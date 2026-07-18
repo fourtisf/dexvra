@@ -83,7 +83,18 @@ function DetailContent({ t }: { t: BoardToken }) {
                 <path d={d} fill="none" stroke={col} strokeWidth="2.2" strokeLinecap="round" />
               </svg>
               <div className="chart-note">
-                {chart === undefined ? "Loading live chart…" : "Live chart unavailable for this pair — showing trend."}
+                {chart === undefined ? (
+                  <>
+                    <span className="dot-live" style={{ display: "inline-block", marginRight: 6, verticalAlign: "middle" }} />
+                    Loading live chart…
+                  </>
+                ) : c?.geckoNetwork ? (
+                  <a href={`https://www.geckoterminal.com/${c.geckoNetwork}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
+                    Open full chart on GeckoTerminal ↗
+                  </a>
+                ) : (
+                  `Price trend · ${c?.label ?? t.chain} charts coming soon`
+                )}
               </div>
             </div>
           )}
