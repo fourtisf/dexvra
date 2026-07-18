@@ -64,3 +64,17 @@ npm run gen:icons  # regenerate all brand assets (favicons, logo, OG) from the S
 Phase 1 needs no env vars. Phases 2/3 add: `DATABASE_URL`, `REDIS_URL`,
 `TREASURY_WALLET`, `HELIUS_KEY`, `GOPLUS_KEY`, `TELEGRAM_BOT_TOKEN`,
 `ADMIN_WALLETS` (see handoff §9).
+
+## Telegram bot integration (`bot/`)
+
+The Dexvra Telegram bot (`bot/`, its own package — see [`bot/README.md`](bot/README.md))
+sells Listing / Xpress / Trending / Banner packages, verifies on-chain payment
+(temp wallet + poll + sweep), and auto-posts to the Dexvra channels + Twitter.
+It writes approved listings and trending/banner bookings back through a
+token-guarded **internal API** (`/api/internal/*`) so the Next.js process stays
+the sole writer of `data/listings.json`.
+
+Set `INTERNAL_API_TOKEN` (a shared secret, **≥ 24 chars**) in `.env.local`; the
+bot's `.env` gets the same value. Until it's set, every `/api/internal/*` route
+returns 401 (fails closed). Generate one with
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.

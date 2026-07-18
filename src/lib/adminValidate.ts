@@ -36,7 +36,13 @@ export interface ListingInput {
   buyShare?: number;
   tx24h?: number;
   listedMin?: number;
+  trendStart?: number;
+  trendExp?: number;
 }
+
+/** Optional non-negative integer (epoch ms / rank); undefined when absent. */
+const optInt = (x: unknown): number | undefined =>
+  x != null && Number.isFinite(Number(x)) ? Math.max(0, Math.round(Number(x))) : undefined;
 
 type BuildResult = { ok: true; row: ListingRow } | { ok: false; error: string };
 
@@ -77,6 +83,8 @@ export function buildRow(input: ListingInput): BuildResult {
     tier: isTier(input.tier) ? input.tier : "BRONZE",
     trendingRank:
       input.trendingRank == null ? undefined : Math.max(1, Math.round(num(input.trendingRank, 1))),
+    trendStart: optInt(input.trendStart),
+    trendExp: optInt(input.trendExp),
     listedMin: Math.max(0, Math.round(num(input.listedMin, 0))),
     tax: clamp(num(input.tax, 0), 0, 100),
     holders: Math.max(0, Math.round(num(input.holders, 0))),
@@ -106,6 +114,13 @@ export function sanitizePatch(body: Record<string, unknown>): Partial<ListingRow
     out.trendingRank = undefined;
   } else if (body.trendingRank != null && Number.isFinite(Number(body.trendingRank))) {
     out.trendingRank = Math.max(1, Math.round(Number(body.trendingRank)));
+  }
+
+  // Trending-window timestamps: null/"" clears, a finite number sets.
+  for (const k of ["trendStart", "trendExp"] as const) {
+    const v = body[k];
+    if (v === null || v === "") out[k] = undefined;
+    else if (v != null && Number.isFinite(Number(v))) out[k] = Math.max(0, Math.round(Number(v)));
   }
 
   for (const k of ["website", "twitter", "telegram"] as const) {

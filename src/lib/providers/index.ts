@@ -33,10 +33,22 @@ const esc = (s: string) =>
 async function loadRows(): Promise<ListingRow[]> {
   try {
     const rows = await approvedRows();
-    return rows.length ? rows : SEED_ROWS;
+    return expireTrending(rows.length ? rows : SEED_ROWS);
   } catch {
     return SEED_ROWS;
   }
+}
+
+/** A paid Trending slot only features a token until `trendExp`. Past it, drop
+ *  the featured rank at render time so the board stops featuring it even before
+ *  the bot's sweeper clears it in the store. Purely non-mutating. */
+function expireTrending(rows: ListingRow[]): ListingRow[] {
+  const now = Date.now();
+  return rows.map((r) =>
+    r.trendExp && r.trendExp < now && r.trendingRank != null
+      ? { ...r, trendingRank: undefined }
+      : r,
+  );
 }
 
 /** Merge live market data onto the paid listings. Any listing without live
