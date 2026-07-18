@@ -23,14 +23,21 @@ export function hashStr(s: string): number {
 
 export function visualFor(sym: string): { emoji: string; gradient: [string, string, string] } {
   const h = hashStr(sym);
+  // `h` is an unsigned 32-bit value, so use the UNSIGNED shift `>>>`. The
+  // signed `>>` sign-extends when the high bit is set, making the result
+  // negative → a negative modulo → an out-of-range index → undefined gradient
+  // → "Cannot read properties of undefined (reading '0')" in coinBg for ~half
+  // of all symbols. (Seed tokens dodge this by carrying hardcoded gradients.)
   return {
     emoji: EMOJIS[h % EMOJIS.length],
-    gradient: GRADIENTS[(h >> 4) % GRADIENTS.length],
+    gradient: GRADIENTS[(h >>> 4) % GRADIENTS.length],
   };
 }
 
-export function coinBg(g: [string, string, string]): string {
-  return `radial-gradient(circle at 32% 26%,${g[0]},${g[1]} 45%,${g[2]})`;
+export function coinBg(g?: [string, string, string]): string {
+  // defensive fallback so a bad/missing gradient can never blank the page
+  const c = g ?? ["#B8FFD0", "#3DF59F", "#0B9E5E"];
+  return `radial-gradient(circle at 32% 26%,${c[0]},${c[1]} 45%,${c[2]})`;
 }
 
 /** Synthetic sparkline seeded by symbol — same construction as the prototype.
