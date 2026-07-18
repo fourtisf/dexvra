@@ -14,6 +14,7 @@ export interface ListingRow {
   emoji: string;
   tier: ListingTier;
   trendingRank?: number; // present = featured on Trending; value is only a stable sub-order within a tier (Diamond-first ordering wins), never shown as a number
+  logoUrl?: string; // admin-set logo image URL; overrides the emoji + live logo
   listedMin: number; // minutes since the listing went live
   tax: number;
   holders: number;
@@ -83,7 +84,7 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     address: r.address,
     symbol: r.sym,
     name: r.name,
-    logoUrl: null,
+    logoUrl: r.logoUrl ?? null,
     emoji: r.emoji,
     gradient: v.gradient,
     priceUsd: r.price,

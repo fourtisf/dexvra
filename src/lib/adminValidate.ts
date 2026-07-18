@@ -19,6 +19,7 @@ export interface ListingInput {
   emoji?: string;
   tier?: string;
   trendingRank?: number | null;
+  logoUrl?: string;
   website?: string;
   twitter?: string;
   telegram?: string;
@@ -57,6 +58,7 @@ export function buildRow(input: ListingInput): BuildResult {
     [input.website, "website"],
     [input.twitter, "X"],
     [input.telegram, "Telegram"],
+    [input.logoUrl, "logo"],
   ] as const) {
     if (v && !URL_RE.test(String(v))) return { ok: false, error: `${label} must be a full https:// URL` };
   }
@@ -80,6 +82,7 @@ export function buildRow(input: ListingInput): BuildResult {
     vol24h: Math.max(0, num(input.vol24h, 0)),
     buyShare: clamp(num(input.buyShare, 0.5), 0, 1),
     tx24h: Math.max(0, Math.round(num(input.tx24h, 0))),
+    logoUrl: input.logoUrl ? String(input.logoUrl) : undefined,
     website: input.website ? String(input.website) : undefined,
     twitter: input.twitter ? String(input.twitter) : undefined,
     telegram: input.telegram ? String(input.telegram) : undefined,
@@ -90,7 +93,7 @@ export function buildRow(input: ListingInput): BuildResult {
 /** Sanitize a partial edit (admin PATCH). chain/address are immutable here. */
 export function sanitizePatch(body: Record<string, unknown>): Partial<ListingRow> {
   const out: Partial<ListingRow> = {};
-  if (typeof body.name === "string") out.name = body.name.trim().slice(0, 60);
+  if (typeof body.name === "string" && body.name.trim()) out.name = body.name.trim().slice(0, 60);
   if (typeof body.emoji === "string") out.emoji = body.emoji.trim().slice(0, 4) || "🪙";
   if (isTier(body.tier)) out.tier = body.tier;
 
@@ -100,7 +103,7 @@ export function sanitizePatch(body: Record<string, unknown>): Partial<ListingRow
     out.trendingRank = Math.max(1, Math.round(Number(body.trendingRank)));
   }
 
-  for (const k of ["website", "twitter", "telegram"] as const) {
+  for (const k of ["website", "twitter", "telegram", "logoUrl"] as const) {
     const v = body[k];
     if (typeof v === "string") {
       if (v === "") out[k] = undefined;

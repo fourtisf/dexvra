@@ -65,7 +65,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     const v = visualFor(t.symbol);
     return {
       ...t,
-      logoUrl: m.logoUrl,
+      logoUrl: t.logoUrl ?? m.logoUrl, // admin-set logo wins; else live logo
       priceUsd: m.priceUsd,
       mcap: m.mcap ?? t.mcap,
       liq: m.liq ?? t.liq,

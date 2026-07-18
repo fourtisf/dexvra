@@ -16,6 +16,7 @@ const emptyAdd = {
   name: "",
   emoji: "",
   tier: "DIAMOND" as ListingTier,
+  logoUrl: "",
   website: "",
   twitter: "",
   telegram: "",
@@ -28,6 +29,10 @@ export default function AdminDashboard() {
   const [add, setAdd] = useState(emptyAdd);
   const [addErr, setAddErr] = useState("");
   const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editErr, setEditErr] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -107,6 +112,43 @@ export default function AdminDashboard() {
       setAdding(false);
     }
   };
+
+  const startEdit = (r: StoredListing) => {
+    setEditId(r.id);
+    setEditErr("");
+    setEf({
+      name: r.name ?? "",
+      emoji: r.emoji ?? "",
+      logoUrl: r.logoUrl ?? "",
+      website: r.website ?? "",
+      twitter: r.twitter ?? "",
+      telegram: r.telegram ?? "",
+    });
+  };
+
+  const saveEdit = async (id: string) => {
+    setSavingEdit(true);
+    setEditErr("");
+    try {
+      const r = await fetch(`/api/admin/listings/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(ef),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setEditId(null);
+        await load();
+      } else {
+        setEditErr(j.error || "Could not save");
+      }
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const setE = (k: keyof typeof ef) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setEf((s) => ({ ...s, [k]: e.target.value }));
 
   const logout = async () => {
     await fetch("/api/admin/logout", { method: "POST" }).catch(() => {});
@@ -198,10 +240,20 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {(rows ?? []).map((r) => (
+                {(rows ?? []).flatMap((r) => [
                   <tr key={r.id}>
                     <td>
-                      <div className="a-sym"><span>{r.emoji}</span>{r.sym}</div>
+                      <div className="a-sym">
+                        <span className="a-logo">
+                          {r.logoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={r.logoUrl} alt="" />
+                          ) : (
+                            r.emoji
+                          )}
+                        </span>
+                        {r.sym}
+                      </div>
                       <div className="a-chain">{r.name}</div>
                     </td>
                     <td className="a-chain">{CHAINS[r.chain]?.label ?? r.chain}</td>
@@ -232,6 +284,9 @@ export default function AdminDashboard() {
                     <td><span className={`a-status ${r.status}`}>{r.status}</span></td>
                     <td>
                       <div className="a-row-actions">
+                        <button className="abtn" disabled={busy === r.id} onClick={() => (editId === r.id ? setEditId(null) : startEdit(r))}>
+                          {editId === r.id ? "Close" : "Edit"}
+                        </button>
                         {r.status !== "approved" ? (
                           <button className="abtn ok" disabled={busy === r.id} onClick={() => setStatus(r.id, "approved")}>Approve</button>
                         ) : (
@@ -240,8 +295,40 @@ export default function AdminDashboard() {
                         <button className="abtn bad" disabled={busy === r.id} onClick={() => remove(r.id)}>Delete</button>
                       </div>
                     </td>
-                  </tr>
-                ))}
+                  </tr>,
+                  editId === r.id && (
+                    <tr className="edit-row" key={`${r.id}-edit`}>
+                      <td colSpan={7}>
+                        <div className="edit-panel">
+                          <div className="edit-grid">
+                            <div className="add-fld"><label>Name</label><input className="a-input" value={ef.name} onChange={setE("name")} /></div>
+                            <div className="add-fld"><label>Emoji (fallback)</label><input className="a-input" value={ef.emoji} onChange={setE("emoji")} maxLength={4} placeholder="🐕" /></div>
+                            <div className="add-fld">
+                              <label>Preview</label>
+                              <div className="edit-logo-box">
+                                {ef.logoUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={ef.logoUrl} alt="" />
+                                ) : (
+                                  <span>{ef.emoji || "🪙"}</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="add-fld wide"><label>Logo image URL (https)</label><input className="a-input" value={ef.logoUrl} onChange={setE("logoUrl")} placeholder="https://…/logo.png" /></div>
+                            <div className="add-fld"><label>Website</label><input className="a-input" value={ef.website} onChange={setE("website")} placeholder="https://…" /></div>
+                            <div className="add-fld"><label>X / Twitter</label><input className="a-input" value={ef.twitter} onChange={setE("twitter")} placeholder="https://x.com/…" /></div>
+                            <div className="add-fld"><label>Telegram</label><input className="a-input" value={ef.telegram} onChange={setE("telegram")} placeholder="https://t.me/…" /></div>
+                          </div>
+                          {editErr && <div className="login-err" style={{ textAlign: "left" }}>{editErr}</div>}
+                          <div className="edit-actions">
+                            <button className="abtn p" disabled={savingEdit} onClick={() => saveEdit(r.id)}>{savingEdit ? "Saving…" : "Save changes"}</button>
+                            <button className="abtn" onClick={() => setEditId(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ),
+                ])}
               </tbody>
             </table>
           </div>
@@ -279,6 +366,10 @@ export default function AdminDashboard() {
               <div className="add-fld">
                 <label>Emoji</label>
                 <input className="a-input" value={add.emoji} onChange={setA("emoji")} placeholder="🐕" maxLength={4} />
+              </div>
+              <div className="add-fld wide">
+                <label>Logo image URL (optional)</label>
+                <input className="a-input" value={add.logoUrl} onChange={setA("logoUrl")} placeholder="https://…/logo.png" />
               </div>
               <div className="add-fld">
                 <label>Website</label>
