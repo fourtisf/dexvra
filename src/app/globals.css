@@ -544,3 +544,119 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .board-loading .dot-live{display:inline-block;margin-right:8px;vertical-align:middle}
 .nav a{-webkit-tap-highlight-color:transparent}
 .verified-badge{color:var(--mint);font-size:12px;margin-left:4px}
+
+/* ============================================================
+   DEXVRA — PREMIUM BLACK THEME
+   Layered over the base styles (source-order override). Kills the
+   neon mint/cyan glow look for a premium, mostly-monochrome black
+   identity: platinum CTAs, refined semantic green/red, hairline
+   borders. Redefining :root cascades the palette everywhere.
+   ============================================================ */
+:root{
+  --bg:#08090B; --panel:#0B0C0F; --card:#0F1013;
+  --line:rgba(255,255,255,.055); --line2:rgba(255,255,255,.10);
+  --text:#F5F6F8; --muted:#9BA1AC; --faint:#5B616C;
+  --mint:#3DDC97; --mint-deep:#17B98A; --cyan:#4CC7D4;
+  --violet:#B79CFF; --violet-deep:#6D4BD1;
+  --orange:#EDA765; --red:#F76A85; --gold:#E7C77A;
+  /* platinum sheen for primary actions — premium, not neon */
+  --grad:linear-gradient(180deg,#FAFBFC 0%,#D6DAE1 100%);
+}
+
+/* premium background: quiet monochrome depth, no colored glows */
+body{
+  background:
+    radial-gradient(1200px 620px at 50% -22%, rgba(255,255,255,.045), transparent 62%),
+    radial-gradient(760px 460px at 96% 0%, rgba(61,220,151,.035), transparent 58%),
+    var(--bg);
+}
+
+/* keep the brand mark on its signature gradient (matches the favicon) */
+.brand-mark,.fcoin-main{
+  background:linear-gradient(135deg,#3DF59F,#22D3EE 58%,#12B9E0)!important;
+  color:#03150B!important;
+  box-shadow:0 8px 22px rgba(0,0,0,.55), inset 0 2px 3px rgba(255,255,255,.5), inset 0 -3px 6px rgba(0,40,25,.3)!important;
+}
+
+/* primary CTAs → platinum */
+.btn-primary,.fasttrack,.btn-slide{
+  color:#0A0B0D!important;
+  box-shadow:0 10px 26px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.85)!important;
+}
+.btn-primary:hover,.fasttrack:hover,.btn-slide:hover{
+  box-shadow:0 16px 36px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.9)!important;
+}
+
+/* panels / cards / board → near-black glass with hairline edge */
+.panel,.wcard,.board{
+  background:linear-gradient(180deg,rgba(255,255,255,.028),transparent 26%),var(--card);
+  box-shadow:0 24px 60px rgba(0,0,0,.55);
+}
+.board .row:not(.head):hover{
+  background:rgba(255,255,255,.035);
+  box-shadow:inset 3px 0 0 var(--mint);
+}
+.row.head{background:rgba(255,255,255,.022)}
+
+/* nav active → subtle platinum wash + emerald hairline */
+.nav a.active{
+  background:linear-gradient(120deg,rgba(255,255,255,.08),rgba(255,255,255,.02));
+  color:#FFFFFF;
+}
+.nav a.active::before{background:var(--mint);box-shadow:0 0 10px rgba(61,220,151,.5)}
+
+/* refined semantic chips */
+.chg.up{color:#04240F;background:linear-gradient(120deg,#4FE0A6,#2BC48D)}
+.chg.dn{color:#2A0710;background:linear-gradient(120deg,#FF8199,#F45C7C)}
+.src-pill.live{color:#04240F;background:var(--mint)}
+.live-pill{color:#04240F;background:var(--mint)}
+
+/* promo carousel → premium black slides (drop the neon/violet/green washes) */
+.s-moon{
+  background:
+    radial-gradient(560px 300px at 84% 8%, rgba(61,220,151,.10), transparent 60%),
+    radial-gradient(460px 300px at 60% 100%, rgba(255,255,255,.04), transparent 62%),
+    linear-gradient(160deg,#101215 0%,#0A0B0D 62%,#08090B 100%);
+}
+.s-boost{
+  background:
+    radial-gradient(600px 340px at 82% 0%, rgba(183,156,255,.14), transparent 60%),
+    linear-gradient(150deg,#141018 0%,#0C0A10 60%,#08090B 100%);
+  color:#F5F6F8;
+}
+.s-boost .s-eyebrow{color:#CDBCFF}
+.s-boost p{color:var(--muted)}
+.boost-btn{background:rgba(255,255,255,.08);color:#FFFFFF;box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 8px 20px rgba(0,0,0,.5)}
+.boost-btn:hover{background:rgba(255,255,255,.14)}
+.s-pump{
+  background:
+    radial-gradient(560px 320px at 20% 0%, rgba(61,220,151,.12), transparent 60%),
+    linear-gradient(150deg,#0F1512 0%,#0A0C0B 60%,#08090B 100%);
+  color:#F5F6F8;
+}
+.s-pump::before{background:none}
+.s-pump .s-eyebrow{color:var(--mint)}
+.pump-x{color:#EAFBF3;text-shadow:0 2px 0 rgba(0,0,0,.4)}
+.chip-since{color:#04240F;background:var(--mint)}
+.pump-meta{color:var(--muted)}
+.pump-meta b{color:#F5F6F8}
+.s-pump .wm path{stroke:rgba(61,220,151,.5)!important}
+.blip-tag{color:#04240F;background:var(--mint);box-shadow:0 8px 20px rgba(0,0,0,.5)}
+
+/* orbit dashes → subtle monochrome */
+.orbit.oa{border-color:rgba(255,255,255,.14)}
+.orbit.ob{border-color:rgba(183,156,255,.22)}
+
+/* pulse heat + gauge accents refined */
+.heat-temp{color:var(--mint)}
+.heat-bar i{background:linear-gradient(120deg,#3DDC97,#4CC7D4)}
+.page-ic,.flame,.wcard-head .ic,.guide .gi{box-shadow:0 6px 18px rgba(0,0,0,.4)}
+
+/* tiers / verify / success */
+.tier.sel{border-color:rgba(61,220,151,.45);background:rgba(61,220,151,.06);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.tier .tprice{color:var(--mint)}
+.success-ic{background:linear-gradient(135deg,#3DF59F,#22D3EE);color:#03150B}
+
+/* focus ring toned for premium */
+:focus-visible{outline:2px solid rgba(255,255,255,.5)}
+::selection{background:rgba(61,220,151,.28)}
