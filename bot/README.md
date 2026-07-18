@@ -71,3 +71,30 @@ pm2 save
 | `src/services/` | trending poster, trending sweeper, pump checker |
 
 See [`.env.example`](.env.example) for every setting.
+
+## Go-live checklist
+
+1. **Web app**: set `INTERNAL_API_TOKEN` (≥24 chars) in the Next app's `.env.local`
+   and restart it (`pm2 restart dexvra --update-env`).
+2. **Bot `.env`**: same `INTERNAL_API_TOKEN`; set `BOT_TOKEN`; point
+   `DEXVRA_API_BASE` at the Next app (default `http://127.0.0.1:3005`).
+3. **Treasuries**: set `TREASURY_EVM` / `TREASURY_SOL` / `TREASURY_TRON` /
+   `TREASURY_TON` so funds sweep out of temp wallets. Set `WALLET_ENC_KEY`
+   (`openssl rand -hex 32`) to encrypt stored keys at rest.
+4. **Channels**: make the bot an **admin** in `@dexvraio`, `@dexvratrending`,
+   `@dexvralisting`.
+5. **Admins**: add your Telegram id to `ADMIN_IDS` (admins pay 0 — use the free
+   test order to verify listing → post end-to-end without spending).
+6. **X (optional)**: paste the 4 `X_*` keys to enable auto-tweeting; leave blank
+   to keep it off.
+7. `npm run check` → `npm test` → `npm start`.
+8. **Security**: rotate the bot token in @BotFather if it was ever shared, then
+   update `.env`.
+
+## Tests
+
+```bash
+npm run check   # boot-wiring smoke (no network)
+npm test        # unit tests (pricing, units, chains, formatting, cards)
+```
+

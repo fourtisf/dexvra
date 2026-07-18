@@ -9,9 +9,9 @@ function attachServices(bot, services) {
   services.push(require("./trendingPoster").start(tg));
   if (PUMP_ENABLED) services.push(require("./pumpChecker").start(tg));
 
-  // One-shot recovery of paid-but-unfulfilled orders (restart safety).
+  // One-shot recovery: re-fulfil paid orders + detect late-arriving payments.
   require("./recovery")
-    .recoverPaidOrders(tg)
+    .runRecovery(tg)
     .catch((e) => log.warn(`[recovery] ${e.message}`));
 }
 
