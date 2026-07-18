@@ -61,6 +61,7 @@ async function startBot() {
   const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 120000 });
   applyMiddleware(bot);
   log.attach(bot, LOG_CHANNEL);
+  require("./channels/post").attach(bot.telegram); // channel posts use the bot's Telegram
 
   // All pre-launch work happens here — in Telegraf v4, launch() only resolves
   // when the bot STOPS, so anything after `await launch()` never runs.

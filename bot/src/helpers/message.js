@@ -61,4 +61,14 @@ async function toast(ctx, text, opts = {}) {
   }
 }
 
-module.exports = { answer, deleteLatest, sendCard, sendPhotoCard, toast, HTML };
+/** Extract the file_id of any media in the incoming message (photo/doc/anim/video). */
+function getMediaFileId(ctx) {
+  const m = (ctx && ctx.message) || {};
+  if (m.photo && m.photo.length) return m.photo[m.photo.length - 1].file_id;
+  if (m.document) return m.document.file_id;
+  if (m.animation) return m.animation.file_id;
+  if (m.video) return m.video.file_id;
+  return null;
+}
+
+module.exports = { answer, deleteLatest, sendCard, sendPhotoCard, toast, getMediaFileId, HTML };

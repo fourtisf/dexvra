@@ -119,6 +119,12 @@ const BANNERS = [
 ];
 const bannerByKey = (key) => BANNERS.find((b) => b.key === key) || null;
 
+// Bundled Trending feature (hours) granted with each Listing purchase — this is
+// the "& Trending" in "Listing & Trending". Mirrors the fourtis listTrendPlans
+// durations; Xpress gets a short feature per its blurb ("listed on trending board").
+const TIER_TREND_HOURS = { DIAMOND: 48, GOLD: 24, PLATINUM: 18, SILVER: 12, BRONZE: 6, XPRESS: 6 };
+const tierTrendingHours = (key) => TIER_TREND_HOURS[key] || 0;
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 const fmtAmount = (n) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(6))));
 const fmtNative = (n, sym) => `${fmtAmount(n)} ${sym}`;
@@ -129,5 +135,6 @@ module.exports = {
   tierMeta, tierLabel, tierColor, tierGlyph, tierEmoji, tierRank, tierAnnounces, tierPrice,
   TRENDING, trendingForChain, durationToHours, trendingAnnounces,
   BANNERS, bannerByKey,
+  TIER_TREND_HOURS, tierTrendingHours,
   fmtAmount, fmtNative, fmtUsd,
 };
