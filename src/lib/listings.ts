@@ -28,6 +28,12 @@ export interface ListingRow {
   website?: string;
   twitter?: string;
   telegram?: string;
+  // Time-boxed Trending slot (set when a project buys a Trending package via the
+  // Telegram bot). `trendingRank` is the featured sub-order; `trendExp` is when
+  // the slot ends — the provider stops featuring the token past it, and the
+  // bot's sweeper clears `trendingRank` in the store shortly after.
+  trendStart?: number; // ms epoch the slot began
+  trendExp?: number; // ms epoch the slot ends
 }
 
 // Only real tokens that resolve to a GeckoTerminal pool, so every listing

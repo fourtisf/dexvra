@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Per-order temporary wallet keys (NEVER commit — funds live here until swept)
+.keys/
+
+# Bot-side operational state (orders, post-ids, pump/trending dedup)
+data/
+
+*.log
+npm-debug.log*

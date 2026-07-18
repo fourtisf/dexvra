@@ -1,0 +1,103 @@
+// Payment arming + the Confirm-payment handler.
+//
+// armPayment(): generate a fresh temp wallet, quote the amount, persist a
+// restart-recoverable order (with a serializable fulfilment payload), and stash
+// it on the session. The calling flow renders the pay card.
+//
+// confirmPayHandler(): idempotent Confirm button. Verifies the on-chain balance
+// (sweep fires inside verify, BEFORE fulfilment), then runs fulfilment. Because
+// funds are already captured, fulfilment must be best-effort and never "refund"
+// on failure — a failed fulfil leaves the order in `paid` for recovery.
+const crypto = require("node:crypto");
+const { isAdminUser } = require("../config/constants");
+const { answer, toast } = require("../helpers/message");
+const { toSmallest, humanWithSymbol } = require("./units");
+const wallets = require("./wallets");
+const verify = require("./verify");
+const orders = require("./orders");
+const log = require("../helpers/logger");
+
+function newOrderId() {
+  return `${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
+}
+
+/**
+ * @param order {{ kind, chain, native, humanAmount, payload, label? }}
+ * @returns {{ address, amount, adminFree, native, humanAmount }}
+ */
+async function armPayment(ctx, order) {
+  const adminFree = isAdminUser(ctx);
+  order.id = order.id || newOrderId();
+  order.buyerId = ctx.from && ctx.from.id;
+  order.buyerUsername = ctx.from && ctx.from.username;
+  order.createdAt = Date.now();
+  order.status = "pending";
+
+  const wallet = await wallets.generateWallet(order.chain, {
+    kind: order.kind,
+    buyer: order.buyerId,
+    orderId: order.id,
+  });
+  const amount = adminFree ? 0n : toSmallest(order.chain, order.humanAmount);
+  order.amountSmallest = amount.toString();
+  order.address = wallet.address;
+  order.adminFree = adminFree;
+  await orders.saveOrder(order).catch((e) => log.warn(`[pay] saveOrder: ${e.message}`));
+
+  ctx.session.pendingPayment = { order, address: wallet.address, adminFree };
+  return { address: wallet.address, amount, adminFree, native: order.native, humanAmount: order.humanAmount };
+}
+
+async function confirmPayHandler(ctx) {
+  await answer(ctx);
+  const pp = ctx.session && ctx.session.pendingPayment;
+  if (!pp) {
+    await toast(ctx, "No pending payment. Send /start to begin.");
+    return;
+  }
+  if (ctx.session._verifying) {
+    await toast(ctx, "⏳ Still checking your last payment — hang tight.");
+    return;
+  }
+  ctx.session._verifying = true;
+  const { order, address, adminFree } = pp;
+
+  try {
+    let paid = adminFree;
+    if (!adminFree) {
+      await toast(
+        ctx,
+        `⏳ Checking ${order.chain.toUpperCase()} for your payment of ${order.humanAmount} ${order.native}… this can take up to a minute.`,
+      );
+      const r = await verify.verifyPayment(order.chain, address, order.amountSmallest);
+      paid = r.paid;
+    }
+
+    if (!paid) {
+      await toast(
+        ctx,
+        `❌ I haven't detected your payment yet.\n\nSend exactly <b>${order.humanAmount} ${order.native}</b> to:\n<code>${address}</code>\n\nThen tap <b>Confirm</b> again. If you already paid, wait a moment (or contact support with order <code>${order.id}</code>).`,
+      );
+      return;
+    }
+
+    await orders.setStatus(order.id, "paid").catch(() => {});
+    const { fulfillOrder } = require("../fulfillment");
+    await fulfillOrder(ctx, order);
+    await orders.setStatus(order.id, "fulfilled").catch(() => {});
+    ctx.session.pendingPayment = null;
+    log.event(
+      `✅ ${order.kind} fulfilled — ${adminFree ? "FREE(admin)" : order.humanAmount + " " + order.native} on ${order.chain} · buyer @${order.buyerUsername || order.buyerId}`,
+    );
+  } catch (e) {
+    log.error(`[pay] confirm/fulfil failed order=${order && order.id}: ${e.message}`);
+    await toast(
+      ctx,
+      `⚠️ Payment received but finalizing hit a snag. Your order <code>${order && order.id}</code> is safe — please contact support and we'll complete it.`,
+    );
+  } finally {
+    ctx.session._verifying = false;
+  }
+}
+
+module.exports = { armPayment, confirmPayHandler, newOrderId, humanWithSymbol };

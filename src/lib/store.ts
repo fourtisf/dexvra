@@ -14,7 +14,7 @@ export interface StoredListing extends ListingRow {
   id: string;
   status: ListingStatus;
   createdAt: number;
-  source?: "seed" | "submission" | "admin";
+  source?: "seed" | "submission" | "admin" | "bot";
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
