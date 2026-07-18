@@ -86,7 +86,7 @@ export default function TokenPage() {
             {t.symbol}
             {t.verified && <span className="verified-badge" title="Verified">✓</span>}
             <TierTag tier={t.tier} />
-            {t.trendingRank != null && <TrendingBadge rank={t.trendingRank} />}
+            {t.trendingRank != null && <TrendingBadge />}
           </div>
           <div className="tp-nm">
             {t.name} · <ChainLogo chain={t.chain} size={14} style={{ verticalAlign: "-2px" }} />{" "}

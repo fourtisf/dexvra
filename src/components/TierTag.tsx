@@ -19,11 +19,12 @@ export function TierTag({ tier, showRank = true }: { tier: ListingTier; showRank
   );
 }
 
-/** Live Trending-board slot indicator (No.1 / No.2 / No.3 …). */
-export function TrendingBadge({ rank, big = false }: { rank: number; big?: boolean }) {
+/** Featured-on-Trending indicator. No number shown — placement/order conveys
+ *  priority (higher-tier packages rank first). */
+export function TrendingBadge({ big = false }: { big?: boolean }) {
   return (
-    <span className={`trend-badge ${big ? "big" : ""}`} title={`Featured on the Trending board — slot No.${rank}`}>
-      🔥 No.{rank}
+    <span className={`trend-badge ${big ? "big" : ""}`} title="Featured on the Trending board">
+      🔥 Trending
     </span>
   );
 }

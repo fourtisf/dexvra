@@ -13,7 +13,7 @@ interface ListingRow {
   name: string;
   emoji: string;
   tier: ListingTier;
-  trendingRank?: number; // live Trending-board slot (1 = No.1); omitted if not trending
+  trendingRank?: number; // present = featured on Trending; value is only a stable sub-order within a tier (Diamond-first ordering wins), never shown as a number
   listedMin: number; // minutes since the listing went live
   tax: number;
   holders: number;

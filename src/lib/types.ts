@@ -33,7 +33,7 @@ export interface BoardToken {
   source: "live" | "seed";
   // paid-listing model: every token on Dexvra is a paid listing
   tier: ListingTier; // listing package the project bought (the tag)
-  trendingRank: number | null; // live trending slot (1 = No.1), null if not trending
+  trendingRank: number | null; // booked a Trending slot? (non-null = featured); used only as a stable sub-order within a tier — no number is shown
   listedMinutesAgo: number; // how long ago the project paid to list
   score: number; // Dexvra Score 0–100 (signal-based, not votes)
   poolAddress: string | null; // top pool — used to embed the GeckoTerminal chart
