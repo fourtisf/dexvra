@@ -34,6 +34,16 @@ export interface BoardToken {
   listedMinutesAgo: number; // how long ago the project paid to list
   score: number; // Dexvra Score 0–100 (signal-based, not votes)
   poolAddress: string | null; // top pool — used to embed the GeckoTerminal chart
+  links: { website: string | null; twitter: string | null; telegram: string | null };
+}
+
+export interface Trade {
+  ts: number; // unix seconds
+  kind: "buy" | "sell";
+  usd: number;
+  amount: number; // base token amount
+  price: number;
+  trader: string;
 }
 
 export interface Signal {

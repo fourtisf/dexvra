@@ -24,7 +24,8 @@ export function Coin({
     style.height = size;
   }
   if (fontSize) style.fontSize = fontSize;
-  const badgeSize = size ? Math.max(13, Math.round(size * 0.42)) : 16;
+  const logoSize = size ? Math.max(14, Math.round(size * 0.4)) : 15;
+  const ring = logoSize + 4; // badge = logo + a thin card-colored ring, so nothing clips
   const inner = (
     <div className="coin" style={style}>
       {token.logoUrl ? (
@@ -39,8 +40,8 @@ export function Coin({
   return (
     <span className="coin-wrap">
       {inner}
-      <span className="cbadge cbadge-logo">
-        <ChainLogo chain={token.chain} size={badgeSize} />
+      <span className="cbadge cbadge-logo" style={{ width: ring, height: ring }}>
+        <ChainLogo chain={token.chain} size={logoSize} />
       </span>
     </span>
   );

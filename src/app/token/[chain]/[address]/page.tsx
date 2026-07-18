@@ -6,6 +6,8 @@ import { useMemo } from "react";
 import { useApp } from "@/components/AppState";
 import { Coin } from "@/components/Coin";
 import { ChainLogo } from "@/components/ChainLogo";
+import { Socials } from "@/components/Socials";
+import { TokenTrades } from "@/components/TokenTrades";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
@@ -112,12 +114,7 @@ export default function TokenPage() {
           <code>{t.address}</code>
           <button className="copy-btn" onClick={copyCa}>COPY</button>
         </div>
-        <div className="soc-row">
-          <a className="soc" title="Explorer" href={c?.explorer(t.address)} target="_blank" rel="noopener noreferrer">⛓</a>
-          <a className="soc" title="X">𝕏</a>
-          <a className="soc" title="Telegram">✈</a>
-          <Link className="soc" title="Safety Scan" href="/scanner">🛡</Link>
-        </div>
+        <Socials t={t} />
       </div>
 
       <div className="tp-grid">
@@ -161,6 +158,8 @@ export default function TokenPage() {
           </div>
         </aside>
       </div>
+
+      <TokenTrades t={t} />
     </section>
   );
 }

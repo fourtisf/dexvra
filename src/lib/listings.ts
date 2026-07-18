@@ -97,6 +97,11 @@ export function listingTokens(): BoardToken[] {
       listedMinutesAgo: r.listedMin,
       score,
       poolAddress: null,
+      links: {
+        website: r.website ?? `https://dexscreener.com/${r.chain}/${r.address}`,
+        twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
+        telegram: r.telegram ?? null,
+      },
     };
   });
 }
