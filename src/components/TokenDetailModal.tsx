@@ -1,28 +1,55 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
+import type { BoardToken } from "@/lib/types";
 import { useApp } from "./AppState";
 import { Coin } from "./Coin";
 
-export function TokenDetailModal() {
-  const { detailToken: t, closeDetail, watchlist, toggleWatch, toast } = useApp();
-  if (!t) return null;
+type ChartState = { network: string; poolAddress: string } | null | undefined; // undefined = loading
+
+function DetailContent({ t }: { t: BoardToken }) {
+  const { closeDetail, watchlist, toggleWatch, toast } = useApp();
+  const [chart, setChart] = useState<ChartState>(undefined);
+
+  // Resolve the token's top pool, then embed the real GeckoTerminal chart.
+  useEffect(() => {
+    let stop = false;
+    setChart(undefined);
+    fetch(`/api/pool?chain=${encodeURIComponent(t.chain)}&address=${encodeURIComponent(t.address)}`)
+      .then((r) => r.json())
+      .then((j: { network: string | null; poolAddress: string | null }) => {
+        if (!stop) setChart(j.poolAddress && j.network ? { network: j.network, poolAddress: j.poolAddress } : null);
+      })
+      .catch(() => {
+        if (!stop) setChart(null);
+      });
+    return () => {
+      stop = true;
+    };
+  }, [t.chain, t.address]);
+
   const c = CHAINS[t.chain];
   const up = t.chg["24h"] >= 0;
-  const col = up ? "#3DF59F" : "#FF5C7A";
+  const col = up ? "#3DDC97" : "#F76A85";
   const d = pathFrom(t.trend, 320, 72);
   const watching = watchlist.has(t.key);
+  const st = scoreTier(t.score);
 
   const copyCa = () => {
     navigator.clipboard?.writeText(t.address).catch(() => {});
     toast("Contract address copied 📋");
   };
 
+  const chartSrc = chart
+    ? `https://www.geckoterminal.com/${chart.network}/pools/${chart.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`
+    : null;
+
   return (
     <div className="modal-ov on" onClick={(e) => e.target === e.currentTarget && closeDetail()}>
-      <div className="modal">
+      <div className="modal detail-modal-wide">
         <button className="modal-x" onClick={closeDetail}>✕</button>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div className="detail-head">
@@ -45,15 +72,26 @@ export function TokenDetailModal() {
             </div>
           </div>
 
-          <svg className="detail-spark" viewBox="0 0 320 72" preserveAspectRatio="none">
-            <path d={`${d} L320,72 L0,72 Z`} fill={col} fillOpacity=".14" />
-            <path d={d} fill="none" stroke={col} strokeWidth="2.2" strokeLinecap="round" />
-          </svg>
+          {chartSrc ? (
+            <div className="detail-chart">
+              <iframe title={`${t.symbol} chart`} src={chartSrc} allow="clipboard-write" allowFullScreen />
+            </div>
+          ) : (
+            <div className="detail-chart-fallback">
+              <svg className="detail-spark" viewBox="0 0 320 72" preserveAspectRatio="none">
+                <path d={`${d} L320,72 L0,72 Z`} fill={col} fillOpacity=".14" />
+                <path d={d} fill="none" stroke={col} strokeWidth="2.2" strokeLinecap="round" />
+              </svg>
+              <div className="chart-note">
+                {chart === undefined ? "Loading live chart…" : "Live chart unavailable for this pair — showing trend."}
+              </div>
+            </div>
+          )}
 
-          <div className="dscore-banner" style={{ borderColor: scoreTier(t.score).color }}>
-            <div className="dsb-num" style={{ color: scoreTier(t.score).color }}>{t.score}</div>
+          <div className="dscore-banner" style={{ borderColor: st.color }}>
+            <div className="dsb-num" style={{ color: st.color }}>{t.score}</div>
             <div className="dsb-meta">
-              <div className="dsb-title">Dexvra Score · <span style={{ color: scoreTier(t.score).color }}>{scoreTier(t.score).label}</span></div>
+              <div className="dsb-title">Dexvra Score · <span style={{ color: st.color }}>{st.label}</span></div>
               <div className="dsb-sub">Signal-based (momentum · liquidity · tax · buy pressure). Not votes.</div>
             </div>
           </div>
@@ -93,12 +131,7 @@ export function TokenDetailModal() {
             >
               {watching ? "★ Watching" : "☆ Watch"}
             </button>
-            <a
-              className="btn-primary"
-              href={c?.buyUrl(t.address)}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <a className="btn-primary" href={c?.buyUrl(t.address)} target="_blank" rel="noopener noreferrer">
               Buy {t.symbol} →
             </a>
           </div>
@@ -106,4 +139,11 @@ export function TokenDetailModal() {
       </div>
     </div>
   );
+}
+
+export function TokenDetailModal() {
+  const { detailToken } = useApp();
+  if (!detailToken) return null;
+  // key by token so chart state resets when a different token is opened
+  return <DetailContent key={detailToken.key} t={detailToken} />;
 }

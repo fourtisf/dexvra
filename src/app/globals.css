@@ -704,3 +704,11 @@ body{
 .dsb-num{font-family:var(--fm);font-weight:800;font-size:32px;line-height:1}
 .dsb-title{font-family:var(--fd);font-weight:700;font-size:14px}
 .dsb-sub{font-size:11px;color:var(--muted);margin-top:3px}
+
+/* GeckoTerminal chart embed in detail modal */
+.detail-modal-wide{width:min(820px,100%)}
+.detail-chart{height:420px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#0a0c10}
+.detail-chart iframe{width:100%;height:100%;border:0;display:block}
+.detail-chart-fallback{position:relative}
+.chart-note{font-family:var(--fm);font-size:10.5px;color:var(--faint);text-align:center;margin-top:6px}
+@media(max-width:560px){.detail-chart{height:300px}}
