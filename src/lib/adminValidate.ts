@@ -6,6 +6,9 @@ export const TIER_KEYS: ListingTier[] = ["DIAMOND", "GOLD", "PLATINUM", "SILVER"
 const isTier = (x: unknown): x is ListingTier => typeof x === "string" && (TIER_KEYS as string[]).includes(x);
 
 const URL_RE = /^https?:\/\/[^\s]+$/i;
+// Logo may be a full https URL OR a same-origin uploaded file (served by
+// /api/media/<24hex>.<ext>).
+const LOGO_RE = /^(https?:\/\/[^\s]+|\/api\/media\/[a-f0-9]{24}\.(png|jpe?g|webp|gif))$/i;
 const NUM_FIELDS = ["tax", "holders", "price", "chg24h", "mcap", "liq", "vol24h", "buyShare", "tx24h", "listedMin"] as const;
 
 const num = (x: unknown, d: number): number => (Number.isFinite(Number(x)) ? Number(x) : d);
@@ -58,9 +61,11 @@ export function buildRow(input: ListingInput): BuildResult {
     [input.website, "website"],
     [input.twitter, "X"],
     [input.telegram, "Telegram"],
-    [input.logoUrl, "logo"],
   ] as const) {
     if (v && !URL_RE.test(String(v))) return { ok: false, error: `${label} must be a full https:// URL` };
+  }
+  if (input.logoUrl && !LOGO_RE.test(String(input.logoUrl))) {
+    return { ok: false, error: "Logo must be an https image URL or an uploaded file" };
   }
 
   const row: ListingRow = {
@@ -103,12 +108,16 @@ export function sanitizePatch(body: Record<string, unknown>): Partial<ListingRow
     out.trendingRank = Math.max(1, Math.round(Number(body.trendingRank)));
   }
 
-  for (const k of ["website", "twitter", "telegram", "logoUrl"] as const) {
+  for (const k of ["website", "twitter", "telegram"] as const) {
     const v = body[k];
     if (typeof v === "string") {
       if (v === "") out[k] = undefined;
       else if (URL_RE.test(v)) out[k] = v;
     }
+  }
+  if (typeof body.logoUrl === "string") {
+    if (body.logoUrl === "") out.logoUrl = undefined;
+    else if (LOGO_RE.test(body.logoUrl)) out.logoUrl = body.logoUrl;
   }
 
   for (const k of NUM_FIELDS) {

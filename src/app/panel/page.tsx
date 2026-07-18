@@ -33,6 +33,8 @@ export default function AdminDashboard() {
   const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -150,12 +152,39 @@ export default function AdminDashboard() {
   const setE = (k: keyof typeof ef) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setEf((s) => ({ ...s, [k]: e.target.value }));
 
+  const uploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file) return;
+    setUploading(true);
+    setEditErr("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/admin/upload", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.url) setEf((s) => ({ ...s, logoUrl: j.url }));
+      else setEditErr(j.error || "Upload failed");
+    } catch {
+      setEditErr("Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const logout = async () => {
     await fetch("/api/admin/logout", { method: "POST" }).catch(() => {});
     window.location.assign(window.location.pathname.replace(/\/$/, "") || "/");
   };
 
   const pending = useMemo(() => (rows ?? []).filter((r) => r.status === "pending"), [rows]);
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const all = rows ?? [];
+    return q
+      ? all.filter((r) => (r.sym + r.name + r.address).toLowerCase().includes(q))
+      : all;
+  }, [rows, search]);
   const stats = useMemo(() => {
     const all = rows ?? [];
     return {
@@ -225,7 +254,15 @@ export default function AdminDashboard() {
 
         {/* All listings */}
         <section className="asec">
-          <div className="asec-h">All listings <span className="cnt">{rows?.length ?? 0}</span></div>
+          <div className="asec-h">
+            All listings <span className="cnt">{search ? `${shown.length}/${rows?.length ?? 0}` : rows?.length ?? 0}</span>
+            <input
+              className="asec-search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search ticker, name, or CA…"
+            />
+          </div>
           <div className="atable-wrap">
             <table className="atable">
               <thead>
@@ -240,7 +277,7 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {(rows ?? []).flatMap((r) => [
+                {shown.flatMap((r) => [
                   <tr key={r.id}>
                     <td>
                       <div className="a-sym">
@@ -314,7 +351,16 @@ export default function AdminDashboard() {
                                 )}
                               </div>
                             </div>
-                            <div className="add-fld wide"><label>Logo image URL (https)</label><input className="a-input" value={ef.logoUrl} onChange={setE("logoUrl")} placeholder="https://…/logo.png" /></div>
+                            <div className="add-fld wide">
+                              <label>Logo — upload a file or paste an image URL</label>
+                              <div className="logo-row">
+                                <label className={`abtn upload-btn ${uploading ? "busy" : ""}`}>
+                                  {uploading ? "Uploading…" : "⬆ Upload"}
+                                  <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={uploadLogo} hidden disabled={uploading} />
+                                </label>
+                                <input className="a-input" value={ef.logoUrl} onChange={setE("logoUrl")} placeholder="https://…/logo.png  or upload →" />
+                              </div>
+                            </div>
                             <div className="add-fld"><label>Website</label><input className="a-input" value={ef.website} onChange={setE("website")} placeholder="https://…" /></div>
                             <div className="add-fld"><label>X / Twitter</label><input className="a-input" value={ef.twitter} onChange={setE("twitter")} placeholder="https://x.com/…" /></div>
                             <div className="add-fld"><label>Telegram</label><input className="a-input" value={ef.telegram} onChange={setE("telegram")} placeholder="https://t.me/…" /></div>
