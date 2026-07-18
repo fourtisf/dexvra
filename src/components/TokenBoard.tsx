@@ -5,6 +5,7 @@ import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
 import { Coin } from "./Coin";
+import { TierTag, TrendingBadge } from "./TierTag";
 import { useApp } from "./AppState";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -133,6 +134,8 @@ function StdRow({
           <div className="sym">
             {t.symbol}
             {t.verified && <span className="verified-badge" title="Verified">✓</span>}
+            <TierTag tier={t.tier} showRank={false} />
+            {t.trendingRank != null && <TrendingBadge rank={t.trendingRank} />}
           </div>
           <div className="nm">{t.name}</div>
         </div>

@@ -8,10 +8,10 @@ import { Coin } from "@/components/Coin";
 import { ChainLogo } from "@/components/ChainLogo";
 import { Socials } from "@/components/Socials";
 import { TokenTrades } from "@/components/TokenTrades";
+import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
-import { tierLabel, tierTip } from "@/lib/tiers";
 
 export default function TokenPage() {
   const params = useParams<{ chain: string; address: string }>();
@@ -85,7 +85,8 @@ export default function TokenPage() {
           <div className="tp-sym">
             {t.symbol}
             {t.verified && <span className="verified-badge" title="Verified">✓</span>}
-            <span className={`tier-chip tier-${t.tier}`} title={tierTip(t.tier)}>{tierLabel(t.tier)}</span>
+            <TierTag tier={t.tier} />
+            {t.trendingRank != null && <TrendingBadge rank={t.trendingRank} />}
           </div>
           <div className="tp-nm">
             {t.name} · <ChainLogo chain={t.chain} size={14} style={{ verticalAlign: "-2px" }} />{" "}

@@ -3,7 +3,7 @@
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { CHAINS } from "@/config/chains";
-import { tierLabel } from "@/lib/tiers";
+import { tierLabel } from "@/lib/packages";
 
 export default function AccountPage() {
   const { wallet, toggleWallet, watchlist, myListings, openListing } = useApp();

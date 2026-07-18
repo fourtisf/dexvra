@@ -7,7 +7,7 @@ import { Coin } from "@/components/Coin";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
-import { tierLabel, tierTip } from "@/lib/tiers";
+import { TierTag } from "@/components/TierTag";
 
 export default function NewListingsPage() {
   const { data, openDetail } = useApp();
@@ -38,7 +38,7 @@ export default function NewListingsPage() {
                 <div className="lc-id">
                   <div className="lc-sym">
                     {t.symbol}
-                    <span className={`tier-chip tier-${t.tier}`} title={tierTip(t.tier)}>{tierLabel(t.tier)}</span>
+                    <TierTag tier={t.tier} />
                   </div>
                   <div className="lc-nm">
                     {t.name} · <span style={{ color: CHAINS[t.chain]?.color }}>{CHAINS[t.chain]?.label ?? t.chain}</span>

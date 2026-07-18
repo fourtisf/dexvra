@@ -1,15 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
+import { LISTING_TIERS, fmtNative, nativeOf, tierPrice } from "@/lib/packages";
 import { useApp } from "./AppState";
-
-const TIERS = [
-  { name: "Trench", price: "0.5 SOL", perks: ["Live within 24h", "All Coins listing", "Search indexed"] },
-  { name: "Express", price: "2 SOL", perks: ["Live within 1h", "Ticker mention", "New Pairs highlight"], popular: true },
-  { name: "Fast-Track", price: "5 SOL", perks: ["Live instantly", "Homepage spotlight", "1-day carousel slot"] },
-];
 
 const URL_RE = /^https?:\/\/[^\s]+$/i;
 
@@ -28,7 +23,11 @@ export function ListingModal() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(emptyForm);
-  const [tier, setTier] = useState(TIERS[1]);
+  const [tierKey, setTierKey] = useState("DIAMOND");
+
+  const native = nativeOf(form.chain);
+  const tier = useMemo(() => LISTING_TIERS.find((t) => t.key === tierKey) ?? LISTING_TIERS[0], [tierKey]);
+  const price = tierPrice(tier.key, form.chain);
 
   if (!listingOpen) return null;
 
@@ -59,19 +58,28 @@ export function ListingModal() {
   };
 
   const pay = () => {
-    // Phase 1 stores locally; real SOL payment + tx-signature verification is Phase 3.
+    // Phase 1 stores locally; real on-chain payment + tx-signature verification is Phase 3.
     addListing({
       symbol: "$" + form.sym.trim().toUpperCase().replace(/^\$+/, ""),
       name: form.name.trim(),
       emoji: form.emoji.trim() || "🆕",
       chain: form.chain,
-      tier: tier.name,
+      tier: tier.key,
       status: "IN REVIEW",
     });
     setStep(4);
   };
 
   const ca = form.ca.trim();
+
+  const perksFor = (t: (typeof LISTING_TIERS)[number]) =>
+    t.instant
+      ? ["Instant activation", "TG + trending board", "Priority verification"]
+      : [
+          t.rank <= 3 ? "Announcement post" : "Standard listing",
+          t.rank <= 3 ? "Verified badge" : "Discovery indexed",
+          `Tier #${t.rank} placement`,
+        ];
 
   return (
     <div className="modal-ov on" onClick={(e) => e.target === e.currentTarget && close()}>
@@ -95,7 +103,7 @@ export function ListingModal() {
                 <label>Chain</label>
                 <select value={form.chain} onChange={set("chain")}>
                   {CHAIN_IDS.map((id) => (
-                    <option key={id} value={id}>{CHAINS[id].label}</option>
+                    <option key={id} value={id}>{CHAINS[id].label} · pays in {nativeOf(id)}</option>
                   ))}
                 </select>
               </div>
@@ -107,30 +115,41 @@ export function ListingModal() {
               <div className="fld"><label>Telegram</label><input value={form.tg} onChange={set("tg")} placeholder="https://t.me/…" /></div>
             </div>
             <div className="m-actions">
-              <button className="btn-primary" onClick={next1}>Choose tier →</button>
+              <button className="btn-primary" onClick={next1}>Choose package →</button>
             </div>
           </div>
         )}
 
         {step === 2 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div className="tier-grid">
-              {TIERS.map((t) => (
-                <div
-                  key={t.name}
-                  className={`tier ${tier.name === t.name ? "sel" : ""}`}
-                  onClick={() => setTier(t)}
-                >
-                  {t.popular && <span className="pop">POPULAR</span>}
-                  <div className="tname">{t.name}</div>
-                  <div className="tprice">{t.price}</div>
-                  <ul>
-                    {t.perks.map((p) => (
-                      <li key={p}>{p}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+            <div className="tier-hint">
+              Paying on <b>{CHAINS[form.chain].label}</b> — prices in <b>{native}</b>.
+            </div>
+            <div className="tier-grid pkg-modal-grid">
+              {LISTING_TIERS.map((t) => {
+                const p = tierPrice(t.key, form.chain);
+                return (
+                  <div
+                    key={t.key}
+                    className={`tier ${tierKey === t.key ? "sel" : ""}`}
+                    style={{ "--tc": t.color } as CSSProperties}
+                    onClick={() => setTierKey(t.key)}
+                  >
+                    {t.rank === 1 && <span className="pop">TOP</span>}
+                    {t.instant && <span className="pop alt">INSTANT</span>}
+                    <div className="tname">
+                      <span className="pkg-glyph">{t.glyph}</span> {t.label}
+                      {t.rank > 0 && <span className="pkg-rank">#{t.rank}</span>}
+                    </div>
+                    <div className="tprice">{p != null ? fmtNative(p, native) : "—"}</div>
+                    <ul>
+                      {perksFor(t).map((perk) => (
+                        <li key={perk}>{perk}</li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
             </div>
             <div className="m-actions">
               <button className="btn-ghost2" onClick={() => setStep(1)}>← Back</button>
@@ -159,8 +178,8 @@ export function ListingModal() {
                 </span>
               </div>
               <div className="check">
-                Tier
-                <span className="cv ok">{tier.name} · {tier.price}</span>
+                Package
+                <span className="cv ok">{tier.glyph} {tier.label} · {price != null ? fmtNative(price, native) : "—"}</span>
               </div>
             </div>
             <div className="m-actions">

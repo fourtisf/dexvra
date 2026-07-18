@@ -6,7 +6,9 @@ export interface TxSplit {
   sells: number;
 }
 
-export type ListingTier = "TRENCH" | "EXPRESS" | "FASTTRACK";
+// Listing packages (the tag every listed token carries). Ranked #1 Diamond →
+// #5 Bronze, plus Xpress (instant, unranked). Pricing lives in lib/packages.ts.
+export type ListingTier = "DIAMOND" | "GOLD" | "PLATINUM" | "SILVER" | "BRONZE" | "XPRESS";
 
 export interface BoardToken {
   key: string; // `${chain}:${address}` — stable identity across refreshes
@@ -30,7 +32,8 @@ export interface BoardToken {
   verified: boolean;
   source: "live" | "seed";
   // paid-listing model: every token on Dexvra is a paid listing
-  tier: ListingTier;
+  tier: ListingTier; // listing package the project bought (the tag)
+  trendingRank: number | null; // live trending slot (1 = No.1), null if not trending
   listedMinutesAgo: number; // how long ago the project paid to list
   score: number; // Dexvra Score 0–100 (signal-based, not votes)
   poolAddress: string | null; // top pool — used to embed the GeckoTerminal chart
