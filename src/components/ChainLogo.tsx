@@ -37,12 +37,13 @@ function Bnb({ s }: { s: number }) {
   return (
     <svg width={s} height={s} viewBox="0 0 24 24" aria-label="BNB Chain">
       <circle cx="12" cy="12" r="10" fill="#F3BA2F" />
+      {/* five touching diamonds — the BNB quincunx */}
       <g fill="#fff">
-        <path d="M12 5.9 14.1 8 12 10.1 9.9 8z" />
-        <path d="M8 9.9 10.1 12 8 14.1 5.9 12z" />
-        <path d="M16 9.9 18.1 12 16 14.1 13.9 12z" />
-        <path d="M12 13.9 14.1 16 12 18.1 9.9 16z" />
-        <path d="M12 9.85 14.15 12 12 14.15 9.85 12z" />
+        <path d="M12 4.5 14.5 7 12 9.5 9.5 7z" />
+        <path d="M7 9.5 9.5 12 7 14.5 4.5 12z" />
+        <path d="M17 9.5 19.5 12 17 14.5 14.5 12z" />
+        <path d="M12 14.5 14.5 17 12 19.5 9.5 17z" />
+        <path d="M12 9.5 14.5 12 12 14.5 9.5 12z" />
       </g>
     </svg>
   );

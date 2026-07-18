@@ -14,43 +14,43 @@ mkdirSync(BRAND, { recursive: true });
 
 const MINT = "#4BFCA6", CYAN = "#22D3EE", INK = "#03150B", BG = "#090C12";
 
-// The vector D badge. `square` = full-bleed (maskable); otherwise rounded.
+// The vector gem badge (dark tile + gradient brilliant-cut gem — matches the
+// in-app Logo). `square` = full-bleed (maskable); otherwise rounded.
 // `pad` shrinks the glyph to leave a maskable safe zone.
 function badgeSvg({ square = false, pad = 0 } = {}) {
   const rx = square ? 0 : 118;
   const scale = 1 - pad;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="b" x1="96" y1="128" x2="416" y2="395" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="${MINT}"/><stop offset="0.55" stop-color="${CYAN}"/><stop offset="1" stop-color="#12B9E0"/>
     </linearGradient>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity="0.55"/><stop offset="0.45" stop-color="#fff" stop-opacity="0.05"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="i" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#04240F"/><stop offset="1" stop-color="#02160A"/>
-    </linearGradient>
   </defs>
-  <rect x="0" y="0" width="512" height="512" rx="${rx}" fill="url(#b)"/>
-  <rect x="0" y="0" width="512" height="512" rx="${rx}" fill="url(#g)"/>
+  <rect x="0" y="0" width="512" height="512" rx="${rx}" fill="#0A0E16"/>
   <g transform="translate(${256 * pad} ${256 * pad}) scale(${scale})">
-    <path fill-rule="evenodd" fill="url(#i)"
-      d="M130 116 L242 116 A140 140 0 0 1 242 396 L130 396 Z
-         M196 176 L242 176 A80 80 0 0 1 242 336 L196 336 Z"/>
-    <path fill="none" stroke="#fff" stroke-opacity="0.14" stroke-width="3" stroke-linecap="round" d="M138 124 L240 124"/>
+    <path d="M160 128 H352 L416 203 L256 395 L96 203 Z" fill="url(#b)"/>
+    <g stroke="#0A0E16" stroke-width="14" stroke-opacity="0.5" fill="none">
+      <path d="M96 203 H416"/><path d="M160 128 L213 203"/><path d="M352 128 L299 203"/>
+      <path d="M213 203 H299"/><path d="M213 203 L256 395"/><path d="M299 203 L256 395"/>
+    </g>
+    <path d="M166 133 H235 L203 197 H112 Z" fill="#ffffff" fill-opacity="0.14"/>
   </g>
 </svg>`;
 }
 
-// glowing badge as a standalone element (matches the app's .brand-mark shadow)
+// glowing gem badge as a standalone element (matches the app's .brand-logo)
 function markHtml(size) {
-  return `<div style="width:${size}px;height:${size}px;border-radius:${size * 0.23}px;
-    background:linear-gradient(135deg,${MINT},${CYAN} 60%,#12B9E0);
-    box-shadow:0 ${size*0.04}px ${size*0.12}px rgba(61,245,159,.38), inset 0 ${size*0.015}px ${size*0.02}px rgba(255,255,255,.55), inset 0 -${size*0.02}px ${size*0.04}px rgba(0,60,35,.28);
+  return `<div style="width:${size}px;height:${size}px;border-radius:${size * 0.27}px;
+    background:#0A0E16;border:1px solid rgba(75,252,166,.35);
+    box-shadow:0 ${size*0.05}px ${size*0.14}px rgba(34,211,238,.32);
     display:grid;place-items:center;position:relative;overflow:hidden">
-    <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.5),transparent 42%)"></div>
-    <svg viewBox="0 0 512 512" style="width:66%;height:66%;position:relative">
-      <path fill-rule="evenodd" fill="${INK}" d="M130 116 L242 116 A140 140 0 0 1 242 396 L130 396 Z M196 176 L242 176 A80 80 0 0 1 242 336 L196 336 Z"/>
+    <svg viewBox="0 0 512 512" style="width:74%;height:74%;position:relative">
+      <defs><linearGradient id="m${size}" x1="96" y1="128" x2="416" y2="395" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="${MINT}"/><stop offset="0.55" stop-color="${CYAN}"/><stop offset="1" stop-color="#12B9E0"/></linearGradient></defs>
+      <path d="M160 128 H352 L416 203 L256 395 L96 203 Z" fill="url(#m${size})"/>
+      <g stroke="#0A0E16" stroke-width="14" stroke-opacity="0.5" fill="none">
+        <path d="M96 203 H416"/><path d="M213 203 H299"/><path d="M213 203 L256 395"/><path d="M299 203 L256 395"/>
+      </g>
     </svg></div>`;
 }
 

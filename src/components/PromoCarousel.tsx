@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BRAND_MARK, BRAND_NAME } from "@/config/brand";
+import { BRAND_NAME } from "@/config/brand";
 import { CHAIN_IDS } from "@/config/chains";
 import { useApp } from "./AppState";
 
@@ -52,7 +52,15 @@ export function PromoCarousel() {
               <div className="sat top"><div className="fcoin c-green sz30">🐸</div></div>
               <div className="sat bot"><div className="fcoin c-viol sz30">🌕</div></div>
             </div>
-            <div className="fcoin fcoin-main">{BRAND_MARK}</div>
+            <div className="fcoin fcoin-main" aria-label={BRAND_NAME}>
+              <svg viewBox="0 0 48 48" width="46" height="46" fill="none" aria-hidden="true">
+                <path d="M15 12 H33 L39 19 L24 37 L9 19 Z" fill="#053825" />
+                <g stroke="#0d6a45" strokeWidth="1.2" strokeOpacity="0.6" fill="none">
+                  <path d="M9 19 H39" /><path d="M20 19 H28" /><path d="M20 19 L24 37" />
+                  <path d="M28 19 L24 37" /><path d="M15 12 L20 19" /><path d="M33 12 L28 19" />
+                </g>
+              </svg>
+            </div>
           </div>
           <span className="blip-tag">$WARCHEST +412×</span>
           <span className="sparkle" style={{ right: "38%", top: "20%" }}>✦</span>
