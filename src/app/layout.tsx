@@ -7,7 +7,6 @@ import { PwaRegister } from "@/components/PwaRegister";
 import { Sidebar } from "@/components/Sidebar";
 import { Ticker } from "@/components/Ticker";
 import { Toast } from "@/components/Toast";
-import { TokenDetailModal } from "@/components/TokenDetailModal";
 import { Topbar } from "@/components/Topbar";
 import "./globals.css";
 
@@ -57,7 +56,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               </main>
             </div>
           </div>
-          <TokenDetailModal />
           <ListingModal />
           <Toast />
           <PwaRegister />

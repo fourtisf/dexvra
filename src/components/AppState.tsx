@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -10,6 +11,9 @@ import {
   type ReactNode,
 } from "react";
 import type { BoardToken, FearGreed, TokensPayload } from "@/lib/types";
+
+export const tokenHref = (t: Pick<BoardToken, "chain" | "address">) =>
+  `/token/${t.chain}/${encodeURIComponent(t.address)}`;
 
 export interface AlertItem {
   key: string;
@@ -41,9 +45,8 @@ interface AppState {
   toggleWallet: () => void;
   toastMsg: string | null;
   toast: (msg: string) => void;
-  detailToken: BoardToken | null;
   openDetail: (t: BoardToken) => void;
-  closeDetail: () => void;
+  tokenHref: (t: Pick<BoardToken, "chain" | "address">) => string;
   listingOpen: boolean;
   openListing: () => void;
   closeListing: () => void;
@@ -81,6 +84,7 @@ const POLL_TOKENS_MS = 30_000;
 const POLL_FNG_MS = 5 * 60_000;
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [data, setData] = useState<TokensPayload | null>(null);
   const [fng, setFng] = useState<FearGreed | null>(null);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
@@ -88,7 +92,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [myListings, setMyListings] = useState<MyListing[]>([]);
   const [wallet, setWallet] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [detailToken, setDetailToken] = useState<BoardToken | null>(null);
   const [listingOpen, setListingOpen] = useState(false);
   const [homeQuery, setHomeQuery] = useState("");
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -211,9 +214,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toggleWallet,
         toastMsg,
         toast,
-        detailToken,
-        openDetail: setDetailToken,
-        closeDetail: () => setDetailToken(null),
+        openDetail: (t) => router.push(tokenHref(t)),
+        tokenHref,
         listingOpen,
         openListing: () => setListingOpen(true),
         closeListing: () => setListingOpen(false),
