@@ -36,11 +36,13 @@ const chains = {
 };
 const chainRow = Object.values(chains).map((c) => `<span style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)">${c}</span>`).join("");
 
+// Matches the site's premium background: quiet monochrome depth (#090C12) with
+// a soft white top glow and a faint mint glow top-right.
 const banner = `
 <div style="width:1500px;height:500px;position:relative;overflow:hidden;font-family:${FONT};background:
-  radial-gradient(820px 540px at 85% -20%, rgba(34,211,238,.20), transparent 60%),
-  radial-gradient(760px 520px at 8% 122%, rgba(75,252,166,.15), transparent 58%),
-  #0A0E16;">
+  radial-gradient(1500px 640px at 50% -30%, rgba(255,255,255,.05), transparent 62%),
+  radial-gradient(860px 480px at 95% -8%, rgba(61,220,151,.06), transparent 60%),
+  #090C12;">
   <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;text-align:center;padding:0 120px">
     <div style="display:flex;align-items:center;gap:30px">
       ${gem(120)}
