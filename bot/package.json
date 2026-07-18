@@ -23,5 +23,11 @@
     "telegraf-ratelimit": "^2.0.0",
     "tronweb": "^6.0.0",
     "twitter-api-v2": "^1.18.2"
-  }
+  },
+  "overrides": {
+    "rpc-websockets": {
+      "uuid": "9.0.1"
+    }
+  },
+  "comment_overrides": "Pin rpc-websockets' uuid to a CommonJS build. @solana/web3.js → rpc-websockets pulls uuid@14 (ESM-only), which crashes require() on Node < 22.12 with ERR_REQUIRE_ESM. uuid@9.0.1 exposes a CJS require entry; the v4 API used by rpc-websockets is unchanged."
 }
