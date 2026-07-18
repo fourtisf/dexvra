@@ -84,7 +84,6 @@ export default function TokenPage() {
         <div className="tp-id">
           <div className="tp-sym">
             {t.symbol}
-            {t.verified && <span className="verified-badge" title="Verified">✓</span>}
             <TierTag tier={t.tier} />
             {t.trendingRank != null && <TrendingBadge />}
           </div>

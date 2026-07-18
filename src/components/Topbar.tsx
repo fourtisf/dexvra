@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BRAND_NAME } from "@/config/brand";
 import { CHAINS } from "@/config/chains";
@@ -42,10 +43,10 @@ export function Topbar() {
 
   return (
     <header className="topbar">
-      <div className="brand-top">
-        <div className="brand-logo sm"><Logo size={32} /></div>
+      <Link href="/" className="brand-top" aria-label={`${BRAND_NAME} home`}>
+        <div className="brand-logo sm spin"><Logo size={32} /></div>
         <div className="brand-name">{BRAND_NAME}</div>
-      </div>
+      </Link>
       <div className="search-wrap">
         <label className="search">
           <svg viewBox="0 0 24 24">

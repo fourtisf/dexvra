@@ -68,8 +68,14 @@ function taxFlag(label: string, pct: number | null): FP {
 }
 
 function assemble(fps: FP[]): { flags: ScanFlag[]; score: number } {
-  const penalty = fps.reduce((s, f) => s + f.penalty, 0);
-  return { flags: fps.map((f) => f.flag), score: Math.max(0, Math.min(100, 100 - penalty)) };
+  const flagPenalty = fps.reduce((s, f) => s + f.penalty, 0);
+  const naCount = fps.filter((f) => f.flag.status === "na").length;
+  // Nothing is ever "perfect": a small residual for inherent uncertainty, plus
+  // a little for each check we couldn't verify — keeps clean tokens in the
+  // mid-90s (like established scanners) instead of a flat, unrealistic 100.
+  const residual = 4 + naCount * 2;
+  const score = Math.max(0, Math.min(96, 100 - flagPenalty - residual));
+  return { flags: fps.map((f) => f.flag), score };
 }
 
 // ── GoPlus EVM ────────────────────────────────────────────────────────────

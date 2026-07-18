@@ -34,13 +34,14 @@ function Ethereum({ s }: { s: number }) {
 }
 function Bnb({ s }: { s: number }) {
   return (
-    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="BNB">
-      <g fill="#F0B90B">
-        <path d="M12 4 9.4 6.6 12 9.2l2.6-2.6z" />
-        <path d="M6.6 9.4 4 12l2.6 2.6L9.2 12z" />
-        <path d="M17.4 9.4 14.8 12l2.6 2.6L20 12z" />
-        <path d="M12 14.8 9.4 17.4 12 20l2.6-2.6z" />
-        <path d="M12 9.4 9.4 12 12 14.6 14.6 12z" />
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="BNB Chain">
+      <circle cx="12" cy="12" r="10" fill="#F3BA2F" />
+      <g fill="#fff">
+        <path d="M12 5.9 14.1 8 12 10.1 9.9 8z" />
+        <path d="M8 9.9 10.1 12 8 14.1 5.9 12z" />
+        <path d="M16 9.9 18.1 12 16 14.1 13.9 12z" />
+        <path d="M12 13.9 14.1 16 12 18.1 9.9 16z" />
+        <path d="M12 9.85 14.15 12 12 14.15 9.85 12z" />
       </g>
     </svg>
   );

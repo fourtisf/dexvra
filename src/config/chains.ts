@@ -16,6 +16,8 @@ export interface ChainConfig {
   addressPattern: RegExp;
 }
 
+// Order here drives the chain-filter / selector order across the app:
+// Solana → BSC → Ethereum → Base → Robinhood → Tron → TON.
 export const CHAINS: Record<string, ChainConfig> = {
   solana: {
     id: "solana",
@@ -27,14 +29,14 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://jup.ag/swap/SOL-${a}`,
     addressPattern: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
   },
-  base: {
-    id: "base",
-    label: "Base",
-    color: "#3B82F6",
-    geckoNetwork: "base",
-    goPlusChainId: "8453",
-    explorer: (a) => `https://basescan.org/token/${a}`,
-    buyUrl: (a) => `https://app.uniswap.org/swap?chain=base&outputCurrency=${a}`,
+  bsc: {
+    id: "bsc",
+    label: "BSC",
+    color: "#F0B90B",
+    geckoNetwork: "bsc",
+    goPlusChainId: "56",
+    explorer: (a) => `https://bscscan.com/token/${a}`,
+    buyUrl: (a) => `https://pancakeswap.finance/swap?outputCurrency=${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   ethereum: {
@@ -47,14 +49,14 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=mainnet&outputCurrency=${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
-  bsc: {
-    id: "bsc",
-    label: "BSC",
-    color: "#F0B90B",
-    geckoNetwork: "bsc",
-    goPlusChainId: "56",
-    explorer: (a) => `https://bscscan.com/token/${a}`,
-    buyUrl: (a) => `https://pancakeswap.finance/swap?outputCurrency=${a}`,
+  base: {
+    id: "base",
+    label: "Base",
+    color: "#3B82F6",
+    geckoNetwork: "base",
+    goPlusChainId: "8453",
+    explorer: (a) => `https://basescan.org/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=base&outputCurrency=${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   robinhood: {
@@ -67,16 +69,6 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://dexscreener.com/search?q=${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
-  ton: {
-    id: "ton",
-    label: "TON",
-    color: "#0098EA",
-    geckoNetwork: "ton",
-    goPlusChainId: null,
-    explorer: (a) => `https://tonviewer.com/${a}`,
-    buyUrl: (a) => `https://app.ston.fi/swap?ft=TON&tt=${a}`,
-    addressPattern: /^(EQ|UQ|0:)[A-Za-z0-9_-]{40,66}$/,
-  },
   tron: {
     id: "tron",
     label: "Tron",
@@ -86,6 +78,16 @@ export const CHAINS: Record<string, ChainConfig> = {
     explorer: (a) => `https://tronscan.org/#/token20/${a}`,
     buyUrl: (a) => `https://sunswap.com/#/home?tokenAddress=${a}`,
     addressPattern: /^T[1-9A-HJ-NP-Za-km-z]{33}$/,
+  },
+  ton: {
+    id: "ton",
+    label: "TON",
+    color: "#0098EA",
+    geckoNetwork: "ton",
+    goPlusChainId: null,
+    explorer: (a) => `https://tonviewer.com/${a}`,
+    buyUrl: (a) => `https://app.ston.fi/swap?ft=TON&tt=${a}`,
+    addressPattern: /^(EQ|UQ|0:)[A-Za-z0-9_-]{40,66}$/,
   },
 };
 

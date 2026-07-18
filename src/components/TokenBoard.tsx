@@ -133,7 +133,6 @@ function StdRow({
         <div className="ts">
           <div className="sym">
             {t.symbol}
-            {t.verified && <span className="verified-badge" title="Verified">✓</span>}
             <TierTag tier={t.tier} showRank={false} />
           </div>
           <div className="nm">{t.name}</div>

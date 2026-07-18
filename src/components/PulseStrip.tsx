@@ -64,7 +64,7 @@ export function PulseStrip() {
 
   return (
     <div className="pulse-strip">
-      <div className="wcard">
+      <div className="wcard" title="Which chains are hottest right now — a heat score from 24h volume + momentum, per chain.">
         <div className="wcard-head">
           <div className="ic">📡</div>
           <h3>{BRAND_NAME} Pulse</h3>
@@ -127,7 +127,7 @@ export function PulseStrip() {
           {(data?.wire ?? []).map((w, i) => (
             <div className="wire-item" key={i}>
               <span className="wdot" style={{ background: w.color, boxShadow: `0 0 8px ${w.color}` }} />
-              <span dangerouslySetInnerHTML={{ __html: w.html }} />
+              <span className="wire-text" dangerouslySetInnerHTML={{ __html: w.html }} />
               <span className="t">{w.time}</span>
             </div>
           ))}

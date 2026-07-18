@@ -64,13 +64,13 @@ export function Sidebar() {
   const { openListing } = useApp();
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <div className="brand-logo"><Logo size={40} /></div>
+      <Link href="/" className="brand" aria-label={`${BRAND_NAME} home`}>
+        <div className="brand-logo spin"><Logo size={40} /></div>
         <div className="brand-txt">
           <div className="brand-name">{BRAND_NAME}</div>
           <div className="brand-sub">{BRAND_SUB}</div>
         </div>
-      </div>
+      </Link>
 
       <button className="fasttrack" onClick={openListing}>
         <svg viewBox="0 0 24 24" fill="currentColor">

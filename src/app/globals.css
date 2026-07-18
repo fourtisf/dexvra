@@ -35,7 +35,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   display:flex;flex-direction:column;gap:16px;scrollbar-width:none;
 }
 .sidebar::-webkit-scrollbar{display:none}
-.brand{display:flex;align-items:center;gap:11px;padding:2px 6px}
+.brand{display:flex;align-items:center;gap:11px;padding:2px 6px;text-decoration:none;color:inherit}
+/* logo spins on hover and links home */
+.brand-logo.spin svg{transition:transform .7s cubic-bezier(.34,1.56,.4,1)}
+.brand:hover .brand-logo.spin svg,.brand-top:hover .brand-logo.spin svg{transform:rotate(360deg)}
 .brand-mark{
   width:40px;height:40px;border-radius:13px;flex:none;background:var(--grad);
   display:grid;place-items:center;color:#03150B;font-family:var(--fd);font-weight:700;font-size:22px;
@@ -85,7 +88,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border-bottom:1px solid var(--line);
 }
-.brand-top{display:none;align-items:center;gap:9px;flex:none}
+.brand-top{display:none;align-items:center;gap:9px;flex:none;text-decoration:none;color:inherit}
 .brand-top .brand-mark{width:32px;height:32px;font-size:17px;border-radius:10px}
 .brand-top .brand-name{font-size:17px}
 .search{
@@ -254,7 +257,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .pulse-strip::-webkit-scrollbar{height:6px}
 .pulse-strip::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:99px}
 .wcard{
-  flex:1 0 305px;min-width:0;height:150px;scroll-snap-align:start;
+  flex:1 0 305px;min-width:0;height:162px;scroll-snap-align:start;
   border:1px solid var(--line2);border-radius:18px;
   background:linear-gradient(180deg,rgba(255,255,255,.03),transparent 22%),var(--card);
   box-shadow:0 14px 34px rgba(0,0,0,.3);padding:13px 15px;
@@ -281,13 +284,14 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .fg-num{font-family:var(--fm);font-weight:800;font-size:28px;line-height:1}
 .fg-label{font-family:var(--fm);font-size:10px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;margin-top:5px}
 .fg-note{font-size:10.5px;color:var(--faint);margin-top:6px;white-space:nowrap}
-.wire-list{display:flex;flex-direction:column;gap:7px;flex:1;justify-content:center}
+.wire-list{display:flex;flex-direction:column;gap:6px;flex:1;justify-content:flex-start;overflow:hidden}
 .wire-item{
-  display:flex;align-items:flex-start;gap:9px;border:1px solid var(--line);border-radius:11px;
-  background:rgba(255,255,255,.025);padding:8px 11px;
-  font-size:11.5px;line-height:1.45;color:var(--text);font-weight:500;
+  display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:11px;
+  background:rgba(255,255,255,.025);padding:7px 11px;
+  font-size:11.5px;line-height:1.35;color:var(--text);font-weight:500;
 }
-.wdot{width:6px;height:6px;border-radius:50%;margin-top:5px;flex:none}
+.wire-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wdot{width:6px;height:6px;border-radius:50%;flex:none}
 .wire-item b{font-family:var(--fm);font-weight:800;font-size:11px}
 .wire-item .t{margin-left:auto;font-family:var(--fm);font-size:9.5px;color:var(--faint);white-space:nowrap;padding-left:8px}
 
@@ -318,7 +322,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tab.active{background:linear-gradient(120deg,rgba(61,245,159,.18),rgba(34,211,238,.1));border-color:rgba(61,245,159,.55);color:#D9FFE9}
 
 /* ============ BOARD ============ */
-.board{border:1px solid var(--line2);border-radius:22px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 12%),var(--card);box-shadow:0 22px 52px rgba(0,0,0,.4)}
+.board{border:1px solid var(--line2);border-radius:22px;overflow:hidden;overflow-x:auto;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 12%),var(--card);box-shadow:0 22px 52px rgba(0,0,0,.4)}
+.board::-webkit-scrollbar{height:7px}
+.board::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:99px}
 .row{
   display:grid;grid-template-columns:50px minmax(200px,1.7fr) 118px 92px 108px 108px 108px 148px 128px 44px;
   align-items:center;gap:8px;padding:13px 20px;border-top:1px solid var(--line);
