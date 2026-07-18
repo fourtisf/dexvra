@@ -15,6 +15,7 @@ export const NATIVE: Record<string, string> = {
   bsc: "BNB",
   ton: "TON",
   robinhood: "ETH",
+  tron: "TRX",
 };
 export const nativeOf = (chain: string): string => NATIVE[chain] ?? "SOL";
 
@@ -38,37 +39,37 @@ export const LISTING_TIERS: ListingTierMeta[] = [
   {
     key: "DIAMOND", rank: 1, label: "Diamond", glyph: "◆", color: "#8FE3FF",
     announce: true, instant: false,
-    price: { BNB: 1.5, SOL: 5, ETH: 0.26, TON: 250 },
+    price: { BNB: 1.5, SOL: 5, ETH: 0.26, TON: 250, TRX: 5000 },
     blurb: "Diamond · Tier #1 — top listing placement, verified badge, announcement post.",
   },
   {
     key: "GOLD", rank: 2, label: "Gold", glyph: "★", color: "#E7C77A",
     announce: true, instant: false,
-    price: { BNB: 1.25, SOL: 4.5, ETH: 0.24, TON: 225 },
+    price: { BNB: 1.25, SOL: 4.5, ETH: 0.24, TON: 225, TRX: 4500 },
     blurb: "Gold · Tier #2 — high placement, verified badge, announcement post.",
   },
   {
     key: "PLATINUM", rank: 3, label: "Platinum", glyph: "◈", color: "#D8DEE9",
     announce: true, instant: false,
-    price: { BNB: 1.15, SOL: 4, ETH: 0.22, TON: 200 },
+    price: { BNB: 1.15, SOL: 4, ETH: 0.22, TON: 200, TRX: 4000 },
     blurb: "Platinum · Tier #3 — priority placement, verified badge, announcement post.",
   },
   {
     key: "SILVER", rank: 4, label: "Silver", glyph: "●", color: "#AAB2BD",
     announce: false, instant: false,
-    price: { BNB: 1, SOL: 3.5, ETH: 0.2, TON: 175 },
+    price: { BNB: 1, SOL: 3.5, ETH: 0.2, TON: 175, TRX: 3500 },
     blurb: "Silver · Tier #4 — standard listing on the board & discovery.",
   },
   {
     key: "BRONZE", rank: 5, label: "Bronze", glyph: "●", color: "#CB8E5E",
     announce: false, instant: false,
-    price: { BNB: 0.75, SOL: 3, ETH: 0.18, TON: 150 },
+    price: { BNB: 0.75, SOL: 3, ETH: 0.18, TON: 150, TRX: 3000 },
     blurb: "Bronze · Tier #5 — entry listing on the board & discovery.",
   },
   {
     key: "XPRESS", rank: 0, label: "Xpress", glyph: "⚡", color: "#4CC7D4",
     announce: false, instant: true,
-    price: { ETH: 0.06, SOL: 1, BNB: 0.25, TON: 40 },
+    price: { ETH: 0.06, SOL: 1, BNB: 0.25, TON: 40, TRX: 900 },
     blurb: "Xpress — instant activation, listed live on TG + trending board, priority verification.",
   },
 ];
@@ -124,6 +125,13 @@ export const TRENDING: Record<string, TrendingRow[]> = {
     { duration: "18H", price: 3.2, discount: 15 },
     { duration: "24H", price: 4, discount: 20 },
     { duration: "48H", price: 7.5, discount: 25 },
+  ],
+  TRX: [
+    { duration: "6H", price: 1250, discount: 0 },
+    { duration: "12H", price: 2375, discount: 5 },
+    { duration: "16H", price: 3000, discount: 10 },
+    { duration: "24H", price: 4250, discount: 15 },
+    { duration: "48H", price: 8000, discount: 20 },
   ],
   // Extrapolated (no Fourtis TON reference) — tune freely.
   TON: [

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BRAND_MARK, BRAND_NAME } from "@/config/brand";
+import { CHAIN_IDS } from "@/config/chains";
 import { useApp } from "./AppState";
 
 const N = 3;
@@ -57,7 +58,7 @@ export function PromoCarousel() {
           <span className="sparkle" style={{ right: "38%", top: "20%" }}>✦</span>
           <span className="sparkle" style={{ right: "12%", bottom: "18%", animationDelay: "1.1s" }}>✦</span>
           <div className="slide-copy">
-            <span className="s-eyebrow"><span className="dot-live" />Live · Tracking 6 chains</span>
+            <span className="s-eyebrow"><span className="dot-live" />Live · Tracking {CHAIN_IDS.length} chains</span>
             <h2>
               Find the next <span className="grad">Moonshot</span> first.
             </h2>

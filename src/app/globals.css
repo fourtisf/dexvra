@@ -967,3 +967,30 @@ body{
 .upload-btn{cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
 .upload-btn.busy{opacity:.6;pointer-events:none}
 @media(max-width:600px){.asec-search{min-width:0;width:100%;margin:8px 0 0}.asec-h{flex-wrap:wrap}}
+
+/* ── Token Scanner (Fourtis-style) ────────────────────────────────────── */
+.scan-loading{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+.scan-report{display:flex;flex-direction:column;gap:14px}
+.scan-head{display:flex;align-items:center;gap:20px}
+.score-ring{width:118px;height:118px;flex:none}
+.score-num{font-family:var(--fd);font-weight:700;font-size:30px}
+.score-den{font-family:var(--fm);font-size:11px;fill:var(--faint)}
+.scan-id{min-width:0;display:flex;flex-direction:column;gap:5px}
+.scan-label{font-family:var(--fm);font-weight:800;font-size:11px;letter-spacing:.16em;text-transform:uppercase}
+.scan-name{font-family:var(--fd);font-weight:700;font-size:21px;line-height:1.15;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.scan-sym{font-family:var(--fm);font-size:12px;font-weight:700;color:var(--muted)}
+.scan-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px}
+.scan-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text);background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.scan-ca{font-family:var(--fm);font-size:11.5px;color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:4px 9px;cursor:pointer}
+.scan-ca:hover{color:var(--text);border-color:var(--line2)}
+.scan-src{font-family:var(--fm);font-size:10px;color:var(--faint);margin-top:2px}
+.scan-sec-h{font-family:var(--fd);font-weight:700;font-size:15px;margin-bottom:14px}
+.scan-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.scan-flag{display:flex;align-items:center;justify-content:space-between;gap:12px;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+.sf-label{font-size:13px;color:var(--muted)}
+.sf-val{font-family:var(--fm);font-weight:800;font-size:11.5px;letter-spacing:.03em;border-radius:7px;padding:3px 10px;white-space:nowrap;border:1px solid currentColor}
+.sf-val.ok{color:#3DDC97;background:rgba(61,220,151,.1)}
+.sf-val.warn{color:#E7C77A;background:rgba(231,199,122,.1)}
+.sf-val.bad{color:#F76A85;background:rgba(247,106,133,.12)}
+.sf-val.na{color:var(--faint);background:rgba(255,255,255,.03)}
+@media(max-width:560px){.scan-head{flex-direction:column;text-align:center;align-items:center}.scan-grid{grid-template-columns:1fr}.scan-meta{justify-content:center}}

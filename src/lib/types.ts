@@ -87,17 +87,22 @@ export interface TokensPayload {
   updatedAt: number;
 }
 
-export interface ScanCheck {
+export interface ScanFlag {
   label: string;
   value: string;
-  status: "ok" | "warn" | "bad";
+  status: "ok" | "warn" | "bad" | "na";
 }
 
 export interface ScanResult {
   address: string;
   chain: string | null;
-  checks: ScanCheck[];
+  name: string | null;
+  symbol: string | null;
+  score: number | null; // 0–100 safety; null when only basic (DexScreener) data
+  scoreLabel: string; // SAFE / CAUTION / HIGH RISK / LIMITED
+  flags: ScanFlag[];
   verdict: "ok" | "warn";
   verdictText: string;
   live: boolean;
+  dataSource: string;
 }

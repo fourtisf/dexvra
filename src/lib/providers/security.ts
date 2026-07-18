@@ -1,151 +1,259 @@
 import { CHAINS } from "@/config/chains";
-import type { ScanCheck, ScanResult } from "@/lib/types";
+import type { ScanFlag, ScanResult } from "@/lib/types";
 
-// Best-effort safety snapshot: GoPlus for EVM chains, RugCheck for Solana.
-// Both have free unauthenticated tiers; failures surface as "unavailable"
-// checks, never as a fabricated verdict. Per the handoff: never claim
-// "100% safe" — verdict copy always keeps the DYOR disclaimer.
+// Fourtis-style safety snapshot. Token identity comes from DexScreener (works on
+// every chain); security detail from GoPlus (EVM + Solana) and RugCheck (Solana).
+// We never claim "100% safe" — the verdict always keeps the DYOR disclaimer.
 
 const isEvmAddress = (a: string) => /^0x[a-fA-F0-9]{40}$/.test(a);
 
-// A bare EVM address is chain-ambiguous (Base/Ethereum/BSC share the 0x…40
-// format), so we can't pick a single GoPlus chain id up front. Solana (base58,
-// never starts with 0x) and TON (EQ/UQ/0: prefix) are unambiguous.
-function detectFamily(address: string): "solana" | "evm" | "ton" | null {
-  if (CHAINS.solana.addressPattern.test(address)) return "solana";
+function detectFamily(address: string): "solana" | "evm" | "ton" | "tron" | null {
   if (isEvmAddress(address)) return "evm";
+  if (CHAINS.tron.addressPattern.test(address)) return "tron";
   if (CHAINS.ton.addressPattern.test(address)) return "ton";
+  if (CHAINS.solana.addressPattern.test(address)) return "solana";
   return null;
 }
 
-function verdictFor(checks: ScanCheck[]): { verdict: "ok" | "warn"; verdictText: string } {
-  const flagged = checks.some((c) => c.status !== "ok");
-  return flagged
-    ? { verdict: "warn", verdictText: "⚠️ Caution — review the flags before aping." }
-    : { verdict: "ok", verdictText: "🛡️ Looks clean — still DYOR, always." };
+// ── DexScreener: token name / symbol / chain (all chains) ─────────────────
+async function dexInfo(address: string): Promise<{ name: string | null; symbol: string | null; chain: string | null }> {
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
+      signal: AbortSignal.timeout(8000),
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    const json = (await res.json()) as {
+      pairs?: { chainId?: string; baseToken?: { address?: string; name?: string; symbol?: string } }[];
+    };
+    const pair = (json.pairs ?? []).find(
+      (p) => p.baseToken?.address?.toLowerCase() === address.toLowerCase(),
+    ) ?? json.pairs?.[0];
+    if (!pair?.baseToken) return { name: null, symbol: null, chain: null };
+    const chain = pair.chainId && CHAINS[pair.chainId] ? pair.chainId : null;
+    return { name: pair.baseToken.name ?? null, symbol: pair.baseToken.symbol ?? null, chain };
+  } catch {
+    return { name: null, symbol: null, chain: null };
+  }
 }
 
-async function goPlusLookup(goPlusId: string, address: string): Promise<Record<string, unknown> | null> {
+// ── Flag helpers ──────────────────────────────────────────────────────────
+type St = ScanFlag["status"];
+interface FP {
+  flag: ScanFlag;
+  penalty: number;
+}
+
+const yn = (v: unknown): boolean | null =>
+  v === "1" || v === 1 || v === true ? true : v === "0" || v === 0 || v === false ? false : null;
+
+/** Risk boolean flag: `risky=true` is the bad direction. */
+function riskFlag(label: string, risky: boolean | null, penalty: number, hard = false): FP {
+  if (risky === null) return { flag: { label, value: "—", status: "na" }, penalty: 0 };
+  const status: St = risky ? (hard ? "bad" : "warn") : "ok";
+  return { flag: { label, value: risky ? "Yes" : "No", status }, penalty: risky ? penalty : 0 };
+}
+
+/** Positive boolean flag: `good=true` is the safe direction. */
+function goodFlag(label: string, good: boolean | null, penalty: number): FP {
+  if (good === null) return { flag: { label, value: "—", status: "na" }, penalty: 0 };
+  return { flag: { label, value: good ? "Yes" : "No", status: good ? "ok" : "warn" }, penalty: good ? 0 : penalty };
+}
+
+function taxFlag(label: string, pct: number | null): FP {
+  if (pct === null || Number.isNaN(pct)) return { flag: { label, value: "—", status: "na" }, penalty: 0 };
+  const status: St = pct < 5 ? "ok" : pct < 10 ? "warn" : "bad";
+  const penalty = pct < 5 ? 0 : Math.min(30, Math.round(pct * 2));
+  return { flag: { label, value: `${pct.toFixed(1)}%`, status }, penalty };
+}
+
+function assemble(fps: FP[]): { flags: ScanFlag[]; score: number } {
+  const penalty = fps.reduce((s, f) => s + f.penalty, 0);
+  return { flags: fps.map((f) => f.flag), score: Math.max(0, Math.min(100, 100 - penalty)) };
+}
+
+// ── GoPlus EVM ────────────────────────────────────────────────────────────
+async function goPlusEvm(goPlusId: string, address: string): Promise<Record<string, unknown> | null> {
   const res = await fetch(
     `https://api.gopluslabs.io/api/v1/token_security/${goPlusId}?contract_addresses=${address}`,
     { signal: AbortSignal.timeout(9000), cache: "no-store" },
   );
   if (!res.ok) throw new Error(`GoPlus ${res.status}`);
-  const json = (await res.json()) as {
-    result?: Record<string, Record<string, unknown>>;
-  };
-  // GoPlus returns an empty object (not an error) for an address that isn't a
-  // token on the queried chain — treat that as "not found here", not a failure.
+  const json = (await res.json()) as { result?: Record<string, Record<string, unknown>> };
   const r = json.result?.[address.toLowerCase()];
   return r && Object.keys(r).length > 0 ? r : null;
 }
 
-// Probe each EVM chain we support until one recognises the token; return its
-// checks plus the chain we actually found it on. Chains are queried
-// concurrently so a slow one can't stall the whole scan.
-async function scanEvmAny(address: string): Promise<{ checks: ScanCheck[]; chainId: string }> {
+async function scanEvm(address: string): Promise<{ fps: FP[]; chainId: string }> {
   const evmChains = Object.values(CHAINS).filter((c) => c.goPlusChainId);
   const attempts = await Promise.allSettled(
     evmChains.map(async (c) => {
-      const r = await goPlusLookup(c.goPlusChainId!, address);
-      if (!r) throw new Error(`not found on ${c.id}`);
+      const r = await goPlusEvm(c.goPlusChainId!, address);
+      if (!r) throw new Error("not found");
       return { chainId: c.id, raw: r };
     }),
   );
   const hit = attempts.find(
-    (a): a is PromiseFulfilledResult<{ chainId: string; raw: Record<string, unknown> }> =>
-      a.status === "fulfilled",
+    (a): a is PromiseFulfilledResult<{ chainId: string; raw: Record<string, unknown> }> => a.status === "fulfilled",
   );
-  if (!hit) throw new Error("GoPlus: token not found on any supported EVM chain");
-  return { checks: buildEvmChecks(hit.value.raw), chainId: hit.value.chainId };
-}
-
-function buildEvmChecks(r: Record<string, unknown>): ScanCheck[] {
-  const pct = (v: unknown) => Math.round(Number(v ?? 0) * 100);
-  const isHoneypot = r.is_honeypot === "1";
-  const openSource = r.is_open_source === "1";
+  if (!hit) throw new Error("GoPlus: not an EVM token on supported chains");
+  const r = hit.value.raw;
+  const buyTax = r.buy_tax != null ? Number(r.buy_tax) * 100 : null;
+  const sellTax = r.sell_tax != null ? Number(r.sell_tax) * 100 : null;
+  const lpLocked = Number(r.lp_locked_percent ?? 0) * 100;
+  const ownerKnown = r.owner_address !== undefined && r.owner_address !== null;
   const ownerRenounced =
     r.owner_address === "" || r.owner_address === "0x0000000000000000000000000000000000000000";
-  const buyTax = pct(r.buy_tax);
-  const sellTax = pct(r.sell_tax);
-  const lpLocked = pct(r.lp_locked_percent ?? r.percent_of_lp_locked ?? 0);
+  const scam = yn(r.is_honeypot) || yn(r.cannot_sell_all) || yn(r.is_blacklisted) || yn(r.honeypot_with_same_creator);
 
-  return [
-    { label: "Honeypot check", value: isHoneypot ? "HONEYPOT" : "CLEAR", status: isHoneypot ? "bad" : "ok" },
-    { label: "Contract open source", value: openSource ? "YES" : "NO", status: openSource ? "ok" : "warn" },
-    { label: "Ownership renounced", value: ownerRenounced ? "YES" : "NO", status: ownerRenounced ? "ok" : "warn" },
-    { label: "Buy / sell tax", value: `${buyTax}% / ${sellTax}%`, status: buyTax < 2 && sellTax < 2 ? "ok" : "warn" },
-    { label: "LP locked", value: lpLocked > 0 ? `${lpLocked}%` : "UNKNOWN", status: lpLocked >= 50 ? "ok" : "warn" },
+  const fps: FP[] = [
+    riskFlag("Honeypot", yn(r.is_honeypot), 70, true),
+    riskFlag("Mintable", yn(r.is_mintable), 12),
+    riskFlag("Freezable / Pausable", yn(r.transfer_pausable), 12),
+    riskFlag("Potential Scam", scam === null ? null : scam, 50, true),
+    riskFlag("Self-destruct", yn(r.selfdestruct), 20, true),
+    riskFlag("Fee Upgradable", yn(r.slippage_modifiable), 12),
+    riskFlag("Cannot sell all", yn(r.cannot_sell_all), 15),
+    taxFlag("Buy Tax", buyTax),
+    taxFlag("Sell Tax", sellTax),
+    goodFlag("Open source", yn(r.is_open_source), 8),
+    goodFlag("Ownership renounced", ownerKnown ? ownerRenounced : null, 8),
+    riskFlag("LP locked", lpLocked >= 50 ? false : lpLocked > 0 ? true : null, 8),
   ];
+  // Show LP locked as a percent rather than yes/no when we have it.
+  if (lpLocked > 0) fps[fps.length - 1].flag.value = `${Math.round(lpLocked)}%`;
+  return { fps, chainId: hit.value.chainId };
 }
 
-async function scanSolana(address: string): Promise<ScanCheck[]> {
+// ── GoPlus Solana ─────────────────────────────────────────────────────────
+async function scanSolanaGoPlus(address: string): Promise<FP[] | null> {
   const res = await fetch(
-    `https://api.rugcheck.xyz/v1/tokens/${address}/report/summary`,
+    `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${address}`,
     { signal: AbortSignal.timeout(9000), cache: "no-store" },
   );
+  if (!res.ok) throw new Error(`GoPlus SOL ${res.status}`);
+  const json = (await res.json()) as { result?: Record<string, Record<string, unknown>> };
+  const r = json.result?.[address] ?? json.result?.[address.toLowerCase()];
+  if (!r || Object.keys(r).length === 0) return null;
+
+  const st = (o: unknown): boolean | null => yn((o as { status?: unknown })?.status ?? o);
+  const mintable = st(r.mintable);
+  const freezable = st(r.freezable);
+  const closable = st(r.closable);
+  const nonTransferable = yn(r.non_transferable);
+  const feeUpgradable = st(r.transfer_fee_upgradable) ?? st(r.transfer_hook_upgradable);
+  const metaMutable = st(r.metadata_mutable) ?? st(r.balance_mutable_authority);
+  const feeObj = r.transfer_fee as { current_fee?: unknown } | undefined;
+  const transferFee = feeObj?.current_fee != null ? Number(feeObj.current_fee) : null;
+
+  const fps: FP[] = [
+    riskFlag("Mintable", mintable, 12),
+    riskFlag("Freezable", freezable, 15),
+    riskFlag("Closable", closable, 20, true),
+    riskFlag("Non-Transferable", nonTransferable, 40, true),
+    riskFlag("Fee Upgradable", feeUpgradable, 12),
+    riskFlag("Mutable metadata", metaMutable, 6),
+    taxFlag("Transfer Fee", transferFee),
+  ];
+  return fps;
+}
+
+// ── RugCheck (Solana risks) ───────────────────────────────────────────────
+async function rugCheck(address: string): Promise<FP[] | null> {
+  const res = await fetch(`https://api.rugcheck.xyz/v1/tokens/${address}/report/summary`, {
+    signal: AbortSignal.timeout(9000),
+    cache: "no-store",
+  });
   if (!res.ok) throw new Error(`RugCheck ${res.status}`);
   const json = (await res.json()) as {
-    score?: number;
-    risks?: { name: string; level: string; description?: string }[];
+    score_normalised?: number;
+    risks?: { name: string; level: string }[];
   };
   const risks = json.risks ?? [];
   const danger = risks.filter((r) => r.level === "danger");
   const warn = risks.filter((r) => r.level === "warn");
-  const checks: ScanCheck[] = [
-    {
-      label: "RugCheck risk score",
-      value: json.score != null ? String(json.score) : "N/A",
-      status: (json.score ?? 0) <= 1000 ? "ok" : "warn",
-    },
-    {
-      label: "Danger flags",
-      value: danger.length ? danger.map((r) => r.name).join(", ") : "NONE",
-      status: danger.length ? "bad" : "ok",
-    },
-    {
-      label: "Warning flags",
-      value: warn.length ? String(warn.length) : "NONE",
-      status: warn.length > 2 ? "warn" : "ok",
-    },
+  const fps: FP[] = [
+    riskFlag("Potential Scam", danger.length > 0, 50, true),
+    { flag: { label: "Risk flags", value: risks.length ? String(risks.length) : "None", status: danger.length ? "bad" : warn.length ? "warn" : "ok" }, penalty: warn.length * 4 },
   ];
-  return checks;
+  return fps;
 }
 
-const FAMILY_LABEL: Record<"solana" | "evm" | "ton", string> = {
-  solana: "Solana",
-  evm: "EVM",
-  ton: "TON",
-};
+function verdictFor(score: number): { verdict: "ok" | "warn"; verdictText: string; label: string } {
+  if (score >= 80) return { verdict: "ok", verdictText: "🛡️ Looks clean — still DYOR, always.", label: "SAFE" };
+  if (score >= 50) return { verdict: "warn", verdictText: "⚠️ Some risk signals — review the flags before aping.", label: "CAUTION" };
+  return { verdict: "warn", verdictText: "🚨 High risk — multiple red flags. Be very careful.", label: "HIGH RISK" };
+}
 
 export async function scanToken(address: string): Promise<ScanResult> {
   const family = detectFamily(address);
-  let checks: ScanCheck[];
-  let chain: string | null = family === "solana" || family === "ton" ? family : null;
-  let live = true;
+  const [info, security] = await Promise.all([
+    dexInfo(address),
+    (async (): Promise<{ fps: FP[]; chain: string | null; source: string } | null> => {
+      try {
+        if (family === "evm") {
+          const r = await scanEvm(address);
+          return { fps: r.fps, chain: r.chainId, source: "GoPlus" };
+        }
+        if (family === "solana") {
+          const [gp, rug] = await Promise.allSettled([scanSolanaGoPlus(address), rugCheck(address)]);
+          const fps: FP[] = [];
+          let source = "";
+          if (gp.status === "fulfilled" && gp.value) {
+            fps.push(...gp.value);
+            source = "GoPlus";
+          }
+          if (rug.status === "fulfilled" && rug.value) {
+            fps.push(...rug.value);
+            source = source ? `${source} + RugCheck` : "RugCheck";
+          }
+          if (!fps.length) return null;
+          return { fps, chain: "solana", source };
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    })(),
+  ]);
 
-  try {
-    if (family === "solana") {
-      checks = await scanSolana(address);
-    } else if (family === "evm") {
-      const res = await scanEvmAny(address);
-      checks = res.checks;
-      chain = res.chainId; // the specific EVM chain we actually found it on
-    } else {
-      // TON (no scanner yet) or unrecognised format
-      throw new Error("no scanner coverage");
-    }
-  } catch {
-    live = false;
-    checks = [
-      { label: "Live scan", value: "UNAVAILABLE", status: "warn" },
-      { label: "Address format", value: family ? FAMILY_LABEL[family] : "UNRECOGNIZED", status: family ? "ok" : "warn" },
+  const chain = security?.chain ?? info.chain ?? (family === "ton" ? "ton" : family === "tron" ? "tron" : null);
+
+  if (!security) {
+    // Basic snapshot only (no security provider covered this chain/token).
+    const flags: ScanFlag[] = [
+      { label: "Name", value: info.name ?? "Unknown", status: info.name ? "ok" : "na" },
+      { label: "Chain", value: chain ? CHAINS[chain]?.label ?? chain : "Unknown", status: chain ? "ok" : "na" },
+      { label: "Security data", value: "Limited", status: "warn" },
     ];
+    return {
+      address,
+      chain,
+      name: info.name,
+      symbol: info.symbol,
+      score: null,
+      scoreLabel: "LIMITED",
+      flags,
+      verdict: "warn",
+      verdictText: "ℹ️ Limited security data for this token — basic info only. DYOR.",
+      live: Boolean(info.name),
+      dataSource: info.name ? "DexScreener (basic)" : "unavailable",
+    };
   }
 
-  const { verdict, verdictText } = live
-    ? verdictFor(checks)
-    : { verdict: "warn" as const, verdictText: "⚠️ Scanner unavailable right now — DYOR before aping." };
-
-  return { address, chain, checks, verdict, verdictText, live };
+  const { flags, score } = assemble(security.fps);
+  const v = verdictFor(score);
+  return {
+    address,
+    chain,
+    name: info.name,
+    symbol: info.symbol,
+    score,
+    scoreLabel: v.label,
+    flags,
+    verdict: v.verdict,
+    verdictText: v.verdictText,
+    live: true,
+    dataSource: security.source,
+  };
 }

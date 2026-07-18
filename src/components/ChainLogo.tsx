@@ -63,9 +63,26 @@ function Ton({ s }: { s: number }) {
 }
 function Robinhood({ s }: { s: number }) {
   return (
-    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Robinhood">
-      <circle cx="12" cy="12" r="10" fill="#0A0A0A" />
-      <path d="M8 17V7c3.4 0 5.6 1.4 5.6 4 0 1.7-1 2.9-2.7 3.4L14 17h-2.4l-1.8-2.4H10V17z" fill="#CCFF00" />
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Robinhood Chain">
+      <circle cx="12" cy="12" r="10" fill="#0B0F10" />
+      {/* stylized feather quill */}
+      <path
+        d="M16.5 6.2c-3.4.3-6.2 2-7.7 4.8-.7 1.3-1 2.8-1 4.4l-1 1.4c-.2.3 0 .7.4.6l1.7-.4c1.4.5 3 .5 4.4-.1 2.9-1.3 4.7-4.1 5.1-7.6l.4-2.9c0-.4-.3-.7-.7-.6l-1.3.9z"
+        fill="#C5F94B"
+      />
+      <path d="M9 15.5c1.6-2.9 3.9-4.9 6.7-6" stroke="#0B0F10" strokeWidth="1" fill="none" strokeLinecap="round" />
+    </svg>
+  );
+}
+function Tron({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Tron">
+      <circle cx="12" cy="12" r="10" fill="#EF0027" />
+      {/* TRON angular tri-mark */}
+      <path
+        d="M6.2 7.4 15.4 8.9c.3 0 .5.2.6.4l2 3.3c.2.3.1.6-.1.8L11.6 18c-.3.3-.8.1-.9-.3L6 8c-.1-.4.2-.7.6-.6zm1.7 1.5 3 5.9.1-4.9zm4.2 1 .0 4.6 3.8-3.2zm.9-.9 2.6 1.9-1.2-2z"
+        fill="#fff"
+      />
     </svg>
   );
 }
@@ -77,6 +94,7 @@ const MAP: Record<string, (p: { s: number }) => JSX.Element> = {
   base: Base,
   ton: Ton,
   robinhood: Robinhood,
+  tron: Tron,
 };
 
 export function ChainLogo({ chain, size = 16, style }: { chain: string; size?: number; style?: CSSProperties }) {

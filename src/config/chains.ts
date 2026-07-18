@@ -77,6 +77,16 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://app.ston.fi/swap?ft=TON&tt=${a}`,
     addressPattern: /^(EQ|UQ|0:)[A-Za-z0-9_-]{40,66}$/,
   },
+  tron: {
+    id: "tron",
+    label: "Tron",
+    color: "#FF060A",
+    geckoNetwork: "tron",
+    goPlusChainId: null, // GoPlus token_security doesn't cover Tron; scanner falls back to basic info
+    explorer: (a) => `https://tronscan.org/#/token20/${a}`,
+    buyUrl: (a) => `https://sunswap.com/#/home?tokenAddress=${a}`,
+    addressPattern: /^T[1-9A-HJ-NP-Za-km-z]{33}$/,
+  },
 };
 
 export const CHAIN_IDS = Object.keys(CHAINS);
