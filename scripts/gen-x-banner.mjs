@@ -1,7 +1,8 @@
-// Renders the Dexvra X/Twitter header (1500x500) via Chromium.
-//   CHROMIUM_PATH=/opt/pw-browsers/chromium node scripts/gen-x-banner.mjs
+// Renders the Dexvra X/Twitter header (1500x500) as a product shot of the real
+// website on the site's own premium background.
+//   SITE_URL=http://127.0.0.1:3231/ CHROMIUM_PATH=/opt/pw-browsers/chromium node scripts/gen-x-banner.mjs
 import { chromium } from "playwright";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,7 @@ mkdirSync(BRAND, { recursive: true });
 const MINT = "#4BFCA6", CYAN = "#22D3EE", DEEP = "#12B9E0";
 const FONT = `'Space Grotesk','Liberation Sans','DejaVu Sans',system-ui,sans-serif`;
 const MONO = `'DejaVu Sans Mono',ui-monospace,monospace`;
+const SITE = process.env.SITE_URL || "http://127.0.0.1:3231/";
 
 const gem = (size) => `
   <svg viewBox="0 0 48 48" width="${size}" height="${size}" style="display:block">
@@ -25,41 +27,43 @@ const gem = (size) => `
     <path d="M15.6 12.5 H22 L19 18.5 H10.5 Z" fill="#fff" fill-opacity=".14"/>
   </svg>`;
 
-// small chain marks
-const chains = {
-  sol: `<svg viewBox="0 0 24 24" width="30" height="30"><defs><linearGradient id="s" x1="3" y1="20" x2="21" y2="4" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#9945FF"/><stop offset="1" stop-color="#19FB9B"/></linearGradient></defs><g fill="url(#s)"><path d="M6.4 4.6H21l-3.4 3.2H3z"/><path d="M3 10.4h14.6L21 13.6H6.4z"/><path d="M6.4 16.2H21l-3.4 3.2H3z"/></g></svg>`,
-  bnb: `<svg viewBox="0 0 24 24" width="30" height="30"><circle cx="12" cy="12" r="10" fill="#F3BA2F"/><g fill="#fff"><path d="M12 4.5 14.5 7 12 9.5 9.5 7z"/><path d="M7 9.5 9.5 12 7 14.5 4.5 12z"/><path d="M17 9.5 19.5 12 17 14.5 14.5 12z"/><path d="M12 14.5 14.5 17 12 19.5 9.5 17z"/><path d="M12 9.5 14.5 12 12 14.5 9.5 12z"/></g></svg>`,
-  eth: `<svg viewBox="0 0 24 24" width="30" height="30"><g fill="#8A92B2"><path d="M12 2 5.5 12.3 12 16z"/><path d="M12 2 18.5 12.3 12 16z" fill="#62688F"/><path d="M12 17.2 5.5 13.5 12 22z"/><path d="M12 17.2 18.5 13.5 12 22z" fill="#62688F"/></g></svg>`,
-  base: `<svg viewBox="0 0 24 24" width="30" height="30"><circle cx="12" cy="12" r="10" fill="#0052FF"/><path d="M12 5.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 6.4-5.4H8.6v-2.2h9.8A6.5 6.5 0 0 0 12 5.5z" fill="#fff"/></svg>`,
-  tron: `<svg viewBox="0 0 24 24" width="30" height="30"><circle cx="12" cy="12" r="10" fill="#EF0027"/><path d="M6.2 7.4 15.4 8.9c.3 0 .5.2.6.4l2 3.3c.2.3.1.6-.1.8L11.6 18c-.3.3-.8.1-.9-.3L6 8c-.1-.4.2-.7.6-.6z" fill="#fff"/></svg>`,
-  ton: `<svg viewBox="0 0 24 24" width="30" height="30"><circle cx="12" cy="12" r="10" fill="#0098EA"/><path d="M7.5 8.5h9L12 17zM12 9.7 9.6 9.7 12 14.4 14.4 9.7z" fill="#fff"/></svg>`,
-};
-const chainRow = Object.values(chains).map((c) => `<span style="display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)">${c}</span>`).join("");
+const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 
-// Matches the site's premium background: quiet monochrome depth (#090C12) with
-// a soft white top glow and a faint mint glow top-right.
+// 1) grab a clean product screenshot of the live homepage
+const shotPage = await browser.newPage({ viewport: { width: 1320, height: 900 }, deviceScaleFactor: 1.5 });
+await shotPage.goto(SITE, { waitUntil: "networkidle", timeout: 30000 }).catch(() => {});
+await shotPage.waitForTimeout(2800);
+const shotBuf = await shotPage.screenshot({ clip: { x: 0, y: 0, width: 1320, height: 812 } });
+const shot = shotBuf.toString("base64");
+await shotPage.close();
+
+// 2) compose the banner: brand on the left, product panel bleeding off the right
 const banner = `
 <div style="width:1500px;height:500px;position:relative;overflow:hidden;font-family:${FONT};background:
-  radial-gradient(1500px 640px at 50% -30%, rgba(255,255,255,.05), transparent 62%),
-  radial-gradient(860px 480px at 95% -8%, rgba(61,220,151,.06), transparent 60%),
+  radial-gradient(1200px 620px at 22% -30%, rgba(255,255,255,.05), transparent 62%),
+  radial-gradient(760px 500px at 96% 118%, rgba(61,220,151,.06), transparent 60%),
   #090C12;">
-  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;text-align:center;padding:0 120px">
-    <div style="display:flex;align-items:center;gap:30px">
-      ${gem(120)}
-      <div style="text-align:left">
-        <div style="font-size:96px;font-weight:800;letter-spacing:-.035em;color:#EEF3FB;line-height:.95">Dexvra</div>
-        <div style="font-family:${MONO};font-size:19px;font-weight:700;letter-spacing:.36em;color:${CYAN};text-transform:uppercase;margin-top:10px">Multi‑chain Discovery</div>
+  <img src="data:image/png;base64,${shot}"
+    style="position:absolute;right:-150px;top:-46px;height:592px;border-radius:18px;
+    border:1px solid rgba(255,255,255,.10);box-shadow:-46px 34px 100px rgba(0,0,0,.6)"/>
+  <div style="position:absolute;inset:0;background:linear-gradient(90deg,#090C12 33%,rgba(9,12,18,.72) 45%,rgba(9,12,18,0) 63%)"></div>
+  <div style="position:absolute;left:100px;top:0;bottom:0;width:640px;display:flex;flex-direction:column;justify-content:center;gap:22px">
+    <div style="display:flex;align-items:center;gap:24px">
+      ${gem(104)}
+      <div>
+        <div style="font-size:82px;font-weight:800;letter-spacing:-.035em;color:#EEF3FB;line-height:.95">Dexvra</div>
+        <div style="font-family:${MONO};font-size:17px;font-weight:700;letter-spacing:.34em;color:${CYAN};text-transform:uppercase;margin-top:9px">Multi‑chain Discovery</div>
       </div>
     </div>
-    <div style="font-size:32px;font-weight:500;color:#9FB0C6;max-width:60ch;line-height:1.4">Find the next moonshot first — trending boards, token safety scans &amp; paid listings across every chain.</div>
-    <div style="display:flex;align-items:center;gap:16px;margin-top:4px">
-      ${chainRow}
-      <span style="font-family:${MONO};font-size:20px;font-weight:700;letter-spacing:.18em;color:${MINT};text-transform:uppercase;margin-left:10px">dexvra.io</span>
+    <div style="font-size:29px;font-weight:500;color:#A6B4C8;max-width:19ch;line-height:1.4">Find the next moonshot first — across every chain.</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span style="font-family:${MONO};font-size:20px;font-weight:700;letter-spacing:.16em;color:${MINT};text-transform:uppercase">dexvra.io</span>
+      <span style="width:5px;height:5px;border-radius:50%;background:#3b4a5e"></span>
+      <span style="font-size:16px;color:#7b8aa0">Trending · Scanner · Paid listings</span>
     </div>
   </div>
 </div>`;
 
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1500, height: 500 }, deviceScaleFactor: 2 });
 await page.setContent(`<!doctype html><html><head><style>*{margin:0;padding:0;box-sizing:border-box}</style></head><body>${banner}</body></html>`, { waitUntil: "networkidle" });
 await page.screenshot({ path: resolve(BRAND, "x-header.png"), clip: { x: 0, y: 0, width: 1500, height: 500 } });
