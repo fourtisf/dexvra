@@ -7,15 +7,16 @@ function Solana({ s }: { s: number }) {
   return (
     <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Solana">
       <defs>
-        <linearGradient id="sol" x1="0" y1="1" x2="1" y2="0">
+        <linearGradient id="sol" x1="3" y1="20" x2="21" y2="4" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#9945FF" />
           <stop offset="1" stopColor="#19FB9B" />
         </linearGradient>
       </defs>
+      {/* three slanted bars — top & bottom lean one way, middle the other */}
       <g fill="url(#sol)">
-        <path d="M5 7.5c.2-.2.5-.3.7-.3H20l-2.7 3H4.3z" />
-        <path d="M5 15.5c.2.2.5.3.7.3H20l-2.7-3H4.3z" transform="translate(0 -1)" />
-        <path d="M5 11.4c.2-.2.5-.3.7-.3H20l-2.7 3H4.3z" transform="translate(0 .1)" />
+        <path d="M6.4 4.6H21l-3.4 3.2H3z" />
+        <path d="M3 10.4h14.6L21 13.6H6.4z" />
+        <path d="M6.4 16.2H21l-3.4 3.2H3z" />
       </g>
     </svg>
   );
