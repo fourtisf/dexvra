@@ -13,6 +13,7 @@ const modules = [
   "../src/config/packages",
   "../src/api/dexvra",
   "../src/marketdata",
+  "../src/dexscreener",
   "../src/nativeprice",
   "../src/fulfillment",
   "../src/twitter",

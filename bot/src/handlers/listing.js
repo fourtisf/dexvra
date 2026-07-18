@@ -5,6 +5,7 @@ const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../h
 const { chainOf, isValidAddress, nativeOf } = require("../config/chains");
 const { RANKED_TIERS, tierPrice, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
 const { fetchMarket } = require("../marketdata");
+const { fetchTokenInfo } = require("../dexscreener");
 const { escapeHtml } = require("../helpers/format");
 const { startPayment } = require("./pay");
 const menu = require("./menu");
@@ -76,11 +77,24 @@ async function handleText(ctx) {
         return toast(ctx, `❌ That doesn't look like a valid ${chainOf(f.chain).label} address. Try again.`);
       }
       f.address = input;
-      const meta = await fetchMarket(f.chain, input).catch(() => null);
-      if (meta && (meta.symbol || meta.name)) {
-        f.name = f.name || meta.name || meta.symbol;
-        f.sym = f.sym || (meta.symbol || meta.name || "").replace(/^\$+/, "").toUpperCase();
-        if (meta.logoUrl && !f.logoUrl) f.logoUrl = meta.logoUrl;
+      // Autofill from DexScreener (name/symbol/logo + socials: X/Telegram/Website)
+      // and GeckoTerminal (name/symbol/logo). DexScreener wins for socials.
+      const [ds, gt] = await Promise.all([
+        fetchTokenInfo(f.chain, input).catch(() => null),
+        fetchMarket(f.chain, input).catch(() => null),
+      ]);
+      const name = (ds && ds.name) || (gt && gt.name);
+      const symbol = (ds && ds.symbol) || (gt && gt.symbol);
+      const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
+      if (name || symbol) {
+        f.name = f.name || name || symbol;
+        f.sym = f.sym || String(symbol || name || "").replace(/^\$+/, "").toUpperCase();
+        if (logoUrl && !f.logoUrl) f.logoUrl = logoUrl;
+        if (ds) {
+          if (ds.website && !f.website) f.website = ds.website;
+          if (ds.twitter && !f.twitter) f.twitter = ds.twitter;
+          if (ds.telegram && !f.telegram) f.telegram = ds.telegram;
+        }
         s.awaitingField = null;
         return showReview(ctx);
       }

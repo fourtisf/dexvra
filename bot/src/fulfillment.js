@@ -13,7 +13,13 @@ const x = require("./twitter");
 const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS } = require("./config/constants");
 const { tierAnnounces } = require("./config/packages");
+const { escapeHtml } = require("./helpers/format");
 const log = require("./helpers/logger");
+
+/** Public t.me link to a specific post in a @username channel. */
+function tmeLink(channel, msgId) {
+  return `https://t.me/${String(channel).replace(/^@/, "")}/${msgId}`;
+}
 
 async function downloadFile(telegram, fileId) {
   try {
@@ -97,12 +103,20 @@ async function fulfillListing(ctx, order) {
   const live = await market.fetchMarket(input.chain, input.address).catch(() => null);
   const coin = coinFrom(input, live);
   const photo = photoSource(p.logoFileId, input.logoUrl);
+  const links = [];
   try {
     const listingMsg = await post.sendPhoto(CHANNELS.listing, photo, fmt.listingPost(coin));
+    if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+
     const annMsg = tierAnnounces(input.tier)
       ? await post.sendPhoto(CHANNELS.announce, photo, fmt.listingPost(coin))
       : null;
-    if (hours > 0) await post.sendPhoto(CHANNELS.trending, photo, fmt.trendingPost(coin));
+    if (annMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
+
+    if (hours > 0) {
+      const trendingMsg = await post.sendPhoto(CHANNELS.trending, photo, fmt.trendingPost(coin));
+      if (trendingMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
+    }
     await postids.set(input.chain, input.address, {
       listingMsgId: listingMsg && listingMsg.message_id,
       annMsgId: annMsg && annMsg.message_id,
@@ -113,7 +127,7 @@ async function fulfillListing(ctx, order) {
 
   // 5. Tweet + 6. Buyer DM.
   x.postListing(coin, logoBuffer, "image/png").catch(() => {});
-  await dm(ctx, successListing(coin), menu.postPurchase(coin.siteUrl));
+  await dm(ctx, successListing(coin, links), menu.postPurchase(coin.siteUrl));
 }
 
 // ── Trending (standalone slot on an already-listed token) ────────────────────
@@ -125,14 +139,19 @@ async function fulfillTrending(ctx, order) {
   const live = await market.fetchMarket(p.chain, p.address).catch(() => null);
   const coin = coinFrom(listing || { chain: p.chain, address: p.address, sym: p.symbol, name: p.name }, live);
   const photo = photoSource(null, listing && listing.logoUrl);
+  const links = [];
   try {
-    await post.sendPhoto(CHANNELS.trending, photo, fmt.trendingPost(coin));
-    if (p.hours >= 24) await post.sendPhoto(CHANNELS.announce, photo, fmt.trendingPost(coin));
+    const tMsg = await post.sendPhoto(CHANNELS.trending, photo, fmt.trendingPost(coin));
+    if (tMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
+    if (p.hours >= 24) {
+      const aMsg = await post.sendPhoto(CHANNELS.announce, photo, fmt.trendingPost(coin));
+      if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
+    }
   } catch (e) {
     log.warn(`[fulfil] trending posts: ${e.message}`);
   }
   x.postTrending(coin).catch(() => {});
-  await dm(ctx, successTrending(coin, p.hours), menu.postPurchase(coin.siteUrl));
+  await dm(ctx, successTrending(coin, p.hours, links), menu.postPurchase(coin.siteUrl));
 }
 
 // ── Banner ad ────────────────────────────────────────────────────────────────
@@ -157,38 +176,48 @@ async function fulfillBanner(ctx, order) {
   const booking = await api.bookBanner(rec); // hard step
   log.info(`[fulfil] banner booked ${rec.slot} until ${new Date(rec.endsAt).toISOString()}`);
 
+  const links = [];
   try {
-    await post.sendPhoto(CHANNELS.announce, p.imageFileId || photoSource(null, rec.imageUrl), fmt.bannerPost(rec));
+    const aMsg = await post.sendPhoto(CHANNELS.announce, p.imageFileId || photoSource(null, rec.imageUrl), fmt.bannerPost(rec));
+    if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
   }
   x.postBanner(rec).catch(() => {});
-  await dm(ctx, successBanner(rec), menu.postPurchase(SITE_URL));
+  await dm(ctx, successBanner(rec, links), menu.postPurchase(SITE_URL));
   return booking;
 }
 
 // ── Buyer success copy ───────────────────────────────────────────────────────
-function successListing(coin) {
+function linkLines(links) {
+  return (links || []).map((l) => `${l.label}: <a href="${l.url}">open ↗</a>`).join("\n");
+}
+function successListing(coin, links) {
+  const ll = linkLines(links);
   return (
-    `✅ <b>Your token is LIVE on Dexvra!</b>\n\n` +
-    `<b>${fmt.sym(coin.symbol)}</b> — ${coin.name}\n` +
+    `✅ <b>Payment successful — your token is LIVE on Dexvra!</b>\n\n` +
+    `<b>${fmt.sym(coin.symbol)}</b> — ${escapeHtml(coin.name)}\n` +
     `🌐 <a href="${coin.siteUrl}">View your listing</a>\n` +
-    `🚨 Posted to the Listing channel${tierAnnounces(coin.tier) ? " + Announcements" : ""} and Trending.\n\n` +
-    `Thanks for listing with Dexvra! 🚀`
+    (ll ? ll + "\n" : "") +
+    `\nThanks for listing with Dexvra! 🚀`
   );
 }
-function successTrending(coin, hours) {
+function successTrending(coin, hours, links) {
+  const ll = linkLines(links);
   return (
-    `✅ <b>Trending slot activated!</b>\n\n` +
+    `✅ <b>Payment successful — Trending activated!</b>\n\n` +
     `<b>${fmt.sym(coin.symbol)}</b> is now featured on Dexvra Trending for <b>${hours}h</b>.\n` +
-    `🔥 <a href="${coin.siteUrl}">View on Dexvra</a>`
+    `🌐 <a href="${coin.siteUrl}">View on Dexvra</a>\n` +
+    (ll ? ll + "\n" : "")
   );
 }
-function successBanner(rec) {
+function successBanner(rec, links) {
+  const ll = linkLines(links);
   return (
-    `✅ <b>Banner ad booked!</b>\n\n` +
-    `Your <b>${rec.slot}</b> is now running on Dexvra until ` +
-    `${new Date(rec.endsAt).toUTCString()}.\n📢 Posted to the announcement channel.`
+    `✅ <b>Payment successful — Banner ad booked!</b>\n\n` +
+    `Your <b>${escapeHtml(rec.slot)}</b> is running on Dexvra until ` +
+    `${new Date(rec.endsAt).toUTCString()}.\n` +
+    (ll ? ll + "\n" : "")
   );
 }
 
