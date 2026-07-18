@@ -70,6 +70,21 @@ pm2 save
 | `src/twitter.js` | X posting (disabled unless keys present) |
 | `src/services/` | trending poster, trending sweeper, pump checker |
 
+## Admin bot & editable templates
+
+Every user-facing message **and** channel-post layout is an editable template
+(`src/templates.js`, built-in defaults). `@dexvraadminbot` (a separate process,
+`ADMIN_BOT_TOKEN`) lets admins edit them + upload the `/start` banner image at
+runtime — the main bot auto-refreshes within ~30s, **no redeploy**.
+
+- Overrides persist in `data/templates.json` (gitignored); banner in `data/banner`.
+- Admins only (`ADMIN_IDS` / `ADMIN_USERNAMES`), private chat.
+- Editable: Welcome, all prompts, payment card, success/error messages, and the
+  Listing / Trending / Pump / Banner **channel-post layouts** (with
+  `{placeholder}` substitution — the editor shows each template's placeholders).
+- Run it: `pm2 start ecosystem.config.js` starts both `dexvra-bot` and
+  `dexvra-adminbot`. Then DM `@dexvraadminbot` → `/start`.
+
 See [`.env.example`](.env.example) for every setting.
 
 ## Go-live checklist

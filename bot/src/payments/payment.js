@@ -15,6 +15,7 @@ const { toSmallest, humanWithSymbol } = require("./units");
 const wallets = require("./wallets");
 const verify = require("./verify");
 const orders = require("./orders");
+const tpl = require("../templates");
 const log = require("../helpers/logger");
 
 function newOrderId() {
@@ -76,7 +77,12 @@ async function confirmPayHandler(ctx) {
     if (!paid) {
       await toast(
         ctx,
-        `❌ I haven't detected your payment yet.\n\nSend exactly <b>${order.humanAmount} ${order.native}</b> to:\n<code>${address}</code>\n\nThen tap <b>Confirm</b> again. If you already paid, wait a moment (or contact support with order <code>${order.id}</code>).`,
+        tpl.t("payment_not_detected", {
+          amount: order.humanAmount,
+          native: order.native,
+          address,
+          order: order.id,
+        }),
       );
       return;
     }
@@ -91,10 +97,7 @@ async function confirmPayHandler(ctx) {
     );
   } catch (e) {
     log.error(`[pay] confirm/fulfil failed order=${order && order.id}: ${e.message}`);
-    await toast(
-      ctx,
-      `⚠️ Payment received but finalizing hit a snag. Your order <code>${order && order.id}</code> is safe — please contact support and we'll complete it.`,
-    );
+    await toast(ctx, tpl.t("payment_snag", { order: order && order.id }));
   } finally {
     ctx.session._verifying = false;
   }

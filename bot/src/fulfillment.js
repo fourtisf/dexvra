@@ -14,6 +14,7 @@ const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS } = require("./config/constants");
 const { tierAnnounces } = require("./config/packages");
 const { escapeHtml } = require("./helpers/format");
+const tpl = require("./templates");
 const log = require("./helpers/logger");
 
 /** Public t.me link to a specific post in a @username channel. */
@@ -193,32 +194,27 @@ function linkLines(links) {
   return (links || []).map((l) => `${l.label}: <a href="${l.url}">open ↗</a>`).join("\n");
 }
 function successListing(coin, links) {
-  const ll = linkLines(links);
-  return (
-    `✅ <b>Payment successful — your token is LIVE on Dexvra!</b>\n\n` +
-    `<b>${fmt.sym(coin.symbol)}</b> — ${escapeHtml(coin.name)}\n` +
-    `🌐 <a href="${coin.siteUrl}">View your listing</a>\n` +
-    (ll ? ll + "\n" : "") +
-    `\nThanks for listing with Dexvra! 🚀`
-  );
+  return tpl.t("success_listing", {
+    symbol: fmt.sym(coin.symbol),
+    name: escapeHtml(coin.name),
+    siteUrl: coin.siteUrl,
+    postLinks: linkLines(links),
+  });
 }
 function successTrending(coin, hours, links) {
-  const ll = linkLines(links);
-  return (
-    `✅ <b>Payment successful — Trending activated!</b>\n\n` +
-    `<b>${fmt.sym(coin.symbol)}</b> is now featured on Dexvra Trending for <b>${hours}h</b>.\n` +
-    `🌐 <a href="${coin.siteUrl}">View on Dexvra</a>\n` +
-    (ll ? ll + "\n" : "")
-  );
+  return tpl.t("success_trending", {
+    symbol: fmt.sym(coin.symbol),
+    hours,
+    siteUrl: coin.siteUrl,
+    postLinks: linkLines(links),
+  });
 }
 function successBanner(rec, links) {
-  const ll = linkLines(links);
-  return (
-    `✅ <b>Payment successful — Banner ad booked!</b>\n\n` +
-    `Your <b>${escapeHtml(rec.slot)}</b> is running on Dexvra until ` +
-    `${new Date(rec.endsAt).toUTCString()}.\n` +
-    (ll ? ll + "\n" : "")
-  );
+  return tpl.t("success_banner", {
+    slot: escapeHtml(rec.slot),
+    endsAt: new Date(rec.endsAt).toUTCString(),
+    postLinks: linkLines(links),
+  });
 }
 
 async function fulfillOrder(ctx, order) {
