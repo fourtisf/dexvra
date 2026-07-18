@@ -1,6 +1,8 @@
 // Number formatting ported 1:1 from the prototype (fmtPrice etc.) — the
 // handoff calls these out as canonical.
 export function fmtPrice(p: number): string {
+  // guard: without this, the trailing-zero strip below turns 0 into "$0."
+  if (!(p > 0)) return "$0";
   if (p >= 1)
     return (
       "$" +

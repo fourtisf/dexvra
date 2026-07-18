@@ -6,10 +6,15 @@ import type { ScanCheck, ScanResult } from "@/lib/types";
 // checks, never as a fabricated verdict. Per the handoff: never claim
 // "100% safe" — verdict copy always keeps the DYOR disclaimer.
 
-function detectChain(address: string): string | null {
-  for (const c of Object.values(CHAINS)) {
-    if (c.addressPattern.test(address)) return c.id;
-  }
+const isEvmAddress = (a: string) => /^0x[a-fA-F0-9]{40}$/.test(a);
+
+// A bare EVM address is chain-ambiguous (Base/Ethereum/BSC share the 0x…40
+// format), so we can't pick a single GoPlus chain id up front. Solana (base58,
+// never starts with 0x) and TON (EQ/UQ/0: prefix) are unambiguous.
+function detectFamily(address: string): "solana" | "evm" | "ton" | null {
+  if (CHAINS.solana.addressPattern.test(address)) return "solana";
+  if (isEvmAddress(address)) return "evm";
+  if (CHAINS.ton.addressPattern.test(address)) return "ton";
   return null;
 }
 
@@ -20,9 +25,7 @@ function verdictFor(checks: ScanCheck[]): { verdict: "ok" | "warn"; verdictText:
     : { verdict: "ok", verdictText: "🛡️ Looks clean — still DYOR, always." };
 }
 
-async function scanEvm(chainId: string, address: string): Promise<ScanCheck[]> {
-  const goPlusId = CHAINS[chainId].goPlusChainId;
-  if (!goPlusId) throw new Error(`no GoPlus coverage for ${chainId}`);
+async function goPlusLookup(goPlusId: string, address: string): Promise<Record<string, unknown> | null> {
   const res = await fetch(
     `https://api.gopluslabs.io/api/v1/token_security/${goPlusId}?contract_addresses=${address}`,
     { signal: AbortSignal.timeout(9000), cache: "no-store" },
@@ -31,9 +34,33 @@ async function scanEvm(chainId: string, address: string): Promise<ScanCheck[]> {
   const json = (await res.json()) as {
     result?: Record<string, Record<string, unknown>>;
   };
+  // GoPlus returns an empty object (not an error) for an address that isn't a
+  // token on the queried chain — treat that as "not found here", not a failure.
   const r = json.result?.[address.toLowerCase()];
-  if (!r) throw new Error("GoPlus: token not found");
+  return r && Object.keys(r).length > 0 ? r : null;
+}
 
+// Probe each EVM chain we support until one recognises the token; return its
+// checks plus the chain we actually found it on. Chains are queried
+// concurrently so a slow one can't stall the whole scan.
+async function scanEvmAny(address: string): Promise<{ checks: ScanCheck[]; chainId: string }> {
+  const evmChains = Object.values(CHAINS).filter((c) => c.goPlusChainId);
+  const attempts = await Promise.allSettled(
+    evmChains.map(async (c) => {
+      const r = await goPlusLookup(c.goPlusChainId!, address);
+      if (!r) throw new Error(`not found on ${c.id}`);
+      return { chainId: c.id, raw: r };
+    }),
+  );
+  const hit = attempts.find(
+    (a): a is PromiseFulfilledResult<{ chainId: string; raw: Record<string, unknown> }> =>
+      a.status === "fulfilled",
+  );
+  if (!hit) throw new Error("GoPlus: token not found on any supported EVM chain");
+  return { checks: buildEvmChecks(hit.value.raw), chainId: hit.value.chainId };
+}
+
+function buildEvmChecks(r: Record<string, unknown>): ScanCheck[] {
   const pct = (v: unknown) => Math.round(Number(v ?? 0) * 100);
   const isHoneypot = r.is_honeypot === "1";
   const openSource = r.is_open_source === "1";
@@ -85,24 +112,34 @@ async function scanSolana(address: string): Promise<ScanCheck[]> {
   return checks;
 }
 
+const FAMILY_LABEL: Record<"solana" | "evm" | "ton", string> = {
+  solana: "Solana",
+  evm: "EVM",
+  ton: "TON",
+};
+
 export async function scanToken(address: string): Promise<ScanResult> {
-  const chain = detectChain(address);
+  const family = detectFamily(address);
   let checks: ScanCheck[];
+  let chain: string | null = family === "solana" || family === "ton" ? family : null;
   let live = true;
 
   try {
-    if (chain === "solana") {
+    if (family === "solana") {
       checks = await scanSolana(address);
-    } else if (chain && CHAINS[chain].goPlusChainId) {
-      checks = await scanEvm(chain, address);
+    } else if (family === "evm") {
+      const res = await scanEvmAny(address);
+      checks = res.checks;
+      chain = res.chainId; // the specific EVM chain we actually found it on
     } else {
+      // TON (no scanner yet) or unrecognised format
       throw new Error("no scanner coverage");
     }
   } catch {
     live = false;
     checks = [
       { label: "Live scan", value: "UNAVAILABLE", status: "warn" },
-      { label: "Address format", value: chain ? CHAINS[chain].label : "UNRECOGNIZED", status: chain ? "ok" : "warn" },
+      { label: "Address format", value: family ? FAMILY_LABEL[family] : "UNRECOGNIZED", status: family ? "ok" : "warn" },
     ];
   }
 

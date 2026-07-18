@@ -35,7 +35,14 @@ class MemoryCache implements KVCache {
 const g = globalThis as { __appCache?: KVCache };
 export const cache: KVCache = g.__appCache ?? (g.__appCache = new MemoryCache());
 
-/** Fetch-through helper: fresh hit → cached; miss → loader; loader failure → stale if any. */
+// In-flight loads coalesced by key so a burst of concurrent misses triggers
+// one provider call, not N — the third-party free tiers are rate-limited.
+const g2 = globalThis as { __appInflight?: Map<string, Promise<unknown>> };
+const inflight: Map<string, Promise<unknown>> =
+  g2.__appInflight ?? (g2.__appInflight = new Map());
+
+/** Fetch-through helper: fresh hit → cached; miss → loader (deduped);
+ *  loader failure → stale if any. */
 export async function cached<T>(
   key: string,
   ttlMs: number,
@@ -43,13 +50,24 @@ export async function cached<T>(
 ): Promise<T> {
   const hit = cache.get<T>(key);
   if (hit !== undefined) return hit;
-  try {
-    const value = await loader();
-    cache.set(key, value, ttlMs);
-    return value;
-  } catch (err) {
-    const stale = cache.getStale<T>(key);
-    if (stale !== undefined) return stale;
-    throw err;
-  }
+
+  const existing = inflight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const load = (async () => {
+    try {
+      const value = await loader();
+      cache.set(key, value, ttlMs);
+      return value;
+    } catch (err) {
+      const stale = cache.getStale<T>(key);
+      if (stale !== undefined) return stale;
+      throw err;
+    } finally {
+      inflight.delete(key);
+    }
+  })();
+
+  inflight.set(key, load);
+  return load;
 }
