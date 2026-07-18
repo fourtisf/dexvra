@@ -42,6 +42,11 @@ const modules = [
   "../src/payments/chains/tron",
   "../src/payments/chains/ton",
   "../src/services/monitoring",
+  "../src/services/attach",
+  "../src/services/trendingPoster",
+  "../src/services/trendingSweeper",
+  "../src/services/pumpChecker",
+  "../src/services/recovery",
 ];
 
 let failed = 0;
