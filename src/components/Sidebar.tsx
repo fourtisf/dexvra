@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BRAND_MARK, BRAND_NAME, BRAND_SUB } from "@/config/brand";
+import { BRAND_NAME, BRAND_SUB } from "@/config/brand";
+import { Logo } from "./Logo";
 import { useApp } from "./AppState";
 
 interface NavItem {
@@ -64,7 +65,7 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">{BRAND_MARK}</div>
+        <div className="brand-logo"><Logo size={40} /></div>
         <div className="brand-txt">
           <div className="brand-name">{BRAND_NAME}</div>
           <div className="brand-sub">{BRAND_SUB}</div>

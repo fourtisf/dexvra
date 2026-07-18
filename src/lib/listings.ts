@@ -6,7 +6,7 @@ import { syntheticTrend, visualFor } from "./visual";
 // list, never auto-indexed. These are real example listings (real contract
 // addresses); the provider layer enriches each with live market data by
 // address, and these figures are the fallback when a provider is unreachable.
-interface ListingRow {
+export interface ListingRow {
   chain: string;
   address: string;
   sym: string;
@@ -33,7 +33,7 @@ interface ListingRow {
 // opens with a live candlestick chart (Solana / ETH / Base / BSC — the
 // chains GeckoTerminal charts). TON & Robinhood stay supported chains for
 // real paid listings, but aren't seeded here (no reliable chart source).
-const ROWS: ListingRow[] = [
+export const SEED_ROWS: ListingRow[] = [
   { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", sym: "$BONK", name: "Bonk", emoji: "🐕", tier: "DIAMOND", trendingRank: 1, listedMin: 18, tax: 0, holders: 812000, price: 0.0000246, chg24h: 12.4, mcap: 1720000000, liq: 24000000, vol24h: 138000000, buyShare: 0.56, tx24h: 240000, twitter: "https://x.com/bonk_inu" },
   { chain: "solana", address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", sym: "$WIF", name: "dogwifhat", emoji: "🐶", tier: "GOLD", trendingRank: 3, listedMin: 44, tax: 0, holders: 214000, price: 1.83, chg24h: 6.1, mcap: 1830000000, liq: 31000000, vol24h: 96000000, buyShare: 0.52, tx24h: 88000, twitter: "https://x.com/dogwifcoin" },
   { chain: "solana", address: "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", sym: "$POPCAT", name: "Popcat", emoji: "🐱", tier: "PLATINUM", listedMin: 22, tax: 0, holders: 96000, price: 0.94, chg24h: 22.7, mcap: 924000000, liq: 12800000, vol24h: 41000000, buyShare: 0.6, tx24h: 52000 },
@@ -61,61 +61,64 @@ function perPeriod(base: number): Record<PeriodKey, number> {
   };
 }
 
-export function listingTokens(): BoardToken[] {
-  return ROWS.map((r) => {
-    const v = visualFor(r.sym);
-    const txns = {} as BoardToken["txns"];
-    (Object.keys(PERIOD_FACTOR) as PeriodKey[]).forEach((p) => {
-      const total = Math.round(r.tx24h * PERIOD_FACTOR[p]);
-      const buys = Math.round(total * r.buyShare);
-      txns[p] = { buys, sells: Math.max(total - buys, 0) };
-    });
-    const chg = perPeriod(r.chg24h);
-    const vol = perPeriod(r.vol24h);
-    const score = dexvraScore({ chg, liq: r.liq, taxPct: r.tax, txns, holders: r.holders });
-    return {
-      key: `${r.chain}:${r.address}`,
-      chain: r.chain,
-      address: r.address,
-      symbol: r.sym,
-      name: r.name,
-      logoUrl: null,
-      emoji: r.emoji,
-      gradient: v.gradient,
-      priceUsd: r.price,
-      mcap: r.mcap,
-      liq: r.liq,
-      chg,
-      vol,
-      txns,
-      holders: r.holders,
-      taxPct: r.tax,
-      ageMinutes: null,
-      trend: syntheticTrend(r.sym, r.chg24h),
-      verified: r.tier === "DIAMOND" || r.tier === "GOLD" || r.tier === "PLATINUM" || r.tier === "XPRESS",
-      source: "seed",
-      tier: r.tier,
-      trendingRank: r.trendingRank ?? null,
-      listedMinutesAgo: r.listedMin,
-      score,
-      poolAddress: null,
-      links: {
-        website: r.website ?? `https://dexscreener.com/${r.chain}/${r.address}`,
-        twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
-        telegram: r.telegram ?? null,
-      },
-    };
+export const verifiedTier = (tier: ListingRow["tier"]): boolean =>
+  tier === "DIAMOND" || tier === "GOLD" || tier === "PLATINUM" || tier === "XPRESS";
+
+/** Pure map from a listing row (seed or admin-managed store record) to a
+ *  BoardToken. The provider layer enriches the result with live market data. */
+export function rowToBoardToken(r: ListingRow): BoardToken {
+  const v = visualFor(r.sym);
+  const txns = {} as BoardToken["txns"];
+  (Object.keys(PERIOD_FACTOR) as PeriodKey[]).forEach((p) => {
+    const total = Math.round(r.tx24h * PERIOD_FACTOR[p]);
+    const buys = Math.round(total * r.buyShare);
+    txns[p] = { buys, sells: Math.max(total - buys, 0) };
   });
+  const chg = perPeriod(r.chg24h);
+  const vol = perPeriod(r.vol24h);
+  const score = dexvraScore({ chg, liq: r.liq, taxPct: r.tax, txns, holders: r.holders });
+  return {
+    key: `${r.chain}:${r.address}`,
+    chain: r.chain,
+    address: r.address,
+    symbol: r.sym,
+    name: r.name,
+    logoUrl: null,
+    emoji: r.emoji,
+    gradient: v.gradient,
+    priceUsd: r.price,
+    mcap: r.mcap,
+    liq: r.liq,
+    chg,
+    vol,
+    txns,
+    holders: r.holders,
+    taxPct: r.tax,
+    ageMinutes: null,
+    trend: syntheticTrend(r.sym, r.chg24h),
+    verified: verifiedTier(r.tier),
+    source: "seed",
+    tier: r.tier,
+    trendingRank: r.trendingRank ?? null,
+    listedMinutesAgo: r.listedMin,
+    score,
+    poolAddress: null,
+    links: {
+      website: r.website ?? `https://dexscreener.com/${r.chain}/${r.address}`,
+      twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
+      telegram: r.telegram ?? null,
+    },
+  };
+}
+
+export function rowsToBoardTokens(rows: ListingRow[]): BoardToken[] {
+  return rows.map(rowToBoardToken);
 }
 
 /** Addresses grouped by chain — the provider fetches live data for exactly
  *  these (the paid listings), never the whole chain. */
-export function listingAddressesByChain(): Record<string, string[]> {
+export function rowsToAddressesByChain(rows: ListingRow[]): Record<string, string[]> {
   const out: Record<string, string[]> = {};
-  for (const r of ROWS) (out[r.chain] ??= []).push(r.address);
+  for (const r of rows) (out[r.chain] ??= []).push(r.address);
   return out;
-}
-
-export function listingMeta(chain: string, address: string): ListingRow | undefined {
-  return ROWS.find((r) => r.chain === chain && r.address.toLowerCase() === address.toLowerCase());
 }

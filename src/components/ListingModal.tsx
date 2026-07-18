@@ -58,7 +58,9 @@ export function ListingModal() {
   };
 
   const pay = () => {
-    // Phase 1 stores locally; real on-chain payment + tx-signature verification is Phase 3.
+    // Store locally for the submitter's "My listings" view, and push to the
+    // server's pending queue so it shows up in the admin panel for review.
+    // (Real on-chain payment + tx-signature verification is a later phase.)
     addListing({
       symbol: "$" + form.sym.trim().toUpperCase().replace(/^\$+/, ""),
       name: form.name.trim(),
@@ -67,6 +69,20 @@ export function ListingModal() {
       tier: tier.key,
       status: "IN REVIEW",
     });
+    void fetch("/api/submit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chain: form.chain,
+        address: form.ca.trim(),
+        sym: form.sym.trim(),
+        name: form.name.trim(),
+        emoji: form.emoji.trim(),
+        tier: tier.key,
+        twitter: form.x.trim() || undefined,
+        telegram: form.tg.trim() || undefined,
+      }),
+    }).catch(() => {});
     setStep(4);
   };
 

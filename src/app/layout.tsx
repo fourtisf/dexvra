@@ -1,13 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/config/brand";
-import { AppProvider } from "@/components/AppState";
-import { ListingModal } from "@/components/ListingModal";
-import { PwaRegister } from "@/components/PwaRegister";
-import { Sidebar } from "@/components/Sidebar";
-import { Ticker } from "@/components/Ticker";
-import { Toast } from "@/components/Toast";
-import { Topbar } from "@/components/Topbar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -32,35 +25,13 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+// Root layout is intentionally minimal — the public chrome lives in
+// (site)/layout.tsx and the admin chrome in panel/layout.tsx, so /panel never
+// inherits the public sidebar/topbar.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        <AppProvider>
-          <div className="app">
-            <Sidebar />
-            <div className="main">
-              <Topbar />
-              <Ticker />
-              <main className="content">
-                {children}
-                <footer className="foot">
-                  <span>© 2026 {BRAND_NAME} · DYOR — nothing here is financial advice.</span>
-                  <span className="links">
-                    <a>Docs</a>
-                    <a>API</a>
-                    <a>X</a>
-                    <a>Telegram</a>
-                  </span>
-                </footer>
-              </main>
-            </div>
-          </div>
-          <ListingModal />
-          <Toast />
-          <PwaRegister />
-        </AppProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -1,6 +1,13 @@
 import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
-import { listingAddressesByChain, listingMeta, listingTokens } from "@/lib/listings";
+import {
+  SEED_ROWS,
+  rowToBoardToken,
+  rowsToAddressesByChain,
+  rowsToBoardTokens,
+  type ListingRow,
+} from "@/lib/listings";
+import { approvedRows } from "@/lib/store";
 import { dexvraScore } from "@/lib/score";
 import { syntheticTrend, visualFor } from "@/lib/visual";
 import type {
@@ -21,11 +28,23 @@ const FNG_TTL = 10 * 60_000;
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** Approved paid listings from the admin store; falls back to the seed if the
+ *  store can't be read. */
+async function loadRows(): Promise<ListingRow[]> {
+  try {
+    const rows = await approvedRows();
+    return rows.length ? rows : SEED_ROWS;
+  } catch {
+    return SEED_ROWS;
+  }
+}
+
 /** Merge live market data onto the paid listings. Any listing without live
  *  data keeps its fallback figures, so the board always renders. */
 async function loadListedTokens(): Promise<BoardToken[]> {
-  const byChain = listingAddressesByChain();
-  const fallback = listingTokens();
+  const rows = await loadRows();
+  const byChain = rowsToAddressesByChain(rows);
+  const fallback = rowsToBoardTokens(rows);
 
   const marketResults = await Promise.allSettled(
     Object.entries(byChain).map(async ([chain, addrs]) => ({
@@ -42,7 +61,6 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   return fallback.map((t) => {
     const m = live.get(t.chain)?.get(t.address.toLowerCase());
     if (!m) return t; // keep fallback figures for this listing
-    const meta = listingMeta(t.chain, t.address);
     const score = dexvraScore({ chg: m.chg, liq: m.liq, taxPct: t.taxPct, txns: m.txns, holders: t.holders });
     const v = visualFor(t.symbol);
     return {
@@ -59,7 +77,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
       score,
       source: "live" as const,
       ageMinutes: m.ageMinutes ?? t.ageMinutes,
-      listedMinutesAgo: meta?.listedMin ?? t.listedMinutesAgo,
+      listedMinutesAgo: t.listedMinutesAgo,
       poolAddress: m.poolAddress,
     };
   });
@@ -125,7 +143,7 @@ export async function getTokensPayload(): Promise<TokensPayload> {
   try {
     tokens = await cached("listings:market", PRICE_TTL, loadListedTokens);
   } catch {
-    tokens = listingTokens();
+    tokens = rowsToBoardTokens(await loadRows());
     live = false;
   }
   const signals = buildSignals(tokens);

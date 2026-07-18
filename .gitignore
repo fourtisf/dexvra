@@ -10,3 +10,7 @@ next-env.d.ts
 .DS_Store
 npm-debug.log*
 e2e-shots/
+
+# Admin listing store (runtime data, do not commit)
+data/
+.env.local

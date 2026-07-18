@@ -2,8 +2,9 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { BRAND_MARK, BRAND_NAME } from "@/config/brand";
+import { BRAND_NAME } from "@/config/brand";
 import { fmtCap } from "@/lib/format";
+import { Logo } from "./Logo";
 import { useApp } from "./AppState";
 
 export function Topbar() {
@@ -28,7 +29,7 @@ export function Topbar() {
   return (
     <header className="topbar">
       <div className="brand-top">
-        <div className="brand-mark">{BRAND_MARK}</div>
+        <div className="brand-logo sm"><Logo size={32} /></div>
         <div className="brand-name">{BRAND_NAME}</div>
       </div>
       <label className="search">
