@@ -19,10 +19,14 @@ export interface StoredListing extends ListingRow {
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const FILE = path.join(DATA_DIR, "listings.json");
+// Cap the public-submission (pending) queue so a flood can't grow the store
+// without bound. Oldest pending rows are evicted once the cap is hit.
+const MAX_PENDING = 200;
 
 let cache: StoredListing[] | null = null;
 let writeChain: Promise<void> = Promise.resolve();
 let tmpSeq = 0;
+let createdSeq = 1; // monotonic stamp for FIFO ordering of new rows
 
 function seed(): StoredListing[] {
   return SEED_ROWS.map((r, i) => ({
@@ -97,14 +101,28 @@ export async function addListing(rec: ListingRow, opts?: { status?: ListingStatu
       ...rec,
       id: dupIdx >= 0 ? rows[dupIdx].id : id,
       status: opts?.status ?? "pending",
-      createdAt: dupIdx >= 0 ? rows[dupIdx].createdAt : 0,
+      createdAt: dupIdx >= 0 ? rows[dupIdx].createdAt : createdSeq++,
       source: opts?.source ?? "submission",
     };
     if (dupIdx >= 0) {
       rows[dupIdx] = created;
       return rows;
     }
-    return [created, ...rows];
+    const next = [created, ...rows];
+    // Bound the pending queue: evict the oldest pending rows past the cap.
+    if (created.status === "pending") {
+      const pending = next.filter((r) => r.status === "pending");
+      if (pending.length > MAX_PENDING) {
+        const evict = new Set(
+          pending
+            .sort((a, b) => a.createdAt - b.createdAt)
+            .slice(0, pending.length - MAX_PENDING)
+            .map((r) => r.id),
+        );
+        return next.filter((r) => !evict.has(r.id));
+      }
+    }
+    return next;
   });
   return created;
 }

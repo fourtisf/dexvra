@@ -50,7 +50,9 @@ sudo certbot --nginx -d dexvra.fun -d www.dexvra.fun
 ```
 
 `proxy_set_header Host $host` is essential — the app decides admin-vs-public by
-the `Host` header.
+the `Host` header. `proxy_set_header X-Real-IP $remote_addr` is also required —
+the login/submit rate limiters key on it (they deliberately ignore the
+client-forgeable leftmost `X-Forwarded-For` hop).
 
 ## 3. Restart
 
