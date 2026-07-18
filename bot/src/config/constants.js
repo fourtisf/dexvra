@@ -13,6 +13,7 @@ const BOT_ROOT = path.join(__dirname, "..", "..");
 
 // ── Telegram ───────────────────────────────────────────────────────────────
 const BOT_TOKEN = env.BOT_TOKEN || "";
+const ADMIN_BOT_TOKEN = env.ADMIN_BOT_TOKEN || ""; // @dexvraadminbot — template editor
 
 // Channels the bot posts to (must be admin in each). Announce == @dexvraio.
 const CHANNELS = {
@@ -105,6 +106,7 @@ const PUMP_ENABLED = bool(env.PUMP_ENABLED, true);
 module.exports = {
   BOT_ROOT,
   BOT_TOKEN,
+  ADMIN_BOT_TOKEN,
   CHANNELS,
   LOG_CHANNEL,
   ADMIN_IDS,

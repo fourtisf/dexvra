@@ -1,17 +1,32 @@
-// /start and /home — full session reset, then the main menu. Private-chat only
-// (the bot's purchase flows are 1:1). In groups it just points users to the DM.
-const { sendCard, answer } = require("../helpers/message");
-const { mainMenu, WELCOME } = require("./menu");
+// /start and /home — full session reset, then the main menu (editable `welcome`
+// template + optional admin-uploaded banner image). Private-chat only.
+const fss = require("node:fs");
+const { sendCard, sendPhotoCard, answer } = require("../helpers/message");
+const { mainMenu } = require("./menu");
+const tpl = require("../templates");
 const log = require("../helpers/logger");
 
 function resetSession(ctx) {
-  // Wipe any in-flight listing/trend/banner state, keep nothing.
   ctx.session = {};
+}
+
+function bannerPhoto() {
+  try {
+    if (fss.existsSync(tpl.BANNER_PATH) && fss.statSync(tpl.BANNER_PATH).size > 0) {
+      return { source: tpl.BANNER_PATH };
+    }
+  } catch {
+    /* no banner */
+  }
+  return null;
 }
 
 async function showHome(ctx) {
   resetSession(ctx);
-  await sendCard(ctx, WELCOME, mainMenu());
+  const text = tpl.t("welcome");
+  const banner = bannerPhoto();
+  if (banner) await sendPhotoCard(ctx, banner, text, mainMenu());
+  else await sendCard(ctx, text, mainMenu());
 }
 
 async function startHandler(ctx) {

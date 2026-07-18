@@ -2,6 +2,7 @@
 // middleware + handlers applied, WITHOUT launching (no network). Catches
 // missing exports, bad requires, and registration errors. `npm run check`.
 process.env.BOT_TOKEN = process.env.BOT_TOKEN || "123456:TEST_TOKEN_SMOKE";
+process.env.ADMIN_BOT_TOKEN = process.env.ADMIN_BOT_TOKEN || "123456:TEST_ADMIN_SMOKE";
 process.env.INTERNAL_API_TOKEN =
   process.env.INTERNAL_API_TOKEN || "smoke_smoke_smoke_smoke_smoke_1234";
 
@@ -11,6 +12,8 @@ const modules = [
   "../src/config/chains",
   "../src/config/constants",
   "../src/config/packages",
+  "../src/templates",
+  "../src/admin/adminBot",
   "../src/api/dexvra",
   "../src/marketdata",
   "../src/dexscreener",
@@ -68,6 +71,14 @@ try {
 } catch (e) {
   failed++;
   console.error(`FAIL applyMiddleware: ${e.stack || e.message}`);
+}
+
+try {
+  require("../src/admin/adminBot").build();
+  console.log("OK  admin bot built");
+} catch (e) {
+  failed++;
+  console.error(`FAIL adminBot.build: ${e.stack || e.message}`);
 }
 
 if (failed) {

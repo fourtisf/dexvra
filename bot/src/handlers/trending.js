@@ -9,6 +9,7 @@ const { startPayment } = require("./pay");
 const api = require("../api/dexvra");
 const menu = require("./menu");
 const { Markup } = menu;
+const tpl = require("../templates");
 
 function freshSession(ctx, patch) {
   const prev = ctx.session && ctx.session.latest_bot_message;
@@ -19,11 +20,7 @@ async function entryTrending(ctx) {
   await answer(ctx);
   if (ctx.chat && ctx.chat.type !== "private") return;
   freshSession(ctx, { type: "trend", awaitingField: "trend_ca" });
-  await sendCard(
-    ctx,
-    "🔥 <b>Book a Trending slot</b>\n\nSend the <b>contract address</b> (or Dexvra token link) of your <b>already-listed</b> token:",
-    menu.withHome([]),
-  );
+  await sendCard(ctx, tpl.t("trending_ca_prompt"), menu.withHome([]));
 }
 
 async function handleText(ctx) {
@@ -55,7 +52,7 @@ async function handleText(ctx) {
   if (!listing) {
     return sendCard(
       ctx,
-      "❌ I couldn't find that token listed on Dexvra.\n\nList it first (⚡ Xpress or 🏆 Listing &amp; Trending), then come back to book a Trending slot.",
+      tpl.t("trending_not_found"),
       Markup.inlineKeyboard([
         [Markup.button.callback("⚡ Xpress Listing", "submit_coin")],
         [Markup.button.callback("🏠 Home", "home")],
