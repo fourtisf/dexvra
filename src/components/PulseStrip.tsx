@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { CHAINS } from "@/config/chains";
 import { fmtCap } from "@/lib/format";
 import { BRAND_NAME } from "@/config/brand";
@@ -119,8 +120,8 @@ export function PulseStrip() {
       <div className="wcard">
         <div className="wcard-head">
           <div className="ic">⚡</div>
-          <h3>Wire</h3>
-          <a className="more">View all</a>
+          <h3>Signals</h3>
+          <Link className="more" href="/signals">View all</Link>
         </div>
         <div className="wire-list">
           {(data?.wire ?? []).map((w, i) => (

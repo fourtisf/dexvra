@@ -2,6 +2,7 @@
 
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
+import { scoreTier } from "@/lib/score";
 import { useApp } from "./AppState";
 import { Coin } from "./Coin";
 
@@ -27,10 +28,12 @@ export function TokenDetailModal() {
           <div className="detail-head">
             <Coin token={t} size={52} fontSize={25} />
             <div>
-              <div className="m-title" style={{ fontSize: 20 }}>{t.symbol}</div>
+              <div className="m-title" style={{ fontSize: 20, display: "flex", alignItems: "center", gap: 8 }}>
+                {t.symbol}
+                <span className={`tier-chip tier-${t.tier}`}>{t.tier.replace("FASTTRACK", "FAST-TRACK")}</span>
+              </div>
               <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
-                {t.name} · <span style={{ color: c?.color }}>{c?.label ?? t.chain}</span>
-                {t.ageMinutes != null && <> · listed {fmtAge(t.ageMinutes)} ago</>}
+                {t.name} · <span style={{ color: c?.color }}>{c?.label ?? t.chain}</span> · listed {fmtAge(t.listedMinutesAgo)} ago
               </div>
             </div>
             <div className="detail-price">
@@ -46,6 +49,14 @@ export function TokenDetailModal() {
             <path d={`${d} L320,72 L0,72 Z`} fill={col} fillOpacity=".14" />
             <path d={d} fill="none" stroke={col} strokeWidth="2.2" strokeLinecap="round" />
           </svg>
+
+          <div className="dscore-banner" style={{ borderColor: scoreTier(t.score).color }}>
+            <div className="dsb-num" style={{ color: scoreTier(t.score).color }}>{t.score}</div>
+            <div className="dsb-meta">
+              <div className="dsb-title">Dexvra Score · <span style={{ color: scoreTier(t.score).color }}>{scoreTier(t.score).label}</span></div>
+              <div className="dsb-sub">Signal-based (momentum · liquidity · tax · buy pressure). Not votes.</div>
+            </div>
+          </div>
 
           <div className="detail-stats">
             <div className="ds"><div className="k">MCAP</div><div className="v">{fmtCap(t.mcap)}</div></div>

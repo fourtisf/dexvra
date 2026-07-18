@@ -1,12 +1,12 @@
 "use client";
 
-import { CHAINS } from "@/config/chains";
 import type { BoardToken } from "@/lib/types";
 import { coinBg } from "@/lib/visual";
 import type { CSSProperties } from "react";
+import { ChainLogo } from "./ChainLogo";
 
 /** Emoji-gradient coin (prototype look) that upgrades to the real logo when
- *  the provider supplies one. Optional chain badge dot. */
+ *  the provider supplies one. The chain badge is the real chain logo. */
 export function Coin({
   token,
   size,
@@ -24,7 +24,7 @@ export function Coin({
     style.height = size;
   }
   if (fontSize) style.fontSize = fontSize;
-  const chain = CHAINS[token.chain];
+  const badgeSize = size ? Math.max(13, Math.round(size * 0.42)) : 16;
   const inner = (
     <div className="coin" style={style}>
       {token.logoUrl ? (
@@ -35,11 +35,13 @@ export function Coin({
       )}
     </div>
   );
-  if (!withBadge || !chain) return inner;
+  if (!withBadge) return inner;
   return (
     <span className="coin-wrap">
       {inner}
-      <span className="cbadge" style={{ background: chain.color }} />
+      <span className="cbadge cbadge-logo">
+        <ChainLogo chain={token.chain} size={badgeSize} />
+      </span>
     </span>
   );
 }

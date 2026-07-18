@@ -6,6 +6,8 @@ export interface TxSplit {
   sells: number;
 }
 
+export type ListingTier = "TRENCH" | "EXPRESS" | "FASTTRACK";
+
 export interface BoardToken {
   key: string; // `${chain}:${address}` — stable identity across refreshes
   chain: string;
@@ -27,6 +29,19 @@ export interface BoardToken {
   trend: number[]; // sparkline points, oldest → newest
   verified: boolean;
   source: "live" | "seed";
+  // paid-listing model: every token on Dexvra is a paid listing
+  tier: ListingTier;
+  listedMinutesAgo: number; // how long ago the project paid to list
+  score: number; // Dexvra Score 0–100 (signal-based, not votes)
+}
+
+export interface Signal {
+  kind: "whale" | "lock" | "volume" | "listing" | "score";
+  color: string;
+  symbol: string;
+  chain: string;
+  text: string;
+  minutesAgo: number;
 }
 
 export interface FearGreed {
@@ -52,6 +67,7 @@ export interface TokensPayload {
   tokens: BoardToken[];
   heat: ChainHeat[];
   wire: WireItem[];
+  signals: Signal[];
   trackedVol24h: number;
   live: boolean;
   updatedAt: number;

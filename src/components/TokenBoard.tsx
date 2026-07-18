@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
+import { scoreTier } from "@/lib/score";
 import { Coin } from "./Coin";
 import { useApp } from "./AppState";
 
@@ -155,12 +156,12 @@ function StdRow({
         </div>
       </div>
       <div className="c-info info-cell">
+        <span className="dscore" style={{ color: scoreTier(t.score).color }} title="Dexvra Score">
+          <span className="dl">DXS</span>
+          {t.score}
+        </span>
         {t.taxPct != null && (
           <span className={`ichip ${t.taxPct === 0 ? "good" : ""}`}>🛡 {t.taxPct}%</span>
-        )}
-        {t.holders != null && <span className="ichip">👤 {fmtNum(t.holders)}</span>}
-        {t.taxPct == null && t.holders == null && (
-          <span className="ichip">⏱ {fmtAge(t.ageMinutes)}</span>
         )}
       </div>
       <StarButton token={t} />
@@ -245,7 +246,7 @@ export function StdBoardHead({
       {col("liq", "Liquidity", "c-liq")}
       {col("vol", `Vol · ${period}`, "c-vol")}
       {col("tx", `Txns · ${period}`, "c-txns")}
-      <div className="c-info">Token info</div>
+      <div className="c-info">Score</div>
       <div></div>
     </div>
   );

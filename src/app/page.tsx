@@ -5,6 +5,7 @@ import { useApp } from "@/components/AppState";
 import { PromoCarousel } from "@/components/PromoCarousel";
 import { PulseStrip } from "@/components/PulseStrip";
 import { StdBoard } from "@/components/TokenBoard";
+import { ChainLogo } from "@/components/ChainLogo";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
 import type { PeriodKey } from "@/lib/types";
 
@@ -31,7 +32,7 @@ export default function HomePage() {
         <div className="sec-head">
           <div className="sec-title">
             <div className="flame">🔥</div>
-            <h2>Top Trending</h2>
+            <h2>Trending Listings</h2>
           </div>
           <div className="ttabs">
             {PERIODS.map((p) => (
@@ -64,7 +65,7 @@ export default function HomePage() {
               className={`tab ${chain === id ? "active" : ""}`}
               onClick={() => setChain(id)}
             >
-              <span className="cdot" style={{ background: CHAINS[id].color, color: CHAINS[id].color }} />
+              <ChainLogo chain={id} size={15} />
               {CHAINS[id].label}
             </button>
           ))}
