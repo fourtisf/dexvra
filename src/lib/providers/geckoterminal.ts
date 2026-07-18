@@ -16,6 +16,7 @@ export interface LiveMarket {
   txns: Record<PeriodKey, TxSplit>;
   ageMinutes: number | null;
   logoUrl: string | null;
+  poolAddress: string | null; // top pool contract — for the chart embed
 }
 
 const num = (s: unknown): number | null => {
@@ -41,6 +42,7 @@ interface GtToken {
 interface GtPool {
   id: string;
   attributes: {
+    address?: string;
     reserve_in_usd: string | null;
     pool_created_at: string | null;
     price_change_percentage: Partial<Record<"m5" | "h1" | "h6" | "h24", string>>;
@@ -49,7 +51,11 @@ interface GtPool {
   };
 }
 
-function mapMarket(token: GtToken, pool: GtPool | undefined): LiveMarket | null {
+// pool id looks like "<network>_<poolAddress>"
+const poolAddrOf = (pool: GtPool | undefined, id: string | undefined): string | null =>
+  pool?.attributes?.address ?? (id ? id.split("_").slice(1).join("_") || null : null);
+
+function mapMarket(token: GtToken, pool: GtPool | undefined, poolId: string | undefined): LiveMarket | null {
   const price = num(token.attributes.price_usd);
   if (price == null || price <= 0) return null;
   const pa = pool?.attributes;
@@ -82,6 +88,7 @@ function mapMarket(token: GtToken, pool: GtPool | undefined): LiveMarket | null 
     txns: { "5m": tx(pa?.transactions?.m5), "1h": tx(pa?.transactions?.h1), "6h": t6, "24h": t24 },
     ageMinutes,
     logoUrl: img && img !== "missing.png" ? img : null,
+    poolAddress: poolAddrOf(pool, poolId),
   };
 }
 
@@ -104,7 +111,7 @@ export async function fetchListedMarket(
   const poolsById = new Map((json.included ?? []).map((p) => [p.id, p]));
   for (const token of json.data ?? []) {
     const topId = token.relationships?.top_pools?.data?.[0]?.id;
-    const market = mapMarket(token, topId ? poolsById.get(topId) : undefined);
+    const market = mapMarket(token, topId ? poolsById.get(topId) : undefined, topId);
     if (market) out.set(token.attributes.address.toLowerCase(), market);
   }
   return out;

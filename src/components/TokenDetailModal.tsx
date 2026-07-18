@@ -12,10 +12,17 @@ type ChartState = { network: string; poolAddress: string } | null | undefined; /
 
 function DetailContent({ t }: { t: BoardToken }) {
   const { closeDetail, watchlist, toggleWatch, toast } = useApp();
-  const [chart, setChart] = useState<ChartState>(undefined);
+  const network = CHAINS[t.chain]?.geckoNetwork ?? null;
+  // The pool address already comes with the live token data (same fetch that
+  // loads price/volume), so the chart embeds instantly with no extra call.
+  const initial: ChartState =
+    network && t.poolAddress ? { network, poolAddress: t.poolAddress } : undefined;
+  const [chart, setChart] = useState<ChartState>(initial);
 
-  // Resolve the token's top pool, then embed the real GeckoTerminal chart.
+  // Fallback only when the token arrived without a pool (e.g. offline seed):
+  // ask the API to resolve it once.
   useEffect(() => {
+    if (initial) return; // already have the pool → nothing to do
     let stop = false;
     setChart(undefined);
     fetch(`/api/pool?chain=${encodeURIComponent(t.chain)}&address=${encodeURIComponent(t.address)}`)
@@ -29,6 +36,7 @@ function DetailContent({ t }: { t: BoardToken }) {
     return () => {
       stop = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t.chain, t.address]);
 
   const c = CHAINS[t.chain];

@@ -33,6 +33,7 @@ export interface BoardToken {
   tier: ListingTier;
   listedMinutesAgo: number; // how long ago the project paid to list
   score: number; // Dexvra Score 0–100 (signal-based, not votes)
+  poolAddress: string | null; // top pool — used to embed the GeckoTerminal chart
 }
 
 export interface Signal {

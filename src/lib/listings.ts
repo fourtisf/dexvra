@@ -96,6 +96,7 @@ export function listingTokens(): BoardToken[] {
       tier: r.tier,
       listedMinutesAgo: r.listedMin,
       score,
+      poolAddress: null,
     };
   });
 }

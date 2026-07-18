@@ -60,6 +60,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
       source: "live" as const,
       ageMinutes: m.ageMinutes ?? t.ageMinutes,
       listedMinutesAgo: meta?.listedMin ?? t.listedMinutesAgo,
+      poolAddress: m.poolAddress,
     };
   });
 }
