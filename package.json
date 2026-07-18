@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "gen:icons": "node scripts/gen-icons.mjs",
+    "gen:icons": "node scripts/gen-brand-assets.mjs",
     "test:e2e": "node scripts/e2e-smoke.mjs"
   },
   "dependencies": {

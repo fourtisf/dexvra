@@ -1,4 +1,4 @@
-# {{BRAND}} — Multi-Chain Token Listing & Discovery
+# Dexvra — Multi-Chain Token Listing & Discovery
 
 Phase 1 build of the token listing & discovery platform described in
 [`docs/HANDOFF.md`](docs/HANDOFF.md). The UI/UX source of truth is the
@@ -56,7 +56,7 @@ The brand name is a placeholder: change it once in `src/config/brand.ts`.
 npm install
 npm run dev        # http://localhost:3000
 npm run build      # production build
-npm run gen:icons  # regenerate PWA icons (no image deps needed)
+npm run gen:icons  # regenerate all brand assets (favicons, logo, OG) from the SVG mark
 ```
 
 ## Environment (later phases)
