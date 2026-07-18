@@ -39,26 +39,53 @@ function demoTrades(t: BoardToken): Trade[] {
   return out;
 }
 
+const POLL_MS = 12_000;
+const tradeKey = (tr: Trade) => `${tr.ts}:${tr.trader}:${tr.usd.toFixed(2)}`;
+
 export function TokenTrades({ t }: { t: BoardToken }) {
   const [trades, setTrades] = useState<Trade[] | null>(null);
+  const [live, setLive] = useState(false);
   const network = CHAINS[t.chain]?.geckoNetwork ?? null;
+  const canLive = Boolean(network && t.poolAddress);
 
   useEffect(() => {
     let stop = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setTrades(null);
-    if (!network || !t.poolAddress) {
+    setLive(false);
+
+    if (!canLive) {
       setTrades(demoTrades(t));
       return;
     }
-    fetch(`/api/trades?chain=${encodeURIComponent(t.chain)}&pool=${encodeURIComponent(t.poolAddress)}`)
-      .then((r) => r.json())
-      .then((j: { trades: Trade[] }) => {
+
+    const url = `/api/trades?chain=${encodeURIComponent(t.chain)}&pool=${encodeURIComponent(
+      t.poolAddress as string,
+    )}`;
+
+    const tick = async () => {
+      try {
+        const r = await fetch(url, { cache: "no-store" });
+        const j = (await r.json()) as { trades?: Trade[] };
         if (stop) return;
-        setTrades(j.trades && j.trades.length ? j.trades : demoTrades(t));
-      })
-      .catch(() => !stop && setTrades(demoTrades(t)));
+        if (j.trades && j.trades.length) {
+          setTrades(j.trades);
+          setLive(true);
+        } else {
+          // Never blank the panel — keep demo only until real trades arrive.
+          setTrades((prev) => (prev && prev.length ? prev : demoTrades(t)));
+        }
+      } catch {
+        if (!stop) setTrades((prev) => (prev && prev.length ? prev : demoTrades(t)));
+      } finally {
+        if (!stop) timer = setTimeout(tick, POLL_MS);
+      }
+    };
+    tick();
+
     return () => {
       stop = true;
+      if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t.chain, t.poolAddress]);
@@ -67,7 +94,12 @@ export function TokenTrades({ t }: { t: BoardToken }) {
 
   return (
     <div className="trades panel" style={{ padding: 0 }}>
-      <div className="trades-head">Transactions</div>
+      <div className="trades-head">
+        Transactions
+        <span className={`trades-live ${live ? "on" : ""}`}>
+          <span className="dot-live" /> {live ? "Live" : "Recent"}
+        </span>
+      </div>
       <div className="trades-scroll">
         <div className="trades-row trades-hd">
           <div>Time</div>
@@ -80,8 +112,8 @@ export function TokenTrades({ t }: { t: BoardToken }) {
         {trades == null ? (
           <div className="board-loading"><span className="dot-live" /> Loading trades…</div>
         ) : (
-          trades.map((tr, i) => (
-            <div className={`trades-row ${tr.kind}`} key={i}>
+          trades.map((tr) => (
+            <div className={`trades-row ${tr.kind}`} key={tradeKey(tr)}>
               <div className="tr-time">{ago(tr.ts)} ago</div>
               <div className={`tr-type ${tr.kind}`}>{tr.kind === "buy" ? "▲ Buy" : "▼ Sell"}</div>
               <div className="c-num tr-usd">${fmtNum(tr.usd)}</div>

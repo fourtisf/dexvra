@@ -11,6 +11,7 @@ import { TokenTrades } from "@/components/TokenTrades";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
+import { tierLabel, tierTip } from "@/lib/tiers";
 
 export default function TokenPage() {
   const params = useParams<{ chain: string; address: string }>();
@@ -84,7 +85,7 @@ export default function TokenPage() {
           <div className="tp-sym">
             {t.symbol}
             {t.verified && <span className="verified-badge" title="Verified">✓</span>}
-            <span className={`tier-chip tier-${t.tier}`}>{t.tier.replace("FASTTRACK", "FAST-TRACK")}</span>
+            <span className={`tier-chip tier-${t.tier}`} title={tierTip(t.tier)}>{tierLabel(t.tier)}</span>
           </div>
           <div className="tp-nm">
             {t.name} · <ChainLogo chain={t.chain} size={14} style={{ verticalAlign: "-2px" }} />{" "}
@@ -141,7 +142,11 @@ export default function TokenPage() {
         </div>
 
         <aside className="tp-side">
-          <div className="dscore-banner" style={{ borderColor: st.color }}>
+          <div
+            className="dscore-banner"
+            style={{ borderColor: st.color }}
+            title="Dexvra Score (0–100) — a transparent on-chain blend: momentum 30% · liquidity depth 25% · tax/safety 15% · buy pressure 15% · holder base 15%. Deterministic, not AI, not paid votes."
+          >
             <div className="dsb-num" style={{ color: st.color }}>{t.score}</div>
             <div className="dsb-meta">
               <div className="dsb-title">Dexvra Score · <span style={{ color: st.color }}>{st.label}</span></div>

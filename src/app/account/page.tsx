@@ -3,6 +3,7 @@
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { CHAINS } from "@/config/chains";
+import { tierLabel } from "@/lib/tiers";
 
 export default function AccountPage() {
   const { wallet, toggleWallet, watchlist, myListings, openListing } = useApp();
@@ -57,7 +58,7 @@ export default function AccountPage() {
                 <div>
                   <div style={{ fontFamily: "var(--fd)", fontWeight: 700, fontSize: 14 }}>{m.symbol}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
-                    {m.name} · <span style={{ color: c?.color }}>{c?.label ?? m.chain}</span> · {m.tier}
+                    {m.name} · <span style={{ color: c?.color }}>{c?.label ?? m.chain}</span> · {tierLabel(m.tier)}
                   </div>
                 </div>
                 <span className="status-chip">{m.status}</span>

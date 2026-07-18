@@ -5,7 +5,9 @@ import type { Trade } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const TRADES_TTL = 20_000;
+// Short TTL so the client's ~12s poll gets genuinely fresh trades, while the
+// cache still coalesces concurrent viewers of the same pool into one upstream hit.
+const TRADES_TTL = 8_000;
 
 interface GtTrade {
   attributes: {
@@ -20,14 +22,16 @@ interface GtTrade {
   };
 }
 
-async function fetchTrades(network: string, pool: string): Promise<Trade[]> {
+async function fetchOnce(network: string, pool: string): Promise<Trade[]> {
   const res = await fetch(
-    `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/trades`,
+    // trade_volume_in_usd_greater_than=0 keeps out dust; GeckoTerminal returns
+    // the most recent ~300 trades for the pool — we surface the freshest 60.
+    `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/trades?trade_volume_in_usd_greater_than=0`,
     { headers: { accept: "application/json;version=20230302" }, signal: AbortSignal.timeout(9000), cache: "no-store" },
   );
   if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
   const json = (await res.json()) as { data?: GtTrade[] };
-  return (json.data ?? []).slice(0, 40).map((tr) => {
+  return (json.data ?? []).slice(0, 60).map((tr) => {
     const a = tr.attributes;
     const buy = a.kind === "buy";
     return {
@@ -39,6 +43,17 @@ async function fetchTrades(network: string, pool: string): Promise<Trade[]> {
       trader: a.tx_from_address ?? "",
     };
   });
+}
+
+// One retry after a short delay — GeckoTerminal occasionally rate-limits a
+// first hit; a single retry recovers it without stalling the panel on demo.
+async function fetchTrades(network: string, pool: string): Promise<Trade[]> {
+  try {
+    return await fetchOnce(network, pool);
+  } catch {
+    await new Promise((r) => setTimeout(r, 600));
+    return fetchOnce(network, pool);
+  }
 }
 
 export async function GET(req: NextRequest) {
