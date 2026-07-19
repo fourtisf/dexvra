@@ -114,6 +114,96 @@ home - Back to the main menu
 
 ---
 
-## 5. X (Twitter) bio
+## 5. Channel kit — @dexvralisting (deep set)
+
+**Description (channel info):**
+> Every token that lists on Dexvra, the second it goes live — CA, chain, price, market cap & socials. Paid listings only: projects choose to be here.
+> ⚡ Get listed in minutes → @dexvrabot
+
+**Pinned post:**
+> 🚨 **DEXVRA LISTING ALERTS**
+>
+> Every post here is a token that just went live on dexvra.io — with its contract address, chain, launch price, market cap and official links, captured at listing time.
+>
+> **Why this channel is different**
+> 💎 Paid listings only — every project here chose to list. No scraped tokens, no auto-indexed noise.
+> ⚡ Posted the moment the listing activates — you see it before the crowd.
+> 🌐 Every token gets a live page on dexvra.io: chart, price, safety scan.
+>
+> **Want your token here?**
+> 👉 @dexvrabot — paste your CA, pick a tier, pay on-chain. Live in minutes.
+> 💎 Diamond · 🥇 Gold · 🏆 Platinum · 🥈 Silver · 🥉 Bronze · ⚡ Xpress
+>
+> 🌐 dexvra.io · 🔥 @dexvratrending · 📢 @dexvraio
+
+**Rotating post 1 — "why Diamond":**
+> 💎 **What Diamond gets you**
+>
+> Rank #1 placement on the dexvra.io board · the Diamond badge on every post · an announcement in @dexvraio · the longest bundled Trending run of any tier.
+>
+> One payment. Everything posts automatically.
+> 👉 @dexvrabot → 🏆 Listing & Trending
+
+**Rotating post 2 — "xpress":**
+> ⚡ **Listed in the next 5 minutes.**
+>
+> Xpress Listing: paste your contract address in @dexvrabot, confirm, pay — and your token is live on the board with a launch post right here.
+>
+> No review queue. No waiting. No forms.
+
+**Rotating post 3 — "9 chains":**
+> 🌐 **Launching on Sui? Plasma? TON?**
+>
+> Dexvra lists across 9 chains — Solana, BSC, Ethereum, Base, Robinhood, Tron, TON, Sui and Plasma — with live pricing on every token page.
+>
+> Whatever chain you ship on, your listing lands here. 👉 @dexvrabot
+
+---
+
+## 6. Channel kit — @dexvratrending (deep set)
+
+**Description (channel info):**
+> Tokens holding a featured Trending slot on dexvra.io — activations announced live, board updated in real time. Slots from 3 to 48 hours.
+> 🔥 Book yours → @dexvrabot
+
+**Pinned post:**
+> 🔥 **DEXVRA TRENDING**
+>
+> This channel announces every token that takes a featured slot on the dexvra.io Trending board — the first thing every visitor sees.
+>
+> **How Trending works**
+> 📈 Slots run 3 · 6 · 12 · 24 · 48 hours — longer runs, bigger discounts
+> 🚀 Activation is announced here the second the slot starts
+> 🌐 Your token sits on the live board with price, chart and score
+>
+> **Put your token on the board**
+> 👉 @dexvrabot → 🔥 Trending Slots — takes 2 minutes, pays on-chain
+>
+> 🌐 dexvra.io · 🚨 @dexvralisting · 📢 @dexvraio
+
+**Rotating post 1 — "front page math":**
+> 📈 **The front page isn't luck. It's a slot.**
+>
+> Every dexvra.io visitor lands on the Trending board first. A 24-hour slot keeps your token in that first look — all day, every visit.
+>
+> Book it in 2 minutes: @dexvrabot → 🔥 Trending Slots
+
+**Rotating post 2 — "48h discount":**
+> 🔥 **48 hours. Biggest discount. Maximum exposure.**
+>
+> The 48h Trending slot carries the deepest discount of any duration — two full days on the board, announced here the moment it starts.
+>
+> 👉 @dexvrabot
+
+**Rotating post 3 — "already listed?":**
+> 🚀 **Already listed on Dexvra?**
+>
+> Add a Trending run: open @dexvrabot → 🔥 Trending Slots → paste your CA → pick a duration. Your token jumps onto the featured board the second payment clears.
+>
+> Not listed yet? Start with ⚡ Xpress — live in minutes.
+
+---
+
+## 7. X (Twitter) bio
 
 > The visibility platform for tokens. Live discovery board · Trending slots · Banner campaigns — across web, Telegram & X. List in minutes → t.me/dexvrabot
