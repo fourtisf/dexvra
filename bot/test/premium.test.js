@@ -136,6 +136,38 @@ test("sanitizeVar neutralizes markup injection in user values", () => {
   assert.strictEqual(premium.sanitizeVar(null), "");
 });
 
+test("sanitizeUrl: a ')' in a URL cannot close a markup link early", () => {
+  const url = premium.sanitizeUrl("https://x.io/a)(malicious[b]`c");
+  assert.ok(!url.includes(")") && !url.includes("(") && !url.includes("[") && !url.includes("`"));
+  const { text, entities } = premium.parse(`[Website](${url}) tail`);
+  assert.strictEqual(text, "Website tail"); // ONE link, nothing injected
+  assert.strictEqual(entities.length, 1);
+  assert.strictEqual(entities[0].type, "text_link");
+});
+
+test("hasAuthoredFormatting: auto-detected url/command entities do NOT count", () => {
+  assert.ok(!premium.hasAuthoredFormatting([{ type: "url", offset: 0, length: 10 }]));
+  assert.ok(!premium.hasAuthoredFormatting([{ type: "bot_command", offset: 0, length: 5 }]));
+  assert.ok(premium.hasAuthoredFormatting([{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "1" }]));
+  assert.ok(premium.hasAuthoredFormatting([{ type: "bold", offset: 0, length: 3 }]));
+});
+
+test("substituteEntities: rich {text, entities} var merges fragment entities at insertion point", () => {
+  const frag = premium.parse("🚨 Listing: [open ↗](https://t.me/x/1)");
+  const r = premium.substituteEntities(
+    "Done! {links} 🎉",
+    [{ type: "bold", offset: 0, length: 5 }],
+    { links: frag },
+  );
+  assert.strictEqual(r.text, "Done! 🚨 Listing: open ↗ 🎉");
+  const link = r.entities.find((e) => e.type === "text_link");
+  assert.ok(link, "fragment link entity survived");
+  // link points at "open ↗" in the FINAL string
+  assert.strictEqual(r.text.slice(link.offset, link.offset + link.length), "open ↗");
+  // template's own bold untouched
+  assert.deepStrictEqual(r.entities.find((e) => e.type === "bold"), { type: "bold", offset: 0, length: 5 });
+});
+
 test("looksLikeHtml: real tags yes, bare & / < no", () => {
   assert.ok(premium.looksLikeHtml("<b>x</b>"));
   assert.ok(premium.looksLikeHtml('<a href="u">x</a>'));
@@ -175,6 +207,38 @@ test("render: channel post default substitutes vars into entities payload", () =
   assert.ok(r.entities.some((e) => e.type === "code")); // `address`
   // every entity within bounds
   for (const e of r.entities) assert.ok(e.offset + e.length <= r.text.length);
+});
+
+test("render: legacy HTML template gets markup-stripped, HTML-escaped vars", async () => {
+  // simulate an admin-saved HTML template (pre-markup era)
+  const os = require("node:os");
+  const fss = require("node:fs");
+  const path = require("node:path");
+  // isolate template storage
+  const tmp = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-tpl-"));
+  fss.writeFileSync(
+    path.join(tmp, "templates.json"),
+    JSON.stringify({ payment_snag: "<b>Snag!</b> Order {order} — sorry." }),
+  );
+  // fresh module instance against the isolated dir
+  const prevEnv = process.env.BOT_DATA_DIR;
+  process.env.BOT_DATA_DIR = tmp;
+  delete require.cache[require.resolve("../src/templates")];
+  delete require.cache[require.resolve("../src/helpers/persist")];
+  delete require.cache[require.resolve("../src/config/constants")]; // DATA_DIR lives here
+  const tpl2 = require("../src/templates");
+  const r = tpl2.render("payment_snag", { order: "x<y&[link](https://evil)" });
+  assert.ok(r.html != null, "legacy HTML mode");
+  assert.ok(r.html.includes("<b>Snag!</b>"), "template's own tags intact");
+  assert.ok(!r.html.includes("x<y"), "user '<' escaped");
+  assert.ok(r.html.includes("&lt;"), "escaped entity present");
+  assert.ok(!r.html.includes("[link]("), "markup stripped from value");
+  // restore
+  if (prevEnv === undefined) delete process.env.BOT_DATA_DIR;
+  else process.env.BOT_DATA_DIR = prevEnv;
+  delete require.cache[require.resolve("../src/templates")];
+  delete require.cache[require.resolve("../src/helpers/persist")];
+  delete require.cache[require.resolve("../src/config/constants")];
 });
 
 test("render: entity-based saved template substitutes with offset shifting", () => {

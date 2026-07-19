@@ -75,7 +75,11 @@ function toGramJs(entities, Api) {
 /** Substitute {placeholders} in an ENTITY template (admin-pasted message with
  *  premium emoji), shifting entity offsets so formatting stays glued to the
  *  right characters. All arithmetic is UTF-16 code units. Values are inserted
- *  literally — placeholders inside a substituted value are NOT re-expanded. */
+ *  literally — placeholders inside a substituted value are NOT re-expanded.
+ *  A var value may itself be a {text, entities} payload (a pre-parsed markup
+ *  fragment, e.g. socials/footer/postLinks): its text is inserted and its
+ *  entities merged in at the insertion offset — so links/emoji inside built
+ *  vars survive inside admin-pasted templates instead of showing raw markup. */
 function substituteEntities(text, entities, vars) {
   let out = String(text == null ? "" : text);
   const ents = (entities || []).map((e) => ({ ...e }));
@@ -83,11 +87,14 @@ function substituteEntities(text, entities, vars) {
   let m;
   while ((m = PH_RE.exec(out)) !== null) {
     const key = m[1];
-    const rep = vars && vars[key] != null ? String(vars[key]) : "";
+    const raw = vars ? vars[key] : null;
+    const isRich = raw != null && typeof raw === "object" && raw.text != null;
+    const rep = raw == null ? "" : isRich ? String(raw.text) : String(raw);
     const start = m.index;
     const phLen = m[0].length;
     const delta = rep.length - phLen;
     out = out.slice(0, start) + rep + out.slice(start + phLen);
+    // 1. shift/trim the template's OWN entities around the replacement…
     for (const e of ents) {
       const end = e.offset + e.length;
       if (e.offset >= start + phLen) e.offset += delta; // fully after → shift
@@ -101,6 +108,10 @@ function substituteEntities(text, entities, vars) {
         e.offset = start + rep.length;
         e.length = Math.max(0, e.length - cut);
       }
+    }
+    // 2. …then merge the fragment's own entities at the insertion offset.
+    if (isRich && Array.isArray(raw.entities)) {
+      for (const e of raw.entities) ents.push({ ...e, offset: e.offset + start });
     }
     PH_RE.lastIndex = start + rep.length; // never re-scan the inserted value
   }
@@ -128,4 +139,45 @@ function sanitizeVar(v) {
     .replace(/`/g, "'");
 }
 
-module.exports = { parse, toGramJs, substituteEntities, hasPremiumMarkup, looksLikeHtml, sanitizeVar };
+/** Neutralize markup delimiters in URLs interpolated into [label](url) — a ')'
+ *  in a user URL would close the link early and inject arbitrary markup into
+ *  official channel posts. Percent-encoding keeps the link working. */
+function sanitizeUrl(v) {
+  return String(v == null ? "" : v)
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29")
+    .replace(/\[/g, "%5B")
+    .replace(/\]/g, "%5D")
+    .replace(/`/g, "%60");
+}
+
+// Entity types an admin actually AUTHORS (formatting/premium emoji). Telegram
+// also auto-detects url/bot_command/mention/hashtag/email/phone/cashtag on any
+// plain message — those alone must NOT flip a typed template into verbatim
+// {text, entities} storage (which would freeze its markup as literal text).
+const AUTHORED_TYPES = new Set([
+  "custom_emoji",
+  "bold",
+  "italic",
+  "underline",
+  "strikethrough",
+  "spoiler",
+  "code",
+  "pre",
+  "text_link",
+  "blockquote",
+]);
+function hasAuthoredFormatting(entities) {
+  return (entities || []).some((e) => AUTHORED_TYPES.has(e.type));
+}
+
+module.exports = {
+  parse,
+  toGramJs,
+  substituteEntities,
+  hasPremiumMarkup,
+  looksLikeHtml,
+  sanitizeVar,
+  sanitizeUrl,
+  hasAuthoredFormatting,
+};

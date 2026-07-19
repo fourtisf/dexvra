@@ -14,6 +14,7 @@
 //   3. Legacy saved HTML (real tags present, no markup) → parse_mode:"HTML".
 const path = require("node:path");
 const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
+const { escapeHtml } = require("./helpers/format");
 const premium = require("./premium");
 
 const FILE = "templates.json";
@@ -163,17 +164,39 @@ function substitute(tpl, vars) {
 /** Resolve a template into a send-ready payload:
  *    { text, entities }  — markup default or admin-pasted premium-emoji template
  *    { html }            — legacy admin-saved HTML template
- *  message.js / channels/post.js accept this payload shape directly. */
+ *  message.js / channels/post.js accept this payload shape directly.
+ *  Vars are handled per mode: in an ENTITY template, markup-bearing vars
+ *  (socials/footer/postLinks/…) are pre-parsed into {text, entities} fragments
+ *  so their links/emoji render instead of showing raw markup; in the legacy
+ *  HTML mode every var is markup-stripped AND HTML-escaped so user values can
+ *  neither leak markup nor break Telegram's HTML parser. */
 function render(key, vars) {
   const val = loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
   if (val && typeof val === "object" && val.text != null) {
     // Admin-pasted template stored with real entity arrays (premium emoji kept).
-    return premium.substituteEntities(val.text, val.entities, vars);
+    const rich = {};
+    for (const k of Object.keys(vars || {})) {
+      const v = vars[k];
+      if (typeof v === "string" && v) {
+        const p = premium.parse(v);
+        rich[k] = p.entities.length ? p : v;
+      } else {
+        rich[k] = v;
+      }
+    }
+    return premium.substituteEntities(val.text, val.entities, rich);
   }
   const s = String(val);
   if (!premium.hasPremiumMarkup(s) && premium.looksLikeHtml(s)) {
-    // Legacy HTML template saved before the markup era — render as HTML.
-    return { html: substitute(s, vars) };
+    // Legacy HTML template saved before the markup era — render as HTML with
+    // markup-stripped, escaped values (links degrade to plain text: correct
+    // beats broken).
+    const safe = {};
+    for (const k of Object.keys(vars || {})) {
+      const v = vars[k];
+      safe[k] = v == null ? "" : escapeHtml(premium.parse(String(v)).text);
+    }
+    return { html: substitute(s, safe) };
   }
   return premium.parse(substitute(s, vars));
 }

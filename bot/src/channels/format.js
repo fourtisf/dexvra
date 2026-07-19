@@ -23,6 +23,7 @@ const priceStr = (p) => (p && p > 0 ? fmtPrice(p) : "TBA");
 const mcStr = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
 const tme = (handle) => `https://t.me/${String(handle).replace(/^@/, "")}`;
 const clean = (v) => premium.sanitizeVar(v); // user-supplied values → markup-safe
+const cleanUrl = (v) => premium.sanitizeUrl(v); // user URLs → can't close [label](url)
 
 // Tier badges — premium where fourtis has proven IDs, unicode otherwise.
 const TIER_EMOJI = {
@@ -35,9 +36,9 @@ const TIER_EMOJI = {
 
 function socialLines(links = {}) {
   const out = [];
-  if (links.website) out.push(`[Website](${links.website})`);
-  if (links.twitter) out.push(`[X](${links.twitter})`);
-  if (links.telegram) out.push(`[Telegram](${links.telegram})`);
+  if (links.website) out.push(`[Website](${cleanUrl(links.website)})`);
+  if (links.twitter) out.push(`[X](${cleanUrl(links.twitter)})`);
+  if (links.telegram) out.push(`[Telegram](${cleanUrl(links.telegram)})`);
   return out.length ? `${em("🔗", E.link)} ${out.join(" · ")}` : "";
 }
 
@@ -108,7 +109,7 @@ function bannerPost(booking) {
   return tpl.render("post_banner", {
     title: booking.title ? clean(booking.title) : "A featured project",
     slot: clean(booking.slot),
-    linkUrl: booking.linkUrl,
+    linkUrl: cleanUrl(booking.linkUrl),
     footer: footer(),
   });
 }

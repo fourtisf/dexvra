@@ -164,10 +164,13 @@ function viewText(key) {
   const m = tpl.meta(key);
   const raw = tpl.getRaw(key);
   const val = tpl.getRawValue(key);
-  const premiumNote =
-    val && typeof val === "object" && val.entities && val.entities.length
-      ? `\n💎 Saved with ${val.entities.filter((e) => e.type === "custom_emoji").length} premium emoji (entities preserved).\n`
-      : "";
+  let premiumNote = "";
+  if (val && typeof val === "object" && val.entities && val.entities.length) {
+    const nPrem = val.entities.filter((e) => e.type === "custom_emoji").length;
+    premiumNote = nPrem
+      ? `\n💎 Saved with ${nPrem} premium emoji (entities preserved).\n`
+      : `\nℹ️ Saved with ${val.entities.length} formatting entities.\n`;
+  }
   const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
   return (
     `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "default"}\n\n` +
@@ -528,10 +531,12 @@ function build() {
     const key = ctx.session.awaitingTemplate;
     if (!key) return;
     ctx.session.awaitingTemplate = null;
-    // A message pasted WITH entities (premium emoji / formatting) is stored
-    // verbatim as {text, entities} so custom emoji survive; plain text stays a
-    // string and is rendered as premium markup by the main bot.
-    const value = entities.length ? { text, entities } : text;
+    // A message pasted with AUTHORED formatting (premium emoji, bold, links…)
+    // is stored verbatim as {text, entities} so custom emoji survive. Telegram
+    // auto-detects url/command/mention entities on ANY plain message — those
+    // alone must NOT freeze a typed markup template into verbatim storage.
+    const premiumLib = require("../premium");
+    const value = premiumLib.hasAuthoredFormatting(entities) ? { text, entities } : text;
     await tpl.setTemplate(key, value);
     const nPrem = entities.filter((e) => e.type === "custom_emoji").length;
     log.info(
