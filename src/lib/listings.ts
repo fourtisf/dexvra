@@ -71,6 +71,23 @@ function perPeriod(base: number): Record<PeriodKey, number> {
 export const verifiedTier = (tier: ListingRow["tier"]): boolean =>
   tier === "DIAMOND" || tier === "GOLD" || tier === "PLATINUM" || tier === "XPRESS";
 
+// DexScreener's public token-image CDN — deterministic by chain+address, loaded
+// browser-side. Best-effort: tokens it doesn't know 404 and the Coin component
+// falls back to the emoji, so a guess is always safe.
+const DS_IMG_CHAIN: Record<string, string> = {
+  solana: "solana",
+  ethereum: "ethereum",
+  base: "base",
+  bsc: "bsc",
+  tron: "tron",
+};
+export function fallbackLogoUrl(chain: string, address: string): string | null {
+  const slug = DS_IMG_CHAIN[chain];
+  if (!slug || !address) return null;
+  const addr = address.startsWith("0x") ? address.toLowerCase() : address;
+  return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${addr}.png?size=lg`;
+}
+
 /** Pure map from a listing row (seed or admin-managed store record) to a
  *  BoardToken. The provider layer enriches the result with live market data. */
 export function rowToBoardToken(r: ListingRow): BoardToken {
@@ -90,7 +107,7 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     address: r.address,
     symbol: r.sym,
     name: r.name,
-    logoUrl: r.logoUrl ?? null,
+    logoUrl: r.logoUrl ?? fallbackLogoUrl(r.chain, r.address),
     emoji: r.emoji,
     gradient: v.gradient,
     priceUsd: r.price,

@@ -2,7 +2,7 @@
 
 import type { BoardToken } from "@/lib/types";
 import { coinBg } from "@/lib/visual";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { ChainLogo } from "./ChainLogo";
 
 /** Emoji-gradient coin (prototype look) that upgrades to the real logo when
@@ -26,11 +26,15 @@ export function Coin({
   if (fontSize) style.fontSize = fontSize;
   const logoSize = size ? Math.max(14, Math.round(size * 0.4)) : 15;
   const ring = logoSize + 4; // badge = logo + a thin card-colored ring, so nothing clips
+  // A logo URL is best-effort (CDN guesses can 404) — fall back to the emoji
+  // instead of ever showing a broken-image square.
+  const [broken, setBroken] = useState(false);
+  const showImg = token.logoUrl && !broken;
   const inner = (
     <div className="coin" style={style}>
-      {token.logoUrl ? (
+      {showImg ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={token.logoUrl} alt="" loading="lazy" />
+        <img src={token.logoUrl!} alt="" loading="lazy" onError={() => setBroken(true)} />
       ) : (
         token.emoji
       )}
