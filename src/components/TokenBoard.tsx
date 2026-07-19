@@ -132,10 +132,15 @@ function StdRow({
         <Coin token={t} />
         <div className="ts">
           <div className="sym">
-            {t.symbol}
+            <span className="sym-txt">{t.symbol}</span>
             <TierTag tier={t.tier} showRank={false} />
           </div>
           <div className="nm">{t.name}</div>
+          {/* phones: the hidden table columns condense into this line */}
+          <div className="m-stats">
+            <b>MC</b> {fmtCap(t.mcap)} · <b>V</b> {fmtCap(t.vol[period])} · <b>TX</b> {fmtNum(buys + sells)} ·{" "}
+            <span style={{ color: scoreTier(t.score).color }}>DXS {t.score}</span>
+          </div>
         </div>
       </div>
       <div className="c-num price">{fmtPrice(price)}</div>
