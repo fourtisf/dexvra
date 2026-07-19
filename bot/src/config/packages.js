@@ -2,7 +2,7 @@
 // Keep the two in sync (the web renders the same prices on /advertise). Prices
 // are billed in each chain's native coin; trending/banner rows are per native
 // symbol. Durations are strings; durationToHours() converts for expiry math.
-const { nativeOf } = require("./chains");
+const { nativeOf, payNativeOf } = require("./chains");
 
 // ── Listing tiers (the tag every listed token carries) ───────────────────────
 // rank 1 = Diamond … 5 = Bronze; 0 = Xpress (instant, unranked). announce=true
@@ -37,11 +37,12 @@ const tierEmoji = (key) => TIER_MAP[key]?.emoji ?? "🪙";
 const tierRank = (key) => TIER_MAP[key]?.rank ?? 0;
 const tierAnnounces = (key) => Boolean(TIER_MAP[key]?.announce);
 
-/** Native-coin price of a tier on a given chain (e.g. Diamond on Solana → 5). */
+/** Native-coin price of a tier on a given chain (e.g. Diamond on Solana → 5).
+ *  Priced in the chain's PAY currency — Sui listings pay in BNB, Plasma in ETH. */
 const tierPrice = (key, chain) => {
   const m = TIER_MAP[key];
   if (!m) return null;
-  return m.price[nativeOf(chain)] ?? null;
+  return m.price[payNativeOf(chain)] ?? null;
 };
 
 // The 5 ranked tiers (Listing & Trending flow) vs the single instant Xpress.
@@ -88,7 +89,8 @@ const TRENDING = {
     { duration: "48H", price: 240, discount: 25 },
   ],
 };
-const trendingForChain = (chain) => TRENDING[nativeOf(chain)] ?? TRENDING.SOL;
+// Priced in the chain's PAY currency (Sui → BNB table, Plasma → ETH table).
+const trendingForChain = (chain) => TRENDING[payNativeOf(chain)] ?? TRENDING.SOL;
 
 /** "3H" → 3, "48H" → 48. */
 const durationToHours = (d) => {

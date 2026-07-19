@@ -53,16 +53,42 @@ const CHAINS = {
     explorer: (a) => `https://tonviewer.com/${a}`,
     buyUrl: (a) => `https://app.ston.fi/swap?ft=TON&tt=${a}`,
   },
+  // ── payVia chains — listed/tracked here, but PAID on another chain (the
+  //    fourtis "monad via ETH/Base" pattern). No wallet adapter needed: every
+  //    payment call routes through payChainOf() below. ──
+  sui: {
+    id: "sui", label: "Sui", native: "SUI", family: null, payVia: "bsc", decimals: 9,
+    geckoNetwork: "sui-network",
+    // Sui coin type: 0x<hex>::module::SYMBOL (bare object addresses accepted too)
+    addressPattern: /^0x[a-fA-F0-9]{1,64}(::[A-Za-z0-9_]+){0,2}$/,
+    explorer: (a) => `https://suivision.xyz/coin/${encodeURIComponent(a)}`,
+    buyUrl: (a) => `https://app.cetus.zone/swap/?to=${encodeURIComponent(a)}`,
+  },
+  plasma: {
+    id: "plasma", label: "Plasma", native: "XPL", family: null, payVia: "ethereum", decimals: 18,
+    geckoNetwork: "plasma",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://dexscreener.com/plasma/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/plasma/${a}`,
+  },
 };
 
 // Menu / selector order across the bot (mirrors the website's chain order).
-const CHAIN_ORDER = ["solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton"];
+const CHAIN_ORDER = ["solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton", "sui", "plasma"];
 const CHAIN_IDS = CHAIN_ORDER.filter((id) => CHAINS[id]);
 
 const chainOf = (id) => CHAINS[id] || null;
 const nativeOf = (id) => CHAINS[id]?.native || "SOL";
 const decimalsOf = (id) => CHAINS[id]?.decimals ?? 9;
 const familyOf = (id) => CHAINS[id]?.family || null;
+
+/** The chain PAYMENT actually happens on (Sui pays in BNB on BSC, Plasma pays
+ *  in ETH on Ethereum). Identity for chains with their own wallet adapter. */
+const payChainOf = (id) => CHAINS[id]?.payVia || id;
+/** Native coin the buyer sends for a listing on `id` (SUI → BNB, XPL → ETH). */
+const payNativeOf = (id) => nativeOf(payChainOf(id));
+/** Chains money can be RECEIVED on (banner pay-method picker etc). */
+const PAYABLE_CHAIN_IDS = CHAIN_IDS.filter((id) => !CHAINS[id].payVia);
 
 /** Loose per-chain contract-address validation (the fourtis bot skipped this — we don't). */
 function isValidAddress(chain, address) {
@@ -75,9 +101,12 @@ module.exports = {
   CHAINS,
   CHAIN_ORDER,
   CHAIN_IDS,
+  PAYABLE_CHAIN_IDS,
   chainOf,
   nativeOf,
   decimalsOf,
   familyOf,
+  payChainOf,
+  payNativeOf,
   isValidAddress,
 };

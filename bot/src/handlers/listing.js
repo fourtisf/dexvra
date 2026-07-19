@@ -2,7 +2,7 @@
 // (pick a ranked tier). Guided form → review card → tier (tiered) → payment.
 // Per-chain contract-address validation is enforced (the reference bot skipped it).
 const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../helpers/message");
-const { chainOf, isValidAddress, nativeOf } = require("../config/chains");
+const { chainOf, isValidAddress, payChainOf, payNativeOf } = require("../config/chains");
 const { RANKED_TIERS, tierPrice, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
 const { fetchMarket } = require("../marketdata");
 const { fetchTokenInfo } = require("../dexscreener");
@@ -35,11 +35,8 @@ async function entry(ctx, type) {
   await answer(ctx);
   if (ctx.chat && ctx.chat.type !== "private") return;
   freshSession(ctx, { type, form: emptyForm() });
-  const head =
-    type === "xpress_listing"
-      ? "⚡ <b>Xpress Listing</b> — instant, live on the board"
-      : "🏆 <b>Listing &amp; Trending</b> — choose a tier (Diamond → Bronze)";
-  await sendCard(ctx, `${head}\n\nFirst, pick your token's chain:`, menu.chainMenu("lc"));
+  const intro = tpl.render(type === "xpress_listing" ? "intro_xpress" : "intro_tiered");
+  await sendCard(ctx, intro, menu.chainMenu("lc"));
 }
 const entryXpress = (ctx) => entry(ctx, "xpress_listing");
 const entryListingTrending = (ctx) => entry(ctx, "tiered_listing");
@@ -213,8 +210,8 @@ async function goPay(ctx, tier) {
     ` — $${f.sym} on ${chainOf(chain).label}`;
   await startPayment(ctx, {
     kind,
-    chain,
-    native: nativeOf(chain),
+    chain: payChainOf(chain),
+    native: payNativeOf(chain),
     humanAmount: price,
     label,
     payload: {
@@ -237,15 +234,11 @@ async function approve(ctx) {
 
   // Listing & Trending → tier chooser
   const chain = f.chain;
-  const native = nativeOf(chain);
+  const native = payNativeOf(chain);
   const rows = RANKED_TIERS.map((t) => [
     Markup.button.callback(`${tierEmoji(t.key)} ${t.label} · ${tierPrice(t.key, chain)} ${native}`, `lt_${t.key}`),
   ]);
-  await sendCard(
-    ctx,
-    `🏆 <b>Choose your listing tier</b>\n\nHigher tiers rank first and post to the announcement channel. All include a Trending feature.`,
-    menu.withHome(rows),
-  );
+  await sendCard(ctx, tpl.render("tier_chooser", { native }), menu.withHome(rows));
 }
 
 async function tierPick(ctx) {

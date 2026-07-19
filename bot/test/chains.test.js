@@ -21,9 +21,35 @@ test("native + family mapping", () => {
   assert.strictEqual(familyOf("ton"), "ton");
 });
 
-test("all 7 chains present", () => {
+test("all 9 chains present", () => {
   assert.deepStrictEqual(
     [...CHAIN_IDS].sort(),
-    ["base", "bsc", "ethereum", "robinhood", "solana", "ton", "tron"].sort(),
+    ["base", "bsc", "ethereum", "plasma", "robinhood", "solana", "sui", "ton", "tron"].sort(),
   );
+});
+
+test("payVia chains: Sui pays in BNB on BSC, Plasma pays in ETH on Ethereum", () => {
+  const { payChainOf, payNativeOf, PAYABLE_CHAIN_IDS } = require("../src/config/chains");
+  assert.strictEqual(payChainOf("sui"), "bsc");
+  assert.strictEqual(payNativeOf("sui"), "BNB");
+  assert.strictEqual(payChainOf("plasma"), "ethereum");
+  assert.strictEqual(payNativeOf("plasma"), "ETH");
+  assert.strictEqual(payChainOf("solana"), "solana"); // identity for native-pay chains
+  // sui/plasma can never be selected as a RECEIVING chain
+  assert.ok(!PAYABLE_CHAIN_IDS.includes("sui"));
+  assert.ok(!PAYABLE_CHAIN_IDS.includes("plasma"));
+  assert.ok(PAYABLE_CHAIN_IDS.includes("bsc"));
+});
+
+test("sui / plasma address validation + payVia pricing", () => {
+  assert.ok(
+    isValidAddress("sui", "0x2b3d7f2a9d0c8e1f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f::token::TOKEN"),
+  );
+  assert.ok(isValidAddress("sui", "0xdeadbeef")); // bare object address ok
+  assert.ok(!isValidAddress("sui", "So1anaStyleAddress11111111111111111111111"));
+  assert.ok(isValidAddress("plasma", "0x6982508145454Ce325dDbE47a25d4ec3d2311933"));
+  const { tierPrice, trendingForChain } = require("../src/config/packages");
+  assert.strictEqual(tierPrice("DIAMOND", "sui"), 1.5); // BNB price
+  assert.strictEqual(tierPrice("DIAMOND", "plasma"), 0.26); // ETH price
+  assert.strictEqual(trendingForChain("sui")[0].price, 0.25); // BNB table
 });

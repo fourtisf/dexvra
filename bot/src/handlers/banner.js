@@ -23,7 +23,8 @@ async function entryBanner(ctx) {
   if (ctx.chat && ctx.chat.type !== "private") return;
   freshSession(ctx, { type: "banner", bannerForm: {} });
   const rows = BANNERS.map((b) => [Markup.button.callback(`${b.name} (${b.size})`, `bt_${b.key}`)]);
-  await sendCard(ctx, "📢 <b>Banner Ads</b>\n\nChoose a banner type:", menu.withHome(rows));
+  const tpl = require("../templates");
+  await sendCard(ctx, tpl.render("intro_banner"), menu.withHome(rows));
 }
 
 async function typePick(ctx) {
