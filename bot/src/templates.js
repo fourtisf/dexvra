@@ -58,24 +58,24 @@ const DEFAULTS = {
     "**Services**\n" +
     `${em("⚡", E.zap)} **Xpress Listing** — live in minutes\n` +
     "🏆 **Listing & Trending** — ranked tiers, Diamond → Bronze\n" +
-    "🔥 **Trending Slots** — 3–48h featured placement\n" +
-    `${em("📢", E.megaphone)} **Banner Campaigns** — homepage takeover\n\n` +
+    "🔥 **Trending Slots** — featured placement, up to 48h\n" +
+    `${em("📢", E.megaphone)} **Banner Campaigns** — homepage banner slots\n\n` +
     "Select a service to continue.",
   intro_xpress:
     `${em("⚡", E.zap)} **Xpress Listing**\n\n` +
     "Instant activation. The moment payment clears, your token is live on the dexvra.io board with its own token page (chart, price, socials), a launch post in our Listing channel and an automatic share on X.\n\n" +
     "**Process**\n" +
-    "1. Select your network\n" +
-    "2. Paste the contract address — name, logo and socials auto-fill\n" +
-    "3. Review and pay\n\n" +
+    "1. Paste your contract address — details auto-fill, or add them manually\n" +
+    "2. Review your listing and pay\n" +
+    "3. Everything posts automatically — your links arrive right here\n\n" +
     "Select your network:",
   intro_tiered:
-    `${em("💎", E.diamond)} **Listing & Trending**\n\n` +
-    "Ranked placement across the Dexvra network. Higher tiers rank higher on the board, carry their badge on every post and include a longer bundled Trending run — Diamond, Gold and Platinum also post to our Announcement channel.\n\n" +
+    "🏆 **Listing & Trending**\n\n" +
+    "Our flagship placement: ranked positioning across the Dexvra network with a bundled Trending run — tier details and pricing follow on the next step.\n\n" +
     "**Process**\n" +
-    "1. Select your network\n" +
-    "2. Paste the contract address — details auto-fill\n" +
-    "3. Choose your tier and pay\n\n" +
+    "1. Paste your contract address — details auto-fill, or add them manually\n" +
+    "2. Review your listing, choose a tier and pay\n" +
+    "3. Everything posts automatically — your links arrive right here\n\n" +
     "Select your network:",
   tier_chooser:
     "🏆 **Select your tier**\n\n" +
@@ -101,8 +101,8 @@ const DEFAULTS = {
   listing_logo_prompt: "**Logo**\n\nSend your logo as a photo — or /skip to continue without one.",
   trending_ca_prompt:
     "🔥 **Book a Trending slot**\n\n" +
-    "Slots run **3–48 hours** with an activation announcement — longer runs at a discount.\n\n" +
-    "Paste the **contract address** of your listed token to continue:",
+    "Featured slots up to **48 hours** with an activation announcement — longer runs at a discount.\n\n" +
+    "Paste the **contract address** of your listed token (or its dexvra.io token link) to continue:",
   trending_not_found:
     `${em("❌", E.cross)} **Not listed yet**\n\n` +
     "We couldn't find that token on Dexvra. List it first — ⚡ Xpress or 🏆 Listing & Trending — then come back to book your slot.",
@@ -115,7 +115,7 @@ const DEFAULTS = {
     `Website — {website}\n` +
     `X — {twitter}\n` +
     `Telegram — {telegram}\n\n` +
-    "This is exactly what goes live on your token page and channel posts. Tap **✅ Confirm**, or edit any field below.",
+    "This is what goes live on your token page and channel posts. Tap **✅ Confirm**, or use the edit buttons below.",
   edit_field_prompt: "✏️ Send the new **{field}**:",
   invalid_address:
     `${em("❌", E.cross)} That doesn't look like a valid **{chain}** contract address. Double-check and paste it again:`,

@@ -46,13 +46,17 @@ function socialLines(links = {}) {
 }
 
 // Fallback overview for tokens with no description (fresh pump.fun launches
-// rarely have one on GT) — the post always reads complete and professional.
-function autoOverview(coin) {
+// rarely have one on GT) — the post always reads complete. Context-aware and
+// deliberately does NOT mention dexvra.io or stats: the CTA and data rows
+// directly below already carry those (review finding: duplication).
+function autoOverview(coin, mode) {
   const nm = String(coin.name || "").trim();
   const sy = sym(coin.symbol);
   const ch = chainName(coin.chain);
   if (!nm) return "";
-  return `${nm} (${sy}) is now live on ${ch} — real-time chart, price and market data on dexvra.io.`;
+  return mode === "trending"
+    ? `${nm} (${sy}) currently holds a featured slot on the Dexvra Trending board.`
+    : `${nm} (${sy}) has just gone live on ${ch}.`;
 }
 
 // Project overview paragraph — one clean block under the title, own spacing.
@@ -97,7 +101,7 @@ function listingPost(coin) {
     head,
     tierLine,
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    overview: overviewBlock(coin.overview || autoOverview(coin)),
+    overview: overviewBlock(coin.overview || autoOverview(coin, "listing")),
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
     chain: clean(chainName(coin.chain)),
@@ -116,7 +120,7 @@ function trendingPost(coin) {
     name: clean(coin.name),
     chain: clean(chainName(coin.chain)),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    overview: overviewBlock(coin.overview || autoOverview(coin)),
+    overview: overviewBlock(coin.overview || autoOverview(coin, "trending")),
     address: clean(coin.address),
     price: priceStr(coin.price),
     mcap: mcStr(coin.mcap),

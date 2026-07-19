@@ -170,12 +170,12 @@ async function showReview(ctx) {
   const text = tpl.render("review_card", {
     chain: chainOf(f.chain).label,
     name: v(f.name),
-    symbol: f.sym ? "$" + premium.sanitizeVar(f.sym) : "—",
+    symbol: f.sym ? "$" + premium.sanitizeVar(f.sym) : "not set",
     address: premium.sanitizeVar(f.address),
     logo: f.logoFileId || f.logoUrl ? "added ✓" : "not set",
     overview: f.overview
       ? premium.sanitizeVar(Array.from(f.overview).length > 160 ? cpSlice(f.overview, 157).trimEnd() + "…" : f.overview)
-      : "not set (auto-generated on the post)",
+      : "not set — a short intro is auto-written on the channel post",
     website: v(f.website),
     twitter: v(f.twitter),
     telegram: v(f.telegram),
