@@ -68,7 +68,7 @@ test("post_rankup renders rank + change with premium entities, clamps negatives"
   assert.ok(card.text.includes("$PEPE"));
   assert.ok(card.text.includes("#2"));
   assert.ok(card.text.includes("+138%"), card.text);
-  assert.ok(card.entities.some((e) => e.type === "custom_emoji"));
+  assert.ok(card.text.includes("📈"), "chart-up emoji present (unicode fallback)");
   // a rounding-negative change never prints a minus
   const neg = fmt.rankupPost(coin, 1, -0.4);
   assert.ok(neg.text.includes("+0%"));

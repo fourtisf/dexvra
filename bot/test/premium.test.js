@@ -178,13 +178,13 @@ test("looksLikeHtml: real tags yes, bare & / < no", () => {
 
 // ── templates.render() modes ─────────────────────────────────────────────────
 
-test("render: markup default → {text, entities} with premium emoji", () => {
+test("render: markup default → clean text + entities (emoji as unicode by default)", () => {
   const r = tpl.render("welcome");
   assert.ok(r.text.includes("Welcome to Dexvra"));
   assert.ok(!r.text.includes("**"), "markup stripped from text");
   assert.ok(!r.text.includes("(emoji/"), "emoji tags stripped from text");
-  const prem = r.entities.filter((e) => e.type === "custom_emoji");
-  assert.ok(prem.length >= 2, "welcome carries premium emoji entities");
+  // the emoji fallback char is present in the text in BOTH modes (premium on/off)
+  assert.ok(r.text.includes("💎"), "diamond emoji present");
   const bold = r.entities.filter((e) => e.type === "bold");
   assert.ok(bold.length >= 3, "welcome keeps bold entities");
 });
@@ -203,7 +203,7 @@ test("render: channel post default substitutes vars into entities payload", () =
   });
   assert.ok(r.text.includes("$JIM is Trending on Dexvra"));
   assert.ok(r.text.includes("So1abc"));
-  assert.ok(r.entities.some((e) => e.type === "custom_emoji"));
+  assert.ok(r.text.includes("💲"), "price emoji present (unicode fallback)");
   assert.ok(r.entities.some((e) => e.type === "code")); // `address`
   // every entity within bounds
   for (const e of r.entities) assert.ok(e.offset + e.length <= r.text.length);
