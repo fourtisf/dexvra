@@ -17,6 +17,12 @@ const num = (x) => {
   const n = Number(x);
   return Number.isFinite(n) && n > 0 ? n : null;
 };
+// Signed finite number — for values that can legitimately be ≤ 0 (24h change).
+const snum = (x) => {
+  if (x === null || x === undefined || x === "") return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+};
 
 // DexScreener chainId per dexvra chain — used ONLY to filter candidate pairs.
 // NEVER match a DexScreener pair by address alone: the token endpoint returns
@@ -51,11 +57,16 @@ async function fetchGT(chain, address) {
     const poolAddress =
       (pool && pool.attributes && pool.attributes.address) ||
       (poolId ? poolId.split("_").slice(1).join("_") || null : null);
+    const change24h =
+      pool && pool.attributes && pool.attributes.price_change_percentage
+        ? snum(pool.attributes.price_change_percentage.h24)
+        : null;
     const img = attr.image_url;
     return {
       priceUsd: price,
       mcap,
       poolAddress,
+      change24h,
       name: attr.name || null,
       symbol: attr.symbol || null,
       logoUrl: img && img !== "missing.png" ? img : null,
@@ -87,6 +98,7 @@ async function fetchDS(chain, address) {
       priceUsd: num(p.priceUsd),
       mcap: num(p.marketCap) ?? num(p.fdv),
       poolAddress: p.pairAddress || null,
+      change24h: p.priceChange ? snum(p.priceChange.h24) : null,
       name: base.name || null,
       symbol: base.symbol || null,
       logoUrl: (p.info && p.info.imageUrl) || null,
@@ -133,6 +145,7 @@ async function fetchMarket(chain, address) {
     priceUsd: gt.priceUsd ?? ds.priceUsd,
     mcap: gt.mcap ?? ds.mcap,
     poolAddress: gt.poolAddress || ds.poolAddress,
+    change24h: gt.change24h ?? ds.change24h,
     name: gt.name || ds.name,
     symbol: gt.symbol || ds.symbol,
     logoUrl: gt.logoUrl || ds.logoUrl,

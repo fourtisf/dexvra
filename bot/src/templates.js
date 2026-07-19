@@ -191,6 +191,10 @@ const DEFAULTS = {
     `${em("🔗", E.link)} **CA** — \`{address}\`\n\n` +
     `{socials}` +
     `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
+  post_rankup:
+    `${em("📈", E.chartUp)} **{symbol} is climbing Dexvra Trending**\n\n` +
+    `**{name}** · {chain} is up **{change}** (24h) — now the **#{rank} performer** among featured tokens.\n\n` +
+    `${em("🟢", E.green)} [Trade & track on Dexvra]({coinUrl}){footer}`,
   post_pump:
     `${em("📈", E.chartUp)} **{symbol} +{percent}%**\n\n` +
     `**{name}** is up **{percent}%** since listing on Dexvra.\n\n` +
@@ -244,6 +248,7 @@ const META = {
   post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
 };
 
