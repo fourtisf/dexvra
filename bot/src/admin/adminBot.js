@@ -419,7 +419,9 @@ function viewText(key) {
   return (
     `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "default"}\n\n` +
     `Placeholders: <code>${escapeHtml(ph)}</code>\n${premiumNote}\n` +
-    `This is how it looks now:\n<pre>${escapeHtml(preview)}</pre>\n\n` +
+    // A blockquote — not <pre> — so the preview shows as natural text (no
+    // monospace code-box, no "copy" button that operators disliked).
+    `This is how it looks now:\n<blockquote>${escapeHtml(preview)}</blockquote>\n\n` +
     `Tap <b>✏️ Edit</b> and send your new text — just type it normally, emoji and line breaks are kept. Keep any <code>{placeholder}</code> where you want the live value.`
   );
 }
@@ -612,7 +614,7 @@ function build() {
     // retype-from-scratch.
     const cur = currentCopyable(key);
     if (cur.text && cur.text.trim()) {
-      await ctx.reply("📋 Current text — copy this, edit it, then send it back:", HTML).catch(() => {});
+      await ctx.reply("📋 Here's the current text 👇 edit it and send it back:", HTML).catch(() => {});
       await ctx
         .reply(cur.text, cur.extra)
         .catch(() => ctx.reply(cur.text, { disable_web_page_preview: true }).catch(() => {}));
