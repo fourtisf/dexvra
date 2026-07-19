@@ -5,6 +5,7 @@ const { sendCard, sendPhotoCard, answer } = require("../helpers/message");
 const { mainMenu } = require("./menu");
 const { escapeHtml } = require("../helpers/format");
 const { DedupSet } = require("../helpers/persist");
+const assets = require("../assets");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
@@ -17,14 +18,16 @@ function resetSession(ctx) {
 }
 
 function bannerPhoto() {
+  // Admin-uploaded banner wins; otherwise the bundled premium welcome banner.
   try {
     if (fss.existsSync(tpl.BANNER_PATH) && fss.statSync(tpl.BANNER_PATH).size > 0) {
       return { source: tpl.BANNER_PATH };
     }
   } catch {
-    /* no banner */
+    /* fall through to bundled default */
   }
-  return null;
+  const bundled = assets.main();
+  return bundled ? { source: bundled } : null;
 }
 
 async function showHome(ctx) {
