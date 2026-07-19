@@ -78,7 +78,14 @@ const DEFAULTS = {
     "Select your network:",
   intro_tiered:
     "🏆 **Listing & Trending**\n\n" +
-    "Our flagship placement: ranked positioning across the Dexvra network with a bundled Trending run — tier details and pricing follow on the next step.\n\n" +
+    "Our flagship package — built for maximum exposure. Your token gets a permanent home on dexvra.io plus a bundled Trending run, announced across every Dexvra channel and X so the whole network sees it.\n\n" +
+    "**What your project gets**\n" +
+    "🌐 Permanent listing on **dexvra.io** — your own token page with live chart, price, market cap and socials\n" +
+    "🚨 Launch post in the Listing channel — [@dexvralisting](https://t.me/dexvralisting)\n" +
+    "🔥 Featured run in the Trending channel — [@dexvratrending](https://t.me/dexvratrending)\n" +
+    "📢 Headline in the Announcement channel — [@dexvraio](https://t.me/dexvraio) (Diamond · Gold · Platinum)\n" +
+    "🐦 Automatic post on **X (Twitter)**\n" +
+    "💎 A tier badge on every post — higher tiers rank higher and trend longer\n\n" +
     "**Process**\n" +
     "1. Paste your contract address — details auto-fill, or add them manually\n" +
     "2. Review your listing, choose a tier and pay\n" +
