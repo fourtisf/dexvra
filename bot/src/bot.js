@@ -79,11 +79,11 @@ async function startBot() {
 
   // Banner pipeline health at boot — a silent failure here is why a channel
   // post degrades to the raw token logo (live incident 2026-07-19).
-  const { POST_BANNERS } = require("./config/constants");
-  if (!POST_BANNERS) {
-    log.warn("[start] POST_BANNERS=0 — channel posts will use the RAW TOKEN LOGO, no banner artwork. Set POST_BANNERS=1 (or remove the line) in bot/.env and restart. If this warning survives a restart, PM2 is injecting a stale env snapshot: pm2 delete dexvra-bot && pm2 start ecosystem.config.js && pm2 save");
+  const bannerTpl = require("./bannerTemplate");
+  if (!bannerTpl.postingEnabled()) {
+    log.warn("[start] banner posts are OFF — channel posts will use the RAW TOKEN LOGO. Turn them on from @dexvraadminbot → 🎨 Channel Banner Artwork → Banner posts toggle (no .env or restart needed).");
   }
-  require("./bannerTemplate").selfCheck();
+  bannerTpl.selfCheck();
 
   process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));

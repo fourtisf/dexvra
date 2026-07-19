@@ -72,6 +72,23 @@ function loadConfig() {
   for (const k of KINDS) out[k] = { ...defaultsFor(k), ...(saved[k] || {}) };
   return out;
 }
+
+// ── Global ON/OFF switch (admin-bot controlled, persisted) ──────────────────
+// Lives in the config file under `_global` so operators flip it from
+// @dexvraadminbot instead of fighting .env/PM2 env-snapshot semantics (live
+// incident 2026-07-19: a stale POST_BANNERS=0 survived every restart). The
+// POST_BANNERS env is only the DEFAULT when no admin choice was saved.
+function postingEnabled() {
+  const g = loadJSONSync(CONFIG_FILE, {})._global || {};
+  if (typeof g.enabled === "boolean") return g.enabled;
+  return require("./config/constants").POST_BANNERS;
+}
+async function setPostingEnabled(on) {
+  const saved = loadJSONSync(CONFIG_FILE, {});
+  saved._global = { ...(saved._global || {}), enabled: !!on };
+  await saveJSON(CONFIG_FILE, saved);
+  return !!on;
+}
 async function updateSettings(kind, settings) {
   const saved = loadJSONSync(CONFIG_FILE, {});
   saved[kind] = { ...defaultsFor(kind), ...(saved[kind] || {}), ...settings };
@@ -323,6 +340,8 @@ module.exports = {
   KINDS,
   compose,
   selfCheck,
+  postingEnabled,
+  setPostingEnabled,
   hasTemplate,
   hasUploaded,
   saveTemplate,

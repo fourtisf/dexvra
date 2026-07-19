@@ -71,17 +71,21 @@ const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
+  const on = bannerTpl.postingEnabled();
   return (
     `🎨 <b>Channel Banner Artwork</b>\n\n` +
     `Designed artwork per service; the bot composites each token's <b>logo</b> ` +
     `(or the advertiser's <b>creative</b> for Banner Ads) into the artwork's slot, ` +
     `plus an optional <b>$TICKER + name</b> overlay.\n\n` +
+    `Banner posts: <b>${on ? "🟢 ON" : "🔴 OFF — channel posts fall back to the raw token logo!"}</b>\n\n` +
     `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n\n` +
     `Pick a service to configure:`
   );
 }
 function btHomeKb() {
+  const on = bannerTpl.postingEnabled();
   return Markup.inlineKeyboard([
+    [Markup.button.callback(on ? "🟢 Banner posts: ON — tap to turn OFF" : "🔴 Banner posts: OFF — tap to turn ON", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner")],
     [Markup.button.callback("⬅ Back", "home")],
@@ -104,21 +108,133 @@ function btKindText(kind) {
 }
 function btKindKb(kind) {
   const s = bannerTpl.getSettings(kind);
-  const sizeRow =
+  const manualRow =
     s.slotShape === "rect"
-      ? [Markup.button.callback("📐 Set slot (W H X,Y)", `bt_slot:${kind}`)]
-      : [
-          Markup.button.callback("➖20px", `bt_sz:${kind}:-20`),
-          Markup.button.callback(`Logo ${s.logoSize}px`, `bt_pos:${kind}`),
-          Markup.button.callback("➕20px", `bt_sz:${kind}:20`),
-        ];
+      ? [Markup.button.callback("📐 Manual slot (W H X,Y)", `bt_slot:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)]
+      : [Markup.button.callback("📍 Manual (SIZE X,Y)", `bt_pos:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)];
   return Markup.inlineKeyboard([
     [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
-    sizeRow,
-    [Markup.button.callback("📍 Logo position", `bt_pos:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)],
+    [Markup.button.callback("🖱 Logo editor — geser • ukuran • live preview", `bt_ed:${kind}`)],
+    manualRow,
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
     [Markup.button.callback("⬅ Artwork menu", "bt")],
   ]);
+}
+
+// ── Interactive slot editor — one PHOTO message that edits itself in place ───
+// Every arrow/size tap: save the setting, re-compose the preview with a dashed
+// guide over the slot, and editMessageMedia the same message. Feels like a
+// mini design tool inside Telegram.
+const BT_NUDGE = 40; // px per tap on the 2560×1280 artwork
+
+function btGuideOverlay(buf, kind) {
+  const cv = require("@napi-rs/canvas");
+  return cv.loadImage(buf).then((img) => {
+    const c = cv.createCanvas(img.width, img.height);
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    const s = bannerTpl.getSettings(kind);
+    const rect = s.slotShape === "rect";
+    const sw = rect ? Number(s.slotW) : Number(s.logoSize);
+    const sh = rect ? Number(s.slotH) : Number(s.logoSize);
+    const lx = s.logoX === "center" ? (img.width - sw) / 2 : Number(s.logoX) || 0;
+    const ly = s.logoY === "center" ? (img.height - sh) / 2 : Number(s.logoY) || 0;
+    const stroke = (color, width) => {
+      g.strokeStyle = color;
+      g.lineWidth = width;
+      g.setLineDash([22, 16]);
+      g.beginPath();
+      if (rect) g.rect(lx, ly, sw, sh);
+      else g.arc(lx + sw / 2, ly + sh / 2, sw / 2, 0, Math.PI * 2);
+      g.stroke();
+    };
+    stroke("rgba(0,0,0,.65)", 12);
+    stroke("#FFD84D", 5);
+    // crosshair at slot center
+    g.setLineDash([]);
+    g.strokeStyle = "#FFD84D";
+    g.lineWidth = 3;
+    const cx = lx + sw / 2;
+    const cy = ly + sh / 2;
+    g.beginPath();
+    g.moveTo(cx - 26, cy);
+    g.lineTo(cx + 26, cy);
+    g.moveTo(cx, cy - 26);
+    g.lineTo(cx, cy + 26);
+    g.stroke();
+    return c.toBuffer("image/png");
+  });
+}
+
+function btEditorCaption(kind) {
+  const s = bannerTpl.getSettings(kind);
+  const rect = s.slotShape === "rect";
+  const pos = `(${s.logoX}, ${s.logoY})`;
+  return (
+    `🖱 <b>${BT_KINDS[kind]} — logo editor</b>\n` +
+    (rect ? `Slot <b>${s.slotW}×${s.slotH}px</b> di ${pos}` : `Logo <b>${s.logoSize}px</b> di ${pos}`) +
+    `\nGaris kuning putus-putus = posisi slot. Panah menggeser ${BT_NUDGE}px per tap; hasil langsung terlihat.`
+  );
+}
+
+function btEditorKb(kind) {
+  const s = bannerTpl.getSettings(kind);
+  const rect = s.slotShape === "rect";
+  const cb = Markup.button.callback;
+  const rows = [
+    [
+      cb("◀", `bt_emv:${kind}:${-BT_NUDGE}:0`),
+      cb("🔼", `bt_emv:${kind}:0:${-BT_NUDGE}`),
+      cb("🔽", `bt_emv:${kind}:0:${BT_NUDGE}`),
+      cb("▶", `bt_emv:${kind}:${BT_NUDGE}:0`),
+    ],
+  ];
+  if (rect) {
+    rows.push([
+      cb("↔️ W−", `bt_ewh:${kind}:${-BT_NUDGE}:0`),
+      cb(`${s.slotW}×${s.slotH}`, `bt_slot:${kind}`),
+      cb("↔️ W+", `bt_ewh:${kind}:${BT_NUDGE}:0`),
+    ]);
+    rows.push([cb("↕️ H−", `bt_ewh:${kind}:0:${-BT_NUDGE}`), cb("↕️ H+", `bt_ewh:${kind}:0:${BT_NUDGE}`)]);
+  } else {
+    rows.push([
+      cb("➖ Kecil", `bt_esz:${kind}:${-BT_NUDGE}`),
+      cb(`${s.logoSize}px`, `bt_pos:${kind}`),
+      cb("➕ Besar", `bt_esz:${kind}:${BT_NUDGE}`),
+    ]);
+  }
+  rows.push([cb("✅ Selesai", `bt_done:${kind}`)]);
+  return Markup.inlineKeyboard(rows);
+}
+
+async function btEditorImage(kind) {
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), {
+    symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier",
+  });
+  if (!buf) return null;
+  return btGuideOverlay(buf, kind).catch(() => buf);
+}
+
+async function btEditorOpen(ctx, kind) {
+  if (!bannerTpl.hasTemplate(kind)) {
+    return ctx.reply(`❌ No ${kind} artwork available yet. Tap ⬆ Upload first.`).catch(() => {});
+  }
+  const img = await btEditorImage(kind);
+  if (!img) return ctx.reply("⚠️ Editor render failed — check pm2 logs.").catch(() => {});
+  await ctx
+    .replyWithPhoto({ source: img }, { caption: btEditorCaption(kind), parse_mode: "HTML", ...btEditorKb(kind) })
+    .catch(() => {});
+}
+
+async function btEditorRefresh(ctx, kind) {
+  const img = await btEditorImage(kind);
+  if (!img) return;
+  await ctx
+    .editMessageMedia(
+      { type: "photo", media: { source: img }, caption: btEditorCaption(kind), parse_mode: "HTML" },
+      { reply_markup: btEditorKb(kind).reply_markup },
+    )
+    .catch(() => btEditorOpen(ctx, kind)); // message too old / edit failed → fresh editor
 }
 
 function sampleMedia(kind) {
@@ -377,6 +493,66 @@ function build() {
       HTML,
     );
   });
+  // Banner posts master switch — persisted config, beats POST_BANNERS env.
+  bot.action(/^bt_on:(0|1)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const on = ctx.match[1] === "1";
+    await bannerTpl.setPostingEnabled(on);
+    log.info(`[adminbot] banner posts turned ${on ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(on ? "🟢 Banner posts ON" : "🔴 Banner posts OFF").catch(() => {});
+    await edit(ctx, btHomeText(), btHomeKb());
+  });
+
+  // Interactive editor: open + nudge + resize, all editing one photo in place.
+  bot.action(new RegExp(`^bt_ed:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await btEditorOpen(ctx, ctx.match[1]);
+  });
+  bot.action(new RegExp(`^bt_emv:${K}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const s = bannerTpl.getSettings(kind);
+    const num = (v, d) => (v === "center" ? d : Number(v) || 0);
+    const lx = Math.max(-800, Math.min(3200, num(s.logoX, 1070) + Number(ctx.match[2])));
+    const ly = Math.max(-800, Math.min(3200, num(s.logoY, 430) + Number(ctx.match[3])));
+    await bannerTpl.updateSettings(kind, { logoX: lx, logoY: ly });
+    ctx.answerCbQuery(`📍 ${lx}, ${ly}`).catch(() => {});
+    await btEditorRefresh(ctx, kind);
+  });
+  bot.action(new RegExp(`^bt_esz:${K}:(-?\\d+)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const s = bannerTpl.getSettings(kind);
+    const size = Math.max(60, Math.min(1600, Number(s.logoSize) + Number(ctx.match[2])));
+    // grow/shrink around the slot CENTER so the ring stays put while resizing
+    const num = (v, d) => (v === "center" ? d : Number(v) || 0);
+    const dx = (Number(s.logoSize) - size) / 2;
+    await bannerTpl.updateSettings(kind, {
+      logoSize: size,
+      logoX: Math.round(num(s.logoX, 1070) + dx),
+      logoY: Math.round(num(s.logoY, 430) + dx),
+    });
+    ctx.answerCbQuery(`Logo ${size}px`).catch(() => {});
+    await btEditorRefresh(ctx, kind);
+  });
+  bot.action(new RegExp(`^bt_ewh:${K}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const s = bannerTpl.getSettings(kind);
+    const w = Math.max(200, Math.min(2560, Number(s.slotW) + Number(ctx.match[2])));
+    const h = Math.max(120, Math.min(1280, Number(s.slotH) + Number(ctx.match[3])));
+    await bannerTpl.updateSettings(kind, { slotW: w, slotH: h });
+    ctx.answerCbQuery(`📐 ${w}×${h}`).catch(() => {});
+    await btEditorRefresh(ctx, kind);
+  });
+  bot.action(new RegExp(`^bt_done:${K}$`), async (ctx) => {
+    ctx.answerCbQuery("✅ Tersimpan").catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    await ctx.reply(btKindText(kind), { ...HTML, ...btKindKb(kind) }).catch(() => {});
+  });
+
   bot.action(new RegExp(`^bt_sz:${K}:(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
