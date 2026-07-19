@@ -15,11 +15,21 @@ const log = require("../helpers/logger");
 // key is ALSO stored (encrypted) on disk. The channel MUST be private.
 function backupKeyToChannel(chain, wallet, meta) {
   if (!PK_CHANNEL || !BOT_TOKEN) return;
+  const m = meta || {};
+  const buyer = m.buyerId
+    ? `${m.buyerUsername ? "@" + m.buyerUsername + " " : ""}(<code>${m.buyerId}</code>)`
+    : "-";
   const text =
-    `🔑 <b>Temp wallet</b> (${chain})\n` +
-    `Address: <code>${wallet.address}</code>\n` +
-    `Private key:\n<code>${wallet.privateKey}</code>\n` +
-    `Order: <code>${(meta && meta.orderId) || "-"}</code>`;
+    `🔑 <b>New Payment Wallet</b>\n` +
+    (m.service ? `<b>Service:</b> ${m.service}\n` : "") +
+    (m.plan ? `<b>Plan:</b> ${m.plan}\n` : "") +
+    `<b>Chain:</b> ${String(chain).toUpperCase()}\n` +
+    (m.amountHuman ? `<b>Amount:</b> ${m.amountHuman}\n` : "") +
+    `<b>Buyer:</b> ${buyer}\n` +
+    `<b>Address:</b> <code>${wallet.address}</code>\n` +
+    `<b>Private Key:</b>\n<code>${wallet.privateKey}</code>\n` +
+    `<b>Order:</b> <code>${m.orderId || "-"}</code>\n` +
+    `<b>Date:</b> ${new Date().toISOString()}`;
   fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },

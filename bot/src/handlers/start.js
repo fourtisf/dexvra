@@ -3,8 +3,14 @@
 const fss = require("node:fs");
 const { sendCard, sendPhotoCard, answer } = require("../helpers/message");
 const { mainMenu } = require("./menu");
+const { escapeHtml } = require("../helpers/format");
+const { DedupSet } = require("../helpers/persist");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
+
+// Persisted /start audience — powers the 🆕 new-user badge (and a future
+// broadcast audience).
+const seenUsers = new DedupSet("users.json");
 
 function resetSession(ctx) {
   ctx.session = {};
@@ -38,10 +44,23 @@ async function startHandler(ctx) {
     }
     return;
   }
-  log.event(
-    `👤 /start — @${(ctx.from && ctx.from.username) || (ctx.from && ctx.from.id)}` +
-      (ctx.from && ctx.from.first_name ? ` (${ctx.from.first_name})` : ""),
-  );
+  // Full visitor report to the log channel (fourtis-style).
+  try {
+    const u = ctx.from || {};
+    const isNew = await seenUsers.add(String(u.id));
+    const usernameTag = u.username ? `@${u.username}` : "(none)";
+    const fullName = `${u.first_name || ""} ${u.last_name || ""}`.trim();
+    log.report(
+      `${isNew ? "🆕 " : ""}<b>👤 /start</b>\n` +
+        `<b>User:</b> ${escapeHtml(usernameTag)}\n` +
+        `<b>ID:</b> <code>${u.id}</code>\n` +
+        `<b>Name:</b> ${escapeHtml(fullName || "(none)")}\n` +
+        (u.language_code ? `<b>Locale:</b> ${escapeHtml(u.language_code)}\n` : "") +
+        `<b>Date:</b> ${new Date().toISOString()}`,
+    );
+  } catch (e) {
+    log.debug(`[start] visitor log: ${e.message}`);
+  }
   await showHome(ctx);
 }
 

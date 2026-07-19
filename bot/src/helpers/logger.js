@@ -39,6 +39,19 @@ const log = {
     out("EVENT", [text]);
     forward(text);
   },
+  // Rich HTML report to the log channel (visitor / purchase reports). Console
+  // gets a tag-stripped line.
+  report: (html) => {
+    out("REPORT", [String(html).replace(/<[^>]+>/g, "").replace(/\n/g, " | ")]);
+    if (botRef && logChannel) {
+      botRef.telegram
+        .sendMessage(logChannel, String(html).slice(0, 3800), {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        })
+        .catch(() => {});
+    }
+  },
 };
 
 module.exports = log;
