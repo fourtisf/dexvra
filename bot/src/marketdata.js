@@ -112,7 +112,8 @@ async function fetchTokenDescription(chain, address) {
     const d = j.data && j.data.attributes && j.data.attributes.description;
     if (!d || typeof d !== "string") return null;
     const clean = d.replace(/\s+/g, " ").trim();
-    return clean.length >= 20 ? clean.slice(0, 500) : null;
+    // code-point slice — never split an emoji's surrogate pair at the cap
+    return clean.length >= 20 ? Array.from(clean).slice(0, 500).join("") : null;
   } catch (e) {
     log.debug(`[market] GT info ${chain}/${address}: ${e.message}`);
     return null;
