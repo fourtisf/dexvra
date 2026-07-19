@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BRAND_NAME } from "@/config/brand";
+import { BOT_URL, BRAND_NAME } from "@/config/brand";
 import { CHAIN_IDS } from "@/config/chains";
 import { useApp } from "./AppState";
 
@@ -13,6 +13,7 @@ const AUTO_MS = 5000;
 // until real bookings exist (Phase 3).
 export function PromoCarousel() {
   const { openListing, reducedMotion } = useApp();
+  void openListing;
   const [idx, setIdx] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -91,7 +92,7 @@ export function PromoCarousel() {
               Find the next <span className="grad">Moonshot</span> first.
             </h2>
             <p>Fresh launches, whale flow, and bundle forensics — the signal hits {BRAND_NAME} before the crowd.</p>
-            <button className="btn-slide" onClick={openListing}>⚡ Express Listing</button>
+            <a className="btn-slide" href={BOT_URL} target="_blank" rel="noopener noreferrer">⚡ Express Listing</a>
           </div>
         </div>
 

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { BoardToken, FearGreed, TokensPayload } from "@/lib/types";
+import type { ConnectedWallet } from "@/lib/walletConnect";
 
 export const tokenHref = (t: Pick<BoardToken, "chain" | "address">) =>
   `/token/${t.chain}/${encodeURIComponent(t.address)}`;
@@ -41,8 +42,12 @@ interface AppState {
   removeAlert: (i: number) => void;
   myListings: MyListing[];
   addListing: (l: MyListing) => void;
-  wallet: string | null;
-  toggleWallet: () => void;
+  wallet: ConnectedWallet | null;
+  walletModalOpen: boolean;
+  openWalletModal: () => void;
+  closeWalletModal: () => void;
+  setWalletConnected: (w: ConnectedWallet) => void;
+  disconnectWallet: () => void;
   toastMsg: string | null;
   toast: (msg: string) => void;
   openDetail: (t: BoardToken) => void;
@@ -90,7 +95,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [myListings, setMyListings] = useState<MyListing[]>([]);
-  const [wallet, setWallet] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<ConnectedWallet | null>(null);
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [listingOpen, setListingOpen] = useState(false);
   const [homeQuery, setHomeQuery] = useState("");
@@ -102,6 +108,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWatchlist(new Set(loadLocal<string[]>("watchlist", [])));
     setAlerts(loadLocal<AlertItem[]>("alerts", []));
     setMyListings(loadLocal<MyListing[]>("myListings", []));
+    setWallet(loadLocal<ConnectedWallet | null>("wallet", null));
     setReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   }, []);
 
@@ -189,13 +196,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const toggleWallet = useCallback(() => {
-    // Demo connect only — real SIWS wallet auth lands in Phase 2.
-    setWallet((prev) => {
-      const next = prev ? null : "FxK3…9dQ2";
-      toast(next ? "Wallet connected ✓ (demo)" : "Wallet disconnected");
-      return next;
-    });
+  const openWalletModal = useCallback(() => setWalletModalOpen(true), []);
+  const closeWalletModal = useCallback(() => setWalletModalOpen(false), []);
+  const setWalletConnected = useCallback(
+    (w: ConnectedWallet) => {
+      setWallet(w);
+      saveLocal("wallet", w);
+      setWalletModalOpen(false);
+      toast(`${w.name} connected ✓`);
+    },
+    [toast],
+  );
+  const disconnectWallet = useCallback(() => {
+    setWallet(null);
+    saveLocal("wallet", null);
+    toast("Wallet disconnected");
   }, [toast]);
 
   return (
@@ -211,7 +226,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         myListings,
         addListing,
         wallet,
-        toggleWallet,
+        walletModalOpen,
+        openWalletModal,
+        closeWalletModal,
+        setWalletConnected,
+        disconnectWallet,
         toastMsg,
         toast,
         openDetail: (t) => router.push(tokenHref(t)),
