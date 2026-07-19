@@ -129,6 +129,7 @@ const DEFAULTS = {
     `🔤 **Symbol** — {symbol}\n` +
     `${em("🔗", E.link)} **CA** — \`{address}\`\n` +
     `🖼 **Logo** — {logo}\n` +
+    `📝 **Overview** — {overview}\n` +
     `${em("🌐", E.globe)} **Website** — {website}\n` +
     `🐦 **X** — {twitter}\n` +
     `💬 **Telegram** — {telegram}\n\n` +
@@ -184,19 +185,25 @@ const DEFAULTS = {
     `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
 
   // ── Channel post layouts ──
-  // {tierLine}/{socials}/{footer} are auto-built; the rest are raw values.
+  // {tierLine}/{overview}/{socials}/{footer} are auto-built and carry their own
+  // spacing (they collapse cleanly when empty); the rest are raw values.
   post_listing:
-    `{head}\n\n**{name}** · {symbol}\n{tierLine}` +
-    `\`{address}\`\n\n` +
+    `{head}\n\n{logoEmoji}**{name}** · {symbol}\n{tierLine}\n` +
+    `{overview}` +
     `${em("📊", E.chart)} **Chain** — {chain}\n` +
     `${em("💲", E.dollar)} **Price** — {price}\n` +
-    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n\n{socials}\n\n` +
-    `${em("🟢", E.green)} [Trade & track on Dexvra]({coinUrl}){footer}`,
+    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n` +
+    `${em("🔗", E.link)} **CA** — \`{address}\`\n\n` +
+    `{socials}` +
+    `${em("🟢", E.green)} [Listed on dexvra.io]({coinUrl}){footer}`,
   post_trending:
     `🔥 **{symbol} is Trending on Dexvra**\n\n` +
-    `**{name}** · {chain}\n\`{address}\`\n\n` +
+    `{logoEmoji}**{name}** · {chain}\n\n` +
+    `{overview}` +
     `${em("💲", E.dollar)} **Price** — {price}\n` +
-    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n\n{socials}\n\n` +
+    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n` +
+    `${em("🔗", E.link)} **CA** — \`{address}\`\n\n` +
+    `{socials}` +
     `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
   post_pump:
     `${em("📈", E.chartUp)} **{symbol} +{percent}%**\n\n` +
@@ -223,7 +230,7 @@ const META = {
   listing_logo_prompt: { group: "Bot Messages", label: "Prompt: logo", ph: [] },
   trending_ca_prompt: { group: "Bot Messages", label: "Prompt: trending CA", ph: [] },
   trending_not_found: { group: "Bot Messages", label: "Trending: token not listed", ph: [] },
-  review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "website", "twitter", "telegram"] },
+  review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram"] },
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
   invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
   invalid_url: { group: "Bot Messages", label: "Error: invalid URL", ph: [] },
@@ -247,8 +254,8 @@ const META = {
   success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks"] },
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
-  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
+  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
 };
@@ -285,7 +292,14 @@ function render(key, vars) {
     // Admin-pasted template stored with real entity arrays (premium emoji kept).
     const rich = {};
     for (const k of Object.keys(vars || {})) {
-      const v = vars[k];
+      let v = vars[k];
+      // Self-spacing vars ({socials}/{overview} end in "\n\n") double up when
+      // an OLDER saved template still writes its own blank line after the
+      // placeholder. Entity text can't be post-collapsed (offsets), so trim
+      // the var's trailing newlines whenever the template supplies its own.
+      if (typeof v === "string" && /\n+$/.test(v) && val.text.includes(`{${k}}\n`)) {
+        v = v.replace(/\n+$/, "");
+      }
       if (typeof v === "string" && v) {
         const p = premium.parse(v);
         rich[k] = p.entities.length ? p : v;
@@ -305,9 +319,18 @@ function render(key, vars) {
       const v = vars[k];
       safe[k] = v == null ? "" : escapeHtml(premium.parse(String(v)).text);
     }
-    return { html: substitute(s, safe) };
+    return { html: collapseGaps(substitute(s, safe)) };
   }
-  return premium.parse(substitute(s, vars));
+  return premium.parse(collapseGaps(substitute(s, vars)));
+}
+
+// Self-spacing vars ({socials}/{overview} carry their own trailing "\n\n") can
+// double up against an older saved template that still writes explicit blank
+// lines around the placeholder — collapse 3+ newlines so both layouts render
+// clean. String paths only: entity-saved templates can't be collapsed without
+// remapping premium-emoji offsets, so they keep the admin's literal spacing.
+function collapseGaps(s) {
+  return String(s).replace(/\n{3,}/g, "\n\n");
 }
 
 /** Plain-text resolve (markup stripped to clean text) — for previews/tests. */

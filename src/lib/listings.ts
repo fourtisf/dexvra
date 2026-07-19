@@ -28,6 +28,7 @@ export interface ListingRow {
   website?: string;
   twitter?: string;
   telegram?: string;
+  overview?: string; // short project description (bot listing flow / admin edit)
   // Time-boxed Trending slot (set when a project buys a Trending package via the
   // Telegram bot). `trendingRank` is the featured sub-order; `trendExp` is when
   // the slot ends — the provider stops featuring the token past it, and the
@@ -132,6 +133,7 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
       twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
       telegram: r.telegram ?? null,
     },
+    overview: r.overview ?? null,
   };
 }
 

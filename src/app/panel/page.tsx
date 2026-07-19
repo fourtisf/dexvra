@@ -31,7 +31,7 @@ export default function AdminDashboard() {
   const [addErr, setAddErr] = useState("");
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "" });
+  const [ef, setEf] = useState({ name: "", emoji: "", logoUrl: "", website: "", twitter: "", telegram: "", overview: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -126,6 +126,7 @@ export default function AdminDashboard() {
       website: r.website ?? "",
       twitter: r.twitter ?? "",
       telegram: r.telegram ?? "",
+      overview: r.overview ?? "",
     });
   };
 
@@ -368,6 +369,7 @@ export default function AdminDashboard() {
                             <div className="add-fld"><label>Website</label><input className="a-input" value={ef.website} onChange={setE("website")} placeholder="https://…" /></div>
                             <div className="add-fld"><label>X / Twitter</label><input className="a-input" value={ef.twitter} onChange={setE("twitter")} placeholder="https://x.com/…" /></div>
                             <div className="add-fld"><label>Telegram</label><input className="a-input" value={ef.telegram} onChange={setE("telegram")} placeholder="https://t.me/…" /></div>
+                            <div className="add-fld wide"><label>Overview — short project description (token page + channel posts; empty = none)</label><input className="a-input" value={ef.overview} onChange={setE("overview")} placeholder="1-3 sentences about the project" /></div>
                           </div>
                           {editErr && <div className="login-err" style={{ textAlign: "left" }}>{editErr}</div>}
                           <div className="edit-actions">

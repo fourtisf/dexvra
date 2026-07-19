@@ -20,6 +20,7 @@ const { chainOf } = require("./config/chains");
 const assets = require("./assets");
 const bannerRender = require("./bannerRender");
 const bannerTemplate = require("./bannerTemplate");
+const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const log = require("./helpers/logger");
 
@@ -68,6 +69,7 @@ function coinFrom(row, live) {
     chain: row.chain,
     address: row.address,
     tier: row.tier,
+    overview: row.overview || null,
     price: live && live.priceUsd,
     mcap: live && live.mcap,
     links: { website: row.website, twitter: row.twitter, telegram: row.telegram },
@@ -169,6 +171,12 @@ async function fulfillListing(ctx, order) {
 
   // 4. Channel posts (best-effort) — dynamic per-token banners.
   if (!logoBuffer && input.logoUrl) logoBuffer = await fetchLogoUrl(input.logoUrl);
+  // Animated logo custom-emoji (per-token pack, shown inline in channel posts
+  // via GramJS). Best-effort — ensureTokenEmoji never throws.
+  await tokenEmoji.ensureTokenEmoji(
+    { chain: input.chain, address: input.address, symbol: input.sym },
+    logoBuffer,
+  );
   const live = await market.fetchMarket(input.chain, input.address).catch(() => null);
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
@@ -213,6 +221,11 @@ async function fulfillTrending(ctx, order) {
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
   const logoBuffer = await fetchLogoUrl(row.logoUrl);
+  // Reuses the pack made at listing time; builds one now if it never existed.
+  await tokenEmoji.ensureTokenEmoji(
+    { chain: p.chain, address: p.address, symbol: row.sym || row.symbol },
+    logoBuffer,
+  );
   const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
   const links = [];
   try {

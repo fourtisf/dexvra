@@ -77,6 +77,14 @@ async function startBot() {
 
   api.ping().then((ok) => log.info(`[start] internal API reachable: ${ok}`));
 
+  // Banner pipeline health at boot — a silent failure here is why a channel
+  // post degrades to the raw token logo (live incident 2026-07-19).
+  const { POST_BANNERS } = require("./config/constants");
+  if (!POST_BANNERS) {
+    log.warn("[start] POST_BANNERS=0 — channel posts will use the RAW TOKEN LOGO, no banner artwork. Set POST_BANNERS=1 (or remove it) in .env and restart to enable banners.");
+  }
+  require("./bannerTemplate").selfCheck();
+
   process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
 

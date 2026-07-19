@@ -130,13 +130,19 @@ function looksLikeHtml(s) {
 }
 
 /** Neutralize markup-control characters in USER-supplied values (token names,
- *  symbols, titles) before they're substituted into a markup template — else a
- *  name like "[click](https://scam)" would inject a link into channel posts. */
+ *  symbols, overviews, titles) before they're substituted into a markup
+ *  template — else a name like "[click](https://scam)" would inject a link
+ *  into channel posts. `**` runs are broken with U+2217 (∗, visually near-
+ *  identical): a user overview containing "100**" would otherwise open a bold
+ *  span that swallows every later emoji/link/code pattern in the post,
+ *  leaking raw "[📊](emoji/…)" markup into the official channel text. Lone
+ *  asterisks survive — a single '*' can't form the '**' delimiter. */
 function sanitizeVar(v) {
   return String(v == null ? "" : v)
     .replace(/\[/g, "(")
     .replace(/\]/g, ")")
-    .replace(/`/g, "'");
+    .replace(/`/g, "'")
+    .replace(/\*{2,}/g, (m) => "∗".repeat(m.length));
 }
 
 /** Neutralize markup delimiters in URLs interpolated into [label](url) — a ')'

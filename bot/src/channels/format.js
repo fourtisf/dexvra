@@ -11,6 +11,7 @@ const { tierLabel } = require("../config/packages");
 const { SITE_URL, CHANNELS } = require("../config/constants");
 const premium = require("../premium");
 const tpl = require("../templates");
+const tokenEmoji = require("../tokenEmoji");
 
 const { EMOJI: E, em } = tpl;
 
@@ -34,12 +35,31 @@ const TIER_EMOJI = {
   XPRESS: em("⚡", E.zap),
 };
 
+// Carries its own trailing spacing so the template collapses cleanly (no
+// stray blank lines) when a token has no socials.
 function socialLines(links = {}) {
   const out = [];
   if (links.website) out.push(`[Website](${cleanUrl(links.website)})`);
   if (links.twitter) out.push(`[X](${cleanUrl(links.twitter)})`);
   if (links.telegram) out.push(`[Telegram](${cleanUrl(links.telegram)})`);
-  return out.length ? `${em("🔗", E.link)} ${out.join(" · ")}` : "";
+  return out.length ? `${em("🌐", E.globe)} ${out.join(" · ")}\n\n` : "";
+}
+
+// Project overview paragraph — one clean block under the title, own spacing.
+// Truncation counts CODE POINTS (Array.from), never slicing through a
+// surrogate pair — overviews routinely contain emoji, and a split pair sends
+// ill-formed U+FFFD text to Telegram.
+function overviewBlock(text) {
+  if (!text) return "";
+  let s = String(text).replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  const chars = Array.from(s);
+  if (chars.length > 300) {
+    s = chars.slice(0, 300).join("");
+    const cut = s.lastIndexOf(" ");
+    s = (cut > 200 ? s.slice(0, cut) : s).trimEnd() + "…";
+  }
+  return `${clean(s)}\n\n`;
 }
 
 function footer() {
@@ -66,6 +86,8 @@ function listingPost(coin) {
   return tpl.render("post_listing", {
     head,
     tierLine,
+    logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
+    overview: overviewBlock(coin.overview),
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
     chain: clean(chainName(coin.chain)),
@@ -83,6 +105,8 @@ function trendingPost(coin) {
     symbol: clean(sym(coin.symbol)),
     name: clean(coin.name),
     chain: clean(chainName(coin.chain)),
+    logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
+    overview: overviewBlock(coin.overview),
     address: clean(coin.address),
     price: priceStr(coin.price),
     mcap: mcStr(coin.mcap),

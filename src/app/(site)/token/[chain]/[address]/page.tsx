@@ -118,6 +118,13 @@ export default function TokenPage() {
         <Socials t={t} />
       </div>
 
+      {t.overview && (
+        <div className="panel tp-about">
+          <div className="tp-about-k">About {t.symbol}</div>
+          <p className="tp-about-p">{t.overview}</p>
+        </div>
+      )}
+
       <div className="tp-grid">
         <div className="tp-chart-wrap">
           {chartSrc ? (
