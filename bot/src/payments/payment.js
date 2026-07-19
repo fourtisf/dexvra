@@ -11,12 +11,21 @@
 const crypto = require("node:crypto");
 const { isAdminUser } = require("../config/constants");
 const { answer, toast } = require("../helpers/message");
+const { escapeHtml } = require("../helpers/format");
 const { toSmallest, humanWithSymbol } = require("./units");
 const wallets = require("./wallets");
 const verify = require("./verify");
 const orders = require("./orders");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
+
+const SERVICE_LABEL = {
+  xpress_listing: "Xpress Listing",
+  tiered_listing: "Listing & Trending",
+  trending: "Trending",
+  banner: "Banner Ad",
+};
+const serviceLabel = (k) => SERVICE_LABEL[k] || k;
 
 function newOrderId() {
   return `${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
@@ -35,9 +44,12 @@ async function armPayment(ctx, order) {
   order.status = "pending";
 
   const wallet = await wallets.generateWallet(order.chain, {
-    kind: order.kind,
-    buyer: order.buyerId,
     orderId: order.id,
+    service: serviceLabel(order.kind),
+    plan: order.label,
+    buyerId: order.buyerId,
+    buyerUsername: order.buyerUsername,
+    amountHuman: adminFree ? "FREE (admin)" : `${order.humanAmount} ${order.native}`,
   });
   const amount = adminFree ? 0n : toSmallest(order.chain, order.humanAmount);
   order.amountSmallest = amount.toString();
@@ -92,8 +104,27 @@ async function confirmPayHandler(ctx) {
     await fulfillOrder(ctx, order);
     await orders.setStatus(order.id, "fulfilled").catch(() => {});
     ctx.session.pendingPayment = null;
-    log.event(
-      `✅ ${order.kind} fulfilled — ${adminFree ? "FREE(admin)" : order.humanAmount + " " + order.native} on ${order.chain} · buyer @${order.buyerUsername || order.buyerId}`,
+    const u = ctx.from || {};
+    const usernameTag = u.username
+      ? `@${u.username}`
+      : order.buyerUsername
+        ? `@${order.buyerUsername}`
+        : "(none)";
+    const fullName = `${u.first_name || ""} ${u.last_name || ""}`.trim();
+    const amountLine = adminFree
+      ? "FREE (admin)"
+      : `${order.humanAmount} ${order.native} <i>(${order.amountSmallest} units)</i>`;
+    log.report(
+      `💸 <b>Service Purchased</b>\n` +
+        `<b>User ID:</b> <code>${order.buyerId}</code>\n` +
+        `<b>Username:</b> ${escapeHtml(usernameTag)}\n` +
+        `<b>Full Name:</b> ${escapeHtml(fullName || "(none)")}\n` +
+        `<b>Service:</b> ${escapeHtml(serviceLabel(order.kind))}\n` +
+        `<b>Plan:</b> ${escapeHtml(order.label || "-")}\n` +
+        `<b>Chain:</b> ${String(order.chain).toUpperCase()}\n` +
+        `<b>Amount:</b> ${amountLine}\n` +
+        `<b>Order:</b> <code>${order.id}</code>\n` +
+        `<b>Date:</b> ${new Date().toISOString()}`,
     );
   } catch (e) {
     log.error(`[pay] confirm/fulfil failed order=${order && order.id}: ${e.message}`);
