@@ -43,15 +43,16 @@ const BASE_DEFAULTS = {
   showText: true, // draw $TICKER + name overlay
   tickerFontSize: 96,
   tickerX: 210, // number | "center"
-  tickerY: 650,
+  tickerY: 618,
   tickerColor: "#FFFFFF",
   nameFontSize: 48,
   nameColor: "#B8CCC8",
-  nameOffsetY: 100,
-  // token meta chips (CHAIN · price · MC) under the ring — filled by live data
-  metaX: 2100, // center x | "center"
-  metaY: 1128,
-  metaFontSize: 38,
+  nameOffsetY: 96,
+  // token meta chips (CHAIN · price · MC) inside the glass panel, under the
+  // name — filled by live data. metaX = LEFT edge (or "center").
+  metaX: 210,
+  metaY: 772,
+  metaFontSize: 34,
 };
 const KIND_DEFAULTS = {
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
@@ -221,8 +222,8 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap } = 
         ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
         const widths = vals.map((v) => ctx.measureText(v).width + padX * 2);
         const total = widths.reduce((a, b) => a + b, 0) + gap * (vals.length - 1);
-        const cxm = cfg.metaX === "center" ? W / 2 : Number(cfg.metaX) || W / 2;
-        let x = cxm - total / 2;
+        let x =
+          cfg.metaX === "center" ? (W - total) / 2 : Number(cfg.metaX) || 210;
         const y = Number(cfg.metaY) || H - 152;
         for (let i = 0; i < vals.length; i++) {
           const w = widths[i];
