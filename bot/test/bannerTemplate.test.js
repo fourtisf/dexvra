@@ -79,3 +79,21 @@ test("postingEnabled: env default, admin toggle persists and wins", async () => 
   assert.strictEqual(bt.getSettings("listing").logoSize, 444);
   await bt.setPostingEnabled(true);
 });
+
+test("stale saved layouts (no/old layoutVersion) are ignored — defaults win", async () => {
+  const { loadJSONSync, saveJSON } = require("../src/helpers/persist");
+  // simulate a config written by an older code version: full frozen snapshot,
+  // no layoutVersion, ticker parked at the bottom edge of the old artwork
+  const saved = loadJSONSync("bannerTemplate.json", {});
+  saved.trending = { logoX: 100, logoY: 1200, tickerY: 1250, logoSize: 999 };
+  await saveJSON("bannerTemplate.json", saved);
+  const s = bt.getSettings("trending");
+  assert.notStrictEqual(s.tickerY, 1250, "stale layout must not survive");
+  assert.notStrictEqual(s.logoSize, 999);
+  // a fresh edit persists (stamped with the current version) and defaults fill the rest
+  const after = await bt.updateSettings("trending", { logoX: 1700 });
+  assert.strictEqual(after.logoX, 1700);
+  assert.strictEqual(bt.getSettings("trending").logoX, 1700);
+  assert.strictEqual(bt.getSettings("trending").logoSize, 420, "untouched keys come from CURRENT defaults");
+  await bt.resetSettings("trending");
+});
