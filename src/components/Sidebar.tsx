@@ -7,7 +7,7 @@ import { Logo } from "./Logo";
 import { useApp } from "./AppState";
 import { BOT_URL } from "@/config/brand";
 
-interface NavItem {
+export interface NavItem {
   href: string;
   label: string;
   icon: JSX.Element;
@@ -39,6 +39,15 @@ const GROW: NavItem[] = [
 const APP: NavItem[] = [
   { href: "/install", label: "Install App", icon: <svg viewBox="0 0 24 24" {...stroke}><path d="M12 3v11M8 10l4 4 4-4" /><path d="M5 19h14" /></svg> },
   { href: "/account", label: "Account", icon: <svg viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="8.5" r="3.8" /><path d="M4.5 20c1.4-3.4 4.1-5 7.5-5s6.1 1.6 7.5 5" /></svg> },
+];
+
+// Shared so the mobile ⋮ menu (Topbar) exposes the exact same features as the
+// desktop sidebar — which is hidden on phones.
+export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  { label: "Discover", items: DISCOVER },
+  { label: "Signals", items: SIGNALS },
+  { label: "Grow", items: GROW },
+  { label: "App", items: APP },
 ];
 
 function NavGroup({ label, items, pathname }: { label: string; items: NavItem[]; pathname: string }) {

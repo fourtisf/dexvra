@@ -10,12 +10,16 @@ import { Logo } from "./Logo";
 import { useApp } from "./AppState";
 import { BOT_URL } from "@/config/brand";
 import { shortAddr } from "@/lib/walletConnect";
+import { NAV_GROUPS } from "./Sidebar";
+import { usePathname } from "next/navigation";
 
 export function Topbar() {
   const { data, wallet, openWalletModal, disconnectWallet, toast, openDetail, homeQuery, setHomeQuery } = useApp();
   const [walletMenu, setWalletMenu] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
+  const [menu, setMenu] = useState(false); // mobile ⋮ feature menu
+  const pathname = usePathname();
 
   // "/" focuses the topbar search from anywhere (prototype behavior)
   useEffect(() => {
@@ -50,6 +54,47 @@ export function Topbar() {
         <div className="brand-logo sm spin"><Logo size={32} /></div>
         <div className="brand-name">{BRAND_NAME}</div>
       </Link>
+      {/* Mobile-only ⋮ menu: the sidebar is hidden on phones, so this is the
+          only way to reach the feature pages there. */}
+      <div className="topmenu">
+        <button
+          className="topmenu-btn"
+          aria-label="Menu"
+          aria-expanded={menu}
+          onClick={() => setMenu((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width={20} height={20} fill="currentColor" aria-hidden>
+            <circle cx="12" cy="5" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="12" cy="19" r="1.8" />
+          </svg>
+        </button>
+        {menu && (
+          <>
+            <div className="topmenu-scrim" onClick={() => setMenu(false)} />
+            <div className="topmenu-dd" role="menu">
+              {NAV_GROUPS.map((g) => (
+                <div className="tmg" key={g.label}>
+                  <div className="tmg-label">{g.label}</div>
+                  {g.items.map((it) => (
+                    <Link
+                      key={it.href}
+                      href={it.href}
+                      role="menuitem"
+                      className={`tmg-item ${pathname === it.href ? "active" : ""}`}
+                      onClick={() => setMenu(false)}
+                    >
+                      <span className="tmg-ic">{it.icon}</span>
+                      <span>{it.label}</span>
+                      {it.badge && <span className={`tmg-badge ${it.badge}`}>{it.badge}</span>}
+                    </Link>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <div className="search-wrap">
         <label className="search">
           <svg viewBox="0 0 24 24">
