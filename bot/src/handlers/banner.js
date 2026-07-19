@@ -36,13 +36,14 @@ async function typePick(ctx) {
   const rows = pack.rows.map((r, i) => [
     Markup.button.callback(`${r.duration} · $${r.usd}${r.discount ? ` (-${r.discount}%)` : ""}`, `bd_${i}`),
   ]);
-  await sendCard(ctx, `📢 <b>${escapeHtml(pack.name)}</b> (${pack.size})\n\nChoose a duration:`, menu.withHome(rows));
+  const tpl = require("../templates");
+  await sendCard(ctx, tpl.render("banner_duration_prompt", { name: pack.name, size: pack.size }), menu.withHome(rows));
 }
 
 async function durationPick(ctx) {
   await answer(ctx);
   const bf = ctx.session.bannerForm;
-  if (!bf || !bf.key) return toast(ctx, "Session expired — send /start.");
+  if (!bf || !bf.key) return toast(ctx, require("../templates").render("session_expired"));
   const pack = bannerByKey(bf.key);
   const row = pack.rows[Number(ctx.match[1])];
   if (!row) return toast(ctx, "Invalid duration.");
@@ -50,7 +51,7 @@ async function durationPick(ctx) {
   bf.usd = row.usd;
   bf.duration = row.duration;
   ctx.session.awaitingField = "banner_image";
-  await sendCard(ctx, `🖼 Send your banner image (<b>${bf.size}</b>) as a photo:`, menu.withHome([]));
+  await sendCard(ctx, require("../templates").render("banner_image_prompt", { size: bf.size }), menu.withHome([]));
 }
 
 async function handlePhoto(ctx) {
@@ -60,7 +61,7 @@ async function handlePhoto(ctx) {
   if (!id) return toast(ctx, "I couldn't read that image — send it as a photo.");
   s.bannerForm.imageFileId = id;
   s.awaitingField = "banner_link";
-  await sendCard(ctx, "🔗 Send the <b>click-through URL</b> (https://…) for your banner:", menu.withHome([]));
+  await sendCard(ctx, require("../templates").render("banner_link_prompt"), menu.withHome([]));
 }
 
 async function handleText(ctx) {
@@ -70,10 +71,10 @@ async function handleText(ctx) {
   const input = (ctx.message.text || "").trim();
 
   if (s.awaitingField === "banner_link") {
-    if (!URL_RE.test(input)) return toast(ctx, "❌ That must be a full https:// URL.");
+    if (!URL_RE.test(input)) return toast(ctx, require("../templates").render("invalid_url"));
     bf.linkUrl = input;
     s.awaitingField = "banner_title";
-    return sendCard(ctx, "🏷 Send a short <b>title/label</b> for your banner (or /skip):", menu.withHome([]));
+    return sendCard(ctx, require("../templates").render("banner_title_prompt"), menu.withHome([]));
   }
   if (s.awaitingField === "banner_title") {
     bf.title = input === "/skip" ? null : input.slice(0, 60);
@@ -93,11 +94,11 @@ async function showPayMethods(ctx) {
     rows.push([Markup.button.callback(`${q.human} ${q.native}`, `bpay_${chain}`)]);
   }
   if (!rows.length) {
-    return sendCard(ctx, "⚠️ Price feed is unavailable right now — please try again in a minute.", menu.withHome([]));
+    return sendCard(ctx, require("../templates").render("price_feed_down"), menu.withHome([]));
   }
   await sendCard(
     ctx,
-    `💳 <b>${escapeHtml(bf.slot)}</b> · ${bf.duration} — <b>$${bf.usd}</b>\n\nChoose how to pay:`,
+    require("../templates").render("banner_pay_prompt", { slot: bf.slot, duration: bf.duration, usd: bf.usd }),
     menu.withHome(rows),
   );
 }
@@ -105,7 +106,7 @@ async function showPayMethods(ctx) {
 async function payPick(ctx) {
   await answer(ctx);
   const bf = ctx.session && ctx.session.bannerForm;
-  if (!bf || !bf.pay) return toast(ctx, "Session expired — send /start.");
+  if (!bf || !bf.pay) return toast(ctx, require("../templates").render("session_expired"));
   const chain = ctx.match[1];
   const q = bf.pay[chain];
   if (!q) return toast(ctx, "That currency isn't available — pick another.");

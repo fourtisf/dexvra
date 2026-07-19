@@ -65,11 +65,11 @@ async function confirmPayHandler(ctx) {
   await answer(ctx);
   const pp = ctx.session && ctx.session.pendingPayment;
   if (!pp) {
-    await toast(ctx, "No pending payment. Send /start to begin.");
+    await toast(ctx, tpl.render("no_pending_payment"));
     return;
   }
   if (ctx.session._verifying) {
-    await toast(ctx, "⏳ Still checking your last payment — hang tight.");
+    await toast(ctx, tpl.render("still_checking"));
     return;
   }
   ctx.session._verifying = true;
@@ -80,7 +80,7 @@ async function confirmPayHandler(ctx) {
     if (!adminFree) {
       await toast(
         ctx,
-        `⏳ Checking ${order.chain.toUpperCase()} for your payment of ${order.humanAmount} ${order.native}… this can take up to a minute.`,
+        tpl.render("checking_payment", { chain: order.chain.toUpperCase(), amount: order.humanAmount, native: order.native }),
       );
       const r = await verify.verifyPayment(order.chain, address, order.amountSmallest);
       paid = r.paid;

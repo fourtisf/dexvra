@@ -68,7 +68,7 @@ async function handleText(ctx) {
   switch (field) {
     case "address": {
       if (!isValidAddress(f.chain, input)) {
-        return toast(ctx, `❌ That doesn't look like a valid ${chainOf(f.chain).label} address. Try again.`);
+        return toast(ctx, tpl.render("invalid_address", { chain: chainOf(f.chain).label }));
       }
       f.address = input;
       // Autofill from DexScreener (name/symbol/logo + socials: X/Telegram/Website)
@@ -114,7 +114,7 @@ async function handleText(ctx) {
     case "website":
     case "twitter":
     case "telegram":
-      if (!URL_RE.test(input)) return toast(ctx, "❌ That must be a full https:// URL.");
+      if (!URL_RE.test(input)) return toast(ctx, tpl.render("invalid_url"));
       f[field] = input;
       s.awaitingField = null;
       return showReview(ctx);
@@ -148,18 +148,18 @@ function reviewKb() {
 async function showReview(ctx) {
   const f = ctx.session.form;
   ctx.session.reviewShown = true;
-  const row = (label, v) => `${label}: ${v ? escapeHtml(v) : "—"}`;
-  const text =
-    `📋 <b>Review your listing</b>\n\n` +
-    `📊 Chain: <b>${escapeHtml(chainOf(f.chain).label)}</b>\n` +
-    `${row("🏷 Name", f.name)}\n` +
-    `🔤 Symbol: ${f.sym ? "$" + escapeHtml(f.sym) : "—"}\n` +
-    `🔗 CA: <code>${escapeHtml(f.address)}</code>\n` +
-    `🖼 Logo: ${f.logoFileId || f.logoUrl ? "✅ set" : "— none"}\n` +
-    `${row("🌐 Website", f.website)}\n` +
-    `${row("🐦 X", f.twitter)}\n` +
-    `${row("💬 Telegram", f.telegram)}\n\n` +
-    `Tap <b>✅ Confirm</b> when ready.`;
+  const premium = require("../premium");
+  const v = (x) => (x ? premium.sanitizeVar(x) : "—");
+  const text = tpl.render("review_card", {
+    chain: chainOf(f.chain).label,
+    name: v(f.name),
+    symbol: f.sym ? "$" + premium.sanitizeVar(f.sym) : "—",
+    address: premium.sanitizeVar(f.address),
+    logo: f.logoFileId || f.logoUrl ? "✅ set" : "— none",
+    website: v(f.website),
+    twitter: v(f.twitter),
+    telegram: v(f.telegram),
+  });
   const photo = f.logoFileId || (f.logoUrl && f.logoUrl.startsWith("http") ? f.logoUrl : null);
   if (photo) return sendPhotoCard(ctx, photo, text, reviewKb());
   return sendCard(ctx, text, reviewKb());
@@ -170,17 +170,17 @@ async function editField(ctx) {
   await answer(ctx);
   if (!isListing(ctx)) return;
   const field = ctx.match[1];
-  const prompts = {
-    name: "🏷 Send the new <b>name</b>:",
-    symbol: "🔤 Send the new <b>symbol</b>:",
-    logo: "🖼 Send the new <b>logo</b> as a photo, or /skip to remove:",
-    website: "🌐 Send the <b>website</b> URL (https://…), or /skip:",
-    twitter: "🐦 Send the <b>X</b> URL (https://…), or /skip:",
-    telegram: "💬 Send the <b>Telegram</b> URL (https://…), or /skip:",
+  const labels = {
+    name: "name",
+    symbol: "symbol (ticker)",
+    logo: "logo — send it as a photo, or /skip to remove",
+    website: "website URL (https://…), or /skip",
+    twitter: "X URL (https://…), or /skip",
+    telegram: "Telegram URL (https://…), or /skip",
   };
-  if (!prompts[field]) return;
+  if (!labels[field]) return;
   ctx.session.awaitingField = field;
-  await sendCard(ctx, prompts[field], menu.withHome([]));
+  await sendCard(ctx, tpl.render("edit_field_prompt", { field: labels[field] }), menu.withHome([]));
 }
 
 // ── Confirm → tier / payment ─────────────────────────────────────────────────
@@ -203,7 +203,7 @@ async function goPay(ctx, tier) {
   const f = ctx.session.form;
   const chain = f.chain;
   const price = tierPrice(tier, chain);
-  if (price == null) return toast(ctx, "Pricing isn't available for this chain — pick another.");
+  if (price == null) return toast(ctx, tpl.render("pricing_unavailable"));
   const kind = tier === "XPRESS" ? "xpress_listing" : "tiered_listing";
   const label =
     (tier === "XPRESS" ? "Xpress Listing" : `${tierLabel(tier)} Listing`) +
@@ -227,7 +227,7 @@ async function approve(ctx) {
   if (!isListing(ctx)) return;
   const f = ctx.session.form;
   if (!f.chain || !f.address || !f.name || !f.sym) {
-    await toast(ctx, "Please set a name, symbol, and valid contract address first.");
+    await toast(ctx, tpl.render("listing_incomplete"));
     return showReview(ctx);
   }
   if (ctx.session.type === "xpress_listing") return goPay(ctx, "XPRESS");

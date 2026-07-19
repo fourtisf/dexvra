@@ -94,7 +94,44 @@ const MAP: Record<string, (p: { s: number }) => JSX.Element> = {
   ton: Ton,
   robinhood: Robinhood,
   tron: Tron,
+  sui: Sui,
+  plasma: Plasma,
 };
+
+function Sui({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Sui">
+      <circle cx="12" cy="12" r="10" fill="#4DA2FF" />
+      {/* Sui water-drop mark */}
+      <path
+        d="M12 4.6c2.9 3.6 5 6 5 8.9a5 5 0 1 1-10 0c0-2.9 2.1-5.3 5-8.9z"
+        fill="#fff"
+      />
+      <path
+        d="M12 8.2c1.8 2.2 3.1 3.7 3.1 5.5a3.1 3.1 0 1 1-6.2 0c0-1.8 1.3-3.3 3.1-5.5z"
+        fill="#4DA2FF"
+        opacity=".55"
+      />
+    </svg>
+  );
+}
+function Plasma({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Plasma">
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="#0D1512" />
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="none" stroke="#00FF9C" strokeWidth="1.6" />
+      {/* plasma arc */}
+      <path
+        d="M6.5 14.5c2-.6 3-3.4 5.5-3.4s3.2 2.6 5.5 2.2"
+        fill="none"
+        stroke="#00FF9C"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="11.1" r="1.6" fill="#00FF9C" />
+    </svg>
+  );
+}
 
 export function ChainLogo({ chain, size = 16, style }: { chain: string; size?: number; style?: CSSProperties }) {
   const C = MAP[chain];

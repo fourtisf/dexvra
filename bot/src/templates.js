@@ -122,6 +122,42 @@ const DEFAULTS = {
   trending_not_found:
     `${em("❌", E.cross)} **Not listed yet**\n\n` +
     "We couldn't find that token on Dexvra. List it first — ⚡ Xpress or 🏆 Listing & Trending — then come back to book your slot.",
+  review_card:
+    `📋 **Review your listing**\n\n` +
+    `${em("📊", E.chart)} **Chain** — {chain}\n` +
+    `🏷 **Name** — {name}\n` +
+    `🔤 **Symbol** — {symbol}\n` +
+    `${em("🔗", E.link)} **CA** — \`{address}\`\n` +
+    `🖼 **Logo** — {logo}\n` +
+    `${em("🌐", E.globe)} **Website** — {website}\n` +
+    `🐦 **X** — {twitter}\n` +
+    `💬 **Telegram** — {telegram}\n\n` +
+    "Check every detail — this is exactly what goes live on your token page and channel posts. Tap **✅ Confirm** when ready, or use the edit buttons below.",
+  edit_field_prompt: "✏️ Send the new **{field}**:",
+  invalid_address:
+    `${em("❌", E.cross)} That doesn't look like a valid **{chain}** contract address. Double-check and paste it again:`,
+  invalid_url: `${em("❌", E.cross)} That must be a full **https://** URL — try again:`,
+  listing_incomplete: "Please set a name, symbol, and a valid contract address before confirming.",
+  pricing_unavailable: "Pricing isn't available for this network yet — please pick another.",
+  session_expired: "Your session expired — send /start to begin again.",
+  trending_service_down: "We couldn't reach the listings service — please try again in a moment.",
+  banner_duration_prompt:
+    `${em("📢", E.megaphone)} **{name}** · {size}\n\n` +
+    "Campaign pricing is in **USD**, converted to crypto at checkout — longer runs carry bigger discounts.\n\nChoose your campaign duration:",
+  banner_image_prompt:
+    "🖼 **Upload your creative**\n\nSend your banner image as a photo — recommended size **{size}**, PNG or JPG, clean and readable at a glance:",
+  banner_link_prompt:
+    `${em("🔗", E.link)} **Target link**\n\nSend the **click-through URL** (https://…) — visitors who tap your banner land here:`,
+  banner_title_prompt:
+    "🏷 **Campaign title**\n\nSend a short title/label for your campaign (shown in the announcement) — or /skip:",
+  banner_pay_prompt:
+    `💳 **{slot}** · {duration} — **\${usd}**\n\n` +
+    "Choose the currency you'd like to pay with — the exact amount is calculated at the live market rate:",
+  price_feed_down: "⚠️ The price feed is unavailable right now — please try again in a minute.",
+  checking_payment:
+    "⏳ Checking **{chain}** for your payment of **{amount} {native}**… on-chain verification can take up to a minute.",
+  still_checking: "⏳ Still verifying your last payment — hang tight, this takes up to a minute.",
+  no_pending_payment: "There's no pending payment on this chat. Send /start to begin.",
   pay_card:
     `💳 **Order summary**\n\n{label}\n\n` +
     `**Amount due** — {amount} {native}\n**Payment address**\n\`{address}\`\n\n` +
@@ -187,6 +223,23 @@ const META = {
   listing_logo_prompt: { group: "Bot Messages", label: "Prompt: logo", ph: [] },
   trending_ca_prompt: { group: "Bot Messages", label: "Prompt: trending CA", ph: [] },
   trending_not_found: { group: "Bot Messages", label: "Trending: token not listed", ph: [] },
+  review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "website", "twitter", "telegram"] },
+  edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
+  invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
+  invalid_url: { group: "Bot Messages", label: "Error: invalid URL", ph: [] },
+  listing_incomplete: { group: "Bot Messages", label: "Error: listing incomplete", ph: [] },
+  pricing_unavailable: { group: "Bot Messages", label: "Error: pricing unavailable", ph: [] },
+  session_expired: { group: "Bot Messages", label: "Error: session expired", ph: [] },
+  trending_service_down: { group: "Bot Messages", label: "Error: listings service down", ph: [] },
+  banner_duration_prompt: { group: "Bot Messages", label: "Banner: duration picker", ph: ["name", "size"] },
+  banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size"] },
+  banner_link_prompt: { group: "Bot Messages", label: "Banner: link prompt", ph: [] },
+  banner_title_prompt: { group: "Bot Messages", label: "Banner: title prompt", ph: [] },
+  banner_pay_prompt: { group: "Bot Messages", label: "Banner: pay-method picker", ph: ["slot", "duration", "usd"] },
+  price_feed_down: { group: "Bot Messages", label: "Error: price feed down", ph: [] },
+  checking_payment: { group: "Bot Messages", label: "Payment: checking", ph: ["chain", "amount", "native"] },
+  still_checking: { group: "Bot Messages", label: "Payment: still checking", ph: [] },
+  no_pending_payment: { group: "Bot Messages", label: "Payment: none pending", ph: [] },
   pay_card: { group: "Bot Messages", label: "Payment card", ph: ["label", "amount", "native", "address"] },
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },

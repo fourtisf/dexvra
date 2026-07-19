@@ -46,7 +46,7 @@ async function handleText(ctx) {
         r.status === "approved",
     );
   } catch (e) {
-    return toast(ctx, "Couldn't reach the listings service — try again shortly.");
+    return toast(ctx, tpl.render("trending_service_down"));
   }
 
   if (!listing) {
@@ -98,7 +98,7 @@ async function showDurations(ctx) {
 async function durationPick(ctx) {
   await answer(ctx);
   const coin = ctx.session && ctx.session.coin;
-  if (!coin) return toast(ctx, "Session expired — send /start and try again.");
+  if (!coin) return toast(ctx, tpl.render("session_expired"));
   const i = Number(ctx.match[1]);
   const rows = trendingForChain(coin.chain);
   const row = rows[i];
