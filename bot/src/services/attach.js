@@ -11,6 +11,9 @@ function attachServices(bot, services) {
   if (RANKUP_ENABLED) services.push(require("./rankUpChecker").start(tg));
   if (UPSELL_ENABLED) services.push(require("./trendingUpsell").start(tg));
   services.push(require("../broadcast/sender").start(tg)); // admin broadcast delivery
+  if (require("../config/constants").MASS_DM_ENABLED) {
+    services.push(require("../massdm/sender").start(tg)); // paid Mass DM delivery (approved jobs only)
+  }
 
   // One-shot recovery: re-fulfil paid orders + detect late-arriving payments.
   require("./recovery")

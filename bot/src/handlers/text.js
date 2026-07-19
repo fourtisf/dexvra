@@ -17,6 +17,7 @@ async function textRouter(ctx) {
     if (LISTING.has(s.type)) return await require("./listing").handleText(ctx);
     if (s.type === "trend") return await require("./trending").handleText(ctx);
     if (s.type === "banner") return await require("./banner").handleText(ctx);
+    if (s.type === "massdm") return await require("./massdm").handleText(ctx);
   } catch (e) {
     log.warn(`[text] ${s.type} handler: ${e.message}`);
   }
@@ -29,6 +30,7 @@ async function mediaRouter(ctx) {
   try {
     if (LISTING.has(s.type)) return await require("./listing").handlePhoto(ctx);
     if (s.type === "banner") return await require("./banner").handlePhoto(ctx);
+    if (s.type === "massdm") return await require("./massdm").handlePhoto(ctx);
   } catch (e) {
     log.warn(`[media] ${s.type} handler: ${e.message}`);
   }

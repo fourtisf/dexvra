@@ -5,6 +5,7 @@ const start = require("./start");
 const listing = require("./listing");
 const trending = require("./trending");
 const banner = require("./banner");
+const massdm = require("./massdm");
 const text = require("./text");
 const payment = require("../payments/payment");
 const log = require("../helpers/logger");
@@ -41,6 +42,11 @@ function registerHandlers(bot) {
   bot.action(/^bd_(\d+)$/, banner.durationPick);
   bot.action(/^bpay_(.+)$/, banner.payPick);
   bot.action(/^yn_([a-z]+)_(yes|no)$/, banner.yesNo);
+
+  // ── Mass DM flow ──────────────────────────────────────────────────────────
+  bot.action("ad_massdm", massdm.entryMassDm);
+  bot.action(/^md_pay_([a-z]+)$/, massdm.payPick);
+  bot.action("md_test", massdm.testSend);
 
   // ── Payment ───────────────────────────────────────────────────────────────
   bot.action("confirm_pay", payment.confirmPayHandler);

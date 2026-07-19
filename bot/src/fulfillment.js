@@ -315,6 +315,54 @@ function successBanner(rec, links) {
   });
 }
 
+// ── Paid Mass DM ──────────────────────────────────────────────────────────
+// Funds are already swept before fulfilment, so this must NEVER throw: it only
+// PERSISTS a pending_review job and notifies the review chat. A failed enqueue
+// tells the buyer to contact support — it never bubbles up to abort the order.
+async function fulfillMassDm(ctx, order) {
+  const massStore = require("./massdm/store");
+  const { MASS_DM_REVIEW_CHAT_ID } = require("./config/constants");
+  const p = order.payload; // { text, entities, mediaFileId }
+  const ref = require("./handlers/massdm").refFor();
+  try {
+    let mediaPath = null;
+    if (p.mediaFileId) {
+      const buf = await downloadFile(ctx.telegram, p.mediaFileId);
+      if (buf) {
+        const os = require("node:os");
+        const path = require("node:path");
+        const fs = require("node:fs");
+        const dir = path.join(os.tmpdir(), "dexvra-massdm");
+        fs.mkdirSync(dir, { recursive: true });
+        mediaPath = path.join(dir, `${order.id}.jpg`);
+        fs.writeFileSync(mediaPath, buf);
+      }
+    }
+    const job = await massStore.createJob({
+      text: p.text || "",
+      entities: p.entities || [],
+      mediaPath,
+      createdBy: order.buyerId,
+      createdByUsername: order.buyerUsername || null,
+      targets: massStore.audience(),
+      test: false, // paid job → pending_review
+      reportChatId: MASS_DM_REVIEW_CHAT_ID || null,
+      ref,
+    });
+    log.info(`[fulfil] mass DM job ${job.id} queued for review (ref ${ref}, ${job.total} audience)`);
+    // Notify the review chat so an admin can approve.
+    if (MASS_DM_REVIEW_CHAT_ID) {
+      await ctx.telegram
+        .sendMessage(MASS_DM_REVIEW_CHAT_ID, `🕵️ New paid Mass DM awaiting review — ref <code>${ref}</code>. Use /reviewmassdm in @dexvraadminbot.`, { parse_mode: "HTML" })
+        .catch(() => {});
+    }
+    await dm(ctx, tpl.render("massdm_received", { ref }), menu.postPurchase());
+  } catch (e) {
+    log.error(`[fulfil] mass DM enqueue FAILED (paid, ref ${ref}): ${e.message}`);
+    await dm(ctx, tpl.render("massdm_enqueue_failed", { ref }), menu.postPurchase()).catch(() => {});
+  }
+}
+
 async function fulfillOrder(ctx, order) {
   switch (order.kind) {
     case "xpress_listing":
@@ -324,9 +372,11 @@ async function fulfillOrder(ctx, order) {
       return fulfillTrending(ctx, order);
     case "banner":
       return fulfillBanner(ctx, order);
+    case "mass_dm":
+      return fulfillMassDm(ctx, order);
     default:
       throw new Error(`unknown order kind: ${order.kind}`);
   }
 }
 
-module.exports = { fulfillOrder, fulfillListing, fulfillTrending, fulfillBanner, postMedia };
+module.exports = { fulfillOrder, fulfillListing, fulfillTrending, fulfillBanner, fulfillMassDm, postMedia };
