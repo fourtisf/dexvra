@@ -65,3 +65,17 @@ test("saveTemplate + compose → PNG with logo composited; remove → null again
   await bt.removeTemplate("listing");
   assert.strictEqual(await bt.compose("listing", logo, { symbol: "JIM" }), null);
 });
+
+test("postingEnabled: env default, admin toggle persists and wins", async () => {
+  // default comes from POST_BANNERS env (true in tests)
+  assert.strictEqual(typeof bt.postingEnabled(), "boolean");
+  await bt.setPostingEnabled(false);
+  assert.strictEqual(bt.postingEnabled(), false);
+  await bt.setPostingEnabled(true);
+  assert.strictEqual(bt.postingEnabled(), true);
+  // per-kind settings survive the global toggle write
+  await bt.updateSettings("listing", { logoSize: 444 });
+  await bt.setPostingEnabled(false);
+  assert.strictEqual(bt.getSettings("listing").logoSize, 444);
+  await bt.setPostingEnabled(true);
+});

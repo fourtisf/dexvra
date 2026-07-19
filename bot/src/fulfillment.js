@@ -11,7 +11,7 @@ const postids = require("./channels/postids");
 const market = require("./marketdata");
 const x = require("./twitter");
 const menu = require("./handlers/menu");
-const { SITE_URL, CHANNELS, POST_BANNERS } = require("./config/constants");
+const { SITE_URL, CHANNELS } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { payloadArgs } = require("./helpers/message");
@@ -106,7 +106,8 @@ function bannerCoinOf(row, live) {
  *  logo composited into the design) → dynamic per-token banner → static
  *  banner → token logo. */
 async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badge) {
-  if (POST_BANNERS) {
+  // Admin-bot toggle (persisted) with POST_BANNERS env as the default.
+  if (bannerTemplate.postingEnabled()) {
     const composed = await bannerTemplate.compose(kind, logoBuffer, {
       symbol: bannerCoin.symbol,
       name: bannerCoin.name,
@@ -269,7 +270,7 @@ async function fulfillBanner(ctx, order) {
     // Frame the creative in the Banner Ads artwork when one is set (admin
     // upload or bundled); otherwise post the raw creative as before.
     let adMedia = p.imageFileId || photoSource(null, rec.imageUrl);
-    if (POST_BANNERS) {
+    if (bannerTemplate.postingEnabled()) {
       const creative = buffer || (await fetchLogoUrl(rec.imageUrl));
       const framed = await bannerTemplate.compose("banner", creative, {});
       if (framed) adMedia = { source: framed };
@@ -328,4 +329,4 @@ async function fulfillOrder(ctx, order) {
   }
 }
 
-module.exports = { fulfillOrder, fulfillListing, fulfillTrending, fulfillBanner };
+module.exports = { fulfillOrder, fulfillListing, fulfillTrending, fulfillBanner, postMedia };
