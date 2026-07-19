@@ -97,3 +97,35 @@ test("stale saved layouts (no/old layoutVersion) are ignored — defaults win", 
   assert.strictEqual(bt.getSettings("trending").logoSize, 420, "untouched keys come from CURRENT defaults");
   await bt.resetSettings("trending");
 });
+
+test("Telegram-compressed upload (1280×640) renders on the 2560×1280 reference canvas", async () => {
+  // reproduce the live bug: admin uploaded artwork as a PHOTO → Telegram
+  // recompressed it to half size → every layout coordinate landed off-canvas
+  const cv = require("@napi-rs/canvas");
+  const small = cv.createCanvas(1280, 640);
+  const sg = small.getContext("2d");
+  sg.fillStyle = "#0b1512";
+  sg.fillRect(0, 0, 1280, 640);
+  await bt.resetSettings("listing"); // earlier tests tweak listing's layout
+  await bt.saveTemplate("listing", small.toBuffer("image/png"));
+  try {
+    const logo = cv.createCanvas(200, 200);
+    logo.getContext("2d").fillStyle = "#ff0044";
+    logo.getContext("2d").fillRect(0, 0, 200, 200);
+    const out = await bt.compose("listing", logo.toBuffer("image/png"), {
+      symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$1", mcap: "$1M", badge: "Diamond Tier",
+    });
+    assert.ok(out, "compose must succeed on a small artwork");
+    const img = await cv.loadImage(out);
+    assert.strictEqual(img.width, 2560, "output must be reference width");
+    assert.strictEqual(img.height, 1280, "output must be reference height");
+    // the logo slot (1890,410,420) must contain the red logo pixels now
+    const chk = cv.createCanvas(2560, 1280);
+    const cg = chk.getContext("2d");
+    cg.drawImage(img, 0, 0);
+    const px = cg.getImageData(2100, 620, 1, 1).data; // slot center
+    assert.ok(px[0] > 150 && px[2] < 120, `logo not composited at slot center (rgb ${px[0]},${px[1]},${px[2]})`);
+  } finally {
+    await bt.removeTemplate("listing");
+  }
+});
