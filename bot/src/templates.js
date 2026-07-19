@@ -165,6 +165,15 @@ const DEFAULTS = {
   success_banner:
     `✅ **Campaign booked**\n\n` +
     `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
+  group_buy_alert:
+    "{emoji}\n" +
+    `${em("🟢", E.green)} **{symbol} Buy!**\n\n` +
+    `${em("💲", E.dollar)} **{usd}** · {count} {buysWord}\n` +
+    `🪙 {tokenAmt} {symbol}\n` +
+    `${em("💲", E.dollar)} Price — {price}\n` +
+    `${em("📈", E.chartUp)} Market cap — {mcap}\n` +
+    `${em("📊", E.chart)} {chain}\n\n` +
+    "_Estimated from on-chain volume._",
   massdm_disabled: "📣 Mass DM broadcasts are paused right now — check back soon.",
   massdm_intro:
     `${em("📢", E.megaphone)} **Mass DM Broadcast**\n\n` +
@@ -267,6 +276,7 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain"] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price", ph: ["sol", "bnb", "eth"] },
   massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: [] },

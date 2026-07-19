@@ -130,6 +130,10 @@ const RENEW_DISCOUNT_PCT = Math.min(90, Math.max(0, int(env.RENEW_DISCOUNT_PCT, 
 // Use the bundled premium banners as channel-post media (else the token logo).
 const POST_BANNERS = bool(env.POST_BANNERS, true);
 
+// ── Group buy bot (posts buy alerts in project group chats) ──────────────────
+const GROUP_BUYBOT_ENABLED = bool(env.GROUP_BUYBOT_ENABLED, true);
+const GROUP_BUYBOT_CHECK_MS = Math.max(10000, int(env.GROUP_BUYBOT_CHECK_MS, 20 * 1000));
+
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
 const MASS_DM_PRICE = {
@@ -188,6 +192,8 @@ module.exports = {
   UPSELL_WARN_HOURS,
   RENEW_DISCOUNT_PCT,
   POST_BANNERS,
+  GROUP_BUYBOT_ENABLED,
+  GROUP_BUYBOT_CHECK_MS,
   MASS_DM_ENABLED,
   MASS_DM_PRICE,
   MASS_DM_REVIEW_CHAT_ID,
