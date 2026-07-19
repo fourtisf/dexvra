@@ -90,6 +90,24 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 }
 .brand-top{display:none;align-items:center;gap:9px;flex:none;text-decoration:none;color:inherit}
 .brand-top .brand-mark{width:32px;height:32px;font-size:17px;border-radius:10px}
+/* Mobile ⋮ feature menu — the sidebar is hidden on phones, so this exposes the
+   same feature pages there. Hidden on desktop (sidebar is visible). */
+.topmenu{display:none;position:relative;flex:none}
+@media (max-width:720px){.topmenu{display:block}}
+.topmenu-btn{width:38px;height:38px;display:grid;place-items:center;border-radius:10px;border:1px solid var(--line2);background:rgba(255,255,255,.03);color:var(--text);cursor:pointer}
+.topmenu-scrim{position:fixed;inset:0;z-index:70}
+.topmenu-dd{position:absolute;top:46px;left:0;z-index:71;width:246px;max-height:74vh;overflow-y:auto;background:var(--card);border:1px solid var(--line2);border-radius:14px;padding:8px;box-shadow:0 18px 50px rgba(0,0,0,.6)}
+.tmg{padding:2px}
+.tmg+.tmg{border-top:1px solid var(--line);margin-top:6px;padding-top:8px}
+.tmg-label{font-family:var(--fm);font-size:9px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--faint);padding:2px 8px 5px}
+.tmg-item{display:flex;align-items:center;gap:10px;padding:9px 8px;border-radius:9px;color:var(--muted);font-weight:600;font-size:13.5px;text-decoration:none}
+.tmg-item.active{background:rgba(61,245,159,.12);color:var(--text)}
+.tmg-ic{display:grid;place-items:center;width:20px;flex:none;color:#3DF59F}
+.tmg-item svg{width:17px;height:17px;stroke:currentColor;stroke-width:2;fill:none}
+.tmg-badge{margin-left:auto;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:2px 5px;border-radius:5px}
+.tmg-badge.hot{background:rgba(255,120,80,.2);color:#FF9D4D}
+.tmg-badge.new{background:rgba(61,245,159,.16);color:#3DF59F}
+.tmg-badge.live{background:rgba(90,180,255,.16);color:#5AB4FF}
 .brand-top .brand-name{font-size:17px}
 .search{
   flex:1;max-width:520px;display:flex;align-items:center;gap:10px;
