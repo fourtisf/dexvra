@@ -68,7 +68,7 @@ function bannerExists() {
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
 function btText() {
-  const st = (k) => (bannerTpl.hasTemplate(k) ? "✅ set" : "— none");
+  const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom uploaded" : "💎 bundled default");
   const s = bannerTpl.getSettings("listing");
   return (
     `🎨 <b>Channel Banner Artwork</b>\n\n` +
