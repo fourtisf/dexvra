@@ -345,8 +345,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tok .coin{width:38px;height:38px;font-size:18px;border-width:2px}
 .cbadge{position:absolute;right:-3px;bottom:-3px;width:15px;height:15px;border-radius:50%;border:2.5px solid var(--card)}
 .tok .ts{min-width:0}
-.tok .sym{font-family:var(--fd);font-weight:700;font-size:15px;white-space:nowrap}
+.tok .sym{font-family:var(--fd);font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;min-width:0}
+.tok .sym>span:first-child,.tok .sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tok .nm{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* compact stats line — the columns hidden on small screens live here instead */
+.tok .m-stats{display:none;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.tok .m-stats b{color:var(--muted);font-weight:800}
 .price{font-family:var(--fm);font-weight:800;font-size:13px;transition:color .3s}
 .mono-dim{font-family:var(--fm);font-weight:600;font-size:12.5px;color:var(--muted)}
 .chg{display:inline-flex;font-family:var(--fm);font-weight:800;font-size:11.5px;border-radius:9px;padding:6px 9px}
@@ -513,6 +517,14 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   .c-mcap{display:none}
   .row{grid-template-columns:40px minmax(140px,1.6fr) 106px 86px 42px;padding:12px 14px;gap:6px}
   .np .row{grid-template-columns:40px minmax(140px,1.6fr) 80px 88px 42px}
+  /* feature parity on phones: MC / Vol / Txns / Score move into the token cell */
+  .tok .m-stats{display:block}
+  .tok .sym{font-size:14px}
+  .tier-chip{font-size:8px;padding:2px 5px}
+  /* chain chips: one swipeable row instead of a tall wrap */
+  .tabs{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{flex:0 0 auto}
   .search kbd{display:none}.btn-primary .lbl{display:none}
   .ttabs{order:5;width:100%;justify-content:space-between}
   .filter-btn{margin-left:0}
