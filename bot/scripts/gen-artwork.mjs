@@ -94,8 +94,12 @@ const page_html = (KIND) => {
   .soc .lab { font-weight:500; font-size:17px; color:#8FA7A4; line-height:1.25; }
   .soc .val { font-weight:700; font-size:20px; color:#EAF6F2; line-height:1.25; }
 
-  ${isAd ? adHeroCss(ACC, ACC2) : ringHeroCss(ACC, ACC2)}
+  ${isAd ? adHeroCss(ACC, ACC2) : ringHeroCss(ACC, ACC2, isTrend)}
 
+  /* shared hero props */
+  .coin { position:absolute; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 34% 28%, #1b3a37, #0a1a1c 72%);
+    border:1.6px solid ${ACC}66; box-shadow:0 10px 24px rgba(0,0,0,.5), inset 0 2px 6px rgba(255,255,255,.14), 0 0 26px ${ACC}33; }
   .spark { position:absolute; color:#EAFFF7; text-shadow:0 0 14px ${ACC}; font-size:26px; }
   .grain { position:absolute; inset:0; opacity:.05; }
   </style></head><body>
@@ -124,7 +128,7 @@ const page_html = (KIND) => {
     <circle cx="372" cy="10" r="9" fill="${ACC}" opacity=".22"/>
   </svg>
 
-  ${isAd ? adHeroHtml() : ringHeroHtml()}
+  ${isAd ? adHeroHtml() : ringHeroHtml(isTrend)}
 
   <div class="vig"></div>
 
@@ -143,18 +147,24 @@ const page_html = (KIND) => {
 };
 
 // ── hero: glowing diamond ring (listing / trending) ──────────────────────────
-function ringHeroCss(ACC, ACC2) {
+function ringHeroCss(ACC, ACC2, isTrend) {
   return `
   .hero { position:absolute; right:0; top:0; width:520px; height:640px; }
   .halo { position:absolute; right:-90px; top:50px; width:600px; height:600px; border-radius:50%;
-    background:radial-gradient(circle, ${ACC2}2e, transparent 60%); filter:blur(46px); }
+    background:radial-gradient(circle, ${ACC2}${isTrend ? "38" : "2e"}, transparent 60%); filter:blur(46px); }
   .ring { position:absolute; left:158px; top:178px; width:264px; height:264px; border-radius:50%;
-    background:conic-gradient(from 140deg, ${ACC2}, ${ACC} 22%, #E8FFF4 38%, ${ACC} 52%, ${ACC2} 76%, #0B84B8 90%, ${ACC2});
-    box-shadow:0 0 70px ${ACC}59, 0 0 150px ${ACC2}38, 0 26px 54px rgba(0,0,0,.6);
+    background:conic-gradient(from 140deg, ${ACC2}, ${ACC} 20%, ${isTrend ? "#E4FAFF" : "#E8FFF4"} 38%, ${ACC} 54%, ${ACC2} 74%, ${ACC} 88%, ${ACC2});
+    box-shadow:0 0 80px ${ACC}66, 0 0 170px ${ACC2}40, 0 26px 54px rgba(0,0,0,.6);
     display:flex; align-items:center; justify-content:center; z-index:1; }
   .ring .band { width:238px; height:238px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-    background:conic-gradient(from 320deg, #0d2a2c, #123a3c 30%, #0d2a2c 60%, #16444a 82%, #0d2a2c);
-    box-shadow:inset 0 2px 6px rgba(255,255,255,.18), inset 0 -4px 10px rgba(0,0,0,.5); }
+    background:conic-gradient(from 320deg, #10333a, #17454e 28%, #10333a 58%, #1b525c 80%, #10333a);
+    box-shadow:inset 0 2px 6px rgba(255,255,255,.2), inset 0 -4px 10px rgba(0,0,0,.45); }
+  /* trending only: ascending momentum chevrons climbing toward the ring */
+  .chev { position:absolute; width:44px; height:44px; border-left:6px solid ${ACC}; border-top:6px solid ${ACC};
+    transform:rotate(45deg); border-radius:4px; filter:drop-shadow(0 0 10px ${ACC}88); }
+  .ch1 { left:52px; top:392px; opacity:.35; transform:rotate(45deg) scale(.7); }
+  .ch2 { left:84px; top:310px; opacity:.6; transform:rotate(45deg) scale(.85); }
+  .ch3 { left:118px; top:222px; opacity:.95; }
   .ring .hole { width:212px; height:212px; border-radius:50%; position:relative;
     background:radial-gradient(circle at 38% 30%, #0f1c21, #060c10 75%);
     box-shadow:inset 0 10px 30px rgba(0,0,0,.9), inset 0 -2px 12px rgba(255,255,255,.05); }
@@ -184,16 +194,13 @@ function ringHeroCss(ACC, ACC2) {
     box-shadow:0 0 36px ${ACC2}40, inset 0 2px 5px rgba(255,255,255,.22), inset 0 -6px 12px rgba(0,0,0,.35); }
   .ped .pool { position:absolute; left:0; top:34px; width:280px; height:42px; border-radius:50%;
     background:radial-gradient(ellipse, ${ACC2}38, transparent 68%); filter:blur(14px); }
-  .coin { position:absolute; border-radius:50%; display:flex; align-items:center; justify-content:center;
-    background:radial-gradient(circle at 34% 28%, #1b3a37, #0a1a1c 72%);
-    border:1.6px solid ${ACC}66; box-shadow:0 10px 24px rgba(0,0,0,.5), inset 0 2px 6px rgba(255,255,255,.14), 0 0 26px ${ACC}33; }
   .c1 { width:74px; height:74px; left:62px;  top:150px; transform:rotate(-14deg); }
   .c2 { width:56px; height:56px; left:452px; top:128px; transform:rotate(12deg);  filter:blur(1px); }
   .c3 { width:64px; height:64px; left:52px;  top:390px; transform:rotate(10deg);  filter:blur(.6px); }
   .c4 { width:46px; height:46px; left:462px; top:372px; transform:rotate(-18deg); filter:blur(1.6px); }
   .c5 { width:38px; height:38px; left:118px; top:14px;  transform:rotate(20deg);  filter:blur(2.2px); }`;
 }
-function ringHeroHtml() {
+function ringHeroHtml(isTrend) {
   return `<div class="hero">
     <div class="halo"></div>
     <div class="gemGlow"></div>
@@ -203,9 +210,9 @@ function ringHeroHtml() {
     <div class="ring"><div class="band"><div class="hole"></div></div></div>
     <div class="ringShine"></div>
     <div class="stud st1"></div><div class="stud st2"></div>
+    ${isTrend ? `<div class="chev ch1"></div><div class="chev ch2"></div><div class="chev ch3"></div>` : `<div class="coin c3">${gemSvg(32)}</div>`}
     <div class="coin c1">${gemSvg(38)}</div>
     <div class="coin c2">${gemSvg(28)}</div>
-    <div class="coin c3">${gemSvg(32)}</div>
     <div class="coin c4">${gemSvg(22)}</div>
     <div class="coin c5">${gemSvg(18)}</div>
     <div class="spark" style="left:452px; top:296px;">✦</div>
@@ -216,38 +223,52 @@ function ringHeroHtml() {
 // ── hero: glass creative frame (banner ads) — advertiser creative goes inside ─
 function adHeroCss(ACC, ACC2) {
   return `
-  .frameWrap { position:absolute; left:410px; top:150px; width:790px; height:410px; }
-  .fhalo { position:absolute; left:-60px; top:-60px; width:910px; height:530px; border-radius:60px;
-    background:radial-gradient(ellipse, ${ACC2}26, transparent 65%); filter:blur(40px); }
-  .frame { position:absolute; left:0; top:0; width:790px; height:410px; border-radius:28px; padding:5px;
-    background:linear-gradient(135deg, ${ACC}cc, ${ACC2}44 40%, ${ACC}99 70%, ${ACC2}cc);
-    box-shadow:0 0 60px ${ACC}45, 0 24px 60px rgba(0,0,0,.55); }
-  .frame .inner { width:100%; height:100%; border-radius:24px; position:relative; overflow:hidden;
+  .frameWrap { position:absolute; left:410px; top:146px; width:790px; height:410px; }
+  .fhalo { position:absolute; left:-90px; top:-90px; width:970px; height:590px; border-radius:80px;
+    background:radial-gradient(ellipse, ${ACC2}3a, transparent 62%); filter:blur(46px); }
+  .frame { position:absolute; left:0; top:0; width:790px; height:410px; border-radius:28px; padding:6px;
+    background:conic-gradient(from 130deg at 50% 50%, ${ACC2}, ${ACC} 22%, #E9F6FF 36%, ${ACC} 50%, ${ACC2} 72%, ${ACC} 88%, ${ACC2});
+    box-shadow:0 0 80px ${ACC}59, 0 0 160px ${ACC2}38, 0 26px 60px rgba(0,0,0,.55); }
+  .frame .inner { width:100%; height:100%; border-radius:23px; position:relative; overflow:hidden;
     background:linear-gradient(160deg, #0b161c, #071017 70%);
     box-shadow:inset 0 8px 30px rgba(0,0,0,.7), inset 0 -2px 10px rgba(255,255,255,.05); }
   .frame .inner::after { content:''; position:absolute; left:4%; top:0; width:92%; height:36%;
     background:linear-gradient(180deg, rgba(255,255,255,.09), transparent); border-radius:24px 24px 50% 50%; }
   .frame .tag { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     font-weight:700; font-size:24px; letter-spacing:4px; color:#3D585F; }
-  .corner { position:absolute; width:34px; height:34px; border:3px solid ${ACC}; z-index:2; filter:drop-shadow(0 0 8px ${ACC}88); }
-  .cTL { left:-14px; top:-14px; border-right:none; border-bottom:none; border-radius:10px 0 0 0; }
-  .cTR { right:-14px; top:-14px; border-left:none; border-bottom:none; border-radius:0 10px 0 0; }
-  .cBL { left:-14px; bottom:-14px; border-right:none; border-top:none; border-radius:0 0 0 10px; }
-  .cBR { right:-14px; bottom:-14px; border-left:none; border-top:none; border-radius:0 0 10px 0; }
-  .megGlow { position:absolute; left:-90px; top:-90px; width:220px; height:220px; border-radius:50%;
-    background:radial-gradient(circle, ${ACC}30, transparent 65%); filter:blur(20px); }
-  .gemDock { position:absolute; right:-40px; top:-58px; filter:drop-shadow(0 10px 22px rgba(0,0,0,.6)) drop-shadow(0 0 26px ${ACC2}88); }`;
+  .corner { position:absolute; width:40px; height:40px; border:5px solid ${ACC}; z-index:2;
+    filter:drop-shadow(0 0 10px ${ACC}aa); }
+  .cTL { left:-20px; top:-20px; border-right:none; border-bottom:none; border-radius:12px 0 0 0; }
+  .cTR { right:-20px; top:-20px; border-left:none; border-bottom:none; border-radius:0 12px 0 0; }
+  .cBL { left:-20px; bottom:-20px; border-right:none; border-top:none; border-radius:0 0 0 12px; }
+  .cBR { right:-20px; bottom:-20px; border-left:none; border-top:none; border-radius:0 0 12px 0; }
+  .gemDock { position:absolute; right:-26px; top:-74px; z-index:3;
+    filter:drop-shadow(0 10px 22px rgba(0,0,0,.6)) drop-shadow(0 0 30px ${ACC2}99); }
+  .gemDockGlow { position:absolute; right:-64px; top:-116px; width:180px; height:170px; border-radius:50%;
+    background:radial-gradient(circle, ${ACC}33, transparent 64%); filter:blur(18px); z-index:2; }
+  .fpool { position:absolute; left:90px; bottom:-46px; width:610px; height:56px; border-radius:50%;
+    background:radial-gradient(ellipse, ${ACC2}40, transparent 68%); filter:blur(18px); }
+  .ac1 { width:64px; height:64px; left:-96px; top:44px;  transform:rotate(-12deg); }
+  .ac2 { width:44px; height:44px; left:-64px; top:330px; transform:rotate(14deg);  filter:blur(1px); }
+  .ac3 { width:52px; height:52px; right:-90px; top:150px; transform:rotate(10deg); filter:blur(.6px); }
+  .ac4 { width:36px; height:36px; right:-58px; top:352px; transform:rotate(-16deg); filter:blur(1.8px); }`;
 }
 function adHeroHtml() {
   return `<div class="frameWrap">
     <div class="fhalo"></div>
-    <div class="megGlow"></div>
+    <div class="fpool"></div>
     <div class="frame"><div class="inner"><div class="tag">YOUR BANNER HERE</div></div>
       <div class="corner cTL"></div><div class="corner cTR"></div><div class="corner cBL"></div><div class="corner cBR"></div>
-      <div class="gemDock">${gemSvg(92)}</div>
+      <div class="gemDockGlow"></div>
+      <div class="gemDock">${gemSvg(96)}</div>
     </div>
-    <div class="spark" style="left:-34px; top:210px;">✦</div>
-    <div class="spark" style="right:-30px; bottom:-16px; font-size:18px; opacity:.8;">✦</div>
+    <div class="coin ac1">${gemSvg(34)}</div>
+    <div class="coin ac2">${gemSvg(24)}</div>
+    <div class="coin ac3">${gemSvg(28)}</div>
+    <div class="coin ac4">${gemSvg(18)}</div>
+    <div class="spark" style="left:-40px; top:216px;">✦</div>
+    <div class="spark" style="right:-36px; bottom:-20px; font-size:18px; opacity:.8;">✦</div>
+    <div class="spark" style="left:220px; top:-34px; font-size:16px; opacity:.7;">✦</div>
   </div>`;
 }
 

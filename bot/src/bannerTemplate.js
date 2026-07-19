@@ -52,7 +52,7 @@ const BASE_DEFAULTS = {
 const KIND_DEFAULTS = {
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
   trending: { ...BASE_DEFAULTS, tickerGlow: "#38D8F0" },
-  banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 830, logoY: 310, slotW: 1560, slotH: 800, showText: false },
+  banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 308, slotW: 1548, slotH: 788, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
 const DEFAULTS = BASE_DEFAULTS; // back-compat export
