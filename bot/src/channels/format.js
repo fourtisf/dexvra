@@ -152,4 +152,16 @@ function bannerPost(booking) {
   });
 }
 
-module.exports = { listingPost, trendingPost, pumpPost, bannerPost, coinUrl, sym, chainName };
+function rankupPost(coin, rank, change24h) {
+  return tpl.render("post_rankup", {
+    symbol: clean(sym(coin.symbol)),
+    name: clean(coin.name),
+    chain: clean(chainName(coin.chain)),
+    rank,
+    change: `+${Math.round(Math.max(0, change24h))}%`,
+    coinUrl: coinUrl(coin),
+    footer: footer(),
+  });
+}
+
+module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName };

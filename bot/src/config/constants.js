@@ -114,6 +114,11 @@ const TRENDING_POST_MS = Math.max(30000, int(env.TRENDING_POST_MS, 5 * 60 * 1000
 const TRENDING_SWEEP_MS = Math.max(30000, int(env.TRENDING_SWEEP_MS, 60 * 1000));
 const PUMP_CHECK_MS = Math.max(60000, int(env.PUMP_CHECK_MS, 3 * 60 * 1000));
 const PUMP_ENABLED = bool(env.PUMP_ENABLED, true);
+// ── Trending rank-up alerts (live 24h-gainers leaderboard among featured) ──
+const RANKUP_ENABLED = bool(env.RANKUP_ENABLED, true);
+const RANKUP_CHECK_MS = Math.max(60000, int(env.RANKUP_CHECK_MS, 8 * 60 * 1000));
+const RANKUP_TOP = Math.max(1, int(env.RANKUP_TOP, 3)); // alert on climbs into the top N
+const RANKUP_MIN_CHANGE = Number(env.RANKUP_MIN_CHANGE) || 15; // noise floor: only when ≥ +15% 24h
 // ── Trending slot-expiry upsell ──
 const UPSELL_ENABLED = bool(env.UPSELL_ENABLED, true);
 const UPSELL_CHECK_MS = Math.max(60000, int(env.UPSELL_CHECK_MS, 5 * 60 * 1000));
@@ -164,6 +169,10 @@ module.exports = {
   TRENDING_SWEEP_MS,
   PUMP_CHECK_MS,
   PUMP_ENABLED,
+  RANKUP_ENABLED,
+  RANKUP_CHECK_MS,
+  RANKUP_TOP,
+  RANKUP_MIN_CHANGE,
   UPSELL_ENABLED,
   UPSELL_CHECK_MS,
   UPSELL_WARN_HOURS,
