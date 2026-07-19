@@ -138,11 +138,14 @@ function looksLikeHtml(s) {
  *  leaking raw "[📊](emoji/…)" markup into the official channel text. Lone
  *  asterisks survive — a single '*' can't form the '**' delimiter. */
 function sanitizeVar(v) {
+  // ALL asterisks become U+2217 — a lone '*' in a value substituted inside a
+  // template's own **bold** span still pairs with the template delimiters and
+  // leaks literal markers (review finding), so runs-only breaking isn't enough.
   return String(v == null ? "" : v)
     .replace(/\[/g, "(")
     .replace(/\]/g, ")")
     .replace(/`/g, "'")
-    .replace(/\*{2,}/g, (m) => "∗".repeat(m.length));
+    .replace(/\*/g, "∗");
 }
 
 /** Neutralize markup delimiters in URLs interpolated into [label](url) — a ')'
