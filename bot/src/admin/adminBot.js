@@ -551,7 +551,7 @@ function build() {
     if (!guard(ctx)) return;
     ctx.session.awaitingBt = { mode: "upload", kind: ctx.match[1] };
     await ctx.reply(
-      `⬆ Send the <b>${BT_KINDS[ctx.match[1]]} artwork</b> as a photo or file (PNG/JPG, ~1280×640 or 2560×1280). Send /cancel to abort.`,
+      `⬆ Send the <b>${BT_KINDS[ctx.match[1]]} artwork</b> — ideally <b>2560×1280 PNG sent as a FILE/document</b> (Telegram compresses photos to ~1280px; a photo still works, it just gets upscaled). Send /cancel to abort.`,
       HTML,
     );
   });
@@ -825,10 +825,18 @@ function build() {
         const link = await ctx.telegram.getFileLink(fileId);
         const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
         if (!res.ok) throw new Error(`download ${res.status}`);
-        await bannerTpl.saveTemplate(kind, Buffer.from(await res.arrayBuffer()));
+        const artBuf = Buffer.from(await res.arrayBuffer());
+        await bannerTpl.saveTemplate(kind, artBuf);
+        let sizeNote = "";
+        try {
+          const im = await require("@napi-rs/canvas").loadImage(artBuf);
+          if (im.width < 2000) {
+            sizeNote = `\n\n⚠️ Terkirim ${im.width}×${im.height}px (Telegram mengompres foto). Tetap dipakai — otomatis di-upscale ke 2560×1280 — tapi untuk kualitas maksimal kirim ulang sebagai <b>File/document</b>.`;
+          }
+        } catch { /* dimension probe is best-effort */ }
         log.info(`[adminbot] ${kind} banner artwork uploaded by @${ctx.from.username || ctx.from.id}`);
         await ctx.reply(
-          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Now set the media slot so the logo/creative lands right, then 👁 Preview.`,
+          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Buka 🖱 Logo editor untuk menempatkan logo/teks, lalu 👁 Preview.${sizeNote}`,
           { ...HTML, ...btKindKb(kind) },
         );
         await btPreview(ctx, kind);
