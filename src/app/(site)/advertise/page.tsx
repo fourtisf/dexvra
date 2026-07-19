@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { ChainLogo } from "@/components/ChainLogo";
+import { BOT_URL } from "@/config/brand";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
 import {
   BANNERS,
@@ -16,7 +16,6 @@ import {
 } from "@/lib/packages";
 
 export default function AdvertisePage() {
-  const { toast, openListing } = useApp();
   const [chain, setChain] = useState("solana");
   const native = nativeOf(chain);
   const trending = trendingForChain(chain);
@@ -56,7 +55,7 @@ export default function AdvertisePage() {
         {LISTING_TIERS.map((tier) => {
           const price = tierPrice(tier.key, chain);
           const perks = tier.instant
-            ? ["Instant activation", "Listed on TG + trending board", "Priority verification"]
+            ? ["Instant activation", "Listing alert on Telegram", "Priority verification"]
             : [
                 tier.rank <= 3 ? "Announcement post" : "Standard board listing",
                 tier.rank <= 3 ? "Verified badge" : "Search + discovery indexed",
@@ -83,9 +82,9 @@ export default function AdvertisePage() {
                   <li key={p}>{p}</li>
                 ))}
               </ul>
-              <button className="btn-primary pkg-cta" onClick={openListing}>
+              <a className="btn-primary pkg-cta" href={BOT_URL} target="_blank" rel="noopener noreferrer">
                 List with {tier.label}
-              </button>
+              </a>
             </div>
           );
         })}
@@ -116,12 +115,9 @@ export default function AdvertisePage() {
                 <td className="pt-price">{fmtNative(r.price, native)}</td>
                 <td>{r.discount > 0 ? <span className="pt-off">−{r.discount}%</span> : <span className="pt-dim">—</span>}</td>
                 <td className="pt-cta">
-                  <button
-                    className="btn-ghost2 sm"
-                    onClick={() => toast(`Trending ${r.duration} · ${fmtNative(r.price, native)} — we'll reach out on TG 📩`)}
-                  >
+                  <a className="btn-ghost2 sm" href={BOT_URL} target="_blank" rel="noopener noreferrer">
                     Book
-                  </button>
+                  </a>
                 </td>
               </tr>
             ))}
@@ -148,12 +144,9 @@ export default function AdvertisePage() {
                 ))}
               </tbody>
             </table>
-            <button
-              className="btn-ghost2 pkg-cta"
-              onClick={() => toast(`"${b.name}" requested — we'll reach out on TG 📩`)}
-            >
+            <a className="btn-ghost2 pkg-cta" href={BOT_URL} target="_blank" rel="noopener noreferrer">
               Book banner
-            </button>
+            </a>
           </div>
         ))}
       </div>

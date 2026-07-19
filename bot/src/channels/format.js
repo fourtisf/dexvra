@@ -45,6 +45,16 @@ function socialLines(links = {}) {
   return out.length ? `${em("🌐", E.globe)} ${out.join(" · ")}\n\n` : "";
 }
 
+// Fallback overview for tokens with no description (fresh pump.fun launches
+// rarely have one on GT) — the post always reads complete and professional.
+function autoOverview(coin) {
+  const nm = String(coin.name || "").trim();
+  const sy = sym(coin.symbol);
+  const ch = chainName(coin.chain);
+  if (!nm) return "";
+  return `${nm} (${sy}) is now live on ${ch} — real-time chart, price and market data on dexvra.io.`;
+}
+
 // Project overview paragraph — one clean block under the title, own spacing.
 // Truncation counts CODE POINTS (Array.from), never slicing through a
 // surrogate pair — overviews routinely contain emoji, and a split pair sends
@@ -87,7 +97,7 @@ function listingPost(coin) {
     head,
     tierLine,
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    overview: overviewBlock(coin.overview),
+    overview: overviewBlock(coin.overview || autoOverview(coin)),
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
     chain: clean(chainName(coin.chain)),
@@ -106,7 +116,7 @@ function trendingPost(coin) {
     name: clean(coin.name),
     chain: clean(chainName(coin.chain)),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    overview: overviewBlock(coin.overview),
+    overview: overviewBlock(coin.overview || autoOverview(coin)),
     address: clean(coin.address),
     price: priceStr(coin.price),
     mcap: mcStr(coin.mcap),

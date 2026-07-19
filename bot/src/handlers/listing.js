@@ -166,16 +166,16 @@ async function showReview(ctx) {
   const f = ctx.session.form;
   ctx.session.reviewShown = true;
   const premium = require("../premium");
-  const v = (x) => (x ? premium.sanitizeVar(x) : "—");
+  const v = (x) => (x ? premium.sanitizeVar(x) : "not set");
   const text = tpl.render("review_card", {
     chain: chainOf(f.chain).label,
     name: v(f.name),
     symbol: f.sym ? "$" + premium.sanitizeVar(f.sym) : "—",
     address: premium.sanitizeVar(f.address),
-    logo: f.logoFileId || f.logoUrl ? "✅ set" : "— none",
+    logo: f.logoFileId || f.logoUrl ? "added ✓" : "not set",
     overview: f.overview
       ? premium.sanitizeVar(Array.from(f.overview).length > 160 ? cpSlice(f.overview, 157).trimEnd() + "…" : f.overview)
-      : "—",
+      : "not set (auto-generated on the post)",
     website: v(f.website),
     twitter: v(f.twitter),
     telegram: v(f.telegram),

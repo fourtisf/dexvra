@@ -54,62 +54,46 @@ const DEFAULTS = {
   // ── Bot messages (to the user) ──
   welcome:
     `${em("💎", E.diamond)} **Welcome to Dexvra**\n\n` +
-    "The visibility platform for tokens — listings, trending placements and banner campaigns across dexvra.io, our Telegram network and X.\n\n" +
-    "**What would you like to launch today?**\n\n" +
+    "The token visibility platform — listings, trending placement and banner campaigns across dexvra.io, Telegram and X.\n\n" +
+    "**Services**\n" +
     `${em("⚡", E.zap)} **Xpress Listing** — live in minutes\n` +
-    "🏆 **Listing & Trending** — Diamond → Bronze tiers, with announcement\n" +
-    "🔥 **Trending Slots** — 3 to 48 hours of featured placement\n" +
-    `${em("📢", E.megaphone)} **Banner Campaigns** — premium homepage placement\n\n` +
-    "Select an option below.",
+    "🏆 **Listing & Trending** — ranked tiers, Diamond → Bronze\n" +
+    "🔥 **Trending Slots** — 3–48h featured placement\n" +
+    `${em("📢", E.megaphone)} **Banner Campaigns** — homepage takeover\n\n` +
+    "Select a service to continue.",
   intro_xpress:
-    `${em("⚡", E.zap)} **Xpress Listing — live in minutes**\n\n` +
-    "The fastest way to put your token in front of the Dexvra audience. Xpress listings activate **immediately after payment** — no review queue, no waiting.\n\n" +
-    "**What's included**\n" +
-    "⚡ Instant listing on the dexvra.io board\n" +
-    `${em("🚨", E.siren)} Launch post in our Listing channel\n` +
-    "📈 Auto-shared on Dexvra's X (Twitter)\n" +
-    `${em("🌐", E.globe)} Dedicated token page — live chart, price & socials\n\n` +
-    "**How it works**\n" +
-    "1. Choose your token's network below\n" +
-    "2. Paste the contract address — name, socials & logo auto-fill\n" +
-    "3. Review, confirm and pay\n" +
-    "4. You're live — all post links delivered right here\n\n" +
-    "Select your token's network to begin:",
+    `${em("⚡", E.zap)} **Xpress Listing**\n\n` +
+    "Instant activation. The moment payment clears, your token is live on the dexvra.io board with its own token page (chart, price, socials), a launch post in our Listing channel and an automatic share on X.\n\n" +
+    "**Process**\n" +
+    "1. Select your network\n" +
+    "2. Paste the contract address — name, logo and socials auto-fill\n" +
+    "3. Review and pay\n\n" +
+    "Select your network:",
   intro_tiered:
-    `🏆 **Listing & Trending — Diamond → Bronze**\n\n` +
-    "Our flagship placement. Choose a tier to get ranked positioning across the entire Dexvra network, announcement coverage, and a bundled Trending run sized to your tier.\n\n" +
-    "**What's included**\n" +
-    `${em("💎", E.diamond)} Ranked placement on the board — Diamond ranks first\n` +
-    `${em("📢", E.megaphone)} Announcement-channel post (Diamond, Gold & Platinum)\n` +
-    "🔥 Bundled Trending feature — up to 48 hours\n" +
-    `${em("🌐", E.globe)} Dedicated token page with live market data\n\n` +
-    "**How it works**\n" +
-    "1. Choose your token's network below\n" +
+    `${em("💎", E.diamond)} **Listing & Trending**\n\n` +
+    "Ranked placement across the Dexvra network. Higher tiers rank higher on the board, carry their badge on every post and include a longer bundled Trending run — Diamond, Gold and Platinum also post to our Announcement channel.\n\n" +
+    "**Process**\n" +
+    "1. Select your network\n" +
     "2. Paste the contract address — details auto-fill\n" +
-    "3. Pick your tier, review and pay\n" +
-    "4. Everything posts automatically — links delivered here\n\n" +
-    "Select your token's network to begin:",
+    "3. Choose your tier and pay\n\n" +
+    "Select your network:",
   tier_chooser:
-    `🏆 **Choose your placement tier**\n\n` +
-    "Higher tiers rank higher on the board, carry their badge on every post, and include a longer bundled Trending run. **Diamond, Gold and Platinum** additionally post to our Announcement channel.\n\n" +
-    "Prices are shown in **{native}** — tap a tier to continue to payment:",
+    "🏆 **Select your tier**\n\n" +
+    "Higher tiers rank higher, carry their badge on every post and bundle a longer Trending run. Diamond, Gold and Platinum include an Announcement-channel post.\n\n" +
+    "Prices in **{native}**:",
   trending_durations:
-    `🔥 **Trending slot — {symbol}** · {chain}\n\n` +
-    "Your token takes a featured position on the Dexvra Trending board and is announced in our Trending channel the moment the slot activates.\n\n" +
-    "**Included with every slot**\n" +
-    `${em("📈", E.chartUp)} Featured placement for the full duration\n` +
-    `${em("📢", E.megaphone)} "Now Trending" announcement post\n` +
-    `${em("🌐", E.globe)} Live tracking on dexvra.io\n\n` +
-    "Longer slots carry bigger discounts. Pick your duration (**{native}**):",
+    `🔥 **Trending — {symbol}** · {chain}\n\n` +
+    "A featured slot on the dexvra.io Trending board, announced in our Trending channel the moment it activates. Longer durations carry larger discounts.\n\n" +
+    "Select a duration (**{native}**):",
   intro_banner:
-    `${em("📢", E.megaphone)} **Banner Campaigns — premium placement on dexvra.io**\n\n` +
-    "Put your creative in front of every Dexvra visitor. Banner campaigns run in the homepage carousel with your click-through link, and are announced in our channel.\n\n" +
-    "**How it works**\n" +
-    "1. Choose a banner format below\n" +
-    "2. Pick your campaign duration — USD pricing, discounts on longer runs\n" +
+    `${em("📢", E.megaphone)} **Banner Campaigns**\n\n` +
+    "Your creative in the dexvra.io homepage carousel with a click-through link, announced in our channel. USD pricing — discounts on longer runs.\n\n" +
+    "**Process**\n" +
+    "1. Choose a format\n" +
+    "2. Pick a duration\n" +
     "3. Upload your creative and target link\n" +
-    "4. Pay in the currency you prefer — the campaign goes live instantly\n\n" +
-    "Choose a banner format:",
+    "4. Pay in the currency you prefer\n\n" +
+    "Choose a format:",
   listing_ca_prompt:
     `${em("🔗", E.link)} **Contract address**\n\nPaste your token's contract address on **{chain}**:`,
   listing_name_prompt: "**Token name**\n\nWhat is your project called?",
@@ -117,23 +101,21 @@ const DEFAULTS = {
   listing_logo_prompt: "**Logo**\n\nSend your logo as a photo — or /skip to continue without one.",
   trending_ca_prompt:
     "🔥 **Book a Trending slot**\n\n" +
-    "Featured placement on the Dexvra Trending board plus a \"Now Trending\" announcement — slots from **3 to 48 hours**, longer runs at a discount.\n\n" +
-    "Paste the **contract address** of your listed token (or its dexvra.io token link) to continue:",
+    "Slots run **3–48 hours** with an activation announcement — longer runs at a discount.\n\n" +
+    "Paste the **contract address** of your listed token to continue:",
   trending_not_found:
     `${em("❌", E.cross)} **Not listed yet**\n\n` +
     "We couldn't find that token on Dexvra. List it first — ⚡ Xpress or 🏆 Listing & Trending — then come back to book your slot.",
   review_card:
     `📋 **Review your listing**\n\n` +
-    `${em("📊", E.chart)} **Chain** — {chain}\n` +
-    `🏷 **Name** — {name}\n` +
-    `🔤 **Symbol** — {symbol}\n` +
-    `${em("🔗", E.link)} **CA** — \`{address}\`\n` +
-    `🖼 **Logo** — {logo}\n` +
-    `📝 **Overview** — {overview}\n` +
-    `${em("🌐", E.globe)} **Website** — {website}\n` +
-    `🐦 **X** — {twitter}\n` +
-    `💬 **Telegram** — {telegram}\n\n` +
-    "Check every detail — this is exactly what goes live on your token page and channel posts. Tap **✅ Confirm** when ready, or use the edit buttons below.",
+    `**{name}** · {symbol} — {chain}\n` +
+    `\`{address}\`\n\n` +
+    `Logo — {logo}\n` +
+    `Overview — {overview}\n` +
+    `Website — {website}\n` +
+    `X — {twitter}\n` +
+    `Telegram — {telegram}\n\n` +
+    "This is exactly what goes live on your token page and channel posts. Tap **✅ Confirm**, or edit any field below.",
   edit_field_prompt: "✏️ Send the new **{field}**:",
   invalid_address:
     `${em("❌", E.cross)} That doesn't look like a valid **{chain}** contract address. Double-check and paste it again:`,
