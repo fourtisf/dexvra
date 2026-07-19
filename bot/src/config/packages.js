@@ -25,7 +25,7 @@ const LISTING_TIERS = [
     blurb: "Bronze · Tier #5 — entry listing on the board & discovery." },
   { key: "XPRESS", rank: 0, label: "Xpress", glyph: "⚡", color: "#4CC7D4", emoji: "⚡", announce: false, instant: true,
     price: { ETH: 0.06, SOL: 1, BNB: 0.25, TON: 40, TRX: 900 },
-    blurb: "Xpress — instant activation, listed live on TG + trending board, priority verification." },
+    blurb: "Xpress — instant activation, live on the dexvra.io board + listing alert, priority verification." },
 ];
 
 const TIER_MAP = Object.fromEntries(LISTING_TIERS.map((t) => [t.key, t]));
@@ -123,8 +123,9 @@ const bannerByKey = (key) => BANNERS.find((b) => b.key === key) || null;
 
 // Bundled Trending feature (hours) granted with each Listing purchase — this is
 // the "& Trending" in "Listing & Trending". Mirrors the fourtis listTrendPlans
-// durations; Xpress gets a short feature per its blurb ("listed on trending board").
-const TIER_TREND_HOURS = { DIAMOND: 48, GOLD: 24, PLATINUM: 18, SILVER: 12, BRONZE: 6, XPRESS: 6 };
+// durations. Xpress is listing-ONLY: no trending slot, no trending-channel post
+// (operator decision 2026-07 — "xpress hanya dapat listing alert + website").
+const TIER_TREND_HOURS = { DIAMOND: 48, GOLD: 24, PLATINUM: 18, SILVER: 12, BRONZE: 6, XPRESS: 0 };
 const tierTrendingHours = (key) => TIER_TREND_HOURS[key] || 0;
 
 // ── Formatting ───────────────────────────────────────────────────────────────

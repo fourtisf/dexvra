@@ -113,14 +113,24 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
       mcap: bannerCoin.mcap,
       badge,
     });
-    if (composed) return { source: composed };
+    if (composed) {
+      log.info(`[fulfil] ${kind} media: template artwork ✔`);
+      return { source: composed };
+    }
     const buf =
       kind === "trending"
         ? await bannerRender.renderTrendingBanner(bannerCoin, logoBuffer)
         : await bannerRender.renderListingBanner(bannerCoin, logoBuffer);
-    if (buf) return { source: buf };
+    if (buf) {
+      log.info(`[fulfil] ${kind} media: dynamic banner (template compose returned null — see [bannerTpl] warnings)`);
+      return { source: buf };
+    }
     const staticP = kind === "trending" ? assets.trending() : assets.listing();
-    if (staticP) return { source: staticP };
+    if (staticP) {
+      log.info(`[fulfil] ${kind} media: static asset (canvas unavailable — run 'npm ci' in bot/)`);
+      return { source: staticP };
+    }
+    log.warn(`[fulfil] ${kind} media: RAW TOKEN LOGO fallback — banner pipeline fully unavailable (check @napi-rs/canvas install + assets/banner-artwork-*.png)`);
   }
   return photoSource(logoFileId, logoUrl);
 }
@@ -262,8 +272,10 @@ async function fulfillBanner(ctx, order) {
 }
 
 // ── Buyer success copy (premium markup — rendered to entities by tpl.render) ─
+// Post links are shown as RAW visible URLs (https://t.me/dexvralisting/6), not
+// hidden behind "open ↗" markup — operator preference from live testing.
 function linkLines(links) {
-  return (links || []).map((l) => `${l.label}: [open ↗](${l.url})`).join("\n");
+  return (links || []).map((l) => `${l.label}: ${l.url}`).join("\n");
 }
 function successListing(coin, links) {
   return tpl.render("success_listing", {
