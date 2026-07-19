@@ -395,35 +395,42 @@ async function btPreview(ctx, kind) {
 function homeText() {
   return "🛠 <b>Dexvra Admin — Templates</b>\n\nEdit any bot message or channel-post layout. Changes go live within ~30s (no redeploy). Pick a category:";
 }
+// The controls card (label + placeholders + hint). The current text itself is
+// NOT embedded here — it's sent as its own PLAIN message just above (see
+// sendTemplateView), like fourtisadminbot, so operators see it as normal text
+// with no code-box / blockquote / copy button.
 function viewText(key) {
   const m = tpl.meta(key);
-  const raw = tpl.getRaw(key);
   const val = tpl.getRawValue(key);
   let premiumNote = "";
   if (val && typeof val === "object" && val.entities && val.entities.length) {
     const nPrem = val.entities.filter((e) => e.type === "custom_emoji").length;
     premiumNote = nPrem
-      ? `\n💎 Saved with ${nPrem} premium emoji (entities preserved).\n`
-      : `\nℹ️ Saved with ${val.entities.length} formatting entities.\n`;
-  }
-  // Show the CLEAN rendered text (emoji/bold/links resolved), not the raw
-  // [💎](emoji/ID) / **bold** markup — that source view confused operators.
-  let preview;
-  try {
-    const rawStr = typeof raw === "string" ? raw : (raw && raw.text) || String(raw || "");
-    preview = require("../premium").parse(rawStr).text;
-  } catch {
-    preview = String(raw || "");
+      ? `💎 Saved with ${nPrem} premium emoji.\n`
+      : `ℹ️ Saved with ${val.entities.length} formatting entities.\n`;
   }
   const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
   return (
-    `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "default"}\n\n` +
-    `Placeholders: <code>${escapeHtml(ph)}</code>\n${premiumNote}\n` +
-    // A blockquote — not <pre> — so the preview shows as natural text (no
-    // monospace code-box, no "copy" button that operators disliked).
-    `This is how it looks now:\n<blockquote>${escapeHtml(preview)}</blockquote>\n\n` +
-    `Tap <b>✏️ Edit</b> and send your new text — just type it normally, emoji and line breaks are kept. Keep any <code>{placeholder}</code> where you want the live value.`
+    `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "📋 default"}\n` +
+    `${premiumNote}` +
+    (m.ph.length ? `Placeholders you can use: <code>${escapeHtml(ph)}</code>\n` : ``) +
+    `\n☝️ That message above is the current text. Tap <b>✏️ Edit</b> and send your new one — ` +
+    `type it normally, emoji and line breaks are kept.` +
+    (m.ph.length ? ` Keep any <code>{placeholder}</code> where the live value goes.` : ``)
   );
+}
+
+// Send the current template as a PLAIN standalone message (premium emoji ride
+// via entities; markup/default strings render to clean text), then the controls
+// card — the fourtisadminbot layout.
+async function sendTemplateView(ctx, key) {
+  const cur = currentCopyable(key);
+  if (cur.text && cur.text.trim()) {
+    await ctx
+      .reply(cur.text, cur.extra)
+      .catch(() => ctx.reply(cur.text, { disable_web_page_preview: true }).catch(() => {}));
+  }
+  await ctx.reply(viewText(key), { ...HTML, ...viewKb(key) }).catch(() => {});
 }
 
 // The current template value in COPYABLE form, so an admin can copy → tweak →
@@ -588,7 +595,7 @@ function build() {
     if (!guard(ctx)) return;
     const key = ctx.match[1];
     if (!tpl.keys().includes(key)) return;
-    await edit(ctx, viewText(key), viewKb(key));
+    await sendTemplateView(ctx, key);
   });
 
   bot.action(/^e:(.+)$/, async (ctx) => {
@@ -601,24 +608,15 @@ function build() {
     const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
     await ctx.reply(
       `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\n` +
-        `Just type it like a normal message — line breaks, spaces and emoji are kept exactly. ` +
-        `💎 For <b>premium emoji</b>, insert them straight from your keyboard as you type — they're preserved as-is.\n\n` +
+        `Type it like a normal message — line breaks, spaces and emoji are kept exactly. ` +
+        `💎 For <b>premium emoji</b>, insert them straight from your keyboard as you type.\n\n` +
+        `Tip: copy the current text shown above, tweak it, and send it back.` +
         (m.ph.length
-          ? `Keep any <code>{placeholder}</code> where the live value goes: <code>${escapeHtml(ph)}</code>\n\n`
+          ? `\n\nKeep any <code>{placeholder}</code> where the live value goes: <code>${escapeHtml(ph)}</code>`
           : ``) +
-        `<i>Optional — </i><code>**bold**</code><i>, </i><code>[text](url)</code><i>, </i><code>\`code\`</code><i> also work.</i>\n` +
-        `Send /cancel to abort.`,
+        `\n\nSend /cancel to abort.`,
       HTML,
     );
-    // Echo the current text as a copyable message so it's edit-then-resend, not
-    // retype-from-scratch.
-    const cur = currentCopyable(key);
-    if (cur.text && cur.text.trim()) {
-      await ctx.reply("📋 Here's the current text 👇 edit it and send it back:", HTML).catch(() => {});
-      await ctx
-        .reply(cur.text, cur.extra)
-        .catch(() => ctx.reply(cur.text, { disable_web_page_preview: true }).catch(() => {}));
-    }
   });
 
   bot.action(/^r:(.+)$/, async (ctx) => {
@@ -627,7 +625,7 @@ function build() {
     const key = ctx.match[1];
     if (!tpl.keys().includes(key)) return;
     await tpl.resetTemplate(key);
-    await edit(ctx, viewText(key), viewKb(key));
+    await sendTemplateView(ctx, key);
   });
 
   bot.action("banner", async (ctx) => {
@@ -1009,7 +1007,7 @@ function build() {
       `✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>${nPrem ? ` with 💎 ${nPrem} premium emoji` : ""}. It goes live within ~30s.`,
       HTML,
     );
-    await ctx.reply(viewText(key), { ...HTML, ...viewKb(key) });
+    await sendTemplateView(ctx, key);
   });
 
   // Photo = banner upload (when awaiting)
