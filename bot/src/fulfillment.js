@@ -108,6 +108,9 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl) {
     const composed = await bannerTemplate.compose(kind, logoBuffer, {
       symbol: bannerCoin.symbol,
       name: bannerCoin.name,
+      chain: bannerCoin.chain,
+      price: bannerCoin.price,
+      mcap: bannerCoin.mcap,
     });
     if (composed) return { source: composed };
     const buf =
