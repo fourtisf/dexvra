@@ -30,6 +30,15 @@ const nameFromSlug = (slug) => groupNames().find((n) => slugOf(n) === slug) || n
 const groupIdOf = (key) => slugOf(tpl.meta(key).group);
 const HTML = { parse_mode: "HTML", disable_web_page_preview: true };
 
+// A group's template list is paginated. A large family (Bot Messages ships 37
+// templates) as one flat keyboard is 38 single-button rows — Telegram rejects a
+// keyboard that tall on editMessageText, so tapping the group silently did
+// nothing (the edit AND its reply fallback both carried the same oversize
+// keyboard). Pages of GROUP_PAGE keep every keyboard small and navigable.
+const GROUP_PAGE = 10;
+const pageCount = (n) => Math.max(1, Math.ceil(n / GROUP_PAGE));
+const clampPage = (p, pages) => Math.max(0, Math.min(Number(p) || 0, pages - 1));
+
 function guard(ctx) {
   if (ctx.chat && ctx.chat.type !== "private") return false;
   if (!isAdminUser(ctx)) return false;
@@ -48,14 +57,28 @@ function mainKb() {
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
-function groupKb(slug) {
+function groupKb(slug, page = 0) {
   const name = nameFromSlug(slug);
   const g = (name && tpl.groups()[name]) || [];
-  const rows = g.map((k) => [
+  const pages = pageCount(g.length);
+  const p = clampPage(page, pages);
+  const slice = g.slice(p * GROUP_PAGE, p * GROUP_PAGE + GROUP_PAGE);
+  const rows = slice.map((k) => [
     Markup.button.callback(`${tpl.isCustom(k) ? "✏️ " : ""}${tpl.meta(k).label}`, `v:${k}`),
   ]);
+  if (pages > 1) {
+    rows.push([
+      Markup.button.callback(p > 0 ? "◀ Prev" : "·", p > 0 ? `grp:${slug}:${p - 1}` : "noop"),
+      Markup.button.callback(`Page ${p + 1}/${pages}`, "noop"),
+      Markup.button.callback(p < pages - 1 ? "Next ▶" : "·", p < pages - 1 ? `grp:${slug}:${p + 1}` : "noop"),
+    ]);
+  }
   rows.push([Markup.button.callback("⬅ Back", "home")]);
   return Markup.inlineKeyboard(rows);
+}
+function groupText(name, p, pages) {
+  const head = pages > 1 ? ` <i>(page ${p + 1}/${pages})</i>` : "";
+  return `<b>${escapeHtml(name)}</b>${head}\n\nPick a template:`;
 }
 function viewKb(key) {
   return Markup.inlineKeyboard([
@@ -521,12 +544,18 @@ function build() {
     await edit(ctx, homeText(), mainKb());
   });
 
-  bot.action(/^grp:([a-z0-9]+)$/, async (ctx) => {
+  bot.action("noop", (ctx) => ctx.answerCbQuery().catch(() => {}));
+
+  bot.action(/^grp:([a-z0-9]+)(?::(\d+))?$/, async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
-    const name = nameFromSlug(ctx.match[1]);
+    const slug = ctx.match[1];
+    const name = nameFromSlug(slug);
     if (!name) return edit(ctx, homeText(), mainKb());
-    await edit(ctx, `<b>${escapeHtml(name)}</b>\n\nPick a template:`, groupKb(ctx.match[1]));
+    const g = tpl.groups()[name] || [];
+    const pages = pageCount(g.length);
+    const p = clampPage(ctx.match[2], pages);
+    await edit(ctx, groupText(name, p, pages), groupKb(slug, p));
   });
 
   bot.action(/^v:(.+)$/, async (ctx) => {
@@ -1059,3 +1088,5 @@ async function startAdminBot() {
 }
 
 module.exports = { startAdminBot, build };
+// Exposed for tests: the group-menu keyboard builder + its paging constant.
+module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
