@@ -11,6 +11,7 @@ const { getMediaFileId } = require("../helpers/message");
 const { escapeHtml } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
+const bannerTpl = require("../bannerTemplate");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
@@ -30,6 +31,7 @@ function mainKb() {
     [Markup.button.callback("📝 Bot Messages", "grp:msg")],
     [Markup.button.callback("📢 Channel Posts", "grp:post")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
+    [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -64,6 +66,96 @@ function bannerExists() {
   }
 }
 
+// ── Channel banner artwork (fourtis-style template compositor) ───────────────
+const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads" };
+
+function btHomeText() {
+  const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
+  return (
+    `🎨 <b>Channel Banner Artwork</b>\n\n` +
+    `Designed artwork per service; the bot composites each token's <b>logo</b> ` +
+    `(or the advertiser's <b>creative</b> for Banner Ads) into the artwork's slot, ` +
+    `plus an optional <b>$TICKER + name</b> overlay.\n\n` +
+    `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n\n` +
+    `Pick a service to configure:`
+  );
+}
+function btHomeKb() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
+    [Markup.button.callback(BT_KINDS.banner, "btk:banner")],
+    [Markup.button.callback("⬅ Back", "home")],
+  ]);
+}
+function btKindText(kind) {
+  const s = bannerTpl.getSettings(kind);
+  const src = bannerTpl.hasUploaded(kind) ? "✅ custom uploaded" : bannerTpl.hasTemplate(kind) ? "💎 bundled default" : "— none (auto-banner used)";
+  const slot =
+    s.slotShape === "rect"
+      ? `slot <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})`
+      : `logo <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})`;
+  return (
+    `🎨 <b>${BT_KINDS[kind]} artwork</b>\n\n` +
+    `Artwork: ${src}\n` +
+    `Media slot: ${slot}\n` +
+    `Text overlay: <b>${s.showText ? "on" : "off"}</b> (${s.tickerFontSize}px at ${s.tickerX}, ${s.tickerY})\n\n` +
+    `Settings are separate per service.`
+  );
+}
+function btKindKb(kind) {
+  const s = bannerTpl.getSettings(kind);
+  const sizeRow =
+    s.slotShape === "rect"
+      ? [Markup.button.callback("📐 Set slot (W H X,Y)", `bt_slot:${kind}`)]
+      : [
+          Markup.button.callback("➖20px", `bt_sz:${kind}:-20`),
+          Markup.button.callback(`Logo ${s.logoSize}px`, `bt_pos:${kind}`),
+          Markup.button.callback("➕20px", `bt_sz:${kind}:20`),
+        ];
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
+    sizeRow,
+    [Markup.button.callback("📍 Logo position", `bt_pos:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)],
+    [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
+    [Markup.button.callback("⬅ Artwork menu", "bt")],
+  ]);
+}
+
+function sampleMedia(kind) {
+  try {
+    const cv = require("@napi-rs/canvas");
+    const rect = bannerTpl.getSettings(kind).slotShape === "rect";
+    const w = rect ? 800 : 300;
+    const h = rect ? 320 : 300;
+    const c = cv.createCanvas(w, h);
+    const g = c.getContext("2d");
+    const lg = g.createLinearGradient(0, 0, w, h);
+    lg.addColorStop(0, "#7C3AED");
+    lg.addColorStop(1, "#22D3EE");
+    g.fillStyle = lg;
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = "rgba(255,255,255,.95)";
+    g.font = `800 ${rect ? 90 : 170}px sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(rect ? "SAMPLE AD" : "J", w / 2, h / 2 + (rect ? 4 : 8));
+    return c.toBuffer("image/png");
+  } catch {
+    return null;
+  }
+}
+
+async function btPreview(ctx, kind) {
+  if (!bannerTpl.hasTemplate(kind)) {
+    return ctx.reply(`❌ No ${kind} artwork available yet. Tap ⬆ Upload first.`).catch(() => {});
+  }
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token" });
+  if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
+  await ctx
+    .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview — tune the slot/text until it sits perfectly.` })
+    .catch(() => {});
+}
+
 // ── Views ────────────────────────────────────────────────────────────────────
 function homeText() {
   return "🛠 <b>Dexvra Admin — Templates</b>\n\nEdit any bot message or channel-post layout. Changes go live within ~30s (no redeploy). Pick a category:";
@@ -71,10 +163,18 @@ function homeText() {
 function viewText(key) {
   const m = tpl.meta(key);
   const raw = tpl.getRaw(key);
+  const val = tpl.getRawValue(key);
+  let premiumNote = "";
+  if (val && typeof val === "object" && val.entities && val.entities.length) {
+    const nPrem = val.entities.filter((e) => e.type === "custom_emoji").length;
+    premiumNote = nPrem
+      ? `\n💎 Saved with ${nPrem} premium emoji (entities preserved).\n`
+      : `\nℹ️ Saved with ${val.entities.length} formatting entities.\n`;
+  }
   const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
   return (
     `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "default"}\n\n` +
-    `Placeholders: <code>${escapeHtml(ph)}</code>\n\n` +
+    `Placeholders: <code>${escapeHtml(ph)}</code>\n${premiumNote}\n` +
     `Current:\n<pre>${escapeHtml(raw)}</pre>\n\n` +
     `Tap <b>✏️ Edit</b> to change it.`
   );
@@ -154,6 +254,7 @@ async function launchBroadcast(ctx, test) {
   }
   const job = await bcStore.createJob({
     text: draft.text || "",
+    entities: draft.entities || [],
     mediaPath,
     createdBy: String(ctx.from.id),
     createdByUsername: ctx.from.username,
@@ -211,7 +312,11 @@ function build() {
     const m = tpl.meta(key);
     const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
     await ctx.reply(
-      `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\nHTML allowed (&lt;b&gt;, &lt;a href&gt;, &lt;code&gt;). Placeholders: <code>${escapeHtml(ph)}</code>\n\nSend /cancel to abort.`,
+      `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\n` +
+        `Formatting: <code>**bold**</code>, <code>[text](url)</code>, <code>\`code\`</code>, ` +
+        `<code>[😀](emoji/ID)</code> for premium emoji — or just paste a message that ` +
+        `<b>contains real premium emoji</b> and they'll be preserved as-is.\n\n` +
+        `Placeholders: <code>${escapeHtml(ph)}</code>\n\nSend /cancel to abort.`,
       HTML,
     );
   });
@@ -251,6 +356,91 @@ function build() {
     await edit(ctx, `🖼 <b>Banner Image</b>\n\nStatus: — none`, bannerKb());
   });
 
+  // ── Channel banner artwork (template compositor, per service) ──
+  const K = "(listing|trending|banner)";
+  bot.action("bt", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, btHomeText(), btHomeKb());
+  });
+  bot.action(new RegExp(`^btk:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, btKindText(ctx.match[1]), btKindKb(ctx.match[1]));
+  });
+  bot.action(new RegExp(`^bt_up:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "upload", kind: ctx.match[1] };
+    await ctx.reply(
+      `⬆ Send the <b>${BT_KINDS[ctx.match[1]]} artwork</b> as a photo or file (PNG/JPG, ~1280×640 or 2560×1280). Send /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(new RegExp(`^bt_sz:${K}:(-?\\d+)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const s = bannerTpl.getSettings(kind);
+    const size = Math.max(60, Math.min(1600, Number(s.logoSize) + Number(ctx.match[2])));
+    await bannerTpl.updateSettings(kind, { logoSize: size });
+    ctx.answerCbQuery(`Logo ${size}px`).catch(() => {});
+    await edit(ctx, btKindText(kind), btKindKb(kind));
+    if (bannerTpl.hasTemplate(kind)) await btPreview(ctx, kind);
+  });
+  bot.action(new RegExp(`^bt_pos:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    ctx.session.awaitingBt = { mode: "pos", kind };
+    const s = bannerTpl.getSettings(kind);
+    await ctx.reply(
+      `📍 <b>Logo spot — ${BT_KINDS[kind]}</b>\n` +
+        `Current: <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
+        `Send: <code>SIZE X,Y</code> — e.g. <code>420 1890,410</code>\n` +
+        `(<code>center</code> works for X or Y). /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(new RegExp(`^bt_slot:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    ctx.session.awaitingBt = { mode: "slot", kind };
+    const s = bannerTpl.getSettings(kind);
+    await ctx.reply(
+      `📐 <b>Creative slot — ${BT_KINDS[kind]}</b>\n` +
+        `Current: <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
+        `Send: <code>WIDTH HEIGHT X,Y</code> — e.g. <code>1680 800 690,310</code>\n` +
+        `(<code>center</code> works for X or Y). /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(new RegExp(`^bt_text:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    ctx.session.awaitingBt = { mode: "text", kind };
+    const s = bannerTpl.getSettings(kind);
+    await ctx.reply(
+      `🔤 <b>Text overlay — ${BT_KINDS[kind]}</b> ($TICKER + name on the artwork).\n` +
+        `Current: <b>${s.showText ? "on" : "off"}</b>, ${s.tickerFontSize}px at (${s.tickerX}, ${s.tickerY})\n\n` +
+        `Send: <code>SIZE X,Y</code> — e.g. <code>96 430,660</code>\n` +
+        `Or <code>off</code> / <code>on</code> to toggle it.\n\n/cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(new RegExp(`^bt_prev:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await btPreview(ctx, ctx.match[1]);
+  });
+  bot.action(new RegExp(`^bt_rm:${K}$`), async (ctx) => {
+    ctx.answerCbQuery("Custom artwork removed").catch(() => {});
+    if (!guard(ctx)) return;
+    await bannerTpl.removeTemplate(ctx.match[1]);
+    await edit(ctx, btKindText(ctx.match[1]), btKindKb(ctx.match[1]));
+  });
+
   bot.action("bc", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -284,6 +474,7 @@ function build() {
     ctx.session.awaitingTemplate = null;
     ctx.session.awaitingBanner = false;
     ctx.session.awaitingBroadcast = false;
+    ctx.session.awaitingBt = null;
     ctx.session.bcDraft = null;
     await ctx.reply("Cancelled.", { ...HTML, ...mainKb() });
   });
@@ -293,35 +484,109 @@ function build() {
     if (!guard(ctx)) return;
     const text = ctx.message.text || "";
     if (text.startsWith("/")) return; // commands handled above
+    const entities = ctx.message.entities || [];
+    // Banner-artwork settings input (per service: logo spot / creative slot /
+    // text overlay)
+    if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
+      const { mode, kind } = ctx.session.awaitingBt;
+      ctx.session.awaitingBt = null;
+      const low = text.trim().toLowerCase();
+      const cv = (v) => (v === "center" ? "center" : Number(v));
+      try {
+        if (mode === "text" && (low === "off" || low === "on")) {
+          await bannerTpl.updateSettings(kind, { showText: low === "on" });
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: text overlay <b>${low}</b>.`, HTML);
+        } else if (mode === "slot") {
+          const m = low.match(/^(\d+)\s+(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
+          if (!m) return ctx.reply("❌ Format: <code>WIDTH HEIGHT X,Y</code> — e.g. <code>1680 800 690,310</code>", HTML).catch(() => {});
+          await bannerTpl.updateSettings(kind, { slotW: Number(m[1]), slotH: Number(m[2]), logoX: cv(m[3]), logoY: cv(m[4]) });
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: slot saved. Previewing…`, HTML);
+        } else {
+          const m = low.match(/^(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
+          if (!m) return ctx.reply("❌ Format: <code>SIZE X,Y</code> — e.g. <code>420 1890,410</code>", HTML).catch(() => {});
+          const patch =
+            mode === "pos"
+              ? { logoSize: Number(m[1]), logoX: cv(m[2]), logoY: cv(m[3]) }
+              : { tickerFontSize: Number(m[1]), tickerX: cv(m[2]), tickerY: cv(m[3]), showText: true };
+          await bannerTpl.updateSettings(kind, patch);
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: saved. Previewing…`, HTML);
+        }
+        if (bannerTpl.hasTemplate(kind)) await btPreview(ctx, kind);
+      } catch (e) {
+        await ctx.reply(`⚠️ ${e.message}`).catch(() => {});
+      }
+      return;
+    }
     if (ctx.session.awaitingBroadcast) {
       ctx.session.awaitingBroadcast = false;
-      ctx.session.bcDraft = { text };
-      await ctx.reply(text, HTML).catch(() => {}); // rendered preview
+      ctx.session.bcDraft = { text, entities };
+      // rendered preview — re-send with the admin's entities so premium emoji show
+      const prevExtra = entities.length
+        ? { entities, disable_web_page_preview: true }
+        : HTML;
+      await ctx.reply(text, prevExtra).catch(() => {});
       await ctx.reply("Send this broadcast?", bcControlKb(bcStore.audience().length));
       return;
     }
     const key = ctx.session.awaitingTemplate;
     if (!key) return;
     ctx.session.awaitingTemplate = null;
-    await tpl.setTemplate(key, text);
-    log.info(`[adminbot] template '${key}' updated by @${ctx.from.username || ctx.from.id} (${text.length} chars)`);
-    await ctx.reply(`✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>. It goes live within ~30s.`, HTML);
+    // A message pasted with AUTHORED formatting (premium emoji, bold, links…)
+    // is stored verbatim as {text, entities} so custom emoji survive. Telegram
+    // auto-detects url/command/mention entities on ANY plain message — those
+    // alone must NOT freeze a typed markup template into verbatim storage.
+    const premiumLib = require("../premium");
+    const value = premiumLib.hasAuthoredFormatting(entities) ? { text, entities } : text;
+    await tpl.setTemplate(key, value);
+    const nPrem = entities.filter((e) => e.type === "custom_emoji").length;
+    log.info(
+      `[adminbot] template '${key}' updated by @${ctx.from.username || ctx.from.id} (${text.length} chars, ${entities.length} entities, ${nPrem} premium emoji)`,
+    );
+    await ctx.reply(
+      `✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>${nPrem ? ` with 💎 ${nPrem} premium emoji` : ""}. It goes live within ~30s.`,
+      HTML,
+    );
     await ctx.reply(viewText(key), { ...HTML, ...viewKb(key) });
   });
 
   // Photo = banner upload (when awaiting)
   bot.on(["photo", "document"], async (ctx) => {
     if (!guard(ctx)) return;
+    // Channel banner artwork upload
+    if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "upload") {
+      const { kind } = ctx.session.awaitingBt;
+      const fileId = getMediaFileId(ctx);
+      if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo or file.").catch(() => {});
+      ctx.session.awaitingBt = null;
+      try {
+        const link = await ctx.telegram.getFileLink(fileId);
+        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
+        if (!res.ok) throw new Error(`download ${res.status}`);
+        await bannerTpl.saveTemplate(kind, Buffer.from(await res.arrayBuffer()));
+        log.info(`[adminbot] ${kind} banner artwork uploaded by @${ctx.from.username || ctx.from.id}`);
+        await ctx.reply(
+          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Now set the media slot so the logo/creative lands right, then 👁 Preview.`,
+          { ...HTML, ...btKindKb(kind) },
+        );
+        await btPreview(ctx, kind);
+      } catch (e) {
+        await ctx.reply(`⚠️ Couldn't save the artwork: ${e.message}`).catch(() => {});
+      }
+      return;
+    }
     if (ctx.session.awaitingBroadcast) {
       const fileId = getMediaFileId(ctx);
       if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo.").catch(() => {});
       ctx.session.awaitingBroadcast = false;
-      ctx.session.bcDraft = { adminFileId: fileId, text: ctx.message.caption || "" };
+      const capEntities = ctx.message.caption_entities || [];
+      ctx.session.bcDraft = { adminFileId: fileId, text: ctx.message.caption || "", entities: capEntities };
       try {
-        await ctx.replyWithPhoto(
-          fileId,
-          ctx.message.caption ? { caption: ctx.message.caption, parse_mode: "HTML" } : {},
-        );
+        const prevExtra = capEntities.length
+          ? { caption: ctx.message.caption, caption_entities: capEntities }
+          : ctx.message.caption
+            ? { caption: ctx.message.caption, parse_mode: "HTML" }
+            : {};
+        await ctx.replyWithPhoto(fileId, prevExtra);
       } catch {
         /* preview best-effort */
       }

@@ -89,7 +89,7 @@ async function confirmPayHandler(ctx) {
     if (!paid) {
       await toast(
         ctx,
-        tpl.t("payment_not_detected", {
+        tpl.render("payment_not_detected", {
           amount: order.humanAmount,
           native: order.native,
           address,
@@ -128,7 +128,7 @@ async function confirmPayHandler(ctx) {
     );
   } catch (e) {
     log.error(`[pay] confirm/fulfil failed order=${order && order.id}: ${e.message}`);
-    await toast(ctx, tpl.t("payment_snag", { order: order && order.id }));
+    await toast(ctx, tpl.render("payment_snag", { order: order && order.id }));
   } finally {
     ctx.session._verifying = false;
   }

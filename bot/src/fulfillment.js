@@ -13,10 +13,13 @@ const x = require("./twitter");
 const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS, POST_BANNERS } = require("./config/constants");
 const { tierAnnounces } = require("./config/packages");
-const { escapeHtml, fmtPrice, formatNumber } = require("./helpers/format");
+const { fmtPrice, formatNumber } = require("./helpers/format");
+const { payloadArgs } = require("./helpers/message");
+const premium = require("./premium");
 const { chainOf } = require("./config/chains");
 const assets = require("./assets");
 const bannerRender = require("./bannerRender");
+const bannerTemplate = require("./bannerTemplate");
 const tpl = require("./templates");
 const log = require("./helpers/logger");
 
@@ -37,8 +40,9 @@ async function downloadFile(telegram, fileId) {
   }
 }
 
-async function dm(ctx, text, keyboard) {
-  const extra = { parse_mode: "HTML", disable_web_page_preview: true, ...(keyboard || {}) };
+async function dm(ctx, payload, keyboard) {
+  const { text, extra: base } = payloadArgs(payload, false);
+  const extra = { ...base, ...(keyboard || {}) };
   try {
     if (typeof ctx.reply === "function") return await ctx.reply(text, extra);
     return await ctx.telegram.sendMessage(ctx.from.id, text, extra);
@@ -96,9 +100,16 @@ function bannerCoinOf(row, live) {
   };
 }
 
-/** Post media: dynamic per-token banner → static banner → token logo. */
+/** Post media, best first: admin-uploaded template ARTWORK (fourtis-style,
+ *  logo composited into the design) → dynamic per-token banner → static
+ *  banner → token logo. */
 async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl) {
   if (POST_BANNERS) {
+    const composed = await bannerTemplate.compose(kind, logoBuffer, {
+      symbol: bannerCoin.symbol,
+      name: bannerCoin.name,
+    });
+    if (composed) return { source: composed };
     const buf =
       kind === "trending"
         ? await bannerRender.renderTrendingBanner(bannerCoin, logoBuffer)
@@ -227,7 +238,15 @@ async function fulfillBanner(ctx, order) {
 
   const links = [];
   try {
-    const aMsg = await post.sendPhoto(CHANNELS.announce, p.imageFileId || photoSource(null, rec.imageUrl), fmt.bannerPost(rec));
+    // Frame the creative in the Banner Ads artwork when one is set (admin
+    // upload or bundled); otherwise post the raw creative as before.
+    let adMedia = p.imageFileId || photoSource(null, rec.imageUrl);
+    if (POST_BANNERS) {
+      const creative = buffer || (await fetchLogoUrl(rec.imageUrl));
+      const framed = await bannerTemplate.compose("banner", creative, {});
+      if (framed) adMedia = { source: framed };
+    }
+    const aMsg = await post.sendPhoto(CHANNELS.announce, adMedia, fmt.bannerPost(rec));
     if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
@@ -237,29 +256,29 @@ async function fulfillBanner(ctx, order) {
   return booking;
 }
 
-// ── Buyer success copy ───────────────────────────────────────────────────────
+// ── Buyer success copy (premium markup — rendered to entities by tpl.render) ─
 function linkLines(links) {
-  return (links || []).map((l) => `${l.label}: <a href="${l.url}">open ↗</a>`).join("\n");
+  return (links || []).map((l) => `${l.label}: [open ↗](${l.url})`).join("\n");
 }
 function successListing(coin, links) {
-  return tpl.t("success_listing", {
-    symbol: fmt.sym(coin.symbol),
-    name: escapeHtml(coin.name),
+  return tpl.render("success_listing", {
+    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
+    name: premium.sanitizeVar(coin.name),
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
   });
 }
 function successTrending(coin, hours, links) {
-  return tpl.t("success_trending", {
-    symbol: fmt.sym(coin.symbol),
+  return tpl.render("success_trending", {
+    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
     hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
   });
 }
 function successBanner(rec, links) {
-  return tpl.t("success_banner", {
-    slot: escapeHtml(rec.slot),
+  return tpl.render("success_banner", {
+    slot: premium.sanitizeVar(rec.slot),
     endsAt: new Date(rec.endsAt).toUTCString(),
     postLinks: linkLines(links),
   });

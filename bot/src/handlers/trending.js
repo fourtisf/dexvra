@@ -20,7 +20,7 @@ async function entryTrending(ctx) {
   await answer(ctx);
   if (ctx.chat && ctx.chat.type !== "private") return;
   freshSession(ctx, { type: "trend", awaitingField: "trend_ca" });
-  await sendCard(ctx, tpl.t("trending_ca_prompt"), menu.withHome([]));
+  await sendCard(ctx, tpl.render("trending_ca_prompt"), menu.withHome([]));
 }
 
 async function handleText(ctx) {
@@ -52,7 +52,7 @@ async function handleText(ctx) {
   if (!listing) {
     return sendCard(
       ctx,
-      tpl.t("trending_not_found"),
+      tpl.render("trending_not_found"),
       Markup.inlineKeyboard([
         [Markup.button.callback("⚡ Xpress Listing", "submit_coin")],
         [Markup.button.callback("🏠 Home", "home")],

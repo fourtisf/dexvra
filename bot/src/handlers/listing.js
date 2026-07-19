@@ -52,7 +52,7 @@ async function chainPick(ctx) {
   if (!chainOf(chain)) return toast(ctx, "Unknown chain.");
   ctx.session.form.chain = chain;
   ctx.session.awaitingField = "address";
-  await sendCard(ctx, tpl.t("listing_ca_prompt", { chain: chainOf(chain).label }), menu.withHome([]));
+  await sendCard(ctx, tpl.render("listing_ca_prompt", { chain: chainOf(chain).label }), menu.withHome([]));
 }
 
 // ── Free-text field capture ──────────────────────────────────────────────────
@@ -96,13 +96,13 @@ async function handleText(ctx) {
         return showReview(ctx);
       }
       s.awaitingField = "name";
-      return sendCard(ctx, tpl.t("listing_name_prompt"), menu.withHome([]));
+      return sendCard(ctx, tpl.render("listing_name_prompt"), menu.withHome([]));
     }
     case "name":
       f.name = input.slice(0, 60);
       if (!s.reviewShown) {
         s.awaitingField = "symbol";
-        return sendCard(ctx, tpl.t("listing_symbol_prompt"), menu.withHome([]));
+        return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
       }
       s.awaitingField = null;
       return showReview(ctx);
@@ -110,7 +110,7 @@ async function handleText(ctx) {
       f.sym = input.replace(/^\$+/, "").toUpperCase().slice(0, 24);
       if (!s.reviewShown) {
         s.awaitingField = "logo";
-        return sendCard(ctx, tpl.t("listing_logo_prompt"), menu.withHome([]));
+        return sendCard(ctx, tpl.render("listing_logo_prompt"), menu.withHome([]));
       }
       s.awaitingField = null;
       return showReview(ctx);

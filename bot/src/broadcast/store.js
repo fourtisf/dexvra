@@ -33,11 +33,12 @@ async function saveJob(job) {
   await fs.rename(tmp, file);
 }
 
-async function createJob({ text, mediaPath, createdBy, createdByUsername, targets, test }) {
+async function createJob({ text, entities, mediaPath, createdBy, createdByUsername, targets, test }) {
   const job = {
     id: newId(),
     status: "pending",
     text: text || "",
+    entities: entities || [], // premium-emoji/format entities from the admin's compose message
     mediaPath: mediaPath || null,
     mediaFileId: null, // filled after the first upload (reused thereafter)
     createdBy,

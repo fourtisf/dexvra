@@ -20,6 +20,7 @@
     "@ton/ton": "^15.2.1",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.2",
+    "telegram": "^2.26.22",
     "telegraf": "^4.16.3",
     "telegraf-ratelimit": "^2.0.0",
     "tronweb": "^6.0.0",

@@ -3,14 +3,16 @@
 const { armPayment } = require("../payments/payment");
 const { sendCard } = require("../helpers/message");
 const menu = require("./menu");
+const premium = require("../premium");
 const tpl = require("../templates");
 
 async function startPayment(ctx, order) {
   const r = await armPayment(ctx, order);
-  const label = order.label || order.kind;
+  // label embeds the user's symbol — sanitize so it can't inject markup
+  const label = premium.sanitizeVar(order.label || order.kind);
   const text = r.adminFree
-    ? tpl.t("pay_card_admin", { label })
-    : tpl.t("pay_card", { label, amount: r.humanAmount, native: r.native, address: r.address });
+    ? tpl.render("pay_card_admin", { label })
+    : tpl.render("pay_card", { label, amount: r.humanAmount, native: r.native, address: r.address });
   await sendCard(ctx, text, menu.confirmPayment());
 }
 

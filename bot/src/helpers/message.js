@@ -1,9 +1,28 @@
 // User-facing Telegram helpers. Enforces the fourtis "single live card" UX:
 // each step deletes the previous bot message and sends a fresh one, so the flow
-// feels like one updating message. All text is HTML (parse_mode:"HTML").
+// feels like one updating message.
+//
+// Text arguments accept either a plain HTML string (legacy, parse_mode:"HTML")
+// or a template PAYLOAD from templates.render():
+//   { text, entities } — premium-markup template → sent with entity arrays and
+//     NO parse_mode (Telegram strips custom emoji for regular bots, leaving the
+//     unicode fallback — and renders them animated if the bot ever can)
+//   { html }           — legacy admin-saved HTML template
 const log = require("./logger");
 
 const HTML = { parse_mode: "HTML", disable_web_page_preview: true };
+
+/** Payload → { text, extra } for sendMessage / { text, extra } captions. */
+function payloadArgs(payload, forCaption = false) {
+  if (payload && typeof payload === "object") {
+    if (payload.html != null) return { text: payload.html, extra: { ...HTML } };
+    const ents = payload.entities || [];
+    const extra = { disable_web_page_preview: true };
+    if (ents.length) extra[forCaption ? "caption_entities" : "entities"] = ents;
+    return { text: payload.text || "", extra };
+  }
+  return { text: String(payload == null ? "" : payload), extra: { ...HTML } };
+}
 
 /** answerCbQuery, swallowing the "query is too old" errors on stale taps. */
 async function answer(ctx, text, extra) {
@@ -26,10 +45,11 @@ async function deleteLatest(ctx) {
 }
 
 /** Delete the previous card, send a fresh text card, remember its id. */
-async function sendCard(ctx, text, keyboard, opts = {}) {
+async function sendCard(ctx, payload, keyboard, opts = {}) {
   await deleteLatest(ctx);
+  const { text, extra } = payloadArgs(payload, false);
   try {
-    const msg = await ctx.reply(text, { ...HTML, ...opts, ...(keyboard || {}) });
+    const msg = await ctx.reply(text, { ...extra, ...opts, ...(keyboard || {}) });
     if (ctx.session) ctx.session.latest_bot_message = msg.message_id;
     return msg;
   } catch (e) {
@@ -40,22 +60,24 @@ async function sendCard(ctx, text, keyboard, opts = {}) {
 
 /** Same, but with a photo (used for the listing review card). `photo` is a
  *  file_id, URL string, or { source }. Falls back to a text card on failure. */
-async function sendPhotoCard(ctx, photo, caption, keyboard, opts = {}) {
+async function sendPhotoCard(ctx, photo, payload, keyboard, opts = {}) {
   await deleteLatest(ctx);
+  const { text, extra } = payloadArgs(payload, true);
   try {
-    const msg = await ctx.replyWithPhoto(photo, { caption, ...HTML, ...opts, ...(keyboard || {}) });
+    const msg = await ctx.replyWithPhoto(photo, { caption: text, ...extra, ...opts, ...(keyboard || {}) });
     if (ctx.session) ctx.session.latest_bot_message = msg.message_id;
     return msg;
   } catch (e) {
     log.debug(`[msg] photo card failed (${e.message}) — falling back to text`);
-    return sendCard(ctx, caption, keyboard, opts);
+    return sendCard(ctx, payload, keyboard, opts);
   }
 }
 
 /** Plain reply that does NOT touch the single-card slot (transient notices). */
-async function toast(ctx, text, opts = {}) {
+async function toast(ctx, payload, opts = {}) {
+  const { text, extra } = payloadArgs(payload, false);
   try {
-    return await ctx.reply(text, { ...HTML, ...opts });
+    return await ctx.reply(text, { ...extra, ...opts });
   } catch {
     return null;
   }
@@ -71,4 +93,4 @@ function getMediaFileId(ctx) {
   return null;
 }
 
-module.exports = { answer, deleteLatest, sendCard, sendPhotoCard, toast, getMediaFileId, HTML };
+module.exports = { answer, deleteLatest, sendCard, sendPhotoCard, toast, getMediaFileId, payloadArgs, HTML };

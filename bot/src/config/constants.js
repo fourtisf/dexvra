@@ -29,6 +29,17 @@ const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key ba
 const ADMIN_IDS = list(env.ADMIN_IDS);
 const ADMIN_USERNAMES = list(env.ADMIN_USERNAMES).map((u) => u.replace(/^@/, "").toLowerCase());
 
+// ── GramJS / MTProto (premium emoji channel posting) ─────────────────────────
+// A Telegram Premium USER account posts to the channels so premium custom emoji
+// render animated (a regular bot gets them stripped). Get API_ID/API_HASH at
+// https://my.telegram.org/apps, then run `node scripts/gramjs-login.js` once on
+// the server to create the session file. The account must be able to post in
+// every channel in CHANNELS. Disabled (Bot API fallback) until all three exist.
+const API_ID = int(env.API_ID, 0);
+const API_HASH = env.API_HASH || "";
+const GRAMJS_SESSION_FILE = env.GRAMJS_SESSION_FILE || path.join(BOT_ROOT, "session.txt");
+const GRAMJS_ENABLED = bool(env.GRAMJS_ENABLED, true);
+
 // ── Site + internal API (the Next.js app) ────────────────────────────────────
 const SITE_URL = (env.SITE_URL || "https://dexvra.io").replace(/\/+$/, "");
 const DEXVRA_API_BASE = (env.DEXVRA_API_BASE || "http://127.0.0.1:3005").replace(/\/+$/, "");
@@ -121,6 +132,10 @@ module.exports = {
   PK_CHANNEL,
   ADMIN_IDS,
   ADMIN_USERNAMES,
+  API_ID,
+  API_HASH,
+  GRAMJS_SESSION_FILE,
+  GRAMJS_ENABLED,
   SITE_URL,
   DEXVRA_API_BASE,
   INTERNAL_API_TOKEN,

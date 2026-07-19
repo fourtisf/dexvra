@@ -6,6 +6,7 @@ import type { ListingTier } from "@/lib/types";
 import { CHAIN_IDS, CHAINS } from "@/config/chains";
 import { LISTING_TIERS, tierLabel } from "@/lib/packages";
 import { Logo } from "@/components/Logo";
+import { BannerManager } from "@/components/admin/BannerManager";
 
 const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
 
@@ -220,6 +221,9 @@ export default function AdminDashboard() {
           <div className="astat pend"><div className="k">Pending</div><div className="v">{stats.pending}</div></div>
           <div className="astat"><div className="k">Trending</div><div className="v">{stats.trending}</div></div>
         </div>
+
+        {/* Homepage banner (upload + click-through link) */}
+        <BannerManager />
 
         {/* Pending submissions */}
         <section className="asec">
