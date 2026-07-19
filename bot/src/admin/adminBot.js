@@ -383,12 +383,21 @@ function viewText(key) {
       ? `\n💎 Saved with ${nPrem} premium emoji (entities preserved).\n`
       : `\nℹ️ Saved with ${val.entities.length} formatting entities.\n`;
   }
+  // Show the CLEAN rendered text (emoji/bold/links resolved), not the raw
+  // [💎](emoji/ID) / **bold** markup — that source view confused operators.
+  let preview;
+  try {
+    const rawStr = typeof raw === "string" ? raw : (raw && raw.text) || String(raw || "");
+    preview = require("../premium").parse(rawStr).text;
+  } catch {
+    preview = String(raw || "");
+  }
   const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
   return (
     `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "default"}\n\n` +
     `Placeholders: <code>${escapeHtml(ph)}</code>\n${premiumNote}\n` +
-    `Current:\n<pre>${escapeHtml(raw)}</pre>\n\n` +
-    `Tap <b>✏️ Edit</b> to change it.`
+    `This is how it looks now:\n<pre>${escapeHtml(preview)}</pre>\n\n` +
+    `Tap <b>✏️ Edit</b> and send your new text — just type it normally, emoji and line breaks are kept. Keep any <code>{placeholder}</code> where you want the live value.`
   );
 }
 
