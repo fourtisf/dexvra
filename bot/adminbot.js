@@ -1,6 +1,7 @@
 // Entry for @dexvraadminbot (template editor). Separate process from the main
 // bot; shares the same code + data/ dir. Started by PM2 as `dexvra-adminbot`.
-require("dotenv").config();
+// override:true — .env beats PM2's stale env snapshot (see main.js).
+require("dotenv").config({ override: true });
 
 const log = require("./src/helpers/logger");
 

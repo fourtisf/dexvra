@@ -1,6 +1,10 @@
 // Entry point. Loads .env, installs non-fatal process guards (a stray RPC/HTTP
 // rejection must never crash the bot), then boots.
-require("dotenv").config();
+// override:true — bot/.env is the source of truth. PM2 snapshots the env at
+// the FIRST `pm2 start` and re-injects it on every restart (--update-env only
+// overlays the current shell), so without override a stale snapshot silently
+// beats an edited .env (live incident: POST_BANNERS=0 survived every restart).
+require("dotenv").config({ override: true });
 
 const log = require("./src/helpers/logger");
 
