@@ -42,7 +42,24 @@ const page_html = (KIND) => {
     background:radial-gradient(circle, transparent 52%, rgba(120,220,205,.05) 62%, transparent 73%); }
   .ringSmoke2 { width:1060px; height:1060px; right:-180px; top:-300px; filter:blur(50px);
     background:radial-gradient(circle, transparent 52%, rgba(90,210,230,.05) 62%, transparent 74%); }
+  .indigo { width:760px; height:640px; left:520px; top:-260px; filter:blur(110px);
+    background:radial-gradient(circle, rgba(99,102,241,.10) 0%, transparent 55%); }
+  .beam { position:absolute; left:640px; top:-260px; width:340px; height:1560px; border-radius:0 !important;
+    transform:rotate(24deg); filter:blur(48px);
+    background:linear-gradient(90deg, transparent, rgba(150,240,225,.05) 45%, rgba(150,240,225,.07) 55%, transparent); }
   .vig { position:absolute; inset:0; background:radial-gradient(125% 125% at 50% 44%, transparent 56%, rgba(0,0,0,.5)); }
+
+  /* floating bokeh particles */
+  .bokeh { position:absolute; border-radius:50%; }
+
+  /* glass panel behind the composited $TICKER + name */
+  .textPanel { position:absolute; left:184px; top:258px; width:580px; height:200px; border-radius:26px;
+    background:linear-gradient(135deg, rgba(255,255,255,.035), rgba(255,255,255,.012) 60%);
+    border:1.2px solid rgba(140,230,215,.13);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 18px 40px rgba(0,0,0,.35); }
+  .textPanel::before { content:''; position:absolute; left:0; top:18px; width:4px; height:164px; border-radius:2px;
+    background:linear-gradient(180deg, transparent, ${ACC}99 30%, ${ACC}99 70%, transparent);
+    box-shadow:0 0 14px ${ACC}66; }
 
   /* faint market grid + rising line, tucked above the socials row */
   .chart { position:absolute; left:30px; bottom:106px; opacity:.4; }
@@ -58,7 +75,7 @@ const page_html = (KIND) => {
     background:linear-gradient(135deg, ${ACC}cc, ${ACC2}55 45%, ${ACC}cc);
     box-shadow:0 0 44px ${ACC}52, 0 10px 30px rgba(0,0,0,.5); }
   .pill .in { border-radius:37px; padding:13px 40px; position:relative; overflow:hidden;
-    background:linear-gradient(180deg, #10231f, #0a1613);
+    background:linear-gradient(180deg, #142c26, #0a1613 70%, #0d1f1c);
     display:flex; align-items:center; gap:14px; }
   .pill .in::after { content:''; position:absolute; left:8%; top:2px; width:84%; height:46%;
     border-radius:30px; background:linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,0)); }
@@ -82,7 +99,20 @@ const page_html = (KIND) => {
   .spark { position:absolute; color:#EAFFF7; text-shadow:0 0 14px ${ACC}; font-size:26px; }
   .grain { position:absolute; inset:0; opacity:.05; }
   </style></head><body>
-  <div class="bg"><div class="wash"></div><div class="blob1"></div><div class="blob2"></div><div class="ringSmoke1"></div><div class="ringSmoke2"></div></div>
+  <div class="bg"><div class="wash"></div><div class="blob1"></div><div class="blob2"></div><div class="indigo"></div><div class="ringSmoke1"></div><div class="ringSmoke2"></div><div class="beam"></div></div>
+
+  ${[
+    [90, 88, 7, 2.2, 0.5], [300, 200, 4, 1.4, 0.4], [520, 120, 9, 3, 0.35], [700, 300, 5, 2, 0.4],
+    [880, 90, 6, 2.4, 0.45], [1010, 210, 4, 1.6, 0.5], [1130, 130, 8, 3.2, 0.3], [240, 420, 5, 2.2, 0.32],
+    [640, 470, 6, 2.6, 0.3], [980, 560, 5, 2, 0.4], [1210, 420, 6, 2.4, 0.4], [420, 560, 4, 1.6, 0.35],
+  ]
+    .map(
+      ([x, y, s, b, o]) =>
+        `<div class="bokeh" style="left:${x}px;top:${y}px;width:${s}px;height:${s}px;filter:blur(${b}px);opacity:${o};background:radial-gradient(circle at 35% 30%, #DFFFF2, ${ACC});"></div>`,
+    )
+    .join("")}
+
+  ${isAd ? "" : `<div class="textPanel"></div>`}
 
   <svg class="chart" width="380" height="96" viewBox="0 0 380 96">
     <defs><linearGradient id="cl" x1="0" y1="0" x2="1" y2="0">

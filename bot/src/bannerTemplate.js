@@ -50,8 +50,8 @@ const BASE_DEFAULTS = {
   nameOffsetY: 100,
 };
 const KIND_DEFAULTS = {
-  listing: { ...BASE_DEFAULTS },
-  trending: { ...BASE_DEFAULTS },
+  listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
+  trending: { ...BASE_DEFAULTS, tickerGlow: "#38D8F0" },
   banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 830, logoY: 310, slotW: 1560, slotH: 800, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
@@ -162,22 +162,36 @@ async function compose(kind, logoBuffer, { symbol, name } = {}) {
     }
 
     // $TICKER + name overlay (position/size admin-tunable; off if artwork has
-    // its own text or the admin prefers the art clean).
+    // its own text or the admin prefers the art clean). Ticker renders with a
+    // vertical white→tint gradient + soft accent glow — jewelry, not print.
     if (cfg.showText && symbol) {
       const ticker = `$${String(symbol).replace(/^\$+/, "").toUpperCase()}`;
+      const fsz = Number(cfg.tickerFontSize) || 96;
       ctx.textBaseline = "middle";
-      ctx.shadowColor = "rgba(0,0,0,.7)";
-      ctx.shadowBlur = 8;
-      ctx.shadowOffsetY = 2;
-      ctx.font = `800 ${cfg.tickerFontSize}px TplBold, sans-serif`;
-      ctx.fillStyle = cfg.tickerColor;
-      const tx =
-        cfg.tickerX === "center"
-          ? (W - ctx.measureText(ticker).width) / 2
-          : Number(cfg.tickerX) || 0;
+      ctx.font = `800 ${fsz}px TplBold, sans-serif`;
+      const tw = ctx.measureText(ticker).width;
+      const tx = cfg.tickerX === "center" ? (W - tw) / 2 : Number(cfg.tickerX) || 0;
       const ty = cfg.tickerY === "center" ? H / 2 : Number(cfg.tickerY) || 0;
+      // soft accent glow pass
+      const glow = cfg.tickerGlow || "#4EE6A8";
+      ctx.shadowColor = glow + "66";
+      ctx.shadowBlur = Math.max(18, fsz * 0.3);
+      ctx.shadowOffsetY = 0;
+      const grad = ctx.createLinearGradient(0, ty - fsz * 0.55, 0, ty + fsz * 0.45);
+      grad.addColorStop(0, "#FFFFFF");
+      grad.addColorStop(0.72, cfg.tickerColor || "#FFFFFF");
+      grad.addColorStop(1, "#BFE9DC");
+      ctx.fillStyle = grad;
+      ctx.fillText(ticker, tx, ty);
+      // crisp second pass (kills glow muddiness on the glyph body)
+      ctx.shadowColor = "rgba(0,0,0,.55)";
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetY = 2;
       ctx.fillText(ticker, tx, ty);
       if (name) {
+        ctx.shadowColor = "rgba(0,0,0,.6)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
         ctx.font = `500 ${cfg.nameFontSize}px TplReg, sans-serif`;
         ctx.fillStyle = cfg.nameColor;
         const nx = cfg.tickerX === "center" ? (W - ctx.measureText(name).width) / 2 : tx;
@@ -185,6 +199,7 @@ async function compose(kind, logoBuffer, { symbol, name } = {}) {
       }
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
     }
 
     return canvas.toBuffer("image/png");

@@ -92,6 +92,17 @@ export async function addBanner(
   return created;
 }
 
+/** Remove a booking (admin panel). Returns true when something was deleted. */
+export async function removeBanner(id: string): Promise<boolean> {
+  let removed = false;
+  await mutate((rows) => {
+    const next = rows.filter((r) => r.id !== id);
+    removed = next.length !== rows.length;
+    return next;
+  });
+  return removed;
+}
+
 function hashId(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
