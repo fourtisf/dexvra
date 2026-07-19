@@ -8,9 +8,12 @@ import { fmtCap, fmtPrice } from "@/lib/format";
 import { Coin } from "./Coin";
 import { Logo } from "./Logo";
 import { useApp } from "./AppState";
+import { BOT_URL } from "@/config/brand";
+import { shortAddr } from "@/lib/walletConnect";
 
 export function Topbar() {
-  const { data, wallet, toggleWallet, openListing, openDetail, homeQuery, setHomeQuery } = useApp();
+  const { data, wallet, openWalletModal, disconnectWallet, toast, openDetail, homeQuery, setHomeQuery } = useApp();
+  const [walletMenu, setWalletMenu] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
 
@@ -100,16 +103,56 @@ export function Topbar() {
         <span className="dot-live" />
         24H TRACKED <b>{data ? fmtCap(data.trackedVol24h) : "…"}</b>
       </div>
-      <button className={`btn-wallet ${wallet ? "connected" : ""}`} onClick={toggleWallet}>
-        <svg viewBox="0 0 24 24">
-          <rect x="3" y="6" width="18" height="13" rx="3" />
-          <path d="M16 12h.01M3 10h18" />
-        </svg>
-        <span className="lbl">{wallet ?? "Connect Wallet"}</span>
-      </button>
-      <button className="btn-primary" onClick={openListing}>
+      <div className="wallet-wrap">
+        <button
+          className={`btn-wallet ${wallet ? "connected" : ""}`}
+          onClick={() => (wallet ? setWalletMenu((v) => !v) : openWalletModal())}
+        >
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="6" width="18" height="13" rx="3" />
+            <path d="M16 12h.01M3 10h18" />
+          </svg>
+          <span className="lbl">{wallet ? shortAddr(wallet.address) : "Connect Wallet"}</span>
+        </button>
+        {wallet && walletMenu && (
+          <div className="wallet-menu" onMouseLeave={() => setWalletMenu(false)}>
+            <div className="wmn-head">
+              {wallet.name} · {wallet.chainType.toUpperCase()}
+            </div>
+            <button
+              className="wmn-item"
+              onClick={() => {
+                navigator.clipboard?.writeText(wallet.address).catch(() => {});
+                toast("Address copied");
+                setWalletMenu(false);
+              }}
+            >
+              📋 Copy address
+            </button>
+            <button
+              className="wmn-item"
+              onClick={() => {
+                openWalletModal();
+                setWalletMenu(false);
+              }}
+            >
+              🔁 Switch wallet
+            </button>
+            <button
+              className="wmn-item danger"
+              onClick={() => {
+                disconnectWallet();
+                setWalletMenu(false);
+              }}
+            >
+              ⏏ Disconnect
+            </button>
+          </div>
+        )}
+      </div>
+      <a className="btn-primary" href={BOT_URL} target="_blank" rel="noopener noreferrer">
         ⚡ <span className="lbl">List Token</span>
-      </button>
+      </a>
     </header>
   );
 }

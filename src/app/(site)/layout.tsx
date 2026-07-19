@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { BRAND_NAME } from "@/config/brand";
 import { AppProvider } from "@/components/AppState";
+import { WalletModal } from "@/components/WalletModal";
 import { ListingModal } from "@/components/ListingModal";
 import { PwaRegister } from "@/components/PwaRegister";
 import { Sidebar } from "@/components/Sidebar";
@@ -33,6 +34,7 @@ export default function SiteLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
       <ListingModal />
+      <WalletModal />
       <Toast />
       <PwaRegister />
     </AppProvider>

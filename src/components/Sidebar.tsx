@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { BRAND_NAME, BRAND_SUB } from "@/config/brand";
 import { Logo } from "./Logo";
 import { useApp } from "./AppState";
+import { BOT_URL } from "@/config/brand";
 
 interface NavItem {
   href: string;
@@ -62,6 +63,7 @@ function NavGroup({ label, items, pathname }: { label: string; items: NavItem[];
 export function Sidebar() {
   const pathname = usePathname();
   const { openListing } = useApp();
+  void openListing; // kept for the in-app submit flow elsewhere
   return (
     <aside className="sidebar">
       <Link href="/" className="brand" aria-label={`${BRAND_NAME} home`}>
@@ -72,12 +74,12 @@ export function Sidebar() {
         </div>
       </Link>
 
-      <button className="fasttrack" onClick={openListing}>
+      <a className="fasttrack" href={BOT_URL} target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M13 2 4.5 13.5H11L9.6 22 19 10h-6.6L13 2z" />
         </svg>
         <span className="lbl">List My Token</span>
-      </button>
+      </a>
 
       <NavGroup label="Discover" items={DISCOVER} pathname={pathname} />
       <NavGroup label="Signals" items={SIGNALS} pathname={pathname} />

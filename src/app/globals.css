@@ -690,6 +690,36 @@ body{
 .tier-chip{--tc:#AAB2BD;display:inline-flex;align-items:center;gap:3px;font-family:var(--fm);font-weight:800;font-size:8.5px;letter-spacing:.06em;border-radius:6px;padding:2.5px 6px;white-space:nowrap;color:var(--tc);background:color-mix(in srgb,var(--tc) 14%,transparent);border:1px solid color-mix(in srgb,var(--tc) 34%,transparent)}
 .tier-glyph{font-size:9px;line-height:1}
 .tier-rank{opacity:.65;font-size:8px;font-weight:700}
+/* ── Wallet connect ── */
+.wallet-wrap{position:relative;display:inline-flex}
+.wallet-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:220;min-width:210px;
+  background:var(--card);border:1px solid var(--line2);border-radius:14px;padding:6px;
+  box-shadow:0 18px 44px rgba(0,0,0,.55)}
+.wmn-head{font-family:var(--fm);font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--faint);
+  padding:8px 10px 6px;border-bottom:1px solid var(--line2);margin-bottom:4px}
+.wmn-item{display:block;width:100%;text-align:left;font-size:12.5px;font-weight:600;color:var(--text);
+  padding:9px 10px;border-radius:9px;transition:background .12s}
+.wmn-item:hover{background:rgba(255,255,255,.06)}
+.wmn-item.danger{color:#FF8080}
+.wallet-modal{max-width:400px}
+.wm-title{font-family:var(--fd);font-weight:700;font-size:18px;margin-bottom:4px}
+.wm-sub{font-size:12px;color:var(--muted);margin-bottom:14px}
+.wm-list{display:grid;gap:8px}
+.wm-item{display:flex;align-items:center;gap:11px;width:100%;padding:11px 13px;border-radius:12px;
+  border:1px solid var(--line2);background:rgba(255,255,255,.03);transition:all .12s;font-size:13.5px;font-weight:700;color:var(--text)}
+.wm-item:hover{background:rgba(255,255,255,.06);border-color:rgba(120,220,205,.3)}
+.wm-item:disabled{opacity:.55}
+.wm-icon{width:26px;height:26px;border-radius:7px;object-fit:contain}
+.wm-icon-fallback{display:grid;place-items:center;font-size:15px;color:var(--mint);background:rgba(255,255,255,.05)}
+.wm-name{flex:1;text-align:left}
+.wm-kind{font-family:var(--fm);font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--faint)}
+.wm-busy{color:var(--mint)}
+.wm-empty{font-size:12.5px;color:var(--muted);padding:8px 2px}
+.wm-installs{display:grid;gap:7px;margin-top:12px}
+.wm-install{display:block;padding:9px 12px;border-radius:10px;border:1px solid var(--line2);
+  font-size:12.5px;font-weight:700;color:var(--text)}
+.wm-install:hover{background:rgba(255,255,255,.05)}
+
 /* Live Trending-board slot badge (No.1 / No.2 …). */
 .trend-badge{display:inline-flex;align-items:center;gap:3px;font-family:var(--fm);font-weight:800;font-size:8.5px;letter-spacing:.04em;border-radius:6px;padding:2.5px 6px;white-space:nowrap;color:#FF9D5C;background:rgba(255,120,60,.12);border:1px solid rgba(255,120,60,.32)}
 .trend-badge.big{font-size:10px;padding:3.5px 9px}
