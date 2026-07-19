@@ -114,6 +114,13 @@ const TRENDING_POST_MS = Math.max(30000, int(env.TRENDING_POST_MS, 5 * 60 * 1000
 const TRENDING_SWEEP_MS = Math.max(30000, int(env.TRENDING_SWEEP_MS, 60 * 1000));
 const PUMP_CHECK_MS = Math.max(60000, int(env.PUMP_CHECK_MS, 3 * 60 * 1000));
 const PUMP_ENABLED = bool(env.PUMP_ENABLED, true);
+// ── Trending slot-expiry upsell ──
+const UPSELL_ENABLED = bool(env.UPSELL_ENABLED, true);
+const UPSELL_CHECK_MS = Math.max(60000, int(env.UPSELL_CHECK_MS, 5 * 60 * 1000));
+// DM the buyer once the slot is within this many hours of ending.
+const UPSELL_WARN_HOURS = Math.max(0.25, Number(env.UPSELL_WARN_HOURS) || 2);
+// Extra discount (%) on the renewal, on top of the duration's own discount.
+const RENEW_DISCOUNT_PCT = Math.min(90, Math.max(0, int(env.RENEW_DISCOUNT_PCT, 10)));
 
 // Use the bundled premium banners as channel-post media (else the token logo).
 const POST_BANNERS = bool(env.POST_BANNERS, true);
@@ -157,6 +164,10 @@ module.exports = {
   TRENDING_SWEEP_MS,
   PUMP_CHECK_MS,
   PUMP_ENABLED,
+  UPSELL_ENABLED,
+  UPSELL_CHECK_MS,
+  UPSELL_WARN_HOURS,
+  RENEW_DISCOUNT_PCT,
   POST_BANNERS,
   BROADCAST_RATE,
   BROADCAST_CONCURRENCY,

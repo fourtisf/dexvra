@@ -114,4 +114,25 @@ async function durationPick(ctx) {
   });
 }
 
-module.exports = { entryTrending, durationPick, handleText };
+// Extend button from the slot-expiry upsell DM: `xtd_{ref}_{DURATION}`.
+// Straight into the trending pay flow at the discounted renewal price.
+async function extendPick(ctx) {
+  await answer(ctx);
+  const upsell = require("../services/trendingUpsell");
+  const ref = ctx.match[1];
+  const duration = ctx.match[2];
+  const offer = upsell.getOffer(ref);
+  if (!offer) return toast(ctx, tpl.render("session_expired"));
+  const renew = upsell.renewOffer(offer.chain, duration);
+  if (!renew) return toast(ctx, "That duration isn't available for this chain.");
+  await startPayment(ctx, {
+    kind: "trending",
+    chain: payChainOf(offer.chain),
+    native: payNativeOf(offer.chain),
+    humanAmount: renew.price,
+    label: `Trending renewal ${duration} — $${String(offer.sym || "").replace(/^\$/, "")}`,
+    payload: { chain: offer.chain, address: offer.address, hours: renew.hours, symbol: offer.sym, name: offer.name },
+  });
+}
+
+module.exports = { entryTrending, durationPick, handleText, extendPick };

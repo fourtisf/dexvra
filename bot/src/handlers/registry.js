@@ -34,6 +34,7 @@ function registerHandlers(bot) {
 
   // ── Trending flow ─────────────────────────────────────────────────────────
   bot.action(/^td_(\d+)$/, trending.durationPick);
+  bot.action(/^xtd_([a-f0-9]+)_(\d+H)$/, trending.extendPick); // slot-expiry renewal
 
   // ── Banner flow ───────────────────────────────────────────────────────────
   bot.action(/^bt_(standard|wide)$/, banner.typePick);
