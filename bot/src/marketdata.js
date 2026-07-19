@@ -97,6 +97,28 @@ async function fetchDS(chain, address) {
   }
 }
 
+/** Project description from GT's token-info endpoint (listing-flow autofill —
+ *  the "overview" paragraph on the channel post). Collapsed to one paragraph. */
+async function fetchTokenDescription(chain, address) {
+  const net = chainOf(chain) && chainOf(chain).geckoNetwork;
+  if (!net) return null;
+  try {
+    const res = await fetch(`${GT}/networks/${net}/tokens/${address}/info`, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const d = j.data && j.data.attributes && j.data.attributes.description;
+    if (!d || typeof d !== "string") return null;
+    const clean = d.replace(/\s+/g, " ").trim();
+    return clean.length >= 20 ? clean.slice(0, 500) : null;
+  } catch (e) {
+    log.debug(`[market] GT info ${chain}/${address}: ${e.message}`);
+    return null;
+  }
+}
+
 /** @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>} */
 async function fetchMarket(chain, address) {
   const gt = await fetchGT(chain, address);
@@ -116,4 +138,4 @@ async function fetchMarket(chain, address) {
   };
 }
 
-module.exports = { fetchMarket };
+module.exports = { fetchMarket, fetchTokenDescription };

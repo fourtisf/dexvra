@@ -26,6 +26,7 @@ export interface ListingInput {
   website?: string;
   twitter?: string;
   telegram?: string;
+  overview?: string;
   tax?: number;
   holders?: number;
   price?: number;
@@ -99,6 +100,10 @@ export function buildRow(input: ListingInput): BuildResult {
     website: input.website ? String(input.website) : undefined,
     twitter: input.twitter ? String(input.twitter) : undefined,
     telegram: input.telegram ? String(input.telegram) : undefined,
+    overview:
+      typeof input.overview === "string"
+        ? Array.from(input.overview.replace(/\s+/g, " ").trim()).slice(0, 600).join("") || undefined
+        : undefined,
   };
   return { ok: true, row };
 }
@@ -109,6 +114,10 @@ export function sanitizePatch(body: Record<string, unknown>): Partial<ListingRow
   if (typeof body.name === "string" && body.name.trim()) out.name = body.name.trim().slice(0, 60);
   if (typeof body.emoji === "string") out.emoji = body.emoji.trim().slice(0, 4) || "🪙";
   if (isTier(body.tier)) out.tier = body.tier;
+  if (body.overview === null || body.overview === "") out.overview = undefined;
+  else if (typeof body.overview === "string") {
+    out.overview = Array.from(body.overview.replace(/\s+/g, " ").trim()).slice(0, 600).join("") || undefined;
+  }
 
   if (body.trendingRank === null || body.trendingRank === "") {
     out.trendingRank = undefined;

@@ -14,7 +14,9 @@ const DS_CHAIN = {
   base: "base",
   tron: "tron",
   ton: "ton",
+  sui: "sui",
   robinhood: null, // not indexed by DexScreener
+  plasma: null, // not indexed by DexScreener (GT covers it)
 };
 
 const first = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);

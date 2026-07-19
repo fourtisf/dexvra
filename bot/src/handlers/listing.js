@@ -4,7 +4,7 @@
 const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../helpers/message");
 const { chainOf, isValidAddress, payChainOf, payNativeOf } = require("../config/chains");
 const { RANKED_TIERS, tierPrice, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
-const { fetchMarket } = require("../marketdata");
+const { fetchMarket, fetchTokenDescription } = require("../marketdata");
 const { fetchTokenInfo } = require("../dexscreener");
 const { escapeHtml } = require("../helpers/format");
 const { startPayment } = require("./pay");
@@ -17,10 +17,16 @@ const URL_RE = /^https?:\/\/\S+$/i;
 
 function emptyForm() {
   return {
-    chain: null, address: null, sym: null, name: null, emoji: "🪙",
+    chain: null, address: null, sym: null, name: null, emoji: "🪙", overview: null,
     website: null, twitter: null, telegram: null, logoFileId: null, logoUrl: null,
   };
 }
+
+// One clean paragraph — the overview renders on the channel post and the site.
+// Length limits count code points so an emoji at the boundary never gets its
+// surrogate pair split (which would store/send ill-formed text).
+const cpSlice = (s, n) => Array.from(String(s)).slice(0, n).join("");
+const cleanOverview = (s) => cpSlice(String(s || "").replace(/\s+/g, " ").trim(), 500) || null;
 function freshSession(ctx, patch) {
   const prev = ctx.session && ctx.session.latest_bot_message;
   ctx.session = { latest_bot_message: prev, ...patch };
@@ -60,7 +66,10 @@ async function handleText(ctx) {
   const field = s.awaitingField;
   const input = (ctx.message.text || "").trim();
 
-  if (input === "/skip" && ["logo", "website", "twitter", "telegram"].includes(field)) {
+  if (input === "/skip" && ["logo", "website", "twitter", "telegram", "overview"].includes(field)) {
+    // overview + logo edit prompts promise "/skip to remove" — honour it
+    if (field === "overview") f.overview = null;
+    if (field === "logo") { f.logoFileId = null; f.logoUrl = null; }
     s.awaitingField = null;
     return showReview(ctx);
   }
@@ -72,14 +81,17 @@ async function handleText(ctx) {
       }
       f.address = input;
       // Autofill from DexScreener (name/symbol/logo + socials: X/Telegram/Website)
-      // and GeckoTerminal (name/symbol/logo). DexScreener wins for socials.
-      const [ds, gt] = await Promise.all([
+      // and GeckoTerminal (name/symbol/logo + project overview). DexScreener
+      // wins for socials.
+      const [ds, gt, desc] = await Promise.all([
         fetchTokenInfo(f.chain, input).catch(() => null),
         fetchMarket(f.chain, input).catch(() => null),
+        fetchTokenDescription(f.chain, input).catch(() => null),
       ]);
       const name = (ds && ds.name) || (gt && gt.name);
       const symbol = (ds && ds.symbol) || (gt && gt.symbol);
       const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
+      if (desc && !f.overview) f.overview = cleanOverview(desc);
       if (name || symbol) {
         f.name = f.name || name || symbol;
         f.sym = f.sym || String(symbol || name || "").replace(/^\$+/, "").toUpperCase();
@@ -111,6 +123,10 @@ async function handleText(ctx) {
       }
       s.awaitingField = null;
       return showReview(ctx);
+    case "overview":
+      f.overview = cleanOverview(input);
+      s.awaitingField = null;
+      return showReview(ctx);
     case "website":
     case "twitter":
     case "telegram":
@@ -138,8 +154,9 @@ async function handlePhoto(ctx) {
 function reviewKb() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("✏️ Name", "edit_name"), Markup.button.callback("✏️ Symbol", "edit_symbol")],
-    [Markup.button.callback("🖼 Logo", "edit_logo"), Markup.button.callback("🌐 Website", "edit_website")],
-    [Markup.button.callback("🐦 X", "edit_twitter"), Markup.button.callback("💬 Telegram", "edit_telegram")],
+    [Markup.button.callback("🖼 Logo", "edit_logo"), Markup.button.callback("📝 Overview", "edit_overview")],
+    [Markup.button.callback("🌐 Website", "edit_website"), Markup.button.callback("🐦 X", "edit_twitter")],
+    [Markup.button.callback("💬 Telegram", "edit_telegram")],
     [Markup.button.callback("✅ Confirm", "approve_listing"), Markup.button.callback("🗑 Discard", "discard_listing")],
     [Markup.button.callback("🏠 Home", "home")],
   ]);
@@ -156,6 +173,9 @@ async function showReview(ctx) {
     symbol: f.sym ? "$" + premium.sanitizeVar(f.sym) : "—",
     address: premium.sanitizeVar(f.address),
     logo: f.logoFileId || f.logoUrl ? "✅ set" : "— none",
+    overview: f.overview
+      ? premium.sanitizeVar(Array.from(f.overview).length > 160 ? cpSlice(f.overview, 157).trimEnd() + "…" : f.overview)
+      : "—",
     website: v(f.website),
     twitter: v(f.twitter),
     telegram: v(f.telegram),
@@ -174,6 +194,7 @@ async function editField(ctx) {
     name: "name",
     symbol: "symbol (ticker)",
     logo: "logo — send it as a photo, or /skip to remove",
+    overview: "project overview — 1-3 sentences about your project (shown on the listing post), or /skip to remove",
     website: "website URL (https://…), or /skip",
     twitter: "X URL (https://…), or /skip",
     telegram: "Telegram URL (https://…), or /skip",
@@ -192,6 +213,7 @@ function buildListingInput(f, tier) {
     name: f.name,
     emoji: f.emoji || "🪙",
     tier,
+    overview: f.overview || undefined,
     website: f.website || undefined,
     twitter: f.twitter || undefined,
     telegram: f.telegram || undefined,

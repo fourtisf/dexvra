@@ -38,6 +38,7 @@ export interface BoardToken {
   score: number; // Dexvra Score 0–100 (signal-based, not votes)
   poolAddress: string | null; // top pool — used to embed the GeckoTerminal chart
   links: { website: string | null; twitter: string | null; telegram: string | null };
+  overview: string | null; // short project description (shown on the token page)
 }
 
 export interface Trade {

@@ -291,6 +291,21 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
   }
 }
 
+/** One-line boot report so pm2 logs show the banner pipeline's health without
+ *  needing a live purchase: canvas availability + which artwork each kind
+ *  resolves to (uploaded / bundled / MISSING). */
+function selfCheck() {
+  const canvas = canvasLib() ? "OK" : "MISSING (run 'npm ci' in bot/)";
+  const art = KINDS.map((k) => {
+    const state = hasUploaded(k) ? "uploaded" : exists(bundledPath(k)) ? "bundled" : "MISSING";
+    return `${k}=${state}`;
+  }).join(" ");
+  const line = `[bannerTpl] selfcheck: canvas=${canvas} artwork: ${art}`;
+  if (canvas === "OK" && !art.includes("MISSING")) log.info(line);
+  else log.warn(`${line} — channel posts will degrade until this is fixed`);
+  return line;
+}
+
 async function saveTemplate(kind, buffer) {
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   await fss.promises.writeFile(uploadedPath(kind), buffer);
@@ -307,6 +322,7 @@ async function removeTemplate(kind) {
 module.exports = {
   KINDS,
   compose,
+  selfCheck,
   hasTemplate,
   hasUploaded,
   saveTemplate,
