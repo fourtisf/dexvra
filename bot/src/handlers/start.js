@@ -40,12 +40,9 @@ async function showHome(ctx) {
 
 async function startHandler(ctx) {
   if (ctx.chat && ctx.chat.type !== "private") {
-    try {
-      await ctx.reply("👋 DM me to list your token: open a private chat and tap Start.");
-    } catch {
-      /* ignore */
-    }
-    return;
+    // In a group, /start (or /help) means "how do I set up the buy bot here?" —
+    // give the exact steps instead of just bouncing them to DM.
+    return groupStart(ctx);
   }
   // Full visitor report to the log channel (fourtis-style).
   try {
@@ -73,6 +70,18 @@ async function homeHandler(ctx) {
   await showHome(ctx);
 }
 
+// /start or /help inside a group → buy-bot setup steps for this group.
+async function groupStart(ctx) {
+  try {
+    const { BOT_USERNAME } = require("../config/constants");
+    const { payloadArgs } = require("../helpers/message");
+    const { text, extra } = payloadArgs(tpl.render("group_start", { bot: `@${BOT_USERNAME}` }), false);
+    await ctx.reply(text, { ...extra, disable_web_page_preview: true });
+  } catch {
+    /* ignore */
+  }
+}
+
 // "🤖 Add Buy Bot to your group" — how-to + a one-tap "add to group" deep link.
 async function buyBotHelp(ctx) {
   await answer(ctx);
@@ -85,4 +94,4 @@ async function buyBotHelp(ctx) {
   await sendCard(ctx, tpl.render("buybot_help"), kb);
 }
 
-module.exports = { startHandler, homeHandler, showHome, resetSession, buyBotHelp };
+module.exports = { startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart };

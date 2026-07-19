@@ -21,9 +21,13 @@ const FILE = "templates.json";
 const BANNER_PATH = path.join(DATA_DIR, "banner"); // image bytes (any ext), set by adminbot
 const REFRESH_MS = 30000;
 
-// Premium emoji document IDs (public packs, proven in fourtis production).
-// Any Telegram Premium account can send these; regular bots fall back to the
-// plain unicode emoji. Central map so templates stay readable.
+// Premium emoji document IDs. NOTE: these are a THIRD-PARTY (fourtis) pack, so
+// they render with that project's branding when actually sent as custom emoji.
+// To stay visually distinct, the default templates now use PLAIN UNICODE emoji
+// (em() below returns the bare emoji) unless PREMIUM_EMOJI=1 is set AND you've
+// swapped these for your OWN Dexvra emoji-pack IDs. Admins can still paste their
+// own premium emoji into any template via the editor — that path is unaffected.
+const USE_PREMIUM_EMOJI = /^(1|true|yes|on)$/i.test(String(process.env.PREMIUM_EMOJI || ""));
 const E = {
   rocket: "5341323326188956773", // 🚀
   plane: "5039783602301175152", // ✈️
@@ -44,7 +48,7 @@ const E = {
   diamond: "5427168083074628963", // 💎
   cross: "5454335838575936647", // ❌
 };
-const em = (emoji, id) => `[${emoji}](emoji/${id})`;
+const em = (emoji, id) => (USE_PREMIUM_EMOJI ? `[${emoji}](emoji/${id})` : emoji);
 
 // ── Built-in defaults (premium markup) ───────────────────────────────────────
 // Placeholders each template accepts are listed in META below (for the editor).
@@ -168,6 +172,16 @@ const DEFAULTS = {
   success_banner:
     `✅ **Campaign booked**\n\n` +
     `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
+  group_start:
+    "🟢 **Dexvra Buy Bot**\n\n" +
+    "I post a live alert here on **every on-chain buy** of your token.\n\n" +
+    "**Set me up (30 seconds):**\n" +
+    "1. Make me an **admin** of this group\n" +
+    "2. Send `/settoken <your contract address>`\n" +
+    "3. Done — buys start posting here\n\n" +
+    "**Handy commands**\n" +
+    "`/buybot` — status · `/setminbuy 50` — only alert buys ≥ $50 · `/buybot off` — pause\n\n" +
+    "Want to list, trend or advertise your token? DM me → {bot}",
   buybot_help:
     `${em("🟢", E.green)} **Dexvra Buy Bot — free for your group**\n\n` +
     "Add @dexvrabot to your project's Telegram group and it posts a live alert on **every on-chain buy** of your token — amount, price, market cap, all automatic.\n\n" +
@@ -296,6 +310,7 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
+  group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
   buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain"] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },

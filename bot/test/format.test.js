@@ -34,7 +34,7 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
   assert.ok(card.text.includes("Listed on dexvra.io"), "CTA is 'Listed on dexvra.io'");
-  assert.ok(card.entities.some((e) => e.type === "custom_emoji"), "premium emoji present");
+  assert.ok(card.text.includes("📊"), "chain emoji present (unicode fallback)");
   assert.ok(card.entities.some((e) => e.type === "code"), "address as code");
   // the CTA links to the token page
   assert.ok(card.entities.some((e) => e.type === "text_link" && e.url === coin.siteUrl));
@@ -98,7 +98,7 @@ test("pump post payload shows percent + MCs", () => {
   assert.ok(card.text.includes("+138%"));
   assert.ok(card.text.includes("Market cap"));
   assert.ok(card.text.includes("2.4×"), "shows the × multiple"); // 1 + 137.6/100 = 2.376 → 2.4×
-  assert.ok(card.entities.some((e) => e.type === "custom_emoji"));
+  assert.ok(card.text.includes("🚀"), "rocket emoji present (unicode fallback)");
 });
 
 test("overview truncation never splits surrogate pairs (no U+FFFD)", () => {

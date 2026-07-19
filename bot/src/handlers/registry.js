@@ -16,9 +16,10 @@ function registerHandlers(bot) {
   bot.start(start.startHandler);
   bot.command("home", start.homeHandler);
   bot.command("menu", start.homeHandler);
-  bot.help((ctx) =>
-    ctx.reply("Send /start to open the menu. List your token, book Trending, or run a Banner Ad."),
-  );
+  bot.help((ctx) => {
+    if (ctx.chat && ctx.chat.type !== "private") return start.groupStart(ctx); // group → buy-bot setup
+    return ctx.reply("Send /start to open the menu. List your token, book Trending, or run a Banner Ad.");
+  });
 
   // ── Group buy bot (run inside a project's group chat) ──────────────────────
   bot.command("settoken", groupSetup.settoken);
