@@ -95,6 +95,16 @@ async function updateSettings(kind, settings) {
   await saveJSON(CONFIG_FILE, saved);
   return saved[kind];
 }
+/** Drop every saved tweak for a kind — back to the defaults tuned for the
+ *  bundled artwork. Cure for stale coordinates saved against older layouts. */
+async function resetSettings(kind) {
+  const saved = loadJSONSync(CONFIG_FILE, {});
+  if (kind in saved) {
+    delete saved[kind];
+    await saveJSON(CONFIG_FILE, saved);
+  }
+  return { ...defaultsFor(kind) };
+}
 function getSettings(kind) {
   return loadConfig()[kind] || { ...defaultsFor(kind) };
 }
@@ -348,6 +358,7 @@ module.exports = {
   removeTemplate,
   getSettings,
   updateSettings,
+  resetSettings,
   resolvePath,
   DEFAULTS,
   defaultsFor,
