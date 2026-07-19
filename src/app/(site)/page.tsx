@@ -31,7 +31,12 @@ export default function HomePage() {
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         <div className="sec-head">
           <div className="sec-title">
-            <div className="flame">🔥</div>
+            <div className="flame">
+              <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M23 6l-9.5 9.5-5-5L1 18" />
+                <path d="M17 6h6v6" />
+              </svg>
+            </div>
             <h2>Trending Listings</h2>
           </div>
           <div className="ttabs">

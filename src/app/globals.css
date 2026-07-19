@@ -347,6 +347,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tok .ts{min-width:0}
 .tok .sym{font-family:var(--fd);font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;min-width:0}
 .tok .sym>span:first-child,.tok .sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ticker keeps its full width; the tier tag yields leftover space (never "$…") */
+.tok .sym-txt{flex:0 0 auto;max-width:16ch}
+.tok .sym .tier-chip{flex:0 1 auto;min-width:0;overflow:hidden}
 .tok .nm{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* compact stats line — the columns hidden on small screens live here instead */
 .tok .m-stats{display:none;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
@@ -515,11 +518,14 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   .slide h2{font-size:21px}.slide p{font-size:12px}
   .promo-dots{left:20px}
   .c-mcap{display:none}
-  .row{grid-template-columns:40px minmax(140px,1.6fr) 106px 86px 42px;padding:12px 14px;gap:6px}
-  .np .row{grid-template-columns:40px minmax(140px,1.6fr) 80px 88px 42px}
+  .row{grid-template-columns:34px minmax(150px,1.8fr) 96px 74px 38px;padding:12px 12px;gap:6px}
+  .np .row{grid-template-columns:34px minmax(150px,1.8fr) 80px 88px 38px}
   /* feature parity on phones: MC / Vol / Txns / Score move into the token cell */
+  .tok{gap:9px}
   .tok .m-stats{display:block}
-  .tok .sym{font-size:14px}
+  /* the ticker is the identity — it must show in full, never collapse to "$…".
+     Give it width priority; the tier tag yields the leftover space instead. */
+  .tok .sym{font-size:14px;gap:5px}
   .tier-chip{font-size:8px;padding:2px 5px}
   /* chain chips: one swipeable row instead of a tall wrap */
   .tabs{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
@@ -954,6 +960,10 @@ body{
 .a-input,.a-select{background:rgba(255,255,255,.03);border:1px solid var(--line2);border-radius:8px;color:var(--text);font-family:var(--fb);font-size:12.5px;padding:7px 9px;width:100%}
 .a-select{cursor:pointer}
 .a-check{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.a-trend-hrs{display:flex;align-items:center;gap:5px;margin-top:6px}
+.a-hrs-in{width:52px;background:rgba(255,255,255,.03);border:1px solid var(--line2);border-radius:7px;color:var(--text);font-family:var(--fm);font-size:11.5px;padding:5px 7px}
+.a-trend-hrs .abtn{padding:5px 9px;font-size:11px}
+.a-hrs-left{font-family:var(--fm);font-size:10px;color:var(--faint);white-space:nowrap}
 .a-row-actions{display:flex;gap:6px;justify-content:flex-end}
 .abtn{font-family:var(--fd);font-weight:600;font-size:11.5px;border-radius:8px;padding:6px 11px;cursor:pointer;border:1px solid var(--line2);background:rgba(255,255,255,.03);color:var(--text);transition:all .12s}
 .abtn:hover{border-color:var(--line2);background:rgba(255,255,255,.07)}

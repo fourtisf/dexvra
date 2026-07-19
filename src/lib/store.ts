@@ -62,6 +62,12 @@ async function load(): Promise<StoredListing[]> {
     if (Array.isArray(parsed)) {
       cache = parsed as StoredListing[];
       healSeedLogos(cache);
+      // Backfill listedAt for real (non-seed) rows persisted before this field
+      // existed, so "listed X ago" is live instead of frozen at listedMin=0.
+      // True creation time is unrecoverable, so start the clock now (persisted
+      // on the next mutation); seeds keep their curated demo ages.
+      const now = Date.now();
+      for (const r of cache) if (r.source !== "seed" && r.listedAt == null) r.listedAt = now;
       return cache;
     }
     throw new Error("corrupt store");
@@ -119,6 +125,9 @@ export async function addListing(rec: ListingRow, opts?: { status?: ListingStatu
       id: dupIdx >= 0 ? rows[dupIdx].id : id,
       status: opts?.status ?? "pending",
       createdAt: dupIdx >= 0 ? rows[dupIdx].createdAt : createdSeq++,
+      // Real listing timestamp so the site shows a LIVE "listed X ago" instead of
+      // the frozen listedMin=0 → "0m ago". Preserved across dup re-submits/patches.
+      listedAt: dupIdx >= 0 ? (rows[dupIdx].listedAt ?? Date.now()) : Date.now(),
       source: opts?.source ?? "submission",
     };
     if (dupIdx >= 0) {

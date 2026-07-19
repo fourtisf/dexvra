@@ -36,6 +36,7 @@ export default function AdminDashboard() {
   const [editErr, setEditErr] = useState("");
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
+  const [hrs, setHrs] = useState<Record<string, string>>({}); // per-row trending-hours draft
 
   const load = useCallback(async () => {
     try {
@@ -68,6 +69,18 @@ export default function AdminDashboard() {
       setBusy(null);
     }
   };
+
+  // Set a trending slot to run for an arbitrary number of hours (0/empty clears
+  // it). Stamps trendStart=now, trendExp=now+hours so the site + bot sweeper
+  // honour a real window — not just the on/off Featured flag.
+  const setTrendHours = (id: string, raw: string) => {
+    const h = Math.max(0, Math.round(Number(raw) || 0));
+    if (!h) return patch(id, { trendingRank: null, trendStart: null, trendExp: null });
+    const now = Date.now();
+    return patch(id, { trendingRank: 1, trendStart: now, trendExp: now + h * 3_600_000 });
+  };
+  const remHours = (r: StoredListing): number | null =>
+    r.trendExp ? Math.max(0, Math.ceil((r.trendExp - Date.now()) / 3_600_000)) : null;
 
   const setStatus = async (id: string, status: string) => {
     setBusy(id);
@@ -318,10 +331,36 @@ export default function AdminDashboard() {
                           type="checkbox"
                           checked={r.trendingRank != null}
                           disabled={busy === r.id}
-                          onChange={(e) => patch(r.id, { trendingRank: e.target.checked ? (r.trendingRank ?? 1) : null })}
+                          onChange={(e) =>
+                            e.target.checked
+                              ? setTrendHours(r.id, hrs[r.id] || "24")
+                              : patch(r.id, { trendingRank: null, trendStart: null, trendExp: null })
+                          }
                         />
                         Featured
                       </label>
+                      <div className="a-trend-hrs">
+                        <input
+                          type="number"
+                          min={1}
+                          className="a-hrs-in"
+                          placeholder="hrs"
+                          value={hrs[r.id] ?? (remHours(r) != null ? String(remHours(r)) : "")}
+                          disabled={busy === r.id}
+                          onChange={(e) => setHrs((s) => ({ ...s, [r.id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") setTrendHours(r.id, (e.target as HTMLInputElement).value);
+                          }}
+                        />
+                        <button
+                          className="abtn"
+                          disabled={busy === r.id}
+                          onClick={() => setTrendHours(r.id, hrs[r.id] ?? "")}
+                        >
+                          Set
+                        </button>
+                        {remHours(r) != null && <span className="a-hrs-left">{remHours(r)}h left</span>}
+                      </div>
                     </td>
                     <td><span className={`a-status ${r.status}`}>{r.status}</span></td>
                     <td>

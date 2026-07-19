@@ -15,7 +15,8 @@ export interface ListingRow {
   tier: ListingTier;
   trendingRank?: number; // present = featured on Trending; value is only a stable sub-order within a tier (Diamond-first ordering wins), never shown as a number
   logoUrl?: string; // admin-set logo image URL; overrides the emoji + live logo
-  listedMin: number; // minutes since the listing went live
+  listedMin: number; // seed-only fallback age (minutes) when listedAt is absent
+  listedAt?: number; // ms epoch the listing went live (real listings) — drives a LIVE "listed X ago"
   tax: number;
   holders: number;
   price: number;
@@ -125,7 +126,7 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     source: "seed",
     tier: r.tier,
     trendingRank: r.trendingRank ?? null,
-    listedMinutesAgo: r.listedMin,
+    listedMinutesAgo: r.listedAt ? Math.max(0, Math.floor((Date.now() - r.listedAt) / 60000)) : r.listedMin,
     score,
     poolAddress: null,
     links: {
