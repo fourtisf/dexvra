@@ -13,6 +13,7 @@ const BOT_ROOT = path.join(__dirname, "..", "..");
 
 // ── Telegram ───────────────────────────────────────────────────────────────
 const BOT_TOKEN = env.BOT_TOKEN || "";
+const BOT_USERNAME = (env.BOT_USERNAME || "dexvrabot").replace(/^@/, ""); // for ?startgroup deep links
 const ADMIN_BOT_TOKEN = env.ADMIN_BOT_TOKEN || ""; // @dexvraadminbot — template editor
 
 // Channels the bot posts to (must be admin in each). Announce == @dexvraio.
@@ -153,6 +154,7 @@ const BROADCAST_POLL_MS = Math.max(3000, int(env.BROADCAST_POLL_MS, 5000));
 module.exports = {
   BOT_ROOT,
   BOT_TOKEN,
+  BOT_USERNAME,
   ADMIN_BOT_TOKEN,
   CHANNELS,
   LOG_CHANNEL,

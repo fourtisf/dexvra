@@ -165,6 +165,15 @@ const DEFAULTS = {
   success_banner:
     `✅ **Campaign booked**\n\n` +
     `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
+  buybot_help:
+    `${em("🟢", E.green)} **Dexvra Buy Bot — free for your group**\n\n` +
+    "Add @dexvrabot to your project's Telegram group and it posts a live alert on **every on-chain buy** of your token — amount, price, market cap, all automatic.\n\n" +
+    "**Setup (60 seconds)**\n" +
+    "1. Tap **➕ Add to your group** below and pick your group\n" +
+    "2. Make the bot an **admin** (so it can post)\n" +
+    "3. In the group send `/settoken <your contract address>`\n" +
+    "4. Done — buys start posting. Tune with `/setminbuy <usd>`, pause with `/buybot off`\n\n" +
+    "Works on Solana, BSC, Ethereum, Base, Tron, TON, Sui, Plasma & Robinhood.",
   group_buy_alert:
     "{emoji}\n" +
     `${em("🟢", E.green)} **{symbol} Buy!**\n\n` +
@@ -284,6 +293,7 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
+  buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain"] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },

@@ -73,4 +73,16 @@ async function homeHandler(ctx) {
   await showHome(ctx);
 }
 
-module.exports = { startHandler, homeHandler, showHome, resetSession };
+// "🤖 Add Buy Bot to your group" — how-to + a one-tap "add to group" deep link.
+async function buyBotHelp(ctx) {
+  await answer(ctx);
+  const { BOT_USERNAME } = require("../config/constants");
+  const { Markup } = require("./menu");
+  const kb = Markup.inlineKeyboard([
+    [Markup.button.url("➕ Add to your group", `https://t.me/${BOT_USERNAME}?startgroup=true`)],
+    [Markup.button.callback("🏠 Home", "home")],
+  ]);
+  await sendCard(ctx, tpl.render("buybot_help"), kb);
+}
+
+module.exports = { startHandler, homeHandler, showHome, resetSession, buyBotHelp };

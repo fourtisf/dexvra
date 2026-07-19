@@ -26,6 +26,7 @@ function mainMenu() {
     [Markup.button.callback("🔥 Trending Token", "trend_coin")],
     [Markup.button.callback("📢 Banner Ads", "ad_banner")],
     [Markup.button.callback("📣 Mass DM Broadcast", "ad_massdm")],
+    [Markup.button.callback("🤖 Add Buy Bot to your group", "buybot_help")],
   ]);
 }
 

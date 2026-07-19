@@ -54,6 +54,7 @@ function registerHandlers(bot) {
   bot.action("ad_massdm", massdm.entryMassDm);
   bot.action("md_pay", massdm.payPick);
   bot.action("md_test", massdm.testSend);
+  bot.action("buybot_help", start.buyBotHelp);
 
   // ── Payment ───────────────────────────────────────────────────────────────
   bot.action("confirm_pay", payment.confirmPayHandler);
