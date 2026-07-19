@@ -70,7 +70,12 @@ const DEFAULTS = {
     "New here? Just tap a button — each flow walks you through it step by step.",
   intro_xpress:
     `${em("⚡", E.zap)} **Xpress Listing**\n\n` +
-    "Instant activation. The moment payment clears, your token is live on the dexvra.io board with its own token page (chart, price, socials), a launch post in our Listing channel and an automatic share on X.\n\n" +
+    "The fastest way onto Dexvra — live within minutes of payment. No tier, no review, no waiting.\n\n" +
+    "**What your project gets**\n" +
+    "🌐 Listed on **dexvra.io** — your own token page with live chart, price, market cap and socials\n" +
+    "🚨 Launch alert in the Listing channel — [@dexvralisting](https://t.me/dexvralisting)\n" +
+    "🐦 Automatic post on **X (Twitter)**\n\n" +
+    "Want Trending placement, a ranked tier badge and an Announcement-channel feature too? Pick **🏆 Listing & Trending** instead.\n\n" +
     "**Process**\n" +
     "1. Paste your contract address — details auto-fill, or add them manually\n" +
     "2. Review your listing and pay\n" +
@@ -97,11 +102,16 @@ const DEFAULTS = {
     "Prices in **{native}**:",
   trending_durations:
     `🔥 **Trending — {symbol}** · {chain}\n\n` +
-    "A featured slot on the dexvra.io Trending board, announced in our Trending channel the moment it activates. Longer durations carry larger discounts.\n\n" +
+    "A featured slot on the dexvra.io Trending board, announced in [@dexvratrending](https://t.me/dexvratrending) the moment it activates. Runs of **24H & 48H** also get a headline in the Announcement channel [@dexvraio](https://t.me/dexvraio). Longer durations carry bigger discounts.\n\n" +
     "Select a duration (**{native}**):",
   intro_banner:
     `${em("📢", E.megaphone)} **Banner Campaigns**\n\n` +
-    "Your creative in the dexvra.io homepage carousel with a click-through link, announced in our channel. USD pricing — discounts on longer runs.\n\n" +
+    "Put your creative in front of every dexvra.io visitor — a premium banner slot on the homepage with your own click-through link.\n\n" +
+    "**What your project gets**\n" +
+    "🖼 Your banner in the dexvra.io homepage carousel, linking anywhere you choose\n" +
+    "📢 Launch announcement in the Announcement channel — [@dexvraio](https://t.me/dexvraio)\n" +
+    "🐦 Shared on **X (Twitter)**\n\n" +
+    "USD pricing — the longer the run, the bigger the discount.\n\n" +
     "**Process**\n" +
     "1. Choose a format\n" +
     "2. Pick a duration\n" +
@@ -115,8 +125,13 @@ const DEFAULTS = {
   listing_logo_prompt: "**Logo**\n\nSend your logo as a photo — or /skip to continue without one.",
   trending_ca_prompt:
     "🔥 **Book a Trending slot**\n\n" +
-    "Featured slots up to **48 hours** with an activation announcement — longer runs at a discount.\n\n" +
-    "Paste the **contract address** of your listed token (or its dexvra.io token link) to continue:",
+    "Push your already-listed token to the top of the dexvra.io Trending board and put it in front of the whole network.\n\n" +
+    "**What you get**\n" +
+    "🔝 Featured placement on the dexvra.io Trending board\n" +
+    "🔥 Instant activation alert in the Trending channel — [@dexvratrending](https://t.me/dexvratrending)\n" +
+    "📢 24H & 48H runs also get a headline in the Announcement channel — [@dexvraio](https://t.me/dexvraio)\n\n" +
+    "Slots run up to **48 hours** — longer runs carry bigger discounts.\n\n" +
+    "Paste the **contract address** of your listed token (or its dexvra.io link) to continue:",
   trending_not_found:
     `${em("❌", E.cross)} **Not listed yet**\n\n` +
     "We couldn't find that token on Dexvra. List it first — ⚡ Xpress or 🏆 Listing & Trending — then come back to book your slot.",
