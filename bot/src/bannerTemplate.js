@@ -32,6 +32,42 @@ const exists = (p) => {
   }
 };
 
+// ── Admin-uploaded GIF / VIDEO override (per kind) ───────────────────────────
+// When set, the channel post uses this ANIMATED media instead of the composited
+// still — a generic hype clip (the per-token details live in the caption, so
+// nothing is composited into a video). Kind here is free-form (listing /
+// trending / banner / pump) so pump alerts can carry a clip too.
+const MEDIA_EXT = { gif: "animation", mp4: "video", webm: "video", mov: "video" };
+function mediaPath(kind, ext) {
+  return path.join(DATA_DIR, `banner-media-${kind}.${ext}`);
+}
+/** { type: 'animation'|'video', source } for a kind's uploaded clip, or null. */
+function mediaOverride(kind) {
+  for (const [ext, type] of Object.entries(MEDIA_EXT)) {
+    const p = mediaPath(kind, ext);
+    if (exists(p)) return { type, source: p };
+  }
+  return null;
+}
+async function saveMedia(kind, buffer, ext) {
+  const e = String(ext || "mp4").toLowerCase();
+  if (!MEDIA_EXT[e]) throw new Error(`unsupported media type .${e} (use gif/mp4/webm/mov)`);
+  await removeMedia(kind); // one clip per kind — drop any prior ext
+  await fss.promises.mkdir(DATA_DIR, { recursive: true });
+  await fss.promises.writeFile(mediaPath(kind, e), buffer);
+  return { type: MEDIA_EXT[e], ext: e };
+}
+async function removeMedia(kind) {
+  for (const ext of Object.keys(MEDIA_EXT)) {
+    try {
+      await fss.promises.unlink(mediaPath(kind, ext));
+    } catch {
+      /* not present */
+    }
+  }
+}
+const hasMedia = (kind) => !!mediaOverride(kind);
+
 // Defaults are tuned for the BUNDLED artworks (2560×1280). listing/trending:
 // circular logo spot in the glowing ring + $TICKER/name under the status pill.
 // banner (ads): a rectangular slot in the glass frame for the advertiser's
@@ -382,6 +418,10 @@ module.exports = {
   hasUploaded,
   saveTemplate,
   removeTemplate,
+  mediaOverride,
+  saveMedia,
+  removeMedia,
+  hasMedia,
   getSettings,
   updateSettings,
   resetSettings,

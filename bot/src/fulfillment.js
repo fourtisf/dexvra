@@ -108,6 +108,13 @@ function bannerCoinOf(row, live) {
 async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badge) {
   // Admin-bot toggle (persisted) with POST_BANNERS env as the default.
   if (bannerTemplate.postingEnabled()) {
+    // Admin-uploaded GIF/video wins over the composited still (generic hype
+    // clip — token details live in the caption, nothing composited into video).
+    const media = bannerTemplate.mediaOverride(kind);
+    if (media) {
+      log.info(`[fulfil] ${kind} media: admin ${media.type} clip ✔`);
+      return media;
+    }
     const composed = await bannerTemplate.compose(kind, logoBuffer, {
       symbol: bannerCoin.symbol,
       name: bannerCoin.name,
@@ -185,17 +192,17 @@ async function fulfillListing(ctx, order) {
   const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, tierBadge);
   const links = [];
   try {
-    const listingMsg = await post.sendPhoto(CHANNELS.listing, listMedia, fmt.listingPost(coin));
+    const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin));
     if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
 
     const annMsg = tierAnnounces(input.tier)
-      ? await post.sendPhoto(CHANNELS.announce, listMedia, fmt.listingPost(coin))
+      ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin))
       : null;
     if (annMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
     if (hours > 0) {
       const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, `Trending ${hours}H`);
-      const trendingMsg = await post.sendPhoto(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
+      const trendingMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
       if (trendingMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
     }
     await postids.set(input.chain, input.address, {
@@ -230,10 +237,10 @@ async function fulfillTrending(ctx, order) {
   const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
   const links = [];
   try {
-    const tMsg = await post.sendPhoto(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
+    const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
     if (tMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
     if (p.hours >= 24) {
-      const aMsg = await post.sendPhoto(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
+      const aMsg = await post.sendMedia(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
       if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
     }
   } catch (e) {
@@ -275,7 +282,7 @@ async function fulfillBanner(ctx, order) {
       const framed = await bannerTemplate.compose("banner", creative, {});
       if (framed) adMedia = { source: framed };
     }
-    const aMsg = await post.sendPhoto(CHANNELS.announce, adMedia, fmt.bannerPost(rec));
+    const aMsg = await post.sendMedia(CHANNELS.announce, adMedia, fmt.bannerPost(rec));
     if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);

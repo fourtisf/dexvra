@@ -130,11 +130,18 @@ function trendingPost(coin) {
   });
 }
 
+// "×" multiple from a percent gain: +540% → "6.4×", +100% → "2×".
+function xMultiple(percent) {
+  const x = 1 + percent / 100;
+  return (Number.isInteger(x) ? String(x) : x.toFixed(1)) + "×";
+}
+
 function pumpPost(coin, percent, firstMc, lastMc) {
   return tpl.render("post_pump", {
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
     percent: Math.round(percent),
+    multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
     lastMc: "$" + formatNumber(lastMc),
     address: clean(coin.address),
