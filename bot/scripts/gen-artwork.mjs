@@ -1,8 +1,9 @@
 // Generate the bundled Dexvra channel-banner ARTWORK (illustration-grade, via
 // Chromium/CSS: real gaussian blur, glass, specular light — things raw canvas
-// can't do). Output: assets/banner-artwork-listing.png / -trending.png at
+// can't do). Output: assets/banner-artwork-{listing,trending,banner}.png at
 // 2560×1280 (2x of 1280×640). The bannerTemplate compositor pastes each
-// token's logo into the glowing ring (see DEFAULTS there for the ring coords).
+// token's logo into the glowing ring (listing/trending) or the advertiser's
+// creative into the glass frame (banner) — see bannerTemplate DEFAULTS.
 //   cd /home/user/dexvra && node bot/scripts/gen-artwork.mjs
 import { chromium } from "playwright";
 import path from "node:path";
@@ -14,97 +15,138 @@ const FONTS = path.join(OUT, "fonts");
 
 const page_html = (KIND) => {
   const isTrend = KIND === "trending";
-  const ACC = isTrend ? "#38D8F0" : "#4EE6A8"; // accent
-  const ACC2 = isTrend ? "#0E9BD6" : "#22D3EE";
-  const LABEL = isTrend ? "TRENDING NOW" : "NEW LISTING";
+  const isAd = KIND === "banner";
+  const ACC = isTrend ? "#38D8F0" : isAd ? "#5BB8FF" : "#4EE6A8";
+  const ACC2 = isTrend ? "#0E9BD6" : isAd ? "#2E7FE0" : "#22D3EE";
+  const LABEL = isTrend ? "TRENDING NOW" : isAd ? "FEATURED" : "NEW LISTING";
+  const TG = isTrend ? "@dexvratrending" : isAd ? "@dexvraio" : "@dexvralisting";
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   @font-face { font-family:'Sora'; font-weight:800; src:url('file://${FONTS}/Sora-800.ttf'); }
   @font-face { font-family:'Sora'; font-weight:700; src:url('file://${FONTS}/Sora-700.ttf'); }
   @font-face { font-family:'Sora'; font-weight:600; src:url('file://${FONTS}/Sora-600.ttf'); }
   @font-face { font-family:'Sora'; font-weight:500; src:url('file://${FONTS}/Sora-500.ttf'); }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { width:1280px; height:640px; overflow:hidden; font-family:'Sora',sans-serif; position:relative;
-    background:
-      radial-gradient(90% 120% at 8% 0%, #0a1b1a 0%, transparent 55%),
-      radial-gradient(110% 130% at 96% 100%, #082026 0%, transparent 60%),
-      radial-gradient(70% 90% at 85% 10%, #071a20 0%, transparent 55%),
-      #04080c; }
+  body { width:1280px; height:640px; overflow:hidden; font-family:'Sora',sans-serif; position:relative; background:#04080c; }
 
-  /* ── smoky depth background (all gradients fade out well inside their box —
-        no hard edges) ── */
-  .blob { position:absolute; border-radius:50%; filter:blur(70px); }
-  .b1 { width:900px; height:700px; left:-320px; top:-300px; background:radial-gradient(circle, ${ACC}1c 0%, transparent 55%); }
-  .b2 { width:1100px; height:900px; right:-380px; bottom:-460px; background:radial-gradient(circle, ${ACC2}20 0%, transparent 55%); }
-  .smoke { position:absolute; border-radius:50%; filter:blur(40px); }
-  .s1 { width:820px; height:820px; left:-260px; top:80px;
-    background:radial-gradient(circle, transparent 52%, rgba(120,220,205,.05) 62%, transparent 74%); }
-  .s2 { width:1000px; height:1000px; right:-320px; top:-440px;
-    background:radial-gradient(circle, transparent 52%, rgba(90,210,230,.055) 63%, transparent 75%); }
-  .s3 { width:640px; height:640px; left:400px; bottom:-380px;
-    background:radial-gradient(circle, transparent 50%, rgba(120,220,205,.045) 61%, transparent 73%); }
-  .vig { position:absolute; inset:0; background:radial-gradient(120% 120% at 50% 45%, transparent 55%, rgba(0,0,0,.5)); }
+  /* ── smoky depth background — all blurred layers live on an oversized bleed
+        canvas so their rectangular bounds never show inside the frame ── */
+  .bg { position:absolute; left:-200px; top:-200px; width:1680px; height:1040px; }
+  .bg > div { position:absolute; border-radius:50%; }
+  .wash { left:0; top:0; width:1680px; height:1040px; border-radius:0 !important;
+    background:linear-gradient(118deg, #081613 0%, #050b10 34%, #04121a 72%, #061d24 100%); }
+  .blob1 { width:980px; height:820px; left:-140px; top:-160px; filter:blur(110px);
+    background:radial-gradient(circle, ${ACC}1a 0%, transparent 52%); }
+  .blob2 { width:1240px; height:1020px; right:-220px; bottom:-260px; filter:blur(120px);
+    background:radial-gradient(circle, ${ACC2}1f 0%, transparent 52%); }
+  .ringSmoke1 { width:880px; height:880px; left:-80px; top:260px; filter:blur(46px);
+    background:radial-gradient(circle, transparent 52%, rgba(120,220,205,.05) 62%, transparent 73%); }
+  .ringSmoke2 { width:1060px; height:1060px; right:-180px; top:-300px; filter:blur(50px);
+    background:radial-gradient(circle, transparent 52%, rgba(90,210,230,.05) 62%, transparent 74%); }
+  .vig { position:absolute; inset:0; background:radial-gradient(125% 125% at 50% 44%, transparent 56%, rgba(0,0,0,.5)); }
+
+  /* faint market grid + rising line, tucked above the socials row */
+  .chart { position:absolute; left:30px; bottom:106px; opacity:.4; }
 
   /* ── brand ── */
   .brand { position:absolute; left:56px; top:44px; display:flex; align-items:center; gap:16px; }
   .brand svg { filter:drop-shadow(0 4px 14px ${ACC2}66); }
   .brand .word { font-weight:800; font-size:40px; color:#F2FAF8; letter-spacing:1px; }
+  .brand .sub { font-weight:600; font-size:13px; letter-spacing:3.5px; color:#5E7A7C; margin-top:4px; }
 
   /* ── glossy status pill ── */
-  .pill { position:absolute; left:210px; top:170px; padding:3px; border-radius:40px;
+  .pill { position:absolute; left:${isAd ? 96 : 210}px; top:${isAd ? 150 : 170}px; padding:3px; border-radius:40px;
     background:linear-gradient(135deg, ${ACC}cc, ${ACC2}55 45%, ${ACC}cc);
-    box-shadow:0 0 44px ${ACC}59, 0 10px 30px rgba(0,0,0,.5); }
-  .pill .in { border-radius:37px; padding:14px 42px; position:relative; overflow:hidden;
+    box-shadow:0 0 44px ${ACC}52, 0 10px 30px rgba(0,0,0,.5); }
+  .pill .in { border-radius:37px; padding:13px 40px; position:relative; overflow:hidden;
     background:linear-gradient(180deg, #10231f, #0a1613);
     display:flex; align-items:center; gap:14px; }
   .pill .in::after { content:''; position:absolute; left:8%; top:2px; width:84%; height:46%;
-    border-radius:30px; background:linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,0)); }
-  .pill .dot { width:13px; height:13px; border-radius:50%; background:${ACC};
+    border-radius:30px; background:linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,0)); }
+  .pill .dot { width:12px; height:12px; border-radius:50%; background:${ACC};
     box-shadow:0 0 16px ${ACC}, 0 0 34px ${ACC}aa; }
-  .pill .txt { font-weight:800; font-size:30px; letter-spacing:3px; color:#ECFFF7;
+  .pill .txt { font-weight:800; font-size:28px; letter-spacing:3px; color:#ECFFF7;
     text-shadow:0 0 22px ${ACC}88; }
 
   /* ── socials row ── */
-  .socials { position:absolute; left:60px; bottom:52px; display:flex; gap:44px; }
+  .socials { position:absolute; left:60px; bottom:44px; display:flex; gap:44px; }
   .soc { display:flex; align-items:center; gap:13px; }
   .soc .ic { width:46px; height:46px; border-radius:50%;
     background:linear-gradient(160deg, ${ACC}2b, #0d1a17 70%);
     border:1.5px solid ${ACC}59; display:flex; align-items:center; justify-content:center;
     box-shadow:0 6px 18px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.14); }
-  .soc .tt { line-height:1.25; }
-  .soc .lab { font-weight:500; font-size:17px; color:#8FA7A4; }
-  .soc .val { font-weight:700; font-size:20px; color:#EAF6F2; }
+  .soc .lab { font-weight:500; font-size:17px; color:#8FA7A4; line-height:1.25; }
+  .soc .val { font-weight:700; font-size:20px; color:#EAF6F2; line-height:1.25; }
 
-  /* ── hero: gem + ring + pedestal (right) ── */
+  ${isAd ? adHeroCss(ACC, ACC2) : ringHeroCss(ACC, ACC2)}
+
+  .spark { position:absolute; color:#EAFFF7; text-shadow:0 0 14px ${ACC}; font-size:26px; }
+  .grain { position:absolute; inset:0; opacity:.05; }
+  </style></head><body>
+  <div class="bg"><div class="wash"></div><div class="blob1"></div><div class="blob2"></div><div class="ringSmoke1"></div><div class="ringSmoke2"></div></div>
+
+  <svg class="chart" width="380" height="96" viewBox="0 0 380 96">
+    <defs><linearGradient id="cl" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="${ACC}" stop-opacity=".0"/><stop offset=".6" stop-color="${ACC}" stop-opacity=".3"/><stop offset="1" stop-color="${ACC}" stop-opacity=".6"/>
+    </linearGradient></defs>
+    ${[0, 1, 2].map((i) => `<line x1="0" y1="${16 + i * 30}" x2="380" y2="${16 + i * 30}" stroke="rgba(140,200,195,.05)" stroke-width="1"/>`).join("")}
+    <path d="M0 84 C 50 80, 80 66, 120 68 S 190 50, 235 44 S 320 26, 372 10" fill="none" stroke="url(#cl)" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="372" cy="10" r="3.5" fill="${ACC}"/>
+    <circle cx="372" cy="10" r="9" fill="${ACC}" opacity=".22"/>
+  </svg>
+
+  ${isAd ? adHeroHtml() : ringHeroHtml()}
+
+  <div class="vig"></div>
+
+  <div class="brand">${gemSvg(52)}<div><div class="word">Dexvra</div><div class="sub">TOKEN VISIBILITY</div></div></div>
+
+  <div class="pill"><div class="in"><div class="dot"></div><div class="txt">${LABEL}</div></div></div>
+
+  <div class="socials">
+    <div class="soc"><div class="ic">${globeSvg(22)}</div><div><div class="lab">Website:</div><div class="val">dexvra.io</div></div></div>
+    <div class="soc"><div class="ic">${tgSvg(22)}</div><div><div class="lab">Telegram:</div><div class="val">${TG}</div></div></div>
+    <div class="soc"><div class="ic">${xSvg(19)}</div><div><div class="lab">X:</div><div class="val">@dexvra</div></div></div>
+  </div>
+
+  <svg class="grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+  </body></html>`;
+};
+
+// ── hero: glowing diamond ring (listing / trending) ──────────────────────────
+function ringHeroCss(ACC, ACC2) {
+  return `
   .hero { position:absolute; right:0; top:0; width:520px; height:640px; }
-  .halo { position:absolute; right:-110px; top:40px; width:640px; height:640px; border-radius:50%;
-    background:radial-gradient(circle, ${ACC2}30, transparent 62%); filter:blur(50px); }
-
-  /* glowing ring — the token logo is composited into its center */
+  .halo { position:absolute; right:-90px; top:50px; width:600px; height:600px; border-radius:50%;
+    background:radial-gradient(circle, ${ACC2}2e, transparent 60%); filter:blur(46px); }
   .ring { position:absolute; left:158px; top:178px; width:264px; height:264px; border-radius:50%;
-    background:conic-gradient(from 140deg, ${ACC2}, ${ACC} 25%, #BFFFE4 40%, ${ACC} 55%, ${ACC2} 78%, #0E9BD6 90%, ${ACC2});
-    box-shadow:0 0 70px ${ACC}59, 0 0 150px ${ACC2}38, 0 24px 50px rgba(0,0,0,.55);
-    display:flex; align-items:center; justify-content:center; }
-  .ring .hole { width:214px; height:214px; border-radius:50%; position:relative;
+    background:conic-gradient(from 140deg, ${ACC2}, ${ACC} 22%, #E8FFF4 38%, ${ACC} 52%, ${ACC2} 76%, #0B84B8 90%, ${ACC2});
+    box-shadow:0 0 70px ${ACC}59, 0 0 150px ${ACC2}38, 0 26px 54px rgba(0,0,0,.6);
+    display:flex; align-items:center; justify-content:center; z-index:1; }
+  .ring .band { width:238px; height:238px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:conic-gradient(from 320deg, #0d2a2c, #123a3c 30%, #0d2a2c 60%, #16444a 82%, #0d2a2c);
+    box-shadow:inset 0 2px 6px rgba(255,255,255,.18), inset 0 -4px 10px rgba(0,0,0,.5); }
+  .ring .hole { width:212px; height:212px; border-radius:50%; position:relative;
     background:radial-gradient(circle at 38% 30%, #0f1c21, #060c10 75%);
-    box-shadow:inset 0 8px 28px rgba(0,0,0,.85), inset 0 -2px 12px rgba(255,255,255,.06); }
+    box-shadow:inset 0 10px 30px rgba(0,0,0,.9), inset 0 -2px 12px rgba(255,255,255,.05); }
   .ring .hole::after { content:''; position:absolute; inset:0; border-radius:50%;
-    border:1.5px solid rgba(255,255,255,.16); }
+    border:1.5px solid rgba(255,255,255,.15); }
   .ring::after { content:''; position:absolute; inset:-24px; border-radius:50%;
-    border:2px dashed ${ACC}42; }
-  /* specular arc along the ring's upper edge */
-  .ringShine { position:absolute; left:158px; top:178px; width:264px; height:264px; border-radius:50%;
-    background:conic-gradient(from 300deg, transparent 0 12%, rgba(255,255,255,.55) 22%, transparent 34% 100%);
-    -webkit-mask:radial-gradient(circle, transparent 0 102px, #000 104px 130px, transparent 133px);
-    filter:blur(1.5px); }
-
-  /* faceted gem docked behind the ring's top edge */
-  .gem { position:absolute; left:216px; top:34px; z-index:0;
-    filter:drop-shadow(0 16px 30px rgba(0,0,0,.6)) drop-shadow(0 0 30px ${ACC2}77); }
-  .gemGlow { position:absolute; left:180px; top:10px; width:230px; height:190px; border-radius:50%;
-    background:radial-gradient(circle, ${ACC}36, transparent 66%); filter:blur(26px); }
-  .ring, .ringShine { z-index:1; }
-
-  /* glass slab platform + light pool */
+    border:2px dashed ${ACC}40; }
+  .ringShine { position:absolute; left:158px; top:178px; width:264px; height:264px; border-radius:50%; z-index:2;
+    background:conic-gradient(from 295deg, transparent 0 10%, rgba(255,255,255,.7) 19%, transparent 30% 100%);
+    -webkit-mask:radial-gradient(circle, transparent 0 104px, #000 106px 132px, transparent 134px);
+    filter:blur(1.2px); }
+  .stud { position:absolute; z-index:2; width:16px; height:16px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #fff, ${ACC} 60%, ${ACC2});
+    box-shadow:0 0 12px ${ACC}; }
+  .st1 { left:196px; top:412px; } .st2 { left:372px; top:376px; width:12px; height:12px; }
+  .gem { position:absolute; left:210px; top:26px; z-index:0;
+    filter:drop-shadow(0 16px 30px rgba(0,0,0,.6)) drop-shadow(0 0 34px ${ACC2}88); }
+  .gemGlow { position:absolute; left:176px; top:2px; width:240px; height:200px; border-radius:50%;
+    background:radial-gradient(circle, ${ACC}38, transparent 66%); filter:blur(26px); }
+  .flare { position:absolute; z-index:1; width:3px; height:52px; border-radius:2px;
+    background:linear-gradient(180deg, transparent, #EAFFF7, transparent); filter:blur(.6px); opacity:.9; }
+  .fl1 { left:288px; top:8px; } .fl2 { left:288px; top:8px; transform:rotate(90deg); height:44px; }
   .ped { position:absolute; left:150px; top:474px; width:280px; height:120px; }
   .ped .slab { position:absolute; left:14px; top:14px; width:252px; height:26px; border-radius:13px;
     background:linear-gradient(90deg, ${ACC2}22, ${ACC}44 50%, ${ACC2}22);
@@ -112,58 +154,72 @@ const page_html = (KIND) => {
     box-shadow:0 0 36px ${ACC2}40, inset 0 2px 5px rgba(255,255,255,.22), inset 0 -6px 12px rgba(0,0,0,.35); }
   .ped .pool { position:absolute; left:0; top:34px; width:280px; height:42px; border-radius:50%;
     background:radial-gradient(ellipse, ${ACC2}38, transparent 68%); filter:blur(14px); }
-  .ped .refl { position:absolute; left:64px; top:48px; width:152px; height:56px; border-radius:50%;
-    background:radial-gradient(ellipse, ${ACC}20, transparent 70%); filter:blur(16px); }
-
-  /* floating gem-coins */
   .coin { position:absolute; border-radius:50%; display:flex; align-items:center; justify-content:center;
     background:radial-gradient(circle at 34% 28%, #1b3a37, #0a1a1c 72%);
     border:1.6px solid ${ACC}66; box-shadow:0 10px 24px rgba(0,0,0,.5), inset 0 2px 6px rgba(255,255,255,.14), 0 0 26px ${ACC}33; }
-  .coin svg { opacity:.95; }
-  .c1 { width:74px; height:74px; left:66px;  top:150px; transform:rotate(-14deg); }
-  .c2 { width:56px; height:56px; left:452px; top:130px; transform:rotate(12deg);  filter:blur(1px); }
-  .c3 { width:64px; height:64px; left:56px;  top:388px; transform:rotate(10deg);  filter:blur(.6px); }
-  .c4 { width:46px; height:46px; left:460px; top:372px; transform:rotate(-18deg); filter:blur(1.6px); }
-  .c5 { width:38px; height:38px; left:120px; top:16px;  transform:rotate(20deg);  filter:blur(2.2px); }
-  .spark { position:absolute; color:#EAFFF7; text-shadow:0 0 12px ${ACC}; font-size:26px; }
-  .sp1 { left:452px; top:296px; } .sp2 { left:96px; top:296px; font-size:18px; opacity:.8; }
-
-  /* grain */
-  .grain { position:absolute; inset:0; opacity:.05; }
-  </style></head><body>
-  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
-  <div class="smoke s1"></div><div class="smoke s2"></div><div class="smoke s3"></div>
-
-  <div class="hero">
+  .c1 { width:74px; height:74px; left:62px;  top:150px; transform:rotate(-14deg); }
+  .c2 { width:56px; height:56px; left:452px; top:128px; transform:rotate(12deg);  filter:blur(1px); }
+  .c3 { width:64px; height:64px; left:52px;  top:390px; transform:rotate(10deg);  filter:blur(.6px); }
+  .c4 { width:46px; height:46px; left:462px; top:372px; transform:rotate(-18deg); filter:blur(1.6px); }
+  .c5 { width:38px; height:38px; left:118px; top:14px;  transform:rotate(20deg);  filter:blur(2.2px); }`;
+}
+function ringHeroHtml() {
+  return `<div class="hero">
     <div class="halo"></div>
     <div class="gemGlow"></div>
     <div class="gem">${gemSvg(160)}</div>
-    <div class="ped"><div class="pool"></div><div class="slab"></div><div class="refl"></div></div>
-    <div class="ring"><div class="hole"></div></div>
+    <div class="flare fl1"></div><div class="flare fl2"></div>
+    <div class="ped"><div class="pool"></div><div class="slab"></div></div>
+    <div class="ring"><div class="band"><div class="hole"></div></div></div>
     <div class="ringShine"></div>
+    <div class="stud st1"></div><div class="stud st2"></div>
     <div class="coin c1">${gemSvg(38)}</div>
     <div class="coin c2">${gemSvg(28)}</div>
     <div class="coin c3">${gemSvg(32)}</div>
     <div class="coin c4">${gemSvg(22)}</div>
     <div class="coin c5">${gemSvg(18)}</div>
-    <div class="spark sp1">✦</div><div class="spark sp2">✦</div>
-  </div>
+    <div class="spark" style="left:452px; top:296px;">✦</div>
+    <div class="spark" style="left:96px; top:296px; font-size:18px; opacity:.8;">✦</div>
+  </div>`;
+}
 
-  <div class="vig"></div>
-
-  <div class="brand">${gemSvg(52)}<div class="word">Dexvra</div></div>
-
-  <div class="pill"><div class="in"><div class="dot"></div><div class="txt">${LABEL}</div></div></div>
-
-  <div class="socials">
-    <div class="soc"><div class="ic">${globeSvg(22)}</div><div class="tt"><div class="lab">Website:</div><div class="val">dexvra.io</div></div></div>
-    <div class="soc"><div class="ic">${tgSvg(22)}</div><div class="tt"><div class="lab">Telegram:</div><div class="val">@dexvra${isTrend ? "trending" : "listing"}</div></div></div>
-    <div class="soc"><div class="ic">${xSvg(19)}</div><div class="tt"><div class="lab">X:</div><div class="val">@dexvra</div></div></div>
-  </div>
-
-  <svg class="grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
-  </body></html>`;
-};
+// ── hero: glass creative frame (banner ads) — advertiser creative goes inside ─
+function adHeroCss(ACC, ACC2) {
+  return `
+  .frameWrap { position:absolute; left:410px; top:150px; width:790px; height:410px; }
+  .fhalo { position:absolute; left:-60px; top:-60px; width:910px; height:530px; border-radius:60px;
+    background:radial-gradient(ellipse, ${ACC2}26, transparent 65%); filter:blur(40px); }
+  .frame { position:absolute; left:0; top:0; width:790px; height:410px; border-radius:28px; padding:5px;
+    background:linear-gradient(135deg, ${ACC}cc, ${ACC2}44 40%, ${ACC}99 70%, ${ACC2}cc);
+    box-shadow:0 0 60px ${ACC}45, 0 24px 60px rgba(0,0,0,.55); }
+  .frame .inner { width:100%; height:100%; border-radius:24px; position:relative; overflow:hidden;
+    background:linear-gradient(160deg, #0b161c, #071017 70%);
+    box-shadow:inset 0 8px 30px rgba(0,0,0,.7), inset 0 -2px 10px rgba(255,255,255,.05); }
+  .frame .inner::after { content:''; position:absolute; left:4%; top:0; width:92%; height:36%;
+    background:linear-gradient(180deg, rgba(255,255,255,.09), transparent); border-radius:24px 24px 50% 50%; }
+  .frame .tag { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    font-weight:700; font-size:24px; letter-spacing:4px; color:#3D585F; }
+  .corner { position:absolute; width:34px; height:34px; border:3px solid ${ACC}; z-index:2; filter:drop-shadow(0 0 8px ${ACC}88); }
+  .cTL { left:-14px; top:-14px; border-right:none; border-bottom:none; border-radius:10px 0 0 0; }
+  .cTR { right:-14px; top:-14px; border-left:none; border-bottom:none; border-radius:0 10px 0 0; }
+  .cBL { left:-14px; bottom:-14px; border-right:none; border-top:none; border-radius:0 0 0 10px; }
+  .cBR { right:-14px; bottom:-14px; border-left:none; border-top:none; border-radius:0 0 10px 0; }
+  .megGlow { position:absolute; left:-90px; top:-90px; width:220px; height:220px; border-radius:50%;
+    background:radial-gradient(circle, ${ACC}30, transparent 65%); filter:blur(20px); }
+  .gemDock { position:absolute; right:-40px; top:-58px; filter:drop-shadow(0 10px 22px rgba(0,0,0,.6)) drop-shadow(0 0 26px ${ACC2}88); }`;
+}
+function adHeroHtml() {
+  return `<div class="frameWrap">
+    <div class="fhalo"></div>
+    <div class="megGlow"></div>
+    <div class="frame"><div class="inner"><div class="tag">YOUR BANNER HERE</div></div>
+      <div class="corner cTL"></div><div class="corner cTR"></div><div class="corner cBL"></div><div class="corner cBR"></div>
+      <div class="gemDock">${gemSvg(92)}</div>
+    </div>
+    <div class="spark" style="left:-34px; top:210px;">✦</div>
+    <div class="spark" style="right:-30px; bottom:-16px; font-size:18px; opacity:.8;">✦</div>
+  </div>`;
+}
 
 // Faceted Dexvra gem (brand mark) with per-facet gradients + specular hints.
 function gemSvg(size) {
@@ -200,7 +256,7 @@ const browser = await chromium.launch({
   args: ["--no-sandbox", "--disable-setuid-sandbox"],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 640 }, deviceScaleFactor: 2 });
-for (const kind of ["listing", "trending"]) {
+for (const kind of ["listing", "trending", "banner"]) {
   await page.setContent(page_html(kind), { waitUntil: "networkidle" });
   await page.waitForTimeout(250);
   const out = path.join(OUT, `banner-artwork-${kind}.png`);

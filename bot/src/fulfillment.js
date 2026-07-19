@@ -238,7 +238,15 @@ async function fulfillBanner(ctx, order) {
 
   const links = [];
   try {
-    const aMsg = await post.sendPhoto(CHANNELS.announce, p.imageFileId || photoSource(null, rec.imageUrl), fmt.bannerPost(rec));
+    // Frame the creative in the Banner Ads artwork when one is set (admin
+    // upload or bundled); otherwise post the raw creative as before.
+    let adMedia = p.imageFileId || photoSource(null, rec.imageUrl);
+    if (POST_BANNERS) {
+      const creative = buffer || (await fetchLogoUrl(rec.imageUrl));
+      const framed = await bannerTemplate.compose("banner", creative, {});
+      if (framed) adMedia = { source: framed };
+    }
+    const aMsg = await post.sendPhoto(CHANNELS.announce, adMedia, fmt.bannerPost(rec));
     if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
