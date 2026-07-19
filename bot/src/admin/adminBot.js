@@ -424,6 +424,29 @@ function viewText(key) {
   );
 }
 
+// The current template value in COPYABLE form, so an admin can copy → tweak →
+// send back instead of retyping a long message from scratch. Entity-saved
+// templates keep their text (premium emoji ride as fallback chars — a regular
+// bot can't re-emit real premium emoji, and the admin re-inserts their own
+// anyway); markup/default strings are rendered to clean text (no raw
+// [💎](emoji/ID) / **bold** noise).
+function currentCopyable(key) {
+  const val = tpl.getRawValue(key);
+  if (val && typeof val === "object" && val.text != null) {
+    const extra = val.entities && val.entities.length
+      ? { entities: val.entities, disable_web_page_preview: true }
+      : { disable_web_page_preview: true };
+    return { text: val.text, extra };
+  }
+  let clean;
+  try {
+    clean = require("../premium").parse(String(val || "")).text;
+  } catch {
+    clean = String(val || "");
+  }
+  return { text: clean, extra: { disable_web_page_preview: true } };
+}
+
 async function edit(ctx, text, kb) {
   try {
     await ctx.editMessageText(text, { ...HTML, ...(kb || {}) });
@@ -576,12 +599,24 @@ function build() {
     const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
     await ctx.reply(
       `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\n` +
-        `Formatting: <code>**bold**</code>, <code>[text](url)</code>, <code>\`code\`</code>, ` +
-        `<code>[😀](emoji/ID)</code> for premium emoji — or just paste a message that ` +
-        `<b>contains real premium emoji</b> and they'll be preserved as-is.\n\n` +
-        `Placeholders: <code>${escapeHtml(ph)}</code>\n\nSend /cancel to abort.`,
+        `Just type it like a normal message — line breaks, spaces and emoji are kept exactly. ` +
+        `💎 For <b>premium emoji</b>, insert them straight from your keyboard as you type — they're preserved as-is.\n\n` +
+        (m.ph.length
+          ? `Keep any <code>{placeholder}</code> where the live value goes: <code>${escapeHtml(ph)}</code>\n\n`
+          : ``) +
+        `<i>Optional — </i><code>**bold**</code><i>, </i><code>[text](url)</code><i>, </i><code>\`code\`</code><i> also work.</i>\n` +
+        `Send /cancel to abort.`,
       HTML,
     );
+    // Echo the current text as a copyable message so it's edit-then-resend, not
+    // retype-from-scratch.
+    const cur = currentCopyable(key);
+    if (cur.text && cur.text.trim()) {
+      await ctx.reply("📋 Current text — copy this, edit it, then send it back:", HTML).catch(() => {});
+      await ctx
+        .reply(cur.text, cur.extra)
+        .catch(() => ctx.reply(cur.text, { disable_web_page_preview: true }).catch(() => {}));
+    }
   });
 
   bot.action(/^r:(.+)$/, async (ctx) => {
