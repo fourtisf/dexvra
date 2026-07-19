@@ -149,7 +149,7 @@ async function btPreview(ctx, kind) {
   if (!bannerTpl.hasTemplate(kind)) {
     return ctx.reply(`❌ No ${kind} artwork available yet. Tap ⬆ Upload first.`).catch(() => {});
   }
-  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M" });
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier" });
   if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
   await ctx
     .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview — tune the slot/text until it sits perfectly.` })

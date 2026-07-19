@@ -53,6 +53,10 @@ const BASE_DEFAULTS = {
   metaX: 210,
   metaY: 772,
   metaFontSize: 34,
+  // small badge on the glass pedestal under the ring (tier / trending duration)
+  badgeX: 2100, // center x
+  badgeY: 1002,
+  badgeFontSize: 30,
 };
 const KIND_DEFAULTS = {
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
@@ -111,7 +115,7 @@ function canvasLib() {
 
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap } = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}) {
   if (!hasTemplate(kind)) return null;
   const cv = canvasLib();
   if (!cv) return null;
@@ -247,6 +251,29 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap } = 
           x += w + gap;
         }
       }
+    }
+
+    // Pedestal badge — the small glass slab under the ring carries the tier
+    // (listing) or the slot duration (trending) instead of sitting empty.
+    if (badge && cfg.slotShape !== "rect") {
+      const bfs = Number(cfg.badgeFontSize) || 30;
+      ctx.font = `600 ${bfs}px TplSemi, TplReg, sans-serif`;
+      ctx.letterSpacing = "4px";
+      const btext = String(badge).toUpperCase().slice(0, 24);
+      const bw = ctx.measureText(btext).width;
+      const bx = (Number(cfg.badgeX) || W - 460) - bw / 2;
+      const by = Number(cfg.badgeY) || H - 278;
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0,0,0,.6)";
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetY = 1;
+      ctx.fillStyle = "#D9F2EA";
+      ctx.fillText(btext, bx, by);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.letterSpacing = "0px";
+      ctx.textBaseline = "alphabetic";
     }
 
     return canvas.toBuffer("image/png");

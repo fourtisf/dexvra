@@ -12,7 +12,7 @@ const market = require("./marketdata");
 const x = require("./twitter");
 const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS, POST_BANNERS } = require("./config/constants");
-const { tierAnnounces } = require("./config/packages");
+const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { payloadArgs } = require("./helpers/message");
 const premium = require("./premium");
@@ -103,7 +103,7 @@ function bannerCoinOf(row, live) {
 /** Post media, best first: admin-uploaded template ARTWORK (fourtis-style,
  *  logo composited into the design) → dynamic per-token banner → static
  *  banner → token logo. */
-async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl) {
+async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badge) {
   if (POST_BANNERS) {
     const composed = await bannerTemplate.compose(kind, logoBuffer, {
       symbol: bannerCoin.symbol,
@@ -111,6 +111,7 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl) {
       chain: bannerCoin.chain,
       price: bannerCoin.price,
       mcap: bannerCoin.mcap,
+      badge,
     });
     if (composed) return { source: composed };
     const buf =
@@ -161,7 +162,8 @@ async function fulfillListing(ctx, order) {
   const live = await market.fetchMarket(input.chain, input.address).catch(() => null);
   const coin = coinFrom(input, live);
   const bannerCoin = bannerCoinOf(input, live);
-  const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl);
+  const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
+  const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, tierBadge);
   const links = [];
   try {
     const listingMsg = await post.sendPhoto(CHANNELS.listing, listMedia, fmt.listingPost(coin));
@@ -173,7 +175,7 @@ async function fulfillListing(ctx, order) {
     if (annMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
     if (hours > 0) {
-      const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl);
+      const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, `Trending ${hours}H`);
       const trendingMsg = await post.sendPhoto(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
       if (trendingMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
     }
@@ -201,7 +203,7 @@ async function fulfillTrending(ctx, order) {
   const coin = coinFrom(row, live);
   const bannerCoin = bannerCoinOf(row, live);
   const logoBuffer = await fetchLogoUrl(row.logoUrl);
-  const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl);
+  const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
   const links = [];
   try {
     const tMsg = await post.sendPhoto(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
