@@ -178,12 +178,19 @@ const DEFAULTS = {
   massdm_intro:
     `${em("📢", E.megaphone)} **Mass DM Broadcast**\n\n` +
     "Send your message as a **direct DM to every Dexvra user** — the strongest reach we offer. Every broadcast is admin-reviewed before it sends (keeps the audience clean and the bot safe).\n\n" +
-    "**Flat price**\n" +
-    "◎ {sol}\n🟡 {bnb}\n⧫ {eth}\n\n" +
-    "Send the message now — **text, or a photo with a caption** (formatting & emoji are kept):",
+    "**Flat price — 50% off** (charged in your token's chain)\n" +
+    "◎ {sol}  ·  🟡 {bnb}  ·  ⧫ {eth}\n\n" +
+    `${em("🔗", E.link)} **First, paste your token's contract address (CA).**\n` +
+    "It sets the chain you'll pay in:",
+  massdm_ca_invalid:
+    `${em("❌", E.cross)} That doesn't look like a contract address.\n\n` +
+    "Paste a valid token CA — an 0x… address (Ethereum / BSC / Base), a Solana mint, a Tron or TON address:",
+  massdm_compose_prompt:
+    "✅ Token detected on **{chain}** — you'll pay **{amount}**.\n\n" +
+    "Now send your broadcast — **text, or a photo with a caption** (formatting & emoji are kept):",
   massdm_preview:
     "👆 **This is your broadcast.**\n\n" +
-    "Check it carefully — it goes to every Dexvra user as a DM once an admin approves. Choose how to pay, or recompose:",
+    "It goes to every Dexvra user as a DM once an admin approves — **{amount}**. Pay below, or recompose:",
   massdm_received:
     "✅ **Payment received — your broadcast is in review.**\n\n" +
     "Ref `{ref}`. An admin will approve it shortly; delivery starts right after. You'll get a receipt here when it's done.",
@@ -278,8 +285,10 @@ const META = {
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain"] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
-  massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price", ph: ["sol", "bnb", "eth"] },
-  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: [] },
+  massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },
+  massdm_ca_invalid: { group: "Mass DM", label: "Mass DM: invalid CA", ph: [] },
+  massdm_compose_prompt: { group: "Mass DM", label: "Mass DM: compose prompt", ph: ["chain", "amount"] },
+  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: ["amount"] },
   massdm_received: { group: "Mass DM", label: "Mass DM: paid, in review", ph: ["ref"] },
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },

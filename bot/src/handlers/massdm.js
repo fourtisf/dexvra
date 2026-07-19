@@ -1,36 +1,49 @@
-// Paid Mass DM flow (public): compose one message → pay a flat price → an admin
-// reviews it → the main-bot sender DMs the whole /start audience once. The order
-// only PERSISTS a pending_review job on payment (funds are already swept before
-// onSuccess, so fulfilment must never throw — a failed enqueue tells the buyer
-// to contact support, it never aborts). Admins get a FREE test-send that skips
-// review and targets only themselves + the composer.
-const { answer, toast, sendCard, getMediaFileId, payloadArgs } = require("../helpers/message");
-const { nativeOf, payNativeOf } = require("../config/chains");
+// Paid Mass DM flow (public): CA FIRST → compose → pay → admin review → send.
+// Like fourtis: the buyer drops their token's contract address first, which
+// locks the payment currency to that token's chain (Solana→SOL, ETH/Base→ETH,
+// everything else→BNB). Then they compose one message and pay. The order only
+// PERSISTS a pending_review job on payment (funds are swept before onSuccess,
+// so fulfilment must never throw). Admins get a FREE test-send.
+const { answer, toast, sendCard, getMediaFileId } = require("../helpers/message");
+const { nativeOf, chainOf } = require("../config/chains");
 const { MASS_DM_PRICE, MASS_DM_ENABLED, isAdminUser, ADMIN_IDS } = require("../config/constants");
 const { startPayment } = require("./pay");
+const groupSetup = require("../group/setup");
 const menu = require("./menu");
 const { Markup } = menu;
 const tpl = require("../templates");
 const premium = require("../premium");
 const store = require("../massdm/store");
 
-// Pay currencies offered (one per native coin). Mirrors the flat-price map.
-const PAY_CHAINS = ["solana", "bsc", "ethereum"];
-
 function freshSession(ctx, patch) {
   const prev = ctx.session && ctx.session.latest_bot_message;
   ctx.session = { latest_bot_message: prev, ...patch };
 }
 
-function priceFor(chain) {
-  return MASS_DM_PRICE[payNativeOf(chain)] ?? null;
+const fmtPrice = (n, sym) => (n == null ? "—" : `${n} ${sym}`);
+
+// The three Mass DM pay currencies, mapped from the token's chain. The buyer
+// pays in the currency of the chain their token lives on.
+function currencyOf(chain) {
+  if (chain === "solana") return "SOL";
+  if (chain === "ethereum" || chain === "base") return "ETH";
+  return "BNB"; // bsc, tron, ton, robinhood, plasma, sui, …
 }
+const PAY_CHAIN = { SOL: "solana", BNB: "bsc", ETH: "ethereum" };
+function payFor(tokenChain) {
+  const currency = currencyOf(tokenChain);
+  return { currency, payChain: PAY_CHAIN[currency], native: currency, price: MASS_DM_PRICE[currency] };
+}
+
+// Loose CA shape check (matches the chains we support) before we scan it.
+const CA_RE = /^(0x[a-fA-F0-9]{40}(::[A-Za-z0-9_]+)*|0x[a-fA-F0-9]{1,64}(::[A-Za-z0-9_]+){1,2}|T[1-9A-HJ-NP-Za-km-z]{33}|(EQ|UQ|0:)[A-Za-z0-9_-]{40,66}|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+const looksLikeCA = (s) => CA_RE.test(String(s || "").trim());
 
 async function entryMassDm(ctx) {
   await answer(ctx);
   if (ctx.chat && ctx.chat.type !== "private") return;
   if (!MASS_DM_ENABLED) return toast(ctx, tpl.render("massdm_disabled"));
-  freshSession(ctx, { type: "massdm", awaitingField: "massdm_compose" });
+  freshSession(ctx, { type: "massdm", awaitingField: "massdm_ca" });
   const intro = tpl.render("massdm_intro", {
     sol: fmtPrice(MASS_DM_PRICE.SOL, "SOL"),
     bnb: fmtPrice(MASS_DM_PRICE.BNB, "BNB"),
@@ -39,25 +52,32 @@ async function entryMassDm(ctx) {
   await sendCard(ctx, intro, menu.withHome([]));
 }
 
-const fmtPrice = (n, sym) => (n == null ? "—" : `${n} ${sym}`);
-
-// Preview + pay/test controls once a message is composed.
-function reviewKb(ctx) {
-  const rows = PAY_CHAINS.filter((c) => priceFor(c) != null).map((c) => [
-    Markup.button.callback(`💳 Pay ${priceFor(c)} ${nativeOf(c)} (${nativeOf(c)})`, `md_pay_${c}`),
-  ]);
-  if (isAdminUser(ctx)) {
-    rows.push([Markup.button.callback("🧪 Test send (admins only • FREE)", "md_test")]);
-  }
-  rows.push([Markup.button.callback("✏️ Recompose", "ad_massdm"), Markup.button.callback("🏠 Home", "home")]);
-  return Markup.inlineKeyboard(rows);
+// Step 1 — capture the token CA, resolve its chain, lock the pay currency.
+async function captureCa(ctx, input) {
+  const s = ctx.session;
+  const ca = String(input || "").trim().split(/\s+/)[0];
+  if (!looksLikeCA(ca)) return sendCard(ctx, tpl.render("massdm_ca_invalid"), menu.withHome([]));
+  await ctx.reply("🔍 Detecting your token's chain…").catch(() => {});
+  const res = await groupSetup.resolveToken(ca).catch(() => null);
+  const chain = res ? res.chain : groupSetup.candidateChains(ca)[0]; // fall back to the shape guess
+  const pay = payFor(chain);
+  s.massForm = { ca, chain, pay };
+  s.awaitingField = "massdm_compose";
+  await sendCard(
+    ctx,
+    tpl.render("massdm_compose_prompt", {
+      chain: chainOf(chain) ? chainOf(chain).label : chain,
+      amount: `${pay.price} ${pay.native}`,
+    }),
+    menu.withHome([]),
+  );
 }
 
+// Step 2 — capture the broadcast message, show the preview + pay/test controls.
 async function capture(ctx, { text, entities, mediaFileId }) {
   const s = ctx.session;
-  s.massForm = { text: text || "", entities: entities || [], mediaFileId: mediaFileId || null };
+  s.massForm = { ...s.massForm, text: text || "", entities: entities || [], mediaFileId: mediaFileId || null };
   s.awaitingField = null;
-  // Echo the composed message back (with its own entities) then the controls.
   const previewExtra = (s.massForm.entities || []).length
     ? { entities: s.massForm.entities, disable_web_page_preview: true }
     : { disable_web_page_preview: true };
@@ -68,17 +88,26 @@ async function capture(ctx, { text, entities, mediaFileId }) {
       await ctx.reply(s.massForm.text, previewExtra);
     }
   } catch {
-    /* preview is best-effort */
+    /* preview best-effort */
   }
-  await sendCard(ctx, tpl.render("massdm_preview"), reviewKb(ctx));
+  await sendCard(ctx, tpl.render("massdm_preview", { amount: `${s.massForm.pay.price} ${s.massForm.pay.native}` }), reviewKb(ctx));
+}
+
+function reviewKb(ctx) {
+  const pay = ctx.session.massForm.pay;
+  const rows = [[Markup.button.callback(`💳 Pay ${pay.price} ${pay.native}`, "md_pay")]];
+  if (isAdminUser(ctx)) rows.push([Markup.button.callback("🧪 Test send (admins only • FREE)", "md_test")]);
+  rows.push([Markup.button.callback("✏️ Recompose", "ad_massdm"), Markup.button.callback("🏠 Home", "home")]);
+  return Markup.inlineKeyboard(rows);
 }
 
 async function handleText(ctx) {
   const s = ctx.session;
-  if (s.type !== "massdm" || s.awaitingField !== "massdm_compose") return;
+  if (s.type !== "massdm") return;
   const text = (ctx.message.text || "").trim();
   if (!text) return;
-  return capture(ctx, { text, entities: ctx.message.entities || [] });
+  if (s.awaitingField === "massdm_ca") return captureCa(ctx, text);
+  if (s.awaitingField === "massdm_compose") return capture(ctx, { text, entities: ctx.message.entities || [] });
 }
 
 async function handlePhoto(ctx) {
@@ -92,37 +121,34 @@ async function handlePhoto(ctx) {
 async function payPick(ctx) {
   await answer(ctx);
   const s = ctx.session;
-  if (!s.massForm) return toast(ctx, tpl.render("session_expired"));
-  const chain = ctx.match[1];
-  const price = priceFor(chain);
-  if (price == null) return toast(ctx, tpl.render("pricing_unavailable"));
+  if (!s.massForm || !s.massForm.pay || s.massForm.text == null) return toast(ctx, tpl.render("session_expired"));
+  const pay = s.massForm.pay;
+  if (pay.price == null) return toast(ctx, tpl.render("pricing_unavailable"));
   await startPayment(ctx, {
     kind: "mass_dm",
-    chain,
-    native: nativeOf(chain),
-    humanAmount: price,
+    chain: pay.payChain,
+    native: pay.native,
+    humanAmount: pay.price,
     label: `Mass DM broadcast — to all Dexvra users`,
     payload: {
       text: s.massForm.text,
       entities: s.massForm.entities,
       mediaFileId: s.massForm.mediaFileId,
+      tokenCa: s.massForm.ca,
+      tokenChain: s.massForm.chain,
     },
   });
 }
 
-// FREE admin test — no payment, straight to in_progress, targeted to resolved
-// admin ids + the composer, delivery report to the composer.
 async function testSend(ctx) {
   await answer(ctx);
   if (!isAdminUser(ctx)) return toast(ctx, "Admins only.");
   const s = ctx.session;
-  if (!s.massForm) return toast(ctx, tpl.render("session_expired"));
+  if (!s.massForm || s.massForm.text == null) return toast(ctx, tpl.render("session_expired"));
   const composer = String(ctx.from.id);
   const targets = Array.from(new Set([...ADMIN_IDS.map(String), composer])).filter(Boolean);
   let mediaPath = null;
-  if (s.massForm.mediaFileId) {
-    mediaPath = await downloadMedia(ctx, s.massForm.mediaFileId).catch(() => null);
-  }
+  if (s.massForm.mediaFileId) mediaPath = await downloadMedia(ctx, s.massForm.mediaFileId).catch(() => null);
   await store.createJob({
     text: s.massForm.text,
     entities: s.massForm.entities,
@@ -142,9 +168,6 @@ function refFor() {
   return `MD-${Date.now().toString(36).toUpperCase().slice(-6)}`;
 }
 
-// Download a Telegram photo file to a temp path for the sender to re-upload
-// once (the main bot can't reuse a file_id captured by a different bot token,
-// but here it's the SAME bot — still, persisting a path survives a restart).
 async function downloadMedia(ctx, fileId) {
   const os = require("node:os");
   const path = require("node:path");
@@ -159,4 +182,4 @@ async function downloadMedia(ctx, fileId) {
   return file;
 }
 
-module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, PAY_CHAINS };
+module.exports = { entryMassDm, handleText, handlePhoto, payPick, testSend, refFor, downloadMedia, currencyOf, looksLikeCA };

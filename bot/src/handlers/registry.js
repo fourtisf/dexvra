@@ -52,7 +52,7 @@ function registerHandlers(bot) {
 
   // ── Mass DM flow ──────────────────────────────────────────────────────────
   bot.action("ad_massdm", massdm.entryMassDm);
-  bot.action(/^md_pay_([a-z]+)$/, massdm.payPick);
+  bot.action("md_pay", massdm.payPick);
   bot.action("md_test", massdm.testSend);
 
   // ── Payment ───────────────────────────────────────────────────────────────
