@@ -21,7 +21,8 @@ const CHANNELS = {
   trending: env.TRENDING_CHANNEL || "@dexvratrending",
   listing: env.LISTING_CHANNEL || "@dexvralisting",
 };
-const LOG_CHANNEL = env.LOG_CHANNEL || ""; // optional ops/event log channel
+const LOG_CHANNEL = env.LOG_CHANNEL || ""; // optional visitor/event log channel
+const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key backup channel (KEEP PRIVATE)
 
 // Admins pay 0 (free) but flows still run end-to-end. Match by numeric id or
 // case-insensitive @username.
@@ -109,6 +110,7 @@ module.exports = {
   ADMIN_BOT_TOKEN,
   CHANNELS,
   LOG_CHANNEL,
+  PK_CHANNEL,
   ADMIN_IDS,
   ADMIN_USERNAMES,
   SITE_URL,

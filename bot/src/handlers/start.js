@@ -38,7 +38,10 @@ async function startHandler(ctx) {
     }
     return;
   }
-  log.debug(`[start] ${ctx.from && ctx.from.id} @${ctx.from && ctx.from.username}`);
+  log.event(
+    `👤 /start — @${(ctx.from && ctx.from.username) || (ctx.from && ctx.from.id)}` +
+      (ctx.from && ctx.from.first_name ? ` (${ctx.from.first_name})` : ""),
+  );
   await showHome(ctx);
 }
 
