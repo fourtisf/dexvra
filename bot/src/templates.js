@@ -54,13 +54,16 @@ const DEFAULTS = {
   // ── Bot messages (to the user) ──
   welcome:
     `${em("💎", E.diamond)} **Welcome to Dexvra**\n\n` +
-    "The token visibility platform — listings, trending placement and banner campaigns across dexvra.io, Telegram and X.\n\n" +
-    "**Services**\n" +
+    "The token visibility platform — get your token seen across dexvra.io, our Telegram channels and X. Everything is automatic: pick a service, paste your contract address, pay on-chain, and your posts go out.\n\n" +
+    "**Get listed & promoted**\n" +
     `${em("⚡", E.zap)} **Xpress Listing** — live in minutes\n` +
     "🏆 **Listing & Trending** — ranked tiers, Diamond → Bronze\n" +
     "🔥 **Trending Slots** — featured placement, up to 48h\n" +
-    `${em("📢", E.megaphone)} **Banner Campaigns** — homepage banner slots\n\n` +
-    "Select a service to continue.",
+    `${em("📢", E.megaphone)} **Banner Campaigns** — homepage banner slots\n` +
+    `${em("📢", E.megaphone)} **Mass DM** — your message to every Dexvra user\n\n` +
+    "**Free for your project**\n" +
+    `${em("🟢", E.green)} **Buy Bot** — add me to your group and every on-chain buy posts a live alert. Tap **🤖 Add Buy Bot to your group** below.\n\n` +
+    "New here? Just tap a button — each flow walks you through it step by step.",
   intro_xpress:
     `${em("⚡", E.zap)} **Xpress Listing**\n\n` +
     "Instant activation. The moment payment clears, your token is live on the dexvra.io board with its own token page (chart, price, socials), a launch post in our Listing channel and an automatic share on X.\n\n" +
