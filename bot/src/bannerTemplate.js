@@ -66,10 +66,25 @@ const KIND_DEFAULTS = {
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
 const DEFAULTS = BASE_DEFAULTS; // back-compat export
 
+// Layout-version gate. updateSettings used to bake the ENTIRE then-current
+// defaults into the saved file, so one ±20px tap froze every coordinate of
+// that era's artwork forever — later default retunes could never win (live
+// incident: ticker rendered at the bottom edge, empty text panel). Saved
+// layouts now carry the version they were tuned against; a mismatch means
+// "tuned for an older artwork" and the saved layout is ignored wholesale.
+// Bump ONLY when the bundled artwork's layout changes (it invalidates saved
+// admin tweaks by design — they were positioned against the old art).
+const LAYOUT_VERSION = 6; // v6 artwork (gen-artwork.mjs)
+
+function savedLayout(saved, kind) {
+  const s = saved[kind];
+  return s && s.layoutVersion === LAYOUT_VERSION ? s : {};
+}
+
 function loadConfig() {
   const saved = loadJSONSync(CONFIG_FILE, {});
   const out = {};
-  for (const k of KINDS) out[k] = { ...defaultsFor(k), ...(saved[k] || {}) };
+  for (const k of KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
   return out;
 }
 
@@ -91,9 +106,11 @@ async function setPostingEnabled(on) {
 }
 async function updateSettings(kind, settings) {
   const saved = loadJSONSync(CONFIG_FILE, {});
-  saved[kind] = { ...defaultsFor(kind), ...(saved[kind] || {}), ...settings };
+  // persist ONLY the admin's tweaks (over prior same-version tweaks) — never
+  // bake defaults in, so future default retunes flow through untouched keys
+  saved[kind] = { ...savedLayout(saved, kind), ...settings, layoutVersion: LAYOUT_VERSION };
   await saveJSON(CONFIG_FILE, saved);
-  return saved[kind];
+  return { ...defaultsFor(kind), ...saved[kind] };
 }
 /** Drop every saved tweak for a kind — back to the defaults tuned for the
  *  bundled artwork. Cure for stale coordinates saved against older layouts. */
