@@ -21,6 +21,8 @@ const modules = [
   "../src/dexscreener",
   "../src/nativeprice",
   "../src/fulfillment",
+  "../src/assets",
+  "../src/bannerRender",
   "../src/twitter",
   "../src/helpers/format",
   "../src/helpers/message",
