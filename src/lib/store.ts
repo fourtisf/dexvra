@@ -38,6 +38,22 @@ function seed(): StoredListing[] {
   }));
 }
 
+/** Heal rows persisted BEFORE seed rows gained logoUrl: an existing
+ *  data/listings.json wins over the in-code seeds, so older deployments kept
+ *  showing emoji placeholders (and flip-flopped whenever live enrichment came
+ *  and went). Merge the seed logo in by chain+address at load time. */
+function healSeedLogos(rows: StoredListing[]): void {
+  const seedLogo = new Map(
+    SEED_ROWS.filter((r) => r.logoUrl).map((r) => [`${r.chain}:${r.address.toLowerCase()}`, r.logoUrl!]),
+  );
+  for (const r of rows) {
+    if (!r.logoUrl) {
+      const l = seedLogo.get(`${r.chain}:${String(r.address).toLowerCase()}`);
+      if (l) r.logoUrl = l;
+    }
+  }
+}
+
 async function load(): Promise<StoredListing[]> {
   if (cache) return cache;
   try {
@@ -45,6 +61,7 @@ async function load(): Promise<StoredListing[]> {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       cache = parsed as StoredListing[];
+      healSeedLogos(cache);
       return cache;
     }
     throw new Error("corrupt store");
