@@ -28,7 +28,7 @@ test("every default template key has editor metadata + a group", () => {
   for (const k of tpl.keys()) {
     const m = tpl.meta(k);
     assert.ok(m.label, `missing label for ${k}`);
-    assert.ok(["Bot Messages", "Channel Posts", "Other"].includes(m.group), `bad group for ${k}`);
+    assert.ok(["Bot Messages", "Channel Posts", "Mass DM", "Other"].includes(m.group), `bad group for ${k}`);
   }
   const g = tpl.groups();
   assert.ok(g["Bot Messages"].length > 0);

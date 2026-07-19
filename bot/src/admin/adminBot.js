@@ -447,6 +447,17 @@ async function launchBroadcast(ctx, test) {
   pollProgress(ctx.telegram, msg.chat.id, msg.message_id, job.id);
 }
 
+// The admin bot can't DM a buyer with its own token (the buyer /start-ed the
+// MAIN bot). A minimal main-bot Telegram client lets us notify buyers on
+// reject. Telegraf's telegram client needs no polling — send-only is fine.
+let mainBotApi = null;
+try {
+  const { BOT_TOKEN } = require("../config/constants");
+  if (BOT_TOKEN) mainBotApi = new Telegraf(BOT_TOKEN).telegram;
+} catch {
+  /* main-bot DMs are best-effort */
+}
+
 // ── Bot ──────────────────────────────────────────────────────────────────────
 function build() {
   const bot = new Telegraf(ADMIN_BOT_TOKEN, { handlerTimeout: 60000 });
@@ -740,6 +751,66 @@ function build() {
     ctx.session.awaitingBt = null;
     ctx.session.bcDraft = null;
     await ctx.reply("Cancelled.", { ...HTML, ...mainKb() });
+  });
+
+  // ── Paid Mass DM review ─────────────────────────────────────────────────
+  // Lists pending paid broadcasts and previews each with Approve/Reject. The
+  // main-bot sender only runs jobs in `in_progress`, so approve = flip status.
+  const massStore = require("../massdm/store");
+  async function previewMassJob(ctx, job) {
+    const buyer = job.createdByUsername ? `@${job.createdByUsername}` : `id ${job.createdBy}`;
+    const cap = `🕵️ <b>Mass DM review</b> — ref <code>${escapeHtml(job.ref || job.id)}</code>\nFrom: ${escapeHtml(buyer)} · audience ${job.total}`;
+    const kb = Markup.inlineKeyboard([
+      [Markup.button.callback("✅ Approve & send", `massrev_ok_${job.id}`), Markup.button.callback("🚫 Reject", `massrev_no_${job.id}`)],
+    ]);
+    try {
+      if (job.mediaPath && fss.existsSync(job.mediaPath)) {
+        await ctx.replyWithPhoto({ source: job.mediaPath }, { caption: job.text || cap, ...(job.entities && job.entities.length ? { caption_entities: job.entities } : {}) });
+      } else if (job.entities && job.entities.length) {
+        await ctx.reply(job.text, { entities: job.entities, disable_web_page_preview: true });
+      } else if (job.text) {
+        await ctx.reply(job.text, HTML);
+      }
+    } catch {
+      /* preview best-effort */
+    }
+    await ctx.reply(cap, { ...HTML, ...kb });
+  }
+  bot.command("reviewmassdm", async (ctx) => {
+    if (!guard(ctx)) return;
+    const pending = massStore.jobsByStatus("pending_review");
+    if (!pending.length) return ctx.reply("No paid Mass DM broadcasts awaiting review. ✅", HTML);
+    await ctx.reply(`📣 <b>${pending.length}</b> broadcast(s) awaiting review:`, HTML);
+    for (const job of pending.slice(0, 10)) await previewMassJob(ctx, job);
+  });
+  bot.action(/^massrev_ok_(.+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const job = massStore.loadJob(ctx.match[1]);
+    if (!job) return ctx.reply("That job no longer exists.", HTML);
+    if (job.status !== "pending_review") return ctx.reply(`Already ${job.status}.`, HTML);
+    job.status = "in_progress"; // the main-bot sender picks it up within ~poll interval
+    await massStore.saveJob(job);
+    log.info(`[adminbot] mass DM ${job.id} APPROVED by @${ctx.from.username || ctx.from.id}`);
+    await ctx.reply(`✅ Approved <code>${escapeHtml(job.ref || job.id)}</code> — sending now.`, HTML);
+  });
+  bot.action(/^massrev_no_(.+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const job = massStore.loadJob(ctx.match[1]);
+    if (!job) return ctx.reply("That job no longer exists.", HTML);
+    if (job.status !== "pending_review") return ctx.reply(`Already ${job.status}.`, HTML);
+    job.status = "rejected";
+    job.rejectedAt = Date.now();
+    await massStore.saveJob(job);
+    log.info(`[adminbot] mass DM ${job.id} REJECTED by @${ctx.from.username || ctx.from.id}`);
+    // DM the buyer via the MAIN bot (this admin bot can't reach them).
+    if (mainBotApi && job.createdBy) {
+      mainBotApi
+        .sendMessage(job.createdBy, `Your Mass DM broadcast (ref ${job.ref || job.id}) wasn't approved. Contact support for a review or refund.`)
+        .catch(() => {});
+    }
+    await ctx.reply(`🚫 Rejected <code>${escapeHtml(job.ref || job.id)}</code>.`, HTML);
   });
 
   // Text = new template value (when awaiting)

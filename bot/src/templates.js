@@ -165,6 +165,28 @@ const DEFAULTS = {
   success_banner:
     `✅ **Campaign booked**\n\n` +
     `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
+  massdm_disabled: "📣 Mass DM broadcasts are paused right now — check back soon.",
+  massdm_intro:
+    `${em("📢", E.megaphone)} **Mass DM Broadcast**\n\n` +
+    "Send your message as a **direct DM to every Dexvra user** — the strongest reach we offer. Every broadcast is admin-reviewed before it sends (keeps the audience clean and the bot safe).\n\n" +
+    "**Flat price**\n" +
+    "◎ {sol}\n🟡 {bnb}\n⧫ {eth}\n\n" +
+    "Send the message now — **text, or a photo with a caption** (formatting & emoji are kept):",
+  massdm_preview:
+    "👆 **This is your broadcast.**\n\n" +
+    "Check it carefully — it goes to every Dexvra user as a DM once an admin approves. Choose how to pay, or recompose:",
+  massdm_received:
+    "✅ **Payment received — your broadcast is in review.**\n\n" +
+    "Ref `{ref}`. An admin will approve it shortly; delivery starts right after. You'll get a receipt here when it's done.",
+  massdm_enqueue_failed:
+    "⚠️ **We're on it.**\n\n" +
+    "Your payment arrived (ref `{ref}`) but queuing the broadcast hit a snag. Your funds are safe — contact support with this ref and we'll push it through.",
+  massdm_test_queued:
+    "🧪 **Test broadcast queued (FREE).**\n\n" +
+    "It'll be delivered to the admins and you within a few seconds, with a delivery report — no review, no charge.",
+  massdm_done:
+    "✅ **Your Dexvra broadcast is delivered.**\n\n" +
+    "Ref `{ref}` · reached **{reached}** users. Thanks for using Dexvra.",
   upsell_expiry:
     "⏰ **Your Trending slot is ending**\n\n" +
     "**{symbol}**'s featured placement on the Dexvra Trending board ends in about **{hours}h**.\n\n" +
@@ -245,6 +267,13 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
+  massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
+  massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price", ph: ["sol", "bnb", "eth"] },
+  massdm_preview: { group: "Mass DM", label: "Mass DM: preview / pay", ph: [] },
+  massdm_received: { group: "Mass DM", label: "Mass DM: paid, in review", ph: ["ref"] },
+  massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
+  massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
+  massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
   post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "firstMc", "lastMc", "address", "coinUrl", "footer"] },

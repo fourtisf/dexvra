@@ -25,6 +25,7 @@ function mainMenu() {
     [Markup.button.callback("🏆 Listing & Trending", "listing_trend_coin")],
     [Markup.button.callback("🔥 Trending Token", "trend_coin")],
     [Markup.button.callback("📢 Banner Ads", "ad_banner")],
+    [Markup.button.callback("📣 Mass DM Broadcast", "ad_massdm")],
   ]);
 }
 
@@ -64,10 +65,10 @@ function yesNo(field) {
 }
 
 function postPurchase(siteUrl) {
-  return Markup.inlineKeyboard([
-    [Markup.button.url("🌐 View on Dexvra", siteUrl)],
-    [homeBtn()],
-  ]);
+  const rows = [];
+  if (siteUrl) rows.push([Markup.button.url("🌐 View on Dexvra", siteUrl)]);
+  rows.push([homeBtn()]);
+  return Markup.inlineKeyboard(rows);
 }
 
 const WELCOME =

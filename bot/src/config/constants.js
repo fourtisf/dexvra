@@ -130,6 +130,16 @@ const RENEW_DISCOUNT_PCT = Math.min(90, Math.max(0, int(env.RENEW_DISCOUNT_PCT, 
 // Use the bundled premium banners as channel-post media (else the token logo).
 const POST_BANNERS = bool(env.POST_BANNERS, true);
 
+// ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
+const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
+const MASS_DM_PRICE = {
+  SOL: Number(env.MASS_DM_PRICE_SOL) || 2,
+  BNB: Number(env.MASS_DM_PRICE_BNB) || 0.3,
+  ETH: Number(env.MASS_DM_PRICE_ETH) || 0.1,
+};
+// Chat that receives paid Mass DM jobs for admin review + the delivery report.
+const MASS_DM_REVIEW_CHAT_ID = env.MASS_DM_REVIEW_CHAT_ID || "";
+
 // ── Admin broadcast (compose in adminbot → sent by the MAIN bot) ─────────────
 const BROADCAST_RATE = Math.min(28, Math.max(1, int(env.BROADCAST_RATE, 20))); // msg/s (Telegram ~30/s to distinct users)
 const BROADCAST_CONCURRENCY = Math.min(16, Math.max(1, int(env.BROADCAST_CONCURRENCY, 8)));
@@ -178,6 +188,9 @@ module.exports = {
   UPSELL_WARN_HOURS,
   RENEW_DISCOUNT_PCT,
   POST_BANNERS,
+  MASS_DM_ENABLED,
+  MASS_DM_PRICE,
+  MASS_DM_REVIEW_CHAT_ID,
   BROADCAST_RATE,
   BROADCAST_CONCURRENCY,
   BROADCAST_POLL_MS,
