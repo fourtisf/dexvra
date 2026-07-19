@@ -15,8 +15,19 @@ const bannerTpl = require("../bannerTemplate");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
-const GROUPS = { msg: "Bot Messages", post: "Channel Posts" };
-const groupIdOf = (key) => Object.keys(GROUPS).find((g) => GROUPS[g] === tpl.meta(key).group) || "msg";
+// Template groups are DYNAMIC — every group that appears in templates.js META
+// gets its own menu button, so new families (Mass DM, Group Buy Bot, …) show up
+// automatically without touching this file. A stable slug id keys the callback.
+const GROUP_ICON = {
+  "Bot Messages": "📝",
+  "Channel Posts": "📢",
+  "Mass DM": "📣",
+  "Group Buy Bot": "🤖",
+};
+const slugOf = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "grp";
+const groupNames = () => Object.keys(tpl.groups());
+const nameFromSlug = (slug) => groupNames().find((n) => slugOf(n) === slug) || null;
+const groupIdOf = (key) => slugOf(tpl.meta(key).group);
 const HTML = { parse_mode: "HTML", disable_web_page_preview: true };
 
 function guard(ctx) {
@@ -27,16 +38,19 @@ function guard(ctx) {
 
 // ── Keyboards ────────────────────────────────────────────────────────────────
 function mainKb() {
+  const groupRows = groupNames().map((name) => [
+    Markup.button.callback(`${GROUP_ICON[name] || "📄"} ${name}`, `grp:${slugOf(name)}`),
+  ]);
   return Markup.inlineKeyboard([
-    [Markup.button.callback("📝 Bot Messages", "grp:msg")],
-    [Markup.button.callback("📢 Channel Posts", "grp:post")],
+    ...groupRows,
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
-function groupKb(gid) {
-  const g = tpl.groups()[GROUPS[gid]] || [];
+function groupKb(slug) {
+  const name = nameFromSlug(slug);
+  const g = (name && tpl.groups()[name]) || [];
   const rows = g.map((k) => [
     Markup.button.callback(`${tpl.isCustom(k) ? "✏️ " : ""}${tpl.meta(k).label}`, `v:${k}`),
   ]);
@@ -498,10 +512,12 @@ function build() {
     await edit(ctx, homeText(), mainKb());
   });
 
-  bot.action(/^grp:(msg|post)$/, async (ctx) => {
+  bot.action(/^grp:([a-z0-9]+)$/, async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
-    await edit(ctx, `<b>${GROUPS[ctx.match[1]]}</b>\n\nPick a template:`, groupKb(ctx.match[1]));
+    const name = nameFromSlug(ctx.match[1]);
+    if (!name) return edit(ctx, homeText(), mainKb());
+    await edit(ctx, `<b>${escapeHtml(name)}</b>\n\nPick a template:`, groupKb(ctx.match[1]));
   });
 
   bot.action(/^v:(.+)$/, async (ctx) => {

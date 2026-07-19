@@ -38,3 +38,17 @@ test("every default template key has editor metadata + a group", () => {
 test("t() falls back to default for an unknown key without throwing", () => {
   assert.strictEqual(tpl.t("does_not_exist", {}), "");
 });
+
+test("every template group is menu-reachable via a unique slug (admin editor)", () => {
+  const slug = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "grp";
+  const groups = Object.keys(tpl.groups());
+  // the families the bot now ships MUST each be their own editable group
+  for (const g of ["Bot Messages", "Channel Posts", "Mass DM", "Group Buy Bot"]) {
+    assert.ok(groups.includes(g), `admin editor is missing the '${g}' group`);
+  }
+  // slugs are unique (callback-data collisions would hide a group)
+  const slugs = groups.map(slug);
+  assert.strictEqual(new Set(slugs).size, slugs.length, "duplicate group slugs");
+  // every template resolves to a listed group (nothing orphaned)
+  for (const k of tpl.keys()) assert.ok(groups.includes(tpl.meta(k).group), `${k} in an unlisted group`);
+});
