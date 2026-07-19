@@ -48,6 +48,10 @@ const BASE_DEFAULTS = {
   nameFontSize: 48,
   nameColor: "#B8CCC8",
   nameOffsetY: 100,
+  // token meta chips (CHAIN · price · MC) under the ring — filled by live data
+  metaX: 2100, // center x | "center"
+  metaY: 1128,
+  metaFontSize: 38,
 };
 const KIND_DEFAULTS = {
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
@@ -94,6 +98,7 @@ function canvasLib() {
       if (fss.existsSync(p)) CV.GlobalFonts.registerFromPath(p, fam);
     };
     reg("Sora-800.ttf", "TplBold");
+    reg("Sora-600.ttf", "TplSemi");
     reg("Sora-500.ttf", "TplReg");
   } catch (e) {
     log.warn(`[bannerTpl] canvas unavailable: ${e.message}`);
@@ -105,7 +110,7 @@ function canvasLib() {
 
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name } = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap } = {}) {
   if (!hasTemplate(kind)) return null;
   const cv = canvasLib();
   if (!cv) return null;
@@ -200,6 +205,47 @@ async function compose(kind, logoBuffer, { symbol, name } = {}) {
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
+    }
+
+    // Token meta chips under the ring: [CHAIN] [$price] [MC $x] — fills the
+    // empty area beneath the hero with the data readers actually want.
+    if (cfg.showText && cfg.slotShape !== "rect") {
+      const vals = [chain, price && price !== "TBA" ? price : null, mcap ? `MC ${mcap}` : null]
+        .map((v) => (v ? String(v) : null))
+        .filter(Boolean);
+      if (vals.length) {
+        const fsz = Number(cfg.metaFontSize) || 38;
+        const padX = fsz * 0.55;
+        const gap = 18;
+        const chipH = fsz * 1.9;
+        ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
+        const widths = vals.map((v) => ctx.measureText(v).width + padX * 2);
+        const total = widths.reduce((a, b) => a + b, 0) + gap * (vals.length - 1);
+        const cxm = cfg.metaX === "center" ? W / 2 : Number(cfg.metaX) || W / 2;
+        let x = cxm - total / 2;
+        const y = Number(cfg.metaY) || H - 152;
+        for (let i = 0; i < vals.length; i++) {
+          const w = widths[i];
+          const r = chipH / 2;
+          ctx.beginPath();
+          ctx.moveTo(x + r, y);
+          ctx.arcTo(x + w, y, x + w, y + chipH, r);
+          ctx.arcTo(x + w, y + chipH, x, y + chipH, r);
+          ctx.arcTo(x, y + chipH, x, y, r);
+          ctx.arcTo(x, y, x + w, y, r);
+          ctx.closePath();
+          ctx.fillStyle = "rgba(255,255,255,.055)";
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = (cfg.tickerGlow || "#4EE6A8") + "55";
+          ctx.stroke();
+          ctx.fillStyle = i === 0 ? "#EAF6F2" : "#CFE4DE";
+          ctx.textBaseline = "middle";
+          ctx.fillText(vals[i], x + padX, y + chipH / 2 + 2);
+          ctx.textBaseline = "alphabetic";
+          x += w + gap;
+        }
+      }
     }
 
     return canvas.toBuffer("image/png");
