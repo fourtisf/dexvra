@@ -14,6 +14,9 @@ function attachServices(bot, services) {
   if (require("../config/constants").MASS_DM_ENABLED) {
     services.push(require("../massdm/sender").start(tg)); // paid Mass DM delivery (approved jobs only)
   }
+  if (require("../config/constants").GROUP_BUYBOT_ENABLED) {
+    services.push(require("../group/buyMonitor").start(tg)); // group buy alerts
+  }
 
   // One-shot recovery: re-fulfil paid orders + detect late-arriving payments.
   require("./recovery")

@@ -6,6 +6,7 @@ const listing = require("./listing");
 const trending = require("./trending");
 const banner = require("./banner");
 const massdm = require("./massdm");
+const groupSetup = require("../group/setup");
 const text = require("./text");
 const payment = require("../payments/payment");
 const log = require("../helpers/logger");
@@ -18,6 +19,12 @@ function registerHandlers(bot) {
   bot.help((ctx) =>
     ctx.reply("Send /start to open the menu. List your token, book Trending, or run a Banner Ad."),
   );
+
+  // ── Group buy bot (run inside a project's group chat) ──────────────────────
+  bot.command("settoken", groupSetup.settoken);
+  bot.command("setchain", groupSetup.setchain);
+  bot.command("setminbuy", groupSetup.setminbuy);
+  bot.command("buybot", groupSetup.buybot);
 
   // ── Main menu ─────────────────────────────────────────────────────────────
   bot.action("home", start.homeHandler);
