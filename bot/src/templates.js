@@ -1,76 +1,117 @@
 // Editable-template engine. Every user-facing message and channel-post layout
 // has a built-in DEFAULT here; admins override any of them via @dexvraadminbot,
-// which writes data/templates.json. The main bot reads through t(key, vars),
-// substituting {placeholders}, and auto-refreshes the file every 30s so edits
-// apply WITHOUT a redeploy. Templates are HTML (parse_mode:"HTML").
+// which writes data/templates.json. The main bot reads through render(key, vars)
+// / t(key, vars), substituting {placeholders}, and auto-refreshes the file every
+// 30s so edits apply WITHOUT a redeploy.
+//
+// Template format — PREMIUM MARKUP (fourtis syntax), not HTML:
+//   [😀](emoji/1234567890)  premium custom emoji (😀 = fallback shown to non-premium)
+//   **bold**   [text](url)   `code`
+// Rendering modes, decided per template:
+//   1. Admin pasted a message containing premium emoji → stored {text, entities},
+//      re-sent with entities (offset-safe substitution).
+//   2. Markup string (all DEFAULTS) → parsed to text+entities.
+//   3. Legacy saved HTML (real tags present, no markup) → parse_mode:"HTML".
 const path = require("node:path");
 const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
+const premium = require("./premium");
 
 const FILE = "templates.json";
 const BANNER_PATH = path.join(DATA_DIR, "banner"); // image bytes (any ext), set by adminbot
 const REFRESH_MS = 30000;
 
-// ── Built-in defaults ────────────────────────────────────────────────────────
+// Premium emoji document IDs (public packs, proven in fourtis production).
+// Any Telegram Premium account can send these; regular bots fall back to the
+// plain unicode emoji. Central map so templates stay readable.
+const E = {
+  rocket: "5341323326188956773", // 🚀
+  plane: "5039783602301175152", // ✈️
+  globe: "5456437619476941825", // 🌐
+  globe2: "5447410659077661506", // 🌐 (alt)
+  link: "5271604874419647061", // 🔗
+  zap: "5105049474359624797", // ⚡
+  zap2: "5456140674028019486", // ⚡️
+  chartUp: "5280842756367851322", // 📈
+  siren: "5972051363939487192", // 🚨
+  sirenHead: "5395695537687123235", // 🚨 (header)
+  clip: "5305265301917549162", // 📎
+  chart: "5415916918026548824", // 📊
+  dollar: "5413400737205990933", // 💲
+  green: "6073581319915312172", // 🟢
+  megaphone: "5217943819311389632", // 📢
+  gold: "5440539497383087970", // 🥇
+  diamond: "5427168083074628963", // 💎
+  cross: "5454335838575936647", // ❌
+};
+const em = (emoji, id) => `[${emoji}](emoji/${id})`;
+
+// ── Built-in defaults (premium markup) ───────────────────────────────────────
 // Placeholders each template accepts are listed in META below (for the editor).
 const DEFAULTS = {
   // ── Bot messages (to the user) ──
   welcome:
-    "🚀 <b>Dexvra Bot</b> — Find the next Moonshot\n\n" +
+    `${em("🚀", E.rocket)} **Dexvra Bot** — Find the next Moonshot\n\n` +
     "List your token and get seen across the Dexvra network — website, Telegram channels, and X.\n\n" +
-    "<b>Packages:</b>\n" +
-    "⚡ <b>Xpress Listing</b> — instant listing, live on the board\n" +
-    "🏆 <b>Listing &amp; Trending</b> — tiered (Diamond → Bronze) with announcement post\n" +
-    "🔥 <b>Trending</b> — featured trending slot (3H–48H)\n" +
-    "📢 <b>Banner Ads</b> — homepage banner takeover\n\n" +
+    "**Packages:**\n" +
+    `${em("⚡", E.zap)} **Xpress Listing** — instant listing, live on the board\n` +
+    "🏆 **Listing & Trending** — tiered (Diamond → Bronze) with announcement post\n" +
+    "🔥 **Trending** — featured trending slot (3H–48H)\n" +
+    `${em("📢", E.megaphone)} **Banner Ads** — homepage banner takeover\n\n` +
     "Pick an option below 👇",
-  listing_ca_prompt: "📄 Send your token's <b>contract address</b> on <b>{chain}</b>:",
-  listing_name_prompt: "🏷 Send your <b>token name</b>:",
-  listing_symbol_prompt: "🔤 Send your <b>token symbol</b> (e.g. BONK):",
-  listing_logo_prompt: "🖼 Send your <b>logo</b> as a photo, or /skip:",
+  listing_ca_prompt: `${em("🔗", E.link)} Send your token's **contract address** on **{chain}**:`,
+  listing_name_prompt: "🏷 Send your **token name**:",
+  listing_symbol_prompt: "🔤 Send your **token symbol** (e.g. BONK):",
+  listing_logo_prompt: "🖼 Send your **logo** as a photo, or /skip:",
   trending_ca_prompt:
-    "🔥 <b>Book a Trending slot</b>\n\nSend the <b>contract address</b> (or Dexvra token link) of your <b>already-listed</b> token:",
+    "🔥 **Book a Trending slot**\n\nSend the **contract address** (or Dexvra token link) of your **already-listed** token:",
   trending_not_found:
-    "❌ I couldn't find that token listed on Dexvra.\n\nList it first (⚡ Xpress or 🏆 Listing &amp; Trending), then come back to book a Trending slot.",
+    `${em("❌", E.cross)} I couldn't find that token listed on Dexvra.\n\n` +
+    "List it first (⚡ Xpress or 🏆 Listing & Trending), then come back to book a Trending slot.",
   pay_card:
-    "💳 <b>Payment</b>\n\n<b>{label}</b>\n\n" +
-    "Send <b>exactly {amount} {native}</b> to this address:\n\n" +
-    "<code>{address}</code>\n\n" +
-    "⏱ This address is unique to your order. After you send, tap <b>Confirm</b> and I'll verify it on-chain (this can take up to a minute).",
-  pay_card_admin:
-    "🧪 <b>Admin test order (FREE)</b>\n\n<b>{label}</b>\n\nNo payment required — tap <b>Confirm</b> to activate.",
+    `💳 **Payment**\n\n**{label}**\n\n` +
+    `Send **exactly {amount} {native}** to this address:\n\n` +
+    "`{address}`\n\n" +
+    "⏱ This address is unique to your order. After you send, tap **Confirm** and I'll verify it on-chain (this can take up to a minute).",
+  pay_card_admin: "🧪 **Admin test order (FREE)**\n\n**{label}**\n\nNo payment required — tap **Confirm** to activate.",
   payment_not_detected:
-    "❌ I haven't detected your payment yet.\n\nSend exactly <b>{amount} {native}</b> to:\n<code>{address}</code>\n\nThen tap <b>Confirm</b> again. If you already paid, wait a moment (or contact support with order <code>{order}</code>).",
+    `${em("❌", E.cross)} I haven't detected your payment yet.\n\n` +
+    "Send exactly **{amount} {native}** to:\n`{address}`\n\n" +
+    "Then tap **Confirm** again. If you already paid, wait a moment (or contact support with order `{order}`).",
   payment_snag:
-    "⚠️ Payment received but finalizing hit a snag. Your order <code>{order}</code> is safe — please contact support and we'll complete it.",
+    "⚠️ Payment received but finalizing hit a snag. Your order `{order}` is safe — please contact support and we'll complete it.",
   success_listing:
-    "✅ <b>Payment successful — your token is LIVE on Dexvra!</b>\n\n" +
-    "<b>{symbol}</b> — {name}\n🌐 <a href=\"{siteUrl}\">View your listing</a>\n{postLinks}\n\nThanks for listing with Dexvra! 🚀",
+    `✅ **Payment successful — your token is LIVE on Dexvra!**\n\n` +
+    `**{symbol}** — {name}\n${em("🌐", E.globe)} [View your listing]({siteUrl})\n{postLinks}\n\n` +
+    `Thanks for listing with Dexvra! ${em("🚀", E.rocket)}`,
   success_trending:
-    "✅ <b>Payment successful — Trending activated!</b>\n\n" +
-    "<b>{symbol}</b> is now featured on Dexvra Trending for <b>{hours}h</b>.\n🌐 <a href=\"{siteUrl}\">View on Dexvra</a>\n{postLinks}",
+    `✅ **Payment successful — Trending activated!**\n\n` +
+    `**{symbol}** is now featured on Dexvra Trending for **{hours}h**.\n` +
+    `${em("🌐", E.globe)} [View on Dexvra]({siteUrl})\n{postLinks}`,
   success_banner:
-    "✅ <b>Payment successful — Banner ad booked!</b>\n\n" +
-    "Your <b>{slot}</b> is running on Dexvra until {endsAt}.\n{postLinks}",
+    `✅ **Payment successful — Banner ad booked!**\n\n` +
+    `Your **{slot}** is running on Dexvra until {endsAt}.\n{postLinks}`,
 
   // ── Channel post layouts ──
   // {tierLine}/{socials}/{footer} are auto-built; the rest are raw values.
   post_listing:
-    "{head}\n\n{tierLine}<b>{name}</b> <a href=\"{coinUrl}\">({symbol})</a>\n" +
-    "🔗 <b>Contract:</b>\n<code>{address}</code>\n" +
-    "📊 <b>Chain:</b> {chain}\n" +
-    "💲 <b>Price:</b> {price}  |  <b>MC:</b> {mcap}\n{socials}\n" +
-    "🟢 <a href=\"{coinUrl}\">Buy / View on Dexvra</a>{footer}",
+    `{head}\n\n{tierLine}**{name}** [({symbol})]({coinUrl})\n` +
+    `${em("🔗", E.link)} **Contract:**\n\`{address}\`\n` +
+    `${em("📊", E.chart)} **Chain:** {chain}\n` +
+    `${em("💲", E.dollar)} **Price:** {price}  |  **MC:** {mcap}\n{socials}\n` +
+    `${em("🟢", E.green)} [Buy / View on Dexvra]({coinUrl}){footer}`,
   post_trending:
-    "🔥 <b>{symbol} is now Trending on Dexvra</b> ⚡\n\n" +
-    "<b>{name}</b>  ·  {chain}\n🔗 <b>CA:</b> <code>{address}</code>\n" +
-    "💲 <b>Price:</b> {price}  |  <b>MC:</b> {mcap}\n{socials}\n" +
-    "🔥 <a href=\"{coinUrl}\">View on Dexvra Trending</a>{footer}",
+    `🔥 **{symbol} is now Trending on Dexvra** ${em("⚡", E.zap)}\n\n` +
+    `**{name}**  ·  {chain}\n${em("🔗", E.link)} **CA:** \`{address}\`\n` +
+    `${em("💲", E.dollar)} **Price:** {price}  |  **MC:** {mcap}\n{socials}\n` +
+    `🔥 [View on Dexvra Trending]({coinUrl}){footer}`,
   post_pump:
-    "📈 <b>Pump Alert — Dexvra</b> ⚡\n\n" +
-    "<b>{name} | {symbol}</b> is up <b>{percent}%</b> since listing on <a href=\"{coinUrl}\">Dexvra</a>\n\n" +
-    "🚨 <b>First MC:</b> {firstMc}  |  <b>Last MC:</b> {lastMc}\n🔗 <code>{address}</code>{footer}",
+    `${em("📈", E.chartUp)} **Pump Alert — Dexvra** ${em("⚡", E.zap)}\n\n` +
+    `**{name} | {symbol}** is up **{percent}%** since listing on [Dexvra]({coinUrl})\n\n` +
+    `${em("🚨", E.siren)} **First MC:** {firstMc}  |  **Last MC:** {lastMc}\n` +
+    `${em("🔗", E.link)} \`{address}\`{footer}`,
   post_banner:
-    "📢 <b>Featured on Dexvra</b>\n\n{title} is now running a <b>{slot}</b> banner across Dexvra.\n👉 <a href=\"{linkUrl}\">Check it out</a>{footer}",
+    `${em("📢", E.megaphone)} **Featured on Dexvra**\n\n` +
+    `{title} is now running a **{slot}** banner across Dexvra.\n👉 [Check it out]({linkUrl}){footer}`,
 };
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
@@ -112,14 +153,37 @@ function substitute(tpl, vars) {
   return String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null ? String(vars[k]) : ""));
 }
 
-/** Resolve a template with placeholder substitution. */
-function t(key, vars) {
-  const tpl = loadAll()[key];
-  return substitute(tpl != null ? tpl : DEFAULTS[key] || "", vars);
+/** Resolve a template into a send-ready payload:
+ *    { text, entities }  — markup default or admin-pasted premium-emoji template
+ *    { html }            — legacy admin-saved HTML template
+ *  message.js / channels/post.js accept this payload shape directly. */
+function render(key, vars) {
+  const val = loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
+  if (val && typeof val === "object" && val.text != null) {
+    // Admin-pasted template stored with real entity arrays (premium emoji kept).
+    return premium.substituteEntities(val.text, val.entities, vars);
+  }
+  const s = String(val);
+  if (!premium.hasPremiumMarkup(s) && premium.looksLikeHtml(s)) {
+    // Legacy HTML template saved before the markup era — render as HTML.
+    return { html: substitute(s, vars) };
+  }
+  return premium.parse(substitute(s, vars));
 }
 
-/** Raw (unsubstituted) current value — for the editor's "current" view. */
+/** Plain-text resolve (markup stripped to clean text) — for previews/tests. */
+function t(key, vars) {
+  const r = render(key, vars);
+  return r.html != null ? r.html : r.text;
+}
+
+/** Raw (unsubstituted) current value — for the editor's "current" view.
+ *  Entity-based templates return their text (entities noted by the editor). */
 function getRaw(key) {
+  const val = loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
+  return val && typeof val === "object" && val.text != null ? val.text : String(val);
+}
+function getRawValue(key) {
   return loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
 }
 function isCustom(key) {
@@ -150,7 +214,9 @@ const groups = () => {
 
 module.exports = {
   t,
+  render,
   getRaw,
+  getRawValue,
   isCustom,
   setTemplate,
   resetTemplate,
@@ -160,4 +226,6 @@ module.exports = {
   substitute,
   DEFAULTS,
   BANNER_PATH,
+  EMOJI: E,
+  em,
 };

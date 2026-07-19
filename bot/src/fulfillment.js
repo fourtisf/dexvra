@@ -13,7 +13,9 @@ const x = require("./twitter");
 const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS, POST_BANNERS } = require("./config/constants");
 const { tierAnnounces } = require("./config/packages");
-const { escapeHtml, fmtPrice, formatNumber } = require("./helpers/format");
+const { fmtPrice, formatNumber } = require("./helpers/format");
+const { payloadArgs } = require("./helpers/message");
+const premium = require("./premium");
 const { chainOf } = require("./config/chains");
 const assets = require("./assets");
 const bannerRender = require("./bannerRender");
@@ -37,8 +39,9 @@ async function downloadFile(telegram, fileId) {
   }
 }
 
-async function dm(ctx, text, keyboard) {
-  const extra = { parse_mode: "HTML", disable_web_page_preview: true, ...(keyboard || {}) };
+async function dm(ctx, payload, keyboard) {
+  const { text, extra: base } = payloadArgs(payload, false);
+  const extra = { ...base, ...(keyboard || {}) };
   try {
     if (typeof ctx.reply === "function") return await ctx.reply(text, extra);
     return await ctx.telegram.sendMessage(ctx.from.id, text, extra);
@@ -237,29 +240,29 @@ async function fulfillBanner(ctx, order) {
   return booking;
 }
 
-// ── Buyer success copy ───────────────────────────────────────────────────────
+// ── Buyer success copy (premium markup — rendered to entities by tpl.render) ─
 function linkLines(links) {
-  return (links || []).map((l) => `${l.label}: <a href="${l.url}">open ↗</a>`).join("\n");
+  return (links || []).map((l) => `${l.label}: [open ↗](${l.url})`).join("\n");
 }
 function successListing(coin, links) {
-  return tpl.t("success_listing", {
-    symbol: fmt.sym(coin.symbol),
-    name: escapeHtml(coin.name),
+  return tpl.render("success_listing", {
+    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
+    name: premium.sanitizeVar(coin.name),
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
   });
 }
 function successTrending(coin, hours, links) {
-  return tpl.t("success_trending", {
-    symbol: fmt.sym(coin.symbol),
+  return tpl.render("success_trending", {
+    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
     hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
   });
 }
 function successBanner(rec, links) {
-  return tpl.t("success_banner", {
-    slot: escapeHtml(rec.slot),
+  return tpl.render("success_banner", {
+    slot: premium.sanitizeVar(rec.slot),
     endsAt: new Date(rec.endsAt).toUTCString(),
     postLinks: linkLines(links),
   });

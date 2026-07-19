@@ -9,8 +9,8 @@ async function startPayment(ctx, order) {
   const r = await armPayment(ctx, order);
   const label = order.label || order.kind;
   const text = r.adminFree
-    ? tpl.t("pay_card_admin", { label })
-    : tpl.t("pay_card", { label, amount: r.humanAmount, native: r.native, address: r.address });
+    ? tpl.render("pay_card_admin", { label })
+    : tpl.render("pay_card", { label, amount: r.humanAmount, native: r.native, address: r.address });
   await sendCard(ctx, text, menu.confirmPayment());
 }
 

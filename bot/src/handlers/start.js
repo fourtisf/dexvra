@@ -32,7 +32,7 @@ function bannerPhoto() {
 
 async function showHome(ctx) {
   resetSession(ctx);
-  const text = tpl.t("welcome");
+  const text = tpl.render("welcome");
   const banner = bannerPhoto();
   if (banner) await sendPhotoCard(ctx, banner, text, mainMenu());
   else await sendCard(ctx, text, mainMenu());

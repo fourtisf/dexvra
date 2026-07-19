@@ -16,12 +16,29 @@ function retryAfter(e) {
   return null;
 }
 
+/** Caption/text extra for a job: admin-composed entities (premium emoji kept —
+ *  Telegram strips custom emoji it can't send, leaving the unicode fallback)
+ *  or legacy HTML when the compose had no entities. */
+function jobExtra(job, forCaption) {
+  const ents = job.entities || [];
+  if (ents.length) {
+    return forCaption
+      ? { caption: job.text, caption_entities: ents }
+      : { entities: ents, disable_web_page_preview: true };
+  }
+  return forCaption
+    ? job.text
+      ? { caption: job.text, parse_mode: "HTML" }
+      : {}
+    : { parse_mode: "HTML", disable_web_page_preview: true };
+}
+
 async function sendOne(telegram, job, userId) {
   try {
     if (job.mediaFileId) {
-      await telegram.sendPhoto(userId, job.mediaFileId, job.text ? { caption: job.text, parse_mode: "HTML" } : {});
+      await telegram.sendPhoto(userId, job.mediaFileId, job.text ? jobExtra(job, true) : {});
     } else {
-      await telegram.sendMessage(userId, job.text, { parse_mode: "HTML", disable_web_page_preview: true });
+      await telegram.sendMessage(userId, job.text, jobExtra(job, false));
     }
     return true;
   } catch (e) {
@@ -43,7 +60,7 @@ async function primeMedia(telegram, job) {
     const msg = await telegram.sendPhoto(
       first,
       { source: job.mediaPath },
-      job.text ? { caption: job.text, parse_mode: "HTML" } : {},
+      job.text ? jobExtra(job, true) : {},
     );
     const photos = msg && msg.photo;
     if (photos && photos.length) job.mediaFileId = photos[photos.length - 1].file_id;

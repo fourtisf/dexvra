@@ -12,6 +12,8 @@ const modules = [
   "../src/config/chains",
   "../src/config/constants",
   "../src/config/packages",
+  "../src/premium",
+  "../src/gramjs",
   "../src/templates",
   "../src/admin/adminBot",
   "../src/broadcast/store",

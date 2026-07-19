@@ -71,10 +71,15 @@ function homeText() {
 function viewText(key) {
   const m = tpl.meta(key);
   const raw = tpl.getRaw(key);
+  const val = tpl.getRawValue(key);
+  const premiumNote =
+    val && typeof val === "object" && val.entities && val.entities.length
+      ? `\n💎 Saved with ${val.entities.filter((e) => e.type === "custom_emoji").length} premium emoji (entities preserved).\n`
+      : "";
   const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
   return (
     `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "default"}\n\n` +
-    `Placeholders: <code>${escapeHtml(ph)}</code>\n\n` +
+    `Placeholders: <code>${escapeHtml(ph)}</code>\n${premiumNote}\n` +
     `Current:\n<pre>${escapeHtml(raw)}</pre>\n\n` +
     `Tap <b>✏️ Edit</b> to change it.`
   );
@@ -154,6 +159,7 @@ async function launchBroadcast(ctx, test) {
   }
   const job = await bcStore.createJob({
     text: draft.text || "",
+    entities: draft.entities || [],
     mediaPath,
     createdBy: String(ctx.from.id),
     createdByUsername: ctx.from.username,
@@ -211,7 +217,11 @@ function build() {
     const m = tpl.meta(key);
     const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
     await ctx.reply(
-      `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\nHTML allowed (&lt;b&gt;, &lt;a href&gt;, &lt;code&gt;). Placeholders: <code>${escapeHtml(ph)}</code>\n\nSend /cancel to abort.`,
+      `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\n` +
+        `Formatting: <code>**bold**</code>, <code>[text](url)</code>, <code>\`code\`</code>, ` +
+        `<code>[😀](emoji/ID)</code> for premium emoji — or just paste a message that ` +
+        `<b>contains real premium emoji</b> and they'll be preserved as-is.\n\n` +
+        `Placeholders: <code>${escapeHtml(ph)}</code>\n\nSend /cancel to abort.`,
       HTML,
     );
   });
@@ -293,19 +303,34 @@ function build() {
     if (!guard(ctx)) return;
     const text = ctx.message.text || "";
     if (text.startsWith("/")) return; // commands handled above
+    const entities = ctx.message.entities || [];
     if (ctx.session.awaitingBroadcast) {
       ctx.session.awaitingBroadcast = false;
-      ctx.session.bcDraft = { text };
-      await ctx.reply(text, HTML).catch(() => {}); // rendered preview
+      ctx.session.bcDraft = { text, entities };
+      // rendered preview — re-send with the admin's entities so premium emoji show
+      const prevExtra = entities.length
+        ? { entities, disable_web_page_preview: true }
+        : HTML;
+      await ctx.reply(text, prevExtra).catch(() => {});
       await ctx.reply("Send this broadcast?", bcControlKb(bcStore.audience().length));
       return;
     }
     const key = ctx.session.awaitingTemplate;
     if (!key) return;
     ctx.session.awaitingTemplate = null;
-    await tpl.setTemplate(key, text);
-    log.info(`[adminbot] template '${key}' updated by @${ctx.from.username || ctx.from.id} (${text.length} chars)`);
-    await ctx.reply(`✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>. It goes live within ~30s.`, HTML);
+    // A message pasted WITH entities (premium emoji / formatting) is stored
+    // verbatim as {text, entities} so custom emoji survive; plain text stays a
+    // string and is rendered as premium markup by the main bot.
+    const value = entities.length ? { text, entities } : text;
+    await tpl.setTemplate(key, value);
+    const nPrem = entities.filter((e) => e.type === "custom_emoji").length;
+    log.info(
+      `[adminbot] template '${key}' updated by @${ctx.from.username || ctx.from.id} (${text.length} chars, ${entities.length} entities, ${nPrem} premium emoji)`,
+    );
+    await ctx.reply(
+      `✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>${nPrem ? ` with 💎 ${nPrem} premium emoji` : ""}. It goes live within ~30s.`,
+      HTML,
+    );
     await ctx.reply(viewText(key), { ...HTML, ...viewKb(key) });
   });
 
@@ -316,12 +341,15 @@ function build() {
       const fileId = getMediaFileId(ctx);
       if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo.").catch(() => {});
       ctx.session.awaitingBroadcast = false;
-      ctx.session.bcDraft = { adminFileId: fileId, text: ctx.message.caption || "" };
+      const capEntities = ctx.message.caption_entities || [];
+      ctx.session.bcDraft = { adminFileId: fileId, text: ctx.message.caption || "", entities: capEntities };
       try {
-        await ctx.replyWithPhoto(
-          fileId,
-          ctx.message.caption ? { caption: ctx.message.caption, parse_mode: "HTML" } : {},
-        );
+        const prevExtra = capEntities.length
+          ? { caption: ctx.message.caption, caption_entities: capEntities }
+          : ctx.message.caption
+            ? { caption: ctx.message.caption, parse_mode: "HTML" }
+            : {};
+        await ctx.replyWithPhoto(fileId, prevExtra);
       } catch {
         /* preview best-effort */
       }
