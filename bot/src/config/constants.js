@@ -136,10 +136,11 @@ const GROUP_BUYBOT_CHECK_MS = Math.max(10000, int(env.GROUP_BUYBOT_CHECK_MS, 20 
 
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
+// 50%-off launch pricing (was 2 / 0.3 / 0.1). Override per-chain via env.
 const MASS_DM_PRICE = {
-  SOL: Number(env.MASS_DM_PRICE_SOL) || 2,
-  BNB: Number(env.MASS_DM_PRICE_BNB) || 0.3,
-  ETH: Number(env.MASS_DM_PRICE_ETH) || 0.1,
+  SOL: Number(env.MASS_DM_PRICE_SOL) || 1,
+  BNB: Number(env.MASS_DM_PRICE_BNB) || 0.15,
+  ETH: Number(env.MASS_DM_PRICE_ETH) || 0.05,
 };
 // Chat that receives paid Mass DM jobs for admin review + the delivery report.
 const MASS_DM_REVIEW_CHAT_ID = env.MASS_DM_REVIEW_CHAT_ID || "";
