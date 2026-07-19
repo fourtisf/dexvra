@@ -148,7 +148,7 @@ test("looksLikeHtml: real tags yes, bare & / < no", () => {
 
 test("render: markup default → {text, entities} with premium emoji", () => {
   const r = tpl.render("welcome");
-  assert.ok(r.text.includes("Dexvra Bot"));
+  assert.ok(r.text.includes("Welcome to Dexvra"));
   assert.ok(!r.text.includes("**"), "markup stripped from text");
   assert.ok(!r.text.includes("(emoji/"), "emoji tags stripped from text");
   const prem = r.entities.filter((e) => e.type === "custom_emoji");
@@ -169,7 +169,7 @@ test("render: channel post default substitutes vars into entities payload", () =
     socials: "",
     footer: "",
   });
-  assert.ok(r.text.includes("$JIM is now Trending on Dexvra"));
+  assert.ok(r.text.includes("$JIM is Trending on Dexvra"));
   assert.ok(r.text.includes("So1abc"));
   assert.ok(r.entities.some((e) => e.type === "custom_emoji"));
   assert.ok(r.entities.some((e) => e.type === "code")); // `address`

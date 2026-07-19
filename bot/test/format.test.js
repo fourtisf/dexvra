@@ -44,7 +44,7 @@ test("listing post payload contains the essentials + premium emoji entities", ()
 test("pump post payload shows percent + MCs", () => {
   const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
   const card = fmt.pumpPost(coin, 137.6, 310000, 128400000);
-  assert.ok(card.text.includes("138%"));
-  assert.ok(card.text.includes("Pump Alert"));
+  assert.ok(card.text.includes("+138%"));
+  assert.ok(card.text.includes("Market cap"));
   assert.ok(card.entities.some((e) => e.type === "custom_emoji"));
 });

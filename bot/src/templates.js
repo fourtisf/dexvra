@@ -47,71 +47,78 @@ const em = (emoji, id) => `[${emoji}](emoji/${id})`;
 
 // ── Built-in defaults (premium markup) ───────────────────────────────────────
 // Placeholders each template accepts are listed in META below (for the editor).
+// Voice: professional exchange-style — clear hierarchy, short lines, emoji as
+// accents (never bullet spam). Deliberately NOT the fourtis layout.
 const DEFAULTS = {
   // ── Bot messages (to the user) ──
   welcome:
-    `${em("🚀", E.rocket)} **Dexvra Bot** — Find the next Moonshot\n\n` +
-    "List your token and get seen across the Dexvra network — website, Telegram channels, and X.\n\n" +
-    "**Packages:**\n" +
-    `${em("⚡", E.zap)} **Xpress Listing** — instant listing, live on the board\n` +
-    "🏆 **Listing & Trending** — tiered (Diamond → Bronze) with announcement post\n" +
-    "🔥 **Trending** — featured trending slot (3H–48H)\n" +
-    `${em("📢", E.megaphone)} **Banner Ads** — homepage banner takeover\n\n` +
-    "Pick an option below 👇",
-  listing_ca_prompt: `${em("🔗", E.link)} Send your token's **contract address** on **{chain}**:`,
-  listing_name_prompt: "🏷 Send your **token name**:",
-  listing_symbol_prompt: "🔤 Send your **token symbol** (e.g. BONK):",
-  listing_logo_prompt: "🖼 Send your **logo** as a photo, or /skip:",
+    `${em("💎", E.diamond)} **Welcome to Dexvra**\n\n` +
+    "The visibility platform for tokens — listings, trending placements and banner campaigns across dexvra.io, our Telegram network and X.\n\n" +
+    "**What would you like to launch today?**\n\n" +
+    `${em("⚡", E.zap)} **Xpress Listing** — live in minutes\n` +
+    "🏆 **Listing & Trending** — Diamond → Bronze tiers, with announcement\n" +
+    "🔥 **Trending Slots** — 3 to 48 hours of featured placement\n" +
+    `${em("📢", E.megaphone)} **Banner Campaigns** — premium homepage placement\n\n` +
+    "Select an option below.",
+  listing_ca_prompt:
+    `${em("🔗", E.link)} **Contract address**\n\nPaste your token's contract address on **{chain}**:`,
+  listing_name_prompt: "**Token name**\n\nWhat is your project called?",
+  listing_symbol_prompt: "**Ticker**\n\nSend your token symbol (e.g. PEPE):",
+  listing_logo_prompt: "**Logo**\n\nSend your logo as a photo — or /skip to continue without one.",
   trending_ca_prompt:
-    "🔥 **Book a Trending slot**\n\nSend the **contract address** (or Dexvra token link) of your **already-listed** token:",
+    "🔥 **Book a Trending slot**\n\nPaste the contract address (or Dexvra token link) of your **listed** token:",
   trending_not_found:
-    `${em("❌", E.cross)} I couldn't find that token listed on Dexvra.\n\n` +
-    "List it first (⚡ Xpress or 🏆 Listing & Trending), then come back to book a Trending slot.",
+    `${em("❌", E.cross)} **Not listed yet**\n\n` +
+    "We couldn't find that token on Dexvra. List it first — ⚡ Xpress or 🏆 Listing & Trending — then come back to book your slot.",
   pay_card:
-    `💳 **Payment**\n\n**{label}**\n\n` +
-    `Send **exactly {amount} {native}** to this address:\n\n` +
-    "`{address}`\n\n" +
-    "⏱ This address is unique to your order. After you send, tap **Confirm** and I'll verify it on-chain (this can take up to a minute).",
-  pay_card_admin: "🧪 **Admin test order (FREE)**\n\n**{label}**\n\nNo payment required — tap **Confirm** to activate.",
+    `💳 **Order summary**\n\n{label}\n\n` +
+    `**Amount due** — {amount} {native}\n**Payment address**\n\`{address}\`\n\n` +
+    "This address is unique to your order. Once sent, tap **Confirm** — on-chain verification usually takes under a minute.",
+  pay_card_admin:
+    "🧪 **Admin test order — FREE**\n\n{label}\n\nNo payment needed. Tap **Confirm** to run the flow end-to-end.",
   payment_not_detected:
-    `${em("❌", E.cross)} I haven't detected your payment yet.\n\n` +
-    "Send exactly **{amount} {native}** to:\n`{address}`\n\n" +
-    "Then tap **Confirm** again. If you already paid, wait a moment (or contact support with order `{order}`).",
+    `${em("❌", E.cross)} **Payment not detected yet**\n\n` +
+    "We haven't seen your transfer of **{amount} {native}** to:\n`{address}`\n\n" +
+    "Just sent it? Give it a minute and tap **Confirm** again.\nAlready paid? Contact support with order ID `{order}`.",
   payment_snag:
-    "⚠️ Payment received but finalizing hit a snag. Your order `{order}` is safe — please contact support and we'll complete it.",
+    "⚠️ **We're on it**\n\nYour payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete the order.",
   success_listing:
-    `✅ **Payment successful — your token is LIVE on Dexvra!**\n\n` +
-    `**{symbol}** — {name}\n${em("🌐", E.globe)} [View your listing]({siteUrl})\n{postLinks}\n\n` +
-    `Thanks for listing with Dexvra! ${em("🚀", E.rocket)}`,
+    `✅ **You're live on Dexvra**\n\n` +
+    `**{symbol}** — {name} is now listed and visible across the Dexvra network.\n\n` +
+    `${em("🌐", E.globe)} [Open your token page]({siteUrl})\n{postLinks}\n\n` +
+    "Welcome aboard — the Dexvra team",
   success_trending:
-    `✅ **Payment successful — Trending activated!**\n\n` +
-    `**{symbol}** is now featured on Dexvra Trending for **{hours}h**.\n` +
-    `${em("🌐", E.globe)} [View on Dexvra]({siteUrl})\n{postLinks}`,
+    `✅ **Trending activated**\n\n` +
+    `**{symbol}** holds a featured Trending slot for the next **{hours} hours**.\n\n` +
+    `${em("🌐", E.globe)} [View your live ranking]({siteUrl})\n{postLinks}`,
   success_banner:
-    `✅ **Payment successful — Banner ad booked!**\n\n` +
-    `Your **{slot}** is running on Dexvra until {endsAt}.\n{postLinks}`,
+    `✅ **Campaign booked**\n\n` +
+    `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
 
   // ── Channel post layouts ──
   // {tierLine}/{socials}/{footer} are auto-built; the rest are raw values.
   post_listing:
-    `{head}\n\n{tierLine}**{name}** [({symbol})]({coinUrl})\n` +
-    `${em("🔗", E.link)} **Contract:**\n\`{address}\`\n` +
-    `${em("📊", E.chart)} **Chain:** {chain}\n` +
-    `${em("💲", E.dollar)} **Price:** {price}  |  **MC:** {mcap}\n{socials}\n` +
-    `${em("🟢", E.green)} [Buy / View on Dexvra]({coinUrl}){footer}`,
+    `{head}\n\n**{name}** · {symbol}\n{tierLine}` +
+    `\`{address}\`\n\n` +
+    `${em("📊", E.chart)} **Chain** — {chain}\n` +
+    `${em("💲", E.dollar)} **Price** — {price}\n` +
+    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n\n{socials}\n\n` +
+    `${em("🟢", E.green)} [Trade & track on Dexvra]({coinUrl}){footer}`,
   post_trending:
-    `🔥 **{symbol} is now Trending on Dexvra** ${em("⚡", E.zap)}\n\n` +
-    `**{name}**  ·  {chain}\n${em("🔗", E.link)} **CA:** \`{address}\`\n` +
-    `${em("💲", E.dollar)} **Price:** {price}  |  **MC:** {mcap}\n{socials}\n` +
-    `🔥 [View on Dexvra Trending]({coinUrl}){footer}`,
+    `🔥 **{symbol} is Trending on Dexvra**\n\n` +
+    `**{name}** · {chain}\n\`{address}\`\n\n` +
+    `${em("💲", E.dollar)} **Price** — {price}\n` +
+    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n\n{socials}\n\n` +
+    `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
   post_pump:
-    `${em("📈", E.chartUp)} **Pump Alert — Dexvra** ${em("⚡", E.zap)}\n\n` +
-    `**{name} | {symbol}** is up **{percent}%** since listing on [Dexvra]({coinUrl})\n\n` +
-    `${em("🚨", E.siren)} **First MC:** {firstMc}  |  **Last MC:** {lastMc}\n` +
-    `${em("🔗", E.link)} \`{address}\`{footer}`,
+    `${em("📈", E.chartUp)} **{symbol} +{percent}%**\n\n` +
+    `**{name}** is up **{percent}%** since listing on Dexvra.\n\n` +
+    `**Market cap** — {firstMc} → {lastMc}\n\`{address}\`\n\n` +
+    `${em("🟢", E.green)} [Chart & trade]({coinUrl}){footer}`,
   post_banner:
-    `${em("📢", E.megaphone)} **Featured on Dexvra**\n\n` +
-    `{title} is now running a **{slot}** banner across Dexvra.\n👉 [Check it out]({linkUrl}){footer}`,
+    `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
+    `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
+    `👉 [View the campaign]({linkUrl}){footer}`,
 };
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────

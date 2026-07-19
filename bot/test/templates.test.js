@@ -21,7 +21,7 @@ test("t() renders a channel-post template with real values", () => {
   });
   assert.ok(out.includes("137%"));
   assert.ok(out.includes("$JIM"));
-  assert.ok(out.includes("Pump Alert"));
+  assert.ok(out.includes("Market cap"));
 });
 
 test("every default template key has editor metadata + a group", () => {

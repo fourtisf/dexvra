@@ -35,19 +35,18 @@ const TIER_EMOJI = {
 
 function socialLines(links = {}) {
   const out = [];
-  if (links.website) out.push(`${em("🌐", E.globe)}[Website](${links.website})`);
-  if (links.twitter) out.push(`${em("🚀", E.rocket)}[X](${links.twitter})`);
-  if (links.telegram) out.push(`${em("✈️", E.plane)}[Telegram](${links.telegram})`);
-  return out.length ? out.join("  ·  ") : "";
+  if (links.website) out.push(`[Website](${links.website})`);
+  if (links.twitter) out.push(`[X](${links.twitter})`);
+  if (links.telegram) out.push(`[Telegram](${links.telegram})`);
+  return out.length ? `${em("🔗", E.link)} ${out.join(" · ")}` : "";
 }
 
 function footer() {
   return (
-    `\n\n${em("📎", E.clip)} **Dexvra**\n` +
-    `${em("🌐", E.globe2)} [Website](${SITE_URL})  ·  ` +
-    `🔥 [Trending](${tme(CHANNELS.trending)})  ·  ` +
-    `${em("🚨", E.siren)} [Listing](${tme(CHANNELS.listing)})  ·  ` +
-    `${em("📢", E.megaphone)} [Announce](${tme(CHANNELS.announce)})`
+    `\n\n${em("💎", E.diamond)} **Dexvra** · [dexvra.io](${SITE_URL}) · ` +
+    `[Trending](${tme(CHANNELS.trending)}) · ` +
+    `[Listings](${tme(CHANNELS.listing)}) · ` +
+    `[Announcements](${tme(CHANNELS.announce)})`
   );
 }
 
@@ -56,11 +55,13 @@ const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coi
 function listingPost(coin) {
   const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
   const tierLine =
-    coin.tier && coin.tier !== "XPRESS" ? `${tierBadge} **${clean(tierLabel(coin.tier))}**\n` : "";
+    coin.tier && coin.tier !== "XPRESS"
+      ? `${tierBadge} **${clean(tierLabel(coin.tier))} tier** — featured placement\n`
+      : "";
   const head =
     coin.tier === "XPRESS"
-      ? `${em("⚡", E.zap)} **Dexvra Express Listing** ${em("⚡", E.zap)}`
-      : `${em("🚨", E.sirenHead)} **New Listing on Dexvra** ${em("🚨", E.sirenHead)}`;
+      ? `${em("⚡", E.zap)} **Xpress Listing — live on Dexvra**`
+      : `${em("🚨", E.sirenHead)} **New Listing on Dexvra**`;
   return tpl.render("post_listing", {
     head,
     tierLine,
