@@ -37,7 +37,10 @@ test("trending per native + duration parsing + 24/48h announce", () => {
 test("bundled trending hours per tier", () => {
   assert.strictEqual(pk.tierTrendingHours("DIAMOND"), 48);
   assert.strictEqual(pk.tierTrendingHours("BRONZE"), 6);
-  assert.strictEqual(pk.tierTrendingHours("XPRESS"), 6);
+  // Xpress is listing-ONLY: no bundled trending slot, no trending-channel post
+  // (operator decision from live testing — do not raise above 0).
+  assert.strictEqual(pk.tierTrendingHours("XPRESS"), 0);
+  for (const t of pk.RANKED_TIERS) assert.ok(pk.tierTrendingHours(t.key) > 0, `${t.key} bundles trending`);
 });
 
 test("banner packs (USD) match the web", () => {

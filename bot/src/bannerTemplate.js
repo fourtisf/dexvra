@@ -116,9 +116,17 @@ function canvasLib() {
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
 async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}) {
-  if (!hasTemplate(kind)) return null;
+  // Loud diagnostics: a null here silently downgrades channel posts to the raw
+  // token logo, which reads as "the banner is broken" (live incident 2026-07).
+  if (!hasTemplate(kind)) {
+    log.warn(`[bannerTpl] no '${kind}' artwork found (${uploadedPath(kind)} / ${bundledPath(kind)}) — posting without template`);
+    return null;
+  }
   const cv = canvasLib();
-  if (!cv) return null;
+  if (!cv) {
+    log.warn(`[bannerTpl] @napi-rs/canvas unavailable — run 'npm ci' in bot/ on the server, then restart`);
+    return null;
+  }
   try {
     const cfg = getSettings(kind);
     const artPath = resolvePath(kind);

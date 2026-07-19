@@ -67,7 +67,7 @@ const DEFAULTS = {
     "**What's included**\n" +
     "⚡ Instant listing on the dexvra.io board\n" +
     `${em("🚨", E.siren)} Launch post in our Listing channel\n` +
-    "🔥 Bundled Trending exposure\n" +
+    "📈 Auto-shared on Dexvra's X (Twitter)\n" +
     `${em("🌐", E.globe)} Dedicated token page — live chart, price & socials\n\n` +
     "**How it works**\n" +
     "1. Choose your token's network below\n" +

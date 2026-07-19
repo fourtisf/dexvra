@@ -34,7 +34,7 @@ const CHAINS = {
   },
   robinhood: {
     id: "robinhood", label: "Robinhood", native: "ETH", family: "evm", decimals: 18,
-    geckoNetwork: null, // no GeckoTerminal coverage yet
+    geckoNetwork: "robinhood", // GT indexes Robinhood Chain (DexScreener doesn't)
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
     explorer: (a) => `https://dexscreener.com/search?q=${a}`,
     buyUrl: (a) => `https://dexscreener.com/search?q=${a}`,
