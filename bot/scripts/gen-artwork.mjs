@@ -48,21 +48,26 @@ const page_html = (KIND) => {
     transform:rotate(24deg); filter:blur(48px);
     background:linear-gradient(90deg, transparent, rgba(150,240,225,.05) 45%, rgba(150,240,225,.07) 55%, transparent); }
   .vig { position:absolute; inset:0; background:radial-gradient(125% 125% at 50% 44%, transparent 56%, rgba(0,0,0,.5)); }
+  .cardFrame { position:absolute; left:16px; top:16px; right:16px; bottom:16px; border-radius:26px; pointer-events:none;
+    border:1.2px solid transparent;
+    background:linear-gradient(135deg, rgba(140,235,215,.22), rgba(140,235,215,.04) 40%, rgba(90,205,235,.2)) border-box;
+    -webkit-mask:linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite:xor; mask-composite:exclude; }
 
   /* floating bokeh particles */
   .bokeh { position:absolute; border-radius:50%; }
 
   /* glass panel behind the composited $TICKER + name */
-  .textPanel { position:absolute; left:184px; top:258px; width:580px; height:200px; border-radius:26px;
+  .textPanel { position:absolute; left:64px; top:248px; width:640px; height:186px; border-radius:24px;
     background:linear-gradient(135deg, rgba(255,255,255,.035), rgba(255,255,255,.012) 60%);
     border:1.2px solid rgba(140,230,215,.13);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 18px 40px rgba(0,0,0,.35); }
-  .textPanel::before { content:''; position:absolute; left:0; top:18px; width:4px; height:164px; border-radius:2px;
+  .textPanel::before { content:''; position:absolute; left:0; top:16px; width:4px; height:154px; border-radius:2px;
     background:linear-gradient(180deg, transparent, ${ACC}99 30%, ${ACC}99 70%, transparent);
     box-shadow:0 0 14px ${ACC}66; }
 
   /* faint market grid + rising line, tucked above the socials row */
-  .chart { position:absolute; left:30px; bottom:106px; opacity:.4; }
+  .chart { position:absolute; left:64px; bottom:104px; opacity:.35; }
 
   /* ── brand ── */
   .brand { position:absolute; left:56px; top:44px; display:flex; align-items:center; gap:16px; }
@@ -71,7 +76,7 @@ const page_html = (KIND) => {
   .brand .sub { font-weight:600; font-size:13px; letter-spacing:3.5px; color:#5E7A7C; margin-top:4px; }
 
   /* ── glossy status pill ── */
-  .pill { position:absolute; left:${isAd ? 96 : 210}px; top:${isAd ? 150 : 170}px; padding:3px; border-radius:40px;
+  .pill { position:absolute; left:64px; top:150px; padding:3px; border-radius:40px;
     background:linear-gradient(135deg, ${ACC}cc, ${ACC2}55 45%, ${ACC}cc);
     box-shadow:0 0 44px ${ACC}52, 0 10px 30px rgba(0,0,0,.5); }
   .pill .in { border-radius:37px; padding:13px 40px; position:relative; overflow:hidden;
@@ -106,9 +111,9 @@ const page_html = (KIND) => {
   <div class="bg"><div class="wash"></div><div class="blob1"></div><div class="blob2"></div><div class="indigo"></div><div class="ringSmoke1"></div><div class="ringSmoke2"></div><div class="beam"></div></div>
 
   ${[
-    [90, 88, 7, 2.2, 0.5], [300, 200, 4, 1.4, 0.4], [520, 120, 9, 3, 0.35], [700, 300, 5, 2, 0.4],
-    [880, 90, 6, 2.4, 0.45], [1010, 210, 4, 1.6, 0.5], [1130, 130, 8, 3.2, 0.3], [240, 420, 5, 2.2, 0.32],
-    [640, 470, 6, 2.6, 0.3], [980, 560, 5, 2, 0.4], [1210, 420, 6, 2.4, 0.4], [420, 560, 4, 1.6, 0.35],
+    [120, 70, 6, 2.2, 0.45], [560, 96, 8, 3, 0.3], [880, 80, 6, 2.4, 0.4],
+    [1150, 140, 7, 3, 0.3], [1216, 430, 6, 2.4, 0.38], [740, 540, 5, 2.4, 0.28],
+    [980, 580, 5, 2, 0.35], [300, 560, 4, 1.8, 0.3],
   ]
     .map(
       ([x, y, s, b, o]) =>
@@ -131,6 +136,7 @@ const page_html = (KIND) => {
   ${isAd ? adHeroHtml() : ringHeroHtml(isTrend)}
 
   <div class="vig"></div>
+  <div class="cardFrame"></div>
 
   <div class="brand">${gemSvg(52)}<div><div class="word">Dexvra</div><div class="sub">TOKEN VISIBILITY</div></div></div>
 
@@ -160,11 +166,12 @@ function ringHeroCss(ACC, ACC2, isTrend) {
     background:conic-gradient(from 320deg, #10333a, #17454e 28%, #10333a 58%, #1b525c 80%, #10333a);
     box-shadow:inset 0 2px 6px rgba(255,255,255,.2), inset 0 -4px 10px rgba(0,0,0,.45); }
   /* trending only: ascending momentum chevrons climbing toward the ring */
-  .chev { position:absolute; width:44px; height:44px; border-left:6px solid ${ACC}; border-top:6px solid ${ACC};
-    transform:rotate(45deg); border-radius:4px; filter:drop-shadow(0 0 10px ${ACC}88); }
-  .ch1 { left:52px; top:392px; opacity:.35; transform:rotate(45deg) scale(.7); }
-  .ch2 { left:84px; top:310px; opacity:.6; transform:rotate(45deg) scale(.85); }
-  .ch3 { left:118px; top:222px; opacity:.95; }
+  .chev { position:absolute; width:38px; height:38px; border-left:5px solid ${ACC}; border-top:5px solid ${ACC};
+    transform:rotate(45deg); border-radius:3px;
+    filter:drop-shadow(0 0 12px ${ACC}aa); }
+  .ch1 { left:64px; top:400px; opacity:.3; transform:rotate(45deg) scale(.65); }
+  .ch2 { left:88px; top:316px; opacity:.55; transform:rotate(45deg) scale(.82); }
+  .ch3 { left:114px; top:228px; opacity:.9; }
   .ring .hole { width:212px; height:212px; border-radius:50%; position:relative;
     background:radial-gradient(circle at 38% 30%, #0f1c21, #060c10 75%);
     box-shadow:inset 0 10px 30px rgba(0,0,0,.9), inset 0 -2px 12px rgba(255,255,255,.05); }
@@ -223,10 +230,10 @@ function ringHeroHtml(isTrend) {
 // ── hero: glass creative frame (banner ads) — advertiser creative goes inside ─
 function adHeroCss(ACC, ACC2) {
   return `
-  .frameWrap { position:absolute; left:410px; top:146px; width:790px; height:410px; }
-  .fhalo { position:absolute; left:-90px; top:-90px; width:970px; height:590px; border-radius:80px;
+  .frameWrap { position:absolute; left:410px; top:140px; width:790px; height:396px; }
+  .fhalo { position:absolute; left:-90px; top:-90px; width:970px; height:576px; border-radius:80px;
     background:radial-gradient(ellipse, ${ACC2}3a, transparent 62%); filter:blur(46px); }
-  .frame { position:absolute; left:0; top:0; width:790px; height:410px; border-radius:28px; padding:6px;
+  .frame { position:absolute; left:0; top:0; width:790px; height:396px; border-radius:28px; padding:6px;
     background:conic-gradient(from 130deg at 50% 50%, ${ACC2}, ${ACC} 22%, #E9F6FF 36%, ${ACC} 50%, ${ACC2} 72%, ${ACC} 88%, ${ACC2});
     box-shadow:0 0 80px ${ACC}59, 0 0 160px ${ACC2}38, 0 26px 60px rgba(0,0,0,.55); }
   .frame .inner { width:100%; height:100%; border-radius:23px; position:relative; overflow:hidden;
@@ -242,9 +249,9 @@ function adHeroCss(ACC, ACC2) {
   .cTR { right:-20px; top:-20px; border-left:none; border-bottom:none; border-radius:0 12px 0 0; }
   .cBL { left:-20px; bottom:-20px; border-right:none; border-top:none; border-radius:0 0 0 12px; }
   .cBR { right:-20px; bottom:-20px; border-left:none; border-top:none; border-radius:0 0 12px 0; }
-  .gemDock { position:absolute; right:-26px; top:-74px; z-index:3;
+  .gemDock { position:absolute; right:56px; top:-64px; z-index:3;
     filter:drop-shadow(0 10px 22px rgba(0,0,0,.6)) drop-shadow(0 0 30px ${ACC2}99); }
-  .gemDockGlow { position:absolute; right:-64px; top:-116px; width:180px; height:170px; border-radius:50%;
+  .gemDockGlow { position:absolute; right:18px; top:-104px; width:180px; height:170px; border-radius:50%;
     background:radial-gradient(circle, ${ACC}33, transparent 64%); filter:blur(18px); z-index:2; }
   .fpool { position:absolute; left:90px; bottom:-46px; width:610px; height:56px; border-radius:50%;
     background:radial-gradient(ellipse, ${ACC2}40, transparent 68%); filter:blur(18px); }

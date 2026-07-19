@@ -42,8 +42,8 @@ const BASE_DEFAULTS = {
   slotH: 800,
   showText: true, // draw $TICKER + name overlay
   tickerFontSize: 96,
-  tickerX: 430, // number | "center"
-  tickerY: 660,
+  tickerX: 210, // number | "center"
+  tickerY: 650,
   tickerColor: "#FFFFFF",
   nameFontSize: 48,
   nameColor: "#B8CCC8",
@@ -52,7 +52,7 @@ const BASE_DEFAULTS = {
 const KIND_DEFAULTS = {
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
   trending: { ...BASE_DEFAULTS, tickerGlow: "#38D8F0" },
-  banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 308, slotW: 1548, slotH: 788, showText: false },
+  banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
 const DEFAULTS = BASE_DEFAULTS; // back-compat export
