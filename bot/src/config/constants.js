@@ -104,6 +104,11 @@ const TRENDING_SWEEP_MS = Math.max(30000, int(env.TRENDING_SWEEP_MS, 60 * 1000))
 const PUMP_CHECK_MS = Math.max(60000, int(env.PUMP_CHECK_MS, 3 * 60 * 1000));
 const PUMP_ENABLED = bool(env.PUMP_ENABLED, true);
 
+// ── Admin broadcast (compose in adminbot → sent by the MAIN bot) ─────────────
+const BROADCAST_RATE = Math.min(28, Math.max(1, int(env.BROADCAST_RATE, 20))); // msg/s (Telegram ~30/s to distinct users)
+const BROADCAST_CONCURRENCY = Math.min(16, Math.max(1, int(env.BROADCAST_CONCURRENCY, 8)));
+const BROADCAST_POLL_MS = Math.max(3000, int(env.BROADCAST_POLL_MS, 5000));
+
 module.exports = {
   BOT_ROOT,
   BOT_TOKEN,
@@ -134,6 +139,9 @@ module.exports = {
   TRENDING_SWEEP_MS,
   PUMP_CHECK_MS,
   PUMP_ENABLED,
+  BROADCAST_RATE,
+  BROADCAST_CONCURRENCY,
+  BROADCAST_POLL_MS,
   // helpers reused elsewhere
   _env: { bool, int, list },
 };

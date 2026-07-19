@@ -5,10 +5,12 @@
 const { Telegraf, Markup, session } = require("telegraf");
 const { promises: fs } = require("node:fs");
 const fss = require("node:fs");
+const path = require("node:path");
 const { isAdminUser, ADMIN_BOT_TOKEN } = require("../config/constants");
 const { getMediaFileId } = require("../helpers/message");
 const { escapeHtml } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
+const bcStore = require("../broadcast/store");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
@@ -28,6 +30,7 @@ function mainKb() {
     [Markup.button.callback("📝 Bot Messages", "grp:msg")],
     [Markup.button.callback("📢 Channel Posts", "grp:post")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
+    [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
 function groupKb(gid) {
@@ -86,12 +89,83 @@ async function edit(ctx, text, kb) {
 }
 
 async function saveBanner(telegram, fileId) {
+  await downloadTo(telegram, fileId, tpl.BANNER_PATH);
+}
+async function downloadTo(telegram, fileId, destPath) {
   const link = await telegram.getFileLink(fileId);
-  const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`download ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(tpl.BANNER_PATH, buf);
+  await fs.mkdir(path.dirname(destPath), { recursive: true });
+  await fs.writeFile(destPath, buf);
+}
+
+// ── Broadcast ────────────────────────────────────────────────────────────────
+function bcControlKb(count) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback(`✅ Send to all (${count})`, "bc_send")],
+    [Markup.button.callback("🧪 Test (me only)", "bc_test")],
+    [Markup.button.callback("❌ Cancel", "bc_cancel")],
+  ]);
+}
+
+/** Poll a broadcast job and live-edit a status message until it completes. */
+function pollProgress(telegram, chatId, messageId, jobId) {
+  const started = Date.now();
+  let lastText = "";
+  const iv = setInterval(async () => {
+    const job = bcStore.loadJob(jobId);
+    if (!job || Date.now() - started > 20 * 60 * 1000) {
+      clearInterval(iv);
+      return;
+    }
+    const done = job.status === "completed";
+    const pct = job.total ? Math.round((job.cursor / job.total) * 100) : 100;
+    const text = done
+      ? `✅ <b>Broadcast complete</b>${job.test ? " (test)" : ""}\nSent: <b>${job.sent}</b>  ·  Failed: <b>${job.failed}</b>  ·  Total: <b>${job.total}</b>`
+      : `📣 <b>Broadcasting…</b>${job.test ? " (test)" : ""}\nProgress: <b>${pct}%</b> (${job.cursor}/${job.total})\nSent: ${job.sent}  ·  Failed: ${job.failed}`;
+    if (text !== lastText) {
+      lastText = text;
+      try {
+        await telegram.editMessageText(chatId, messageId, undefined, text, HTML);
+      } catch {
+        /* not modified / too old */
+      }
+    }
+    if (done) clearInterval(iv);
+  }, 3000);
+}
+
+async function launchBroadcast(ctx, test) {
+  const draft = ctx.session.bcDraft;
+  if (!draft) return ctx.reply("Nothing composed. Tap 📣 Broadcast to start.").catch(() => {});
+  const targets = test ? [String(ctx.from.id)] : bcStore.audience();
+  if (!targets.length) {
+    return ctx.reply("No /start users yet — nobody to broadcast to.").catch(() => {});
+  }
+  let mediaPath = null;
+  if (draft.adminFileId) {
+    try {
+      mediaPath = path.join(bcStore.BC_DIR, `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.img`);
+      await downloadTo(ctx.telegram, draft.adminFileId, mediaPath);
+    } catch (e) {
+      return ctx.reply(`⚠️ Couldn't prepare the image: ${e.message}`).catch(() => {});
+    }
+  }
+  const job = await bcStore.createJob({
+    text: draft.text || "",
+    mediaPath,
+    createdBy: String(ctx.from.id),
+    createdByUsername: ctx.from.username,
+    targets,
+    test,
+  });
+  ctx.session.bcDraft = null;
+  const msg = await ctx.reply(
+    `📣 <b>Broadcast queued</b> to <b>${targets.length}</b> user(s). Delivering via the main bot…`,
+    HTML,
+  );
+  pollProgress(ctx.telegram, msg.chat.id, msg.message_id, job.id);
 }
 
 // ── Bot ──────────────────────────────────────────────────────────────────────
@@ -177,10 +251,40 @@ function build() {
     await edit(ctx, `🖼 <b>Banner Image</b>\n\nStatus: — none`, bannerKb());
   });
 
+  bot.action("bc", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBroadcast = true;
+    ctx.session.bcDraft = null;
+    await ctx.reply(
+      `📣 <b>Broadcast</b>\n\nSend the message to broadcast to all /start users — <b>text</b>, or a <b>photo with a caption</b> (HTML allowed). /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("bc_send", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await launchBroadcast(ctx, false);
+  });
+  bot.action("bc_test", async (ctx) => {
+    ctx.answerCbQuery("Sending test to you").catch(() => {});
+    if (!guard(ctx)) return;
+    await launchBroadcast(ctx, true);
+  });
+  bot.action("bc_cancel", async (ctx) => {
+    ctx.answerCbQuery("Cancelled").catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.bcDraft = null;
+    ctx.session.awaitingBroadcast = false;
+    await edit(ctx, homeText(), mainKb());
+  });
+
   bot.command("cancel", async (ctx) => {
     if (!guard(ctx)) return;
     ctx.session.awaitingTemplate = null;
     ctx.session.awaitingBanner = false;
+    ctx.session.awaitingBroadcast = false;
+    ctx.session.bcDraft = null;
     await ctx.reply("Cancelled.", { ...HTML, ...mainKb() });
   });
 
@@ -189,6 +293,13 @@ function build() {
     if (!guard(ctx)) return;
     const text = ctx.message.text || "";
     if (text.startsWith("/")) return; // commands handled above
+    if (ctx.session.awaitingBroadcast) {
+      ctx.session.awaitingBroadcast = false;
+      ctx.session.bcDraft = { text };
+      await ctx.reply(text, HTML).catch(() => {}); // rendered preview
+      await ctx.reply("Send this broadcast?", bcControlKb(bcStore.audience().length));
+      return;
+    }
     const key = ctx.session.awaitingTemplate;
     if (!key) return;
     ctx.session.awaitingTemplate = null;
@@ -201,6 +312,22 @@ function build() {
   // Photo = banner upload (when awaiting)
   bot.on(["photo", "document"], async (ctx) => {
     if (!guard(ctx)) return;
+    if (ctx.session.awaitingBroadcast) {
+      const fileId = getMediaFileId(ctx);
+      if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo.").catch(() => {});
+      ctx.session.awaitingBroadcast = false;
+      ctx.session.bcDraft = { adminFileId: fileId, text: ctx.message.caption || "" };
+      try {
+        await ctx.replyWithPhoto(
+          fileId,
+          ctx.message.caption ? { caption: ctx.message.caption, parse_mode: "HTML" } : {},
+        );
+      } catch {
+        /* preview best-effort */
+      }
+      await ctx.reply("Send this broadcast?", bcControlKb(bcStore.audience().length));
+      return;
+    }
     if (!ctx.session.awaitingBanner) return;
     const fileId = getMediaFileId(ctx);
     if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo.").catch(() => {});

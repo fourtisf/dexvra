@@ -8,6 +8,7 @@ function attachServices(bot, services) {
   services.push(require("./trendingSweeper").start());
   services.push(require("./trendingPoster").start(tg));
   if (PUMP_ENABLED) services.push(require("./pumpChecker").start(tg));
+  services.push(require("../broadcast/sender").start(tg)); // admin broadcast delivery
 
   // One-shot recovery: re-fulfil paid orders + detect late-arriving payments.
   require("./recovery")

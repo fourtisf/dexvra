@@ -14,6 +14,8 @@ const modules = [
   "../src/config/packages",
   "../src/templates",
   "../src/admin/adminBot",
+  "../src/broadcast/store",
+  "../src/broadcast/sender",
   "../src/api/dexvra",
   "../src/marketdata",
   "../src/dexscreener",
