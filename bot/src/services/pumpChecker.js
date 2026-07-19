@@ -1,13 +1,15 @@
 // Pump alerts: polls each approved listing's live price and fires a one-time
-// alert when it's up 100–2000% from the baseline (the price first observed by
-// the bot ≈ listing time). Posts as a reply to the original listing post (like
-// fourtis) and tweets. Baseline + once-only latch persist across restarts.
+// alert when it's up 100–5000% (up to 50×) from the baseline (the price first
+// observed by the bot ≈ listing time). Posts as a REPLY to the original listing
+// post (like fourtis) and tweets; carries the admin's pump GIF/video clip when
+// one is set. Baseline + once-only latch persist across restarts.
 const { PUMP_CHECK_MS, CHANNELS, SITE_URL } = require("../config/constants");
 const api = require("../api/dexvra");
 const { fetchMarket } = require("../marketdata");
 const postids = require("../channels/postids");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
+const bannerTemplate = require("../bannerTemplate");
 const x = require("../twitter");
 const { DedupSet, loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
@@ -56,16 +58,17 @@ function start(tg) {
       const base = baseline[key];
       if (!base.price || m.priceUsd < base.price) continue;
       const pct = ((m.priceUsd - base.price) / base.price) * 100;
-      if (pct < 100 || pct >= 2000) continue; // same band as fourtis
+      if (pct < 100 || pct >= 5000) continue; // 100% floor, 50× ceiling (fourtis: 5000)
       if (latch.has(key)) continue;
 
       await latch.add(key);
       const coin = coinOf(r, m.priceUsd, m.mcap);
       const ids = postids.get(r.chain, r.address);
       const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
+      const media = bannerTemplate.mediaOverride("pump"); // admin GIF/video (null → text reply)
       try {
-        await post.sendText(CHANNELS.listing, card, { replyTo: ids.listingMsgId });
-        if (ids.annMsgId) await post.sendText(CHANNELS.announce, card, { replyTo: ids.annMsgId });
+        await post.sendMedia(CHANNELS.listing, media, card, { replyTo: ids.listingMsgId });
+        if (ids.annMsgId) await post.sendMedia(CHANNELS.announce, media, card, { replyTo: ids.annMsgId });
       } catch (e) {
         log.warn(`[pump] post: ${e.message}`);
       }

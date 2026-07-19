@@ -108,4 +108,36 @@ async function sendPhoto(channel, photo, payload, { replyTo, pin } = {}) {
   }
 }
 
-module.exports = { attach, sendText, sendPhoto, CHANNELS, isAttached: () => !!tg };
+/**
+ * Send any media descriptor with a caption. `media` is:
+ *   { type: 'photo'|'animation'|'video', source }  — animated posts (gif/mp4)
+ *   a plain photo (source/file_id/URL)             — back-compat → sendPhoto
+ * GramJS (premium emoji) handles any media via {source}; the Bot API path
+ * dispatches to sendPhoto/sendAnimation/sendVideo. Falls back to text on error.
+ */
+async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
+  if (!tg) throw new Error("channels/post not attached to a bot");
+  if (!media) return sendText(channel, payload, { replyTo, pin });
+  const type = media && media.type ? media.type : "photo";
+  const source = media && media.source !== undefined ? media.source : media;
+  if (type === "photo") return sendPhoto(channel, source, payload, { replyTo, pin });
+
+  const p = norm(payload);
+  const viaGram = await viaGramJs(channel, { source }, p, { replyTo, pin });
+  if (viaGram) return viaGram;
+  const method = type === "video" ? "sendVideo" : "sendAnimation";
+  try {
+    const msg = await tg[method](channel, source, {
+      caption: p.text,
+      ...botApiExtra(p, true),
+      ...replyParams(replyTo),
+    });
+    if (pin) tg.pinChatMessage(channel, msg.message_id, { disable_notification: true }).catch(() => {});
+    return msg;
+  } catch (e) {
+    log.debug(`[channels] ${method} ${channel} failed (${e.message}) → text`);
+    return sendText(channel, payload, { replyTo, pin });
+  }
+}
+
+module.exports = { attach, sendText, sendPhoto, sendMedia, CHANNELS, isAttached: () => !!tg };

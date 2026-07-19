@@ -234,10 +234,11 @@ const DEFAULTS = {
     `**{name}** · {chain} is up **{change}** (24h) — now the **#{rank} performer** among featured tokens.\n\n` +
     `${em("🟢", E.green)} [Trade & track on Dexvra]({coinUrl}){footer}`,
   post_pump:
-    `${em("📈", E.chartUp)} **{symbol} +{percent}%**\n\n` +
-    `**{name}** is up **{percent}%** since listing on Dexvra.\n\n` +
-    `**Market cap** — {firstMc} → {lastMc}\n\`{address}\`\n\n` +
-    `${em("🟢", E.green)} [Chart & trade]({coinUrl}){footer}`,
+    `${em("🚀", E.rocket)} **{symbol} is pumping — {multiple}**\n\n` +
+    `**{name}** has run **+{percent}%** since it listed on Dexvra.\n\n` +
+    `${em("📈", E.chartUp)} **Market cap** — {firstMc} → **{lastMc}**\n` +
+    `${em("🔗", E.link)} \`{address}\`\n\n` +
+    `${em("🟢", E.green)} [Chart & trade on Dexvra]({coinUrl}){footer}`,
   post_banner:
     `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
     `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
@@ -295,7 +296,7 @@ const META = {
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
   post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
 };

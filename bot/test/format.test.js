@@ -97,6 +97,7 @@ test("pump post payload shows percent + MCs", () => {
   const card = fmt.pumpPost(coin, 137.6, 310000, 128400000);
   assert.ok(card.text.includes("+138%"));
   assert.ok(card.text.includes("Market cap"));
+  assert.ok(card.text.includes("2.4×"), "shows the × multiple"); // 1 + 137.6/100 = 2.376 → 2.4×
   assert.ok(card.entities.some((e) => e.type === "custom_emoji"));
 });
 

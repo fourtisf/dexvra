@@ -67,7 +67,10 @@ function bannerExists() {
 }
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
-const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads" };
+const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert" };
+// Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
+// only for the three still-image kinds.
+const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
@@ -87,11 +90,21 @@ function btHomeKb() {
   return Markup.inlineKeyboard([
     [Markup.button.callback(on ? "🟢 Banner posts: ON — tap to turn OFF" : "🔴 Banner posts: OFF — tap to turn ON", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
-    [Markup.button.callback(BT_KINDS.banner, "btk:banner")],
+    [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
     [Markup.button.callback("⬅ Back", "home")],
   ]);
 }
 function btKindText(kind) {
+  const clip = bannerTpl.mediaOverride(kind);
+  const clipLine = clip ? `🎞 GIF/Video: <b>${clip.type} set — overrides the still</b>\n` : `🎞 GIF/Video: <b>— none</b>\n`;
+  if (!BT_ARTWORK_KINDS.has(kind)) {
+    // pump: media-only (the alert card is text; a clip plays above it)
+    return (
+      `🎨 <b>${BT_KINDS[kind]}</b>\n\n` +
+      clipLine +
+      `\nUpload a GIF or short MP4 to play above every ${BT_KINDS[kind].replace(/^\S+\s/, "")} post. Token details stay in the caption text.`
+    );
+  }
   const s = bannerTpl.getSettings(kind);
   const src = bannerTpl.hasUploaded(kind) ? "✅ custom uploaded" : bannerTpl.hasTemplate(kind) ? "💎 bundled default" : "— none (auto-banner used)";
   const slot =
@@ -101,12 +114,18 @@ function btKindText(kind) {
   return (
     `🎨 <b>${BT_KINDS[kind]} artwork</b>\n\n` +
     `Artwork: ${src}\n` +
+    clipLine +
     `Media slot: ${slot}\n` +
     `Text overlay: <b>${s.showText ? "on" : "off"}</b> (${s.tickerFontSize}px at ${s.tickerX}, ${s.tickerY})\n\n` +
-    `Settings are separate per service.`
+    `Settings are separate per service. A GIF/video, when set, is used instead of the still artwork.`
   );
 }
 function btKindKb(kind) {
+  const clipRow = [Markup.button.callback("🎞 Upload GIF/Video", `bt_med:${kind}`)];
+  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Remove clip", `bt_medrm:${kind}`));
+  if (!BT_ARTWORK_KINDS.has(kind)) {
+    return Markup.inlineKeyboard([clipRow, [Markup.button.callback("⬅ Artwork menu", "bt")]]);
+  }
   const s = bannerTpl.getSettings(kind);
   const manualRow =
     s.slotShape === "rect"
@@ -114,6 +133,7 @@ function btKindKb(kind) {
       : [Markup.button.callback("📍 Manual (SIZE X,Y)", `bt_pos:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)];
   return Markup.inlineKeyboard([
     [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
+    clipRow,
     [Markup.button.callback("🖱 Logo editor — geser • ukuran • live preview", `bt_ed:${kind}`)],
     manualRow,
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
@@ -547,14 +567,32 @@ function build() {
 
   // ── Channel banner artwork (template compositor, per service) ──
   const K = "(listing|trending|banner)";
+  const KM = "(listing|trending|banner|pump)"; // media-capable kinds (incl. pump)
   bot.action("bt", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     await edit(ctx, btHomeText(), btHomeKb());
   });
-  bot.action(new RegExp(`^btk:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^btk:${KM}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
+    await edit(ctx, btKindText(ctx.match[1]), btKindKb(ctx.match[1]));
+  });
+  // Upload a GIF/video clip for a kind (incl. pump). Accepts animation/video/
+  // document; the file's extension picks animation vs video at send time.
+  bot.action(new RegExp(`^bt_med:${KM}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "media_upload", kind: ctx.match[1] };
+    await ctx.reply(
+      `🎞 Send the <b>${BT_KINDS[ctx.match[1]]} GIF or video</b> — a GIF/animation or a short MP4 (send as a <b>file/document</b> for best quality, ≤ ~20 MB). It plays above every ${BT_KINDS[ctx.match[1]]} post. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(new RegExp(`^bt_medrm:${KM}$`), async (ctx) => {
+    ctx.answerCbQuery("Clip removed").catch(() => {});
+    if (!guard(ctx)) return;
+    await bannerTpl.removeMedia(ctx.match[1]);
     await edit(ctx, btKindText(ctx.match[1]), btKindKb(ctx.match[1]));
   });
   bot.action(new RegExp(`^bt_up:${K}$`), async (ctx) => {
@@ -884,8 +922,34 @@ function build() {
   });
 
   // Photo = banner upload (when awaiting)
-  bot.on(["photo", "document"], async (ctx) => {
+  bot.on(["photo", "document", "animation", "video"], async (ctx) => {
     if (!guard(ctx)) return;
+    // GIF/video clip upload (per kind, incl. pump) — wins over the still artwork
+    if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "media_upload") {
+      const { kind } = ctx.session.awaitingBt;
+      const m = ctx.message;
+      let fileId, ext;
+      if (m.animation) { fileId = m.animation.file_id; ext = "gif"; } // looping clip → sendAnimation
+      else if (m.video) { fileId = m.video.file_id; ext = "mp4"; }
+      else if (m.document) {
+        fileId = m.document.file_id;
+        const fn = String(m.document.file_name || "").toLowerCase();
+        ext = fn.endsWith(".gif") ? "gif" : fn.endsWith(".webm") ? "webm" : fn.endsWith(".mov") ? "mov" : "mp4";
+      }
+      if (!fileId) return ctx.reply("Send a GIF or a video (or an mp4/gif file).").catch(() => {});
+      ctx.session.awaitingBt = null;
+      try {
+        const link = await ctx.telegram.getFileLink(fileId);
+        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(30000) });
+        if (!res.ok) throw new Error(`download ${res.status}`);
+        const { type } = await bannerTpl.saveMedia(kind, Buffer.from(await res.arrayBuffer()), ext);
+        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id}`);
+        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved.</b> It now plays above every ${BT_KINDS[kind]} post (it overrides the still artwork).`, { ...HTML, ...btKindKb(kind) });
+      } catch (e) {
+        await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
+      }
+      return;
+    }
     // Channel banner artwork upload
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "upload") {
       const { kind } = ctx.session.awaitingBt;
