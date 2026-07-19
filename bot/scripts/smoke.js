@@ -25,6 +25,7 @@ const modules = [
   "../src/fulfillment",
   "../src/assets",
   "../src/bannerRender",
+  "../src/bannerTemplate",
   "../src/twitter",
   "../src/helpers/format",
   "../src/helpers/message",

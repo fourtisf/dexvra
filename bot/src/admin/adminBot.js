@@ -11,6 +11,7 @@ const { getMediaFileId } = require("../helpers/message");
 const { escapeHtml } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
+const bannerTpl = require("../bannerTemplate");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
@@ -30,6 +31,7 @@ function mainKb() {
     [Markup.button.callback("📝 Bot Messages", "grp:msg")],
     [Markup.button.callback("📢 Channel Posts", "grp:post")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
+    [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -62,6 +64,72 @@ function bannerExists() {
   } catch {
     return false;
   }
+}
+
+// ── Channel banner artwork (fourtis-style template compositor) ───────────────
+function btText() {
+  const st = (k) => (bannerTpl.hasTemplate(k) ? "✅ set" : "— none");
+  const s = bannerTpl.getSettings("listing");
+  return (
+    `🎨 <b>Channel Banner Artwork</b>\n\n` +
+    `Upload a <b>designed banner image</b> (illustration/3D art — like the fourtis robot banner). ` +
+    `For every purchased listing the bot pastes the token's <b>logo</b> into the artwork's circle spot ` +
+    `and can overlay the <b>$TICKER + name</b>.\n\n` +
+    `Listing artwork: ${st("listing")}\nTrending artwork: ${st("trending")}\n\n` +
+    `Logo spot: <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})  ·  Text overlay: <b>${s.showText ? "on" : "off"}</b>\n` +
+    `No artwork uploaded → the auto-generated banner is used instead.`
+  );
+}
+function btKb() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("⬆ Upload LISTING artwork", "bt_up:listing")],
+    [Markup.button.callback("⬆ Upload TRENDING artwork", "bt_up:trending")],
+    [
+      Markup.button.callback("📐 Logo spot", "bt_logo:listing"),
+      Markup.button.callback("🔤 Text overlay", "bt_text:listing"),
+    ],
+    [
+      Markup.button.callback("👁 Preview listing", "bt_prev:listing"),
+      Markup.button.callback("👁 Preview trending", "bt_prev:trending"),
+    ],
+    [
+      Markup.button.callback("🗑 Remove listing", "bt_rm:listing"),
+      Markup.button.callback("🗑 Remove trending", "bt_rm:trending"),
+    ],
+    [Markup.button.callback("⬅ Back", "home")],
+  ]);
+}
+
+function sampleLogo() {
+  try {
+    const cv = require("@napi-rs/canvas");
+    const c = cv.createCanvas(300, 300);
+    const g = c.getContext("2d");
+    const lg = g.createLinearGradient(0, 0, 300, 300);
+    lg.addColorStop(0, "#7C3AED");
+    lg.addColorStop(1, "#22D3EE");
+    g.fillStyle = lg;
+    g.fillRect(0, 0, 300, 300);
+    g.fillStyle = "rgba(255,255,255,.95)";
+    g.font = "800 170px sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("J", 150, 158);
+    return c.toBuffer("image/png");
+  } catch {
+    return null;
+  }
+}
+
+async function btPreview(ctx, kind) {
+  if (!bannerTpl.hasTemplate(kind)) {
+    return ctx.reply(`❌ No ${kind} artwork uploaded yet. Tap ⬆ Upload first.`).catch(() => {});
+  }
+  const buf = await bannerTpl.compose(kind, sampleLogo(), { symbol: "SAMPLE", name: "Sample Token" });
+  if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
+  await ctx
+    .replyWithPhoto({ source: buf }, { caption: `👁 ${kind} preview — adjust 📐 Logo spot / 🔤 Text overlay until the logo sits in the ring.` })
+    .catch(() => {});
 }
 
 // ── Views ────────────────────────────────────────────────────────────────────
@@ -261,6 +329,59 @@ function build() {
     await edit(ctx, `🖼 <b>Banner Image</b>\n\nStatus: — none`, bannerKb());
   });
 
+  // ── Channel banner artwork (template compositor) ──
+  bot.action("bt", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, btText(), btKb());
+  });
+  bot.action(/^bt_up:(listing|trending)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "upload", kind: ctx.match[1] };
+    await ctx.reply(
+      `⬆ Send the <b>${ctx.match[1]} artwork</b> as a photo or file (PNG/JPG, ~1280×640 recommended). Send /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(/^bt_logo:(listing|trending)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "logo", kind: ctx.match[1] };
+    const s = bannerTpl.getSettings(ctx.match[1]);
+    await ctx.reply(
+      `📐 <b>Logo spot</b> — where the token logo is pasted into the artwork.\n` +
+        `Current: <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
+        `Send: <code>SIZE X,Y</code> — e.g. <code>180 925,240</code>\n` +
+        `(<code>center</code> works for X or Y: <code>200 center,center</code>)\n\nApplies to BOTH artworks. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(/^bt_text:(listing|trending)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "text", kind: ctx.match[1] };
+    const s = bannerTpl.getSettings(ctx.match[1]);
+    await ctx.reply(
+      `🔤 <b>Text overlay</b> ($TICKER + token name on the artwork).\n` +
+        `Current: <b>${s.showText ? "on" : "off"}</b>, ${s.tickerFontSize}px at (${s.tickerX}, ${s.tickerY})\n\n` +
+        `Send: <code>SIZE X,Y</code> — e.g. <code>44 60,300</code>\n` +
+        `Or <code>off</code> / <code>on</code> to toggle it.\n\n/cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action(/^bt_prev:(listing|trending)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await btPreview(ctx, ctx.match[1]);
+  });
+  bot.action(/^bt_rm:(listing|trending)$/, async (ctx) => {
+    ctx.answerCbQuery("Removed").catch(() => {});
+    if (!guard(ctx)) return;
+    await bannerTpl.removeTemplate(ctx.match[1]);
+    await edit(ctx, btText(), btKb());
+  });
+
   bot.action("bc", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -294,6 +415,7 @@ function build() {
     ctx.session.awaitingTemplate = null;
     ctx.session.awaitingBanner = false;
     ctx.session.awaitingBroadcast = false;
+    ctx.session.awaitingBt = null;
     ctx.session.bcDraft = null;
     await ctx.reply("Cancelled.", { ...HTML, ...mainKb() });
   });
@@ -304,6 +426,37 @@ function build() {
     const text = ctx.message.text || "";
     if (text.startsWith("/")) return; // commands handled above
     const entities = ctx.message.entities || [];
+    // Banner-artwork settings input (logo spot / text overlay)
+    if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
+      const { mode, kind } = ctx.session.awaitingBt;
+      ctx.session.awaitingBt = null;
+      const low = text.trim().toLowerCase();
+      try {
+        if (mode === "text" && (low === "off" || low === "on")) {
+          await bannerTpl.updateSettings("listing", { showText: low === "on" });
+          await bannerTpl.updateSettings("trending", { showText: low === "on" });
+          await ctx.reply(`✅ Text overlay <b>${low}</b>.`, HTML);
+        } else {
+          const m = low.match(/^(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
+          if (!m) return ctx.reply("❌ Format: <code>SIZE X,Y</code> — e.g. <code>180 925,240</code>", HTML).catch(() => {});
+          const size = Number(m[1]);
+          const x = m[2] === "center" ? "center" : Number(m[2]);
+          const y = m[3] === "center" ? "center" : Number(m[3]);
+          const patch =
+            mode === "logo"
+              ? { logoSize: size, logoX: x, logoY: y }
+              : { tickerFontSize: size, tickerX: x, tickerY: y, showText: true };
+          // spot settings apply to both artworks (same layout family)
+          await bannerTpl.updateSettings("listing", patch);
+          await bannerTpl.updateSettings("trending", patch);
+          await ctx.reply(`✅ Saved. Previewing…`, HTML);
+        }
+        if (bannerTpl.hasTemplate(kind)) await btPreview(ctx, kind);
+      } catch (e) {
+        await ctx.reply(`⚠️ ${e.message}`).catch(() => {});
+      }
+      return;
+    }
     if (ctx.session.awaitingBroadcast) {
       ctx.session.awaitingBroadcast = false;
       ctx.session.bcDraft = { text, entities };
@@ -337,6 +490,28 @@ function build() {
   // Photo = banner upload (when awaiting)
   bot.on(["photo", "document"], async (ctx) => {
     if (!guard(ctx)) return;
+    // Channel banner artwork upload
+    if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "upload") {
+      const { kind } = ctx.session.awaitingBt;
+      const fileId = getMediaFileId(ctx);
+      if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo or file.").catch(() => {});
+      ctx.session.awaitingBt = null;
+      try {
+        const link = await ctx.telegram.getFileLink(fileId);
+        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
+        if (!res.ok) throw new Error(`download ${res.status}`);
+        await bannerTpl.saveTemplate(kind, Buffer.from(await res.arrayBuffer()));
+        log.info(`[adminbot] ${kind} banner artwork uploaded by @${ctx.from.username || ctx.from.id}`);
+        await ctx.reply(
+          `✅ <b>${kind} artwork saved.</b> Now set 📐 Logo spot so the token logo lands in the circle, then 👁 Preview.`,
+          { ...HTML, ...btKb() },
+        );
+        await btPreview(ctx, kind);
+      } catch (e) {
+        await ctx.reply(`⚠️ Couldn't save the artwork: ${e.message}`).catch(() => {});
+      }
+      return;
+    }
     if (ctx.session.awaitingBroadcast) {
       const fileId = getMediaFileId(ctx);
       if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo.").catch(() => {});

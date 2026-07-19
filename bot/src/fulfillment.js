@@ -19,6 +19,7 @@ const premium = require("./premium");
 const { chainOf } = require("./config/chains");
 const assets = require("./assets");
 const bannerRender = require("./bannerRender");
+const bannerTemplate = require("./bannerTemplate");
 const tpl = require("./templates");
 const log = require("./helpers/logger");
 
@@ -99,9 +100,16 @@ function bannerCoinOf(row, live) {
   };
 }
 
-/** Post media: dynamic per-token banner → static banner → token logo. */
+/** Post media, best first: admin-uploaded template ARTWORK (fourtis-style,
+ *  logo composited into the design) → dynamic per-token banner → static
+ *  banner → token logo. */
 async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl) {
   if (POST_BANNERS) {
+    const composed = await bannerTemplate.compose(kind, logoBuffer, {
+      symbol: bannerCoin.symbol,
+      name: bannerCoin.name,
+    });
+    if (composed) return { source: composed };
     const buf =
       kind === "trending"
         ? await bannerRender.renderTrendingBanner(bannerCoin, logoBuffer)
