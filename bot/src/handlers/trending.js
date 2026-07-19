@@ -2,7 +2,7 @@
 // User sends the CA / token link → we resolve the listing (chain comes from the
 // coin) → pick a duration → pay.
 const { answer, toast, sendCard } = require("../helpers/message");
-const { nativeOf, chainOf } = require("../config/chains");
+const { chainOf, payChainOf, payNativeOf } = require("../config/chains");
 const { trendingForChain, durationToHours } = require("../config/packages");
 const { escapeHtml } = require("../helpers/format");
 const { startPayment } = require("./pay");
@@ -76,7 +76,7 @@ async function handleText(ctx) {
 
 async function showDurations(ctx) {
   const coin = ctx.session.coin;
-  const native = nativeOf(coin.chain);
+  const native = payNativeOf(coin.chain);
   const rows = trendingForChain(coin.chain);
   const kb = rows.map((r, i) => [
     Markup.button.callback(
@@ -86,7 +86,11 @@ async function showDurations(ctx) {
   ]);
   await sendCard(
     ctx,
-    `🔥 <b>Trending for $${escapeHtml(coin.sym.replace(/^\$/, ""))}</b> on ${escapeHtml(chainOf(coin.chain).label)}\n\nPick a duration:`,
+    tpl.render("trending_durations", {
+      symbol: `$${coin.sym.replace(/^\$/, "")}`,
+      chain: chainOf(coin.chain).label,
+      native,
+    }),
     menu.withHome(kb),
   );
 }
@@ -102,8 +106,8 @@ async function durationPick(ctx) {
   const hours = durationToHours(row.duration);
   await startPayment(ctx, {
     kind: "trending",
-    chain: coin.chain,
-    native: nativeOf(coin.chain),
+    chain: payChainOf(coin.chain),
+    native: payNativeOf(coin.chain),
     humanAmount: row.price,
     label: `Trending ${row.duration} — $${coin.sym.replace(/^\$/, "")}`,
     payload: { chain: coin.chain, address: coin.address, hours, symbol: coin.sym, name: coin.name },

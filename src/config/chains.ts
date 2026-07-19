@@ -89,6 +89,27 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://app.ston.fi/swap?ft=TON&tt=${a}`,
     addressPattern: /^(EQ|UQ|0:)[A-Za-z0-9_-]{40,66}$/,
   },
+  sui: {
+    id: "sui",
+    label: "Sui",
+    color: "#4DA2FF",
+    geckoNetwork: "sui-network",
+    goPlusChainId: null,
+    explorer: (a) => `https://suivision.xyz/coin/${encodeURIComponent(a)}`,
+    buyUrl: (a) => `https://app.cetus.zone/swap/?to=${encodeURIComponent(a)}`,
+    // Sui coin type: 0x<hex>::module::SYMBOL (bare object addresses accepted)
+    addressPattern: /^0x[a-fA-F0-9]{1,64}(::[A-Za-z0-9_]+){0,2}$/,
+  },
+  plasma: {
+    id: "plasma",
+    label: "Plasma",
+    color: "#00FF9C",
+    geckoNetwork: "plasma",
+    goPlusChainId: null,
+    explorer: (a) => `https://dexscreener.com/plasma/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/plasma/${a}`,
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+  },
 };
 
 export const CHAIN_IDS = Object.keys(CHAINS);

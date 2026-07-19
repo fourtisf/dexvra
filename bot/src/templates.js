@@ -61,13 +61,64 @@ const DEFAULTS = {
     "🔥 **Trending Slots** — 3 to 48 hours of featured placement\n" +
     `${em("📢", E.megaphone)} **Banner Campaigns** — premium homepage placement\n\n` +
     "Select an option below.",
+  intro_xpress:
+    `${em("⚡", E.zap)} **Xpress Listing — live in minutes**\n\n` +
+    "The fastest way to put your token in front of the Dexvra audience. Xpress listings activate **immediately after payment** — no review queue, no waiting.\n\n" +
+    "**What's included**\n" +
+    "⚡ Instant listing on the dexvra.io board\n" +
+    `${em("🚨", E.siren)} Launch post in our Listing channel\n` +
+    "🔥 Bundled Trending exposure\n" +
+    `${em("🌐", E.globe)} Dedicated token page — live chart, price & socials\n\n` +
+    "**How it works**\n" +
+    "1. Choose your token's network below\n" +
+    "2. Paste the contract address — name, socials & logo auto-fill\n" +
+    "3. Review, confirm and pay\n" +
+    "4. You're live — all post links delivered right here\n\n" +
+    "Select your token's network to begin:",
+  intro_tiered:
+    `🏆 **Listing & Trending — Diamond → Bronze**\n\n` +
+    "Our flagship placement. Choose a tier to get ranked positioning across the entire Dexvra network, announcement coverage, and a bundled Trending run sized to your tier.\n\n" +
+    "**What's included**\n" +
+    `${em("💎", E.diamond)} Ranked placement on the board — Diamond ranks first\n` +
+    `${em("📢", E.megaphone)} Announcement-channel post (Diamond, Gold & Platinum)\n` +
+    "🔥 Bundled Trending feature — up to 48 hours\n" +
+    `${em("🌐", E.globe)} Dedicated token page with live market data\n\n` +
+    "**How it works**\n" +
+    "1. Choose your token's network below\n" +
+    "2. Paste the contract address — details auto-fill\n" +
+    "3. Pick your tier, review and pay\n" +
+    "4. Everything posts automatically — links delivered here\n\n" +
+    "Select your token's network to begin:",
+  tier_chooser:
+    `🏆 **Choose your placement tier**\n\n` +
+    "Higher tiers rank higher on the board, carry their badge on every post, and include a longer bundled Trending run. **Diamond, Gold and Platinum** additionally post to our Announcement channel.\n\n" +
+    "Prices are shown in **{native}** — tap a tier to continue to payment:",
+  trending_durations:
+    `🔥 **Trending slot — {symbol}** · {chain}\n\n` +
+    "Your token takes a featured position on the Dexvra Trending board and is announced in our Trending channel the moment the slot activates.\n\n" +
+    "**Included with every slot**\n" +
+    `${em("📈", E.chartUp)} Featured placement for the full duration\n` +
+    `${em("📢", E.megaphone)} "Now Trending" announcement post\n` +
+    `${em("🌐", E.globe)} Live tracking on dexvra.io\n\n` +
+    "Longer slots carry bigger discounts. Pick your duration (**{native}**):",
+  intro_banner:
+    `${em("📢", E.megaphone)} **Banner Campaigns — premium placement on dexvra.io**\n\n` +
+    "Put your creative in front of every Dexvra visitor. Banner campaigns run in the homepage carousel with your click-through link, and are announced in our channel.\n\n" +
+    "**How it works**\n" +
+    "1. Choose a banner format below\n" +
+    "2. Pick your campaign duration — USD pricing, discounts on longer runs\n" +
+    "3. Upload your creative and target link\n" +
+    "4. Pay in the currency you prefer — the campaign goes live instantly\n\n" +
+    "Choose a banner format:",
   listing_ca_prompt:
     `${em("🔗", E.link)} **Contract address**\n\nPaste your token's contract address on **{chain}**:`,
   listing_name_prompt: "**Token name**\n\nWhat is your project called?",
   listing_symbol_prompt: "**Ticker**\n\nSend your token symbol (e.g. PEPE):",
   listing_logo_prompt: "**Logo**\n\nSend your logo as a photo — or /skip to continue without one.",
   trending_ca_prompt:
-    "🔥 **Book a Trending slot**\n\nPaste the contract address (or Dexvra token link) of your **listed** token:",
+    "🔥 **Book a Trending slot**\n\n" +
+    "Featured placement on the Dexvra Trending board plus a \"Now Trending\" announcement — slots from **3 to 48 hours**, longer runs at a discount.\n\n" +
+    "Paste the **contract address** of your listed token (or its dexvra.io token link) to continue:",
   trending_not_found:
     `${em("❌", E.cross)} **Not listed yet**\n\n` +
     "We couldn't find that token on Dexvra. List it first — ⚡ Xpress or 🏆 Listing & Trending — then come back to book your slot.",
@@ -125,6 +176,11 @@ const DEFAULTS = {
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
 const META = {
   welcome: { group: "Bot Messages", label: "Welcome / Start", ph: [] },
+  intro_xpress: { group: "Bot Messages", label: "Intro: Xpress Listing", ph: [] },
+  intro_tiered: { group: "Bot Messages", label: "Intro: Listing & Trending", ph: [] },
+  tier_chooser: { group: "Bot Messages", label: "Tier chooser", ph: ["native"] },
+  trending_durations: { group: "Bot Messages", label: "Trending: duration picker", ph: ["symbol", "chain", "native"] },
+  intro_banner: { group: "Bot Messages", label: "Intro: Banner Ads", ph: [] },
   listing_ca_prompt: { group: "Bot Messages", label: "Prompt: contract address", ph: ["chain"] },
   listing_name_prompt: { group: "Bot Messages", label: "Prompt: token name", ph: [] },
   listing_symbol_prompt: { group: "Bot Messages", label: "Prompt: token symbol", ph: [] },
