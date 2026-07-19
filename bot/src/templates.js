@@ -165,6 +165,10 @@ const DEFAULTS = {
   success_banner:
     `✅ **Campaign booked**\n\n` +
     `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
+  upsell_expiry:
+    "⏰ **Your Trending slot is ending**\n\n" +
+    "**{symbol}**'s featured placement on the Dexvra Trending board ends in about **{hours}h**.\n\n" +
+    "Extend now to keep your spot without a gap — a **{discount}% renewal discount** is already applied below:",
 
   // ── Channel post layouts ──
   // {tierLine}/{overview}/{socials}/{footer} are auto-built and carry their own
@@ -236,6 +240,7 @@ const META = {
   success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks"] },
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
+  upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
