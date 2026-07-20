@@ -78,3 +78,20 @@ Set `INTERNAL_API_TOKEN` (a shared secret, **≥ 24 chars**) in `.env.local`; th
 bot's `.env` gets the same value. Until it's set, every `/api/internal/*` route
 returns 401 (fails closed). Generate one with
 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
+## Durable storage — MongoDB (optional)
+
+Both the web app and the bot persist to local JSON files under `data/` by
+default. Set **`MONGO_URI`** (in the web's `.env.local` **and** the bot's `.env`,
+pointing at the **same** database) to mirror that state into MongoDB, so it
+survives a VPS reset / container replace and the site + bot share one store:
+
+- **Web** (`src/lib/mongo.ts`) mirrors `listings` and `banners` into a `web`
+  collection; on a fresh container with no local file, the store restores from
+  the mirror.
+- **Bot** (`bot/src/db/mongo.js`) mirrors every JSON store (the /start audience,
+  orders, templates, group + banner config, dedup latches) into a `kv`
+  collection and restores missing files at boot.
+
+Fail-open: unset or unreachable → both fall back to local files (no outage).
+Optional `MONGO_DB` overrides the database name (default: from the URI).

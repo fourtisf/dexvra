@@ -3,6 +3,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { SEED_ROWS, type ListingRow } from "./listings";
+import { kvGet, kvSet, mongoConfigured } from "./mongo";
+
+// Mongo mirror key for this store (doc _id in the `web` collection).
+const MIRROR_KEY = "listings";
 
 // Server-side listing store — the admin panel's source of truth. Persisted as a
 // JSON file on disk (writable on a VPS; survives restarts and `git pull` since
@@ -72,10 +76,31 @@ async function load(): Promise<StoredListing[]> {
     }
     throw new Error("corrupt store");
   } catch {
-    // Seed in memory only — the file is written on the first mutation. Reads
-    // must never write (and never race the mutation write path).
+    // File missing/corrupt (e.g. fresh container after a VPS reset) → restore
+    // from the durable Mongo mirror before seeding. Reads must never WRITE the
+    // local file (that would race the mutation path); the next mutation persists
+    // it back to disk, and Mongo already holds the durable copy.
+    const mirrored = await restoreFromMirror();
+    if (mirrored && mirrored.length) {
+      cache = mirrored;
+      healSeedLogos(cache);
+      const now = Date.now();
+      for (const r of cache) if (r.source !== "seed" && r.listedAt == null) r.listedAt = now;
+      return cache;
+    }
+    // Seed in memory only — the file is written on the first mutation.
     cache = seed();
     return cache;
+  }
+}
+
+async function restoreFromMirror(): Promise<StoredListing[] | null> {
+  if (!mongoConfigured()) return null;
+  try {
+    const rows = await kvGet<StoredListing[]>(MIRROR_KEY);
+    return Array.isArray(rows) ? rows : null;
+  } catch {
+    return null;
   }
 }
 
@@ -85,6 +110,8 @@ async function persist(rows: StoredListing[]): Promise<void> {
   await fs.writeFile(tmp, JSON.stringify(rows, null, 2), "utf8");
   await fs.rename(tmp, FILE);
   cache = rows;
+  // Durable mirror — best-effort, never blocks or fails the local write.
+  if (mongoConfigured()) void kvSet(MIRROR_KEY, rows);
 }
 
 /** Serialize mutations so concurrent writes never clobber each other. */

@@ -5,6 +5,10 @@
 // listings store's atomic-write + serialized-mutation pattern.
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { kvGet, kvSet, mongoConfigured } from "./mongo";
+
+// Mongo mirror key for this store (doc _id in the `web` collection).
+const MIRROR_KEY = "banners";
 
 export interface BannerBooking {
   id: string;
@@ -34,7 +38,20 @@ async function load(): Promise<BannerBooking[]> {
   try {
     const parsed = JSON.parse(await fs.readFile(FILE, "utf8"));
     cache = Array.isArray(parsed) ? (parsed as BannerBooking[]) : [];
+    return cache;
   } catch {
+    // File missing (fresh container) → restore from the durable Mongo mirror.
+    if (mongoConfigured()) {
+      try {
+        const mirrored = await kvGet<BannerBooking[]>(MIRROR_KEY);
+        if (Array.isArray(mirrored)) {
+          cache = mirrored;
+          return cache;
+        }
+      } catch {
+        /* fall through to empty */
+      }
+    }
     cache = [];
   }
   return cache;
@@ -46,6 +63,8 @@ async function persist(rows: BannerBooking[]): Promise<void> {
   await fs.writeFile(tmp, JSON.stringify(rows, null, 2), "utf8");
   await fs.rename(tmp, FILE);
   cache = rows;
+  // Durable mirror — best-effort, never blocks the local write.
+  if (mongoConfigured()) void kvSet(MIRROR_KEY, rows);
 }
 
 function mutate(fn: (rows: BannerBooking[]) => BannerBooking[]): Promise<BannerBooking[]> {
