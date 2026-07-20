@@ -41,8 +41,13 @@ test("postingEnabled defaults true and postMedia returns TEMPLATE ARTWORK", asyn
     "Xpress Listing",
   );
   assert.ok(media && media.source && Buffer.isBuffer(media.source), "expected composed artwork Buffer, got raw-logo fallback");
-  // PNG magic — proves the compositor produced the artwork, not a passthrough
-  assert.strictEqual(media.source.readUInt32BE(0), 0x89504e47);
+  // Compositor produced the artwork, not a passthrough logo. The encoder emits
+  // PNG normally but re-encodes oversized banners to JPEG (Telegram size guard),
+  // so accept either PNG or JPEG magic.
+  const magic = media.source.readUInt32BE(0);
+  const isPng = magic === 0x89504e47;
+  const isJpeg = (magic & 0xffffff00) >>> 0 === 0xffd8ff00;
+  assert.ok(isPng || isJpeg, `expected PNG or JPEG artwork, got magic 0x${magic.toString(16)}`);
 });
 
 test("admin toggle OFF really disables the banner pipeline", async () => {

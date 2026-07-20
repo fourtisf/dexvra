@@ -72,7 +72,9 @@ function start(tg) {
       } catch (e) {
         log.warn(`[pump] post: ${e.message}`);
       }
-      x.postPump(coin, pct, base.mcap || 0, m.mcap || 0).catch(() => {});
+      // Quote the original listing tweet on X (falls back to a standalone
+      // tweet when the listing tweet id isn't known).
+      x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId).catch(() => {});
       log.event(`📈 Pump: ${r.sym} +${Math.round(pct)}% since listing (${r.chain})`);
     }
   };

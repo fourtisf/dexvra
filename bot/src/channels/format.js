@@ -20,6 +20,24 @@ const sym = (s) => {
   return t ? `$${t}` : "$TOKEN";
 };
 const chainName = (c) => (chainOf(c) ? chainOf(c).label : String(c).toUpperCase());
+// Per-network emoji the bot AUTO-PICKS from the token's chain, driven by the
+// editable `chain_emojis` template (one `chainid = emoji` per line). Unknown
+// chains fall back to 💠 so the "Chain:" line always has a leading glyph.
+function chainEmojiMap() {
+  const map = {};
+  for (const line of String(tpl.getRaw("chain_emojis") || "").split("\n")) {
+    const i = line.indexOf("=");
+    if (i <= 0) continue;
+    const k = line.slice(0, i).trim().toLowerCase();
+    const v = line.slice(i + 1).trim();
+    if (k && v) map[k] = v;
+  }
+  return map;
+}
+function chainEmoji(chain) {
+  const id = (chainOf(chain) && chainOf(chain).id) || String(chain || "").toLowerCase();
+  return chainEmojiMap()[id] || "💠";
+}
 const priceStr = (p) => (p && p > 0 ? fmtPrice(p) : "TBA");
 const mcStr = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
 const tme = (handle) => `https://t.me/${String(handle).replace(/^@/, "")}`;
@@ -38,19 +56,26 @@ const TIER_EMOJI = {
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 const twitterInline = (links) => (links && links.twitter ? ` | [X](${cleanUrl(links.twitter)})` : "");
 
-// Per-link social row (Moontok/Fourtis style: emoji + labelled link). Returns
-// "" for a token with no socials so the template collapses cleanly.
-function socialsInline(links = {}) {
-  const out = [];
-  if (links.twitter) out.push(`🐦 [X](${cleanUrl(links.twitter)})`);
-  if (links.telegram) out.push(`✈️ [Telegram](${cleanUrl(links.telegram)})`);
-  if (links.website) out.push(`🌐 [Website](${cleanUrl(links.website)})`);
-  return out.join(" · ");
-}
+// Social-links block — driven by the editable `post_socials` template (admins
+// change the emoji/label/layout in @dexvraadminbot). One social PER LINE; a line
+// whose link the token lacks is dropped so the block never shows a dead link.
+// Returns "" for a token with no socials so the parent template collapses.
 function socialsBlock(coin) {
-  const s = socialsInline(coin.links);
-  // Label on its own line, links on the next (operator-preferred layout).
-  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} socials:**\n${s}\n\n` : "";
+  const links = coin.links || {};
+  const present = { twitter: !!links.twitter, website: !!links.website, telegram: !!links.telegram };
+  if (!present.twitter && !present.website && !present.telegram) return "";
+  const kept = tpl
+    .getRaw("post_socials")
+    .split("\n")
+    .filter((line) => !["twitter", "website", "telegram"].some((k) => line.includes(`{${k}}`) && !present[k]))
+    .join("\n");
+  const out = tpl.substitute(kept, {
+    symbol: clean(sym(coin.symbol)),
+    twitter: links.twitter ? cleanUrl(links.twitter) : "",
+    website: links.website ? cleanUrl(links.website) : "",
+    telegram: links.telegram ? cleanUrl(links.telegram) : "",
+  });
+  return out + "\n\n";
 }
 
 // Fallback overview for tokens with no description (fresh pump.fun launches
@@ -84,14 +109,17 @@ function overviewBlock(text) {
   return `${clean(s)}\n\n`;
 }
 
-// Footer order (operator preference): Listings → Trending → Announcements.
+// Footer block — driven by the editable `post_footer` template (admins change
+// the emoji/labels in @dexvraadminbot; the channel URLs stay {placeholders}).
 function footer() {
   return (
-    `\n\n${em("📎", E.link)} **Dexvra**\n` +
-    `${em("💎", E.diamond)} [Dexvra.io](${SITE_URL}) · ` +
-    `${em("🚨", E.sirenHead)} [Listings](${tme(CHANNELS.listing)}) · ` +
-    `🔥 [Trending](${tme(CHANNELS.trending)}) · ` +
-    `${em("📢", E.megaphone)} [Announcements](${tme(CHANNELS.announce)})`
+    "\n\n" +
+    tpl.substitute(tpl.getRaw("post_footer"), {
+      site: SITE_URL,
+      listing: tme(CHANNELS.listing),
+      trending: tme(CHANNELS.trending),
+      announce: tme(CHANNELS.announce),
+    })
   );
 }
 
@@ -101,15 +129,19 @@ const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coi
 const coinUrlLabel = (coin) => coinUrl(coin).replace(/^https?:\/\//, "");
 
 function listingPost(coin) {
-  const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
+  const isXpress = coin.tier === "XPRESS";
+  // Header + tier line are editable templates too (every word lives in the editor).
+  const head = tpl.substitute(tpl.getRaw(isXpress ? "post_head_xpress" : "post_head_listed"), {
+    name: clean(coin.name),
+  });
   const tierLine =
-    coin.tier && coin.tier !== "XPRESS"
-      ? `\n${tierBadge} **${clean(tierLabel(coin.tier))} tier**`
+    coin.tier && !isXpress
+      ? "\n" +
+        tpl.substitute(tpl.getRaw("post_tierline"), {
+          tierEmoji: TIER_EMOJI[String(coin.tier).toUpperCase()] || "",
+          tier: clean(tierLabel(coin.tier)),
+        })
       : "";
-  const head =
-    coin.tier === "XPRESS"
-      ? `${em("⚡", E.zap)} **Xpress Listing — ${clean(coin.name)} live on Dexvra**`
-      : `${em("🚨", E.sirenHead)} **New Listing on Dexvra**`;
   return tpl.render("post_listing", {
     head,
     tierLine,
@@ -118,6 +150,7 @@ function listingPost(coin) {
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
     twitter: twitterInline(coin.links),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     address: clean(coin.address),
     price: priceStr(coin.price),
@@ -134,6 +167,7 @@ function trendingPost(coin) {
   return tpl.render("post_trending", {
     symbol: clean(sym(coin.symbol)),
     name: clean(coin.name),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
     overview: overviewBlock(coin.overview || autoOverview(coin, "trending")),
@@ -162,8 +196,11 @@ function pumpPost(coin, percent, firstMc, lastMc) {
     multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
     lastMc: "$" + formatNumber(lastMc),
+    chainEmoji: chainEmoji(coin.chain),
+    chain: clean(chainName(coin.chain)),
     address: clean(coin.address),
     coinUrl: coinUrl(coin),
+    socials: socialsBlock(coin),
     footer: footer(),
   });
 }
@@ -185,18 +222,22 @@ const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 function changeSentence(change24h) {
   const v = Number(change24h);
   if (!Number.isFinite(v) || v <= 0) return "";
-  if (v > 5000) return " Momentum is building over the last 24h.";
-  return ` Up +${withCommas(Math.round(v))}% over the last 24h.`;
+  // Own emphasized line under the body. Absurd low-liquidity readings
+  // (e.g. +490,749%) look like spam, so above a sane cap we drop the number.
+  if (v > 5000) return "\n\n**Momentum is surging** over the last 24h.";
+  return `\n\n**+${withCommas(Math.round(v))}%** over the last 24h — and still climbing.`;
 }
 
 function rankupPost(coin, rank, change24h) {
   return tpl.render("post_rankup", {
     symbol: clean(sym(coin.symbol)),
     name: clean(coin.name),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     rank,
     change: changeSentence(change24h),
     coinUrl: coinUrl(coin),
+    socials: socialsBlock(coin),
     footer: footer(),
   });
 }

@@ -106,7 +106,7 @@ function bannerCoinOf(row, live) {
 /** Post media, best first: admin-uploaded template ARTWORK (fourtis-style,
  *  logo composited into the design) → dynamic per-token banner → static
  *  banner → token logo. */
-async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badge) {
+async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badge, opts = {}) {
   // Self-fetch the logo from its URL when no buffer was passed, so background
   // callers (rank-up, pump) get the token logo composited into the artwork too.
   if (!logoBuffer && logoUrl) logoBuffer = await fetchLogoUrl(logoUrl).catch(() => null);
@@ -118,6 +118,20 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
     if (media) {
       log.info(`[fulfil] ${kind} media: admin ${media.type} clip ✔`);
       return media;
+    }
+    // Rank-up has its OWN dynamic banner (rank medallion + big % gain). It can't
+    // be a static composited artwork (the rank/% change every alert), so skip
+    // compose() and render it procedurally. Admin GIF/video override still wins.
+    if (kind === "rankup") {
+      const buf = await bannerRender
+        .renderRankUpBanner(bannerCoin, logoBuffer, { rank: opts.rank, change: opts.change })
+        .catch(() => null);
+      if (buf) {
+        log.info(`[fulfil] rankup media: dynamic banner ✔ (#${opts.rank})`);
+        return { source: buf };
+      }
+      log.warn(`[fulfil] rankup media: RAW TOKEN LOGO fallback — renderRankUpBanner returned null (check @napi-rs/canvas)`);
+      return photoSource(logoFileId, logoUrl);
     }
     const composed = await bannerTemplate.compose(kind, logoBuffer, {
       symbol: bannerCoin.symbol,
@@ -217,8 +231,11 @@ async function fulfillListing(ctx, order) {
     log.warn(`[fulfil] listing channel posts: ${e.message}`);
   }
 
-  // 5. Tweet + 6. Buyer DM.
-  x.postListing(coin, logoBuffer, "image/png").catch(() => {});
+  // 5. Tweet + 6. Buyer DM. Persist the listing TWEET id so a later pump alert
+  // can QUOTE it on X (mirrors the TG reply-to-listing behaviour).
+  x.postListing(coin, logoBuffer, "image/png")
+    .then((tweetId) => (tweetId ? postids.set(input.chain, input.address, { listingTweetId: tweetId }) : null))
+    .catch(() => {});
   await dm(ctx, successListing(coin, links), menu.postPurchase(coin.siteUrl));
 }
 

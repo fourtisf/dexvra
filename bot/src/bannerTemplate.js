@@ -10,6 +10,7 @@
 const path = require("node:path");
 const fss = require("node:fs");
 const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
+const { toSendBuffer } = require("./helpers/encodeImage");
 const log = require("./helpers/logger");
 
 const CONFIG_FILE = "bannerTemplate.json";
@@ -377,7 +378,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       ctx.textBaseline = "alphabetic";
     }
 
-    return canvas.toBuffer("image/png");
+    return toSendBuffer(canvas);
   } catch (e) {
     log.warn(`[bannerTpl] compose(${kind}) failed: ${e.message}`);
     return null;

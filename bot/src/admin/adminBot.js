@@ -12,6 +12,7 @@ const { escapeHtml } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
+const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
@@ -341,7 +342,7 @@ function btGuideOverlay(buf, kind, elem) {
     g.moveTo(cx, cy - 26);
     g.lineTo(cx, cy + 26);
     g.stroke();
-    return c.toBuffer("image/png");
+    return toSendBuffer(c);
   });
 }
 
@@ -455,7 +456,7 @@ function sampleMedia(kind) {
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillText(rect ? "SAMPLE AD" : "J", w / 2, h / 2 + (rect ? 4 : 8));
-    return c.toBuffer("image/png");
+    return toSendBuffer(c);
   } catch {
     return null;
   }
@@ -476,6 +477,66 @@ async function btPreview(ctx, kind) {
 function homeText() {
   return "🛠 <b>Dexvra Admin — Templates</b>\n\nEdit any bot message or channel-post layout. Changes go live within ~30s (no redeploy). Pick a category:";
 }
+// Plain-language meaning for every {placeholder}, so admins aren't staring at
+// cryptic tags. AUTO ones are filled AND formatted automatically (usually leave
+// them as-is); the rest are simple live values you place wherever you want them.
+const PH_HELP = {
+  // auto-built blocks (carry their own emoji + spacing)
+  head: "the header line (e.g. “New Listing on Dexvra”)",
+  tierLine: "tier badge line (e.g. “💎 Diamond tier”)",
+  logoEmoji: "the token’s logo emoji",
+  overview: "the project description paragraph",
+  socials: "the project’s social links block (X · Website · Telegram)",
+  footer: "the Dexvra channel links block",
+  // simple live values
+  name: "token name",
+  symbol: "ticker (e.g. $CUBEMAN)",
+  tag: "ticker without the $",
+  twitter: "the token’s X link",
+  mention: "the token’s X @handle",
+  chain: "blockchain (e.g. Solana)",
+  address: "contract address",
+  price: "token price",
+  mcap: "market cap",
+  liq: "liquidity",
+  coinUrl: "full Dexvra token-page link",
+  coinUrlLabel: "the Dexvra link shown as text",
+  url: "link",
+  rank: "trending rank number",
+  change: "24h change sentence",
+  percent: "pump % since listing",
+  multiple: "pump multiple (e.g. 2×)",
+  firstMc: "market cap at listing",
+  lastMc: "current market cap",
+  native: "native coin (SOL / BNB / ETH)",
+  hours: "number of hours",
+  discount: "renewal discount %",
+  reached: "number of users reached",
+  ref: "reference id",
+  slot: "banner slot name",
+  linkUrl: "advertiser link",
+  title: "advertiser / project title",
+  tier: "tier name (Diamond, Gold…)",
+  tierEmoji: "tier emoji",
+};
+const AUTO_PH = new Set(["head", "tierLine", "logoEmoji", "overview", "socials", "footer"]);
+
+// A friendly legend: split the template's placeholders into "your values" vs
+// "auto — leave as-is" with a plain description for each.
+function phLegend(phList) {
+  if (!phList || !phList.length) return "";
+  const val = [];
+  const auto = [];
+  for (const p of phList) {
+    const line = `• <code>{${p}}</code> — ${PH_HELP[p] || "live value"}`;
+    (AUTO_PH.has(p) ? auto : val).push(line);
+  }
+  let out = "";
+  if (val.length) out += `\n✍️ <b>Your values</b> (put where you want them):\n${val.join("\n")}\n`;
+  if (auto.length) out += `\n🤖 <b>Auto — usually leave as-is</b>:\n${auto.join("\n")}\n`;
+  return out;
+}
+
 // The controls card (label + placeholders + hint). The current text itself is
 // NOT embedded here — it's sent as its own PLAIN message just above (see
 // sendTemplateView), like fourtisadminbot, so operators see it as normal text
@@ -490,14 +551,14 @@ function viewText(key) {
       ? `💎 Saved with ${nPrem} premium emoji.\n`
       : `ℹ️ Saved with ${val.entities.length} formatting entities.\n`;
   }
-  const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
   return (
     `<b>${escapeHtml(m.label)}</b> — ${tpl.isCustom(key) ? "✏️ custom" : "📋 default"}\n` +
     `${premiumNote}` +
-    (m.ph.length ? `Placeholders you can use: <code>${escapeHtml(ph)}</code>\n` : ``) +
-    `\n☝️ That message above is the current text. Tap <b>✏️ Edit</b> and send your new one — ` +
-    `type it normally, emoji and line breaks are kept.` +
-    (m.ph.length ? ` Keep any <code>{placeholder}</code> where the live value goes.` : ``)
+    `\n☝️ The message above is what’s live now. Tap <b>✏️ Edit</b> to change the wording — ` +
+    `type it like a normal message (emoji & line breaks are kept).` +
+    (m.ph.length
+      ? ` The <code>{tags}</code> below get swapped for live data — keep the ones you want, delete the rest.\n${phLegend(m.ph)}`
+      : ``)
   );
 }
 
@@ -729,16 +790,13 @@ function build() {
     if (!tpl.keys().includes(key)) return;
     ctx.session.awaitingTemplate = key;
     const m = tpl.meta(key);
-    const ph = m.ph.length ? m.ph.map((p) => `{${p}}`).join(" ") : "(none)";
     await ctx.reply(
       `✏️ Send the new text for <b>${escapeHtml(m.label)}</b>.\n\n` +
         `Type it like a normal message — line breaks, spaces and emoji are kept exactly. ` +
         `💎 For <b>premium emoji</b>, insert them straight from your keyboard as you type.\n\n` +
-        `Tip: copy the current text shown above, tweak it, and send it back.` +
-        (m.ph.length
-          ? `\n\nKeep any <code>{placeholder}</code> where the live value goes: <code>${escapeHtml(ph)}</code>`
-          : ``) +
-        `\n\nSend /cancel to abort.`,
+        `Tip: copy the current text shown above, tweak the wording, and send it back — keep the <code>{tags}</code> where you want the live values.` +
+        (m.ph.length ? `\n${phLegend(m.ph)}` : ``) +
+        `\nSend /cancel to abort.`,
       HTML,
     );
   });
