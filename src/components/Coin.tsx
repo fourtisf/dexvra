@@ -2,6 +2,7 @@
 
 import type { BoardToken } from "@/lib/types";
 import { coinBg } from "@/lib/visual";
+import { logoSrc } from "@/lib/logo";
 import { useState, type CSSProperties } from "react";
 import { ChainLogo } from "./ChainLogo";
 
@@ -29,12 +30,13 @@ export function Coin({
   // A logo URL is best-effort (CDN guesses can 404) — fall back to the emoji
   // instead of ever showing a broken-image square.
   const [broken, setBroken] = useState(false);
-  const showImg = token.logoUrl && !broken;
+  const src = logoSrc(token.logoUrl);
+  const showImg = src && !broken;
   const inner = (
     <div className="coin" style={style}>
       {showImg ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={token.logoUrl!} alt="" loading="lazy" onError={() => setBroken(true)} />
+        <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} />
       ) : (
         token.emoji
       )}
