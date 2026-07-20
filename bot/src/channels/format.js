@@ -49,7 +49,8 @@ function socialsInline(links = {}) {
 }
 function socialsBlock(coin) {
   const s = socialsInline(coin.links);
-  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} socials:** ${s}\n\n` : "";
+  // Label on its own line, links on the next (operator-preferred layout).
+  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} socials:**\n${s}\n\n` : "";
 }
 
 // Fallback overview for tokens with no description (fresh pump.fun launches
@@ -99,7 +100,7 @@ function listingPost(coin) {
   const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
   const tierLine =
     coin.tier && coin.tier !== "XPRESS"
-      ? `\n${tierBadge} **${clean(tierLabel(coin.tier))} tier** — featured placement`
+      ? `\n${tierBadge} **${clean(tierLabel(coin.tier))} tier**`
       : "";
   const head =
     coin.tier === "XPRESS"
