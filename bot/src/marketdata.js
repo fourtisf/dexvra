@@ -62,9 +62,11 @@ async function fetchGT(chain, address) {
         ? snum(pool.attributes.price_change_percentage.h24)
         : null;
     const img = attr.image_url;
+    const liq = pool && pool.attributes ? num(pool.attributes.reserve_in_usd) : null;
     return {
       priceUsd: price,
       mcap,
+      liq,
       poolAddress,
       change24h,
       name: attr.name || null,
@@ -97,6 +99,7 @@ async function fetchDS(chain, address) {
     return {
       priceUsd: num(p.priceUsd),
       mcap: num(p.marketCap) ?? num(p.fdv),
+      liq: num(p.liquidity?.usd),
       poolAddress: p.pairAddress || null,
       change24h: p.priceChange ? snum(p.priceChange.h24) : null,
       name: base.name || null,
@@ -144,6 +147,7 @@ async function fetchMarket(chain, address) {
     ...gt,
     priceUsd: gt.priceUsd ?? ds.priceUsd,
     mcap: gt.mcap ?? ds.mcap,
+    liq: gt.liq ?? ds.liq,
     poolAddress: gt.poolAddress || ds.poolAddress,
     change24h: gt.change24h ?? ds.change24h,
     name: gt.name || ds.name,
