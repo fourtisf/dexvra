@@ -49,10 +49,8 @@ test("resetAllTemplates wipes every custom override in one shot", async () => {
   assert.strictEqual(await tpl.resetAllTemplates(), 0);
 });
 
-test("new default layout still spaces correctly with entity-style rich vars", () => {
-  const r = tpl.render("post_listing", {
-    head: "⚡ Xpress",
-    tierLine: "",
+test("new default layout still spaces correctly with empty optional vars", () => {
+  const r = tpl.render("post_listing_xpress", {
     logoEmoji: "",
     name: "T",
     symbol: "$T",
@@ -62,9 +60,43 @@ test("new default layout still spaces correctly with entity-style rich vars", ()
     mcap: "$2",
     liq: "$3",
     coinUrl: "https://dexvra.io/t",
-    socials: "",
-    footer: "",
+    coinUrlLabel: "dexvra.io/t",
+    twitter: "https://x.com/t",
+    website: "https://t.io",
+    telegram: "https://t.me/t",
+    site: "https://dexvra.io",
+    listing: "https://t.me/l",
+    trending: "https://t.me/tr",
+    announce: "https://t.me/a",
   });
   assert.ok(!/\n{3,}/.test(r.text), JSON.stringify(r.text));
   assert.ok(r.text.includes("T ($T)") && r.text.includes("Chain:"));
+});
+
+test("entity-saved WYSIWYG template: socials strip remaps entity offsets", async () => {
+  const fmt = require("../src/channels/format");
+  const text =
+    "HEAD\n\n🔗 {symbol} social links\n❌ [X]({twitter})\n🌐 [Website]({website})\n✈️ [Telegram]({telegram})\n\n📎 END {name}";
+  const clipIdx = text.indexOf("📎");
+  await tpl.setTemplate("post_trending", {
+    text,
+    entities: [
+      { type: "bold", offset: 0, length: 4 },
+      { type: "custom_emoji", offset: clipIdx, length: 2, custom_emoji_id: "123" },
+    ],
+  });
+  // no socials at all → the whole social paragraph (incl. header line) drops
+  const card = fmt.trendingPost({ name: "T", symbol: "T", chain: "solana", address: "So1", links: {} });
+  assert.ok(!card.text.includes("social links"), card.text);
+  assert.ok(card.text.includes("HEAD"));
+  assert.ok(card.text.includes("📎 END T"));
+  const clip = card.entities.find((e) => e.type === "custom_emoji");
+  assert.ok(clip && card.text.slice(clip.offset, clip.offset + clip.length) === "📎", "custom emoji stays glued after strip");
+  for (const e of card.entities) assert.ok(e.offset + e.length <= card.text.length);
+  // one social present → only that line survives, header stays
+  const partial = fmt.trendingPost({ name: "T", symbol: "T", chain: "solana", address: "So1", links: { website: "https://t.io" } });
+  assert.ok(partial.text.includes("social links"));
+  assert.ok(partial.text.includes("Website"));
+  assert.ok(!/❌ X/.test(partial.text), partial.text);
+  await tpl.resetTemplate("post_trending");
 });

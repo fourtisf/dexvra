@@ -50,6 +50,33 @@ const E = {
 };
 const em = (emoji, id) => (USE_PREMIUM_EMOJI ? `[${emoji}](emoji/${id})` : emoji);
 
+// ── Channel-post building blocks (code-level only, NOT separate templates) ──
+// Inlined into every channel-post DEFAULT below so each stored template is the
+// FULL post. Editing stays per-template; these constants only keep the code DRY
+// and feed the legacy {socials}/{footer} vars for templates saved before the
+// one-template-per-post era. Keep ONE social per line — channels/format.js
+// drops a line whose link the token doesn't have.
+const SOCIALS_BLOCK =
+  `${em("🔗", E.link)} **{symbol} social links**\n` +
+  `${em("❌", E.cross)} [X]({twitter})\n` +
+  `🌐 [Website]({website})\n` +
+  `✈️ [Telegram]({telegram})`;
+const FOOTER_BLOCK =
+  `${em("📎", E.clip)} **Dexvra**\n` +
+  `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
+  `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
+  `🔥 [Trending]({trending}) · ` +
+  `${em("📢", E.megaphone)} [Announcements]({announce})`;
+// Shared body of the listing/trending cards (below their distinct headers).
+const LISTING_BODY =
+  `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
+  `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
+  `{chainEmoji} **Chain:** {chain}\n` +
+  `📄 **Contract:**\n\`{address}\`\n\n` +
+  `◼️ **Liquidity:** {liq}\n` +
+  `${em("📈", E.chartUp)} **Market Cap:** {mcap}\n\n` +
+  `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`;
+
 // ── Built-in defaults (premium markup) ───────────────────────────────────────
 // Placeholders each template accepts are listed in META below (for the editor).
 // Voice: professional exchange-style — clear hierarchy, short lines, emoji as
@@ -262,62 +289,37 @@ const DEFAULTS = {
     "🔹 **{symbol}**'s featured placement on the Dexvra Trending board ends in about **{hours}h**.\n\n" +
     "🔥 Extend now to keep your spot without a gap — a **{discount}% renewal discount** is already applied below:",
 
-  // ── Channel post layouts ──
-  // {tierLine}/{overview}/{socials}/{footer} are auto-built and carry their own
-  // spacing (they collapse cleanly when empty); the rest are raw values.
-  post_listing:
-    `{head} {logoEmoji}{tierLine}\n\n` +
-    `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
-    `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
-    `{chainEmoji} **Chain:** {chain}\n` +
-    `📄 **Contract:**\n\`{address}\`\n\n` +
-    `◼️ **Liquidity:** {liq}\n` +
-    `${em("📈", E.chartUp)} **Market Cap:** {mcap}\n\n` +
-    `{socials}{footer}`,
-  post_trending:
-    `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` +
-    `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
-    `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
-    `{chainEmoji} **Chain:** {chain}\n` +
-    `📄 **Contract:**\n\`{address}\`\n\n` +
-    `◼️ **Liquidity:** {liq}\n` +
-    `${em("📈", E.chartUp)} **Market Cap:** {mcap}\n\n` +
-    `{socials}{footer}`,
+  // ── Channel post layouts — ONE self-contained template per post type ──
+  // What you see in the editor IS the whole post: header, data rows, social
+  // links and footer all live in the same template (no separate fragments).
+  // Only live values are {placeholders}. channels/format.js drops a social
+  // line whose link the token doesn't have — and the whole social paragraph
+  // (incl. its header line) when the token has none — before rendering; the
+  // tier badge line drops the same way on a listing without a tier.
+  post_listing_xpress:
+    `${em("⚡", E.zap)} **Xpress Listing — {name} live on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  post_listing_tiered:
+    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** {logoEmoji}\n` +
+    `{tierEmoji} **{tier} tier**\n\n` +
+    LISTING_BODY,
+  post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  post_banner:
+    `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
+    `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
+    `👉 [View the campaign]({linkUrl})\n\n` +
+    FOOTER_BLOCK,
   post_rankup:
     `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
     `**{name}** just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
-    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n{socials}{footer}`,
+    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n` +
+    `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
   post_pump:
     `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
     `**{name}** is up **+{percent}%** since it listed — and still climbing.\n\n` +
     `${em("📊", E.chart)} **Market cap:** {firstMc} → **{lastMc}**\n` +
     `{chainEmoji} **Chain:** {chain}\n\n` +
-    `${em("🟢", E.green)} [Chart & trade {symbol} on Dexvra]({coinUrl})\n\n{socials}{footer}`,
-  post_banner:
-    `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
-    `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
-    `👉 [View the campaign]({linkUrl}){footer}`,
-
-  // Listing HEADER (first line of the listing post) + tier badge line — now
-  // editable instead of hardcoded, so every word of a post lives in the editor.
-  post_head_xpress: `${em("⚡", E.zap)} **Xpress Listing — {name} live on Dexvra**`,
-  post_head_listed: `${em("🚨", E.sirenHead)} **New Listing on Dexvra**`,
-  post_tierline: `{tierEmoji} **{tier} tier**`,
-
-  // Shared blocks reused by EVERY channel post (listing/trending/pump/rankup).
-  // Edit these once and every post updates. post_socials: keep ONE social per
-  // line — a line whose link the token doesn't have is dropped automatically.
-  post_socials:
-    `${em("🔗", E.link)} **{symbol} social links**\n` +
-    `${em("❌", E.cross)} [X]({twitter})\n` +
-    `🌐 [Website]({website})\n` +
-    `✈️ [Telegram]({telegram})`,
-  post_footer:
-    `${em("📎", E.clip)} **Dexvra**\n` +
-    `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
-    `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
-    `🔥 [Trending]({trending}) · ` +
-    `${em("📢", E.megaphone)} [Announcements]({announce})`,
+    `${em("🟢", E.green)} [Chart & trade {symbol} on Dexvra]({coinUrl})\n\n` +
+    `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
   // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
   // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
   // Edit an emoji to rebrand a network everywhere at once.
@@ -417,16 +419,12 @@ const META = {
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
-  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "twitter", "chainEmoji", "chain", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chainEmoji", "chain", "logoEmoji", "overview", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "socials", "footer"] },
-  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "socials", "footer"] },
-  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
-  post_head_xpress: { group: "Channel Posts", label: "Post: Listing header — Xpress", ph: ["name"] },
-  post_head_listed: { group: "Channel Posts", label: "Post: Listing header — Listing & Trending", ph: [] },
-  post_tierline: { group: "Channel Posts", label: "Post: Tier badge line", ph: ["tierEmoji", "tier"] },
-  post_socials: { group: "Channel Posts", label: "Post: Social links block", ph: ["symbol", "twitter", "website", "telegram"] },
-  post_footer: { group: "Channel Posts", label: "Post: Footer (Dexvra links)", ph: ["site", "listing", "trending", "announce"] },
+  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrlLabel", "coinUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrlLabel", "coinUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrlLabel", "coinUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "site", "listing", "trending", "announce"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "rank", "change", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
@@ -462,6 +460,13 @@ function substitute(tpl, vars) {
  *  neither leak markup nor break Telegram's HTML parser. */
 function render(key, vars) {
   const val = loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
+  return renderValue(val, vars);
+}
+
+/** Render a RESOLVED template value (markup string or {text, entities}) — the
+ *  body of render() without the key lookup. channels/format.js uses it to
+ *  render a template AFTER stripping social/tier lines the token lacks. */
+function renderValue(val, vars) {
   if (val && typeof val === "object" && val.text != null) {
     // Admin-pasted template stored with real entity arrays (premium emoji kept).
     const rich = {};
@@ -561,6 +566,9 @@ const groups = () => {
 module.exports = {
   t,
   render,
+  renderValue,
+  SOCIALS_BLOCK,
+  FOOTER_BLOCK,
   getRaw,
   getRawValue,
   isCustom,

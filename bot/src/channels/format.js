@@ -1,10 +1,11 @@
-// Channel post payloads — driven by editable templates (src/templates.js →
-// post_listing / post_trending / post_pump / post_banner). This file builds the
-// dynamic values (sanitized fields, socials line, footer, tier line) in PREMIUM
-// MARKUP and hands them to the template engine; the result is a
-// { text, entities } payload (or { html } for a legacy saved template) that
-// channels/post.js sends — GramJS first (premium emoji animate), Bot API
-// fallback. Admins restyle any post via @dexvraadminbot without touching code.
+// Channel post payloads — driven by editable WYSIWYG templates (src/templates.js
+// → post_listing_xpress / post_listing_tiered / post_trending / post_banner /
+// post_rankup / post_pump). Each template IS the full post; this file supplies
+// the sanitized live values, strips the social/tier lines the token lacks, and
+// hands the result to the template engine → a { text, entities } payload (or
+// { html } for a legacy saved template) that channels/post.js sends — GramJS
+// first (premium emoji animate), Bot API fallback. Admins restyle any post via
+// @dexvraadminbot without touching code.
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { chainOf } = require("../config/chains");
 const { tierLabel } = require("../config/packages");
@@ -54,20 +55,105 @@ const TIER_EMOJI = {
 };
 
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
-const twitterInline = (links) => (links && links.twitter ? ` | [X](${cleanUrl(links.twitter)})` : "");
 
-// Social-links block — driven by the editable `post_socials` template (admins
-// change the emoji/label/layout in @dexvraadminbot). One social PER LINE; a line
-// whose link the token lacks is dropped so the block never shows a dead link.
-// Returns "" for a token with no socials so the parent template collapses.
-function socialsBlock(coin) {
+// ── WYSIWYG template stripping ───────────────────────────────────────────────
+// Every channel-post template stores the FULL post (header, socials, footer
+// inline). Before rendering, lines for data the token doesn't have are removed:
+//   • a social line ({twitter}/{website}/{telegram}) whose link is missing
+//   • the whole social paragraph — incl. its header line — when ALL its social
+//     lines dropped (a token with no socials never shows an orphan header)
+//   • the {tierEmoji}/{tier} badge line on a listing without a tier
+// Works on BOTH stored forms: markup strings and admin-pasted {text, entities}
+// (line ranges are removed and entity offsets remapped, so premium emoji stay
+// glued to the right characters).
+const SOCIAL_KEYS = ["twitter", "website", "telegram"];
+
+function stripLines(val, { all, missing, dropParagraph }) {
+  if (!missing.length) return val;
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? val.text : String(val);
+  const lines = text.split("\n");
+  const refs = (line, keys) => keys.filter((k) => line.includes(`{${k}}`));
+  const drop = lines.map((l) => {
+    const r = refs(l, all);
+    return r.length > 0 && r.every((k) => missing.includes(k));
+  });
+  if (dropParagraph) {
+    let start = 0;
+    for (let i = 0; i <= lines.length; i++) {
+      if (i < lines.length && lines[i].trim() !== "") continue;
+      const para = [];
+      for (let j = start; j < i; j++) para.push(j);
+      const tracked = para.filter((j) => refs(lines[j], all).length > 0);
+      if (tracked.length && tracked.every((j) => drop[j])) {
+        for (const j of para) drop[j] = true;
+        if (i < lines.length) drop[i] = true; // the blank separator below it
+      }
+      start = i + 1;
+    }
+  }
+  if (!drop.some(Boolean)) return val;
+  if (!isEntity) return lines.filter((_, i) => !drop[i]).join("\n"); // collapseGaps cleans leftovers
+  return dropEntityLines(val, lines, drop);
+}
+
+// Remove dropped lines from an ENTITY template: cut their UTF-16 ranges out of
+// the text, shift/shrink entities across the cuts, drop entities inside them.
+function dropEntityLines(val, lines, drop) {
+  const ranges = []; // merged [start, end) ranges, end incl the trailing \n
+  let off = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const len = lines[i].length + (i < lines.length - 1 ? 1 : 0);
+    if (drop[i]) {
+      const prev = ranges[ranges.length - 1];
+      if (prev && prev[1] === off) prev[1] = off + len;
+      else ranges.push([off, off + len]);
+    }
+    off += len;
+  }
+  const removedBefore = (pos) => {
+    let n = 0;
+    for (const [s, e] of ranges) {
+      if (pos <= s) break;
+      n += Math.min(pos, e) - s;
+    }
+    return n;
+  };
+  let text = "";
+  let last = 0;
+  for (const [s, e] of ranges) {
+    text += val.text.slice(last, s);
+    last = e;
+  }
+  text += val.text.slice(last);
+  const entities = [];
+  for (const e of val.entities || []) {
+    const s = e.offset - removedBefore(e.offset);
+    const en = e.offset + e.length - removedBefore(e.offset + e.length);
+    if (en - s > 0) entities.push({ ...e, offset: s, length: en - s });
+  }
+  return { text, entities };
+}
+
+/** The template for `key`, with social lines (and optionally the tier line)
+ *  the token lacks stripped out — ready for tpl.renderValue(). */
+function stripForCoin(key, links, { noTier } = {}) {
+  let val = tpl.getRawValue(key);
+  const missing = SOCIAL_KEYS.filter((k) => !(links && links[k]));
+  val = stripLines(val, { all: SOCIAL_KEYS, missing, dropParagraph: true });
+  if (noTier) {
+    val = stripLines(val, { all: ["tierEmoji", "tier"], missing: ["tierEmoji", "tier"], dropParagraph: false });
+  }
+  return val;
+}
+
+// Legacy {socials} var (templates saved before the one-template-per-post era):
+// the built block, one social per line, missing links dropped, "" when none.
+function legacySocials(coin) {
   const links = coin.links || {};
-  const present = { twitter: !!links.twitter, website: !!links.website, telegram: !!links.telegram };
-  if (!present.twitter && !present.website && !present.telegram) return "";
-  const kept = tpl
-    .getRaw("post_socials")
-    .split("\n")
-    .filter((line) => !["twitter", "website", "telegram"].some((k) => line.includes(`{${k}}`) && !present[k]))
+  if (!SOCIAL_KEYS.some((k) => links[k])) return "";
+  const kept = tpl.SOCIALS_BLOCK.split("\n")
+    .filter((line) => !SOCIAL_KEYS.some((k) => line.includes(`{${k}}`) && !links[k]))
     .join("\n");
   const out = tpl.substitute(kept, {
     symbol: clean(sym(coin.symbol)),
@@ -109,18 +195,44 @@ function overviewBlock(text) {
   return `${clean(s)}\n\n`;
 }
 
-// Footer block — driven by the editable `post_footer` template (admins change
-// the emoji/labels in @dexvraadminbot; the channel URLs stay {placeholders}).
-function footer() {
-  return (
-    "\n\n" +
-    tpl.substitute(tpl.getRaw("post_footer"), {
-      site: SITE_URL,
-      listing: tme(CHANNELS.listing),
-      trending: tme(CHANNELS.trending),
-      announce: tme(CHANNELS.announce),
-    })
-  );
+// Dexvra channel-link URLs — substituted into the footer's [label]({site}) etc.
+function channelLinks() {
+  return {
+    site: SITE_URL,
+    listing: tme(CHANNELS.listing),
+    trending: tme(CHANNELS.trending),
+    announce: tme(CHANNELS.announce),
+  };
+}
+
+// Legacy {footer} var (pre-WYSIWYG saved templates): the built footer block.
+function legacyFooter() {
+  return "\n\n" + tpl.substitute(tpl.FOOTER_BLOCK, channelLinks());
+}
+
+// Vars shared by every coin-based channel post — live values plus the legacy
+// {socials}/{footer} vars so admin templates saved before the restructure keep
+// rendering their blocks.
+function coinVars(coin) {
+  const links = coin.links || {};
+  return {
+    name: clean(coin.name),
+    symbol: clean(sym(coin.symbol)),
+    chainEmoji: chainEmoji(coin.chain),
+    chain: clean(chainName(coin.chain)),
+    address: clean(coin.address),
+    price: priceStr(coin.price),
+    mcap: mcStr(coin.mcap),
+    liq: liqStr(coin.liq),
+    coinUrl: coinUrl(coin),
+    coinUrlLabel: coinUrlLabel(coin),
+    twitter: links.twitter ? cleanUrl(links.twitter) : "",
+    website: links.website ? cleanUrl(links.website) : "",
+    telegram: links.telegram ? cleanUrl(links.telegram) : "",
+    ...channelLinks(),
+    socials: legacySocials(coin),
+    footer: legacyFooter(),
+  };
 }
 
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
@@ -130,55 +242,23 @@ const coinUrlLabel = (coin) => coinUrl(coin).replace(/^https?:\/\//, "");
 
 function listingPost(coin) {
   const isXpress = coin.tier === "XPRESS";
-  // Header + tier line are editable templates too (every word lives in the editor).
-  const head = tpl.substitute(tpl.getRaw(isXpress ? "post_head_xpress" : "post_head_listed"), {
-    name: clean(coin.name),
-  });
-  const tierLine =
-    coin.tier && !isXpress
-      ? "\n" +
-        tpl.substitute(tpl.getRaw("post_tierline"), {
-          tierEmoji: TIER_EMOJI[String(coin.tier).toUpperCase()] || "",
-          tier: clean(tierLabel(coin.tier)),
-        })
-      : "";
-  return tpl.render("post_listing", {
-    head,
-    tierLine,
+  const key = isXpress ? "post_listing_xpress" : "post_listing_tiered";
+  const val = stripForCoin(key, coin.links, { noTier: !coin.tier });
+  return tpl.renderValue(val, {
+    ...coinVars(coin),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    overview: overviewBlock(coin.overview || autoOverview(coin, "listing")),
-    name: clean(coin.name),
-    symbol: clean(sym(coin.symbol)),
-    twitter: twitterInline(coin.links),
-    chainEmoji: chainEmoji(coin.chain),
-    chain: clean(chainName(coin.chain)),
-    address: clean(coin.address),
-    price: priceStr(coin.price),
-    mcap: mcStr(coin.mcap),
-    liq: liqStr(coin.liq),
-    coinUrl: coinUrl(coin),
-    coinUrlLabel: coinUrlLabel(coin),
-    socials: socialsBlock(coin),
-    footer: footer(),
+    tierEmoji: coin.tier ? TIER_EMOJI[String(coin.tier).toUpperCase()] || "" : "",
+    tier: coin.tier ? clean(tierLabel(coin.tier)) : "",
+    overview: overviewBlock(coin.overview || autoOverview(coin, "listing")), // legacy
   });
 }
 
 function trendingPost(coin) {
-  return tpl.render("post_trending", {
-    symbol: clean(sym(coin.symbol)),
-    name: clean(coin.name),
-    chainEmoji: chainEmoji(coin.chain),
-    chain: clean(chainName(coin.chain)),
+  const val = stripForCoin("post_trending", coin.links);
+  return tpl.renderValue(val, {
+    ...coinVars(coin),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    overview: overviewBlock(coin.overview || autoOverview(coin, "trending")),
-    address: clean(coin.address),
-    price: priceStr(coin.price),
-    mcap: mcStr(coin.mcap),
-    liq: liqStr(coin.liq),
-    coinUrl: coinUrl(coin),
-    coinUrlLabel: coinUrlLabel(coin),
-    socials: socialsBlock(coin),
-    footer: footer(),
+    overview: overviewBlock(coin.overview || autoOverview(coin, "trending")), // legacy
   });
 }
 
@@ -189,28 +269,25 @@ function xMultiple(percent) {
 }
 
 function pumpPost(coin, percent, firstMc, lastMc) {
-  return tpl.render("post_pump", {
-    name: clean(coin.name),
-    symbol: clean(sym(coin.symbol)),
+  const val = stripForCoin("post_pump", coin.links);
+  return tpl.renderValue(val, {
+    ...coinVars(coin),
     percent: Math.round(percent),
     multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
     lastMc: "$" + formatNumber(lastMc),
-    chainEmoji: chainEmoji(coin.chain),
-    chain: clean(chainName(coin.chain)),
-    address: clean(coin.address),
-    coinUrl: coinUrl(coin),
-    socials: socialsBlock(coin),
-    footer: footer(),
   });
 }
 
 function bannerPost(booking) {
-  return tpl.render("post_banner", {
+  // No token on a banner post — any social lines an admin adds strip away.
+  const val = stripForCoin("post_banner", {});
+  return tpl.renderValue(val, {
     title: booking.title ? clean(booking.title) : "A featured project",
     slot: clean(booking.slot),
     linkUrl: cleanUrl(booking.linkUrl),
-    footer: footer(),
+    ...channelLinks(),
+    footer: legacyFooter(),
   });
 }
 
@@ -229,16 +306,11 @@ function changeSentence(change24h) {
 }
 
 function rankupPost(coin, rank, change24h) {
-  return tpl.render("post_rankup", {
-    symbol: clean(sym(coin.symbol)),
-    name: clean(coin.name),
-    chainEmoji: chainEmoji(coin.chain),
-    chain: clean(chainName(coin.chain)),
+  const val = stripForCoin("post_rankup", coin.links);
+  return tpl.renderValue(val, {
+    ...coinVars(coin),
     rank,
     change: changeSentence(change24h),
-    coinUrl: coinUrl(coin),
-    socials: socialsBlock(coin),
-    footer: footer(),
   });
 }
 

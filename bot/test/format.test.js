@@ -66,6 +66,33 @@ test("listing post: clean layout, no overview paragraph, no stray blanks", () =>
   assert.ok(!noOv.text.includes("null"));
   // empty socials never leave 3+ consecutive newlines
   assert.ok(!/\n{3,}/.test(noOv.text), `stray blank lines: ${JSON.stringify(noOv.text.slice(0, 200))}`);
+  // a token with no socials drops the WHOLE social paragraph, header included
+  assert.ok(!noOv.text.includes("social links"), noOv.text);
+  // …but the footer still follows the market-cap line
+  assert.ok(noOv.text.includes("📎 Dexvra"), noOv.text);
+});
+
+test("social lines drop individually; tier badge line drops without a tier", () => {
+  const base = {
+    name: "Bull Cat",
+    symbol: "$BULLCAT",
+    chain: "solana",
+    address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+    price: 0.000725,
+    mcap: 725100,
+    siteUrl: "https://dexvra.io/token/solana/G9j8",
+  };
+  // only a website → X + Telegram lines gone, header + Website kept
+  const partial = fmt.listingPost({ ...base, tier: "XPRESS", links: { website: "https://bullcat.io" } });
+  assert.ok(partial.text.includes("social links"));
+  assert.ok(partial.text.includes("Website"));
+  assert.ok(!/❌ X/.test(partial.text), partial.text);
+  assert.ok(!partial.text.includes("Telegram"), partial.text);
+  // tiered template without a tier → no orphan " tier" badge line
+  const noTier = fmt.listingPost({ ...base, tier: null, links: {} });
+  assert.ok(noTier.text.includes("New Listing on Dexvra"));
+  assert.ok(!/ tier\b/.test(noTier.text), noTier.text);
+  assert.ok(!/\n{3,}/.test(noTier.text));
 });
 
 test("overview with ** cannot break markup parsing (bold-injection regression)", () => {
