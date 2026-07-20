@@ -4,8 +4,9 @@
 // buffer is provided; otherwise (and on any v1 upload 403 — free tier) it falls
 // back to a text-only tweet. Returns the tweet id or null; never throws.
 const { X, X_ENABLED, X_HANDLE, SITE_URL } = require("./config/constants");
-const { fmtPrice, formatNumber } = require("./helpers/format");
+const { formatNumber } = require("./helpers/format");
 const { chainOf } = require("./config/chains");
+const tpl = require("./templates");
 const log = require("./helpers/logger");
 
 let TwitterApi = null;
@@ -27,8 +28,6 @@ function clientFor(account) {
 
 const symTag = (s) => String(s || "").replace(/^\$+/, "").toUpperCase();
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
-// Branded footer (order: Listing → Trending → Announcement).
-const X_FOOTER = "\n\n🌐 dexvra.io | 🚨 Listing | 🔥 Trending | 📢 Announcement";
 
 async function send(account, text, mediaBuffer, mimeType) {
   if (!X_ENABLED) {
@@ -60,27 +59,33 @@ async function send(account, text, mediaBuffer, mimeType) {
   }
 }
 
+const chainLabel = (c) => (chainOf(c) ? chainOf(c).label : String(c || ""));
+const mcOf = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
+const liqOf = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
+
+// Editable via @dexvraadminbot → "X Posts" group (plain text; X has no markdown).
 function listingText(coin) {
   const tag = symTag(coin.symbol);
-  const chain = chainOf(coin.chain) ? chainOf(coin.chain).label : coin.chain;
-  return (
-    `🚀 New Listing on @${X_HANDLE}\n\n` +
-    `${coin.name} ( #${tag} ) · ${chain}\n` +
-    `${coinUrl(coin)}\n` +
-    `CA: ${coin.address}\n` +
-    (coin.price ? `Price: ${fmtPrice(coin.price)}` : "") +
-    (coin.mcap ? `  |  MC: $${formatNumber(coin.mcap)}` : "") +
-    X_FOOTER
-  );
+  return tpl.t("x_listing", {
+    name: coin.name,
+    symbol: `$${tag}`,
+    chain: chainLabel(coin.chain),
+    mcap: mcOf(coin.mcap),
+    liq: liqOf(coin.liq),
+    url: coinUrl(coin),
+    tag,
+  });
 }
 
 function trendingText(coin) {
   const tag = symTag(coin.symbol);
-  return (
-    `🔥 #${tag} is Trending on @${X_HANDLE}\n\n` +
-    `${coin.name}\n${coinUrl(coin)}` +
-    X_FOOTER
-  );
+  return tpl.t("x_trending", {
+    symbol: `$${tag}`,
+    name: coin.name,
+    chain: chainLabel(coin.chain),
+    url: coinUrl(coin),
+    tag,
+  });
 }
 
 function pumpText(coin, percent, firstMc, lastMc) {
