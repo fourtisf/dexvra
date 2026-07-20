@@ -42,7 +42,13 @@ async function entry(ctx, type) {
   if (ctx.chat && ctx.chat.type !== "private") return;
   freshSession(ctx, { type, form: emptyForm() });
   const intro = tpl.render(type === "xpress_listing" ? "intro_xpress" : "intro_tiered");
-  await sendCard(ctx, intro, menu.chainMenu("lc"));
+  // The Xpress intro points to Listing & Trending — give a one-tap route to it
+  // (a button, not just text), so nobody has to backtrack to Home to upgrade.
+  const extra =
+    type === "xpress_listing"
+      ? [[menu.Markup.button.callback("🏆 Listing & Trending", "listing_trend_coin")]]
+      : [];
+  await sendCard(ctx, intro, menu.chainMenu("lc", extra));
 }
 const entryXpress = (ctx) => entry(ctx, "xpress_listing");
 const entryListingTrending = (ctx) => entry(ctx, "tiered_listing");
