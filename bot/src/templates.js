@@ -268,7 +268,7 @@ const DEFAULTS = {
   post_listing:
     `{head} {logoEmoji}{tierLine}\n\n` +
     `🪙 **{name}** ({symbol})\n` +
-    `🔗 [dexvra.io/token]({coinUrl})\n\n` +
+    `🔗 [{coinUrlLabel}]({coinUrl})\n\n` +
     `💠 **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
     `💧 **Liquidity:** {liq}\n` +
@@ -277,7 +277,7 @@ const DEFAULTS = {
   post_trending:
     `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` +
     `🪙 **{name}** ({symbol})\n` +
-    `🔗 [dexvra.io/token]({coinUrl})\n\n` +
+    `🔗 [{coinUrlLabel}]({coinUrl})\n\n` +
     `💠 **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
     `💧 **Liquidity:** {liq}\n` +
