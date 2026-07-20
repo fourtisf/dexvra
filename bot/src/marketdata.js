@@ -36,6 +36,10 @@ const DS_CHAIN = {
   tron: "tron",
   ton: "ton",
   sui: "sui",
+  // DexScreener now indexes these — used to FILL liquidity/mcap that GT leaves
+  // blank for GT-primary chains. Chain-filtered, so price stays correct-chain.
+  robinhood: "robinhood",
+  plasma: "plasma",
 };
 
 async function fetchGT(chain, address) {
@@ -164,8 +168,11 @@ async function fetchTokenDescription(chain, address) {
 /** @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>} */
 async function fetchMarket(chain, address) {
   const gt = await fetchGT(chain, address);
-  if (gt && gt.priceUsd && gt.mcap) return gt;
-  // GT missing entirely, or missing price/mcap → let DexScreener fill the gaps.
+  // Only skip DexScreener when GT already has EVERYTHING. GT often returns a
+  // price+mcap but no liquidity (reserve_in_usd null) for GT-primary chains
+  // (Robinhood/Plasma) — without this, "Liquidity: —" stuck forever.
+  if (gt && gt.priceUsd && gt.mcap && gt.liq) return gt;
+  // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   const ds = await fetchDS(chain, address);
   if (!gt) return ds;
   if (!ds) return gt;
