@@ -302,12 +302,19 @@ const DEFAULTS = {
   //    chars: a URL counts as 23, each emoji ~2). Footer order Listing →
   //    Trending → Announcement. Posted on a successful listing/trending order. ──
   x_listing:
-    "⚡ New Listing on Dexvra ⚡\n\n" +
-    "{tierLine}" +
-    "🚀 {name} ( #{tag} ) is now live on Dexvra!{mention}\n" +
-    "🔗 {url}\n\n" +
-    "📄 CA: {address}\n\n" +
-    "💰 Price: {price}  |  📊 MC: {mcap}\n\n" +
+    "⚡ New Listing on Dexvra\n\n" +
+    "{name} ( #{tag} ){mention} just went live on Dexvra — early eyes get the first look.\n" +
+    "{url}\n\n" +
+    "CA: {address}\n\n" +
+    "Price: {price}  |  MC: {mcap}\n\n" +
+    "#Dexvra #NewListing #Altcoin #Memecoin #DexvraListing #DYOR",
+  x_listing_tiered:
+    "⚡ New Listing on Dexvra\n\n" +
+    "{tierEmoji} {tier} Tier — Trending Now\n\n" +
+    "{name} ( #{tag} ){mention} is officially listed and featured on the Dexvra trending board.\n" +
+    "{url}\n\n" +
+    "CA: {address}\n\n" +
+    "Price: {price}  |  MC: {mcap}\n\n" +
     "#Dexvra #NewListing #Altcoin #Memecoin #DexvraListing #DYOR",
   x_trending:
     "🔥 {symbol} is now Trending on Dexvra!\n\n" +
@@ -373,7 +380,8 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
-  x_listing: { group: "X Posts", label: "X post: new listing", ph: ["tierLine", "name", "tag", "mention", "url", "address", "price", "mcap"] },
+  x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
+  x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
 };
 

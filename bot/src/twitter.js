@@ -62,14 +62,7 @@ async function send(account, text, mediaBuffer, mimeType) {
 const chainLabel = (c) => (chainOf(c) ? chainOf(c).label : String(c || ""));
 const mcOf = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
 
-// Tier line for the Listing & Trending package (Xpress has none):
-// "💎 DIAMOND Trend Now!". Blank for Xpress.
 const X_TIER_EMOJI = { DIAMOND: "💎", GOLD: "🥇", PLATINUM: "🏆", SILVER: "🥈", BRONZE: "🥉" };
-function xTierLine(coin) {
-  const tier = String(coin.tier || "").toUpperCase();
-  if (!tier || tier === "XPRESS") return "";
-  return `${X_TIER_EMOJI[tier] || "💎"} ${tier} Trend Now!\n\n`;
-}
 // @mention the project's X account, parsed from the twitter link they submitted.
 function xMention(links) {
   const t = links && links.twitter;
@@ -78,11 +71,13 @@ function xMention(links) {
   return m ? ` @${m[1]}` : "";
 }
 
-// Editable via @dexvraadminbot → "X Posts" group (plain text; X has no markdown).
+// Editable via @dexvraadminbot → "X Posts". Xpress and Listing & Trending get
+// distinct copy (the latter carries the tier line); both keep only the leading
+// ⚡ and the tier emoji — no per-line emoji.
 function listingText(coin) {
   const tag = symTag(coin.symbol);
-  return tpl.t("x_listing", {
-    tierLine: xTierLine(coin),
+  const tier = String(coin.tier || "").toUpperCase();
+  const vars = {
     name: coin.name,
     tag,
     mention: xMention(coin.links),
@@ -90,7 +85,11 @@ function listingText(coin) {
     address: coin.address,
     price: coin.price ? fmtPrice(coin.price) : "TBA",
     mcap: mcOf(coin.mcap),
-  });
+  };
+  if (tier && tier !== "XPRESS") {
+    return tpl.t("x_listing_tiered", { ...vars, tier, tierEmoji: X_TIER_EMOJI[tier] || "💎" });
+  }
+  return tpl.t("x_listing", vars);
 }
 
 function trendingText(coin) {
