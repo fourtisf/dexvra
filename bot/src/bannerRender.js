@@ -580,6 +580,15 @@ function drawRisingChart(ctx, accent) {
   ctx.shadowBlur = 24;
   ctx.stroke();
   ctx.restore();
+  // faint node dots at each data point (trading-chart polish)
+  ctx.save();
+  for (let i = 1; i < pts.length - 1; i++) {
+    ctx.beginPath();
+    ctx.arc(pts[i][0], pts[i][1], 4, 0, Math.PI * 2);
+    ctx.fillStyle = hexA(accent, 0.5);
+    ctx.fill();
+  }
+  ctx.restore();
   // glowing pulse tip
   const tip = pts[pts.length - 1];
   radial(ctx, tip[0], tip[1], 54, accent, 0.55);
@@ -633,10 +642,85 @@ function sparkle(ctx, x, y, r, color) {
   ctx.restore();
 }
 
+/** Frosted glass panel — soft drop shadow, hairline border, top sheen. Groups
+ *  the hero copy so it reads as a designed card, not text floating on noise. */
+function glassPanel(ctx, x, y, w, h, r, accent) {
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,.5)";
+  ctx.shadowBlur = 44;
+  ctx.shadowOffsetY = 20;
+  roundRect(ctx, x, y, w, h, r);
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, "rgba(24,40,44,.72)");
+  g.addColorStop(1, "rgba(10,18,22,.62)");
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
+  // hairline border with a faint accent→cyan sweep
+  roundRect(ctx, x, y, w, h, r);
+  const b = ctx.createLinearGradient(x, y, x + w, y + h);
+  b.addColorStop(0, hexA(accent, 0.45));
+  b.addColorStop(0.5, "rgba(255,255,255,.1)");
+  b.addColorStop(1, hexA(CYAN, 0.32));
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = b;
+  ctx.stroke();
+  // top sheen
+  ctx.save();
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+  const s = ctx.createLinearGradient(x, y, x, y + h * 0.42);
+  s.addColorStop(0, "rgba(255,255,255,.10)");
+  s.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = s;
+  ctx.fillRect(x, y, w, h * 0.42);
+  ctx.restore();
+}
+
+/** Soft radial spotlight (tinted by the podium metal) behind the hero. */
+function heroSpotlight(ctx, cx, cy, metal) {
+  radial(ctx, cx, cy, 520, metal.glow, 0.14);
+  radial(ctx, cx, cy, 300, metal.glow, 0.1);
+}
+
+/** A single diagonal gloss band across the whole card — the "glass" catch-light
+ *  that reads as premium. Very subtle so it never washes out the content. */
+function glossSheen(ctx) {
+  ctx.save();
+  ctx.translate(W * 0.2, 0);
+  ctx.rotate(0.32);
+  const g = ctx.createLinearGradient(0, 0, 520, 0);
+  g.addColorStop(0, "rgba(255,255,255,0)");
+  g.addColorStop(0.5, "rgba(255,255,255,.045)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(-200, -200, 520, H + 600);
+  ctx.restore();
+}
+
 /** Premium podium medallion — metallic per-rank ring + beveled disc + "#N". */
 function rankMedallion(ctx, cx, cy, r, rank) {
   const m = medalOf(rank);
   radial(ctx, cx, cy, r + 70, m.glow, 0.4);
+  // gold ray-burst behind the champion
+  if (rank === 1) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    for (let i = 0; i < 12; i++) {
+      ctx.rotate((Math.PI * 2) / 12);
+      const ray = ctx.createLinearGradient(0, -r - 8, 0, -r - 78);
+      ray.addColorStop(0, hexA(m.glow, 0.5));
+      ray.addColorStop(1, hexA(m.glow, 0));
+      ctx.fillStyle = ray;
+      ctx.beginPath();
+      ctx.moveTo(-10, -r - 8);
+      ctx.lineTo(10, -r - 8);
+      ctx.lineTo(0, -r - 82);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
   // drop shadow / bevel base
   ctx.save();
   ctx.beginPath();
@@ -650,24 +734,42 @@ function rankMedallion(ctx, cx, cy, r, rank) {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.lineWidth = 12;
+  ctx.lineWidth = 14;
   ctx.strokeStyle = metalGrad(ctx, cx, cy, r, m);
   ctx.stroke();
   ctx.restore();
+  // diamond-stud bezel — tiny bright studs set into the ring (jewellery)
+  ctx.save();
+  for (let i = 0; i < 32; i++) {
+    const a = ((Math.PI * 2) / 32) * i;
+    const sx = cx + Math.cos(a) * r;
+    const sy = cy + Math.sin(a) * r;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 2.1, 0, Math.PI * 2);
+    ctx.fillStyle = i % 2 ? hexA(m.light, 0.9) : hexA(m.dark, 0.7);
+    ctx.fill();
+  }
+  ctx.restore();
   // dark glass face
   ctx.beginPath();
-  ctx.arc(cx, cy, r - 8, 0, Math.PI * 2);
-  const face = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
-  face.addColorStop(0, "#12202A");
-  face.addColorStop(1, "#070E14");
+  ctx.arc(cx, cy, r - 9, 0, Math.PI * 2);
+  const face = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.4, r * 0.1, cx, cy, r);
+  face.addColorStop(0, "#172833");
+  face.addColorStop(1, "#060C12");
   ctx.fillStyle = face;
   ctx.fill();
+  // inner rim shadow for depth
+  ctx.beginPath();
+  ctx.arc(cx, cy, r - 9, 0, Math.PI * 2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,.5)";
+  ctx.stroke();
   // top sheen highlight on the ring
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, Math.PI * 1.08, Math.PI * 1.62);
-  ctx.lineWidth = 12;
-  ctx.strokeStyle = "rgba(255,255,255,.5)";
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = "rgba(255,255,255,.55)";
   ctx.lineCap = "round";
   ctx.stroke();
   ctx.restore();
@@ -707,21 +809,26 @@ async function renderRankUpBanner(coin, logoBuffer, opts = {}) {
     const canvas = cv.createCanvas(W, H);
     const ctx = canvas.getContext("2d");
     ctx.textBaseline = "alphabetic";
+    const metal = medalOf(rank);
     drawBackground(ctx);
+    heroSpotlight(ctx, 980, 296, metal); // warm the podium
     drawRisingChart(ctx, RISE);
-    const X0 = 66;
-    brandBar(ctx, X0);
+    glossSheen(ctx); // glass catch-light over everything
+    // frosted hero panel grouping the left copy (chart rises out of its edge)
+    glassPanel(ctx, 40, 112, 648, 350, 30, RISE);
+    const X0 = 92;
+    brandBar(ctx, X0 - 26);
     statusPill(ctx, W - 66, 42, "TRENDING UP", RISE);
 
     // $SYMBOL
     const sym = "$" + String(coin.symbol || "").replace(/^\$+/, "").toUpperCase().slice(0, 12);
-    let symSize = 96;
+    let symSize = 92;
     ctx.font = `800 ${symSize}px ${F.x}`;
-    while (ctx.measureText(sym).width > 560 && symSize > 48) {
+    while (ctx.measureText(sym).width > 540 && symSize > 46) {
       symSize -= 4;
       ctx.font = `800 ${symSize}px ${F.x}`;
     }
-    const symY = 214;
+    const symY = 212;
     ctx.save();
     ctx.shadowColor = hexA(RISE, 0.4);
     ctx.shadowBlur = 30;
