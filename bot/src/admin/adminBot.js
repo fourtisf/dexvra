@@ -63,15 +63,47 @@ function mainKb() {
 // =default. `arg` = a group slug for fuller previews of just that group, or ""
 // for a short snippet of all. Messages chunked under Telegram's 4096 limit.
 // Shared by the /preview command and the "🔍 Preview all templates" button.
+// Realistic sample values so the audit renders every template the way a real
+// user/channel sees it — not the {placeholder} skeleton.
+const SAMPLE_VARS = {
+  native: "SOL", chain: "Solana", symbol: "$BULLCAT", name: "The Bull Cat",
+  address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+  price: "$0.001266", mcap: "$1.3M", liq: "$183.5K",
+  siteUrl: "https://dexvra.io/token/solana/G9j8", coinUrl: "https://dexvra.io/token/solana/G9j8",
+  logo: "✅ set", overview: "A community-driven memecoin on Solana.",
+  website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat",
+  label: "Diamond Listing — $BULLCAT on Solana", amount: "1", order: "k3n8_a1b2",
+  hours: "48", size: "728×90", slot: "Wide Banner", duration: "3 Days", usd: "670",
+  endsAt: "Jul 22, 14:00 UTC", discount: "20", field: "name",
+  postLinks: "🚨 Listing post: https://t.me/dexvralisting/6\n📢 Announcement: https://t.me/dexvraio/9",
+  sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
+  emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "@dexvrabot",
+};
+
 async function sendTemplateAudit(ctx, arg = "") {
-  const premiumLib = require("../premium");
+  // Channel posts are built by format.js (not simple var-substitution), so
+  // render them from a sample coin to show the true post.
+  const fmt = require("../channels/format");
+  const sampleCoin = {
+    name: "The Bull Cat", symbol: "$BULLCAT", chain: "solana", tier: "DIAMOND",
+    address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+    price: 0.001266, mcap: 1300000, liq: 183475,
+    links: { website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat" },
+    siteUrl: "https://dexvra.io/token/solana/G9j8", overview: "A community-driven memecoin on Solana.",
+  };
+  const CHANNEL = {
+    post_listing: () => fmt.listingPost(sampleCoin),
+    post_trending: () => fmt.trendingPost(sampleCoin),
+    post_pump: () => fmt.pumpPost(sampleCoin, 137.6, 310000, 1300000),
+    post_rankup: () => fmt.rankupPost(sampleCoin, 2, 82),
+    post_banner: () => fmt.bannerPost({ title: "The Bull Cat", slot: "Wide Banner", linkUrl: "https://bullcat.io" }),
+  };
   const cleanOf = (k) => {
-    const raw = tpl.getRaw(k);
-    const s = typeof raw === "string" ? raw : (raw && raw.text) || String(raw || "");
     try {
-      return premiumLib.parse(s).text.replace(/\s+/g, " ").trim();
+      const r = CHANNEL[k] ? CHANNEL[k]() : tpl.render(k, SAMPLE_VARS);
+      return String((r && r.text) || "").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, " · ").trim();
     } catch {
-      return String(s).replace(/\s+/g, " ").trim();
+      return "(render error)";
     }
   };
   const groups = tpl.groups();
