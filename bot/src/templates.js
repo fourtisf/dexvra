@@ -286,7 +286,7 @@ const DEFAULTS = {
   post_rankup:
     `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
     `**{name}** just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
-    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl}){footer}`,
+    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n{socials}{footer}`,
   post_pump:
     `${em("🚀", E.rocket)} **{symbol} is pumping — {multiple}**\n\n` +
     `**{name}** has run **+{percent}%** since it listed on Dexvra.\n\n` +
@@ -378,7 +378,7 @@ const META = {
   post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "twitter", "chain", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
-  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "socials", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },

@@ -38,19 +38,19 @@ const TIER_EMOJI = {
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 const twitterInline = (links) => (links && links.twitter ? ` | [X](${cleanUrl(links.twitter)})` : "");
 
-// Per-link social row (Moontok/Fourtis style: emoji + labelled link). Returns
-// "" for a token with no socials so the template collapses cleanly.
+// Per-link social row (Fourtis style: 𝕏/🌐/✈️ + labelled link, " | " joined).
+// Returns "" for a token with no socials so the template collapses cleanly.
 function socialsInline(links = {}) {
   const out = [];
-  if (links.twitter) out.push(`🐦 [X](${cleanUrl(links.twitter)})`);
-  if (links.telegram) out.push(`✈️ [Telegram](${cleanUrl(links.telegram)})`);
+  if (links.twitter) out.push(`𝕏 [X](${cleanUrl(links.twitter)})`);
   if (links.website) out.push(`🌐 [Website](${cleanUrl(links.website)})`);
-  return out.join(" · ");
+  if (links.telegram) out.push(`✈️ [Telegram](${cleanUrl(links.telegram)})`);
+  return out.join("  |  ");
 }
 function socialsBlock(coin) {
   const s = socialsInline(coin.links);
-  // Label on its own line, links on the next (operator-preferred layout).
-  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} socials:**\n${s}\n\n` : "";
+  // Label on its own line, links on the next (Fourtis layout).
+  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} social links**\n${s}\n\n` : "";
 }
 
 // Fallback overview for tokens with no description (fresh pump.fun launches
@@ -199,6 +199,7 @@ function rankupPost(coin, rank, change24h) {
     rank,
     change: changeSentence(change24h),
     coinUrl: coinUrl(coin),
+    socials: socialsBlock(coin),
     footer: footer(),
   });
 }
