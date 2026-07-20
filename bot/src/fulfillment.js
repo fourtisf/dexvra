@@ -107,6 +107,9 @@ function bannerCoinOf(row, live) {
  *  logo composited into the design) → dynamic per-token banner → static
  *  banner → token logo. */
 async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badge) {
+  // Self-fetch the logo from its URL when no buffer was passed, so background
+  // callers (rank-up, pump) get the token logo composited into the artwork too.
+  if (!logoBuffer && logoUrl) logoBuffer = await fetchLogoUrl(logoUrl).catch(() => null);
   // Admin-bot toggle (persisted) with POST_BANNERS env as the default.
   if (bannerTemplate.postingEnabled()) {
     // Admin-uploaded GIF/video wins over the composited still (generic hype
