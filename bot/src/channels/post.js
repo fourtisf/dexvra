@@ -33,6 +33,23 @@ function norm(payload) {
   return { text: String(payload == null ? "" : payload), html: String(payload == null ? "" : payload) };
 }
 
+// Telegram media captions are capped at 1024 UTF-16 units — a longer caption
+// makes sendPhoto/sendVideo THROW ("caption is too long"), which silently
+// dropped the whole post to a text-only message (no banner image). Trim the
+// caption to fit at a word boundary, dropping entities that fall past the cut,
+// so the image always survives. Text-only posts (sendText) keep the 4096 limit.
+const CAPTION_LIMIT = 1024;
+function fitCaption(p) {
+  if (!p || typeof p.text !== "string" || p.text.length <= CAPTION_LIMIT) return p;
+  let text = p.text.slice(0, CAPTION_LIMIT - 8);
+  text = text.replace(/[\uD800-\uDBFF]$/, ""); // never end on a split surrogate (emoji)
+  const lastSpace = text.lastIndexOf(" ");
+  if (lastSpace > CAPTION_LIMIT - 240) text = text.slice(0, lastSpace);
+  text = text.trimEnd() + "…";
+  const entities = (p.entities || []).filter((e) => e.offset + e.length <= text.length);
+  return { ...p, text, entities };
+}
+
 /** GramJS media compatibility: Buffers / local paths / URLs upload fine over
  *  MTProto; a Bot API file_id means nothing there. */
 function gramMedia(media) {
@@ -91,7 +108,7 @@ async function sendText(channel, payload, { replyTo, pin } = {}) {
 async function sendPhoto(channel, photo, payload, { replyTo, pin } = {}) {
   if (!tg) throw new Error("channels/post not attached to a bot");
   if (!photo) return sendText(channel, payload, { replyTo, pin });
-  const p = norm(payload);
+  const p = fitCaption(norm(payload));
   const viaGram = await viaGramJs(channel, photo, p, { replyTo, pin });
   if (viaGram) return viaGram;
   try {
@@ -103,7 +120,9 @@ async function sendPhoto(channel, photo, payload, { replyTo, pin } = {}) {
     if (pin) tg.pinChatMessage(channel, msg.message_id, { disable_notification: true }).catch(() => {});
     return msg;
   } catch (e) {
-    log.debug(`[channels] sendPhoto ${channel} failed (${e.message}) → text`);
+    // Loud on purpose — a swallowed photo failure is exactly why a banner
+    // silently degraded to a text-only post (previously logged at debug).
+    log.warn(`[channels] sendPhoto ${channel} failed (${e.message}) → text-only fallback`);
     return sendText(channel, payload, { replyTo, pin });
   }
 }
@@ -122,7 +141,7 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   const source = media && media.source !== undefined ? media.source : media;
   if (type === "photo") return sendPhoto(channel, source, payload, { replyTo, pin });
 
-  const p = norm(payload);
+  const p = fitCaption(norm(payload));
   const viaGram = await viaGramJs(channel, { source }, p, { replyTo, pin });
   if (viaGram) return viaGram;
   const method = type === "video" ? "sendVideo" : "sendAnimation";
@@ -135,9 +154,10 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
     if (pin) tg.pinChatMessage(channel, msg.message_id, { disable_notification: true }).catch(() => {});
     return msg;
   } catch (e) {
-    log.debug(`[channels] ${method} ${channel} failed (${e.message}) → text`);
+    log.warn(`[channels] ${method} ${channel} failed (${e.message}) → text-only fallback`);
     return sendText(channel, payload, { replyTo, pin });
   }
 }
 
 module.exports = { attach, sendText, sendPhoto, sendMedia, CHANNELS, isAttached: () => !!tg };
+module.exports._fitCaption = fitCaption; // exposed for tests
