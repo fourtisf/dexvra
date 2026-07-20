@@ -12,6 +12,7 @@ const { escapeHtml } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
+const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
 
@@ -341,7 +342,7 @@ function btGuideOverlay(buf, kind, elem) {
     g.moveTo(cx, cy - 26);
     g.lineTo(cx, cy + 26);
     g.stroke();
-    return c.toBuffer("image/png");
+    return toSendBuffer(c);
   });
 }
 
@@ -455,7 +456,7 @@ function sampleMedia(kind) {
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillText(rect ? "SAMPLE AD" : "J", w / 2, h / 2 + (rect ? 4 : 8));
-    return c.toBuffer("image/png");
+    return toSendBuffer(c);
   } catch {
     return null;
   }

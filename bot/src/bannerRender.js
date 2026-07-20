@@ -5,6 +5,7 @@
 // Never throws (caller falls back to a static banner, then the token logo).
 const path = require("node:path");
 const fss = require("node:fs");
+const { toSendBuffer } = require("./helpers/encodeImage");
 const log = require("./helpers/logger");
 
 let CV = null; // lazy — only load the native lib when a banner is actually rendered
@@ -488,7 +489,7 @@ async function render(coin, logoBuffer, opts) {
     // token logo (right hero)
     await drawLogo(cv, ctx, logoBuffer, 980, 292, 152, coin.symbol);
 
-    return canvas.toBuffer("image/png");
+    return toSendBuffer(canvas);
   } catch (e) {
     log.warn(`[banner] render failed: ${e.message}`);
     return null;
@@ -892,7 +893,7 @@ async function renderRankUpBanner(coin, logoBuffer, opts = {}) {
     await drawLogo(cv, ctx, logoBuffer, 980, 262, 140, coin.symbol);
     rankMedallion(ctx, 862, 374, 94, rank);
 
-    return canvas.toBuffer("image/png");
+    return toSendBuffer(canvas);
   } catch (e) {
     log.warn(`[banner] rankup render failed: ${e.message}`);
     return null;
@@ -983,7 +984,7 @@ function renderStatic(opts) {
     ctx.fillText("—  List · Trend · Advertise", X0 + fW + 16, H - 40);
 
     drawEmblem(ctx, 980, 300, 150);
-    return canvas.toBuffer("image/png");
+    return toSendBuffer(canvas);
   } catch (e) {
     log.warn(`[banner] static render failed: ${e.message}`);
     return null;
