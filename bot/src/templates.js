@@ -303,19 +303,19 @@ const DEFAULTS = {
   //    Trending → Announcement. Posted on a successful listing/trending order. ──
   x_listing:
     "⚡ New Listing on Dexvra\n\n" +
-    "{name} ( #{tag} ){mention} just went live on Dexvra — early eyes get the first look.\n" +
-    "{url}\n\n" +
+    "{name} ( ${tag} ){mention}\n\n" +
     "CA: {address}\n\n" +
     "Price: {price}  |  MC: {mcap}\n\n" +
-    "#Dexvra #NewListing #Altcoin #Memecoin #DexvraListing #DYOR",
+    "{url}\n\n" +
+    "#Dexvra #NewListing #Altcoin #DYOR",
   x_listing_tiered:
     "⚡ New Listing on Dexvra\n\n" +
     "{tierEmoji} {tier} Tier — Trending Now\n\n" +
-    "{name} ( #{tag} ){mention} is officially listed and featured on the Dexvra trending board.\n" +
-    "{url}\n\n" +
+    "{name} ( ${tag} ){mention}\n\n" +
     "CA: {address}\n\n" +
     "Price: {price}  |  MC: {mcap}\n\n" +
-    "#Dexvra #NewListing #Altcoin #Memecoin #DexvraListing #DYOR",
+    "{url}\n\n" +
+    "#Dexvra #NewListing #Altcoin #DYOR",
   x_trending:
     "🔥 {symbol} is now Trending on Dexvra!\n\n" +
     "💎 {name}  ·  {chain}\n" +
