@@ -27,6 +27,18 @@ function emptyForm() {
 // surrogate pair split (which would store/send ill-formed text).
 const cpSlice = (s, n) => Array.from(String(s)).slice(0, n).join("");
 const cleanOverview = (s) => cpSlice(String(s || "").replace(/\s+/g, " ").trim(), 500) || null;
+
+// Auto-written project intro — used when the token carries no on-chain/API
+// description and the user didn't type one, so the review card and channel post
+// always read as a finished listing instead of "not set". Editable like any
+// field. Returns null only if we don't even know the token name yet.
+function autoIntro(f) {
+  const nm = String(f.name || "").trim();
+  if (!nm) return null;
+  const sy = f.sym ? ` ($${String(f.sym).replace(/^\$+/, "")})` : "";
+  const ch = f.chain && chainOf(f.chain) ? chainOf(f.chain).label : f.chain || "";
+  return `${nm}${sy} is now live and trading on ${ch}.`;
+}
 function freshSession(ctx, patch) {
   const prev = ctx.session && ctx.session.latest_bot_message;
   ctx.session = { latest_bot_message: prev, ...patch };
@@ -171,6 +183,9 @@ function reviewKb() {
 async function showReview(ctx) {
   const f = ctx.session.form;
   ctx.session.reviewShown = true;
+  // Guarantee the listing has an overview — the bot writes one automatically if
+  // none was fetched/typed, so nothing ever posts as "not set".
+  if (!f.overview) f.overview = autoIntro(f);
   const premium = require("../premium");
   const v = (x) => (x ? premium.sanitizeVar(x) : "not set");
   const text = tpl.render("review_card", {

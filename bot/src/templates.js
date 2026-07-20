@@ -267,18 +267,24 @@ const DEFAULTS = {
   // spacing (they collapse cleanly when empty); the rest are raw values.
   post_listing:
     `{head} {logoEmoji}{tierLine}\n\n` +
+    `🪙 **{name}** ({symbol})\n` +
+    `🔗 [dexvra.io/token]({coinUrl})\n\n` +
     `{overview}` +
-    `🪙 **Token:** {name} ({symbol}){twitter}\n\n` +
-    `🖥 **Contract Address:** \`{address}\`\n\n` +
-    `🕯 **Liquidity / Market Cap:** {liq} / {mcap}\n\n` +
+    `💠 **Chain:** {chain}\n` +
+    `📄 **Contract:**\n\`{address}\`\n\n` +
+    `💧 **Liquidity:** {liq}\n` +
+    `📈 **Market Cap:** {mcap}\n\n` +
     `{socials}` +
-    `${em("🟢", E.green)} [Open on dexvra.io]({coinUrl}){footer}`,
+    `${em("🟢", E.green)} [Open on Dexvra]({coinUrl}){footer}`,
   post_trending:
-    `${em("📈", E.chartUp)} **{symbol} · New Trending on Dexvra** {logoEmoji}\n\n` +
+    `${em("📈", E.chartUp)} **{symbol} · Trending on Dexvra** {logoEmoji}\n\n` +
+    `🪙 **{name}** ({symbol})\n` +
+    `🔗 [dexvra.io/token]({coinUrl})\n\n` +
     `{overview}` +
-    `📊 [Open on Dexvra]({coinUrl})\n\n` +
-    `🖥 **Contract Address:** \`{address}\`\n\n` +
-    `🕯 **Liquidity / Market Cap:** {liq} / {mcap}\n\n` +
+    `💠 **Chain:** {chain}\n` +
+    `📄 **Contract:**\n\`{address}\`\n\n` +
+    `💧 **Liquidity:** {liq}\n` +
+    `📈 **Market Cap:** {mcap}\n\n` +
     `{socials}` +
     `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
   post_rankup:

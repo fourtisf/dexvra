@@ -62,8 +62,8 @@ function autoOverview(coin, mode) {
   const ch = chainName(coin.chain);
   if (!nm) return "";
   return mode === "trending"
-    ? `${nm} (${sy}) currently holds a featured slot on the Dexvra Trending board.`
-    : `${nm} (${sy}) has just gone live on ${ch}.`;
+    ? `${nm} (${sy}) is featured on the Dexvra Trending board.`
+    : `${nm} (${sy}) is now live and trading on ${ch}.`;
 }
 
 // Project overview paragraph — one clean block under the title, own spacing.
