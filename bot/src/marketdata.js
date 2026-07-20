@@ -112,27 +112,53 @@ async function fetchDS(chain, address) {
   }
 }
 
-/** Project description from GT's token-info endpoint (listing-flow autofill —
- *  the "overview" paragraph on the channel post). Collapsed to one paragraph. */
-async function fetchTokenDescription(chain, address) {
-  const net = chainOf(chain) && chainOf(chain).geckoNetwork;
-  if (!net) return null;
+const tidyDesc = (d) => {
+  if (!d || typeof d !== "string") return null;
+  const clean = d.replace(/\s+/g, " ").trim();
+  // code-point slice — never split an emoji's surrogate pair at the cap
+  return clean.length >= 20 ? Array.from(clean).slice(0, 500).join("") : null;
+};
+
+/** pump.fun carries the project's OWN description (set at mint) for Solana
+ *  launches that GeckoTerminal hasn't enriched yet — the text DexScreener shows.
+ *  Best-effort: any failure → null, the caller falls back to an auto-intro. */
+async function fetchPumpFunDescription(address) {
   try {
-    const res = await fetch(`${GT}/networks/${net}/tokens/${address}/info`, {
-      headers: HEADERS,
+    const res = await fetch(`https://frontend-api-v3.pump.fun/coins/${address}`, {
+      headers: { accept: "application/json" },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
     const j = await res.json();
-    const d = j.data && j.data.attributes && j.data.attributes.description;
-    if (!d || typeof d !== "string") return null;
-    const clean = d.replace(/\s+/g, " ").trim();
-    // code-point slice — never split an emoji's surrogate pair at the cap
-    return clean.length >= 20 ? Array.from(clean).slice(0, 500).join("") : null;
+    return tidyDesc(j && j.description);
   } catch (e) {
-    log.debug(`[market] GT info ${chain}/${address}: ${e.message}`);
+    log.debug(`[market] pumpfun ${address}: ${e.message}`);
     return null;
   }
+}
+
+/** Project description for the "overview" paragraph — GeckoTerminal's token-info
+ *  endpoint first, then pump.fun for Solana (GT often lacks it for fresh pump
+ *  launches). One collapsed paragraph, or null. */
+async function fetchTokenDescription(chain, address) {
+  const net = chainOf(chain) && chainOf(chain).geckoNetwork;
+  if (net) {
+    try {
+      const res = await fetch(`${GT}/networks/${net}/tokens/${address}/info`, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        const gt = tidyDesc(j.data && j.data.attributes && j.data.attributes.description);
+        if (gt) return gt;
+      }
+    } catch (e) {
+      log.debug(`[market] GT info ${chain}/${address}: ${e.message}`);
+    }
+  }
+  if (chain === "solana") return fetchPumpFunDescription(address);
+  return null;
 }
 
 /** @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>} */
