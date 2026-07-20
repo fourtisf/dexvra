@@ -14,6 +14,7 @@ const api = require("../api/dexvra");
 const { fetchMarket } = require("../marketdata");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
+const { postMedia } = require("../fulfillment");
 const { chainOf } = require("../config/chains");
 const { SITE_URL } = require("../config/constants");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
@@ -92,8 +93,13 @@ async function scanOnce(tg) {
 
   for (const a of alerts) {
     try {
-      const payload = fmt.rankupPost(coinOf(a.r, a.m), a.rank, a.change);
-      await post.sendText(CHANNELS.trending, payload);
+      const coin = coinOf(a.r, a.m);
+      const payload = fmt.rankupPost(coin, a.rank, a.change);
+      // Attach the trending banner artwork (same compositor as listing/trending
+      // posts) so rank-up alerts aren't text-only; degrades to text if the
+      // banner pipeline is off/unavailable.
+      const media = await postMedia("trending", coin, null, null, a.r.logoUrl, coin.tier).catch(() => null);
+      await post.sendMedia(CHANNELS.trending, media, payload);
       log.info(`[rankup] ${a.r.sym || a.r.address} climbed to #${a.rank} (+${a.change.toFixed(1)}% 24h)`);
     } catch (e) {
       log.debug(`[rankup] post failed: ${e.message}`);
