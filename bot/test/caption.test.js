@@ -3,7 +3,24 @@
 // post (live incident). fitCaption() trims to fit so the image always survives.
 const test = require("node:test");
 const assert = require("node:assert");
-const { _fitCaption } = require("../src/channels/post");
+const post = require("../src/channels/post");
+const { _fitCaption } = post;
+
+test("sendMedia passes a Buffer to Telegram as {source} (regression: banner dropped to text)", async () => {
+  let captured = null;
+  post.attach({
+    sendPhoto: async (_c, photo) => ((captured = photo), { message_id: 1 }),
+    sendMessage: async () => ({ message_id: 2 }),
+    pinChatMessage: async () => {},
+  });
+  const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  await post.sendMedia("@c", { source: buf }, { text: "hi", entities: [] });
+  assert.ok(captured && captured.source && Buffer.isBuffer(captured.source), "Buffer must reach Telegraf wrapped in {source}, not raw");
+  // a bare file_id / URL string must still pass straight through
+  captured = null;
+  await post.sendMedia("@c", "file_id_123", { text: "hi", entities: [] });
+  assert.strictEqual(captured, "file_id_123", "string media passes through untouched");
+});
 
 test("short captions pass through unchanged", () => {
   const p = { text: "🚀 New Listing", entities: [{ type: "bold", offset: 3, length: 11 }] };

@@ -138,15 +138,19 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   if (!tg) throw new Error("channels/post not attached to a bot");
   if (!media) return sendText(channel, payload, { replyTo, pin });
   const type = media && media.type ? media.type : "photo";
-  const source = media && media.source !== undefined ? media.source : media;
-  if (type === "photo") return sendPhoto(channel, source, payload, { replyTo, pin });
+  // PRESERVE the {source} wrapper for Buffers / local paths — Telegraf needs it
+  // to treat the value as an upload. Passing a bare Buffer (or path string) made
+  // sendPhoto/sendVideo misread it as a file_id and throw, silently dropping the
+  // banner to a text-only post. Bare file_id / URL strings pass through as-is.
+  const input = media && media.source !== undefined ? { source: media.source } : media;
+  if (type === "photo") return sendPhoto(channel, input, payload, { replyTo, pin });
 
   const p = fitCaption(norm(payload));
-  const viaGram = await viaGramJs(channel, { source }, p, { replyTo, pin });
+  const viaGram = await viaGramJs(channel, input, p, { replyTo, pin });
   if (viaGram) return viaGram;
   const method = type === "video" ? "sendVideo" : "sendAnimation";
   try {
-    const msg = await tg[method](channel, source, {
+    const msg = await tg[method](channel, input, {
       caption: p.text,
       ...botApiExtra(p, true),
       ...replyParams(replyTo),
