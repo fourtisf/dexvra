@@ -81,7 +81,7 @@ const DEFAULTS = {
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
     "🐦 Automatic post on X\n\n" +
     "💎 Want Trending + a tier badge too? Choose **🏆 Listing & Trending**.\n\n" +
-    "🔹 Only one step away — paste your **contract address** and select your network:",
+    "🔹 Only one step away — **select your network** below to begin:",
   intro_tiered:
     "🏆 **Listing & Trending**  (Best value)\n\n" +
     "🔹 Maximum exposure across the entire Dexvra network.\n\n" +
@@ -93,7 +93,7 @@ const DEFAULTS = {
     "🐦 Automatic post on X\n" +
     "💎 A ranked tier badge on every post\n\n" +
     "⚠️ Only **Diamond, Gold & Platinum** get the bonus @dexvraio announcement.\n\n" +
-    "🔹 Only one step away — paste your **contract address** and select your network:",
+    "🔹 Only one step away — **select your network** below to begin:",
   tier_chooser:
     "🏆 **Select your tier**\n\n" +
     "🔹 **Every tier includes:** a permanent dexvra.io listing, a launch post on @dexvralisting, a bundled Trending run, an automatic X post and a tier badge.\n\n" +
