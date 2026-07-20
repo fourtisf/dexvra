@@ -9,13 +9,15 @@ export const metadata: Metadata = {
     "Multi-chain token listing & discovery. Fresh launches, trending boards, and safety scans across Solana, Base, Ethereum, BSC, TON, Tron, and Robinhood Chain.",
   manifest: "/manifest.webmanifest",
   icons: {
+    // ?v=2 cache-busts the aggressively-cached favicon (browsers pinned an old
+    // one). SVG first so modern browsers use the crisp vector gem.
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icons/icon.svg", type: "image/svg+xml" },
-      { url: "/icons/icon-32.png", type: "image/png", sizes: "32x32" },
-      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icons/icon.svg?v=2", type: "image/svg+xml" },
+      { url: "/favicon.ico?v=2", sizes: "any" },
+      { url: "/icons/icon-32.png?v=2", type: "image/png", sizes: "32x32" },
+      { url: "/icons/icon-192.png?v=2", type: "image/png", sizes: "192x192" },
     ],
-    apple: "/icons/apple-touch-icon.png",
+    apple: "/icons/apple-touch-icon.png?v=2",
   },
 };
 

@@ -75,13 +75,18 @@ async function confirmPayHandler(ctx) {
   ctx.session._verifying = true;
   const { order, address, adminFree } = pp;
 
+  // Immediate on-tap feedback — the buyer must SEE the check is running the
+  // moment they tap Confirm (not just a silent spinner). Shown for every tap.
+  await toast(
+    ctx,
+    adminFree
+      ? "⏳ Running your order — hang tight…"
+      : tpl.render("checking_payment", { chain: order.chain.toUpperCase(), amount: order.humanAmount, native: order.native }),
+  );
+
   try {
     let paid = adminFree;
     if (!adminFree) {
-      await toast(
-        ctx,
-        tpl.render("checking_payment", { chain: order.chain.toUpperCase(), amount: order.humanAmount, native: order.native }),
-      );
       const r = await verify.verifyPayment(order.chain, address, order.amountSmallest);
       paid = r.paid;
     }
