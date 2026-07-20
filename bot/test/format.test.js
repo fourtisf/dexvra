@@ -33,8 +33,9 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("New Listing on Dexvra"));
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
-  assert.ok(card.text.includes("Listed on dexvra.io"), "CTA is 'Listed on dexvra.io'");
-  assert.ok(card.text.includes("📊"), "chain emoji present (unicode fallback)");
+  assert.ok(card.text.includes("Open on dexvra.io"), "CTA is 'Open on dexvra.io'");
+  assert.ok(card.text.includes("Liquidity / Market Cap"), "Moontok-style Liquidity/MC line");
+  assert.ok(card.text.includes("Token:"), "Token line present");
   assert.ok(card.entities.some((e) => e.type === "code"), "address as code");
   // the CTA links to the token page
   assert.ok(card.entities.some((e) => e.type === "text_link" && e.url === coin.siteUrl));

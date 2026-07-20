@@ -236,21 +236,19 @@ const DEFAULTS = {
   // {tierLine}/{overview}/{socials}/{footer} are auto-built and carry their own
   // spacing (they collapse cleanly when empty); the rest are raw values.
   post_listing:
-    `{head}\n\n{logoEmoji}**{name}** · {symbol}\n{tierLine}\n` +
+    `{head} {logoEmoji}{tierLine}\n\n` +
     `{overview}` +
-    `${em("📊", E.chart)} **Chain** — {chain}\n` +
-    `${em("💲", E.dollar)} **Price** — {price}\n` +
-    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n` +
-    `${em("🔗", E.link)} **CA** — \`{address}\`\n\n` +
+    `🪙 **Token:** {name} ({symbol}){twitter}\n\n` +
+    `🖥 **Contract Address:** \`{address}\`\n\n` +
+    `🕯 **Liquidity / Market Cap:** {liq} / {mcap}\n\n` +
     `{socials}` +
-    `${em("🟢", E.green)} [Listed on dexvra.io]({coinUrl}){footer}`,
+    `${em("🟢", E.green)} [Open on dexvra.io]({coinUrl}){footer}`,
   post_trending:
-    `🔥 **{symbol} is Trending on Dexvra**\n\n` +
-    `{logoEmoji}**{name}** · {chain}\n\n` +
+    `${em("📈", E.chartUp)} **{symbol} · New Trending on Dexvra** {logoEmoji}\n\n` +
     `{overview}` +
-    `${em("💲", E.dollar)} **Price** — {price}\n` +
-    `${em("📈", E.chartUp)} **Market cap** — {mcap}\n` +
-    `${em("🔗", E.link)} **CA** — \`{address}\`\n\n` +
+    `📊 [Open on Dexvra]({coinUrl})\n\n` +
+    `🖥 **Contract Address:** \`{address}\`\n\n` +
+    `🕯 **Liquidity / Market Cap:** {liq} / {mcap}\n\n` +
     `{socials}` +
     `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
   post_rankup:
@@ -320,8 +318,8 @@ const META = {
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
-  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "chain", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "coinUrl", "socials", "footer"] },
+  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "twitter", "chain", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },

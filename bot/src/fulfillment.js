@@ -72,6 +72,7 @@ function coinFrom(row, live) {
     overview: row.overview || null,
     price: live && live.priceUsd,
     mcap: live && live.mcap,
+    liq: live && live.liq,
     links: { website: row.website, twitter: row.twitter, telegram: row.telegram },
     siteUrl: `${SITE_URL}/token/${row.chain}/${row.address}`,
   };

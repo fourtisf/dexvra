@@ -35,14 +35,21 @@ const TIER_EMOJI = {
   XPRESS: em("⚡", E.zap),
 };
 
-// Carries its own trailing spacing so the template collapses cleanly (no
-// stray blank lines) when a token has no socials.
-function socialLines(links = {}) {
+const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
+const twitterInline = (links) => (links && links.twitter ? ` | [X](${cleanUrl(links.twitter)})` : "");
+
+// Per-link social row (Moontok/Fourtis style: emoji + labelled link). Returns
+// "" for a token with no socials so the template collapses cleanly.
+function socialsInline(links = {}) {
   const out = [];
-  if (links.website) out.push(`[Website](${cleanUrl(links.website)})`);
-  if (links.twitter) out.push(`[X](${cleanUrl(links.twitter)})`);
-  if (links.telegram) out.push(`[Telegram](${cleanUrl(links.telegram)})`);
-  return out.length ? `${em("🌐", E.globe)} ${out.join(" · ")}\n\n` : "";
+  if (links.twitter) out.push(`🐦 [X](${cleanUrl(links.twitter)})`);
+  if (links.telegram) out.push(`✈️ [Telegram](${cleanUrl(links.telegram)})`);
+  if (links.website) out.push(`🌐 [Website](${cleanUrl(links.website)})`);
+  return out.join(" · ");
+}
+function socialsBlock(coin) {
+  const s = socialsInline(coin.links);
+  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} socials:** ${s}\n\n` : "";
 }
 
 // Fallback overview for tokens with no description (fresh pump.fun launches
@@ -78,10 +85,11 @@ function overviewBlock(text) {
 
 function footer() {
   return (
-    `\n\n${em("💎", E.diamond)} **Dexvra** · [dexvra.io](${SITE_URL}) · ` +
-    `[Trending](${tme(CHANNELS.trending)}) · ` +
-    `[Listings](${tme(CHANNELS.listing)}) · ` +
-    `[Announcements](${tme(CHANNELS.announce)})`
+    `\n\n${em("📎", E.link)} **Dexvra**\n` +
+    `${em("💎", E.diamond)} [Dexvra.io](${SITE_URL}) · ` +
+    `🔥 [Trending](${tme(CHANNELS.trending)}) · ` +
+    `${em("🚨", E.sirenHead)} [Listings](${tme(CHANNELS.listing)}) · ` +
+    `${em("📢", E.megaphone)} [Announcements](${tme(CHANNELS.announce)})`
   );
 }
 
@@ -91,7 +99,7 @@ function listingPost(coin) {
   const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
   const tierLine =
     coin.tier && coin.tier !== "XPRESS"
-      ? `${tierBadge} **${clean(tierLabel(coin.tier))} tier** — featured placement\n`
+      ? `\n${tierBadge} **${clean(tierLabel(coin.tier))} tier** — featured placement`
       : "";
   const head =
     coin.tier === "XPRESS"
@@ -104,12 +112,14 @@ function listingPost(coin) {
     overview: overviewBlock(coin.overview || autoOverview(coin, "listing")),
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
+    twitter: twitterInline(coin.links),
     chain: clean(chainName(coin.chain)),
     address: clean(coin.address),
     price: priceStr(coin.price),
     mcap: mcStr(coin.mcap),
+    liq: liqStr(coin.liq),
     coinUrl: coinUrl(coin),
-    socials: socialLines(coin.links),
+    socials: socialsBlock(coin),
     footer: footer(),
   });
 }
@@ -124,8 +134,9 @@ function trendingPost(coin) {
     address: clean(coin.address),
     price: priceStr(coin.price),
     mcap: mcStr(coin.mcap),
+    liq: liqStr(coin.liq),
     coinUrl: coinUrl(coin),
-    socials: socialLines(coin.links),
+    socials: socialsBlock(coin),
     footer: footer(),
   });
 }
