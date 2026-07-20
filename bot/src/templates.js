@@ -284,9 +284,9 @@ const DEFAULTS = {
     `📈 **Market Cap:** {mcap}\n\n` +
     `{socials}{footer}`,
   post_rankup:
-    `${em("📈", E.chartUp)} **{symbol} · Trending #{rank} on Dexvra**\n\n` +
-    `**{name}** just moved up to **#{rank}** on the Dexvra Trending board.{change}\n\n` +
-    `${em("🟢", E.green)} [Trade & track on Dexvra]({coinUrl}){footer}`,
+    `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
+    `**{name}** just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
+    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl}){footer}`,
   post_pump:
     `${em("🚀", E.rocket)} **{symbol} is pumping — {multiple}**\n\n` +
     `**{name}** has run **+{percent}%** since it listed on Dexvra.\n\n` +

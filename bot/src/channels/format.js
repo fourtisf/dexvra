@@ -185,8 +185,10 @@ const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 function changeSentence(change24h) {
   const v = Number(change24h);
   if (!Number.isFinite(v) || v <= 0) return "";
-  if (v > 5000) return " Momentum is building over the last 24h.";
-  return ` Up +${withCommas(Math.round(v))}% over the last 24h.`;
+  // Own emphasized line under the body. Absurd low-liquidity readings
+  // (e.g. +490,749%) look like spam, so above a sane cap we drop the number.
+  if (v > 5000) return "\n\n**Momentum is surging** over the last 24h.";
+  return `\n\n**+${withCommas(Math.round(v))}%** over the last 24h — and still climbing.`;
 }
 
 function rankupPost(coin, rank, change24h) {

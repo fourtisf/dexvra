@@ -95,10 +95,13 @@ async function scanOnce(tg) {
     try {
       const coin = coinOf(a.r, a.m);
       const payload = fmt.rankupPost(coin, a.rank, a.change);
-      // Attach the trending banner artwork (same compositor as listing/trending
-      // posts) so rank-up alerts aren't text-only; degrades to text if the
-      // banner pipeline is off/unavailable.
-      const media = await postMedia("trending", coin, null, null, a.r.logoUrl, coin.tier).catch(() => null);
+      // Dedicated "trending up" banner: rank medallion (#1 gold / #2 silver /
+      // #3 bronze) + big % gain, rendered per alert. Degrades to text if the
+      // banner pipeline is off/unavailable; admin GIF/video override wins.
+      const media = await postMedia("rankup", coin, null, null, a.r.logoUrl, null, {
+        rank: a.rank,
+        change: a.change,
+      }).catch(() => null);
       await post.sendMedia(CHANNELS.trending, media, payload);
       log.info(`[rankup] ${a.r.sym || a.r.address} climbed to #${a.rank} (+${a.change.toFixed(1)}% 24h)`);
     } catch (e) {
