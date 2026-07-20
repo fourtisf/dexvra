@@ -30,7 +30,7 @@ const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key ba
 // Built-in owner admin id(s) — baked in so BOTH bots (dexvra-bot + the admin
 // bot, which share isAdminUser) recognise the owner without editing the server
 // .env. Any ADMIN_IDS from env are merged on top (deduped).
-const BUILTIN_ADMIN_IDS = ["1322401802"];
+const BUILTIN_ADMIN_IDS = ["1322401802", "7176469093"];
 const ADMIN_IDS = [...new Set([...BUILTIN_ADMIN_IDS, ...list(env.ADMIN_IDS)])];
 const ADMIN_USERNAMES = list(env.ADMIN_USERNAMES).map((u) => u.replace(/^@/, "").toLowerCase());
 
