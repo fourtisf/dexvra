@@ -129,15 +129,19 @@ const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coi
 const coinUrlLabel = (coin) => coinUrl(coin).replace(/^https?:\/\//, "");
 
 function listingPost(coin) {
-  const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
+  const isXpress = coin.tier === "XPRESS";
+  // Header + tier line are editable templates too (every word lives in the editor).
+  const head = tpl.substitute(tpl.getRaw(isXpress ? "post_head_xpress" : "post_head_listed"), {
+    name: clean(coin.name),
+  });
   const tierLine =
-    coin.tier && coin.tier !== "XPRESS"
-      ? `\n${tierBadge} **${clean(tierLabel(coin.tier))} tier**`
+    coin.tier && !isXpress
+      ? "\n" +
+        tpl.substitute(tpl.getRaw("post_tierline"), {
+          tierEmoji: TIER_EMOJI[String(coin.tier).toUpperCase()] || "",
+          tier: clean(tierLabel(coin.tier)),
+        })
       : "";
-  const head =
-    coin.tier === "XPRESS"
-      ? `${em("⚡", E.zap)} **Xpress Listing — ${clean(coin.name)} live on Dexvra**`
-      : `${em("🚨", E.sirenHead)} **New Listing on Dexvra**`;
   return tpl.render("post_listing", {
     head,
     tierLine,

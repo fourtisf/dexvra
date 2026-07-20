@@ -298,6 +298,12 @@ const DEFAULTS = {
     `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
     `👉 [View the campaign]({linkUrl}){footer}`,
 
+  // Listing HEADER (first line of the listing post) + tier badge line — now
+  // editable instead of hardcoded, so every word of a post lives in the editor.
+  post_head_xpress: `${em("⚡", E.zap)} **Xpress Listing — {name} live on Dexvra**`,
+  post_head_listed: `${em("🚨", E.sirenHead)} **New Listing on Dexvra**`,
+  post_tierline: `{tierEmoji} **{tier} tier**`,
+
   // Shared blocks reused by EVERY channel post (listing/trending/pump/rankup).
   // Edit these once and every post updates. post_socials: keep ONE social per
   // line — a line whose link the token doesn't have is dropped automatically.
@@ -416,6 +422,9 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "socials", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "socials", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
+  post_head_xpress: { group: "Channel Posts", label: "Post: Listing header — Xpress", ph: ["name"] },
+  post_head_listed: { group: "Channel Posts", label: "Post: Listing header — Listing & Trending", ph: [] },
+  post_tierline: { group: "Channel Posts", label: "Post: Tier badge line", ph: ["tierEmoji", "tier"] },
   post_socials: { group: "Channel Posts", label: "Post: Social links block", ph: ["symbol", "twitter", "website", "telegram"] },
   post_footer: { group: "Channel Posts", label: "Post: Footer (Dexvra links)", ph: ["site", "listing", "trending", "announce"] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
