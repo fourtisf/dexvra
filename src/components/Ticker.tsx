@@ -1,7 +1,7 @@
 "use client";
 
 import { fmtPrice } from "@/lib/format";
-import { coinBg } from "@/lib/visual";
+import { coinBg, monogram } from "@/lib/visual";
 import { logoSrc } from "@/lib/logo";
 import { useApp } from "./AppState";
 
@@ -30,7 +30,7 @@ export function Ticker() {
                 }}
               />
             ) : (
-              t.emoji
+              <span className="coin-mono">{monogram(t.symbol)}</span>
             )}
           </span>
           <span className="sym">{t.symbol}</span>

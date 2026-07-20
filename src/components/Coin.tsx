@@ -1,7 +1,7 @@
 "use client";
 
 import type { BoardToken } from "@/lib/types";
-import { coinBg } from "@/lib/visual";
+import { coinBg, monogram } from "@/lib/visual";
 import { logoSrc } from "@/lib/logo";
 import { useState, type CSSProperties } from "react";
 import { ChainLogo } from "./ChainLogo";
@@ -38,7 +38,7 @@ export function Coin({
         // eslint-disable-next-line @next/next/no-img-element
         <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} />
       ) : (
-        token.emoji
+        <span className="coin-mono">{monogram(token.symbol)}</span>
       )}
     </div>
   );

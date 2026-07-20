@@ -249,6 +249,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   border:2.5px solid rgba(255,255,255,.42);
   box-shadow:inset 0 3px 7px rgba(255,255,255,.5), inset 0 -4px 8px rgba(0,0,0,.2), 0 8px 18px rgba(0,0,0,.3);
 }
+/* Ticker-monogram placeholder (logo-less tokens) — clean initials, not a
+   random emoji. Scales with the coin's font-size; sits above the gradient. */
+.coin-mono{
+  font-family:var(--fd);font-weight:800;font-size:.82em;letter-spacing:-.04em;
+  color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35);line-height:1;user-select:none;
+}
 .pump-inline{display:flex;align-items:center;gap:13px;margin:2px 0 9px;position:relative;flex-wrap:wrap}
 .pump-x{font-family:var(--fm);font-weight:800;font-size:44px;line-height:1;letter-spacing:-.03em;color:#02180B;text-shadow:0 2px 0 rgba(255,255,255,.3)}
 .chip-since{
