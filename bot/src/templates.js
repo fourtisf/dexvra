@@ -82,7 +82,8 @@ const DEFAULTS = {
     "Select your network:",
   tier_chooser:
     "🏆 **Select your tier**\n\n" +
-    "Higher tiers rank higher, carry their badge on every post and bundle a longer Trending run. Diamond, Gold and Platinum include an Announcement-channel post.\n\n" +
+    "**Every tier gets you:** a permanent dexvra.io listing, a launch post in @dexvralisting, a bundled Trending run, an automatic X post and a tier badge on every post.\n\n" +
+    "**Higher tiers** rank higher and trend longer — and Diamond, Gold & Platinum add a headline in @dexvraio (Announcements).\n\n" +
     "Prices in **{native}**:",
   trending_durations:
     `🔥 **Trending — {symbol}** · {chain}\n\n` +
@@ -148,8 +149,8 @@ const DEFAULTS = {
   no_pending_payment: "There's no pending payment on this chat. Send /start to begin.",
   pay_card:
     `💳 **Order summary**\n\n{label}\n\n` +
-    `**Amount due** — {amount} {native}\n**Payment address**\n\`{address}\`\n\n` +
-    "This address is unique to your order. Once sent, tap **Confirm** — on-chain verification usually takes under a minute.",
+    `💰 **Amount due:** {amount} {native}\n👜 **Payment address:**\n\`{address}\`\n\n` +
+    "This address is unique to your order. Pay within a few minutes, then tap **✅ Confirm** — on-chain verification usually takes under a minute.",
   pay_card_admin:
     "🧪 **Admin test order — FREE**\n\n{label}\n\nNo payment needed. Tap **Confirm** to run the flow end-to-end.",
   payment_not_detected:
@@ -159,17 +160,17 @@ const DEFAULTS = {
   payment_snag:
     "⚠️ **We're on it**\n\nYour payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete the order.",
   success_listing:
-    `✅ **You're live on Dexvra**\n\n` +
-    `**{symbol}** — {name} is now listed and visible across the Dexvra network.\n\n` +
+    `✅ **Payment confirmed — you're live on Dexvra!**\n\n` +
+    `⚡ Congratulations! **{symbol}** ({name}) is now listed and visible across the Dexvra network — your own token page, our Listing channel, and X.\n\n` +
     `${em("🌐", E.globe)} [Open your token page]({siteUrl})\n{postLinks}\n\n` +
-    "Welcome aboard — the Dexvra team",
+    "Welcome aboard 💎 — the Dexvra team",
   success_trending:
-    `✅ **Trending activated**\n\n` +
-    `**{symbol}** holds a featured Trending slot for the next **{hours} hours**.\n\n` +
+    `✅ **Payment confirmed — {symbol} is Trending!**\n\n` +
+    `⚡ Your token now holds a featured slot on the Dexvra Trending board for the next **{hours} hours**, announced across our channels.\n\n` +
     `${em("🌐", E.globe)} [View your live ranking]({siteUrl})\n{postLinks}`,
   success_banner:
-    `✅ **Campaign booked**\n\n` +
-    `Your **{slot}** is live across Dexvra until {endsAt}.\n{postLinks}`,
+    `✅ **Payment confirmed — your campaign is live!**\n\n` +
+    `⚡ Your **{slot}** banner is now running on the dexvra.io homepage until {endsAt}, announced in our channel.\n{postLinks}`,
   group_start:
     "🟢 **Dexvra Buy Bot**\n\n" +
     "I post a live alert here on **every on-chain buy** of your token.\n\n" +
