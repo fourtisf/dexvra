@@ -4,7 +4,7 @@
 // buffer is provided; otherwise (and on any v1 upload 403 — free tier) it falls
 // back to a text-only tweet. Returns the tweet id or null; never throws.
 const { X, X_ENABLED, X_HANDLE, SITE_URL } = require("./config/constants");
-const { formatNumber } = require("./helpers/format");
+const { fmtPrice, formatNumber } = require("./helpers/format");
 const { chainOf } = require("./config/chains");
 const tpl = require("./templates");
 const log = require("./helpers/logger");
@@ -61,19 +61,18 @@ async function send(account, text, mediaBuffer, mimeType) {
 
 const chainLabel = (c) => (chainOf(c) ? chainOf(c).label : String(c || ""));
 const mcOf = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
-const liqOf = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 
 // Editable via @dexvraadminbot → "X Posts" group (plain text; X has no markdown).
 function listingText(coin) {
   const tag = symTag(coin.symbol);
   return tpl.t("x_listing", {
     name: coin.name,
-    symbol: `$${tag}`,
-    chain: chainLabel(coin.chain),
-    mcap: mcOf(coin.mcap),
-    liq: liqOf(coin.liq),
-    url: coinUrl(coin),
     tag,
+    chain: chainLabel(coin.chain),
+    url: coinUrl(coin),
+    address: coin.address,
+    price: coin.price ? fmtPrice(coin.price) : "TBA",
+    mcap: mcOf(coin.mcap),
   });
 }
 

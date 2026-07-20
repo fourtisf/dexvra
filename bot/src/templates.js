@@ -302,12 +302,12 @@ const DEFAULTS = {
   //    chars: a URL counts as 23, each emoji ~2). Footer order Listing →
   //    Trending → Announcement. Posted on a successful listing/trending order. ──
   x_listing:
-    "🚨 New Listing on Dexvra\n\n" +
-    "💎 {name} ({symbol}) is now live on {chain}!\n\n" +
-    "📊 MC: {mcap}  ·  💧 Liq: {liq}\n" +
+    "⚡ New Listing on Dexvra ⚡\n\n" +
+    "🚀 {name} ( #{tag} ) is now live on {chain}!\n" +
     "🔗 {url}\n\n" +
-    "🌐 dexvra.io | 🚨 Listing | 🔥 Trending | 📢 Announcement\n" +
-    "#Dexvra #{tag} #Crypto #DYOR",
+    "📄 CA: {address}\n\n" +
+    "💰 Price: {price}  |  📊 MC: {mcap}\n\n" +
+    "#Dexvra #NewListing #Altcoin #Memecoin #DexvraListing #DYOR",
   x_trending:
     "🔥 {symbol} is now Trending on Dexvra!\n\n" +
     "💎 {name}  ·  {chain}\n" +
@@ -372,7 +372,7 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
-  x_listing: { group: "X Posts", label: "X post: new listing", ph: ["name", "symbol", "chain", "mcap", "liq", "url", "tag"] },
+  x_listing: { group: "X Posts", label: "X post: new listing", ph: ["name", "tag", "chain", "url", "address", "price", "mcap"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
 };
 
