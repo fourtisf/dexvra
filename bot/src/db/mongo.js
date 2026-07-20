@@ -3,23 +3,36 @@
 // state so nothing lives only on the VPS — if the container/VPS is replaced,
 // boot-time hydrate() restores every store from here.
 //
-// Fail-open by design: if MONGO_URI is unset OR the server can't be reached,
-// enabled() stays false and every persistence call in persist.js silently falls
-// back to the local-file behaviour the bot has always had. Mongo is never on the
-// critical path of a payment or a message send — mirror writes are best-effort
-// and fire-and-forget.
-const { MongoClient } = require("mongodb");
+// Fail-open by design: if MONGO_URI is unset, the `mongodb` package isn't
+// installed, OR the server can't be reached, enabled() stays false and every
+// persistence call in persist.js silently falls back to the local-file behaviour
+// the bot has always had. Mongo is never on the critical path of a payment or a
+// message send — mirror writes are best-effort and fire-and-forget.
 const { MONGO_URI, MONGO_DB } = require("../config/constants");
 const log = require("../helpers/logger");
+
+// Load the driver DEFENSIVELY. A deploy that pulled this code but skipped
+// `npm install` (so `mongodb` is absent) must NOT crash the whole bot — degrade
+// to local-file mode exactly as if MONGO_URI were unset. This require sits at
+// the base of the persist chain, so an unguarded failure here took the bot down.
+let MongoClient = null;
+try {
+  ({ MongoClient } = require("mongodb"));
+} catch (e) {
+  if (MONGO_URI) {
+    log.warn(`[mongo] 'mongodb' package not installed — running on local files only. Run 'npm install'. (${e && e.message})`);
+  }
+}
 
 let client = null;
 let db = null;
 let connecting = null;
 let connected = false;
 
-/** MONGO_URI is configured (a connection will be attempted). */
+/** MONGO_URI is configured AND the driver is available (a connection will be
+ *  attempted). Both are required — a missing driver means no Mongo, full stop. */
 function configured() {
-  return !!MONGO_URI;
+  return !!MONGO_URI && !!MongoClient;
 }
 /** A live connection exists right now (mirror reads/writes will run). */
 function enabled() {
@@ -30,7 +43,7 @@ function enabled() {
  *  Never throws — a bad URI or an unreachable server logs a warning and the bot
  *  continues in local-file mode. */
 async function connect() {
-  if (!MONGO_URI) return null;
+  if (!MONGO_URI || !MongoClient) return null;
   if (db) return db;
   if (connecting) return connecting;
   connecting = (async () => {
