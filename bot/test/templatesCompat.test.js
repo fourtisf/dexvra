@@ -37,6 +37,18 @@ test("old ENTITY-saved template: trailing newlines of self-spacing vars are trim
   await tpl.resetTemplate("post_trending");
 });
 
+test("resetAllTemplates wipes every custom override in one shot", async () => {
+  await tpl.setTemplate("intro_tiered", "custom A");
+  await tpl.setTemplate("pay_card", "custom B");
+  assert.ok(tpl.isCustom("intro_tiered") && tpl.isCustom("pay_card"));
+  const n = await tpl.resetAllTemplates();
+  assert.ok(n >= 2, `expected ≥2 cleared, got ${n}`);
+  assert.strictEqual(tpl.isCustom("intro_tiered"), false);
+  assert.strictEqual(tpl.isCustom("pay_card"), false);
+  // second call is a no-op → 0 cleared, never throws
+  assert.strictEqual(await tpl.resetAllTemplates(), 0);
+});
+
 test("new default layout still spaces correctly with entity-style rich vars", () => {
   const r = tpl.render("post_listing", {
     head: "⚡ Xpress",

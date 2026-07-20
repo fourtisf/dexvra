@@ -57,3 +57,8 @@ test("a single-page group shows no nav row", () => {
   const cbs = flat(_menu.groupKb(_menu.slugOf(small), 0)).map((b) => b.callback_data);
   assert.ok(!cbs.includes("noop"), "small group should not render pager buttons");
 });
+
+test("main menu exposes a one-tap reset-all-templates action", () => {
+  const cbs = flat(_menu.mainKb()).map((b) => b.callback_data);
+  assert.ok(cbs.includes("resetall"), `reset-all button missing: ${cbs.join(",")}`);
+});

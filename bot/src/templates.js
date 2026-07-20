@@ -432,6 +432,16 @@ async function resetTemplate(key) {
   cache = null;
 }
 
+/** Wipe every admin-saved override → all templates revert to the code defaults.
+ *  Returns how many custom templates were cleared. */
+async function resetAllTemplates() {
+  const saved = loadJSONSync(FILE, {});
+  const n = Object.keys(saved).length;
+  await saveJSON(FILE, {});
+  cache = null;
+  return n;
+}
+
 const keys = () => Object.keys(DEFAULTS);
 const meta = (key) => META[key] || { group: "Other", label: key, ph: [] };
 const groups = () => {
@@ -448,6 +458,7 @@ module.exports = {
   isCustom,
   setTemplate,
   resetTemplate,
+  resetAllTemplates,
   keys,
   meta,
   groups,

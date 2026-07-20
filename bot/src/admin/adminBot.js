@@ -53,6 +53,7 @@ function mainKb() {
   return Markup.inlineKeyboard([
     ...groupRows,
     [Markup.button.callback("🔍 Preview all templates", "audit")],
+    [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
     [Markup.button.callback("📣 Broadcast", "bc")],
@@ -660,6 +661,36 @@ function build() {
     ctx.answerCbQuery("Auditing all templates…").catch(() => {});
     if (!guard(ctx)) return;
     await sendTemplateAudit(ctx, "");
+  });
+
+  // Reset ALL templates to their code defaults — destructive, so gate behind a
+  // confirm. Counts how many custom overrides exist before wiping.
+  bot.action("resetall", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const n = tpl.keys().filter((k) => tpl.isCustom(k)).length;
+    if (!n) {
+      return edit(ctx, "♻️ <b>Nothing to reset</b>\n\nEvery template is already on its default.", Markup.inlineKeyboard([[Markup.button.callback("⬅ Back", "home")]]));
+    }
+    await edit(
+      ctx,
+      `♻️ <b>Reset ALL templates to default?</b>\n\nThis reverts <b>${n}</b> custom template${n === 1 ? "" : "s"} you've edited back to the built-in defaults. This cannot be undone.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback(`✅ Yes, reset all ${n}`, "resetall_yes")],
+        [Markup.button.callback("⬅ Cancel", "home")],
+      ]),
+    );
+  });
+  bot.action("resetall_yes", async (ctx) => {
+    ctx.answerCbQuery("Resetting…").catch(() => {});
+    if (!guard(ctx)) return;
+    const n = await tpl.resetAllTemplates();
+    log.info(`[adminbot] ALL templates reset to default (${n} custom cleared) by @${ctx.from.username || ctx.from.id}`);
+    await edit(
+      ctx,
+      `✅ <b>Done — ${n} template${n === 1 ? "" : "s"} reset to default.</b>\n\nAll bot messages and channel posts are back to the built-in copy. Goes live within ~30s.`,
+      Markup.inlineKeyboard([[Markup.button.callback("⬅ Back to menu", "home")]]),
+    );
   });
 
   bot.action("home", async (ctx) => {
