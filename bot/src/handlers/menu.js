@@ -30,8 +30,10 @@ function mainMenu() {
   ]);
 }
 
-/** Chain picker → `<prefix>_<chain>` (e.g. lc_solana). */
-function chainMenu(prefix) {
+/** Chain picker → `<prefix>_<chain>` (e.g. lc_solana). `extraRows` (array of
+ *  button-rows) are appended after the chain grid, before Home — used to offer a
+ *  one-tap switch to the other package. */
+function chainMenu(prefix, extraRows = []) {
   const rows = [];
   for (let i = 0; i < CHAIN_ORDER.length; i += 2) {
     const row = CHAIN_ORDER.slice(i, i + 2).map((id) =>
@@ -39,7 +41,7 @@ function chainMenu(prefix) {
     );
     rows.push(row);
   }
-  return withHome(rows);
+  return withHome([...rows, ...extraRows]);
 }
 
 /** One button per item → `<prefix>_<index>`; label via labelFn(item, i). */
