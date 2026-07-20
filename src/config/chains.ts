@@ -63,10 +63,10 @@ export const CHAINS: Record<string, ChainConfig> = {
     id: "robinhood",
     label: "Robinhood",
     color: "#CCFF00",
-    geckoNetwork: null,
+    geckoNetwork: "robinhood", // GT indexes Robinhood Chain → live price/mcap/liq + chart embed
     goPlusChainId: null,
-    explorer: (a) => `https://dexscreener.com/search?q=${a}`,
-    buyUrl: (a) => `https://dexscreener.com/search?q=${a}`,
+    explorer: (a) => `https://dexscreener.com/robinhood/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/robinhood/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   tron: {
