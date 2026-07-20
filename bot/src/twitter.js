@@ -62,13 +62,30 @@ async function send(account, text, mediaBuffer, mimeType) {
 const chainLabel = (c) => (chainOf(c) ? chainOf(c).label : String(c || ""));
 const mcOf = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
 
+// Tier line for the Listing & Trending package (Xpress has none):
+// "💎 DIAMOND Trend Now!". Blank for Xpress.
+const X_TIER_EMOJI = { DIAMOND: "💎", GOLD: "🥇", PLATINUM: "🏆", SILVER: "🥈", BRONZE: "🥉" };
+function xTierLine(coin) {
+  const tier = String(coin.tier || "").toUpperCase();
+  if (!tier || tier === "XPRESS") return "";
+  return `${X_TIER_EMOJI[tier] || "💎"} ${tier} Trend Now!\n\n`;
+}
+// @mention the project's X account, parsed from the twitter link they submitted.
+function xMention(links) {
+  const t = links && links.twitter;
+  if (!t) return "";
+  const m = String(t).match(/(?:x\.com|twitter\.com)\/@?([A-Za-z0-9_]{1,15})/i);
+  return m ? ` @${m[1]}` : "";
+}
+
 // Editable via @dexvraadminbot → "X Posts" group (plain text; X has no markdown).
 function listingText(coin) {
   const tag = symTag(coin.symbol);
   return tpl.t("x_listing", {
+    tierLine: xTierLine(coin),
     name: coin.name,
     tag,
-    chain: chainLabel(coin.chain),
+    mention: xMention(coin.links),
     url: coinUrl(coin),
     address: coin.address,
     price: coin.price ? fmtPrice(coin.price) : "TBA",

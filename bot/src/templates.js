@@ -303,7 +303,8 @@ const DEFAULTS = {
   //    Trending → Announcement. Posted on a successful listing/trending order. ──
   x_listing:
     "⚡ New Listing on Dexvra ⚡\n\n" +
-    "🚀 {name} ( #{tag} ) is now live on {chain}!\n" +
+    "{tierLine}" +
+    "🚀 {name} ( #{tag} ) is now live on Dexvra!{mention}\n" +
     "🔗 {url}\n\n" +
     "📄 CA: {address}\n\n" +
     "💰 Price: {price}  |  📊 MC: {mcap}\n\n" +
@@ -372,7 +373,7 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
-  x_listing: { group: "X Posts", label: "X post: new listing", ph: ["name", "tag", "chain", "url", "address", "price", "mcap"] },
+  x_listing: { group: "X Posts", label: "X post: new listing", ph: ["tierLine", "name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
 };
 
