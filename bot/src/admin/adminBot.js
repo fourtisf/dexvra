@@ -569,6 +569,50 @@ function build() {
   bot.start(start);
   bot.command("home", start);
 
+  // /preview [group-slug] — audit EVERY template at once (clean rendered text,
+  // grouped, ✏️=custom / •=default). No arg → short snippet of all; a group slug
+  // → longer previews for just that group. Messages are chunked under 4096.
+  bot.command("preview", async (ctx) => {
+    if (!guard(ctx)) return;
+    const arg = (ctx.message.text.split(/\s+/)[1] || "").toLowerCase();
+    const premiumLib = require("../premium");
+    const cleanOf = (k) => {
+      const raw = tpl.getRaw(k);
+      const s = typeof raw === "string" ? raw : (raw && raw.text) || String(raw || "");
+      try {
+        return premiumLib.parse(s).text.replace(/\s+/g, " ").trim();
+      } catch {
+        return String(s).replace(/\s+/g, " ").trim();
+      }
+    };
+    const groups = tpl.groups();
+    const names = arg ? groupNames().filter((n) => slugOf(n) === arg) : groupNames();
+    if (!names.length) {
+      return ctx.reply(`No group '${escapeHtml(arg)}'. Try: ${groupNames().map((n) => `<code>/preview ${slugOf(n)}</code>`).join(", ")}`, HTML).catch(() => {});
+    }
+    const cap = arg ? 480 : 130; // fuller text when a single group is requested
+    for (const name of names) {
+      let msg = `📋 <b>${escapeHtml(name)}</b> — ${groups[name].length} templates\n\n`;
+      for (const k of groups[name]) {
+        const text = cleanOf(k);
+        const snip = text.length > cap ? `${text.slice(0, cap)}…` : text;
+        const row = `${tpl.isCustom(k) ? "✏️" : "•"} <b>${escapeHtml(tpl.meta(k).label)}</b>\n<i>${escapeHtml(snip)}</i>\n\n`;
+        if (msg.length + row.length > 3900) {
+          await ctx.reply(msg, HTML).catch(() => {});
+          msg = "";
+        }
+        msg += row;
+      }
+      if (msg.trim()) await ctx.reply(msg, HTML).catch(() => {});
+    }
+    if (!arg) {
+      await ctx.reply(
+        `Tip: <code>/preview botmessages</code> (or any group) shows fuller text. ✏️ = edited · • = default. Edit any of them from /start → 📝 Bot Messages / 📢 Channel Posts.`,
+        HTML,
+      ).catch(() => {});
+    }
+  });
+
   bot.action("home", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -1113,6 +1157,7 @@ async function startAdminBot() {
   const bot = build();
   await bot.telegram.setMyCommands([
     { command: "start", description: "Open the template editor" },
+    { command: "preview", description: "Audit all templates at once" },
     { command: "home", description: "Back to the menu" },
     { command: "cancel", description: "Cancel the current edit" },
   ]).catch(() => {});
