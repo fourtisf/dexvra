@@ -95,6 +95,14 @@ function footer() {
 }
 
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
+// Shortened contract for the link LABEL so it reads "dexvra.io/token/<ca>" — the
+// clickable target is still the full token page (coinUrl). Handles EVM (0x…) and
+// long base58 (Solana) addresses.
+const shortCa = (a) => {
+  const s = String(a || "");
+  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+};
+const coinUrlLabel = (coin) => `dexvra.io/token/${shortCa(coin.address)}`;
 
 function listingPost(coin) {
   const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
@@ -104,7 +112,7 @@ function listingPost(coin) {
       : "";
   const head =
     coin.tier === "XPRESS"
-      ? `${em("⚡", E.zap)} **Xpress Listing — live on Dexvra**`
+      ? `${em("⚡", E.zap)} **Xpress Listing — ${clean(coin.name)} live on Dexvra**`
       : `${em("🚨", E.sirenHead)} **New Listing on Dexvra**`;
   return tpl.render("post_listing", {
     head,
@@ -120,6 +128,7 @@ function listingPost(coin) {
     mcap: mcStr(coin.mcap),
     liq: liqStr(coin.liq),
     coinUrl: coinUrl(coin),
+    coinUrlLabel: coinUrlLabel(coin),
     socials: socialsBlock(coin),
     footer: footer(),
   });
@@ -137,6 +146,7 @@ function trendingPost(coin) {
     mcap: mcStr(coin.mcap),
     liq: liqStr(coin.liq),
     coinUrl: coinUrl(coin),
+    coinUrlLabel: coinUrlLabel(coin),
     socials: socialsBlock(coin),
     footer: footer(),
   });
