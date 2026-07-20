@@ -1238,6 +1238,7 @@ async function startAdminBot() {
   // serving the editor (fail-open without MONGO_URI).
   try {
     await require("../helpers/persist").hydrate();
+    await require("../db/jobMirror").restoreAll(); // so /reviewbroadcasts sees pending jobs after a VPS reset
   } catch (e) {
     log.warn(`[adminbot] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }
