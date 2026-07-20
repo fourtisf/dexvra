@@ -134,8 +134,12 @@ function loadConfig() {
 // POST_BANNERS env is only the DEFAULT when no admin choice was saved.
 function postingEnabled() {
   const g = loadJSONSync(CONFIG_FILE, {})._global || {};
+  // Default ON — banners are a core feature. ONLY an explicit admin toggle
+  // (persisted _global.enabled === false in @dexvraadminbot) turns them off. A
+  // stale POST_BANNERS=0 env snapshot must never silently kill every channel
+  // banner again (recurring incident: "setiap announce tidak ada banner").
   if (typeof g.enabled === "boolean") return g.enabled;
-  return require("./config/constants").POST_BANNERS;
+  return true;
 }
 async function setPostingEnabled(on) {
   const saved = loadJSONSync(CONFIG_FILE, {});
