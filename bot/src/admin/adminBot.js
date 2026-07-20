@@ -1234,6 +1234,13 @@ async function startAdminBot() {
     log.warn("[adminbot] ADMIN_BOT_TOKEN not set — admin bot disabled");
     return;
   }
+  // Restore/seed templates + banner config from the Mongo durable mirror before
+  // serving the editor (fail-open without MONGO_URI).
+  try {
+    await require("../helpers/persist").hydrate();
+  } catch (e) {
+    log.warn(`[adminbot] persist hydrate failed (continuing on local files): ${e && e.message}`);
+  }
   const bot = build();
   await bot.telegram.setMyCommands([
     { command: "start", description: "Open the template editor" },

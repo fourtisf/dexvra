@@ -89,6 +89,16 @@ const WALLET_ENC_KEY = env.WALLET_ENC_KEY || "";
 // Bot-side operational state (orders for restart-recovery, post ids, dedup).
 const DATA_DIR = env.BOT_DATA_DIR || path.join(BOT_ROOT, "data");
 
+// ── MongoDB durable mirror (optional) ────────────────────────────────────────
+// When MONGO_URI is set, persist.js mirrors every JSON store into a `kv`
+// collection so bot state (the /start audience, orders, templates, group +
+// banner config, dedup latches) survives a VPS reset / container replace and is
+// no longer only on local disk. Reads still come from the local files (the two
+// bot processes share one DATA_DIR); at boot any store missing from disk is
+// restored from Mongo. Unset or unreachable → pure local-file mode (fail-open).
+const MONGO_URI = env.MONGO_URI || "";
+const MONGO_DB = env.MONGO_DB || ""; // optional; default DB comes from the URI
+
 // ── Twitter / X (built, disabled unless keys present) ────────────────────────
 const X = {
   listing: {
@@ -181,6 +191,8 @@ module.exports = {
   WALLETS_DIR,
   WALLET_ENC_KEY,
   DATA_DIR,
+  MONGO_URI,
+  MONGO_DB,
   X,
   X_HANDLE,
   X_ENABLED,

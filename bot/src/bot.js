@@ -58,6 +58,16 @@ function applyMiddleware(bot) {
 
 async function startBot() {
   if (!BOT_TOKEN) throw new Error("BOT_TOKEN is not set (see .env.example)");
+
+  // Restore/seed state from the Mongo durable mirror BEFORE any handler or
+  // service constructs a DedupSet or reads a store (fail-open: no-op without
+  // MONGO_URI). Must run before applyMiddleware → registerHandlers.
+  try {
+    await require("./helpers/persist").hydrate();
+  } catch (e) {
+    log.warn(`[start] persist hydrate failed (continuing on local files): ${e && e.message}`);
+  }
+
   const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 120000 });
   applyMiddleware(bot);
   log.attach(bot, LOG_CHANNEL);
