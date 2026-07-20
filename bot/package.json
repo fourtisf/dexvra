@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node main.js",
     "check": "node scripts/smoke.js",
+    "mongo:check": "node scripts/mongo-check.js",
     "test": "node --test"
   },
   "engines": {
