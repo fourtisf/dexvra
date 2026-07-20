@@ -530,6 +530,13 @@ function getRawValue(key) {
 function isCustom(key) {
   return loadJSONSync(FILE, {})[key] != null;
 }
+/** Number of admin-saved overrides on disk — INCLUDING orphaned keys from
+ *  older template generations (keys that no longer exist in DEFAULTS). The
+ *  reset-all flow must offer to clear those too, or a data file holding only
+ *  stale keys reads as "nothing to reset" while the file is not empty. */
+function overrideCount() {
+  return Object.keys(loadJSONSync(FILE, {})).length;
+}
 async function setTemplate(key, value) {
   const saved = loadJSONSync(FILE, {});
   saved[key] = value;
@@ -572,6 +579,7 @@ module.exports = {
   getRaw,
   getRawValue,
   isCustom,
+  overrideCount,
   setTemplate,
   resetTemplate,
   resetAllTemplates,

@@ -742,7 +742,10 @@ function build() {
   bot.action("resetall", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
-    const n = tpl.keys().filter((k) => tpl.isCustom(k)).length;
+    // overrideCount() counts EVERY saved override, incl. orphaned keys from
+    // older template generations — keys() would miss those and wrongly report
+    // "nothing to reset" on a data file that still has stale entries.
+    const n = tpl.overrideCount();
     if (!n) {
       return edit(ctx, "♻️ <b>Nothing to reset</b>\n\nEvery template is already on its default.", Markup.inlineKeyboard([[Markup.button.callback("⬅ Back", "home")]]));
     }

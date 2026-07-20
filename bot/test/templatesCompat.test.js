@@ -49,6 +49,17 @@ test("resetAllTemplates wipes every custom override in one shot", async () => {
   assert.strictEqual(await tpl.resetAllTemplates(), 0);
 });
 
+test("overrideCount sees orphaned keys from older template generations", async () => {
+  assert.strictEqual(tpl.overrideCount(), 0);
+  // a key saved under the OLD template structure, no longer in DEFAULTS —
+  // reset-all must still offer to clear it instead of "nothing to reset"
+  await tpl.setTemplate("post_listing", "old orphaned layout");
+  assert.ok(!tpl.keys().includes("post_listing"), "sanity: key really is orphaned");
+  assert.strictEqual(tpl.overrideCount(), 1);
+  assert.strictEqual(await tpl.resetAllTemplates(), 1);
+  assert.strictEqual(tpl.overrideCount(), 0);
+});
+
 test("new default layout still spaces correctly with empty optional vars", () => {
   const r = tpl.render("post_listing_xpress", {
     logoEmoji: "",
