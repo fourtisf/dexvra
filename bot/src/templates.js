@@ -267,21 +267,21 @@ const DEFAULTS = {
   // spacing (they collapse cleanly when empty); the rest are raw values.
   post_listing:
     `{head} {logoEmoji}{tierLine}\n\n` +
-    `🪙 **{name}** ({symbol})\n` +
-    `🔗 [{coinUrlLabel}]({coinUrl})\n\n` +
+    `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
+    `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
     `{chainEmoji} **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
-    `💧 **Liquidity:** {liq}\n` +
-    `📈 **Market Cap:** {mcap}\n\n` +
+    `◼️ **Liquidity:** {liq}\n` +
+    `${em("📈", E.chartUp)} **Market Cap:** {mcap}\n\n` +
     `{socials}{footer}`,
   post_trending:
     `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` +
-    `🪙 **{name}** ({symbol})\n` +
-    `🔗 [{coinUrlLabel}]({coinUrl})\n\n` +
+    `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
+    `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
     `{chainEmoji} **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
-    `💧 **Liquidity:** {liq}\n` +
-    `📈 **Market Cap:** {mcap}\n\n` +
+    `◼️ **Liquidity:** {liq}\n` +
+    `${em("📈", E.chartUp)} **Market Cap:** {mcap}\n\n` +
     `{socials}{footer}`,
   post_rankup:
     `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
@@ -309,11 +309,11 @@ const DEFAULTS = {
   // line — a line whose link the token doesn't have is dropped automatically.
   post_socials:
     `${em("🔗", E.link)} **{symbol} social links**\n` +
-    `𝕏 [X]({twitter})\n` +
+    `${em("❌", E.cross)} [X]({twitter})\n` +
     `🌐 [Website]({website})\n` +
     `✈️ [Telegram]({telegram})`,
   post_footer:
-    `${em("📎", E.link)} **Dexvra**\n` +
+    `${em("📎", E.clip)} **Dexvra**\n` +
     `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
     `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
     `🔥 [Trending]({trending}) · ` +

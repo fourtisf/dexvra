@@ -91,6 +91,30 @@ test("overview with ** cannot break markup parsing (bold-injection regression)",
   }
 });
 
+test("xpress listing post matches the operator's reference layout", () => {
+  const coin = {
+    name: "The Golden Whale",
+    symbol: "WHALE",
+    chain: "solana",
+    tier: "XPRESS",
+    address: "4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump",
+    price: 0.0000842,
+    mcap: 84400,
+    liq: 22300,
+    links: { twitter: "https://x.com/gw", website: "https://gw.io", telegram: "https://t.me/gw" },
+  };
+  const { text } = fmt.listingPost(coin);
+  assert.ok(text.startsWith("⚡ Xpress Listing — The Golden Whale live on Dexvra"), "header line");
+  assert.ok(text.includes("💲 The Golden Whale ($WHALE)"), "💲 token line");
+  assert.ok(text.includes("✅ dexvra.io/token/solana/4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "✅ full dexvra link line");
+  assert.ok(text.includes("Chain: Solana"), "chain line");
+  assert.ok(text.includes("📄 Contract:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
+  assert.ok(text.includes("◼️ Liquidity: $22.3K"), "◼️ liquidity line");
+  assert.ok(text.includes("📈 Market Cap: $84.4K"), "market-cap line");
+  assert.ok(text.includes("🔗 $WHALE social links\n❌ X\n🌐 Website\n✈️ Telegram"), "socials block (❌ X)");
+  assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
+});
+
 test("pump post payload shows percent + MCs", () => {
   const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
   const card = fmt.pumpPost(coin, 137.6, 310000, 128400000);
