@@ -20,6 +20,24 @@ const sym = (s) => {
   return t ? `$${t}` : "$TOKEN";
 };
 const chainName = (c) => (chainOf(c) ? chainOf(c).label : String(c).toUpperCase());
+// Per-network emoji the bot AUTO-PICKS from the token's chain, driven by the
+// editable `chain_emojis` template (one `chainid = emoji` per line). Unknown
+// chains fall back to 💠 so the "Chain:" line always has a leading glyph.
+function chainEmojiMap() {
+  const map = {};
+  for (const line of String(tpl.getRaw("chain_emojis") || "").split("\n")) {
+    const i = line.indexOf("=");
+    if (i <= 0) continue;
+    const k = line.slice(0, i).trim().toLowerCase();
+    const v = line.slice(i + 1).trim();
+    if (k && v) map[k] = v;
+  }
+  return map;
+}
+function chainEmoji(chain) {
+  const id = (chainOf(chain) && chainOf(chain).id) || String(chain || "").toLowerCase();
+  return chainEmojiMap()[id] || "💠";
+}
 const priceStr = (p) => (p && p > 0 ? fmtPrice(p) : "TBA");
 const mcStr = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
 const tme = (handle) => `https://t.me/${String(handle).replace(/^@/, "")}`;
@@ -128,6 +146,7 @@ function listingPost(coin) {
     name: clean(coin.name),
     symbol: clean(sym(coin.symbol)),
     twitter: twitterInline(coin.links),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     address: clean(coin.address),
     price: priceStr(coin.price),
@@ -144,6 +163,7 @@ function trendingPost(coin) {
   return tpl.render("post_trending", {
     symbol: clean(sym(coin.symbol)),
     name: clean(coin.name),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
     overview: overviewBlock(coin.overview || autoOverview(coin, "trending")),
@@ -172,6 +192,7 @@ function pumpPost(coin, percent, firstMc, lastMc) {
     multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
     lastMc: "$" + formatNumber(lastMc),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     address: clean(coin.address),
     coinUrl: coinUrl(coin),
@@ -207,6 +228,7 @@ function rankupPost(coin, rank, change24h) {
   return tpl.render("post_rankup", {
     symbol: clean(sym(coin.symbol)),
     name: clean(coin.name),
+    chainEmoji: chainEmoji(coin.chain),
     chain: clean(chainName(coin.chain)),
     rank,
     change: changeSentence(change24h),

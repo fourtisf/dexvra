@@ -269,7 +269,7 @@ const DEFAULTS = {
     `{head} {logoEmoji}{tierLine}\n\n` +
     `🪙 **{name}** ({symbol})\n` +
     `🔗 [{coinUrlLabel}]({coinUrl})\n\n` +
-    `💠 **Chain:** {chain}\n` +
+    `{chainEmoji} **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
     `💧 **Liquidity:** {liq}\n` +
     `📈 **Market Cap:** {mcap}\n\n` +
@@ -278,7 +278,7 @@ const DEFAULTS = {
     `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` +
     `🪙 **{name}** ({symbol})\n` +
     `🔗 [{coinUrlLabel}]({coinUrl})\n\n` +
-    `💠 **Chain:** {chain}\n` +
+    `{chainEmoji} **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
     `💧 **Liquidity:** {liq}\n` +
     `📈 **Market Cap:** {mcap}\n\n` +
@@ -291,7 +291,7 @@ const DEFAULTS = {
     `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
     `**{name}** is up **+{percent}%** since it listed — and still climbing.\n\n` +
     `${em("📊", E.chart)} **Market cap:** {firstMc} → **{lastMc}**\n` +
-    `💠 **Chain:** {chain}\n\n` +
+    `{chainEmoji} **Chain:** {chain}\n\n` +
     `${em("🟢", E.green)} [Chart & trade {symbol} on Dexvra]({coinUrl})\n\n{socials}{footer}`,
   post_banner:
     `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
@@ -312,6 +312,19 @@ const DEFAULTS = {
     `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
     `🔥 [Trending]({trending}) · ` +
     `${em("📢", E.megaphone)} [Announcements]({announce})`,
+  // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
+  // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
+  // Edit an emoji to rebrand a network everywhere at once.
+  chain_emojis:
+    "solana = 🟣\n" +
+    "ethereum = 🔷\n" +
+    "bsc = 🟡\n" +
+    "base = 🔵\n" +
+    "robinhood = 🪶\n" +
+    "tron = 🔴\n" +
+    "ton = 🔹\n" +
+    "sui = 💧\n" +
+    "plasma = 🟢",
 
   // ── X / Twitter posts (PLAIN TEXT — X has no markdown; keep under ~280
   //    chars: a URL counts as 23, each emoji ~2). Footer order Listing →
@@ -398,13 +411,14 @@ const META = {
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
-  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "twitter", "chain", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chain", "logoEmoji", "overview", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "chain", "coinUrl", "socials", "footer"] },
+  post_listing: { group: "Channel Posts", label: "Post: Listing", ph: ["head", "tierLine", "logoEmoji", "overview", "name", "symbol", "twitter", "chainEmoji", "chain", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["symbol", "name", "chainEmoji", "chain", "logoEmoji", "overview", "address", "price", "mcap", "liq", "coinUrl", "socials", "footer"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "socials", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "socials", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
   post_socials: { group: "Channel Posts", label: "Post: Social links block", ph: ["symbol", "twitter", "website", "telegram"] },
   post_footer: { group: "Channel Posts", label: "Post: Footer (Dexvra links)", ph: ["site", "listing", "trending", "announce"] },
+  chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
