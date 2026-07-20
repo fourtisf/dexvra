@@ -162,8 +162,10 @@ function pumpPost(coin, percent, firstMc, lastMc) {
     multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
     lastMc: "$" + formatNumber(lastMc),
+    chain: clean(chainName(coin.chain)),
     address: clean(coin.address),
     coinUrl: coinUrl(coin),
+    socials: socialsBlock(coin),
     footer: footer(),
   });
 }
