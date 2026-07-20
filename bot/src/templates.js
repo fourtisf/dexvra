@@ -322,6 +322,14 @@ const DEFAULTS = {
     "🔗 {url}\n\n" +
     "🌐 dexvra.io | 🚨 Listing | 🔥 Trending | 📢 Announcement\n" +
     "#Dexvra #Trending #{tag} #DYOR",
+  // Posted as a QUOTE of the token's original listing tweet (the listing card
+  // shows below), so this text stays short and focused on the pump news.
+  x_pump:
+    "🚀 Pump Alert — ${tag} on Dexvra\n\n" +
+    "{name}{mention} is up +{percent}% since it listed on Dexvra.\n\n" +
+    "MC: {firstMc} → {lastMc}\n" +
+    "{url}\n\n" +
+    "#Dexvra #Pump #Altcoin #DYOR",
 };
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
@@ -383,6 +391,7 @@ const META = {
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
+  x_pump: { group: "X Posts", label: "X post: pump alert", ph: ["tag", "name", "mention", "percent", "firstMc", "lastMc", "url"] },
 };
 
 // ── Load / cache with auto-refresh ───────────────────────────────────────────

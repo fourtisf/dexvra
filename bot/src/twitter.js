@@ -29,7 +29,7 @@ function clientFor(account) {
 const symTag = (s) => String(s || "").replace(/^\$+/, "").toUpperCase();
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
 
-async function send(account, text, mediaBuffer, mimeType) {
+async function send(account, text, mediaBuffer, mimeType, quoteTweetId) {
   if (!X_ENABLED) {
     log.debug("[x] disabled (no keys) — skipping tweet");
     return null;
@@ -49,9 +49,12 @@ async function send(account, text, mediaBuffer, mimeType) {
         log.debug(`[x] media upload failed (${e.message}) — text-only`);
       }
     }
-    const res = await client.v2.tweet(text, mediaIds ? { media: { media_ids: mediaIds } } : undefined);
+    const opts = {};
+    if (mediaIds) opts.media = { media_ids: mediaIds };
+    if (quoteTweetId) opts.quote_tweet_id = String(quoteTweetId); // quote the listing tweet
+    const res = await client.v2.tweet(text, Object.keys(opts).length ? opts : undefined);
     const id = res && res.data && res.data.id;
-    log.info(`[x] tweeted (${account}) id=${id}`);
+    log.info(`[x] tweeted (${account}) id=${id}${quoteTweetId ? ` (quote of ${quoteTweetId})` : ""}`);
     return id || null;
   } catch (e) {
     log.warn(`[x] tweet failed (${account}): ${e.message}`);
@@ -104,21 +107,25 @@ function trendingText(coin) {
 }
 
 function pumpText(coin, percent, firstMc, lastMc) {
-  const tag = symTag(coin.symbol);
-  return (
-    `📈 Pump Alert #Dexvra 🚨\n\n` +
-    `💎 #${tag} is up ${Math.round(percent)}% since listing on Dexvra!\n` +
-    `💸 First MC: $${formatNumber(firstMc)} | Last MC: $${formatNumber(lastMc)}\n` +
-    `${coinUrl(coin)}\n#NewListing #Altcoin #Memecoin #DYOR`
-  );
+  return tpl.t("x_pump", {
+    tag: symTag(coin.symbol),
+    name: coin.name,
+    mention: xMention(coin.links),
+    percent: Math.round(percent),
+    firstMc: mcOf(firstMc),
+    lastMc: mcOf(lastMc),
+    url: coinUrl(coin),
+  });
 }
 
 module.exports = {
   enabled: () => X_ENABLED,
   postListing: (coin, media, mime) => send("listing", listingText(coin), media, mime),
   postTrending: (coin, media, mime) => send("listing", trendingText(coin), media, mime),
-  postPump: (coin, percent, firstMc, lastMc, media, mime) =>
-    send("listing", pumpText(coin, percent, firstMc, lastMc), media, mime),
+  // Quote the token's original listing tweet when we have its id (the listing
+  // card renders below the pump text, like fourtis); standalone tweet otherwise.
+  postPump: (coin, percent, firstMc, lastMc, quoteTweetId, media, mime) =>
+    send("listing", pumpText(coin, percent, firstMc, lastMc), media, mime, quoteTweetId),
   postBanner: (booking) =>
     send(
       "official",

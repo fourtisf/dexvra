@@ -231,8 +231,11 @@ async function fulfillListing(ctx, order) {
     log.warn(`[fulfil] listing channel posts: ${e.message}`);
   }
 
-  // 5. Tweet + 6. Buyer DM.
-  x.postListing(coin, logoBuffer, "image/png").catch(() => {});
+  // 5. Tweet + 6. Buyer DM. Persist the listing TWEET id so a later pump alert
+  // can QUOTE it on X (mirrors the TG reply-to-listing behaviour).
+  x.postListing(coin, logoBuffer, "image/png")
+    .then((tweetId) => (tweetId ? postids.set(input.chain, input.address, { listingTweetId: tweetId }) : null))
+    .catch(() => {});
   await dm(ctx, successListing(coin, links), menu.postPurchase(coin.siteUrl));
 }
 
