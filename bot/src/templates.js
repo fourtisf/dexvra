@@ -288,7 +288,7 @@ const DEFAULTS = {
     `**{name}** just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
     `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n{socials}{footer}`,
   post_pump:
-    `${em("🚀", E.rocket)} **{symbol} just ran {multiple} on Dexvra**\n\n` +
+    `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
     `**{name}** is up **+{percent}%** since it listed — and still climbing.\n\n` +
     `${em("📊", E.chart)} **Market cap:** {firstMc} → **{lastMc}**\n` +
     `💠 **Chain:** {chain}\n\n` +
