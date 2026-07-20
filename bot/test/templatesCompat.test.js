@@ -54,17 +54,17 @@ test("new default layout still spaces correctly with entity-style rich vars", ()
     head: "⚡ Xpress",
     tierLine: "",
     logoEmoji: "",
-    overview: "About the project.\n\n",
     name: "T",
     symbol: "$T",
     chain: "Solana",
     address: "So1",
     price: "$1",
     mcap: "$2",
+    liq: "$3",
     coinUrl: "https://dexvra.io/t",
     socials: "",
     footer: "",
   });
   assert.ok(!/\n{3,}/.test(r.text), JSON.stringify(r.text));
-  assert.ok(r.text.includes("About the project."));
+  assert.ok(r.text.includes("T ($T)") && r.text.includes("Chain:"));
 });

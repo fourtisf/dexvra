@@ -201,7 +201,8 @@ test("render: channel post default substitutes vars into entities payload", () =
     socials: "",
     footer: "",
   });
-  assert.ok(r.text.includes("$JIM · Trending on Dexvra"));
+  assert.ok(r.text.includes("New Trending on Dexvra"));
+  assert.ok(r.text.includes("$JIM"));
   assert.ok(r.text.includes("So1abc"));
   assert.ok(r.text.includes("Market Cap:"), "market cap line present");
   assert.ok(r.entities.some((e) => e.type === "code")); // `address`

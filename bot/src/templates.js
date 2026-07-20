@@ -269,24 +269,20 @@ const DEFAULTS = {
     `{head} {logoEmoji}{tierLine}\n\n` +
     `🪙 **{name}** ({symbol})\n` +
     `🔗 [dexvra.io/token]({coinUrl})\n\n` +
-    `{overview}` +
     `💠 **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
     `💧 **Liquidity:** {liq}\n` +
     `📈 **Market Cap:** {mcap}\n\n` +
-    `{socials}` +
-    `${em("🟢", E.green)} [Open on Dexvra]({coinUrl}){footer}`,
+    `{socials}{footer}`,
   post_trending:
-    `${em("📈", E.chartUp)} **{symbol} · Trending on Dexvra** {logoEmoji}\n\n` +
+    `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` +
     `🪙 **{name}** ({symbol})\n` +
     `🔗 [dexvra.io/token]({coinUrl})\n\n` +
-    `{overview}` +
     `💠 **Chain:** {chain}\n` +
     `📄 **Contract:**\n\`{address}\`\n\n` +
     `💧 **Liquidity:** {liq}\n` +
     `📈 **Market Cap:** {mcap}\n\n` +
-    `{socials}` +
-    `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
+    `{socials}{footer}`,
   post_rankup:
     `${em("📈", E.chartUp)} **{symbol} · Trending #{rank} on Dexvra**\n\n` +
     `**{name}** just moved up to **#{rank}** on the Dexvra Trending board.{change}\n\n` +

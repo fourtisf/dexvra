@@ -33,7 +33,6 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("New Listing on Dexvra"));
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
-  assert.ok(card.text.includes("Open on Dexvra"), "CTA is 'Open on Dexvra'");
   assert.ok(card.text.includes("Liquidity:") && card.text.includes("Market Cap:"), "Liquidity + Market Cap lines");
   assert.ok(card.text.includes("Chain:"), "Chain line present");
   assert.ok(card.text.includes("dexvra.io/token"), "token-page link line present");
@@ -46,7 +45,7 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   for (const e of card.entities) assert.ok(e.offset + e.length <= card.text.length);
 });
 
-test("listing post: overview paragraph included when set, collapses when absent", () => {
+test("listing post: clean layout, no overview paragraph, no stray blanks", () => {
   const base = {
     name: "Bull Cat",
     symbol: "$BULLCAT",
@@ -58,17 +57,15 @@ test("listing post: overview paragraph included when set, collapses when absent"
     links: {},
     siteUrl: "https://dexvra.io/token/solana/G9j8",
   };
-  const withOv = fmt.listingPost({ ...base, overview: "The Bull Cat is a community-driven memecoin on Solana.\n\nBuilt for  cats." });
-  // collapsed to one clean paragraph (inner newlines/double spaces gone)
-  assert.ok(withOv.text.includes("The Bull Cat is a community-driven memecoin on Solana. Built for cats."));
+  // The channel post no longer renders the overview paragraph (operator layout):
+  // even when a coin carries one, it must not appear in the post body.
+  const withOv = fmt.listingPost({ ...base, overview: "The Bull Cat is a community-driven memecoin on Solana." });
+  assert.ok(!withOv.text.includes("community-driven memecoin"), "overview must NOT render in the post");
   const noOv = fmt.listingPost(base);
   assert.ok(!noOv.text.includes("undefined"));
   assert.ok(!noOv.text.includes("null"));
-  // empty overview + empty socials never leave 3+ consecutive newlines
+  // empty socials never leave 3+ consecutive newlines
   assert.ok(!/\n{3,}/.test(noOv.text), `stray blank lines: ${JSON.stringify(noOv.text.slice(0, 200))}`);
-  // long overviews are truncated at a word boundary with an ellipsis
-  const long = fmt.listingPost({ ...base, overview: "word ".repeat(120) });
-  assert.ok(/…/.test(long.text));
 });
 
 test("overview with ** cannot break markup parsing (bold-injection regression)", () => {
