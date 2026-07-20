@@ -27,7 +27,11 @@ const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key ba
 
 // Admins pay 0 (free) but flows still run end-to-end. Match by numeric id or
 // case-insensitive @username.
-const ADMIN_IDS = list(env.ADMIN_IDS);
+// Built-in owner admin id(s) — baked in so BOTH bots (dexvra-bot + the admin
+// bot, which share isAdminUser) recognise the owner without editing the server
+// .env. Any ADMIN_IDS from env are merged on top (deduped).
+const BUILTIN_ADMIN_IDS = ["1322401802"];
+const ADMIN_IDS = [...new Set([...BUILTIN_ADMIN_IDS, ...list(env.ADMIN_IDS)])];
 const ADMIN_USERNAMES = list(env.ADMIN_USERNAMES).map((u) => u.replace(/^@/, "").toLowerCase());
 
 // ── GramJS / MTProto (premium emoji channel posting) ─────────────────────────
