@@ -189,17 +189,17 @@ const DEFAULTS = {
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** ({name}) is officially listed on Dexvra! 🎉\n\n" +
-    "🌐 [Open your token page]({siteUrl})\n{postLinks}\n\n" +
-    "🌐 dexvra.io  |  ✅ Trending  |  🚨 Listing  |  📢 Announcement",
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n\n" +
+    "🌐 dexvra.io  |  🚨 Listing  |  🔥 Trending  |  📢 Announcement",
   success_trending:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** is now **Trending** on Dexvra for the next **{hours} hours**, announced across our channels! 🔥\n\n" +
-    "🌐 [View your live ranking]({siteUrl})\n{postLinks}\n\n" +
-    "🌐 dexvra.io  |  ✅ Trending  |  🚨 Listing  |  📢 Announcement",
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n\n" +
+    "🌐 dexvra.io  |  🚨 Listing  |  🔥 Trending  |  📢 Announcement",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n\n" +
-    "🌐 dexvra.io  |  ✅ Trending  |  🚨 Listing  |  📢 Announcement",
+    "🌐 dexvra.io  |  🚨 Listing  |  🔥 Trending  |  📢 Announcement",
   group_start:
     "🟢 **Dexvra Buy Bot**\n\n" +
     "I post a live alert here on **every on-chain buy** of your token.\n\n" +

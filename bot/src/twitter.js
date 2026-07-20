@@ -27,6 +27,8 @@ function clientFor(account) {
 
 const symTag = (s) => String(s || "").replace(/^\$+/, "").toUpperCase();
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
+// Branded footer (order: Listing → Trending → Announcement).
+const X_FOOTER = "\n\n🌐 dexvra.io | 🚨 Listing | 🔥 Trending | 📢 Announcement";
 
 async function send(account, text, mediaBuffer, mimeType) {
   if (!X_ENABLED) {
@@ -68,7 +70,7 @@ function listingText(coin) {
     `CA: ${coin.address}\n` +
     (coin.price ? `Price: ${fmtPrice(coin.price)}` : "") +
     (coin.mcap ? `  |  MC: $${formatNumber(coin.mcap)}` : "") +
-    `\n#Dexvra #NewListing #Altcoin #Memecoin #DYOR`
+    X_FOOTER
   );
 }
 
@@ -76,8 +78,8 @@ function trendingText(coin) {
   const tag = symTag(coin.symbol);
   return (
     `🔥 #${tag} is Trending on @${X_HANDLE}\n\n` +
-    `${coin.name}\n${coinUrl(coin)}\n` +
-    `#Dexvra #Trending #Crypto #DYOR`
+    `${coin.name}\n${coinUrl(coin)}` +
+    X_FOOTER
   );
 }
 

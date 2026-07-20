@@ -84,25 +84,21 @@ function overviewBlock(text) {
   return `${clean(s)}\n\n`;
 }
 
+// Footer order (operator preference): Listings → Trending → Announcements.
 function footer() {
   return (
     `\n\n${em("📎", E.link)} **Dexvra**\n` +
     `${em("💎", E.diamond)} [Dexvra.io](${SITE_URL}) · ` +
-    `🔥 [Trending](${tme(CHANNELS.trending)}) · ` +
     `${em("🚨", E.sirenHead)} [Listings](${tme(CHANNELS.listing)}) · ` +
+    `🔥 [Trending](${tme(CHANNELS.trending)}) · ` +
     `${em("📢", E.megaphone)} [Announcements](${tme(CHANNELS.announce)})`
   );
 }
 
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
-// Shortened contract for the link LABEL so it reads "dexvra.io/token/<ca>" — the
-// clickable target is still the full token page (coinUrl). Handles EVM (0x…) and
-// long base58 (Solana) addresses.
-const shortCa = (a) => {
-  const s = String(a || "");
-  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
-};
-const coinUrlLabel = (coin) => `dexvra.io/token/${shortCa(coin.address)}`;
+// The link LABEL shows the FULL token-page path (never truncated — operator
+// wants the complete dexvra.io/token/<chain>/<address> visible).
+const coinUrlLabel = (coin) => coinUrl(coin).replace(/^https?:\/\//, "");
 
 function listingPost(coin) {
   const tierBadge = TIER_EMOJI[String(coin.tier || "").toUpperCase()] || "";
