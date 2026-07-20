@@ -69,10 +69,15 @@ test("post_rankup renders rank + change with premium entities, clamps negatives"
   assert.ok(card.text.includes("#2"));
   assert.ok(card.text.includes("+138%"), card.text);
   assert.ok(card.text.includes("📈"), "chart-up emoji present (unicode fallback)");
-  // a rounding-negative change never prints a minus
+  // a non-positive change omits the 24h sentence entirely (no minus, no junk %)
   const neg = fmt.rankupPost(coin, 1, -0.4);
-  assert.ok(neg.text.includes("+0%"));
-  assert.ok(!neg.text.includes("-"));
+  assert.ok(neg.text.includes("#1"));
+  assert.ok(!/over the last 24h/.test(neg.text));
+  assert.ok(!neg.text.includes("%"));
+  // absurd low-liquidity readings are never printed as a giant number
+  const absurd = fmt.rankupPost(coin, 2, 490749);
+  assert.ok(!absurd.text.includes("490"), "absurd % not shown");
+  assert.ok(/Momentum/.test(absurd.text));
 });
 
 // The climb logic, unit-tested in isolation (mirrors rankUpChecker's rule).

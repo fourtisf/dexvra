@@ -159,13 +159,25 @@ function bannerPost(booking) {
   });
 }
 
+const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+// A clean optional 24h-change sentence. Non-positive / invalid → omitted.
+// Absurd low-liquidity readings (e.g. +490,749%) look like spam, so above a
+// sane cap we state momentum without the junk number.
+function changeSentence(change24h) {
+  const v = Number(change24h);
+  if (!Number.isFinite(v) || v <= 0) return "";
+  if (v > 5000) return " Momentum is building over the last 24h.";
+  return ` Up +${withCommas(Math.round(v))}% over the last 24h.`;
+}
+
 function rankupPost(coin, rank, change24h) {
   return tpl.render("post_rankup", {
     symbol: clean(sym(coin.symbol)),
     name: clean(coin.name),
     chain: clean(chainName(coin.chain)),
     rank,
-    change: `+${Math.round(Math.max(0, change24h))}%`,
+    change: changeSentence(change24h),
     coinUrl: coinUrl(coin),
     footer: footer(),
   });

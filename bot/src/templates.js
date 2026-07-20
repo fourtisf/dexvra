@@ -254,8 +254,8 @@ const DEFAULTS = {
     `{socials}` +
     `${em("🟢", E.green)} [View live ranking]({coinUrl}){footer}`,
   post_rankup:
-    `${em("📈", E.chartUp)} **{symbol} is climbing Dexvra Trending**\n\n` +
-    `**{name}** · {chain} is up **{change}** (24h) — now the **#{rank} performer** among featured tokens.\n\n` +
+    `${em("📈", E.chartUp)} **{symbol} · Trending #{rank} on Dexvra**\n\n` +
+    `**{name}** just moved up to **#{rank}** on the Dexvra Trending board.{change}\n\n` +
     `${em("🟢", E.green)} [Trade & track on Dexvra]({coinUrl}){footer}`,
   post_pump:
     `${em("🚀", E.rocket)} **{symbol} is pumping — {multiple}**\n\n` +
