@@ -52,10 +52,58 @@ function mainKb() {
   ]);
   return Markup.inlineKeyboard([
     ...groupRows,
+    [Markup.button.callback("🔍 Preview all templates", "audit")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
+}
+
+// Audit EVERY template at once: clean rendered text, grouped, ✏️=custom / •
+// =default. `arg` = a group slug for fuller previews of just that group, or ""
+// for a short snippet of all. Messages chunked under Telegram's 4096 limit.
+// Shared by the /preview command and the "🔍 Preview all templates" button.
+async function sendTemplateAudit(ctx, arg = "") {
+  const premiumLib = require("../premium");
+  const cleanOf = (k) => {
+    const raw = tpl.getRaw(k);
+    const s = typeof raw === "string" ? raw : (raw && raw.text) || String(raw || "");
+    try {
+      return premiumLib.parse(s).text.replace(/\s+/g, " ").trim();
+    } catch {
+      return String(s).replace(/\s+/g, " ").trim();
+    }
+  };
+  const groups = tpl.groups();
+  const names = arg ? groupNames().filter((n) => slugOf(n) === arg) : groupNames();
+  if (!names.length) {
+    return ctx
+      .reply(`No group '${escapeHtml(arg)}'. Try: ${groupNames().map((n) => `<code>/preview ${slugOf(n)}</code>`).join(", ")}`, HTML)
+      .catch(() => {});
+  }
+  const cap = arg ? 480 : 130;
+  for (const name of names) {
+    let msg = `📋 <b>${escapeHtml(name)}</b> — ${groups[name].length} templates\n\n`;
+    for (const k of groups[name]) {
+      const text = cleanOf(k);
+      const snip = text.length > cap ? `${text.slice(0, cap)}…` : text;
+      const row = `${tpl.isCustom(k) ? "✏️" : "•"} <b>${escapeHtml(tpl.meta(k).label)}</b>\n<i>${escapeHtml(snip)}</i>\n\n`;
+      if (msg.length + row.length > 3900) {
+        await ctx.reply(msg, HTML).catch(() => {});
+        msg = "";
+      }
+      msg += row;
+    }
+    if (msg.trim()) await ctx.reply(msg, HTML).catch(() => {});
+  }
+  if (!arg) {
+    await ctx
+      .reply(
+        `Tip: <code>/preview botmessages</code> (or any group) shows fuller text. ✏️ = edited · • = default. Tap a category on /start to edit any of them.`,
+        HTML,
+      )
+      .catch(() => {});
+  }
 }
 function groupKb(slug, page = 0) {
   const name = nameFromSlug(slug);
@@ -574,43 +622,12 @@ function build() {
   // → longer previews for just that group. Messages are chunked under 4096.
   bot.command("preview", async (ctx) => {
     if (!guard(ctx)) return;
-    const arg = (ctx.message.text.split(/\s+/)[1] || "").toLowerCase();
-    const premiumLib = require("../premium");
-    const cleanOf = (k) => {
-      const raw = tpl.getRaw(k);
-      const s = typeof raw === "string" ? raw : (raw && raw.text) || String(raw || "");
-      try {
-        return premiumLib.parse(s).text.replace(/\s+/g, " ").trim();
-      } catch {
-        return String(s).replace(/\s+/g, " ").trim();
-      }
-    };
-    const groups = tpl.groups();
-    const names = arg ? groupNames().filter((n) => slugOf(n) === arg) : groupNames();
-    if (!names.length) {
-      return ctx.reply(`No group '${escapeHtml(arg)}'. Try: ${groupNames().map((n) => `<code>/preview ${slugOf(n)}</code>`).join(", ")}`, HTML).catch(() => {});
-    }
-    const cap = arg ? 480 : 130; // fuller text when a single group is requested
-    for (const name of names) {
-      let msg = `📋 <b>${escapeHtml(name)}</b> — ${groups[name].length} templates\n\n`;
-      for (const k of groups[name]) {
-        const text = cleanOf(k);
-        const snip = text.length > cap ? `${text.slice(0, cap)}…` : text;
-        const row = `${tpl.isCustom(k) ? "✏️" : "•"} <b>${escapeHtml(tpl.meta(k).label)}</b>\n<i>${escapeHtml(snip)}</i>\n\n`;
-        if (msg.length + row.length > 3900) {
-          await ctx.reply(msg, HTML).catch(() => {});
-          msg = "";
-        }
-        msg += row;
-      }
-      if (msg.trim()) await ctx.reply(msg, HTML).catch(() => {});
-    }
-    if (!arg) {
-      await ctx.reply(
-        `Tip: <code>/preview botmessages</code> (or any group) shows fuller text. ✏️ = edited · • = default. Edit any of them from /start → 📝 Bot Messages / 📢 Channel Posts.`,
-        HTML,
-      ).catch(() => {});
-    }
+    await sendTemplateAudit(ctx, (ctx.message.text.split(/\s+/)[1] || "").toLowerCase());
+  });
+  bot.action("audit", async (ctx) => {
+    ctx.answerCbQuery("Auditing all templates…").catch(() => {});
+    if (!guard(ctx)) return;
+    await sendTemplateAudit(ctx, "");
   });
 
   bot.action("home", async (ctx) => {
