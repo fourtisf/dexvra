@@ -6,7 +6,9 @@ const log = require("./helpers/logger");
 
 const BASE = "https://api.dexscreener.com/latest/dex/tokens/";
 
-// our chain id -> DexScreener chainId
+// our chain id -> DexScreener chainId. DexScreener now indexes Robinhood chain
+// (dexscreener.com/robinhood/…) and Plasma, so their socials/website autofill
+// works too. A wrong slug just yields no chain-matching pair → null (safe).
 const DS_CHAIN = {
   solana: "solana",
   bsc: "bsc",
@@ -15,8 +17,8 @@ const DS_CHAIN = {
   tron: "tron",
   ton: "ton",
   sui: "sui",
-  robinhood: null, // not indexed by DexScreener
-  plasma: null, // not indexed by DexScreener (GT covers it)
+  robinhood: "robinhood",
+  plasma: "plasma",
 };
 
 const first = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
