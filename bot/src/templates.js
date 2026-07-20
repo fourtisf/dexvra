@@ -70,31 +70,15 @@ const DEFAULTS = {
     "New here? Just tap a button — each flow walks you through it step by step.",
   intro_xpress:
     `${em("⚡", E.zap)} **Xpress Listing**\n\n` +
-    "The fastest way onto Dexvra — live within minutes of payment. No tier, no review, no waiting.\n\n" +
-    "**What your project gets**\n" +
-    "🌐 Listed on **dexvra.io** — your own token page with live chart, price, market cap and socials\n" +
-    "🚨 Launch alert in the Listing channel — [@dexvralisting](https://t.me/dexvralisting)\n" +
-    "🐦 Automatic post on **X (Twitter)**\n\n" +
-    "Want Trending placement, a ranked tier badge and an Announcement-channel feature too? Pick **🏆 Listing & Trending** instead.\n\n" +
-    "**Process**\n" +
-    "1. Paste your contract address — details auto-fill, or add them manually\n" +
-    "2. Review your listing and pay\n" +
-    "3. Everything posts automatically — your links arrive right here\n\n" +
-    "Select your network:",
+    "Live in minutes — no tier, no review.\n\n" +
+    "**You get:** listed on dexvra.io, a launch post in [@dexvralisting](https://t.me/dexvralisting), and an automatic X post.\n\n" +
+    "Want Trending + a tier badge too? Pick **🏆 Listing & Trending**.\n\n" +
+    "Paste your contract address to begin — select your network:",
   intro_tiered:
     "🏆 **Listing & Trending**\n\n" +
-    "Our flagship package — built for maximum exposure. Your token gets a permanent home on dexvra.io plus a bundled Trending run, announced across every Dexvra channel and X so the whole network sees it.\n\n" +
-    "**What your project gets**\n" +
-    "🌐 Permanent listing on **dexvra.io** — your own token page with live chart, price, market cap and socials\n" +
-    "🚨 Launch post in the Listing channel — [@dexvralisting](https://t.me/dexvralisting)\n" +
-    "🔥 Featured run in the Trending channel — [@dexvratrending](https://t.me/dexvratrending)\n" +
-    "📢 Headline in the Announcement channel — [@dexvraio](https://t.me/dexvraio) (Diamond · Gold · Platinum)\n" +
-    "🐦 Automatic post on **X (Twitter)**\n" +
-    "💎 A tier badge on every post — higher tiers rank higher and trend longer\n\n" +
-    "**Process**\n" +
-    "1. Paste your contract address — details auto-fill, or add them manually\n" +
-    "2. Review your listing, choose a tier and pay\n" +
-    "3. Everything posts automatically — your links arrive right here\n\n" +
+    "Maximum exposure across the whole Dexvra network.\n\n" +
+    "**You get:** a permanent listing on dexvra.io, a launch post in [@dexvralisting](https://t.me/dexvralisting), a featured run in [@dexvratrending](https://t.me/dexvratrending), an [@dexvraio](https://t.me/dexvraio) headline (top tiers), an X post, and a ranked tier badge.\n\n" +
+    "Paste your contract address, pick a tier, pay — everything posts automatically.\n\n" +
     "Select your network:",
   tier_chooser:
     "🏆 **Select your tier**\n\n" +
@@ -106,17 +90,9 @@ const DEFAULTS = {
     "Select a duration (**{native}**):",
   intro_banner:
     `${em("📢", E.megaphone)} **Banner Campaigns**\n\n` +
-    "Put your creative in front of every dexvra.io visitor — a premium banner slot on the homepage with your own click-through link.\n\n" +
-    "**What your project gets**\n" +
-    "🖼 Your banner in the dexvra.io homepage carousel, linking anywhere you choose\n" +
-    "📢 Launch announcement in the Announcement channel — [@dexvraio](https://t.me/dexvraio)\n" +
-    "🐦 Shared on **X (Twitter)**\n\n" +
-    "USD pricing — the longer the run, the bigger the discount.\n\n" +
-    "**Process**\n" +
-    "1. Choose a format\n" +
-    "2. Pick a duration\n" +
-    "3. Upload your creative and target link\n" +
-    "4. Pay in the currency you prefer\n\n" +
+    "Your creative on the dexvra.io homepage, seen by every visitor.\n\n" +
+    "**You get:** a homepage banner with your own click-through link, an announcement in [@dexvraio](https://t.me/dexvraio), and an X post.\n\n" +
+    "USD pricing — bigger discounts on longer runs.\n\n" +
     "Choose a format:",
   listing_ca_prompt:
     `${em("🔗", E.link)} **Contract address**\n\nPaste your token's contract address on **{chain}**:`,
