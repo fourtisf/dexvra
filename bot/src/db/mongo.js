@@ -81,6 +81,22 @@ async function kvSet(name, data) {
   await coll("kv").updateOne({ _id: name }, { $set: { data, at: Date.now() } }, { upsert: true });
 }
 
+// ── Job mirror (used by db/jobMirror.js) — one doc per job in the `jobs`
+//    collection: {_id:"<dir>/<id>", dir, id, data, at}. `dir` is the job family
+//    ("broadcasts" | "mass_dm") so a family can be restored independently. ──
+async function jobsAll(dir) {
+  if (!connected) return [];
+  return coll("jobs").find({ dir }).toArray();
+}
+async function jobSet(dir, id, data) {
+  if (!connected) return;
+  await coll("jobs").updateOne(
+    { _id: `${dir}/${id}` },
+    { $set: { dir, id, data, at: Date.now() } },
+    { upsert: true },
+  );
+}
+
 async function close() {
   if (client) {
     try {
@@ -95,4 +111,4 @@ async function close() {
   connecting = null;
 }
 
-module.exports = { connect, close, configured, enabled, coll, db: () => db, kvAll, kvGet, kvSet };
+module.exports = { connect, close, configured, enabled, coll, db: () => db, kvAll, kvGet, kvSet, jobsAll, jobSet };

@@ -10,6 +10,7 @@ const fss = require("node:fs");
 const { promises: fs } = require("node:fs");
 const path = require("node:path");
 const { DATA_DIR, loadJSONSync } = require("../helpers/persist");
+const jobMirror = require("../db/jobMirror");
 
 const MD_DIR = path.join(DATA_DIR, "mass_dm");
 
@@ -36,6 +37,7 @@ async function saveJob(job) {
   const tmp = `${file}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(job, null, 2), "utf8");
   await fs.rename(tmp, file);
+  jobMirror.mirrorJob("mass_dm", job); // durable mirror (best-effort, off Mongo → no-op)
 }
 
 /**

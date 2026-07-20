@@ -64,6 +64,7 @@ async function startBot() {
   // MONGO_URI). Must run before applyMiddleware → registerHandlers.
   try {
     await require("./helpers/persist").hydrate();
+    await require("./db/jobMirror").restoreAll(); // resume in-flight broadcasts / paid Mass DMs after a VPS reset
   } catch (e) {
     log.warn(`[start] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }
