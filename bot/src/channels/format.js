@@ -38,19 +38,26 @@ const TIER_EMOJI = {
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 const twitterInline = (links) => (links && links.twitter ? ` | [X](${cleanUrl(links.twitter)})` : "");
 
-// Per-link social row (Fourtis style: 𝕏/🌐/✈️ + labelled link, " | " joined).
-// Returns "" for a token with no socials so the template collapses cleanly.
-function socialsInline(links = {}) {
-  const out = [];
-  if (links.twitter) out.push(`𝕏 [X](${cleanUrl(links.twitter)})`);
-  if (links.website) out.push(`🌐 [Website](${cleanUrl(links.website)})`);
-  if (links.telegram) out.push(`✈️ [Telegram](${cleanUrl(links.telegram)})`);
-  return out.join("  |  ");
-}
+// Social-links block — driven by the editable `post_socials` template (admins
+// change the emoji/label/layout in @dexvraadminbot). One social PER LINE; a line
+// whose link the token lacks is dropped so the block never shows a dead link.
+// Returns "" for a token with no socials so the parent template collapses.
 function socialsBlock(coin) {
-  const s = socialsInline(coin.links);
-  // Label on its own line, links on the next (Fourtis layout).
-  return s ? `${em("🔗", E.link)} **${clean(sym(coin.symbol))} social links**\n${s}\n\n` : "";
+  const links = coin.links || {};
+  const present = { twitter: !!links.twitter, website: !!links.website, telegram: !!links.telegram };
+  if (!present.twitter && !present.website && !present.telegram) return "";
+  const kept = tpl
+    .getRaw("post_socials")
+    .split("\n")
+    .filter((line) => !["twitter", "website", "telegram"].some((k) => line.includes(`{${k}}`) && !present[k]))
+    .join("\n");
+  const out = tpl.substitute(kept, {
+    symbol: clean(sym(coin.symbol)),
+    twitter: links.twitter ? cleanUrl(links.twitter) : "",
+    website: links.website ? cleanUrl(links.website) : "",
+    telegram: links.telegram ? cleanUrl(links.telegram) : "",
+  });
+  return out + "\n\n";
 }
 
 // Fallback overview for tokens with no description (fresh pump.fun launches
@@ -84,14 +91,17 @@ function overviewBlock(text) {
   return `${clean(s)}\n\n`;
 }
 
-// Footer order (operator preference): Listings → Trending → Announcements.
+// Footer block — driven by the editable `post_footer` template (admins change
+// the emoji/labels in @dexvraadminbot; the channel URLs stay {placeholders}).
 function footer() {
   return (
-    `\n\n${em("📎", E.link)} **Dexvra**\n` +
-    `${em("💎", E.diamond)} [Dexvra.io](${SITE_URL}) · ` +
-    `${em("🚨", E.sirenHead)} [Listings](${tme(CHANNELS.listing)}) · ` +
-    `🔥 [Trending](${tme(CHANNELS.trending)}) · ` +
-    `${em("📢", E.megaphone)} [Announcements](${tme(CHANNELS.announce)})`
+    "\n\n" +
+    tpl.substitute(tpl.getRaw("post_footer"), {
+      site: SITE_URL,
+      listing: tme(CHANNELS.listing),
+      trending: tme(CHANNELS.trending),
+      announce: tme(CHANNELS.announce),
+    })
   );
 }
 

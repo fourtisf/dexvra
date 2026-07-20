@@ -298,6 +298,21 @@ const DEFAULTS = {
     `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
     `👉 [View the campaign]({linkUrl}){footer}`,
 
+  // Shared blocks reused by EVERY channel post (listing/trending/pump/rankup).
+  // Edit these once and every post updates. post_socials: keep ONE social per
+  // line — a line whose link the token doesn't have is dropped automatically.
+  post_socials:
+    `${em("🔗", E.link)} **{symbol} social links**\n` +
+    `𝕏 [X]({twitter})\n` +
+    `🌐 [Website]({website})\n` +
+    `✈️ [Telegram]({telegram})`,
+  post_footer:
+    `${em("📎", E.link)} **Dexvra**\n` +
+    `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
+    `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
+    `🔥 [Trending]({trending}) · ` +
+    `${em("📢", E.megaphone)} [Announcements]({announce})`,
+
   // ── X / Twitter posts (PLAIN TEXT — X has no markdown; keep under ~280
   //    chars: a URL counts as 23, each emoji ~2). Footer order Listing →
   //    Trending → Announcement. Posted on a successful listing/trending order. ──
@@ -388,6 +403,8 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "chain", "coinUrl", "socials", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "socials", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
+  post_socials: { group: "Channel Posts", label: "Post: Social links block", ph: ["symbol", "twitter", "website", "telegram"] },
+  post_footer: { group: "Channel Posts", label: "Post: Footer (Dexvra links)", ph: ["site", "listing", "trending", "announce"] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
