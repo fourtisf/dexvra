@@ -297,6 +297,23 @@ const DEFAULTS = {
     `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
     `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
     `👉 [View the campaign]({linkUrl}){footer}`,
+
+  // ── X / Twitter posts (PLAIN TEXT — X has no markdown; keep under ~280
+  //    chars: a URL counts as 23, each emoji ~2). Footer order Listing →
+  //    Trending → Announcement. Posted on a successful listing/trending order. ──
+  x_listing:
+    "🚨 New Listing on Dexvra\n\n" +
+    "💎 {name} ({symbol}) is now live on {chain}!\n\n" +
+    "📊 MC: {mcap}  ·  💧 Liq: {liq}\n" +
+    "🔗 {url}\n\n" +
+    "🌐 dexvra.io | 🚨 Listing | 🔥 Trending | 📢 Announcement\n" +
+    "#Dexvra #{tag} #Crypto #DYOR",
+  x_trending:
+    "🔥 {symbol} is now Trending on Dexvra!\n\n" +
+    "💎 {name}  ·  {chain}\n" +
+    "🔗 {url}\n\n" +
+    "🌐 dexvra.io | 🚨 Listing | 🔥 Trending | 📢 Announcement\n" +
+    "#Dexvra #Trending #{tag} #DYOR",
 };
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
@@ -355,6 +372,8 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["name", "symbol", "percent", "multiple", "firstMc", "lastMc", "address", "coinUrl", "footer"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "chain", "rank", "change", "coinUrl", "footer"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "footer"] },
+  x_listing: { group: "X Posts", label: "X post: new listing", ph: ["name", "symbol", "chain", "mcap", "liq", "url", "tag"] },
+  x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
 };
 
 // ── Load / cache with auto-refresh ───────────────────────────────────────────
