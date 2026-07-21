@@ -231,6 +231,18 @@ function stripForCoin(key, coin, { noTier } = {}) {
   return val;
 }
 
+// The CA must be ONE-TAP COPYABLE — Telegram copies `code`-formatted text on
+// tap. The default templates keep {address} bare and the VALUE arrives pre-
+// wrapped as `code` markup, so tap-to-copy survives ANY admin rewrite of the
+// template (incl. plain-text pastes that lose formatting). A legacy template
+// that still writes its own `{address}` backticks keeps them — pre-wrapping
+// there would leak stray backtick characters around the address.
+function addressVar(val, address) {
+  const text = val && typeof val === "object" && val.text != null ? val.text : String(val);
+  const a = clean(address);
+  return text.includes("`{address}`") ? a : a ? "`" + a + "`" : "";
+}
+
 // Legacy {socials} var (templates saved before the one-template-per-post era):
 // the built block with missing links stripped the same way, "" when none.
 function legacySocials(coin) {
@@ -330,6 +342,7 @@ function listingPost(coin) {
   const val = stripForCoin(key, coin, { noTier: !coin.tier });
   return tpl.renderValue(val, {
     ...coinVars(coin),
+    address: addressVar(val, coin.address),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
     tierEmoji: coin.tier ? TIER_EMOJI[String(coin.tier).toUpperCase()] || "" : "",
     tier: coin.tier ? clean(tierLabel(coin.tier)) : "",
@@ -341,6 +354,7 @@ function trendingPost(coin) {
   const val = stripForCoin("post_trending", coin);
   return tpl.renderValue(val, {
     ...coinVars(coin),
+    address: addressVar(val, coin.address),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
     overview: overviewBlock(coin.overview || autoOverview(coin, "trending")), // legacy
   });
@@ -356,6 +370,7 @@ function pumpPost(coin, percent, firstMc, lastMc) {
   const val = stripForCoin("post_pump", coin);
   return tpl.renderValue(val, {
     ...coinVars(coin),
+    address: addressVar(val, coin.address),
     percent: Math.round(percent),
     multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
@@ -393,6 +408,7 @@ function rankupPost(coin, rank, change24h) {
   const val = stripForCoin("post_rankup", coin);
   return tpl.renderValue(val, {
     ...coinVars(coin),
+    address: addressVar(val, coin.address),
     rank,
     change: changeSentence(change24h),
   });

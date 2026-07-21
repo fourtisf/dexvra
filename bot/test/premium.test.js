@@ -194,7 +194,7 @@ test("render: channel post default substitutes vars into entities payload", () =
     symbol: "$JIM",
     name: "Jimothy",
     chain: "SOLANA",
-    address: "So1abc",
+    address: "`So1abc`", // format.js pre-wraps the CA as code markup (tap-to-copy)
     price: "$0.01",
     mcap: "$1M",
     coinUrl: "https://dexvra.io/x",

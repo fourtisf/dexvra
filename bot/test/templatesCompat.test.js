@@ -60,6 +60,24 @@ test("overrideCount sees orphaned keys from older template generations", async (
   assert.strictEqual(tpl.overrideCount(), 0);
 });
 
+test("CA is tap-to-copy (code entity) no matter how the admin writes the template", async () => {
+  const fmt = require("../src/channels/format");
+  const coin = { name: "T", symbol: "T", chain: "solana", address: "So1CopyMe111", links: {} };
+  const codeOn = (card, addr) =>
+    card.entities.some((e) => e.type === "code" && card.text.slice(e.offset, e.offset + e.length) === addr);
+  // default template ({address} bare — the VALUE brings its own code markup)
+  assert.ok(codeOn(fmt.trendingPost(coin), "So1CopyMe111"), "default: CA copyable");
+  // admin re-typed the template as PLAIN text (formatting lost) — still copyable
+  await tpl.setTemplate("post_trending", "🔥 New\n\n📄 Contract:\n{address}");
+  assert.ok(codeOn(fmt.trendingPost(coin), "So1CopyMe111"), "plain custom: CA copyable");
+  // legacy custom that writes its own `{address}` backticks — no stray backticks
+  await tpl.setTemplate("post_trending", "🔥 New\n\n📄 Contract:\n`{address}`");
+  const legacy = fmt.trendingPost(coin);
+  assert.ok(codeOn(legacy, "So1CopyMe111"), "legacy backticked custom: CA copyable");
+  assert.ok(!legacy.text.includes("`"), "no stray backtick chars leak");
+  await tpl.resetTemplate("post_trending");
+});
+
 test("chain_emojis saved with premium emoji → chain line carries the custom emoji", async () => {
   const fmt = require("../src/channels/format");
   const text = "solana = 🟣\nbsc = 🟡";
