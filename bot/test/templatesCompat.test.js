@@ -60,6 +60,34 @@ test("overrideCount sees orphaned keys from older template generations", async (
   assert.strictEqual(tpl.overrideCount(), 0);
 });
 
+test("plain-pasted custom template: social/footer/announce labels get auto-linked", async () => {
+  const fmt = require("../src/channels/format");
+  await tpl.setTemplate(
+    "post_trending",
+    "HEAD {name}\n\n🔗 {symbol} social links\n𝕏 X · 🌐 Website · ✈️ Telegram\n\nAnnounce On X\n\n📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements",
+  );
+  const coin = {
+    name: "T", symbol: "T", chain: "solana", address: "So1",
+    xUrl: "https://x.com/i/status/9",
+    links: { twitter: "https://x.com/t", telegram: "https://t.me/t" }, // no website
+  };
+  const card = fmt.trendingPost(coin);
+  const linkOf = (label) =>
+    card.entities.find((e) => e.type === "text_link" && card.text.slice(e.offset, e.offset + e.length) === label);
+  assert.strictEqual(linkOf("X") && linkOf("X").url, "https://x.com/t", "X label linked");
+  assert.strictEqual(linkOf("Telegram") && linkOf("Telegram").url, "https://t.me/t", "Telegram label linked");
+  assert.ok(!card.text.includes("Website"), "missing link → its segment cut: " + card.text);
+  assert.strictEqual(linkOf("Announce On X") && linkOf("Announce On X").url, "https://x.com/i/status/9");
+  assert.ok(linkOf("Dexvra.io") && linkOf("Listings") && linkOf("Trending") && linkOf("Announcements"), "footer labels linked");
+  // no tweet → the whole Announce line disappears
+  const noX = fmt.trendingPost({ ...coin, xUrl: "" });
+  assert.ok(!/announce on x/i.test(noX.text), noX.text);
+  // token with NO socials at all → the whole social paragraph goes, header too
+  const bare = fmt.trendingPost({ ...coin, xUrl: "", links: {} });
+  assert.ok(!/social links/i.test(bare.text), bare.text);
+  await tpl.resetTemplate("post_trending");
+});
+
 test("CA is tap-to-copy (code entity) no matter how the admin writes the template", async () => {
   const fmt = require("../src/channels/format");
   const coin = { name: "T", symbol: "T", chain: "solana", address: "So1CopyMe111", links: {} };

@@ -149,13 +149,11 @@ function stripLines(val, { all, missing, dropParagraph }) {
 // its live segments: a segment whose link is missing is cut together with ONE
 // adjacent separator so the row collapses cleanly. Rows with no separators
 // fall back to whole-line semantics (handled by the caller's line pass).
-function segmentCuts(line, base, missKeys) {
-  if (!missKeys.length) return [];
+function segsOf(line) {
   const seps = [];
   SEG_SEP.lastIndex = 0;
   let m;
   while ((m = SEG_SEP.exec(line)) !== null) seps.push([m.index, m.index + m[0].length]);
-  if (!seps.length) return [];
   const segs = [];
   let pos = 0;
   for (const [s, e] of seps) {
@@ -163,13 +161,27 @@ function segmentCuts(line, base, missKeys) {
     pos = e;
   }
   segs.push({ start: pos, end: line.length });
+  return segs;
+}
+
+// Cut range for segment j: the segment plus ONE adjacent separator (the one
+// before it, or after it for the first segment) so the row collapses cleanly.
+function segCutRange(segs, j) {
+  const cutStart = j > 0 ? segs[j - 1].end : segs[j].start;
+  const cutEnd = j > 0 ? segs[j].end : segs[j + 1] ? segs[j + 1].start : segs[j].end;
+  return [cutStart, cutEnd];
+}
+
+function segmentCuts(line, base, missKeys) {
+  if (!missKeys.length) return [];
+  const segs = segsOf(line);
+  if (segs.length < 2) return [];
   const cuts = [];
   for (let j = 0; j < segs.length; j++) {
     const s = line.slice(segs[j].start, segs[j].end);
     if (!missKeys.some((k) => s.includes(`{${k}}`))) continue;
-    const cutStart = j > 0 ? segs[j - 1].end : segs[j].start; // take the separator BEFORE…
-    const cutEnd = j > 0 ? segs[j].end : segs[j + 1] ? segs[j + 1].start : segs[j].end; // …or AFTER for the first segment
-    cuts.push([base + cutStart, base + cutEnd]);
+    const [cs, ce] = segCutRange(segs, j);
+    cuts.push([base + cs, base + ce]);
   }
   return cuts;
 }
@@ -231,6 +243,164 @@ function stripForCoin(key, coin, { noTier } = {}) {
   return val;
 }
 
+// ── Post-render auto-linking (paste-proof links) ─────────────────────────────
+// Admin-edited templates are usually PASTED as plain text: the [label](url)
+// markup — and with it every social/footer link — silently disappears, leaving
+// dead "X · Website · Telegram" labels. After rendering, links are re-attached
+// by LABEL: inside the "…social links" paragraph X/Website/Telegram get the
+// token's links (a label whose link the token lacks is cut, separator and
+// all); "Announce On X" links the tweet (the line drops when there is none);
+// the last paragraph's Dexvra.io/Listings/Trending/Announcements get the
+// channel links. Labels already carrying a link (the default markup path) are
+// left untouched — for default templates this whole pass is a no-op.
+const SOCIAL_LABELS = [
+  ["X", "twitter"],
+  ["Website", "website"],
+  ["Telegram", "telegram"],
+];
+const FOOTER_LABELS = [
+  ["Dexvra.io", "site"],
+  ["Listings", "listing"],
+  ["Trending", "trending"],
+  ["Announcements", "announce"],
+];
+
+function splitLines(text) {
+  const lines = [];
+  let off = 0;
+  for (const s of text.split("\n")) {
+    lines.push({ s, start: off, end: off + s.length });
+    off += s.length + 1;
+  }
+  return lines;
+}
+// Standalone-word search (no alnum char on either side) — \b alone mishandles
+// labels like "Dexvra.io".
+function wordAt(s, label, from = 0) {
+  let i = s.indexOf(label, from);
+  while (i !== -1) {
+    const before = i === 0 ? "" : s[i - 1];
+    const after = s[i + label.length] || "";
+    if (!/[A-Za-z0-9]/.test(before) && !/[A-Za-z0-9]/.test(after)) return i;
+    i = s.indexOf(label, i + 1);
+  }
+  return -1;
+}
+const overlapsLink = (ents, s, e) =>
+  (ents || []).some((x) => x.type === "text_link" && x.offset < e && x.offset + x.length > s);
+
+function socialRowIndexes(lines) {
+  const hIdx = lines.findIndex((l) => /social links/i.test(l.s));
+  if (hIdx === -1) return { hIdx, rows: [] };
+  const rows = [];
+  for (let i = hIdx + 1; i < lines.length && lines[i].s.trim() !== ""; i++) rows.push(i);
+  return { hIdx, rows };
+}
+
+function autoSocials(p, urls) {
+  if (!p || p.html != null || p.text == null) return p;
+  let out = { text: p.text, entities: (p.entities || []).map((e) => ({ ...e })) };
+  out = autoSocialCuts(out, urls);
+  return autoSocialLinks(out, urls);
+}
+
+// Pass 1 — cuts: dead unlinked social labels (and the whole block when nothing
+// survives), plus a dead "Announce On X" line when no tweet exists.
+function autoSocialCuts(p, urls) {
+  const lines = splitLines(p.text);
+  const cuts = [];
+  const { hIdx, rows } = socialRowIndexes(lines);
+  if (hIdx !== -1) {
+    let live = 0;
+    const dead = [];
+    for (const i of rows) {
+      const segs = segsOf(lines[i].s);
+      for (let j = 0; j < segs.length; j++) {
+        const segStr = lines[i].s.slice(segs[j].start, segs[j].end);
+        const hit = SOCIAL_LABELS.find(([w]) => wordAt(segStr, w) !== -1);
+        if (!hit) continue;
+        const gs = lines[i].start + segs[j].start;
+        const ge = lines[i].start + segs[j].end;
+        if (overlapsLink(p.entities, gs, ge) || urls[hit[1]]) live++;
+        else {
+          const [cs, ce] = segCutRange(segs, j);
+          dead.push([lines[i].start + cs, lines[i].start + ce]);
+        }
+      }
+    }
+    if (dead.length && !live) {
+      // every social is dead → drop the whole paragraph, header included
+      const last = rows.length ? rows[rows.length - 1] : hIdx;
+      let to = lines[last].end + 1;
+      if (last + 1 < lines.length && lines[last + 1].s.trim() === "") to = lines[last + 1].end + 1;
+      cuts.push([lines[hIdx].start, Math.min(to, p.text.length)]);
+    } else {
+      cuts.push(...dead);
+    }
+  }
+  if (!urls.xUrl) {
+    const aIdx = lines.findIndex((l) => /announce on x/i.test(l.s) && !l.s.includes("{"));
+    if (aIdx !== -1 && !overlapsLink(p.entities, lines[aIdx].start, lines[aIdx].end)) {
+      let to = lines[aIdx].end + 1;
+      if (aIdx + 1 < lines.length && lines[aIdx + 1].s.trim() === "") to = lines[aIdx + 1].end + 1;
+      cuts.push([lines[aIdx].start, Math.min(to, p.text.length)]);
+    }
+  }
+  const merged = mergeRanges(cuts);
+  return merged.length ? cutRanges(p, merged, true) : p;
+}
+
+// Pass 2 — links: attach text_link entities to bare labels.
+function autoSocialLinks(p, urls) {
+  const lines = splitLines(p.text);
+  const add = [];
+  const { hIdx, rows } = socialRowIndexes(lines);
+  if (hIdx !== -1) {
+    for (const i of rows) {
+      for (const seg of segsOf(lines[i].s)) {
+        const segStr = lines[i].s.slice(seg.start, seg.end);
+        for (const [w, key] of SOCIAL_LABELS) {
+          const li = wordAt(segStr, w);
+          if (li === -1 || !urls[key]) continue;
+          const gs = lines[i].start + seg.start + li;
+          if (!overlapsLink(p.entities, gs, gs + w.length)) {
+            add.push({ type: "text_link", offset: gs, length: w.length, url: urls[key] });
+          }
+          break; // one label per segment
+        }
+      }
+    }
+  }
+  if (urls.xUrl) {
+    for (const l of lines) {
+      const m = l.s.match(/announce on x/i);
+      if (!m) continue;
+      const gs = l.start + m.index;
+      if (!overlapsLink(p.entities, gs, gs + m[0].length)) {
+        add.push({ type: "text_link", offset: gs, length: m[0].length, url: urls.xUrl });
+      }
+      break;
+    }
+  }
+  // Footer labels — scoped to the LAST paragraph so e.g. a "New Trending on
+  // Dexvra" header never picks up a link.
+  let end = lines.length - 1;
+  while (end > 0 && lines[end].s.trim() === "") end--;
+  let start = end;
+  while (start > 0 && lines[start - 1].s.trim() !== "") start--;
+  for (let i = start; i <= end; i++) {
+    for (const [w, key] of FOOTER_LABELS) {
+      const li = wordAt(lines[i].s, w);
+      if (li === -1 || !urls[key]) continue;
+      const gs = lines[i].start + li;
+      if (!overlapsLink(p.entities, gs, gs + w.length)) {
+        add.push({ type: "text_link", offset: gs, length: w.length, url: urls[key] });
+      }
+    }
+  }
+  return add.length ? { text: p.text, entities: [...p.entities, ...add] } : p;
+}
+
 // The CA must be ONE-TAP COPYABLE — Telegram copies `code`-formatted text on
 // tap. The default templates keep {address} bare and the VALUE arrives pre-
 // wrapped as `code` markup, so tap-to-copy survives ANY admin rewrite of the
@@ -290,6 +460,18 @@ function overviewBlock(text) {
   return `${clean(s)}\n\n`;
 }
 
+// Raw URLs for the post-render auto-link pass (entity URLs, not markup).
+function postUrls(coin) {
+  const links = (coin && coin.links) || {};
+  return {
+    twitter: links.twitter || "",
+    website: links.website || "",
+    telegram: links.telegram || "",
+    xUrl: (coin && coin.xUrl) || "",
+    ...channelLinks(),
+  };
+}
+
 // Dexvra channel-link URLs — substituted into the footer's [label]({site}) etc.
 function channelLinks() {
   return {
@@ -340,24 +522,24 @@ function listingPost(coin) {
   const isXpress = coin.tier === "XPRESS";
   const key = isXpress ? "post_listing_xpress" : "post_listing_tiered";
   const val = stripForCoin(key, coin, { noTier: !coin.tier });
-  return tpl.renderValue(val, {
+  return autoSocials(tpl.renderValue(val, {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
     tierEmoji: coin.tier ? TIER_EMOJI[String(coin.tier).toUpperCase()] || "" : "",
     tier: coin.tier ? clean(tierLabel(coin.tier)) : "",
     overview: overviewBlock(coin.overview || autoOverview(coin, "listing")), // legacy
-  });
+  }), postUrls(coin));
 }
 
 function trendingPost(coin) {
   const val = stripForCoin("post_trending", coin);
-  return tpl.renderValue(val, {
+  return autoSocials(tpl.renderValue(val, {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
     overview: overviewBlock(coin.overview || autoOverview(coin, "trending")), // legacy
-  });
+  }), postUrls(coin));
 }
 
 // "×" multiple from a percent gain: +540% → "6.4×", +100% → "2×".
@@ -368,26 +550,26 @@ function xMultiple(percent) {
 
 function pumpPost(coin, percent, firstMc, lastMc) {
   const val = stripForCoin("post_pump", coin);
-  return tpl.renderValue(val, {
+  return autoSocials(tpl.renderValue(val, {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     percent: Math.round(percent),
     multiple: xMultiple(percent),
     firstMc: "$" + formatNumber(firstMc),
     lastMc: "$" + formatNumber(lastMc),
-  });
+  }), postUrls(coin));
 }
 
 function bannerPost(booking) {
   // No token on a banner post — any social lines an admin adds strip away.
   const val = stripForCoin("post_banner", null);
-  return tpl.renderValue(val, {
+  return autoSocials(tpl.renderValue(val, {
     title: booking.title ? clean(booking.title) : "A featured project",
     slot: clean(booking.slot),
     linkUrl: cleanUrl(booking.linkUrl),
     ...channelLinks(),
     footer: legacyFooter(),
-  });
+  }), { ...channelLinks() });
 }
 
 const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -406,12 +588,12 @@ function changeSentence(change24h) {
 
 function rankupPost(coin, rank, change24h) {
   const val = stripForCoin("post_rankup", coin);
-  return tpl.renderValue(val, {
+  return autoSocials(tpl.renderValue(val, {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     rank,
     change: changeSentence(change24h),
-  });
+  }), postUrls(coin));
 }
 
 module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName };
