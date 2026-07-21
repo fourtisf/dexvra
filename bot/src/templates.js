@@ -54,13 +54,12 @@ const em = (emoji, id) => (USE_PREMIUM_EMOJI ? `[${emoji}](emoji/${id})` : emoji
 // Inlined into every channel-post DEFAULT below so each stored template is the
 // FULL post. Editing stays per-template; these constants only keep the code DRY
 // and feed the legacy {socials}/{footer} vars for templates saved before the
-// one-template-per-post era. Keep ONE social per line — channels/format.js
-// drops a line whose link the token doesn't have.
+// one-template-per-post era. Socials sit SIDE-BY-SIDE on one row (" · "
+// separated) — channels/format.js cuts a segment whose link the token doesn't
+// have, and the whole paragraph when it has none.
 const SOCIALS_BLOCK =
   `${em("🔗", E.link)} **{symbol} social links**\n` +
-  `${em("❌", E.cross)} [X]({twitter})\n` +
-  `🌐 [Website]({website})\n` +
-  `✈️ [Telegram]({telegram})`;
+  `${em("❌", E.cross)} [X]({twitter}) · 🌐 [Website]({website}) · ✈️ [Telegram]({telegram})`;
 const FOOTER_BLOCK =
   `${em("📎", E.clip)} **Dexvra**\n` +
   `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +

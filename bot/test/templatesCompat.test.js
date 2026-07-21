@@ -60,6 +60,20 @@ test("overrideCount sees orphaned keys from older template generations", async (
   assert.strictEqual(tpl.overrideCount(), 0);
 });
 
+test("chain_emojis saved with premium emoji → chain line carries the custom emoji", async () => {
+  const fmt = require("../src/channels/format");
+  const text = "solana = 🟣\nbsc = 🟡";
+  await tpl.setTemplate("chain_emojis", {
+    text,
+    entities: [{ type: "custom_emoji", offset: text.indexOf("🟣"), length: 2, custom_emoji_id: "555" }],
+  });
+  const card = fmt.trendingPost({ name: "T", symbol: "T", chain: "solana", address: "So1", links: {} });
+  const ce = card.entities.find((e) => e.custom_emoji_id === "555");
+  assert.ok(ce, "custom chain emoji entity present in the rendered post");
+  assert.strictEqual(card.text.slice(ce.offset, ce.offset + ce.length), "🟣", "fallback char under the entity");
+  await tpl.resetTemplate("chain_emojis");
+});
+
 test("new default layout still spaces correctly with empty optional vars", () => {
   const r = tpl.render("post_listing_xpress", {
     logoEmoji: "",

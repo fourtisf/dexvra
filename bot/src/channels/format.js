@@ -24,14 +24,43 @@ const chainName = (c) => (chainOf(c) ? chainOf(c).label : String(c).toUpperCase(
 // Per-network emoji the bot AUTO-PICKS from the token's chain, driven by the
 // editable `chain_emojis` template (one `chainid = emoji` per line). Unknown
 // chains fall back to 💠 so the "Chain:" line always has a leading glyph.
+// When the admin PASTED premium custom emoji, the template is stored as
+// {text, entities} and the text alone only carries the unicode fallback — so
+// rebuild each mapping as premium markup ([fallback](emoji/ID)) from the
+// entities, letting the custom emoji survive into the rendered post.
 function chainEmojiMap() {
+  const val = tpl.getRawValue("chain_emojis");
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? val.text : String(val || "");
+  const ents = ((isEntity && val.entities) || []).filter((e) => e.type === "custom_emoji" && e.custom_emoji_id);
   const map = {};
-  for (const line of String(tpl.getRaw("chain_emojis") || "").split("\n")) {
+  let off = 0;
+  for (const line of text.split("\n")) {
+    const lineStart = off;
+    off += line.length + 1;
     const i = line.indexOf("=");
     if (i <= 0) continue;
     const k = line.slice(0, i).trim().toLowerCase();
-    const v = line.slice(i + 1).trim();
-    if (k && v) map[k] = v;
+    const rest = line.slice(i + 1);
+    let v = rest.trim();
+    if (!k || !v) continue;
+    if (ents.length) {
+      const vStart = lineStart + i + 1 + (rest.length - rest.trimStart().length);
+      const vEnd = vStart + v.length;
+      const inLine = ents
+        .filter((e) => e.offset >= vStart && e.offset + e.length <= vEnd)
+        .sort((a, b) => a.offset - b.offset);
+      if (inLine.length) {
+        let out = "";
+        let pos = vStart;
+        for (const e of inLine) {
+          out += text.slice(pos, e.offset) + `[${text.slice(e.offset, e.offset + e.length)}](emoji/${e.custom_emoji_id})`;
+          pos = e.offset + e.length;
+        }
+        v = out + text.slice(pos, vEnd);
+      }
+    }
+    map[k] = v;
   }
   return map;
 }
@@ -68,16 +97,30 @@ const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 // glued to the right characters).
 const SOCIAL_KEYS = ["twitter", "website", "telegram"];
 
+const SEG_SEP = /\s*[·|]\s*/g; // side-by-side row separators: " · " or " | "
+
 function stripLines(val, { all, missing, dropParagraph }) {
   if (!missing.length) return val;
   const isEntity = val && typeof val === "object" && val.text != null;
   const text = isEntity ? val.text : String(val);
   const lines = text.split("\n");
-  const refs = (line, keys) => keys.filter((k) => line.includes(`{${k}}`));
-  const drop = lines.map((l) => {
-    const r = refs(l, all);
-    return r.length > 0 && r.every((k) => missing.includes(k));
-  });
+  const refs = (s, keys) => keys.filter((k) => s.includes(`{${k}}`));
+  const drop = new Array(lines.length).fill(false);
+  const starts = [];
+  {
+    let off = 0;
+    for (let i = 0; i < lines.length; i++) {
+      starts[i] = off;
+      off += lines[i].length + 1;
+    }
+  }
+  const segCuts = [];
+  for (let i = 0; i < lines.length; i++) {
+    const r = refs(lines[i], all);
+    if (!r.length) continue;
+    if (r.every((k) => missing.includes(k))) drop[i] = true; // whole line dead
+    else segCuts.push(...segmentCuts(lines[i], starts[i], r.filter((k) => missing.includes(k))));
+  }
   if (dropParagraph) {
     let start = 0;
     for (let i = 0; i <= lines.length; i++) {
@@ -92,25 +135,60 @@ function stripLines(val, { all, missing, dropParagraph }) {
       start = i + 1;
     }
   }
-  if (!drop.some(Boolean)) return val;
-  if (!isEntity) return lines.filter((_, i) => !drop[i]).join("\n"); // collapseGaps cleans leftovers
-  return dropEntityLines(val, lines, drop);
+  const ranges = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (drop[i]) ranges.push([starts[i], starts[i] + lines[i].length + (i < lines.length - 1 ? 1 : 0)]);
+  }
+  ranges.push(...segCuts);
+  const merged = mergeRanges(ranges);
+  if (!merged.length) return val;
+  return cutRanges(isEntity ? val : text, merged, isEntity);
 }
 
-// Remove dropped lines from an ENTITY template: cut their UTF-16 ranges out of
-// the text, shift/shrink entities across the cuts, drop entities inside them.
-function dropEntityLines(val, lines, drop) {
-  const ranges = []; // merged [start, end) ranges, end incl the trailing \n
-  let off = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const len = lines[i].length + (i < lines.length - 1 ? 1 : 0);
-    if (drop[i]) {
-      const prev = ranges[ranges.length - 1];
-      if (prev && prev[1] === off) prev[1] = off + len;
-      else ranges.push([off, off + len]);
-    }
-    off += len;
+// A side-by-side row ("❌ [X]({twitter}) · 🌐 [Website]({website}) · …") keeps
+// its live segments: a segment whose link is missing is cut together with ONE
+// adjacent separator so the row collapses cleanly. Rows with no separators
+// fall back to whole-line semantics (handled by the caller's line pass).
+function segmentCuts(line, base, missKeys) {
+  if (!missKeys.length) return [];
+  const seps = [];
+  SEG_SEP.lastIndex = 0;
+  let m;
+  while ((m = SEG_SEP.exec(line)) !== null) seps.push([m.index, m.index + m[0].length]);
+  if (!seps.length) return [];
+  const segs = [];
+  let pos = 0;
+  for (const [s, e] of seps) {
+    segs.push({ start: pos, end: s });
+    pos = e;
   }
+  segs.push({ start: pos, end: line.length });
+  const cuts = [];
+  for (let j = 0; j < segs.length; j++) {
+    const s = line.slice(segs[j].start, segs[j].end);
+    if (!missKeys.some((k) => s.includes(`{${k}}`))) continue;
+    const cutStart = j > 0 ? segs[j - 1].end : segs[j].start; // take the separator BEFORE…
+    const cutEnd = j > 0 ? segs[j].end : segs[j + 1] ? segs[j + 1].start : segs[j].end; // …or AFTER for the first segment
+    cuts.push([base + cutStart, base + cutEnd]);
+  }
+  return cuts;
+}
+
+function mergeRanges(ranges) {
+  const sorted = ranges.filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const r of sorted) {
+    const last = out[out.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else out.push([r[0], r[1]]);
+  }
+  return out;
+}
+
+// Cut [start, end) ranges out of the text; the entity form also shifts/shrinks
+// entities across the cuts (UTF-16 units) and drops the ones inside them.
+function cutRanges(valOrText, ranges, isEntity) {
+  const text = isEntity ? valOrText.text : valOrText;
   const removedBefore = (pos) => {
     let n = 0;
     for (const [s, e] of ranges) {
@@ -119,20 +197,21 @@ function dropEntityLines(val, lines, drop) {
     }
     return n;
   };
-  let text = "";
+  let out = "";
   let last = 0;
   for (const [s, e] of ranges) {
-    text += val.text.slice(last, s);
+    out += text.slice(last, s);
     last = e;
   }
-  text += val.text.slice(last);
+  out += text.slice(last);
+  if (!isEntity) return out;
   const entities = [];
-  for (const e of val.entities || []) {
+  for (const e of valOrText.entities || []) {
     const s = e.offset - removedBefore(e.offset);
     const en = e.offset + e.length - removedBefore(e.offset + e.length);
     if (en - s > 0) entities.push({ ...e, offset: s, length: en - s });
   }
-  return { text, entities };
+  return { text: out, entities };
 }
 
 /** The template for `key`, with the lines the token can't fill stripped out —
@@ -153,13 +232,12 @@ function stripForCoin(key, coin, { noTier } = {}) {
 }
 
 // Legacy {socials} var (templates saved before the one-template-per-post era):
-// the built block, one social per line, missing links dropped, "" when none.
+// the built block with missing links stripped the same way, "" when none.
 function legacySocials(coin) {
   const links = coin.links || {};
   if (!SOCIAL_KEYS.some((k) => links[k])) return "";
-  const kept = tpl.SOCIALS_BLOCK.split("\n")
-    .filter((line) => !SOCIAL_KEYS.some((k) => line.includes(`{${k}}`) && !links[k]))
-    .join("\n");
+  const missing = SOCIAL_KEYS.filter((k) => !links[k]);
+  const kept = String(stripLines(tpl.SOCIALS_BLOCK, { all: SOCIAL_KEYS, missing, dropParagraph: false }));
   const out = tpl.substitute(kept, {
     symbol: clean(sym(coin.symbol)),
     twitter: links.twitter ? cleanUrl(links.twitter) : "",

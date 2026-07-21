@@ -82,12 +82,14 @@ test("social lines drop individually; tier badge line drops without a tier", () 
     mcap: 725100,
     siteUrl: "https://dexvra.io/token/solana/G9j8",
   };
-  // only a website → X + Telegram lines gone, header + Website kept
+  // only a website → X + Telegram SEGMENTS cut from the row, header + Website kept
   const partial = fmt.listingPost({ ...base, tier: "XPRESS", links: { website: "https://bullcat.io" } });
-  assert.ok(partial.text.includes("social links"));
-  assert.ok(partial.text.includes("Website"));
+  assert.ok(partial.text.includes("social links\n🌐 Website\n"), partial.text);
   assert.ok(!/❌ X/.test(partial.text), partial.text);
   assert.ok(!partial.text.includes("Telegram"), partial.text);
+  // two present, one missing → the row keeps its separator between survivors
+  const two = fmt.listingPost({ ...base, tier: "XPRESS", links: { twitter: "https://x.com/bc", website: "https://bullcat.io" } });
+  assert.ok(two.text.includes("❌ X · 🌐 Website\n"), two.text);
   // tiered template without a tier → no orphan " tier" badge line
   const noTier = fmt.listingPost({ ...base, tier: null, links: {} });
   assert.ok(noTier.text.includes("New Listing on Dexvra"));
@@ -137,7 +139,7 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(text.includes("Chain: Solana"), "chain line");
   assert.ok(text.includes("📄 Contract:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
   assert.ok(text.includes("◼️ Liquidity: $22.3K | MC: $84.4K"), "liquidity + MC on ONE line (fourtis-style)");
-  assert.ok(text.includes("🔗 $WHALE social links\n❌ X\n🌐 Website\n✈️ Telegram"), "socials block (❌ X)");
+  assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
 });
 
