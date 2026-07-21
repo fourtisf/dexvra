@@ -21,13 +21,13 @@ const FILE = "templates.json";
 const BANNER_PATH = path.join(DATA_DIR, "banner"); // image bytes (any ext), set by adminbot
 const REFRESH_MS = 30000;
 
-// Premium emoji document IDs. NOTE: these are a THIRD-PARTY (fourtis) pack, so
-// they render with that project's branding when actually sent as custom emoji.
-// To stay visually distinct, the default templates now use PLAIN UNICODE emoji
-// (em() below returns the bare emoji) unless PREMIUM_EMOJI=1 is set AND you've
-// swapped these for your OWN Dexvra emoji-pack IDs. Admins can still paste their
-// own premium emoji into any template via the editor — that path is unaffected.
-const USE_PREMIUM_EMOJI = /^(1|true|yes|on)$/i.test(String(process.env.PREMIUM_EMOJI || ""));
+// Premium emoji document IDs. NOTE: these are a THIRD-PARTY (fourtis) pack —
+// rendered as custom emoji they show FOURTIS BRANDING inside Dexvra posts
+// (operator complaint: the fourtis logo appeared on rank-up alerts). em()
+// therefore ALWAYS returns the plain unicode emoji now, regardless of the old
+// PREMIUM_EMOJI env flag; the table stays only as documentation. Premium emoji
+// enter templates exclusively via the adminbot editor (admins paste their OWN
+// pack) and via the per-token logo packs — both unaffected.
 const E = {
   rocket: "5341323326188956773", // 🚀
   plane: "5039783602301175152", // ✈️
@@ -48,7 +48,7 @@ const E = {
   diamond: "5427168083074628963", // 💎
   cross: "5454335838575936647", // ❌
 };
-const em = (emoji, id) => (USE_PREMIUM_EMOJI ? `[${emoji}](emoji/${id})` : emoji);
+const em = (emoji) => emoji;
 
 // ── Channel-post building blocks (code-level only, NOT separate templates) ──
 // Inlined into every channel-post DEFAULT below so each stored template is the
