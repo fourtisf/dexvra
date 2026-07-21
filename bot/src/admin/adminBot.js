@@ -92,6 +92,7 @@ async function sendTemplateAudit(ctx, arg = "") {
     price: 0.001266, mcap: 1300000, liq: 183475,
     links: { website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat" },
     siteUrl: "https://dexvra.io/token/solana/G9j8", overview: "A community-driven memecoin on Solana.",
+    xUrl: "https://x.com/i/status/1",
   };
   const CHANNEL = {
     post_listing_xpress: () => fmt.listingPost({ ...sampleCoin, tier: "XPRESS" }),
@@ -492,6 +493,7 @@ const PH_HELP = {
   listing: "the Listings channel link",
   trending: "the Trending channel link",
   announce: "the Announcements channel link",
+  xUrl: "link to the X announcement post (auto after tweeting)",
   change: "24h change sentence",
   tierEmoji: "tier emoji (from the paid tier)",
   // legacy blocks (older saved templates only)
@@ -531,7 +533,7 @@ const PH_HELP = {
 const AUTO_PH = new Set([
   "head", "tierLine", "logoEmoji", "overview", "socials", "footer",
   "chainEmoji", "twitter", "website", "telegram", "site", "listing", "trending", "announce",
-  "change", "tierEmoji",
+  "xUrl", "change", "tierEmoji",
 ]);
 
 // A friendly legend: split the template's placeholders into "your values" vs

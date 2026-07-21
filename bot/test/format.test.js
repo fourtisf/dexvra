@@ -33,7 +33,7 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("New Listing on Dexvra"));
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
-  assert.ok(card.text.includes("Liquidity:") && card.text.includes("Market Cap:"), "Liquidity + Market Cap lines");
+  assert.ok(card.text.includes("Liquidity:") && card.text.includes("MC:"), "Liquidity + MC line");
   assert.ok(card.text.includes("Chain:"), "Chain line present");
   assert.ok(card.text.includes("dexvra.io/token"), "token-page link line present");
   assert.ok(card.entities.some((e) => e.type === "code"), "address as code");
@@ -136,10 +136,32 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(text.includes("✅ dexvra.io/token/solana/4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "✅ full dexvra link line");
   assert.ok(text.includes("Chain: Solana"), "chain line");
   assert.ok(text.includes("📄 Contract:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
-  assert.ok(text.includes("◼️ Liquidity: $22.3K"), "◼️ liquidity line");
-  assert.ok(text.includes("📈 Market Cap: $84.4K"), "market-cap line");
+  assert.ok(text.includes("◼️ Liquidity: $22.3K | MC: $84.4K"), "liquidity + MC on ONE line (fourtis-style)");
   assert.ok(text.includes("🔗 $WHALE social links\n❌ X\n🌐 Website\n✈️ Telegram"), "socials block (❌ X)");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
+});
+
+test("Announce On X line: shown with a tweet link, dropped without one", () => {
+  const base = {
+    name: "T",
+    symbol: "$T",
+    chain: "solana",
+    tier: "XPRESS",
+    address: "So1anaAddr111111111111111111111111111111111",
+    price: 0.01,
+    mcap: 1000,
+    links: {},
+    siteUrl: "https://dexvra.io/token/solana/So1",
+  };
+  const withX = fmt.listingPost({ ...base, xUrl: "https://x.com/i/status/123" });
+  assert.ok(withX.text.includes("Announce On X"), withX.text);
+  assert.ok(
+    withX.entities.some((e) => e.type === "text_link" && e.url === "https://x.com/i/status/123"),
+    "tweet link entity present",
+  );
+  const withoutX = fmt.listingPost(base);
+  assert.ok(!withoutX.text.includes("Announce On X"), withoutX.text);
+  assert.ok(!/\n{3,}/.test(withoutX.text));
 });
 
 test("pump post payload shows percent + MCs", () => {

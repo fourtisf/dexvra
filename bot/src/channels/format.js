@@ -135,12 +135,17 @@ function dropEntityLines(val, lines, drop) {
   return { text, entities };
 }
 
-/** The template for `key`, with social lines (and optionally the tier line)
- *  the token lacks stripped out — ready for tpl.renderValue(). */
-function stripForCoin(key, links, { noTier } = {}) {
+/** The template for `key`, with the lines the token can't fill stripped out —
+ *  social links it lacks, the "Announce On X" line when no tweet was made, the
+ *  tier badge line on an untiered listing — ready for tpl.renderValue(). */
+function stripForCoin(key, coin, { noTier } = {}) {
+  const links = (coin && coin.links) || {};
   let val = tpl.getRawValue(key);
-  const missing = SOCIAL_KEYS.filter((k) => !(links && links[k]));
+  const missing = SOCIAL_KEYS.filter((k) => !links[k]);
   val = stripLines(val, { all: SOCIAL_KEYS, missing, dropParagraph: true });
+  if (!(coin && coin.xUrl)) {
+    val = stripLines(val, { all: ["xUrl"], missing: ["xUrl"], dropParagraph: true });
+  }
   if (noTier) {
     val = stripLines(val, { all: ["tierEmoji", "tier"], missing: ["tierEmoji", "tier"], dropParagraph: false });
   }
@@ -229,6 +234,7 @@ function coinVars(coin) {
     twitter: links.twitter ? cleanUrl(links.twitter) : "",
     website: links.website ? cleanUrl(links.website) : "",
     telegram: links.telegram ? cleanUrl(links.telegram) : "",
+    xUrl: coin.xUrl ? cleanUrl(coin.xUrl) : "",
     ...channelLinks(),
     socials: legacySocials(coin),
     footer: legacyFooter(),
@@ -243,7 +249,7 @@ const coinUrlLabel = (coin) => coinUrl(coin).replace(/^https?:\/\//, "");
 function listingPost(coin) {
   const isXpress = coin.tier === "XPRESS";
   const key = isXpress ? "post_listing_xpress" : "post_listing_tiered";
-  const val = stripForCoin(key, coin.links, { noTier: !coin.tier });
+  const val = stripForCoin(key, coin, { noTier: !coin.tier });
   return tpl.renderValue(val, {
     ...coinVars(coin),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
@@ -254,7 +260,7 @@ function listingPost(coin) {
 }
 
 function trendingPost(coin) {
-  const val = stripForCoin("post_trending", coin.links);
+  const val = stripForCoin("post_trending", coin);
   return tpl.renderValue(val, {
     ...coinVars(coin),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
@@ -269,7 +275,7 @@ function xMultiple(percent) {
 }
 
 function pumpPost(coin, percent, firstMc, lastMc) {
-  const val = stripForCoin("post_pump", coin.links);
+  const val = stripForCoin("post_pump", coin);
   return tpl.renderValue(val, {
     ...coinVars(coin),
     percent: Math.round(percent),
@@ -281,7 +287,7 @@ function pumpPost(coin, percent, firstMc, lastMc) {
 
 function bannerPost(booking) {
   // No token on a banner post — any social lines an admin adds strip away.
-  const val = stripForCoin("post_banner", {});
+  const val = stripForCoin("post_banner", null);
   return tpl.renderValue(val, {
     title: booking.title ? clean(booking.title) : "A featured project",
     slot: clean(booking.slot),
@@ -306,7 +312,7 @@ function changeSentence(change24h) {
 }
 
 function rankupPost(coin, rank, change24h) {
-  const val = stripForCoin("post_rankup", coin.links);
+  const val = stripForCoin("post_rankup", coin);
   return tpl.renderValue(val, {
     ...coinVars(coin),
     rank,
