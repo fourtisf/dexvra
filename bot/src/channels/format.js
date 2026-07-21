@@ -398,6 +398,16 @@ function autoSocialLinks(p, urls) {
       }
     }
   }
+  // Bare dexvra.io/… path labels (the token-page line pasted without its URL
+  // markup) become real links to the same path.
+  const host = String(SITE_URL || "").replace(/^https?:\/\//, "") || "dexvra.io";
+  const pathRe = new RegExp(host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/[^\\s)]+", "g");
+  let pm;
+  while ((pm = pathRe.exec(p.text)) !== null) {
+    if (!overlapsLink(p.entities, pm.index, pm.index + pm[0].length)) {
+      add.push({ type: "text_link", offset: pm.index, length: pm[0].length, url: `https://${pm[0]}` });
+    }
+  }
   return add.length ? { text: p.text, entities: [...p.entities, ...add] } : p;
 }
 

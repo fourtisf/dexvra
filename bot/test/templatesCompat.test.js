@@ -79,6 +79,14 @@ test("plain-pasted custom template: social/footer/announce labels get auto-linke
   assert.ok(!card.text.includes("Website"), "missing link → its segment cut: " + card.text);
   assert.strictEqual(linkOf("Announce On X") && linkOf("Announce On X").url, "https://x.com/i/status/9");
   assert.ok(linkOf("Dexvra.io") && linkOf("Listings") && linkOf("Trending") && linkOf("Announcements"), "footer labels linked");
+  // pasted token-page line (bare "dexvra.io/…" text, markup lost) → real link
+  await tpl.setTemplate("post_trending", "HEAD\n\n✅ {coinUrlLabel}\n\n📎 Dexvra");
+  const bareUrl = fmt.trendingPost(coin);
+  const pathLink = bareUrl.entities.find(
+    (e) => e.type === "text_link" && bareUrl.text.slice(e.offset, e.offset + e.length).startsWith("dexvra.io/token/"),
+  );
+  assert.ok(pathLink, "token-page label linked: " + JSON.stringify(bareUrl.entities));
+  assert.ok(pathLink.url.startsWith("https://dexvra.io/token/solana/So1"), pathLink.url);
   // no tweet → the whole Announce line disappears
   const noX = fmt.trendingPost({ ...coin, xUrl: "" });
   assert.ok(!/announce on x/i.test(noX.text), noX.text);
