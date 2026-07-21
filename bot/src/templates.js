@@ -72,7 +72,7 @@ const LISTING_BODY =
   `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
   `{chainEmoji} **Chain:** {chain}\n` +
   `📄 **Contract:**\n\`{address}\`\n\n` +
-  `◼️ **Liquidity:** {liq} | **MC:** {mcap}\n\n` +
+  `◼️ **MC:** {mcap} | **Liquidity:** {liq}\n\n` +
   `[Announce On X 𝕏]({xUrl})\n\n` +
   `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`;
 

@@ -138,7 +138,7 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(text.includes("✅ dexvra.io/token/solana/4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "✅ full dexvra link line");
   assert.ok(text.includes("Chain: Solana"), "chain line");
   assert.ok(text.includes("📄 Contract:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
-  assert.ok(text.includes("◼️ Liquidity: $22.3K | MC: $84.4K"), "liquidity + MC on ONE line (fourtis-style)");
+  assert.ok(text.includes("◼️ MC: $84.4K | Liquidity: $22.3K"), "MC first, then Liquidity, on ONE line");
   assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
 });
