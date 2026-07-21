@@ -295,11 +295,11 @@ const DEFAULTS = {
   // line whose link the token doesn't have — and the whole social paragraph
   // (incl. its header line) when the token has none — before rendering; the
   // tier badge line drops the same way on a listing without a tier.
-  // {logoEmoji} sits just LEFT of the project name (operator preference) — and
-  // OUTSIDE the bold runs: a custom-emoji tag inside **…** would be skipped by
+  // {logoEmoji} sits at the RIGHT end of the header (operator preference) — and
+  // OUTSIDE the bold run: a custom-emoji tag inside **…** would be skipped by
   // the markup parser and leak as raw text.
   post_listing_xpress:
-    `${em("⚡", E.zap)} **Xpress Listing —** {logoEmoji}**{name} live on Dexvra**\n\n` + LISTING_BODY,
+    `${em("⚡", E.zap)} **Xpress Listing — {name} live on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
   post_listing_tiered:
     `${em("🚨", E.sirenHead)} **New Listing on Dexvra** {logoEmoji}\n` +
     `{tierEmoji} **{tier} tier**\n\n` +
