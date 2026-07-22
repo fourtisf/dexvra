@@ -969,6 +969,20 @@ async function bestDexVenue(ca, chainKey) {
   return v;
 }
 
+// Gas limit for a plain native transfer. The hard 21000 is ONLY valid for an
+// EOA→EOA transfer on a chain with no L1 data component — it reverts (out of
+// gas) on Arbitrum-Orbit chains like Robinhood Chain (extra L1-calldata gas)
+// and to any CONTRACT recipient (Safe/multisig/exchange deposit contract whose
+// receive() needs gas). This silently killed fee collection there. Estimate and
+// bump; fall back generously. estimateGas on Orbit chains already folds in the
+// L1 component, so this returns a limit that actually lands.
+async function nativeTransferGas(chainKey, from, to, value) {
+  try {
+    const g = await providerFor(chainKey).estimateGas({ from, to, value: value > 1n ? value : 1n });
+    return g + g / 4n;   // +25% headroom
+  } catch (_) { return 120000n; }   // covers Orbit L1 gas + a contract recipient's receive()
+}
+
 async function ensureApprove(wallet, ca, spender, amount, chainKey) {
   const erc = new ethers.Contract(ca, ERC20_ABI, wallet);
   const cur = await erc.allowance(wallet.address, spender).catch(() => 0n);
@@ -983,9 +997,12 @@ async function _chargeFee(wallet, feeWei, chainKey) {
     // rawSend, NOT wallet.sendTransaction: the Robinhood node rejects ethers'
     // estimate/send path (see rawSend), which made every fee transfer there
     // fail silently while the trade itself succeeded — zero revenue collected.
-    const hash = await rawSend(wallet, chainKey, CFG.feeWallet, '0x', 21000n, feeWei);
+    // Gas is estimated (not a hard 21000) — 21000 reverts on Robinhood (Orbit
+    // L1 gas) and to a contract treasury, which is why the treasury stayed 0.
+    const gasLimit = await nativeTransferGas(chainKey, wallet.address, CFG.feeWallet, feeWei);
+    const hash = await rawSend(wallet, chainKey, CFG.feeWallet, '0x', gasLimit, feeWei);
     const rc = await waitHash(hash, chainKey);
-    if (!rc || rc.status === 0) return null;   // null = timed out (unconfirmed) → don't credit referral
+    if (!rc || rc.status === 0) { if (rc && rc.status === 0) console.error('fee tx reverted (status 0) — is FEE_WALLET reachable? gas?', hash); return null; }   // null → don't credit referral
     return hash;
   } catch (e) { console.error('fee charge failed', e.message); return null; }
 }
@@ -1050,9 +1067,12 @@ async function _buySol(u, ca, amount, chainKey, walletId) {
     if (feeSig) _creditReferral(u, fee, chainKey);
 
     const key = posKey(chainKey, ca);
-    const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0' };
+    const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
+    if (p.costEth == null) p.costEth = Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));   // migrate legacy
     p.name = meta.name; p.sym = meta.sym; p.dec = meta.decimals;
-    p.ethIn += solana.lamportsToSol(spend);
+    const spendSol = solana.lamportsToSol(spend);
+    p.ethIn += spendSol;
+    p.costEth += spendSol;
     p.tokens = after.toString();
     delete p.closed;
     wal.positions[key] = p;
@@ -1091,10 +1111,15 @@ async function _sellSol(u, ca, pct, chainKey, walletId) {
     const key = posKey(chainKey, ca);
     const pos = wal.positions[key];
     if (pos) {
-      pos.ethOut += solana.lamportsToSol(proceeds - fee);
+      if (pos.costEth == null) pos.costEth = Math.max(0, (pos.ethIn || 0) - (pos.ethOut || 0));   // migrate legacy
+      const soldFrac = bal > 0n ? Number(amount) / Number(bal) : 1;
+      const costOfSold = pos.costEth * Math.min(1, Math.max(0, soldFrac));
+      const netProceeds = solana.lamportsToSol(proceeds - fee);
+      pos.ethOut += netProceeds;
+      pos.realizedEth = (Number(pos.realizedEth) || 0) + (netProceeds - costOfSold);
+      pos.costEth = Math.max(0, pos.costEth - costOfSold);
       pos.tokens = (await solana.splBalance(conn, signer.address, ca)).raw.toString();
-      pos.realizedEth = (pos.ethOut - pos.ethIn);
-      if (pos.tokens === '0') pos.closed = true;
+      if (pos.tokens === '0') { pos.costEth = 0; pos.closed = true; }
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: solana.lamportsToSol(proceeds), pct: p, hash: sig });
     saveStore();
@@ -1159,11 +1184,29 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
       let minTok;
       try { const exp = await cc.buy.staticCall(0n, deadline, { value: spend }); minTok = exp * (10000n - slip) / 10000n; }
       catch (e) { throw new Error('could not quote this buy (try again / lower amount): ' + (e.shortMessage || e.message || e)); }
-      const tx = await cc.buy(minTok, deadline, { value: spend, ...gas });
-      venue = 'curve'; hash = tx.hash; trc = await waitBounded(tx);
+      // rawSend, NOT cc.buy(...): the Robinhood node rejects ethers' estimate/send
+      // envelope (same reason curve SELL, withdraw and _chargeFee use rawSend) —
+      // a plain cc.buy could throw the opaque "could not coalesce error" there.
+      const data = cc.interface.encodeFunctionData('buy', [minTok, deadline]);
+      hash = await rawSend(wallet, chainKey, curve, data, 600000n, spend);
+      venue = 'curve'; trc = await waitHash(hash, chainKey);
+      if (trc && trc.status === 0) throw new Error('the buy reverted on-chain — you may not be allowed to buy this token yet (private beta), or try a smaller amount. Tx: ' + hash);
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
       const pick = await bestDexVenue(ca, chainKey);
+      // Thin-pool HARD guard, enforced ENGINE-SIDE so it also covers snipe /
+      // copy-trade / DCA / limit fills (which call core.buy directly and used to
+      // bypass the UI's guard). Impact ≈ spend/(nativeReserve+spend) on the
+      // venue that will actually trade; over PRICE_IMPACT_MAX_PCT (default 10%)
+      // the buy is refused. Automated callers catch this and skip.
+      {
+        const reserve = pick && pick.wethBal != null ? pick.wethBal : 0n;
+        if (reserve > 0n) {
+          const impactBps = Number((spend * 10000n) / (reserve + spend));
+          const maxPct = Math.max(1, Number(process.env.PRICE_IMPACT_MAX_PCT || 10));
+          if (impactBps >= maxPct * 100) throw new Error(`buy blocked: ~${(impactBps / 100).toFixed(0)}% price impact into a thin pool (~${Number(ethers.formatEther(reserve)).toFixed(4)} ${chain.native} tradeable depth) — over the ${maxPct}% limit. Real depth may be on a pool type this bot can't reach.`);
+        }
+      }
       if (pick.kind === 'v3') {
         // Deepest liquidity is a Uniswap V3 pool — quote via QuoterV2, swap via
         // SwapRouter02 (ETH in via msg.value; the router wraps to WETH itself).
@@ -1209,9 +1252,15 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     if (feeHash) _creditReferral(u, fee, chainKey);
 
     const key = posKey(chainKey, ca);
-    const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0' };
+    const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
+    // costEth = cost basis of the CURRENTLY-HELD tokens (drained proportionally on
+    // sells). ethIn/ethOut stay as LIFETIME totals for the ×-multiple/stats.
+    // Migrate a legacy position (no costEth) from its net cash still in the trade.
+    if (p.costEth == null) p.costEth = Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));
     p.name = meta.name; p.sym = meta.sym; p.dec = meta.decimals;
-    p.ethIn += Number(ethers.formatEther(spend));
+    const spendEth = Number(ethers.formatEther(spend));
+    p.ethIn += spendEth;       // lifetime invested
+    p.costEth += spendEth;     // basis of the held bag
     p.tokens = after.toString();
     delete p.closed;
     wal.positions[key] = p;
@@ -1253,7 +1302,7 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
     await ensureApprove(wallet, ca, spender, amount, chainKey);   // before ethBefore snapshot
     const ethBefore = await ethBalance(wallet.address, chainKey);
 
-    let venue, hash, trc;
+    let venue, hash, trc, v3ProceedsWei = null;   // v3: the WETH the swap produced (accounting source of truth)
     if (onCurve) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
       // Quote with a SHAVE-TO-FIT guard. A holder of ~all circulating supply can sit
@@ -1291,21 +1340,28 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
       const minW = expW > 0n ? expW * (10000n - dexSlip) / 10000n : 0n;
       if (minW <= 0n) throw new Error('no V3 liquidity / zero quote for this sell on ' + chain.name);   // never send minOut=0 (sandwich drain)
+      const wethC = new ethers.Contract(chain.weth, ERC20_ABI, providerFor(chainKey));
+      const wethBefore = await wethC.balanceOf(wallet.address).catch(() => 0n);   // so we unwrap ONLY this swap's output, never pre-existing WETH
       const ri = new ethers.Interface(V3_ROUTER_ABI);
       const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: ca, tokenOut: chain.weth, fee: pick.feeTier, recipient: wallet.address, amountIn: amount, amountOutMinimum: minW, sqrtPriceLimitX96: 0n }]);
       hash = await rawSend(wallet, chainKey, v3.router, dataV3, 500000n);
       venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the V3 sell reverted on-chain — try again or a slightly smaller amount. Tx: ' + hash);
-      // Unwrap the WETH proceeds. Best-effort: if this leg fails the value is
-      // NOT lost — it sits as WETH (an ERC20) in the wallet, sellable/sendable.
-      try {
-        const wbal = await new ethers.Contract(chain.weth, ERC20_ABI, providerFor(chainKey)).balanceOf(wallet.address);
-        if (wbal > 0n) {
-          const wi = new ethers.Interface(WETH9_ABI);
-          const uh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('withdraw', [wbal]), 80000n);
-          await waitHash(uh, chainKey);
+      // Unwrap ONLY the WETH this swap produced (delta), never the wallet's whole
+      // WETH balance — so unrelated WETH isn't force-unwrapped and mis-counted as
+      // proceeds. Retry once; the value is safe as WETH if it still fails.
+      const wethAfter = await wethC.balanceOf(wallet.address).catch(() => wethBefore);
+      const gained = wethAfter > wethBefore ? wethAfter - wethBefore : 0n;
+      v3ProceedsWei = gained;   // trust the WETH delta for accounting (gas-independent, unwrap-independent)
+      if (gained > 0n) {
+        const wi = new ethers.Interface(WETH9_ABI);
+        let unwrapped = false;
+        for (let i = 0; i < 2 && !unwrapped; i++) {
+          try { const uh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('withdraw', [gained]), 120000n); const urc = await waitHash(uh, chainKey); if (!urc || urc.status !== 0) unwrapped = true; }
+          catch (e) { console.error('WETH unwrap attempt failed:', e.message); }
         }
-      } catch (e) { console.error('WETH unwrap failed (funds safe as WETH):', e.message); }
+        if (!unwrapped) console.error('WETH unwrap failed — proceeds are safe as WETH in the wallet (sell/send them manually).');
+      }
     } else {
       const router = new ethers.Contract(chain.router, ROUTER_ABI, wallet);
       let expEth = 0n;
@@ -1322,7 +1378,11 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
     // "pending" if the receipt timed out AND the balance read shows no change.
     if (!trc && tokAfter >= bal) throw new Error('sell sent but not confirmed yet — check your wallet before retrying. Tx: ' + hash);
     const ethAfter = await ethBalance(wallet.address, chainKey);
-    const proceeds = ethAfter > ethBefore ? ethAfter - ethBefore : 0n;
+    // Proceeds: for a V3 sell use the WETH the swap produced (v3ProceedsWei) —
+    // it's exact and independent of gas and of whether the unwrap confirmed, so
+    // the fee/PnL are right even if unwrapping timed out. Curve/V2 pay native
+    // directly, so the native balance delta is the source there.
+    const proceeds = (v3ProceedsWei != null) ? v3ProceedsWei : (ethAfter > ethBefore ? ethAfter - ethBefore : 0n);
     const fee = (proceeds * BigInt(CFG.feeBps)) / 10000n;
     const feeHash = await _chargeFee(wallet, fee, chainKey);
     if (feeHash) _creditReferral(u, fee, chainKey);
@@ -1330,10 +1390,18 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
     const key = posKey(chainKey, ca);
     const pos = wal.positions[key];
     if (pos) {
-      pos.ethOut += Number(ethers.formatEther(proceeds - fee));
+      // Pro-rate the cost basis to the fraction of the bag actually sold, so
+      // realized PnL is correct on PARTIAL sells and a full exit zeroes the
+      // basis (a later re-buy then starts fresh instead of inheriting old cash).
+      if (pos.costEth == null) pos.costEth = Math.max(0, (pos.ethIn || 0) - (pos.ethOut || 0));   // migrate legacy
+      const soldFrac = bal > 0n ? Number(amount) / Number(bal) : 1;   // amount sold / bag held
+      const costOfSold = pos.costEth * Math.min(1, Math.max(0, soldFrac));
+      const netProceeds = Number(ethers.formatEther(proceeds - fee));
+      pos.ethOut += netProceeds;                                   // lifetime received
+      pos.realizedEth = (Number(pos.realizedEth) || 0) + (netProceeds - costOfSold);   // accumulate realized PnL
+      pos.costEth = Math.max(0, pos.costEth - costOfSold);         // remaining basis
       pos.tokens = tokAfter.toString();
-      pos.realizedEth = (pos.ethOut - pos.ethIn);
-      if (pos.tokens === '0') pos.closed = true;
+      if (pos.tokens === '0') { pos.costEth = 0; pos.closed = true; }
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: Number(ethers.formatEther(proceeds)), pct: p, hash });
     saveStore();
@@ -1361,7 +1429,10 @@ async function withdraw(chatId, to, amount, chainKey, walletId) {
     let gp = gas.gasPrice;
     if (!gp) { try { const fd = await providerFor(chainKey).getFeeData(); gp = fd.gasPrice || fd.maxFeePerGas; } catch (_) {} }
     if (!gp || gp <= 0n) gp = ethers.parseUnits('0.1', 'gwei');
-    const gasCost = gp * 21000n * 3n;
+    // Estimate the REAL gas for this transfer — 21000 reverts on Orbit chains
+    // (Robinhood) and to contract recipients (exchange deposit contracts, Safes).
+    const gasLimit = await nativeTransferGas(chainKey, wallet.address, to, 1n);
+    const gasCost = gp * gasLimit * 2n;   // reserve 2× the estimated cost
     let value;
     if (String(amount).toLowerCase() === 'max') value = bal - gasCost;
     else value = ethers.parseEther(String(amount));
@@ -1370,9 +1441,12 @@ async function withdraw(chatId, to, amount, chainKey, walletId) {
     // rawSend, NOT wallet.sendTransaction — same Robinhood-node quirk as
     // _chargeFee: the ethers send path fails there, which would have made
     // native withdrawals on Robinhood Chain fail too.
-    const hash = await rawSend(wallet, chainKey, to, '0x', 21000n, value);
+    const hash = await rawSend(wallet, chainKey, to, '0x', gasLimit, value);
     _noteWithdraw(u);
-    await waitHash(hash, chainKey);
+    const rc = await waitHash(hash, chainKey);
+    // A reverted withdraw (e.g. a contract recipient that rejects the transfer)
+    // must NOT be reported as sent — funds stayed put.
+    if (rc && rc.status === 0) throw new Error('the withdraw reverted on-chain — the recipient may reject direct transfers. Funds were NOT sent. Tx: ' + hash);
     return { hash, sentEth: Number(ethers.formatEther(value)), native: (chainOf(chainKey) || {}).native || 'ETH' };
   });
 }
@@ -1487,7 +1561,8 @@ async function portfolio(chatId, walletId) {
     const priceEth = snap ? snap.priceEth : 0;
     const valueEth = bal * priceEth;
     totalValueEth += valueEth;
-    rows.push({ ca: p.ca, name: p.name, sym: p.sym, tokens: bal, valueEth, ethIn: p.ethIn, ethOut: p.ethOut, unrealizedEth: valueEth - (p.ethIn - p.ethOut), realizedEth: p.realizedEth || 0 });
+    const costBasis = (p.costEth != null) ? p.costEth : Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));
+    rows.push({ ca: p.ca, name: p.name, sym: p.sym, tokens: bal, valueEth, ethIn: p.ethIn, ethOut: p.ethOut, costEth: costBasis, unrealizedEth: valueEth - costBasis, realizedEth: p.realizedEth || 0 });
   }
   rows.sort((a, b) => b.valueEth - a.valueEth);
   return { rows, totalValueEth, address: walletAddress(wal, chainKey), chain, native: chain.native };
@@ -1507,8 +1582,9 @@ async function portfolioAll(chatId) {
       const p = wal.positions[key];
       if (p.chain !== chainKey) continue;
       const k = p.ca.toLowerCase();
-      const agg = cas.get(k) || { ca: p.ca, name: p.name, sym: p.sym, dec: p.dec || 18, ethIn: 0, ethOut: 0 };
+      const agg = cas.get(k) || { ca: p.ca, name: p.name, sym: p.sym, dec: p.dec || 18, ethIn: 0, ethOut: 0, costEth: 0 };
       agg.ethIn += p.ethIn || 0; agg.ethOut += p.ethOut || 0;
+      agg.costEth += (p.costEth != null) ? p.costEth : Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));
       cas.set(k, agg);
     }
   }
@@ -1527,7 +1603,7 @@ async function portfolioAll(chatId) {
     const priceEth = snap ? snap.priceEth : 0;
     const valueEth = totalTokens * priceEth;
     totalValueEth += valueEth;
-    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, tokens: totalTokens, valueEth, ethIn: agg.ethIn, ethOut: agg.ethOut, unrealizedEth: valueEth - (agg.ethIn - agg.ethOut), holders });
+    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, tokens: totalTokens, valueEth, ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth, unrealizedEth: valueEth - agg.costEth, holders });
   }
   rows.sort((a, b) => b.valueEth - a.valueEth);
   return { rows, totalValueEth, chain, native: chain.native };

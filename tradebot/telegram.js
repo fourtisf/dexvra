@@ -69,6 +69,9 @@ const taxStr = (t) => (t == null ? '?' : (Math.round(t * 10) / 10) + '%');
 function fmtAge(ms) { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h'; return Math.floor(s / 86400) + 'd'; }
 function setPending(chatId, obj) { obj.ts = Date.now(); pending.set(chatId, obj); }
 function activeChain(chatId) { return core.chainOf(core.userChain(core.ensureUser(chatId))); }
+// Cost basis of the tokens a position currently HOLDS (drained proportionally on
+// sells in core). Falls back to the legacy net-cash figure for old positions.
+const posCost = (pos) => (pos && pos.costEth != null) ? pos.costEth : Math.max(0, ((pos && pos.ethIn) || 0) - ((pos && pos.ethOut) || 0));
 const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(() => r(fb), ms))]);
 // Chart + explorer URL buttons for the token card. DexScreener covers the big
 // chains by slug; anything else (e.g. Robinhood Chain) falls back to search.
@@ -302,7 +305,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     const totTok = across.rows.reduce((s, r) => s + r.tokens, 0);
     const totEth = across.rows.reduce((s, r) => s + r.eth, 0);
     if (totTok > 1e-9) L.push(`Σ <b>${fmt(totTok)} $${esc(sym)}</b> ≈ <b>${usdOf(totTok)}</b> · ${totEth.toFixed(4)} ${nat} across ${across.rows.length} wallets`);
-    if (pos && pos.ethIn > 0 && !selN) { const unreal = valueEth - (pos.ethIn - pos.ethOut); L.push(`PnL (${esc(core.walletLabel(w, wi))}): <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b>`); }
+    if (pos && posCost(pos) > 0 && !selN) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`PnL (${esc(core.walletLabel(w, wi))}): <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`); }
     if (sel.all) L.push(`<i>Trading on <b>ALL ${list.length} wallets</b> at once. Tap 👛 below to change.</i>`);
     else if (selN >= 1) L.push(`<i>Trading on <b>${selN} selected wallet${selN > 1 ? 's' : ''}</b>. Tap 👛 below to change.</i>`);
     else L.push(`<i>Trading with <b>${esc(core.walletLabel(w, wi))}</b>${autoSwitched ? ' — the wallet holding this token' : ''}. Tap 👛 below to trade from several at once.</i>`);
@@ -311,7 +314,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     // balance, so the card answers "what do I hold and what can I spend" at a
     // glance — Maestro-style.
     L.push('');
-    if (pos && pos.ethIn > 0) { const unreal = valueEth - (pos.ethIn - pos.ethOut); L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b>`); }
+    if (pos && posCost(pos) > 0) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`); }
     else if (bal > 0) L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)}`);
     else L.push(`💼 Your bag: <i>none yet</i>`);
     if (myRow && myRow.eth != null) L.push(`👛 ${esc(core.walletLabel(w, wi))}: <b>${myRow.eth.toFixed(4)} ${nat}</b> (${usd(myRow.eth, nat)}) available`);
@@ -1200,12 +1203,15 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
   let closed = false;
   const L = [`📍 <b>$${esc(sym)}</b> · ${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}`];
-  const balNow = pos && pos.tokens != null ? Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)) : 0;
-  if (!pos || !(pos.ethIn > 0) || !(balNow > 0)) {
+  // Read the LIVE on-chain balance (not pos.tokens) so tokens sent out via 📤
+  // Send don't leave the Monitor showing a phantom bag with fake PnL.
+  let balNow = 0;
+  try { const raw = await withTmo(core.tokenBalance(ca, wAddr(w, chainKey), chainKey).catch(() => null), 5000, null); if (raw != null) balNow = Number(ethers.formatUnits(raw, (pos && pos.dec) || 18)); else if (pos && pos.tokens != null) balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); } catch (_) {}
+  const cost = posCost(pos);
+  if (!pos || !(cost > 0) || !(balNow > 0)) {
     closed = true;
     L.push('<i>No open position — sold, or nothing bought yet.</i>');
   } else {
-    const cost = pos.ethIn - pos.ethOut;
     const px = snap && snap.priceEth > 0 ? snap.priceEth : 0;
     const val = balNow * px;
     L.push(`💰 Initial: <b>${cost.toFixed(5)} ${nat}</b>${inUsd(cost)} | Worth: <b>${px > 0 ? val.toFixed(5) + ' ' + nat : '—'}</b>${px > 0 ? inUsd(val) : ''}`);
