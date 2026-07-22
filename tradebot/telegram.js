@@ -67,6 +67,11 @@ function fmtAge(ms) { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)
 function setPending(chatId, obj) { obj.ts = Date.now(); pending.set(chatId, obj); }
 function activeChain(chatId) { return core.chainOf(core.userChain(core.ensureUser(chatId))); }
 const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(() => r(fb), ms))]);
+// Chart + explorer URL buttons for the token card. DexScreener covers the big
+// chains by slug; anything else (e.g. Robinhood Chain) falls back to search.
+const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
+const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
 
 // Maestro-style chain auto-detect: figure out which enabled chain a pasted CA
 // lives on so the user never has to switch chains to trade. base58 → Solana;
@@ -276,6 +281,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   ];
   // Offer "send this token out" only when the bound wallet actually holds a bag.
   if (bal > 1e-9) ikb.push([btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`)]);
+  ikb.push([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, { text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }]);
   ikb.push(lastRow);
   return { text, kb: { inline_keyboard: ikb } };
 }
@@ -692,11 +698,27 @@ async function onMessage(m) {
   if (text === '/cancel') return send(chatId, 'Cancelled.', mainMenu());
 
   if (text.startsWith('/start')) {
-    const ref = text.split(/\s+/)[1] || null;
+    const payload = text.split(/\s+/)[1] || null;
+    // Deep link from the Dexvra channels' "⚡ Trade" line: /start ca_<address>
+    // opens the token card directly (chain auto-detected). Anything else stays
+    // a referral code, exactly as before.
+    const deepCa = (payload && payload.startsWith('ca_') && isCa(payload.slice(3))) ? payload.slice(3) : null;
+    const ref = deepCa ? null : payload;
     const isNew = !core.getUser(chatId);
     core.ensureUser(chatId, ref);
     core.noteUser(chatId, m.from);                 // capture @username now that the user exists
     report.onStart(core.getUser(chatId), isNew, ref, core.allUsers().length);   // → admin channel (fire-and-forget)
+    if (deepCa) {
+      if (isNew) await send(chatId, `👋 <b>Welcome to the Dexvra Trade Bot</b> — a fresh custodial wallet was created for you. Fund it (💼 Wallets → 📥), then trade below 👇`, mainMenu());
+      const det = await detectChain(chatId, deepCa);
+      if (det.choices) {
+        const kb = det.choices.map((ck) => { const c = core.chainOf(ck); return [btn(`${c.emoji} ${c.name}`, `tok:${ck}:${walletIndex(chatId)}:${deepCa}`)]; });
+        kb.push([btn('« Menu', 'menu')]);
+        return send(chatId, `🌐 <code>${short(deepCa)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+      }
+      const c = await tokenCard(chatId, deepCa, det.chain);
+      return send(chatId, c.text, c.kb);
+    }
     await send(chatId,
       `👋 <b>Welcome to the Dexvra Trade Bot</b>\n\n` +
       `Buy & sell tokens across chains — straight from Telegram, no browser or extension.\n\n` +

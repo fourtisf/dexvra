@@ -79,6 +79,10 @@ cd tradebot && pm2 start index.js --name dexvra-tradebot --update-env && pm2 sav
   existing wallets can't be decrypted.
 - Keys are never logged and never written in plaintext. The store
   (`data/tradebot.json`) holds only ciphertext.
+- **Off-site backups:** the rotating snapshots in `data/backups/` die with the
+  VPS. Cron `scripts/backup-offsite.sh` (rclone or scp — see its header) every
+  few hours, and keep `WALLET_SECRET` backed up separately offline — never in
+  the same place as the store.
 - Withdrawals require the user to type the destination — nothing leaves a wallet
   without an explicit user action.
 - This is beta software holding real funds. Tell users to keep balances small.
