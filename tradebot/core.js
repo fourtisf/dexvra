@@ -1013,6 +1013,17 @@ async function nativeTransferGas(chainKey, from, to, value) {
     return g + g / 4n;   // +25% headroom
   } catch (_) { return 120000n; }   // covers Orbit L1 gas + a contract recipient's receive()
 }
+// Gas limit for a V3 swap / unwrap CONTRACT call. Same reason as
+// nativeTransferGas: a hardcoded limit ignores the Orbit L1-calldata component
+// (folded into gas units on Nitro chains), so a fixed 500k could out-of-gas an
+// exactInputSingle during an L1 fee spike and block exits. Estimate + 25%;
+// generous fallback (> curve's 600k) covers L1 data + ~200k L2 compute.
+async function v3SwapGas(chainKey, from, to, data, value) {
+  try {
+    const g = await providerFor(chainKey).estimateGas({ from, to, data, value: value || 0n });
+    return g + g / 4n;
+  } catch (_) { return 800000n; }
+}
 
 async function ensureApprove(wallet, ca, spender, amount, chainKey) {
   const erc = new ethers.Contract(ca, ERC20_ABI, wallet);
@@ -1239,19 +1250,23 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
         }
       }
       if (pick.kind === 'v3') {
-        // Deepest liquidity is a Uniswap V3 pool. Price the minOut floor off the
-        // pool's slot0 spot (no quoter — see v3ExpectedOutRaw), then swap via
-        // SwapRouter02 (ETH in via msg.value; the router wraps to WETH itself).
+        // Deepest liquidity is a Uniswap V3 pool. minOut is floored off the pool's
+        // slot0 SPOT (v3ExpectedOutRaw has no depth term) using ONLY the user's own
+        // slippage — NOT the extra +1200bps V2 padding. This is deliberate: slot0
+        // can't see concentrated-liquidity depth, so the tight floor makes a buy
+        // that would actually fill worse than the user's slippage REVERT instead of
+        // silently filling at a loss (audit B1). Gas is estimated (audit B2).
         const v3 = v3Cfg(chainKey);
         const expTok = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, chain.weth, spend);
         if (expTok == null || expTok <= 0n) throw new Error('could not price this buy on ' + chain.name + ' V3 (pool read failed) — try again');
-        const minTok = expTok * (10000n - dexSlip) / 10000n;
+        const minTok = expTok * (10000n - slip) / 10000n;
         if (minTok <= 0n) throw new Error('no V3 liquidity / zero quote for this token on ' + chain.name);
         const ri = new ethers.Interface(V3_ROUTER_ABI);
         const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: chain.weth, tokenOut: ca, fee: pick.feeTier, recipient: wallet.address, amountIn: spend, amountOutMinimum: minTok, sqrtPriceLimitX96: 0n }]);
-        hash = await rawSend(wallet, chainKey, v3.router, dataV3, 500000n, spend);
+        const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, spend);
+        hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, spend);
         venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
-        if (trc && trc.status === 0) throw new Error('the V3 buy reverted on-chain — try again or a smaller amount. Tx: ' + hash);
+        if (trc && trc.status === 0) throw new Error('the V3 buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
       } else {
         const router = new ethers.Contract(chain.router, ROUTER_ABI, wallet);
         let expTok = 0n;
@@ -1361,31 +1376,40 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
       trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the sell reverted on-chain — you may not be allowed to sell this token yet (private beta), or try a slightly smaller amount. Tx: ' + hash);
     } else if (v3) {
-      // V3 sell: token → WETH via SwapRouter02 (minOut floored from slot0 spot,
-      // no quoter), then unwrap WETH → native so accounting works like V2.
+      // V3 sell: token → WETH via SwapRouter02, then unwrap. minOut floored off
+      // slot0 spot using ONLY the user's slippage (no +1200 padding) so a fill
+      // worse than their slippage REVERTS rather than silently losing (audit B1).
       const expW = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, ca, amount);
       if (expW == null || expW <= 0n) throw new Error('could not price this sell on ' + chain.name + ' V3 (pool read failed) — try again');
-      const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
-      const minW = expW * (10000n - dexSlip) / 10000n;
+      const minW = expW * (10000n - slip) / 10000n;
       if (minW <= 0n) throw new Error('no V3 liquidity / zero quote for this sell on ' + chain.name);   // never send minOut=0 (sandwich drain)
       const wethC = new ethers.Contract(chain.weth, ERC20_ABI, providerFor(chainKey));
-      const wethBefore = await wethC.balanceOf(wallet.address).catch(() => 0n);   // so we unwrap ONLY this swap's output, never pre-existing WETH
+      // wethBefore MUST be read reliably — a failed read defaulting to 0 would
+      // later sweep + mis-credit pre-existing WETH (audit B4). Retry; abort the
+      // whole sell BEFORE broadcasting if it can't be read.
+      let wethBefore = null;
+      for (let i = 0; i < 3 && wethBefore == null; i++) { try { wethBefore = await wethC.balanceOf(wallet.address); } catch (_) { wethBefore = null; } }
+      if (wethBefore == null) throw new Error('could not read wallet WETH balance on ' + chain.name + ' — try again in a moment');
       const ri = new ethers.Interface(V3_ROUTER_ABI);
       const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: ca, tokenOut: chain.weth, fee: pick.feeTier, recipient: wallet.address, amountIn: amount, amountOutMinimum: minW, sqrtPriceLimitX96: 0n }]);
-      hash = await rawSend(wallet, chainKey, v3.router, dataV3, 500000n);
+      const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, 0n);   // audit B2: estimate, don't hardcode
+      hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim);
       venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
-      if (trc && trc.status === 0) throw new Error('the V3 sell reverted on-chain — try again or a slightly smaller amount. Tx: ' + hash);
-      // Unwrap ONLY the WETH this swap produced (delta), never the wallet's whole
-      // WETH balance — so unrelated WETH isn't force-unwrapped and mis-counted as
-      // proceeds. Retry once; the value is safe as WETH if it still fails.
-      const wethAfter = await wethC.balanceOf(wallet.address).catch(() => wethBefore);
-      const gained = wethAfter > wethBefore ? wethAfter - wethBefore : 0n;
-      v3ProceedsWei = gained;   // trust the WETH delta for accounting (gas-independent, unwrap-independent)
+      if (trc && trc.status === 0) throw new Error('the V3 sell reverted on-chain (price moved past your slippage, or gas) — try again or a slightly smaller amount. Tx: ' + hash);
+      // Post-swap WETH received. Retry the read; if it can't be read at all after
+      // a CONFIRMED swap, fall back to the expected output (expW) rather than
+      // booking 0 — a transient read must never record a profitable exit as a
+      // total loss with no fee (audit B3).
+      let wethAfter = null;
+      for (let i = 0; i < 3 && wethAfter == null; i++) { try { wethAfter = await wethC.balanceOf(wallet.address); } catch (_) { wethAfter = null; } }
+      let gained = (wethAfter != null && wethAfter > wethBefore) ? wethAfter - wethBefore : 0n;
+      if (gained <= 0n) gained = expW;   // swap confirmed but read failed / showed no delta → use the priced estimate, never 0
+      v3ProceedsWei = gained;
       if (gained > 0n) {
         const wi = new ethers.Interface(WETH9_ABI);
         let unwrapped = false;
-        for (let i = 0; i < 2 && !unwrapped; i++) {
-          try { const uh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('withdraw', [gained]), 120000n); const urc = await waitHash(uh, chainKey); if (!urc || urc.status !== 0) unwrapped = true; }
+        for (let i = 0; i < 3 && !unwrapped; i++) {
+          try { const ug = await v3SwapGas(chainKey, wallet.address, chain.weth, wi.encodeFunctionData('withdraw', [gained]), 0n); const uh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('withdraw', [gained]), ug); const urc = await waitHash(uh, chainKey); if (!urc || urc.status !== 0) unwrapped = true; }
           catch (e) { console.error('WETH unwrap attempt failed:', e.message); }
         }
         if (!unwrapped) console.error('WETH unwrap failed — proceeds are safe as WETH in the wallet (sell/send them manually).');
@@ -1410,7 +1434,10 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
     // it's exact and independent of gas and of whether the unwrap confirmed, so
     // the fee/PnL are right even if unwrapping timed out. Curve/V2 pay native
     // directly, so the native balance delta is the source there.
-    const proceeds = (v3ProceedsWei != null) ? v3ProceedsWei : (ethAfter > ethBefore ? ethAfter - ethBefore : 0n);
+    // Guard the V3 source with > 0n (audit B3): a 0n here means the read chain
+    // failed — never silently book a confirmed sell as zero proceeds; fall back
+    // to the native delta rather than recording a total loss.
+    const proceeds = (v3ProceedsWei != null && v3ProceedsWei > 0n) ? v3ProceedsWei : (ethAfter > ethBefore ? ethAfter - ethBefore : 0n);
     const fee = (proceeds * BigInt(CFG.feeBps)) / 10000n;
     const feeHash = await _chargeFee(wallet, fee, chainKey);
     if (feeHash) _creditReferral(u, fee, chainKey);
@@ -1429,7 +1456,10 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
       pos.realizedEth = (Number(pos.realizedEth) || 0) + (netProceeds - costOfSold);   // accumulate realized PnL
       pos.costEth = Math.max(0, pos.costEth - costOfSold);         // remaining basis
       pos.tokens = tokAfter.toString();
-      if (pos.tokens === '0') { pos.costEth = 0; pos.closed = true; }
+      // Treat a dust remainder (e.g. curve shave-to-fit leaving a few wei) as
+      // closed too, so a full exit zeroes the basis and doesn't trip a false
+      // "possible rug" alert on the leftover dust (audit C3).
+      if (pos.tokens === '0' || (p >= 100 && tokAfter <= bal / 1000000n)) { pos.costEth = 0; pos.closed = true; }
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: Number(ethers.formatEther(proceeds)), pct: p, hash });
     saveStore();
