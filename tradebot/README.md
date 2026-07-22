@@ -60,7 +60,7 @@ when `FEE_WALLET_KEY` is set; Solana referral debt is always settled manually.
 ## Run
 
 ```bash
-cp .env.example .env      # fill in TRADEBOT_TOKEN, WALLET_SECRET, FEE_WALLET
+cp .env.example .env      # fill in TRADEBOT_TOKEN + WALLET_SECRET (treasury wallets are pre-set)
 npm install
 npm start                 # long-polls Telegram; no inbound ports needed
 ```

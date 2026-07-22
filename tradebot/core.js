@@ -50,8 +50,10 @@ const CFG = {
   gasGwei:   Number(process.env.GAS_GWEI || 0.01),
   feeBps:      Math.min(500, Math.max(0, Number(process.env.BOT_FEE_BPS || 100))),
   refShareBps: Math.min(10000, Math.max(0, Number(process.env.REF_SHARE_BPS || 3000))),
-  feeWallet:   (process.env.FEE_WALLET || '').trim(),
-  solFeeWallet: (process.env.SOL_FEE_WALLET || '').trim(),   // Solana bot-fee wallet (base58); empty = fee waived on SOL
+  // Dexvra treasury wallets (fee destination). ?? not ||: an env var SET TO EMPTY
+  // still means "waive the fee" — only an UNSET var falls back to the treasury.
+  feeWallet:   (process.env.FEE_WALLET ?? '0x212cE51eBF3162189dA1acaD0BFc0544b985f1B5').trim(),
+  solFeeWallet: (process.env.SOL_FEE_WALLET ?? 'GbBNNPYejJUBcuVsLTLeMnvDY1YzbsMuzE21CtZuL4tA').trim(),   // Solana bot-fee wallet (base58)
   feeWalletKey: (process.env.FEE_WALLET_KEY || '').trim(),   // OPTIONAL: enables referral auto-payout (hot key)
   walletSecret: (process.env.WALLET_SECRET || '').trim(),
   dataDir:   (process.env.DATA_DIR || path.join(__dirname, 'data')).trim(),
