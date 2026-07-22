@@ -69,6 +69,7 @@ async function marketStats(ca, chainKey) {
         chgH24: p.priceChange && p.priceChange.h24 != null ? Number(p.priceChange.h24) : null,
         buysH24: p.txns && p.txns.h24 ? p.txns.h24.buys : null,
         sellsH24: p.txns && p.txns.h24 ? p.txns.h24.sells : null,
+        liqUsd: p.liquidity && p.liquidity.usd != null ? Number(p.liquidity.usd) : null,   // market-wide (any pool type)
         createdAt: p.pairCreatedAt || null,
       };
     }
@@ -84,6 +85,7 @@ async function marketStats(ca, chainKey) {
       chgH24: a.price_change_percentage && a.price_change_percentage.h24 != null ? Number(a.price_change_percentage.h24) : null,
       buysH24: a.transactions && a.transactions.h24 ? a.transactions.h24.buys : null,
       sellsH24: a.transactions && a.transactions.h24 ? a.transactions.h24.sells : null,
+      liqUsd: a.reserve_in_usd != null ? Number(a.reserve_in_usd) : null,   // market-wide (any pool type)
       createdAt: a.pool_created_at ? Date.parse(a.pool_created_at) : null,
     };
   } catch (_) { return null; }

@@ -248,12 +248,22 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   L.push(`💵 Price: <b>${priceUsd > 0 ? '$' + priceUsd.toPrecision(3) : px.toExponential(2) + ' ' + nat}</b>`);
   const mcapUsd = (api && api.marketCapUsd) || (info.mcapEth * nativeUsd(nat));
   L.push(`📊 Market cap: <b>${mcapUsd > 0 ? '$' + fmt(mcapUsd) : usd(info.mcapEth, nat)}</b>`);
-  if (info.liquidityNative != null) L.push(`💧 Liquidity: <b>${info.liquidityNative.toFixed(3)} ${nat}</b> (${usd(info.liquidityNative, nat)})`);
+  const mkt = info.market;
+  if (info.liquidityNative != null) {
+    L.push(`💧 Liquidity: <b>${info.liquidityNative.toFixed(3)} ${nat}</b> (${usd(info.liquidityNative, nat)})`);
+    // The bot trades the V2-style pool it just measured. When the indexer sees
+    // FAR more market liquidity (e.g. a Uniswap V3 pool the router can't
+    // reach), flag it — buys here eat heavy price impact despite a "deep"
+    // market, which otherwise reads as instant negative PnL.
+    const poolUsd = info.liquidityNative * nativeUsd(nat);
+    if (mkt && mkt.liqUsd > 0 && mkt.liqUsd > Math.max(poolUsd, 1) * 5) {
+      L.push(`⚠️ <b>Thin tradeable pool!</b> Market liquidity is <b>$${fmt(mkt.liqUsd)}</b>, but it sits on a pool type this bot can't trade (V3?). Buys here move the price hard.`);
+    }
+  }
   else if (info.raised != null) L.push(`💧 Raised: <b>${info.raised.toFixed(3)} / ${(info.target || 0).toFixed(2)} ${nat}</b> (bonding curve)`);
   if (api && api.volume) L.push(`📈 Vol 24h: <b>${api.volume.h24Usd != null ? '$' + fmt(api.volume.h24Usd) : '—'}</b>${api.volume.totalUsd != null ? ' · total $' + fmt(api.volume.totalUsd) : ''}`);
   // Indexer market stats (DexScreener / GeckoTerminal) — fills the gaps the
   // launchpad API leaves: volume for any token, price change, buy/sell txns.
-  const mkt = info.market;
   if (mkt) {
     if (!(api && api.volume && api.volume.h24Usd != null) && mkt.volH24Usd != null) L.push(`📈 Vol 24h: <b>$${fmt(mkt.volH24Usd)}</b>`);
     const chg = (v) => (v == null ? null : `${v >= 0 ? '🟢 +' : '🔴 '}${Number(v).toFixed(1)}%`);
@@ -661,6 +671,30 @@ async function _placeAutoExit(chatId, r, walletId) {
 }
 async function doBuy(chatId, ca, amt, chain, walletId) {
   const u = core.ensureUser(chatId);
+  // HARD thin-pool block (operator rule: the bot must NEVER buy into a small
+  // LP). Estimated V2 impact = amt / (poolNativeReserve + amt); at or above
+  // PRICE_IMPACT_MAX_PCT (default 10%) the buy is refused — no override
+  // button. Covers every manual path incl. auto-buy-on-paste, since they all
+  // execute through doBuy. Fails open only if the pool can't be read at all.
+  const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
+  if (!core.chains.isSvm(chG.key)) {
+    try {
+      const liq = await withTmo(tokeninfo.dexLiquidityNative(ca, chG.key).catch(() => null), 4000, null);
+      if (liq != null && liq >= 0) {
+        const amtN = Number(amt) || 0;
+        const impact = (amtN / (liq / 2 + amtN)) * 100;
+        const maxAt = Math.max(1, Number(process.env.PRICE_IMPACT_MAX_PCT || 10));
+        if (impact >= maxAt) {
+          const maxSafe = (maxAt / 100) * (liq / 2) / (1 - maxAt / 100);
+          return send(chatId,
+            `🚫 <b>Buy blocked — thin pool</b>\n\nTradeable liquidity for <code>${short(ca)}</code> is only <b>${liq.toFixed(3)} ${chG.native}</b> (${usd(liq, chG.native)}). A <b>${esc(String(amt))} ${chG.native}</b> buy would move the price ~<b>${impact.toFixed(0)}%</b> — over the ${maxAt}% limit, so the bot refuses to fill it.` +
+            `${maxSafe > 0.00001 ? `\n\nLargest buy within the limit: ~<b>${maxSafe.toFixed(5)} ${chG.native}</b>.` : ''}` +
+            `\nIf the token's real depth sits on a V3 pool, this bot can't trade it — use the DEX directly for this one.`,
+            rows([btn('🔄 Card', `tok:${chG.key}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')]));
+        }
+      }
+    } catch (_) {}
+  }
   const key = chatId + ':' + (chain || core.userChain(u)) + ':' + String(ca).toLowerCase();
   if (_inflightBuy.has(key)) return send(chatId, '⏳ Already buying that token — wait for the result before buying again.');
   _inflightBuy.add(key);
