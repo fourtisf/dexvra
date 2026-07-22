@@ -513,10 +513,12 @@ function settingsScreen(chatId) {
   const bp = core.buyPresets(u, ch.key).join(' · ');
   const perChain = core.hasChainPresets(u, ch.key) ? ' <i>(set for this chain)</i>' : '';
   const onoff = (b) => b ? '🟢 ON' : '⚪ OFF';
+  const gasName = gasLabel(core.userGasBoost(u));
   return {
     text: `⚙️ <b>Settings</b>\n\n` +
       `Active chain: <b>${ch.emoji} ${esc(ch.name)}</b>\n` +
       `Slippage: <b>${esc(String(slip))}</b>\n` +
+      `Gas priority: <b>${esc(gasName)}</b>\n` +
       `Quick-buy (${esc(ch.name)}): <b>${esc(bp)} ${ch.native}</b>${perChain}\n` +
       `Confirm before buy: <b>${onoff(s.confirmBuy)}</b>\n` +
       `Fast mode: <b>${onoff(s.expert)}</b>\n` +
@@ -524,12 +526,34 @@ function settingsScreen(chatId) {
       `Auto-exit after buy: <b>${(s.autoTpPct > 0 || s.autoSlPct > 0) ? [(s.autoTpPct > 0 ? 'TP +' + s.autoTpPct + '%' : ''), (s.autoSlPct > 0 ? 'SL −' + s.autoSlPct + '%' : '')].filter(Boolean).join(' · ') : '⚪ OFF'}</b>\n\n` +
       `<i>Quick-buy amounts are per-chain (0.01 ETH ≠ 0.01 BNB) — this sets them for ${esc(ch.name)}. Confirm-before-buy adds a Yes/No step. Fast mode skips the "buying…" messages. Auto-buy buys instantly on paste (skips both the safety card AND the confirm step).</i>`,
     kb: rows(
-      [btn('🌐 Chain', 'chain'), btn('📉 Slippage', 'setslip'), btn(`⚡ Buy amounts`, 'setbp')],
+      [btn('🌐 Chain', 'chain'), btn('📉 Slippage', 'setslip'), btn('⛽ Gas', 'setgas')],
+      [btn(`⚡ Buy amounts`, 'setbp')],
       [btn(`${s.confirmBuy ? '🔴 Confirm buy OFF' : '🟢 Confirm buy ON'}`, 'cbtog'), btn(`${s.expert ? '🔴 Fast mode OFF' : '🟢 Fast mode ON'}`, 'extog')],
       [btn(s.autoBuy ? '🔴 Auto-buy OFF' : '🟢 Auto-buy ON', 'abtog'), btn('✏️ Auto-buy amount', 'abamt')],
       [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn('🔐 Security', 'usec')],
       [btn('🔔 Notifications', 'ntf')],
       [btn('❔ Help', 'help'), btn('« Menu', 'menu')],
+    ),
+  };
+}
+// Gas priority: a small multiplier on the gas price the bot pays. Higher = faster
+// confirmations, marginally higher network fee (tiny on the Robinhood L2).
+function gasLabel(n) { return n >= 3 ? 'Turbo (≈3× gas)' : (n === 2 ? 'Fast (≈2× gas)' : 'Normal'); }
+function gasScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const g = core.userGasBoost(u);
+  const mark = (n) => (g === n ? '✅ ' : '');
+  return {
+    text: `⛽ <b>Gas priority</b>\n\n` +
+      `This sets how much gas the bot pays to get your <b>buys and sells mined</b>. Higher priority confirms faster when the chain is busy — the extra fee is tiny on Robinhood Chain.\n\n` +
+      `Current: <b>${esc(gasLabel(g))}</b>\n\n` +
+      `🟢 <b>Normal</b> — standard speed, lowest fee. Best for calm markets.\n` +
+      `⚡ <b>Fast</b> — about 2× gas. Gets you in quicker during busy moments.\n` +
+      `🚀 <b>Turbo</b> — about 3× gas. For fast-moving launches where every second counts.\n\n` +
+      `<i>You don't have to touch this — if a sell ever fails on gas, the bot already auto-retries with higher gas and wider slippage. This just sets your starting level.</i>`,
+    kb: rows(
+      [btn(`${mark(1)}🟢 Normal`, 'gasset:1'), btn(`${mark(2)}⚡ Fast`, 'gasset:2'), btn(`${mark(3)}🚀 Turbo`, 'gasset:3')],
+      [btn('« Settings', 'set')],
     ),
   };
 }
@@ -626,6 +650,17 @@ function walletIndex(chatId, walletId) {
   const i = core.walletList(u).findIndex((w) => w.id === id);
   return i >= 0 ? i + 1 : 1;
 }
+// Human label for the wallet a trade will use (e.g. "Wallet 1") — in-memory, no network.
+function walletLabelFor(chatId, walletId) {
+  try { const u = core.getUser(chatId) || core.ensureUser(chatId); const w = (walletId && core.walletById(u, walletId)) || core.activeWallet(u); return core.walletLabel(w, walletIndex(chatId, w && w.id)); }
+  catch (_) { return 'your wallet'; }
+}
+// The token's symbol from the user's stored position, if any — instant (no RPC), so the
+// "selling…" progress note can name the coin without adding latency to the trade.
+function quickSym(chatId, ca, chainKey, walletId) {
+  try { const u = core.getUser(chatId); const w = (walletId && core.walletById(u, walletId)) || core.activeWallet(u); const p = w && (w.positions || {})[core.posKey(chainKey || core.userChain(u), ca)]; return (p && p.sym) || ''; }
+  catch (_) { return ''; }
+}
 // Which wallets a Buy/Sell tap acts on: the explicit multi-selection if the user set
 // one (👛 picker on the card), otherwise the card's single bound wallet. Returns
 // [{id,index,label}] in wallet order.
@@ -713,7 +748,14 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
   try {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
-      if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code>…`);
+      if (!expert) {
+        const chn = core.chainOf(chain || core.userChain(u));
+        await send(chatId,
+          `⏳ <b>Buying ${esc(amt)} of your token</b>\n` +
+          `${chn.emoji} ${esc(chn.name)} · 💳 ${esc(walletLabelFor(chatId, wid))}\n` +
+          `📄 <code>${short(ca)}</code>\n\n` +
+          `Placing your buy on the DEX now. This usually confirms in a few seconds — I'll send a full receipt (tokens received, entry price, market cap and the transaction link) as soon as it lands. No need to tap again.`);
+      }
       const r = await core.buy(chatId, ca, amt, chain, wid);
       const wi = walletIndex(chatId, wid);
       // Clear, complete receipt: what you spent, what you got, the price you got
@@ -750,7 +792,13 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       startMonitor(chatId, ca, r.chain, wid);   // live position report, auto-refreshing
       await _placeAutoExit(chatId, r, wid);
     } else {
-      if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
+      if (!expert) {
+        const chn = core.chainOf(chain || core.userChain(u));
+        await send(chatId,
+          `⏳ <b>Buying ${esc(amt)} on ${targets.length} wallets</b>\n` +
+          `${chn.emoji} ${esc(chn.name)} · 📄 <code>${short(ca)}</code>\n\n` +
+          `Placing a buy from each selected wallet now. I'll send one summary receipt (per-wallet results, total spent and tokens received) as soon as they land.`);
+      }
       const results = await Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       results.forEach((res, i) => {
@@ -809,8 +857,16 @@ async function doSell(chatId, ca, pct, chain, walletId) {
   try {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
-      if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code>…`);
-      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => !expert && send(chatId, `⚙️ Retry ${n}/2 — bumping gas &amp; slippage to push the sell through…`).catch(() => {}));
+      if (!expert) {
+        const sym = quickSym(chatId, ca, chain, wid);
+        const chn = core.chainOf(chain || core.userChain(core.ensureUser(chatId)));
+        await send(chatId,
+          `⏳ <b>Selling ${pct}% of ${sym ? '$' + esc(sym) : 'your token'}</b>\n` +
+          `${chn.emoji} ${esc(chn.name)} · 💳 ${esc(walletLabelFor(chatId, wid))}\n` +
+          `📄 <code>${short(ca)}</code>\n\n` +
+          `Submitting your sell order to the DEX now. This usually confirms in a few seconds — I'll send a full receipt (amount received, profit/loss and the transaction link) the moment it lands. No need to tap again.`);
+      }
+      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => !expert && send(chatId, `⚙️ <b>Retry ${n}/2</b> — the first attempt didn't confirm, so I'm bumping the gas and widening slippage to push the sell through. Hang tight…`).catch(() => {}));
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
@@ -833,7 +889,14 @@ async function doSell(chatId, ca, pct, chain, walletId) {
           [btn('🔄 Refresh card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
         ] });
     } else {
-      if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
+      if (!expert) {
+        const sym = quickSym(chatId, ca, chain);
+        const chn = core.chainOf(chain || core.userChain(core.ensureUser(chatId)));
+        await send(chatId,
+          `⏳ <b>Selling ${pct}% of ${sym ? '$' + esc(sym) : 'your token'} on ${targets.length} wallets</b>\n` +
+          `${chn.emoji} ${esc(chn.name)} · 📄 <code>${short(ca)}</code>\n\n` +
+          `Submitting a sell from each wallet that holds a bag now. I'll send one summary receipt (per-wallet proceeds and the total) the moment they confirm.`);
+      }
       const results = await Promise.allSettled(targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id)));
       let okN = 0, skip = 0, totProceeds = 0, totFee = 0, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
       results.forEach((res, i) => {
@@ -1026,6 +1089,8 @@ async function onCallback(q) {
   if (data === 'ref') { const s = referralScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'set') { const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'setslip') { setPending(chatId, { action: 'slip_val' }); return send(chatId, 'Send your <b>slippage %</b> (e.g. <code>5</code>). <code>0</code> = default (5%). Max 50.'); }
+  if (data === 'setgas') { const s = gasScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'gasset') { const n = Number((data.split(':')[1]) || 1); try { core.setGasBoost(chatId, n); } catch (_) {} const s = gasScreen(chatId); await answer(q.id, `Gas priority: ${gasLabel(core.userGasBoost(core.ensureUser(chatId)))}`); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'setbp') { const ck = core.userChain(core.ensureUser(chatId)); const cn = core.chainOf(ck); setPending(chatId, { action: 'bp_val', chain: ck }); return send(chatId, `Send <b>3 quick-buy amounts</b> for <b>${cn.emoji} ${esc(cn.name)}</b> (in ${cn.native}), separated by spaces, e.g. <code>0.01 0.05 0.1</code>:`); }
   if (data === 'cbtog') { const u = core.ensureUser(chatId); try { core.setConfirmBuy(chatId, !u.settings.confirmBuy); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'extog') { const u = core.ensureUser(chatId); try { core.setExpert(chatId, !u.settings.expert); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -1623,5 +1688,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

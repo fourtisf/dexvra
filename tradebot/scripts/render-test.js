@@ -10,12 +10,17 @@ const CH = { key: 'robinhood', name: 'Robinhood Chain', emoji: '🔗', native: '
 const CA = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const WALLET = { id: 'w1', address: '0xAbc0000000000000000000000000000000000001', positions: {}, active: true };
 WALLET.positions['robinhood:' + CA.toLowerCase()] = { sym: 'PEPE', dec: 18, tokens: '5000000000000000000000000', costEth: 0.12 };
+const USER = { id: 1, wallets: [WALLET], activeWallet: 'w1', settings: { slippage: 0, buyPresets: ['0.05', '0.1', '0.5'], confirmBuy: false, expert: false, autoBuy: false, autoBuyAmount: '0.01', autoTpPct: 0, autoSlPct: 0, gasBoost: 2 } };
 
 const coreStub = {
   CFG: { tgToken: 'TEST:TOKEN', feeWallet: '0xFee', solFeeWallet: 'SoL' },
   chains: { isSvm: () => false, enabledChains: () => [CH], isSol: () => false },
-  ensureUser: () => ({ id: 1, wallets: [WALLET], activeWallet: 'w1' }),
-  getUser: () => ({ id: 1 }),
+  ensureUser: () => USER,
+  getUser: () => USER,
+  hasChainPresets: () => false,
+  userGasBoost: (u) => (u && u.settings && u.settings.gasBoost) || 1,
+  setGasBoost: (id, n) => { USER.settings.gasBoost = Math.min(6, Math.max(1, Math.round(Number(n)))); return USER.settings.gasBoost; },
+  setSlippage: () => 0,
   allUsers: () => [{}],
   chainOf: (k) => (k === 'robinhood' ? CH : CH),
   userChain: () => 'robinhood',
@@ -73,5 +78,12 @@ const dump = (title, p) => {
   dump('TOKEN CARD (drop CA)', await T.tokenCard(1, CA, 'robinhood', 'w1'));
   dump('SELL MENU (Sell other %)', await T.sellMenu(1, CA, 'robinhood', 'w1'));
   dump('MONITOR (live position)', await T.monitorPayload(1, CA, 'robinhood', 'w1'));
+  if (T.settingsScreen) dump('SETTINGS', T.settingsScreen(1));
+  if (T.gasScreen) dump('GAS PRIORITY', T.gasScreen(1));
+  console.log('\n\n===== INTERIM PROGRESS HELPERS =====');
+  console.log('quickSym       →', JSON.stringify(T.quickSym(1, CA, 'robinhood', 'w1')));
+  console.log('walletLabelFor →', JSON.stringify(T.walletLabelFor(1, 'w1')));
+  console.log('Example sell progress line:');
+  console.log(`  ⏳ Selling 100% of $${T.quickSym(1, CA, 'robinhood', 'w1')} — 🔗 Robinhood Chain · 💳 ${T.walletLabelFor(1, 'w1')}`);
   process.exit(0);
 })().catch((e) => { console.error('render test failed:', e); process.exit(1); });

@@ -391,6 +391,7 @@ function ensureUser(chatId, referredBy) {
       if (!s.notify || typeof s.notify !== 'object') { s.notify = { snipe: true, copy: true, alerts: true }; ch = true; }
       if (typeof s.autoTpPct !== 'number') { s.autoTpPct = 0; ch = true; }   // 0 = off; else auto take-profit at +X% on every buy
       if (typeof s.autoSlPct !== 'number') { s.autoSlPct = 0; ch = true; }   // 0 = off; else auto stop-loss at −X%
+      if (typeof s.gasBoost !== 'number' || !(s.gasBoost >= 1)) { s.gasBoost = 1; ch = true; }   // gas priority: 1 Normal · 2 Fast · 3 Turbo
       if (!s.presetsByChain || typeof s.presetsByChain !== 'object') { s.presetsByChain = {}; ch = true; } }
     // Write THROUGH if we just minted a key in the backfill (durability), else debounce.
     if (minted) saveStoreNow(); else if (ch) saveStore();
@@ -649,6 +650,19 @@ function setSlippage(chatId, pct) {
   if (!(n >= 0) || n > 50) throw new Error('slippage must be a number 0–50 (%)');
   u.settings.slippage = n; saveStore();
   return n;
+}
+// Gas priority as a small integer multiplier on the gas price: 1 = Normal (the
+// default 2× base-fee buffer), 2 = Fast, 3 = Turbo. Higher confirms quicker when
+// the chain is busy; on the cheap Robinhood L2 even Turbo costs a fraction of a
+// cent. Retry escalation (on a failed sell) still bumps ON TOP of this.
+function userGasBoost(u) { const v = Math.round(Number(u && u.settings && u.settings.gasBoost)); return (v >= 1 && v <= 6) ? v : 1; }
+function setGasBoost(chatId, n) {
+  const u = ensureUser(chatId);
+  let v = Math.round(Number(n));
+  if (!(v >= 1)) v = 1;
+  if (v > 6) v = 6;
+  u.settings.gasBoost = v; saveStore();
+  return v;
 }
 // Set the 3 quick-buy amounts. If chainKey is given, they apply to THAT chain only
 // (settings.presetsByChain[chainKey]); otherwise they set the global default.
@@ -1230,7 +1244,8 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     const curve = await resolveCurve(ca, chainKey);
     const grad = curve ? await isGraduated(curve, chainKey) : true;
     const deadline = Math.floor(Date.now() / 1000) + 600;
-    const gas = await gasOverrides(chainKey);
+    const gasBoost = userGasBoost(u);   // user's chosen gas priority applies to every buy
+    const gas = await gasOverrides(chainKey, gasBoost);
     const slip = slipBps(u);
     const before = await tokenBalance(ca, wallet.address, chainKey);
 
@@ -1244,7 +1259,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
       // envelope (same reason curve SELL, withdraw and _chargeFee use rawSend) —
       // a plain cc.buy could throw the opaque "could not coalesce error" there.
       const data = cc.interface.encodeFunctionData('buy', [minTok, deadline]);
-      hash = await rawSend(wallet, chainKey, curve, data, 600000n, spend);
+      hash = await rawSend(wallet, chainKey, curve, data, 600000n, spend, gasBoost);
       venue = 'curve'; trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the buy reverted on-chain — you may not be allowed to buy this token yet (private beta), or try a smaller amount. Tx: ' + hash);
     } else {
@@ -1278,7 +1293,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
         const ri = new ethers.Interface(V3_ROUTER_ABI);
         const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: chain.weth, tokenOut: ca, fee: pick.feeTier, recipient: wallet.address, amountIn: spend, amountOutMinimum: minTok, sqrtPriceLimitX96: 0n }]);
         const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, spend);
-        hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, spend);
+        hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, spend, gasBoost);
         venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
         if (trc && trc.status === 0) throw new Error('the V3 buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
       } else {
@@ -1339,7 +1354,9 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
   const wal = _resolveWallet(u, walletId);
   // Retry escalation (from doSell): opts.gasMult raises the gas price, opts.slipAddBps
   // widens slippage — so a sell rejected for gas or a tight quote can be re-tried harder.
-  const gasMult = (opts && opts.gasMult) || 1;
+  // The user's own gas-priority setting is the FLOOR, so a normal (first-try) sell
+  // already honours Fast/Turbo; retries escalate above it.
+  const gasMult = Math.max(userGasBoost(u), (opts && opts.gasMult) || 1);
   const slipAdd = BigInt(Math.max(0, Math.round((opts && opts.slipAddBps) || 0)));
   return withWalletLock(wal.address, async () => {
     chainKey = chainKey || userChain(u);
@@ -1712,7 +1729,7 @@ module.exports = {
   walletList, walletById, activeWallet, activeAddress, addWallet, switchWallet, removeWallet, listWallets, WALLET_CAP,
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,
-  buyPresets, setSlippage, setBuyPresets, setAutoBuy, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
+  buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
   setConfirmBuy, setExpert, setAutoExit, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS,
