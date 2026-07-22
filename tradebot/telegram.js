@@ -733,7 +733,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       } catch (_) {}
       const exp2 = core.chainOf(r.chain);
       await send(chatId,
-        `🟩 <b>Buy of ${r.spentEth} ${r.native}${inUsd(spent)} succeeded</b> | 💳 ${esc(wl)}\n\n💰 You gained <b>${fmt(got)} $${esc(r.sym)}</b>${gained}${entryMc}`,
+        `🟩 <b>Buy of ${spent.toFixed(6)} ${r.native}${inUsd(spent)} succeeded</b> | 💳 ${esc(wl)}\n\n💰 You gained <b>${fmt(got)} $${esc(r.sym)}</b>${gained}${entryMc}`,
         { inline_keyboard: [
           [{ text: '🔍 Transaction', url: `${exp2.explorer}/tx/${r.hash}` }],
           [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
@@ -806,7 +806,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
       const sexp = core.chainOf(r.chain);
-      await send(chatId, `🟥 <b>Sell of ${r.soldPct}% succeeded</b>\n\n💰 You received <b>${r.proceedsEth} ${r.native}</b>${sUsd > 0 ? ` ≡ <b>$${(got2 * sUsd).toFixed(2)}</b>` : ''}`, { inline_keyboard: [
+      await send(chatId, `🟥 <b>Sell of ${r.soldPct}% succeeded</b>\n\n💰 You received <b>${got2.toFixed(6)} ${r.native}</b>${sUsd > 0 ? ` ≡ <b>$${(got2 * sUsd).toFixed(2)}</b>` : ''}`, { inline_keyboard: [
         [{ text: '🔍 Transaction', url: `${sexp.explorer}/tx/${r.hash}` }],
         [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
       ] });
@@ -1050,7 +1050,7 @@ async function onCallback(q) {
   if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '🎯 <b>How much to auto-buy on each new launch?</b>\n\nType an amount in the chain\'s coin (for example <code>0.01</code>). The bot will spend this on every new token it snipes.'); }
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
-  if (data === 'monx') { stopMonitor(chatId, mid); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
+  if (data === 'monx') { stopMonitor(chatId, mid); tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
   if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca' || k === 'mon' || k === 'monn') {
     const parts = data.split(':'); const ch = parts[1], wi = parts[2], tca = parts[3], a = parts[4];
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
@@ -1271,13 +1271,29 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   ] };
   return { text: L.join('\n'), kb, closed };
 }
-function stopMonitor(chatId, mid) { const k = chatId + ':' + mid; const t = _monitors.get(k); if (t) { clearInterval(t); _monitors.delete(k); } }
+const _monitorByToken = new Map();   // `${chatId}:${ca}` → msgId of the live monitor for that token
+function stopMonitor(chatId, mid) {
+  const k = chatId + ':' + mid; const t = _monitors.get(k);
+  if (t) { clearInterval(t); _monitors.delete(k); }
+  for (const [tk, m] of _monitorByToken) if (m === mid) _monitorByToken.delete(tk);
+}
 async function startMonitor(chatId, ca, chainKey, wid) {
   try {
+    // ONE live monitor per token — a repeat buy (or the 📍 button) reuses/replaces
+    // the existing pinned monitor instead of spamming a new message each time.
+    const tkey = chatId + ':' + String(ca).toLowerCase();
+    const existing = _monitorByToken.get(tkey);
+    if (existing) {
+      // refresh the existing monitor in place and keep it; don't post a duplicate.
+      try { const np = await monitorPayload(chatId, ca, chainKey, wid); await edit(chatId, existing, np.text, np.kb); return; } catch (_) { stopMonitor(chatId, existing); }
+    }
     const p = await monitorPayload(chatId, ca, chainKey, wid);
     const r = await send(chatId, p.text, p.kb);
     const mid = r && r.ok && r.result && r.result.message_id;
     if (!mid) return;
+    _monitorByToken.set(tkey, mid);
+    // Pin it (silently) so it stays at the top of the chat as a live position tracker.
+    tg('pinChatMessage', { chat_id: chatId, message_id: mid, disable_notification: true }).catch(() => {});
     const until = Date.now() + 30 * 60 * 1000;
     const timer = setInterval(async () => {
       if (Date.now() > until) return stopMonitor(chatId, mid);
@@ -1285,7 +1301,7 @@ async function startMonitor(chatId, ca, chainKey, wid) {
         const np = await monitorPayload(chatId, ca, chainKey, wid);
         const er = await edit(chatId, mid, np.text, np.kb);
         if (er && er.ok === false && /not found|can't be edited/i.test(er.description || '')) return stopMonitor(chatId, mid);
-        if (np.closed) stopMonitor(chatId, mid);   // position gone → freeze the last state
+        if (np.closed) { tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); stopMonitor(chatId, mid); }   // position gone → unpin + freeze
       } catch (_) { stopMonitor(chatId, mid); }
     }, 45000);
     _monitors.set(chatId + ':' + mid, timer);

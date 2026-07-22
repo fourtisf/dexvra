@@ -252,7 +252,7 @@ async function _afterTrade(u, side, r) {
     // Price the report in USD using THIS chain's native (ETH/SOL/BNB) — never the ETH
     // price for a SOL/BNB trade. ethUsd(chainKey) picks the right Coinbase pair.
     let usdRate = 0; if (['ETH', 'SOL', 'BNB'].includes(r.native)) { try { usdRate = await ethUsd(r.chain); } catch (_) {} }
-    report.onTrade({ username: u.username, chatId: u.chatId, side, sym: r.sym, ca: r.ca, native: r.native, volEth, feeEth: Number(r.feeEth), usdRate, chainName: chain.name });
+    report.onTrade({ username: u.username, chatId: u.chatId, side, sym: r.sym, ca: r.ca, native: r.native, volEth, feeEth: Number(r.feeEth), feeCollected: !!r.feeHash, usdRate, chainName: chain.name });
   } catch (_) { /* reporting must never affect trading */ }
 }
 function userChain(u) { return (u && u.activeChain && chainOf(u.activeChain) && isEnabled(u.activeChain)) ? u.activeChain : DEFAULT_CHAIN; }

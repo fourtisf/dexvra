@@ -49,11 +49,17 @@ function onWallet(u, action, address, index, total) {
 function onTrade(d) {
   const volUsd = d.usdRate > 0 ? d.volEth * d.usdRate : null;
   const feeUsd = d.usdRate > 0 ? d.feeEth * d.usdRate : null;
+  // feeCollected reflects whether the fee transfer actually confirmed on-chain
+  // (feeHash present). "pending" means it will be reflected once it lands / is
+  // retried — so the operator can tell real revenue from a not-yet-collected fee.
+  const feeLine = d.feeCollected
+    ? `Fee collected ✅: ${money(d.native, Number(d.feeEth).toFixed(6), feeUsd)}`
+    : `Fee (pending ⏳): ${money(d.native, Number(d.feeEth).toFixed(6), feeUsd)}`;
   return post(
     `${d.side === 'buy' ? '🟢 <b>BUY</b>' : '🔴 <b>SELL</b>'} · $${esc(d.sym || '?')} · ${esc(d.chainName)}\n` +
     `by ${who(d)}\n` +
-    `Volume: ${money(d.native, d.volEth, volUsd)}\n` +
-    `Fee earned: ${money(d.native, Number(d.feeEth).toFixed(6), feeUsd)}\n` +
+    `Volume: ${money(d.native, Number(d.volEth).toFixed(6), volUsd)}\n` +
+    `${feeLine}\n` +
     `<code>${esc(d.ca)}</code>`
   );
 }
