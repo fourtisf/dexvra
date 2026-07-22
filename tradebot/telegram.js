@@ -416,13 +416,33 @@ function historyScreen(chatId) {
 function snipeScreen(chatId) {
   const u = core.ensureUser(chatId);
   const chains = u.snipe.chains || {};
-  const kbRows = core.chains.enabledChains().map((c) => [btn(`${c.emoji} ${c.name}: ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]);
-  kbRows.push([btn('✏️ Set amount', 'snamt')]);
+  const enabled = core.chains.enabledChains();
+  const onList = enabled.filter((c) => chains[c.key]);
+  const amt = esc(u.snipe.ethAmount);
+  const live = onList.length > 0;
+  const onStr = live ? onList.map((c) => `${c.emoji} ${esc(c.name)}`).join(', ') : '<i>none yet</i>';
+  const SEP = '━━━━━━━━━━━━━━━━';
+  const text =
+    `🎯 <b>Auto-Snipe — buy every new launch</b>\n\n` +
+    `The bot watches for brand-new tokens and buys each one <b>the instant it launches</b>, all by itself.\n\n` +
+    `<b>Set it up in 2 steps:</b>\n` +
+    `1️⃣ Set how much to spend on each launch\n` +
+    `2️⃣ Turn ON the chains you want to snipe\n\n` +
+    SEP + `\n` +
+    `${live ? '🟢' : '⚪'} Status: <b>${live ? 'LIVE' : 'not active yet'}</b>\n` +
+    `💵 Spend per launch: <b>${amt}</b> (chain's coin)\n` +
+    `💳 Uses your <b>active wallet</b> on each chain\n` +
+    `📡 Sniping on: <b>${onStr}</b>\n` +
+    SEP + `\n\n` +
+    `<i>⚠️ This buys EVERY new launch on the chains you switch ON — most brand-new tokens are risky, so keep the amount small. Honeypots are skipped automatically, but always DYOR.</i>\n\n` +
+    `<i>👉 Want to snipe only ONE specific dev's launches (not everything)? Use 👥 Copy &amp; Dev Snipe instead.</i>`;
+  const kbRows = [];
+  kbRows.push([btn(`1️⃣ ✏️ Set amount (now ${amt})`, 'snamt')]);
+  // Step 2 — one clear toggle row per chain.
+  enabled.forEach((c) => kbRows.push([btn(`2️⃣ ${c.emoji} ${c.name}: ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
+  kbRows.push([btn('🎯 Snipe one dev wallet instead', 'copy')]);
   kbRows.push([btn('« Menu', 'menu')]);
-  return {
-    text: `🎯 <b>Snipe new launches</b>\n\n• <b>Robinhood Chain</b> — auto-buys every new launchpad token\n• <b>Other chains</b> — auto-buys every new DEX pair (honeypots auto-skipped)\n\nAmount per snipe: <b>${esc(u.snipe.ethAmount)}</b> (native)\nBuys with your <b>active wallet</b> on each chain.\n\n⚠️ Snipes indiscriminately — keep the amount small. Non-Robinhood sniping buys brand-new pairs which are <b>mostly risky</b>; honeypots are skipped but always DYOR.\n\nToggle per chain:`,
-    kb: { inline_keyboard: kbRows },
-  };
+  return { text, kb: { inline_keyboard: kbRows } };
 }
 function ordersScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -1716,5 +1736,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

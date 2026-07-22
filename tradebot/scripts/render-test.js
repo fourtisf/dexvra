@@ -11,6 +11,7 @@ const CA = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const WALLET = { id: 'w1', address: '0xAbc0000000000000000000000000000000000001', positions: {}, active: true };
 WALLET.positions['robinhood:' + CA.toLowerCase()] = { sym: 'PEPE', dec: 18, tokens: '5000000000000000000000000', costEth: 0.12 };
 const USER = { id: 1, wallets: [WALLET], activeWallet: 'w1', settings: { slippage: 0, buyPresets: ['0.05', '0.1', '0.5'], confirmBuy: false, expert: false, autoBuy: false, autoBuyAmount: '0.01', autoTpPct: 0, autoSlPct: 0, gasBoost: 2 },
+  snipe: { ethAmount: '0.01', chains: { robinhood: true } },
   copy: { on: true, targets: [
     { id: 'cp1', address: '0xDev0000000000000000000000000000000000A1', chain: 'robinhood', mode: 'launches', buyEth: '0.02', maxEth: '0.2', spentEth: 0.04 },
     { id: 'cp2', address: '0xTrd0000000000000000000000000000000000B2', chain: 'robinhood', mode: 'trades', buyEth: '0.05', maxEth: '0.5', spentEth: 0.15 },
@@ -18,7 +19,7 @@ const USER = { id: 1, wallets: [WALLET], activeWallet: 'w1', settings: { slippag
 
 const coreStub = {
   CFG: { tgToken: 'TEST:TOKEN', feeWallet: '0xFee', solFeeWallet: 'SoL' },
-  chains: { isSvm: () => false, enabledChains: () => [CH], isSol: () => false },
+  chains: { isSvm: () => false, enabledChains: () => [CH, { key: 'ethereum', name: 'Ethereum', emoji: '◆', native: 'ETH', curve: false }, { key: 'base', name: 'Base', emoji: '🔵', native: 'ETH', curve: false }], isSol: () => false },
   ensureUser: () => USER,
   getUser: () => USER,
   hasChainPresets: () => false,
@@ -87,6 +88,7 @@ const dump = (title, p) => {
   if (T.settingsScreen) dump('SETTINGS', T.settingsScreen(1));
   if (T.gasScreen) dump('GAS PRIORITY', T.gasScreen(1));
   if (T.copyScreen) dump('COPY & DEV SNIPE', T.copyScreen(1));
+  if (T.snipeScreen) dump('AUTO-SNIPE', T.snipeScreen(1));
   console.log('\n\n===== INTERIM PROGRESS HELPERS =====');
   console.log('quickSym       →', JSON.stringify(T.quickSym(1, CA, 'robinhood', 'w1')));
   console.log('walletLabelFor →', JSON.stringify(T.walletLabelFor(1, 'w1')));
