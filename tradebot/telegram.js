@@ -1306,9 +1306,16 @@ function statsText(snap, totalUsers) {
   const w = block(snap.vol, snap.fee);
   const l = block(snap.lifetime.vol, snap.lifetime.fee);
   const hrs = snap.since ? Math.max(1, Math.round((Date.now() - snap.since) / 3600000)) : 0;
+  // Treasury footer — where the collected fees are sent, so the report is
+  // self-auditing: cross-check these on-chain balances against the fee totals.
+  const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
+  let treasury = '\n\n💰 <b>Fee treasury</b>';
+  if (evmT) treasury += `\n  EVM: <code>${esc(evmT)}</code>`;
+  if (solT) treasury += `\n  SOL: <code>${esc(solT)}</code>`;
   return `📊 <b>Bot stats</b>\n👥 Total users: <b>${totalUsers}</b>\n\n` +
     `<b>Today (~${hrs}h)</b> · <b>${snap.trades}</b> trades · vol <b>$${fmt(w.volUsd)}</b> · fees <b>$${fmt(w.feeUsd)}</b>\n${w.lines}\n` +
-    `<b>Lifetime</b> · <b>${snap.lifetime.trades}</b> trades · vol <b>$${fmt(l.volUsd)}</b> · fees <b>$${fmt(l.feeUsd)}</b>\n${l.lines}`;
+    `<b>Lifetime</b> · <b>${snap.lifetime.trades}</b> trades · vol <b>$${fmt(l.volUsd)}</b> · fees <b>$${fmt(l.feeUsd)}</b>\n${l.lines}` +
+    treasury;
 }
 // Admin volume + fee snapshot on demand.
 async function adminStats(chatId) {
@@ -1471,6 +1478,13 @@ async function start() {
       }
     })();
     console.log(`ops reporting ENABLED → channel (daily recap ~${recapHour}:00 UTC)`);
+    // Announce the fee treasury to the channel at boot so the operator always
+    // knows (and can verify on-chain) which wallet the 1% fee is collected to.
+    const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
+    report.post(`🟢 <b>Dexvra Trade Bot online</b> — @${BOT_USERNAME || '?'}\n💰 <b>Fee treasury (1% per trade)</b>` +
+      (evmT ? `\n  EVM: <code>${esc(evmT)}</code>` : '') +
+      (solT ? `\n  SOL: <code>${esc(solT)}</code>` : '') +
+      `\n\n<i>Every trade sends its fee here. Cross-check the balance against the daily report.</i>`).catch(() => {});
   }
   // Off-site store backup to a private Telegram channel (see tgBackupOnce).
   if (backupChannel()) {
