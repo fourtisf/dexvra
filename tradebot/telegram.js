@@ -420,27 +420,26 @@ function snipeScreen(chatId) {
   const onList = enabled.filter((c) => chains[c.key]);
   const amt = esc(u.snipe.ethAmount);
   const live = onList.length > 0;
-  const onStr = live ? onList.map((c) => `${c.emoji} ${esc(c.name)}`).join(', ') : '<i>none yet</i>';
+  const onStr = live ? onList.map((c) => `${c.emoji} ${esc(c.name)}`).join(', ') : '—';
   const SEP = '━━━━━━━━━━━━━━━━';
   const statusLine = live
-    ? `🟢 <b>You're all set — it's running!</b>\nI'm sniping on <b>${onStr}</b> and spending <b>${amt}</b> per launch from your active wallet.`
-    : `⚪ <b>Not running yet.</b>\nTurn on at least one chain below and you're live.`;
+    ? `<b>Status: 🟢 Active</b>\nSniping on <b>${onStr}</b> · <b>${amt}</b> per launch from your active wallet.`
+    : `<b>Status: ⚪ Inactive</b>\nEnable at least one chain below to begin.`;
   const text =
-    `🎯 <b>Auto-Snipe — I buy new tokens for you</b>\n\n` +
-    `I watch the chains around the clock and <b>buy any brand-new token the second it launches</b> — so you never have to sit and stare at charts. Just tell me two things:\n\n` +
-    `<b>1️⃣ How much to spend each time?</b>\n` +
-    `Right now: <b>${amt}</b> (the chain's own coin). Tap the 💵 button to change it.\n\n` +
-    `<b>2️⃣ Which chains should I watch?</b>\n` +
-    `Tap a chain in the list to flip it 🟢 ON or ⚪ OFF. That's it.\n\n` +
+    `🎯 <b>Auto-Snipe</b>\n\n` +
+    `Automatically buys every brand-new token the moment it launches, on the chains you enable — no manual monitoring required.\n\n` +
+    `<b>1. Amount per launch</b>\n` +
+    `Currently <b>${amt}</b> (each chain's native coin). Tap 💵 below to change it.\n\n` +
+    `<b>2. Chains</b>\n` +
+    `Tap a chain to enable or disable sniping on it.\n\n` +
     SEP + `\n${statusLine}\n` + SEP + `\n\n` +
-    `<i>💡 This buys EVERY new launch on the chains you turn ON, and most brand-new tokens are risky — so keep the amount small. Honeypots are skipped for you, but always do your own research.</i>\n\n` +
-    `<i>👉 Only want to catch ONE specific dev's launches, not everything? Use 👥 Copy &amp; Dev Snipe instead.</i>`;
+    `⚠️ <b>Buys every new launch</b> on the enabled chains. Brand-new tokens carry high risk, so keep the amount small. Honeypots are filtered automatically; always do your own research.\n\n` +
+    `<i>To follow one specific developer's launches instead, use 👥 Copy &amp; Dev Snipe.</i>`;
   const kbRows = [];
-  kbRows.push([btn(`💵 Set amount  (now ${amt})`, 'snamt')]);
-  // Clean per-chain toggles — tapping flips ON/OFF.
-  enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF — tap to start'}`, `sntog:${c.key}`)]));
-  kbRows.push([btn('🎯 Snipe just one dev instead', 'copy')]);
-  kbRows.push([btn('« Back to menu', 'menu')]);
+  kbRows.push([btn(`💵 Amount: ${amt}`, 'snamt')]);
+  enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
+  kbRows.push([btn('🎯 Snipe a specific developer', 'copy')]);
+  kbRows.push([btn('« Back', 'menu')]);
   return { text, kb: { inline_keyboard: kbRows } };
 }
 function ordersScreen(chatId) {
@@ -900,7 +899,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
           `📄 <code>${short(ca)}</code>\n\n` +
           `Submitting your sell order to the DEX now. This usually confirms in a few seconds — I'll send a full receipt (amount received, profit/loss and the transaction link) the moment it lands. No need to tap again.`);
       }
-      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => !expert && send(chatId, `⚙️ <b>Retry ${n}/2</b> — the first attempt didn't confirm, so I'm bumping the gas and widening slippage to push the sell through. Hang tight…`).catch(() => {}));
+      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => !expert && send(chatId, `⚙️ <b>Retry ${n}/2</b> — the previous attempt did not confirm. Raising gas and widening slippage to complete the sell…`).catch(() => {}));
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
@@ -1165,7 +1164,7 @@ async function onCallback(q) {
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (k === 'sntog') { const u = core.ensureUser(chatId); try { core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '💵 <b>How much should I spend on each launch?</b>\n\nType a number in the chain\'s own coin — for example <code>0.01</code>.\nI\'ll spend exactly this on every new token I snipe. Start small while you try it out! 👍'); }
+  if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '💵 <b>Amount per snipe</b>\n\nEnter the amount to spend on each new launch, in the chain\'s native coin (for example <code>0.01</code>). This exact amount is used for every snipe. A small amount is recommended.'); }
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
   if (data === 'monx') { stopMonitor(chatId, mid); tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
