@@ -120,7 +120,12 @@ async function enrich(ca, chainKey) {
   const tasks = [];
   const onCurve = !!(chain.curve && snap.curve && !snap.graduated);
   if (onCurve) tasks.push(curveRaised(snap.curve, chainKey).then((v) => { if (v) { info.raised = v.raised; info.target = v.target; } }));
-  else tasks.push(dexLiquidityNative(ca, chainKey).then((v) => { info.liquidityNative = v; }));
+  // Liquidity of the venue a trade would ACTUALLY use (V2 pair or deepest V3
+  // pool — whichever the engine picks), not just the V2 pair.
+  else tasks.push(core.bestDexVenue(ca, chainKey).then((p) => {
+    info.dexVenue = p && p.kind;
+    info.liquidityNative = p && p.wethBal != null ? Number(ethers.formatEther(p.wethBal)) * 2 : null;
+  }).catch(() => { info.liquidityNative = null; }));
   if (chain.curve) tasks.push(launchpadApi(ca).then((a) => { info.api = a; }));
   tasks.push(marketStats(ca, chainKey).then((m) => { if (m) info.market = m; }));
   if (goplus.supported(chainKey)) tasks.push(goplus.tokenSecurity(chainKey, ca).then((s) => { info.security = s; }).catch(() => {}));

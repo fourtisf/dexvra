@@ -242,7 +242,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   const L = [];
   L.push(`<b>${esc(name)}</b>  $${esc(sym)}  ·  ${ch.emoji} ${esc(ch.name)}`);
   L.push(`<code>${ca}</code>`);
-  L.push(info.dex ? '◆ DEX' : (info.graduated ? '◆ GRADUATED' : `◈ LISTED · ${(info.progressPct || 0).toFixed(0)}%`));
+  L.push(info.dex ? `◆ DEX${info.dexVenue === 'v3' ? ' · V3 pool' : ''}` : (info.graduated ? '◆ GRADUATED' : `◈ LISTED · ${(info.progressPct || 0).toFixed(0)}%`));
   if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b>: ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ ${esc(v.warn.join(', '))}`); }
   L.push('');
   L.push(`💵 Price: <b>${priceUsd > 0 ? '$' + priceUsd.toPrecision(3) : px.toExponential(2) + ' ' + nat}</b>`);
@@ -679,7 +679,10 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
   const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
   if (!core.chains.isSvm(chG.key)) {
     try {
-      const liq = await withTmo(tokeninfo.dexLiquidityNative(ca, chG.key).catch(() => null), 4000, null);
+      // Depth of the venue the trade would ACTUALLY use (V2 pair or deepest V3
+      // pool) — so deep-V3 tokens aren't falsely blocked by a dusty V2 pair.
+      const pick = await withTmo(core.bestDexVenue(ca, chG.key).catch(() => null), 6000, null);
+      const liq = pick && pick.wethBal != null ? Number(ethers.formatEther(pick.wethBal)) * 2 : null;
       if (liq != null && liq >= 0) {
         const amtN = Number(amt) || 0;
         const impact = (amtN / (liq / 2 + amtN)) * 100;

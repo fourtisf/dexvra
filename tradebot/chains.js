@@ -21,6 +21,11 @@ const CHAINS = {
   robinhood: {
     key: 'robinhood', name: 'Robinhood Chain', emoji: '🪶', chainId: Number(env('CHAIN_ID', '4663')), native: 'ETH', curve: true,
     rpc: env('RPC', 'https://rpc.mainnet.chain.robinhood.com'),
+    // Uniswap V3 on Robinhood Chain: NO baked defaults on purpose — the official
+    // deployment addresses must come from Uniswap's deployments page (or run
+    // scripts/v3-discover.js against a known V3 pool). Guessed addresses on a
+    // money path are worse than a disabled feature. All three set → V3 routing on.
+    v3: { factory: env('ROBINHOOD_V3_FACTORY', ''), router: env('ROBINHOOD_V3_ROUTER', ''), quoter: env('ROBINHOOD_V3_QUOTER', '') },
     factory: env('FACTORY_ADDR', '0xf0a093bc6ab5bb408ca1f084ec2161d879edaa57'),
     router: env('DEX_ROUTER', '0x89e5db8b5aa49aa85ac63f691524311aeb649eba'),
     weth: env('WETH', '0x0bd7d308f8e1639fab988df18a8011f41eacad73'),
@@ -31,6 +36,11 @@ const CHAINS = {
     rpc: env('ETHEREUM_RPC', 'https://ethereum-rpc.publicnode.com'),   // llamarpc default was flaky → balances silently read 0
     router: env('ETHEREUM_ROUTER', '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),   // Uniswap V2
     weth: env('ETHEREUM_WETH', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+    // Uniswap V3 (canonical mainnet deployment: factory / SwapRouter02 / QuoterV2).
+    // When all three are set the engine can route to whichever pool is deeper.
+    v3: { factory: env('ETHEREUM_V3_FACTORY', '0x1F98431c8aD98523631AE4a59f267346ea31F984'),
+          router: env('ETHEREUM_V3_ROUTER', '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'),
+          quoter: env('ETHEREUM_V3_QUOTER', '0x61fFE014bA17989E743c5F6cB21bF9697530B21e') },
     explorer: 'https://etherscan.io',
   },
   base: {
@@ -38,6 +48,9 @@ const CHAINS = {
     rpc: env('BASE_RPC', 'https://mainnet.base.org'),
     router: env('BASE_ROUTER', '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24'),        // Uniswap V2 (Base)
     weth: env('BASE_WETH', '0x4200000000000000000000000000000000000006'),
+    v3: { factory: env('BASE_V3_FACTORY', '0x33128a8fC17869897dcE68Ed026d694621f6FDfD'),
+          router: env('BASE_V3_ROUTER', '0x2626664c2603336E57B271c5C0b26F421741e481'),
+          quoter: env('BASE_V3_QUOTER', '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a') },
     explorer: 'https://basescan.org',
   },
   bsc: {
@@ -45,6 +58,9 @@ const CHAINS = {
     rpc: env('BSC_RPC', 'https://bsc-dataseed.binance.org'),
     router: env('BSC_ROUTER', '0x10ED43C718714eb63d5aA57B78B54704E256024E'),         // PancakeSwap V2
     weth: env('BSC_WBNB', '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'),             // WBNB
+    v3: { factory: env('BSC_V3_FACTORY', '0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7'),   // Uniswap V3 on BNB
+          router: env('BSC_V3_ROUTER', '0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2'),
+          quoter: env('BSC_V3_QUOTER', '0x78D78E420Da98ad378D7799bE8f4AF69033EB077') },
     explorer: 'https://bscscan.com',
   },
   arbitrum: {
@@ -52,6 +68,9 @@ const CHAINS = {
     rpc: env('ARBITRUM_RPC', 'https://arb1.arbitrum.io/rpc'),
     router: env('ARBITRUM_ROUTER', '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24'),    // Uniswap V2 (Arbitrum)
     weth: env('ARBITRUM_WETH', '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1'),
+    v3: { factory: env('ARBITRUM_V3_FACTORY', '0x1F98431c8aD98523631AE4a59f267346ea31F984'),
+          router: env('ARBITRUM_V3_ROUTER', '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'),
+          quoter: env('ARBITRUM_V3_QUOTER', '0x61fFE014bA17989E743c5F6cB21bF9697530B21e') },
     explorer: 'https://arbiscan.io',
   },
   // Solana — NON-EVM (kind:'svm'). No chainId/router/weth/factory; swaps route through
