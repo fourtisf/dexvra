@@ -912,7 +912,12 @@ const V3_QUOTER_ABI = ['function quoteExactInputSingle((address tokenIn,address 
 const V3_ROUTER_ABI = ['function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)'];
 const WETH9_ABI = ['function withdraw(uint256)'];
 
-function v3Cfg(chainKey) { const c = chainOf(chainKey); const v = c && c.v3; return (v && v.factory && v.router && v.quoter) ? v : null; }
+// V3 is enabled for a chain only when factory+router+quoter are all WELL-FORMED
+// addresses. A blank OR malformed value (e.g. a placeholder "0x…" fat-fingered
+// into .env) disables V3 for that chain and the engine falls back to V2 —
+// never breaks trading with an invalid-address throw.
+const _isAddr = (a) => /^0x[0-9a-fA-F]{40}$/.test(String(a == null ? '' : a).trim());
+function v3Cfg(chainKey) { const c = chainOf(chainKey); const v = c && c.v3; return (v && _isAddr(v.factory) && _isAddr(v.router) && _isAddr(v.quoter)) ? v : null; }
 
 // Deepest token↔WETH V3 pool across fee tiers, measured by the WETH the pool
 // holds (directly comparable to a V2 pair's WETH reserve).

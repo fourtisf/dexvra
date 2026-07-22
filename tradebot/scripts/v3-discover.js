@@ -26,7 +26,9 @@ const POOL_ABI = [
   'function token0() view returns (address)',
   'function token1() view returns (address)',
   'function liquidity() view returns (uint128)',
+  'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 obsIdx, uint16 obsCard, uint16 obsCardNext, uint8 feeProtocol, bool unlocked)',
 ];
+const QUOTER_ABI = ['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)'];
 const SWAP_TOPIC = ethers.id('Swap(address,address,int256,int256,uint160,uint128,int24)');
 const QUOTER_CANDIDATES = [
   '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',   // QuoterV2 — mainnet/arbitrum/…
@@ -102,12 +104,52 @@ async function findRouter(prov, pool) {
   }
   if (!quoter) console.log('    (none found — get QuoterV2 from Uniswap deployments docs)');
 
+  // ── LIVE VERIFICATION ──────────────────────────────────────────────────
+  // The factory (from the pool) is trusted. The quoter is the fragile part on a
+  // CUSTOM deployment: prove it actually returns a quote that matches the pool's
+  // own slot0 price. If it doesn't, these addresses must NOT be used.
+  console.log('\nVerifying the quoter against the pool (live)…');
+  let quoterOK = false, spotPrice0per1 = null;
+  try {
+    const s0 = await pc.slot0();
+    // price of token0 in token1 from sqrtPriceX96: (sqrt/2^96)^2
+    const sp = Number(s0[0]);
+    spotPrice0per1 = (sp / 2 ** 96) ** 2;   // token1 per token0 (raw, ignoring decimals — used only as a sanity ratio)
+    console.log(`  pool slot0 sqrtPriceX96=${s0[0]} (tick ${s0[1]})`);
+  } catch (e) { console.log('  slot0 read failed: ' + (e.message || e)); }
+  if (quoter && fee != null && t0 && t1) {
+    try {
+      const q = new ethers.Contract(quoter, QUOTER_ABI, prov);
+      const amtIn = 10n ** 15n;   // 0.001 of token0
+      const r = await q.quoteExactInputSingle.staticCall({ tokenIn: t0, tokenOut: t1, amountIn: amtIn, fee, sqrtPriceLimitX96: 0n });
+      const out = r[0];
+      if (out > 0n) {
+        quoterOK = true;
+        const implied = Number(out) / Number(amtIn);
+        console.log(`  ✅ quoter returned ${out} (token1 out for 0.001 token0) — implied ratio ${implied.toExponential(3)}`);
+        if (spotPrice0per1 != null) {
+          const drift = Math.abs(implied - spotPrice0per1) / spotPrice0per1;
+          console.log(`  cross-check vs slot0: ${(drift * 100).toFixed(1)}% ${drift < 0.1 ? '✅ matches' : '⚠️ differs — double-check the fee tier'}`);
+        }
+      } else { console.log('  ❌ quoter returned 0 — wrong quoter for this deployment.'); }
+    } catch (e) { console.log('  ❌ quoter call reverted: ' + (e.shortMessage || e.message || e) + '\n     → this QuoterV2 does NOT work with this chain\'s factory.'); }
+  }
+
   console.log('\n────────────────────────────────────────────────────────');
-  console.log('Add these to /opt/dexvra/tradebot/.env  (verify first!):\n');
-  console.log(`${chainKey.toUpperCase()}_V3_FACTORY=${factory}`);
-  console.log(`${chainKey.toUpperCase()}_V3_ROUTER=${router || '0x…(not found — see above)'}`);
-  console.log(`${chainKey.toUpperCase()}_V3_QUOTER=${quoter || '0x…(not found — see above)'}`);
-  console.log('\n⚠️ The ROUTER is inferred from real swaps; confirm it is Uniswap SwapRouter02');
-  console.log('   (not an aggregator) before trading. Then: pm2 restart dexvra-tradebot --update-env');
+  if (quoterOK && router) {
+    console.log('✅ VERIFIED. Add these to /opt/dexvra/tradebot/.env:\n');
+    console.log(`${chainKey.toUpperCase()}_V3_FACTORY=${factory}`);
+    console.log(`${chainKey.toUpperCase()}_V3_ROUTER=${router}`);
+    console.log(`${chainKey.toUpperCase()}_V3_QUOTER=${quoter}`);
+    console.log('\nThen: pm2 restart dexvra-tradebot --update-env');
+    console.log('⚠️ ROUTER is inferred from real swaps — do ONE tiny test buy (e.g. $2) and');
+    console.log('   confirm it fills at a sane price before trading larger.');
+  } else {
+    console.log('❌ NOT verified — do NOT put these in .env yet.');
+    console.log(`   factory: ${factory}`);
+    console.log(`   router : ${router || '(not found)'}`);
+    console.log(`   quoter : ${quoter || '(not found)'}  ${quoterOK ? '' : '← quoter did not return a valid quote'}`);
+    console.log('   Paste this whole output back and we\'ll find the right quoter/router.');
+  }
   console.log('────────────────────────────────────────────────────────\n');
 })().catch((e) => { console.error('discover failed:', (e && e.message) || e); process.exit(1); });
