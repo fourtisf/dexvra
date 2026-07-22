@@ -72,6 +72,18 @@ function activeChain(chatId) { return core.chainOf(core.userChain(core.ensureUse
 const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(() => r(fb), ms))]);
 // Chart + explorer URL buttons for the token card. DexScreener covers the big
 // chains by slug; anything else (e.g. Robinhood Chain) falls back to search.
+// Buy amounts accept native units ('0.05') or USD ('$10', '10$', '10usd') —
+// USD converts to native at the live price-feed rate at parse time.
+function parseAmt(input, native) {
+  const s = String(input == null ? '' : input).trim().toLowerCase();
+  const m = s.match(/^\$?([0-9]*\.?[0-9]+)(\$|usd)?$/);
+  if (!m) return null;
+  const n = Number(m[1]); if (!(n > 0)) return null;
+  if (!(s.startsWith('$') || m[2])) return { amt: String(n) };
+  const px = nativeUsd(native);
+  if (!(px > 0)) return { err: `price feed unavailable — send a ${native} amount instead (e.g. 0.01)` };
+  return { amt: String(Number((n / px).toFixed(6))), usdVal: n };
+}
 const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
 const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
@@ -660,7 +672,28 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code>…`);
       const r = await core.buy(chatId, ca, amt, chain, wid);
       const wi = walletIndex(chatId, wid);
-      await send(chatId, `✅ <b>Bought</b> ${fmt(r.gotTokens)} $${esc(r.sym)}\nSpent ${r.spentEth} ${r.native} · fee ${r.feeEth.toFixed(5)} · ${r.venue}\n${txLink(r.chain, r.hash)}`, rows([btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
+      // Full-value receipt: every number carries its USD worth, entry price per
+      // token, plus a live bag valuation + PnL read right after the fill.
+      const usdRate = nativeUsd(r.native);
+      const spent = Number(r.spentEth) || 0, fee = Number(r.feeEth) || 0, got = Number(r.gotTokens) || 0;
+      const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
+      const entry = (got > 0 && spent > 0 && usdRate > 0) ? `\n📈 Entry: <b>$${((spent * usdRate) / got).toPrecision(3)}</b> / token · ${r.venue}` : `\n· via ${r.venue}`;
+      let pnl = '';
+      try {
+        const snap = await withTmo(core.tokenSnapshot(ca, r.chain).catch(() => null), 4000, null);
+        const uu = core.getUser(chatId); const ww = (uu && (core.walletById(uu, wid) || core.activeWallet(uu))) || null;
+        const pos = ww && (ww.positions || {})[core.posKey(r.chain, ca)];
+        if (snap && snap.priceEth > 0 && pos && (pos.ethIn - pos.ethOut) > 0) {
+          const balNow = pos.tokens != null ? Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)) : got;
+          const valueEth = balNow * snap.priceEth;
+          const costEth = pos.ethIn - pos.ethOut;
+          const unreal = valueEth - costEth;
+          const pct = costEth > 0 ? (unreal / costEth) * 100 : 0;
+          pnl = `\n💼 Bag now: <b>${fmt(balNow)} $${esc(r.sym)}</b> ≈ ${valueEth.toFixed(5)} ${r.native}${inUsd(valueEth)}`
+              + `\n📊 PnL live: <b>${unreal >= 0 ? '🟢 +' : '🔴 '}${unreal.toFixed(5)} ${r.native}</b>${inUsd(unreal)} · ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        }
+      } catch (_) {}
+      await send(chatId, `✅ <b>Bought</b> ${fmt(got)} $${esc(r.sym)}\n💵 Spent: <b>${r.spentEth} ${r.native}</b>${inUsd(spent)} · fee ${fee.toFixed(5)}${inUsd(fee)}${entry}${pnl}\n${txLink(r.chain, r.hash)}`, rows([btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
       await _placeAutoExit(chatId, r, wid);
     } else {
       if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
@@ -672,7 +705,8 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
         else { const e = res.reason; lines.push(`• ${esc(t.label)}: ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
-      const head = `✅ <b>Bought on ${okN}/${targets.length} wallets</b> — $${esc(sym || '')}\nTotal ${fmt(totTok)} · spent ${totSpent.toFixed(5)} ${esc(nat || 'ETH')} · fee ${totFee.toFixed(5)}`;
+      const mUsd = nativeUsd(nat || 'ETH');
+      const head = `✅ <b>Bought on ${okN}/${targets.length} wallets</b> — $${esc(sym || '')}\nTotal ${fmt(totTok)} · spent ${totSpent.toFixed(5)} ${esc(nat || 'ETH')}${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''} · fee ${totFee.toFixed(5)}${mUsd > 0 ? ` ($${(totFee * mUsd).toFixed(2)})` : ''}`;
       await send(chatId, head + '\n' + lines.join('\n'), rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     }
   } catch (e) { await send(chatId, `❌ Buy failed: ${esc(e.message || String(e))}`); }
@@ -687,7 +721,9 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code>…`);
       const r = await core.sell(chatId, ca, pct, chain, wid);
       const wi = walletIndex(chatId, wid);
-      await send(chatId, `✅ <b>Sold</b> ${r.soldPct}%\nGot ${r.proceedsEth} ${r.native} · fee ${r.feeEth.toFixed(5)} · ${r.venue}\n${txLink(r.chain, r.hash)}`, rows([btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
+      const sUsd = nativeUsd(r.native);
+      const got2 = Number(r.proceedsEth) || 0, fee2 = Number(r.feeEth) || 0;
+      await send(chatId, `✅ <b>Sold</b> ${r.soldPct}%\n💵 Got: <b>${r.proceedsEth} ${r.native}</b>${sUsd > 0 ? ` ($${(got2 * sUsd).toFixed(2)})` : ''} · fee ${fee2.toFixed(5)}${sUsd > 0 ? ` ($${(fee2 * sUsd).toFixed(2)})` : ''} · ${r.venue}\n${txLink(r.chain, r.hash)}`, rows([btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     } else {
       if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
       const results = await Promise.allSettled(targets.map((t) => core.sell(chatId, ca, pct, chain, t.id)));
@@ -698,7 +734,8 @@ async function doSell(chatId, ca, pct, chain, walletId) {
         else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• ${esc(t.label)}: — no bag`); } else lines.push(`• ${esc(t.label)}: ❌ ${esc(msg.slice(0, 60))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
-      const head = `✅ <b>Sold ${pct}% on ${okN}/${targets.length} wallets</b>${skip ? ` (${skip} had no bag)` : ''}\nTotal got ${totProceeds.toFixed(5)} ${esc(nat || 'ETH')} · fee ${totFee.toFixed(5)}`;
+      const msUsd = nativeUsd(nat || 'ETH');
+      const head = `✅ <b>Sold ${pct}% on ${okN}/${targets.length} wallets</b>${skip ? ` (${skip} had no bag)` : ''}\nTotal got ${totProceeds.toFixed(5)} ${esc(nat || 'ETH')}${msUsd > 0 ? ` ($${(totProceeds * msUsd).toFixed(2)})` : ''} · fee ${totFee.toFixed(5)}${msUsd > 0 ? ` ($${(totFee * msUsd).toFixed(2)})` : ''}`;
       await send(chatId, head + '\n' + lines.join('\n'), rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     }
   } catch (e) { await send(chatId, `❌ Sell failed: ${esc(e.message || String(e))}`); }
@@ -799,7 +836,7 @@ async function onMessage(m) {
   if (text.startsWith('/stats')) return adminStats(chatId);
   if (text === '/menu' || text === '/help') return send(chatId, helpText(chatId), mainMenu());
   if (text === '/bahasa' || text === '/lang' || text === '/language') { const s = langScreen(chatId); return send(chatId, s.text, s.kb); }
-  if (text.startsWith('/buy')) { const [, ca, amt] = text.split(/\s+/); if (isCa(ca) && amt) { const det = await detectChain(chatId, ca); return requestBuy(chatId, ca, amt, det.chain); } return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount&gt;</code> — or paste a contract address.'); }
+  if (text.startsWith('/buy')) { const [, ca, amtRaw] = text.split(/\s+/); if (isCa(ca) && amtRaw) { const det = await detectChain(chatId, ca); const cn = core.chainOf(det.chain || core.userChain(core.ensureUser(chatId))); const pa = parseAmt(amtRaw, cn.native); if (!pa) return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code>'); if (pa.err) return send(chatId, '❌ ' + esc(pa.err)); return requestBuy(chatId, ca, pa.amt, det.chain); } return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code> — or paste a contract address.'); }
   if (text.startsWith('/sell')) { const [, ca, pct] = text.split(/\s+/); if (isCa(ca) && pct) { const det = await detectChain(chatId, ca); return doSell(chatId, ca, Number(pct), det.chain); } return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>'); }
 
   if (isCa(text)) {
@@ -933,7 +970,7 @@ async function onCallback(q) {
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
-    if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); return send(chatId, `Send the amount to buy of <code>${short(tca)}</code>:`); }
+    if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `Send the amount to buy of <code>${short(tca)}</code> — in <b>${cn ? cn.native : 'native'}</b> (e.g. <code>0.05</code>) or in USD (e.g. <code>$10</code>):`); }
     if (k === 'sx') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `Sell what % of your <code>${short(tca)}</code> bag? Send a number 1–100:`); }
     if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 Take-profit — send the target to sell 100% at:\n• a <b>USD price</b> (e.g. <code>0.0025</code>), or\n• a <b>market cap</b> — prefix with <code>mc</code> (e.g. <code>mc 1000000</code>).`); }
     if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 Stop-loss — send the target to sell 100% at:\n• a <b>USD price</b> (e.g. <code>0.0008</code>), or\n• a <b>market cap</b> — prefix with <code>mc</code> (e.g. <code>mc 250000</code>).`); }
@@ -970,7 +1007,7 @@ async function resolvePending(chatId, p, text, m) {
     }
     if (p.action === 'rename_wallet') { const raw = String(t).trim(); const name = core.renameWallet(chatId, p.id, raw === '-' ? '' : raw); await send(chatId, name ? `✅ Renamed to <b>${esc(name)}</b>.` : '✅ Name reset to default.'); const s = await walletsScreen(chatId); return send(chatId, s.text, s.kb); }
     if (p.action === 'confirm_buy') { pending.set(chatId, p); return send(chatId, 'Tap ✅ Confirm or ✖ Cancel above, or /cancel.'); }   // confirm is button-driven; keep original ts (don't refresh TTL)
-    if (p.action === 'buy_amt') { if (!(Number(t) > 0)) return send(chatId, 'Send a positive number.'); return requestBuy(chatId, p.ca, t, p.chain, p.walletId); }
+    if (p.action === 'buy_amt') { const cn = core.chainOf(p.chain || core.userChain(core.ensureUser(chatId))); const pa = parseAmt(t, cn.native); if (!pa) return send(chatId, `Send a positive number — in ${cn.native} (<code>0.05</code>) or USD (<code>$10</code>).`); if (pa.err) return send(chatId, '❌ ' + esc(pa.err)); return requestBuy(chatId, p.ca, pa.amt, p.chain, p.walletId); }
     if (p.action === 'sell_pct') { const pct = Number(t); if (!(pct > 0 && pct <= 100)) return send(chatId, 'Send a number 1–100.'); return doSell(chatId, p.ca, pct, p.chain, p.walletId); }
     if (p.action === 'slip_val') { const n = core.setSlippage(chatId, t); const s = settingsScreen(chatId); return send(chatId, `✅ Slippage set to <b>${n > 0 ? n + '%' : 'default (5%)'}</b>.`, s.kb); }
     if (p.action === 'bp_val') { const arr = core.setBuyPresets(chatId, t, p.chain); const cn = core.chainOf(p.chain); return send(chatId, `✅ Quick-buy for <b>${cn ? esc(cn.name) : 'this chain'}</b>: <b>${arr.join(' · ')}${cn ? ' ' + cn.native : ''}</b>.`, settingsScreen(chatId).kb); }
@@ -1332,5 +1369,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit } };
+module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
