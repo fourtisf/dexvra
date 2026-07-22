@@ -79,6 +79,18 @@ bot's `.env` gets the same value. Until it's set, every `/api/internal/*` route
 returns 401 (fails closed). Generate one with
 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
+## Trade bot (`tradebot/`)
+
+The **Dexvra Trade Bot** (`tradebot/`, its own package — see
+[`tradebot/README.md`](tradebot/README.md)) is the custodial, Maestro-style,
+multi-chain Telegram trading bot migrated from the Robinfun repo: one-tap
+buy/sell by contract address on Robinhood Chain / Ethereum / Base / BNB /
+Arbitrum / Solana, snipe, copy-trading, TP/SL/limit/DCA orders, referrals, and
+visitor + trade ops-reporting to a private admin channel (`report.js`,
+`REPORT_CHANNEL_ID`). It is a **separate Telegram bot and process** from
+`bot/` (its own token via `TRADEBOT_TOKEN`, its own `data/` store) — run it
+with `cd tradebot && npm install && npm start`.
+
 ## Durable storage — MongoDB (optional)
 
 Both the web app and the bot persist to local JSON files under `data/` by
