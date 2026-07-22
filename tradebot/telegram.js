@@ -479,17 +479,32 @@ function copyScreen(chatId) {
   const u = core.ensureUser(chatId);
   const c = u.copy || { on: false, targets: [] };
   const list = c.targets || [];
-  let body = `👥 <b>Copy-trading</b> (beta) — mirror a wallet's BUYS\n\nMaster: <b>${c.on ? '🟢 ON' : '⚪ OFF'}</b>\n\n`;
+  const ach = activeChain(chatId);
+  let body = `👥 <b>Copy &amp; Dev Snipe</b> (beta)\n\n` +
+    `Follow any wallet and act on it automatically. Two modes:\n` +
+    `• <b>Copy trades</b> — when it <b>buys</b> a token, you buy it too.\n` +
+    `• <b>Dev snipe</b> 🎯 — when it <b>launches a new token</b> on the launchpad, you buy the launch instantly (like a pump.fun dev sniper).\n\n` +
+    `Master switch: <b>${c.on ? '🟢 ON' : '⚪ OFF'}</b>\n\n`;
   const kbRows = [[btn(c.on ? '🔴 Turn OFF' : '🟢 Turn ON', 'cptog')]];
-  if (!list.length) body += 'No wallets followed yet.\n';
-  else for (const t of list) {
-    const ch = core.chainOf(t.chain) || { emoji: '' };
-    body += `${ch.emoji} <code>${short(t.address)}</code> · ${esc(t.buyEth)}/buy · spent ${Number(t.spentEth).toFixed(3)}/${esc(t.maxEth)}\n`;
-    kbRows.push([btn(`✖ Unfollow ${short(t.address)}`, `cprm:${t.id}`)]);
+  if (!list.length) body += '<i>No wallets followed yet — add one below.</i>\n';
+  else {
+    body += '<b>Following:</b>\n';
+    for (const t of list) {
+      const ch = core.chainOf(t.chain) || { emoji: '' };
+      const badge = (t.mode === 'launches') ? '🎯 dev snipe' : '👥 copy trades';
+      const spent = Number(t.spentEth).toFixed(3), max = esc(t.maxEth);
+      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy · used ${spent}/${max} ${ch.native || ''}\n`;
+      kbRows.push([btn(`✖ Remove ${t.mode === 'launches' ? '🎯' : '👥'} ${short(t.address)}`, `cprm:${t.id}`)]);
+    }
   }
-  if (list.length < core.MAX_COPY_TARGETS) kbRows.push([btn('➕ Follow a wallet', 'cpadd')]);
+  if (list.length < core.MAX_COPY_TARGETS) {
+    kbRows.push([btn('➕ Copy trades', 'cpadd')]);
+    // Dev snipe is only offered when the active chain is a launchpad chain.
+    if (core.canDevSnipe(ach.key)) kbRows.push([btn('🎯 Snipe a dev wallet', 'cpaddd')]);
+  }
   kbRows.push([btn('« Menu', 'menu')]);
-  body += `\n<i>Copies only BUYS the followed wallet makes from a token's own pool, using your active wallet on that token's chain. Honeypots are skipped. Total spend per wallet is capped (budget) so worst-case loss is bounded. You manage your own sells (TP/SL). ⚠️ High risk — DYOR.</i>`;
+  body += `\n<i>Both modes use your per-buy amount from your wallet on that chain, skip honeypots, and are hard-capped by the budget so worst-case loss is bounded. Sells stay your job (TP/SL/manual). Turn the master switch ON to start. ⚠️ High risk — DYOR.</i>`;
+  if (!core.canDevSnipe(ach.key)) body += `\n<i>🎯 Dev snipe is available on Robinhood Chain &amp; Solana — switch chain (🌐) to add one.</i>`;
   return { text: body, kb: { inline_keyboard: kbRows } };
 }
 function referralScreen(chatId) {
@@ -1170,7 +1185,14 @@ async function onCallback(q) {
   if (k === 'al') { const okc = watchers.cancelAlert(chatId, ca); await answer(q.id, okc ? 'Cancelled' : 'Not found'); const s = alertsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'copy') { const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'cptog') { const u = core.ensureUser(chatId); try { core.setCopyOn(chatId, !(u.copy && u.copy.on)); } catch (_) {} const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'cpadd') { setPending(chatId, { action: 'copy_add' }); const ch = activeChain(chatId); const ex = core.chains.isSvm(ch.key) ? '4Nd1m… 0.05 0.5' : '0xAbc… 0.02 0.2'; return send(chatId, `👥 <b>Follow a wallet</b> on ${ch.emoji} ${esc(ch.name)} (your active chain)\n\nSend: <code>&lt;wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\nEach buy the wallet makes is mirrored with <b>perBuy</b> ${ch.native} from your active wallet, until <b>totalBudget</b> is spent.`); }
+  if (data === 'cpadd') { setPending(chatId, { action: 'copy_add', mode: 'trades' }); const ch = activeChain(chatId); const ex = core.chains.isSvm(ch.key) ? '4Nd1m… 0.05 0.5' : '0xAbc… 0.02 0.2'; return send(chatId, `👥 <b>Copy a wallet's trades</b> on ${ch.emoji} ${esc(ch.name)} (your active chain)\n\nSend: <code>&lt;wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\nEvery <b>buy</b> the wallet makes is mirrored with <b>perBuy</b> ${ch.native} from your wallet, until <b>totalBudget</b> is used up.`); }
+  if (data === 'cpaddd') {
+    const ch = activeChain(chatId);
+    if (!core.canDevSnipe(ch.key)) return send(chatId, `🎯 Dev snipe works on <b>Robinhood Chain</b> and <b>Solana</b> (the launchpad chains). Switch chain with 🌐, then try again.`, rows([btn('🌐 Switch chain', 'chain'), btn('« Copy', 'copy')]));
+    setPending(chatId, { action: 'copy_add', mode: 'launches' });
+    const ex = core.chains.isSvm(ch.key) ? 'DevWa11et… 0.05 0.5' : '0xDev… 0.02 0.2';
+    return send(chatId, `🎯 <b>Snipe a dev wallet</b> on ${ch.emoji} ${esc(ch.name)}\n\nFollow a developer/creator wallet. The moment it <b>launches a new token</b> on the launchpad, the bot auto-buys the launch with your per-buy amount — until the budget is used up.\n\nSend: <code>&lt;dev_wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\n<i>Only that wallet's OWN new launches are bought (matched by on-chain creator), never its ordinary trades. Honeypots are skipped; budget caps your risk.</i>`);
+  }
   if (k === 'cprm') { core.removeCopyTarget(chatId, ca); const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'oc') { const ok = watchers.cancelOrder(chatId, ca); await answer(q.id, ok ? 'Cancelled' : 'Not found'); const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
 }
@@ -1267,8 +1289,14 @@ async function resolvePending(chatId, p, text, m) {
       const parts = t.split(/\s+/).filter(Boolean);
       if (parts.length < 3) return send(chatId, 'Format: <code>&lt;wallet&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>, e.g. <code>0xAbc… 0.02 0.2</code>');
       const ch = activeChain(chatId);
-      const tg = core.addCopyTarget(chatId, parts[0], ch.key, parts[1], parts[2]);
-      return send(chatId, `✅ Following <code>${short(tg.address)}</code> on ${ch.emoji} ${esc(ch.name)} — ${esc(tg.buyEth)}/buy, budget ${esc(tg.maxEth)}. Turn the master switch ON to start copying.`, rows([btn('👥 Copy', 'copy')]));
+      const mode = p.mode === 'launches' ? 'launches' : 'trades';
+      try {
+        const tgt = core.addCopyTarget(chatId, parts[0], ch.key, parts[1], parts[2], mode);
+        const u2 = core.ensureUser(chatId);
+        const onNote = (u2.copy && u2.copy.on) ? 'The master switch is ON — it is live now.' : 'Turn the master switch ON to start.';
+        if (mode === 'launches') return send(chatId, `✅ <b>Dev snipe armed</b> 🎯\nWatching <code>${short(tgt.address)}</code> on ${ch.emoji} ${esc(ch.name)} — when it launches a new token I'll buy <b>${esc(tgt.buyEth)} ${ch.native}</b> (budget ${esc(tgt.maxEth)}).\n${onNote}`, rows([btn('👥 Copy & Snipe', 'copy')]));
+        return send(chatId, `✅ <b>Copying trades</b> 👥\nFollowing <code>${short(tgt.address)}</code> on ${ch.emoji} ${esc(ch.name)} — ${esc(tgt.buyEth)} ${ch.native}/buy, budget ${esc(tgt.maxEth)}.\n${onNote}`, rows([btn('👥 Copy & Snipe', 'copy')]));
+      } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
     }
     if (p.action === 'alert_price') {
       const usdPrice = Number(t); if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price.');
@@ -1688,5 +1716,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

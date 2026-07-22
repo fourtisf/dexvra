@@ -39,13 +39,28 @@ const SNIPE_CONCURRENCY = Math.max(1, Number(process.env.SNIPE_CONCURRENCY || 4)
 let _lastSnipeBlock = 0;
 const SNIPE_MAX_SPAN = Math.max(200, Number(process.env.SNIPE_MAX_SPAN || 2000));
 const _snipeFailAt = new Map();   // chatId -> last failure-DM ms (rate limit)
+// Per-launch dedup for the "snipe ALL launches" EVM paths. Their block cursor can be
+// pinned BACKWARD when a load-balanced RPC returns a lagging head (the cycles explicitly
+// handle head < cursor), which re-scans a block range and would otherwise buy the same
+// launch twice (core.buy has no on-chain idempotency). Marking each launch seen makes
+// snipe-all one-shot. Dev-wallet snipe does NOT use this — it's already idempotent via
+// its target's own `bought` map. (Audit #1 fix.)
+const _snipeSeen = new Set();
+function _snipeMark(chainKey, token) {
+  const k = chainKey + ':' + String(token).toLowerCase();
+  if (_snipeSeen.has(k)) return false;
+  _snipeSeen.add(k);
+  if (_snipeSeen.size > 8000) { const it = _snipeSeen.values().next().value; _snipeSeen.delete(it); }
+  return true;
+}
 async function snipeCycle() {
   const prov = core.providerFor(SNIPE_CHAIN);
   let head;
   try { head = await prov.getBlockNumber(); } catch (_) { return; }
   if (!_lastSnipeBlock || head < _lastSnipeBlock) _lastSnipeBlock = head;   // pin cursor near head always
   const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.robinhood && Number(u.snipe.ethAmount) > 0);
-  if (!armed.length) { _lastSnipeBlock = head; return; }
+  const devFollowers = launchFollowers('robinhood');   // users sniping specific dev wallets on Robinhood
+  if (!armed.length && !devFollowers.length) { _lastSnipeBlock = head; return; }
   const factory = new ethers.Contract(core.chainOf(SNIPE_CHAIN).factory, core.FACTORY_ABI, prov);
   const from = Math.max(_lastSnipeBlock + 1, head - SNIPE_MAX_SPAN);
   if (from > head) { _lastSnipeBlock = head; return; }
@@ -57,27 +72,74 @@ async function snipeCycle() {
     const ca = e.args && e.args.token;
     const sym = (e.args && e.args.symbol) || '?';
     if (!ca) continue;
-    // Snipe every armed user CONCURRENTLY (bounded) with their ACTIVE wallet, so one
-    // slow buy doesn't make faster snipers miss the launch.
-    await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
-      const addr = core.activeAddress(u); if (!addr) return;
-      try {
-        const bal = await core.ethBalance(addr, SNIPE_CHAIN);
-        const need = ethers.parseEther(String(u.snipe.ethAmount)) + ethers.parseEther(core.CFG.gasBufferEth);
-        if (bal < need) return;   // can't afford → skip silently (no spam)
-      } catch (_) { return; }
-      try {
-        const r = await core.buy(u.chatId, ca, u.snipe.ethAmount, SNIPE_CHAIN);
-        _notify(u.chatId, `🎯 <b>Sniped $${esc(sym)}</b>\nBought ${fmt(r.gotTokens)} $${esc(r.sym)} for ${r.spentEth} ${r.native}\n<code>${ca}</code>\n${txLink(SNIPE_CHAIN, r.hash)}`, undefined, 'snipe');
-      } catch (err) {
-        const now = Date.now();
-        if (now - (_snipeFailAt.get(u.chatId) || 0) > 300000) {   // ≤ 1 failure DM / 5 min / user
-          _snipeFailAt.set(u.chatId, now);
-          _notify(u.chatId, `⚠️ A snipe failed: ${esc(err.message || String(err))} (further failures muted for 5 min)`, undefined, 'snipe');
-        }
+    // ── Dev-wallet snipe: buy this launch for anyone following its CREATOR. Idempotent
+    // via each target's own dedup map, so a cursor regression / re-scan can't double-buy.
+    const devBoughtBy = new Set();   // chatIds that dev-sniped THIS launch → skip them in snipe-all (no double buy)
+    if (devFollowers.length) {
+      const creator = (e.args && e.args.creator) ? String(e.args.creator).toLowerCase() : '';
+      if (creator) {
+        const matches = [];
+        for (const u of devFollowers) for (const t of u.copy.targets) if (t.mode === 'launches' && t.chain === 'robinhood' && String(t.address).toLowerCase() === creator) matches.push({ u, t });
+        if (matches.length) await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => { if (await _followerBuy(u, t, ca, 'robinhood')) devBoughtBy.add(u.chatId); });
       }
-    });
+    }
+    // ── Snipe ALL launches: every armed user buys concurrently (bounded) with their
+    // ACTIVE wallet. Gated by _snipeMark so a re-scanned block range can't buy the same
+    // launch twice (audit #1) — dev-snipe above is exempt (own dedup).
+    if (armed.length && _snipeMark(SNIPE_CHAIN, ca)) {
+      await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
+        if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
+        const addr = core.activeAddress(u); if (!addr) return;
+        try {
+          const bal = await core.ethBalance(addr, SNIPE_CHAIN);
+          const need = ethers.parseEther(String(u.snipe.ethAmount)) + ethers.parseEther(core.CFG.gasBufferEth);
+          if (bal < need) return;   // can't afford → skip silently (no spam)
+        } catch (_) { return; }
+        try {
+          const r = await core.buy(u.chatId, ca, u.snipe.ethAmount, SNIPE_CHAIN);
+          _notify(u.chatId, `🎯 <b>Sniped $${esc(sym)}</b>\nBought ${fmt(r.gotTokens)} $${esc(r.sym)} for ${r.spentEth} ${r.native}\n<code>${ca}</code>\n${txLink(SNIPE_CHAIN, r.hash)}`, undefined, 'snipe');
+        } catch (err) {
+          const now = Date.now();
+          if (now - (_snipeFailAt.get(u.chatId) || 0) > 300000) {   // ≤ 1 failure DM / 5 min / user
+            _snipeFailAt.set(u.chatId, now);
+            _notify(u.chatId, `⚠️ A snipe failed: ${esc(err.message || String(err))} (further failures muted for 5 min)`, undefined, 'snipe');
+          }
+        }
+      });
+    }
   }
+}
+// Users with the master copy switch ON who follow ≥1 dev wallet (launch mode) on `chainKey`.
+function launchFollowers(chainKey) {
+  return core.allUsers().filter((u) => u.copy && u.copy.on && Array.isArray(u.copy.targets) && u.copy.targets.some((t) => t.mode === 'launches' && t.chain === chainKey));
+}
+// Crash-safe single buy for a copy/dev-snipe target — SAME budget+dedup commit as
+// copyCycle: commit bought+spent (persisted) BEFORE the buy, and roll back ONLY when the
+// buy clearly didn't spend (never on err.broadcast, so a tx that may still land can't be
+// double-spent or blow the budget cap). Used by the dev-wallet snipe paths.
+// Returns true if a buy was COMMITTED (so the caller can skip a redundant snipe-all buy
+// of the same launch for the same user), false if the target skipped (dedup/budget/danger).
+async function _followerBuy(u, t, token, chainKey) {
+  const svm = core.chains.isSvm(chainKey);
+  const key = svm ? String(token) : String(token).toLowerCase();
+  t.bought = t.bought || {};
+  if (t.bought[key]) return false;                                                     // already sniped this launch for this target
+  if (Number(t.spentEth) + Number(t.buyEth) > Number(t.maxEth) + 1e-12) return false;  // budget cap
+  if (safety.supported(chainKey)) { const s = await safety.tokenSecurity(chainKey, token).catch(() => null); if (s && safety.verdict(chainKey, s).level === 'danger') return false; }
+  const bk = Object.keys(t.bought); if (bk.length >= 2000) delete t.bought[bk[0]];
+  t.bought[key] = true;
+  t.spentEth = Number(t.spentEth) + Number(t.buyEth);
+  core.saveStoreNow();
+  const ch = core.chainOf(chainKey) || { emoji: '', name: chainKey, native: 'ETH' };
+  try {
+    const r = await core.buy(u.chatId, token, t.buyEth, chainKey);
+    _notify(u.chatId, `🎯 <b>Dev snipe</b> — $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nDev <code>${short(t.address)}</code> just launched it · bought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, undefined, 'copy');
+  } catch (err) {
+    if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[key]; core.saveStoreNow(); }
+    const now = Date.now(), fk = u.chatId + ':devsnipe:' + key;
+    if (now - (_snipeFailAt.get(fk) || 0) > 300000) { _snipeFailAt.set(fk, now); _notify(u.chatId, `⚠️ Dev-snipe of ${short(token)} failed: ${esc(err.message || String(err))} (muted 5 min)`, undefined, 'copy'); }
+  }
+  return true;
 }
 
 // ------------------------------------------------------------------ multi-chain snipe (new DEX pairs)
@@ -135,6 +197,7 @@ async function _dexSnipeChain(ch) {
     let token = null;
     if (t0 === weth) token = a.token1; else if (t1 === weth) token = a.token0; else continue;   // only native-paired launches
     if (!token) continue;
+    if (!_snipeMark(ch.key, token)) continue;   // already sniped → don't re-buy on a cursor regression / re-scan (audit #1)
     processed++;
     // Skip anything GoPlus flags as DANGER (honeypot, can't-sell, pausable, owner-rug,
     // blacklist, >10% tax). When GoPlus has no data yet (brand-new token) we proceed —
@@ -399,6 +462,7 @@ async function copyCycle() {
   if (!users.length) return;
   for (const u of users) {
     for (const t of u.copy.targets) {
+      if (t.mode === 'launches') continue;   // dev-wallet snipe is driven by the snipe cycles, not swap-buy logs
       const ch = core.chainOf(t.chain); if (!ch) continue;
       // Solana copy-buy uses signature polling (no EVM logs) — dedicated path.
       if (core.chains.isSvm(t.chain)) { await _copySolTarget(u, t).catch((e) => console.error('copysol', (e && e.message) || e)); continue; }
@@ -556,7 +620,8 @@ const SOL_SNIPE_MAX_AGE_MS = Math.max(60000, Number(process.env.SOL_SNIPE_MAX_AG
 async function solSnipeCycle() {
   if (!core.chains.isEnabled('solana')) return;
   const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.solana && Number(u.snipe.ethAmount) > 0);
-  if (!armed.length) return;
+  const devFollowers = launchFollowers('solana');   // users sniping specific dev wallets on Solana
+  if (!armed.length && !devFollowers.length) return;
   const coins = await solana.pumpfunNew(50);
   if (!coins.length) return;
   const newestTs = Math.max(0, ...coins.map((c) => c.createdTs || 0));
@@ -572,8 +637,18 @@ async function solSnipeCycle() {
     _solSnipeSeen.add(c.mint);
     if (_solSnipeSeen.size > 4000) { const it = _solSnipeSeen.values().next().value; _solSnipeSeen.delete(it); }
     processed++;
+    // ── Dev-wallet snipe: buy this launch for anyone following its creator (idempotent
+    // via each target's own dedup map). Matched on the pump.fun feed's creator field.
+    const devBoughtBy = new Set();
+    if (devFollowers.length && c.creator) {
+      const matches = [];
+      for (const u of devFollowers) for (const t of u.copy.targets) if (t.mode === 'launches' && t.chain === 'solana' && t.address === c.creator) matches.push({ u, t });
+      if (matches.length) await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => { if (await _followerBuy(u, t, c.mint, 'solana')) devBoughtBy.add(u.chatId); });
+    }
+    if (!armed.length) continue;   // dev-snipe-only followers: skip the snipe-all pass
     if (safety.supported('solana')) { const s = await safety.tokenSecurity('solana', c.mint).catch(() => null); if (s && safety.verdict('solana', s).level === 'danger') continue; }
     await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
+      if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
       const w = core.activeWallet(u); if (!w) return;
       try {
         const bal = await core.ethBalance(core.walletAddress(w, 'solana'), 'solana');
@@ -738,4 +813,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, _test: { solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle } };
+module.exports = { setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, _test: { solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };

@@ -355,6 +355,9 @@ async function pumpfunNew(limit = 50) {
       createdTs: Number(c && c.created_timestamp) || 0,
       mcapUsd: Number(c && c.usd_market_cap) || 0,
       complete: !!(c && c.complete),
+      // The launch's creator/dev wallet (base58) — used by dev-wallet snipe to match a
+      // followed dev. Absent/renamed field → '' → simply never matches (fails safe).
+      creator: String((c && (c.creator || c.creator_address || c.dev)) || ''),
     })).filter((c) => isSolAddress(c.mint));
   } catch (_) { return []; }
 }

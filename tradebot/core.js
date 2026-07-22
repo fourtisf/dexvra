@@ -592,10 +592,19 @@ function setSnipeAmount(chatId, amt) {
 
 // ---------------------------------------------------------------- copy-trading
 const MAX_COPY_TARGETS = Math.max(1, Number(process.env.MAX_COPY_TARGETS || 5));
-function addCopyTarget(chatId, address, chain, buyEth, maxEth) {
+// Chains where a "dev wallet snipe" is possible — i.e. where the token's creator is
+// knowable on-chain / from the launchpad feed: the Robinhood launchpad (TokenCreated
+// carries `creator`) and Solana/pump.fun (feed carries the creator). EVM DEX chains
+// have no cheap deployer signal, so launch-mode follows are refused there.
+function canDevSnipe(chain) { return chain === 'robinhood' || chain === 'solana'; }
+// mode: 'trades' = mirror the wallet's swap-BUYS (classic copy-trade);
+//       'launches' = buy tokens the wallet CREATES on a launchpad (dev-wallet snipe).
+function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
   const u = ensureUser(chatId);
   address = String(address || '').trim();
+  mode = (mode === 'launches') ? 'launches' : 'trades';
   if (!isEnabled(chain)) throw new Error('chain not enabled');
+  if (mode === 'launches' && !canDevSnipe(chain)) throw new Error('dev-wallet snipe only works on Robinhood Chain and Solana (the launchpad chains)');
   const svm = isSvm(chain);
   // Validate per chain: base58 pubkey on Solana, 0x on EVM. Solana addresses are
   // case-SENSITIVE, so only lowercase EVM addresses for the dup check.
@@ -605,11 +614,13 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth) {
   u.copy = u.copy || { on: false, targets: [] };
   u.copy.targets = u.copy.targets || [];
   if (u.copy.targets.length >= MAX_COPY_TARGETS) throw new Error(`copy limit (${MAX_COPY_TARGETS}) reached — remove one first`);
-  if (u.copy.targets.some((t) => norm(t.address) === norm(address) && t.chain === chain)) throw new Error('already following that wallet on this chain');
+  // Allow following the SAME wallet in BOTH modes (mirror its trades AND snipe its
+  // launches), so the dup check keys on address+chain+mode.
+  if (u.copy.targets.some((t) => norm(t.address) === norm(address) && t.chain === chain && (t.mode || 'trades') === mode)) throw new Error(mode === 'launches' ? 'already sniping that dev on this chain' : 'already copying that wallet on this chain');
   const be = Number(buyEth), me = Number(maxEth);
   if (!(be > 0)) throw new Error('per-buy amount must be > 0');
   if (!(me >= be)) throw new Error('total budget must be ≥ the per-buy amount');
-  const t = { id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, cursor: 0, cursorSig: '', createdAt: Date.now() };
+  const t = { id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode, buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, cursor: 0, cursorSig: '', createdAt: Date.now() };
   u.copy.targets.push(t);
   saveStore();
   return t;
@@ -898,6 +909,23 @@ async function gasOverrides(chainKey, gasMult) {
 }
 async function waitBounded(tx) { try { return await tx.wait(1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
 async function waitHash(hash, chainKey) { try { return await providerFor(chainKey).waitForTransaction(hash, 1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
+// Wait for a BROADCAST buy's receipt without ever mistaking a post-broadcast wait
+// error for a clean failure. The tx is already in the mempool (we hold its hash), so:
+//   • a genuine on-chain revert (CALL_EXCEPTION — ethers throws this on a status-0
+//     receipt) RE-THROWS: the buy really failed and the ETH was refunded, so a
+//     copy/dev-snipe caller SHOULD roll back its committed budget.
+//   • any OTHER wait error (TRANSACTION_REPLACED, a transient RPC hiccup during receipt
+//     polling) returns null, routing buy() into its "broadcast but unconfirmed" path —
+//     the tx may still land, so the caller must NOT refund the budget (which would let
+//     the maxEth cap be exceeded if the tx actually confirms). Audit #2 fix.
+async function waitBuyReceipt(waiter) {
+  try { return await waiter(); }
+  catch (e) {
+    if (e && e.code === 'CALL_EXCEPTION') throw e;   // real revert → funds refunded → real failure
+    if (e && e.code === 'TIMEOUT') return null;
+    return null;                                      // any other post-broadcast wait error → treat as unconfirmed (never refund)
+  }
+}
 // Broadcast a signed write WITHOUT ethers' send/estimate path. On the Robinhood node
 // ethers' own send can throw an opaque "could not coalesce error" / "missing revert
 // data" because the node returns a non-standard JSON-RPC error envelope and strips
@@ -1260,7 +1288,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
       // a plain cc.buy could throw the opaque "could not coalesce error" there.
       const data = cc.interface.encodeFunctionData('buy', [minTok, deadline]);
       hash = await rawSend(wallet, chainKey, curve, data, 600000n, spend, gasBoost);
-      venue = 'curve'; trc = await waitHash(hash, chainKey);
+      venue = 'curve'; trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
       if (trc && trc.status === 0) throw new Error('the buy reverted on-chain — you may not be allowed to buy this token yet (private beta), or try a smaller amount. Tx: ' + hash);
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
@@ -1294,7 +1322,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
         const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: chain.weth, tokenOut: ca, fee: pick.feeTier, recipient: wallet.address, amountIn: spend, amountOutMinimum: minTok, sqrtPriceLimitX96: 0n }]);
         const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, spend);
         hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, spend, gasBoost);
-        venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
+        venue = 'dex·v3'; trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
         if (trc && trc.status === 0) throw new Error('the V3 buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
       } else {
         const router = new ethers.Contract(chain.router, ROUTER_ABI, wallet);
@@ -1304,7 +1332,8 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
         const minTok = expTok > 0n ? expTok * (10000n - dexSlip) / 10000n : 0n;
         if (minTok <= 0n) throw new Error('no liquidity / zero quote for this token on ' + chain.name);
         const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTok, [chain.weth, ca], wallet.address, deadline, { value: spend, ...gas });
-        venue = 'dex'; hash = tx.hash; trc = await waitBounded(tx);
+        venue = 'dex'; hash = tx.hash; trc = await waitBuyReceipt(() => waitBounded(tx));
+        if (trc && trc.status === 0) throw new Error('the buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
       }
     }
     const after = await tokenBalance(ca, wallet.address, chainKey);
@@ -1732,7 +1761,7 @@ module.exports = {
   buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
   setConfirmBuy, setExpert, setAutoExit, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
-  addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS,
+  addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenAcrossWallets, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
