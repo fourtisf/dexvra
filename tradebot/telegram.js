@@ -136,7 +136,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   const ch = core.chainOf(chainKey);
   const list = core.walletList(u);
   const explicit = (walletId && core.walletById(u, walletId)) || null;
-  // Rich scan: on-chain price/mcap + liquidity + Robinfun API (vol/socials) + GoPlus
+  // Rich scan: on-chain price/mcap + liquidity + launchpad API (vol/socials) + GoPlus
   // (tax/honeypot/holders/LP) — all best-effort, never throws (tokeninfo swallows).
   const info = await tokeninfo.enrich(ca, chainKey).catch(() => null);
   if (!info) return { text: `❌ Couldn't price <code>${short(ca)}</code> on ${ch.emoji} ${esc(ch.name)} — no pool/curve found here. Switch chain if it trades elsewhere.`, kb: rows([btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]) };
@@ -307,7 +307,7 @@ function snipeScreen(chatId) {
   kbRows.push([btn('✏️ Set amount', 'snamt')]);
   kbRows.push([btn('« Menu', 'menu')]);
   return {
-    text: `🎯 <b>Snipe new launches</b>\n\n• <b>Robinhood Chain</b> — auto-buys every new Robinfun token\n• <b>Other chains</b> — auto-buys every new DEX pair (honeypots auto-skipped)\n\nAmount per snipe: <b>${esc(u.snipe.ethAmount)}</b> (native)\nBuys with your <b>active wallet</b> on each chain.\n\n⚠️ Snipes indiscriminately — keep the amount small. Non-Robinhood sniping buys brand-new pairs which are <b>mostly risky</b>; honeypots are skipped but always DYOR.\n\nToggle per chain:`,
+    text: `🎯 <b>Snipe new launches</b>\n\n• <b>Robinhood Chain</b> — auto-buys every new launchpad token\n• <b>Other chains</b> — auto-buys every new DEX pair (honeypots auto-skipped)\n\nAmount per snipe: <b>${esc(u.snipe.ethAmount)}</b> (native)\nBuys with your <b>active wallet</b> on each chain.\n\n⚠️ Snipes indiscriminately — keep the amount small. Non-Robinhood sniping buys brand-new pairs which are <b>mostly risky</b>; honeypots are skipped but always DYOR.\n\nToggle per chain:`,
     kb: { inline_keyboard: kbRows },
   };
 }
@@ -464,7 +464,7 @@ async function safetyScreen(chatId, ca, chainKey) {
   const ch = core.chainOf(chainKey) || core.chainOf(core.userChain(core.ensureUser(chatId)));
   const back = rows([btn('« Menu', 'menu')]);
   if (!safety.supported(chainKey)) {
-    return { text: `🛡 <b>Token safety</b> — not available on ${ch.emoji} ${esc(ch.name)}.\n\nRobinfun-native tokens on Robinhood Chain are fair-launch by design: fixed supply, no tax, and LP is 100% burned at graduation.`, kb: back };
+    return { text: `🛡 <b>Token safety</b> — not available on ${ch.emoji} ${esc(ch.name)}.\n\nLaunchpad tokens on Robinhood Chain are fair-launch by design: fixed supply, no tax, and LP is 100% burned at graduation.`, kb: back };
   }
   const s = await safety.tokenSecurity(chainKey, ca).catch(() => null);
   if (!s) return { text: `🛡 <b>Token safety</b>\n\nCouldn't fetch security data right now (or the token isn't indexed yet). Trade carefully.`, kb: rows([btn('🔄 Retry', `sec:${chainKey}:${ca}`), btn('« Menu', 'menu')]) };
@@ -1071,11 +1071,60 @@ async function refreshPrices() {
 }
 async function getMe() { try { const r = await tg('getMe', {}); if (r && r.ok) BOT_USERNAME = r.result.username; } catch (_) {} }
 
+// Register the blue "/" command menu with Telegram — default (EN) plus an
+// Indonesian variant so the menu matches the user's Telegram language, same
+// pairing as the /bahasa toggle. Best-effort: a failure never blocks boot.
+async function registerCommands() {
+  const en = [
+    { command: 'start',     description: 'Open the bot — wallet & main menu' },
+    { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
+    { command: 'portfolio', description: 'Open positions & PnL' },
+    { command: 'history',   description: 'Trade history' },
+    { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
+    { command: 'buy',       description: 'Buy by contract: /buy <ca> <amount>' },
+    { command: 'sell',      description: 'Sell a position: /sell <ca> <percent>' },
+    { command: 'snipe',     description: 'Auto-buy new launches' },
+    { command: 'copy',      description: 'Copy-trade a wallet' },
+    { command: 'orders',    description: 'TP / SL / trailing / limit orders' },
+    { command: 'dca',       description: 'Scheduled recurring buys' },
+    { command: 'alerts',    description: 'Price alerts' },
+    { command: 'send',      description: 'Send tokens: /send <token> <dest> <amount>' },
+    { command: 'referral',  description: 'Referral link & earnings' },
+    { command: 'bahasa',    description: 'Language / Bahasa' },
+    { command: 'help',      description: 'How the bot works' },
+    { command: 'cancel',    description: 'Cancel the current action' },
+  ];
+  const id = [
+    { command: 'start',     description: 'Buka bot — wallet & menu utama' },
+    { command: 'wallet',    description: 'Wallet: saldo, deposit, withdraw, import' },
+    { command: 'portfolio', description: 'Posisi terbuka & PnL' },
+    { command: 'history',   description: 'Riwayat trade' },
+    { command: 'chain',     description: 'Ganti chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
+    { command: 'buy',       description: 'Beli via kontrak: /buy <ca> <jumlah>' },
+    { command: 'sell',      description: 'Jual posisi: /sell <ca> <persen>' },
+    { command: 'snipe',     description: 'Auto-beli launch baru' },
+    { command: 'copy',      description: 'Tiru trading wallet lain' },
+    { command: 'orders',    description: 'Order TP / SL / trailing / limit' },
+    { command: 'dca',       description: 'Beli rutin terjadwal' },
+    { command: 'alerts',    description: 'Alert harga' },
+    { command: 'send',      description: 'Kirim token: /send <token> <tujuan> <jumlah>' },
+    { command: 'referral',  description: 'Link referral & pendapatan' },
+    { command: 'bahasa',    description: 'Bahasa / Language' },
+    { command: 'help',      description: 'Cara kerja bot' },
+    { command: 'cancel',    description: 'Batalkan aksi berjalan' },
+  ];
+  try {
+    await tg('setMyCommands', { commands: en });
+    await tg('setMyCommands', { commands: id, language_code: 'id' });
+  } catch (_) { /* menu is cosmetic — never block boot on it */ }
+}
+
 async function start() {
   if (!core.CFG.tgToken) { console.error('TRADEBOT_TOKEN missing.'); process.exit(1); }
   if (!core.CFG.walletSecret) { console.error('WALLET_SECRET missing — refusing to run custodial without key encryption.'); process.exit(1); }
   core.loadStore();
   await getMe();
+  await registerCommands();
   await refreshPrices();
   setInterval(refreshPrices, 120000);
   // `type` (snipe|copy|alerts) is gated by the user's notification settings; order
