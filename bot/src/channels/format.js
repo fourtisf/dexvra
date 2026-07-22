@@ -9,7 +9,7 @@
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { chainOf } = require("../config/chains");
 const { tierLabel } = require("../config/packages");
-const { SITE_URL, CHANNELS } = require("../config/constants");
+const { SITE_URL, CHANNELS, TRADEBOT_USERNAME } = require("../config/constants");
 const premium = require("../premium");
 const tpl = require("../templates");
 const tokenEmoji = require("../tokenEmoji");
@@ -346,6 +346,14 @@ function autoSocialCuts(p, urls) {
       cuts.push([lines[aIdx].start, Math.min(to, p.text.length)]);
     }
   }
+  if (!urls.tradeUrl) {   // no address → drop the Trade line (mirrors the xUrl strip)
+    const tIdx = lines.findIndex((l) => /trade on dexvra trade bot/i.test(l.s) && !l.s.includes("{"));
+    if (tIdx !== -1 && !overlapsLink(p.entities, lines[tIdx].start, lines[tIdx].end)) {
+      let to = lines[tIdx].end + 1;
+      if (tIdx + 1 < lines.length && lines[tIdx + 1].s.trim() === "") to = lines[tIdx + 1].end + 1;
+      cuts.push([lines[tIdx].start, Math.min(to, p.text.length)]);
+    }
+  }
   const merged = mergeRanges(cuts);
   return merged.length ? cutRanges(p, merged, true) : p;
 }
@@ -378,6 +386,17 @@ function autoSocialLinks(p, urls) {
       const gs = l.start + m.index;
       if (!overlapsLink(p.entities, gs, gs + m[0].length)) {
         add.push({ type: "text_link", offset: gs, length: m[0].length, url: urls.xUrl });
+      }
+      break;
+    }
+  }
+  if (urls.tradeUrl) {   // paste-proof relink for the ⚡ Trade deep link
+    for (const l of lines) {
+      const m = l.s.match(/trade on dexvra trade bot/i);
+      if (!m) continue;
+      const gs = l.start + m.index;
+      if (!overlapsLink(p.entities, gs, gs + m[0].length)) {
+        add.push({ type: "text_link", offset: gs, length: m[0].length, url: urls.tradeUrl });
       }
       break;
     }
@@ -470,6 +489,11 @@ function overviewBlock(text) {
   return `${clean(s)}\n\n`;
 }
 
+// Deep link into the Dexvra Trade Bot: opens the token card for this CA
+// directly (the trade bot's /start handler resolves the ca_ payload).
+const tradeUrlOf = (coin) =>
+  (coin && coin.address) ? `https://t.me/${TRADEBOT_USERNAME}?start=ca_${coin.address}` : "";
+
 // Raw URLs for the post-render auto-link pass (entity URLs, not markup).
 function postUrls(coin) {
   const links = (coin && coin.links) || {};
@@ -478,6 +502,7 @@ function postUrls(coin) {
     website: links.website || "",
     telegram: links.telegram || "",
     xUrl: (coin && coin.xUrl) || "",
+    tradeUrl: tradeUrlOf(coin),
     ...channelLinks(),
   };
 }
@@ -517,6 +542,7 @@ function coinVars(coin) {
     website: links.website ? cleanUrl(links.website) : "",
     telegram: links.telegram ? cleanUrl(links.telegram) : "",
     xUrl: coin.xUrl ? cleanUrl(coin.xUrl) : "",
+    tradeUrl: tradeUrlOf(coin),
     ...channelLinks(),
     socials: legacySocials(coin),
     footer: legacyFooter(),

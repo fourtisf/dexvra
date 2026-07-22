@@ -494,6 +494,7 @@ const PH_HELP = {
   trending: "the Trending channel link",
   announce: "the Announcements channel link",
   xUrl: "link to the X announcement post (auto after tweeting)",
+  tradeUrl: "deep link that opens this token in the Dexvra Trade Bot",
   change: "24h change sentence",
   tierEmoji: "tier emoji (from the paid tier)",
   // legacy blocks (older saved templates only)
@@ -533,7 +534,7 @@ const PH_HELP = {
 const AUTO_PH = new Set([
   "head", "tierLine", "logoEmoji", "overview", "socials", "footer",
   "chainEmoji", "twitter", "website", "telegram", "site", "listing", "trending", "announce",
-  "xUrl", "change", "tierEmoji",
+  "xUrl", "tradeUrl", "change", "tierEmoji",
 ]);
 
 // A friendly legend: split the template's placeholders into "your values" vs

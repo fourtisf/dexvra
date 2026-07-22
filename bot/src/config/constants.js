@@ -14,6 +14,7 @@ const BOT_ROOT = path.join(__dirname, "..", "..");
 // ── Telegram ───────────────────────────────────────────────────────────────
 const BOT_TOKEN = env.BOT_TOKEN || "";
 const BOT_USERNAME = (env.BOT_USERNAME || "dexvrabot").replace(/^@/, ""); // for ?startgroup deep links
+const TRADEBOT_USERNAME = (env.TRADEBOT_USERNAME || "dexvratradebot").replace(/^@/, ""); // for the ⚡ Trade deep links in channel posts
 const ADMIN_BOT_TOKEN = env.ADMIN_BOT_TOKEN || ""; // @dexvraadminbot — template editor
 
 // Channels the bot posts to (must be admin in each). Announce == @dexvraio.
@@ -169,6 +170,7 @@ module.exports = {
   BOT_ROOT,
   BOT_TOKEN,
   BOT_USERNAME,
+  TRADEBOT_USERNAME,
   ADMIN_BOT_TOKEN,
   CHANNELS,
   LOG_CHANNEL,
