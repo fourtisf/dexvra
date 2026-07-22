@@ -1174,13 +1174,15 @@ async function refreshPrices() {
 }
 async function getMe() { try { const r = await tg('getMe', {}); if (r && r.ok) BOT_USERNAME = r.result.username; } catch (_) {} }
 
-// Off-site backup → a PRIVATE Telegram channel (BACKUP_TG_CHANNEL, bot must be
-// admin). Ships the encrypted store, gzipped, every BACKUP_TG_HOURS (default 6)
-// — off-box without rclone/SSH, using infrastructure the operator already runs.
-// The file is ciphertext only; WALLET_SECRET is never included, so the channel
-// alone can't decrypt anything. Keep the channel private regardless.
+// Off-site backup → a PRIVATE Telegram channel. Defaults to the visitor/ops
+// report channel (operator preference: one private channel for everything);
+// override with BACKUP_TG_CHANNEL, or set it EMPTY to disable (?? not ||, so
+// an empty env var means off). Ships the encrypted store, gzipped, every
+// BACKUP_TG_HOURS (default 6) — off-box without rclone/SSH. Ciphertext only;
+// WALLET_SECRET is never included, so the channel alone can't decrypt anything.
+const backupChannel = () => String(process.env.BACKUP_TG_CHANNEL ?? process.env.REPORT_CHANNEL_ID ?? '-1003885406672').trim();
 async function tgBackupOnce() {
-  const ch = (process.env.BACKUP_TG_CHANNEL || '').trim();
+  const ch = backupChannel();
   if (!ch) return false;
   try {
     const file = path.join(core.CFG.dataDir, 'tradebot.json');
@@ -1282,7 +1284,7 @@ async function start() {
     console.log(`ops reporting ENABLED → channel (daily recap ~${recapHour}:00 UTC)`);
   }
   // Off-site store backup to a private Telegram channel (see tgBackupOnce).
-  if ((process.env.BACKUP_TG_CHANNEL || '').trim()) {
+  if (backupChannel()) {
     const hours = Math.max(1, Number(process.env.BACKUP_TG_HOURS || 6));
     tgBackupOnce();   // one at boot so a fresh deploy is covered immediately
     setInterval(tgBackupOnce, hours * 3600 * 1000);
