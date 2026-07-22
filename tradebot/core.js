@@ -862,7 +862,7 @@ async function tokenSnapshot(ca, chainKey) {
 }
 
 // ---------------------------------------------------------------- gas
-async function gasOverrides(chainKey) {
+async function gasOverrides(chainKey, gasMult) {
   const prov = providerFor(chainKey);
   // Only Robinhood (cheap L2) uses the fixed/cheap floor; busy L1s/L2s use auto so
   // ethers sets a proper (base + tip) fee that actually confirms.
@@ -877,9 +877,10 @@ async function gasOverrides(chainKey) {
   // fee ticks up between our read and the node receiving it. On this cheap L2
   // (~0.07 gwei base) 2x is still negligible and absorbs normal drift/spikes.
   const buffered = base > 0n ? base * 2n : ethers.parseUnits('0.02', 'gwei');
-  if (mode === 'cheap') return { gasPrice: buffered };
+  const boost = BigInt(Math.max(1, Math.round(Number(gasMult) || 1)));   // retry escalation (1x, 2x, 4x…)
+  if (mode === 'cheap') return { gasPrice: buffered * boost };
   const want = ethers.parseUnits(String(CFG.gasGwei > 0 ? CFG.gasGwei : 0.01), 'gwei');
-  return { gasPrice: want > buffered ? want : buffered };   // operator's fixed price, but never below the buffered base fee
+  return { gasPrice: (want > buffered ? want : buffered) * boost };   // operator's fixed price, but never below the buffered base fee
 }
 async function waitBounded(tx) { try { return await tx.wait(1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
 async function waitHash(hash, chainKey) { try { return await providerFor(chainKey).waitForTransaction(hash, 1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
@@ -889,10 +890,10 @@ async function waitHash(hash, chainKey) { try { return await providerFor(chainKe
 // custom-error/revert data on eth_estimateGas. We sign locally and POST
 // eth_sendRawTransaction ourselves, so the node's REAL reason reaches the user (e.g. a
 // beta-allowlist NotAllowed) instead of an ethers wrapper. Returns the tx hash.
-async function rawSend(wallet, chainKey, to, data, gasLimit, value) {
+async function rawSend(wallet, chainKey, to, data, gasLimit, value, gasMult) {
   const prov = providerFor(chainKey);
   const ch = chainOf(chainKey);
-  const gasO = await gasOverrides(chainKey);
+  const gasO = await gasOverrides(chainKey, gasMult);
   let gasPrice = gasO.gasPrice;
   if (!gasPrice || gasPrice <= 0n) { try { const fd = await prov.getFeeData(); gasPrice = fd.gasPrice; } catch (_) {} }
   if (!gasPrice || gasPrice <= 0n) gasPrice = ethers.parseUnits('0.02', 'gwei');
@@ -1135,10 +1136,13 @@ async function _buySol(u, ca, amount, chainKey, walletId) {
   });
 }
 // Sell `pct`% of the SPL bag `ca` for SOL via Jupiter.
-async function _sellSol(u, ca, pct, chainKey, walletId) {
+async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
   ca = String(ca || '').trim();
   if (!solana.isSolAddress(ca)) throw new Error('invalid Solana token mint');
   const wal = _resolveWallet(u, walletId);
+  // Retry escalation from doSell: widen slippage and raise the Solana priority fee.
+  const slipAdd = Math.max(0, Math.round((opts && opts.slipAddBps) || 0));
+  const gasMult = Math.max(1, Math.round((opts && opts.gasMult) || 1));
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);
     const conn = signer.connection, kp = signer.keypair;
@@ -1147,10 +1151,11 @@ async function _sellSol(u, ca, pct, chainKey, walletId) {
     const p = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
     const amount = (bal * BigInt(p)) / 100n;
     if (amount <= 0n) throw new Error('token balance is 0');
-    const slip = Number(slipBps(u));
+    const slip = Math.min(5000, Number(slipBps(u)) + slipAdd);
+    const prio = (Number(CFG.solPriorityLamports) || 0) * gasMult + (gasMult > 1 ? 200000 : 0);   // bump priority fee on retry
     const solBefore = await solana.solBalance(conn, signer.address);
     let sig, quote;
-    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: ca, outputMint: solana.WSOL_MINT, amountRaw: amount, slippageBps: slip, priorityLamports: CFG.solPriorityLamports })); }
+    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: ca, outputMint: solana.WSOL_MINT, amountRaw: amount, slippageBps: slip, priorityLamports: prio })); }
     catch (e) { const err = new Error('sell failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
     const solAfter = await solana.solBalance(conn, signer.address);
     // Net SOL received (swap tx fee already netted out, exactly like EVM ethAfter-ethBefore).
@@ -1327,11 +1332,15 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
   });
 }
 
-async function sell(chatId, ca, pct, chainKey, walletId) {
+async function sell(chatId, ca, pct, chainKey, walletId, opts) {
   const u = getUser(chatId); if (!u) throw new Error('no wallet');
   chainKey = chainKey || userChain(u);
-  if (isSvm(chainKey)) return _sellSol(u, ca, pct, chainKey, walletId);
+  if (isSvm(chainKey)) return _sellSol(u, ca, pct, chainKey, walletId, opts);
   const wal = _resolveWallet(u, walletId);
+  // Retry escalation (from doSell): opts.gasMult raises the gas price, opts.slipAddBps
+  // widens slippage — so a sell rejected for gas or a tight quote can be re-tried harder.
+  const gasMult = (opts && opts.gasMult) || 1;
+  const slipAdd = BigInt(Math.max(0, Math.round((opts && opts.slipAddBps) || 0)));
   return withWalletLock(wal.address, async () => {
     chainKey = chainKey || userChain(u);
     const chain = chainOf(chainKey);
@@ -1345,8 +1354,8 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
     const curve = await resolveCurve(ca, chainKey);
     const grad = curve ? await isGraduated(curve, chainKey) : true;
     const deadline = Math.floor(Date.now() / 1000) + 600;
-    const gas = await gasOverrides(chainKey);
-    const slip = slipBps(u);
+    const gas = await gasOverrides(chainKey, gasMult);
+    const slip = (() => { let s = slipBps(u) + slipAdd; return s > 5000n ? 5000n : s; })();   // capped 50%
     const onCurve = !!(curve && !grad);
     // DEX sells route to whichever venue is deepest (V2 pair vs V3 pool) — the
     // approval must target that venue's router, so pick it before approving.
@@ -1380,7 +1389,7 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
       // sell is bounded work, so 600k is safe headroom; rawSend surfaces the node's real
       // reason if it rejects (e.g. a private-beta NotAllowed).
       const data = cc.interface.encodeFunctionData('sell', [sellAmt, minEth, deadline]);
-      hash = await rawSend(wallet, chainKey, curve, data, 600000n);
+      hash = await rawSend(wallet, chainKey, curve, data, 600000n, 0n, gasMult);
       venue = 'curve';
       trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the sell reverted on-chain — you may not be allowed to sell this token yet (private beta), or try a slightly smaller amount. Tx: ' + hash);
@@ -1402,7 +1411,7 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
       const ri = new ethers.Interface(V3_ROUTER_ABI);
       const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: ca, tokenOut: chain.weth, fee: pick.feeTier, recipient: wallet.address, amountIn: amount, amountOutMinimum: minW, sqrtPriceLimitX96: 0n }]);
       const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, 0n);   // audit B2: estimate, don't hardcode
-      hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim);
+      hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, 0n, gasMult);
       venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the V3 sell reverted on-chain (price moved past your slippage, or gas) — try again or a slightly smaller amount. Tx: ' + hash);
       // Post-swap WETH received. Retry the read; if it can't be read at all after
@@ -1418,7 +1427,7 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
         const wi = new ethers.Interface(WETH9_ABI);
         let unwrapped = false;
         for (let i = 0; i < 3 && !unwrapped; i++) {
-          try { const ug = await v3SwapGas(chainKey, wallet.address, chain.weth, wi.encodeFunctionData('withdraw', [gained]), 0n); const uh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('withdraw', [gained]), ug); const urc = await waitHash(uh, chainKey); if (!urc || urc.status !== 0) unwrapped = true; }
+          try { const ug = await v3SwapGas(chainKey, wallet.address, chain.weth, wi.encodeFunctionData('withdraw', [gained]), 0n); const uh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('withdraw', [gained]), ug, 0n, gasMult + i); const urc = await waitHash(uh, chainKey); if (!urc || urc.status !== 0) unwrapped = true; }
           catch (e) { console.error('WETH unwrap attempt failed:', e.message); }
         }
         if (!unwrapped) console.error('WETH unwrap failed — proceeds are safe as WETH in the wallet (sell/send them manually).');

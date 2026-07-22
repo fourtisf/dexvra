@@ -754,8 +754,45 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const head = `🟩 <b>Buy on ${okN}/${targets.length} wallets succeeded</b> — $${esc(sym || '')}\n💰 Total <b>${fmt(totTok)}</b> · spent <b>${totSpent.toFixed(5)} ${esc(nat || 'ETH')}</b>${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''}`;
       await send(chatId, head + '\n' + lines.join('\n'), rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     }
-  } catch (e) { await send(chatId, `❌ Buy failed: ${esc(e.message || String(e))}`); }
+  } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `❌ <b>Buy didn't go through</b>\n\n${esc(friendlyError(e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
   finally { _inflightBuy.delete(key); }
+}
+// Escalating sell: if a sell fails for a RETRIABLE reason (gas rejected by a
+// base-fee tick, a too-tight quote/revert, an unconfirmed timeout), automatically
+// re-try with higher gas and wider slippage so the exit still lands. Terminal
+// errors (no balance, insufficient funds) are NOT retried. onStep notifies the UI.
+const SELL_ESCALATION = [
+  {},                                   // 1st: normal
+  { gasMult: 2, slipAddBps: 500 },      // 2nd: 2× gas, +5% slippage
+  { gasMult: 4, slipAddBps: 1500 },     // 3rd: 4× gas, +15% slippage
+];
+const _retriable = (m) => /max fee per gas|base fee|reverted|not confirmed|try again|could not (read|price)|coalesce|timeout|replacement|underpriced|nonce/i.test(String(m || ''));
+// Turn a raw on-chain / RPC error into one clear, professional sentence a
+// non-technical user understands. Falls back to a generic line. The original
+// message is still logged server-side for the operator.
+function friendlyError(raw, action) {
+  const m = String(raw && (raw.message || raw) || '').toLowerCase();
+  const act = action || 'transaction';
+  if (/token balance is 0|no bag/.test(m)) return `You don't hold any of this token to sell.`;
+  if (/insufficient|need ~|exceeds balance/.test(m)) return `Not enough balance to cover this ${act} plus network gas. Top up and try again.`;
+  if (/max fee per gas|base fee|underpriced|replacement|nonce/.test(m)) return `The network gas price just moved. Please tap ${act === 'buy' ? 'Buy' : 'Sell'} again — it usually goes through on the next try.`;
+  if (/thin pool|price impact|slippage|reverted|IIA|too little received/.test(m)) return `The price moved faster than your slippage allows, so the ${act} didn't go through. Try again, or raise your slippage in ⚙️ Settings.`;
+  if (/not confirmed|timeout|pending/.test(m)) return `The network is slow right now — your ${act} may still complete. Check your wallet before trying again.`;
+  if (/could not (read|price)|pool read|quote|no pool|no liquidity/.test(m)) return `Couldn't read live pricing for this token right now. Please try again in a moment.`;
+  if (/private beta|not allowed|notallowed/.test(m)) return `This token can't be traded yet (it may be restricted). Try a different token.`;
+  return `The ${act} didn't go through. Please try again in a moment.`;
+}
+async function sellWithRetry(chatId, ca, pct, chain, wid, onStep) {
+  let lastErr;
+  for (let i = 0; i < SELL_ESCALATION.length; i++) {
+    try { return await core.sell(chatId, ca, pct, chain, wid, SELL_ESCALATION[i]); }
+    catch (e) {
+      lastErr = e; const msg = (e && (e.message || e)) || 'failed';
+      if (i === SELL_ESCALATION.length - 1 || !_retriable(msg)) throw e;
+      if (onStep) await onStep(i + 1, msg);
+    }
+  }
+  throw lastErr;
 }
 async function doSell(chatId, ca, pct, chain, walletId) {
   const expert = core.ensureUser(chatId).settings.expert;
@@ -764,7 +801,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
       if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code>…`);
-      const r = await core.sell(chatId, ca, pct, chain, wid);
+      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => !expert && send(chatId, `⚙️ Retry ${n}/2 — bumping gas &amp; slippage to push the sell through…`).catch(() => {}));
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
@@ -775,7 +812,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       ] });
     } else {
       if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
-      const results = await Promise.allSettled(targets.map((t) => core.sell(chatId, ca, pct, chain, t.id)));
+      const results = await Promise.allSettled(targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id)));
       let okN = 0, skip = 0, totProceeds = 0, totFee = 0, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
@@ -787,7 +824,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const head = `🟥 <b>Sell of ${pct}% on ${okN}/${targets.length} wallets succeeded</b>${skip ? ` (${skip} had no bag)` : ''}\n💰 Total received <b>${totProceeds.toFixed(5)} ${esc(nat || 'ETH')}</b>${msUsd > 0 ? ` ≡ $${(totProceeds * msUsd).toFixed(2)}` : ''}`;
       await send(chatId, head + '\n' + lines.join('\n'), rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     }
-  } catch (e) { await send(chatId, `❌ Sell failed: ${esc(e.message || String(e))}`); }
+  } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `❌ <b>Sell didn't go through</b>\n\n${esc(friendlyError(e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
 }
 
 // ------------------------------------------------------------ router
