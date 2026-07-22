@@ -138,7 +138,7 @@ function postingEnabled() {
   // Default ON — banners are a core feature. ONLY an explicit admin toggle
   // (persisted _global.enabled === false in @dexvraadminbot) turns them off. A
   // stale POST_BANNERS=0 env snapshot must never silently kill every channel
-  // banner again (recurring incident: "setiap announce tidak ada banner").
+  // banner again (recurring incident: "every announcement had no banner").
   if (typeof g.enabled === "boolean") return g.enabled;
   return true;
 }

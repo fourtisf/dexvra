@@ -124,7 +124,7 @@ const bannerByKey = (key) => BANNERS.find((b) => b.key === key) || null;
 // Bundled Trending feature (hours) granted with each Listing purchase — this is
 // the "& Trending" in "Listing & Trending". Mirrors the fourtis listTrendPlans
 // durations. Xpress is listing-ONLY: no trending slot, no trending-channel post
-// (operator decision 2026-07 — "xpress hanya dapat listing alert + website").
+// (operator decision 2026-07 — "xpress only gets listing alert + website").
 const TIER_TREND_HOURS = { DIAMOND: 48, GOLD: 24, PLATINUM: 18, SILVER: 12, BRONZE: 6, XPRESS: 0 };
 const tierTrendingHours = (key) => TIER_TREND_HOURS[key] || 0;
 

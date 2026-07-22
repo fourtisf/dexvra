@@ -255,7 +255,7 @@ function btKindKb(kind) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
     clipRow,
-    [Markup.button.callback("🖱 Logo editor — geser • ukuran • live preview", `bt_ed:${kind}`)],
+    [Markup.button.callback("🖱 Logo editor — move • size • live preview", `bt_ed:${kind}`)],
     manualRow,
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
     [Markup.button.callback("⬅ Artwork menu", "bt")],
@@ -274,7 +274,7 @@ const BT_TEXT_NUDGE = 20; // finer step for text elements
 // element → which settings keys it drives
 const BT_ELEMS = {
   logo: { label: "🪙 Logo", xKey: "logoX", yKey: "logoY" },
-  ticker: { label: "🔤 Ticker+Nama", xKey: "tickerX", yKey: "tickerY", sizeKey: "tickerFontSize", step: 8 },
+  ticker: { label: "🔤 Ticker+Name", xKey: "tickerX", yKey: "tickerY", sizeKey: "tickerFontSize", step: 8 },
   meta: { label: "📊 Chips", xKey: "metaX", yKey: "metaY", sizeKey: "metaFontSize", step: 4 },
   badge: { label: "🏷 Badge", xKey: "badgeX", yKey: "badgeY", sizeKey: "badgeFontSize", step: 4 },
 };
@@ -362,9 +362,9 @@ function btEditorCaption(kind, elem) {
   }
   return (
     `🖱 <b>${BT_KINDS[kind]} — layout editor</b>\n` +
-    `Elemen aktif: <b>${e.label}</b> — ${detail}\n` +
-    `Garis kuning = elemen terpilih. Pilih elemen di bawah, panah menggeser, ➕/➖ mengubah ukuran.` +
-    (elem === "ticker" ? " Nama token ikut bergeser bersama ticker." : "")
+    `Active element: <b>${e.label}</b> — ${detail}\n` +
+    `Yellow outline = selected element. Pick an element below, arrows move it, ➕/➖ resize.` +
+    (elem === "ticker" ? " The token name moves together with the ticker." : "")
   );
 }
 
@@ -1256,12 +1256,12 @@ function build() {
         try {
           const im = await require("@napi-rs/canvas").loadImage(artBuf);
           if (im.width < 2000) {
-            sizeNote = `\n\n⚠️ Terkirim ${im.width}×${im.height}px (Telegram mengompres foto). Tetap dipakai — otomatis di-upscale ke 2560×1280 — tapi untuk kualitas maksimal kirim ulang sebagai <b>File/document</b>.`;
+            sizeNote = `\n\n⚠️ Sent at ${im.width}×${im.height}px (Telegram compresses photos). It'll still be used — auto-upscaled to 2560×1280 — but for best quality re-send it as a <b>File/document</b>.`;
           }
         } catch { /* dimension probe is best-effort */ }
         log.info(`[adminbot] ${kind} banner artwork uploaded by @${ctx.from.username || ctx.from.id}`);
         await ctx.reply(
-          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Buka 🖱 Logo editor untuk menempatkan logo/teks, lalu 👁 Preview.${sizeNote}`,
+          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Open 🖱 Logo editor to place the logo/text, then 👁 Preview.${sizeNote}`,
           { ...HTML, ...btKindKb(kind) },
         );
         await btPreview(ctx, kind);

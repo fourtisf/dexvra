@@ -1042,7 +1042,6 @@ async function onMessage(m) {
   if (text.startsWith('/userkey')) return adminUserKey(chatId, text.split(/\s+/)[1]);
   if (text.startsWith('/stats')) return adminStats(chatId);
   if (text === '/menu' || text === '/help') return send(chatId, helpText(chatId), mainMenu());
-  if (text === '/bahasa' || text === '/lang' || text === '/language') { const s = langScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text.startsWith('/buy')) { const [, ca, amtRaw] = text.split(/\s+/); if (isCa(ca) && amtRaw) { const det = await detectChain(chatId, ca); const cn = core.chainOf(det.chain || core.userChain(core.ensureUser(chatId))); const pa = parseAmt(amtRaw, cn.native); if (!pa) return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code>'); if (pa.err) return send(chatId, '❌ ' + esc(pa.err)); return requestBuy(chatId, ca, pa.amt, det.chain); } return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code> — or paste a contract address.'); }
   if (text.startsWith('/sell')) { const [, ca, pct] = text.split(/\s+/); if (isCa(ca) && pct) { const det = await detectChain(chatId, ca); return doSell(chatId, ca, Number(pct), det.chain); } return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>'); }
 
@@ -1110,8 +1109,6 @@ async function onCallback(q) {
   }
   if (data === 'menu') return edit(chatId, mid, menuGreeting(chatId), mainMenu());
   if (data === 'help') return edit(chatId, mid, helpText(chatId), mainMenu());
-  if (data === 'lang') { const s = langScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (k === 'lang') { core.setLang(chatId, ca); const s = langScreen(chatId); await edit(chatId, mid, s.text, s.kb); return send(chatId, ca === 'id' ? '✅ Bahasa disetel ke <b>Indonesia</b>.' : '✅ Language set to <b>English</b>.', mainMenu()); }
   if (data === 'wal') { const w = await walletScreen(chatId); return edit(chatId, mid, w.text, w.kb); }
   if (data === 'chain') { const s = chainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'setch') { try { core.setChain(chatId, ca); } catch (_) {} const w = await walletScreen(chatId); return edit(chatId, mid, w.text, w.kb); }
@@ -1561,40 +1558,12 @@ async function adminStats(chatId) {
   if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
   return send(chatId, statsText(core.reportSnapshot(), core.allUsers().length));
 }
-// English-only bot (operator preference). langOf always returns 'en' so every
-// UI string uses the English copy; the Indonesian branches stay in the code but
-// are unreachable.
-function langOf(chatId) { return 'en'; }
+// English-only bot.
 function menuGreeting(chatId) {
-  return langOf(chatId) === 'id'
-    ? '🏠 <b>Dexvra Trade Bot</b>\n\nTempel alamat kontrak (CA/mint) untuk trading, atau pilih menu:'
-    : '🏠 <b>Dexvra Trade Bot</b>\n\nPaste a contract address to trade, or pick:';
-}
-function langScreen(chatId) {
-  const cur = langOf(chatId);
-  return { text: '🌐 <b>Language / Bahasa</b>\n\nChoose your language. / Pilih bahasa kamu.', kb: rows([btn(`${cur === 'en' ? '✓ ' : ''}🇬🇧 English`, 'lang:en'), btn(`${cur === 'id' ? '✓ ' : ''}🇮🇩 Indonesia`, 'lang:id')], [btn('« Menu', 'menu')]) };
+  return '🏠 <b>Dexvra Trade Bot</b>\n\nPaste a contract address to trade, or pick a menu:';
 }
 function helpText(chatId) {
   const fee = (core.CFG.feeBps / 100).toFixed(2), ref = (core.CFG.refShareBps / 100).toFixed(0);
-  if (langOf(chatId) === 'id') return (
-    `🤖 <b>Bantuan — Dexvra Trade Bot</b>\n\n` +
-    `<b>Cara trading</b>\n` +
-    `Tempel alamat kontrak token → muncul kartu live → tap <b>Buy</b> atau <b>Sell</b>. Chain-nya terdeteksi otomatis.\n\n` +
-    `<b>Dana kamu</b>\n` +
-    `💼 <b>Wallets</b> — lihat saldo, deposit, tarik, import/export wallet (bisa sampai ${core.WALLET_CAP} wallet)\n` +
-    `📊 <b>Portfolio</b> — token yang kamu pegang & untung/rugi\n` +
-    `🧾 <b>History</b> — riwayat trade\n\n` +
-    `<b>Otomatis</b>\n` +
-    `🎯 <b>Snipe</b> — beli otomatis tiap ada token baru\n` +
-    `👥 <b>Copy</b> — ikuti pembelian wallet lain\n` +
-    `📋 <b>Orders</b> — jual otomatis di target harga (TP/SL/trailing/limit)\n` +
-    `🔁 <b>DCA</b> — beli rutin terjadwal · 🔔 <b>Alerts</b> — notif harga\n\n` +
-    `<b>Lainnya</b>\n` +
-    `🎁 <b>Referral</b> — undang teman, dapat ${ref}% dari fee mereka\n` +
-    `⚙️ <b>Settings → 🔐 Security</b> — kunci penarikan & whitelist alamat\n` +
-    `🌐 <b>Bahasa</b> — ganti bahasa\n\n` +
-    `<b>Biaya:</b> ${fee}% per transaksi. <i>Hanya masukkan dana yang kamu siap kehilangan.</i>`
-  );
   return (
     `🤖 <b>Help — Dexvra Trade Bot</b>\n\n` +
     `<b>How to trade</b>\n` +
@@ -1605,13 +1574,12 @@ function helpText(chatId) {
     `🧾 <b>History</b> — your past trades\n\n` +
     `<b>Automation</b>\n` +
     `🎯 <b>Snipe</b> — auto-buy every new launch\n` +
-    `👥 <b>Copy</b> — mirror another wallet's buys\n` +
+    `👥 <b>Copy &amp; Dev Snipe</b> — mirror a wallet's buys, or auto-buy a dev's new launches\n` +
     `📋 <b>Orders</b> — auto-sell at a price target (TP/SL/trailing/limit)\n` +
     `🔁 <b>DCA</b> — scheduled recurring buys · 🔔 <b>Alerts</b> — price notifications\n\n` +
     `<b>More</b>\n` +
     `🎁 <b>Referral</b> — invite friends, earn ${ref}% of their fees\n` +
-    `⚙️ <b>Settings → 🔐 Security</b> — withdraw lock & address whitelist\n` +
-    `🌐 <b>Language</b> — change language\n\n` +
+    `⚙️ <b>Settings → 🔐 Security</b> — withdraw lock &amp; address whitelist\n\n` +
     `<b>Fee:</b> ${fee}% per trade. <i>Only deposit what you can afford to lose.</i>`
   );
 }
@@ -1736,5 +1704,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
