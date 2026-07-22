@@ -243,11 +243,15 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   const sym = (api && api.symbol) || meta.sym;
 
   const L = [];
-  L.push(`<b>${esc(name)}</b>  $${esc(sym)}  ·  ${ch.emoji} ${esc(ch.name)}`);
+  const SEP = '━━━━━━━━━━━━━━━━';
+  // ── Header: name · symbol, then chain · live trading venue, then the contract ──
+  const statusBadge = info.dex ? `◆ DEX${info.dexVenue === 'v3' ? ' · V3 pool' : ''}` : (info.graduated ? '◆ Graduated' : `◈ Bonding curve · ${(info.progressPct || 0).toFixed(0)}%`);
+  L.push(`<b>${esc(name)}</b> · <b>$${esc(sym)}</b>`);
+  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}`);
   L.push(`<code>${ca}</code>`);
-  L.push(info.dex ? `◆ DEX${info.dexVenue === 'v3' ? ' · V3 pool' : ''}` : (info.graduated ? '◆ GRADUATED' : `◈ LISTED · ${(info.progressPct || 0).toFixed(0)}%`));
-  if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b>: ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ ${esc(v.warn.join(', '))}`); }
-  L.push('');
+  if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`); }
+  // ── Market stats block (framed by dividers for a clean, scannable card) ──
+  L.push(SEP);
   L.push(`💵 Price: <b>${priceUsd > 0 ? '$' + priceUsd.toPrecision(3) : px.toExponential(2) + ' ' + nat}</b>`);
   const mcapUsd = (api && api.marketCapUsd) || (info.mcapEth * nativeUsd(nat));
   L.push(`📊 Market cap: <b>${mcapUsd > 0 ? '$' + fmt(mcapUsd) : usd(info.mcapEth, nat)}</b>`);
@@ -292,7 +296,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   if (list.length > 1) {
     // Per-wallet balance table (Maestro "Balance" panel): ✅ marks the wallet(s) a
     // Buy/Sell will act on (single, a selected subset, or ALL). Shows each bag's USD worth.
-    L.push('');
+    L.push(SEP);
     L.push(`👛 <b>Balance across wallets</b> (${esc(sym)} · USD · ${nat})`);
     const held = across.rows.filter((r) => r.tokens > 1e-9 || r.eth > 1e-5);
     const show = (held.length ? held : across.rows).slice(0, 10);
@@ -313,7 +317,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     // Single wallet: ALWAYS show the bag (even "none") and the wallet's native
     // balance, so the card answers "what do I hold and what can I spend" at a
     // glance — Maestro-style.
-    L.push('');
+    L.push(SEP);
     if (pos && posCost(pos) > 0) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`); }
     else if (bal > 0) L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)}`);
     else L.push(`💼 Your bag: <i>none yet</i>`);
@@ -336,7 +340,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     ...walletRow,
     [btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)],
     [btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)],
-    [btn('Sell X%', `sx:${chainKey}:${wi}:${ca}`), btn('🎯 TP', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 SL', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trail', `trl:${chainKey}:${wi}:${ca}`), btn('⏳ Limit', `lb:${chainKey}:${wi}:${ca}`)],
+    [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('🎯 TP', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 SL', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trail', `trl:${chainKey}:${wi}:${ca}`), btn('⏳ Limit', `lb:${chainKey}:${wi}:${ca}`)],
   ];
   // Offer "send this token out" only when the bound wallet actually holds a bag.
   if (bal > 1e-9) ikb.push([btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`)]);
@@ -1069,7 +1073,7 @@ async function onCallback(q) {
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
   if (data === 'monx') { stopMonitor(chatId, mid); tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
-  if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca' || k === 'mon' || k === 'monn') {
+  if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'sxt' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca' || k === 'mon' || k === 'monn') {
     const parts = data.split(':'); const ch = parts[1], wi = parts[2], tca = parts[3], a = parts[4];
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
     const wid = wobj ? wobj.id : undefined;   // stale/removed index → fall back to the active wallet
@@ -1079,7 +1083,8 @@ async function onCallback(q) {
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
     if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `💵 <b>How much do you want to spend?</b>\n\nType an amount in <b>${cn ? cn.native : 'native'}</b> (for example <code>0.05</code>) or in dollars (for example <code>$10</code>).`); }
-    if (k === 'sx') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📤 <b>How much do you want to sell?</b>\n\nType a percentage of your holdings, from 1 to 100 (for example <code>50</code> to sell half, or <code>100</code> to sell everything).`); }
+    if (k === 'sx') { const sp = await sellMenu(chatId, tca, ch, wid); return send(chatId, sp.text, sp.kb); }
+    if (k === 'sxt') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `✏️ <b>Custom sell amount</b>\n\nType a percentage of your holdings from <b>1</b> to <b>100</b>.\nExamples: <code>33</code> = sell a third · <code>80</code> = sell most · <code>100</code> = sell everything.`); }
     if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 <b>Take-profit — sell automatically when the price goes UP</b>\n\nTell me the target and the bot sells 100% of this token when it's reached:\n• A <b>price in dollars</b> — for example <code>0.0025</code>\n• Or a <b>market cap</b> — type <code>mc</code> first, for example <code>mc 1000000</code>`); }
     if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 <b>Stop-loss — sell automatically when the price goes DOWN</b>\n\nTell me the target and the bot sells 100% of this token to limit your loss when it's reached:\n• A <b>price in dollars</b> — for example <code>0.0008</code>\n• Or a <b>market cap</b> — type <code>mc</code> first, for example <code>mc 250000</code>`); }
     if (k === 'trl') { setPending(chatId, { action: 'trail_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📉 <b>Trailing stop</b> — send the trail <b>percent</b> (1–99), e.g. <code>20</code>.\n\n<i>The bot tracks the peak price from now and sells 100% if it falls that % below the peak. A rising price only ratchets the peak up.</i>`); }
@@ -1247,6 +1252,48 @@ function exportKeyMsg(chatId, walletId) {
 // initial vs worth, P/L %, tokens, price/MC. Manual 🔄 works anytime; ✖ Stop
 // ends the auto-refresh. One interval per message, cleaned up on stop/error.
 const _monitors = new Map();   // `${chatId}:${msgId}` → interval timer
+// "Sell some %" picker — opened from the 🔻 Sell X% button on the card or the
+// live Monitor. Shows the live bag + what each preset would sell (in tokens AND
+// dollars), so the choice is obvious. Presets fire a normal Sell; ✏️ Custom lets
+// the user type any 1–100%. Sent as a NEW message so it never overwrites the
+// pinned Monitor or the card it was opened from.
+async function sellMenu(chatId, ca, chainKey, wid) {
+  const u = core.ensureUser(chatId);
+  const ch = core.chainOf(chainKey);
+  const w = (wid && core.walletById(u, wid)) || core.activeWallet(u);
+  const wi = walletIndex(chatId, w && w.id);
+  const nat = ch.native; const usdRate = nativeUsd(nat);
+  let sym = '?', balNow = 0, px = 0, dec = 18;
+  try { const meta = await core.tokenMeta(ca, chainKey); if (meta) { sym = meta.sym || sym; dec = meta.decimals || 18; } } catch (_) {}
+  try { const raw = await withTmo(core.tokenBalance(ca, wAddr(w, chainKey), chainKey).catch(() => null), 5000, null); if (raw != null) balNow = Number(ethers.formatUnits(raw, dec)); } catch (_) {}
+  try { const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 5000, null); if (snap) { if (snap.priceEth > 0) px = snap.priceEth; if (snap.sym) sym = snap.sym; } } catch (_) {}
+  const val = balNow * px;
+  const worth = (pct) => (px > 0 ? ` → ~${usd((val * pct) / 100, nat)}` : '');
+  const L = [`🔻 <b>Sell $${esc(sym)}</b>`, `${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}`, ''];
+  if (balNow > 1e-9) {
+    L.push(`🎒 You hold: <b>${fmt(balNow)} $${esc(sym)}</b>${px > 0 ? ` · ${usd(val, nat)}` : ''}`);
+    L.push('');
+    L.push('<b>How much do you want to sell?</b>');
+    L.push(`• 25% = ${fmt(balNow * 0.25)} $${esc(sym)}${worth(25)}`);
+    L.push(`• 50% = ${fmt(balNow * 0.50)} $${esc(sym)}${worth(50)}`);
+    L.push(`• 75% = ${fmt(balNow * 0.75)} $${esc(sym)}${worth(75)}`);
+    L.push(`• 100% = everything${worth(100)}`);
+    L.push('');
+    L.push('<i>Tap a preset below, or ✏️ Custom % to type any amount from 1 to 100.</i>');
+  } else {
+    L.push(`<i>This wallet holds no $${esc(sym)} to sell right now.</i>`);
+  }
+  const kb = { inline_keyboard: balNow > 1e-9 ? [
+    [btn('Sell 10%', `s:${chainKey}:${wi}:${ca}:10`), btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 33%', `s:${chainKey}:${wi}:${ca}:33`)],
+    [btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 90%', `s:${chainKey}:${wi}:${ca}:90`)],
+    [btn('💯 Sell 100% (all)', `s:${chainKey}:${wi}:${ca}:100`)],
+    [btn('✏️ Custom %', `sxt:${chainKey}:${wi}:${ca}`)],
+    [btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')],
+  ] : [
+    [btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')],
+  ] };
+  return { text: L.join('\n'), kb };
+}
 async function monitorPayload(chatId, ca, chainKey, wid) {
   const u = core.ensureUser(chatId);
   const ch = core.chainOf(chainKey);
@@ -1284,10 +1331,16 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     L.push(`\n📈 <b>Price:</b> ${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}  ·  <b>Market cap:</b> ${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}`);
   }
   L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 16)} UTC</i>`);
-  const kb = { inline_keyboard: [
-    [btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)],
-    [btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`), btn('✖ Stop', 'monx')],
-  ] };
+  // Quick-sell straight from the live tracker: 25 / 50 / 75 / 100, plus "other %"
+  // for anything in between. Sell buttons only appear while a bag is open.
+  const kbRows = [[btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)]];
+  if (!closed) {
+    kbRows.push([btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)]);
+    kbRows.push([btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('✖ Stop', 'monx')]);
+  } else {
+    kbRows.push([btn('✖ Stop', 'monx')]);
+  }
+  const kb = { inline_keyboard: kbRows };
   return { text: L.join('\n'), kb, closed };
 }
 const _monitorByToken = new Map();   // `${chatId}:${ca}` → msgId of the live monitor for that token
@@ -1570,5 +1623,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, langScreen, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
