@@ -66,6 +66,31 @@ const taxStr = (t) => (t == null ? '?' : (Math.round(t * 10) / 10) + '%');
 function fmtAge(ms) { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h'; return Math.floor(s / 86400) + 'd'; }
 function setPending(chatId, obj) { obj.ts = Date.now(); pending.set(chatId, obj); }
 function activeChain(chatId) { return core.chainOf(core.userChain(core.ensureUser(chatId))); }
+const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(() => r(fb), ms))]);
+
+// Maestro-style chain auto-detect: figure out which enabled chain a pasted CA
+// lives on so the user never has to switch chains to trade. base58 → Solana;
+// 0x → probe every enabled EVM chain for contract code in parallel (bounded).
+// Prefers the ACTIVE chain when the same address is a contract on several
+// chains (common for multi-chain deployments). Returns { chain } on a unique
+// hit, { choices } when ambiguous, {} when nothing was found (caller falls
+// back to the active chain, which keeps the old behavior for edge cases).
+async function detectChain(chatId, ca) {
+  if (!isEvmCa(ca)) {
+    const sol = core.chains.enabledChains().find((c) => core.chains.isSvm(c.key));
+    return sol ? { chain: sol.key } : {};
+  }
+  const evm = core.chains.enabledChains().filter((c) => !core.chains.isSvm(c.key));
+  const hits = (await Promise.all(evm.map(async (c) => {
+    const code = await withTmo(core.providerFor(c.key).getCode(ca).catch(() => null), 4000, null);
+    return (code && code !== '0x') ? c.key : null;
+  }))).filter(Boolean);
+  const active = core.userChain(core.ensureUser(chatId));
+  if (hits.includes(active)) return { chain: active };
+  if (hits.length === 1) return { chain: hits[0] };
+  if (hits.length > 1) return { choices: hits };
+  return {};
+}
 
 // ------------------------------------------------------------ screens
 function mainMenu() {
@@ -83,9 +108,27 @@ async function walletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const ch = core.chainOf(core.userChain(u));
   const list = core.walletList(u);
-  const bals = await Promise.all(list.map((w) => core.ethBalance(wAddr(w, ch.key), ch.key).catch(() => 0n)));
+  // Maestro-style: the ACTIVE wallet's balance on EVERY enabled chain (one EVM
+  // key = same 0x address everywhere, Solana has its own), fetched in parallel
+  // alongside the per-wallet balances on the active chain. A chain whose RPC
+  // doesn't answer in time shows '—' instead of a misleading 0.
+  const allChains = core.chains.enabledChains();
+  const aw = list.find((w) => w.id === u.activeWalletId) || list[0];
+  const [bals, awBals] = await Promise.all([
+    Promise.all(list.map((w) => core.ethBalance(wAddr(w, ch.key), ch.key).catch(() => 0n))),
+    Promise.all(allChains.map((c) => withTmo(core.ethBalance(wAddr(aw, c.key), c.key).catch(() => null), 4500, null))),
+  ]);
   const total = bals.reduce((a, b) => a + b, 0n);
   const allEmpty = total <= 0n;
+  let chainBlock = '', chainUsd = 0, anyChainBal = false;
+  allChains.forEach((c, i) => {
+    const b = awBals[i];
+    if (b == null) { chainBlock += `${c.emoji} ${esc(c.name)}: —\n`; return; }
+    const amt = Number(fmtNat(b, c.key));
+    if (amt > 0) anyChainBal = true;
+    const usdV = nativeUsd(c.native) * amt; chainUsd += usdV;
+    chainBlock += `${c.emoji} ${esc(c.name)}: <b>${amt > 0 ? amt.toFixed(4) : '0'} ${c.native}</b>${usdV > 0.005 ? ` ($${fmt(usdV)})` : ''}\n`;
+  });
   let body = '';
   const kbRows = [];
   list.forEach((w, i) => {
@@ -100,10 +143,11 @@ async function walletScreen(chatId) {
   if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
   kbRows.push([btn('🌐 Chain', 'chain'), btn('🔄 Refresh', 'wal'), btn('« Menu', 'menu')]);
-  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>${fmtNat(total, ch.key)} ${ch.native}</b> (${usd(fmtNat(total, ch.key), ch.native)})\n\n`;
+  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>${fmtNat(total, ch.key)} ${ch.native}</b> (${usd(fmtNat(total, ch.key), ch.native)})\n\n`
+    + `🌐 <b>${esc(core.walletLabel(aw, list.findIndex((x) => x.id === aw.id) + 1))} — all chains</b>${anyChainBal && chainUsd > 0.005 ? ` · ≈ $${fmt(chainUsd)}` : ''}\n${chainBlock}\n`;
   const guide = allEmpty
     ? `<b>Start in 3 steps 👇</b>\n1️⃣ Deposit ${ch.native} to a wallet — tap <b>📥</b> on it for the address/QR.\n2️⃣ Tap <b>🔄 Refresh</b> to see it land.\n3️⃣ Paste any token contract → live card → one-tap buy.\n\n<i>Tap a name to switch · ✏️ rename · 📥 deposit · 🗑 remove. One key per wallet on every chain — EVM shares one 0x address, Solana has its own (switch with 🌐).</i>`
-    : `<i>Tap a name to switch the active wallet · ✏️ rename · 📥 deposit QR · 🗑 remove. Export/Withdraw act on the ✅ active wallet. Balances shown for ${esc(ch.name)}; positions &amp; orders are per-wallet.</i>`;
+    : `<i>Tap a name to switch the active wallet · ✏️ rename · 📥 deposit QR · 🗑 remove. Export/Withdraw act on the ✅ active wallet. Per-wallet lines show ${esc(ch.name)}; the 🌐 block shows the active wallet on every chain. Paste any CA — the chain is detected automatically.</i>`;
   return { text: head + body + guide, kb: { inline_keyboard: kbRows } };
 }
 // Maestro-style deposit: a QR of the address + the address text. Works for any wallet
@@ -128,7 +172,7 @@ function chainScreen(chatId) {
   const list = core.chains.enabledChains();
   const kb = list.map((c) => [btn(`${c.emoji} ${c.name}${c.key === cur ? '  ✓' : ''}`, 'setch:' + c.key)]);
   kb.push([btn('« Menu', 'menu')]);
-  return { text: `🌐 <b>Select chain</b>\n\nYour wallet is the same address on all of them. Pick where to trade:`, kb: { inline_keyboard: kb } };
+  return { text: `🌐 <b>Select chain</b>\n\nYour wallet is the same address on all of them, and pasting a CA <b>auto-detects its chain</b> — this only sets the default for deposits, snipes and quick commands:`, kb: { inline_keyboard: kb } };
 }
 async function tokenCard(chatId, ca, chainKey, walletId) {
   const u = core.ensureUser(chatId);
@@ -699,15 +743,25 @@ async function onMessage(m) {
   if (text.startsWith('/stats')) return adminStats(chatId);
   if (text === '/menu' || text === '/help') return send(chatId, helpText(chatId), mainMenu());
   if (text === '/bahasa' || text === '/lang' || text === '/language') { const s = langScreen(chatId); return send(chatId, s.text, s.kb); }
-  if (text.startsWith('/buy')) { const [, ca, amt] = text.split(/\s+/); if (isCa(ca) && amt) return requestBuy(chatId, ca, amt); return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount&gt;</code> — or paste a contract address.'); }
-  if (text.startsWith('/sell')) { const [, ca, pct] = text.split(/\s+/); if (isCa(ca) && pct) return doSell(chatId, ca, Number(pct)); return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>'); }
+  if (text.startsWith('/buy')) { const [, ca, amt] = text.split(/\s+/); if (isCa(ca) && amt) { const det = await detectChain(chatId, ca); return requestBuy(chatId, ca, amt, det.chain); } return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount&gt;</code> — or paste a contract address.'); }
+  if (text.startsWith('/sell')) { const [, ca, pct] = text.split(/\s+/); if (isCa(ca) && pct) { const det = await detectChain(chatId, ca); return doSell(chatId, ca, Number(pct), det.chain); } return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>'); }
 
   if (isCa(text)) {
     const u = core.ensureUser(chatId);
-    // Auto-buy on paste (Settings): buy instantly with the active wallet/chain.
+    // Detect the token's chain first (Maestro-style) — trading needs no /chain
+    // switching. Ambiguous (same contract on several chains) → let the user pick;
+    // the card's buttons carry the chain, so the tap trades on the right one.
+    const det = await detectChain(chatId, text);
+    if (det.choices) {
+      const kb = det.choices.map((k) => { const c = core.chainOf(k); return [btn(`${c.emoji} ${c.name}`, `tok:${k}:${walletIndex(chatId)}:${text}`)]; });
+      kb.push([btn('« Menu', 'menu')]);
+      return send(chatId, `🌐 <code>${short(text)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+    }
+    // Auto-buy on paste (Settings): buy instantly with the active wallet on the
+    // DETECTED chain (falls back to the active chain if detection found nothing).
     if (u.settings && u.settings.autoBuy) {
       const amt = u.settings.autoBuyAmount || '0.01';
-      const chainKey = core.userChain(u);
+      const chainKey = det.chain || core.userChain(u);
       // Safety gate: auto-buy skips the manual 🛡 Safety screen, so on chains we can
       // check (GoPlus on EVM, RugCheck on Solana) refuse a DANGER-flagged token
       // (honeypot / can't-sell / freeze-authority / rugged) before spending funds.
@@ -725,7 +779,7 @@ async function onMessage(m) {
       await send(chatId, `⚡ <b>Auto-buy</b> ${esc(amt)} of <code>${short(text)}</code>… <i>(toggle in ⚙️ Settings)</i>${safetyNote}`);
       return doBuy(chatId, text, amt, chainKey);
     }
-    const c = await tokenCard(chatId, text); return send(chatId, c.text, c.kb);
+    const c = await tokenCard(chatId, text, det.chain); return send(chatId, c.text, c.kb);
   }
   return send(chatId, 'Paste a <b>token contract address</b> to trade, or tap a button.', mainMenu());
 }
