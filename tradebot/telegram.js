@@ -860,10 +860,10 @@ async function onCallback(q) {
   }
   if (k === 'rmwok') { try { await core.removeWallet(chatId, ca); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis reveals full control of that wallet — anyone with the key can drain it. Never share it. Continue?`, rows([btn('Yes, show key', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
-  if (k === 'expwy') { try { const pk = core.exportKey(chatId, ca); await send(chatId, `🔑 <b>Private key</b> (delete this message after saving):\n\n<code>${pk}</code>`); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
+  if (k === 'expwy') { try { await send(chatId, exportKeyMsg(chatId, ca)); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (data === 'wd') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 Send the <b>destination address</b>:'); }
   if (data === 'exp') return askExport(chatId);
-  if (data === 'expy') { try { const pk = core.exportKey(chatId); await send(chatId, `🔑 <b>Private key</b> (delete this message after saving):\n\n<code>${pk}</code>`); } catch (e) { await send(chatId, '❌ ' + esc(e.message)); } return; }
+  if (data === 'expy') { try { await send(chatId, exportKeyMsg(chatId)); } catch (e) { await send(chatId, '❌ ' + esc(e.message)); } return; }
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (k === 'sntog') { const u = core.ensureUser(chatId); try { core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -1016,6 +1016,30 @@ async function resolvePending(chatId, p, text, m) {
   } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
 }
 
+// Export message: the key ALWAYS travels with the wallet label and the FULL
+// address it controls, so someone saving keys for several wallets can never
+// mismatch key ↔ address later. Chain-aware: on Solana the Solana key+address
+// are exported (different curve); on EVM the 0x key that is the same address
+// on every EVM chain.
+function exportKeyMsg(chatId, walletId) {
+  const u = core.ensureUser(chatId);
+  const w = walletId ? core.walletById(u, walletId) : core.activeWallet(u);
+  if (!w) throw new Error('wallet not found');
+  const i = core.walletList(u).findIndex((x) => x.id === w.id) + 1;
+  const label = core.walletLabel(w, i);
+  const ck = core.userChain(u);
+  let out = `🔑 <b>Private key — ${esc(label)}</b> <i>(delete this message after saving)</i>\n\n`;
+  if (core.chains.isSvm(ck)) {
+    const pk = core.exportKey(chatId, w.id, ck);
+    out += `Solana address:\n<code>${esc(core.walletAddress(w, ck))}</code>\n\nPrivate key (base58 — import into Phantom/Solflare):\n<code>${esc(pk)}</code>`;
+  } else {
+    const pk = core.exportKey(chatId, w.id);
+    out += `Address (same on every EVM chain):\n<code>${esc(w.address)}</code>\n\nPrivate key:\n<code>${esc(pk)}</code>`;
+    const sol = core.chains.enabledChains().find((c) => core.chains.isSvm(c.key));
+    if (sol) out += `\n\n<i>Solana uses its own key — switch 🌐 to ${esc(sol.name)} and export again for that one.</i>`;
+  }
+  return out;
+}
 function askExport(chatId) {
   return send(chatId, `🔑 <b>Export private key</b>\n\nThis reveals full control of your bot wallet. Anyone with it can drain the wallet. Never share it.\n\nAre you sure?`, rows([btn('Yes, show my key', 'expy'), btn('Cancel', 'menu')]));
 }
