@@ -45,12 +45,20 @@ const _snipeFailAt = new Map();   // chatId -> last failure-DM ms (rate limit)
 // launch twice (core.buy has no on-chain idempotency). Marking each launch seen makes
 // snipe-all one-shot. Dev-wallet snipe does NOT use this — it's already idempotent via
 // its target's own `bought` map. (Audit #1 fix.)
-const _snipeSeen = new Set();
+const _snipeSeen = new Map();   // chainKey -> Set(token). PER-CHAIN: a high-volume chain
+                                // must NOT be able to evict a slow chain's still-in-window
+                                // launch (which would let a cursor regression re-buy it).
+const SNIPE_SEEN_CAP = Math.max(4000, Number(process.env.SNIPE_SEEN_CAP || 20000));
 function _snipeMark(chainKey, token) {
-  const k = chainKey + ':' + String(token).toLowerCase();
-  if (_snipeSeen.has(k)) return false;
-  _snipeSeen.add(k);
-  if (_snipeSeen.size > 8000) { const it = _snipeSeen.values().next().value; _snipeSeen.delete(it); }
+  let set = _snipeSeen.get(chainKey);
+  if (!set) { set = new Set(); _snipeSeen.set(chainKey, set); }
+  const k = String(token).toLowerCase();
+  if (set.has(k)) return false;
+  set.add(k);
+  // FIFO cap comfortably exceeds the most launches that can fall inside ONE chain's
+  // re-scan window (SNIPE_MAX_SPAN blocks ≈ tens–hundreds of launches), so an in-window
+  // launch is never evicted → no re-buy on a cursor regression. (Audit #1 fix.)
+  if (set.size > SNIPE_SEEN_CAP) { const it = set.values().next().value; set.delete(it); }
   return true;
 }
 async function snipeCycle() {
@@ -72,6 +80,11 @@ async function snipeCycle() {
     const ca = e.args && e.args.token;
     const sym = (e.args && e.args.symbol) || '?';
     if (!ca) continue;
+    // Record EVERY launch once — even in a dev-follower-only window with no armed
+    // snipe-all user — so snipe-all stays forward-looking (a user who arms AFTER a
+    // launch never retro-snipes it on a re-scan). Matches solSnipeCycle's unconditional
+    // _solSnipeSeen. (Audit #2 fix.)
+    const firstSee = _snipeMark(SNIPE_CHAIN, ca);
     // ── Dev-wallet snipe: buy this launch for anyone following its CREATOR. Idempotent
     // via each target's own dedup map, so a cursor regression / re-scan can't double-buy.
     const devBoughtBy = new Set();   // chatIds that dev-sniped THIS launch → skip them in snipe-all (no double buy)
@@ -84,9 +97,9 @@ async function snipeCycle() {
       }
     }
     // ── Snipe ALL launches: every armed user buys concurrently (bounded) with their
-    // ACTIVE wallet. Gated by _snipeMark so a re-scanned block range can't buy the same
+    // ACTIVE wallet. `firstSee` gates it so a re-scanned block range can't buy the same
     // launch twice (audit #1) — dev-snipe above is exempt (own dedup).
-    if (armed.length && _snipeMark(SNIPE_CHAIN, ca)) {
+    if (armed.length && firstSee) {
       await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
         if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
         const addr = core.activeAddress(u); if (!addr) return;
@@ -117,8 +130,10 @@ function launchFollowers(chainKey) {
 // copyCycle: commit bought+spent (persisted) BEFORE the buy, and roll back ONLY when the
 // buy clearly didn't spend (never on err.broadcast, so a tx that may still land can't be
 // double-spent or blow the budget cap). Used by the dev-wallet snipe paths.
-// Returns true if a buy was COMMITTED (so the caller can skip a redundant snipe-all buy
-// of the same launch for the same user), false if the target skipped (dedup/budget/danger).
+// Returns true if the buy HELD (succeeded, or was broadcast and may still land) — so the
+// caller skips a redundant snipe-all buy of the same launch for that user. Returns false
+// when nothing was spent: an early skip (dedup/budget/danger) OR a failed buy that rolled
+// back — in which case a snipe-all fallback for that user is still allowed. (Audit #3 fix.)
 async function _followerBuy(u, t, token, chainKey) {
   const svm = core.chains.isSvm(chainKey);
   const key = svm ? String(token) : String(token).toLowerCase();
@@ -130,16 +145,17 @@ async function _followerBuy(u, t, token, chainKey) {
   t.bought[key] = true;
   t.spentEth = Number(t.spentEth) + Number(t.buyEth);
   core.saveStoreNow();
+  let held = true;   // did the spend hold? false only when the buy clearly didn't spend and we rolled back
   const ch = core.chainOf(chainKey) || { emoji: '', name: chainKey, native: 'ETH' };
   try {
     const r = await core.buy(u.chatId, token, t.buyEth, chainKey);
     _notify(u.chatId, `🎯 <b>Dev snipe</b> — $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nDev <code>${short(t.address)}</code> just launched it · bought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, undefined, 'copy');
   } catch (err) {
-    if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[key]; core.saveStoreNow(); }
+    if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[key]; core.saveStoreNow(); held = false; }
     const now = Date.now(), fk = u.chatId + ':devsnipe:' + key;
     if (now - (_snipeFailAt.get(fk) || 0) > 300000) { _snipeFailAt.set(fk, now); _notify(u.chatId, `⚠️ Dev-snipe of ${short(token)} failed: ${esc(err.message || String(err))} (muted 5 min)`, undefined, 'copy'); }
   }
-  return true;
+  return held;
 }
 
 // ------------------------------------------------------------------ multi-chain snipe (new DEX pairs)

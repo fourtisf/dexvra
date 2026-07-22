@@ -1,4 +1,5 @@
 'use strict';
+process.env.SNIPE_SEEN_CAP = '4000';   // pin to the min cap (floor) so eviction is testable without a huge flood
 /* Offline unit test for the dev-wallet snipe internals (no network / no chain):
  *   • _snipeMark  — per-launch dedup (audit #1)
  *   • _followerBuy — crash-safe commit / rollback / budget-cap / dedup / broadcast
@@ -44,6 +45,12 @@ const mkT = (over) => Object.assign({ id: 'cp1', address: '0xDEV', chain: 'robin
   A('_snipeMark first = true', T._snipeMark('robinhood', '0xAaa') === true);
   A('_snipeMark repeat = false', T._snipeMark('robinhood', '0xAAA') === false);      // case-insensitive
   A('_snipeMark other chain = true', T._snipeMark('base', '0xAaa') === true);
+  // Per-chain isolation (audit #1): flooding a busy chain PAST its cap (default floor 4000)
+  // must NOT evict a different chain's still-remembered launch. This is the core #1 fix.
+  T._snipeMark('slowchain', '0xKEEP');
+  for (let i = 0; i < 4200; i++) T._snipeMark('busychain', '0xB' + i);   // exceed the pinned cap 4000
+  A('_snipeMark cross-chain isolation (busy chain cannot evict slow chain)', T._snipeMark('slowchain', '0xKEEP') === false);   // still remembered
+  A('_snipeMark same-chain eviction works', T._snipeMark('busychain', '0xB0') === true);  // oldest on busychain evicted
 
   // ---- launchFollowers ----
   USERS.length = 0;
@@ -79,7 +86,7 @@ const mkT = (over) => Object.assign({ id: 'cp1', address: '0xDEV', chain: 'robin
   BUY_BEHAVIOR = { throw: true, msg: 'reverted', broadcast: false }; notes.length = 0;
   t = mkT({});
   ret = await T._followerBuy({ chatId: 1 }, t, '0xToken3', 'robinhood');
-  A('rollback: returns true (was committed)', ret === true);
+  A('rollback: returns false (rolled back → snipe-all fallback allowed)', ret === false);
   A('rollback: spent restored to 0', Number(t.spentEth) === 0);
   A('rollback: dedup cleared', t.bought['0xtoken3'] === undefined);
   A('rollback: failure DM sent', notes.length === 1 && /failed/.test(notes[0].text));
