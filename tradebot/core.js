@@ -868,12 +868,18 @@ async function gasOverrides(chainKey) {
   // ethers sets a proper (base + tip) fee that actually confirms.
   const mode = chainKey === 'robinhood' ? CFG.gasMode : 'auto';
   if (mode === 'auto') return {};
-  let floor = 0n;
-  try { const blk = await prov.getBlock('latest'); if (blk && blk.baseFeePerGas) floor = blk.baseFeePerGas; } catch (_) {}
-  if (floor === 0n) { try { const fd = await prov.getFeeData(); floor = fd.gasPrice || 0n; } catch (_) {} }
-  if (mode === 'cheap') return { gasPrice: floor > 0n ? floor : ethers.parseUnits('0.01', 'gwei') };
+  let base = 0n;
+  try { const blk = await prov.getBlock('latest'); if (blk && blk.baseFeePerGas) base = blk.baseFeePerGas; } catch (_) {}
+  if (base === 0n) { try { const fd = await prov.getFeeData(); base = fd.gasPrice || 0n; } catch (_) {} }
+  // Pay 2x the current base fee. A legacy (type-0) tx's gasPrice IS its
+  // maxFeePerGas, so setting it EXACTLY to the base fee we just read gets the tx
+  // rejected ("max fee per gas less than block base fee") the moment the base
+  // fee ticks up between our read and the node receiving it. On this cheap L2
+  // (~0.07 gwei base) 2x is still negligible and absorbs normal drift/spikes.
+  const buffered = base > 0n ? base * 2n : ethers.parseUnits('0.02', 'gwei');
+  if (mode === 'cheap') return { gasPrice: buffered };
   const want = ethers.parseUnits(String(CFG.gasGwei > 0 ? CFG.gasGwei : 0.01), 'gwei');
-  return { gasPrice: (floor > 0n && floor > want) ? floor : want };
+  return { gasPrice: want > buffered ? want : buffered };   // operator's fixed price, but never below the buffered base fee
 }
 async function waitBounded(tx) { try { return await tx.wait(1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
 async function waitHash(hash, chainKey) { try { return await providerFor(chainKey).waitForTransaction(hash, 1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
