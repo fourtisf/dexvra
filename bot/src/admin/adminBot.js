@@ -92,9 +92,11 @@ async function sendTemplateAudit(ctx, arg = "") {
     price: 0.001266, mcap: 1300000, liq: 183475,
     links: { website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat" },
     siteUrl: "https://dexvra.io/token/solana/G9j8", overview: "A community-driven memecoin on Solana.",
+    xUrl: "https://x.com/i/status/1",
   };
   const CHANNEL = {
-    post_listing: () => fmt.listingPost(sampleCoin),
+    post_listing_xpress: () => fmt.listingPost({ ...sampleCoin, tier: "XPRESS" }),
+    post_listing_tiered: () => fmt.listingPost(sampleCoin),
     post_trending: () => fmt.trendingPost(sampleCoin),
     post_pump: () => fmt.pumpPost(sampleCoin, 137.6, 310000, 1300000),
     post_rankup: () => fmt.rankupPost(sampleCoin, 2, 82),
@@ -481,10 +483,22 @@ function homeText() {
 // cryptic tags. AUTO ones are filled AND formatted automatically (usually leave
 // them as-is); the rest are simple live values you place wherever you want them.
 const PH_HELP = {
-  // auto-built blocks (carry their own emoji + spacing)
+  // auto-filled links & blocks (leave them where they are)
+  logoEmoji: "the token’s logo emoji",
+  chainEmoji: "the network’s emoji (from the Chain emoji template)",
+  twitter: "the token’s X link",
+  website: "the token’s Website link",
+  telegram: "the token’s Telegram link",
+  site: "the dexvra.io link",
+  listing: "the Listings channel link",
+  trending: "the Trending channel link",
+  announce: "the Announcements channel link",
+  xUrl: "link to the X announcement post (auto after tweeting)",
+  change: "24h change sentence",
+  tierEmoji: "tier emoji (from the paid tier)",
+  // legacy blocks (older saved templates only)
   head: "the header line (e.g. “New Listing on Dexvra”)",
   tierLine: "tier badge line (e.g. “💎 Diamond tier”)",
-  logoEmoji: "the token’s logo emoji",
   overview: "the project description paragraph",
   socials: "the project’s social links block (X · Website · Telegram)",
   footer: "the Dexvra channel links block",
@@ -492,7 +506,6 @@ const PH_HELP = {
   name: "token name",
   symbol: "ticker (e.g. $CUBEMAN)",
   tag: "ticker without the $",
-  twitter: "the token’s X link",
   mention: "the token’s X @handle",
   chain: "blockchain (e.g. Solana)",
   address: "contract address",
@@ -503,7 +516,6 @@ const PH_HELP = {
   coinUrlLabel: "the Dexvra link shown as text",
   url: "link",
   rank: "trending rank number",
-  change: "24h change sentence",
   percent: "pump % since listing",
   multiple: "pump multiple (e.g. 2×)",
   firstMc: "market cap at listing",
@@ -517,9 +529,12 @@ const PH_HELP = {
   linkUrl: "advertiser link",
   title: "advertiser / project title",
   tier: "tier name (Diamond, Gold…)",
-  tierEmoji: "tier emoji",
 };
-const AUTO_PH = new Set(["head", "tierLine", "logoEmoji", "overview", "socials", "footer"]);
+const AUTO_PH = new Set([
+  "head", "tierLine", "logoEmoji", "overview", "socials", "footer",
+  "chainEmoji", "twitter", "website", "telegram", "site", "listing", "trending", "announce",
+  "xUrl", "change", "tierEmoji",
+]);
 
 // A friendly legend: split the template's placeholders into "your values" vs
 // "auto — leave as-is" with a plain description for each.
@@ -729,7 +744,10 @@ function build() {
   bot.action("resetall", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
-    const n = tpl.keys().filter((k) => tpl.isCustom(k)).length;
+    // overrideCount() counts EVERY saved override, incl. orphaned keys from
+    // older template generations — keys() would miss those and wrongly report
+    // "nothing to reset" on a data file that still has stale entries.
+    const n = tpl.overrideCount();
     if (!n) {
       return edit(ctx, "♻️ <b>Nothing to reset</b>\n\nEvery template is already on its default.", Markup.inlineKeyboard([[Markup.button.callback("⬅ Back", "home")]]));
     }

@@ -208,6 +208,19 @@ async function fulfillListing(ctx, order) {
   const bannerCoin = bannerCoinOf(input, live);
   const tierBadge = input.tier === "XPRESS" ? "Xpress Listing" : input.tier ? `${tierLabel(input.tier)} Tier` : null;
   const listMedia = await postMedia("listing", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, tierBadge);
+
+  // 5 → moved BEFORE the channel posts: tweet first, so the channel post can
+  // carry the fourtis-style "Announce On X" link (the line auto-drops when X
+  // is off or the tweet failed). The race keeps a hung X API from stalling
+  // fulfillment; the tweet id is persisted whenever it eventually lands so a
+  // later pump alert can still QUOTE the listing tweet.
+  const tweetP = x.postListing(coin, logoBuffer, "image/png").catch(() => null);
+  tweetP
+    .then((id) => (id ? postids.set(input.chain, input.address, { listingTweetId: id }) : null))
+    .catch(() => {});
+  const tweetId = await Promise.race([tweetP, new Promise((r) => setTimeout(r, 20000, null))]);
+  if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
+
   const links = [];
   try {
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin));
@@ -231,11 +244,7 @@ async function fulfillListing(ctx, order) {
     log.warn(`[fulfil] listing channel posts: ${e.message}`);
   }
 
-  // 5. Tweet + 6. Buyer DM. Persist the listing TWEET id so a later pump alert
-  // can QUOTE it on X (mirrors the TG reply-to-listing behaviour).
-  x.postListing(coin, logoBuffer, "image/png")
-    .then((tweetId) => (tweetId ? postids.set(input.chain, input.address, { listingTweetId: tweetId }) : null))
-    .catch(() => {});
+  // 6. Buyer DM (the tweet was posted before the channel posts above).
   await dm(ctx, successListing(coin, links), menu.postPurchase(coin.siteUrl));
 }
 
@@ -256,6 +265,15 @@ async function fulfillTrending(ctx, order) {
     logoBuffer,
   );
   const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
+
+  // Tweet first (timeboxed) so the channel post can link it — same pattern as
+  // the listing flow; the "Announce On X" line drops when there's no tweet.
+  const tweetId = await Promise.race([
+    x.postTrending(coin).catch(() => null),
+    new Promise((r) => setTimeout(r, 20000, null)),
+  ]);
+  if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
+
   const links = [];
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
@@ -267,7 +285,6 @@ async function fulfillTrending(ctx, order) {
   } catch (e) {
     log.warn(`[fulfil] trending posts: ${e.message}`);
   }
-  x.postTrending(coin).catch(() => {});
   await dm(ctx, successTrending(coin, p.hours, links), menu.postPurchase(coin.siteUrl));
 }
 

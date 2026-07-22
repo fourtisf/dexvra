@@ -33,7 +33,7 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("New Listing on Dexvra"));
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
-  assert.ok(card.text.includes("Liquidity:") && card.text.includes("Market Cap:"), "Liquidity + Market Cap lines");
+  assert.ok(card.text.includes("Liquidity:") && card.text.includes("MC:"), "Liquidity + MC line");
   assert.ok(card.text.includes("Chain:"), "Chain line present");
   assert.ok(card.text.includes("dexvra.io/token"), "token-page link line present");
   assert.ok(card.entities.some((e) => e.type === "code"), "address as code");
@@ -66,6 +66,35 @@ test("listing post: clean layout, no overview paragraph, no stray blanks", () =>
   assert.ok(!noOv.text.includes("null"));
   // empty socials never leave 3+ consecutive newlines
   assert.ok(!/\n{3,}/.test(noOv.text), `stray blank lines: ${JSON.stringify(noOv.text.slice(0, 200))}`);
+  // a token with no socials drops the WHOLE social paragraph, header included
+  assert.ok(!noOv.text.includes("social links"), noOv.text);
+  // …but the footer still follows the market-cap line
+  assert.ok(noOv.text.includes("📎 Dexvra"), noOv.text);
+});
+
+test("social lines drop individually; tier badge line drops without a tier", () => {
+  const base = {
+    name: "Bull Cat",
+    symbol: "$BULLCAT",
+    chain: "solana",
+    address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+    price: 0.000725,
+    mcap: 725100,
+    siteUrl: "https://dexvra.io/token/solana/G9j8",
+  };
+  // only a website → X + Telegram SEGMENTS cut from the row, header + Website kept
+  const partial = fmt.listingPost({ ...base, tier: "XPRESS", links: { website: "https://bullcat.io" } });
+  assert.ok(partial.text.includes("social links\n🌐 Website\n"), partial.text);
+  assert.ok(!/❌ X/.test(partial.text), partial.text);
+  assert.ok(!partial.text.includes("Telegram"), partial.text);
+  // two present, one missing → the row keeps its separator between survivors
+  const two = fmt.listingPost({ ...base, tier: "XPRESS", links: { twitter: "https://x.com/bc", website: "https://bullcat.io" } });
+  assert.ok(two.text.includes("❌ X · 🌐 Website\n"), two.text);
+  // tiered template without a tier → no orphan " tier" badge line
+  const noTier = fmt.listingPost({ ...base, tier: null, links: {} });
+  assert.ok(noTier.text.includes("New Listing on Dexvra"));
+  assert.ok(!/ tier\b/.test(noTier.text), noTier.text);
+  assert.ok(!/\n{3,}/.test(noTier.text));
 });
 
 test("overview with ** cannot break markup parsing (bold-injection regression)", () => {
@@ -89,6 +118,52 @@ test("overview with ** cannot break markup parsing (bold-injection regression)",
     assert.ok(card.entities.some((e) => e.type === "code"), "code entity survived");
     assert.ok(card.entities.some((e) => e.type === "text_link" && e.url === base.siteUrl), "CTA link survived");
   }
+});
+
+test("xpress listing post matches the operator's reference layout", () => {
+  const coin = {
+    name: "The Golden Whale",
+    symbol: "WHALE",
+    chain: "solana",
+    tier: "XPRESS",
+    address: "4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump",
+    price: 0.0000842,
+    mcap: 84400,
+    liq: 22300,
+    links: { twitter: "https://x.com/gw", website: "https://gw.io", telegram: "https://t.me/gw" },
+  };
+  const { text } = fmt.listingPost(coin);
+  assert.ok(text.startsWith("⚡ Xpress Listing — The Golden Whale live on Dexvra"), "header line");
+  assert.ok(text.includes("💲 The Golden Whale ($WHALE)"), "💲 token line");
+  assert.ok(text.includes("✅ dexvra.io/token/solana/4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "✅ full dexvra link line");
+  assert.ok(text.includes("Chain: Solana"), "chain line");
+  assert.ok(text.includes("📄 Contract:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
+  assert.ok(text.includes("◼️ MC: $84.4K | Liquidity: $22.3K"), "MC first, then Liquidity, on ONE line");
+  assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
+  assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
+});
+
+test("Announce On X line: shown with a tweet link, dropped without one", () => {
+  const base = {
+    name: "T",
+    symbol: "$T",
+    chain: "solana",
+    tier: "XPRESS",
+    address: "So1anaAddr111111111111111111111111111111111",
+    price: 0.01,
+    mcap: 1000,
+    links: {},
+    siteUrl: "https://dexvra.io/token/solana/So1",
+  };
+  const withX = fmt.listingPost({ ...base, xUrl: "https://x.com/i/status/123" });
+  assert.ok(withX.text.includes("Announce On X"), withX.text);
+  assert.ok(
+    withX.entities.some((e) => e.type === "text_link" && e.url === "https://x.com/i/status/123"),
+    "tweet link entity present",
+  );
+  const withoutX = fmt.listingPost(base);
+  assert.ok(!withoutX.text.includes("Announce On X"), withoutX.text);
+  assert.ok(!/\n{3,}/.test(withoutX.text));
 });
 
 test("pump post payload shows percent + MCs", () => {
