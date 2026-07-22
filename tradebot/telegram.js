@@ -165,15 +165,21 @@ async function walletScreen(chatId) {
     const usdV = nativeUsd(c.native) * amt;
     chainBlock += `${c.emoji} ${esc(c.name)}: <b>${amt > 0 ? amt.toFixed(4) : '0'} ${c.native}</b>${usdV > 0.005 ? ` ($${fmt(usdV)})` : ''}\n`;
   });
+  // One EVM key = one 0x address shared by every EVM chain; Solana has its own key.
+  // Show BOTH addresses per wallet so it's obvious where to deposit each.
+  const evmChain = allChains.find((c) => !core.chains.isSvm(c.key)) || allChains[0];
+  const solChain = allChains.find((c) => core.chains.isSvm(c.key));
+  const evmNames = allChains.filter((c) => !core.chains.isSvm(c.key)).map((c) => c.name).join(' · ');
   let body = '';
   const kbRows = [];
   list.forEach((w, i) => {
     const active = i === awIdx;
     const label = core.walletLabel(w, i + 1);
     const nOrders = (w.orders && w.orders.length) || 0;
-    const chIdx = allChains.findIndex((c) => c.key === ch.key);
-    const onActive = chIdx !== -1 ? matrix[i][chIdx] : null;
-    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> all chains · ${onActive == null ? '—' : fmtNat(onActive, ch.key)} ${ch.native} on ${esc(ch.name)}${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n<code>${wAddr(w, ch.key)}</code>\n\n`;
+    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> all chains${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n`;
+    body += `🔗 <b>EVM address</b> <i>(${esc(evmNames)})</i>\n<code>${wAddr(w, evmChain.key)}</code>\n`;
+    if (solChain) body += `🟣 <b>Solana address</b>\n<code>${wAddr(w, solChain.key)}</code>\n`;
+    body += `\n`;
     const row = [btn(`${active ? '✓ ' : '⚪ '}${label}`.slice(0, 26), active ? 'wal' : 'sw:' + w.id), btn('✏️', 'rnw:' + w.id), btn('📥', 'qrw:' + w.id)];
     if (list.length > 1) row.push(btn('🗑', 'rmw:' + w.id));
     kbRows.push(row);

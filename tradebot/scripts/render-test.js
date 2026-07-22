@@ -19,7 +19,9 @@ const USER = { id: 1, wallets: [WALLET], activeWallet: 'w1', settings: { slippag
 
 const coreStub = {
   CFG: { tgToken: 'TEST:TOKEN', feeWallet: '0xFee', solFeeWallet: 'SoL' },
-  chains: { isSvm: () => false, enabledChains: () => [CH, { key: 'ethereum', name: 'Ethereum', emoji: '◆', native: 'ETH', curve: false }, { key: 'base', name: 'Base', emoji: '🔵', native: 'ETH', curve: false }], isSol: () => false },
+  chains: { isSvm: (k) => k === 'solana', enabledChains: () => [CH, { key: 'ethereum', name: 'Ethereum', emoji: '◆', native: 'ETH', curve: false }, { key: 'base', name: 'Base', emoji: '🔵', native: 'ETH', curve: false }, { key: 'solana', name: 'Solana', emoji: '🟣', native: 'SOL', curve: false, kind: 'svm' }], isSol: (k) => k === 'solana' },
+  providerFor: () => ({ getBalance: async () => 1000000000000000000n }),
+  WALLET_CAP: 10,
   ensureUser: () => USER,
   getUser: () => USER,
   hasChainPresets: () => false,
@@ -33,7 +35,7 @@ const coreStub = {
   userChain: () => 'robinhood',
   walletList: () => [WALLET],
   walletById: (u, id) => (id === 'w1' ? WALLET : null),
-  walletAddress: (w) => w.address,
+  walletAddress: (w, chainKey) => (chainKey === 'solana' ? '6TyQqpcS5HUWS9C1eRMPd4cGpUMyackKaFmjzxVPcqZ' : w.address),
   activeWallet: () => WALLET,
   walletLabel: (w, i) => `Wallet ${i}`,
   posKey: (chain, ca) => `${chain}:${String(ca).toLowerCase()}`,
@@ -87,6 +89,7 @@ const dump = (title, p) => {
   dump('MONITOR (live position)', await T.monitorPayload(1, CA, 'robinhood', 'w1'));
   if (T.settingsScreen) dump('SETTINGS', T.settingsScreen(1));
   if (T.gasScreen) dump('GAS PRIORITY', T.gasScreen(1));
+  if (T.walletScreen) dump('WALLETS', await T.walletScreen(1));
   if (T.copyScreen) dump('COPY & DEV SNIPE', T.copyScreen(1));
   if (T.snipeScreen) dump('AUTO-SNIPE', T.snipeScreen(1));
   console.log('\n\n===== INTERIM PROGRESS HELPERS =====');
