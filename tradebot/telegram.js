@@ -428,15 +428,20 @@ function snipeScreen(chatId) {
   const text =
     `🎯 <b>Auto-Snipe</b>\n\n` +
     `Automatically buys every brand-new token the moment it launches, on the chains you enable — no manual monitoring required.\n\n` +
-    `<b>1. Amount per launch</b>\n` +
-    `Currently <b>${amt}</b> (each chain's native coin). Tap 💵 below to change it.\n\n` +
-    `<b>2. Chains</b>\n` +
-    `Tap a chain to enable or disable sniping on it.\n\n` +
+    `<b>Step 1 — Amount per launch</b>\n` +
+    `Currently <b>${amt}</b> (each chain's native coin). Tap a preset below, or ✏️ to type your own.\n\n` +
+    `<b>Step 2 — Turn on a chain</b>\n` +
+    `Tap a chain to start or stop sniping on it. Done.\n\n` +
     SEP + `\n${statusLine}\n` + SEP + `\n\n` +
     `⚠️ <b>Buys every new launch</b> on the enabled chains. Brand-new tokens carry high risk, so keep the amount small. Honeypots are filtered automatically; always do your own research.\n\n` +
     `<i>To follow one specific developer's launches instead, use 👥 Copy &amp; Dev Snipe.</i>`;
+  const cur = String(u.snipe.ethAmount);
+  const QUICK = ['0.01', '0.05', '0.1', '0.5'];
   const kbRows = [];
-  kbRows.push([btn(`💵 Amount: ${amt}`, 'snamt')]);
+  // Step 1 — one-tap amount presets (no typing). ✓ marks the current amount.
+  kbRows.push(QUICK.map((p) => btn(`${cur === p ? '✓ ' : ''}${p}`, `snamtq:${p}`)));
+  kbRows.push([btn('✏️ Custom amount', 'snamt')]);
+  // Step 2 — one tap per chain to start/stop sniping there.
   enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
   kbRows.push([btn('🎯 Snipe a specific developer', 'copy')]);
   kbRows.push([btn('« Back', 'menu')]);
@@ -1164,6 +1169,7 @@ async function onCallback(q) {
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (k === 'sntog') { const u = core.ensureUser(chatId); try { core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'snamtq') { try { core.setSnipeAmount(chatId, ca); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '💵 <b>Amount per snipe</b>\n\nEnter the amount to spend on each new launch, in the chain\'s native coin (for example <code>0.01</code>). This exact amount is used for every snipe. A small amount is recommended.'); }
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
