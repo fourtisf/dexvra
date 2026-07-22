@@ -11,19 +11,31 @@ const path = require('path');
 let BUY_BEHAVIOR = { ok: true };   // toggled per case
 const saved = [];                   // records saveStoreNow calls
 const notes = [];                   // captured notifications
+let SNAP_PRICE = 0;                  // tokenSnapshot priceEth (positions test)
+let SELL_BEHAVIOR = { ok: true };   // core.sell behavior (positions test)
+const sellCalls = [];               // records core.sell(chatId, ca, pct, chain, wid, opts)
+let SAFE = { supported: false, level: 'ok' };   // safety verdict (positions test)
 const coreStub = {
   CFG: { gasBufferEth: '0.001', solGasBuffer: '0.01' },
   chains: { isSvm: (k) => k === 'solana', isEnabled: () => true },
   chainOf: (k) => ({ key: k, name: k, emoji: '◆', native: k === 'solana' ? 'SOL' : 'ETH', explorer: 'https://x' }),
   allUsers: () => USERS,
-  saveStoreNow: () => saved.push(Date.now ? 1 : 1),
+  walletList: (u) => u.wallets || [],
+  notifyOn: () => false,   // alerts OFF → only autoProtect can drive positionsCycle
+  tokenSnapshot: async () => (SNAP_PRICE > 0 ? { priceEth: SNAP_PRICE, sym: 'DEV' } : null),
+  sell: async (chatId, ca, pct, chain, wid, opts) => {
+    sellCalls.push({ chatId, ca, pct, chain, wid, opts });
+    if (SELL_BEHAVIOR.throw) throw new Error(SELL_BEHAVIOR.msg || 'sell failed');
+    return { proceedsEth: 0.05, native: 'ETH', hash: '0xsellhash', soldPct: pct };
+  },
+  saveStoreNow: () => saved.push(1),
   saveStore: () => {},
   buy: async (chatId, token, amt) => {
     if (BUY_BEHAVIOR.throw) { const e = new Error(BUY_BEHAVIOR.msg || 'boom'); if (BUY_BEHAVIOR.broadcast) e.broadcast = true; throw e; }
     return { sym: 'DEV', gotTokens: 123, spentEth: amt, native: 'ETH', hash: '0xhash', chain: 'robinhood' };
   },
 };
-const safetyStub = { supported: () => false, tokenSecurity: async () => null, verdict: () => ({ level: 'ok' }) };
+const safetyStub = { supported: () => SAFE.supported, tokenSecurity: async () => ({}), verdict: () => ({ level: SAFE.level }) };
 const dir = path.resolve(__dirname, '..');
 const inject = (rel, exp) => { const p = require.resolve(path.join(dir, rel)); require.cache[p] = { id: p, filename: p, loaded: true, exports: exp }; };
 inject('core', coreStub);
@@ -98,6 +110,50 @@ const mkT = (over) => Object.assign({ id: 'cp1', address: '0xDEV', chain: 'robin
   A('broadcast: returns true', ret === true);
   A('broadcast: spent KEPT', Math.abs(Number(t.spentEth) - 0.02) < 1e-9);
   A('broadcast: dedup KEPT', t.bought['0xtoken4'] === true);
+
+  // ---- Auto-protect (rug guard) in positionsCycle ----
+  const TOK = '1000000000000000000';   // 1 token (18 dec)
+  const mkPos = (over) => Object.assign({ chain: 'robinhood', ca: '0xtok', sym: 'DEV', dec: 18, ethIn: 0.1, tokens: TOK, peakValueEth: 1.0, notified: {} }, over);
+  const mkUser = (autoProtect, pos) => ({ chatId: 1, settings: { autoProtect }, wallets: [{ id: 'w1', positions: { 'robinhood:0xtok': pos } }] });
+  const resetPos = () => { sellCalls.length = 0; notes.length = 0; };
+
+  // Crash: value 0.2 vs peak 1.0 = 80% drop ≥ 65% → auto-sell 100%
+  resetPos(); SNAP_PRICE = 0.2; SELL_BEHAVIOR = { ok: true }; SAFE = { supported: false, level: 'ok' };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
+  await T.positionsCycle();
+  A('autoProtect crash → sells 100%', sellCalls.length === 1 && sellCalls[0].pct === 100 && sellCalls[0].wid === 'w1');
+  A('autoProtect crash → aggressive slippage/gas opts', !!sellCalls[0] && sellCalls[0].opts && sellCalls[0].opts.slipAddBps >= 1000 && sellCalls[0].opts.gasMult >= 2);
+  A('autoProtect crash → DM sent', notes.some((n) => /Auto-protect sold/.test(n.text)));
+
+  // Guard OFF: same crash, autoProtect false → no sell
+  resetPos(); USERS.length = 0; USERS.push(mkUser(false, mkPos({})));
+  await T.positionsCycle();
+  A('guard OFF → no auto-sell', sellCalls.length === 0);
+
+  // Mild dip (30%), safety OK → no sell
+  resetPos(); SNAP_PRICE = 0.7; SAFE = { supported: true, level: 'ok' };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
+  await T.positionsCycle();
+  A('mild dip + safe → no auto-sell', sellCalls.length === 0);
+
+  // Mild dip (30%) but safety flips to DANGER → auto-sell
+  resetPos(); SNAP_PRICE = 0.7; SAFE = { supported: true, level: 'danger' };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
+  await T.positionsCycle();
+  A('mild dip + DANGER → auto-sell 100%', sellCalls.length === 1 && sellCalls[0].pct === 100);
+
+  // Cooldown: crash but protectAt just now → no repeat sell
+  resetPos(); SNAP_PRICE = 0.2; SAFE = { supported: false, level: 'ok' };
+  const recentPos = mkPos({ notified: { protectAt: Date.now() } });
+  USERS.length = 0; USERS.push(mkUser(true, recentPos));
+  await T.positionsCycle();
+  A('cooldown → no repeat auto-sell', sellCalls.length === 0);
+
+  // Honeypot: crash triggers sell but sell throws → failure DM, no crash
+  resetPos(); SNAP_PRICE = 0.2; SELL_BEHAVIOR = { throw: true, msg: 'reverted: cannot sell' };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
+  await T.positionsCycle();
+  A('honeypot sell fails → failure DM, no throw', sellCalls.length === 1 && notes.some((n) => /couldn't exit/.test(n.text)));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

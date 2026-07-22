@@ -391,6 +391,7 @@ function ensureUser(chatId, referredBy) {
       if (!s.notify || typeof s.notify !== 'object') { s.notify = { snipe: true, copy: true, alerts: true }; ch = true; }
       if (typeof s.autoTpPct !== 'number') { s.autoTpPct = 0; ch = true; }   // 0 = off; else auto take-profit at +X% on every buy
       if (typeof s.autoSlPct !== 'number') { s.autoSlPct = 0; ch = true; }   // 0 = off; else auto stop-loss at −X%
+      if (typeof s.autoProtect !== 'boolean') { s.autoProtect = false; ch = true; }   // rug guard: auto-sell a held bag if it crashes / turns dangerous
       if (typeof s.gasBoost !== 'number' || !(s.gasBoost >= 1)) { s.gasBoost = 1; ch = true; }   // gas priority: 1 Normal · 2 Fast · 3 Turbo
       if (!s.presetsByChain || typeof s.presetsByChain !== 'object') { s.presetsByChain = {}; ch = true; } }
     // Write THROUGH if we just minted a key in the backfill (durability), else debounce.
@@ -409,7 +410,7 @@ function ensureUser(chatId, referredBy) {
     alerts: [], copy: { on: false, targets: [] }, dca: [],
     security: { withdrawLock: false, whitelist: [], wdTimes: [] },
     refEarnedEth: 0,
-    settings: { slippage: 0, buyPresets: DEFAULT_BUY_PRESETS.slice(), autoBuy: false, autoBuyAmount: '0.01', confirmBuy: false, expert: false, notify: { snipe: true, copy: true, alerts: true }, autoTpPct: 0, autoSlPct: 0, presetsByChain: {} },
+    settings: { slippage: 0, buyPresets: DEFAULT_BUY_PRESETS.slice(), autoBuy: false, autoBuyAmount: '0.01', confirmBuy: false, expert: false, notify: { snipe: true, copy: true, alerts: true }, autoTpPct: 0, autoSlPct: 0, autoProtect: false, presetsByChain: {} },
   };
   DB.users[id] = u; DB.refByCode[code] = id;
   saveStoreNow();   // write-through: the encrypted key must be durable before we return the address
@@ -718,6 +719,14 @@ function setAutoExit(chatId, tpPct, slPct) {
   const sl = Math.max(0, Math.min(99, Math.round(Number(slPct) || 0)));       // −% loss (can't be ≥100%)
   u.settings.autoTpPct = tp; u.settings.autoSlPct = sl; saveStore();
   return { autoTpPct: tp, autoSlPct: sl };
+}
+// Rug guard (opt-in): when ON, the positions watcher auto-sells 100% of a held bag if it
+// crashes far below its peak OR its safety check flips to DANGER (honeypot / LP pulled /
+// sell-tax spike). A genuine honeypot may still block the exit — best-effort protection.
+function setAutoProtect(chatId, on) {
+  const u = ensureUser(chatId);
+  u.settings.autoProtect = !!on; saveStore();
+  return u.settings.autoProtect;
 }
 // Per-type notification toggles for PASSIVE bot actions (snipe / copy). User-created
 // signals — price alerts and your own limit/TP/SL fills — always notify (muting a
@@ -1356,6 +1365,11 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
 
     const key = posKey(chainKey, ca);
     const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
+    // Freshly (re)opened bag = was closed or held nothing before this buy. Reset the
+    // risk-tracking state so a STALE peak from a prior holding can't instantly trip the
+    // rug guard / rug alert on a brand-new entry.
+    let prevHeld = 0n; try { prevHeld = BigInt(p.tokens || '0'); } catch (_) {}
+    if (p.closed || prevHeld <= 0n) { p.peakValueEth = 0; if (p.notified && typeof p.notified === 'object') { delete p.notified.rug; delete p.notified.protectAt; delete p.notified.protectCheckAt; } }
     // costEth = cost basis of the CURRENTLY-HELD tokens (drained proportionally on
     // sells). ethIn/ethOut stay as LIFETIME totals for the ×-multiple/stats.
     // Migrate a legacy position (no costEth) from its net cash still in the trade.
@@ -1759,7 +1773,7 @@ module.exports = {
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,
   buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
-  setConfirmBuy, setExpert, setAutoExit, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
+  setConfirmBuy, setExpert, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,

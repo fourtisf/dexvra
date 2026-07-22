@@ -567,15 +567,16 @@ function settingsScreen(chatId) {
       `Confirm before buy: <b>${onoff(s.confirmBuy)}</b>\n` +
       `Fast mode: <b>${onoff(s.expert)}</b>\n` +
       `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n` +
-      `Auto-exit after buy: <b>${(s.autoTpPct > 0 || s.autoSlPct > 0) ? [(s.autoTpPct > 0 ? 'TP +' + s.autoTpPct + '%' : ''), (s.autoSlPct > 0 ? 'SL −' + s.autoSlPct + '%' : '')].filter(Boolean).join(' · ') : '⚪ OFF'}</b>\n\n` +
-      `<i>Quick-buy amounts are per-chain (0.01 ETH ≠ 0.01 BNB) — this sets them for ${esc(ch.name)}. Confirm-before-buy adds a Yes/No step. Fast mode skips the "buying…" messages. Auto-buy buys instantly on paste (skips both the safety card AND the confirm step).</i>`,
+      `Auto-exit after buy: <b>${(s.autoTpPct > 0 || s.autoSlPct > 0) ? [(s.autoTpPct > 0 ? 'TP +' + s.autoTpPct + '%' : ''), (s.autoSlPct > 0 ? 'SL −' + s.autoSlPct + '%' : '')].filter(Boolean).join(' · ') : '⚪ OFF'}</b>\n` +
+      `🛡 Auto-protect (rug guard): <b>${onoff(s.autoProtect)}</b>\n\n` +
+      `<i>Quick-buy amounts are per-chain (0.01 ETH ≠ 0.01 BNB) — this sets them for ${esc(ch.name)}. Confirm-before-buy adds a Yes/No step. Fast mode skips the "buying…" messages. Auto-buy buys instantly on paste (skips both the safety card AND the confirm step). Auto-protect auto-sells a bag if it crashes or turns dangerous.</i>`,
     kb: rows(
       [btn('🌐 Chain', 'chain'), btn('📉 Slippage', 'setslip'), btn('⛽ Gas', 'setgas')],
       [btn(`⚡ Buy amounts`, 'setbp')],
       [btn(`${s.confirmBuy ? '🔴 Confirm buy OFF' : '🟢 Confirm buy ON'}`, 'cbtog'), btn(`${s.expert ? '🔴 Fast mode OFF' : '🟢 Fast mode ON'}`, 'extog')],
       [btn(s.autoBuy ? '🔴 Auto-buy OFF' : '🟢 Auto-buy ON', 'abtog'), btn('✏️ Auto-buy amount', 'abamt')],
-      [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn('🔐 Security', 'usec')],
-      [btn('🔔 Notifications', 'ntf')],
+      [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn(`${s.autoProtect ? '🔴 Rug guard OFF' : '🛡 Rug guard ON'}`, 'aptog')],
+      [btn('🔐 Security', 'usec'), btn('🔔 Notifications', 'ntf')],
       [btn('❔ Help', 'help'), btn('« Menu', 'menu')],
     ),
   };
@@ -1005,16 +1006,22 @@ async function onMessage(m) {
       const c = await tokenCard(chatId, deepCa, det.chain);
       return send(chatId, c.text, c.kb);
     }
+    const activeW = core.activeWallet(core.ensureUser(chatId));
+    // New users get a single obvious first action (get the deposit address); returning
+    // users get the normal menu.
+    const welcomeKb = (isNew && activeW)
+      ? { inline_keyboard: [[btn('📥 Get my deposit address', 'qrw:' + activeW.id)], [btn('❔ How it works', 'help'), btn('« Menu', 'menu')]] }
+      : mainMenu();
     await send(chatId,
       `👋 <b>Welcome to Dexvra Trade Bot</b>\n\n` +
       `Buy and sell tokens right here in Telegram — no website, no wallet app, no extension.\n\n` +
       `<b>Get started in 3 steps</b>\n` +
-      `1️⃣ <b>Add funds.</b> Tap 💼 Wallets, then 📥 to get your deposit address, and send some ${core.chainOf(core.userChain(core.ensureUser(chatId))).native} to it.\n` +
+      `1️⃣ <b>Add funds.</b> Tap <b>📥 Get my deposit address</b> below and send some ${core.chainOf(core.userChain(core.ensureUser(chatId))).native} to it.\n` +
       `2️⃣ <b>Pick a token.</b> Paste its contract address here — you'll get a live card with price, safety and your holdings.\n` +
       `3️⃣ <b>Trade.</b> Tap Buy or Sell. That's it.\n\n` +
       `<i>Your wallet is created and secured for you — only you can withdraw. Never share your private key with anyone.</i>\n\n` +
       (isNew ? `👇 A wallet was just created for you. Add funds to begin.` : `👇 Here's your wallet.`),
-      mainMenu());
+      welcomeKb);
     const w = await walletScreen(chatId); return send(chatId, w.text, w.kb);
   }
   if (text === '/wallet') { const w = await walletScreen(chatId); return send(chatId, w.text, w.kb); }
@@ -1050,6 +1057,7 @@ async function onMessage(m) {
   }
   if (text.startsWith('/userkey')) return adminUserKey(chatId, text.split(/\s+/)[1]);
   if (text.startsWith('/stats')) return adminStats(chatId);
+  if (text.startsWith('/revenue')) return adminRevenue(chatId);
   if (text === '/menu' || text === '/help') return send(chatId, helpText(chatId), mainMenu());
   if (text.startsWith('/buy')) { const [, ca, amtRaw] = text.split(/\s+/); if (isCa(ca) && amtRaw) { const det = await detectChain(chatId, ca); const cn = core.chainOf(det.chain || core.userChain(core.ensureUser(chatId))); const pa = parseAmt(amtRaw, cn.native); if (!pa) return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code>'); if (pa.err) return send(chatId, '❌ ' + esc(pa.err)); return requestBuy(chatId, ca, pa.amt, det.chain); } return send(chatId, 'Usage: <code>/buy &lt;contract&gt; &lt;amount|$usd&gt;</code> — e.g. <code>/buy 0x… 0.05</code> or <code>/buy 0x… $10</code> — or paste a contract address.'); }
   if (text.startsWith('/sell')) { const [, ca, pct] = text.split(/\s+/); if (isCa(ca) && pct) { const det = await detectChain(chatId, ca); return doSell(chatId, ca, Number(pct), det.chain); } return send(chatId, 'Usage: <code>/sell &lt;contract&gt; &lt;pct&gt;</code>'); }
@@ -1138,6 +1146,7 @@ async function onCallback(q) {
   if (data === 'ntf') { const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'ntftog') { const type = ca; try { core.setNotify(chatId, type, !core.notifyOn(chatId, type)); } catch (_) {} const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'abtog') { const u = core.ensureUser(chatId); try { core.setAutoBuy(chatId, !u.settings.autoBuy); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'aptog') { const u = core.ensureUser(chatId); let on = false; try { on = core.setAutoProtect(chatId, !u.settings.autoProtect); } catch (_) {} const s = settingsScreen(chatId); await edit(chatId, mid, s.text, s.kb); if (on) await send(chatId, `🛡 <b>Auto-protect ON</b>\n\nIf a token you hold <b>crashes far below its peak</b>, or a safety re-check finds it turned <b>high-risk</b> (honeypot / liquidity pulled / sell-tax spike), the bot will automatically <b>sell 100%</b> of that bag to protect you and DM you the result.\n\n<i>Best-effort: a genuine honeypot can block any sale. Applies to every token you hold.</i>`); return; }
   if (data === 'abamt') { setPending(chatId, { action: 'ab_amt' }); return send(chatId, 'Send the <b>auto-buy amount</b> to spend per paste (e.g. <code>0.02</code>):'); }
   if (data === 'aex') { setPending(chatId, { action: 'ae_val' }); return send(chatId, '🎯 <b>Auto-exit after every buy</b>\n\nSend <b>&lt;take-profit%&gt; &lt;stop-loss%&gt;</b> (0 = off), e.g.\n<code>100 50</code> → sell 100% at +100% (2x) or −50%.\n<code>0 0</code> → turn auto-exit off.\n\n<i>Orders are placed on the buying wallet, one-shot, relative to your entry price.</i>'); }
   if (data === 'usec') { const s = securityScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -1509,7 +1518,7 @@ function adminScreen(chatId) {
   const byChain = {};
   for (const u of users) { const o = u.refOwed || {}; for (const [ck, wei] of Object.entries(o)) { try { byChain[ck] = (BigInt(byChain[ck] || '0') + BigInt(wei || '0')).toString(); } catch (_) {} } }
   const owedLines = Object.entries(byChain).map(([ck, wei]) => { const c = core.chainOf(ck) || { native: 'ETH', name: ck }; return `  ${c.name}: <b>${fmtNat(wei, ck)} ${c.native}</b>`; }).join('\n') || '  none';
-  return send(chatId, `🛠 <b>Admin</b>\n\nUsers: <b>${users.length}</b>\nReferral owed (unsettled), per chain:\n${owedLines}\n\nSettle manually from FEE_WALLET on each chain (refOwed[chain] in the store).\n\n<code>/userkey &lt;@user or id&gt;</code> — recover a user's key (support)\n<code>/stats</code> — volume &amp; fees`);
+  return send(chatId, `🛠 <b>Admin</b>\n\nUsers: <b>${users.length}</b>\nReferral owed (unsettled), per chain:\n${owedLines}\n\nSettle manually from FEE_WALLET on each chain (refOwed[chain] in the store).\n\n<code>/userkey &lt;@user or id&gt;</code> — recover a user's key (support)\n<code>/stats</code> — volume &amp; fees\n<code>/revenue</code> — live treasury balances + liabilities`);
 }
 // Admin-only, ON-DEMAND key recovery for support. Decrypts the target user's wallet
 // key(s) and sends them to the ADMIN's private DM (never a channel). Audited.
@@ -1567,6 +1576,39 @@ function statsText(snap, totalUsers) {
 async function adminStats(chatId) {
   if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
   return send(chatId, statsText(core.reportSnapshot(), core.allUsers().length));
+}
+// Operator revenue dashboard: the fee snapshot PLUS the LIVE on-chain treasury balances
+// (actual collected revenue) and referral liabilities. Admin-only.
+async function adminRevenue(chatId) {
+  if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
+  await send(chatId, '⏳ Reading live treasury balances…');
+  const users = core.allUsers();
+  const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
+  // Live fee-wallet balance per enabled chain = revenue actually sitting in the treasury.
+  const chains = core.chains.enabledChains();
+  let treasuryUsd = 0;
+  const balLines = [];
+  for (const c of chains) {
+    const addr = core.chains.isSvm(c.key) ? solT : evmT;
+    if (!addr) { balLines.push(`  ${c.emoji || ''} ${esc(c.name)}: <i>no treasury set</i>`); continue; }
+    const bal = await withTmo(core.ethBalance(addr, c.key).catch(() => null), 6000, null);
+    if (bal == null) { balLines.push(`  ${c.emoji || ''} ${esc(c.name)}: —`); continue; }
+    const amt = Number(fmtNat(bal, c.key));
+    const usd = nativeUsd(c.native) * amt; treasuryUsd += usd;
+    balLines.push(`  ${c.emoji || ''} ${esc(c.name)}: <b>${amt.toFixed(5)} ${c.native}</b>${usd > 0.005 ? ` ($${fmt(usd)})` : ''}`);
+  }
+  // Referral liabilities (owed, not yet settled) summed across users, per chain.
+  const owed = {};
+  for (const u of users) { const o = u.refOwed || {}; for (const [ck, wei] of Object.entries(o)) { try { owed[ck] = (BigInt(owed[ck] || '0') + BigInt(wei || '0')).toString(); } catch (_) {} } }
+  const owedLines = Object.entries(owed).filter(([, w]) => { try { return BigInt(w) > 0n; } catch (_) { return false; } })
+    .map(([ck, w]) => { const c = core.chainOf(ck) || { native: 'ETH', emoji: '' }; return `  ${c.emoji || ''} ${esc(c.name || ck)}: ${fmtNat(w, ck)} ${c.native}`; });
+  const traders = users.filter((u) => core.walletList(u).some((w) => Object.keys(w.positions || {}).length > 0)).length;
+  return send(chatId,
+    statsText(core.reportSnapshot(), users.length) +
+    `\n👤 Users who've traded: <b>${traders}</b>` +
+    `\n\n💰 <b>Live treasury balance</b>${treasuryUsd > 0 ? ` · ≈ $${fmt(treasuryUsd)}` : ''}\n${balLines.join('\n')}` +
+    `\n\n🎁 <b>Referral owed (liabilities)</b>\n${owedLines.length ? owedLines.join('\n') : '  none'}` +
+    `\n\n<i>Treasury = fees collected minus anything withdrawn. Net ≈ treasury − referral owed.</i>`);
 }
 // English-only bot.
 function menuGreeting(chatId) {

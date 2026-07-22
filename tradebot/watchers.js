@@ -402,24 +402,35 @@ async function alertsCycle() {
 const POS_MILESTONES = [2, 5, 10, 25, 50, 100];
 const RUG_MIN_PEAK = Math.max(0, Number(process.env.POS_RUG_MIN_PEAK || 0.01));   // native; ignore dust positions
 const RUG_DROP = Math.min(0.9, Math.max(0.01, Number(process.env.POS_RUG_DROP || 0.15)));   // value ≤ 15% of peak = rug-ish
+// Auto-protect (rug guard) — opt-in per user. Sell 100% when a bag has fallen this far
+// below its peak (a crash/rug), or, once it is meaningfully down, when a safety re-check
+// flips to DANGER (honeypot / LP pulled / sell-tax spike).
+const AUTO_PROTECT_DROP = Math.min(0.95, Math.max(0.2, Number(process.env.AUTO_PROTECT_DROP_PCT || 70) / 100));
+const AUTO_PROTECT_WATCH = Math.min(AUTO_PROTECT_DROP, 0.25);   // start re-checking contract safety once down ≥25%
+const AUTO_PROTECT_COOLDOWN_MS = 5 * 60 * 1000;   // min gap between auto-sell attempts on one bag (honeypot retry guard)
+const AUTO_PROTECT_CHECK_MS = 3 * 60 * 1000;      // min gap between safety re-checks on one bag (API rate guard)
 async function positionsCycle() {
   const items = [];
   for (const u of core.allUsers()) {
-    if (!core.notifyOn(u.chatId, 'alerts')) continue;
+    const wantProtect = !!(u.settings && u.settings.autoProtect);
+    // Process a user's positions if they want alerts OR have the rug guard on. (The
+    // milestone/rug ALERTS self-gate on the 'alerts' toggle inside _notify; the
+    // auto-protect SELL runs whenever the guard is on, and its DM is never muted.)
+    if (!core.notifyOn(u.chatId, 'alerts') && !wantProtect) continue;
     for (const w of core.walletList(u)) {
       for (const key of Object.keys(w.positions || {})) {
         const p = w.positions[key];
         if (!p || p.closed || !(Number(p.ethIn) > 0)) continue;
         let heldRaw = 0n; try { heldRaw = BigInt(p.tokens || '0'); } catch (_) {}
         if (heldRaw <= 0n) continue;
-        items.push({ u, w, p, heldRaw });
+        items.push({ u, w, p, heldRaw, wantProtect });
       }
     }
   }
   if (!items.length) return;
   const snapOf = snapReader();
   let dirty = false;
-  await mapLimit(items, ORDER_CONCURRENCY, async ({ u, w, p, heldRaw }) => {
+  await mapLimit(items, ORDER_CONCURRENCY, async ({ u, w, p, heldRaw, wantProtect }) => {
     let snap; try { snap = await snapOf(p.chain, p.ca); } catch (_) { return; }
     if (!snap || !(snap.priceEth > 0)) return;
     const c = core.chainOf(p.chain) || { native: 'ETH', emoji: '' };
@@ -436,6 +447,30 @@ async function positionsCycle() {
       for (const m of POS_MILESTONES) if (m <= hi) p.notified['x' + m] = true;
       dirty = true;
       _notify(u.chatId, `🚀 <b>$${esc(p.sym || '')} is up ${hi}×</b> on your entry!\nBag ≈ <b>${valueEth.toFixed(4)} ${c.native}</b> · consider taking profit.`, kb, 'alerts');
+    }
+    // ── Auto-protect (rug guard): sell 100% if the bag crashed far below its peak, or a
+    // safety re-check flips to DANGER. Best-effort — a genuine honeypot may block the exit.
+    if (wantProtect && p.peakValueEth >= RUG_MIN_PEAK) {
+      const dropFromPeak = 1 - (valueEth / p.peakValueEth);
+      const cooled = (Date.now() - (p.notified.protectAt || 0)) > AUTO_PROTECT_COOLDOWN_MS;
+      let reason = '';
+      if (dropFromPeak >= AUTO_PROTECT_DROP) {
+        reason = `it crashed ${Math.round(dropFromPeak * 100)}% below its peak`;
+      } else if (dropFromPeak >= AUTO_PROTECT_WATCH && safety.supported(p.chain) && (Date.now() - (p.notified.protectCheckAt || 0)) > AUTO_PROTECT_CHECK_MS) {
+        p.notified.protectCheckAt = Date.now(); dirty = true;
+        const sec = await safety.tokenSecurity(p.chain, p.ca).catch(() => null);
+        if (sec && safety.verdict(p.chain, sec).level === 'danger') reason = 'it turned high-risk (honeypot / liquidity / tax)';
+      }
+      if (reason && cooled) {
+        p.notified.protectAt = Date.now(); dirty = true;
+        try {
+          const r = await core.sell(u.chatId, p.ca, 100, p.chain, w.id, { slipAddBps: 1500, gasMult: 2 });   // exit aggressively (wide slippage)
+          _notify(u.chatId, `🛡 <b>Auto-protect sold $${esc(p.sym || '')}</b>\nReason: ${reason}.\nRecovered <b>${Number(r.proceedsEth).toFixed(5)} ${c.native}</b>.\n${txLink(p.chain, r.hash)}`);
+        } catch (err) {
+          _notify(u.chatId, `🛡 <b>Auto-protect couldn't exit $${esc(p.sym || '')}</b>\n${esc((err && (err.message || err)) || 'sell failed')}\nThe token may be blocking sells (honeypot). I'll try again shortly.`);
+        }
+        return;   // handled — skip the passive rug alert this cycle
+      }
     }
     // rug/dump: value fell to ≤RUG_DROP of a meaningful peak (once).
     if (!p.notified.rug && p.peakValueEth >= RUG_MIN_PEAK && valueEth <= p.peakValueEth * RUG_DROP) {
