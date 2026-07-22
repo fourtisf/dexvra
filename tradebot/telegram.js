@@ -327,7 +327,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   ];
   // Offer "send this token out" only when the bound wallet actually holds a bag.
   if (bal > 1e-9) ikb.push([btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`)]);
-  ikb.push([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, { text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }]);
+  ikb.push([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), { text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }]);
   ikb.push(lastRow);
   return { text, kb: { inline_keyboard: ikb } };
 }
@@ -973,11 +973,12 @@ async function onCallback(q) {
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
   if (data === 'monx') { stopMonitor(chatId, mid); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
-  if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca' || k === 'mon') {
+  if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca' || k === 'mon' || k === 'monn') {
     const parts = data.split(':'); const ch = parts[1], wi = parts[2], tca = parts[3], a = parts[4];
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
     const wid = wobj ? wobj.id : undefined;   // stale/removed index → fall back to the active wallet
     if (k === 'mon') { const p2 = await monitorPayload(chatId, tca, ch, wid); return edit(chatId, mid, p2.text, p2.kb); }
+    if (k === 'monn') { startMonitor(chatId, tca, ch, wid); return answer(q.id, '📍 Monitor started'); }
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
