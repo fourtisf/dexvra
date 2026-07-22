@@ -7,7 +7,7 @@
  * single custodial key is the SAME address on all of these, so switching chains
  * needs no new wallet.
  *
- * `curve:true` marks a chain where Robinfun bonding curves exist (Robinhood Chain);
+ * `curve:true` marks a chain where launchpad bonding curves exist (Robinhood Chain);
  * everywhere else the bot trades tokens directly on that chain's DEX.
  *
  * RPCs, routers and wrapped-native addresses are ALL overridable via env — verify

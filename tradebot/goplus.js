@@ -11,7 +11,7 @@
  */
 
 // GoPlus chain ids for the chains we route DEX trades on. Robinhood Chain (4663)
-// is NOT covered — its Robinfun-native tokens are fair-launch by construction.
+// is NOT covered — its launchpad-native tokens are fair-launch by construction.
 const GP_CHAIN = { ethereum: '1', bsc: '56', base: '8453', arbitrum: '42161' };
 
 function supported(chainKey) { return !!GP_CHAIN[chainKey]; }

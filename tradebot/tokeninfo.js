@@ -6,7 +6,7 @@
  *   • on-chain snapshot (core.tokenSnapshot): price, mcap, curve/graduation state
  *   • liquidity: DEX pool = WETH reserve × 2 (via router.factory→getPair→reserves);
  *                bonding curve = ETH raised so far / graduation target
- *   • Robinfun API (Robinhood-chain tokens): 24h/total volume, socials, created-at
+ *   • launchpad API (Robinhood-chain tokens): 24h/total volume, socials, created-at
  *   • GoPlus (Ethereum/Base/BNB/Arbitrum): tax, honeypot, holders, LP lock, mint…
  *
  * Everything is wrapped so this NEVER throws to the caller and never blocks a trade.
@@ -49,8 +49,8 @@ async function curveRaised(curveAddr, chainKey) {
   } catch (_) { return null; }
 }
 
-// Robinfun public API token record (Robinhood-chain launches only).
-async function robinfunApi(ca) {
+// Launchpad public API token record (Robinhood-chain launches only).
+async function launchpadApi(ca) {
   try {
     const r = await fetch(`${SITE}/api/v1/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
     if (!r.ok) return null;
@@ -79,7 +79,7 @@ async function enrich(ca, chainKey) {
   const onCurve = !!(chain.curve && snap.curve && !snap.graduated);
   if (onCurve) tasks.push(curveRaised(snap.curve, chainKey).then((v) => { if (v) { info.raised = v.raised; info.target = v.target; } }));
   else tasks.push(dexLiquidityNative(ca, chainKey).then((v) => { info.liquidityNative = v; }));
-  if (chain.curve) tasks.push(robinfunApi(ca).then((a) => { info.api = a; }));
+  if (chain.curve) tasks.push(launchpadApi(ca).then((a) => { info.api = a; }));
   if (goplus.supported(chainKey)) tasks.push(goplus.tokenSecurity(chainKey, ca).then((s) => { info.security = s; }).catch(() => {}));
   // Each task swallows its own errors, so Promise.all never rejects; the timeout
   // caps total latency and any unfinished task simply leaves its field undefined.
@@ -87,4 +87,4 @@ async function enrich(ca, chainKey) {
   return info;
 }
 
-module.exports = { enrich, dexLiquidityNative, curveRaised, robinfunApi };
+module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi };

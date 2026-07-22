@@ -4,7 +4,7 @@
  *
  * Custodial Telegram trading bot. One EVM key per user = the SAME address on every
  * supported chain (Robinhood Chain, Ethereum, Base, BNB Chain, Arbitrum — see
- * chains.js). On Robinhood Chain trades route to the Robinfun bonding curve while a
+ * chains.js). On Robinhood Chain trades route to the launchpad bonding curve while a
  * token is listed and to the DEX once graduated; on every other chain trades go
  * straight to that chain's Uniswap-V2-style DEX (any token, by contract address).
  *
@@ -570,7 +570,7 @@ function setChain(chatId, key) {
   u.activeChain = key; saveStore();
   return chainOf(key);
 }
-// Per-chain snipe toggle (Robinhood = new Robinfun launches; other chains = new DEX pairs).
+// Per-chain snipe toggle (Robinhood = new launchpad launches; other chains = new DEX pairs).
 function setSnipeChain(chatId, key, on) {
   const u = ensureUser(chatId);
   if (!isEnabled(key)) throw new Error('chain not enabled');

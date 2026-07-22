@@ -2,14 +2,13 @@
 
 A **custodial, Maestro-style, multi-chain Telegram trading bot** for
 [Dexvra](https://dexvra.io). Users trade tokens straight from Telegram — no
-website, no wallet extension. (Migrated from the Robinfun repo — the engine,
-chains and visitor/ops reporting are unchanged; only the branding is Dexvra's.)
+website, no wallet extension.
 
-**Chains:** Robinhood Chain (Robinfun bonding curves), Ethereum, Base, BNB Chain,
+**Chains:** Robinhood Chain (launchpad bonding curves), Ethereum, Base, BNB Chain,
 Arbitrum, and **Solana**. One EVM key is the **same address on every EVM chain**;
 the same custodial secret also derives one fixed **Solana** address (Phantom-path for
 seed-phrase wallets) — switch with `/chain`. On Robinhood Chain trades route to the
-Robinfun curve (then its DEX after graduation); on other EVM chains to that chain's
+launchpad curve (then its DEX after graduation); on other EVM chains to that chain's
 Uniswap-V2/PancakeSwap DEX; on **Solana** to the **Jupiter** aggregator (any SPL mint,
 by base58 address). Solana is **off by default** — enable it by adding `solana` to
 `ENABLED_CHAINS` and setting `SOLANA_RPC` (a private RPC is strongly recommended).
@@ -26,7 +25,7 @@ by base58 address). Solana is **off by default** — enable it by adding `solana
   and you always keep at least one.
 - **Buy / Sell by CA** — paste a contract address → live card (price, mcap,
   graduation %, your bag & PnL) with one-tap buy/sell. Routes to the bonding curve
-  while listed, and to Uniswap V2 once graduated — the same route the Robinfun
+  while listed, and to Uniswap V2 once graduated — the same route the
   launchpad site uses.
 - **Rich token scan** — paste a CA/mint for a Maestro-style card: price, market cap,
   liquidity/raised, 24h volume, holders, LP status, and safety. **EVM** safety is
@@ -35,7 +34,7 @@ by base58 address). Solana is **off by default** — enable it by adding `solana
   both surfaced as a HIGH-RISK banner.
 - **Portfolio + History** — open positions with live value and unrealized PnL, a
   per-wallet trade log, and realized PnL (SOL-denominated on Solana).
-- **Snipe (multi-chain)** — auto-buy every new Robinfun launch, every new
+- **Snipe (multi-chain)** — auto-buy every new Robinhood Chain launch, every new
   Uniswap/Pancake pair on ETH/Base/BNB/Arbitrum, and every new **pump.fun** launch on
   Solana (discovery via the pump.fun feed, buy via Jupiter); DANGER-flagged tokens
   skipped. Opt-in per chain.
