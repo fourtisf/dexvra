@@ -28,7 +28,7 @@ const CHAINS = {
   },
   ethereum: {
     key: 'ethereum', name: 'Ethereum', emoji: '⟠', chainId: 1, native: 'ETH', curve: false,
-    rpc: env('ETHEREUM_RPC', 'https://eth.llamarpc.com'),
+    rpc: env('ETHEREUM_RPC', 'https://ethereum-rpc.publicnode.com'),   // llamarpc default was flaky → balances silently read 0
     router: env('ETHEREUM_ROUTER', '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),   // Uniswap V2
     weth: env('ETHEREUM_WETH', '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
     explorer: 'https://etherscan.io',

@@ -122,8 +122,17 @@ async function walletScreen(chatId) {
   // whose RPC doesn't answer in time is null → '—', not a misleading 0.
   const allChains = core.chains.enabledChains();
   const awIdx = Math.max(0, list.findIndex((w) => w.id === u.activeWalletId));
+  // STRICT reads: core.ethBalance swallows EVM RPC errors into 0n, which made a
+  // dead RPC render as "0 ETH" (looked like an untracked deposit). Read the
+  // provider directly with one retry; a chain that still fails is null → '—'.
+  const readNative = async (w, c) => {
+    const addr = wAddr(w, c.key);
+    if (core.chains.isSvm(c.key)) return core.ethBalance(addr, c.key);   // svm errors already bubble
+    const prov = core.providerFor(c.key);
+    try { return await prov.getBalance(addr); } catch (_) { return prov.getBalance(addr); }
+  };
   const matrix = await Promise.all(list.map((w) =>
-    Promise.all(allChains.map((c) => withTmo(core.ethBalance(wAddr(w, c.key), c.key).catch(() => null), 4500, null)))));
+    Promise.all(allChains.map((c) => withTmo(readNative(w, c).catch(() => null), 6000, null)))));
   // Per-wallet USD total across chains + the grand total over all wallets.
   const usdOfRow = (row) => row.reduce((sum, b, i) => {
     if (b == null) return sum;
