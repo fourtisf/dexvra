@@ -67,13 +67,18 @@ const FOOTER_BLOCK =
   `🔥 [Trending]({trending}) · ` +
   `${em("📢", E.megaphone)} [Announcements]({announce})`;
 // Shared body of the listing/trending cards (below their distinct headers).
+// Clear, labelled stats so a reader sees the token, its market at a glance, and
+// exactly where to trade it. {price}/{mcap}/{liq} come from live data.
 const LISTING_BODY =
   `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
   `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
-  `{chainEmoji} **Chain:** {chain}\n` +
-  `📄 **Contract:**\n{address}\n\n` +
-  `◼️ **MC:** {mcap} | **Liquidity:** {liq}\n\n` +
-  `[⚡ Trade on Dexvra Trade Bot]({tradeUrl})\n\n` +
+  `{chainEmoji} **Network:** {chain}\n` +
+  `📄 **Contract address:**\n{address}\n\n` +
+  `${em("📊", E.chart)} **Price:** {price}\n` +
+  `${em("🏦", E.dollar)} **Market cap:** {mcap}\n` +
+  `${em("💧", E.link)} **Liquidity:** {liq}\n\n` +
+  `${em("⚡", E.zap)} **Trade it now — one tap:**\n` +
+  `[⚡ Buy / Sell on Dexvra Trade Bot]({tradeUrl})\n\n` +
   `[Announce On X 𝕏]({xUrl})\n\n` +
   `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`;
 
