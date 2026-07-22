@@ -239,6 +239,16 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   if (info.liquidityNative != null) L.push(`💧 Liquidity: <b>${info.liquidityNative.toFixed(3)} ${nat}</b> (${usd(info.liquidityNative, nat)})`);
   else if (info.raised != null) L.push(`💧 Raised: <b>${info.raised.toFixed(3)} / ${(info.target || 0).toFixed(2)} ${nat}</b> (bonding curve)`);
   if (api && api.volume) L.push(`📈 Vol 24h: <b>${api.volume.h24Usd != null ? '$' + fmt(api.volume.h24Usd) : '—'}</b>${api.volume.totalUsd != null ? ' · total $' + fmt(api.volume.totalUsd) : ''}`);
+  // Indexer market stats (DexScreener / GeckoTerminal) — fills the gaps the
+  // launchpad API leaves: volume for any token, price change, buy/sell txns.
+  const mkt = info.market;
+  if (mkt) {
+    if (!(api && api.volume && api.volume.h24Usd != null) && mkt.volH24Usd != null) L.push(`📈 Vol 24h: <b>$${fmt(mkt.volH24Usd)}</b>`);
+    const chg = (v) => (v == null ? null : `${v >= 0 ? '🟢 +' : '🔴 '}${Number(v).toFixed(1)}%`);
+    const chgParts = [chg(mkt.chgH1) && `1h ${chg(mkt.chgH1)}`, chg(mkt.chgH24) && `24h ${chg(mkt.chgH24)}`].filter(Boolean);
+    if (chgParts.length) L.push(`📉 Change: ${chgParts.join(' · ')}`);
+    if (mkt.buysH24 != null || mkt.sellsH24 != null) L.push(`🔁 Txns 24h: <b>${mkt.buysH24 || 0}</b> buys · <b>${mkt.sellsH24 || 0}</b> sells`);
+  }
   const hLp = [];
   if (sec && sec.holders != null) hLp.push(`👥 ${sec.holders} holders`);
   if (sec && sec.lpLockedPct != null) hLp.push(`🔒 LP ${Math.round(sec.lpLockedPct)}% locked`);
@@ -246,7 +256,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   if (hLp.length) L.push(hLp.join('  ·  '));
   if (sec) L.push(`🛡 Tax B/S: <b>${taxStr(sec.buyTaxPct)}/${taxStr(sec.sellTaxPct)}</b> · Honeypot: <b>${sec.honeypot ? '🔴 YES' : 'no'}</b>${sec.openSource === false ? ' · ⚠️ closed-source' : ''}`);
   else if (ch.curve) L.push(`🛡 <b>Fair-launch</b> · 0% tax · fixed 1B supply · LP burned on graduation`);
-  const created = api && api.createdAt;
+  const created = (api && api.createdAt) || (mkt && mkt.createdAt);
   if (created) L.push(`⏱ Age: <b>${fmtAge(created)}</b>`);
   if (api && api.links) { const lk = []; if (api.links.website) lk.push(`<a href="${esc(api.links.website)}">Web</a>`); if (api.links.twitter) lk.push(`<a href="${esc(api.links.twitter)}">X</a>`); if (api.links.telegram) lk.push(`<a href="${esc(api.links.telegram)}">TG</a>`); if (lk.length) L.push('🔗 ' + lk.join(' · ')); }
   const valueEth = bal * px;
@@ -275,8 +285,14 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     else if (selN >= 1) L.push(`<i>Trading on <b>${selN} selected wallet${selN > 1 ? 's' : ''}</b>. Tap 👛 below to change.</i>`);
     else L.push(`<i>Trading with <b>${esc(core.walletLabel(w, wi))}</b>${autoSwitched ? ' — the wallet holding this token' : ''}. Tap 👛 below to trade from several at once.</i>`);
   } else {
-    if (pos && pos.ethIn > 0) { const unreal = valueEth - (pos.ethIn - pos.ethOut); L.push(''); L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b>`); }
-    else if (bal > 0) { L.push(''); L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)}`); }
+    // Single wallet: ALWAYS show the bag (even "none") and the wallet's native
+    // balance, so the card answers "what do I hold and what can I spend" at a
+    // glance — Maestro-style.
+    L.push('');
+    if (pos && pos.ethIn > 0) { const unreal = valueEth - (pos.ethIn - pos.ethOut); L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b>`); }
+    else if (bal > 0) L.push(`💼 Your bag: ${fmt(bal)} $${esc(sym)} · ${usd(valueEth, nat)}`);
+    else L.push(`💼 Your bag: <i>none yet</i>`);
+    if (myRow && myRow.eth != null) L.push(`👛 ${esc(core.walletLabel(w, wi))}: <b>${myRow.eth.toFixed(4)} ${nat}</b> (${usd(myRow.eth, nat)}) available`);
   }
   const text = L.join('\n');
   // Encode the card's chain AND wallet index in every action, so a tap on a stale

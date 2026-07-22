@@ -49,6 +49,46 @@ async function curveRaised(curveAddr, chainKey) {
   } catch (_) { return null; }
 }
 
+// Market stats (24h volume, price change, buy/sell txns, pool age) from public
+// indexers: DexScreener for the big EVM chains, GeckoTerminal for Robinhood
+// Chain (DexScreener doesn't index it). Best-effort: null on any failure.
+const DS_CHAIN = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum' };
+const GT_NETWORK = { robinhood: 'robinhood' };
+async function marketStats(ca, chainKey) {
+  try {
+    if (DS_CHAIN[chainKey]) {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+      if (!r.ok) return null;
+      const j = await r.json();
+      const pairs = (j.pairs || []).filter((p) => p.chainId === DS_CHAIN[chainKey]);
+      if (!pairs.length) return null;
+      const p = pairs.sort((a, b) => ((b.liquidity && b.liquidity.usd) || 0) - ((a.liquidity && a.liquidity.usd) || 0))[0];
+      return {
+        volH24Usd: p.volume && p.volume.h24 != null ? Number(p.volume.h24) : null,
+        chgH1: p.priceChange && p.priceChange.h1 != null ? Number(p.priceChange.h1) : null,
+        chgH24: p.priceChange && p.priceChange.h24 != null ? Number(p.priceChange.h24) : null,
+        buysH24: p.txns && p.txns.h24 ? p.txns.h24.buys : null,
+        sellsH24: p.txns && p.txns.h24 ? p.txns.h24.sells : null,
+        createdAt: p.pairCreatedAt || null,
+      };
+    }
+    const net = GT_NETWORK[chainKey]; if (!net) return null;
+    const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${ca}/pools?page=1`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const a = j.data && j.data[0] && j.data[0].attributes;
+    if (!a) return null;
+    return {
+      volH24Usd: a.volume_usd && a.volume_usd.h24 != null ? Number(a.volume_usd.h24) : null,
+      chgH1: a.price_change_percentage && a.price_change_percentage.h1 != null ? Number(a.price_change_percentage.h1) : null,
+      chgH24: a.price_change_percentage && a.price_change_percentage.h24 != null ? Number(a.price_change_percentage.h24) : null,
+      buysH24: a.transactions && a.transactions.h24 ? a.transactions.h24.buys : null,
+      sellsH24: a.transactions && a.transactions.h24 ? a.transactions.h24.sells : null,
+      createdAt: a.pool_created_at ? Date.parse(a.pool_created_at) : null,
+    };
+  } catch (_) { return null; }
+}
+
 // Launchpad public API token record (Robinhood-chain launches only).
 async function launchpadApi(ca) {
   try {
@@ -80,6 +120,7 @@ async function enrich(ca, chainKey) {
   if (onCurve) tasks.push(curveRaised(snap.curve, chainKey).then((v) => { if (v) { info.raised = v.raised; info.target = v.target; } }));
   else tasks.push(dexLiquidityNative(ca, chainKey).then((v) => { info.liquidityNative = v; }));
   if (chain.curve) tasks.push(launchpadApi(ca).then((a) => { info.api = a; }));
+  tasks.push(marketStats(ca, chainKey).then((m) => { if (m) info.market = m; }));
   if (goplus.supported(chainKey)) tasks.push(goplus.tokenSecurity(chainKey, ca).then((s) => { info.security = s; }).catch(() => {}));
   // Each task swallows its own errors, so Promise.all never rejects; the timeout
   // caps total latency and any unfinished task simply leaves its field undefined.
@@ -87,4 +128,4 @@ async function enrich(ca, chainKey) {
   return info;
 }
 
-module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi };
+module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi, marketStats };
