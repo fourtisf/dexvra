@@ -712,31 +712,36 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code>…`);
       const r = await core.buy(chatId, ca, amt, chain, wid);
       const wi = walletIndex(chatId, wid);
-      // Maestro-style receipt (operator preference): NO fee line — the 1% is
-      // disclosed in /help and still collected on-chain. The receipt shows the
-      // spend + what you gained (USD worth) + entry MC, then a live Monitor
-      // message follows and keeps updating the position.
+      // Clear, complete receipt: what you spent, what you got, the price you got
+      // in, and where. The 1% fee is disclosed in /help and collected on-chain.
       const usdRate = nativeUsd(r.native);
       const spent = Number(r.spentEth) || 0, got = Number(r.gotTokens) || 0;
-      const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
+      const usd2 = (v) => (usdRate > 0 ? `$${(v * usdRate).toFixed(2)}` : '—');
       const uu = core.getUser(chatId);
       const wl = core.walletLabel((uu && core.walletById(uu, wid)) || core.activeWallet(uu), wi);
-      let gained = (usdRate > 0 && spent > 0) ? ` ≡ <b>$${(spent * usdRate).toFixed(2)}</b>` : '';
-      let entryMc = '';
+      let holdUsd = usdRate > 0 && spent > 0 ? usd2(spent) : '—';
+      let priceLine = '', mcLine = '';
       try {
         const snap = await withTmo(core.tokenSnapshot(ca, r.chain).catch(() => null), 4000, null);
         if (snap && snap.priceEth > 0) {
-          if (usdRate > 0 && got > 0) gained = ` ≡ <b>$${(got * snap.priceEth * usdRate).toFixed(2)}</b>`;
+          if (usdRate > 0 && got > 0) holdUsd = `$${(got * snap.priceEth * usdRate).toFixed(2)}`;
+          const pxUsd = snap.priceEth * usdRate;
+          if (pxUsd > 0) priceLine = `\n📈 <b>Entry price:</b> $${pxUsd.toPrecision(3)} per token`;
           const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
-          if (mcUsd > 0) entryMc = `\n🔹 Entry MC | <b>$${fmt(mcUsd)}</b>`;
+          if (mcUsd > 0) mcLine = `\n📊 <b>Market cap:</b> $${fmt(mcUsd)}`;
         }
       } catch (_) {}
       const exp2 = core.chainOf(r.chain);
+      const venue = r.venue === 'curve' ? 'Launchpad curve' : (r.venue === 'dex·v3' ? 'DEX (V3 pool)' : 'DEX');
       await send(chatId,
-        `🟩 <b>Buy of ${spent.toFixed(6)} ${r.native}${inUsd(spent)} succeeded</b> | 💳 ${esc(wl)}\n\n💰 You gained <b>${fmt(got)} $${esc(r.sym)}</b>${gained}${entryMc}`,
+        `✅ <b>Buy successful</b>\n\n` +
+        `💵 <b>Spent:</b> ${spent.toFixed(6)} ${r.native} (${usd2(spent)})\n` +
+        `🪙 <b>Received:</b> ${fmt(got)} $${esc(r.sym)} (worth ${holdUsd})` +
+        priceLine + mcLine +
+        `\n💳 <b>Wallet:</b> ${esc(wl)}\n🔀 <b>Traded on:</b> ${venue}`,
         { inline_keyboard: [
-          [{ text: '🔍 Transaction', url: `${exp2.explorer}/tx/${r.hash}` }],
-          [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
+          [{ text: '🔍 View transaction', url: `${exp2.explorer}/tx/${r.hash}` }],
+          [btn('🔄 Refresh card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
         ] });
       startMonitor(chatId, ca, r.chain, wid);   // live position report, auto-refreshing
       await _placeAutoExit(chatId, r, wid);
@@ -806,10 +811,23 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
       const sexp = core.chainOf(r.chain);
-      await send(chatId, `🟥 <b>Sell of ${r.soldPct}% succeeded</b>\n\n💰 You received <b>${got2.toFixed(6)} ${r.native}</b>${sUsd > 0 ? ` ≡ <b>$${(got2 * sUsd).toFixed(2)}</b>` : ''}`, { inline_keyboard: [
-        [{ text: '🔍 Transaction', url: `${sexp.explorer}/tx/${r.hash}` }],
-        [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
-      ] });
+      const uu2 = core.getUser(chatId);
+      const wl2 = core.walletLabel((uu2 && core.walletById(uu2, wid)) || core.activeWallet(uu2), wi);
+      const svenue = r.venue === 'curve' ? 'Launchpad curve' : (r.venue === 'dex·v3' ? 'DEX (V3 pool)' : 'DEX');
+      const pnl = Number(r.realizedEth);   // profit/loss on this sell in native
+      const pnlUsd = sUsd > 0 ? pnl * sUsd : null;
+      const pnlLine = Number.isFinite(pnl) && pnl !== 0
+        ? `\n📊 <b>Profit/Loss:</b> ${pnl >= 0 ? '🟢 +' : '🔴 '}${pnl.toFixed(6)} ${r.native}${pnlUsd != null ? ` (${pnl >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)})` : ''}`
+        : '';
+      await send(chatId,
+        `✅ <b>Sell successful — sold ${r.soldPct}%</b>\n\n` +
+        `💰 <b>Received:</b> ${got2.toFixed(6)} ${r.native}${sUsd > 0 ? ` ($${(got2 * sUsd).toFixed(2)})` : ''}` +
+        pnlLine +
+        `\n💳 <b>Wallet:</b> ${esc(wl2)}\n🔀 <b>Traded on:</b> ${svenue}`,
+        { inline_keyboard: [
+          [{ text: '🔍 View transaction', url: `${sexp.explorer}/tx/${r.hash}` }],
+          [btn('🔄 Refresh card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
+        ] });
     } else {
       if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
       const results = await Promise.allSettled(targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id)));
@@ -1240,7 +1258,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
   let closed = false;
-  const L = [`📍 <b>$${esc(sym)}</b> · ${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}`];
+  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}\n`];
   // Read the LIVE on-chain balance (not pos.tokens) so tokens sent out via 📤
   // Send don't leave the Monitor showing a phantom bag with fake PnL.
   let balNow = 0;
@@ -1248,23 +1266,24 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const cost = posCost(pos);
   if (!pos || !(cost > 0) || !(balNow > 0)) {
     closed = true;
-    L.push('<i>No open position — sold, or nothing bought yet.</i>');
+    L.push('<i>No open position right now — you have sold it, or have not bought yet.</i>');
   } else {
     const px = snap && snap.priceEth > 0 ? snap.priceEth : 0;
     const val = balNow * px;
-    L.push(`💰 Initial: <b>${cost.toFixed(5)} ${nat}</b>${inUsd(cost)} | Worth: <b>${px > 0 ? val.toFixed(5) + ' ' + nat : '—'}</b>${px > 0 ? inUsd(val) : ''}`);
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}`);
+    L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
+    L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
       const unreal = val - cost; const pct = (unreal / cost) * 100;
-      L.push(`📊 P/L: <b>${unreal >= 0 ? '🟢 +' : '🔴 '}${pct.toFixed(2)}%</b> · ${unreal >= 0 ? '+' : ''}${unreal.toFixed(5)} ${nat}${inUsd(unreal)}`);
+      L.push(`${unreal >= 0 ? '🟢' : '🔴'} <b>Profit/Loss:</b> ${unreal >= 0 ? '+' : ''}${pct.toFixed(2)}% (${unreal >= 0 ? '+' : ''}${unreal.toFixed(5)} ${nat}${usdRate > 0 ? ', ' + (unreal >= 0 ? '+' : '') + '$' + (unreal * usdRate).toFixed(2) : ''})`);
     }
-    L.push(`🎒 Tokens: <b>${fmt(balNow)}</b>`);
   }
   if (snap) {
     const pxUsd = (snap.priceEth || 0) * usdRate;
     const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
-    L.push(`💵 Price: <b>${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}</b> | MC: <b>${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}</b>`);
+    L.push(`\n📈 <b>Price:</b> ${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}  ·  <b>Market cap:</b> ${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}`);
   }
-  L.push(`<i>Updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
+  L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 16)} UTC</i>`);
   const kb = { inline_keyboard: [
     [btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)],
     [btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`), btn('✖ Stop', 'monx')],

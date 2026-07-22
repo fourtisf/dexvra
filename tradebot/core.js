@@ -1366,6 +1366,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     const ethBefore = await ethBalance(wallet.address, chainKey);
 
     let venue, hash, trc, v3ProceedsWei = null;   // v3: the WETH the swap produced (accounting source of truth)
+    let realizedThisSell = 0;   // profit/loss realized on this specific sell (for the receipt)
     if (onCurve) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
       // Quote with a SHAVE-TO-FIT guard. A holder of ~all circulating supply can sit
@@ -1470,8 +1471,9 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       const soldFrac = bal > 0n ? Number(amount) / Number(bal) : 1;   // amount sold / bag held
       const costOfSold = pos.costEth * Math.min(1, Math.max(0, soldFrac));
       const netProceeds = Number(ethers.formatEther(proceeds - fee));
+      realizedThisSell = netProceeds - costOfSold;   // profit/loss on THIS sell (for the receipt)
       pos.ethOut += netProceeds;                                   // lifetime received
-      pos.realizedEth = (Number(pos.realizedEth) || 0) + (netProceeds - costOfSold);   // accumulate realized PnL
+      pos.realizedEth = (Number(pos.realizedEth) || 0) + realizedThisSell;   // accumulate realized PnL
       pos.costEth = Math.max(0, pos.costEth - costOfSold);         // remaining basis
       pos.tokens = tokAfter.toString();
       // Treat a dust remainder (e.g. curve shave-to-fit leaving a few wei) as
@@ -1481,7 +1483,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: Number(ethers.formatEther(proceeds)), pct: p, hash });
     saveStore();
-    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, proceedsEth: Number(ethers.formatEther(proceeds)), feeEth: Number(ethers.formatEther(fee)), sym: (pos && pos.sym) || '' };
+    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, proceedsEth: Number(ethers.formatEther(proceeds)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
     _afterTrade(u, 'sell', res).catch(() => {});   // account + report (fire-and-forget)
     return res;
   });
