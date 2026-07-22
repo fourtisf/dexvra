@@ -15,7 +15,7 @@
 // inside core.js BEFORE core's .env loader runs, so capturing env at load time would
 // read an empty token and silently disable all reporting.
 const _token = () => (process.env.TRADEBOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-const _channel = () => (process.env.REPORT_CHANNEL_ID || '-1004448963090').trim();
+const _channel = () => (process.env.REPORT_CHANNEL_ID || '-1003885406672').trim();
 
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const who = (u) => (u && u.username) ? '@' + esc(u.username) : ('id ' + (u && u.chatId != null ? u.chatId : '?'));
