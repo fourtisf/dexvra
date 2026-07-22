@@ -7,9 +7,15 @@
  * snipe + order fills. DMs only (custodial wallet must not be shared in a group).
  */
 const { ethers } = require('ethers');
+const { AsyncLocalStorage } = require('async_hooks');
 const core = require('./core');
 const watchers = require('./watchers');
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
+// Carries the user's message id through a text-message handler so every reply THREADS
+// (Telegram "reply to") that message — set once in onMessage, read in send(). Safe under
+// concurrency (per-invocation store, not a global). Callback (button) handlers have no
+// store, so button responses don't reply-to-nothing.
+const _replyCtx = new AsyncLocalStorage();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware token safety (GoPlus on EVM, RugCheck on Solana)
@@ -24,13 +30,17 @@ const pending = new Map();      // chatId -> { action, ..., ts }
 const PENDING_TTL = 5 * 60 * 1000;
 const PRICES = { ETH: 0, BNB: 0, SOL: 0 };
 let BOT_USERNAME = '';
+// Last-known native balance per `${walletId}:${chainKey}` → { raw, at }. Used so a
+// single flaky/slow RPC (a timed-out read) can't silently drop a chain from the wallet
+// totals — the total stays stable instead of jumping down then back on refresh.
+const _balCache = new Map();
 
 // ------------------------------------------------------------ telegram api
 async function tg(method, body) {
   const r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
   return r.json();
 }
-function send(chatId, text, kb) { return tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}) }); }
+function send(chatId, text, kb) { const rt = _replyCtx.getStore(); return tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}), ...(rt ? { reply_to_message_id: rt, allow_sending_without_reply: true } : {}) }); }
 function edit(chatId, mid, text, kb) { return tg('editMessageText', { chat_id: chatId, message_id: mid, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}) }); }
 function answer(id, text) { return tg('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) }); }
 function del(chatId, mid) { return tg('deleteMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); }
@@ -146,8 +156,20 @@ async function walletScreen(chatId) {
     const prov = core.providerFor(c.key);
     try { return await prov.getBalance(addr); } catch (_) { return prov.getBalance(addr); }
   };
-  const matrix = await Promise.all(list.map((w) =>
+  const rawMatrix = await Promise.all(list.map((w) =>
     Promise.all(allChains.map((c) => withTmo(readNative(w, c).catch(() => null), 6000, null)))));
+  // Resolve each cell: a successful read (incl. a real 0) updates the last-known cache; a
+  // FAILED read (null, e.g. RPC timeout) falls back to the last-known balance (≤10 min) so
+  // the grand total stays stable and accurate instead of silently undercounting.
+  const nowMs = Date.now();
+  const matrix = list.map((w, wi) => allChains.map((c, ci) => {
+    const key = w.id + ':' + c.key;
+    const live = rawMatrix[wi][ci];
+    if (live != null) { _balCache.set(key, { raw: live, at: nowMs }); return live; }
+    const hit = _balCache.get(key);
+    return (hit && (nowMs - hit.at) < 600000) ? hit.raw : null;
+  }));
+  if (_balCache.size > 5000) { const first = _balCache.keys().next().value; _balCache.delete(first); }
   // Per-wallet USD total across chains + the grand total over all wallets.
   const usdOfRow = (row) => row.reduce((sum, b, i) => {
     if (b == null) return sum;
@@ -957,7 +979,12 @@ async function handleUpdate(up) {
   } catch (e) { console.error('handleUpdate', e.message); }
 }
 
-async function onMessage(m) {
+function onMessage(m) {
+  // Thread every reply to the user's message. allow_sending_without_reply keeps it working
+  // even for flows that delete the user's message first (e.g. importing a private key).
+  return _replyCtx.run(m && m.message_id, () => onMessageImpl(m));
+}
+async function onMessageImpl(m) {
   const chatId = m.chat.id;
   const text = (m.text || '').trim();
   if (!text) return;
