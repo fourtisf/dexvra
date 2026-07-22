@@ -523,8 +523,8 @@ function settingsScreen(chatId) {
       [btn('🌐 Chain', 'chain'), btn('📉 Slippage', 'setslip'), btn(`⚡ Buy amounts`, 'setbp')],
       [btn(`${s.confirmBuy ? '🔴 Confirm buy OFF' : '🟢 Confirm buy ON'}`, 'cbtog'), btn(`${s.expert ? '🔴 Fast mode OFF' : '🟢 Fast mode ON'}`, 'extog')],
       [btn(s.autoBuy ? '🔴 Auto-buy OFF' : '🟢 Auto-buy ON', 'abtog'), btn('✏️ Auto-buy amount', 'abamt')],
-      [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn('🌐 Bahasa / Language', 'lang')],
-      [btn('🔐 Security', 'usec'), btn('🔔 Notifications', 'ntf')],
+      [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn('🔐 Security', 'usec')],
+      [btn('🔔 Notifications', 'ntf')],
       [btn('❔ Help', 'help'), btn('« Menu', 'menu')],
     ),
   };
@@ -1360,7 +1360,10 @@ async function adminStats(chatId) {
   if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
   return send(chatId, statsText(core.reportSnapshot(), core.allUsers().length));
 }
-function langOf(chatId) { return core.getLang(chatId); }
+// English-only bot (operator preference). langOf always returns 'en' so every
+// UI string uses the English copy; the Indonesian branches stay in the code but
+// are unreachable.
+function langOf(chatId) { return 'en'; }
 function menuGreeting(chatId) {
   return langOf(chatId) === 'id'
     ? '🏠 <b>Dexvra Trade Bot</b>\n\nTempel alamat kontrak (CA/mint) untuk trading, atau pilih menu:'
@@ -1446,51 +1449,29 @@ async function tgBackupOnce() {
   } catch (e) { console.error('tg backup failed:', e.message); return false; }
 }
 
-// Register the blue "/" command menu with Telegram — default (EN) plus an
-// Indonesian variant so the menu matches the user's Telegram language, same
-// pairing as the /bahasa toggle. Best-effort: a failure never blocks boot.
+// Register the blue "/" command menu with Telegram (English only). Best-effort:
+// a failure never blocks boot.
 async function registerCommands() {
   const en = [
     { command: 'start',     description: 'Open the bot — wallet & main menu' },
     { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
-    { command: 'portfolio', description: 'Open positions & PnL' },
-    { command: 'history',   description: 'Trade history' },
+    { command: 'portfolio', description: 'Your holdings & profit/loss' },
+    { command: 'history',   description: 'Your past trades' },
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
-    { command: 'buy',       description: 'Buy by contract: /buy <ca> <amount>' },
-    { command: 'sell',      description: 'Sell a position: /sell <ca> <percent>' },
+    { command: 'buy',       description: 'Buy a token: /buy <address> <amount or $usd>' },
+    { command: 'sell',      description: 'Sell a token: /sell <address> <percent>' },
     { command: 'snipe',     description: 'Auto-buy new launches' },
-    { command: 'copy',      description: 'Copy-trade a wallet' },
-    { command: 'orders',    description: 'TP / SL / trailing / limit orders' },
+    { command: 'copy',      description: 'Copy another wallet\'s buys' },
+    { command: 'orders',    description: 'Auto-sell orders (take-profit / stop-loss)' },
     { command: 'dca',       description: 'Scheduled recurring buys' },
     { command: 'alerts',    description: 'Price alerts' },
-    { command: 'send',      description: 'Send tokens: /send <token> <dest> <amount>' },
-    { command: 'referral',  description: 'Referral link & earnings' },
-    { command: 'bahasa',    description: 'Language / Bahasa' },
+    { command: 'send',      description: 'Send tokens out: /send <token> <address> <amount>' },
+    { command: 'referral',  description: 'Your referral link & earnings' },
     { command: 'help',      description: 'How the bot works' },
-    { command: 'cancel',    description: 'Cancel the current action' },
-  ];
-  const id = [
-    { command: 'start',     description: 'Buka bot — wallet & menu utama' },
-    { command: 'wallet',    description: 'Wallet: saldo, deposit, withdraw, import' },
-    { command: 'portfolio', description: 'Posisi terbuka & PnL' },
-    { command: 'history',   description: 'Riwayat trade' },
-    { command: 'chain',     description: 'Ganti chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
-    { command: 'buy',       description: 'Beli via kontrak: /buy <ca> <jumlah>' },
-    { command: 'sell',      description: 'Jual posisi: /sell <ca> <persen>' },
-    { command: 'snipe',     description: 'Auto-beli launch baru' },
-    { command: 'copy',      description: 'Tiru trading wallet lain' },
-    { command: 'orders',    description: 'Order TP / SL / trailing / limit' },
-    { command: 'dca',       description: 'Beli rutin terjadwal' },
-    { command: 'alerts',    description: 'Alert harga' },
-    { command: 'send',      description: 'Kirim token: /send <token> <tujuan> <jumlah>' },
-    { command: 'referral',  description: 'Link referral & pendapatan' },
-    { command: 'bahasa',    description: 'Bahasa / Language' },
-    { command: 'help',      description: 'Cara kerja bot' },
-    { command: 'cancel',    description: 'Batalkan aksi berjalan' },
+    { command: 'cancel',    description: 'Cancel what you were doing' },
   ];
   try {
     await tg('setMyCommands', { commands: en });
-    await tg('setMyCommands', { commands: id, language_code: 'id' });
   } catch (_) { /* menu is cosmetic — never block boot on it */ }
 }
 
