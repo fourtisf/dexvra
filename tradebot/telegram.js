@@ -116,34 +116,40 @@ async function walletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const ch = core.chainOf(core.userChain(u));
   const list = core.walletList(u);
-  // Maestro-style: the ACTIVE wallet's balance on EVERY enabled chain (one EVM
-  // key = same 0x address everywhere, Solana has its own), fetched in parallel
-  // alongside the per-wallet balances on the active chain. A chain whose RPC
-  // doesn't answer in time shows '—' instead of a misleading 0.
+  // Maestro-style: EVERY wallet × EVERY enabled chain, fetched in parallel (one
+  // EVM key = same 0x address everywhere, Solana has its own), so a deposit on
+  // ANY chain shows up in the totals — never just the active chain. A chain
+  // whose RPC doesn't answer in time is null → '—', not a misleading 0.
   const allChains = core.chains.enabledChains();
-  const aw = list.find((w) => w.id === u.activeWalletId) || list[0];
-  const [bals, awBals] = await Promise.all([
-    Promise.all(list.map((w) => core.ethBalance(wAddr(w, ch.key), ch.key).catch(() => 0n))),
-    Promise.all(allChains.map((c) => withTmo(core.ethBalance(wAddr(aw, c.key), c.key).catch(() => null), 4500, null))),
-  ]);
-  const total = bals.reduce((a, b) => a + b, 0n);
-  const allEmpty = total <= 0n;
-  let chainBlock = '', chainUsd = 0, anyChainBal = false;
+  const awIdx = Math.max(0, list.findIndex((w) => w.id === u.activeWalletId));
+  const matrix = await Promise.all(list.map((w) =>
+    Promise.all(allChains.map((c) => withTmo(core.ethBalance(wAddr(w, c.key), c.key).catch(() => null), 4500, null)))));
+  // Per-wallet USD total across chains + the grand total over all wallets.
+  const usdOfRow = (row) => row.reduce((sum, b, i) => {
+    if (b == null) return sum;
+    return sum + Number(fmtNat(b, allChains[i].key)) * nativeUsd(allChains[i].native);
+  }, 0);
+  const walletUsd = matrix.map(usdOfRow);
+  const grandUsd = walletUsd.reduce((a, b) => a + b, 0);
+  const anyFunds = matrix.some((row) => row.some((b, i) => b != null && Number(fmtNat(b, allChains[i].key)) > 0));
+  // Active wallet's per-chain breakdown block.
+  let chainBlock = '';
   allChains.forEach((c, i) => {
-    const b = awBals[i];
+    const b = (matrix[awIdx] || [])[i];
     if (b == null) { chainBlock += `${c.emoji} ${esc(c.name)}: —\n`; return; }
     const amt = Number(fmtNat(b, c.key));
-    if (amt > 0) anyChainBal = true;
-    const usdV = nativeUsd(c.native) * amt; chainUsd += usdV;
+    const usdV = nativeUsd(c.native) * amt;
     chainBlock += `${c.emoji} ${esc(c.name)}: <b>${amt > 0 ? amt.toFixed(4) : '0'} ${c.native}</b>${usdV > 0.005 ? ` ($${fmt(usdV)})` : ''}\n`;
   });
   let body = '';
   const kbRows = [];
   list.forEach((w, i) => {
-    const active = w.id === u.activeWalletId;
+    const active = i === awIdx;
     const label = core.walletLabel(w, i + 1);
     const nOrders = (w.orders && w.orders.length) || 0;
-    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>${fmtNat(bals[i], ch.key)} ${ch.native}</b> (${usd(fmtNat(bals[i], ch.key), ch.native)})${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n<code>${wAddr(w, ch.key)}</code>\n\n`;
+    const chIdx = allChains.findIndex((c) => c.key === ch.key);
+    const onActive = chIdx !== -1 ? matrix[i][chIdx] : null;
+    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> all chains · ${onActive == null ? '—' : fmtNat(onActive, ch.key)} ${ch.native} on ${esc(ch.name)}${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n<code>${wAddr(w, ch.key)}</code>\n\n`;
     const row = [btn(`${active ? '✓ ' : '⚪ '}${label}`.slice(0, 26), active ? 'wal' : 'sw:' + w.id), btn('✏️', 'rnw:' + w.id), btn('📥', 'qrw:' + w.id)];
     if (list.length > 1) row.push(btn('🗑', 'rmw:' + w.id));
     kbRows.push(row);
@@ -151,11 +157,11 @@ async function walletScreen(chatId) {
   if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
   kbRows.push([btn('🌐 Chain', 'chain'), btn('🔄 Refresh', 'wal'), btn('« Menu', 'menu')]);
-  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>${fmtNat(total, ch.key)} ${ch.native}</b> (${usd(fmtNat(total, ch.key), ch.native)})\n\n`
-    + `🌐 <b>${esc(core.walletLabel(aw, list.findIndex((x) => x.id === aw.id) + 1))} — all chains</b>${anyChainBal && chainUsd > 0.005 ? ` · ≈ $${fmt(chainUsd)}` : ''}\n${chainBlock}\n`;
-  const guide = allEmpty
+  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>≈ $${fmt(grandUsd)}</b> across ${allChains.length} chains\n\n`
+    + `🌐 <b>${esc(core.walletLabel(list[awIdx], awIdx + 1))} — all chains</b>${walletUsd[awIdx] > 0.005 ? ` · ≈ $${fmt(walletUsd[awIdx])}` : ''}\n${chainBlock}\n`;
+  const guide = !anyFunds
     ? `<b>Start in 3 steps 👇</b>\n1️⃣ Deposit ${ch.native} to a wallet — tap <b>📥</b> on it for the address/QR.\n2️⃣ Tap <b>🔄 Refresh</b> to see it land.\n3️⃣ Paste any token contract → live card → one-tap buy.\n\n<i>Tap a name to switch · ✏️ rename · 📥 deposit · 🗑 remove. One key per wallet on every chain — EVM shares one 0x address, Solana has its own (switch with 🌐).</i>`
-    : `<i>Tap a name to switch the active wallet · ✏️ rename · 📥 deposit QR · 🗑 remove. Export/Withdraw act on the ✅ active wallet. Per-wallet lines show ${esc(ch.name)}; the 🌐 block shows the active wallet on every chain. Paste any CA — the chain is detected automatically.</i>`;
+    : `<i>Tap a name to switch the active wallet · ✏️ rename · 📥 deposit QR · 🗑 remove. Export/Withdraw act on the ✅ active wallet. Totals count EVERY chain; the 🌐 block breaks the active wallet down per chain. Paste any CA — the chain is detected automatically.</i>`;
   return { text: head + body + guide, kb: { inline_keyboard: kbRows } };
 }
 // Maestro-style deposit: a QR of the address + the address text. Works for any wallet
