@@ -15,6 +15,9 @@ const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware token safety (GoPlus on EVM, RugCheck on Solana)
 const tokeninfo = require('./tokeninfo');
 const solana = require('./solana');   // base58 address validation + SVM helpers
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
 
 const API = `https://api.telegram.org/bot${core.CFG.tgToken}`;
 const pending = new Map();      // chatId -> { action, ..., ts }
@@ -1171,6 +1174,30 @@ async function refreshPrices() {
 }
 async function getMe() { try { const r = await tg('getMe', {}); if (r && r.ok) BOT_USERNAME = r.result.username; } catch (_) {} }
 
+// Off-site backup → a PRIVATE Telegram channel (BACKUP_TG_CHANNEL, bot must be
+// admin). Ships the encrypted store, gzipped, every BACKUP_TG_HOURS (default 6)
+// — off-box without rclone/SSH, using infrastructure the operator already runs.
+// The file is ciphertext only; WALLET_SECRET is never included, so the channel
+// alone can't decrypt anything. Keep the channel private regardless.
+async function tgBackupOnce() {
+  const ch = (process.env.BACKUP_TG_CHANNEL || '').trim();
+  if (!ch) return false;
+  try {
+    const file = path.join(core.CFG.dataDir, 'tradebot.json');
+    if (!fs.existsSync(file)) return false;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const gz = zlib.gzipSync(fs.readFileSync(file));
+    const fd = new FormData();
+    fd.append('chat_id', ch);
+    fd.append('caption', `🗄 Store backup · ${new Date().toISOString()}\nCiphertext only — WALLET_SECRET is NOT in this file (keep it backed up separately, offline).`);
+    fd.append('document', new Blob([gz]), `tradebot-${stamp}.json.gz`);
+    const r = await fetch(`${API}/sendDocument`, { method: 'POST', body: fd, signal: AbortSignal.timeout(60000) });
+    const j = await r.json().catch(() => null);
+    if (!j || j.ok !== true) { console.error('tg backup failed:', j && j.description); return false; }
+    return true;
+  } catch (e) { console.error('tg backup failed:', e.message); return false; }
+}
+
 // Register the blue "/" command menu with Telegram — default (EN) plus an
 // Indonesian variant so the menu matches the user's Telegram language, same
 // pairing as the /bahasa toggle. Best-effort: a failure never blocks boot.
@@ -1253,6 +1280,13 @@ async function start() {
       }
     })();
     console.log(`ops reporting ENABLED → channel (daily recap ~${recapHour}:00 UTC)`);
+  }
+  // Off-site store backup to a private Telegram channel (see tgBackupOnce).
+  if ((process.env.BACKUP_TG_CHANNEL || '').trim()) {
+    const hours = Math.max(1, Number(process.env.BACKUP_TG_HOURS || 6));
+    tgBackupOnce();   // one at boot so a fresh deploy is covered immediately
+    setInterval(tgBackupOnce, hours * 3600 * 1000);
+    console.log(`telegram store backup ENABLED → channel every ${hours}h`);
   }
   console.log(`Dexvra Trade Bot up as @${BOT_USERNAME || '?'} — chains: ${core.chains.ENABLED.join(', ')}`);
 
