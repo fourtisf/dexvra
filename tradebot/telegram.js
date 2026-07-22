@@ -672,28 +672,33 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code>…`);
       const r = await core.buy(chatId, ca, amt, chain, wid);
       const wi = walletIndex(chatId, wid);
-      // Full-value receipt: every number carries its USD worth, entry price per
-      // token, plus a live bag valuation + PnL read right after the fill.
+      // Maestro-style receipt (operator preference): NO fee line — the 1% is
+      // disclosed in /help and still collected on-chain. The receipt shows the
+      // spend + what you gained (USD worth) + entry MC, then a live Monitor
+      // message follows and keeps updating the position.
       const usdRate = nativeUsd(r.native);
-      const spent = Number(r.spentEth) || 0, fee = Number(r.feeEth) || 0, got = Number(r.gotTokens) || 0;
+      const spent = Number(r.spentEth) || 0, got = Number(r.gotTokens) || 0;
       const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
-      const entry = (got > 0 && spent > 0 && usdRate > 0) ? `\n📈 Entry: <b>$${((spent * usdRate) / got).toPrecision(3)}</b> / token · ${r.venue}` : `\n· via ${r.venue}`;
-      let pnl = '';
+      const uu = core.getUser(chatId);
+      const wl = core.walletLabel((uu && core.walletById(uu, wid)) || core.activeWallet(uu), wi);
+      let gained = (usdRate > 0 && spent > 0) ? ` ≡ <b>$${(spent * usdRate).toFixed(2)}</b>` : '';
+      let entryMc = '';
       try {
         const snap = await withTmo(core.tokenSnapshot(ca, r.chain).catch(() => null), 4000, null);
-        const uu = core.getUser(chatId); const ww = (uu && (core.walletById(uu, wid) || core.activeWallet(uu))) || null;
-        const pos = ww && (ww.positions || {})[core.posKey(r.chain, ca)];
-        if (snap && snap.priceEth > 0 && pos && (pos.ethIn - pos.ethOut) > 0) {
-          const balNow = pos.tokens != null ? Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)) : got;
-          const valueEth = balNow * snap.priceEth;
-          const costEth = pos.ethIn - pos.ethOut;
-          const unreal = valueEth - costEth;
-          const pct = costEth > 0 ? (unreal / costEth) * 100 : 0;
-          pnl = `\n💼 Bag now: <b>${fmt(balNow)} $${esc(r.sym)}</b> ≈ ${valueEth.toFixed(5)} ${r.native}${inUsd(valueEth)}`
-              + `\n📊 PnL live: <b>${unreal >= 0 ? '🟢 +' : '🔴 '}${unreal.toFixed(5)} ${r.native}</b>${inUsd(unreal)} · ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        if (snap && snap.priceEth > 0) {
+          if (usdRate > 0 && got > 0) gained = ` ≡ <b>$${(got * snap.priceEth * usdRate).toFixed(2)}</b>`;
+          const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
+          if (mcUsd > 0) entryMc = `\n🔹 Entry MC | <b>$${fmt(mcUsd)}</b>`;
         }
       } catch (_) {}
-      await send(chatId, `✅ <b>Bought</b> ${fmt(got)} $${esc(r.sym)}\n💵 Spent: <b>${r.spentEth} ${r.native}</b>${inUsd(spent)} · fee ${fee.toFixed(5)}${inUsd(fee)}${entry}${pnl}\n${txLink(r.chain, r.hash)}`, rows([btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
+      const exp2 = core.chainOf(r.chain);
+      await send(chatId,
+        `🟩 <b>Buy of ${r.spentEth} ${r.native}${inUsd(spent)} succeeded</b> | 💳 ${esc(wl)}\n\n💰 You gained <b>${fmt(got)} $${esc(r.sym)}</b>${gained}${entryMc}`,
+        { inline_keyboard: [
+          [{ text: '🔍 Transaction', url: `${exp2.explorer}/tx/${r.hash}` }],
+          [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
+        ] });
+      startMonitor(chatId, ca, r.chain, wid);   // live position report, auto-refreshing
       await _placeAutoExit(chatId, r, wid);
     } else {
       if (!expert) await send(chatId, `⏳ Buying ${esc(amt)} of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
@@ -706,7 +711,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       });
       const wi = walletIndex(chatId, targets[0].id);
       const mUsd = nativeUsd(nat || 'ETH');
-      const head = `✅ <b>Bought on ${okN}/${targets.length} wallets</b> — $${esc(sym || '')}\nTotal ${fmt(totTok)} · spent ${totSpent.toFixed(5)} ${esc(nat || 'ETH')}${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''} · fee ${totFee.toFixed(5)}${mUsd > 0 ? ` ($${(totFee * mUsd).toFixed(2)})` : ''}`;
+      const head = `🟩 <b>Buy on ${okN}/${targets.length} wallets succeeded</b> — $${esc(sym || '')}\n💰 Total <b>${fmt(totTok)}</b> · spent <b>${totSpent.toFixed(5)} ${esc(nat || 'ETH')}</b>${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''}`;
       await send(chatId, head + '\n' + lines.join('\n'), rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     }
   } catch (e) { await send(chatId, `❌ Buy failed: ${esc(e.message || String(e))}`); }
@@ -722,8 +727,12 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const r = await core.sell(chatId, ca, pct, chain, wid);
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
-      const got2 = Number(r.proceedsEth) || 0, fee2 = Number(r.feeEth) || 0;
-      await send(chatId, `✅ <b>Sold</b> ${r.soldPct}%\n💵 Got: <b>${r.proceedsEth} ${r.native}</b>${sUsd > 0 ? ` ($${(got2 * sUsd).toFixed(2)})` : ''} · fee ${fee2.toFixed(5)}${sUsd > 0 ? ` ($${(fee2 * sUsd).toFixed(2)})` : ''} · ${r.venue}\n${txLink(r.chain, r.hash)}`, rows([btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
+      const got2 = Number(r.proceedsEth) || 0;
+      const sexp = core.chainOf(r.chain);
+      await send(chatId, `🟥 <b>Sell of ${r.soldPct}% succeeded</b>\n\n💰 You received <b>${r.proceedsEth} ${r.native}</b>${sUsd > 0 ? ` ≡ <b>$${(got2 * sUsd).toFixed(2)}</b>` : ''}`, { inline_keyboard: [
+        [{ text: '🔍 Transaction', url: `${sexp.explorer}/tx/${r.hash}` }],
+        [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
+      ] });
     } else {
       if (!expert) await send(chatId, `⏳ Selling ${pct}% of <code>${short(ca)}</code> on <b>${targets.length} wallets</b>…`);
       const results = await Promise.allSettled(targets.map((t) => core.sell(chatId, ca, pct, chain, t.id)));
@@ -735,7 +744,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       });
       const wi = walletIndex(chatId, targets[0].id);
       const msUsd = nativeUsd(nat || 'ETH');
-      const head = `✅ <b>Sold ${pct}% on ${okN}/${targets.length} wallets</b>${skip ? ` (${skip} had no bag)` : ''}\nTotal got ${totProceeds.toFixed(5)} ${esc(nat || 'ETH')}${msUsd > 0 ? ` ($${(totProceeds * msUsd).toFixed(2)})` : ''} · fee ${totFee.toFixed(5)}${msUsd > 0 ? ` ($${(totFee * msUsd).toFixed(2)})` : ''}`;
+      const head = `🟥 <b>Sell of ${pct}% on ${okN}/${targets.length} wallets succeeded</b>${skip ? ` (${skip} had no bag)` : ''}\n💰 Total received <b>${totProceeds.toFixed(5)} ${esc(nat || 'ETH')}</b>${msUsd > 0 ? ` ≡ $${(totProceeds * msUsd).toFixed(2)}` : ''}`;
       await send(chatId, head + '\n' + lines.join('\n'), rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]));
     }
   } catch (e) { await send(chatId, `❌ Sell failed: ${esc(e.message || String(e))}`); }
@@ -963,10 +972,12 @@ async function onCallback(q) {
   if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, 'Send the amount to buy per snipe in native token (e.g. <code>0.01</code>):'); }
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
-  if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca') {
+  if (data === 'monx') { stopMonitor(chatId, mid); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
+  if (k === 'tok' || k === 'b' || k === 's' || k === 'bx' || k === 'sx' || k === 'tp' || k === 'sl' || k === 'lb' || k === 'alt' || k === 'trl' || k === 'wt' || k === 'dca' || k === 'mon') {
     const parts = data.split(':'); const ch = parts[1], wi = parts[2], tca = parts[3], a = parts[4];
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
     const wid = wobj ? wobj.id : undefined;   // stale/removed index → fall back to the active wallet
+    if (k === 'mon') { const p2 = await monitorPayload(chatId, tca, ch, wid); return edit(chatId, mid, p2.text, p2.kb); }
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
@@ -1133,6 +1144,72 @@ function exportKeyMsg(chatId, walletId) {
   }
   return out;
 }
+// ---- live position monitor (Maestro-style) ------------------------------
+// After every buy the bot posts a Monitor message for that token and keeps
+// EDITING it (every 45s, for 30 min, bounded) so the position report is live:
+// initial vs worth, P/L %, tokens, price/MC. Manual 🔄 works anytime; ✖ Stop
+// ends the auto-refresh. One interval per message, cleaned up on stop/error.
+const _monitors = new Map();   // `${chatId}:${msgId}` → interval timer
+async function monitorPayload(chatId, ca, chainKey, wid) {
+  const u = core.ensureUser(chatId);
+  const ch = core.chainOf(chainKey);
+  const w = (wid && core.walletById(u, wid)) || core.activeWallet(u);
+  const wi = walletIndex(chatId, w && w.id);
+  const pos = w && (w.positions || {})[core.posKey(chainKey, ca)];
+  const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 6000, null);
+  const nat = ch.native; const usdRate = nativeUsd(nat);
+  const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
+  const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
+  let closed = false;
+  const L = [`📍 <b>$${esc(sym)}</b> · ${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}`];
+  const balNow = pos && pos.tokens != null ? Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)) : 0;
+  if (!pos || !(pos.ethIn > 0) || !(balNow > 0)) {
+    closed = true;
+    L.push('<i>No open position — sold, or nothing bought yet.</i>');
+  } else {
+    const cost = pos.ethIn - pos.ethOut;
+    const px = snap && snap.priceEth > 0 ? snap.priceEth : 0;
+    const val = balNow * px;
+    L.push(`💰 Initial: <b>${cost.toFixed(5)} ${nat}</b>${inUsd(cost)} | Worth: <b>${px > 0 ? val.toFixed(5) + ' ' + nat : '—'}</b>${px > 0 ? inUsd(val) : ''}`);
+    if (px > 0 && cost > 0) {
+      const unreal = val - cost; const pct = (unreal / cost) * 100;
+      L.push(`📊 P/L: <b>${unreal >= 0 ? '🟢 +' : '🔴 '}${pct.toFixed(2)}%</b> · ${unreal >= 0 ? '+' : ''}${unreal.toFixed(5)} ${nat}${inUsd(unreal)}`);
+    }
+    L.push(`🎒 Tokens: <b>${fmt(balNow)}</b>`);
+  }
+  if (snap) {
+    const pxUsd = (snap.priceEth || 0) * usdRate;
+    const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
+    L.push(`💵 Price: <b>${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}</b> | MC: <b>${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}</b>`);
+  }
+  L.push(`<i>Updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
+  const kb = { inline_keyboard: [
+    [btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)],
+    [btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`), btn('✖ Stop', 'monx')],
+  ] };
+  return { text: L.join('\n'), kb, closed };
+}
+function stopMonitor(chatId, mid) { const k = chatId + ':' + mid; const t = _monitors.get(k); if (t) { clearInterval(t); _monitors.delete(k); } }
+async function startMonitor(chatId, ca, chainKey, wid) {
+  try {
+    const p = await monitorPayload(chatId, ca, chainKey, wid);
+    const r = await send(chatId, p.text, p.kb);
+    const mid = r && r.ok && r.result && r.result.message_id;
+    if (!mid) return;
+    const until = Date.now() + 30 * 60 * 1000;
+    const timer = setInterval(async () => {
+      if (Date.now() > until) return stopMonitor(chatId, mid);
+      try {
+        const np = await monitorPayload(chatId, ca, chainKey, wid);
+        const er = await edit(chatId, mid, np.text, np.kb);
+        if (er && er.ok === false && /not found|can't be edited/i.test(er.description || '')) return stopMonitor(chatId, mid);
+        if (np.closed) stopMonitor(chatId, mid);   // position gone → freeze the last state
+      } catch (_) { stopMonitor(chatId, mid); }
+    }, 45000);
+    _monitors.set(chatId + ':' + mid, timer);
+  } catch (_) {}
+}
+
 function askExport(chatId) {
   return send(chatId, `🔑 <b>Export private key</b>\n\nThis reveals full control of your bot wallet. Anyone with it can drain the wallet. Never share it.\n\nAre you sure?`, rows([btn('Yes, show my key', 'expy'), btn('Cancel', 'menu')]));
 }

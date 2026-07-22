@@ -900,11 +900,13 @@ function slipBps(u) { let s = Number(u && u.settings && u.settings.slippage); if
 async function _chargeFee(wallet, feeWei, chainKey) {
   if (feeWei <= 0n || !CFG.feeWallet || !/^0x[0-9a-fA-F]{40}$/.test(CFG.feeWallet)) return null;
   try {
-    const gas = await gasOverrides(chainKey);
-    const tx = await wallet.sendTransaction({ to: CFG.feeWallet, value: feeWei, ...gas });
-    const rc = await waitBounded(tx);
+    // rawSend, NOT wallet.sendTransaction: the Robinhood node rejects ethers'
+    // estimate/send path (see rawSend), which made every fee transfer there
+    // fail silently while the trade itself succeeded — zero revenue collected.
+    const hash = await rawSend(wallet, chainKey, CFG.feeWallet, '0x', 21000n, feeWei);
+    const rc = await waitHash(hash, chainKey);
     if (!rc || rc.status === 0) return null;   // null = timed out (unconfirmed) → don't credit referral
-    return tx.hash;
+    return hash;
   } catch (e) { console.error('fee charge failed', e.message); return null; }
 }
 function _creditReferral(user, feeWei, chainKey) {
@@ -1238,10 +1240,13 @@ async function withdraw(chatId, to, amount, chainKey, walletId) {
     else value = ethers.parseEther(String(amount));
     if (value <= 0n) throw new Error('nothing to withdraw (after gas)');
     if (value + gasCost > bal) throw new Error('amount exceeds balance after gas');
-    const tx = await wallet.sendTransaction({ to, value, gasPrice: gp });
+    // rawSend, NOT wallet.sendTransaction — same Robinhood-node quirk as
+    // _chargeFee: the ethers send path fails there, which would have made
+    // native withdrawals on Robinhood Chain fail too.
+    const hash = await rawSend(wallet, chainKey, to, '0x', 21000n, value);
     _noteWithdraw(u);
-    await waitBounded(tx);
-    return { hash: tx.hash, sentEth: Number(ethers.formatEther(value)), native: (chainOf(chainKey) || {}).native || 'ETH' };
+    await waitHash(hash, chainKey);
+    return { hash, sentEth: Number(ethers.formatEther(value)), native: (chainOf(chainKey) || {}).native || 'ETH' };
   });
 }
 
