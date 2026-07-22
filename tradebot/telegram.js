@@ -34,6 +34,9 @@ let BOT_USERNAME = '';
 // single flaky/slow RPC (a timed-out read) can't silently drop a chain from the wallet
 // totals — the total stays stable instead of jumping down then back on refresh.
 const _balCache = new Map();
+// Short-lived token price cache `${chain}:${caLower}` → { priceEth, at } so the wallet
+// screen can include TOKEN holdings in each wallet's total without re-pricing every render.
+const _priceCache = new Map();
 
 // ------------------------------------------------------------ telegram api
 async function tg(method, body) {
@@ -137,6 +140,38 @@ function mainMenu() {
 // The Wallet menu is an ALL-WALLETS dashboard (Maestro-style): every wallet with its
 // name, live balance and full address on one screen — tap a name to switch, ✏️ rename,
 // 📥 deposit QR, 🗑 remove. Export/Withdraw act on the ✅ active wallet.
+// USD value of each wallet's TOKEN holdings (bags), so the wallet total reflects the full
+// portfolio, not just native coin. Uses the bot-tracked bag size (p.tokens — no per-token
+// RPC) and prices each distinct token ONCE (deduped, cached 30s, bounded + timed out), so
+// it stays fast. Returns a per-wallet USD array aligned to `list`.
+async function walletTokenUsd(list, enabledKeys) {
+  const distinct = new Map();               // 'chain:caLower' -> { chain, ca }
+  const bags = list.map(() => []);          // per wallet: [{ ck, tokens, native }]
+  list.forEach((w, wi) => {
+    for (const key of Object.keys(w.positions || {})) {
+      const p = w.positions[key];
+      if (!p || p.closed || !enabledKeys.has(p.chain)) continue;
+      let raw = 0n; try { raw = BigInt(p.tokens || '0'); } catch (_) { continue; }
+      if (raw <= 0n) continue;
+      const tokens = Number(ethers.formatUnits(raw, p.dec || 18));
+      if (!(tokens > 0)) continue;
+      const ck = p.chain + ':' + String(p.ca).toLowerCase();
+      distinct.set(ck, { chain: p.chain, ca: p.ca });
+      bags[wi].push({ ck, tokens, native: (core.chainOf(p.chain) || {}).native || 'ETH' });
+    }
+  });
+  if (!distinct.size) return list.map(() => 0);
+  const now = Date.now();
+  const stale = [...distinct.entries()].filter(([ck]) => { const h = _priceCache.get(ck); return !(h && now - h.at < 30000); });
+  await Promise.all(stale.map(([ck, { chain, ca }]) =>
+    withTmo(core.tokenSnapshot(ca, chain).catch(() => null), 4000, null)
+      .then((snap) => { _priceCache.set(ck, { priceEth: (snap && snap.priceEth > 0) ? snap.priceEth : 0, at: Date.now() }); })));
+  if (_priceCache.size > 5000) { const first = _priceCache.keys().next().value; _priceCache.delete(first); }
+  return bags.map((wb) => wb.reduce((sum, b) => {
+    const h = _priceCache.get(b.ck); const priceEth = h ? h.priceEth : 0;
+    return sum + b.tokens * priceEth * nativeUsd(b.native);
+  }, 0));
+}
 async function walletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const ch = core.chainOf(core.userChain(u));
@@ -175,9 +210,15 @@ async function walletScreen(chatId) {
     if (b == null) return sum;
     return sum + Number(fmtNat(b, allChains[i].key)) * nativeUsd(allChains[i].native);
   }, 0);
-  const walletUsd = matrix.map(usdOfRow);
+  const nativeUsdArr = matrix.map(usdOfRow);
+  // Include TOKEN holdings so each wallet's total is the full portfolio value, not just
+  // native coin (why "Wallet 4" reads $292 native but ~$1.3k with its bags).
+  const tokenUsdArr = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  const walletUsd = nativeUsdArr.map((v, i) => v + (tokenUsdArr[i] || 0));
   const grandUsd = walletUsd.reduce((a, b) => a + b, 0);
-  const anyFunds = matrix.some((row) => row.some((b, i) => b != null && Number(fmtNat(b, allChains[i].key)) > 0));
+  const grandNative = nativeUsdArr.reduce((a, b) => a + b, 0);
+  const grandToken = tokenUsdArr.reduce((a, b) => a + b, 0);
+  const anyFunds = grandToken > 0.05 || matrix.some((row) => row.some((b, i) => b != null && Number(fmtNat(b, allChains[i].key)) > 0));
   // Active wallet's per-chain breakdown block.
   let chainBlock = '';
   allChains.forEach((c, i) => {
@@ -198,7 +239,8 @@ async function walletScreen(chatId) {
     const active = i === awIdx;
     const label = core.walletLabel(w, i + 1);
     const nOrders = (w.orders && w.orders.length) || 0;
-    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> all chains${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n`;
+    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> total${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n`;
+    if ((tokenUsdArr[i] || 0) > 0.05) body += `    <i>native $${fmt(nativeUsdArr[i])} · tokens $${fmt(tokenUsdArr[i])}</i>\n`;
     body += `🔗 <b>EVM address</b> <i>(${esc(evmNames)})</i>\n<code>${wAddr(w, evmChain.key)}</code>\n`;
     if (solChain) body += `🟣 <b>Solana address</b>\n<code>${wAddr(w, solChain.key)}</code>\n`;
     body += `\n`;
@@ -209,8 +251,8 @@ async function walletScreen(chatId) {
   if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
   kbRows.push([btn('🌐 Chain', 'chain'), btn('🔄 Refresh', 'wal'), btn('« Menu', 'menu')]);
-  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>≈ $${fmt(grandUsd)}</b> across ${allChains.length} chains\n\n`
-    + `🌐 <b>${esc(core.walletLabel(list[awIdx], awIdx + 1))} — all chains</b>${walletUsd[awIdx] > 0.005 ? ` · ≈ $${fmt(walletUsd[awIdx])}` : ''}\n${chainBlock}\n`;
+  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>≈ $${fmt(grandUsd)}</b>${grandToken > 0.05 ? ` <i>(native $${fmt(grandNative)} · tokens $${fmt(grandToken)})</i>` : ''}\n\n`
+    + `🌐 <b>${esc(core.walletLabel(list[awIdx], awIdx + 1))}</b>${walletUsd[awIdx] > 0.005 ? ` · ≈ $${fmt(walletUsd[awIdx])}` : ''}\n${chainBlock}${(tokenUsdArr[awIdx] || 0) > 0.05 ? `🪙 Tokens (bags): <b>$${fmt(tokenUsdArr[awIdx])}</b>\n` : ''}\n`;
   const guide = !anyFunds
     ? `<b>Start in 3 steps 👇</b>\n1️⃣ Deposit ${ch.native} to a wallet — tap <b>📥</b> on it for the address/QR.\n2️⃣ Tap <b>🔄 Refresh</b> to see it land.\n3️⃣ Paste any token contract → live card → one-tap buy.\n\n<i>Tap a name to switch · ✏️ rename · 📥 deposit · 🗑 remove. One key per wallet on every chain — EVM shares one 0x address, Solana has its own (switch with 🌐).</i>`
     : `<i>Tap a wallet to switch · ✏️ rename · 📥 deposit · 🗑 remove. Paste any token address to trade.</i>`;

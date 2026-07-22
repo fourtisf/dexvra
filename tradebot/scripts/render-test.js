@@ -9,7 +9,7 @@ const Module = require('module');
 const CH = { key: 'robinhood', name: 'Robinhood Chain', emoji: '🔗', native: 'ETH', curve: false };
 const CA = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const WALLET = { id: 'w1', address: '0xAbc0000000000000000000000000000000000001', positions: {}, active: true };
-WALLET.positions['robinhood:' + CA.toLowerCase()] = { sym: 'PEPE', dec: 18, tokens: '5000000000000000000000000', costEth: 0.12 };
+WALLET.positions['robinhood:' + CA.toLowerCase()] = { chain: 'robinhood', ca: CA, sym: 'PEPE', dec: 18, tokens: '5000000000000000000000000', costEth: 0.12 };
 const USER = { id: 1, wallets: [WALLET], activeWallet: 'w1', settings: { slippage: 0, buyPresets: ['0.05', '0.1', '0.5'], confirmBuy: false, expert: false, autoBuy: false, autoBuyAmount: '0.01', autoTpPct: 0, autoSlPct: 0, gasBoost: 2 },
   snipe: { ethAmount: '0.01', chains: { robinhood: true } },
   copy: { on: true, targets: [
@@ -75,6 +75,8 @@ inject('solana', solanaStub);
 
 const tg = require(path.join(dir, 'telegram'));
 const T = tg._test;
+// Give the harness a price feed so USD values (incl. token bags) render.
+if (T.PRICES) { T.PRICES.ETH = 2000; T.PRICES.SOL = 150; T.PRICES.BNB = 600; }
 
 const dump = (title, p) => {
   console.log('\n\n===== ' + title + ' =====');
