@@ -866,7 +866,7 @@ async function onMessage(m) {
     core.noteUser(chatId, m.from);                 // capture @username now that the user exists
     report.onStart(core.getUser(chatId), isNew, ref, core.allUsers().length);   // → admin channel (fire-and-forget)
     if (deepCa) {
-      if (isNew) await send(chatId, `👋 <b>Welcome to the Dexvra Trade Bot</b> — a fresh custodial wallet was created for you. Fund it (💼 Wallets → 📥), then trade below 👇`, mainMenu());
+      if (isNew) await send(chatId, `👋 <b>Welcome to Dexvra Trade Bot</b>\n\nA wallet was just created for you. To start trading, tap 💼 Wallets → 📥 to get your deposit address and add some funds. Here's the token you tapped 👇`, mainMenu());
       const det = await detectChain(chatId, deepCa);
       if (det.choices) {
         const kb = det.choices.map((ck) => { const c = core.chainOf(ck); return [btn(`${c.emoji} ${c.name}`, `tok:${ck}:${walletIndex(chatId)}:${deepCa}`)]; });
@@ -877,13 +877,14 @@ async function onMessage(m) {
       return send(chatId, c.text, c.kb);
     }
     await send(chatId,
-      `👋 <b>Welcome to the Dexvra Trade Bot</b>\n\n` +
-      `Buy & sell tokens across chains — straight from Telegram, no browser or extension.\n\n` +
-      `<b>How it works</b>\n` +
-      `1️⃣ Fund your wallet (deposit ${core.chainOf(core.userChain(core.ensureUser(chatId))).native}).\n` +
-      `2️⃣ Paste any <b>token contract address</b> → live card (price, safety, your bag).\n` +
-      `3️⃣ One-tap <b>buy / sell</b>.\n\n` +
-      (isNew ? `A fresh custodial wallet was created for you 👇 fund it to begin.` : `Your wallet 👇`),
+      `👋 <b>Welcome to Dexvra Trade Bot</b>\n\n` +
+      `Buy and sell tokens right here in Telegram — no website, no wallet app, no extension.\n\n` +
+      `<b>Get started in 3 steps</b>\n` +
+      `1️⃣ <b>Add funds.</b> Tap 💼 Wallets, then 📥 to get your deposit address, and send some ${core.chainOf(core.userChain(core.ensureUser(chatId))).native} to it.\n` +
+      `2️⃣ <b>Pick a token.</b> Paste its contract address here — you'll get a live card with price, safety and your holdings.\n` +
+      `3️⃣ <b>Trade.</b> Tap Buy or Sell. That's it.\n\n` +
+      `<i>Your wallet is created and secured for you — only you can withdraw. Never share your private key with anyone.</i>\n\n` +
+      (isNew ? `👇 A wallet was just created for you. Add funds to begin.` : `👇 Here's your wallet.`),
       mainMenu());
     const w = await walletScreen(chatId); return send(chatId, w.text, w.kb);
   }
@@ -898,7 +899,7 @@ async function onMessage(m) {
   if (text === '/dca') { const s = dcaScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/referral' || text === '/refer') { const s = referralScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/settings') { const s = settingsScreen(chatId); return send(chatId, s.text, s.kb); }
-  if (text === '/withdraw') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 Send the <b>destination address</b> to withdraw to:'); }
+  if (text === '/withdraw') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 <b>Withdraw</b>\n\nPaste the wallet address you want to send your funds to.'); }
   if (text.startsWith('/send')) {
     const [, ca, to, amt] = text.split(/\s+/);
     if (!isCa(ca) || !to || !amt) return send(chatId, 'Usage: <code>/send &lt;token&gt; &lt;destination&gt; &lt;amount|max&gt;</code> — sends a held token out. Or open the token card and tap 📤 Send.');
@@ -960,7 +961,7 @@ async function onMessage(m) {
     }
     const c = await tokenCard(chatId, text, det.chain); return send(chatId, c.text, c.kb);
   }
-  return send(chatId, 'Paste a <b>token contract address</b> to trade, or tap a button.', mainMenu());
+  return send(chatId, `🤔 I didn't recognise that.\n\nTo trade a token, paste its <b>contract address</b> here. Or tap a button below.`, mainMenu());
 }
 
 async function onCallback(q) {
@@ -1040,13 +1041,13 @@ async function onCallback(q) {
   if (k === 'rmwok') { try { await core.removeWallet(chatId, ca); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis reveals full control of that wallet — anyone with the key can drain it. Never share it. Continue?`, rows([btn('Yes, show key', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
   if (k === 'expwy') { try { await send(chatId, exportKeyMsg(chatId, ca)); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
-  if (data === 'wd') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 Send the <b>destination address</b>:'); }
+  if (data === 'wd') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 <b>Withdraw</b>\n\nPaste the wallet address you want to send your funds to.'); }
   if (data === 'exp') return askExport(chatId);
   if (data === 'expy') { try { await send(chatId, exportKeyMsg(chatId)); } catch (e) { await send(chatId, '❌ ' + esc(e.message)); } return; }
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (k === 'sntog') { const u = core.ensureUser(chatId); try { core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, 'Send the amount to buy per snipe in native token (e.g. <code>0.01</code>):'); }
+  if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '🎯 <b>How much to auto-buy on each new launch?</b>\n\nType an amount in the chain\'s coin (for example <code>0.01</code>). The bot will spend this on every new token it snipes.'); }
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
   if (data === 'monx') { stopMonitor(chatId, mid); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
@@ -1059,10 +1060,10 @@ async function onCallback(q) {
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
-    if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `Send the amount to buy of <code>${short(tca)}</code> — in <b>${cn ? cn.native : 'native'}</b> (e.g. <code>0.05</code>) or in USD (e.g. <code>$10</code>):`); }
-    if (k === 'sx') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `Sell what % of your <code>${short(tca)}</code> bag? Send a number 1–100:`); }
-    if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 Take-profit — send the target to sell 100% at:\n• a <b>USD price</b> (e.g. <code>0.0025</code>), or\n• a <b>market cap</b> — prefix with <code>mc</code> (e.g. <code>mc 1000000</code>).`); }
-    if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 Stop-loss — send the target to sell 100% at:\n• a <b>USD price</b> (e.g. <code>0.0008</code>), or\n• a <b>market cap</b> — prefix with <code>mc</code> (e.g. <code>mc 250000</code>).`); }
+    if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `💵 <b>How much do you want to spend?</b>\n\nType an amount in <b>${cn ? cn.native : 'native'}</b> (for example <code>0.05</code>) or in dollars (for example <code>$10</code>).`); }
+    if (k === 'sx') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📤 <b>How much do you want to sell?</b>\n\nType a percentage of your holdings, from 1 to 100 (for example <code>50</code> to sell half, or <code>100</code> to sell everything).`); }
+    if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 <b>Take-profit — sell automatically when the price goes UP</b>\n\nTell me the target and the bot sells 100% of this token when it's reached:\n• A <b>price in dollars</b> — for example <code>0.0025</code>\n• Or a <b>market cap</b> — type <code>mc</code> first, for example <code>mc 1000000</code>`); }
+    if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 <b>Stop-loss — sell automatically when the price goes DOWN</b>\n\nTell me the target and the bot sells 100% of this token to limit your loss when it's reached:\n• A <b>price in dollars</b> — for example <code>0.0008</code>\n• Or a <b>market cap</b> — type <code>mc</code> first, for example <code>mc 250000</code>`); }
     if (k === 'trl') { setPending(chatId, { action: 'trail_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📉 <b>Trailing stop</b> — send the trail <b>percent</b> (1–99), e.g. <code>20</code>.\n\n<i>The bot tracks the peak price from now and sells 100% if it falls that % below the peak. A rising price only ratchets the peak up.</i>`); }
     if (k === 'lb') { setPending(chatId, { action: 'lb_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `Limit buy: send <b>&lt;usd_price&gt; &lt;amount&gt;</b> (e.g. <code>0.002 0.05</code>) — buy when price drops to that:`); }
     if (k === 'alt') { setPending(chatId, { action: 'alert_price', ca: tca, chain: ch }); return send(chatId, `🔔 Alert: send the target <b>USD price</b> — I'll ping you when <code>${short(tca)}</code> crosses it:`); }
@@ -1102,7 +1103,7 @@ async function resolvePending(chatId, p, text, m) {
     if (p.action === 'bp_val') { const arr = core.setBuyPresets(chatId, t, p.chain); const cn = core.chainOf(p.chain); return send(chatId, `✅ Quick-buy for <b>${cn ? esc(cn.name) : 'this chain'}</b>: <b>${arr.join(' · ')}${cn ? ' ' + cn.native : ''}</b>.`, settingsScreen(chatId).kb); }
     if (p.action === 'ab_amt') { const r = core.setAutoBuy(chatId, undefined, t); return send(chatId, `✅ Auto-buy amount: <b>${esc(r.autoBuyAmount)}</b>.`, settingsScreen(chatId).kb); }
     if (p.action === 'snipe_amt') { if (!(Number(t) > 0)) return send(chatId, 'Send a positive number.'); core.setSnipeAmount(chatId, t); const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
-    if (p.action === 'wd_addr') { const wch = activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ Not a valid ${esc(wch.name)} address (${core.chains.isSvm(wch.key) ? 'base58' : '0x…'}). Try /withdraw again.`); setPending(chatId, { action: 'wd_amt', to: t }); return send(chatId, `Amount to send to <code>${short(t)}</code> — a number, or <code>max</code>:`); }
+    if (p.action === 'wd_addr') { const wch = activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ That doesn't look like a valid ${esc(wch.name)} address. Please check it and tap 📤 Withdraw again.`); setPending(chatId, { action: 'wd_amt', to: t }); return send(chatId, `💸 <b>How much do you want to send to</b>\n<code>${short(t)}</code>?\n\nType an amount, or type <code>max</code> to send everything (a little is kept back for network fees).`); }
     if (p.action === 'wd_amt') {
       if (!(String(t).toLowerCase() === 'max' || Number(t) > 0)) return send(chatId, 'Send a positive amount, or <code>max</code>.');
       const ch = activeChain(chatId);
@@ -1372,30 +1373,42 @@ function langScreen(chatId) {
 function helpText(chatId) {
   const fee = (core.CFG.feeBps / 100).toFixed(2), ref = (core.CFG.refShareBps / 100).toFixed(0);
   if (langOf(chatId) === 'id') return (
-    `🤖 <b>Dexvra Trade Bot — bantuan</b>\n\n` +
-    `• Tempel <b>alamat kontrak / mint</b> → kartu live, buy/sell satu-tap\n` +
-    `• <b>/chain</b> — ganti chain (Robinhood, Ethereum, Base, BNB, Arbitrum, Solana)\n` +
-    `• <b>/wallet</b> — hingga ${core.WALLET_CAP} wallet: saldo, deposit/withdraw, import/export, ganti\n` +
-    `• <b>/portfolio</b> — posisi & PnL · <b>/history</b> — riwayat trade\n` +
-    `• <b>/snipe</b> — auto-beli launch baru · <b>/copy</b> — tiru buy wallet lain\n` +
-    `• <b>/orders</b> — TP / SL / trailing / limit · <b>/dca</b> — beli terjadwal · <b>/alerts</b> — alert harga\n` +
-    `• <b>⚙️ Settings → 🔐 Security</b> — kunci withdraw & whitelist alamat\n` +
-    `• <b>/referral</b> — dapat ${ref}% fee dari undangan · <b>/bahasa</b> — ganti bahasa\n` +
-    `• <b>/buy &lt;ca&gt; &lt;jml&gt;</b>, <b>/sell &lt;ca&gt; &lt;%&gt;</b>, <b>/send &lt;token&gt; &lt;tujuan&gt; &lt;jml&gt;</b>, <b>/cancel</b>\n\n` +
-    `Fee bot: <b>${fee}%</b> per trade. Hanya deposit yang kamu sanggup rugi.`
+    `🤖 <b>Bantuan — Dexvra Trade Bot</b>\n\n` +
+    `<b>Cara trading</b>\n` +
+    `Tempel alamat kontrak token → muncul kartu live → tap <b>Buy</b> atau <b>Sell</b>. Chain-nya terdeteksi otomatis.\n\n` +
+    `<b>Dana kamu</b>\n` +
+    `💼 <b>Wallets</b> — lihat saldo, deposit, tarik, import/export wallet (bisa sampai ${core.WALLET_CAP} wallet)\n` +
+    `📊 <b>Portfolio</b> — token yang kamu pegang & untung/rugi\n` +
+    `🧾 <b>History</b> — riwayat trade\n\n` +
+    `<b>Otomatis</b>\n` +
+    `🎯 <b>Snipe</b> — beli otomatis tiap ada token baru\n` +
+    `👥 <b>Copy</b> — ikuti pembelian wallet lain\n` +
+    `📋 <b>Orders</b> — jual otomatis di target harga (TP/SL/trailing/limit)\n` +
+    `🔁 <b>DCA</b> — beli rutin terjadwal · 🔔 <b>Alerts</b> — notif harga\n\n` +
+    `<b>Lainnya</b>\n` +
+    `🎁 <b>Referral</b> — undang teman, dapat ${ref}% dari fee mereka\n` +
+    `⚙️ <b>Settings → 🔐 Security</b> — kunci penarikan & whitelist alamat\n` +
+    `🌐 <b>Bahasa</b> — ganti bahasa\n\n` +
+    `<b>Biaya:</b> ${fee}% per transaksi. <i>Hanya masukkan dana yang kamu siap kehilangan.</i>`
   );
   return (
-    `🤖 <b>Dexvra Trade Bot — help</b>\n\n` +
-    `• Paste a <b>contract address / mint</b> → live card with one-tap buy/sell\n` +
-    `• <b>/chain</b> — switch chain (Robinhood, Ethereum, Base, BNB, Arbitrum, Solana)\n` +
-    `• <b>/wallet</b> — up to ${core.WALLET_CAP} wallets: balance, deposit/withdraw, import/export, switch\n` +
-    `• <b>/portfolio</b> — positions & PnL · <b>/history</b> — trade log\n` +
-    `• <b>/snipe</b> — auto-buy new launches · <b>/copy</b> — mirror a wallet's buys\n` +
-    `• <b>/orders</b> — TP / SL / trailing / limit · <b>/dca</b> — scheduled buys · <b>/alerts</b> — price pings\n` +
-    `• <b>⚙️ Settings → 🔐 Security</b> — withdraw lock & address whitelist\n` +
-    `• <b>/referral</b> — earn ${ref}% of the bot fee from invites · <b>/bahasa</b> — language\n` +
-    `• <b>/buy &lt;ca&gt; &lt;amt&gt;</b>, <b>/sell &lt;ca&gt; &lt;pct&gt;</b>, <b>/send &lt;token&gt; &lt;dest&gt; &lt;amt&gt;</b>, <b>/cancel</b>\n\n` +
-    `Bot fee: <b>${fee}%</b> per trade. Only deposit what you can afford to lose.`
+    `🤖 <b>Help — Dexvra Trade Bot</b>\n\n` +
+    `<b>How to trade</b>\n` +
+    `Paste a token's contract address → a live card appears → tap <b>Buy</b> or <b>Sell</b>. The chain is detected automatically.\n\n` +
+    `<b>Your money</b>\n` +
+    `💼 <b>Wallets</b> — balance, deposit, withdraw, import/export (up to ${core.WALLET_CAP} wallets)\n` +
+    `📊 <b>Portfolio</b> — what you hold and your profit/loss\n` +
+    `🧾 <b>History</b> — your past trades\n\n` +
+    `<b>Automation</b>\n` +
+    `🎯 <b>Snipe</b> — auto-buy every new launch\n` +
+    `👥 <b>Copy</b> — mirror another wallet's buys\n` +
+    `📋 <b>Orders</b> — auto-sell at a price target (TP/SL/trailing/limit)\n` +
+    `🔁 <b>DCA</b> — scheduled recurring buys · 🔔 <b>Alerts</b> — price notifications\n\n` +
+    `<b>More</b>\n` +
+    `🎁 <b>Referral</b> — invite friends, earn ${ref}% of their fees\n` +
+    `⚙️ <b>Settings → 🔐 Security</b> — withdraw lock & address whitelist\n` +
+    `🌐 <b>Language</b> — change language\n\n` +
+    `<b>Fee:</b> ${fee}% per trade. <i>Only deposit what you can afford to lose.</i>`
   );
 }
 
