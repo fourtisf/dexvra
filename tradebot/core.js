@@ -16,15 +16,13 @@ const { ethers } = require('ethers');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const chains = require('./chains');
-const { providerFor, chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
-const solana = require('./solana');   // non-EVM (Solana) adapter — used only on kind:'svm' chains
-const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // Load tradebot/.env (KEY=VALUE lines) into process.env BEFORE config is read.
-// Zero-dependency, no dotenv. A real environment variable ALWAYS wins over the
-// file (we only fill values that are unset), so pm2 --update-env / systemd env
-// still override. Keeps secrets (TRADEBOT_TOKEN, WALLET_SECRET) out of git.
+// CRITICAL: this MUST run before require('./chains') below — chains.js reads env
+// at module-eval time (e.g. ROBINHOOD_V3_FACTORY), so loading .env after it left
+// those values empty and silently disabled V3. Zero-dependency, no dotenv. A real
+// environment variable ALWAYS wins over the file (we only fill unset values), so
+// pm2 --update-env / systemd env still override. Keeps secrets out of git.
 (function loadDotEnv() {
   try {
     const file = path.join(__dirname, '.env');
@@ -41,6 +39,11 @@ const report = require('./report');   // ops reporting to admin channel (never s
     }
   } catch (_) { /* never let env parsing crash the bot */ }
 })();
+
+const chains = require('./chains');
+const { providerFor, chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
+const solana = require('./solana');   // non-EVM (Solana) adapter — used only on kind:'svm' chains
+const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // ---------------------------------------------------------------- config
 const CFG = {
