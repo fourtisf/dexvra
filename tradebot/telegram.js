@@ -1089,7 +1089,9 @@ async function onCallback(q) {
   const mid = q.message.message_id;
   const data = q.data || '';
   const [k, ca, arg] = data.split(':');
-  if (k !== 'oc' && k !== 'al') await answer(q.id);   // 'oc'/'al' answer with text in their handlers
+  // Fire-and-forget the ack (clears the button's spinner) so the handler proceeds without
+  // waiting on a Telegram round-trip — noticeably snappier taps. 'oc'/'al' answer with text.
+  if (k !== 'oc' && k !== 'al') answer(q.id).catch(() => {});
 
   if (k === 'bccancel') { const pp = pending.get(chatId); if (pp && pp.action === 'confirm_buy' && pp.confirmId === ca) pending.delete(chatId); return edit(chatId, mid, 'Buy cancelled.', mainMenu()); }
   if (k === 'bcok') {

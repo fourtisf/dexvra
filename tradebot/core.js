@@ -171,13 +171,41 @@ function _backupStore(force) {
   } catch (e) { console.error('store backup', e.message); }
 }
 let _saveTimer = null;
-function _writeNow() {
+let _writing = false, _pending = false, _supersededBySync = false;
+// ASYNC debounced write: never blocks the event loop, so hundreds of users' taps are not
+// stalled while the store is serialized to disk. Coalesces bursts (one write in flight; a
+// request during it re-runs at the end). A concurrent SYNC write (saveStoreNow) is always
+// authoritative — this loop is told (`_supersededBySync`) not to rename its older tmp over
+// it, and re-runs to capture anything mutated after. Async uses .wtmp, sync uses .stmp, so
+// the two never write the same tmp file concurrently.
+async function _writeAsync() {
+  if (_writing) { _pending = true; return; }
+  _writing = true;
   try {
+    do {
+      _pending = false; _supersededBySync = false;
+      const data = JSON.stringify(DB);            // snapshot of the LIVE store
+      fs.mkdirSync(CFG.dataDir, { recursive: true });
+      const tmp = STORE_FILE + '.wtmp';
+      await fs.promises.writeFile(tmp, data);      // the slow part — now off the event loop
+      if (_supersededBySync) { try { fs.unlinkSync(tmp); } catch (_) {} _pending = true; continue; }   // a sync write landed newer data
+      fs.renameSync(tmp, STORE_FILE);              // atomic replace (fast)
+      _backupStore(false);                         // throttled rotating snapshot
+    } while (_pending);
+  } catch (e) { console.error('store write', e.message); }
+  finally { _writing = false; }
+}
+// SYNCHRONOUS authoritative write — for fund-critical mutations (a minted/imported key, an
+// order removed BEFORE its fill, a copy/snipe budget commit BEFORE the buy). Kept sync so a
+// crash right after can never lose a key or replay a fill.
+function _writeSync() {
+  try {
+    if (_writing) _supersededBySync = true;        // in-flight async must not overwrite this newer data
     fs.mkdirSync(CFG.dataDir, { recursive: true });
-    const tmp = STORE_FILE + '.tmp';
+    const tmp = STORE_FILE + '.stmp';
     fs.writeFileSync(tmp, JSON.stringify(DB));
-    fs.renameSync(tmp, STORE_FILE);   // atomic replace
-    _backupStore(false);              // throttled rotating snapshot
+    fs.renameSync(tmp, STORE_FILE);                // atomic replace
+    _backupStore(false);
   } catch (e) { console.error('store write', e.message); }
 }
 // On-demand backup (admin /backup): always writes a fresh snapshot, returns its path.
@@ -185,12 +213,12 @@ function backupNow() { saveStoreNow(); _backupStore(true); try { return { dir: B
 // Debounced save for high-frequency, non-critical mutations (positions, orders).
 function saveStore() {
   if (_saveTimer) return;
-  _saveTimer = setTimeout(() => { _saveTimer = null; _writeNow(); }, 400);
+  _saveTimer = setTimeout(() => { _saveTimer = null; _writeAsync(); }, 600);
 }
 // WRITE-THROUGH — for fund-critical mutations (a newly minted/imported private
-// key, an order removal before a fill). A crash in the 400ms debounce window must
+// key, an order removal before a fill). A crash in the debounce window must
 // never lose a wallet key or replay a filled order.
-function saveStoreNow() { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; } _writeNow(); }
+function saveStoreNow() { if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; } _writeSync(); }
 // Flush any pending debounced write on shutdown/redeploy.
 let _shutdownWired = false;
 function wireShutdownFlush() {
