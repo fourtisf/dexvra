@@ -97,59 +97,40 @@ async function findRouter(prov, pool) {
     console.log('  no Swap events found in the scanned window — do a real swap on DexScreener, then re-run.');
   }
 
-  console.log('\nQuoterV2 candidates with code on this chain:');
-  let quoter = null;
-  for (const addr of QUOTER_CANDIDATES) {
-    try { const c = await prov.getCode(addr); if (c && c !== '0x') { console.log(`    ✓ ${addr}`); if (!quoter) quoter = addr; } } catch (_) {}
-  }
-  if (!quoter) console.log('    (none found — get QuoterV2 from Uniswap deployments docs)');
-
-  // ── LIVE VERIFICATION ──────────────────────────────────────────────────
-  // The factory (from the pool) is trusted. The quoter is the fragile part on a
-  // CUSTOM deployment: prove it actually returns a quote that matches the pool's
-  // own slot0 price. If it doesn't, these addresses must NOT be used.
-  console.log('\nVerifying the quoter against the pool (live)…');
-  let quoterOK = false, spotPrice0per1 = null;
+  // ── PRICE FROM slot0 (no quoter needed) ────────────────────────────────
+  // The bot prices/routes V3 off the pool's slot0 spot, so no QuoterV2 is
+  // required. Compute the token price here so you can eyeball it against
+  // DexScreener before enabling — if it matches, factory+router are good to go.
+  console.log('\nPricing from slot0 (this is exactly how the bot will price V3)…');
+  let priceOK = false;
   try {
     const s0 = await pc.slot0();
-    // price of token0 in token1 from sqrtPriceX96: (sqrt/2^96)^2
-    const sp = Number(s0[0]);
-    spotPrice0per1 = (sp / 2 ** 96) ** 2;   // token1 per token0 (raw, ignoring decimals — used only as a sanity ratio)
-    console.log(`  pool slot0 sqrtPriceX96=${s0[0]} (tick ${s0[1]})`);
-  } catch (e) { console.log('  slot0 read failed: ' + (e.message || e)); }
-  if (quoter && fee != null && t0 && t1) {
-    try {
-      const q = new ethers.Contract(quoter, QUOTER_ABI, prov);
-      const amtIn = 10n ** 15n;   // 0.001 of token0
-      const r = await q.quoteExactInputSingle.staticCall({ tokenIn: t0, tokenOut: t1, amountIn: amtIn, fee, sqrtPriceLimitX96: 0n });
-      const out = r[0];
-      if (out > 0n) {
-        quoterOK = true;
-        const implied = Number(out) / Number(amtIn);
-        console.log(`  ✅ quoter returned ${out} (token1 out for 0.001 token0) — implied ratio ${implied.toExponential(3)}`);
-        if (spotPrice0per1 != null) {
-          const drift = Math.abs(implied - spotPrice0per1) / spotPrice0per1;
-          console.log(`  cross-check vs slot0: ${(drift * 100).toFixed(1)}% ${drift < 0.1 ? '✅ matches' : '⚠️ differs — double-check the fee tier'}`);
-        }
-      } else { console.log('  ❌ quoter returned 0 — wrong quoter for this deployment.'); }
-    } catch (e) { console.log('  ❌ quoter call reverted: ' + (e.shortMessage || e.message || e) + '\n     → this QuoterV2 does NOT work with this chain\'s factory.'); }
-  }
+    const P = (Number(s0[0]) / 2 ** 96) ** 2;   // token1_raw per token0_raw
+    const [d0, d1] = await Promise.all([
+      new ethers.Contract(t0, ['function decimals() view returns (uint8)'], prov).decimals().then(Number).catch(() => 18),
+      new ethers.Contract(t1, ['function decimals() view returns (uint8)'], prov).decimals().then(Number).catch(() => 18),
+    ]);
+    const wethIsT0 = t0.toLowerCase() === String(ch.weth).toLowerCase();
+    // priceEth = native per whole NON-weth token
+    const priceEth = wethIsT0 ? (10 ** (d1 - d0)) / P : P * (10 ** (d0 - d1));
+    console.log(`  token0 ${short(t0)} (dec ${d0}) · token1 ${short(t1)} (dec ${d1}) · WETH is token${wethIsT0 ? 0 : 1}`);
+    console.log(`  ➜ price ≈ ${priceEth.toExponential(4)} ${ch.native} per token`);
+    console.log('    Compare this to DexScreener\'s "PRICE …WETH" — if they match, you\'re good.');
+    priceOK = isFinite(priceEth) && priceEth > 0;
+  } catch (e) { console.log('  ❌ slot0 price read failed: ' + (e.message || e)); }
 
   console.log('\n────────────────────────────────────────────────────────');
-  if (quoterOK && router) {
-    console.log('✅ VERIFIED. Add these to /opt/dexvra/tradebot/.env:\n');
+  if (priceOK && router) {
+    console.log('✅ READY (no quoter needed). Add these to /opt/dexvra/tradebot/.env:\n');
     console.log(`${chainKey.toUpperCase()}_V3_FACTORY=${factory}`);
     console.log(`${chainKey.toUpperCase()}_V3_ROUTER=${router}`);
-    console.log(`${chainKey.toUpperCase()}_V3_QUOTER=${quoter}`);
     console.log('\nThen: pm2 restart dexvra-tradebot --update-env');
-    console.log('⚠️ ROUTER is inferred from real swaps — do ONE tiny test buy (e.g. $2) and');
-    console.log('   confirm it fills at a sane price before trading larger.');
+    console.log('⚠️ ROUTER is inferred from real swaps. First confirm the price above matches');
+    console.log('   DexScreener, then do ONE tiny test buy ($2) before trading larger.');
   } else {
-    console.log('❌ NOT verified — do NOT put these in .env yet.');
+    console.log('❌ NOT ready — paste this whole output back.');
     console.log(`   factory: ${factory}`);
-    console.log(`   router : ${router || '(not found)'}`);
-    console.log(`   quoter : ${quoter || '(not found)'}  ${quoterOK ? '' : '← quoter did not return a valid quote'}`);
-    console.log('   Paste this whole output back and we\'ll find the right quoter/router.');
+    console.log(`   router : ${router || '(not found — do a swap on DexScreener then re-run)'}`);
   }
   console.log('────────────────────────────────────────────────────────\n');
 })().catch((e) => { console.error('discover failed:', (e && e.message) || e); process.exit(1); });

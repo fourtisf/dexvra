@@ -843,10 +843,9 @@ async function tokenSnapshot(ca, chainKey) {
     if (pick && pick.wethBal != null) venueWethEth = Number(ethers.formatEther(pick.wethBal));
     if (pick && pick.kind === 'v3') {
       dexVenue = 'v3';
-      const v3 = v3Cfg(chainKey);
-      const q = new ethers.Contract(v3.quoter, V3_QUOTER_ABI, prov);
-      const r = await q.quoteExactInputSingle.staticCall({ tokenIn: ca, tokenOut: chain.weth, amountIn: one, fee: pick.feeTier, sqrtPriceLimitX96: 0n });
-      priceEth = Number(ethers.formatEther(r[0]));
+      // Price 1 whole token → WETH from the pool's slot0 spot (no quoter).
+      const outW = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, ca, one);
+      priceEth = outW != null ? Number(ethers.formatEther(outW)) : 0;
     } else {
       const router = new ethers.Contract(chain.router, ROUTER_ABI, prov);
       const amts = await router.getAmountsOut(one, [ca, chain.weth]);
@@ -908,16 +907,48 @@ async function rawSend(wallet, chainKey, to, data, gasLimit, value) {
 // active per chain only when factory+router+quoter are all configured.
 const V3_FEES = [100, 500, 3000, 10000];
 const V3_FACTORY_ABI = ['function getPool(address,address,uint24) view returns (address)'];
-const V3_QUOTER_ABI = ['function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)'];
 const V3_ROUTER_ABI = ['function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)'];
+const V3_POOL_ABI = ['function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 a, uint16 b, uint16 c, uint8 d, bool unlocked)', 'function token0() view returns (address)'];
 const WETH9_ABI = ['function withdraw(uint256)'];
 
-// V3 is enabled for a chain only when factory+router+quoter are all WELL-FORMED
-// addresses. A blank OR malformed value (e.g. a placeholder "0x…" fat-fingered
-// into .env) disables V3 for that chain and the engine falls back to V2 —
-// never breaks trading with an invalid-address throw.
+// V3 is enabled for a chain only when factory+router are WELL-FORMED addresses.
+// The QUOTER is intentionally NOT required: on custom V3 forks (e.g. Robinhood
+// Chain) the canonical QuoterV2 doesn't match the fork's factory and reverts,
+// so we price/route off the pool's own slot0 (sqrtPriceX96) instead — no quoter
+// dependency. A blank/malformed value disables V3 and falls back to V2.
 const _isAddr = (a) => /^0x[0-9a-fA-F]{40}$/.test(String(a == null ? '' : a).trim());
-function v3Cfg(chainKey) { const c = chainOf(chainKey); const v = c && c.v3; return (v && _isAddr(v.factory) && _isAddr(v.router) && _isAddr(v.quoter)) ? v : null; }
+function v3Cfg(chainKey) { const c = chainOf(chainKey); const v = c && c.v3; return (v && _isAddr(v.factory) && _isAddr(v.router)) ? v : null; }
+
+// Pool spot price P = token1_raw per token0_raw, from slot0's sqrtPriceX96
+// (P = (sqrtPriceX96/2^96)^2). Cached briefly. Returns { P, token0 } or null.
+const _v3PoolCache = new Map();
+async function v3PoolState(chainKey, pool) {
+  const ck = chainKey + ':' + pool.toLowerCase();
+  const hit = _v3PoolCache.get(ck); if (hit && Date.now() - hit.ts < 15000) return hit.v;
+  try {
+    const pc = new ethers.Contract(pool, V3_POOL_ABI, providerFor(chainKey));
+    const [s0, token0] = await Promise.all([pc.slot0(), pc.token0()]);
+    const sqrt = Number(s0[0]);
+    if (!(sqrt > 0)) return null;
+    const P = (sqrt / 2 ** 96) ** 2;   // token1_raw per token0_raw
+    const v = { P, token0: String(token0).toLowerCase() };
+    _v3PoolCache.set(ck, { v, ts: Date.now() });
+    return v;
+  } catch (_) { return null; }
+}
+// Expected raw output of a V3 exact-input swap, from spot price. Decimal-
+// INDEPENDENT: P is raw/raw, so out_raw = (in is token0 ? in·P : in/P)·(1-fee).
+// Used only to set amountOutMinimum (a protective FLOOR with slippage on top) —
+// the on-chain swap still guarantees ≥ minOut or reverts, so a small estimate
+// error is safe. null if the pool can't be read.
+async function v3ExpectedOutRaw(chainKey, pool, feeTier, tokenIn, amountInRaw) {
+  const st = await v3PoolState(chainKey, pool); if (!st) return null;
+  const inIsT0 = String(tokenIn).toLowerCase() === st.token0;
+  const feeMul = 1 - feeTier / 1e6;
+  const outFloat = (inIsT0 ? Number(amountInRaw) * st.P : Number(amountInRaw) / st.P) * feeMul;
+  if (!(outFloat > 0) || !isFinite(outFloat)) return null;
+  return BigInt(Math.floor(outFloat));
+}
 
 // Deepest token↔WETH V3 pool across fee tiers, measured by the WETH the pool
 // holds (directly comparable to a V2 pair's WETH reserve).
@@ -1208,14 +1239,13 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
         }
       }
       if (pick.kind === 'v3') {
-        // Deepest liquidity is a Uniswap V3 pool — quote via QuoterV2, swap via
+        // Deepest liquidity is a Uniswap V3 pool. Price the minOut floor off the
+        // pool's slot0 spot (no quoter — see v3ExpectedOutRaw), then swap via
         // SwapRouter02 (ETH in via msg.value; the router wraps to WETH itself).
         const v3 = v3Cfg(chainKey);
-        const q = new ethers.Contract(v3.quoter, V3_QUOTER_ABI, providerFor(chainKey));
-        let expTok = 0n;
-        try { const r = await q.quoteExactInputSingle.staticCall({ tokenIn: chain.weth, tokenOut: ca, amountIn: spend, fee: pick.feeTier, sqrtPriceLimitX96: 0n }); expTok = r[0]; }
-        catch (e) { throw new Error('could not quote this buy on ' + chain.name + ' V3 (try again): ' + (e.shortMessage || e.message || e)); }
-        const minTok = expTok > 0n ? expTok * (10000n - dexSlip) / 10000n : 0n;
+        const expTok = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, chain.weth, spend);
+        if (expTok == null || expTok <= 0n) throw new Error('could not price this buy on ' + chain.name + ' V3 (pool read failed) — try again');
+        const minTok = expTok * (10000n - dexSlip) / 10000n;
         if (minTok <= 0n) throw new Error('no V3 liquidity / zero quote for this token on ' + chain.name);
         const ri = new ethers.Interface(V3_ROUTER_ABI);
         const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: chain.weth, tokenOut: ca, fee: pick.feeTier, recipient: wallet.address, amountIn: spend, amountOutMinimum: minTok, sqrtPriceLimitX96: 0n }]);
@@ -1331,14 +1361,12 @@ async function sell(chatId, ca, pct, chainKey, walletId) {
       trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the sell reverted on-chain — you may not be allowed to sell this token yet (private beta), or try a slightly smaller amount. Tx: ' + hash);
     } else if (v3) {
-      // V3 sell: token → WETH via SwapRouter02, then unwrap WETH → native so
-      // the balance-diff accounting and withdrawals work exactly like V2.
-      const q = new ethers.Contract(v3.quoter, V3_QUOTER_ABI, providerFor(chainKey));
-      let expW = 0n;
-      try { const r = await q.quoteExactInputSingle.staticCall({ tokenIn: ca, tokenOut: chain.weth, amountIn: amount, fee: pick.feeTier, sqrtPriceLimitX96: 0n }); expW = r[0]; }
-      catch (e) { throw new Error('could not quote this sell on ' + chain.name + ' V3 (try again): ' + (e.shortMessage || e.message || e)); }
+      // V3 sell: token → WETH via SwapRouter02 (minOut floored from slot0 spot,
+      // no quoter), then unwrap WETH → native so accounting works like V2.
+      const expW = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, ca, amount);
+      if (expW == null || expW <= 0n) throw new Error('could not price this sell on ' + chain.name + ' V3 (pool read failed) — try again');
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
-      const minW = expW > 0n ? expW * (10000n - dexSlip) / 10000n : 0n;
+      const minW = expW * (10000n - dexSlip) / 10000n;
       if (minW <= 0n) throw new Error('no V3 liquidity / zero quote for this sell on ' + chain.name);   // never send minOut=0 (sandwich drain)
       const wethC = new ethers.Contract(chain.weth, ERC20_ABI, providerFor(chainKey));
       const wethBefore = await wethC.balanceOf(wallet.address).catch(() => 0n);   // so we unwrap ONLY this swap's output, never pre-existing WETH
