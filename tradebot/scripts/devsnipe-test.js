@@ -14,7 +14,7 @@ const notes = [];                   // captured notifications
 let SNAP_PRICE = 0;                  // tokenSnapshot priceEth (positions test)
 let SELL_BEHAVIOR = { ok: true };   // core.sell behavior (positions test)
 const sellCalls = [];               // records core.sell(chatId, ca, pct, chain, wid, opts)
-let SAFE = { supported: false, level: 'ok' };   // safety verdict (positions test)
+let SAFE = { supported: false, sec: null };   // safety re-check result (positions test)
 const coreStub = {
   CFG: { gasBufferEth: '0.001', solGasBuffer: '0.01' },
   chains: { isSvm: (k) => k === 'solana', isEnabled: () => true },
@@ -35,7 +35,7 @@ const coreStub = {
     return { sym: 'DEV', gotTokens: 123, spentEth: amt, native: 'ETH', hash: '0xhash', chain: 'robinhood' };
   },
 };
-const safetyStub = { supported: () => SAFE.supported, tokenSecurity: async () => ({}), verdict: () => ({ level: SAFE.level }) };
+const safetyStub = { supported: () => SAFE.supported, tokenSecurity: async () => SAFE.sec, verdict: () => ({ level: 'ok' }) };
 const dir = path.resolve(__dirname, '..');
 const inject = (rel, exp) => { const p = require.resolve(path.join(dir, rel)); require.cache[p] = { id: p, filename: p, loaded: true, exports: exp }; };
 inject('core', coreStub);
@@ -111,46 +111,65 @@ const mkT = (over) => Object.assign({ id: 'cp1', address: '0xDEV', chain: 'robin
   A('broadcast: spent KEPT', Math.abs(Number(t.spentEth) - 0.02) < 1e-9);
   A('broadcast: dedup KEPT', t.bought['0xtoken4'] === true);
 
-  // ---- Auto-protect (rug guard) in positionsCycle ----
-  const TOK = '1000000000000000000';   // 1 token (18 dec)
-  const mkPos = (over) => Object.assign({ chain: 'robinhood', ca: '0xtok', sym: 'DEV', dec: 18, ethIn: 0.1, tokens: TOK, peakValueEth: 1.0, notified: {} }, over);
+  // ---- Auto-protect (rug guard) in positionsCycle — COST-based, not peak-based ----
+  const TOK = '1000000000000000000';   // 1 token (18 dec) → value = SNAP_PRICE; cost basis = 0.1
+  const mkPos = (over) => Object.assign({ chain: 'robinhood', ca: '0xtok', sym: 'DEV', dec: 18, ethIn: 0.1, costEth: 0.1, tokens: TOK, peakValueEth: 1.0, notified: {} }, over);
   const mkUser = (autoProtect, pos) => ({ chatId: 1, settings: { autoProtect }, wallets: [{ id: 'w1', positions: { 'robinhood:0xtok': pos } }] });
   const resetPos = () => { sellCalls.length = 0; notes.length = 0; };
 
-  // Crash: value 0.2 vs peak 1.0 = 80% drop ≥ 65% → auto-sell 100%
-  resetPos(); SNAP_PRICE = 0.2; SELL_BEHAVIOR = { ok: true }; SAFE = { supported: false, level: 'ok' };
+  // Loss: value 0.03 vs cost 0.10 = 70% down on entry ≥ 60% → auto-sell 100%
+  resetPos(); SNAP_PRICE = 0.03; SELL_BEHAVIOR = { ok: true }; SAFE = { supported: false, sec: null };
   USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
   await T.positionsCycle();
-  A('autoProtect crash → sells 100%', sellCalls.length === 1 && sellCalls[0].pct === 100 && sellCalls[0].wid === 'w1');
-  A('autoProtect crash → aggressive slippage/gas opts', !!sellCalls[0] && sellCalls[0].opts && sellCalls[0].opts.slipAddBps >= 1000 && sellCalls[0].opts.gasMult >= 2);
-  A('autoProtect crash → DM sent', notes.some((n) => /Auto-protect sold/.test(n.text)));
+  A('autoProtect loss → sells 100%', sellCalls.length === 1 && sellCalls[0].pct === 100 && sellCalls[0].wid === 'w1');
+  A('autoProtect loss → aggressive slippage/gas opts', !!sellCalls[0] && sellCalls[0].opts && sellCalls[0].opts.slipAddBps >= 1000 && sellCalls[0].opts.gasMult >= 2);
+  A('autoProtect loss → DM sent', notes.some((n) => /Auto-protect sold/.test(n.text)));
 
-  // Guard OFF: same crash, autoProtect false → no sell
+  // Guard OFF: same loss, autoProtect false → no sell
   resetPos(); USERS.length = 0; USERS.push(mkUser(false, mkPos({})));
   await T.positionsCycle();
   A('guard OFF → no auto-sell', sellCalls.length === 0);
 
-  // Mild dip (30%), safety OK → no sell
-  resetPos(); SNAP_PRICE = 0.7; SAFE = { supported: true, level: 'ok' };
+  // AUDIT #1 FIX: a WINNER that retraced from a high peak is still in profit → must NOT sell.
+  // value 0.5 vs cost 0.10 = +400% profit, but 90% below peak 5.0.
+  resetPos(); SNAP_PRICE = 0.5; SAFE = { supported: true, sec: { honeypot: false, sellTaxPct: 0 } };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({ peakValueEth: 5.0 })));
+  await T.positionsCycle();
+  A('profitable retrace from peak → NOT sold', sellCalls.length === 0);
+
+  // Mild loss (20% down on entry), contract safe → no sell
+  resetPos(); SNAP_PRICE = 0.08; SAFE = { supported: true, sec: { honeypot: false, sellTaxPct: 0 } };
   USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
   await T.positionsCycle();
-  A('mild dip + safe → no auto-sell', sellCalls.length === 0);
+  A('mild loss + safe → no auto-sell', sellCalls.length === 0);
 
-  // Mild dip (30%) but safety flips to DANGER → auto-sell
-  resetPos(); SNAP_PRICE = 0.7; SAFE = { supported: true, level: 'danger' };
+  // AUDIT #2 FIX: honeypot flag triggers even in mild loss; pausable/blacklist (not modeled
+  // here) would NOT. Only honeypot / sellTax≥50 fire.
+  resetPos(); SNAP_PRICE = 0.08; SAFE = { supported: true, sec: { honeypot: true } };
   USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
   await T.positionsCycle();
-  A('mild dip + DANGER → auto-sell 100%', sellCalls.length === 1 && sellCalls[0].pct === 100);
+  A('honeypot flag → auto-sell 100%', sellCalls.length === 1 && sellCalls[0].pct === 100);
 
-  // Cooldown: crash but protectAt just now → no repeat sell
-  resetPos(); SNAP_PRICE = 0.2; SAFE = { supported: false, level: 'ok' };
-  const recentPos = mkPos({ notified: { protectAt: Date.now() } });
-  USERS.length = 0; USERS.push(mkUser(true, recentPos));
+  // sell-tax spike (≥50%) also triggers
+  resetPos(); SNAP_PRICE = 0.08; SAFE = { supported: true, sec: { honeypot: false, sellTaxPct: 80 } };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
+  await T.positionsCycle();
+  A('sell-tax spike → auto-sell 100%', sellCalls.length === 1);
+
+  // legit high BUY tax but sellable → NOT sold (only sellTax matters)
+  resetPos(); SNAP_PRICE = 0.08; SAFE = { supported: true, sec: { honeypot: false, buyTaxPct: 40, sellTaxPct: 5 } };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
+  await T.positionsCycle();
+  A('high buy-tax but sellable → NOT sold', sellCalls.length === 0);
+
+  // Cooldown: loss but protectAt just now → no repeat sell
+  resetPos(); SNAP_PRICE = 0.03; SAFE = { supported: false, sec: null };
+  USERS.length = 0; USERS.push(mkUser(true, mkPos({ notified: { protectAt: Date.now() } })));
   await T.positionsCycle();
   A('cooldown → no repeat auto-sell', sellCalls.length === 0);
 
-  // Honeypot: crash triggers sell but sell throws → failure DM, no crash
-  resetPos(); SNAP_PRICE = 0.2; SELL_BEHAVIOR = { throw: true, msg: 'reverted: cannot sell' };
+  // Honeypot: loss triggers sell but sell throws → failure DM, no crash
+  resetPos(); SNAP_PRICE = 0.03; SELL_BEHAVIOR = { throw: true, msg: 'reverted: cannot sell' };
   USERS.length = 0; USERS.push(mkUser(true, mkPos({})));
   await T.positionsCycle();
   A('honeypot sell fails → failure DM, no throw', sellCalls.length === 1 && notes.some((n) => /couldn't exit/.test(n.text)));

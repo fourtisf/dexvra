@@ -402,11 +402,11 @@ async function alertsCycle() {
 const POS_MILESTONES = [2, 5, 10, 25, 50, 100];
 const RUG_MIN_PEAK = Math.max(0, Number(process.env.POS_RUG_MIN_PEAK || 0.01));   // native; ignore dust positions
 const RUG_DROP = Math.min(0.9, Math.max(0.01, Number(process.env.POS_RUG_DROP || 0.15)));   // value ≤ 15% of peak = rug-ish
-// Auto-protect (rug guard) — opt-in per user. Sell 100% when a bag has fallen this far
-// below its peak (a crash/rug), or, once it is meaningfully down, when a safety re-check
-// flips to DANGER (honeypot / LP pulled / sell-tax spike).
-const AUTO_PROTECT_DROP = Math.min(0.95, Math.max(0.2, Number(process.env.AUTO_PROTECT_DROP_PCT || 70) / 100));
-const AUTO_PROTECT_WATCH = Math.min(AUTO_PROTECT_DROP, 0.25);   // start re-checking contract safety once down ≥25%
+// Auto-protect (rug guard) — opt-in per user. Sells 100% ONLY to protect capital:
+// when the bag is deep in LOSS versus your ENTRY (a dump/rug), or the contract turned
+// into a honeypot / sell-tax trap. Deliberately measured against COST, not the all-time
+// peak — a winner that merely retraces from its high is never force-sold.
+const AUTO_PROTECT_DROP = Math.min(0.95, Math.max(0.3, Number(process.env.AUTO_PROTECT_DROP_PCT || 60) / 100));   // sell if down ≥60% on your entry
 const AUTO_PROTECT_COOLDOWN_MS = 5 * 60 * 1000;   // min gap between auto-sell attempts on one bag (honeypot retry guard)
 const AUTO_PROTECT_CHECK_MS = 3 * 60 * 1000;      // min gap between safety re-checks on one bag (API rate guard)
 async function positionsCycle() {
@@ -448,28 +448,37 @@ async function positionsCycle() {
       dirty = true;
       _notify(u.chatId, `🚀 <b>$${esc(p.sym || '')} is up ${hi}×</b> on your entry!\nBag ≈ <b>${valueEth.toFixed(4)} ${c.native}</b> · consider taking profit.`, kb, 'alerts');
     }
-    // ── Auto-protect (rug guard): sell 100% if the bag crashed far below its peak, or a
-    // safety re-check flips to DANGER. Best-effort — a genuine honeypot may block the exit.
-    if (wantProtect && p.peakValueEth >= RUG_MIN_PEAK) {
-      const dropFromPeak = 1 - (valueEth / p.peakValueEth);
-      const cooled = (Date.now() - (p.notified.protectAt || 0)) > AUTO_PROTECT_COOLDOWN_MS;
-      let reason = '';
-      if (dropFromPeak >= AUTO_PROTECT_DROP) {
-        reason = `it crashed ${Math.round(dropFromPeak * 100)}% below its peak`;
-      } else if (dropFromPeak >= AUTO_PROTECT_WATCH && safety.supported(p.chain) && (Date.now() - (p.notified.protectCheckAt || 0)) > AUTO_PROTECT_CHECK_MS) {
-        p.notified.protectCheckAt = Date.now(); dirty = true;
-        const sec = await safety.tokenSecurity(p.chain, p.ca).catch(() => null);
-        if (sec && safety.verdict(p.chain, sec).level === 'danger') reason = 'it turned high-risk (honeypot / liquidity / tax)';
-      }
-      if (reason && cooled) {
-        p.notified.protectAt = Date.now(); dirty = true;
-        try {
-          const r = await core.sell(u.chatId, p.ca, 100, p.chain, w.id, { slipAddBps: 1500, gasMult: 2 });   // exit aggressively (wide slippage)
-          _notify(u.chatId, `🛡 <b>Auto-protect sold $${esc(p.sym || '')}</b>\nReason: ${reason}.\nRecovered <b>${Number(r.proceedsEth).toFixed(5)} ${c.native}</b>.\n${txLink(p.chain, r.hash)}`);
-        } catch (err) {
-          _notify(u.chatId, `🛡 <b>Auto-protect couldn't exit $${esc(p.sym || '')}</b>\n${esc((err && (err.message || err)) || 'sell failed')}\nThe token may be blocking sells (honeypot). I'll try again shortly.`);
+    // ── Auto-protect (rug guard): sell 100% ONLY to protect capital — when the bag is
+    // deep in LOSS vs your ENTRY (a dump/rug), or the contract turned into a honeypot /
+    // sell-tax trap. NOT peak-based, so a winner that retraces from its high is never
+    // dumped. Best-effort — a genuine honeypot may still block the exit.
+    if (wantProtect) {
+      const cost = (p.costEth != null) ? Number(p.costEth) : Math.max(0, Number(p.ethIn || 0) - Number(p.ethOut || 0));
+      if (cost >= RUG_MIN_PEAK) {
+        const cooled = (Date.now() - (p.notified.protectAt || 0)) > AUTO_PROTECT_COOLDOWN_MS;
+        const lossFrac = cost > 0 ? 1 - (valueEth / cost) : 0;
+        let reason = '';
+        if (lossFrac >= AUTO_PROTECT_DROP) {
+          reason = `it's down ${Math.round(lossFrac * 100)}% on your entry`;
+        } else if (safety.supported(p.chain) && (Date.now() - (p.notified.protectCheckAt || 0)) > AUTO_PROTECT_CHECK_MS) {
+          // Re-check the CONTRACT regardless of price — a honeypot can be switched on while
+          // you're still in profit. Only the unambiguous "can't sell" signals trigger a
+          // sale (honeypot flag, or a sell-tax spike) — NOT broad warnings like pausable /
+          // blacklist / high buy-tax, which many legitimate tokens carry.
+          p.notified.protectCheckAt = Date.now(); dirty = true;
+          const sec = await safety.tokenSecurity(p.chain, p.ca).catch(() => null);
+          if (sec && (sec.honeypot === true || Number(sec.sellTaxPct) >= 50)) reason = 'it turned into a honeypot (you can no longer sell it normally)';
         }
-        return;   // handled — skip the passive rug alert this cycle
+        if (reason && cooled) {
+          p.notified.protectAt = Date.now(); dirty = true; core.saveStoreNow();   // write-through the cooldown so a crash can't retry the sell
+          try {
+            const r = await core.sell(u.chatId, p.ca, 100, p.chain, w.id, { slipAddBps: 1500, gasMult: 2 });   // exit aggressively (wide slippage)
+            _notify(u.chatId, `🛡 <b>Auto-protect sold $${esc(p.sym || '')}</b>\nReason: ${reason}.\nRecovered <b>${Number(r.proceedsEth).toFixed(5)} ${c.native}</b>.\n${txLink(p.chain, r.hash)}`);
+          } catch (err) {
+            _notify(u.chatId, `🛡 <b>Auto-protect couldn't exit $${esc(p.sym || '')}</b>\n${esc((err && (err.message || err)) || 'sell failed')}\nThe token may be blocking sells (honeypot). I'll try again shortly.`);
+          }
+          return;   // handled — skip the passive rug alert this cycle
+        }
       }
     }
     // rug/dump: value fell to ≤RUG_DROP of a meaningful peak (once).
