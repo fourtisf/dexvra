@@ -422,26 +422,25 @@ function snipeScreen(chatId) {
   const live = onList.length > 0;
   const onStr = live ? onList.map((c) => `${c.emoji} ${esc(c.name)}`).join(', ') : '<i>none yet</i>';
   const SEP = '━━━━━━━━━━━━━━━━';
+  const statusLine = live
+    ? `🟢 <b>You're all set — it's running!</b>\nI'm sniping on <b>${onStr}</b> and spending <b>${amt}</b> per launch from your active wallet.`
+    : `⚪ <b>Not running yet.</b>\nTurn on at least one chain below and you're live.`;
   const text =
-    `🎯 <b>Auto-Snipe — buy every new launch</b>\n\n` +
-    `The bot watches for brand-new tokens and buys each one <b>the instant it launches</b>, all by itself.\n\n` +
-    `<b>Set it up in 2 steps:</b>\n` +
-    `1️⃣ Set how much to spend on each launch\n` +
-    `2️⃣ Turn ON the chains you want to snipe\n\n` +
-    SEP + `\n` +
-    `${live ? '🟢' : '⚪'} Status: <b>${live ? 'LIVE' : 'not active yet'}</b>\n` +
-    `💵 Spend per launch: <b>${amt}</b> (chain's coin)\n` +
-    `💳 Uses your <b>active wallet</b> on each chain\n` +
-    `📡 Sniping on: <b>${onStr}</b>\n` +
-    SEP + `\n\n` +
-    `<i>⚠️ This buys EVERY new launch on the chains you switch ON — most brand-new tokens are risky, so keep the amount small. Honeypots are skipped automatically, but always DYOR.</i>\n\n` +
-    `<i>👉 Want to snipe only ONE specific dev's launches (not everything)? Use 👥 Copy &amp; Dev Snipe instead.</i>`;
+    `🎯 <b>Auto-Snipe — I buy new tokens for you</b>\n\n` +
+    `I watch the chains around the clock and <b>buy any brand-new token the second it launches</b> — so you never have to sit and stare at charts. Just tell me two things:\n\n` +
+    `<b>1️⃣ How much to spend each time?</b>\n` +
+    `Right now: <b>${amt}</b> (the chain's own coin). Tap the 💵 button to change it.\n\n` +
+    `<b>2️⃣ Which chains should I watch?</b>\n` +
+    `Tap a chain in the list to flip it 🟢 ON or ⚪ OFF. That's it.\n\n` +
+    SEP + `\n${statusLine}\n` + SEP + `\n\n` +
+    `<i>💡 This buys EVERY new launch on the chains you turn ON, and most brand-new tokens are risky — so keep the amount small. Honeypots are skipped for you, but always do your own research.</i>\n\n` +
+    `<i>👉 Only want to catch ONE specific dev's launches, not everything? Use 👥 Copy &amp; Dev Snipe instead.</i>`;
   const kbRows = [];
-  kbRows.push([btn(`1️⃣ ✏️ Set amount (now ${amt})`, 'snamt')]);
-  // Step 2 — one clear toggle row per chain.
-  enabled.forEach((c) => kbRows.push([btn(`2️⃣ ${c.emoji} ${c.name}: ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
-  kbRows.push([btn('🎯 Snipe one dev wallet instead', 'copy')]);
-  kbRows.push([btn('« Menu', 'menu')]);
+  kbRows.push([btn(`💵 Set amount  (now ${amt})`, 'snamt')]);
+  // Clean per-chain toggles — tapping flips ON/OFF.
+  enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF — tap to start'}`, `sntog:${c.key}`)]));
+  kbRows.push([btn('🎯 Snipe just one dev instead', 'copy')]);
+  kbRows.push([btn('« Back to menu', 'menu')]);
   return { text, kb: { inline_keyboard: kbRows } };
 }
 function ordersScreen(chatId) {
@@ -1166,7 +1165,7 @@ async function onCallback(q) {
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (k === 'sntog') { const u = core.ensureUser(chatId); try { core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '🎯 <b>How much to auto-buy on each new launch?</b>\n\nType an amount in the chain\'s coin (for example <code>0.01</code>). The bot will spend this on every new token it snipes.'); }
+  if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '💵 <b>How much should I spend on each launch?</b>\n\nType a number in the chain\'s own coin — for example <code>0.01</code>.\nI\'ll spend exactly this on every new token I snipe. Start small while you try it out! 👍'); }
 
   // Trade actions encode the CARD's chain: k:chain:ca[:arg]
   if (data === 'monx') { stopMonitor(chatId, mid); tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); try { await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: mid, reply_markup: { inline_keyboard: [] } }); } catch (_) {} return answer(q.id, 'Monitor stopped'); }
