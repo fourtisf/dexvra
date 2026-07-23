@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { chainOf } from "@/config/chains";
 
 // Recognizable per-chain mark (nominative use — labels which chain a token
 // trades on, like every DEX aggregator). Kept as compact inline SVG so it
@@ -135,8 +136,34 @@ function Plasma({ s }: { s: number }) {
 
 export function ChainLogo({ chain, size = 16, style }: { chain: string; size?: number; style?: CSSProperties }) {
   const C = MAP[chain];
-  if (!C)
-    return <span style={{ width: size, height: size, display: "inline-block", ...style }} />;
+  if (!C) {
+    // No hand-drawn mark yet (e.g. a newly-added chain) → a colored initial
+    // badge from the chain registry, so it still reads as a recognizable tag
+    // instead of a blank gap.
+    const cfg = chainOf(chain);
+    const color = cfg?.color ?? "#5A6E74";
+    const initial = (cfg?.label ?? chain ?? "?").slice(0, 1).toUpperCase();
+    return (
+      <span
+        aria-label={cfg?.label ?? chain}
+        style={{
+          width: size,
+          height: size,
+          display: "inline-grid",
+          placeItems: "center",
+          borderRadius: "50%",
+          background: color,
+          color: "#0A1219",
+          fontSize: Math.round(size * 0.58),
+          fontWeight: 700,
+          lineHeight: 1,
+          ...style,
+        }}
+      >
+        {initial}
+      </span>
+    );
+  }
   return (
     <span style={{ width: size, height: size, display: "inline-grid", placeItems: "center", ...style }}>
       <C s={size} />

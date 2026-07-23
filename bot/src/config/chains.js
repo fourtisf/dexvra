@@ -71,10 +71,72 @@ const CHAINS = {
     explorer: (a) => `https://dexscreener.com/plasma/${a}`,
     buyUrl: (a) => `https://dexscreener.com/plasma/${a}`,
   },
+  // ── More EVM chains — all PAID IN BNB via BSC (payVia:"bsc"), no wallet
+  //    adapter needed (same pattern as Sui). geckoNetwork drives live market
+  //    data for posts; every token address is a standard 0x… EVM address. ──
+  polygon: {
+    id: "polygon", label: "Polygon", native: "POL", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "polygon_pos",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://polygonscan.com/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=polygon&outputCurrency=${a}`,
+  },
+  arbitrum: {
+    id: "arbitrum", label: "Arbitrum", native: "ETH", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "arbitrum",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://arbiscan.io/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=${a}`,
+  },
+  optimism: {
+    id: "optimism", label: "Optimism", native: "ETH", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "optimism",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://optimistic.etherscan.io/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=optimism&outputCurrency=${a}`,
+  },
+  avalanche: {
+    id: "avalanche", label: "Avalanche", native: "AVAX", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "avax",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://snowtrace.io/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=avalanche&outputCurrency=${a}`,
+  },
+  berachain: {
+    id: "berachain", label: "Berachain", native: "BERA", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "berachain",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://berascan.com/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/berachain/${a}`,
+  },
+  sonic: {
+    id: "sonic", label: "Sonic", native: "S", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "sonic",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://sonicscan.org/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/sonic/${a}`,
+  },
+  hyperevm: {
+    id: "hyperevm", label: "HyperEVM", native: "HYPE", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "hyperevm",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://dexscreener.com/hyperevm/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/hyperevm/${a}`,
+  },
+  abstract: {
+    id: "abstract", label: "Abstract", native: "ETH", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "abstract",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://abscan.org/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/abstract/${a}`,
+  },
 };
 
 // Menu / selector order across the bot (mirrors the website's chain order).
-const CHAIN_ORDER = ["solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton", "sui", "plasma"];
+const CHAIN_ORDER = [
+  "solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton", "sui", "plasma",
+  "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
+];
 const CHAIN_IDS = CHAIN_ORDER.filter((id) => CHAINS[id]);
 
 const chainOf = (id) => CHAINS[id] || null;

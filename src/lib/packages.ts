@@ -7,7 +7,11 @@ import type { ListingTier } from "./types";
 // tune here without touching UI.
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Settlement currency per chain. */
+/** Settlement currency per chain — the coin the buyer actually pays in. Must
+ *  match the bot's payChainOf/payNativeOf (bot/src/config/chains.js): chains
+ *  with a payVia route settle in that chain's coin (Sui/Polygon/… → BNB via BSC,
+ *  Plasma → ETH), NOT their own gas token. Keep this in step so the web price on
+ *  /advertise equals what the bot charges. */
 export const NATIVE: Record<string, string> = {
   solana: "SOL",
   ethereum: "ETH",
@@ -16,6 +20,18 @@ export const NATIVE: Record<string, string> = {
   ton: "TON",
   robinhood: "ETH",
   tron: "TRX",
+  // payVia:"bsc" chains — settled in BNB.
+  sui: "BNB",
+  polygon: "BNB",
+  arbitrum: "BNB",
+  optimism: "BNB",
+  avalanche: "BNB",
+  berachain: "BNB",
+  sonic: "BNB",
+  hyperevm: "BNB",
+  abstract: "BNB",
+  // payVia:"ethereum" — settled in ETH.
+  plasma: "ETH",
 };
 export const nativeOf = (chain: string): string => NATIVE[chain] ?? "SOL";
 

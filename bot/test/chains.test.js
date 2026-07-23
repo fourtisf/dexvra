@@ -21,11 +21,28 @@ test("native + family mapping", () => {
   assert.strictEqual(familyOf("ton"), "ton");
 });
 
-test("all 9 chains present", () => {
+test("all supported chains present", () => {
   assert.deepStrictEqual(
     [...CHAIN_IDS].sort(),
-    ["base", "bsc", "ethereum", "plasma", "robinhood", "solana", "sui", "ton", "tron"].sort(),
+    [
+      "base", "bsc", "ethereum", "plasma", "robinhood", "solana", "sui", "ton", "tron",
+      "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
+    ].sort(),
   );
+});
+
+test("added EVM chains settle in BNB (payVia bsc) with a valid price", () => {
+  const { payChainOf, payNativeOf, PAYABLE_CHAIN_IDS } = require("../src/config/chains");
+  const { tierPrice, trendingForChain } = require("../src/config/packages");
+  for (const ch of ["polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract"]) {
+    assert.strictEqual(payChainOf(ch), "bsc", `${ch} pays via bsc`);
+    assert.strictEqual(payNativeOf(ch), "BNB", `${ch} pays in BNB`);
+    assert.strictEqual(tierPrice("DIAMOND", ch), 1.5, `${ch} Diamond = 1.5 BNB`);
+    assert.strictEqual(tierPrice("XPRESS", ch), 0.25, `${ch} Xpress = 0.25 BNB`);
+    assert.strictEqual(trendingForChain(ch)[0].price, 0.25, `${ch} trending uses the BNB table`);
+    assert.ok(isValidAddress(ch, "0x6982508145454Ce325dDbE47a25d4ec3d2311933"), `${ch} accepts a 0x address`);
+    assert.ok(!PAYABLE_CHAIN_IDS.includes(ch), `${ch} is never a RECEIVING chain`);
+  }
 });
 
 test("payVia chains: Sui pays in BNB on BSC, Plasma pays in ETH on Ethereum", () => {
