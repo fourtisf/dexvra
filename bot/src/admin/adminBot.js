@@ -497,8 +497,8 @@ function bxMenuText(kind) {
   return (
     `🎛 <b>${BT_KINDS[kind]} — Layout editor</b>\n\n` +
     (rect
-      ? `Set the advertiser creative's <b>slot size</b> and <b>position</b>, then tap 👁 Preview.`
-      : `Tap any element to <b>size</b> or <b>move</b> it — coarse & fine ± buttons, or type an exact value. Tap 👁 <b>Preview</b> anytime to see it on your ${anim ? "<b>animated template</b>" : "banner"}.`)
+      ? `Tap the creative slot to <b>resize</b> and <b>move</b> it, then 👁 Preview.`
+      : `Tap an element to <b>resize ➖➕ and move</b> it on one screen. Tap 👁 <b>Preview</b> anytime to see it on your ${anim ? "<b>animated template</b>" : "banner"}.`)
   );
 }
 function bxMenuKb(kind) {
@@ -507,19 +507,17 @@ function bxMenuKb(kind) {
   const cb = Markup.button.callback;
   const rows = [];
   if (rect) {
-    rows.push([cb(`📐 Slot Size · ${s.slotW}×${s.slotH}`, `bxs:${kind}:slot`)]);
-    rows.push([cb("🎯 Move Slot", `bxm:${kind}:slot`)]);
+    rows.push([cb(`🖼 Creative slot · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
   } else {
     const showText = s.showText !== false;
     const showBadge = s.showBadge !== false;
-    rows.push([cb(`📐 Logo Size · ${s.logoSize}px`, `bxs:${kind}:logo`), cb("🎯 Move Logo", `bxm:${kind}:logo`)]);
+    rows.push([cb(`🪙 Logo · ${s.logoSize}px`, `bxe:${kind}:logo`)]);
     if (showText) {
-      rows.push([cb(`🔤 Ticker Size · ${s.tickerFontSize}px`, `bxs:${kind}:ticker`), cb("🎯 Move Ticker", `bxm:${kind}:ticker`)]);
-      rows.push([cb(`📝 Name Size · ${s.nameFontSize}px`, `bxs:${kind}:name`)]);
-      rows.push([cb(`📊 Chips Size · ${s.metaFontSize}px`, `bxs:${kind}:meta`), cb("🎯 Move Chips", `bxm:${kind}:meta`)]);
+      rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
+      rows.push([cb(`📊 Chips · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
     rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
-    if (showBadge) rows.push([cb(`🏷 Badge Size · ${s.badgeFontSize}px`, `bxs:${kind}:badge`), cb("🎯 Move Badge", `bxm:${kind}:badge`)]);
+    if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
   }
   rows.push([cb("👁 Preview", `bxp:${kind}`)]);
   rows.push([cb("🔄 Reset layout", `bxr:${kind}`), cb("⬅ Back", `btk:${kind}`)]);
@@ -531,44 +529,49 @@ async function bxOpen(ctx, kind) {
   }
   await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
 }
-function bxSizeText(kind, elem) {
+// One screen per element: RESIZE (➖➕) and MOVE (arrows) together, so you never
+// hunt for size on a separate page. `slot` (banner ads) resizes W & H.
+function bxElemText(kind, elem) {
   const s = bannerTpl.getSettings(kind);
-  if (elem === "slot") return `📐 <b>${BT_KINDS[kind]} — creative slot size</b>\nCurrent: <b>${s.slotW}×${s.slotH}px</b>\n\nUse the buttons, or ⌨ enter <code>W H</code> (e.g. <code>1548 760</code>).`;
+  if (elem === "slot") {
+    return `🖼 <b>${BT_KINDS[kind]} — creative slot</b>\nSize <b>${s.slotW}×${s.slotH}px</b> · Position <b>(${s.logoX}, ${s.logoY})</b>\n\nTop two rows resize (W / H), arrows move, or ⌨ enter exact values. 👁 Preview anytime.`;
+  }
   const c = BX[elem];
-  return `📐 <b>${BT_KINDS[kind]} — ${c.label} size</b>\nCurrent: <b>${s[c.sizeKey]}px</b>\n\nCoarse ±${c.sc}, fine ±${c.sf}, or ⌨ enter an exact number.`;
+  const pos = c.nomove ? "" : ` · Position <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
+  return (
+    `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nSize <b>${s[c.sizeKey]}px</b>${pos}\n\n` +
+    `➖➕ resize${c.nomove ? "" : ", arrows move (top coarse, bottom fine)"}, or ⌨ enter exact. 👁 Preview anytime.`
+  );
 }
-function bxSizeKb(kind, elem) {
+function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
+  const C = BX_MOVE_COARSE;
+  const F = BX_MOVE_FINE;
   if (elem === "slot") {
     return Markup.inlineKeyboard([
-      [cb("↔ W −40", `bxsd:${kind}:slotw:-40`), cb("↔ W −10", `bxsd:${kind}:slotw:-10`), cb("↔ W +10", `bxsd:${kind}:slotw:10`), cb("↔ W +40", `bxsd:${kind}:slotw:40`)],
-      [cb("↕ H −40", `bxsd:${kind}:sloth:-40`), cb("↕ H −10", `bxsd:${kind}:sloth:-10`), cb("↕ H +10", `bxsd:${kind}:sloth:10`), cb("↕ H +40", `bxsd:${kind}:sloth:40`)],
-      [cb("⌨ Enter W H", `bxsn:${kind}:slot`)],
+      [cb("W ➖40", `bxsd:${kind}:slotw:-40`), cb("W ➖10", `bxsd:${kind}:slotw:-10`), cb("W ➕10", `bxsd:${kind}:slotw:10`), cb("W ➕40", `bxsd:${kind}:slotw:40`)],
+      [cb("H ➖40", `bxsd:${kind}:sloth:-40`), cb("H ➖10", `bxsd:${kind}:sloth:-10`), cb("H ➕10", `bxsd:${kind}:sloth:10`), cb("H ➕40", `bxsd:${kind}:sloth:40`)],
+      [cb("⬅", `bxmd:${kind}:slot:${-C}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-C}`), cb("⬇", `bxmd:${kind}:slot:0:${C}`), cb("➡", `bxmd:${kind}:slot:${C}:0`)],
+      [cb("⌨ Size W H", `bxsn:${kind}:slot`), cb("⌨ Move X,Y", `bxmn:${kind}:slot`)],
       [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
     ]);
   }
   const c = BX[elem];
-  return Markup.inlineKeyboard([
-    [cb(`− ${c.sc}`, `bxsd:${kind}:${elem}:${-c.sc}`), cb(`− ${c.sf}`, `bxsd:${kind}:${elem}:${-c.sf}`), cb(`+ ${c.sf}`, `bxsd:${kind}:${elem}:${c.sf}`), cb(`+ ${c.sc}`, `bxsd:${kind}:${elem}:${c.sc}`)],
-    [cb("⌨ Enter exact size", `bxsn:${kind}:${elem}`)],
-    [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
-  ]);
+  const rows = [
+    [cb(`➖ ${c.sc}`, `bxsd:${kind}:${elem}:${-c.sc}`), cb(`➖ ${c.sf}`, `bxsd:${kind}:${elem}:${-c.sf}`), cb(`➕ ${c.sf}`, `bxsd:${kind}:${elem}:${c.sf}`), cb(`➕ ${c.sc}`, `bxsd:${kind}:${elem}:${c.sc}`)],
+  ];
+  if (c.nomove) {
+    rows.push([cb("⌨ Enter exact size", `bxsn:${kind}:${elem}`)]);
+  } else {
+    rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-C}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-C}`), cb("⬇", `bxmd:${kind}:${elem}:0:${C}`), cb("➡", `bxmd:${kind}:${elem}:${C}:0`)]);
+    rows.push([cb("◀ fine", `bxmd:${kind}:${elem}:${-F}:0`), cb("🔼", `bxmd:${kind}:${elem}:0:${-F}`), cb("🔽", `bxmd:${kind}:${elem}:0:${F}`), cb("fine ▶", `bxmd:${kind}:${elem}:${F}:0`)]);
+    rows.push([cb("🎯 Center X", `bxc:${kind}:${elem}`), cb("⌨ Size", `bxsn:${kind}:${elem}`), cb("⌨ X,Y", `bxmn:${kind}:${elem}`)]);
+  }
+  rows.push([cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)]);
+  return Markup.inlineKeyboard(rows);
 }
-function bxMoveText(kind, elem) {
-  const s = bannerTpl.getSettings(kind);
-  const c = elem === "slot" ? { label: "🖼 Slot", xKey: "logoX", yKey: "logoY" } : BX[elem];
-  return `🎯 <b>${BT_KINDS[kind]} — move ${c.label}</b>\nPosition: <b>(${s[c.xKey]}, ${s[c.yKey]})</b>\n\nArrows nudge it (top row coarse, bottom fine); ⌨ enter <code>X,Y</code> for exact (<code>center</code> allowed for X).`;
-}
-function bxMoveKb(kind, elem) {
-  const cb = Markup.button.callback;
-  const C = BX_MOVE_COARSE;
-  const F = BX_MOVE_FINE;
-  return Markup.inlineKeyboard([
-    [cb("⬅", `bxmd:${kind}:${elem}:${-C}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-C}`), cb("⬇", `bxmd:${kind}:${elem}:0:${C}`), cb("➡", `bxmd:${kind}:${elem}:${C}:0`)],
-    [cb("◀ fine", `bxmd:${kind}:${elem}:${-F}:0`), cb("🔼", `bxmd:${kind}:${elem}:0:${-F}`), cb("🔽", `bxmd:${kind}:${elem}:0:${F}`), cb("fine ▶", `bxmd:${kind}:${elem}:${F}:0`)],
-    [cb("🎯 Center X", `bxc:${kind}:${elem}`), cb("⌨ Enter X,Y", `bxmn:${kind}:${elem}`)],
-    [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
-  ]);
+async function bxElemOpen(ctx, kind, elem) {
+  await edit(ctx, bxElemText(kind, elem), bxElemKb(kind, elem));
 }
 async function bxPreview(ctx, kind) {
   const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), BX_SAMPLE).catch(() => null);
@@ -1065,20 +1068,11 @@ function build() {
     if (!guard(ctx)) return;
     await bxOpen(ctx, ctx.match[1]);
   });
-  bot.action(new RegExp(`^bxs:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxe:${K}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
-    await edit(ctx, bxSizeText(kind, elem), bxSizeKb(kind, elem));
-  });
-  bot.action(new RegExp(`^bxm:${K}:${EX}$`), async (ctx) => {
-    if (!guard(ctx)) return;
-    const [, kind, elem] = ctx.match;
-    if (elem !== "slot" && BX[elem] && BX[elem].nomove) {
-      return ctx.answerCbQuery("Name follows the ticker — size it instead.").catch(() => {});
-    }
-    ctx.answerCbQuery().catch(() => {});
-    await edit(ctx, bxMoveText(kind, elem), bxMoveKb(kind, elem));
+    await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxsd:${K}:(logo|ticker|name|meta|badge|slotw|sloth):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
@@ -1091,7 +1085,7 @@ function build() {
       const v = Math.max(lim[0], Math.min(lim[1], Number(s[key]) + d));
       await bannerTpl.updateSettings(kind, { [key]: v });
       ctx.answerCbQuery(`${key} ${v}px`).catch(() => {});
-      return void edit(ctx, bxSizeText(kind, "slot"), bxSizeKb(kind, "slot"));
+      return void bxElemOpen(ctx, kind, "slot");
     }
     const c = BX[elem];
     if (elem === "logo") {
@@ -1109,7 +1103,7 @@ function build() {
       await bannerTpl.updateSettings(kind, { [c.sizeKey]: size });
       ctx.answerCbQuery(`${c.label} ${size}px`).catch(() => {});
     }
-    await edit(ctx, bxSizeText(kind, elem), bxSizeKb(kind, elem));
+    await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxmd:${K}:${EX}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
@@ -1121,7 +1115,7 @@ function build() {
     const y = Math.max(-800, Math.min(3200, btNum(s[c.yKey], 430) + Number(dys)));
     await bannerTpl.updateSettings(kind, { [c.xKey]: x, [c.yKey]: y });
     ctx.answerCbQuery(`📍 ${x}, ${y}`).catch(() => {});
-    await edit(ctx, bxMoveText(kind, elem), bxMoveKb(kind, elem));
+    await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxc:${K}:${EX}$`), async (ctx) => {
     if (!guard(ctx)) return;
@@ -1130,7 +1124,7 @@ function build() {
     if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.xKey]: "center" });
     ctx.answerCbQuery("🎯 Centred horizontally").catch(() => {});
-    await edit(ctx, bxMoveText(kind, elem), bxMoveKb(kind, elem));
+    await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxsn:${K}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -1442,18 +1436,18 @@ function build() {
             if (!c || !Number.isFinite(n)) return ctx.reply("❌ Send a number, e.g. <code>96</code>.", HTML).catch(() => {});
             const v = Math.max(c.smin, Math.min(c.smax, n));
             await bannerTpl.updateSettings(kind, { [c.sizeKey]: v });
-            await ctx.reply(bxSizeText(kind, elem), { ...HTML, ...bxSizeKb(kind, elem) });
+            await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
           } else if (mode === "bxslotsize") {
             const m = low.match(/^(\d+)\s+(\d+)$/);
             if (!m) return ctx.reply("❌ Format: <code>W H</code> — e.g. <code>1548 760</code>.", HTML).catch(() => {});
             await bannerTpl.updateSettings(kind, { slotW: Math.max(200, Math.min(2560, Number(m[1]))), slotH: Math.max(120, Math.min(1280, Number(m[2]))) });
-            await ctx.reply(bxSizeText(kind, "slot"), { ...HTML, ...bxSizeKb(kind, "slot") });
+            await ctx.reply(bxElemText(kind, "slot"), { ...HTML, ...bxElemKb(kind, "slot") });
           } else {
             const m = low.match(/^(center|-?\d+)\s*,\s*(center|-?\d+)$/);
             if (!m) return ctx.reply("❌ Format: <code>X,Y</code> — e.g. <code>1890,410</code> (<code>center</code> allowed for X).", HTML).catch(() => {});
             const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
             await bannerTpl.updateSettings(kind, { [c.xKey]: cv(m[1]), [c.yKey]: cv(m[2]) });
-            await ctx.reply(bxMoveText(kind, elem), { ...HTML, ...bxMoveKb(kind, elem) });
+            await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
           }
         } catch (e) {
           await ctx.reply(`⚠️ ${e.message}`).catch(() => {});
