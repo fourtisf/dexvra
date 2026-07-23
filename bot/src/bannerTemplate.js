@@ -66,9 +66,13 @@ async function saveMedia(kind, buffer, ext) {
   if (!MEDIA_EXT[e]) throw new Error(`unsupported media type .${e} (use gif/mp4/webm/mov)`);
   await removeMedia(kind); // one clip per kind — drop any prior ext
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
-  await fss.promises.writeFile(mediaPath(kind, e), buffer);
+  const outPath = mediaPath(kind, e);
+  await fss.promises.writeFile(outPath, buffer);
   _invalidateClipCache(kind); // force the editor to re-extract a frame from the new clip
-  return { type: MEDIA_EXT[e], ext: e };
+  // Loud diagnostic: shows the EXACT absolute path + byte count written, so a
+  // wrong DATA_DIR / cwd (save landing somewhere the reader doesn't look) is obvious.
+  log.info(`[bannerTpl] saveMedia ${kind}: wrote ${buffer.length}B → ${path.resolve(outPath)}`);
+  return { type: MEDIA_EXT[e], ext: e, bytes: buffer.length, path: path.resolve(outPath) };
 }
 async function removeMedia(kind) {
   for (const ext of Object.keys(MEDIA_EXT)) {

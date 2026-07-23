@@ -1562,9 +1562,11 @@ function build() {
         const link = await ctx.telegram.getFileLink(fileId);
         const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(30000) });
         if (!res.ok) throw new Error(`download ${res.status}`);
-        const { type } = await bannerTpl.saveMedia(kind, Buffer.from(await res.arrayBuffer()), ext);
-        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id}`);
-        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved.</b> It now plays above every ${BT_KINDS[kind]} post (it overrides the still artwork).`, { ...HTML, ...btKindKb(kind) });
+        const buf = Buffer.from(await res.arrayBuffer());
+        const { type, bytes } = await bannerTpl.saveMedia(kind, buf, ext);
+        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B)`);
+        const mb = (bytes / 1048576).toFixed(2);
+        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 Preview to see it.`, { ...HTML, ...btKindKb(kind) });
       } catch (e) {
         await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
       }
