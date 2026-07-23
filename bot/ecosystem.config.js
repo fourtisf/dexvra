@@ -17,6 +17,10 @@ module.exports = {
       max_restarts: 50,
       min_uptime: "30s",
       restart_delay: 5000,
+      // Give the bot time to close its Telegram long-poll cleanly on SIGTERM.
+      // Killed too fast, the old getUpdates lingers ~50s and the fresh process
+      // gets 409 Conflict — the "bot doesn't answer for a minute after restart".
+      kill_timeout: 6000,
       watch: false,
       max_memory_restart: "1G",
       env: { NODE_ENV: "production" },
@@ -31,6 +35,7 @@ module.exports = {
       max_restarts: 50,
       min_uptime: "30s",
       restart_delay: 5000,
+      kill_timeout: 6000,
       watch: false,
       max_memory_restart: "768M",
       env: { NODE_ENV: "production" },
