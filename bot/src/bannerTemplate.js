@@ -349,7 +349,11 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         const r = Math.min(chipH / 2, fsz * 0.7);
         const padX = Math.max(fsz * 0.66, r * 0.95);
         ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
-        const w = ctx.measureText(t).width + padX * 2;
+        // measureText under-reports advance width for some fonts/long numeric strings
+        // (micro-cap prices like $0.00008624 spilled past the pill). Pad the box by a
+        // safety factor + a fixed guard so any value stays fully inside.
+        const textW = ctx.measureText(t).width;
+        const w = textW * 1.08 + padX * 2 + 6;
         const cx = x === "center" ? (W - w) / 2 : Number(x) || 0;
         const cy = Number(y) || H - 152;
         ctx.beginPath();
