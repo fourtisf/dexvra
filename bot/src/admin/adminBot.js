@@ -1662,7 +1662,20 @@ async function startAdminBot() {
   process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
   log.info("[adminbot] launching (long-polling)…");
-  await bot.launch({ allowedUpdates: ["message", "callback_query"] });
+  // Clear any stray webhook (a set webhook makes getUpdates 409 forever → the bot
+  // silently stops answering) and drop the backlog. Best-effort, never blocks startup.
+  try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+  } catch (e) {
+    log.warn(`[adminbot] deleteWebhook: ${e.message}`);
+  }
+  await bot
+    .launch({ dropPendingUpdates: true, allowedUpdates: ["message", "callback_query"] })
+    .catch((e) => {
+      log.error(`[adminbot] launch FAILED (no updates will be received): ${e.message}`);
+      throw e;
+    });
+  log.info("[adminbot] polling started ✔");
 }
 
 module.exports = { startAdminBot, build };

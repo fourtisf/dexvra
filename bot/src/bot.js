@@ -100,16 +100,31 @@ async function startBot() {
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
   log.info("[telegraf] launching (long-polling)…");
-  await bot.launch({
-    allowedUpdates: [
-      "message",
-      "edited_message",
-      "channel_post",
-      "callback_query",
-      "my_chat_member",
-      "chat_member",
-    ],
-  });
+  // A stray webhook makes getUpdates return 409 forever, so the bot silently stops
+  // answering /start (recurring incident). Clear any webhook + drop the backlog of
+  // updates that stacked up while it was down. Best-effort — never block startup.
+  try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+  } catch (e) {
+    log.warn(`[telegraf] deleteWebhook: ${e.message}`);
+  }
+  await bot
+    .launch({
+      dropPendingUpdates: true,
+      allowedUpdates: [
+        "message",
+        "edited_message",
+        "channel_post",
+        "callback_query",
+        "my_chat_member",
+        "chat_member",
+      ],
+    })
+    .catch((e) => {
+      log.error(`[telegraf] launch FAILED (bot will not receive updates): ${e.message}`);
+      throw e;
+    });
+  log.info("[telegraf] polling started ✔");
 }
 
 module.exports = { startBot, applyMiddleware, generateSessionKey, rateLimitConfig };
