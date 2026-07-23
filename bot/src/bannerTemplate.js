@@ -89,24 +89,12 @@ const BASE_DEFAULTS = {
   nameFontSize: 48,
   nameColor: "#B8CCC8",
   nameOffsetY: 96,
-  // token meta chips — each INDEPENDENTLY placed & sized so the layout can be
-  // tuned per chip. Filled by live data (chain / price / market cap). X = LEFT
-  // edge (or "center"). metaX/metaY/metaFontSize kept for back-compat only.
+  // token meta chips (CHAIN · price · MC) — auto-arranged as a row from metaX
+  // (or centred), constant gap, each auto-sized to its text so they never
+  // overflow or collide. Positioned & sized as a GROUP. X = LEFT edge / "center".
   metaX: 210,
   metaY: 772,
   metaFontSize: 34,
-  // Defaults hug the panel's left edge as a tight row so they fit the artwork's
-  // rectangle out of the box (were too spread, MC spilled past the panel). Each
-  // is still freely movable per chip in the layout editor.
-  chainX: 210,
-  chainY: 772,
-  chainSize: 34,
-  priceX: 470,
-  priceY: 772,
-  priceSize: 34,
-  mcX: 690,
-  mcY: 772,
-  mcSize: 34,
   // small badge on the glass pedestal under the ring (tier / trending duration).
   // Off by default — deployments with no tier system show no badge; turn it on
   // per-kind in the layout editor when a badge is wanted.
@@ -334,48 +322,49 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
     }
 
     // Token meta chips under the ring — CHAIN / price / market cap, each drawn
-    // INDEPENDENTLY at its own position & size (admin-tunable per chip) so they
-    // can be arranged freely instead of a fixed row.
+    // arranged as a ROW from metaX with a constant gap, each pill auto-sized to
+    // its text. This never overflows or collides no matter how long the price is.
     if (cfg.showText && cfg.slotShape !== "rect") {
       const tint = (cfg.tickerGlow || "#4EE6A8") + "55";
-      const drawChip = (text, x, y, size) => {
-        if (!text) return;
-        const t = String(text);
-        const fsz = Number(size) || Number(cfg.metaFontSize) || 34;
-        const chipH = fsz * 1.9;
-        // Padding must clear the rounded corner so glyphs don't sit inside the
-        // curve ("text spilling out of the pill"). Cap the corner radius below
-        // chipH/2 (a full pill) so text has a flat interior to sit in.
-        const r = Math.min(chipH / 2, fsz * 0.7);
-        const padX = Math.max(fsz * 0.66, r * 0.95);
-        ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
-        // measureText under-reports advance width for some fonts/long numeric strings
-        // (micro-cap prices like $0.00008624 spilled past the pill). Pad the box by a
-        // safety factor + a fixed guard so any value stays fully inside.
-        const textW = ctx.measureText(t).width;
-        const w = textW * 1.08 + padX * 2 + 6;
-        const cx = x === "center" ? (W - w) / 2 : Number(x) || 0;
-        const cy = Number(y) || H - 152;
+      const fsz = Number(cfg.metaFontSize) || 34;
+      const chipH = fsz * 1.9;
+      // Cap the corner radius below chipH/2 (a full pill) so text sits in a flat
+      // interior, and pad enough to clear that radius — otherwise glyphs sit in
+      // the curve and read as "spilling out".
+      const r = Math.min(chipH / 2, fsz * 0.7);
+      const padX = Math.max(fsz * 0.66, r * 0.95);
+      const gap = Math.round(fsz * 0.5);
+      const cy = Number(cfg.metaY) || H - 152;
+      ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
+      const vals = [chain, price && price !== "TBA" ? price : null, mcap ? `MC ${mcap}` : null]
+        .filter(Boolean)
+        .map(String);
+      // measureText under-reports advance width for some fonts/long numeric strings,
+      // so pad the box by a safety factor + fixed guard — the value stays inside.
+      const widths = vals.map((t) => ctx.measureText(t).width * 1.08 + padX * 2 + 6);
+      const total = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, vals.length - 1);
+      let x = cfg.metaX === "center" ? (W - total) / 2 : Number(cfg.metaX) || 210;
+      for (let i = 0; i < vals.length; i++) {
+        const t = vals[i];
+        const w = widths[i];
         ctx.beginPath();
-        ctx.moveTo(cx + r, cy);
-        ctx.arcTo(cx + w, cy, cx + w, cy + chipH, r);
-        ctx.arcTo(cx + w, cy + chipH, cx, cy + chipH, r);
-        ctx.arcTo(cx, cy + chipH, cx, cy, r);
-        ctx.arcTo(cx, cy, cx + w, cy, r);
+        ctx.moveTo(x + r, cy);
+        ctx.arcTo(x + w, cy, x + w, cy + chipH, r);
+        ctx.arcTo(x + w, cy + chipH, x, cy + chipH, r);
+        ctx.arcTo(x, cy + chipH, x, cy, r);
+        ctx.arcTo(x, cy, x + w, cy, r);
         ctx.closePath();
         ctx.fillStyle = "rgba(255,255,255,.055)";
         ctx.fill();
         ctx.lineWidth = 2;
         ctx.strokeStyle = tint;
         ctx.stroke();
-        ctx.fillStyle = "#EAF6F2";
+        ctx.fillStyle = i === 0 ? "#EAF6F2" : "#CFE4DE";
         ctx.textBaseline = "middle";
-        ctx.fillText(t, cx + padX, cy + chipH / 2 + 2);
+        ctx.fillText(t, x + padX, cy + chipH / 2 + 2);
         ctx.textBaseline = "alphabetic";
-      };
-      drawChip(chain, cfg.chainX, cfg.chainY, cfg.chainSize);
-      drawChip(price && price !== "TBA" ? price : null, cfg.priceX, cfg.priceY, cfg.priceSize);
-      drawChip(mcap ? `MC ${mcap}` : null, cfg.mcX, cfg.mcY, cfg.mcSize);
+        x += w + gap;
+      }
     }
 
     // Pedestal badge — the small glass slab under the ring carries the tier

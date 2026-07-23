@@ -484,9 +484,7 @@ const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
   name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
-  chain: { label: "🔗 Chain", sizeKey: "chainSize", xKey: "chainX", yKey: "chainY", smin: 16, smax: 120, sc: 8, sf: 3 },
-  price: { label: "💲 Price", sizeKey: "priceSize", xKey: "priceX", yKey: "priceY", smin: 16, smax: 120, sc: 8, sf: 3 },
-  mc: { label: "📊 Market cap", sizeKey: "mcSize", xKey: "mcX", yKey: "mcY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  meta: { label: "📊 Chips (chain·price·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
   badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
 };
 const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
@@ -516,8 +514,7 @@ function bxMenuKb(kind) {
     rows.push([cb(`🪙 Logo · ${s.logoSize}px`, `bxe:${kind}:logo`)]);
     if (showText) {
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
-      rows.push([cb(`🔗 Chain · ${s.chainSize}px`, `bxe:${kind}:chain`), cb(`💲 Price · ${s.priceSize}px`, `bxe:${kind}:price`)]);
-      rows.push([cb(`📊 Market cap · ${s.mcSize}px`, `bxe:${kind}:mc`)]);
+      rows.push([cb(`📊 Chips (chain·price·MC) · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
     rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
     if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
@@ -1072,7 +1069,7 @@ function build() {
   // one photo message in place. Element rides in the callback data (stateless).
   const E = "(logo|ticker|meta|badge)";
   // ── Fourtis-style layout editor handlers (bx*) ────────────────────────────
-  const EX = "(logo|ticker|name|chain|price|mc|badge|slot)";
+  const EX = "(logo|ticker|name|meta|badge|slot)";
   bot.action(new RegExp(`^bxo:${K}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -1084,7 +1081,7 @@ function build() {
     const [, kind, elem] = ctx.match;
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxsd:${K}:(logo|ticker|name|chain|price|mc|badge|slotw|sloth):(-?\\d+)$`), async (ctx) => {
+  bot.action(new RegExp(`^bxsd:${K}:(logo|ticker|name|meta|badge|slotw|sloth):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem, ds] = ctx.match;
     const s = bannerTpl.getSettings(kind);
