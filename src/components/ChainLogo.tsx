@@ -105,6 +105,11 @@ const MAP: Record<string, (p: { s: number }) => JSX.Element> = {
   sonic: Sonic,
   hyperevm: HyperEvm,
   abstract: Abstract,
+  apechain: ApeChain,
+  blast: Blast,
+  sei: Sei2,
+  aptos: Aptos,
+  unichain: Unichain,
 };
 
 function Sui({ s }: { s: number }) {
@@ -220,6 +225,55 @@ function Abstract({ s }: { s: number }) {
       {/* rounded-square mark */}
       <rect x="8" y="8" width="8" height="8" rx="2.4" fill="none" stroke="#06251A" strokeWidth="1.8" />
       <circle cx="12" cy="12" r="1.7" fill="#06251A" />
+    </svg>
+  );
+}
+function ApeChain({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="ApeChain">
+      <circle cx="12" cy="12" r="10" fill="#0054FA" />
+      {/* ape face — side ears distinguish it from the bear */}
+      <circle cx="6.9" cy="12" r="1.8" fill="#fff" />
+      <circle cx="17.1" cy="12" r="1.8" fill="#fff" />
+      <circle cx="12" cy="12" r="4.4" fill="#fff" />
+      <circle cx="10.4" cy="11.4" r="0.75" fill="#0054FA" />
+      <circle cx="13.6" cy="11.4" r="0.75" fill="#0054FA" />
+      <path d="M10.2 13.7c.9.8 2.7.8 3.6 0" fill="none" stroke="#0054FA" strokeWidth="1" strokeLinecap="round" />
+    </svg>
+  );
+}
+function Blast({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Blast">
+      <circle cx="12" cy="12" r="10" fill="#FCFC03" />
+      <text x="12" y="16.4" textAnchor="middle" fontSize="13" fontWeight="800" fill="#0A0A0A" fontFamily="system-ui,-apple-system,'Segoe UI',sans-serif">B</text>
+    </svg>
+  );
+}
+function Sei2({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Sei">
+      <circle cx="12" cy="12" r="10" fill="#9E1C1C" />
+      <text x="12" y="16.4" textAnchor="middle" fontSize="12.5" fontWeight="800" fill="#fff" fontFamily="system-ui,-apple-system,'Segoe UI',sans-serif">S</text>
+    </svg>
+  );
+}
+function Aptos({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Aptos">
+      <circle cx="12" cy="12" r="10" fill="#12141C" />
+      {/* white 'A' — Aptos' mark reads as an A/peak */}
+      <path d="M12 7 8 16.6" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M12 7 16 16.6" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M9.7 13.1 14.3 13.1" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+function Unichain({ s }: { s: number }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" aria-label="Unichain">
+      <circle cx="12" cy="12" r="10" fill="#F50DB4" />
+      <text x="12" y="16.4" textAnchor="middle" fontSize="12.5" fontWeight="800" fill="#fff" fontFamily="system-ui,-apple-system,'Segoe UI',sans-serif">U</text>
     </svg>
   );
 }

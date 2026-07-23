@@ -193,6 +193,57 @@ export const CHAINS: Record<string, ChainConfig> = {
     buyUrl: (a) => `https://dexscreener.com/abstract/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
+  apechain: {
+    id: "apechain",
+    label: "ApeChain",
+    color: "#0054FA",
+    geckoNetwork: "apechain",
+    goPlusChainId: null,
+    explorer: (a) => `https://apescan.io/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/apechain/${a}`,
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+  },
+  blast: {
+    id: "blast",
+    label: "Blast",
+    color: "#FCFC03",
+    geckoNetwork: "blast",
+    goPlusChainId: "81457",
+    explorer: (a) => `https://blastscan.io/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/blast/${a}`,
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+  },
+  sei: {
+    id: "sei",
+    label: "Sei",
+    color: "#9E1C1C",
+    geckoNetwork: "sei-evm",
+    goPlusChainId: null,
+    explorer: (a) => `https://seitrace.com/token/${a}?chain=pacific-1`,
+    buyUrl: (a) => `https://dexscreener.com/seiv2/${a}`,
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+  },
+  aptos: {
+    id: "aptos",
+    label: "Aptos",
+    color: "#8CA0B8",
+    geckoNetwork: "aptos",
+    goPlusChainId: null, // non-EVM → GoPlus token_security doesn't cover it
+    explorer: (a) => `https://dexscreener.com/aptos/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/aptos/${a}`,
+    // Aptos coin type (0x…::module::SYMBOL) or a bare object / FA address.
+    addressPattern: /^0x[a-fA-F0-9]{1,64}(::[A-Za-z0-9_]+){0,2}$/,
+  },
+  unichain: {
+    id: "unichain",
+    label: "Unichain",
+    color: "#F50DB4",
+    geckoNetwork: "unichain",
+    goPlusChainId: null,
+    explorer: (a) => `https://uniscan.xyz/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=unichain&outputCurrency=${a}`,
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+  },
 };
 
 export const CHAIN_IDS = Object.keys(CHAINS);

@@ -30,6 +30,11 @@ export const NATIVE: Record<string, string> = {
   sonic: "BNB",
   hyperevm: "BNB",
   abstract: "BNB",
+  apechain: "BNB",
+  blast: "BNB",
+  sei: "BNB",
+  aptos: "BNB",
+  unichain: "BNB",
   // payVia:"ethereum" — settled in ETH.
   plasma: "ETH",
 };

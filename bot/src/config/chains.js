@@ -130,12 +130,50 @@ const CHAINS = {
     explorer: (a) => `https://abscan.org/token/${a}`,
     buyUrl: (a) => `https://dexscreener.com/abstract/${a}`,
   },
+  apechain: {
+    id: "apechain", label: "ApeChain", native: "APE", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "apechain",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://apescan.io/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/apechain/${a}`,
+  },
+  blast: {
+    id: "blast", label: "Blast", native: "ETH", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "blast",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://blastscan.io/token/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/blast/${a}`,
+  },
+  sei: {
+    id: "sei", label: "Sei", native: "SEI", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "sei-evm",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://seitrace.com/token/${a}?chain=pacific-1`,
+    buyUrl: (a) => `https://dexscreener.com/seiv2/${a}`,
+  },
+  aptos: {
+    // Non-EVM (Move). Address = a coin type (0x…::module::SYMBOL) or a bare
+    // object / fungible-asset address. Still billed in BNB via BSC (payVia).
+    id: "aptos", label: "Aptos", native: "APT", family: null, payVia: "bsc", decimals: 8,
+    geckoNetwork: "aptos",
+    addressPattern: /^0x[a-fA-F0-9]{1,64}(::[A-Za-z0-9_]+){0,2}$/,
+    explorer: (a) => `https://dexscreener.com/aptos/${a}`,
+    buyUrl: (a) => `https://dexscreener.com/aptos/${a}`,
+  },
+  unichain: {
+    id: "unichain", label: "Unichain", native: "ETH", family: null, payVia: "bsc", decimals: 18,
+    geckoNetwork: "unichain",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    explorer: (a) => `https://uniscan.xyz/token/${a}`,
+    buyUrl: (a) => `https://app.uniswap.org/swap?chain=unichain&outputCurrency=${a}`,
+  },
 };
 
 // Menu / selector order across the bot (mirrors the website's chain order).
 const CHAIN_ORDER = [
   "solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton", "sui", "plasma",
   "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
+  "apechain", "blast", "sei", "aptos", "unichain",
 ];
 const CHAIN_IDS = CHAIN_ORDER.filter((id) => CHAINS[id]);
 

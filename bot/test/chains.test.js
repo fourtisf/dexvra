@@ -27,14 +27,18 @@ test("all supported chains present", () => {
     [
       "base", "bsc", "ethereum", "plasma", "robinhood", "solana", "sui", "ton", "tron",
       "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
+      "apechain", "blast", "sei", "aptos", "unichain",
     ].sort(),
   );
 });
 
-test("added EVM chains settle in BNB (payVia bsc) with a valid price", () => {
+test("added chains settle in BNB (payVia bsc) with a valid price", () => {
   const { payChainOf, payNativeOf, PAYABLE_CHAIN_IDS } = require("../src/config/chains");
   const { tierPrice, trendingForChain } = require("../src/config/packages");
-  for (const ch of ["polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract"]) {
+  for (const ch of [
+    "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
+    "apechain", "blast", "sei", "aptos", "unichain",
+  ]) {
     assert.strictEqual(payChainOf(ch), "bsc", `${ch} pays via bsc`);
     assert.strictEqual(payNativeOf(ch), "BNB", `${ch} pays in BNB`);
     assert.strictEqual(tierPrice("DIAMOND", ch), 1.5, `${ch} Diamond = 1.5 BNB`);
