@@ -188,7 +188,7 @@ function bannerExists() {
 }
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
-const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert" };
+const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up" };
 // Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
@@ -212,6 +212,7 @@ function btHomeKb() {
     [Markup.button.callback(on ? "🟢 Banner posts: ON — tap to turn OFF" : "🔴 Banner posts: OFF — tap to turn ON", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
+    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup")],
     [Markup.button.callback("⬅ Back", "home")],
   ]);
 }
@@ -219,12 +220,13 @@ function btKindText(kind) {
   const clip = bannerTpl.mediaOverride(kind);
   const clipLine = clip ? `🎞 GIF/Video: <b>${clip.type} set — overrides the still</b>\n` : `🎞 GIF/Video: <b>— none</b>\n`;
   if (!BT_ARTWORK_KINDS.has(kind)) {
-    // pump: media-only (the alert card is text; a clip plays above it)
-    return (
-      `🎨 <b>${BT_KINDS[kind]}</b>\n\n` +
-      clipLine +
-      `\nUpload a GIF or short MP4 to play above every ${BT_KINDS[kind].replace(/^\S+\s/, "")} post. Token details stay in the caption text.`
-    );
+    // media-only kinds (pump alert = text card; rank-up = auto dynamic banner). A clip
+    // plays above / overrides the default.
+    const note =
+      kind === "rankup"
+        ? `\nRank-up alerts post an <b>auto-generated banner</b> by default (rank medallion + % gain). A GIF/video here <b>overrides</b> it and plays above every rank-up post.`
+        : `\nUpload a GIF or short MP4 to play above every ${BT_KINDS[kind].replace(/^\S+\s/, "")} post. Token details stay in the caption text.`;
+    return `🎨 <b>${BT_KINDS[kind]}</b>\n\n` + clipLine + note;
   }
   const s = bannerTpl.getSettings(kind);
   const src = bannerTpl.hasUploaded(kind) ? "✅ custom uploaded" : bannerTpl.hasTemplate(kind) ? "💎 bundled default" : "— none (auto-banner used)";
@@ -874,7 +876,7 @@ function build() {
 
   // ── Channel banner artwork (template compositor, per service) ──
   const K = "(listing|trending|banner)";
-  const KM = "(listing|trending|banner|pump)"; // media-capable kinds (incl. pump)
+  const KM = "(listing|trending|banner|pump|rankup)"; // media-capable kinds (incl. pump + rank-up)
   bot.action("bt", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
