@@ -1141,8 +1141,20 @@ function build() {
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     ctx.session.awaitingBt = { mode: elem === "slot" ? "bxslotsize" : "bxsize", kind, elem };
-    const prompt = elem === "slot" ? "Send the slot size as <code>W H</code> — e.g. <code>1548 760</code>." : `Send the exact size in px — e.g. <code>96</code>.`;
-    await ctx.reply(`⌨ <b>${BT_KINDS[kind]} — ${elem === "slot" ? "slot" : (BX[elem] && BX[elem].label) || elem} size</b>\n${prompt}\n\n/cancel to abort.`, HTML);
+    const s = bannerTpl.getSettings(kind);
+    const label = elem === "slot" ? "🖼 Ad slot" : (BX[elem] && BX[elem].label) || elem;
+    if (elem === "slot") {
+      await ctx.reply(
+        `⌨ <b>${BT_KINDS[kind]} — ${label} size</b>\nNow: <b>${s.slotW}×${s.slotH}px</b>\n\nSend the new size as <code>WIDTH HEIGHT</code> (in pixels).\n👉 Example: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel to abort.`,
+        HTML,
+      );
+    } else {
+      const cur = s[BX[elem].sizeKey];
+      await ctx.reply(
+        `⌨ <b>${BT_KINDS[kind]} — ${label} size</b>\nNow: <b>${cur}px</b>\n\nJust send a number (bigger = larger text).\n👉 Example: <code>${cur}</code>  ·  try <code>${Math.round(cur * 1.25)}</code> for bigger, <code>${Math.max(BX[elem].smin, Math.round(cur * 0.8))}</code> for smaller.\n\n/cancel to abort.`,
+        HTML,
+      );
+    }
   });
   bot.action(new RegExp(`^bxmn:${K}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -1150,7 +1162,18 @@ function build() {
     const [, kind, elem] = ctx.match;
     if (elem !== "slot" && BX[elem] && BX[elem].nomove) return;
     ctx.session.awaitingBt = { mode: "bxmove", kind, elem };
-    await ctx.reply(`⌨ <b>${BT_KINDS[kind]} — move ${elem === "slot" ? "slot" : (BX[elem] && BX[elem].label) || elem}</b>\nSend <code>X,Y</code> — e.g. <code>1890,410</code> (<code>center</code> allowed for X).\n\n/cancel to abort.`, HTML);
+    const s = bannerTpl.getSettings(kind);
+    const c = elem === "slot" ? { label: "🖼 Ad slot", xKey: "logoX", yKey: "logoY" } : BX[elem];
+    const cx = s[c.xKey];
+    const cy = s[c.yKey];
+    await ctx.reply(
+      `⌨ <b>${BT_KINDS[kind]} — move ${c.label}</b>\nNow at: <b>(${cx}, ${cy})</b>\n\n` +
+        `Send the new position as <code>X,Y</code>:\n` +
+        `• <b>X</b> = left → right (0 = far left, 2560 = far right)\n` +
+        `• <b>Y</b> = top → bottom (0 = top, 1280 = bottom)\n\n` +
+        `👉 Example: <code>${cx === "center" ? "1280" : cx},${cy}</code>  ·  or <code>center,${cy}</code> to centre it.\n\n/cancel to abort.`,
+      HTML,
+    );
   });
   bot.action(new RegExp(`^bxp:${K}$`), async (ctx) => {
     ctx.answerCbQuery("Rendering…").catch(() => {});
