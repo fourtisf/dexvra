@@ -328,22 +328,19 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       const tint = (cfg.tickerGlow || "#4EE6A8") + "55";
       const fsz = Number(cfg.metaFontSize) || 34;
       const chipH = fsz * 1.9;
-      // Cap the corner radius below chipH/2 (a full pill) so text sits in a flat
-      // interior, and pad enough to clear that radius — otherwise glyphs sit in
-      // the curve and read as "spilling out".
-      const r = Math.min(chipH / 2, fsz * 0.7);
-      const padX = Math.max(fsz * 0.66, r * 0.95);
+      const r = Math.min(chipH / 2, fsz * 0.55); // gentle rounded-rect corners
+      const padX = fsz * 0.62; // snug, balanced padding — box hugs the text
       const gap = Math.round(fsz * 0.5);
       const cy = Number(cfg.metaY) || H - 152;
       ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
       const vals = [chain, price && price !== "TBA" ? price : null, mcap ? `MC ${mcap}` : null]
         .filter(Boolean)
         .map(String);
-      // measureText under-reports advance width for some fonts/long numeric strings,
-      // so pad the box by a safety factor + fixed guard — the value stays inside.
-      const widths = vals.map((t) => ctx.measureText(t).width * 1.08 + padX * 2 + 6);
+      const widths = vals.map((t) => ctx.measureText(t).width + padX * 2);
       const total = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, vals.length - 1);
       let x = cfg.metaX === "center" ? (W - total) / 2 : Number(cfg.metaX) || 210;
+      ctx.textAlign = "center"; // centred text → balanced padding, and any measure
+      ctx.textBaseline = "middle"; // slack is split evenly instead of piling up on one side
       for (let i = 0; i < vals.length; i++) {
         const t = vals[i];
         const w = widths[i];
@@ -360,11 +357,11 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         ctx.strokeStyle = tint;
         ctx.stroke();
         ctx.fillStyle = i === 0 ? "#EAF6F2" : "#CFE4DE";
-        ctx.textBaseline = "middle";
-        ctx.fillText(t, x + padX, cy + chipH / 2 + 2);
-        ctx.textBaseline = "alphabetic";
+        ctx.fillText(t, x + w / 2, cy + chipH / 2 + 2);
         x += w + gap;
       }
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
     }
 
     // Pedestal badge — the small glass slab under the ring carries the tier
