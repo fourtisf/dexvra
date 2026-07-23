@@ -89,11 +89,21 @@ const BASE_DEFAULTS = {
   nameFontSize: 48,
   nameColor: "#B8CCC8",
   nameOffsetY: 96,
-  // token meta chips (CHAIN · price · MC) inside the glass panel, under the
-  // name — filled by live data. metaX = LEFT edge (or "center").
+  // token meta chips — each INDEPENDENTLY placed & sized so the layout can be
+  // tuned per chip. Filled by live data (chain / price / market cap). X = LEFT
+  // edge (or "center"). metaX/metaY/metaFontSize kept for back-compat only.
   metaX: 210,
   metaY: 772,
   metaFontSize: 34,
+  chainX: 210,
+  chainY: 772,
+  chainSize: 34,
+  priceX: 640,
+  priceY: 772,
+  priceSize: 34,
+  mcX: 1030,
+  mcY: 772,
+  mcSize: 34,
   // small badge on the glass pedestal under the ring (tier / trending duration).
   // Off by default — deployments with no tier system show no badge; turn it on
   // per-kind in the layout editor when a badge is wanted.
@@ -320,45 +330,42 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       ctx.shadowOffsetY = 0;
     }
 
-    // Token meta chips under the ring: [CHAIN] [$price] [MC $x] — fills the
-    // empty area beneath the hero with the data readers actually want.
+    // Token meta chips under the ring — CHAIN / price / market cap, each drawn
+    // INDEPENDENTLY at its own position & size (admin-tunable per chip) so they
+    // can be arranged freely instead of a fixed row.
     if (cfg.showText && cfg.slotShape !== "rect") {
-      const vals = [chain, price && price !== "TBA" ? price : null, mcap ? `MC ${mcap}` : null]
-        .map((v) => (v ? String(v) : null))
-        .filter(Boolean);
-      if (vals.length) {
-        const fsz = Number(cfg.metaFontSize) || 38;
+      const tint = (cfg.tickerGlow || "#4EE6A8") + "55";
+      const drawChip = (text, x, y, size) => {
+        if (!text) return;
+        const t = String(text);
+        const fsz = Number(size) || Number(cfg.metaFontSize) || 34;
         const padX = fsz * 0.55;
-        const gap = 18;
         const chipH = fsz * 1.9;
         ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
-        const widths = vals.map((v) => ctx.measureText(v).width + padX * 2);
-        const total = widths.reduce((a, b) => a + b, 0) + gap * (vals.length - 1);
-        let x =
-          cfg.metaX === "center" ? (W - total) / 2 : Number(cfg.metaX) || 210;
-        const y = Number(cfg.metaY) || H - 152;
-        for (let i = 0; i < vals.length; i++) {
-          const w = widths[i];
-          const r = chipH / 2;
-          ctx.beginPath();
-          ctx.moveTo(x + r, y);
-          ctx.arcTo(x + w, y, x + w, y + chipH, r);
-          ctx.arcTo(x + w, y + chipH, x, y + chipH, r);
-          ctx.arcTo(x, y + chipH, x, y, r);
-          ctx.arcTo(x, y, x + w, y, r);
-          ctx.closePath();
-          ctx.fillStyle = "rgba(255,255,255,.055)";
-          ctx.fill();
-          ctx.lineWidth = 2;
-          ctx.strokeStyle = (cfg.tickerGlow || "#4EE6A8") + "55";
-          ctx.stroke();
-          ctx.fillStyle = i === 0 ? "#EAF6F2" : "#CFE4DE";
-          ctx.textBaseline = "middle";
-          ctx.fillText(vals[i], x + padX, y + chipH / 2 + 2);
-          ctx.textBaseline = "alphabetic";
-          x += w + gap;
-        }
-      }
+        const w = ctx.measureText(t).width + padX * 2;
+        const cx = x === "center" ? (W - w) / 2 : Number(x) || 0;
+        const cy = Number(y) || H - 152;
+        const r = chipH / 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + r, cy);
+        ctx.arcTo(cx + w, cy, cx + w, cy + chipH, r);
+        ctx.arcTo(cx + w, cy + chipH, cx, cy + chipH, r);
+        ctx.arcTo(cx, cy + chipH, cx, cy, r);
+        ctx.arcTo(cx, cy, cx + w, cy, r);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(255,255,255,.055)";
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = tint;
+        ctx.stroke();
+        ctx.fillStyle = "#EAF6F2";
+        ctx.textBaseline = "middle";
+        ctx.fillText(t, cx + padX, cy + chipH / 2 + 2);
+        ctx.textBaseline = "alphabetic";
+      };
+      drawChip(chain, cfg.chainX, cfg.chainY, cfg.chainSize);
+      drawChip(price && price !== "TBA" ? price : null, cfg.priceX, cfg.priceY, cfg.priceSize);
+      drawChip(mcap ? `MC ${mcap}` : null, cfg.mcX, cfg.mcY, cfg.mcSize);
     }
 
     // Pedestal badge — the small glass slab under the ring carries the tier
