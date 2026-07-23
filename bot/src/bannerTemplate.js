@@ -342,13 +342,16 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         if (!text) return;
         const t = String(text);
         const fsz = Number(size) || Number(cfg.metaFontSize) || 34;
-        const padX = fsz * 0.55;
         const chipH = fsz * 1.9;
+        // Padding must clear the rounded corner so glyphs don't sit inside the
+        // curve ("text spilling out of the pill"). Cap the corner radius below
+        // chipH/2 (a full pill) so text has a flat interior to sit in.
+        const r = Math.min(chipH / 2, fsz * 0.7);
+        const padX = Math.max(fsz * 0.66, r * 0.95);
         ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
         const w = ctx.measureText(t).width + padX * 2;
         const cx = x === "center" ? (W - w) / 2 : Number(x) || 0;
         const cy = Number(y) || H - 152;
-        const r = chipH / 2;
         ctx.beginPath();
         ctx.moveTo(cx + r, cy);
         ctx.arcTo(cx + w, cy, cx + w, cy + chipH, r);
