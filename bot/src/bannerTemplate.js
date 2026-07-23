@@ -493,11 +493,16 @@ function _paintPlaceholder(ctx, W, H) {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 }
-/** A still image for the layout editor: the artwork composite when a still template
- *  exists, otherwise the token overlay drawn onto a frame of the animated template
- *  (or a neutral backdrop). Returns a PNG Buffer or null. */
+/** A still image for the layout editor / preview, matching what ACTUALLY posts:
+ *  when an animated clip is set it WINS over the still artwork (postMedia does the
+ *  same), so preview the overlay on a FRAME of that clip; otherwise composite on the
+ *  still artwork; else a neutral backdrop. Returns a PNG Buffer or null. */
 async function editorStill(kind, logoBuffer, data) {
-  if (hasTemplate(kind)) return compose(kind, logoBuffer, data);
+  const hasClip = !!mediaOverride(kind);
+  // Still artwork only when NO clip overrides it — else the preview would show the
+  // bundled banner while real posts use the uploaded GIF (reported: "still using the
+  // banner though I set the GIF").
+  if (!hasClip && hasTemplate(kind)) return compose(kind, logoBuffer, data);
   const cv = canvasLib();
   if (!cv) return null;
   let overlay;

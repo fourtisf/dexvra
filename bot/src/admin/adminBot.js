@@ -577,7 +577,7 @@ async function bxPreview(ctx, kind) {
   const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), BX_SAMPLE).catch(() => null);
   if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas may be missing on the server.").catch(() => {});
   const cap = bannerTpl.mediaOverride(kind)
-    ? "👁 Layout preview (still). Your live posts play the animated template with this exact layout."
+    ? "👁 Layout preview — a frame of YOUR uploaded GIF/video with this exact layout. Live posts play the full animated version."
     : "👁 Layout preview (sample data).";
   await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
