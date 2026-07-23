@@ -532,43 +532,38 @@ async function bxOpen(ctx, kind) {
   }
   await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
 }
-// One screen per element: RESIZE (➖➕) and MOVE (arrows) together, so you never
-// hunt for size on a separate page. `slot` (banner ads) resizes W & H.
+// One SIMPLE screen per element: Smaller/Bigger + a single row of arrows, plus
+// Preview. Center X and "type exact" stay for precision but out of the way.
+// `slot` (banner ads) resizes W & H.
+const BX_STEP = 24; // px per arrow tap (single step — kept simple, no coarse/fine rows)
 function bxElemText(kind, elem) {
   const s = bannerTpl.getSettings(kind);
   if (elem === "slot") {
-    return `🖼 <b>${BT_KINDS[kind]} — creative slot</b>\nSize <b>${s.slotW}×${s.slotH}px</b> · Position <b>(${s.logoX}, ${s.logoY})</b>\n\nTop two rows resize (W / H), arrows move, or ⌨ enter exact values. 👁 Preview anytime.`;
+    return `🖼 <b>${BT_KINDS[kind]} — ad slot</b>\nSize <b>${s.slotW}×${s.slotH}px</b> · at <b>(${s.logoX}, ${s.logoY})</b>`;
   }
   const c = BX[elem];
-  const pos = c.nomove ? "" : ` · Position <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
-  return (
-    `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nSize <b>${s[c.sizeKey]}px</b>${pos}\n\n` +
-    `➖➕ resize${c.nomove ? "" : ", arrows move (top coarse, bottom fine)"}, or ⌨ enter exact. 👁 Preview anytime.`
-  );
+  const pos = c.nomove ? "" : ` · at <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
+  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nSize <b>${s[c.sizeKey]}px</b>${pos}`;
 }
 function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
-  const C = BX_MOVE_COARSE;
-  const F = BX_MOVE_FINE;
+  const M = BX_STEP;
   if (elem === "slot") {
     return Markup.inlineKeyboard([
-      [cb("W ➖40", `bxsd:${kind}:slotw:-40`), cb("W ➖10", `bxsd:${kind}:slotw:-10`), cb("W ➕10", `bxsd:${kind}:slotw:10`), cb("W ➕40", `bxsd:${kind}:slotw:40`)],
-      [cb("H ➖40", `bxsd:${kind}:sloth:-40`), cb("H ➖10", `bxsd:${kind}:sloth:-10`), cb("H ➕10", `bxsd:${kind}:sloth:10`), cb("H ➕40", `bxsd:${kind}:sloth:40`)],
-      [cb("⬅", `bxmd:${kind}:slot:${-C}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-C}`), cb("⬇", `bxmd:${kind}:slot:0:${C}`), cb("➡", `bxmd:${kind}:slot:${C}:0`)],
-      [cb("⌨ Size W H", `bxsn:${kind}:slot`), cb("⌨ Move X,Y", `bxmn:${kind}:slot`)],
+      [cb("Wider ➕", `bxsd:${kind}:slotw:20`), cb("Narrower ➖", `bxsd:${kind}:slotw:-20`)],
+      [cb("Taller ➕", `bxsd:${kind}:sloth:20`), cb("Shorter ➖", `bxsd:${kind}:sloth:-20`)],
+      [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
+      [cb("⌨ Type X,Y", `bxmn:${kind}:slot`)],
       [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
     ]);
   }
   const c = BX[elem];
-  const rows = [
-    [cb(`➖ ${c.sc}`, `bxsd:${kind}:${elem}:${-c.sc}`), cb(`➖ ${c.sf}`, `bxsd:${kind}:${elem}:${-c.sf}`), cb(`➕ ${c.sf}`, `bxsd:${kind}:${elem}:${c.sf}`), cb(`➕ ${c.sc}`, `bxsd:${kind}:${elem}:${c.sc}`)],
-  ];
+  const rows = [[cb("➖ Smaller", `bxsd:${kind}:${elem}:${-c.sc}`), cb("➕ Bigger", `bxsd:${kind}:${elem}:${c.sc}`)]];
   if (c.nomove) {
-    rows.push([cb("⌨ Enter exact size", `bxsn:${kind}:${elem}`)]);
+    rows.push([cb("⌨ Type exact size", `bxsn:${kind}:${elem}`)]);
   } else {
-    rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-C}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-C}`), cb("⬇", `bxmd:${kind}:${elem}:0:${C}`), cb("➡", `bxmd:${kind}:${elem}:${C}:0`)]);
-    rows.push([cb("◀ fine", `bxmd:${kind}:${elem}:${-F}:0`), cb("🔼", `bxmd:${kind}:${elem}:0:${-F}`), cb("🔽", `bxmd:${kind}:${elem}:0:${F}`), cb("fine ▶", `bxmd:${kind}:${elem}:${F}:0`)]);
-    rows.push([cb("🎯 Center X", `bxc:${kind}:${elem}`), cb("⌨ Size", `bxsn:${kind}:${elem}`), cb("⌨ X,Y", `bxmn:${kind}:${elem}`)]);
+    rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-M}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-M}`), cb("⬇", `bxmd:${kind}:${elem}:0:${M}`), cb("➡", `bxmd:${kind}:${elem}:${M}:0`)]);
+    rows.push([cb("🎯 Center", `bxc:${kind}:${elem}`), cb("⌨ Type X,Y", `bxmn:${kind}:${elem}`)]);
   }
   rows.push([cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)]);
   return Markup.inlineKeyboard(rows);
