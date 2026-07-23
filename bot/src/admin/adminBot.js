@@ -475,7 +475,10 @@ async function btPreview(ctx, kind) {
   const media = bannerTpl.mediaOverride(kind);
   if (media) {
     const isVid = media.type === "video";
-    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — this ${isVid ? "video" : "GIF"} plays above every ${BT_KINDS[kind]} post. Token details go in the caption; the clip is used as-is (no logo/text overlaid onto a clip).`;
+    const overrideNote = BT_ARTWORK_KINDS.has(kind)
+      ? ` ⚠️ This clip OVERRIDES your fill-in still template — tap 🗑 Remove clip to post the auto-filled banner (logo + $ticker + price/MC) instead.`
+      : "";
+    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — this ${isVid ? "video" : "GIF"} plays above every ${BT_KINDS[kind]} post. The clip is used as-is (no logo/text drawn onto it); token details go in the caption.${overrideNote}`;
     try {
       if (isVid) await ctx.replyWithVideo({ source: media.source }, { caption: cap, parse_mode: "HTML" });
       else await ctx.replyWithAnimation({ source: media.source }, { caption: cap, parse_mode: "HTML" });
@@ -892,9 +895,13 @@ function build() {
   bot.action(new RegExp(`^bt_med:${KM}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
-    ctx.session.awaitingBt = { mode: "media_upload", kind: ctx.match[1] };
+    const kind = ctx.match[1];
+    ctx.session.awaitingBt = { mode: "media_upload", kind };
+    const fillNote = BT_ARTWORK_KINDS.has(kind)
+      ? `\n\n⚠️ A clip plays <b>as-is</b> — the token's logo, name and price are <b>NOT</b> drawn onto it, so a template with empty slots posts empty. For a banner that <b>auto-fills</b> each token's details (a designed frame like your listing mock-up), use <b>⬆ Upload artwork</b> (still PNG) instead, then remove any clip.`
+      : "";
     await ctx.reply(
-      `🎞 Send the <b>${BT_KINDS[ctx.match[1]]} GIF or video</b> — a GIF/animation or a short MP4 (send as a <b>file/document</b> for best quality, ≤ ~20 MB). It plays above every ${BT_KINDS[ctx.match[1]]} post. /cancel to abort.`,
+      `🎞 Send the <b>${BT_KINDS[kind]} GIF or video</b> — a GIF/animation or a short MP4 (send as a <b>file/document</b> for best quality, ≤ ~20 MB). It plays above every ${BT_KINDS[kind]} post.${fillNote}\n\n/cancel to abort.`,
       HTML,
     );
   });
