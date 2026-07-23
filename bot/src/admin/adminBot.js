@@ -192,6 +192,8 @@ const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "
 // Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
+// Token banners whose animated clip is auto-filled with the token's logo/$ticker/price.
+const BT_FILL_KINDS = new Set(["listing", "trending"]);
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
@@ -474,11 +476,24 @@ async function btPreview(ctx, kind) {
   // exactly what will play above every post, letting the admin verify it before going live.
   const media = bannerTpl.mediaOverride(kind);
   if (media) {
+    // Token banners: preview the clip WITH sample token data composited on — exactly what
+    // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
+    if (BT_FILL_KINDS.has(kind)) {
+      const filled = await bannerTpl
+        .composeOntoClip(kind, media, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier" })
+        .catch(() => null);
+      if (filled) {
+        await ctx
+          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b> — your animated template with the token's <b>logo, $ticker, name and price/MC drawn on automatically</b> (sample data). Tune positions in 🖱 Logo editor.`, parse_mode: "HTML" })
+          .catch(() => {});
+        return;
+      }
+    }
     const isVid = media.type === "video";
-    const overrideNote = BT_ARTWORK_KINDS.has(kind)
-      ? ` ⚠️ This clip OVERRIDES your fill-in still template — tap 🗑 Remove clip to post the auto-filled banner (logo + $ticker + price/MC) instead.`
-      : "";
-    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — this ${isVid ? "video" : "GIF"} plays above every ${BT_KINDS[kind]} post. The clip is used as-is (no logo/text drawn onto it); token details go in the caption.${overrideNote}`;
+    const note = BT_FILL_KINDS.has(kind)
+      ? ` In posts the bot draws the token's logo/$ticker/price onto it (couldn't composite here — check ffmpeg on the server).`
+      : ` Played as-is; token details go in the caption.`;
+    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — ${isVid ? "video" : "GIF"} clip.${note}`;
     try {
       if (isVid) await ctx.replyWithVideo({ source: media.source }, { caption: cap, parse_mode: "HTML" });
       else await ctx.replyWithAnimation({ source: media.source }, { caption: cap, parse_mode: "HTML" });
@@ -897,9 +912,11 @@ function build() {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     ctx.session.awaitingBt = { mode: "media_upload", kind };
-    const fillNote = BT_ARTWORK_KINDS.has(kind)
-      ? `\n\n⚠️ A clip plays <b>as-is</b> — the token's logo, name and price are <b>NOT</b> drawn onto it, so a template with empty slots posts empty. For a banner that <b>auto-fills</b> each token's details (a designed frame like your listing mock-up), use <b>⬆ Upload artwork</b> (still PNG) instead, then remove any clip.`
-      : "";
+    const fillNote = BT_FILL_KINDS.has(kind)
+      ? `\n\n✨ <b>Auto-fill:</b> send an <b>EMPTY animated template</b> (ideally <b>2560×1280</b>, no text/logo baked in). The bot draws each token's <b>logo, $ticker, name and price/MC</b> onto it automatically — same as the still artwork, but animated.`
+      : kind === "banner"
+        ? `\n\n⚠️ Banner Ads play the advertiser's clip <b>as-is</b> — token data is not drawn onto it.`
+        : "";
     await ctx.reply(
       `🎞 Send the <b>${BT_KINDS[kind]} GIF or video</b> — a GIF/animation or a short MP4 (send as a <b>file/document</b> for best quality, ≤ ~20 MB). It plays above every ${BT_KINDS[kind]} post.${fillNote}\n\n/cancel to abort.`,
       HTML,

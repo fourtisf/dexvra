@@ -24,6 +24,11 @@ const tokenEmoji = require("./tokenEmoji");
 const tpl = require("./templates");
 const log = require("./helpers/logger");
 
+// Kinds whose animated clip is an EMPTY token template — the bot composites the token's
+// logo + $ticker + name + price/MC onto it (same data as the still artwork). Ad/pump/
+// rank-up clips are generic/advertiser media and are sent as-is.
+const BANNER_FILL_KINDS = new Set(["listing", "trending"]);
+
 /** Public t.me link to a specific post in a @username channel. */
 function tmeLink(channel, msgId) {
   return `https://t.me/${String(channel).replace(/^@/, "")}/${msgId}`;
@@ -112,10 +117,30 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
   if (!logoBuffer && logoUrl) logoBuffer = await fetchLogoUrl(logoUrl).catch(() => null);
   // Admin-bot toggle (persisted) with POST_BANNERS env as the default.
   if (bannerTemplate.postingEnabled()) {
-    // Admin-uploaded GIF/video wins over the composited still (generic hype
-    // clip — token details live in the caption, nothing composited into video).
+    // Admin-uploaded GIF/video wins over the composited still.
     const media = bannerTemplate.mediaOverride(kind);
     if (media) {
+      // For token banners (listing/trending) the clip is an EMPTY animated template —
+      // composite the token's logo + $ticker + name + price/MC onto it, so it matches
+      // the still artwork. Any failure falls back to the raw clip. Ad/pump/rank clips
+      // (advertiser creative / generic hype) are sent as-is.
+      if (BANNER_FILL_KINDS.has(kind)) {
+        const filled = await bannerTemplate
+          .composeOntoClip(kind, media, logoBuffer, {
+            symbol: bannerCoin.symbol,
+            name: bannerCoin.name,
+            chain: bannerCoin.chain,
+            price: bannerCoin.price,
+            mcap: bannerCoin.mcap,
+            badge,
+          })
+          .catch(() => null);
+        if (filled) {
+          log.info(`[fulfil] ${kind} media: admin clip + token overlay ✔`);
+          return filled;
+        }
+        log.warn(`[fulfil] ${kind} media: overlay composite failed — sending clip as-is`);
+      }
       log.info(`[fulfil] ${kind} media: admin ${media.type} clip ✔`);
       return media;
     }

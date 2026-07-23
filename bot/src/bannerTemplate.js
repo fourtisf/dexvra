@@ -9,6 +9,7 @@
 // programmatic dynamic banner (bannerRender.js). Never throws.
 const path = require("node:path");
 const fss = require("node:fs");
+const os = require("node:os");
 const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
 const { toSendBuffer } = require("./helpers/encodeImage");
 const log = require("./helpers/logger");
@@ -203,10 +204,14 @@ function canvasLib() {
 
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}, opts = {}) {
+  // `opts.transparent` renders ONLY the token overlay (logo + $ticker + name + chips +
+  // badge) on a CLEAR canvas — used to composite that data onto an animated GIF/video
+  // template. Otherwise this draws the still artwork background + the same overlay.
+  const transparent = !!(opts && opts.transparent);
   // Loud diagnostics: a null here silently downgrades channel posts to the raw
   // token logo, which reads as "the banner is broken" (live incident 2026-07).
-  if (!hasTemplate(kind)) {
+  if (!transparent && !hasTemplate(kind)) {
     log.warn(`[bannerTpl] no '${kind}' artwork found (${uploadedPath(kind)} / ${bundledPath(kind)}) — posting without template`);
     return null;
   }
@@ -217,20 +222,18 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
   }
   try {
     const cfg = getSettings(kind);
-    const artPath = resolvePath(kind);
-    if (!artPath) return null;
-    const tpl = await cv.loadImage(artPath);
-    // ALWAYS compose on the 2560×1280 reference canvas and stretch the artwork
-    // to fill it. Admin uploads sent as Telegram PHOTOS arrive recompressed to
-    // ~1280×640 — on that half-size canvas every layout coordinate (tuned for
-    // 2560×1280) landed off-screen: empty ring, ticker clipped at the bottom
-    // edge, invisible chips/badge (live incident 2026-07-19). Normalizing the
-    // canvas makes layout coordinates mean the same thing for any upload size.
+    // ALWAYS compose on the 2560×1280 reference canvas so every layout coordinate
+    // (tuned for 2560×1280) means the same thing regardless of the source size.
     const W = REF_W;
     const H = REF_H;
     const canvas = cv.createCanvas(W, H);
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(tpl, 0, 0, W, H);
+    if (!transparent) {
+      const artPath = resolvePath(kind);
+      if (!artPath) return null;
+      const tpl = await cv.loadImage(artPath);
+      ctx.drawImage(tpl, 0, 0, W, H);
+    }
 
     // Media slot: token logo circle-clipped into the ring, or (banner ads)
     // the advertiser's creative cover-fitted into a rounded rectangular frame.
@@ -378,9 +381,72 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       ctx.textBaseline = "alphabetic";
     }
 
-    return toSendBuffer(canvas);
+    // Overlay mode → PNG WITH ALPHA (transparency preserved for ffmpeg compositing);
+    // still mode → the normal send buffer (may be JPEG-flattened for size).
+    return transparent ? canvas.toBuffer("image/png") : toSendBuffer(canvas);
   } catch (e) {
     log.warn(`[bannerTpl] compose(${kind}) failed: ${e.message}`);
+    return null;
+  }
+}
+// ── Animated fill-in: composite the token overlay (logo + $ticker + name + price/MC
+// chips) onto an admin's EMPTY animated template (GIF/MP4), so the same auto-filled
+// banner the still compositor makes also works animated. Returns { type:'animation',
+// source: <mp4 buffer> } or null on ANY failure (caller falls back to the clip as-is).
+let _FF;
+function ffmpegLib() {
+  if (_FF !== undefined) return _FF;
+  try {
+    const ffmpeg = require("fluent-ffmpeg");
+    ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
+    _FF = ffmpeg;
+  } catch (e) {
+    log.warn(`[bannerTpl] ffmpeg unavailable (animated fill-in disabled): ${e.message}`);
+    _FF = null;
+  }
+  return _FF;
+}
+async function composeOntoClip(kind, media, logoBuffer, data) {
+  const ffmpeg = ffmpegLib();
+  if (!ffmpeg || !media || !media.source) return null;
+  let overlay;
+  try { overlay = await compose(kind, logoBuffer, data, { transparent: true }); } catch (_) { overlay = null; }
+  if (!overlay) return null;
+  const dir = os.tmpdir();
+  // Best-effort sweep of stale render files so temp doesn't grow unbounded.
+  try {
+    const now = Date.now();
+    for (const f of await fss.promises.readdir(dir)) {
+      if (!/^bt-(ov|out)-/.test(f)) continue;
+      const fp = path.join(dir, f);
+      const st = await fss.promises.stat(fp).catch(() => null);
+      if (st && now - st.mtimeMs > 600000) fss.promises.unlink(fp).catch(() => {});
+    }
+  } catch (_) {}
+  const stamp = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const ovPath = path.join(dir, `bt-ov-${stamp}.png`);
+  const outPath = path.join(dir, `bt-out-${stamp}.mp4`);
+  try {
+    await fss.promises.writeFile(ovPath, overlay);
+    await new Promise((resolve, reject) => {
+      ffmpeg(media.source)
+        .input(ovPath)
+        // Normalize both to 1280×640 (a clean 2:1 Telegram size) and lay the token overlay
+        // over every frame. Plain scale (no scale2ref) is the most portable across builds.
+        .complexFilter("[0:v]scale=1280:640[bg];[1:v]scale=1280:640[ov];[bg][ov]overlay=0:0,format=yuv420p[vout]", "vout")
+        .outputOptions(["-movflags", "+faststart", "-an", "-t", "20"]) // silent, ≤20s
+        .save(outPath)
+        .on("end", resolve)
+        .on("error", reject);
+    });
+    fss.promises.unlink(ovPath).catch(() => {});
+    // Return the .mp4 PATH (Telegram detects the type from the extension); the sweep above
+    // reclaims it later. A Buffer would drop the filename and could be mis-detected.
+    return { type: "animation", source: outPath };
+  } catch (e) {
+    log.warn(`[bannerTpl] composeOntoClip(${kind}) failed: ${e.message}`);
+    fss.promises.unlink(ovPath).catch(() => {});
+    fss.promises.unlink(outPath).catch(() => {});
     return null;
   }
 }
@@ -424,6 +490,7 @@ module.exports = {
   saveTemplate,
   removeTemplate,
   mediaOverride,
+  composeOntoClip,
   saveMedia,
   removeMedia,
   hasMedia,
