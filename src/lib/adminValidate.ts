@@ -58,9 +58,12 @@ export function buildRow(input: ListingInput): BuildResult {
   }
 
   const symRaw = String(input.sym ?? "").trim().replace(/^\$+/, "").toUpperCase();
-  // Restrict to a safe ticker charset (no markup/whitespace) — these render on
-  // the public site and, escaped, in the signal wire.
-  if (!symRaw || symRaw.length > 24 || !/^[A-Z0-9._-]+$/.test(symRaw)) {
+  // Allow Unicode LETTERS + DIGITS (so CJK/Cyrillic meme tickers like $旺旺 list,
+  // not just ASCII) plus . _ - — but still reject whitespace, markup (< > & …),
+  // emoji, and control/format chars (zero-width, bidi overrides). \p{L}\p{N}
+  // covers real scripts; the excluded classes are exactly the ones that could
+  // break escaped rendering on the site or in the signal wire.
+  if (!symRaw || symRaw.length > 24 || !/^[\p{L}\p{N}._-]+$/u.test(symRaw)) {
     return { ok: false, error: "Invalid ticker" };
   }
 
