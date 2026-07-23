@@ -245,7 +245,10 @@ function btKindKb(kind) {
   const clipRow = [Markup.button.callback("🎞 Upload GIF/Video", `bt_med:${kind}`)];
   if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Remove clip", `bt_medrm:${kind}`));
   if (!BT_ARTWORK_KINDS.has(kind)) {
-    return Markup.inlineKeyboard([clipRow, [Markup.button.callback("⬅ Artwork menu", "bt")]]);
+    const rows = [clipRow];
+    if (bannerTpl.mediaOverride(kind)) rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+    rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
+    return Markup.inlineKeyboard(rows);
   }
   const s = bannerTpl.getSettings(kind);
   const manualRow =
@@ -465,8 +468,22 @@ function sampleMedia(kind) {
 }
 
 async function btPreview(ctx, kind) {
+  // A GIF/video clip WINS over the still artwork in real posts, so preview IT — this is
+  // exactly what will play above every post, letting the admin verify it before going live.
+  const media = bannerTpl.mediaOverride(kind);
+  if (media) {
+    const isVid = media.type === "video";
+    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — this ${isVid ? "video" : "GIF"} plays above every ${BT_KINDS[kind]} post. Token details go in the caption; the clip is used as-is (no logo/text overlaid onto a clip).`;
+    try {
+      if (isVid) await ctx.replyWithVideo({ source: media.source }, { caption: cap, parse_mode: "HTML" });
+      else await ctx.replyWithAnimation({ source: media.source }, { caption: cap, parse_mode: "HTML" });
+    } catch (e) {
+      await ctx.reply(`⚠️ Couldn't preview the clip: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
   if (!bannerTpl.hasTemplate(kind)) {
-    return ctx.reply(`❌ No ${kind} artwork available yet. Tap ⬆ Upload first.`).catch(() => {});
+    return ctx.reply(`❌ No ${BT_KINDS[kind]} artwork or clip yet. Tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
   }
   const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier" });
   if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
@@ -1031,7 +1048,7 @@ function build() {
       HTML,
     );
   });
-  bot.action(new RegExp(`^bt_prev:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bt_prev:${KM}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     await btPreview(ctx, ctx.match[1]);
