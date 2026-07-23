@@ -169,12 +169,13 @@ const DEFAULTS = {
     "🪙 **Token:** {name} ({symbol})\n" +
     "📊 **Chain:** {chain}\n" +
     "📂 **Contract:**\n`{address}`\n\n" +
-    "🖼 **Logo:** {logo}\n" +
-    "💬 **Overview:** {overview}\n" +
-    "🌐 **Website:** {website}\n" +
-    "🐦 **X:** {twitter}\n" +
+    "🖼 **Logo:** {logo}\n\n" +
+    "💬 **Overview:**\n{overview}\n\n" +
+    "🌐 **Website:** {website}\n\n" +
+    "🐦 **X:** {twitter}\n\n" +
     "📢 **Telegram:** {telegram}\n\n" +
-    "🔹 This is exactly what goes live on your token page and channel posts.\nTap **✅ Confirm**, or use the edit buttons below.",
+    "🔹 This is exactly what goes live on your token page and channel posts.\n\n" +
+    "Tap **✅ Confirm**, or use the edit buttons below.",
   edit_field_prompt: "✏️ Send the new **{field}**:",
   invalid_address:
     "❌ That doesn't look like a valid **{chain}** contract address.\n\n🔹 Double-check and paste it again:",
