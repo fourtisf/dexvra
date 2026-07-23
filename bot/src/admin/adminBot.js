@@ -789,11 +789,43 @@ async function edit(ctx, text, kb) {
 async function saveBanner(telegram, fileId) {
   await downloadTo(telegram, fileId, tpl.BANNER_PATH);
 }
+/** Download a Telegram file to a Buffer, resiliently. Two failure modes are
+ *  handled explicitly instead of surfacing a bare "fetch failed":
+ *   • getFileLink throws for files over the Bot API's 20 MB getFile ceiling →
+ *     a clear "too big" message with the actual limit.
+ *   • the GET itself fails transiently (a DNS/TLS/connection-reset blip to
+ *     api.telegram.org — undici reports these as "fetch failed") → retried a few
+ *     times with backoff, and the REAL cause (e.cause.code) is surfaced. */
+async function fetchTelegramFileBuffer(telegram, fileId, { timeoutMs = 30000, tries = 3 } = {}) {
+  let link;
+  try {
+    link = await telegram.getFileLink(fileId);
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (/too big|file is too big|413|420/i.test(msg)) {
+      throw new Error("file is too big — a Telegram bot can only fetch files up to 20 MB. Compress the clip or send a shorter one.");
+    }
+    throw new Error(`couldn't get the file link: ${msg}`);
+  }
+  const url = link.href || String(link);
+  let lastErr = "unknown error";
+  for (let i = 1; i <= tries; i++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) {
+      // undici hides the real transport reason in .cause — that's the useful bit.
+      const cause = e && e.cause && (e.cause.code || e.cause.message);
+      lastErr = cause ? `${e.message} (${cause})` : (e && e.message) || String(e);
+      log.warn(`[adminbot] telegram download attempt ${i}/${tries} failed: ${lastErr}`);
+      if (i < tries) await new Promise((r) => setTimeout(r, 800 * i)); // 0.8s → 1.6s backoff
+    }
+  }
+  throw new Error(`download failed after ${tries} tries (${lastErr}) — Telegram may be briefly unreachable from the server; try again in a moment.`);
+}
 async function downloadTo(telegram, fileId, destPath) {
-  const link = await telegram.getFileLink(fileId);
-  const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`download ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
+  const buf = await fetchTelegramFileBuffer(telegram, fileId, { timeoutMs: 20000 });
   await fs.mkdir(path.dirname(destPath), { recursive: true });
   await fs.writeFile(destPath, buf);
 }
@@ -1568,10 +1600,9 @@ function build() {
       if (!fileId) return ctx.reply("Send a GIF or a video (or an mp4/gif file).").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
-        const link = await ctx.telegram.getFileLink(fileId);
-        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(30000) });
-        if (!res.ok) throw new Error(`download ${res.status}`);
-        const buf = Buffer.from(await res.arrayBuffer());
+        // Clips can be up to ~20 MB, so allow a generous timeout, and retry the
+        // download so a transient "fetch failed" doesn't lose the whole upload.
+        const buf = await fetchTelegramFileBuffer(ctx.telegram, fileId, { timeoutMs: 45000 });
         const { type, bytes, path: savedPath } = await bannerTpl.saveMedia(kind, buf, ext);
         log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B → ${savedPath})`);
         const mb = (bytes / 1048576).toFixed(2);
@@ -1594,10 +1625,7 @@ function build() {
       if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo or file.").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
-        const link = await ctx.telegram.getFileLink(fileId);
-        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
-        if (!res.ok) throw new Error(`download ${res.status}`);
-        const artBuf = Buffer.from(await res.arrayBuffer());
+        const artBuf = await fetchTelegramFileBuffer(ctx.telegram, fileId, { timeoutMs: 30000 });
         await bannerTpl.saveTemplate(kind, artBuf);
         let sizeNote = "";
         try {
@@ -1695,3 +1723,5 @@ async function startAdminBot() {
 module.exports = { startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
+// Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
+module.exports._net = { fetchTelegramFileBuffer };
