@@ -380,8 +380,10 @@ function btEditorKb(kind, elem) {
   const rect = s.slotShape === "rect";
   const cb = Markup.button.callback;
   const showText = s.showText !== false;
-  // element selector — active one marked; banner-ads (rect, no text) only has logo
-  const selectable = rect || !showText ? ["logo"] : BT_ELEM_KEYS;
+  const showBadge = s.showBadge !== false;
+  // element selector — active one marked; banner-ads (rect, no text) only has logo.
+  // The badge is only selectable when it's turned on (no point positioning a hidden one).
+  const selectable = rect || !showText ? ["logo"] : showBadge ? BT_ELEM_KEYS : BT_ELEM_KEYS.filter((k) => k !== "badge");
   const rows = [];
   if (selectable.length > 1) {
     rows.push(
@@ -413,21 +415,27 @@ function btEditorKb(kind, elem) {
       cb("➕ Besar", `bt_esz:${kind}:${elem}:${szStep}`),
     ]);
   }
+  if (!rect) {
+    rows.push([cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bt_badge:${kind}`)]);
+  }
   rows.push([cb("↩️ Reset layout", `bt_erst:${kind}`), cb("✅ Selesai", `bt_done:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 
 async function btEditorImage(kind, elem) {
-  const buf = await bannerTpl.compose(kind, sampleMedia(kind), {
-    symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier",
+  // editorStill draws the token overlay onto the still artwork OR — when only an empty
+  // animated template is uploaded — onto a frame of that clip, so positioning matches
+  // the real look either way.
+  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), {
+    symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge",
   });
   if (!buf) return null;
   return btGuideOverlay(buf, kind, elem).catch(() => buf);
 }
 
 async function btEditorOpen(ctx, kind, elem = "logo") {
-  if (!bannerTpl.hasTemplate(kind)) {
-    return ctx.reply(`❌ No ${kind} artwork available yet. Tap ⬆ Upload first.`).catch(() => {});
+  if (!bannerTpl.hasTemplate(kind) && !bannerTpl.hasMedia(kind)) {
+    return ctx.reply(`❌ No ${BT_KINDS[kind]} template yet — tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
   }
   const img = await btEditorImage(kind, elem);
   if (!img) return ctx.reply("⚠️ Editor render failed — check pm2 logs.").catch(() => {});
@@ -480,7 +488,7 @@ async function btPreview(ctx, kind) {
     // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
     if (BT_FILL_KINDS.has(kind)) {
       const filled = await bannerTpl
-        .composeOntoClip(kind, media, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier" })
+        .composeOntoClip(kind, media, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" })
         .catch(() => null);
       if (filled) {
         await ctx
@@ -505,7 +513,7 @@ async function btPreview(ctx, kind) {
   if (!bannerTpl.hasTemplate(kind)) {
     return ctx.reply(`❌ No ${BT_KINDS[kind]} artwork or clip yet. Tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
   }
-  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Diamond Tier" });
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" });
   if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
   await ctx
     .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview — tune the slot/text until it sits perfectly.` })
@@ -1073,6 +1081,15 @@ function build() {
         `Or <code>off</code> / <code>on</code> to toggle it.\n\n/cancel to abort.`,
       HTML,
     );
+  });
+  bot.action(new RegExp(`^bt_badge:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const on = bannerTpl.getSettings(kind).showBadge !== false;
+    await bannerTpl.updateSettings(kind, { showBadge: !on });
+    // Turning on → jump to the badge element so it's visible to position; off → back to logo.
+    await btEditorRefresh(ctx, kind, on ? "logo" : "badge");
   });
   bot.action(new RegExp(`^bt_prev:${KM}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});

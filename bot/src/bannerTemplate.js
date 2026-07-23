@@ -94,7 +94,10 @@ const BASE_DEFAULTS = {
   metaX: 210,
   metaY: 772,
   metaFontSize: 34,
-  // small badge on the glass pedestal under the ring (tier / trending duration)
+  // small badge on the glass pedestal under the ring (tier / trending duration).
+  // Off by default — deployments with no tier system show no badge; turn it on
+  // per-kind in the layout editor when a badge is wanted.
+  showBadge: false,
   badgeX: 2100, // center x
   badgeY: 1002,
   badgeFontSize: 30,
@@ -360,7 +363,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
 
     // Pedestal badge — the small glass slab under the ring carries the tier
     // (listing) or the slot duration (trending) instead of sitting empty.
-    if (badge && cfg.slotShape !== "rect") {
+    if (badge && cfg.showBadge !== false && cfg.slotShape !== "rect") {
       const bfs = Number(cfg.badgeFontSize) || 30;
       ctx.font = `600 ${bfs}px TplSemi, TplReg, sans-serif`;
       ctx.letterSpacing = "4px";
@@ -451,6 +454,74 @@ async function composeOntoClip(kind, media, logoBuffer, data) {
   }
 }
 
+// ── Editor backdrop: the layout editor needs a still image to draw the logo/text +
+// guide boxes on. When only an animated template (GIF/MP4) is uploaded — no still
+// artwork — we grab ONE frame of the clip and use it as the backdrop, so positioning
+// happens against the real template look. Cached per clip identity (mtime+size) so
+// repeated ± taps don't re-run ffmpeg.
+const _frameCache = {}; // kind -> { key, buf }
+async function clipFrame(kind) {
+  const media = mediaOverride(kind);
+  if (!media || !media.source) return null;
+  const ffmpeg = ffmpegLib();
+  if (!ffmpeg) return null;
+  try {
+    const st = await fss.promises.stat(media.source).catch(() => null);
+    const key = st ? `${media.source}:${st.size}:${st.mtimeMs}` : media.source;
+    if (_frameCache[kind] && _frameCache[kind].key === key) return _frameCache[kind].buf;
+    const outPath = path.join(os.tmpdir(), `bt-frame-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`);
+    await new Promise((resolve, reject) => {
+      ffmpeg(media.source)
+        .outputOptions(["-frames:v", "1"]) // first frame only
+        .save(outPath)
+        .on("end", resolve)
+        .on("error", reject);
+    });
+    const buf = await fss.promises.readFile(outPath);
+    fss.promises.unlink(outPath).catch(() => {});
+    _frameCache[kind] = { key, buf };
+    return buf;
+  } catch (e) {
+    log.warn(`[bannerTpl] clipFrame(${kind}) failed: ${e.message}`);
+    return null;
+  }
+}
+function _paintPlaceholder(ctx, W, H) {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, "#0b1220");
+  g.addColorStop(1, "#10201c");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+/** A still image for the layout editor: the artwork composite when a still template
+ *  exists, otherwise the token overlay drawn onto a frame of the animated template
+ *  (or a neutral backdrop). Returns a PNG Buffer or null. */
+async function editorStill(kind, logoBuffer, data) {
+  if (hasTemplate(kind)) return compose(kind, logoBuffer, data);
+  const cv = canvasLib();
+  if (!cv) return null;
+  let overlay;
+  try { overlay = await compose(kind, logoBuffer, data, { transparent: true }); } catch (_) { overlay = null; }
+  if (!overlay) return null;
+  try {
+    const W = REF_W;
+    const H = REF_H;
+    const canvas = cv.createCanvas(W, H);
+    const ctx = canvas.getContext("2d");
+    const frame = await clipFrame(kind).catch(() => null);
+    let drew = false;
+    if (frame) {
+      try { ctx.drawImage(await cv.loadImage(frame), 0, 0, W, H); drew = true; } catch (_) {}
+    }
+    if (!drew) _paintPlaceholder(ctx, W, H);
+    ctx.drawImage(await cv.loadImage(overlay), 0, 0, W, H);
+    return toSendBuffer(canvas);
+  } catch (e) {
+    log.warn(`[bannerTpl] editorStill(${kind}) failed: ${e.message}`);
+    return null;
+  }
+}
+
 /** One-line boot report so pm2 logs show the banner pipeline's health without
  *  needing a live purchase: canvas availability + which artwork each kind
  *  resolves to (uploaded / bundled / MISSING). */
@@ -491,6 +562,8 @@ module.exports = {
   removeTemplate,
   mediaOverride,
   composeOntoClip,
+  clipFrame,
+  editorStill,
   saveMedia,
   removeMedia,
   hasMedia,
