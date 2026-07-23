@@ -1606,13 +1606,9 @@ function build() {
         const { type, bytes, path: savedPath } = await bannerTpl.saveMedia(kind, buf, ext);
         log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B → ${savedPath})`);
         const mb = (bytes / 1048576).toFixed(2);
-        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\n👇 Fresh preview of the clip you just uploaded:`, { ...HTML, ...btKindKb(kind) });
-        // Auto-preview the JUST-saved clip so the admin sees this upload's render
-        // immediately — no hunting for the button, no looking at a scrolled-up old
-        // preview and mistaking it for the new one ("preview still shows the old gif").
-        // Isolated catch: the clip is already saved, so a preview hiccup must not
-        // surface as a "couldn't save" error.
-        await btPreview(ctx, kind).catch((e) => log.warn(`[adminbot] auto-preview ${kind} failed: ${e && e.message}`));
+        // ONE preview only, and it's admin-triggered — auto-previewing here on top
+        // of the admin tapping 👁 Preview produced two identical previews.
+        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 <b>Preview</b> below to see this exact clip.`, { ...HTML, ...btKindKb(kind) });
       } catch (e) {
         await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
       }
