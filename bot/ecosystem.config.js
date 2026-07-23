@@ -11,10 +11,14 @@ module.exports = {
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
-      max_restarts: 20,
+      // Banner rendering (napi-rs canvas + ffmpeg) spikes RAM transiently; 400M
+      // was too low and forced mid-listing restarts. min_uptime + a higher
+      // max_restarts stop PM2 from permanently giving up after a few blips.
+      max_restarts: 50,
+      min_uptime: "30s",
       restart_delay: 5000,
       watch: false,
-      max_memory_restart: "400M",
+      max_memory_restart: "1G",
       env: { NODE_ENV: "production" },
     },
     {
@@ -24,10 +28,11 @@ module.exports = {
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
-      max_restarts: 20,
+      max_restarts: 50,
+      min_uptime: "30s",
       restart_delay: 5000,
       watch: false,
-      max_memory_restart: "250M",
+      max_memory_restart: "768M",
       env: { NODE_ENV: "production" },
     },
   ],
