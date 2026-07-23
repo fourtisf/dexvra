@@ -574,10 +574,22 @@ async function bxElemOpen(ctx, kind, elem) {
   await edit(ctx, bxElemText(kind, elem), bxElemKb(kind, elem));
 }
 async function bxPreview(ctx, kind) {
+  const media = bannerTpl.mediaOverride(kind);
+  // With a clip set, render and send the REAL animated result (exactly what posts),
+  // not just a still frame. Falls back to a still if ffmpeg compositing isn't available.
+  if (media) {
+    const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), BX_SAMPLE).catch(() => null);
+    if (filled) {
+      await ctx
+        .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Animated preview</b> — your GIF/video template with this exact layout (sample data). This is what posts.", parse_mode: "HTML" })
+        .catch(() => {});
+      return;
+    }
+  }
   const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), BX_SAMPLE).catch(() => null);
-  if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas may be missing on the server.").catch(() => {});
-  const cap = bannerTpl.mediaOverride(kind)
-    ? "👁 Layout preview — a frame of YOUR uploaded GIF/video with this exact layout. Live posts play the full animated version."
+  if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas / ffmpeg may be missing on the server.").catch(() => {});
+  const cap = media
+    ? "👁 Layout preview (still frame — animated compositing failed; check ffmpeg on the server). Live posts still play the animated version."
     : "👁 Layout preview (sample data).";
   await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
