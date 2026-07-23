@@ -40,38 +40,71 @@ const exists = (p) => {
 // nothing is composited into a video). Kind here is free-form (listing /
 // trending / banner / pump) so pump alerts can carry a clip too.
 const MEDIA_EXT = { gif: "animation", mp4: "video", webm: "video", mov: "video" };
+let _mediaSeq = 0; // process-local counter → collision-free temp filenames on write
 function mediaPath(kind, ext) {
   return path.join(DATA_DIR, `banner-media-${kind}.${ext}`);
 }
 /** { type: 'animation'|'video', source } for a kind's uploaded clip, or null.
- *  Returns the MOST RECENTLY MODIFIED file among the extensions — so a freshly
- *  uploaded clip always wins even if an older file of a different extension was
- *  left behind (fixed a "new template uploaded but the old one still shows"). */
+ *  saveMedia keeps EXACTLY ONE clip file per kind, so normally there is a single
+ *  candidate here. If a stale sibling of another extension ever lingers (a legacy
+ *  upload from an older build, or a past removeMedia hiccup) it is SELF-HEALED:
+ *  the most-recently-modified file wins and the strictly-older siblings are
+ *  deleted, so an old clip can never win a future (possibly mtime-tied)
+ *  comparison and resurrect itself — the root cause of "uploaded a new GIF but
+ *  the preview still shows the old one". */
 function mediaOverride(kind) {
-  let best = null;
+  const found = [];
   for (const [ext, type] of Object.entries(MEDIA_EXT)) {
     const p = mediaPath(kind, ext);
-    let st;
     try {
-      st = fss.statSync(p);
+      const st = fss.statSync(p);
+      found.push({ type, source: p, mtimeMs: st.mtimeMs });
     } catch {
-      continue; // not present
+      /* not present */
     }
-    if (!best || st.mtimeMs > best.mtimeMs) best = { type, source: p, mtimeMs: st.mtimeMs };
   }
-  return best ? { type: best.type, source: best.source } : null;
+  if (!found.length) return null;
+  // Stable sort by mtime desc → newest first. Then drop any STRICTLY-OLDER
+  // sibling (never a tie — deleting a tied file could drop the fresh upload).
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const best = found[0];
+  for (const f of found) {
+    if (f === best || f.mtimeMs >= best.mtimeMs) continue;
+    try {
+      fss.unlinkSync(f.source);
+      log.info(`[bannerTpl] mediaOverride ${kind}: removed stale ${path.basename(f.source)} (older than ${path.basename(best.source)})`);
+    } catch (e) {
+      if (e && e.code !== "ENOENT") log.warn(`[bannerTpl] mediaOverride cleanup ${path.basename(f.source)}: ${e.message}`);
+    }
+  }
+  return { type: best.type, source: best.source };
 }
 async function saveMedia(kind, buffer, ext) {
   const e = String(ext || "mp4").toLowerCase();
   if (!MEDIA_EXT[e]) throw new Error(`unsupported media type .${e} (use gif/mp4/webm/mov)`);
-  await removeMedia(kind); // one clip per kind — drop any prior ext
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   const outPath = mediaPath(kind, e);
-  await fss.promises.writeFile(outPath, buffer);
+  // Write the NEW clip FIRST, atomically (temp + rename). rename gives a clean
+  // same-ext overwrite, and — because the new file is safely on disk BEFORE any
+  // cleanup — a failed sibling delete can never leave the kind with no clip.
+  const tmp = `${outPath}.${process.pid}.${_mediaSeq++}.tmp`;
+  await fss.promises.writeFile(tmp, buffer);
+  await fss.promises.rename(tmp, outPath);
+  // Now drop EVERY other-extension sibling so exactly ONE clip exists per kind.
+  // This is what actually kills "the old GIF still shows": if a prior upload
+  // left, say, a banner-media-listing.gif behind and the admin now uploads an
+  // .mp4, the stale .gif could otherwise win an mtime tie in mediaOverride. It
+  // is removed here, AFTER the new file is durably written.
+  for (const other of Object.keys(MEDIA_EXT)) {
+    if (other === e) continue;
+    await fss.promises.unlink(mediaPath(kind, other)).catch((err) => {
+      if (err && err.code !== "ENOENT") log.warn(`[bannerTpl] saveMedia cleanup ${kind}.${other}: ${err.message}`);
+    });
+  }
   _invalidateClipCache(kind); // force the editor to re-extract a frame from the new clip
   // Loud diagnostic: shows the EXACT absolute path + byte count written, so a
   // wrong DATA_DIR / cwd (save landing somewhere the reader doesn't look) is obvious.
-  log.info(`[bannerTpl] saveMedia ${kind}: wrote ${buffer.length}B → ${path.resolve(outPath)}`);
+  log.info(`[bannerTpl] saveMedia ${kind}: wrote ${buffer.length}B → ${path.resolve(outPath)} (.${e}; siblings cleared)`);
   return { type: MEDIA_EXT[e], ext: e, bytes: buffer.length, path: path.resolve(outPath) };
 }
 async function removeMedia(kind) {

@@ -594,6 +594,15 @@ async function btPreview(ctx, kind) {
   // exactly what will play above every post, letting the admin verify it before going live.
   const media = bannerTpl.mediaOverride(kind);
   if (media) {
+    // Diagnostic: which exact clip file the preview resolved to (path+size+mtime).
+    // If a stale-clip report ever recurs, this line pins whether the newest file
+    // was picked, without guessing.
+    try {
+      const st = fss.statSync(media.source);
+      log.info(`[adminbot] btPreview ${kind}: clip → ${media.source} (${st.size}B, mtime ${new Date(st.mtimeMs).toISOString()})`);
+    } catch {
+      /* stat is best-effort diagnostics */
+    }
     // Token banners: preview the clip WITH sample token data composited on — exactly what
     // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
     if (BT_FILL_KINDS.has(kind)) {
@@ -1563,10 +1572,16 @@ function build() {
         const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(30000) });
         if (!res.ok) throw new Error(`download ${res.status}`);
         const buf = Buffer.from(await res.arrayBuffer());
-        const { type, bytes } = await bannerTpl.saveMedia(kind, buf, ext);
-        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B)`);
+        const { type, bytes, path: savedPath } = await bannerTpl.saveMedia(kind, buf, ext);
+        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B → ${savedPath})`);
         const mb = (bytes / 1048576).toFixed(2);
-        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 Preview to see it.`, { ...HTML, ...btKindKb(kind) });
+        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\n👇 Fresh preview of the clip you just uploaded:`, { ...HTML, ...btKindKb(kind) });
+        // Auto-preview the JUST-saved clip so the admin sees this upload's render
+        // immediately — no hunting for the button, no looking at a scrolled-up old
+        // preview and mistaking it for the new one ("preview still shows the old gif").
+        // Isolated catch: the clip is already saved, so a preview hiccup must not
+        // surface as a "couldn't save" error.
+        await btPreview(ctx, kind).catch((e) => log.warn(`[adminbot] auto-preview ${kind} failed: ${e && e.message}`));
       } catch (e) {
         await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
       }
