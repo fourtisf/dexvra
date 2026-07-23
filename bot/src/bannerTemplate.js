@@ -43,13 +43,23 @@ const MEDIA_EXT = { gif: "animation", mp4: "video", webm: "video", mov: "video" 
 function mediaPath(kind, ext) {
   return path.join(DATA_DIR, `banner-media-${kind}.${ext}`);
 }
-/** { type: 'animation'|'video', source } for a kind's uploaded clip, or null. */
+/** { type: 'animation'|'video', source } for a kind's uploaded clip, or null.
+ *  Returns the MOST RECENTLY MODIFIED file among the extensions — so a freshly
+ *  uploaded clip always wins even if an older file of a different extension was
+ *  left behind (fixed a "new template uploaded but the old one still shows"). */
 function mediaOverride(kind) {
+  let best = null;
   for (const [ext, type] of Object.entries(MEDIA_EXT)) {
     const p = mediaPath(kind, ext);
-    if (exists(p)) return { type, source: p };
+    let st;
+    try {
+      st = fss.statSync(p);
+    } catch {
+      continue; // not present
+    }
+    if (!best || st.mtimeMs > best.mtimeMs) best = { type, source: p, mtimeMs: st.mtimeMs };
   }
-  return null;
+  return best ? { type: best.type, source: best.source } : null;
 }
 async function saveMedia(kind, buffer, ext) {
   const e = String(ext || "mp4").toLowerCase();
@@ -57,16 +67,19 @@ async function saveMedia(kind, buffer, ext) {
   await removeMedia(kind); // one clip per kind — drop any prior ext
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   await fss.promises.writeFile(mediaPath(kind, e), buffer);
+  _invalidateClipCache(kind); // force the editor to re-extract a frame from the new clip
   return { type: MEDIA_EXT[e], ext: e };
 }
 async function removeMedia(kind) {
   for (const ext of Object.keys(MEDIA_EXT)) {
     try {
       await fss.promises.unlink(mediaPath(kind, ext));
-    } catch {
-      /* not present */
+    } catch (e) {
+      // ENOENT = simply not present; anything else means a stale file may linger.
+      if (e && e.code !== "ENOENT") log.warn(`[bannerTpl] removeMedia ${kind}.${ext}: ${e.message}`);
     }
   }
+  _invalidateClipCache(kind);
 }
 const hasMedia = (kind) => !!mediaOverride(kind);
 
@@ -463,6 +476,11 @@ async function composeOntoClip(kind, media, logoBuffer, data) {
 // happens against the real template look. Cached per clip identity (mtime+size) so
 // repeated ± taps don't re-run ffmpeg.
 const _frameCache = {}; // kind -> { key, buf }
+// Drop a kind's cached clip frame so the next render re-extracts from the new clip
+// (called on upload/removal). Hoisted, so saveMedia/removeMedia above can use it.
+function _invalidateClipCache(kind) {
+  delete _frameCache[kind];
+}
 async function clipFrame(kind) {
   const media = mediaOverride(kind);
   if (!media || !media.source) return null;
