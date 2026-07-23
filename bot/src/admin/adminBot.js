@@ -484,7 +484,7 @@ const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
   name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
-  meta: { label: "📊 Chips", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  meta: { label: "📊 Chain·Price·MC", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
   badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
 };
 const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
@@ -514,7 +514,7 @@ function bxMenuKb(kind) {
     rows.push([cb(`🪙 Logo · ${s.logoSize}px`, `bxe:${kind}:logo`)]);
     if (showText) {
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
-      rows.push([cb(`📊 Chips · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
+      rows.push([cb(`📊 Chain · Price · MC · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
     rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
     if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
