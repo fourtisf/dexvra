@@ -254,16 +254,10 @@ function btKindKb(kind) {
     rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
-  const s = bannerTpl.getSettings(kind);
-  const manualRow =
-    s.slotShape === "rect"
-      ? [Markup.button.callback("📐 Manual slot (W H X,Y)", `bt_slot:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)]
-      : [Markup.button.callback("📍 Manual (SIZE X,Y)", `bt_pos:${kind}`), Markup.button.callback("🔤 Text overlay", `bt_text:${kind}`)];
   return Markup.inlineKeyboard([
     [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
     clipRow,
-    [Markup.button.callback("🖱 Logo editor — move • size • live preview", `bt_ed:${kind}`)],
-    manualRow,
+    [Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)],
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
     [Markup.button.callback("⬅ Artwork menu", "bt")],
   ]);
@@ -477,6 +471,112 @@ function sampleMedia(kind) {
   } catch {
     return null;
   }
+}
+
+// ── Fourtis-style layout editor ─────────────────────────────────────────────
+// A plain button menu (not a self-editing photo) with an explicit Size and Move
+// screen per element — coarse/fine ± steps, "enter exact", and an on-demand
+// Preview. Each element button shows its current value. Reads/writes the same
+// layout settings the still + animated compositors use, so tuning here applies
+// everywhere. Callback namespace: bx*.
+const BX_SAMPLE = { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" };
+const BX = {
+  logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
+  ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
+  name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
+  meta: { label: "📊 Chips", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
+};
+const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
+const BX_MOVE_FINE = 10;
+
+function bxMenuText(kind) {
+  const s = bannerTpl.getSettings(kind);
+  const rect = s.slotShape === "rect";
+  const anim = !!bannerTpl.mediaOverride(kind);
+  return (
+    `🎛 <b>${BT_KINDS[kind]} — Layout editor</b>\n\n` +
+    (rect
+      ? `Set the advertiser creative's <b>slot size</b> and <b>position</b>, then tap 👁 Preview.`
+      : `Tap any element to <b>size</b> or <b>move</b> it — coarse & fine ± buttons, or type an exact value. Tap 👁 <b>Preview</b> anytime to see it on your ${anim ? "<b>animated template</b>" : "banner"}.`)
+  );
+}
+function bxMenuKb(kind) {
+  const s = bannerTpl.getSettings(kind);
+  const rect = s.slotShape === "rect";
+  const cb = Markup.button.callback;
+  const rows = [];
+  if (rect) {
+    rows.push([cb(`📐 Slot Size · ${s.slotW}×${s.slotH}`, `bxs:${kind}:slot`)]);
+    rows.push([cb("🎯 Move Slot", `bxm:${kind}:slot`)]);
+  } else {
+    const showText = s.showText !== false;
+    const showBadge = s.showBadge !== false;
+    rows.push([cb(`📐 Logo Size · ${s.logoSize}px`, `bxs:${kind}:logo`), cb("🎯 Move Logo", `bxm:${kind}:logo`)]);
+    if (showText) {
+      rows.push([cb(`🔤 Ticker Size · ${s.tickerFontSize}px`, `bxs:${kind}:ticker`), cb("🎯 Move Ticker", `bxm:${kind}:ticker`)]);
+      rows.push([cb(`📝 Name Size · ${s.nameFontSize}px`, `bxs:${kind}:name`)]);
+      rows.push([cb(`📊 Chips Size · ${s.metaFontSize}px`, `bxs:${kind}:meta`), cb("🎯 Move Chips", `bxm:${kind}:meta`)]);
+    }
+    rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
+    if (showBadge) rows.push([cb(`🏷 Badge Size · ${s.badgeFontSize}px`, `bxs:${kind}:badge`), cb("🎯 Move Badge", `bxm:${kind}:badge`)]);
+  }
+  rows.push([cb("👁 Preview", `bxp:${kind}`)]);
+  rows.push([cb("🔄 Reset layout", `bxr:${kind}`), cb("⬅ Back", `btk:${kind}`)]);
+  return Markup.inlineKeyboard(rows);
+}
+async function bxOpen(ctx, kind) {
+  if (!bannerTpl.hasTemplate(kind) && !bannerTpl.hasMedia(kind)) {
+    return ctx.reply(`❌ No ${BT_KINDS[kind]} template yet — tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
+  }
+  await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+}
+function bxSizeText(kind, elem) {
+  const s = bannerTpl.getSettings(kind);
+  if (elem === "slot") return `📐 <b>${BT_KINDS[kind]} — creative slot size</b>\nCurrent: <b>${s.slotW}×${s.slotH}px</b>\n\nUse the buttons, or ⌨ enter <code>W H</code> (e.g. <code>1548 760</code>).`;
+  const c = BX[elem];
+  return `📐 <b>${BT_KINDS[kind]} — ${c.label} size</b>\nCurrent: <b>${s[c.sizeKey]}px</b>\n\nCoarse ±${c.sc}, fine ±${c.sf}, or ⌨ enter an exact number.`;
+}
+function bxSizeKb(kind, elem) {
+  const cb = Markup.button.callback;
+  if (elem === "slot") {
+    return Markup.inlineKeyboard([
+      [cb("↔ W −40", `bxsd:${kind}:slotw:-40`), cb("↔ W −10", `bxsd:${kind}:slotw:-10`), cb("↔ W +10", `bxsd:${kind}:slotw:10`), cb("↔ W +40", `bxsd:${kind}:slotw:40`)],
+      [cb("↕ H −40", `bxsd:${kind}:sloth:-40`), cb("↕ H −10", `bxsd:${kind}:sloth:-10`), cb("↕ H +10", `bxsd:${kind}:sloth:10`), cb("↕ H +40", `bxsd:${kind}:sloth:40`)],
+      [cb("⌨ Enter W H", `bxsn:${kind}:slot`)],
+      [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
+    ]);
+  }
+  const c = BX[elem];
+  return Markup.inlineKeyboard([
+    [cb(`− ${c.sc}`, `bxsd:${kind}:${elem}:${-c.sc}`), cb(`− ${c.sf}`, `bxsd:${kind}:${elem}:${-c.sf}`), cb(`+ ${c.sf}`, `bxsd:${kind}:${elem}:${c.sf}`), cb(`+ ${c.sc}`, `bxsd:${kind}:${elem}:${c.sc}`)],
+    [cb("⌨ Enter exact size", `bxsn:${kind}:${elem}`)],
+    [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
+  ]);
+}
+function bxMoveText(kind, elem) {
+  const s = bannerTpl.getSettings(kind);
+  const c = elem === "slot" ? { label: "🖼 Slot", xKey: "logoX", yKey: "logoY" } : BX[elem];
+  return `🎯 <b>${BT_KINDS[kind]} — move ${c.label}</b>\nPosition: <b>(${s[c.xKey]}, ${s[c.yKey]})</b>\n\nArrows nudge it (top row coarse, bottom fine); ⌨ enter <code>X,Y</code> for exact (<code>center</code> allowed for X).`;
+}
+function bxMoveKb(kind, elem) {
+  const cb = Markup.button.callback;
+  const C = BX_MOVE_COARSE;
+  const F = BX_MOVE_FINE;
+  return Markup.inlineKeyboard([
+    [cb("⬅", `bxmd:${kind}:${elem}:${-C}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-C}`), cb("⬇", `bxmd:${kind}:${elem}:0:${C}`), cb("➡", `bxmd:${kind}:${elem}:${C}:0`)],
+    [cb("◀ fine", `bxmd:${kind}:${elem}:${-F}:0`), cb("🔼", `bxmd:${kind}:${elem}:0:${-F}`), cb("🔽", `bxmd:${kind}:${elem}:0:${F}`), cb("fine ▶", `bxmd:${kind}:${elem}:${F}:0`)],
+    [cb("🎯 Center X", `bxc:${kind}:${elem}`), cb("⌨ Enter X,Y", `bxmn:${kind}:${elem}`)],
+    [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
+  ]);
+}
+async function bxPreview(ctx, kind) {
+  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), BX_SAMPLE).catch(() => null);
+  if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas may be missing on the server.").catch(() => {});
+  const cap = bannerTpl.mediaOverride(kind)
+    ? "👁 Layout preview (still). Your live posts play the animated template with this exact layout."
+    : "👁 Layout preview (sample data).";
+  await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
 
 async function btPreview(ctx, kind) {
@@ -958,10 +1058,129 @@ function build() {
   // Interactive layout editor: element selector + nudge + resize, all editing
   // one photo message in place. Element rides in the callback data (stateless).
   const E = "(logo|ticker|meta|badge)";
+  // ── Fourtis-style layout editor handlers (bx*) ────────────────────────────
+  const EX = "(logo|ticker|name|meta|badge|slot)";
+  bot.action(new RegExp(`^bxo:${K}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await bxOpen(ctx, ctx.match[1]);
+  });
+  bot.action(new RegExp(`^bxs:${K}:${EX}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    await edit(ctx, bxSizeText(kind, elem), bxSizeKb(kind, elem));
+  });
+  bot.action(new RegExp(`^bxm:${K}:${EX}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    if (elem !== "slot" && BX[elem] && BX[elem].nomove) {
+      return ctx.answerCbQuery("Name follows the ticker — size it instead.").catch(() => {});
+    }
+    ctx.answerCbQuery().catch(() => {});
+    await edit(ctx, bxMoveText(kind, elem), bxMoveKb(kind, elem));
+  });
+  bot.action(new RegExp(`^bxsd:${K}:(logo|ticker|name|meta|badge|slotw|sloth):(-?\\d+)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem, ds] = ctx.match;
+    const s = bannerTpl.getSettings(kind);
+    const d = Number(ds);
+    if (elem === "slotw" || elem === "sloth") {
+      const key = elem === "slotw" ? "slotW" : "slotH";
+      const lim = elem === "slotw" ? [200, 2560] : [120, 1280];
+      const v = Math.max(lim[0], Math.min(lim[1], Number(s[key]) + d));
+      await bannerTpl.updateSettings(kind, { [key]: v });
+      ctx.answerCbQuery(`${key} ${v}px`).catch(() => {});
+      return void edit(ctx, bxSizeText(kind, "slot"), bxSizeKb(kind, "slot"));
+    }
+    const c = BX[elem];
+    if (elem === "logo") {
+      const size = Math.max(c.smin, Math.min(c.smax, Number(s.logoSize) + d));
+      // grow/shrink around the slot CENTRE so the ring doesn't drift while resizing
+      const dx = (Number(s.logoSize) - size) / 2;
+      await bannerTpl.updateSettings(kind, {
+        logoSize: size,
+        logoX: Math.round(btNum(s.logoX, 1070) + dx),
+        logoY: Math.round(btNum(s.logoY, 430) + dx),
+      });
+      ctx.answerCbQuery(`Logo ${size}px`).catch(() => {});
+    } else {
+      const size = Math.max(c.smin, Math.min(c.smax, Number(s[c.sizeKey]) + d));
+      await bannerTpl.updateSettings(kind, { [c.sizeKey]: size });
+      ctx.answerCbQuery(`${c.label} ${size}px`).catch(() => {});
+    }
+    await edit(ctx, bxSizeText(kind, elem), bxSizeKb(kind, elem));
+  });
+  bot.action(new RegExp(`^bxmd:${K}:${EX}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem, dxs, dys] = ctx.match;
+    const s = bannerTpl.getSettings(kind);
+    const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
+    if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    const x = Math.max(-800, Math.min(3200, btNum(s[c.xKey], 1070) + Number(dxs)));
+    const y = Math.max(-800, Math.min(3200, btNum(s[c.yKey], 430) + Number(dys)));
+    await bannerTpl.updateSettings(kind, { [c.xKey]: x, [c.yKey]: y });
+    ctx.answerCbQuery(`📍 ${x}, ${y}`).catch(() => {});
+    await edit(ctx, bxMoveText(kind, elem), bxMoveKb(kind, elem));
+  });
+  bot.action(new RegExp(`^bxc:${K}:${EX}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    const c = elem === "slot" ? { xKey: "logoX" } : BX[elem];
+    if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    await bannerTpl.updateSettings(kind, { [c.xKey]: "center" });
+    ctx.answerCbQuery("🎯 Centred horizontally").catch(() => {});
+    await edit(ctx, bxMoveText(kind, elem), bxMoveKb(kind, elem));
+  });
+  bot.action(new RegExp(`^bxsn:${K}:${EX}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    ctx.session.awaitingBt = { mode: elem === "slot" ? "bxslotsize" : "bxsize", kind, elem };
+    const prompt = elem === "slot" ? "Send the slot size as <code>W H</code> — e.g. <code>1548 760</code>." : `Send the exact size in px — e.g. <code>96</code>.`;
+    await ctx.reply(`⌨ <b>${BT_KINDS[kind]} — ${elem === "slot" ? "slot" : (BX[elem] && BX[elem].label) || elem} size</b>\n${prompt}\n\n/cancel to abort.`, HTML);
+  });
+  bot.action(new RegExp(`^bxmn:${K}:${EX}$`), async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    if (elem !== "slot" && BX[elem] && BX[elem].nomove) return;
+    ctx.session.awaitingBt = { mode: "bxmove", kind, elem };
+    await ctx.reply(`⌨ <b>${BT_KINDS[kind]} — move ${elem === "slot" ? "slot" : (BX[elem] && BX[elem].label) || elem}</b>\nSend <code>X,Y</code> — e.g. <code>1890,410</code> (<code>center</code> allowed for X).\n\n/cancel to abort.`, HTML);
+  });
+  bot.action(new RegExp(`^bxp:${K}$`), async (ctx) => {
+    ctx.answerCbQuery("Rendering…").catch(() => {});
+    if (!guard(ctx)) return;
+    await bxPreview(ctx, ctx.match[1]);
+  });
+  bot.action(new RegExp(`^bxr:${K}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    await bannerTpl.resetSettings(kind);
+    log.info(`[adminbot] ${kind} banner layout reset by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery("🔄 Layout reset to defaults").catch(() => {});
+    await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
+  bot.action(new RegExp(`^bxt:${K}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const on = bannerTpl.getSettings(kind).showText !== false;
+    await bannerTpl.updateSettings(kind, { showText: !on });
+    ctx.answerCbQuery(`🔤 Text ${on ? "OFF" : "ON"}`).catch(() => {});
+    await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
+  bot.action(new RegExp(`^bxb:${K}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const on = bannerTpl.getSettings(kind).showBadge !== false;
+    await bannerTpl.updateSettings(kind, { showBadge: !on });
+    ctx.answerCbQuery(`🏷 Badge ${on ? "OFF" : "ON"}`).catch(() => {});
+    await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
   bot.action(new RegExp(`^bt_ed:${K}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
-    await btEditorOpen(ctx, ctx.match[1], "logo");
+    await bxOpen(ctx, ctx.match[1]);
   });
   bot.action(new RegExp(`^bt_esel:${K}:${E}$`), async (ctx) => {
     if (!guard(ctx)) return;
@@ -1210,10 +1429,37 @@ function build() {
     // Banner-artwork settings input (per service: logo spot / creative slot /
     // text overlay)
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
-      const { mode, kind } = ctx.session.awaitingBt;
+      const { mode, kind, elem } = ctx.session.awaitingBt;
       ctx.session.awaitingBt = null;
       const low = text.trim().toLowerCase();
       const cv = (v) => (v === "center" ? "center" : Number(v));
+      // ── Fourtis-style editor: exact size / slot size / move ──────────────
+      if (mode === "bxsize" || mode === "bxslotsize" || mode === "bxmove") {
+        try {
+          if (mode === "bxsize") {
+            const n = Math.round(Number(low));
+            const c = BX[elem];
+            if (!c || !Number.isFinite(n)) return ctx.reply("❌ Send a number, e.g. <code>96</code>.", HTML).catch(() => {});
+            const v = Math.max(c.smin, Math.min(c.smax, n));
+            await bannerTpl.updateSettings(kind, { [c.sizeKey]: v });
+            await ctx.reply(bxSizeText(kind, elem), { ...HTML, ...bxSizeKb(kind, elem) });
+          } else if (mode === "bxslotsize") {
+            const m = low.match(/^(\d+)\s+(\d+)$/);
+            if (!m) return ctx.reply("❌ Format: <code>W H</code> — e.g. <code>1548 760</code>.", HTML).catch(() => {});
+            await bannerTpl.updateSettings(kind, { slotW: Math.max(200, Math.min(2560, Number(m[1]))), slotH: Math.max(120, Math.min(1280, Number(m[2]))) });
+            await ctx.reply(bxSizeText(kind, "slot"), { ...HTML, ...bxSizeKb(kind, "slot") });
+          } else {
+            const m = low.match(/^(center|-?\d+)\s*,\s*(center|-?\d+)$/);
+            if (!m) return ctx.reply("❌ Format: <code>X,Y</code> — e.g. <code>1890,410</code> (<code>center</code> allowed for X).", HTML).catch(() => {});
+            const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
+            await bannerTpl.updateSettings(kind, { [c.xKey]: cv(m[1]), [c.yKey]: cv(m[2]) });
+            await ctx.reply(bxMoveText(kind, elem), { ...HTML, ...bxMoveKb(kind, elem) });
+          }
+        } catch (e) {
+          await ctx.reply(`⚠️ ${e.message}`).catch(() => {});
+        }
+        return;
+      }
       try {
         if (mode === "text" && (low === "off" || low === "on")) {
           await bannerTpl.updateSettings(kind, { showText: low === "on" });
