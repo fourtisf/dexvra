@@ -95,13 +95,16 @@ const BASE_DEFAULTS = {
   metaX: 210,
   metaY: 772,
   metaFontSize: 34,
+  // Defaults hug the panel's left edge as a tight row so they fit the artwork's
+  // rectangle out of the box (were too spread, MC spilled past the panel). Each
+  // is still freely movable per chip in the layout editor.
   chainX: 210,
   chainY: 772,
   chainSize: 34,
-  priceX: 640,
+  priceX: 470,
   priceY: 772,
   priceSize: 34,
-  mcX: 1030,
+  mcX: 690,
   mcY: 772,
   mcSize: 34,
   // small badge on the glass pedestal under the ring (tier / trending duration).
