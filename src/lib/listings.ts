@@ -62,7 +62,7 @@ export const SEED_ROWS: ListingRow[] = [
 // Real socials for the well-known SEED/demo tokens, so the sample board never
 // shows a token with no links. Real listings carry their own socials (from the
 // listing form) and always take precedence over this map.
-const SEED_SOCIALS: Record<string, { website?: string; twitter?: string; telegram?: string }> = {
+export const SEED_SOCIALS: Record<string, { website?: string; twitter?: string; telegram?: string }> = {
   BONK: { website: "https://bonkcoin.com", twitter: "https://x.com/bonk_inu", telegram: "https://t.me/bonk_inu" },
   WIF: { website: "https://dogwifcoin.org", twitter: "https://x.com/dogwifcoin", telegram: "https://t.me/dogwifhatcto" },
   POPCAT: { website: "https://www.popcat.click", twitter: "https://x.com/Popcatsolana" },
