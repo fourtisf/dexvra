@@ -79,7 +79,9 @@ const LISTING_BODY =
   // Market cap and Liquidity sit SIDE-BY-SIDE on one line (operator preference)
   // — not liquidity stacked underneath the market cap.
   `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("💧", E.link)} **Liquidity:** {liq}\n\n` +
-  `${em("⚡", E.zap)} **Trade it now — one tap:**\n` +
+  // Single one-tap CTA. {tradeUrl} = https://t.me/<tradebot>?start=ca_<address>
+  // — the deep link carries the token's CA so the trade bot opens straight on
+  // this token (no "Trade it now" header line above it).
   `[⚡ Buy / Sell on Dexvra Trade Bot]({tradeUrl})\n\n` +
   `[Announce On X 𝕏]({xUrl})\n\n` +
   `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`;
