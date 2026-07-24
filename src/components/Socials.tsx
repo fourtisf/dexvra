@@ -27,14 +27,18 @@ const ScanLogo = () => (
 
 export function Socials({ t }: { t: BoardToken }) {
   const c = CHAINS[t.chain];
-  const tg = t.links.telegram ?? t.links.website;
+  // Only the project's REAL socials — each icon shows ONLY when its real link
+  // exists. Never point X at a search or Telegram at the website; a wrong link
+  // is worse than a missing one.
   return (
     <div className="soc-row">
-      <a className="soc soc-x" href={t.links.twitter ?? "#"} target="_blank" rel="noopener noreferrer" title="X (Twitter)">
-        <XLogo />
-      </a>
-      {tg && (
-        <a className="soc soc-tg" href={tg} target="_blank" rel="noopener noreferrer" title="Telegram">
+      {t.links.twitter && (
+        <a className="soc soc-x" href={t.links.twitter} target="_blank" rel="noopener noreferrer" title="X (Twitter)">
+          <XLogo />
+        </a>
+      )}
+      {t.links.telegram && (
+        <a className="soc soc-tg" href={t.links.telegram} target="_blank" rel="noopener noreferrer" title="Telegram">
           <TgLogo />
         </a>
       )}

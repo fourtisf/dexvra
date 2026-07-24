@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { StdBoard } from "@/components/TokenBoard";
@@ -36,6 +36,12 @@ export default function TrendingPage() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
   }, [data]);
   const inChain = useMemo(() => (c: string) => chain === "all" || c === chain, [chain]);
+  // If the selected chain disappears from the data (delisted / dropped from a
+  // later poll), fall back to "all" — otherwise the picker unmounts and the
+  // board would be stuck filtering to zero rows with no way to reset.
+  useEffect(() => {
+    if (chain !== "all" && !chains.includes(chain)) setChain("all");
+  }, [chain, chains]);
 
   const list = useMemo(
     () =>
@@ -62,12 +68,11 @@ export default function TrendingPage() {
   return (
     <section className="view">
       {chains.length > 1 && (
-        <div className="chain-pick" role="tablist" aria-label="Filter by chain">
+        <div className="chain-pick" role="group" aria-label="Filter by chain">
           <button
             className={`chain-chip ${chain === "all" ? "active" : ""}`}
             onClick={() => setChain("all")}
-            role="tab"
-            aria-selected={chain === "all"}
+            aria-pressed={chain === "all"}
           >
             🌐 All chains
           </button>
@@ -76,8 +81,7 @@ export default function TrendingPage() {
               key={id}
               className={`chain-chip ${chain === id ? "active" : ""}`}
               onClick={() => setChain(id)}
-              role="tab"
-              aria-selected={chain === id}
+              aria-pressed={chain === id}
             >
               <ChainLogo chain={id} size={15} />
               {chainOf(id)?.label ?? id}
@@ -101,7 +105,7 @@ export default function TrendingPage() {
                   <Coin token={t} size={38} fontSize={17} />
                   <div className="feat-id">
                     <div className="feat-sym">{t.symbol}</div>
-                    <TierTag tier={t.tier} showRank={false} />
+                    <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
                   </div>
                   <div className="feat-px">
                     <div>{fmtPrice(t.priceUsd)}</div>

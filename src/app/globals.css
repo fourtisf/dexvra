@@ -558,8 +558,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   /* feature parity on phones: MC / Vol / Txns / Score move into the token cell */
   .tok{gap:9px}
   .tok .m-stats{display:block}
-  /* the ticker is the identity — it must show in full, never collapse to "$…".
-     Give it width priority; the tier tag yields the leftover space instead. */
+  /* same priority as desktop: the tier tag always renders whole; an over-long
+     ticker ellipsises (base .sym-txt/.tier-chip flex rules are inherited here). */
   .tok .sym{font-size:14px;gap:5px}
   .tier-chip{font-size:8px;padding:2px 5px}
   /* chain chips: one swipeable row instead of a tall wrap */

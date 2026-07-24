@@ -133,7 +133,7 @@ function StdRow({
         <div className="ts">
           <div className="sym">
             <span className="sym-txt">{t.symbol}</span>
-            <TierTag tier={t.tier} showRank={false} />
+            <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
           </div>
           <div className="nm">{t.name}</div>
           {/* phones: the hidden table columns condense into this line */}

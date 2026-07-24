@@ -84,7 +84,7 @@ export default function TokenPage() {
         <div className="tp-id">
           <div className="tp-sym">
             {t.symbol}
-            <TierTag tier={t.tier} />
+            <TierTag tier={t.tier} ageMinutes={t.listedMinutesAgo} />
             {t.trendingRank != null && <TrendingBadge />}
           </div>
           <div className="tp-nm">

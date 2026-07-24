@@ -129,9 +129,12 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     listedMinutesAgo: r.listedAt ? Math.max(0, Math.floor((Date.now() - r.listedAt) / 60000)) : r.listedMin,
     score,
     poolAddress: null,
+    // Only the project's REAL socials (from the listing). Never fabricate a
+    // dexscreener/X-search fallback — a wrong link is worse than no link, and
+    // the UI simply hides an icon whose link is missing.
     links: {
-      website: r.website ?? `https://dexscreener.com/${r.chain}/${r.address}`,
-      twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
+      website: r.website ?? null,
+      twitter: r.twitter ?? null,
       telegram: r.telegram ?? null,
     },
     overview: r.overview ?? null,
