@@ -88,23 +88,24 @@ const LISTING_BODY =
 // accents (never bullet spam). Deliberately NOT the fourtis layout.
 const DEFAULTS = {
   // ── Bot messages (to the user) ──
+  // Channel links are CONFIG-DRIVEN placeholders ({site}/{announce}/{listing}/
+  // {trending}) — start.js fills them from CHANNELS/SITE_URL, so the links are
+  // always correct and never need manual editing (change a channel via env and
+  // they follow automatically).
   welcome:
     "💎 **Welcome to Dexvra**\n\n" +
-    "⚡ Your all-in-one platform for token **Listing, Trending & Banner Ads** — powered by the [dexvra.io](https://dexvra.io) ecosystem.\n\n" +
-    "✅ Maximum exposure across dexvra.io, our Telegram channels and X — fully automatic.\n\n" +
-    "**Our Services**\n" +
-    "⚡ **Xpress Listing** — go live in minutes\n" +
+    "⚡ **List · Trend · Advertise** — your token pushed across **[dexvra.io]({site})**, our Telegram channels and **X**, fully automatic and live in minutes.\n\n" +
+    "**✨ What you can do**\n" +
+    "⚡ **Xpress Listing** — live in minutes\n" +
     "🏆 **Listing & Trending** — ranked tiers, Diamond → Bronze\n" +
-    "🔥 **Trending Token** — featured placement, up to 48H\n" +
-    "📢 **Banner Ads** — homepage banner campaigns\n" +
-    "🚀 **Mass DM** — your message to every Dexvra user\n" +
-    "🟢 **Buy Bot** — free live buy alerts in your group\n\n" +
-    "**Dexvra Channels**\n" +
-    "🌐 Website: [dexvra.io](https://dexvra.io)\n" +
-    "📢 [Announcements](https://t.me/dexvraio)\n" +
-    "🚨 [Listings](https://t.me/dexvralisting)\n" +
-    "📈 [Trending](https://t.me/dexvratrending)\n\n" +
-    "👇 Tap a button below to get started — each step is fully guided.",
+    "🔥 **Trending Token** — featured, up to 48H\n" +
+    "📢 **Banner Ads** — homepage campaigns\n" +
+    "🚀 **Mass DM** — reach every Dexvra user\n" +
+    "🟢 **Buy Bot** — free live buy alerts for your group\n\n" +
+    "**🔗 Official Links**\n" +
+    "🌐 [Website]({site}) · 📢 [Announcements]({announce})\n" +
+    "🚨 [Listings]({listing}) · 📈 [Trending]({trending})\n\n" +
+    "👇 Pick a service below — each step is fully guided.",
   intro_xpress:
     "⚡ **Xpress Listing**\n\n" +
     "🔹 Go live in **minutes** — no tier, no review.\n\n" +
@@ -379,7 +380,7 @@ const DEFAULTS = {
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
 const META = {
-  welcome: { group: "Bot Messages", label: "Welcome / Start", ph: [] },
+  welcome: { group: "Bot Messages", label: "Welcome / Start", ph: ["site", "announce", "listing", "trending"] },
   intro_xpress: { group: "Bot Messages", label: "Intro: Xpress Listing", ph: [] },
   intro_tiered: { group: "Bot Messages", label: "Intro: Listing & Trending", ph: [] },
   tier_chooser: { group: "Bot Messages", label: "Tier chooser", ph: ["native"] },
