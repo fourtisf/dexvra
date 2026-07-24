@@ -138,10 +138,10 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(text.startsWith("⚡ Xpress Listing — The Golden Whale live on Dexvra"), "header line");
   // The token name IS the link now — visible text unchanged, links to the page.
   assert.ok(text.includes("💲 The Golden Whale ($WHALE)"), "💲 token line");
-  assert.ok(
-    entities.some((e) => e.type === "text_link" && e.url === `https://dexvra.io/token/solana/${coin.address}`),
-    "the name links to the Dexvra token page",
-  );
+  const nameLink = entities.find((e) => e.type === "text_link" && e.url === `https://dexvra.io/token/solana/${coin.address}`);
+  assert.ok(nameLink, "the name links to the Dexvra token page");
+  // ONLY the name is linked — the ($WHALE) ticker stays plain text.
+  assert.strictEqual(text.substr(nameLink.offset, nameLink.length), "The Golden Whale", "link covers just the name");
   // …and the bare dexvra.io/token/… URL line is gone (it read as spam).
   assert.ok(!text.includes("dexvra.io/token/"), "no raw dexvra token URL printed");
   assert.ok(text.includes("Network: Solana"), "network line");

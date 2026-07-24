@@ -70,15 +70,15 @@ const FOOTER_BLOCK =
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
 // exactly where to trade it. {price}/{mcap}/{liq} come from live data.
 const LISTING_BODY =
-  // The token name is the clickable link to its Dexvra page — no bare
-  // dexvra.io/token/… URL printed underneath (that read as spam).
-  `${em("💲", E.dollar)} [{name} ({symbol})]({coinUrl})\n\n` +
+  // ONLY the token name is the clickable link to its Dexvra page — the ({symbol})
+  // stays plain text beside it — and no bare dexvra.io/… URL is printed (spam).
+  `${em("💲", E.dollar)} [{name}]({coinUrl}) ({symbol})\n\n` +
   `{chainEmoji} **Network:** {chain}\n` +
   `📄 **Contract address:**\n{address}\n\n` +
-  `${em("📊", E.chart)} **Price:** {price}\n` +
-  // Market cap and Liquidity sit SIDE-BY-SIDE on one line (operator preference)
-  // — not liquidity stacked underneath the market cap.
-  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("💧", E.link)} **Liquidity:** {liq}\n\n` +
+  // Market cap (the headline metric) ABOVE the price; Market cap and Liquidity
+  // sit SIDE-BY-SIDE on one line — liquidity is not stacked underneath.
+  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("💧", E.link)} **Liquidity:** {liq}\n` +
+  `${em("📊", E.chart)} **Price:** {price}\n\n` +
   // Single one-tap CTA. {tradeUrl} = https://t.me/<tradebot>?start=ca_<address>
   // — the deep link carries the token's CA so the trade bot opens straight on
   // this token (no "Trade it now" header line above it).

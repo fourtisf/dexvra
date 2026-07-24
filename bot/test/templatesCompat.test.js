@@ -202,9 +202,11 @@ test("paste-proof relink: NAME → token page and Buy/Sell CTA → trade bot sur
   const card = fmt.listingPost(coin);
   const linkFor = (needle) =>
     card.entities.find((e) => e.type === "text_link" && card.text.substr(e.offset, e.length).includes(needle));
-  const nameLink = linkFor("What If ($IF)");
+  const nameLink = linkFor("What If");
   assert.ok(nameLink, "the name became a link after paste");
   assert.strictEqual(nameLink.url, `https://dexvra.io/token/robinhood/${coin.address}`, "name → token page");
+  // ONLY the name is linked, not the "($IF)" ticker.
+  assert.strictEqual(card.text.substr(nameLink.offset, nameLink.length), "What If", "link covers just the name");
   const cta = linkFor("Buy / Sell on Dexvra Trade Bot");
   assert.ok(cta, "the Buy/Sell CTA became a link after paste");
   assert.ok(cta.url.startsWith(`https://t.me/dexvratradebot?start=ca_${coin.address}`), "CTA → trade bot with the CA");

@@ -405,13 +405,13 @@ function autoSocialLinks(p, urls) {
       break;
     }
   }
-  // Paste-proof relink for the token NAME → its Dexvra page (the "{name}
-  // ({symbol})" label on the 💲 line). Only the first occurrence, and only when
-  // it isn't already linked (default markup templates already carry the link).
-  if (urls.coinUrl && urls.coinName) {
-    const li = p.text.indexOf(urls.coinName);
-    if (li !== -1 && !overlapsLink(p.entities, li, li + urls.coinName.length)) {
-      add.push({ type: "text_link", offset: li, length: urls.coinName.length, url: urls.coinUrl });
+  // Paste-proof relink for the token NAME → its Dexvra page. Locate the 💲 line
+  // via the unique "name (symbol)" label, but link ONLY the name (the ticker
+  // stays plain). Skipped when already linked (default markup templates carry it).
+  if (urls.coinUrl && urls.coinName && urls.coinLabel) {
+    const at = p.text.indexOf(urls.coinLabel);
+    if (at !== -1 && !overlapsLink(p.entities, at, at + urls.coinName.length)) {
+      add.push({ type: "text_link", offset: at, length: urls.coinName.length, url: urls.coinUrl });
     }
   }
   // Footer labels — scoped to the LAST paragraph so e.g. a "New Trending on
@@ -516,11 +516,14 @@ function postUrls(coin) {
     telegram: links.telegram || "",
     xUrl: (coin && coin.xUrl) || "",
     tradeUrl: tradeUrlOf(coin),
-    // Paste-proof name link: the "{name} ({symbol})" label on the 💲 line links
-    // to the token's Dexvra page even when an admin pasted the template as plain
-    // text (which strips the [name](url) markup) — same relink idea as socials.
+    // Paste-proof name link: ONLY the name (not the "({symbol})") on the 💲 line
+    // links to the token's Dexvra page, even when an admin pasted the template as
+    // plain text (stripping the [name](url) markup). coinLabel = "name (symbol)"
+    // is the unique locator (the header says "name live", never "name ("), so we
+    // find the 💲 line without colliding with the header, then link just the name.
     coinUrl: coin ? coinUrl(coin) : "",
-    coinName: coin ? `${clean(coin.name)} (${clean(sym(coin.symbol))})` : "",
+    coinName: coin ? clean(coin.name) : "",
+    coinLabel: coin ? `${clean(coin.name)} (${clean(sym(coin.symbol))})` : "",
     ...channelLinks(),
   };
 }
