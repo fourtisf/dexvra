@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
 import { PromoCarousel } from "@/components/PromoCarousel";
 import { PulseStrip } from "@/components/PulseStrip";
+import { HomeBannerStrip } from "@/components/HomeBannerStrip";
 import { StdBoard } from "@/components/TokenBoard";
 import { ChainLogo } from "@/components/ChainLogo";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
@@ -27,6 +28,7 @@ export default function HomePage() {
     <section className="view">
       <PromoCarousel />
       <PulseStrip />
+      <HomeBannerStrip />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         <div className="sec-head">

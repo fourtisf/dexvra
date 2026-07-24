@@ -302,6 +302,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .heat-kv b{color:var(--muted)}
 .heat-bar{height:4px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:7px}
 .heat-bar i{display:block;height:100%;border-radius:99px;background:var(--grad)}
+/* Plain homepage ad banner (uploaded image + link, managed in the panel) */
+.home-banner{position:relative;display:block;border-radius:16px;overflow:hidden;border:1px solid var(--line2);box-shadow:0 10px 30px rgba(0,0,0,.28);line-height:0;background:rgba(255,255,255,.02)}
+.home-banner img{width:100%;height:auto;max-height:150px;object-fit:cover;display:block}
+.home-banner-tag{position:absolute;top:8px;right:10px;font-family:var(--fm);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:rgba(0,0,0,.5);color:#fff;padding:2px 8px;border-radius:999px}
 .fg{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
 .fg svg{width:122px;height:70px;flex:none;overflow:visible}
 .fg-col{display:flex;flex-direction:column;min-width:0}

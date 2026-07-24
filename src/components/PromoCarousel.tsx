@@ -24,25 +24,9 @@ export function PromoCarousel() {
   const [idx, setIdx] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Carousel Takeover: if a paid Banner Ad is currently running (booked via the
-  // Telegram bot), slide 2 shows the advertiser's creative; otherwise it falls
-  // back to the house "Boost your token" ad.
-  const [booked, setBooked] = useState<{ imageUrl: string; linkUrl: string; title: string | null } | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/banners")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        const b = j?.banners?.[0];
-        if (alive && b?.imageUrl && b?.linkUrl) {
-          setBooked({ imageUrl: b.imageUrl, linkUrl: b.linkUrl, title: b.title ?? null });
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // The uploaded/booked ad banner renders as a dedicated plain strip on the
+  // homepage (HomeBannerStrip) — slide 2 here stays the house "Boost your token"
+  // promo so the same creative never shows twice.
 
   // Editable "Pumped on Dexvra" showcase (admin panel → /api/promo).
   const [promo, setPromo] = useState<Promo>(PROMO_FALLBACK);
@@ -118,49 +102,15 @@ export function PromoCarousel() {
           </div>
         </div>
 
-        {booked ? (
-          <a
-            className="slide"
-            href={booked.linkUrl}
-            target="_blank"
-            rel="noopener noreferrer nofollow"
-            aria-label={booked.title ?? "Sponsored banner"}
-            style={{
-              backgroundImage: `url(${booked.imageUrl})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              textDecoration: "none",
-              position: "relative",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 8,
-                right: 10,
-                fontSize: 11,
-                letterSpacing: ".08em",
-                textTransform: "uppercase",
-                background: "rgba(0,0,0,.5)",
-                color: "#fff",
-                padding: "2px 8px",
-                borderRadius: 999,
-              }}
-            >
-              Ad
-            </span>
-          </a>
-        ) : (
-          <div className="slide s-boost">
-            <span className="wm">🚀</span>
-            <div className="slide-copy">
-              <span className="s-eyebrow">📢 Boost your token</span>
-              <h2>Get featured across the {BRAND_NAME} network</h2>
-              <p>Homepage spotlight, ticker priority, and reach on every {BRAND_NAME} tool.</p>
-              <Link href="/advertise" className="boost-btn">Boost now →</Link>
-            </div>
+        <div className="slide s-boost">
+          <span className="wm">🚀</span>
+          <div className="slide-copy">
+            <span className="s-eyebrow">📢 Boost your token</span>
+            <h2>Get featured across the {BRAND_NAME} network</h2>
+            <p>Homepage spotlight, ticker priority, and reach on every {BRAND_NAME} tool.</p>
+            <Link href="/advertise" className="boost-btn">Boost now →</Link>
           </div>
-        )}
+        </div>
 
         <div className="slide s-pump">
           <svg className="wm" viewBox="0 0 260 120" preserveAspectRatio="none">
