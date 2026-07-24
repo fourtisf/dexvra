@@ -653,4 +653,4 @@ function rankupPost(coin, rank, change24h) {
   }), postUrls(coin));
 }
 
-module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName };
+module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };

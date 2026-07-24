@@ -247,6 +247,7 @@ async function fulfillListing(ctx, order) {
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];
+  if (coin.xUrl) links.push({ label: "🐦 Announce on X", url: coin.xUrl });
   try {
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin));
     if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
@@ -300,6 +301,7 @@ async function fulfillTrending(ctx, order) {
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];
+  if (coin.xUrl) links.push({ label: "🐦 Announce on X", url: coin.xUrl });
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
     if (tMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
@@ -350,7 +352,12 @@ async function fulfillBanner(ctx, order) {
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
   }
-  x.postBanner(rec).catch(() => {});
+  // Tweet the banner (timeboxed) and surface the "Announce on X" link in the DM.
+  const bTweetId = await Promise.race([
+    x.postBanner(rec).catch(() => null),
+    new Promise((r) => setTimeout(r, 20000, null)),
+  ]);
+  if (bTweetId) links.push({ label: "🐦 Announce on X", url: `https://x.com/i/status/${bTweetId}` });
   await dm(ctx, successBanner(rec, links), menu.postPurchase(SITE_URL));
   return booking;
 }
@@ -367,6 +374,7 @@ function successListing(coin, links) {
     name: premium.sanitizeVar(coin.name),
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
+    ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} → clickable footer
   });
 }
 function successTrending(coin, hours, links) {
@@ -375,6 +383,7 @@ function successTrending(coin, hours, links) {
     hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
+    ...fmt.channelLinks(),
   });
 }
 function successBanner(rec, links) {
@@ -382,6 +391,7 @@ function successBanner(rec, links) {
     slot: premium.sanitizeVar(rec.slot),
     endsAt: new Date(rec.endsAt).toUTCString(),
     postLinks: linkLines(links),
+    ...fmt.channelLinks(),
   });
 }
 
