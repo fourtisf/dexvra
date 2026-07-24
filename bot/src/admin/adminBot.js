@@ -193,7 +193,8 @@ const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
 // Token banners whose animated clip is auto-filled with the token's logo/$ticker/price.
-const BT_FILL_KINDS = new Set(["listing", "trending"]);
+// Pump is a fill kind too, but with its OWN layout (▲ +N% · old→new price · MCAP).
+const BT_FILL_KINDS = new Set(["listing", "trending", "pump"]);
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
@@ -422,9 +423,7 @@ async function btEditorImage(kind, elem) {
   // editorStill draws the token overlay onto the still artwork OR — when only an empty
   // animated template is uploaded — onto a frame of that clip, so positioning matches
   // the real look either way.
-  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), {
-    symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge",
-  });
+  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), sampleData(kind));
   if (!buf) return null;
   return btGuideOverlay(buf, kind, elem).catch(() => buf);
 }
@@ -482,6 +481,15 @@ function sampleMedia(kind) {
 // layout settings the still + animated compositors use, so tuning here applies
 // everywhere. Callback namespace: bx*.
 const BX_SAMPLE = { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" };
+// Sample token data for every preview / the layout editor. Pump gets its
+// DISTINCT fields (▲ +N% · old→new price) so its preview shows the real pump
+// layout, not the listing/trending chip row.
+function sampleData(kind) {
+  if (kind === "pump") {
+    return { symbol: "DEXV", name: "Dexvra", chain: "SOLANA", change: "+28%", priceFrom: "$0.032", priceTo: "$0.049", price: "$0.049", mcap: "$120M", badge: "Sample Badge" };
+  }
+  return BX_SAMPLE;
+}
 const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
@@ -575,7 +583,7 @@ async function bxPreview(ctx, kind) {
   // With a clip set, render and send the REAL animated result (exactly what posts),
   // not just a still frame. Falls back to a still if ffmpeg compositing isn't available.
   if (media) {
-    const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), BX_SAMPLE).catch(() => null);
+    const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind)).catch(() => null);
     if (filled) {
       await ctx
         .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Animated preview</b> — your GIF/video template with this exact layout (sample data). This is what posts.", parse_mode: "HTML" })
@@ -583,7 +591,7 @@ async function bxPreview(ctx, kind) {
       return;
     }
   }
-  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), BX_SAMPLE).catch(() => null);
+  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), sampleData(kind)).catch(() => null);
   if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas / ffmpeg may be missing on the server.").catch(() => {});
   const cap = media
     ? "👁 Layout preview (still frame — animated compositing failed; check ffmpeg on the server). Live posts still play the animated version."
@@ -609,7 +617,7 @@ async function btPreview(ctx, kind) {
     // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
     if (BT_FILL_KINDS.has(kind)) {
       const filled = await bannerTpl
-        .composeOntoClip(kind, media, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" })
+        .composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind))
         .catch(() => null);
       if (filled) {
         await ctx
@@ -634,7 +642,7 @@ async function btPreview(ctx, kind) {
   if (!bannerTpl.hasTemplate(kind)) {
     return ctx.reply(`❌ No ${BT_KINDS[kind]} artwork or clip yet. Tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
   }
-  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" });
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), sampleData(kind));
   if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
   await ctx
     .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview — tune the slot/text until it sits perfectly.` })

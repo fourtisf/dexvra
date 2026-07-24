@@ -207,7 +207,7 @@ export function LayoutEditor({
               {[
                 layout.showChain !== false ? "SOLANA" : null,
                 layout.showPrice !== false ? "$0.0042" : null,
-                layout.showMcap !== false ? "MC $1.2M" : null,
+                layout.showMcap !== false ? (kind === "pump" ? "MCAP $120M" : "MC $1.2M") : null,
               ]
                 .filter((t): t is string => Boolean(t))
                 .map((t) => (

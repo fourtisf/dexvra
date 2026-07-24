@@ -18,8 +18,9 @@ export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 export const ARTWORK_KINDS = new Set<string>(["listing", "trending", "banner"]);
 // Kinds where the bot draws the token's logo + $ticker/name/chips onto the clip
 // (auto-fill). For these the text overlay can be toggled off (logo only) when a
-// designed clip already carries its own text.
-export const FILL_KINDS = new Set<string>(["listing", "trending"]);
+// designed clip already carries its own text. Pump auto-fills too, but with its
+// OWN layout (▲ +N% · old→new price · MCAP pill).
+export const FILL_KINDS = new Set<string>(["listing", "trending", "pump"]);
 // Must match the bot's LAYOUT_VERSION (bannerTemplate.js) or saved tweaks are
 // ignored as "tuned for an older artwork".
 const LAYOUT_VERSION = 6;
@@ -36,7 +37,7 @@ const KIND_NOTE: Record<ChannelKind, string> = {
   listing: "Empty animated template — the bot draws each token's logo, $ticker, name & price/MC onto it.",
   trending: "Empty animated template — the bot draws the token's logo, $ticker, name & price/MC onto it.",
   banner: "Advertiser creative — played as-is (no token data drawn on).",
-  pump: "Hype clip above every pump alert — token details stay in the caption.",
+  pump: "Empty animated template — the bot draws ▲ +N%, old→new price, MCAP & the token logo/$ticker onto it (its own pump layout).",
   rankup: "Overrides the auto rank-up banner and plays above every rank-up post.",
 };
 
@@ -160,6 +161,29 @@ const KIND_LAYOUT: Record<string, Partial<Layout>> = {
     metaX: 1160,
     metaY: 1120,
     metaFontSize: 34,
+  },
+  // Pump has extra bot-only overlay keys (pctX/Y, priceX/Y) the web editor does
+  // not drive; here we mirror only the shared handles — logo ring + cyan $ticker
+  // on the right, and the MCAP pill (metaX/Y) on the left. showMcap stays ON so
+  // the editor gives a draggable MCAP handle; chain/price chips are off (the bot
+  // draws its own ▲%/price line instead).
+  pump: {
+    logoX: 1880,
+    logoY: 360,
+    logoSize: 420,
+    tickerX: 1720,
+    tickerY: 900,
+    tickerFontSize: 84,
+    tickerColor: "#33E5C9",
+    nameFontSize: 44,
+    nameOffsetY: 102,
+    nameColor: "#EAF6F2",
+    showChain: false,
+    showPrice: false,
+    showMcap: true,
+    metaX: 262,
+    metaY: 902,
+    metaFontSize: 44,
   },
 };
 

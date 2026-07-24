@@ -98,6 +98,50 @@ test("stale saved layouts (no/old layoutVersion) are ignored — defaults win", 
   await bt.resetSettings("trending");
 });
 
+test("pump: distinct layout defaults (cyan ticker, no chain/price/MC chips, own %/price keys)", () => {
+  const d = bt.defaultsFor("pump");
+  assert.strictEqual(d.tickerColor, "#33E5C9", "pump ticker is cyan");
+  assert.strictEqual(d.showChain, false);
+  assert.strictEqual(d.showPrice, false);
+  assert.strictEqual(d.showMcap, false);
+  // pump-only overlay keys exist and differ from listing/trending
+  assert.ok(Number(d.pctFontSize) > 0 && Number(d.priceFontSize) > 0, "pump has %/price sizes");
+  assert.notDeepStrictEqual(
+    { x: d.logoX, y: d.logoY },
+    { x: bt.defaultsFor("listing").logoX, y: bt.defaultsFor("listing").logoY },
+    "pump logo slot differs from listing",
+  );
+});
+
+test("pump: transparent overlay renders the ▲%/price/MCAP block (no still artwork needed)", async () => {
+  // pump is animation-only — no bundled still art — so a normal compose returns
+  // null, but the TRANSPARENT overlay (what gets composited onto the clip) renders.
+  assert.strictEqual(await bt.compose("pump", null, { symbol: "DEXV" }), null, "no still art → null");
+  const cv = require("@napi-rs/canvas");
+  const logo = cv.createCanvas(200, 200);
+  logo.getContext("2d").fillStyle = "#33E5C9";
+  logo.getContext("2d").fillRect(0, 0, 200, 200);
+  const out = await bt.compose(
+    "pump",
+    logo.toBuffer("image/png"),
+    { symbol: "DEXV", name: "Dexvra", change: "+28%", priceFrom: "$0.032", priceTo: "$0.049", mcap: "$120M" },
+    { transparent: true },
+  );
+  assert.ok(Buffer.isBuffer(out) && out.length > 500, "transparent pump overlay renders");
+  const img = await cv.loadImage(out);
+  assert.strictEqual(img.width, 2560);
+  assert.strictEqual(img.height, 1280);
+});
+
+test("pump: saved layout tweaks load (pump is a layout kind, merges over defaults)", async () => {
+  const after = await bt.updateSettings("pump", { metaX: 300 });
+  assert.strictEqual(after.metaX, 300);
+  assert.strictEqual(bt.getSettings("pump").metaX, 300, "pump saved layout must load");
+  // untouched key still comes from pump defaults
+  assert.strictEqual(bt.getSettings("pump").tickerColor, bt.defaultsFor("pump").tickerColor);
+  await bt.resetSettings("pump");
+});
+
 test("Telegram-compressed upload (1280×640) renders on the 2560×1280 reference canvas", async () => {
   // reproduce the live bug: admin uploaded artwork as a PHOTO → Telegram
   // recompressed it to half size → every layout coordinate landed off-canvas

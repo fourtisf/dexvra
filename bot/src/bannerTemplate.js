@@ -15,7 +15,12 @@ const { toSendBuffer } = require("./helpers/encodeImage");
 const log = require("./helpers/logger");
 
 const CONFIG_FILE = "bannerTemplate.json";
+// Kinds with a bundled/uploadable STILL artwork (drives selfCheck + artwork API).
 const KINDS = ["listing", "trending", "banner"];
+// Every kind that carries a tunable layout — includes "pump", which is
+// animation-only (composited onto its clip) and so has no bundled still art but
+// still needs its saved position tweaks to load.
+const LAYOUT_KINDS = ["listing", "trending", "banner", "pump"];
 // Reference canvas — every layout coordinate in this module assumes this space.
 const REF_W = 2560;
 const REF_H = 1280;
@@ -190,6 +195,45 @@ const KIND_DEFAULTS = {
     metaY: 1120,
     metaFontSize: 34,
   },
+  // Pump alert art: a DISTINCT layout from listing/trending. Left card carries a
+  // big "▲ +N%" headline, an "old → new" price line and a "MCAP $x" pill; the
+  // token logo ring + cyan $ticker sit in the RIGHT card. Nothing here reuses the
+  // listing/trending chip row — pump has its own overlay block below.
+  pump: {
+    ...BASE_DEFAULTS,
+    tickerGlow: "#33E5C9",
+    tickerColor: "#33E5C9",
+    nameColor: "#EAF6F2",
+    // Logo ring — right card.
+    logoX: 1880,
+    logoY: 360,
+    logoSize: 420,
+    // $ticker + name — centred under the right logo ring.
+    tickerX: 1720,
+    tickerY: 900,
+    tickerFontSize: 84,
+    nameFontSize: 44,
+    nameOffsetY: 102,
+    // The standard chain/price/MC chip row is OFF for pump — the pump overlay
+    // draws its own %, price-transition and MCAP instead.
+    showChain: false,
+    showPrice: false,
+    showMcap: false,
+    // ▲ +N% headline (big, left card).
+    pctX: 250,
+    pctY: 545,
+    pctFontSize: 172,
+    pctColor: "#33E5C9",
+    // old → new price transition (left card, under the %).
+    priceX: 262,
+    priceY: 762,
+    priceFontSize: 78,
+    // MCAP pill (left card, under the price). Reuses meta* so the position
+    // editor's "Chips" handle drives it.
+    metaX: 262,
+    metaY: 902,
+    metaFontSize: 44,
+  },
   banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
@@ -213,7 +257,7 @@ function savedLayout(saved, kind) {
 function loadConfig() {
   const saved = loadJSONSync(CONFIG_FILE, {});
   const out = {};
-  for (const k of KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
+  for (const k of LAYOUT_KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
   return out;
 }
 
@@ -304,7 +348,7 @@ function lightenHex(hex, amt) {
 
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}, opts = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge, change, priceFrom, priceTo } = {}, opts = {}) {
   // `opts.transparent` renders ONLY the token overlay (logo + $ticker + name + chips +
   // badge) on a CLEAR canvas — used to composite that data onto an animated GIF/video
   // template. Otherwise this draws the still artwork background + the same overlay.
@@ -429,7 +473,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
     // Token meta chips under the ring — CHAIN / price / market cap, each drawn
     // arranged as a ROW from metaX with a constant gap, each pill auto-sized to
     // its text. This never overflows or collides no matter how long the price is.
-    if (cfg.showText && cfg.slotShape !== "rect") {
+    if (cfg.showText && cfg.slotShape !== "rect" && kind !== "pump") {
       const tint = (cfg.tickerGlow || "#4EE6A8") + "55";
       const fsz = Number(cfg.metaFontSize) || 34;
       const chipH = fsz * 1.9;
@@ -468,6 +512,150 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         ctx.fillStyle = i === 0 ? "#EAF6F2" : "#CFE4DE";
         ctx.fillText(t, x + w / 2, cy + chipH / 2 + 2);
         x += w + gap;
+      }
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+    }
+
+    // Pump-alert overlay — a DISTINCT left-card block (▲ +N% headline · old→new
+    // price transition · MCAP pill) that replaces the standard chip row. change /
+    // priceFrom / priceTo come from the pump checker; each part degrades gracefully
+    // if its datum is missing, so a partial pump still renders cleanly.
+    if (kind === "pump" && cfg.showText) {
+      const accent = cfg.pctColor || cfg.tickerColor || "#33E5C9";
+      // ▲ +N% headline. The ▲ is drawn as a VECTOR triangle — the bundled Sora
+      // fonts have no ▲/→ glyphs (they'd render as tofu ▯), so every symbol here
+      // is a shape, never a character.
+      if (change != null && String(change).trim() !== "") {
+        let body = String(change).trim().replace(/^[▲▼]\s*/, "");
+        if (!/^[+\-]/.test(body)) body = `+${body}`;
+        const pfs = Number(cfg.pctFontSize) || 172;
+        const centered = cfg.pctX === "center";
+        const py = Number(cfg.pctY) || 545;
+        ctx.font = `800 ${pfs}px TplBold, sans-serif`;
+        ctx.textBaseline = "middle";
+        const triW = pfs * 0.6; // up-triangle bounding box
+        const triH = pfs * 0.54;
+        const triGap = pfs * 0.24;
+        const textW = ctx.measureText(body).width;
+        const groupW = triW + triGap + textW;
+        const startX = centered ? W / 2 - groupW / 2 : Number(cfg.pctX) || 250;
+        const grad = ctx.createLinearGradient(0, py - pfs * 0.5, 0, py + pfs * 0.5);
+        grad.addColorStop(0, lightenHex(accent, 0.5));
+        grad.addColorStop(1, accent);
+        // filled up-triangle (glow pass folded into the same fill)
+        ctx.save();
+        ctx.shadowColor = accent + "66";
+        ctx.shadowBlur = Math.max(20, pfs * 0.28);
+        ctx.fillStyle = grad;
+        const tcx = startX + triW / 2;
+        const tTop = py - triH / 2;
+        const tBot = py + triH / 2;
+        const rr = triH * 0.12; // slightly rounded apex/corners
+        ctx.beginPath();
+        ctx.moveTo(tcx, tTop);
+        ctx.lineTo(startX + triW - rr, tBot);
+        ctx.lineTo(startX + rr, tBot);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        // the +N% text
+        ctx.textAlign = "left";
+        const textX = startX + triW + triGap;
+        ctx.shadowColor = accent + "66";
+        ctx.shadowBlur = Math.max(20, pfs * 0.28);
+        ctx.shadowOffsetY = 0;
+        ctx.fillStyle = grad;
+        ctx.fillText(body, textX, py);
+        ctx.shadowColor = "rgba(0,0,0,.5)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        ctx.fillText(body, textX, py);
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+      }
+      // old → new price transition (dim old · vector arrow · bright new)
+      const from = priceFrom && priceFrom !== "TBA" ? String(priceFrom) : null;
+      const to = priceTo && priceTo !== "TBA" ? priceTo : price && price !== "TBA" ? price : null;
+      if (to) {
+        const rfs = Number(cfg.priceFontSize) || 78;
+        const rx = cfg.priceX === "center" ? W / 2 : Number(cfg.priceX) || 262;
+        const ry = Number(cfg.priceY) || 762;
+        ctx.font = `700 ${rfs}px TplBold, TplSemi, sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        const arrowW = rfs * 0.9; // width the vector "→" occupies
+        const gapw = rfs * 0.3;
+        // Pre-measure so a centred priceX keeps the whole line centred.
+        const fromW = from ? ctx.measureText(from).width : 0;
+        const toW = ctx.measureText(String(to)).width;
+        const lineW = (from ? fromW + arrowW + gapw * 2 : 0) + toW;
+        let x = cfg.priceX === "center" ? W / 2 - lineW / 2 : rx;
+        ctx.shadowColor = "rgba(0,0,0,.55)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        if (from) {
+          ctx.fillStyle = "#93AAA4"; // old price, dimmed
+          ctx.fillText(from, x, ry);
+          x += fromW + gapw;
+          // vector arrow →
+          const ax = x;
+          const ac = lightenHex(accent, 0.2);
+          ctx.save();
+          ctx.shadowColor = "transparent";
+          ctx.strokeStyle = ac;
+          ctx.fillStyle = ac;
+          ctx.lineWidth = Math.max(4, rfs * 0.08);
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(ax, ry);
+          ctx.lineTo(ax + arrowW - rfs * 0.28, ry);
+          ctx.stroke();
+          const hx = ax + arrowW; // arrowhead tip
+          const hh = rfs * 0.2;
+          ctx.beginPath();
+          ctx.moveTo(hx, ry);
+          ctx.lineTo(ax + arrowW - rfs * 0.3, ry - hh);
+          ctx.lineTo(ax + arrowW - rfs * 0.3, ry + hh);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+          x += arrowW + gapw;
+        }
+        ctx.fillStyle = accent; // new price, bright accent
+        ctx.fillText(String(to), x, ry);
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+      }
+      // MCAP pill
+      if (mcap) {
+        const label = `MCAP ${mcap}`;
+        const fsz = Number(cfg.metaFontSize) || 44;
+        ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
+        const chipH = fsz * 1.9;
+        const r = Math.min(chipH / 2, fsz * 0.55);
+        const padX = fsz * 0.7;
+        const cy = Number(cfg.metaY) || 902;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const w = ctx.measureText(label).width + padX * 2;
+        const x = cfg.metaX === "center" ? (W - w) / 2 : Number(cfg.metaX) || 262;
+        ctx.beginPath();
+        ctx.moveTo(x + r, cy);
+        ctx.arcTo(x + w, cy, x + w, cy + chipH, r);
+        ctx.arcTo(x + w, cy + chipH, x, cy + chipH, r);
+        ctx.arcTo(x, cy + chipH, x, cy, r);
+        ctx.arcTo(x, cy, x + w, cy, r);
+        ctx.closePath();
+        ctx.fillStyle = accent.startsWith("#") ? accent + "1A" : "rgba(51,229,201,.10)";
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = accent + "66";
+        ctx.stroke();
+        ctx.fillStyle = "#EAF6F2";
+        ctx.fillText(label, x + w / 2, cy + chipH / 2 + 2);
       }
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
