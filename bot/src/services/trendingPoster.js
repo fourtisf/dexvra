@@ -40,6 +40,13 @@ function xUrl(x) {
   s = s.replace(/^@/, "").replace(/^(x\.com|twitter\.com)\//i, "");
   return s ? `https://x.com/${s}` : null;
 }
+// Normalize a website (bare domain or url) into an absolute URL, or null.
+function webUrl(w) {
+  if (!w) return null;
+  const s = String(w).trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  return s.includes(".") ? `https://${s}` : null;
+}
 
 async function buildText() {
   const now = Date.now();
@@ -77,10 +84,10 @@ async function buildText() {
     enriched.slice(0, MAX_PER_CHAIN).forEach((e, i) => {
       const sym = String(e.r.sym || "").replace(/^\$/, "");
       const dexUrl = `${SITE_URL}/token/${e.r.chain}/${e.r.address}`;
-      // $TICKER → the token's Telegram; if it has no TG, its X; and only if it
-      // has neither, its Dexvra page (never a dead link). MARKET CAP → the
-      // Dexvra token page (its CA).
-      const tickerHref = tgUrl(e.r.telegram) || xUrl(e.r.twitter) || dexUrl;
+      // $TICKER prefers Telegram → then X → then Website; only if the token has
+      // none of those does it fall back to its Dexvra page (never a dead link).
+      // MARKET CAP → the Dexvra token page (its CA).
+      const tickerHref = tgUrl(e.r.telegram) || xUrl(e.r.twitter) || webUrl(e.r.website) || dexUrl;
       const link = `<a href="${escapeHtml(tickerHref)}">$${escapeHtml(sym)}</a>`;
       const pct = pctStr(e.change);
       const mc = mcapStr(e.mcap);
