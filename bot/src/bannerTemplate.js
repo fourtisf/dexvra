@@ -176,16 +176,17 @@ const KIND_DEFAULTS = {
     logoX: 1890,
     logoY: 350,
     logoSize: 430,
-    tickerX: 1800,
+    // $ticker + name centred a bit more inside the right token card.
+    tickerX: 1720,
     tickerY: 920,
     tickerFontSize: 80,
     nameFontSize: 44,
     nameOffsetY: 105,
-    // Trending shows the CHAIN chip only — no price / MC (name + $ticker already
-    // sit in the token card).
+    // Trending shows the CHAIN chip only — no price / MC — dropped into the
+    // separate box at bottom-centre of the template (left of the token card).
     showPrice: false,
     showMcap: false,
-    metaX: 1690,
+    metaX: 1160,
     metaY: 1120,
     metaFontSize: 34,
   },
