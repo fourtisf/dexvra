@@ -315,14 +315,23 @@ function pthKb() {
 }
 
 // ── Trending board editor (pinned @dexvratrending message look) ─────────────
-// The chain logo emoji + rank badges 1–8 shown on the live trending board.
+// The chain logo emoji + rank badges 1–10 shown on the live trending board.
+// Editor marker: ✅ = the operator has set a custom emoji here, ▫️ = still the
+// built-in default (answers "which have I already given a premium emoji?").
+const TB_SET = "✅";
+const TB_DEFAULT = "▫️";
 function tbText() {
-  const badges = trendingBoard.rankEmojis().map((e, i) => `${i + 1}${e}`).join("  ");
+  const n = trendingBoard.RANK_SLOTS;
+  const badges = trendingBoard
+    .rankEmojis()
+    .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${e}`)
+    .join("  ");
   return (
     `🔥 <b>Trending board</b>\n\n` +
     `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
-    `(top-tier buyers first), up to <b>${10}</b> tokens each, auto-updated.\n\n` +
-    `<b>Rank badges 1–8:</b>\n${badges}\n\n` +
+    `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
+    `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
+    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n\n` +
     `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
     `Send any emoji when asked. Applies on the next board refresh.`
   );
@@ -330,8 +339,13 @@ function tbText() {
 function tbKb() {
   const cb = Markup.button.callback;
   const badges = trendingBoard.rankEmojis();
-  const rankBtns = badges.map((e, i) => cb(`${i + 1} ${e}`, `tbr:${i + 1}`));
-  const rows = [rankBtns.slice(0, 4), rankBtns.slice(4, 8)];
+  const rankBtns = badges.map((e, i) => {
+    const mark = trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT;
+    return cb(`${mark} ${i + 1} ${e}`, `tbr:${i + 1}`);
+  });
+  // Five per row so 1–10 fits two clean rows (grows automatically with RANK_SLOTS).
+  const rows = [];
+  for (let i = 0; i < rankBtns.length; i += 5) rows.push(rankBtns.slice(i, i + 5));
   rows.push([cb("🔗 Chain logos", "tbc")]);
   rows.push([cb("↩️ Reset board", "tbrst"), cb("⬅ Back", "home")]);
   return Markup.inlineKeyboard(rows);
@@ -341,6 +355,7 @@ function tbChainsText() {
     `🔗 <b>Chain logos</b>\n\n` +
     `The emoji shown before each chain's header on the trending board ` +
     `(e.g. <code>🟣 SOLANA - Trending</code>).\n\n` +
+    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n\n` +
     `Tap a chain, then send the emoji you want. ⬅ Back to the board.`
   );
 }
@@ -350,7 +365,7 @@ function tbChainsKb() {
   const rows = [];
   for (let i = 0; i < chains.length; i += 2) {
     rows.push(
-      chains.slice(i, i + 2).map((c) => cb(`${c.logo} ${c.label}`, `tbcl:${c.id}`)),
+      chains.slice(i, i + 2).map((c) => cb(`${c.custom ? TB_SET : TB_DEFAULT} ${c.logo} ${c.label}`, `tbcl:${c.id}`)),
     );
   }
   rows.push([cb("⬅ Back", "tb")]);

@@ -24,8 +24,11 @@ const poster = require("../src/services/trendingPoster");
 
 test("board: defaults, override, reset, rank fallback", async () => {
   assert.deepStrictEqual(tb.rankEmojis().slice(0, 3), ["🥇", "🥈", "🥉"]);
+  assert.strictEqual(tb.RANK_SLOTS, 10, "10 editable rank slots");
   assert.strictEqual(tb.chainLogo("solana"), "🟣");
-  assert.strictEqual(tb.rankBadge(9), "9.", "ranks past 8 fall back to N.");
+  assert.strictEqual(tb.rankBadge(9), "9️⃣", "rank 9 has an emoji badge");
+  assert.strictEqual(tb.rankBadge(10), "🔟", "rank 10 has an emoji badge");
+  assert.strictEqual(tb.rankBadge(11), "11.", "ranks past 10 fall back to N.");
   await tb.setRankEmoji(1, "🔥");
   await tb.setChainLogo("solana", "◎");
   assert.strictEqual(tb.rankBadge(1), "🔥");
@@ -35,9 +38,25 @@ test("board: defaults, override, reset, rank fallback", async () => {
   assert.strictEqual(tb.chainLogo("solana"), "🟣");
 });
 
-test("board: rank must be 1–8", async () => {
-  await assert.rejects(() => tb.setRankEmoji(9, "x"));
+test("board: rank must be 1–10", async () => {
+  await assert.rejects(() => tb.setRankEmoji(11, "x"));
   await assert.rejects(() => tb.setRankEmoji(0, "x"));
+  await tb.setRankEmoji(10, "🚀"); // rank 10 is now valid
+  assert.strictEqual(tb.rankBadge(10), "🚀");
+  await tb.reset();
+});
+
+test("board: custom markers track admin overrides (✅ vs default)", async () => {
+  assert.strictEqual(tb.isRankCustom(3), false, "rank 3 starts on default");
+  assert.strictEqual(tb.isChainCustom("bsc"), false, "bsc starts on default");
+  await tb.setRankEmoji(3, "⭐");
+  await tb.setChainLogo("bsc", "🐤");
+  assert.strictEqual(tb.isRankCustom(3), true, "rank 3 now marked custom");
+  assert.strictEqual(tb.isChainCustom("bsc"), true, "bsc now marked custom");
+  assert.ok(tb.chainList().find((c) => c.id === "bsc").custom, "chainList exposes the custom flag");
+  await tb.reset();
+  assert.strictEqual(tb.isRankCustom(3), false, "reset clears the marker");
+  assert.strictEqual(tb.isChainCustom("bsc"), false);
 });
 
 test("poster: tier priority beats performance, fourtis format", async () => {
