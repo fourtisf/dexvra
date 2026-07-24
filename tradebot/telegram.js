@@ -1047,10 +1047,26 @@ async function onMessageImpl(m) {
 
   if (text.startsWith('/start')) {
     const payload = text.split(/\s+/)[1] || null;
-    // Deep link from the Dexvra channels' "⚡ Trade" line: /start ca_<address>
-    // opens the token card directly (chain auto-detected). Anything else stays
-    // a referral code, exactly as before.
-    const deepCa = (payload && payload.startsWith('ca_') && isCa(payload.slice(3))) ? payload.slice(3) : null;
+    // Deep link from a Dexvra listing post's "⚡ Buy / Sell" line:
+    //   /start ca_<address>          — legacy, chain is auto-detected
+    //   /start ca_<chain>_<address>  — carries the chain, so we skip getCode
+    //                                  detection and open the EXACT venue. Vital
+    //                                  for Robinhood launchpad / bonding-curve
+    //                                  tokens: they have NO code at the address,
+    //                                  so getCode-based detection can't see them
+    //                                  and the tap used to dead-end. Anything
+    //                                  else stays a referral code, as before.
+    let deepCa = null, deepChain = null;
+    if (payload && payload.startsWith('ca_')) {
+      const rest = payload.slice(3);
+      const us = rest.indexOf('_');
+      if (us > 0 && core.chainOf(rest.slice(0, us)) && isCa(rest.slice(us + 1))) {
+        deepChain = rest.slice(0, us);
+        deepCa = rest.slice(us + 1);
+      } else if (isCa(rest)) {
+        deepCa = rest;
+      }
+    }
     const ref = deepCa ? null : payload;
     const isNew = !core.getUser(chatId);
     core.ensureUser(chatId, ref);
@@ -1059,13 +1075,26 @@ async function onMessageImpl(m) {
     if (deepCa) {
       if (isNew) await send(chatId, `👋 <b>Welcome to Dexvra Trade Bot</b>\n\nA wallet was just created for you. To start trading, tap 💼 Wallets → 📥 to get your deposit address and add some funds. Here's the token you tapped 👇`, mainMenu());
       try {
-        const det = await detectChain(chatId, deepCa);
-        if (det.choices) {
-          const kb = det.choices.map((ck) => { const c = core.chainOf(ck); return [btn(`${c.emoji} ${c.name}`, `tok:${ck}:${walletIndex(chatId)}:${deepCa}`)]; });
-          kb.push([btn('« Menu', 'menu')]);
-          return await send(chatId, `🌐 <code>${short(deepCa)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+        let chain = deepChain;   // chain carried by the link → no detection needed
+        if (!chain) {
+          const det = await detectChain(chatId, deepCa);
+          if (det.choices) {
+            const kb = det.choices.map((ck) => { const c = core.chainOf(ck); return [btn(`${c.emoji} ${c.name}`, `tok:${ck}:${walletIndex(chatId)}:${deepCa}`)]; });
+            kb.push([btn('« Menu', 'menu')]);
+            return await send(chatId, `🌐 <code>${short(deepCa)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+          }
+          chain = det.chain;
         }
-        const c = await tokenCard(chatId, deepCa, det.chain);
+        if (!chain) {
+          // Detection found nothing (codeless launchpad token, or an RPC was
+          // down) → offer a chain picker so the tap is ALWAYS actionable, never
+          // a silent dead-end or a wrong-chain "couldn't price". The tok: button
+          // loads the card on whichever chain the user picks.
+          const kb = core.chains.enabledChains().map((c) => [btn(`${c.emoji} ${c.name}`, `tok:${c.key}:${walletIndex(chatId)}:${deepCa}`)]);
+          kb.push([btn('« Menu', 'menu')]);
+          return await send(chatId, `🌐 <code>${short(deepCa)}</code> — pick the chain to trade on:`, { inline_keyboard: kb });
+        }
+        const c = await tokenCard(chatId, deepCa, chain);
         return await send(chatId, c.text, c.kb);
       } catch (e) {
         // A deep-link tap must NEVER go blank. If the card can't load right now

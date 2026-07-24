@@ -503,9 +503,15 @@ function overviewBlock(text) {
 }
 
 // Deep link into the Dexvra Trade Bot: opens the token card for this CA
-// directly (the trade bot's /start handler resolves the ca_ payload).
-const tradeUrlOf = (coin) =>
-  (coin && coin.address) ? `https://t.me/${TRADEBOT_USERNAME}?start=ca_${coin.address}` : "";
+// directly. We include the CHAIN (ca_<chain>_<address>) so the trade bot opens
+// the exact venue without guessing — essential for Robinhood launchpad tokens,
+// which have no code at the address for getCode-based chain detection to find.
+// The trade bot stays backward-compatible with the older ca_<address> form.
+const tradeUrlOf = (coin) => {
+  if (!coin || !coin.address) return "";
+  const chain = coin.chain ? `${String(coin.chain).toLowerCase().replace(/[^a-z0-9]/g, "")}_` : "";
+  return `https://t.me/${TRADEBOT_USERNAME}?start=ca_${chain}${coin.address}`;
+};
 
 // Raw URLs for the post-render auto-link pass (entity URLs, not markup).
 function postUrls(coin) {

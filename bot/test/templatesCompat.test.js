@@ -209,7 +209,9 @@ test("paste-proof relink: NAME → token page and Buy/Sell CTA → trade bot sur
   assert.strictEqual(card.text.substr(nameLink.offset, nameLink.length), "What If", "link covers just the name");
   const cta = linkFor("Buy / Sell on Dexvra Trade Bot");
   assert.ok(cta, "the Buy/Sell CTA became a link after paste");
-  assert.ok(cta.url.startsWith(`https://t.me/dexvratradebot?start=ca_${coin.address}`), "CTA → trade bot with the CA");
+  // The deep link carries the chain (ca_<chain>_<address>) so the trade bot
+  // opens the exact venue without guessing.
+  assert.strictEqual(cta.url, `https://t.me/dexvratradebot?start=ca_robinhood_${coin.address}`, "CTA → trade bot with chain + CA");
   for (const e of card.entities) assert.ok(e.offset + e.length <= card.text.length);
   await tpl.resetTemplate("post_listing_xpress");
 });
