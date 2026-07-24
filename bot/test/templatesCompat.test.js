@@ -179,3 +179,35 @@ test("entity-saved WYSIWYG template: socials strip remaps entity offsets", async
   assert.ok(!/❌ X/.test(partial.text), partial.text);
   await tpl.resetTemplate("post_trending");
 });
+
+test("paste-proof relink: NAME → token page and Buy/Sell CTA → trade bot survive a plain-text paste", async () => {
+  const fmt = require("../src/channels/format");
+  // An admin PASTED the listing template as plain text → every [label](url)
+  // markup is gone (the exact state behind the $IF screenshot).
+  const pasted =
+    "⚡ Xpress Listing — {name} live on Dexvra {logoEmoji}\n\n" +
+    "💲 {name} ({symbol})\n\n" +
+    "{chainEmoji} Network: {chain}\n📄 Contract address:\n{address}\n\n" +
+    "📊 Price: {price}\n🏦 Market cap: {mcap} · 💧 Liquidity: {liq}\n\n" +
+    "⚡ Buy / Sell on Dexvra Trade Bot\n\n" +
+    "🔗 {symbol} social links\n❌ X · 🌐 Website · ✈️ Telegram\n\n" +
+    "📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements";
+  await tpl.setTemplate("post_listing_xpress", pasted);
+  const coin = {
+    name: "What If", symbol: "IF", chain: "robinhood", tier: "XPRESS",
+    address: "0x232CDFc415D10b673845D83Dc02ba2eaBe7e30d1",
+    price: 0.00514, mcap: 5.1e6, liq: 232200,
+    links: { twitter: "https://x.com/w", website: "https://w.io", telegram: "https://t.me/w" },
+  };
+  const card = fmt.listingPost(coin);
+  const linkFor = (needle) =>
+    card.entities.find((e) => e.type === "text_link" && card.text.substr(e.offset, e.length).includes(needle));
+  const nameLink = linkFor("What If ($IF)");
+  assert.ok(nameLink, "the name became a link after paste");
+  assert.strictEqual(nameLink.url, `https://dexvra.io/token/robinhood/${coin.address}`, "name → token page");
+  const cta = linkFor("Buy / Sell on Dexvra Trade Bot");
+  assert.ok(cta, "the Buy/Sell CTA became a link after paste");
+  assert.ok(cta.url.startsWith(`https://t.me/dexvratradebot?start=ca_${coin.address}`), "CTA → trade bot with the CA");
+  for (const e of card.entities) assert.ok(e.offset + e.length <= card.text.length);
+  await tpl.resetTemplate("post_listing_xpress");
+});
