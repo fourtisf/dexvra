@@ -229,16 +229,16 @@ const DEFAULTS = {
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** ({name}) is officially listed on Dexvra! 🎉\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n\n" +
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_trending:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** is now **Trending** on Dexvra for the next **{hours} hours**, announced across our channels! 🔥\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n\n" +
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n\n" +
+    "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   group_start:
     "🟢 **Dexvra Buy Bot**\n\n" +
@@ -419,9 +419,9 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
-  success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks", "site", "listing", "trending", "announce"] },
-  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "site", "listing", "trending", "announce"] },
-  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks", "site", "listing", "trending", "announce"] },
+  success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
   buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },

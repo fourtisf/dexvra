@@ -81,6 +81,9 @@ const SAMPLE_VARS = {
   hours: "48", size: "728×90", slot: "Wide Banner", duration: "3 Days", usd: "670",
   endsAt: "Jul 22, 14:00 UTC", discount: "20", field: "name",
   postLinks: "🚨 Listing post: https://t.me/dexvralisting/6\n📢 Announcement: https://t.me/dexvraio/9",
+  announceX: "🐦 [Announce on X 𝕏](https://x.com/i/status/1)",
+  site: "https://dexvra.io", listing: "https://t.me/dexvralisting",
+  trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
   emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "@dexvrabot",
 };
@@ -806,6 +809,8 @@ const PH_HELP = {
   trending: "the Trending channel link",
   announce: "the Announcements channel link",
   xUrl: "link to the X announcement post (auto after tweeting)",
+  announceX: "the “Announce on X” link line (auto — shows after a tweet, hidden otherwise)",
+  postLinks: "the posted-message links (Listing/Trending/Announcement — auto)",
   tradeUrl: "deep link that opens this token in the Dexvra Trade Bot",
   change: "24h change sentence",
   tierEmoji: "tier emoji (from the paid tier)",
@@ -846,7 +851,7 @@ const PH_HELP = {
 const AUTO_PH = new Set([
   "head", "tierLine", "logoEmoji", "overview", "socials", "footer",
   "chainEmoji", "twitter", "website", "telegram", "site", "listing", "trending", "announce",
-  "xUrl", "tradeUrl", "change", "tierEmoji",
+  "xUrl", "tradeUrl", "change", "tierEmoji", "announceX", "postLinks",
 ]);
 
 // A friendly legend: split the template's placeholders into "your values" vs

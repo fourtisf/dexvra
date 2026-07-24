@@ -247,7 +247,6 @@ async function fulfillListing(ctx, order) {
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];
-  if (coin.xUrl) links.push({ label: "🐦 Announce on X", url: coin.xUrl });
   try {
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin));
     if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
@@ -301,7 +300,6 @@ async function fulfillTrending(ctx, order) {
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];
-  if (coin.xUrl) links.push({ label: "🐦 Announce on X", url: coin.xUrl });
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
     if (tMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
@@ -357,8 +355,8 @@ async function fulfillBanner(ctx, order) {
     x.postBanner(rec).catch(() => null),
     new Promise((r) => setTimeout(r, 20000, null)),
   ]);
-  if (bTweetId) links.push({ label: "🐦 Announce on X", url: `https://x.com/i/status/${bTweetId}` });
-  await dm(ctx, successBanner(rec, links), menu.postPurchase(SITE_URL));
+  const bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
+  await dm(ctx, successBanner(rec, links, bXUrl), menu.postPurchase(SITE_URL));
   return booking;
 }
 
@@ -368,12 +366,18 @@ async function fulfillBanner(ctx, order) {
 function linkLines(links) {
   return (links || []).map((l) => `${l.label}: ${l.url}`).join("\n");
 }
+// The editable {announceX} placeholder — a clean "Announce on X" link when a
+// tweet exists, empty otherwise (collapseGaps drops the blank line).
+function announceXLine(xUrl) {
+  return xUrl ? `🐦 [Announce on X 𝕏](${xUrl})` : "";
+}
 function successListing(coin, links) {
   return tpl.render("success_listing", {
     symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
     name: premium.sanitizeVar(coin.name),
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
+    announceX: announceXLine(coin.xUrl),
     ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} → clickable footer
   });
 }
@@ -383,14 +387,16 @@ function successTrending(coin, hours, links) {
     hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
+    announceX: announceXLine(coin.xUrl),
     ...fmt.channelLinks(),
   });
 }
-function successBanner(rec, links) {
+function successBanner(rec, links, xUrl) {
   return tpl.render("success_banner", {
     slot: premium.sanitizeVar(rec.slot),
     endsAt: new Date(rec.endsAt).toUTCString(),
     postLinks: linkLines(links),
+    announceX: announceXLine(xUrl),
     ...fmt.channelLinks(),
   });
 }
