@@ -65,8 +65,8 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#CCFF00",
     geckoNetwork: "robinhood", // GT indexes Robinhood Chain → live price/mcap/liq + chart embed
     goPlusChainId: null,
-    explorer: (a) => `https://dexscreener.com/robinhood/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/robinhood/${a}`,
+    explorer: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/robinhood/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   tron: {
@@ -106,8 +106,8 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#00FF9C",
     geckoNetwork: "plasma",
     goPlusChainId: null,
-    explorer: (a) => `https://dexscreener.com/plasma/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/plasma/${a}`,
+    explorer: (a) => `https://plasmascan.to/token/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/plasma/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   // ── More EVM chains (billed in BNB by the bot via BSC). Registered here so
@@ -160,7 +160,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     geckoNetwork: "berachain",
     goPlusChainId: null,
     explorer: (a) => `https://berascan.com/token/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/berachain/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/berachain/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   sonic: {
@@ -170,7 +170,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     geckoNetwork: "sonic",
     goPlusChainId: null,
     explorer: (a) => `https://sonicscan.org/token/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/sonic/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/sonic/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   hyperevm: {
@@ -179,8 +179,8 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#4FD1C5",
     geckoNetwork: "hyperevm",
     goPlusChainId: null,
-    explorer: (a) => `https://dexscreener.com/hyperevm/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/hyperevm/${a}`,
+    explorer: (a) => `https://www.geckoterminal.com/hyperevm/tokens/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/hyperevm/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   abstract: {
@@ -190,7 +190,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     geckoNetwork: "abstract",
     goPlusChainId: null,
     explorer: (a) => `https://abscan.org/token/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/abstract/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/abstract/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   apechain: {
@@ -200,7 +200,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     geckoNetwork: "apechain",
     goPlusChainId: null,
     explorer: (a) => `https://apescan.io/token/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/apechain/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/apechain/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   blast: {
@@ -210,7 +210,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     geckoNetwork: "blast",
     goPlusChainId: "81457",
     explorer: (a) => `https://blastscan.io/token/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/blast/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/blast/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   sei: {
@@ -220,7 +220,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     geckoNetwork: "sei-evm",
     goPlusChainId: null,
     explorer: (a) => `https://seitrace.com/token/${a}?chain=pacific-1`,
-    buyUrl: (a) => `https://dexscreener.com/seiv2/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/sei-evm/tokens/${a}`,
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
   },
   aptos: {
@@ -229,8 +229,8 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#8CA0B8",
     geckoNetwork: "aptos",
     goPlusChainId: null, // non-EVM → GoPlus token_security doesn't cover it
-    explorer: (a) => `https://dexscreener.com/aptos/${a}`,
-    buyUrl: (a) => `https://dexscreener.com/aptos/${a}`,
+    explorer: (a) => `https://www.geckoterminal.com/aptos/tokens/${a}`,
+    buyUrl: (a) => `https://www.geckoterminal.com/aptos/tokens/${a}`,
     // Aptos coin type (0x…::module::SYMBOL) or a bare object / FA address.
     addressPattern: /^0x[a-fA-F0-9]{1,64}(::[A-Za-z0-9_]+){0,2}$/,
   },

@@ -32,6 +32,14 @@ function tgUrl(tg) {
   s = s.replace(/^@/, "").replace(/^t\.me\//i, "");
   return s ? `https://t.me/${s}` : null;
 }
+// Normalize a token's X/Twitter (handle / url) into an x.com URL, or null.
+function xUrl(x) {
+  if (!x) return null;
+  let s = String(x).trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  s = s.replace(/^@/, "").replace(/^(x\.com|twitter\.com)\//i, "");
+  return s ? `https://x.com/${s}` : null;
+}
 
 async function buildText() {
   const now = Date.now();
@@ -69,9 +77,10 @@ async function buildText() {
     enriched.slice(0, MAX_PER_CHAIN).forEach((e, i) => {
       const sym = String(e.r.sym || "").replace(/^\$/, "");
       const dexUrl = `${SITE_URL}/token/${e.r.chain}/${e.r.address}`;
-      // $TICKER → the token's Telegram (falls back to its Dexvra page so it's
-      // never a dead link); the MARKET CAP → the Dexvra token page (its CA).
-      const tickerHref = tgUrl(e.r.telegram) || dexUrl;
+      // $TICKER → the token's Telegram; if it has no TG, its X; and only if it
+      // has neither, its Dexvra page (never a dead link). MARKET CAP → the
+      // Dexvra token page (its CA).
+      const tickerHref = tgUrl(e.r.telegram) || xUrl(e.r.twitter) || dexUrl;
       const link = `<a href="${escapeHtml(tickerHref)}">$${escapeHtml(sym)}</a>`;
       const pct = pctStr(e.change);
       const mc = mcapStr(e.mcap);

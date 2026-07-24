@@ -10,7 +10,7 @@ import { Socials } from "@/components/Socials";
 import { TokenTrades } from "@/components/TokenTrades";
 import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
-import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
+import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
 
 export default function TokenPage() {
@@ -57,7 +57,6 @@ export default function TokenPage() {
     network && t.poolAddress
       ? `https://www.geckoterminal.com/${network}/pools/${t.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`
       : null;
-  const d = pathFrom(t.trend, 640, 120);
 
   const copyCa = () => {
     navigator.clipboard?.writeText(t.address).catch(() => {});
@@ -131,9 +130,34 @@ export default function TokenPage() {
             <iframe className="tp-chart" title={`${t.symbol} chart`} src={chartSrc} allow="clipboard-write" allowFullScreen />
           ) : (
             <div className="tp-chart-fallback">
-              <svg viewBox="0 0 640 120" preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
-                <path d={`${d} L640,120 L0,120 Z`} fill={col} fillOpacity=".14" />
-                <path d={d} fill="none" stroke={col} strokeWidth="2.4" strokeLinecap="round" />
+              <svg viewBox="0 0 640 260" preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
+                {(() => {
+                  // Candlestick view synthesised from the price trend (green up /
+                  // red down candles with wicks) — shown until the live
+                  // GeckoTerminal candle embed is available (needs a pool address).
+                  const pts = t.trend;
+                  const H = 260, W = 640, n = pts.length;
+                  const lo = Math.min(...pts), hi = Math.max(...pts), rng = hi - lo || 1;
+                  const yOf = (v: number) => H - 14 - ((v - lo) / rng) * (H - 28);
+                  const slot = W / n;
+                  const bw = Math.max(3, slot * 0.58);
+                  return pts.map((close, i) => {
+                    const open = pts[Math.max(0, i - 1)];
+                    const wickHi = Math.max(open, close, pts[Math.min(n - 1, i + 1)]);
+                    const wickLo = Math.min(open, close, pts[Math.min(n - 1, i + 1)]);
+                    const green = close >= open;
+                    const cc = green ? "#3DDC97" : "#F76A85";
+                    const cx = i * slot + slot / 2;
+                    const bodyTop = Math.min(yOf(open), yOf(close));
+                    const bodyH = Math.max(2, Math.abs(yOf(close) - yOf(open)));
+                    return (
+                      <g key={i}>
+                        <line x1={cx} x2={cx} y1={yOf(wickHi)} y2={yOf(wickLo)} stroke={cc} strokeWidth="1.4" />
+                        <rect x={cx - bw / 2} y={bodyTop} width={bw} height={bodyH} fill={cc} rx="1" />
+                      </g>
+                    );
+                  });
+                })()}
               </svg>
               <div className="chart-note">
                 {network ? (

@@ -47,7 +47,7 @@ export function Socials({ t }: { t: BoardToken }) {
           <WebLogo />
         </a>
       )}
-      {c && (
+      {c && !c.explorer(t.address).includes("dexscreener") && (
         <a className="soc" href={c.explorer(t.address)} target="_blank" rel="noopener noreferrer" title="Explorer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M9 15 15 9M10.5 6.5 13 4a4 4 0 0 1 6 6l-2.5 2.5M13.5 17.5 11 20a4 4 0 0 1-6-6l2.5-2.5" />
