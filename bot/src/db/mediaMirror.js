@@ -7,9 +7,15 @@
 // mirrored too, without either process having to call us.
 const path = require("node:path");
 const fss = require("node:fs");
-const { DATA_DIR } = require("../config/constants");
+const { DATA_DIR, GRAMJS_SESSION_FILE } = require("../config/constants");
 const mongo = require("./mongo");
 const log = require("../helpers/logger");
+
+// The premium userbot login (a GramJS string session). Mirroring it means a
+// fresh container recovers the premium account WITHOUT a manual re-login. It is
+// auth material — keep the Mongo DB private. Lives OUTSIDE DATA_DIR, so it is
+// handled explicitly (not by the DATA_DIR blob scan).
+const SESSION_BLOB = "gramjs-session";
 
 // Binary files worth backing up (NOT the .json stores — those go via kv, and a
 // .tmp write-in-progress must never be mirrored).
@@ -47,6 +53,40 @@ async function deleteMirror(name) {
   await mongo.blobDelete(name).catch(() => {});
 }
 
+/** Push the premium userbot session to Mongo (best-effort). */
+async function mirrorSession() {
+  if (!mongo.enabled() || !GRAMJS_SESSION_FILE) return;
+  try {
+    const buf = await fss.promises.readFile(GRAMJS_SESSION_FILE);
+    if (buf.length > 10) await mongo.blobSet(SESSION_BLOB, buf);
+  } catch {
+    /* no session file yet — nothing to mirror */
+  }
+}
+/** Restore the session from Mongo when it's missing locally. Returns true if it
+ *  wrote one (so the caller can log that the premium login was recovered). */
+async function restoreSession() {
+  if (!mongo.enabled() || !GRAMJS_SESSION_FILE) return false;
+  let localSize = 0;
+  try {
+    localSize = (await fss.promises.stat(GRAMJS_SESSION_FILE)).size;
+  } catch {
+    /* missing */
+  }
+  if (localSize > 10) return false; // a valid local session already exists
+  try {
+    const buf = await mongo.blobGet(SESSION_BLOB);
+    if (buf && buf.length > 10) {
+      await fss.promises.mkdir(path.dirname(GRAMJS_SESSION_FILE), { recursive: true });
+      await writeAtomic(GRAMJS_SESSION_FILE, buf);
+      return true;
+    }
+  } catch (e) {
+    log.warn(`[media] session restore: ${e && e.message}`);
+  }
+  return false;
+}
+
 /** Boot convergence: restore any mirrored blob missing locally (fresh container),
  *  then seed Mongo from any local blob not yet mirrored. Runs AFTER
  *  persist.hydrate() has established the connection. No-op off Mongo. */
@@ -78,8 +118,15 @@ async function hydrate() {
         seeded++;
       }
     }
-    log.info(`[media] mongo hydrate: ${remote.length} blob(s) in db, restored ${restored}, seeded ${seeded}`);
-    return { mode: "mongo", blobs: remote.length, restored, seeded };
+    // Premium userbot session: restore if missing (before GramJS connects), else
+    // seed the mirror from the local one.
+    const sessRestored = await restoreSession();
+    await mirrorSession();
+    log.info(
+      `[media] mongo hydrate: ${remote.length} blob(s) in db, restored ${restored}, seeded ${seeded}` +
+        (sessRestored ? " · premium session RESTORED" : ""),
+    );
+    return { mode: "mongo", blobs: remote.length, restored, seeded, sessRestored };
   } catch (e) {
     log.warn(`[media] hydrate error — continuing on local files: ${e && e.message}`);
     return { mode: "file" };
@@ -103,6 +150,8 @@ function startSweep(everyMs = 10 * 60 * 1000) {
       for (const name of localBlobs()) {
         if (remote.get(name) !== safeSize(name)) await mirrorFile(name);
       }
+      // Catch a re-login done via scripts/gramjs-login.js between boots.
+      await mirrorSession();
     } catch (e) {
       log.debug(`[media] sweep: ${e && e.message}`);
     }
@@ -117,4 +166,4 @@ function startSweep(everyMs = 10 * 60 * 1000) {
   };
 }
 
-module.exports = { mirrorFile, deleteMirror, hydrate, startSweep, localBlobs, isBlob };
+module.exports = { mirrorFile, deleteMirror, hydrate, startSweep, localBlobs, isBlob, mirrorSession, restoreSession };

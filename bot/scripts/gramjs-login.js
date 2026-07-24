@@ -58,6 +58,18 @@ function ask(question, { hidden } = {}) {
   const me = await client.getMe();
   console.log(`\n✓ Logged in as ${me.username ? "@" + me.username : me.firstName}${me.premium ? " (PREMIUM ✓)" : " (NOT premium — emoji will fall back to unicode!)"}`);
   console.log(`✓ Session saved to ${GRAMJS_SESSION_FILE}`);
+  // Back the fresh session up to Mongo immediately (best-effort) so a container
+  // reset auto-recovers this login without re-running this script.
+  try {
+    const mongo = require("../src/db/mongo");
+    if (mongo.configured() && (await mongo.connect())) {
+      await require("../src/db/mediaMirror").mirrorSession();
+      console.log("✓ Session backed up to MongoDB");
+    }
+    await mongo.close();
+  } catch (e) {
+    console.warn(`  (session Mongo backup skipped: ${e && e.message})`);
+  }
   console.log("\nNext: make sure this account can post in the channels, then restart the bot:");
   console.log("  pm2 restart dexvra-bot");
   await client.disconnect();

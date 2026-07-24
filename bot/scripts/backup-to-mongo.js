@@ -7,8 +7,8 @@
 //   cd /opt/dexvra/bot && node scripts/backup-to-mongo.js
 //
 // Requires MONGO_URI in .env. Fail-loud: exits non-zero if Mongo is unreachable.
-// NOTE: session.txt (the premium login) is intentionally NOT backed up — it is
-// auth material, not data. Re-create it with scripts/gramjs-login.js if lost.
+// Includes the premium userbot session (session.txt) so a fresh container fully
+// auto-recovers — keep the Mongo DB private (it is auth material).
 require("dotenv").config({ path: require("node:path").join(__dirname, "..", ".env") });
 const path = require("node:path");
 const fss = require("node:fs");
@@ -67,8 +67,12 @@ const mediaMirror = require("../src/db/mediaMirror");
     }
   }
 
+  // Premium userbot login (lives outside DATA_DIR).
+  await mediaMirror.mirrorSession();
+  console.log(`  sess ✓ premium userbot session (if present)`);
+
   console.log(
-    `\n✓ Backup complete → MongoDB: ${json} JSON store(s), ${blob} media file(s), ${skipped} skipped.\n` +
+    `\n✓ Backup complete → MongoDB: ${json} JSON store(s), ${blob} media file(s) + session, ${skipped} skipped.\n` +
       `  Restore is automatic on the next boot (persist.hydrate + mediaMirror.hydrate).`,
   );
   await mongo.close();
