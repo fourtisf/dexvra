@@ -14,6 +14,8 @@ type Kind = {
   label: string;
   note: string;
   artworkable: boolean;
+  fillable: boolean;
+  textOverlay: boolean;
   hasArtwork: boolean;
   artworkMtime: number | null;
   clip: Clip | null;
@@ -83,6 +85,20 @@ export function ChannelBannerManager() {
     }
   };
 
+  const toggleText = async (kind: string, on: boolean) => {
+    setBusy(`${kind}:text`);
+    try {
+      await fetch("/api/admin/channel-banners", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind, textOverlay: on }),
+      });
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <section className="asec">
       <div className="asec-h">
@@ -126,7 +142,7 @@ export function ChannelBannerManager() {
         ) : (
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
             {data.kinds.map((k) => (
-              <KindCard key={k.kind} k={k} busy={busy} onUpload={upload} onRemove={remove} />
+              <KindCard key={k.kind} k={k} busy={busy} onUpload={upload} onRemove={remove} onToggleText={toggleText} />
             ))}
           </div>
         )}
@@ -140,11 +156,13 @@ function KindCard({
   busy,
   onUpload,
   onRemove,
+  onToggleText,
 }: {
   k: Kind;
   busy: string | null;
   onUpload: (kind: string, type: "artwork" | "clip", file: File) => void;
   onRemove: (kind: string, type: "artwork" | "clip") => void;
+  onToggleText: (kind: string, on: boolean) => void;
 }) {
   const artRef = useRef<HTMLInputElement>(null);
   const clipRef = useRef<HTMLInputElement>(null);
@@ -192,6 +210,16 @@ function KindCard({
             </button>
           )}
         </div>
+        {k.fillable && (
+          <button
+            className={`abtn ${k.textOverlay ? "" : "ok"}`}
+            style={{ marginTop: 8, width: "100%" }}
+            disabled={busy === `${k.kind}:text`}
+            onClick={() => onToggleText(k.kind, !k.textOverlay)}
+          >
+            {k.textOverlay ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only"}
+          </button>
+        )}
       </div>
 
       {/* Still artwork (listing / trending / banner) */}

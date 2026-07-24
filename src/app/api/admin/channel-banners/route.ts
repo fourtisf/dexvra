@@ -13,6 +13,7 @@ import {
   removeArtwork,
   removeClip,
   setPostingEnabled,
+  setTextOverlay,
   type ChannelKind,
 } from "@/lib/channelBanners";
 
@@ -84,9 +85,15 @@ export async function DELETE(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   if (!(await isAdmin(req))) return unauthorized();
   const body = await req.json().catch(() => ({}));
-  if (typeof body.postingEnabled !== "boolean") {
-    return NextResponse.json({ error: "postingEnabled (boolean) required" }, { status: 400 });
+  // Per-kind text-overlay toggle: { kind, textOverlay: boolean }
+  if (isKind(String(body.kind || "")) && typeof body.textOverlay === "boolean") {
+    const on = await setTextOverlay(String(body.kind), body.textOverlay);
+    return NextResponse.json({ ok: true, kind: body.kind, textOverlay: on });
   }
-  const on = await setPostingEnabled(body.postingEnabled);
-  return NextResponse.json({ ok: true, postingEnabled: on });
+  // Global posting toggle: { postingEnabled: boolean }
+  if (typeof body.postingEnabled === "boolean") {
+    const on = await setPostingEnabled(body.postingEnabled);
+    return NextResponse.json({ ok: true, postingEnabled: on });
+  }
+  return NextResponse.json({ error: "nothing to update" }, { status: 400 });
 }

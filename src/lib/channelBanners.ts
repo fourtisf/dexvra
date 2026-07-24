@@ -16,6 +16,13 @@ export const CHANNEL_KINDS = ["listing", "trending", "banner", "pump", "rankup"]
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 // Still-artwork compositing exists only for these; the rest are clip-only.
 export const ARTWORK_KINDS = new Set<string>(["listing", "trending", "banner"]);
+// Kinds where the bot draws the token's logo + $ticker/name/chips onto the clip
+// (auto-fill). For these the text overlay can be toggled off (logo only) when a
+// designed clip already carries its own text.
+export const FILL_KINDS = new Set<string>(["listing", "trending"]);
+// Must match the bot's LAYOUT_VERSION (bannerTemplate.js) or saved tweaks are
+// ignored as "tuned for an older artwork".
+const LAYOUT_VERSION = 6;
 
 const MEDIA_EXT: Record<string, "animation" | "video"> = {
   gif: "animation", mp4: "video", webm: "video", mov: "video",
@@ -75,11 +82,34 @@ export function postingEnabled(): boolean {
   return typeof g.enabled === "boolean" ? g.enabled : true;
 }
 
+// Per-kind saved layout, but only when it was tuned against the current artwork
+// version (else the bot ignores it — mirror that here).
+function savedLayoutOf(cfg: Record<string, unknown>, kind: string): Record<string, unknown> {
+  const s = cfg[kind] as Record<string, unknown> | undefined;
+  return s && s.layoutVersion === LAYOUT_VERSION ? s : {};
+}
+/** Whether the bot draws the token $ticker/name/chips onto the clip (default on). */
+export function textOverlayEnabled(kind: string): boolean {
+  return savedLayoutOf(loadConfig(), kind).showText !== false;
+}
+export async function setTextOverlay(kind: string, on: boolean): Promise<boolean> {
+  await ensureDir();
+  const cfg = loadConfig();
+  cfg[kind] = { ...savedLayoutOf(cfg, kind), showText: !!on, layoutVersion: LAYOUT_VERSION };
+  const p = configPath();
+  const tmp = `${p}.web.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(cfg, null, 2), "utf8");
+  await fs.rename(tmp, p);
+  return !!on;
+}
+
 export interface ChannelBannerStatus {
   kind: ChannelKind;
   label: string;
   note: string;
   artworkable: boolean;
+  fillable: boolean; // bot draws logo + $ticker/name/chips (listing/trending)
+  textOverlay: boolean; // when fillable: is the auto-text drawn (vs logo-only)?
   hasArtwork: boolean;
   artworkMtime: number | null;
   // preview: how a browser should render the clip — a real GIF is an <img>, an
@@ -131,6 +161,8 @@ export function statusAll(): {
       label: KIND_LABEL[kind],
       note: KIND_NOTE[kind],
       artworkable: ARTWORK_KINDS.has(kind),
+      fillable: FILL_KINDS.has(kind),
+      textOverlay: textOverlayEnabled(kind),
       hasArtwork: existsNonEmpty(ap),
       artworkMtime,
       clip: clip ? { ...clip, preview: clipPreviewKind(kind, clip.ext) } : null,

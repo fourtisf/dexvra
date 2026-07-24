@@ -254,10 +254,12 @@ function btKindKb(kind) {
     rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
+  const textOn = bannerTpl.getSettings(kind).showText !== false;
   return Markup.inlineKeyboard([
     [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
     clipRow,
     [Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)],
+    [Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)],
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
     [Markup.button.callback("⬅ Artwork menu", "bt")],
   ]);
@@ -1241,6 +1243,17 @@ function build() {
     await bannerTpl.updateSettings(kind, { showBadge: !on });
     ctx.answerCbQuery(`🏷 Badge ${on ? "OFF" : "ON"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
+  // One-tap auto-text toggle straight from the kind menu — when a designed clip
+  // already carries text ("Trending Alert" etc.), hiding the auto-drawn
+  // $ticker/name/chips stops them overlapping; the bot then draws only the logo.
+  bot.action(new RegExp(`^bt_txt:${K}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const on = bannerTpl.getSettings(kind).showText !== false;
+    await bannerTpl.updateSettings(kind, { showText: !on });
+    ctx.answerCbQuery(on ? "🔤 Auto-text hidden — logo only (no overlap)" : "🔤 Auto-text shown").catch(() => {});
+    await edit(ctx, btKindText(kind), btKindKb(kind));
   });
   bot.action(new RegExp(`^bt_ed:${K}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
