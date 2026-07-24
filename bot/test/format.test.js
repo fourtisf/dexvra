@@ -146,8 +146,8 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(!text.includes("dexvra.io/token/"), "no raw dexvra token URL printed");
   assert.ok(text.includes("Network: Solana"), "network line");
   assert.ok(text.includes("📄 Contract address:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
-  assert.ok(text.includes("🏦 Market cap: $84.4K"), "market cap line");
-  assert.ok(text.includes("💧 Liquidity: $22.3K"), "liquidity line");
+  // Market cap and Liquidity share ONE line, side by side (not stacked).
+  assert.ok(text.includes("🏦 Market cap: $84.4K · 💧 Liquidity: $22.3K"), "market cap · liquidity on one line");
   assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
 });

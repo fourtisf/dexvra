@@ -76,8 +76,9 @@ const LISTING_BODY =
   `{chainEmoji} **Network:** {chain}\n` +
   `📄 **Contract address:**\n{address}\n\n` +
   `${em("📊", E.chart)} **Price:** {price}\n` +
-  `${em("🏦", E.dollar)} **Market cap:** {mcap}\n` +
-  `${em("💧", E.link)} **Liquidity:** {liq}\n\n` +
+  // Market cap and Liquidity sit SIDE-BY-SIDE on one line (operator preference)
+  // — not liquidity stacked underneath the market cap.
+  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("💧", E.link)} **Liquidity:** {liq}\n\n` +
   `${em("⚡", E.zap)} **Trade it now — one tap:**\n` +
   `[⚡ Buy / Sell on Dexvra Trade Bot]({tradeUrl})\n\n` +
   `[Announce On X 𝕏]({xUrl})\n\n` +
