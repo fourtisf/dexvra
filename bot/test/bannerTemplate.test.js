@@ -35,8 +35,8 @@ test("settings load defaults and persist updates per kind", async () => {
   const s2 = bt.getSettings("listing");
   assert.strictEqual(s2.logoSize, 220);
   assert.strictEqual(s2.logoX, 900);
-  // trending untouched
-  assert.strictEqual(bt.getSettings("trending").logoSize, bt.DEFAULTS.logoSize);
+  // trending untouched — its own per-kind default (separate from listing)
+  assert.strictEqual(bt.getSettings("trending").logoSize, bt.defaultsFor("trending").logoSize);
 });
 
 test("bundled artwork acts as fallback; upload overrides it", async () => {
@@ -94,7 +94,7 @@ test("stale saved layouts (no/old layoutVersion) are ignored — defaults win", 
   const after = await bt.updateSettings("trending", { logoX: 1700 });
   assert.strictEqual(after.logoX, 1700);
   assert.strictEqual(bt.getSettings("trending").logoX, 1700);
-  assert.strictEqual(bt.getSettings("trending").logoSize, 420, "untouched keys come from CURRENT defaults");
+  assert.strictEqual(bt.getSettings("trending").logoSize, bt.defaultsFor("trending").logoSize, "untouched keys come from CURRENT defaults");
   await bt.resetSettings("trending");
 });
 

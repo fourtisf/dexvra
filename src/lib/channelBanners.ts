@@ -131,10 +131,27 @@ const BASE_LAYOUT: Layout = {
   metaY: 772,
 };
 const LAYOUT_KEYS = Object.keys(BASE_LAYOUT) as (keyof Layout)[];
+// Per-kind default overrides — MUST match bannerTemplate.js KIND_DEFAULTS so the
+// editor's starting positions equal what the bot actually composites.
+const KIND_LAYOUT: Record<string, Partial<Layout>> = {
+  trending: {
+    logoX: 1890,
+    logoY: 350,
+    logoSize: 430,
+    tickerX: 1800,
+    tickerY: 920,
+    tickerFontSize: 80,
+    nameFontSize: 44,
+    nameOffsetY: 105,
+    metaX: 1620,
+    metaY: 1110,
+    metaFontSize: 30,
+  },
+};
 
 export function getLayout(kind: string): Layout {
   const saved = savedLayoutOf(loadConfig(), kind);
-  const out = { ...BASE_LAYOUT };
+  const out = { ...BASE_LAYOUT, ...(KIND_LAYOUT[kind] || {}) };
   for (const k of LAYOUT_KEYS) {
     if (saved[k] !== undefined) (out as Record<string, unknown>)[k] = saved[k];
   }

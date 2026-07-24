@@ -154,8 +154,28 @@ const BASE_DEFAULTS = {
   badgeFontSize: 30,
 };
 const KIND_DEFAULTS = {
+  // Listing keeps the token TEXT on the LEFT (its bundled art has an empty panel
+  // there).
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
-  trending: { ...BASE_DEFAULTS, tickerGlow: "#38D8F0" },
+  // Trending art puts a hero title ("Trending Alert") on the LEFT, so group the
+  // token block on the RIGHT — under the logo ring — instead of over the title.
+  // Deliberately DIFFERENT from listing (fine-tune per template in the layout /
+  // position editor).
+  trending: {
+    ...BASE_DEFAULTS,
+    tickerGlow: "#38D8F0",
+    logoX: 1890,
+    logoY: 350,
+    logoSize: 430,
+    tickerX: 1800,
+    tickerY: 920,
+    tickerFontSize: 80,
+    nameFontSize: 44,
+    nameOffsetY: 105,
+    metaX: 1620,
+    metaY: 1110,
+    metaFontSize: 30,
+  },
   banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
