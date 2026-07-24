@@ -65,8 +65,8 @@ test("poster: tier priority beats performance, fourtis format", async () => {
     { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
     { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "alive", sym: "ALIVE", tier: "XPRESS" },
   ];
-  const text = await poster.buildText();
-  assert.ok(text.includes("🟣 <b>SOLANA - Trending</b>"), "chain header with logo");
+  const text = await poster.buildText(); // premium markup
+  assert.ok(text.includes("🟣 **SOLANA - Trending**"), "chain header with logo (bold markup)");
   // Diamond (WIF) must rank above Bronze (BONK) and Xpress (ALIVE) despite lower mcap.
   const iWif = text.indexOf("$WIF");
   const iBonk = text.indexOf("$BONK");
@@ -74,6 +74,11 @@ test("poster: tier priority beats performance, fourtis format", async () => {
   assert.ok(iWif < iBonk && iBonk < iAlive, `tier order wrong: WIF@${iWif} BONK@${iBonk} ALIVE@${iAlive}`);
   assert.ok(text.includes("🥇 +47.20% |"), "rank badge + signed % present");
   assert.ok(text.includes("1,793,783$"), "comma market cap present");
+  // The markup parses into entities cleanly (what actually gets sent).
+  const parsed = require("../src/premium").parse(text);
+  assert.ok(parsed.entities.some((e) => e.type === "bold"), "bold entities");
+  assert.ok(parsed.entities.some((e) => e.type === "text_link"), "link entities");
+  assert.ok(!/\*\*|\]\(/.test(parsed.text), "no raw markup leaks into the sent text");
 });
 
 test("poster: ticker links to Telegram, market cap links to the Dexvra CA page", async () => {
@@ -85,11 +90,26 @@ test("poster: ticker links to Telegram, market cap links to the Dexvra CA page",
   // Robinhood chain renders (it's in CHAIN_ORDER).
   assert.ok(text.includes("ROBINHOOD - Trending"), "robinhood chain present");
   // $ticker → the token's Telegram.
-  assert.ok(text.includes('<a href="https://t.me/rht_official">$RHT</a>'), "ticker links to Telegram");
+  assert.ok(text.includes("[$RHT](https://t.me/rht_official)"), "ticker links to Telegram");
   // market cap → the Dexvra token page (its CA).
-  assert.ok(text.includes('<a href="https://dexvra.io/token/robinhood/0xRH">'), "mcap links to Dexvra CA page");
+  assert.ok(text.includes("](https://dexvra.io/token/robinhood/0xRH)"), "mcap links to Dexvra CA page");
   // No Telegram → ticker falls back to the Dexvra page (never a dead link).
-  assert.ok(text.includes('<a href="https://dexvra.io/token/base/0xNoTg">$NOTG</a>'), "ticker falls back to Dexvra");
+  assert.ok(text.includes("[$NOTG](https://dexvra.io/token/base/0xNoTg)"), "ticker falls back to Dexvra");
+});
+
+test("board: premium-emoji badge stored as markup, displayed as fallback", async () => {
+  await tb.setRankEmoji(1, "[🥇](emoji/5440539497383087970)"); // admin sent a premium 🥇
+  assert.strictEqual(tb.rankBadge(1), "[🥇](emoji/5440539497383087970)", "board gets the premium markup");
+  assert.strictEqual(tb.displayEmoji(tb.rankBadge(1)), "🥇", "editor shows the plain fallback");
+  assert.strictEqual(tb.isRankCustom(1), true, "marked custom");
+  // The board markup with a premium badge parses to a custom_emoji entity.
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
+  ];
+  const parsed = require("../src/premium").parse(await poster.buildText());
+  assert.ok(parsed.entities.some((e) => e.type === "custom_emoji" && e.custom_emoji_id === "5440539497383087970"), "premium badge → custom_emoji entity");
+  assert.ok(!parsed.text.includes("emoji/"), "no raw emoji markup in the sent text");
+  await tb.reset();
 });
 
 test("poster: no featured tokens → null (nothing to post)", async () => {

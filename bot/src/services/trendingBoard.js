@@ -56,6 +56,15 @@ function load() {
   };
 }
 
+// A badge/logo may be stored as PLAIN emoji ("🥇") or as premium-emoji MARKUP
+// ("[🥇](emoji/5440539497383087970)") — the latter renders as a real premium
+// emoji on the board (via GramJS). rankBadge()/chainLogo() return the stored
+// fragment as-is (fed straight into the board's markup); displayEmoji() strips
+// it back to the plain fallback char for the admin editor's buttons/preview.
+function displayEmoji(frag) {
+  return String(frag == null ? "" : frag).replace(/\[([^\]]+)\]\(emoji\/\d+\)/g, "$1");
+}
+
 /** The rank badge for a 1-based position (1..). 1–10 are configurable; 11+ are "N.". */
 function rankBadge(pos) {
   if (pos > RANK_SLOTS) return `${pos}.`;
@@ -126,6 +135,7 @@ module.exports = {
   rankEmojis,
   chainLogo,
   chainList,
+  displayEmoji,
   isRankCustom,
   isChainCustom,
   setRankEmoji,

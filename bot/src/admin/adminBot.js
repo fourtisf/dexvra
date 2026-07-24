@@ -323,11 +323,24 @@ function pthKb() {
 // built-in default (answers "which have I already given a premium emoji?").
 const TB_SET = "✅";
 const TB_DEFAULT = "▫️";
+// Turn the admin's emoji message into a storable fragment. A PREMIUM (custom)
+// emoji arrives as a fallback char + a custom_emoji entity → store it as markup
+// "[fallback](emoji/ID)" so the board renders it premium (GramJS). A plain emoji
+// → just the first token. UTF-16 offsets (what Telegram gives) index JS strings.
+function emojiFragment(msg) {
+  const raw = String((msg && msg.text) || "");
+  const ce = ((msg && msg.entities) || []).find((e) => e.type === "custom_emoji");
+  if (ce && ce.custom_emoji_id) {
+    const fallback = raw.substring(ce.offset, ce.offset + ce.length).trim();
+    if (fallback) return `[${fallback}](emoji/${ce.custom_emoji_id})`;
+  }
+  return raw.trim().split(/\s+/)[0] || "";
+}
 function tbText() {
   const n = trendingBoard.RANK_SLOTS;
   const badges = trendingBoard
     .rankEmojis()
-    .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${e}`)
+    .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${trendingBoard.displayEmoji(e)}`)
     .join("  ");
   return (
     `🔥 <b>Trending board</b>\n\n` +
@@ -344,7 +357,7 @@ function tbKb() {
   const badges = trendingBoard.rankEmojis();
   const rankBtns = badges.map((e, i) => {
     const mark = trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT;
-    return cb(`${mark} ${i + 1} ${e}`, `tbr:${i + 1}`);
+    return cb(`${mark} ${i + 1} ${trendingBoard.displayEmoji(e)}`, `tbr:${i + 1}`);
   });
   // Five per row so 1–10 fits two clean rows (grows automatically with RANK_SLOTS).
   const rows = [];
@@ -368,7 +381,7 @@ function tbChainsKb() {
   const rows = [];
   for (let i = 0; i < chains.length; i += 2) {
     rows.push(
-      chains.slice(i, i + 2).map((c) => cb(`${c.custom ? TB_SET : TB_DEFAULT} ${c.logo} ${c.label}`, `tbcl:${c.id}`)),
+      chains.slice(i, i + 2).map((c) => cb(`${c.custom ? TB_SET : TB_DEFAULT} ${trendingBoard.displayEmoji(c.logo)} ${c.label}`, `tbcl:${c.id}`)),
     );
   }
   rows.push([cb("⬅ Back", "tb")]);
@@ -1328,7 +1341,8 @@ function build() {
     const pos = Number(ctx.match[1]);
     ctx.session.awaitingBt = { mode: "tbrank", pos };
     await ctx.reply(
-      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.rankEmojis()[pos - 1]}).\n\nSend a single emoji, e.g. 🥇 🔥 ⭐. /cancel to abort.`,
+      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.displayEmoji(trendingBoard.rankEmojis()[pos - 1])}).\n\n` +
+        `Tip: send a <b>premium</b> emoji and it renders premium on the board (posted via the premium account). /cancel to abort.`,
       HTML,
     );
   });
@@ -1777,19 +1791,22 @@ function build() {
         await btPreview(ctx, "pump", n);
         return;
       }
-      // ── Trending board: set a rank badge / chain logo (raw text = the emoji) ──
+      // ── Trending board: set a rank badge / chain logo. A PREMIUM emoji is
+      //    stored as markup ("[fallback](emoji/ID)") so it renders premium on
+      //    the board (posted via the GramJS premium account); a plain emoji is
+      //    stored as-is. ──
       if (mode === "tbrank") {
-        const emoji = text.trim().split(/\s+/)[0];
-        if (!emoji) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
-        await trendingBoard.setRankEmoji(pos || 1, emoji).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
-        await ctx.reply(`✅ Rank ${pos} badge → ${emoji}`, { ...HTML, ...tbKb() }).catch(() => {});
+        const frag = emojiFragment(ctx.message);
+        if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setRankEmoji(pos || 1, frag).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
+        await ctx.reply(`✅ Rank ${pos} badge → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbKb() }).catch(() => {});
         return;
       }
       if (mode === "tbchain") {
-        const emoji = text.trim().split(/\s+/)[0];
-        if (!emoji || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
-        await trendingBoard.setChainLogo(chain, emoji).catch((e) => log.warn(`[adminbot] setChainLogo: ${e.message}`));
-        await ctx.reply(`✅ ${chain.toUpperCase()} logo → ${emoji}`, { ...HTML, ...tbChainsKb() }).catch(() => {});
+        const frag = emojiFragment(ctx.message);
+        if (!frag || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setChainLogo(chain, frag).catch((e) => log.warn(`[adminbot] setChainLogo: ${e.message}`));
+        await ctx.reply(`✅ ${chain.toUpperCase()} logo → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbChainsKb() }).catch(() => {});
         return;
       }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
