@@ -14,6 +14,7 @@ const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
 const trendingBoard = require("../services/trendingBoard");
+const autoTrend = require("../services/autoTrend");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
@@ -59,7 +60,8 @@ function mainKb() {
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
-    [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–8)", "tb")],
+    [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
+    [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -386,6 +388,33 @@ function tbChainsKb() {
   }
   rows.push([cb("⬅ Back", "tb")]);
   return Markup.inlineKeyboard(rows);
+}
+
+// ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
+function atText() {
+  const c = autoTrend.get();
+  return (
+    `🤖 <b>Auto Trending</b>\n\n` +
+    `Keeps the Trending board alive between paid slots: when a slot expires it ` +
+    `auto-promotes a <b>random</b> listed token for a <b>random</b> duration, at ` +
+    `<b>random</b> intervals. Paid tiers always stay on top.\n\n` +
+    `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
+    `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
+    `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    `🎯 Keep featured: <b>${c.target}</b> tokens\n\n` +
+    `Tune with the steppers below. Applies on the next cycle.`
+  );
+}
+function atKb() {
+  const cb = Markup.button.callback;
+  const c = autoTrend.get();
+  return Markup.inlineKeyboard([
+    [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
+    [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
+    [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
+    [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
+  ]);
 }
 
 // ── Interactive layout editor — one PHOTO message that edits itself in place ─
@@ -1329,7 +1358,39 @@ function build() {
     );
   });
 
-  // ── Trending board (chain logos + rank badges 1–8) ──
+  // ── Auto Trending (auto-fill slots, random duration/timing, max 18h) ──
+  bot.action("at", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, atText(), atKb());
+  });
+  bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
+  bot.action("aten", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ enabled: !autoTrend.get().enabled });
+    log.info(`[adminbot] auto-trend ${c.enabled ? "ENABLED" : "disabled"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.enabled ? "🟢 Auto Trending ON" : "🔴 Auto Trending OFF").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
+  const atStep = (key, label) => async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ [key]: autoTrend.get()[key] + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`${label}: ${c[key]}`).catch(() => {});
+    await edit(ctx, atText(), atKb());
+  };
+  bot.action(/^athmin:(-?\d+)$/, atStep("minHours", "Min hours"));
+  bot.action(/^athmax:(-?\d+)$/, atStep("maxHours", "Max hours"));
+  bot.action(/^atgmin:(-?\d+)$/, atStep("minGapMin", "Min gap"));
+  bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
+  bot.action(/^attgt:(-?\d+)$/, atStep("target", "Target"));
+  bot.action("atrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    await autoTrend.reset();
+    ctx.answerCbQuery("↩️ Reset").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
+
+  // ── Trending board (chain logos + rank badges 1–10) ──
   bot.action("tb", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
