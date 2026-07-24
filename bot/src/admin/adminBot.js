@@ -251,7 +251,16 @@ function btKindKb(kind) {
   if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Remove clip", `bt_medrm:${kind}`));
   if (!BT_ARTWORK_KINDS.has(kind)) {
     const rows = [clipRow];
-    if (bannerTpl.mediaOverride(kind)) rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+    if (bannerTpl.mediaOverride(kind)) {
+      // Pump (a fill kind) auto-fills the clip, so it gets the full layout editor
+      // + auto-text toggle just like listing/trending — its own ▲%/price/MCAP.
+      if (BT_FILL_KINDS.has(kind)) {
+        const textOn = bannerTpl.getSettings(kind).showText !== false;
+        rows.push([Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)]);
+        rows.push([Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)]);
+      }
+      rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+    }
     rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
@@ -494,6 +503,9 @@ const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
   name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
+  // Pump-only elements: the big "▲ +N%" headline and the "old → new" price line.
+  pct: { label: "📈 % Change", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
+  price: { label: "💱 Price →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
   meta: { label: "📊 Chips (chain·price·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
   badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
 };
@@ -514,6 +526,7 @@ function bxMenuText(kind) {
 function bxMenuKb(kind) {
   const s = bannerTpl.getSettings(kind);
   const rect = s.slotShape === "rect";
+  const isPump = kind === "pump";
   const cb = Markup.button.callback;
   const rows = [];
   if (rect) {
@@ -522,12 +535,21 @@ function bxMenuKb(kind) {
     const showText = s.showText !== false;
     const showBadge = s.showBadge !== false;
     rows.push([cb(`🪙 Logo · ${s.logoSize}px`, `bxe:${kind}:logo`)]);
-    if (showText) {
+    if (showText && isPump) {
+      // Pump: its own elements — ▲%, old→new price, ticker/name, MCAP pill.
+      rows.push([cb(`📈 % Change · ${s.pctFontSize}px`, `bxe:${kind}:pct`), cb(`💱 Price → · ${s.priceFontSize}px`, `bxe:${kind}:price`)]);
+      rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
+      rows.push([cb(`💰 MCAP pill · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
+    } else if (showText) {
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
       rows.push([cb(`📊 Chips (chain·price·MC) · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
-    rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
-    if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
+    if (isPump) {
+      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`)]);
+    } else {
+      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
+      if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
+    }
   }
   rows.push([cb("👁 Preview", `bxp:${kind}`)]);
   rows.push([cb("🔄 Reset layout", `bxr:${kind}`), cb("⬅ Back", `btk:${kind}`)]);
@@ -1120,19 +1142,22 @@ function build() {
   // one photo message in place. Element rides in the callback data (stateless).
   const E = "(logo|ticker|meta|badge)";
   // ── Fourtis-style layout editor handlers (bx*) ────────────────────────────
-  const EX = "(logo|ticker|name|meta|badge|slot)";
-  bot.action(new RegExp(`^bxo:${K}$`), async (ctx) => {
+  const EX = "(logo|ticker|name|meta|badge|pct|price|slot)";
+  // Layout-editor kinds — the still-artwork kinds PLUS pump (a clip-only fill
+  // kind that auto-fills its OWN ▲%/price/MCAP layout). rank-up has no layout.
+  const KL = "(listing|trending|banner|pump)";
+  bot.action(new RegExp(`^bxo:${KL}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     await bxOpen(ctx, ctx.match[1]);
   });
-  bot.action(new RegExp(`^bxe:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxe:${KL}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxsd:${K}:(logo|ticker|name|meta|badge|slotw|sloth):(-?\\d+)$`), async (ctx) => {
+  bot.action(new RegExp(`^bxsd:${KL}:(logo|ticker|name|meta|badge|pct|price|slotw|sloth):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem, ds] = ctx.match;
     const s = bannerTpl.getSettings(kind);
@@ -1163,7 +1188,7 @@ function build() {
     }
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxmd:${K}:${EX}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
+  bot.action(new RegExp(`^bxmd:${KL}:${EX}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem, dxs, dys] = ctx.match;
     const s = bannerTpl.getSettings(kind);
@@ -1175,7 +1200,7 @@ function build() {
     ctx.answerCbQuery(`📍 ${x}, ${y}`).catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxc:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxc:${KL}:${EX}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     const c = elem === "slot" ? { xKey: "logoX" } : BX[elem];
@@ -1184,7 +1209,7 @@ function build() {
     ctx.answerCbQuery("🎯 Centred horizontally").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxsn:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxsn:${KL}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
@@ -1204,7 +1229,7 @@ function build() {
       );
     }
   });
-  bot.action(new RegExp(`^bxmn:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxmn:${KL}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
@@ -1223,12 +1248,12 @@ function build() {
       HTML,
     );
   });
-  bot.action(new RegExp(`^bxp:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxp:${KL}$`), async (ctx) => {
     ctx.answerCbQuery("Rendering…").catch(() => {});
     if (!guard(ctx)) return;
     await bxPreview(ctx, ctx.match[1]);
   });
-  bot.action(new RegExp(`^bxr:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxr:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     await bannerTpl.resetSettings(kind);
@@ -1236,7 +1261,7 @@ function build() {
     ctx.answerCbQuery("🔄 Layout reset to defaults").catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
   });
-  bot.action(new RegExp(`^bxt:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxt:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showText !== false;
@@ -1244,7 +1269,7 @@ function build() {
     ctx.answerCbQuery(`🔤 Text ${on ? "OFF" : "ON"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
   });
-  bot.action(new RegExp(`^bxb:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxb:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showBadge !== false;
@@ -1255,7 +1280,7 @@ function build() {
   // One-tap auto-text toggle straight from the kind menu — when a designed clip
   // already carries text ("Trending Alert" etc.), hiding the auto-drawn
   // $ticker/name/chips stops them overlapping; the bot then draws only the logo.
-  bot.action(new RegExp(`^bt_txt:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bt_txt:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showText !== false;
@@ -1263,7 +1288,7 @@ function build() {
     ctx.answerCbQuery(on ? "🔤 Auto-text hidden — logo only (no overlap)" : "🔤 Auto-text shown").catch(() => {});
     await edit(ctx, btKindText(kind), btKindKb(kind));
   });
-  bot.action(new RegExp(`^bt_ed:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bt_ed:${KL}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     await bxOpen(ctx, ctx.match[1]);

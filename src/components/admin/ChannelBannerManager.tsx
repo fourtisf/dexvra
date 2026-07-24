@@ -16,6 +16,8 @@ type Layout = {
   tickerFontSize: number; tickerX: number | "center"; tickerY: number; tickerColor: string;
   nameFontSize: number; nameOffsetY: number; nameColor: string;
   metaFontSize: number; metaX: number | "center"; metaY: number;
+  pctX?: number | "center"; pctY?: number; pctFontSize?: number;
+  priceX?: number | "center"; priceY?: number; priceFontSize?: number;
 };
 type Kind = {
   kind: string;

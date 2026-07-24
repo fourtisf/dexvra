@@ -120,6 +120,14 @@ export interface Layout {
   metaFontSize: number;
   metaX: number | "center";
   metaY: number;
+  // Pump-only overlay elements (▲ +N% headline · old→new price line). Optional:
+  // only pump carries them; listing/trending leave them undefined.
+  pctX?: number | "center";
+  pctY?: number;
+  pctFontSize?: number;
+  priceX?: number | "center";
+  priceY?: number;
+  priceFontSize?: number;
 }
 // Mirrors bannerTemplate.js BASE_DEFAULTS (the subset the editor drives).
 const BASE_LAYOUT: Layout = {
@@ -141,7 +149,12 @@ const BASE_LAYOUT: Layout = {
   metaX: 210,
   metaY: 772,
 };
-const LAYOUT_KEYS = Object.keys(BASE_LAYOUT) as (keyof Layout)[];
+// Persisted keys = the base layout PLUS the pump-only overlay keys (which aren't
+// in BASE_LAYOUT, so only pump's saved layout carries them).
+const LAYOUT_KEYS = [
+  ...Object.keys(BASE_LAYOUT),
+  "pctX", "pctY", "pctFontSize", "priceX", "priceY", "priceFontSize",
+] as (keyof Layout)[];
 // Per-kind default overrides — MUST match bannerTemplate.js KIND_DEFAULTS so the
 // editor's starting positions equal what the bot actually composites.
 const KIND_LAYOUT: Record<string, Partial<Layout>> = {
@@ -184,6 +197,13 @@ const KIND_LAYOUT: Record<string, Partial<Layout>> = {
     metaX: 262,
     metaY: 902,
     metaFontSize: 44,
+    // pump-only overlay handles (mirror bannerTemplate.js KIND_DEFAULTS.pump)
+    pctX: 250,
+    pctY: 545,
+    pctFontSize: 172,
+    priceX: 262,
+    priceY: 762,
+    priceFontSize: 78,
   },
 };
 

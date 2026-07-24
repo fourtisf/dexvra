@@ -28,14 +28,29 @@ type Layout = {
   metaFontSize: number;
   metaX: number | "center";
   metaY: number;
+  // Pump-only overlay elements (optional — only pump carries them).
+  pctX?: number | "center";
+  pctY?: number;
+  pctFontSize?: number;
+  priceX?: number | "center";
+  priceY?: number;
+  priceFontSize?: number;
 };
 type Backdrop = { url: string; kind: "image" | "video" } | null;
+type Elem = { key: string; label: string; xKey: string; yKey: string; sizeKey: string; sizeStep: number };
 
-const ELEMS = [
+const BASE_ELEMS: Elem[] = [
   { key: "logo", label: "🪙 Logo", xKey: "logoX", yKey: "logoY", sizeKey: "logoSize", sizeStep: 20 },
   { key: "ticker", label: "🔤 Ticker + Name", xKey: "tickerX", yKey: "tickerY", sizeKey: "tickerFontSize", sizeStep: 6 },
   { key: "meta", label: "📊 Chips", xKey: "metaX", yKey: "metaY", sizeKey: "metaFontSize", sizeStep: 4 },
-] as const;
+];
+// Pump has its own overlay handles — the big ▲ +N% headline and old→new price.
+const PUMP_ELEMS: Elem[] = [
+  { key: "pct", label: "📈 % Change", xKey: "pctX", yKey: "pctY", sizeKey: "pctFontSize", sizeStep: 8 },
+  { key: "price", label: "💱 Price →", xKey: "priceX", yKey: "priceY", sizeKey: "priceFontSize", sizeStep: 4 },
+];
+const elemsFor = (kind: string): Elem[] =>
+  kind === "pump" ? [BASE_ELEMS[0], ...PUMP_ELEMS, BASE_ELEMS[1], BASE_ELEMS[2]] : BASE_ELEMS;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const numX = (v: number | "center", size: number) => (v === "center" ? Math.round((REF_W - size) / 2) : v);
@@ -51,6 +66,8 @@ export function LayoutEditor({
   backdrop: Backdrop;
   onSaved: (l: Layout) => void;
 }) {
+  const ELEMS = elemsFor(kind);
+  const isPump = kind === "pump";
   // Resolve any "center" X to a numeric left edge so dragging is unambiguous.
   const [layout, setLayout] = useState<Layout>(() => ({
     ...initial,
@@ -58,8 +75,14 @@ export function LayoutEditor({
     logoY: initial.logoY === "center" ? Math.round((REF_H - initial.logoSize) / 2) : initial.logoY,
     tickerX: numX(initial.tickerX, initial.tickerFontSize * 4),
     metaX: numX(initial.metaX, initial.metaFontSize * 12),
+    ...(isPump
+      ? {
+          pctX: numX(initial.pctX ?? "center", (initial.pctFontSize ?? 172) * 4),
+          priceX: numX(initial.priceX ?? "center", (initial.priceFontSize ?? 78) * 6),
+        }
+      : {}),
   }));
-  const [sel, setSel] = useState<string>("ticker");
+  const [sel, setSel] = useState<string>(isPump ? "pct" : "ticker");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -107,7 +130,19 @@ export function LayoutEditor({
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok && j.layout) {
-        setLayout((l) => ({ ...l, ...j.layout, logoX: numX(j.layout.logoX, j.layout.logoSize), tickerX: numX(j.layout.tickerX, j.layout.tickerFontSize * 4), metaX: numX(j.layout.metaX, j.layout.metaFontSize * 12) }));
+        setLayout((l) => ({
+          ...l,
+          ...j.layout,
+          logoX: numX(j.layout.logoX, j.layout.logoSize),
+          tickerX: numX(j.layout.tickerX, j.layout.tickerFontSize * 4),
+          metaX: numX(j.layout.metaX, j.layout.metaFontSize * 12),
+          ...(isPump
+            ? {
+                pctX: numX(j.layout.pctX ?? "center", (j.layout.pctFontSize ?? 172) * 4),
+                priceX: numX(j.layout.priceX ?? "center", (j.layout.priceFontSize ?? 78) * 6),
+              }
+            : {}),
+        }));
         setDirty(false);
         onSaved(j.layout);
       }
@@ -171,6 +206,51 @@ export function LayoutEditor({
 
         {layout.showText && (
           <>
+            {isPump && (
+              <>
+                {/* ▲ +N% headline (pump) — drag by anchor, vertical-centered */}
+                <div
+                  onPointerDown={down("pctX", "pctY")}
+                  onPointerMove={move}
+                  onPointerUp={up}
+                  style={{
+                    position: "absolute",
+                    left: `${pctX(layout.pctX ?? 250)}%`,
+                    top: `${pctY(layout.pctY ?? 545)}%`,
+                    transform: "translateY(-50%)",
+                    whiteSpace: "nowrap",
+                    fontSize: cqw(layout.pctFontSize ?? 172),
+                    fontWeight: 800,
+                    color: layout.tickerColor || "#33E5C9",
+                    lineHeight: 1,
+                    ...elBox("pct"),
+                  }}
+                >
+                  ▲ +28%
+                </div>
+                {/* old → new price (pump) */}
+                <div
+                  onPointerDown={down("priceX", "priceY")}
+                  onPointerMove={move}
+                  onPointerUp={up}
+                  style={{
+                    position: "absolute",
+                    left: `${pctX(layout.priceX ?? 262)}%`,
+                    top: `${pctY(layout.priceY ?? 762)}%`,
+                    transform: "translateY(-50%)",
+                    whiteSpace: "nowrap",
+                    fontSize: cqw(layout.priceFontSize ?? 78),
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    ...elBox("price"),
+                  }}
+                >
+                  <span style={{ color: "#93AAA4" }}>$0.032</span>
+                  <span style={{ color: layout.tickerColor || "#33E5C9", margin: `0 ${cqw((layout.priceFontSize ?? 78) * 0.3)}` }}>→</span>
+                  <span style={{ color: layout.tickerColor || "#33E5C9" }}>$0.049</span>
+                </div>
+              </>
+            )}
             {/* Ticker + name (drag by ticker anchor; vertical-centered) */}
             <div
               onPointerDown={down("tickerX", "tickerY")}
