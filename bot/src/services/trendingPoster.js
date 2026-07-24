@@ -4,12 +4,26 @@
 const { TRENDING_POST_MS, CHANNELS, SITE_URL } = require("../config/constants");
 const api = require("../api/dexvra");
 const { chainOf, CHAIN_ORDER } = require("../config/chains");
+const { tierRank } = require("../config/packages");
+const { fetchMarket } = require("../marketdata");
+const board = require("./trendingBoard");
 const { escapeHtml } = require("../helpers/format");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
 
 const STATE_FILE = "trendpost.json";
+const MAX_PER_CHAIN = 10;
 let state = loadJSONSync(STATE_FILE, { messageId: null, lastText: null });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Board priority: paid tier first (Diamond=1 … Bronze=5), then Xpress/none last.
+const tierPrio = (tier) => {
+  const r = tierRank(tier);
+  return r > 0 ? r : 99;
+};
+// Full comma number + "$" (fourtis style: 23,868,066$).
+const mcapStr = (n) => (Number.isFinite(n) && n > 0 ? `${Math.round(n).toLocaleString("en-US")}$` : "");
+const pctStr = (n) => (Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "");
 
 async function buildText() {
   const now = Date.now();
@@ -22,14 +36,37 @@ async function buildText() {
   const byChain = {};
   for (const r of featured) (byChain[r.chain] ||= []).push(r);
 
-  const lines = ["🔥 <b>Dexvra Trending</b> — live featured slots\n"];
+  const lines = ["🔥 <b>Dexvra Trending</b> — live featured slots"];
   for (const chain of CHAIN_ORDER) {
     const arr = byChain[chain];
     if (!arr || !arr.length) continue;
-    lines.push(`\n<b>${escapeHtml(chainOf(chain).label)}</b>`);
-    arr.slice(0, 10).forEach((r, i) => {
-      const sym = String(r.sym || "").replace(/^\$/, "");
-      lines.push(`${i + 1}. <a href="${SITE_URL}/token/${r.chain}/${r.address}">$${escapeHtml(sym)}</a>`);
+    // Pull live 24h change + market cap for each token (polite to GeckoTerminal).
+    const enriched = [];
+    for (const r of arr) {
+      const m = await fetchMarket(r.chain, r.address).catch(() => null);
+      await sleep(300);
+      enriched.push({
+        r,
+        change: m && Number.isFinite(m.change24h) ? m.change24h : null,
+        mcap: m && Number.isFinite(m.mcap) ? m.mcap : null,
+      });
+    }
+    // Rank by PACKAGE tier first (top-tier buyers on top), then by 24h performance.
+    enriched.sort((a, b) => {
+      const d = tierPrio(a.r.tier) - tierPrio(b.r.tier);
+      if (d !== 0) return d;
+      return (b.change ?? -Infinity) - (a.change ?? -Infinity);
+    });
+    lines.push(`\n${board.chainLogo(chain)} <b>${escapeHtml(chainOf(chain).label.toUpperCase())} - Trending</b>`);
+    enriched.slice(0, MAX_PER_CHAIN).forEach((e, i) => {
+      const sym = String(e.r.sym || "").replace(/^\$/, "");
+      const link = `<a href="${SITE_URL}/token/${e.r.chain}/${e.r.address}">$${escapeHtml(sym)}</a>`;
+      const pct = pctStr(e.change);
+      const mc = mcapStr(e.mcap);
+      // {badge} {+%} | $TICKER | {mcap}$   (fourtis layout; parts drop cleanly if missing)
+      const segs = [board.rankBadge(i + 1), pct, "|", link];
+      if (mc) segs.push("|", mc);
+      lines.push(segs.filter(Boolean).join(" "));
     });
   }
   lines.push(`\n🌐 <a href="${SITE_URL}/trending">View all on Dexvra</a>`);
@@ -82,4 +119,4 @@ function start(tg) {
   };
 }
 
-module.exports = { start };
+module.exports = { start, buildText };

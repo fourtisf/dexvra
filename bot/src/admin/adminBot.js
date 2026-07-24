@@ -13,6 +13,7 @@ const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
+const trendingBoard = require("../services/trendingBoard");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
@@ -58,6 +59,7 @@ function mainKb() {
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
+    [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–8)", "tb")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -310,6 +312,49 @@ function pthKb() {
     [cb("👁 Preview @ custom %", "pwpvc")],
     [cb(`↩️ Reset (${pumpConfig.DEFAULT_MIN}–${pumpConfig.DEFAULT_MAX})`, "pwrst"), cb("⬅ Back", "btk:pump")],
   ]);
+}
+
+// ── Trending board editor (pinned @dexvratrending message look) ─────────────
+// The chain logo emoji + rank badges 1–8 shown on the live trending board.
+function tbText() {
+  const badges = trendingBoard.rankEmojis().map((e, i) => `${i + 1}${e}`).join("  ");
+  return (
+    `🔥 <b>Trending board</b>\n\n` +
+    `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
+    `(top-tier buyers first), up to <b>${10}</b> tokens each, auto-updated.\n\n` +
+    `<b>Rank badges 1–8:</b>\n${badges}\n\n` +
+    `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
+    `Send any emoji when asked. Applies on the next board refresh.`
+  );
+}
+function tbKb() {
+  const cb = Markup.button.callback;
+  const badges = trendingBoard.rankEmojis();
+  const rankBtns = badges.map((e, i) => cb(`${i + 1} ${e}`, `tbr:${i + 1}`));
+  const rows = [rankBtns.slice(0, 4), rankBtns.slice(4, 8)];
+  rows.push([cb("🔗 Chain logos", "tbc")]);
+  rows.push([cb("↩️ Reset board", "tbrst"), cb("⬅ Back", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+function tbChainsText() {
+  return (
+    `🔗 <b>Chain logos</b>\n\n` +
+    `The emoji shown before each chain's header on the trending board ` +
+    `(e.g. <code>🟣 SOLANA - Trending</code>).\n\n` +
+    `Tap a chain, then send the emoji you want. ⬅ Back to the board.`
+  );
+}
+function tbChainsKb() {
+  const cb = Markup.button.callback;
+  const chains = trendingBoard.chainList();
+  const rows = [];
+  for (let i = 0; i < chains.length; i += 2) {
+    rows.push(
+      chains.slice(i, i + 2).map((c) => cb(`${c.logo} ${c.label}`, `tbcl:${c.id}`)),
+    );
+  }
+  rows.push([cb("⬅ Back", "tb")]);
+  return Markup.inlineKeyboard(rows);
 }
 
 // ── Interactive layout editor — one PHOTO message that edits itself in place ─
@@ -1251,6 +1296,45 @@ function build() {
     );
   });
 
+  // ── Trending board (chain logos + rank badges 1–8) ──
+  bot.action("tb", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, tbText(), tbKb());
+  });
+  bot.action(/^tbr:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const pos = Number(ctx.match[1]);
+    ctx.session.awaitingBt = { mode: "tbrank", pos };
+    await ctx.reply(
+      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.rankEmojis()[pos - 1]}).\n\nSend a single emoji, e.g. 🥇 🔥 ⭐. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbc", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, tbChainsText(), tbChainsKb());
+  });
+  bot.action(/^tbcl:([a-z0-9]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const chain = ctx.match[1];
+    ctx.session.awaitingBt = { mode: "tbchain", chain };
+    await ctx.reply(
+      `⌨ Send the new logo emoji for <b>${chain.toUpperCase()}</b> (current: ${trendingBoard.chainLogo(chain)}).\n\nSend a single emoji. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    await trendingBoard.reset();
+    log.info(`[adminbot] trending board reset by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery("↩️ Board reset to defaults").catch(() => {});
+    await edit(ctx, tbText(), tbKb());
+  });
+
   // Interactive layout editor: element selector + nudge + resize, all editing
   // one photo message in place. Element rides in the callback data (stateless).
   const E = "(logo|ticker|meta|badge)";
@@ -1653,7 +1737,7 @@ function build() {
     // Banner-artwork settings input (per service: logo spot / creative slot /
     // text overlay)
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
-      const { mode, kind, elem } = ctx.session.awaitingBt;
+      const { mode, kind, elem, pos, chain } = ctx.session.awaitingBt;
       ctx.session.awaitingBt = null;
       const low = text.trim().toLowerCase();
       const cv = (v) => (v === "center" ? "center" : Number(v));
@@ -1671,6 +1755,21 @@ function build() {
         if (!Number.isFinite(n) || n <= 0) return ctx.reply("❌ Send a positive number, e.g. <code>100</code>.", HTML).catch(() => {});
         if (!bannerTpl.mediaOverride("pump")) return ctx.reply("❌ No pump clip yet — upload one first.", HTML).catch(() => {});
         await btPreview(ctx, "pump", n);
+        return;
+      }
+      // ── Trending board: set a rank badge / chain logo (raw text = the emoji) ──
+      if (mode === "tbrank") {
+        const emoji = text.trim().split(/\s+/)[0];
+        if (!emoji) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setRankEmoji(pos || 1, emoji).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
+        await ctx.reply(`✅ Rank ${pos} badge → ${emoji}`, { ...HTML, ...tbKb() }).catch(() => {});
+        return;
+      }
+      if (mode === "tbchain") {
+        const emoji = text.trim().split(/\s+/)[0];
+        if (!emoji || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setChainLogo(chain, emoji).catch((e) => log.warn(`[adminbot] setChainLogo: ${e.message}`));
+        await ctx.reply(`✅ ${chain.toUpperCase()} logo → ${emoji}`, { ...HTML, ...tbChainsKb() }).catch(() => {});
         return;
       }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
