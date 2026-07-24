@@ -175,11 +175,11 @@ const KIND_LAYOUT: Record<string, Partial<Layout>> = {
     metaY: 1120,
     metaFontSize: 34,
   },
-  // Pump has extra bot-only overlay keys (pctX/Y, priceX/Y) the web editor does
-  // not drive; here we mirror only the shared handles — logo ring + cyan $ticker
-  // on the right, and the MCAP pill (metaX/Y) on the left. showMcap stays ON so
-  // the editor gives a draggable MCAP handle; chain/price chips are off (the bot
-  // draws its own ▲%/price line instead).
+  // Pump's own layout — mirror of bannerTemplate.js KIND_DEFAULTS.pump. The web
+  // editor drives every handle: logo ring + cyan $ticker on the right, the MCAP
+  // pill (metaX/Y) plus the ▲% headline (pctX/Y) and old→new price (priceX/Y) on
+  // the left. showMcap stays ON so the editor shows a draggable MCAP handle;
+  // chain/price chips are off (pump draws its own ▲%/price line instead).
   pump: {
     logoX: 1880,
     logoY: 360,
