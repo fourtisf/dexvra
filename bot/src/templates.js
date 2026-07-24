@@ -94,7 +94,7 @@ const DEFAULTS = {
   // they follow automatically).
   welcome:
     "💎 **Welcome to Dexvra**\n\n" +
-    "⚡ **List · Trend · Advertise** — your token pushed across **[dexvra.io]({site})**, our Telegram channels and **X**, fully automatic and live in minutes.\n\n" +
+    "⚡ **List · Trend · Advertise** — your token pushed across [dexvra.io]({site}), our Telegram channels and **X**, fully automatic and live in minutes.\n\n" +
     "**✨ What you can do**\n" +
     "⚡ **Xpress Listing** — live in minutes\n" +
     "🏆 **Listing & Trending** — ranked tiers, Diamond → Bronze\n" +
@@ -103,8 +103,10 @@ const DEFAULTS = {
     "🚀 **Mass DM** — reach every Dexvra user\n" +
     "🟢 **Buy Bot** — free live buy alerts for your group\n\n" +
     "**🔗 Official Links**\n" +
-    "🌐 [Website]({site}) · 📢 [Announcements]({announce})\n" +
-    "🚨 [Listings]({listing}) · 📈 [Trending]({trending})\n\n" +
+    "🌐 [Website]({site})\n" +
+    "📢 [Announcements]({announce})\n" +
+    "🚨 [Listings]({listing})\n" +
+    "📈 [Trending]({trending})\n\n" +
     "👇 Pick a service below — each step is fully guided.",
   intro_xpress:
     "⚡ **Xpress Listing**\n\n" +
