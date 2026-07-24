@@ -75,10 +75,10 @@ const LISTING_BODY =
   `${em("💲", E.dollar)} [{name}]({coinUrl}) ({symbol})\n\n` +
   `{chainEmoji} **Network:** {chain}\n` +
   `📄 **Contract address:**\n{address}\n\n` +
-  // Market cap (the headline metric) ABOVE the price; Market cap and Liquidity
-  // sit SIDE-BY-SIDE on one line — liquidity is not stacked underneath.
-  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("💧", E.link)} **Liquidity:** {liq}\n` +
-  `${em("📊", E.chart)} **Price:** {price}\n\n` +
+  // Market cap and Price ONLY, SIDE-BY-SIDE on one line (operator preference) —
+  // no liquidity row, and never stacked. ({liq} stays an available placeholder
+  // for any custom template that still wants it.)
+  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
   // Single one-tap CTA. {tradeUrl} = https://t.me/<tradebot>?start=ca_<address>
   // — the deep link carries the token's CA so the trade bot opens straight on
   // this token (no "Trade it now" header line above it).

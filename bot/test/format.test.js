@@ -33,7 +33,7 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("New Listing on Dexvra"));
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
-  assert.ok(card.text.includes("Market cap:") && card.text.includes("Liquidity:"), "Market cap + Liquidity lines");
+  assert.ok(card.text.includes("Market cap:") && card.text.includes("Price:"), "Market cap + Price line");
   assert.ok(card.text.includes("Network:"), "Network line present");
   // The bare dexvra.io/token/… URL line was removed (read as spam) — the token
   // NAME is now the clickable link to its Dexvra page instead.
@@ -146,8 +146,9 @@ test("xpress listing post matches the operator's reference layout", () => {
   assert.ok(!text.includes("dexvra.io/token/"), "no raw dexvra token URL printed");
   assert.ok(text.includes("Network: Solana"), "network line");
   assert.ok(text.includes("📄 Contract address:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
-  // Market cap and Liquidity share ONE line, side by side (not stacked).
-  assert.ok(text.includes("🏦 Market cap: $84.4K · 💧 Liquidity: $22.3K"), "market cap · liquidity on one line");
+  // Market cap and Price share ONE line, side by side — no liquidity row.
+  assert.ok(text.includes("🏦 Market cap: $84.4K · 📊 Price: $0.0000842"), "market cap · price on one line");
+  assert.ok(!text.includes("Liquidity:"), "no liquidity row");
   assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
 });
