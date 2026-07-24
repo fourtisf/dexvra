@@ -405,10 +405,10 @@ function btEditorCaption(kind, elem) {
   let detail;
   if (elem === "logo") {
     detail = rect
-      ? `Slot <b>${s.slotW}×${s.slotH}px</b> di (${s.logoX}, ${s.logoY})`
-      : `<b>${s.logoSize}px</b> di (${s.logoX}, ${s.logoY})`;
+      ? `Slot <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})`
+      : `<b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})`;
   } else {
-    detail = `<b>${s[e.sizeKey]}px</b> di (${s[e.xKey]}, ${s[e.yKey]})`;
+    detail = `<b>${s[e.sizeKey]}px</b> at (${s[e.xKey]}, ${s[e.yKey]})`;
   }
   return (
     `🖱 <b>${BT_KINDS[kind]} — layout editor</b>\n` +
@@ -453,15 +453,15 @@ function btEditorKb(kind, elem) {
     const szStep = elem === "logo" ? BT_NUDGE : BT_ELEMS[elem].step;
     const cur = elem === "logo" ? `${s.logoSize}px` : `${s[BT_ELEMS[elem].sizeKey]}px`;
     rows.push([
-      cb("➖ Kecil", `bt_esz:${kind}:${elem}:${-szStep}`),
+      cb("➖ Smaller", `bt_esz:${kind}:${elem}:${-szStep}`),
       cb(cur, `bt_pos:${kind}`),
-      cb("➕ Besar", `bt_esz:${kind}:${elem}:${szStep}`),
+      cb("➕ Bigger", `bt_esz:${kind}:${elem}:${szStep}`),
     ]);
   }
   if (!rect) {
     rows.push([cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bt_badge:${kind}`)]);
   }
-  rows.push([cb("↩️ Reset layout", `bt_erst:${kind}`), cb("✅ Selesai", `bt_done:${kind}`)]);
+  rows.push([cb("↩️ Reset layout", `bt_erst:${kind}`), cb("✅ Done", `bt_done:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -1463,11 +1463,11 @@ function build() {
     const kind = ctx.match[1];
     await bannerTpl.resetSettings(kind);
     log.info(`[adminbot] ${kind} banner layout reset to defaults by @${ctx.from.username || ctx.from.id}`);
-    ctx.answerCbQuery("↩️ Layout kembali ke default").catch(() => {});
+    ctx.answerCbQuery("↩️ Layout reset to default").catch(() => {});
     await btEditorRefresh(ctx, kind, "logo");
   });
   bot.action(new RegExp(`^bt_done:${K}$`), async (ctx) => {
-    ctx.answerCbQuery("✅ Tersimpan").catch(() => {});
+    ctx.answerCbQuery("✅ Saved").catch(() => {});
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     await ctx.reply(btKindText(kind), { ...HTML, ...btKindKb(kind) }).catch(() => {});
