@@ -7,6 +7,7 @@ import { CHAIN_IDS, CHAINS } from "@/config/chains";
 import { LISTING_TIERS, tierLabel } from "@/lib/packages";
 import { Logo } from "@/components/Logo";
 import { BannerManager } from "@/components/admin/BannerManager";
+import { ChannelBannerManager } from "@/components/admin/ChannelBannerManager";
 
 const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
 
@@ -238,6 +239,9 @@ export default function AdminDashboard() {
 
         {/* Homepage banner (upload + click-through link) */}
         <BannerManager />
+
+        {/* Channel-post banner templates (artwork + GIF/video, per kind) */}
+        <ChannelBannerManager />
 
         {/* Pending submissions */}
         <section className="asec">
