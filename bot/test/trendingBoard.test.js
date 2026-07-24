@@ -15,7 +15,8 @@ const MOCK = {
   alive: { mcap: 28_607, change24h: 39.9 },
   floki: { mcap: 3_925_360, change24h: 133 },
 };
-md.fetchMarket = async (_chain, addr) => (MOCK[addr] ? { priceUsd: 1, ...MOCK[addr] } : null);
+md.fetchMarket = async (_chain, addr) =>
+  MOCK[addr] ? { priceUsd: 1, ...MOCK[addr] } : { priceUsd: 1, mcap: 1_000_000, change24h: 1.5 };
 const api = require("../src/api/dexvra");
 
 const tb = require("../src/services/trendingBoard");
@@ -54,6 +55,22 @@ test("poster: tier priority beats performance, fourtis format", async () => {
   assert.ok(iWif < iBonk && iBonk < iAlive, `tier order wrong: WIF@${iWif} BONK@${iBonk} ALIVE@${iAlive}`);
   assert.ok(text.includes("🥇 +47.20% |"), "rank badge + signed % present");
   assert.ok(text.includes("1,793,783$"), "comma market cap present");
+});
+
+test("poster: ticker links to Telegram, market cap links to the Dexvra CA page", async () => {
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "robinhood", address: "0xRH", sym: "RHT", tier: "GOLD", telegram: "@rht_official" },
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "base", address: "0xNoTg", sym: "NOTG", tier: "SILVER" },
+  ];
+  const text = await poster.buildText();
+  // Robinhood chain renders (it's in CHAIN_ORDER).
+  assert.ok(text.includes("ROBINHOOD - Trending"), "robinhood chain present");
+  // $ticker → the token's Telegram.
+  assert.ok(text.includes('<a href="https://t.me/rht_official">$RHT</a>'), "ticker links to Telegram");
+  // market cap → the Dexvra token page (its CA).
+  assert.ok(text.includes('<a href="https://dexvra.io/token/robinhood/0xRH">'), "mcap links to Dexvra CA page");
+  // No Telegram → ticker falls back to the Dexvra page (never a dead link).
+  assert.ok(text.includes('<a href="https://dexvra.io/token/base/0xNoTg">$NOTG</a>'), "ticker falls back to Dexvra");
 });
 
 test("poster: no featured tokens → null (nothing to post)", async () => {

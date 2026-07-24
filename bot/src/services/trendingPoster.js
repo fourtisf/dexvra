@@ -24,6 +24,14 @@ const tierPrio = (tier) => {
 // Full comma number + "$" (fourtis style: 23,868,066$).
 const mcapStr = (n) => (Number.isFinite(n) && n > 0 ? `${Math.round(n).toLocaleString("en-US")}$` : "");
 const pctStr = (n) => (Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "");
+// Normalize a token's Telegram (handle / t.me / full url) into a t.me URL, or null.
+function tgUrl(tg) {
+  if (!tg) return null;
+  let s = String(tg).trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  s = s.replace(/^@/, "").replace(/^t\.me\//i, "");
+  return s ? `https://t.me/${s}` : null;
+}
 
 async function buildText() {
   const now = Date.now();
@@ -60,12 +68,17 @@ async function buildText() {
     lines.push(`\n${board.chainLogo(chain)} <b>${escapeHtml(chainOf(chain).label.toUpperCase())} - Trending</b>`);
     enriched.slice(0, MAX_PER_CHAIN).forEach((e, i) => {
       const sym = String(e.r.sym || "").replace(/^\$/, "");
-      const link = `<a href="${SITE_URL}/token/${e.r.chain}/${e.r.address}">$${escapeHtml(sym)}</a>`;
+      const dexUrl = `${SITE_URL}/token/${e.r.chain}/${e.r.address}`;
+      // $TICKER → the token's Telegram (falls back to its Dexvra page so it's
+      // never a dead link); the MARKET CAP → the Dexvra token page (its CA).
+      const tickerHref = tgUrl(e.r.telegram) || dexUrl;
+      const link = `<a href="${escapeHtml(tickerHref)}">$${escapeHtml(sym)}</a>`;
       const pct = pctStr(e.change);
       const mc = mcapStr(e.mcap);
-      // {badge} {+%} | $TICKER | {mcap}$   (fourtis layout; parts drop cleanly if missing)
+      const mcLink = mc ? `<a href="${escapeHtml(dexUrl)}">${mc}</a>` : "";
+      // {badge} {+%} | $TICKER(→TG) | {mcap}$(→Dexvra)  — parts drop cleanly if missing
       const segs = [board.rankBadge(i + 1), pct, "|", link];
-      if (mc) segs.push("|", mc);
+      if (mcLink) segs.push("|", mcLink);
       lines.push(segs.filter(Boolean).join(" "));
     });
   }
