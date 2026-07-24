@@ -9,6 +9,13 @@ import { useApp } from "./AppState";
 const N = 3;
 const AUTO_MS = 5000;
 
+// Client-safe fallback (mirrors PROMO_DEFAULTS in lib/promo.ts) — used until
+// /api/promo loads, and if it's unreachable.
+type Promo = { emoji: string; symbol: string; multiplier: string; mcap: string; ath: string; chain: string };
+const PROMO_FALLBACK: Promo = {
+  emoji: "⚔️", symbol: "$WARCHEST", multiplier: "412×", mcap: "$310K", ath: "$128.4M", chain: "Solana",
+};
+
 // Slides 2 & 3 are ad inventory (Carousel Takeover) — kept as house ads
 // until real bookings exist (Phase 3).
 export function PromoCarousel() {
@@ -30,6 +37,21 @@ export function PromoCarousel() {
         if (alive && b?.imageUrl && b?.linkUrl) {
           setBooked({ imageUrl: b.imageUrl, linkUrl: b.linkUrl, title: b.title ?? null });
         }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Editable "Pumped on Dexvra" showcase (admin panel → /api/promo).
+  const [promo, setPromo] = useState<Promo>(PROMO_FALLBACK);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/promo")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (alive && j && j.symbol) setPromo({ ...PROMO_FALLBACK, ...j });
       })
       .catch(() => {});
     return () => {
@@ -83,7 +105,7 @@ export function PromoCarousel() {
               </svg>
             </div>
           </div>
-          <span className="blip-tag">$WARCHEST +412×</span>
+          <span className="blip-tag">{promo.symbol} +{promo.multiplier}</span>
           <span className="sparkle" style={{ right: "38%", top: "20%" }}>✦</span>
           <span className="sparkle" style={{ right: "12%", bottom: "18%", animationDelay: "1.1s" }}>✦</span>
           <div className="slide-copy">
@@ -147,12 +169,12 @@ export function PromoCarousel() {
           <div className="slide-copy">
             <span className="s-eyebrow">◆ Pumped on {BRAND_NAME}</span>
             <div className="pump-inline">
-              <div className="coin" style={{ background: "radial-gradient(circle at 32% 26%,#FFE9A8,#FFC53D 45%,#B57900)" }}>⚔️</div>
-              <div className="pump-x">412×</div>
+              <div className="coin" style={{ background: "radial-gradient(circle at 32% 26%,#FFE9A8,#FFC53D 45%,#B57900)" }}>{promo.emoji}</div>
+              <div className="pump-x">{promo.multiplier}</div>
               <span className="chip-since">↗ SINCE LISTING</span>
             </div>
             <div className="pump-meta">
-              MCAP <b>$310K</b> → ATH <b>$128.4M</b> · <b>$WARCHEST</b> · Solana
+              MCAP <b>{promo.mcap}</b> → ATH <b>{promo.ath}</b> · <b>{promo.symbol}</b> · {promo.chain}
             </div>
           </div>
         </div>
