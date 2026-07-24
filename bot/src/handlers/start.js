@@ -43,9 +43,44 @@ function channelVars() {
   };
 }
 
+// The "Official Links" footer is generated here (never in the editable template)
+// so the links are ALWAYS present and correct — editing the welcome text can
+// never lose them. Labels carry "Channel" for the Telegram channels; Website
+// stays as-is. Config change (env) → the links follow automatically.
+function officialLinksMarkup(v) {
+  return (
+    "\n\n**🔗 Official Links**\n" +
+    `🌐 [Website](${v.site})\n` +
+    `📢 [Announcements Channel](${v.announce})\n` +
+    `🚨 [Listings Channel](${v.listing})\n` +
+    `📈 [Trending Channel](${v.trending})`
+  );
+}
+/** Append the generated linked footer to a rendered welcome payload
+ *  ({text, entities} or legacy {html}), offsetting the block's entities. */
+function withOfficialLinks(payload, v) {
+  const premium = require("../premium");
+  if (payload && payload.html != null) {
+    const a = (label, url) => `<a href="${url}">${label}</a>`;
+    return {
+      html:
+        payload.html +
+        `\n\n🔗 <b>Official Links</b>\n🌐 ${a("Website", v.site)}\n📢 ${a("Announcements Channel", v.announce)}\n🚨 ${a("Listings Channel", v.listing)}\n📈 ${a("Trending Channel", v.trending)}`,
+    };
+  }
+  const base = payload && payload.text != null ? payload : { text: String(payload || ""), entities: [] };
+  const block = premium.parse(officialLinksMarkup(v));
+  const off = base.text.length;
+  return {
+    text: base.text + block.text,
+    entities: [...(base.entities || []), ...block.entities.map((e) => ({ ...e, offset: e.offset + off }))],
+  };
+}
+
 async function showHome(ctx) {
   resetSession(ctx);
-  const text = tpl.render("welcome", channelVars());
+  const v = channelVars();
+  const text = withOfficialLinks(tpl.render("welcome", v), v);
   const banner = bannerPhoto();
   if (banner) await sendPhotoCard(ctx, banner, text, mainMenu());
   else await sendCard(ctx, text, mainMenu());

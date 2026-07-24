@@ -88,10 +88,10 @@ const LISTING_BODY =
 // accents (never bullet spam). Deliberately NOT the fourtis layout.
 const DEFAULTS = {
   // ── Bot messages (to the user) ──
-  // Channel links are CONFIG-DRIVEN placeholders ({site}/{announce}/{listing}/
-  // {trending}) — start.js fills them from CHANNELS/SITE_URL, so the links are
-  // always correct and never need manual editing (change a channel via env and
-  // they follow automatically).
+  // The "Official Links" block is NOT part of this editable body — start.js
+  // appends it, generated from CHANNELS/SITE_URL, so the links are always
+  // present, always correct, and can never be lost by editing this template.
+  // Edit everything ABOVE freely; the linked footer is added automatically.
   welcome:
     "💎 **Welcome to Dexvra**\n\n" +
     "⚡ **List · Trend · Advertise** — your token pushed across [dexvra.io]({site}), our Telegram channels and **X**, fully automatic and live in minutes.\n\n" +
@@ -102,11 +102,6 @@ const DEFAULTS = {
     "📢 **Banner Ads** — homepage campaigns\n" +
     "🚀 **Mass DM** — reach every Dexvra user\n" +
     "🟢 **Buy Bot** — free live buy alerts for your group\n\n" +
-    "**🔗 Official Links**\n" +
-    "🌐 [Website]({site})\n" +
-    "📢 [Announcements]({announce})\n" +
-    "🚨 [Listings]({listing})\n" +
-    "📈 [Trending]({trending})\n\n" +
     "👇 Pick a service below — each step is fully guided.",
   intro_xpress:
     "⚡ **Xpress Listing**\n\n" +
