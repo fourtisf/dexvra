@@ -331,6 +331,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .ttabs{display:flex;gap:4px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:12px;padding:4px}
 .ttab{font-family:var(--fm);font-size:11px;font-weight:800;padding:6px 12px;border-radius:9px;color:var(--muted);transition:all .14s}
 .ttab.active{background:linear-gradient(120deg,rgba(61,245,159,.24),rgba(34,211,238,.15));color:#D9FFE9}
+/* Trending chain filter — horizontally scrollable pills with the chain logo */
+.chain-pick{display:flex;gap:7px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chain-pick::-webkit-scrollbar{display:none}
+.chain-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-family:var(--fm);font-weight:800;font-size:12px;color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:999px;padding:7px 13px;cursor:pointer;white-space:nowrap;transition:all .14s}
+.chain-chip:hover{color:var(--text);border-color:rgba(255,255,255,.2)}
+.chain-chip.active{color:#D9FFE9;background:linear-gradient(120deg,rgba(61,245,159,.24),rgba(34,211,238,.15));border-color:rgba(61,245,159,.4)}
 .filter-btn{
   margin-left:auto;display:inline-flex;align-items:center;gap:7px;
   padding:9px 15px;border-radius:11px;border:1.5px solid var(--line);
@@ -375,9 +381,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tok .ts{min-width:0}
 .tok .sym{font-family:var(--fd);font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;min-width:0}
 .tok .sym>span:first-child,.tok .sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* ticker keeps its full width; the tier tag yields leftover space (never "$…") */
-.tok .sym-txt{flex:0 0 auto;max-width:16ch}
-.tok .sym .tier-chip{flex:0 1 auto;min-width:0;overflow:hidden}
+/* the tier tag ALWAYS renders whole (no "◆ Di…"); an over-long ticker yields
+   the leftover space and ellipsises instead */
+.tok .sym-txt{flex:0 1 auto;min-width:0;max-width:16ch}
+.tok .sym .tier-chip{flex:0 0 auto}
 .tok .nm{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* compact stats line — the columns hidden on small screens live here instead */
 .tok .m-stats{display:none;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}

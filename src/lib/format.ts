@@ -13,7 +13,12 @@ export function fmtPrice(p: number): string {
     );
   if (p >= 0.01) return "$" + p.toFixed(4);
   if (p >= 0.0001) return "$" + p.toFixed(6);
-  return "$" + p.toFixed(8).replace(/0+$/, "");
+  // Sub-$0.0001: keep ~4 significant figures. The old toFixed(8) rounded any
+  // price below ~1e-8 down to "0.00000000", and the trailing-zero strip then
+  // left a bare "$0." (looked broken for tiny memecoin prices).
+  const decimals = Math.min(18, Math.max(8, -Math.floor(Math.log10(p)) + 3));
+  const s = p.toFixed(decimals).replace(/0+$/, "").replace(/\.$/, "");
+  return "$" + (s && s !== "0" ? s : p.toExponential(2));
 }
 
 export function fmtCap(n: number | null): string {
