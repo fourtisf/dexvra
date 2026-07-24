@@ -8,7 +8,7 @@ const fss = require("node:fs");
 const path = require("node:path");
 const { isAdminUser, ADMIN_BOT_TOKEN } = require("../config/constants");
 const { getMediaFileId } = require("../helpers/message");
-const { escapeHtml } = require("../helpers/format");
+const { escapeHtml, fmtPrice } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
@@ -287,21 +287,27 @@ function btKindKb(kind) {
 // baseline. Adjustable here so the operator tunes sensitivity without a redeploy.
 function pthText() {
   const { minPct, maxPct } = pumpConfig.get();
+  const mid = Math.round((minPct + maxPct) / 2);
   return (
     `⚙ <b>Pump alert window</b>\n\n` +
     `A token fires a 📈 <b>Pump alert</b> when it's up between <b>${minPct}%</b> and <b>${maxPct}%</b> ` +
     `from its baseline (the first price the bot saw ≈ listing time).\n\n` +
     `• Below <b>${minPct}%</b> → too small, no alert\n` +
     `• Above <b>${maxPct}%</b> → almost always bad market data, skipped\n\n` +
-    `Tap to adjust, or ⌨ type both exactly. Applies on the next check (~no restart).`
+    `Tap to adjust, or ⌨ type both exactly. Applies on the next check (~no restart).\n\n` +
+    `👁 <b>Preview</b> the alert at <b>${minPct}%</b> (min) · <b>${mid}%</b> · <b>${maxPct}%</b> (max), or a custom %.`
   );
 }
 function pthKb() {
   const cb = Markup.button.callback;
+  const { minPct, maxPct } = pumpConfig.get();
+  const mid = Math.round((minPct + maxPct) / 2);
   return Markup.inlineKeyboard([
     [cb("Min ➖25", "pwmin:-25"), cb("➖5", "pwmin:-5"), cb("➕5", "pwmin:5"), cb("➕25", "pwmin:25")],
     [cb("Max ➖250", "pwmax:-250"), cb("➖50", "pwmax:-50"), cb("➕50", "pwmax:50"), cb("➕250", "pwmax:250")],
     [cb("⌨ Type min,max", "pwset")],
+    [cb(`👁 ${minPct}%`, `pwpv:${minPct}`), cb(`👁 ${mid}%`, `pwpv:${mid}`), cb(`👁 ${maxPct}%`, `pwpv:${maxPct}`)],
+    [cb("👁 Preview @ custom %", "pwpvc")],
     [cb(`↩️ Reset (${pumpConfig.DEFAULT_MIN}–${pumpConfig.DEFAULT_MAX})`, "pwrst"), cb("⬅ Back", "btk:pump")],
   ]);
 }
@@ -523,10 +529,25 @@ function sampleMedia(kind) {
 const BX_SAMPLE = { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" };
 // Sample token data for every preview / the layout editor. Pump gets its
 // DISTINCT fields (▲ +N% · old→new price) so its preview shows the real pump
-// layout, not the listing/trending chip row.
-function sampleData(kind) {
+// layout. The pump % defaults to the configured window MINIMUM (so the example
+// matches what actually triggers an alert), or an explicit `pct` to preview a
+// specific gain; the old→new price is derived from that %.
+function sampleData(kind, pct) {
   if (kind === "pump") {
-    return { symbol: "DEXV", name: "Dexvra", chain: "SOLANA", change: "+28%", priceFrom: "$0.032", priceTo: "$0.049", price: "$0.049", mcap: "$120M", badge: "Sample Badge" };
+    const p = Number.isFinite(pct) ? pct : pumpConfig.get().minPct;
+    const base = 0.032; // sample baseline price
+    const now = base * (1 + p / 100);
+    return {
+      symbol: "DEXV",
+      name: "Dexvra",
+      chain: "SOLANA",
+      change: `+${Math.round(p)}%`,
+      priceFrom: fmtPrice(base),
+      priceTo: fmtPrice(now),
+      price: fmtPrice(now),
+      mcap: "$120M",
+      badge: "Sample Badge",
+    };
   }
   return BX_SAMPLE;
 }
@@ -652,7 +673,11 @@ async function bxPreview(ctx, kind) {
   await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
 
-async function btPreview(ctx, kind) {
+async function btPreview(ctx, kind, pct) {
+  // `pct` (pump only) previews the alert at a specific % gain; omitted → the
+  // configured window minimum, so the default example matches a real trigger.
+  const data = sampleData(kind, pct);
+  const pctNote = kind === "pump" ? ` — showing <b>${data.change}</b> (${data.priceFrom} → ${data.priceTo})` : "";
   // A GIF/video clip WINS over the still artwork in real posts, so preview IT — this is
   // exactly what will play above every post, letting the admin verify it before going live.
   const media = bannerTpl.mediaOverride(kind);
@@ -670,11 +695,11 @@ async function btPreview(ctx, kind) {
     // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
     if (BT_FILL_KINDS.has(kind)) {
       const filled = await bannerTpl
-        .composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind))
+        .composeOntoClip(kind, media, sampleMedia(kind), data)
         .catch(() => null);
       if (filled) {
         await ctx
-          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b> — your animated template with the token's <b>logo, $ticker, name and price/MC drawn on automatically</b> (sample data). Tune positions in 🖱 Logo editor.`, parse_mode: "HTML" })
+          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b>${pctNote} — your animated template with the token's data <b>drawn on automatically</b> (sample data). Tune positions in 🎛 Layout editor.`, parse_mode: "HTML" })
           .catch(() => {});
         return;
       }
@@ -695,10 +720,10 @@ async function btPreview(ctx, kind) {
   if (!bannerTpl.hasTemplate(kind)) {
     return ctx.reply(`❌ No ${BT_KINDS[kind]} artwork or clip yet. Tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
   }
-  const buf = await bannerTpl.compose(kind, sampleMedia(kind), sampleData(kind));
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), data);
   if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
   await ctx
-    .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview — tune the slot/text until it sits perfectly.` })
+    .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview${pctNote} — tune the slot/text until it sits perfectly.` })
     .catch(() => {});
 }
 
@@ -1206,6 +1231,25 @@ function build() {
     ctx.answerCbQuery(`↩️ Reset ${res.minPct}%–${res.maxPct}%`).catch(() => {});
     await edit(ctx, pthText(), pthKb());
   });
+  // Preview the pump alert at a chosen % gain (min / mid / max shortcuts).
+  bot.action(/^pwpv:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery("Rendering…").catch(() => {});
+    if (!guard(ctx)) return;
+    if (!bannerTpl.mediaOverride("pump")) {
+      return ctx.reply("❌ No pump clip yet — tap 🎞 Upload GIF/Video first, then preview.").catch(() => {});
+    }
+    await btPreview(ctx, "pump", Number(ctx.match[1]));
+  });
+  bot.action("pwpvc", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "pumppreviewpct" };
+    const { minPct, maxPct } = pumpConfig.get();
+    await ctx.reply(
+      `⌨ <b>Preview at what %?</b>\nWindow is <b>${minPct}%–${maxPct}%</b>.\n\nSend a number, e.g. <code>${minPct}</code>, <code>${Math.round((minPct + maxPct) / 2)}</code> or <code>${maxPct}</code>.\n\n/cancel to abort.`,
+      HTML,
+    );
+  });
 
   // Interactive layout editor: element selector + nudge + resize, all editing
   // one photo message in place. Element rides in the callback data (stateless).
@@ -1619,6 +1663,14 @@ function build() {
         if (!m) return ctx.reply("❌ Format: <code>MIN,MAX</code> — e.g. <code>100,2000</code>.", HTML).catch(() => {});
         const res = await pumpConfig.set({ minPct: Number(m[1]), maxPct: Number(m[2]) });
         await ctx.reply(`✅ Pump alert window set to <b>${res.minPct}%–${res.maxPct}%</b>.`, { ...HTML, ...pthKb() }).catch(() => {});
+        return;
+      }
+      // ── Pump preview at a typed % ──
+      if (mode === "pumppreviewpct") {
+        const n = Math.round(Number(low));
+        if (!Number.isFinite(n) || n <= 0) return ctx.reply("❌ Send a positive number, e.g. <code>100</code>.", HTML).catch(() => {});
+        if (!bannerTpl.mediaOverride("pump")) return ctx.reply("❌ No pump clip yet — upload one first.", HTML).catch(() => {});
+        await btPreview(ctx, "pump", n);
         return;
       }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
