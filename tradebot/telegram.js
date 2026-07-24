@@ -1018,7 +1018,15 @@ async function handleUpdate(up) {
     if (from) core.noteUser(from.id, from);   // remember @username (no-op until the user exists)
     if (up.message) return await onMessage(up.message);
     if (up.callback_query) return await onCallback(up.callback_query);
-  } catch (e) { console.error('handleUpdate', e.message); }
+  } catch (e) {
+    console.error('handleUpdate', e && (e.message || e));
+    // Last resort: never leave the user staring at nothing on an unhandled
+    // error. Best-effort — this send must not itself throw out of the catch.
+    try {
+      const chat = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
+      if (chat && chat.type === 'private') await send(chat.id, '⚠️ Something glitched handling that — please try again in a moment.');
+    } catch (_) { /* ignore */ }
+  }
 }
 
 function onMessage(m) {
@@ -1050,14 +1058,25 @@ async function onMessageImpl(m) {
     report.onStart(core.getUser(chatId), isNew, ref, core.allUsers().length);   // → admin channel (fire-and-forget)
     if (deepCa) {
       if (isNew) await send(chatId, `👋 <b>Welcome to Dexvra Trade Bot</b>\n\nA wallet was just created for you. To start trading, tap 💼 Wallets → 📥 to get your deposit address and add some funds. Here's the token you tapped 👇`, mainMenu());
-      const det = await detectChain(chatId, deepCa);
-      if (det.choices) {
-        const kb = det.choices.map((ck) => { const c = core.chainOf(ck); return [btn(`${c.emoji} ${c.name}`, `tok:${ck}:${walletIndex(chatId)}:${deepCa}`)]; });
-        kb.push([btn('« Menu', 'menu')]);
-        return send(chatId, `🌐 <code>${short(deepCa)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+      try {
+        const det = await detectChain(chatId, deepCa);
+        if (det.choices) {
+          const kb = det.choices.map((ck) => { const c = core.chainOf(ck); return [btn(`${c.emoji} ${c.name}`, `tok:${ck}:${walletIndex(chatId)}:${deepCa}`)]; });
+          kb.push([btn('« Menu', 'menu')]);
+          return await send(chatId, `🌐 <code>${short(deepCa)}</code> exists on <b>${det.choices.length} chains</b> — pick where to trade:`, { inline_keyboard: kb });
+        }
+        const c = await tokenCard(chatId, deepCa, det.chain);
+        return await send(chatId, c.text, c.kb);
+      } catch (e) {
+        // A deep-link tap must NEVER go blank. If the card can't load right now
+        // (RPC hiccup, a token-meta call reverting), hand the CA straight back —
+        // tap-to-copy — so the user pastes it and retries (same card path, which
+        // succeeds on a retry). Silence here read as "the button does nothing".
+        console.error('deep-link card', e && (e.message || e));
+        return send(chatId,
+          `⚠️ <b>Couldn't open that token just now.</b>\n\nTap to copy its contract and paste it here to try again 👇\n<code>${esc(deepCa)}</code>`,
+          mainMenu());
       }
-      const c = await tokenCard(chatId, deepCa, det.chain);
-      return send(chatId, c.text, c.kb);
     }
     const activeW = core.activeWallet(core.ensureUser(chatId));
     // New users get a single obvious first action (get the deposit address); returning
