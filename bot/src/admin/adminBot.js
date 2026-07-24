@@ -1961,6 +1961,7 @@ async function startAdminBot() {
   try {
     await require("../helpers/persist").hydrate();
     await require("../db/jobMirror").restoreAll(); // so /reviewbroadcasts sees pending jobs after a VPS reset
+    await require("../db/mediaMirror").hydrate(); // restore banner clips/artwork so the editor previews them
   } catch (e) {
     log.warn(`[adminbot] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }

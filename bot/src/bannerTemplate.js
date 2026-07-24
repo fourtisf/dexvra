@@ -12,6 +12,7 @@ const fss = require("node:fs");
 const os = require("node:os");
 const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
 const { toSendBuffer } = require("./helpers/encodeImage");
+const mediaMirror = require("./db/mediaMirror");
 const log = require("./helpers/logger");
 
 const CONFIG_FILE = "bannerTemplate.json";
@@ -105,7 +106,11 @@ async function saveMedia(kind, buffer, ext) {
     await fss.promises.unlink(mediaPath(kind, other)).catch((err) => {
       if (err && err.code !== "ENOENT") log.warn(`[bannerTpl] saveMedia cleanup ${kind}.${other}: ${err.message}`);
     });
+    mediaMirror.deleteMirror(path.basename(mediaPath(kind, other))).catch(() => {});
   }
+  // Durable backup to Mongo (best-effort, fire-and-forget) so a container reset
+  // restores the uploaded clip, not just the JSON config.
+  mediaMirror.mirrorFile(path.basename(outPath)).catch(() => {});
   _invalidateClipCache(kind); // force the editor to re-extract a frame from the new clip
   // Loud diagnostic: shows the EXACT absolute path + byte count written, so a
   // wrong DATA_DIR / cwd (save landing somewhere the reader doesn't look) is obvious.
@@ -120,6 +125,7 @@ async function removeMedia(kind) {
       // ENOENT = simply not present; anything else means a stale file may linger.
       if (e && e.code !== "ENOENT") log.warn(`[bannerTpl] removeMedia ${kind}.${ext}: ${e.message}`);
     }
+    mediaMirror.deleteMirror(path.basename(mediaPath(kind, ext))).catch(() => {});
   }
   _invalidateClipCache(kind);
 }
@@ -850,6 +856,7 @@ function selfCheck() {
 async function saveTemplate(kind, buffer) {
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   await fss.promises.writeFile(uploadedPath(kind), buffer);
+  mediaMirror.mirrorFile(path.basename(uploadedPath(kind))).catch(() => {});
 }
 /** Remove the admin upload — the bundled default artwork takes over again. */
 async function removeTemplate(kind) {
@@ -858,6 +865,7 @@ async function removeTemplate(kind) {
   } catch {
     /* already gone */
   }
+  mediaMirror.deleteMirror(path.basename(uploadedPath(kind))).catch(() => {});
 }
 
 module.exports = {
