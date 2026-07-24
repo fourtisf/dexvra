@@ -93,14 +93,69 @@ export function textOverlayEnabled(kind: string): boolean {
   return savedLayoutOf(loadConfig(), kind).showText !== false;
 }
 export async function setTextOverlay(kind: string, on: boolean): Promise<boolean> {
+  return (await setLayout(kind, { showText: !!on })).showText;
+}
+
+// ── Layout (positions the bot composites at) ────────────────────────────────
+// Reference canvas the bot draws on; every coordinate is in this space.
+export const REF_W = 2560;
+export const REF_H = 1280;
+
+export interface Layout {
+  logoSize: number;
+  logoX: number | "center";
+  logoY: number | "center";
+  showText: boolean;
+  tickerFontSize: number;
+  tickerX: number | "center";
+  tickerY: number;
+  nameFontSize: number;
+  nameOffsetY: number;
+  metaFontSize: number;
+  metaX: number | "center";
+  metaY: number;
+}
+// Mirrors bannerTemplate.js BASE_DEFAULTS (the position subset the editor drives).
+const BASE_LAYOUT: Layout = {
+  logoSize: 420,
+  logoX: 1890,
+  logoY: 410,
+  showText: true,
+  tickerFontSize: 96,
+  tickerX: 210,
+  tickerY: 618,
+  nameFontSize: 48,
+  nameOffsetY: 96,
+  metaFontSize: 34,
+  metaX: 210,
+  metaY: 772,
+};
+const LAYOUT_KEYS = Object.keys(BASE_LAYOUT) as (keyof Layout)[];
+
+export function getLayout(kind: string): Layout {
+  const saved = savedLayoutOf(loadConfig(), kind);
+  const out = { ...BASE_LAYOUT };
+  for (const k of LAYOUT_KEYS) {
+    if (saved[k] !== undefined) (out as Record<string, unknown>)[k] = saved[k];
+  }
+  return out;
+}
+export async function setLayout(kind: string, patch: Partial<Layout>): Promise<Layout> {
   await ensureDir();
   const cfg = loadConfig();
-  cfg[kind] = { ...savedLayoutOf(cfg, kind), showText: !!on, layoutVersion: LAYOUT_VERSION };
+  // Keep any non-position saved keys (tickerColor, glow, …); overwrite only the
+  // patched position keys, and stamp the current version so the bot honours it.
+  const next: Record<string, unknown> = { ...savedLayoutOf(cfg, kind) };
+  for (const k of LAYOUT_KEYS) {
+    if (patch[k] !== undefined) next[k] = patch[k];
+  }
+  next.layoutVersion = LAYOUT_VERSION;
+  cfg[kind] = next;
   const p = configPath();
   const tmp = `${p}.web.${process.pid}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(cfg, null, 2), "utf8");
   await fs.rename(tmp, p);
-  return !!on;
+  return getLayout(kind);
 }
 
 export interface ChannelBannerStatus {
@@ -110,6 +165,7 @@ export interface ChannelBannerStatus {
   artworkable: boolean;
   fillable: boolean; // bot draws logo + $ticker/name/chips (listing/trending)
   textOverlay: boolean; // when fillable: is the auto-text drawn (vs logo-only)?
+  layout: Layout; // positions the bot composites at (for the visual editor)
   hasArtwork: boolean;
   artworkMtime: number | null;
   // preview: how a browser should render the clip — a real GIF is an <img>, an
@@ -163,6 +219,7 @@ export function statusAll(): {
       artworkable: ARTWORK_KINDS.has(kind),
       fillable: FILL_KINDS.has(kind),
       textOverlay: textOverlayEnabled(kind),
+      layout: getLayout(kind),
       hasArtwork: existsNonEmpty(ap),
       artworkMtime,
       clip: clip ? { ...clip, preview: clipPreviewKind(kind, clip.ext) } : null,

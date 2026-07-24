@@ -14,6 +14,7 @@ import {
   removeClip,
   setPostingEnabled,
   setTextOverlay,
+  setLayout,
   type ChannelKind,
 } from "@/lib/channelBanners";
 
@@ -85,6 +86,11 @@ export async function DELETE(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   if (!(await isAdmin(req))) return unauthorized();
   const body = await req.json().catch(() => ({}));
+  // Per-kind layout save: { kind, layout: {...positions} }
+  if (isKind(String(body.kind || "")) && body.layout && typeof body.layout === "object") {
+    const layout = await setLayout(String(body.kind), body.layout);
+    return NextResponse.json({ ok: true, kind: body.kind, layout });
+  }
   // Per-kind text-overlay toggle: { kind, textOverlay: boolean }
   if (isKind(String(body.kind || "")) && typeof body.textOverlay === "boolean") {
     const on = await setTextOverlay(String(body.kind), body.textOverlay);

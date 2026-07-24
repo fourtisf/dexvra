@@ -7,8 +7,15 @@
 // bot at post time — this panel shows the RAW upload; preview the exact
 // composite in @dexvraadminbot.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LayoutEditor } from "./LayoutEditor";
 
 type Clip = { type: string; ext: string; bytes: number; mtime: number; preview: "image" | "video" };
+type Layout = {
+  logoSize: number; logoX: number | "center"; logoY: number | "center"; showText: boolean;
+  tickerFontSize: number; tickerX: number | "center"; tickerY: number;
+  nameFontSize: number; nameOffsetY: number;
+  metaFontSize: number; metaX: number | "center"; metaY: number;
+};
 type Kind = {
   kind: string;
   label: string;
@@ -16,6 +23,7 @@ type Kind = {
   artworkable: boolean;
   fillable: boolean;
   textOverlay: boolean;
+  layout: Layout;
   hasArtwork: boolean;
   artworkMtime: number | null;
   clip: Clip | null;
@@ -166,8 +174,14 @@ function KindCard({
 }) {
   const artRef = useRef<HTMLInputElement>(null);
   const clipRef = useRef<HTMLInputElement>(null);
+  const [editing, setEditing] = useState(false);
   const fileUrl = (type: "artwork" | "clip", v: number) =>
     `/api/admin/channel-banners/file?kind=${k.kind}&type=${type}&v=${v}`;
+  const backdrop = k.clip
+    ? { url: fileUrl("clip", k.clip.mtime), kind: k.clip.preview }
+    : k.hasArtwork && k.artworkMtime
+      ? { url: fileUrl("artwork", k.artworkMtime), kind: "image" as const }
+      : null;
 
   return (
     <div style={{ border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: 12, background: "rgba(255,255,255,.02)" }}>
@@ -252,6 +266,16 @@ function KindCard({
               </button>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Visual position editor (listing/trending) — drag logo/text on the template */}
+      {k.fillable && k.textOverlay && (
+        <div style={{ marginTop: 12 }}>
+          <button className="abtn" style={{ width: "100%" }} onClick={() => setEditing((v) => !v)}>
+            {editing ? "▲ Close position editor" : "🎛 Position editor — drag logo · $ticker · chips"}
+          </button>
+          {editing && <LayoutEditor kind={k.kind} layout={k.layout} backdrop={backdrop} onSaved={() => {}} />}
         </div>
       )}
     </div>
