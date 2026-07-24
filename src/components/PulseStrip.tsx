@@ -5,6 +5,7 @@ import { CHAINS } from "@/config/chains";
 import { fmtCap } from "@/lib/format";
 import { BRAND_NAME } from "@/config/brand";
 import { useApp } from "./AppState";
+import { ChainLogo } from "./ChainLogo";
 
 // Clean line icons (Lucide-style) instead of emoji section-glyphs — crisp and
 // identical across every device, not the OS emoji-of-the-day.
@@ -97,12 +98,12 @@ export function PulseStrip() {
             if (!c) return null;
             return (
               <div className="heat-cell" key={h.chain}>
-                <div className="heat-top">
-                  <span className="heat-chain">
-                    <span className="cdot" style={{ background: c.color, color: c.color }} />
-                    {c.label}
-                  </span>
-                  <span className="heat-temp">{h.temp}°</span>
+                <div className="heat-chain">
+                  <ChainLogo chain={h.chain} size={16} />
+                  <span className="heat-name">{c.label}</span>
+                </div>
+                <div className="heat-temp">
+                  {h.temp}<span className="deg">°</span>
                 </div>
                 <div className="heat-kv">
                   <span>VOL</span>

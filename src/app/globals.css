@@ -293,11 +293,11 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .live-pill{font-family:var(--fm);font-size:8px;font-weight:800;letter-spacing:.14em;color:#03150B;background:var(--mint);border-radius:999px;padding:3px 7px}
 .wcard-head .more{margin-left:auto;font-family:var(--fm);font-size:9.5px;font-weight:700;letter-spacing:.08em;color:var(--mint);text-transform:uppercase;white-space:nowrap}
 .heat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;flex:1}
-.heat-cell{border:1px solid var(--line);border-radius:12px;padding:9px 10px;background:rgba(255,255,255,.02);display:flex;flex-direction:column;justify-content:center}
-.heat-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-.heat-chain{display:flex;align-items:center;gap:6px;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--text)}
-.heat-chain .cdot{width:7px;height:7px;border-radius:50%;box-shadow:0 0 8px currentColor}
-.heat-temp{font-family:var(--fm);font-weight:800;font-size:14px;color:var(--mint)}
+.heat-cell{border:1px solid var(--line);border-radius:12px;padding:9px 10px;background:rgba(255,255,255,.02);display:flex;flex-direction:column;justify-content:center;min-width:0}
+.heat-chain{display:flex;align-items:center;gap:6px;min-width:0;margin-bottom:5px}
+.heat-chain .heat-name{font-family:var(--fm);font-size:10px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.heat-temp{font-family:var(--fm);font-weight:800;font-size:19px;line-height:1;color:var(--mint);margin-bottom:7px}
+.heat-temp .deg{font-size:.62em;opacity:.65;margin-left:1px}
 .heat-kv{display:flex;justify-content:space-between;font-family:var(--fm);font-size:9.5px;color:var(--faint)}
 .heat-kv b{color:var(--muted)}
 .heat-bar{height:4px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:7px}
