@@ -149,7 +149,7 @@ test("new default layout still spaces correctly with empty optional vars", () =>
     announce: "https://t.me/a",
   });
   assert.ok(!/\n{3,}/.test(r.text), JSON.stringify(r.text));
-  assert.ok(r.text.includes("T ($T)") && r.text.includes("Chain:"));
+  assert.ok(r.text.includes("T ($T)") && r.text.includes("Network:"));
 });
 
 test("entity-saved WYSIWYG template: socials strip remaps entity offsets", async () => {

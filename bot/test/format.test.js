@@ -33,12 +33,14 @@ test("listing post payload contains the essentials + premium emoji entities", ()
   assert.ok(card.text.includes("New Listing on Dexvra"));
   assert.ok(card.text.includes("$EVIL"));
   assert.ok(card.text.includes("Diamond"));
-  assert.ok(card.text.includes("Liquidity:") && card.text.includes("MC:"), "Liquidity + MC line");
-  assert.ok(card.text.includes("Chain:"), "Chain line present");
-  assert.ok(card.text.includes("dexvra.io/token"), "token-page link line present");
+  assert.ok(card.text.includes("Market cap:") && card.text.includes("Liquidity:"), "Market cap + Liquidity lines");
+  assert.ok(card.text.includes("Network:"), "Network line present");
+  // The bare dexvra.io/token/… URL line was removed (read as spam) — the token
+  // NAME is now the clickable link to its Dexvra page instead.
+  assert.ok(!card.text.includes("dexvra.io/token"), "no raw dexvra URL printed in the body");
   assert.ok(card.entities.some((e) => e.type === "code"), "address as code");
-  // the CTA links to the token page
-  assert.ok(card.entities.some((e) => e.type === "text_link" && e.url === coin.siteUrl));
+  // the NAME links to the token page (the CTA target url is the coin's site url)
+  assert.ok(card.entities.some((e) => e.type === "text_link" && e.url === coin.siteUrl), "name links to the token page");
   // the injected link in the name must NOT become a text_link entity
   assert.ok(!card.entities.some((e) => e.type === "text_link" && /scam\.io/.test(e.url || "")));
   // every entity stays inside the text bounds
@@ -132,13 +134,20 @@ test("xpress listing post matches the operator's reference layout", () => {
     liq: 22300,
     links: { twitter: "https://x.com/gw", website: "https://gw.io", telegram: "https://t.me/gw" },
   };
-  const { text } = fmt.listingPost(coin);
+  const { text, entities } = fmt.listingPost(coin);
   assert.ok(text.startsWith("⚡ Xpress Listing — The Golden Whale live on Dexvra"), "header line");
+  // The token name IS the link now — visible text unchanged, links to the page.
   assert.ok(text.includes("💲 The Golden Whale ($WHALE)"), "💲 token line");
-  assert.ok(text.includes("✅ dexvra.io/token/solana/4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "✅ full dexvra link line");
-  assert.ok(text.includes("Chain: Solana"), "chain line");
-  assert.ok(text.includes("📄 Contract:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
-  assert.ok(text.includes("◼️ MC: $84.4K | Liquidity: $22.3K"), "MC first, then Liquidity, on ONE line");
+  assert.ok(
+    entities.some((e) => e.type === "text_link" && e.url === `https://dexvra.io/token/solana/${coin.address}`),
+    "the name links to the Dexvra token page",
+  );
+  // …and the bare dexvra.io/token/… URL line is gone (it read as spam).
+  assert.ok(!text.includes("dexvra.io/token/"), "no raw dexvra token URL printed");
+  assert.ok(text.includes("Network: Solana"), "network line");
+  assert.ok(text.includes("📄 Contract address:\n4rABHLfm7BDkkjrkyPYtRadg2BZTEZVoEy3MzrFQpump"), "contract block");
+  assert.ok(text.includes("🏦 Market cap: $84.4K"), "market cap line");
+  assert.ok(text.includes("💧 Liquidity: $22.3K"), "liquidity line");
   assert.ok(text.includes("🔗 $WHALE social links\n❌ X · 🌐 Website · ✈️ Telegram"), "socials side-by-side row");
   assert.ok(text.includes("📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements"), "footer block");
 });
