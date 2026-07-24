@@ -21,8 +21,10 @@ type Layout = {
   tickerFontSize: number;
   tickerX: number | "center";
   tickerY: number;
+  tickerColor: string;
   nameFontSize: number;
   nameOffsetY: number;
+  nameColor: string;
   metaFontSize: number;
   metaX: number | "center";
   metaY: number;
@@ -183,8 +185,8 @@ export function LayoutEditor({
                 ...elBox("ticker"),
               }}
             >
-              <div style={{ fontSize: cqw(layout.tickerFontSize), fontWeight: 800, color: "#EAF6F2", lineHeight: 1 }}>$SAMPLE</div>
-              <div style={{ fontSize: cqw(layout.nameFontSize), color: "#B8CCC8", marginTop: cqw(layout.nameOffsetY - layout.tickerFontSize) }}>Sample Token</div>
+              <div style={{ fontSize: cqw(layout.tickerFontSize), fontWeight: 800, color: layout.tickerColor || "#EAF6F2", lineHeight: 1 }}>$SAMPLE</div>
+              <div style={{ fontSize: cqw(layout.nameFontSize), color: layout.nameColor || "#B8CCC8", marginTop: cqw(layout.nameOffsetY - layout.tickerFontSize) }}>Sample Token</div>
             </div>
 
             {/* Chips (drag by row start) */}
@@ -246,6 +248,36 @@ export function LayoutEditor({
               {lbl}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Text colours */}
+      {layout.showText && (
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 8 }}>
+          <label className="a-chain" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 6 }}>
+            $ticker color
+            <input
+              type="color"
+              value={layout.tickerColor || "#FFFFFF"}
+              onChange={(e) => {
+                setLayout((l) => ({ ...l, tickerColor: e.target.value }));
+                setDirty(true);
+              }}
+              style={{ width: 34, height: 24, padding: 0, border: "none", background: "none" }}
+            />
+          </label>
+          <label className="a-chain" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 6 }}>
+            Name color
+            <input
+              type="color"
+              value={layout.nameColor || "#B8CCC8"}
+              onChange={(e) => {
+                setLayout((l) => ({ ...l, nameColor: e.target.value }));
+                setDirty(true);
+              }}
+              style={{ width: 34, height: 24, padding: 0, border: "none", background: "none" }}
+            />
+          </label>
         </div>
       )}
 

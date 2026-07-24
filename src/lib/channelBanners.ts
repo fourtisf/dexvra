@@ -112,8 +112,10 @@ export interface Layout {
   tickerFontSize: number;
   tickerX: number | "center";
   tickerY: number;
+  tickerColor: string;
   nameFontSize: number;
   nameOffsetY: number;
+  nameColor: string;
   metaFontSize: number;
   metaX: number | "center";
   metaY: number;
@@ -130,8 +132,10 @@ const BASE_LAYOUT: Layout = {
   tickerFontSize: 96,
   tickerX: 210,
   tickerY: 618,
+  tickerColor: "#FFFFFF",
   nameFontSize: 48,
   nameOffsetY: 96,
+  nameColor: "#B8CCC8",
   metaFontSize: 34,
   metaX: 210,
   metaY: 772,
@@ -147,8 +151,10 @@ const KIND_LAYOUT: Record<string, Partial<Layout>> = {
     tickerX: 1800,
     tickerY: 920,
     tickerFontSize: 80,
+    tickerColor: "#33E5C9",
     nameFontSize: 44,
     nameOffsetY: 105,
+    nameColor: "#EAF6F2",
     showPrice: false,
     showMcap: false,
     metaX: 1690,

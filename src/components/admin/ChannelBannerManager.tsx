@@ -13,8 +13,8 @@ type Clip = { type: string; ext: string; bytes: number; mtime: number; preview: 
 type Layout = {
   logoSize: number; logoX: number | "center"; logoY: number | "center"; showText: boolean;
   showChain: boolean; showPrice: boolean; showMcap: boolean;
-  tickerFontSize: number; tickerX: number | "center"; tickerY: number;
-  nameFontSize: number; nameOffsetY: number;
+  tickerFontSize: number; tickerX: number | "center"; tickerY: number; tickerColor: string;
+  nameFontSize: number; nameOffsetY: number; nameColor: string;
   metaFontSize: number; metaX: number | "center"; metaY: number;
 };
 type Kind = {

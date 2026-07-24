@@ -170,6 +170,9 @@ const KIND_DEFAULTS = {
   trending: {
     ...BASE_DEFAULTS,
     tickerGlow: "#38D8F0",
+    // Cyan $ticker + white name to match the trending template design.
+    tickerColor: "#33E5C9",
+    nameColor: "#EAF6F2",
     logoX: 1890,
     logoY: 350,
     logoSize: 430,
@@ -286,6 +289,18 @@ function canvasLib() {
   return CV;
 }
 
+// Blend a hex colour toward white by `amt` (0..1) — used to give a coloured
+// $ticker a subtle lighter-top gradient instead of a flat fill.
+function lightenHex(hex, amt) {
+  const n = parseInt(String(hex).replace("#", ""), 16);
+  if (!Number.isFinite(n)) return hex;
+  const r = (n >> 16) & 255,
+    g = (n >> 8) & 255,
+    b = n & 255;
+  const L = (c) => Math.round(c + (255 - c) * amt);
+  return `rgb(${L(r)},${L(g)},${L(b)})`;
+}
+
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
 async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}, opts = {}) {
@@ -376,10 +391,19 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       ctx.shadowColor = glow + "66";
       ctx.shadowBlur = Math.max(18, fsz * 0.3);
       ctx.shadowOffsetY = 0;
+      const tc = cfg.tickerColor || "#FFFFFF";
       const grad = ctx.createLinearGradient(0, ty - fsz * 0.55, 0, ty + fsz * 0.45);
-      grad.addColorStop(0, "#FFFFFF");
-      grad.addColorStop(0.72, cfg.tickerColor || "#FFFFFF");
-      grad.addColorStop(1, "#BFE9DC");
+      if (tc.toUpperCase() === "#FFFFFF") {
+        // White ticker (listing default): keep the crisp white→mint sheen.
+        grad.addColorStop(0, "#FFFFFF");
+        grad.addColorStop(0.72, "#FFFFFF");
+        grad.addColorStop(1, "#BFE9DC");
+      } else {
+        // Coloured ticker (e.g. trending cyan): a lighter top → the colour, so it
+        // reads as that colour, not white with a tint.
+        grad.addColorStop(0, lightenHex(tc, 0.55));
+        grad.addColorStop(1, tc);
+      }
       ctx.fillStyle = grad;
       ctx.fillText(ticker, tx, ty);
       // crisp second pass (kills glow muddiness on the glyph body)
