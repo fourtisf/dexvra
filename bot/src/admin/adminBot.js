@@ -12,6 +12,7 @@ const { escapeHtml } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
+const pumpConfig = require("../services/pumpConfig");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
@@ -261,6 +262,12 @@ function btKindKb(kind) {
       }
       rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
     }
+    // Pump alert trigger window (min%/max%) — configurable, applies to the alert
+    // logic regardless of whether a clip is set.
+    if (kind === "pump") {
+      const { minPct, maxPct } = pumpConfig.get();
+      rows.push([Markup.button.callback(`⚙ Alert window · ${minPct}%–${maxPct}%`, "pth")]);
+    }
     rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
@@ -272,6 +279,30 @@ function btKindKb(kind) {
     [Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)],
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
     [Markup.button.callback("⬅ Artwork menu", "bt")],
+  ]);
+}
+
+// ── Pump alert window editor (min% / max%) ──────────────────────────────────
+// A token fires a pump alert only when it's up between min% and max% from its
+// baseline. Adjustable here so the operator tunes sensitivity without a redeploy.
+function pthText() {
+  const { minPct, maxPct } = pumpConfig.get();
+  return (
+    `⚙ <b>Pump alert window</b>\n\n` +
+    `A token fires a 📈 <b>Pump alert</b> when it's up between <b>${minPct}%</b> and <b>${maxPct}%</b> ` +
+    `from its baseline (the first price the bot saw ≈ listing time).\n\n` +
+    `• Below <b>${minPct}%</b> → too small, no alert\n` +
+    `• Above <b>${maxPct}%</b> → almost always bad market data, skipped\n\n` +
+    `Tap to adjust, or ⌨ type both exactly. Applies on the next check (~no restart).`
+  );
+}
+function pthKb() {
+  const cb = Markup.button.callback;
+  return Markup.inlineKeyboard([
+    [cb("Min ➖25", "pwmin:-25"), cb("➖5", "pwmin:-5"), cb("➕5", "pwmin:5"), cb("➕25", "pwmin:25")],
+    [cb("Max ➖250", "pwmax:-250"), cb("➖50", "pwmax:-50"), cb("➕50", "pwmax:50"), cb("➕250", "pwmax:250")],
+    [cb("⌨ Type min,max", "pwset")],
+    [cb(`↩️ Reset (${pumpConfig.DEFAULT_MIN}–${pumpConfig.DEFAULT_MAX})`, "pwrst"), cb("⬅ Back", "btk:pump")],
   ]);
 }
 
@@ -1138,6 +1169,44 @@ function build() {
     await edit(ctx, btHomeText(), btHomeKb());
   });
 
+  // ── Pump alert window (min%/max%) ──
+  bot.action("pth", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, pthText(), pthKb());
+  });
+  bot.action(/^pwmin:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const cur = pumpConfig.get();
+    const res = await pumpConfig.set({ minPct: cur.minPct + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Min ${res.minPct}%`).catch(() => {});
+    await edit(ctx, pthText(), pthKb());
+  });
+  bot.action(/^pwmax:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const cur = pumpConfig.get();
+    const res = await pumpConfig.set({ maxPct: cur.maxPct + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Max ${res.maxPct}%`).catch(() => {});
+    await edit(ctx, pthText(), pthKb());
+  });
+  bot.action("pwset", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "pumpwindow" };
+    const { minPct, maxPct } = pumpConfig.get();
+    await ctx.reply(
+      `⌨ <b>Pump alert window</b>\nNow: <b>${minPct}%–${maxPct}%</b>\n\nSend the new window as <code>MIN,MAX</code> (percent, min first).\n👉 Example: <code>100,2000</code>\n\n/cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("pwrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    const res = await pumpConfig.reset();
+    log.info(`[adminbot] pump window reset to ${res.minPct}%–${res.maxPct}% by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(`↩️ Reset ${res.minPct}%–${res.maxPct}%`).catch(() => {});
+    await edit(ctx, pthText(), pthKb());
+  });
+
   // Interactive layout editor: element selector + nudge + resize, all editing
   // one photo message in place. Element rides in the callback data (stateless).
   const E = "(logo|ticker|meta|badge)";
@@ -1544,6 +1613,14 @@ function build() {
       ctx.session.awaitingBt = null;
       const low = text.trim().toLowerCase();
       const cv = (v) => (v === "center" ? "center" : Number(v));
+      // ── Pump alert window: "MIN,MAX" (or "MIN MAX") ──
+      if (mode === "pumpwindow") {
+        const m = low.match(/^(\d+)\s*[, ]\s*(\d+)$/);
+        if (!m) return ctx.reply("❌ Format: <code>MIN,MAX</code> — e.g. <code>100,2000</code>.", HTML).catch(() => {});
+        const res = await pumpConfig.set({ minPct: Number(m[1]), maxPct: Number(m[2]) });
+        await ctx.reply(`✅ Pump alert window set to <b>${res.minPct}%–${res.maxPct}%</b>.`, { ...HTML, ...pthKb() }).catch(() => {});
+        return;
+      }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
       if (mode === "bxsize" || mode === "bxslotsize" || mode === "bxmove") {
         try {

@@ -15,11 +15,11 @@ const { fmtPrice, formatNumber } = require("../helpers/format");
 const { DedupSet, loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
 
-// Alert window: only fire once a token is up at least PUMP_MIN_PCT and at most
-// PUMP_MAX_PCT from its baseline. Above the ceiling is almost always bad market
-// data (thin liquidity / a bad tick), so it's skipped rather than posted.
-const PUMP_MIN_PCT = 100; // floor: token has at least doubled
-const PUMP_MAX_PCT = 2000; // ceiling: 20×
+// Alert window (min%/max%) is admin-configurable via pumpConfig — read fresh
+// each poll so an @dexvraadminbot change applies next cycle. Above the ceiling
+// is almost always bad market data (thin liquidity / a bad tick), so it's
+// skipped rather than posted.
+const pumpConfig = require("./pumpConfig");
 const BASE_FILE = "pumpbase.json";
 let baseline = loadJSONSync(BASE_FILE, {});
 const latch = new DedupSet("pumplatch.json");
@@ -108,7 +108,8 @@ function start(tg) {
       const base = baseline[key];
       if (!base.price || m.priceUsd < base.price) continue;
       const pct = ((m.priceUsd - base.price) / base.price) * 100;
-      if (pct < PUMP_MIN_PCT || pct > PUMP_MAX_PCT) continue; // window: 100%–2000%
+      const { minPct, maxPct } = pumpConfig.get(); // admin-set window (default 100%–2000%)
+      if (pct < minPct || pct > maxPct) continue;
       if (latch.has(key)) continue;
 
       await latch.add(key);
