@@ -12,6 +12,7 @@ import { LayoutEditor } from "./LayoutEditor";
 type Clip = { type: string; ext: string; bytes: number; mtime: number; preview: "image" | "video" };
 type Layout = {
   logoSize: number; logoX: number | "center"; logoY: number | "center"; showText: boolean;
+  showChain: boolean; showPrice: boolean; showMcap: boolean;
   tickerFontSize: number; tickerX: number | "center"; tickerY: number;
   nameFontSize: number; nameOffsetY: number;
   metaFontSize: number; metaX: number | "center"; metaY: number;

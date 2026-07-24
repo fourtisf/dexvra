@@ -106,6 +106,9 @@ export interface Layout {
   logoX: number | "center";
   logoY: number | "center";
   showText: boolean;
+  showChain: boolean;
+  showPrice: boolean;
+  showMcap: boolean;
   tickerFontSize: number;
   tickerX: number | "center";
   tickerY: number;
@@ -115,12 +118,15 @@ export interface Layout {
   metaX: number | "center";
   metaY: number;
 }
-// Mirrors bannerTemplate.js BASE_DEFAULTS (the position subset the editor drives).
+// Mirrors bannerTemplate.js BASE_DEFAULTS (the subset the editor drives).
 const BASE_LAYOUT: Layout = {
   logoSize: 420,
   logoX: 1890,
   logoY: 410,
   showText: true,
+  showChain: true,
+  showPrice: true,
+  showMcap: true,
   tickerFontSize: 96,
   tickerX: 210,
   tickerY: 618,
@@ -143,9 +149,11 @@ const KIND_LAYOUT: Record<string, Partial<Layout>> = {
     tickerFontSize: 80,
     nameFontSize: 44,
     nameOffsetY: 105,
-    metaX: 1620,
-    metaY: 1110,
-    metaFontSize: 30,
+    showPrice: false,
+    showMcap: false,
+    metaX: 1690,
+    metaY: 1120,
+    metaFontSize: 34,
   },
 };
 

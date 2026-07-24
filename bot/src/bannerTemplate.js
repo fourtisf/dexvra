@@ -132,6 +132,12 @@ const BASE_DEFAULTS = {
   slotW: 1680, // rect: slot width/height
   slotH: 800,
   showText: true, // draw $TICKER + name overlay
+  // Which meta chips to draw. Default: all three (chain · price · MC). A designed
+  // template may want only some (e.g. trending shows chain only — the token's
+  // name/$ticker already sit in its card).
+  showChain: true,
+  showPrice: true,
+  showMcap: true,
   tickerFontSize: 96,
   tickerX: 210, // number | "center"
   tickerY: 618,
@@ -172,9 +178,13 @@ const KIND_DEFAULTS = {
     tickerFontSize: 80,
     nameFontSize: 44,
     nameOffsetY: 105,
-    metaX: 1620,
-    metaY: 1110,
-    metaFontSize: 30,
+    // Trending shows the CHAIN chip only — no price / MC (name + $ticker already
+    // sit in the token card).
+    showPrice: false,
+    showMcap: false,
+    metaX: 1690,
+    metaY: 1120,
+    metaFontSize: 34,
   },
   banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
@@ -403,7 +413,11 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       const gap = Math.round(fsz * 0.5);
       const cy = Number(cfg.metaY) || H - 152;
       ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
-      const vals = [chain, price && price !== "TBA" ? price : null, mcap ? `MC ${mcap}` : null]
+      const vals = [
+        cfg.showChain === false ? null : chain,
+        cfg.showPrice === false ? null : price && price !== "TBA" ? price : null,
+        cfg.showMcap === false ? null : mcap ? `MC ${mcap}` : null,
+      ]
         .filter(Boolean)
         .map(String);
       const widths = vals.map((t) => ctx.measureText(t).width + padX * 2);

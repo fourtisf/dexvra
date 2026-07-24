@@ -15,6 +15,9 @@ type Layout = {
   logoX: number | "center";
   logoY: number | "center";
   showText: boolean;
+  showChain: boolean;
+  showPrice: boolean;
+  showMcap: boolean;
   tickerFontSize: number;
   tickerX: number | "center";
   tickerY: number;
@@ -199,7 +202,13 @@ export function LayoutEditor({
                 ...elBox("meta"),
               }}
             >
-              {["SOLANA", "$0.0042", "MC $1.2M"].map((t) => (
+              {[
+                layout.showChain !== false ? "SOLANA" : null,
+                layout.showPrice !== false ? "$0.0042" : null,
+                layout.showMcap !== false ? "MC $1.2M" : null,
+              ]
+                .filter((t): t is string => Boolean(t))
+                .map((t) => (
                 <span
                   key={t}
                   style={{
@@ -218,6 +227,27 @@ export function LayoutEditor({
           </>
         )}
       </div>
+
+      {/* Chip content toggles */}
+      {layout.showText && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <span className="a-chain" style={{ fontSize: 11 }}>Chips:</span>
+          {([["showChain", "Chain"], ["showPrice", "Price"], ["showMcap", "MC"]] as const).map(([k, lbl]) => (
+            <button
+              key={k}
+              className={`abtn ${layout[k] !== false ? "p" : ""}`}
+              style={{ fontSize: 11, padding: "4px 10px" }}
+              onClick={() => {
+                setLayout((l) => ({ ...l, [k]: l[k] === false }));
+                setDirty(true);
+              }}
+            >
+              {layout[k] !== false ? "✓ " : "✕ "}
+              {lbl}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
