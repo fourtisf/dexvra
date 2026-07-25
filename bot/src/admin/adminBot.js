@@ -15,6 +15,7 @@ const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
 const trendingBoard = require("../services/trendingBoard");
 const autoTrend = require("../services/autoTrend");
+const autoLister = require("../services/autoLister");
 const forcePost = require("./forcePost");
 const fpStore = require("../forcepost/store");
 const gramjs = require("../gramjs");
@@ -66,6 +67,7 @@ function mainKb() {
     [Markup.button.callback("🚀 Force post to channel (test live)", "fp")],
     [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
     [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
+    [Markup.button.callback("🆓 Auto Listing (free, $1M+ projects)", "al")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -589,6 +591,50 @@ function atKb() {
     [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
     [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
     [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
+  ]);
+}
+
+// ── Auto-Listing editor (free listings for projects crossing the threshold) ──
+const usd = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("en-US");
+function alText() {
+  const c = autoLister.get();
+  const s = autoLister.stats();
+  const recent = autoLister
+    .history(5)
+    .map((h) => `• <b>${h.sym || h.key}</b> at ${usd(h.mcap)}`)
+    .join("\n");
+  return (
+    `🆓 <b>Auto Listing</b>\n\n` +
+    `Watches DexScreener across every supported chain and lists a project for ` +
+    `<b>free</b> once it climbs past its own trigger. Each token's trigger is a ` +
+    `different number inside the band below — so listings land at ${usd(1_100_000)}, ` +
+    `${usd(1_370_000)}, ${usd(1_420_000)}… instead of every single one at a ` +
+    `suspiciously round ${usd(1_000_000)}.\n\n` +
+    `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
+    `🎯 Trigger band: <b>${usd(c.minMcap)} – ${usd(c.maxMcap)}</b>\n` +
+    `🚫 Ignore above: <b>${usd(c.maxMcapHard)}</b>\n` +
+    `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
+    `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +
+    `🔢 Max <b>${c.maxPerDay}</b>/day, <b>${c.maxPerRun}</b>/scan · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n\n` +
+    `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
+    (recent ? `${recent}\n\n` : "\n") +
+    `Auto listings carry a <b>Free</b> badge — never a paid tier, so they can't be ` +
+    `mistaken for a Bronze customer.`
+  );
+}
+function alKb() {
+  const cb = Markup.button.callback;
+  const c = autoLister.get();
+  return Markup.inlineKeyboard([
+    [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "alen")],
+    [cb(`🎯 From ${usd(c.minMcap)}`, "alnop"), cb("➖", "almin:-100000"), cb("➕", "almin:100000")],
+    [cb(`   To ${usd(c.maxMcap)}`, "alnop"), cb("➖", "almax:-100000"), cb("➕", "almax:100000")],
+    [cb(`💧 Liq ${usd(c.minLiq)}`, "alnop"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
+    [cb(`📊 Vol ${usd(c.minVol24)}`, "alnop"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
+    [cb(`🔢 ${c.maxPerDay}/day`, "alnop"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
+    [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
+    [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
 }
 
@@ -1569,6 +1615,59 @@ function build() {
     await autoTrend.reset();
     ctx.answerCbQuery("↩️ Reset").catch(() => {});
     await edit(ctx, atText(), atKb());
+  });
+
+  // ── Auto Listing ──
+  bot.action("al", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons
+  bot.action("alen", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ enabled: !autoLister.get().enabled });
+    log.info(`[adminbot] auto-listing ${c.enabled ? "ENABLED" : "disabled"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.enabled ? "🟢 Auto Listing ON" : "🔴 Auto Listing OFF").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alpost", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ postChannel: !autoLister.get().postChannel });
+    log.info(`[adminbot] auto-listing channel post ${c.postChannel ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.postChannel ? "📣 Posts to the listing channel" : "🤫 Site only").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  const alStep = (key, label) => async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ [key]: autoLister.get()[key] + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`${label}: ${usd(c[key])}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  };
+  bot.action(/^almin:(-?\d+)$/, alStep("minMcap", "From"));
+  bot.action(/^almax:(-?\d+)$/, alStep("maxMcap", "To"));
+  bot.action(/^alliq:(-?\d+)$/, alStep("minLiq", "Min liquidity"));
+  bot.action(/^alvol:(-?\d+)$/, alStep("minVol24", "Min 24h volume"));
+  bot.action(/^alday:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ maxPerDay: autoLister.get().maxPerDay + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Max/day: ${c.maxPerDay}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    await autoLister.reset();
+    ctx.answerCbQuery("↩️ Reset").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alclr", async (ctx) => {
+    // After clearing listings on the site: without this a token already
+    // auto-listed would never be considered again.
+    if (!guard(ctx)) return;
+    await autoLister.resetState();
+    log.info(`[adminbot] auto-listing history cleared by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery("🧹 History cleared — those tokens can be listed again").catch(() => {});
+    await edit(ctx, alText(), alKb());
   });
 
   // ── Force post: pick a kind → confirm → publish for real ──

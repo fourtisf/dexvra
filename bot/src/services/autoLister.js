@@ -1,0 +1,352 @@
+// Auto-Listing — free, automatic listings for projects that climb past the
+// operator's market-cap threshold (~$1M), discovered on DexScreener across every
+// supported chain. Off by default; everything is tunable from @dexvraadminbot
+// and the loop re-reads config each cycle, so changes apply without a restart.
+//
+// WHY THE TRIGGER IS PER-TOKEN AND RANDOM
+// Listing everything the instant it prints $1,000,000 makes the feed read as
+// machine-generated: every entry shows the same round number. So each token gets
+// its OWN trigger somewhere in [minMcap, maxMcap] — one lists at $1.08M, the
+// next at $1.42M — and because a scan lands minutes after the crossing, the
+// recorded cap is a little past that. That is the whole point of the band.
+//
+// The trigger is DERIVED FROM THE ADDRESS, not rolled fresh each scan. A fresh
+// roll would re-draw until one landed under the token's current cap, which
+// converges on listing everything at the floor — exactly the behaviour we are
+// trying to avoid. Hashing the address means a token has to genuinely climb to
+// ITS number, and the number never moves.
+//
+// An auto listing is created with tier "FREE": not a package anyone can buy, so
+// it can never be mistaken for (or dilute) a paid Bronze placement. Its channel
+// post carries no tier badge at all.
+const crypto = require("node:crypto");
+const { loadJSONSync, saveJSON } = require("../helpers/persist");
+const ds = require("../dexscreener");
+const api = require("../api/dexvra");
+const post = require("../channels/post");
+const fmt = require("../channels/format");
+const { CHANNELS } = require("../config/constants");
+const { sanitizeTicker } = require("../helpers/ticker");
+const { chainOf } = require("../config/chains");
+const log = require("../helpers/logger");
+
+const FILE = "autoLister.json";
+const STATE_FILE = "autoListerState.json";
+const DAY_MS = 86_400_000;
+
+const DEFAULTS = {
+  enabled: false, // OFF until the operator turns it on — it publishes in public
+  minMcap: 1_000_000, // the floor the operator asked for
+  maxMcap: 1_500_000, // top of the random band → 1.1M / 1.4M listings
+  maxMcapHard: 50_000_000, // past this it is an established token, not a find
+  minLiq: 25_000, // a $1M cap on $300 of liquidity is not a $1M project
+  minVol24: 50_000,
+  minAgeHours: 6, // skip the first hours, where most rugs live
+  maxPerDay: 12, // the channel/site must not read as a firehose
+  maxPerRun: 3,
+  maxLookupsPerRun: 40, // politeness toward the DexScreener API
+  minGapMin: 25, // random wait between scans (never a fixed heartbeat)
+  maxGapMin: 90,
+  postChannel: false, // list on the site only, until the operator says otherwise
+};
+
+// Rails: a fat-finger in the admin editor must not be able to list the whole
+// market or spam the channel.
+const HARD = {
+  mcap: [10_000, 1_000_000_000],
+  liq: [0, 100_000_000],
+  vol: [0, 1_000_000_000],
+  ageHours: [0, 720],
+  perDay: [1, 100],
+  perRun: [1, 25],
+  lookups: [5, 200],
+  gapMin: [5, 1440],
+};
+
+function clampInt(v, [lo, hi], fb) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fb;
+}
+
+/** Current config, defaults applied and every value forced within its rails. */
+function get() {
+  const c = loadJSONSync(FILE, {}) || {};
+  const g = { ...DEFAULTS };
+  for (const k of ["enabled", "postChannel"]) if (typeof c[k] === "boolean") g[k] = c[k];
+  g.minMcap = clampInt(c.minMcap, HARD.mcap, DEFAULTS.minMcap);
+  g.maxMcap = clampInt(c.maxMcap, HARD.mcap, DEFAULTS.maxMcap);
+  if (g.maxMcap < g.minMcap) g.maxMcap = g.minMcap; // keep the band valid
+  g.maxMcapHard = clampInt(c.maxMcapHard, HARD.mcap, DEFAULTS.maxMcapHard);
+  if (g.maxMcapHard < g.maxMcap) g.maxMcapHard = g.maxMcap;
+  g.minLiq = clampInt(c.minLiq, HARD.liq, DEFAULTS.minLiq);
+  g.minVol24 = clampInt(c.minVol24, HARD.vol, DEFAULTS.minVol24);
+  g.minAgeHours = clampInt(c.minAgeHours, HARD.ageHours, DEFAULTS.minAgeHours);
+  g.maxPerDay = clampInt(c.maxPerDay, HARD.perDay, DEFAULTS.maxPerDay);
+  g.maxPerRun = clampInt(c.maxPerRun, HARD.perRun, DEFAULTS.maxPerRun);
+  g.maxLookupsPerRun = clampInt(c.maxLookupsPerRun, HARD.lookups, DEFAULTS.maxLookupsPerRun);
+  g.minGapMin = clampInt(c.minGapMin, HARD.gapMin, DEFAULTS.minGapMin);
+  g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, DEFAULTS.maxGapMin);
+  if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
+  return g;
+}
+
+/** Patch any subset of the config; persists and returns the clamped result. */
+async function set(patch = {}) {
+  const next = { ...get() };
+  for (const [k, v] of Object.entries(patch)) if (k in DEFAULTS && v != null) next[k] = v;
+  await saveJSON(FILE, next);
+  return get();
+}
+
+async function reset() {
+  await saveJSON(FILE, { ...DEFAULTS });
+  return get();
+}
+
+/** Forget what has been auto-listed (and today's count). The operator needs this
+ *  after clearing listings on the site: a token this service already listed is
+ *  otherwise never considered again, so it could never come back. */
+async function resetState() {
+  await saveJSON(STATE_FILE, { listed: {}, day: null });
+}
+
+// ── State: what we already listed, and today's count ────────────────────────
+const loadState = () => {
+  const s = loadJSONSync(STATE_FILE, {}) || {};
+  return { listed: s.listed && typeof s.listed === "object" ? s.listed : {}, day: s.day || null };
+};
+const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
+const todayCount = (state, now) => (state.day && state.day.key === dayKey(now) ? state.day.n : 0);
+
+/** Everything the service has auto-listed, newest first (for the admin panel). */
+function history(limit = 10) {
+  const { listed } = loadState();
+  return Object.entries(listed)
+    .map(([key, v]) => ({ key, ...(typeof v === "object" ? v : { at: v }) }))
+    .sort((a, b) => (b.at || 0) - (a.at || 0))
+    .slice(0, limit);
+}
+
+function stats(now = Date.now()) {
+  const state = loadState();
+  return { total: Object.keys(state.listed).length, today: todayCount(state, now) };
+}
+
+const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
+
+/**
+ * This token's own trigger market cap, stable for as long as the band is.
+ * @see the header — derived from the address on purpose, never re-rolled.
+ */
+function triggerMcap(address, cfg = get()) {
+  const span = Math.max(0, cfg.maxMcap - cfg.minMcap);
+  if (!span) return cfg.minMcap;
+  const h = crypto.createHash("sha1").update(String(address).toLowerCase()).digest();
+  return cfg.minMcap + (h.readUInt32BE(0) % (span + 1));
+}
+
+/**
+ * Why this token is NOT getting listed, or null when it qualifies. A single
+ * function so every rejection is one readable reason in the log — "nothing was
+ * listed today" is otherwise impossible to explain.
+ */
+function rejectReason(info, cfg, trigger, now = Date.now()) {
+  if (!info) return "no market data";
+  if (!sanitizeTicker(info.symbol)) return "no usable ticker";
+  if (!info.name) return "no name";
+  const mcap = Number(info.mcap) || 0;
+  if (!mcap) return "no market cap";
+  if (mcap < trigger) return `below its trigger ($${Math.round(mcap).toLocaleString("en-US")} < $${trigger.toLocaleString("en-US")})`;
+  if (mcap > cfg.maxMcapHard) return `above the ceiling ($${Math.round(mcap).toLocaleString("en-US")})`;
+  if ((Number(info.liq) || 0) < cfg.minLiq) return `thin liquidity ($${Math.round(info.liq || 0).toLocaleString("en-US")})`;
+  if ((Number(info.vol24) || 0) < cfg.minVol24) return `low 24h volume ($${Math.round(info.vol24 || 0).toLocaleString("en-US")})`;
+  if (info.pairCreatedAt && now - info.pairCreatedAt < cfg.minAgeHours * 3_600_000) {
+    return `too new (${Math.round((now - info.pairCreatedAt) / 3_600_000)}h old)`;
+  }
+  return null;
+}
+
+/** The listing payload the site expects for an auto-listed token. */
+function listingInput(chain, address, info) {
+  return {
+    chain,
+    address,
+    sym: sanitizeTicker(info.symbol),
+    name: String(info.name).slice(0, 60),
+    emoji: "🪙",
+    tier: "FREE", // NOT a purchasable package — see lib/packages.ts
+    logoUrl: info.logoUrl && /^https:\/\//.test(info.logoUrl) ? info.logoUrl : undefined,
+    website: info.website || undefined,
+    twitter: info.twitter || undefined,
+    telegram: info.telegram || undefined,
+  };
+}
+
+/**
+ * One scan. Returns how many tokens were listed. Never throws — a hiccup must
+ * not take down the service loop. `deps` is injectable so tests don't touch the
+ * network.
+ */
+async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
+  const cfg = get();
+  if (!cfg.enabled) return 0;
+  const discover = deps.fetchDiscovery || ds.fetchDiscovery;
+  const price = deps.fetchTokenInfo || ds.fetchTokenInfo;
+
+  const state = loadState();
+  let today = todayCount(state, now);
+  if (today >= cfg.maxPerDay) {
+    log.debug(`[autolist] daily cap reached (${today}/${cfg.maxPerDay})`);
+    return 0;
+  }
+
+  let candidates;
+  try {
+    candidates = await discover();
+  } catch (e) {
+    log.debug(`[autolist] discovery: ${e.message}`);
+    return 0;
+  }
+  if (!candidates.length) return 0;
+
+  // Anything already on the site is off the table, however it got there.
+  let known = new Set();
+  try {
+    known = new Set((await api.getListings()).map((r) => keyOf(r.chain, r.address)));
+  } catch (e) {
+    // Without this list we could double-list a paying customer's token — that is
+    // worse than skipping a cycle, so bail instead of guessing.
+    log.debug(`[autolist] listings unavailable, skipping this scan: ${e.message}`);
+    return 0;
+  }
+
+  let listedNow = 0;
+  let lookups = 0;
+  for (const c of candidates) {
+    if (listedNow >= cfg.maxPerRun || today >= cfg.maxPerDay) break;
+    if (lookups >= cfg.maxLookupsPerRun) break;
+    const key = keyOf(c.chain, c.address);
+    if (state.listed[key] || known.has(key)) continue;
+    if (!chainOf(c.chain)) continue;
+
+    lookups++;
+    const info = await price(c.chain, c.address).catch(() => null);
+    const trigger = triggerMcap(c.address, cfg);
+    const why = rejectReason(info, cfg, trigger, now);
+    if (why) {
+      log.debug(`[autolist] skip ${c.chain}/${c.address}: ${why}`);
+      continue;
+    }
+
+    const input = listingInput(c.chain, c.address, info);
+    let listing;
+    try {
+      listing = await api.createListing(input);
+    } catch (e) {
+      log.warn(`[autolist] createListing ${input.sym} (${c.chain}): ${e.message}`);
+      continue;
+    }
+    if (!listing) continue;
+
+    state.listed[key] = { at: now, sym: input.sym, mcap: Math.round(info.mcap), trigger };
+    today += 1;
+    listedNow += 1;
+    state.day = { key: dayKey(now), n: today };
+    await saveJSON(STATE_FILE, state).catch(() => {});
+    log.info(
+      `[autolist] listed ${input.sym} on ${c.chain} at $${Math.round(info.mcap).toLocaleString("en-US")} ` +
+        `(its trigger was $${trigger.toLocaleString("en-US")}) — ${today}/${cfg.maxPerDay} today`,
+    );
+
+    if (cfg.postChannel && tg) await announce(tg, c, info, input).catch(() => {});
+  }
+  return listedNow;
+}
+
+/** Channel post for an auto listing — the normal listing card, with NO tier
+ *  badge: it wasn't bought, so it must not wear a package's colours. */
+async function announce(tg, c, info, input) {
+  const coin = {
+    name: input.name,
+    symbol: input.sym,
+    chain: c.chain,
+    address: c.address,
+    price: info.priceUsd,
+    mcap: info.mcap,
+    liq: info.liq,
+    links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
+  };
+  try {
+    const { postMedia } = require("../fulfillment");
+    const media = await postMedia(
+      "listing",
+      {
+        symbol: coin.symbol,
+        name: coin.name,
+        chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
+        price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
+        mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
+        links: coin.links,
+      },
+      null,
+      null,
+      input.logoUrl || "",
+      null,
+    ).catch(() => null);
+    const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin));
+    if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
+  } catch (e) {
+    log.warn(`[autolist] post ${input.sym}: ${e.message}`);
+  }
+}
+
+/**
+ * Start the loop. Self-reschedules with a RANDOM gap (never setInterval): a
+ * fixed heartbeat puts every listing on the same minute of the hour, which is
+ * the other half of looking machine-run.
+ */
+function start(tg, { rng = Math.random } = {}) {
+  let timer = null;
+  let stopped = false;
+  const schedule = () => {
+    if (stopped) return;
+    const cfg = get();
+    const mins = cfg.minGapMin + rng() * (cfg.maxGapMin - cfg.minGapMin);
+    log.debug(`[autolist] next scan in ${mins.toFixed(1)}min`);
+    timer = setTimeout(run, mins * 60_000);
+    if (timer.unref) timer.unref();
+  };
+  const run = async () => {
+    try {
+      await runOnce({ tg });
+    } catch (e) {
+      log.debug(`[autolist] ${e.message}`);
+    }
+    schedule();
+  };
+  // Random boot delay for the same reason — a restart must not put every scan
+  // back on the same clock.
+  timer = setTimeout(run, (30 + rng() * 120) * 1000);
+  if (timer.unref) timer.unref();
+  return {
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
+module.exports = {
+  get,
+  set,
+  reset,
+  resetState,
+  start,
+  runOnce,
+  stats,
+  history,
+  triggerMcap,
+  rejectReason,
+  listingInput,
+  DEFAULTS,
+};

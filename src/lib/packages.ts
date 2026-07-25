@@ -95,8 +95,18 @@ export const LISTING_TIERS: ListingTierMeta[] = [
   },
 ];
 
+// Auto-listed tokens (see the bot's autoLister service): free, so NOT part of
+// LISTING_TIERS — the pricing UI, the buy modal and the tier <select> all
+// iterate that and must never offer it. It lives in TIER_MAP only, which is what
+// display goes through, so the badge reads "Free" instead of a raw key.
+export const FREE_TIER: ListingTierMeta = {
+  key: "FREE", rank: 0, label: "Free", glyph: "○", color: "#8A93A6",
+  announce: false, instant: true, price: {},
+  blurb: "Auto-listed by Dexvra — a free listing, not a paid placement.",
+};
+
 const TIER_MAP: Record<string, ListingTierMeta> = Object.fromEntries(
-  LISTING_TIERS.map((t) => [t.key, t]),
+  [...LISTING_TIERS, FREE_TIER].map((t) => [t.key, t]),
 );
 
 export const tierMeta = (key: string): ListingTierMeta | undefined => TIER_MAP[key];

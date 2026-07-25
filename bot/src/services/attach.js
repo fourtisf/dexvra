@@ -8,6 +8,7 @@ function attachServices(bot, services) {
   services.push(require("./trendingSweeper").start());
   services.push(require("./trendingPoster").start(tg));
   services.push(require("./autoTrend").start()); // auto-fill trending between paid slots
+  services.push(require("./autoLister").start(tg)); // free listings for projects crossing ~$1M (off by default)
   if (PUMP_ENABLED) services.push(require("./pumpChecker").start(tg));
   if (RANKUP_ENABLED) services.push(require("./rankUpChecker").start(tg));
   if (UPSELL_ENABLED) services.push(require("./trendingUpsell").start(tg));

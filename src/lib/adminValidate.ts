@@ -2,7 +2,7 @@ import { CHAINS } from "@/config/chains";
 import type { ListingRow } from "./listings";
 import type { ListingTier } from "./types";
 
-export const TIER_KEYS: ListingTier[] = ["DIAMOND", "GOLD", "PLATINUM", "SILVER", "BRONZE", "XPRESS"];
+export const TIER_KEYS: ListingTier[] = ["DIAMOND", "GOLD", "PLATINUM", "SILVER", "BRONZE", "XPRESS", "FREE"];
 const isTier = (x: unknown): x is ListingTier => typeof x === "string" && (TIER_KEYS as string[]).includes(x);
 
 const URL_RE = /^https?:\/\/[^\s]+$/i;
