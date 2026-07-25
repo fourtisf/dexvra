@@ -1,0 +1,118 @@
+// trendingBoard config + trendingPoster board rendering (tier-priority + format).
+const path = require("node:path");
+const os = require("node:os");
+const fss = require("node:fs");
+process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-tb-"));
+
+const test = require("node:test");
+const assert = require("node:assert");
+
+// Mock live market data BEFORE trendingPoster destructures fetchMarket.
+const md = require("../src/marketdata");
+const MOCK = {
+  wif: { mcap: 1_793_783, change24h: 47.2 },
+  bonk: { mcap: 1_291_521_621_468, change24h: 12.4 },
+  alive: { mcap: 28_607, change24h: 39.9 },
+  floki: { mcap: 3_925_360, change24h: 133 },
+};
+md.fetchMarket = async (_chain, addr) =>
+  MOCK[addr] ? { priceUsd: 1, ...MOCK[addr] } : { priceUsd: 1, mcap: 1_000_000, change24h: 1.5 };
+const api = require("../src/api/dexvra");
+
+const tb = require("../src/services/trendingBoard");
+const poster = require("../src/services/trendingPoster");
+
+test("board: defaults, override, reset, rank fallback", async () => {
+  assert.deepStrictEqual(tb.rankEmojis().slice(0, 3), ["🥇", "🥈", "🥉"]);
+  assert.strictEqual(tb.RANK_SLOTS, 10, "10 editable rank slots");
+  assert.strictEqual(tb.chainLogo("solana"), "🟣");
+  assert.strictEqual(tb.rankBadge(9), "9️⃣", "rank 9 has an emoji badge");
+  assert.strictEqual(tb.rankBadge(10), "🔟", "rank 10 has an emoji badge");
+  assert.strictEqual(tb.rankBadge(11), "11.", "ranks past 10 fall back to N.");
+  await tb.setRankEmoji(1, "🔥");
+  await tb.setChainLogo("solana", "◎");
+  assert.strictEqual(tb.rankBadge(1), "🔥");
+  assert.strictEqual(tb.chainLogo("solana"), "◎");
+  await tb.reset();
+  assert.strictEqual(tb.rankBadge(1), "🥇");
+  assert.strictEqual(tb.chainLogo("solana"), "🟣");
+});
+
+test("board: rank must be 1–10", async () => {
+  await assert.rejects(() => tb.setRankEmoji(11, "x"));
+  await assert.rejects(() => tb.setRankEmoji(0, "x"));
+  await tb.setRankEmoji(10, "🚀"); // rank 10 is now valid
+  assert.strictEqual(tb.rankBadge(10), "🚀");
+  await tb.reset();
+});
+
+test("board: custom markers track admin overrides (✅ vs default)", async () => {
+  assert.strictEqual(tb.isRankCustom(3), false, "rank 3 starts on default");
+  assert.strictEqual(tb.isChainCustom("bsc"), false, "bsc starts on default");
+  await tb.setRankEmoji(3, "⭐");
+  await tb.setChainLogo("bsc", "🐤");
+  assert.strictEqual(tb.isRankCustom(3), true, "rank 3 now marked custom");
+  assert.strictEqual(tb.isChainCustom("bsc"), true, "bsc now marked custom");
+  assert.ok(tb.chainList().find((c) => c.id === "bsc").custom, "chainList exposes the custom flag");
+  await tb.reset();
+  assert.strictEqual(tb.isRankCustom(3), false, "reset clears the marker");
+  assert.strictEqual(tb.isChainCustom("bsc"), false);
+});
+
+test("poster: tier priority beats performance, fourtis format", async () => {
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "bonk", sym: "BONK", tier: "BRONZE" },
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "alive", sym: "ALIVE", tier: "XPRESS" },
+  ];
+  const text = await poster.buildText(); // premium markup
+  assert.ok(text.includes("🟣 **SOLANA - Trending**"), "chain header with logo (bold markup)");
+  // Diamond (WIF) must rank above Bronze (BONK) and Xpress (ALIVE) despite lower mcap.
+  const iWif = text.indexOf("$WIF");
+  const iBonk = text.indexOf("$BONK");
+  const iAlive = text.indexOf("$ALIVE");
+  assert.ok(iWif < iBonk && iBonk < iAlive, `tier order wrong: WIF@${iWif} BONK@${iBonk} ALIVE@${iAlive}`);
+  assert.ok(text.includes("🥇 +47.20% |"), "rank badge + signed % present");
+  assert.ok(text.includes("1,793,783$"), "comma market cap present");
+  // The markup parses into entities cleanly (what actually gets sent).
+  const parsed = require("../src/premium").parse(text);
+  assert.ok(parsed.entities.some((e) => e.type === "bold"), "bold entities");
+  assert.ok(parsed.entities.some((e) => e.type === "text_link"), "link entities");
+  assert.ok(!/\*\*|\]\(/.test(parsed.text), "no raw markup leaks into the sent text");
+});
+
+test("poster: ticker links to Telegram, market cap links to the Dexvra CA page", async () => {
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "robinhood", address: "0xRH", sym: "RHT", tier: "GOLD", telegram: "@rht_official" },
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "base", address: "0xNoTg", sym: "NOTG", tier: "SILVER" },
+  ];
+  const text = await poster.buildText();
+  // Robinhood chain renders (it's in CHAIN_ORDER).
+  assert.ok(text.includes("ROBINHOOD - Trending"), "robinhood chain present");
+  // $ticker → the token's Telegram.
+  assert.ok(text.includes("[$RHT](https://t.me/rht_official)"), "ticker links to Telegram");
+  // market cap → the Dexvra token page (its CA).
+  assert.ok(text.includes("](https://dexvra.io/token/robinhood/0xRH)"), "mcap links to Dexvra CA page");
+  // No Telegram → ticker falls back to the Dexvra page (never a dead link).
+  assert.ok(text.includes("[$NOTG](https://dexvra.io/token/base/0xNoTg)"), "ticker falls back to Dexvra");
+});
+
+test("board: premium-emoji badge stored as markup, displayed as fallback", async () => {
+  await tb.setRankEmoji(1, "[🥇](emoji/5440539497383087970)"); // admin sent a premium 🥇
+  assert.strictEqual(tb.rankBadge(1), "[🥇](emoji/5440539497383087970)", "board gets the premium markup");
+  assert.strictEqual(tb.displayEmoji(tb.rankBadge(1)), "🥇", "editor shows the plain fallback");
+  assert.strictEqual(tb.isRankCustom(1), true, "marked custom");
+  // The board markup with a premium badge parses to a custom_emoji entity.
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
+  ];
+  const parsed = require("../src/premium").parse(await poster.buildText());
+  assert.ok(parsed.entities.some((e) => e.type === "custom_emoji" && e.custom_emoji_id === "5440539497383087970"), "premium badge → custom_emoji entity");
+  assert.ok(!parsed.text.includes("emoji/"), "no raw emoji markup in the sent text");
+  await tb.reset();
+});
+
+test("poster: no featured tokens → null (nothing to post)", async () => {
+  api.getListings = async () => [{ status: "approved", trendingRank: null, chain: "solana", address: "x", sym: "X" }];
+  assert.strictEqual(await poster.buildText(), null);
+});

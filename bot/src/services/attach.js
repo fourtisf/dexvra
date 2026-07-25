@@ -7,6 +7,7 @@ function attachServices(bot, services) {
 
   services.push(require("./trendingSweeper").start());
   services.push(require("./trendingPoster").start(tg));
+  services.push(require("./autoTrend").start()); // auto-fill trending between paid slots
   if (PUMP_ENABLED) services.push(require("./pumpChecker").start(tg));
   if (RANKUP_ENABLED) services.push(require("./rankUpChecker").start(tg));
   if (UPSELL_ENABLED) services.push(require("./trendingUpsell").start(tg));

@@ -7,6 +7,8 @@ import { CHAIN_IDS, CHAINS } from "@/config/chains";
 import { LISTING_TIERS, tierLabel } from "@/lib/packages";
 import { Logo } from "@/components/Logo";
 import { BannerManager } from "@/components/admin/BannerManager";
+import { ChannelBannerManager } from "@/components/admin/ChannelBannerManager";
+import { PromoManager } from "@/components/admin/PromoManager";
 
 const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
 
@@ -236,8 +238,14 @@ export default function AdminDashboard() {
           <div className="astat"><div className="k">Trending</div><div className="v">{stats.trending}</div></div>
         </div>
 
+        {/* Homepage carousel "Pumped on Dexvra" showcase (editable example) */}
+        <PromoManager />
+
         {/* Homepage banner (upload + click-through link) */}
         <BannerManager />
+
+        {/* Channel-post banner templates (artwork + GIF/video, per kind) */}
+        <ChannelBannerManager />
 
         {/* Pending submissions */}
         <section className="asec">

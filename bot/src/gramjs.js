@@ -191,4 +191,26 @@ async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
   }
 }
 
-module.exports = { available, getClient, sendToChannel, _resolveFile: resolveFile };
+/** Edit an existing message (text + premium-emoji entities) that the logged-in
+ *  user posted — used to keep the pinned Trending board's custom emoji live.
+ *  Returns a Bot-API-shaped { message_id } or throws. */
+async function editChannelMessage(channel, messageId, { text, entities }) {
+  try {
+    const c = await getClient();
+    const t = lib();
+    const target = await c.getEntity(channel);
+    const formattingEntities = premium.toGramJs(entities || [], t.Api);
+    await c.editMessage(target, {
+      message: messageId,
+      text: text || "",
+      formattingEntities,
+      linkPreview: false,
+    });
+    return { message_id: messageId, chat: { id: Number(target.id) || target.id } };
+  } catch (e) {
+    invalidateOnAuthError(e);
+    throw e;
+  }
+}
+
+module.exports = { available, getClient, sendToChannel, editChannelMessage, _resolveFile: resolveFile };

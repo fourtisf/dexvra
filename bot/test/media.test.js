@@ -28,6 +28,59 @@ test("saveMedia rejects an unsupported extension", async () => {
   await assert.rejects(() => bt.saveMedia("listing", Buffer.from("x"), "exe"));
 });
 
+test("same-ext re-upload replaces the clip content (new bytes win)", async () => {
+  await bt.saveMedia("listing", Buffer.from("FIRST-GIF"), "gif");
+  await bt.saveMedia("listing", Buffer.from("SECOND-GIF"), "gif");
+  const m = bt.mediaOverride("listing");
+  assert.strictEqual(fss.readFileSync(m.source, "utf8"), "SECOND-GIF");
+  await bt.removeMedia("listing");
+});
+
+test("saveMedia leaves exactly ONE clip file (siblings cleared)", async () => {
+  await bt.saveMedia("trending", Buffer.from("g"), "gif");
+  await bt.saveMedia("trending", Buffer.from("v"), "mp4"); // different ext
+  const dir = process.env.BOT_DATA_DIR;
+  const files = fss.readdirSync(dir).filter((f) => f.startsWith("banner-media-trending."));
+  assert.deepStrictEqual(files, ["banner-media-trending.mp4"], `expected one file, got ${files}`);
+  await bt.removeMedia("trending");
+});
+
+test("stale leftover sibling never resurrects the old clip on an mtime tie", async () => {
+  // Simulate a legacy leftover: an OLD .gif co-existing with a NEW .mp4, both with
+  // an IDENTICAL mtime (coarse filesystem / same-second writes). The new .mp4 must
+  // win — and the stale .gif must not linger to win a later comparison.
+  const dir = process.env.BOT_DATA_DIR;
+  const gif = path.join(dir, "banner-media-listing.gif"); // OLD
+  const mp4 = path.join(dir, "banner-media-listing.mp4"); // NEW
+  fss.writeFileSync(gif, "OLD-GIF");
+  fss.writeFileSync(mp4, "NEW-MP4");
+  const T = new Date("2026-01-01T00:00:00Z");
+  fss.utimesSync(gif, T, T);
+  fss.utimesSync(mp4, T, T);
+  // A tie can't be resolved by mtime, so guarantee the invariant the way the app
+  // does: a fresh saveMedia writes the winner and clears every sibling.
+  await bt.saveMedia("listing", Buffer.from("NEW-MP4"), "mp4");
+  const m = bt.mediaOverride("listing");
+  assert.strictEqual(m.type, "video");
+  assert.strictEqual(fss.readFileSync(m.source, "utf8"), "NEW-MP4");
+  assert.ok(!fss.existsSync(gif), "stale .gif sibling should be gone after saveMedia");
+  await bt.removeMedia("listing");
+});
+
+test("mediaOverride self-heals a strictly-older sibling (deletes it, keeps newest)", async () => {
+  const dir = process.env.BOT_DATA_DIR;
+  const gif = path.join(dir, "banner-media-banner.gif"); // OLDER
+  const mp4 = path.join(dir, "banner-media-banner.mp4"); // NEWER
+  fss.writeFileSync(gif, "OLD");
+  fss.writeFileSync(mp4, "NEW");
+  fss.utimesSync(gif, new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
+  fss.utimesSync(mp4, new Date("2026-06-01T00:00:00Z"), new Date("2026-06-01T00:00:00Z"));
+  const m = bt.mediaOverride("banner");
+  assert.strictEqual(fss.readFileSync(m.source, "utf8"), "NEW");
+  assert.ok(!fss.existsSync(gif), "older sibling should be self-healed away");
+  await bt.removeMedia("banner");
+});
+
 test("sendMedia dispatches by type (photo/animation/video) with caption+reply", async () => {
   const post = require("../src/channels/post");
   const calls = [];

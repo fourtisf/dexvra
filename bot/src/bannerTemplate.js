@@ -12,10 +12,16 @@ const fss = require("node:fs");
 const os = require("node:os");
 const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
 const { toSendBuffer } = require("./helpers/encodeImage");
+const mediaMirror = require("./db/mediaMirror");
 const log = require("./helpers/logger");
 
 const CONFIG_FILE = "bannerTemplate.json";
+// Kinds with a bundled/uploadable STILL artwork (drives selfCheck + artwork API).
 const KINDS = ["listing", "trending", "banner"];
+// Every kind that carries a tunable layout — includes "pump", which is
+// animation-only (composited onto its clip) and so has no bundled still art but
+// still needs its saved position tweaks to load.
+const LAYOUT_KINDS = ["listing", "trending", "banner", "pump"];
 // Reference canvas — every layout coordinate in this module assumes this space.
 const REF_W = 2560;
 const REF_H = 1280;
@@ -40,38 +46,75 @@ const exists = (p) => {
 // nothing is composited into a video). Kind here is free-form (listing /
 // trending / banner / pump) so pump alerts can carry a clip too.
 const MEDIA_EXT = { gif: "animation", mp4: "video", webm: "video", mov: "video" };
+let _mediaSeq = 0; // process-local counter → collision-free temp filenames on write
 function mediaPath(kind, ext) {
   return path.join(DATA_DIR, `banner-media-${kind}.${ext}`);
 }
 /** { type: 'animation'|'video', source } for a kind's uploaded clip, or null.
- *  Returns the MOST RECENTLY MODIFIED file among the extensions — so a freshly
- *  uploaded clip always wins even if an older file of a different extension was
- *  left behind (fixed a "new template uploaded but the old one still shows"). */
+ *  saveMedia keeps EXACTLY ONE clip file per kind, so normally there is a single
+ *  candidate here. If a stale sibling of another extension ever lingers (a legacy
+ *  upload from an older build, or a past removeMedia hiccup) it is SELF-HEALED:
+ *  the most-recently-modified file wins and the strictly-older siblings are
+ *  deleted, so an old clip can never win a future (possibly mtime-tied)
+ *  comparison and resurrect itself — the root cause of "uploaded a new GIF but
+ *  the preview still shows the old one". */
 function mediaOverride(kind) {
-  let best = null;
+  const found = [];
   for (const [ext, type] of Object.entries(MEDIA_EXT)) {
     const p = mediaPath(kind, ext);
-    let st;
     try {
-      st = fss.statSync(p);
+      const st = fss.statSync(p);
+      found.push({ type, source: p, mtimeMs: st.mtimeMs });
     } catch {
-      continue; // not present
+      /* not present */
     }
-    if (!best || st.mtimeMs > best.mtimeMs) best = { type, source: p, mtimeMs: st.mtimeMs };
   }
-  return best ? { type: best.type, source: best.source } : null;
+  if (!found.length) return null;
+  // Stable sort by mtime desc → newest first. Then drop any STRICTLY-OLDER
+  // sibling (never a tie — deleting a tied file could drop the fresh upload).
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const best = found[0];
+  for (const f of found) {
+    if (f === best || f.mtimeMs >= best.mtimeMs) continue;
+    try {
+      fss.unlinkSync(f.source);
+      log.info(`[bannerTpl] mediaOverride ${kind}: removed stale ${path.basename(f.source)} (older than ${path.basename(best.source)})`);
+    } catch (e) {
+      if (e && e.code !== "ENOENT") log.warn(`[bannerTpl] mediaOverride cleanup ${path.basename(f.source)}: ${e.message}`);
+    }
+  }
+  return { type: best.type, source: best.source };
 }
 async function saveMedia(kind, buffer, ext) {
   const e = String(ext || "mp4").toLowerCase();
   if (!MEDIA_EXT[e]) throw new Error(`unsupported media type .${e} (use gif/mp4/webm/mov)`);
-  await removeMedia(kind); // one clip per kind — drop any prior ext
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   const outPath = mediaPath(kind, e);
-  await fss.promises.writeFile(outPath, buffer);
+  // Write the NEW clip FIRST, atomically (temp + rename). rename gives a clean
+  // same-ext overwrite, and — because the new file is safely on disk BEFORE any
+  // cleanup — a failed sibling delete can never leave the kind with no clip.
+  const tmp = `${outPath}.${process.pid}.${_mediaSeq++}.tmp`;
+  await fss.promises.writeFile(tmp, buffer);
+  await fss.promises.rename(tmp, outPath);
+  // Now drop EVERY other-extension sibling so exactly ONE clip exists per kind.
+  // This is what actually kills "the old GIF still shows": if a prior upload
+  // left, say, a banner-media-listing.gif behind and the admin now uploads an
+  // .mp4, the stale .gif could otherwise win an mtime tie in mediaOverride. It
+  // is removed here, AFTER the new file is durably written.
+  for (const other of Object.keys(MEDIA_EXT)) {
+    if (other === e) continue;
+    await fss.promises.unlink(mediaPath(kind, other)).catch((err) => {
+      if (err && err.code !== "ENOENT") log.warn(`[bannerTpl] saveMedia cleanup ${kind}.${other}: ${err.message}`);
+    });
+    mediaMirror.deleteMirror(path.basename(mediaPath(kind, other))).catch(() => {});
+  }
+  // Durable backup to Mongo (best-effort, fire-and-forget) so a container reset
+  // restores the uploaded clip, not just the JSON config.
+  mediaMirror.mirrorFile(path.basename(outPath)).catch(() => {});
   _invalidateClipCache(kind); // force the editor to re-extract a frame from the new clip
   // Loud diagnostic: shows the EXACT absolute path + byte count written, so a
   // wrong DATA_DIR / cwd (save landing somewhere the reader doesn't look) is obvious.
-  log.info(`[bannerTpl] saveMedia ${kind}: wrote ${buffer.length}B → ${path.resolve(outPath)}`);
+  log.info(`[bannerTpl] saveMedia ${kind}: wrote ${buffer.length}B → ${path.resolve(outPath)} (.${e}; siblings cleared)`);
   return { type: MEDIA_EXT[e], ext: e, bytes: buffer.length, path: path.resolve(outPath) };
 }
 async function removeMedia(kind) {
@@ -82,6 +125,7 @@ async function removeMedia(kind) {
       // ENOENT = simply not present; anything else means a stale file may linger.
       if (e && e.code !== "ENOENT") log.warn(`[bannerTpl] removeMedia ${kind}.${ext}: ${e.message}`);
     }
+    mediaMirror.deleteMirror(path.basename(mediaPath(kind, ext))).catch(() => {});
   }
   _invalidateClipCache(kind);
 }
@@ -99,6 +143,12 @@ const BASE_DEFAULTS = {
   slotW: 1680, // rect: slot width/height
   slotH: 800,
   showText: true, // draw $TICKER + name overlay
+  // Which meta chips to draw. Default: all three (chain · price · MC). A designed
+  // template may want only some (e.g. trending shows chain only — the token's
+  // name/$ticker already sit in its card).
+  showChain: true,
+  showPrice: true,
+  showMcap: true,
   tickerFontSize: 96,
   tickerX: 210, // number | "center"
   tickerY: 618,
@@ -121,8 +171,75 @@ const BASE_DEFAULTS = {
   badgeFontSize: 30,
 };
 const KIND_DEFAULTS = {
+  // Listing keeps the token TEXT on the LEFT (its bundled art has an empty panel
+  // there).
   listing: { ...BASE_DEFAULTS, tickerGlow: "#4EE6A8" },
-  trending: { ...BASE_DEFAULTS, tickerGlow: "#38D8F0" },
+  // Trending art puts a hero title ("Trending Alert") on the LEFT, so group the
+  // token block on the RIGHT — under the logo ring — instead of over the title.
+  // Deliberately DIFFERENT from listing (fine-tune per template in the layout /
+  // position editor).
+  trending: {
+    ...BASE_DEFAULTS,
+    tickerGlow: "#38D8F0",
+    // Cyan $ticker + white name to match the trending template design.
+    tickerColor: "#33E5C9",
+    nameColor: "#EAF6F2",
+    logoX: 1890,
+    logoY: 350,
+    logoSize: 430,
+    // $ticker + name centred a bit more inside the right token card.
+    tickerX: 1720,
+    tickerY: 920,
+    tickerFontSize: 80,
+    nameFontSize: 44,
+    nameOffsetY: 105,
+    // Trending shows the CHAIN chip only — no price / MC — dropped into the
+    // separate box at bottom-centre of the template (left of the token card).
+    showPrice: false,
+    showMcap: false,
+    metaX: 1160,
+    metaY: 1120,
+    metaFontSize: 34,
+  },
+  // Pump alert art: a DISTINCT layout from listing/trending. Left card carries a
+  // big "▲ +N%" headline, an "old → new" price line and a "MCAP $x" pill; the
+  // token logo ring + cyan $ticker sit in the RIGHT card. Nothing here reuses the
+  // listing/trending chip row — pump has its own overlay block below.
+  pump: {
+    ...BASE_DEFAULTS,
+    tickerGlow: "#33E5C9",
+    tickerColor: "#33E5C9",
+    nameColor: "#EAF6F2",
+    // Logo ring — right card.
+    logoX: 1880,
+    logoY: 360,
+    logoSize: 420,
+    // $ticker + name — centred under the right logo ring.
+    tickerX: 1720,
+    tickerY: 900,
+    tickerFontSize: 84,
+    nameFontSize: 44,
+    nameOffsetY: 102,
+    // The standard chain/price/MC chip row is OFF for pump — the pump overlay
+    // draws its own %, price-transition and MCAP instead.
+    showChain: false,
+    showPrice: false,
+    showMcap: false,
+    // ▲ +N% headline (big, left card).
+    pctX: 250,
+    pctY: 545,
+    pctFontSize: 172,
+    pctColor: "#33E5C9",
+    // old → new price transition (left card, under the %).
+    priceX: 262,
+    priceY: 762,
+    priceFontSize: 78,
+    // MCAP pill (left card, under the price). Reuses meta* so the position
+    // editor's "Chips" handle drives it.
+    metaX: 262,
+    metaY: 902,
+    metaFontSize: 44,
+  },
   banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
@@ -146,7 +263,7 @@ function savedLayout(saved, kind) {
 function loadConfig() {
   const saved = loadJSONSync(CONFIG_FILE, {});
   const out = {};
-  for (const k of KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
+  for (const k of LAYOUT_KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
   return out;
 }
 
@@ -223,9 +340,21 @@ function canvasLib() {
   return CV;
 }
 
+// Blend a hex colour toward white by `amt` (0..1) — used to give a coloured
+// $ticker a subtle lighter-top gradient instead of a flat fill.
+function lightenHex(hex, amt) {
+  const n = parseInt(String(hex).replace("#", ""), 16);
+  if (!Number.isFinite(n)) return hex;
+  const r = (n >> 16) & 255,
+    g = (n >> 8) & 255,
+    b = n & 255;
+  const L = (c) => Math.round(c + (255 - c) * amt);
+  return `rgb(${L(r)},${L(g)},${L(b)})`;
+}
+
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge } = {}, opts = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge, change, priceFrom, priceTo } = {}, opts = {}) {
   // `opts.transparent` renders ONLY the token overlay (logo + $ticker + name + chips +
   // badge) on a CLEAR canvas — used to composite that data onto an animated GIF/video
   // template. Otherwise this draws the still artwork background + the same overlay.
@@ -313,10 +442,19 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       ctx.shadowColor = glow + "66";
       ctx.shadowBlur = Math.max(18, fsz * 0.3);
       ctx.shadowOffsetY = 0;
+      const tc = cfg.tickerColor || "#FFFFFF";
       const grad = ctx.createLinearGradient(0, ty - fsz * 0.55, 0, ty + fsz * 0.45);
-      grad.addColorStop(0, "#FFFFFF");
-      grad.addColorStop(0.72, cfg.tickerColor || "#FFFFFF");
-      grad.addColorStop(1, "#BFE9DC");
+      if (tc.toUpperCase() === "#FFFFFF") {
+        // White ticker (listing default): keep the crisp white→mint sheen.
+        grad.addColorStop(0, "#FFFFFF");
+        grad.addColorStop(0.72, "#FFFFFF");
+        grad.addColorStop(1, "#BFE9DC");
+      } else {
+        // Coloured ticker (e.g. trending cyan): a lighter top → the colour, so it
+        // reads as that colour, not white with a tint.
+        grad.addColorStop(0, lightenHex(tc, 0.55));
+        grad.addColorStop(1, tc);
+      }
       ctx.fillStyle = grad;
       ctx.fillText(ticker, tx, ty);
       // crisp second pass (kills glow muddiness on the glyph body)
@@ -341,7 +479,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
     // Token meta chips under the ring — CHAIN / price / market cap, each drawn
     // arranged as a ROW from metaX with a constant gap, each pill auto-sized to
     // its text. This never overflows or collides no matter how long the price is.
-    if (cfg.showText && cfg.slotShape !== "rect") {
+    if (cfg.showText && cfg.slotShape !== "rect" && kind !== "pump") {
       const tint = (cfg.tickerGlow || "#4EE6A8") + "55";
       const fsz = Number(cfg.metaFontSize) || 34;
       const chipH = fsz * 1.9;
@@ -350,7 +488,11 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       const gap = Math.round(fsz * 0.5);
       const cy = Number(cfg.metaY) || H - 152;
       ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
-      const vals = [chain, price && price !== "TBA" ? price : null, mcap ? `MC ${mcap}` : null]
+      const vals = [
+        cfg.showChain === false ? null : chain,
+        cfg.showPrice === false ? null : price && price !== "TBA" ? price : null,
+        cfg.showMcap === false ? null : mcap ? `MC ${mcap}` : null,
+      ]
         .filter(Boolean)
         .map(String);
       const widths = vals.map((t) => ctx.measureText(t).width + padX * 2);
@@ -376,6 +518,150 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         ctx.fillStyle = i === 0 ? "#EAF6F2" : "#CFE4DE";
         ctx.fillText(t, x + w / 2, cy + chipH / 2 + 2);
         x += w + gap;
+      }
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+    }
+
+    // Pump-alert overlay — a DISTINCT left-card block (▲ +N% headline · old→new
+    // price transition · MCAP pill) that replaces the standard chip row. change /
+    // priceFrom / priceTo come from the pump checker; each part degrades gracefully
+    // if its datum is missing, so a partial pump still renders cleanly.
+    if (kind === "pump" && cfg.showText) {
+      const accent = cfg.pctColor || cfg.tickerColor || "#33E5C9";
+      // ▲ +N% headline. The ▲ is drawn as a VECTOR triangle — the bundled Sora
+      // fonts have no ▲/→ glyphs (they'd render as tofu ▯), so every symbol here
+      // is a shape, never a character.
+      if (change != null && String(change).trim() !== "") {
+        let body = String(change).trim().replace(/^[▲▼]\s*/, "");
+        if (!/^[+\-]/.test(body)) body = `+${body}`;
+        const pfs = Number(cfg.pctFontSize) || 172;
+        const centered = cfg.pctX === "center";
+        const py = Number(cfg.pctY) || 545;
+        ctx.font = `800 ${pfs}px TplBold, sans-serif`;
+        ctx.textBaseline = "middle";
+        const triW = pfs * 0.6; // up-triangle bounding box
+        const triH = pfs * 0.54;
+        const triGap = pfs * 0.24;
+        const textW = ctx.measureText(body).width;
+        const groupW = triW + triGap + textW;
+        const startX = centered ? W / 2 - groupW / 2 : Number(cfg.pctX) || 250;
+        const grad = ctx.createLinearGradient(0, py - pfs * 0.5, 0, py + pfs * 0.5);
+        grad.addColorStop(0, lightenHex(accent, 0.5));
+        grad.addColorStop(1, accent);
+        // filled up-triangle (glow pass folded into the same fill)
+        ctx.save();
+        ctx.shadowColor = accent + "66";
+        ctx.shadowBlur = Math.max(20, pfs * 0.28);
+        ctx.fillStyle = grad;
+        const tcx = startX + triW / 2;
+        const tTop = py - triH / 2;
+        const tBot = py + triH / 2;
+        const rr = triH * 0.12; // slightly rounded apex/corners
+        ctx.beginPath();
+        ctx.moveTo(tcx, tTop);
+        ctx.lineTo(startX + triW - rr, tBot);
+        ctx.lineTo(startX + rr, tBot);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        // the +N% text
+        ctx.textAlign = "left";
+        const textX = startX + triW + triGap;
+        ctx.shadowColor = accent + "66";
+        ctx.shadowBlur = Math.max(20, pfs * 0.28);
+        ctx.shadowOffsetY = 0;
+        ctx.fillStyle = grad;
+        ctx.fillText(body, textX, py);
+        ctx.shadowColor = "rgba(0,0,0,.5)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        ctx.fillText(body, textX, py);
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+      }
+      // old → new price transition (dim old · vector arrow · bright new)
+      const from = priceFrom && priceFrom !== "TBA" ? String(priceFrom) : null;
+      const to = priceTo && priceTo !== "TBA" ? priceTo : price && price !== "TBA" ? price : null;
+      if (to) {
+        const rfs = Number(cfg.priceFontSize) || 78;
+        const rx = cfg.priceX === "center" ? W / 2 : Number(cfg.priceX) || 262;
+        const ry = Number(cfg.priceY) || 762;
+        ctx.font = `700 ${rfs}px TplBold, TplSemi, sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        const arrowW = rfs * 0.9; // width the vector "→" occupies
+        const gapw = rfs * 0.3;
+        // Pre-measure so a centred priceX keeps the whole line centred.
+        const fromW = from ? ctx.measureText(from).width : 0;
+        const toW = ctx.measureText(String(to)).width;
+        const lineW = (from ? fromW + arrowW + gapw * 2 : 0) + toW;
+        let x = cfg.priceX === "center" ? W / 2 - lineW / 2 : rx;
+        ctx.shadowColor = "rgba(0,0,0,.55)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
+        if (from) {
+          ctx.fillStyle = "#93AAA4"; // old price, dimmed
+          ctx.fillText(from, x, ry);
+          x += fromW + gapw;
+          // vector arrow →
+          const ax = x;
+          const ac = lightenHex(accent, 0.2);
+          ctx.save();
+          ctx.shadowColor = "transparent";
+          ctx.strokeStyle = ac;
+          ctx.fillStyle = ac;
+          ctx.lineWidth = Math.max(4, rfs * 0.08);
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          ctx.moveTo(ax, ry);
+          ctx.lineTo(ax + arrowW - rfs * 0.28, ry);
+          ctx.stroke();
+          const hx = ax + arrowW; // arrowhead tip
+          const hh = rfs * 0.2;
+          ctx.beginPath();
+          ctx.moveTo(hx, ry);
+          ctx.lineTo(ax + arrowW - rfs * 0.3, ry - hh);
+          ctx.lineTo(ax + arrowW - rfs * 0.3, ry + hh);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+          x += arrowW + gapw;
+        }
+        ctx.fillStyle = accent; // new price, bright accent
+        ctx.fillText(String(to), x, ry);
+        ctx.shadowColor = "transparent";
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+      }
+      // MCAP pill
+      if (mcap) {
+        const label = `MCAP ${mcap}`;
+        const fsz = Number(cfg.metaFontSize) || 44;
+        ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
+        const chipH = fsz * 1.9;
+        const r = Math.min(chipH / 2, fsz * 0.55);
+        const padX = fsz * 0.7;
+        const cy = Number(cfg.metaY) || 902;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const w = ctx.measureText(label).width + padX * 2;
+        const x = cfg.metaX === "center" ? (W - w) / 2 : Number(cfg.metaX) || 262;
+        ctx.beginPath();
+        ctx.moveTo(x + r, cy);
+        ctx.arcTo(x + w, cy, x + w, cy + chipH, r);
+        ctx.arcTo(x + w, cy + chipH, x, cy + chipH, r);
+        ctx.arcTo(x, cy + chipH, x, cy, r);
+        ctx.arcTo(x, cy, x + w, cy, r);
+        ctx.closePath();
+        ctx.fillStyle = accent.startsWith("#") ? accent + "1A" : "rgba(51,229,201,.10)";
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = accent + "66";
+        ctx.stroke();
+        ctx.fillStyle = "#EAF6F2";
+        ctx.fillText(label, x + w / 2, cy + chipH / 2 + 2);
       }
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
@@ -570,6 +856,7 @@ function selfCheck() {
 async function saveTemplate(kind, buffer) {
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   await fss.promises.writeFile(uploadedPath(kind), buffer);
+  mediaMirror.mirrorFile(path.basename(uploadedPath(kind))).catch(() => {});
 }
 /** Remove the admin upload — the bundled default artwork takes over again. */
 async function removeTemplate(kind) {
@@ -578,6 +865,7 @@ async function removeTemplate(kind) {
   } catch {
     /* already gone */
   }
+  mediaMirror.deleteMirror(path.basename(uploadedPath(kind))).catch(() => {});
 }
 
 module.exports = {

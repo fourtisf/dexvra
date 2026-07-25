@@ -149,7 +149,7 @@ test("new default layout still spaces correctly with empty optional vars", () =>
     announce: "https://t.me/a",
   });
   assert.ok(!/\n{3,}/.test(r.text), JSON.stringify(r.text));
-  assert.ok(r.text.includes("T ($T)") && r.text.includes("Chain:"));
+  assert.ok(r.text.includes("T ($T)") && r.text.includes("Network:"));
 });
 
 test("entity-saved WYSIWYG template: socials strip remaps entity offsets", async () => {
@@ -178,4 +178,40 @@ test("entity-saved WYSIWYG template: socials strip remaps entity offsets", async
   assert.ok(partial.text.includes("Website"));
   assert.ok(!/❌ X/.test(partial.text), partial.text);
   await tpl.resetTemplate("post_trending");
+});
+
+test("paste-proof relink: NAME → token page and Buy/Sell CTA → trade bot survive a plain-text paste", async () => {
+  const fmt = require("../src/channels/format");
+  // An admin PASTED the listing template as plain text → every [label](url)
+  // markup is gone (the exact state behind the $IF screenshot).
+  const pasted =
+    "⚡ Xpress Listing — {name} live on Dexvra {logoEmoji}\n\n" +
+    "💲 {name} ({symbol})\n\n" +
+    "{chainEmoji} Network: {chain}\n📄 Contract address:\n{address}\n\n" +
+    "📊 Price: {price}\n🏦 Market cap: {mcap} · 💧 Liquidity: {liq}\n\n" +
+    "⚡ Buy / Sell on Dexvra Trade Bot\n\n" +
+    "🔗 {symbol} social links\n❌ X · 🌐 Website · ✈️ Telegram\n\n" +
+    "📎 Dexvra\n💎 Dexvra.io · 🚨 Listings · 🔥 Trending · 📢 Announcements";
+  await tpl.setTemplate("post_listing_xpress", pasted);
+  const coin = {
+    name: "What If", symbol: "IF", chain: "robinhood", tier: "XPRESS",
+    address: "0x232CDFc415D10b673845D83Dc02ba2eaBe7e30d1",
+    price: 0.00514, mcap: 5.1e6, liq: 232200,
+    links: { twitter: "https://x.com/w", website: "https://w.io", telegram: "https://t.me/w" },
+  };
+  const card = fmt.listingPost(coin);
+  const linkFor = (needle) =>
+    card.entities.find((e) => e.type === "text_link" && card.text.substr(e.offset, e.length).includes(needle));
+  const nameLink = linkFor("What If");
+  assert.ok(nameLink, "the name became a link after paste");
+  assert.strictEqual(nameLink.url, `https://dexvra.io/token/robinhood/${coin.address}`, "name → token page");
+  // ONLY the name is linked, not the "($IF)" ticker.
+  assert.strictEqual(card.text.substr(nameLink.offset, nameLink.length), "What If", "link covers just the name");
+  const cta = linkFor("Buy / Sell on Dexvra Trade Bot");
+  assert.ok(cta, "the Buy/Sell CTA became a link after paste");
+  // The deep link carries the chain (ca_<chain>_<address>) so the trade bot
+  // opens the exact venue without guessing.
+  assert.strictEqual(cta.url, `https://t.me/dexvratradebot?start=ca_robinhood_${coin.address}`, "CTA → trade bot with chain + CA");
+  for (const e of card.entities) assert.ok(e.offset + e.length <= card.text.length);
+  await tpl.resetTemplate("post_listing_xpress");
 });

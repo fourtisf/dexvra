@@ -106,7 +106,8 @@ export function BannerManager() {
       </div>
       <div className="asec-body">
         <div className="a-chain" style={{ marginBottom: 12 }}>
-          The newest live banner shows in the homepage carousel; clicking it opens the target link in a new tab.
+          Upload a banner image and a target link — the newest live banner shows as a plain banner strip on the homepage;
+          clicking it opens the link in a new tab.
         </div>
 
         {/* create */}

@@ -30,9 +30,22 @@ function bannerPhoto() {
   return bundled ? { source: bundled } : null;
 }
 
+// Channel links are filled from config so they're always correct without any
+// manual template editing (change a channel via env → the link follows).
+const tme = (h) => `https://t.me/${String(h).replace(/^@/, "")}`;
+function channelVars() {
+  const { CHANNELS, SITE_URL } = require("../config/constants");
+  return {
+    site: SITE_URL,
+    announce: tme(CHANNELS.announce),
+    listing: tme(CHANNELS.listing),
+    trending: tme(CHANNELS.trending),
+  };
+}
+
 async function showHome(ctx) {
   resetSession(ctx);
-  const text = tpl.render("welcome");
+  const text = tpl.render("welcome", channelVars());
   const banner = bannerPhoto();
   if (banner) await sendPhotoCard(ctx, banner, text, mainMenu());
   else await sendCard(ctx, text, mainMenu());

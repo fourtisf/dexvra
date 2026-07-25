@@ -16,8 +16,9 @@ const log = require("../helpers/logger");
 // to local-file mode exactly as if MONGO_URI were unset. This require sits at
 // the base of the persist chain, so an unguarded failure here took the bot down.
 let MongoClient = null;
+let GridFSBucket = null;
 try {
-  ({ MongoClient } = require("mongodb"));
+  ({ MongoClient, GridFSBucket } = require("mongodb"));
 } catch (e) {
   if (MONGO_URI) {
     log.warn(`[mongo] 'mongodb' package not installed — running on local files only. Run 'npm install'. (${e && e.message})`);
@@ -110,6 +111,54 @@ async function jobSet(dir, id, data) {
   );
 }
 
+// ── Blob mirror (used by db/mediaMirror.js) — binary files (banner GIF/MP4/
+//    artwork) that don't fit the JSON kv store. Stored in GridFS (bucket
+//    "blobs") so files larger than the 16MB BSON doc limit are chunked
+//    automatically. One logical file per `name`; a new upload replaces the old. ──
+let bucket = null;
+function gridfs() {
+  if (!db) throw new Error("mongo not connected");
+  if (!bucket) bucket = new GridFSBucket(db, { bucketName: "blobs" });
+  return bucket;
+}
+async function blobList() {
+  if (!connected) return [];
+  return coll("blobs.files").find({}).project({ filename: 1, length: 1, uploadDate: 1 }).toArray();
+}
+async function blobDelete(name) {
+  if (!connected) return;
+  const files = await coll("blobs.files").find({ filename: name }).toArray();
+  for (const f of files) {
+    try {
+      await gridfs().delete(f._id);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+async function blobSet(name, buffer) {
+  if (!connected) return;
+  await blobDelete(name); // replace any prior copy so `name` is single-valued
+  await new Promise((resolve, reject) => {
+    const up = gridfs().openUploadStream(name, { metadata: { at: Date.now() } });
+    up.on("error", reject).on("finish", resolve);
+    up.end(buffer);
+  });
+}
+async function blobGet(name) {
+  if (!connected) return null;
+  const f = await coll("blobs.files").findOne({ filename: name }, { sort: { uploadDate: -1 } });
+  if (!f) return null;
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    gridfs()
+      .openDownloadStream(f._id)
+      .on("data", (c) => chunks.push(c))
+      .on("error", reject)
+      .on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
 async function close() {
   if (client) {
     try {
@@ -124,4 +173,4 @@ async function close() {
   connecting = null;
 }
 
-module.exports = { connect, close, configured, enabled, coll, db: () => db, kvAll, kvGet, kvSet, jobsAll, jobSet };
+module.exports = { connect, close, configured, enabled, coll, db: () => db, kvAll, kvGet, kvSet, jobsAll, jobSet, blobList, blobGet, blobSet, blobDelete };

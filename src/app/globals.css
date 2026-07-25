@@ -293,15 +293,19 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .live-pill{font-family:var(--fm);font-size:8px;font-weight:800;letter-spacing:.14em;color:#03150B;background:var(--mint);border-radius:999px;padding:3px 7px}
 .wcard-head .more{margin-left:auto;font-family:var(--fm);font-size:9.5px;font-weight:700;letter-spacing:.08em;color:var(--mint);text-transform:uppercase;white-space:nowrap}
 .heat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;flex:1}
-.heat-cell{border:1px solid var(--line);border-radius:12px;padding:9px 10px;background:rgba(255,255,255,.02);display:flex;flex-direction:column;justify-content:center}
-.heat-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-.heat-chain{display:flex;align-items:center;gap:6px;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--text)}
-.heat-chain .cdot{width:7px;height:7px;border-radius:50%;box-shadow:0 0 8px currentColor}
-.heat-temp{font-family:var(--fm);font-weight:800;font-size:14px;color:var(--mint)}
+.heat-cell{border:1px solid var(--line);border-radius:12px;padding:9px 10px;background:rgba(255,255,255,.02);display:flex;flex-direction:column;justify-content:center;min-width:0}
+.heat-chain{display:flex;align-items:center;gap:6px;min-width:0;margin-bottom:5px}
+.heat-chain .heat-name{font-family:var(--fm);font-size:10px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.heat-temp{font-family:var(--fm);font-weight:800;font-size:19px;line-height:1;color:var(--mint);margin-bottom:7px}
+.heat-temp .deg{font-size:.62em;opacity:.65;margin-left:1px}
 .heat-kv{display:flex;justify-content:space-between;font-family:var(--fm);font-size:9.5px;color:var(--faint)}
 .heat-kv b{color:var(--muted)}
 .heat-bar{height:4px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:7px}
 .heat-bar i{display:block;height:100%;border-radius:99px;background:var(--grad)}
+/* Plain homepage ad banner (uploaded image + link, managed in the panel) */
+.home-banner{position:relative;display:block;border-radius:16px;overflow:hidden;border:1px solid var(--line2);box-shadow:0 10px 30px rgba(0,0,0,.28);line-height:0;background:rgba(255,255,255,.02)}
+.home-banner img{width:100%;height:auto;max-height:150px;object-fit:cover;display:block}
+.home-banner-tag{position:absolute;top:8px;right:10px;font-family:var(--fm);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:rgba(0,0,0,.5);color:#fff;padding:2px 8px;border-radius:999px}
 .fg{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
 .fg svg{width:122px;height:70px;flex:none;overflow:visible}
 .fg-col{display:flex;flex-direction:column;min-width:0}
@@ -327,6 +331,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .ttabs{display:flex;gap:4px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:12px;padding:4px}
 .ttab{font-family:var(--fm);font-size:11px;font-weight:800;padding:6px 12px;border-radius:9px;color:var(--muted);transition:all .14s}
 .ttab.active{background:linear-gradient(120deg,rgba(61,245,159,.24),rgba(34,211,238,.15));color:#D9FFE9}
+/* Trending chain filter — horizontally scrollable pills with the chain logo */
+.chain-pick{display:flex;gap:7px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chain-pick::-webkit-scrollbar{display:none}
+.chain-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-family:var(--fm);font-weight:800;font-size:12px;color:var(--muted);background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:999px;padding:7px 13px;cursor:pointer;white-space:nowrap;transition:all .14s}
+.chain-chip:hover{color:var(--text);border-color:rgba(255,255,255,.2)}
+.chain-chip.active{color:#D9FFE9;background:linear-gradient(120deg,rgba(61,245,159,.24),rgba(34,211,238,.15));border-color:rgba(61,245,159,.4)}
 .filter-btn{
   margin-left:auto;display:inline-flex;align-items:center;gap:7px;
   padding:9px 15px;border-radius:11px;border:1.5px solid var(--line);
@@ -371,9 +381,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tok .ts{min-width:0}
 .tok .sym{font-family:var(--fd);font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;min-width:0}
 .tok .sym>span:first-child,.tok .sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* ticker keeps its full width; the tier tag yields leftover space (never "$…") */
-.tok .sym-txt{flex:0 0 auto;max-width:16ch}
-.tok .sym .tier-chip{flex:0 1 auto;min-width:0;overflow:hidden}
+/* the tier tag ALWAYS renders whole (no "◆ Di…"); an over-long ticker yields
+   the leftover space and ellipsises instead */
+.tok .sym-txt{flex:0 1 auto;min-width:0;max-width:16ch}
+.tok .sym .tier-chip{flex:0 0 auto}
 .tok .nm{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* compact stats line — the columns hidden on small screens live here instead */
 .tok .m-stats{display:none;font-family:var(--fm);font-size:10px;font-weight:700;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
@@ -547,8 +558,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   /* feature parity on phones: MC / Vol / Txns / Score move into the token cell */
   .tok{gap:9px}
   .tok .m-stats{display:block}
-  /* the ticker is the identity — it must show in full, never collapse to "$…".
-     Give it width priority; the tier tag yields the leftover space instead. */
+  /* same priority as desktop: the tier tag always renders whole; an over-long
+     ticker ellipsises (base .sym-txt/.tier-chip flex rules are inherited here). */
   .tok .sym{font-size:14px;gap:5px}
   .tier-chip{font-size:8px;padding:2px 5px}
   /* chain chips: one swipeable row instead of a tall wrap */

@@ -53,11 +53,11 @@ export default function TokenPage() {
   const col = up ? "#3DDC97" : "#F76A85";
   const watching = watchlist.has(t.key);
   const st = scoreTier(t.score);
+  const d = pathFrom(t.trend, 640, 120);
   const chartSrc =
     network && t.poolAddress
       ? `https://www.geckoterminal.com/${network}/pools/${t.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`
       : null;
-  const d = pathFrom(t.trend, 640, 120);
 
   const copyCa = () => {
     navigator.clipboard?.writeText(t.address).catch(() => {});
@@ -84,7 +84,7 @@ export default function TokenPage() {
         <div className="tp-id">
           <div className="tp-sym">
             {t.symbol}
-            <TierTag tier={t.tier} />
+            <TierTag tier={t.tier} ageMinutes={t.listedMinutesAgo} />
             {t.trendingRank != null && <TrendingBadge />}
           </div>
           <div className="tp-nm">

@@ -70,14 +70,18 @@ const FOOTER_BLOCK =
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
 // exactly where to trade it. {price}/{mcap}/{liq} come from live data.
 const LISTING_BODY =
-  `${em("💲", E.dollar)} **{name}** ({symbol})\n` +
-  `✅ [{coinUrlLabel}]({coinUrl})\n\n` +
+  // ONLY the token name is the clickable link to its Dexvra page — the ({symbol})
+  // stays plain text beside it — and no bare dexvra.io/… URL is printed (spam).
+  `${em("💲", E.dollar)} [{name}]({coinUrl}) ({symbol})\n\n` +
   `{chainEmoji} **Network:** {chain}\n` +
   `📄 **Contract address:**\n{address}\n\n` +
-  `${em("📊", E.chart)} **Price:** {price}\n` +
-  `${em("🏦", E.dollar)} **Market cap:** {mcap}\n` +
-  `${em("💧", E.link)} **Liquidity:** {liq}\n\n` +
-  `${em("⚡", E.zap)} **Trade it now — one tap:**\n` +
+  // Market cap and Price ONLY, SIDE-BY-SIDE on one line (operator preference) —
+  // no liquidity row, and never stacked. ({liq} stays an available placeholder
+  // for any custom template that still wants it.)
+  `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
+  // Single one-tap CTA. {tradeUrl} = https://t.me/<tradebot>?start=ca_<address>
+  // — the deep link carries the token's CA so the trade bot opens straight on
+  // this token (no "Trade it now" header line above it).
   `[⚡ Buy / Sell on Dexvra Trade Bot]({tradeUrl})\n\n` +
   `[Announce On X 𝕏]({xUrl})\n\n` +
   `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`;
@@ -88,23 +92,26 @@ const LISTING_BODY =
 // accents (never bullet spam). Deliberately NOT the fourtis layout.
 const DEFAULTS = {
   // ── Bot messages (to the user) ──
+  // Channel links are CONFIG-DRIVEN placeholders ({site}/{announce}/{listing}/
+  // {trending}) — start.js fills them from CHANNELS/SITE_URL so the default
+  // links are always correct. Edit the labels/links freely; keep the
+  // [Label]({placeholder}) shape and the link stays clickable.
   welcome:
     "💎 **Welcome to Dexvra**\n\n" +
-    "⚡ Your all-in-one platform for token **Listing, Trending & Banner Ads** — powered by the [dexvra.io](https://dexvra.io) ecosystem.\n\n" +
-    "✅ Maximum exposure across dexvra.io, our Telegram channels and X — fully automatic.\n\n" +
-    "**Our Services**\n" +
-    "⚡ **Xpress Listing** — go live in minutes\n" +
+    "⚡ **List · Trend · Advertise** — your token pushed across [dexvra.io]({site}), our Telegram channels and **X**, fully automatic and live in minutes.\n\n" +
+    "**✨ What you can do**\n" +
+    "⚡ **Xpress Listing** — live in minutes\n" +
     "🏆 **Listing & Trending** — ranked tiers, Diamond → Bronze\n" +
-    "🔥 **Trending Token** — featured placement, up to 48H\n" +
-    "📢 **Banner Ads** — homepage banner campaigns\n" +
-    "🚀 **Mass DM** — your message to every Dexvra user\n" +
-    "🟢 **Buy Bot** — free live buy alerts in your group\n\n" +
-    "**Dexvra Channels**\n" +
-    "🌐 Website: [dexvra.io](https://dexvra.io)\n" +
-    "📢 [Announcements](https://t.me/dexvraio)\n" +
-    "🚨 [Listings](https://t.me/dexvralisting)\n" +
-    "📈 [Trending](https://t.me/dexvratrending)\n\n" +
-    "👇 Tap a button below to get started — each step is fully guided.",
+    "🔥 **Trending Token** — featured, up to 48H\n" +
+    "📢 **Banner Ads** — homepage campaigns\n" +
+    "🚀 **Mass DM** — reach every Dexvra user\n" +
+    "🟢 **Buy Bot** — free live buy alerts for your group\n\n" +
+    "**🔗 Official Links**\n" +
+    "🌐 [Website]({site})\n" +
+    "📢 [Announcements Channel]({announce})\n" +
+    "🚨 [Listings Channel]({listing})\n" +
+    "📈 [Trending Channel]({trending})\n\n" +
+    "👇 Pick a service below — each step is fully guided.",
   intro_xpress:
     "⚡ **Xpress Listing**\n\n" +
     "🔹 Go live in **minutes** — no tier, no review.\n\n" +
@@ -222,17 +229,17 @@ const DEFAULTS = {
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** ({name}) is officially listed on Dexvra! 🎉\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n\n" +
-    "🌐 dexvra.io  |  🚨 Listing  |  🔥 Trending  |  📢 Announcement",
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
+    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_trending:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** is now **Trending** on Dexvra for the next **{hours} hours**, announced across our channels! 🔥\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n\n" +
-    "🌐 dexvra.io  |  🚨 Listing  |  🔥 Trending  |  📢 Announcement",
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
+    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n\n" +
-    "🌐 dexvra.io  |  🚨 Listing  |  🔥 Trending  |  📢 Announcement",
+    "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n{announceX}\n\n" +
+    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   group_start:
     "🟢 **Dexvra Buy Bot**\n\n" +
     "I post a live alert here on **every on-chain buy** of your token.\n\n" +
@@ -319,12 +326,12 @@ const DEFAULTS = {
     FOOTER_BLOCK,
   post_rankup:
     `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
-    `**{name}** just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
+    `[{name}]({coinUrl}) just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
     `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n` +
     `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
   post_pump:
     `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
-    `**{name}** is up **+{percent}%** since it listed — and still climbing.\n\n` +
+    `[{name}]({coinUrl}) is up **+{percent}%** since it listed — and still climbing.\n\n` +
     `${em("📊", E.chart)} **Market cap:** {firstMc} → **{lastMc}**\n` +
     `{chainEmoji} **Chain:** {chain}\n\n` +
     `${em("🟢", E.green)} [Chart & trade {symbol} on Dexvra]({coinUrl})\n\n` +
@@ -379,7 +386,7 @@ const DEFAULTS = {
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
 const META = {
-  welcome: { group: "Bot Messages", label: "Welcome / Start", ph: [] },
+  welcome: { group: "Bot Messages", label: "Welcome / Start", ph: ["site", "announce", "listing", "trending"] },
   intro_xpress: { group: "Bot Messages", label: "Intro: Xpress Listing", ph: [] },
   intro_tiered: { group: "Bot Messages", label: "Intro: Listing & Trending", ph: [] },
   tier_chooser: { group: "Bot Messages", label: "Tier chooser", ph: ["native"] },
@@ -412,9 +419,9 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
-  success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks"] },
-  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks"] },
-  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks"] },
+  success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
   buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
@@ -428,9 +435,9 @@ const META = {
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
-  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrlLabel", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrlLabel", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrlLabel", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "site", "listing", "trending", "announce"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "rank", "change", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },

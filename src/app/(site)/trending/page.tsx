@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
 import { StdBoard } from "@/components/TokenBoard";
 import type { CSSProperties } from "react";
 import { Coin } from "@/components/Coin";
 import { TierTag } from "@/components/TierTag";
+import { ChainLogo } from "@/components/ChainLogo";
 import { fmtPrice } from "@/lib/format";
 import { tierColor, tierRank } from "@/lib/packages";
+import { chainOf } from "@/config/chains";
 import type { PeriodKey } from "@/lib/types";
 
 // Sort priority for the Trending rail: higher-tier package first (Diamond #1 →
@@ -24,13 +26,29 @@ export default function TrendingPage() {
   const { data, openDetail } = useApp();
   const [mode, setMode] = useState<"gain" | "lose">("gain");
   const [frame, setFrame] = useState<PeriodKey>("24h");
+  const [chain, setChain] = useState<string>("all");
+
+  // Chains actually present in the data, most-populated first — so the picker
+  // only offers chains that have tokens (no dead filters).
+  const chains = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of data?.tokens ?? []) counts.set(t.chain, (counts.get(t.chain) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  }, [data]);
+  const inChain = useMemo(() => (c: string) => chain === "all" || c === chain, [chain]);
+  // If the selected chain disappears from the data (delisted / dropped from a
+  // later poll), fall back to "all" — otherwise the picker unmounts and the
+  // board would be stuck filtering to zero rows with no way to reset.
+  useEffect(() => {
+    if (chain !== "all" && !chains.includes(chain)) setChain("all");
+  }, [chain, chains]);
 
   const list = useMemo(
     () =>
-      [...(data?.tokens ?? [])].sort((a, b) =>
-        mode === "gain" ? b.chg[frame] - a.chg[frame] : a.chg[frame] - b.chg[frame],
-      ),
-    [data, mode, frame],
+      [...(data?.tokens ?? [])]
+        .filter((t) => inChain(t.chain))
+        .sort((a, b) => (mode === "gain" ? b.chg[frame] - a.chg[frame] : a.chg[frame] - b.chg[frame])),
+    [data, mode, frame, inChain],
   );
 
   // Paid Trending slots — ordered by the package booked: Diamond first, then
@@ -38,17 +56,39 @@ export default function TrendingPage() {
   const featured = useMemo(
     () =>
       [...(data?.tokens ?? [])]
-        .filter((t) => t.trendingRank != null)
+        .filter((t) => t.trendingRank != null && inChain(t.chain))
         .sort(
           (a, b) =>
             trendPriority(a.tier) - trendPriority(b.tier) ||
             (a.trendingRank ?? 99) - (b.trendingRank ?? 99),
         ),
-    [data],
+    [data, inChain],
   );
 
   return (
     <section className="view">
+      {chains.length > 1 && (
+        <div className="chain-pick" role="group" aria-label="Filter by chain">
+          <button
+            className={`chain-chip ${chain === "all" ? "active" : ""}`}
+            onClick={() => setChain("all")}
+            aria-pressed={chain === "all"}
+          >
+            🌐 All chains
+          </button>
+          {chains.map((id) => (
+            <button
+              key={id}
+              className={`chain-chip ${chain === id ? "active" : ""}`}
+              onClick={() => setChain(id)}
+              aria-pressed={chain === id}
+            >
+              <ChainLogo chain={id} size={15} />
+              {chainOf(id)?.label ?? id}
+            </button>
+          ))}
+        </div>
+      )}
       {featured.length > 0 && (
         <div className="feat-trend">
           <div className="feat-head">🔥 Trending Now <span className="feat-sub">Paid featured slots</span></div>
@@ -65,7 +105,7 @@ export default function TrendingPage() {
                   <Coin token={t} size={38} fontSize={17} />
                   <div className="feat-id">
                     <div className="feat-sym">{t.symbol}</div>
-                    <TierTag tier={t.tier} showRank={false} />
+                    <TierTag tier={t.tier} showRank={false} ageMinutes={t.listedMinutesAgo} />
                   </div>
                   <div className="feat-px">
                     <div>{fmtPrice(t.priceUsd)}</div>

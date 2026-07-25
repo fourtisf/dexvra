@@ -65,9 +65,13 @@ async function startBot() {
   try {
     await require("./helpers/persist").hydrate();
     await require("./db/jobMirror").restoreAll(); // resume in-flight broadcasts / paid Mass DMs after a VPS reset
+    await require("./db/mediaMirror").hydrate(); // restore/seed binary media (banner clips + artwork)
   } catch (e) {
     log.warn(`[start] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }
+  // Keep the binary-media backup converged with files the web admin panel writes
+  // into this shared DATA_DIR (the JSON stores already self-mirror via persist.js).
+  require("./db/mediaMirror").startSweep();
 
   const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 120000 });
   applyMiddleware(bot);

@@ -9,6 +9,13 @@ import { useApp } from "./AppState";
 const N = 3;
 const AUTO_MS = 5000;
 
+// Client-safe fallback (mirrors PROMO_DEFAULTS in lib/promo.ts) — used until
+// /api/promo loads, and if it's unreachable.
+type Promo = { emoji: string; symbol: string; multiplier: string; mcap: string; ath: string; chain: string };
+const PROMO_FALLBACK: Promo = {
+  emoji: "⚔️", symbol: "$WARCHEST", multiplier: "412×", mcap: "$310K", ath: "$128.4M", chain: "Solana",
+};
+
 // Slides 2 & 3 are ad inventory (Carousel Takeover) — kept as house ads
 // until real bookings exist (Phase 3).
 export function PromoCarousel() {
@@ -17,19 +24,18 @@ export function PromoCarousel() {
   const [idx, setIdx] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Carousel Takeover: if a paid Banner Ad is currently running (booked via the
-  // Telegram bot), slide 2 shows the advertiser's creative; otherwise it falls
-  // back to the house "Boost your token" ad.
-  const [booked, setBooked] = useState<{ imageUrl: string; linkUrl: string; title: string | null } | null>(null);
+  // The uploaded/booked ad banner renders as a dedicated plain strip on the
+  // homepage (HomeBannerStrip) — slide 2 here stays the house "Boost your token"
+  // promo so the same creative never shows twice.
+
+  // Editable "Pumped on Dexvra" showcase (admin panel → /api/promo).
+  const [promo, setPromo] = useState<Promo>(PROMO_FALLBACK);
   useEffect(() => {
     let alive = true;
-    fetch("/api/banners")
+    fetch("/api/promo")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
-        const b = j?.banners?.[0];
-        if (alive && b?.imageUrl && b?.linkUrl) {
-          setBooked({ imageUrl: b.imageUrl, linkUrl: b.linkUrl, title: b.title ?? null });
-        }
+        if (alive && j && j.symbol) setPromo({ ...PROMO_FALLBACK, ...j });
       })
       .catch(() => {});
     return () => {
@@ -83,7 +89,7 @@ export function PromoCarousel() {
               </svg>
             </div>
           </div>
-          <span className="blip-tag">$WARCHEST +412×</span>
+          <span className="blip-tag">{promo.symbol} +{promo.multiplier}</span>
           <span className="sparkle" style={{ right: "38%", top: "20%" }}>✦</span>
           <span className="sparkle" style={{ right: "12%", bottom: "18%", animationDelay: "1.1s" }}>✦</span>
           <div className="slide-copy">
@@ -96,49 +102,15 @@ export function PromoCarousel() {
           </div>
         </div>
 
-        {booked ? (
-          <a
-            className="slide"
-            href={booked.linkUrl}
-            target="_blank"
-            rel="noopener noreferrer nofollow"
-            aria-label={booked.title ?? "Sponsored banner"}
-            style={{
-              backgroundImage: `url(${booked.imageUrl})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              textDecoration: "none",
-              position: "relative",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 8,
-                right: 10,
-                fontSize: 11,
-                letterSpacing: ".08em",
-                textTransform: "uppercase",
-                background: "rgba(0,0,0,.5)",
-                color: "#fff",
-                padding: "2px 8px",
-                borderRadius: 999,
-              }}
-            >
-              Ad
-            </span>
-          </a>
-        ) : (
-          <div className="slide s-boost">
-            <span className="wm">🚀</span>
-            <div className="slide-copy">
-              <span className="s-eyebrow">📢 Boost your token</span>
-              <h2>Get featured across the {BRAND_NAME} network</h2>
-              <p>Homepage spotlight, ticker priority, and reach on every {BRAND_NAME} tool.</p>
-              <Link href="/advertise" className="boost-btn">Boost now →</Link>
-            </div>
+        <div className="slide s-boost">
+          <span className="wm">🚀</span>
+          <div className="slide-copy">
+            <span className="s-eyebrow">📢 Boost your token</span>
+            <h2>Get featured across the {BRAND_NAME} network</h2>
+            <p>Homepage spotlight, ticker priority, and reach on every {BRAND_NAME} tool.</p>
+            <Link href="/advertise" className="boost-btn">Boost now →</Link>
           </div>
-        )}
+        </div>
 
         <div className="slide s-pump">
           <svg className="wm" viewBox="0 0 260 120" preserveAspectRatio="none">
@@ -147,12 +119,12 @@ export function PromoCarousel() {
           <div className="slide-copy">
             <span className="s-eyebrow">◆ Pumped on {BRAND_NAME}</span>
             <div className="pump-inline">
-              <div className="coin" style={{ background: "radial-gradient(circle at 32% 26%,#FFE9A8,#FFC53D 45%,#B57900)" }}>⚔️</div>
-              <div className="pump-x">412×</div>
+              <div className="coin" style={{ background: "radial-gradient(circle at 32% 26%,#FFE9A8,#FFC53D 45%,#B57900)" }}>{promo.emoji}</div>
+              <div className="pump-x">{promo.multiplier}</div>
               <span className="chip-since">↗ SINCE LISTING</span>
             </div>
             <div className="pump-meta">
-              MCAP <b>$310K</b> → ATH <b>$128.4M</b> · <b>$WARCHEST</b> · Solana
+              MCAP <b>{promo.mcap}</b> → ATH <b>{promo.ath}</b> · <b>{promo.symbol}</b> · {promo.chain}
             </div>
           </div>
         </div>

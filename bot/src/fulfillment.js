@@ -350,8 +350,13 @@ async function fulfillBanner(ctx, order) {
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
   }
-  x.postBanner(rec).catch(() => {});
-  await dm(ctx, successBanner(rec, links), menu.postPurchase(SITE_URL));
+  // Tweet the banner (timeboxed) and surface the "Announce on X" link in the DM.
+  const bTweetId = await Promise.race([
+    x.postBanner(rec).catch(() => null),
+    new Promise((r) => setTimeout(r, 20000, null)),
+  ]);
+  const bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
+  await dm(ctx, successBanner(rec, links, bXUrl), menu.postPurchase(SITE_URL));
   return booking;
 }
 
@@ -361,12 +366,19 @@ async function fulfillBanner(ctx, order) {
 function linkLines(links) {
   return (links || []).map((l) => `${l.label}: ${l.url}`).join("\n");
 }
+// The editable {announceX} placeholder — a clean "Announce on X" link when a
+// tweet exists, empty otherwise (collapseGaps drops the blank line).
+function announceXLine(xUrl) {
+  return xUrl ? `🐦 [Announce on X 𝕏](${xUrl})` : "";
+}
 function successListing(coin, links) {
   return tpl.render("success_listing", {
     symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
     name: premium.sanitizeVar(coin.name),
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
+    announceX: announceXLine(coin.xUrl),
+    ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} → clickable footer
   });
 }
 function successTrending(coin, hours, links) {
@@ -375,13 +387,17 @@ function successTrending(coin, hours, links) {
     hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
+    announceX: announceXLine(coin.xUrl),
+    ...fmt.channelLinks(),
   });
 }
-function successBanner(rec, links) {
+function successBanner(rec, links, xUrl) {
   return tpl.render("success_banner", {
     slot: premium.sanitizeVar(rec.slot),
     endsAt: new Date(rec.endsAt).toUTCString(),
     postLinks: linkLines(links),
+    announceX: announceXLine(xUrl),
+    ...fmt.channelLinks(),
   });
 }
 

@@ -264,6 +264,10 @@ const FOOTER_LABELS = [
   ["Trending", "trending"],
   ["Announcements", "announce"],
 ];
+// The one-tap trade CTA label, however it's phrased ("⚡ Buy / Sell on Dexvra
+// Trade Bot" today, older "Trade on Dexvra Trade Bot") — matched loosely so the
+// paste-proof relink survives a rewording of the button.
+const TRADE_CTA_RE = /(?:buy\s*\/\s*sell|trade)[^\n]*dexvra trade bot/i;
 
 function splitLines(text) {
   const lines = [];
@@ -347,7 +351,7 @@ function autoSocialCuts(p, urls) {
     }
   }
   if (!urls.tradeUrl) {   // no address → drop the Trade line (mirrors the xUrl strip)
-    const tIdx = lines.findIndex((l) => /trade on dexvra trade bot/i.test(l.s) && !l.s.includes("{"));
+    const tIdx = lines.findIndex((l) => TRADE_CTA_RE.test(l.s) && !l.s.includes("{"));
     if (tIdx !== -1 && !overlapsLink(p.entities, lines[tIdx].start, lines[tIdx].end)) {
       let to = lines[tIdx].end + 1;
       if (tIdx + 1 < lines.length && lines[tIdx + 1].s.trim() === "") to = lines[tIdx + 1].end + 1;
@@ -390,15 +394,24 @@ function autoSocialLinks(p, urls) {
       break;
     }
   }
-  if (urls.tradeUrl) {   // paste-proof relink for the ⚡ Trade deep link
+  if (urls.tradeUrl) {   // paste-proof relink for the ⚡ Buy/Sell deep link
     for (const l of lines) {
-      const m = l.s.match(/trade on dexvra trade bot/i);
+      const m = l.s.match(TRADE_CTA_RE);
       if (!m) continue;
       const gs = l.start + m.index;
       if (!overlapsLink(p.entities, gs, gs + m[0].length)) {
         add.push({ type: "text_link", offset: gs, length: m[0].length, url: urls.tradeUrl });
       }
       break;
+    }
+  }
+  // Paste-proof relink for the token NAME → its Dexvra page. Locate the 💲 line
+  // via the unique "name (symbol)" label, but link ONLY the name (the ticker
+  // stays plain). Skipped when already linked (default markup templates carry it).
+  if (urls.coinUrl && urls.coinName && urls.coinLabel) {
+    const at = p.text.indexOf(urls.coinLabel);
+    if (at !== -1 && !overlapsLink(p.entities, at, at + urls.coinName.length)) {
+      add.push({ type: "text_link", offset: at, length: urls.coinName.length, url: urls.coinUrl });
     }
   }
   // Footer labels — scoped to the LAST paragraph so e.g. a "New Trending on
@@ -490,9 +503,15 @@ function overviewBlock(text) {
 }
 
 // Deep link into the Dexvra Trade Bot: opens the token card for this CA
-// directly (the trade bot's /start handler resolves the ca_ payload).
-const tradeUrlOf = (coin) =>
-  (coin && coin.address) ? `https://t.me/${TRADEBOT_USERNAME}?start=ca_${coin.address}` : "";
+// directly. We include the CHAIN (ca_<chain>_<address>) so the trade bot opens
+// the exact venue without guessing — essential for Robinhood launchpad tokens,
+// which have no code at the address for getCode-based chain detection to find.
+// The trade bot stays backward-compatible with the older ca_<address> form.
+const tradeUrlOf = (coin) => {
+  if (!coin || !coin.address) return "";
+  const chain = coin.chain ? `${String(coin.chain).toLowerCase().replace(/[^a-z0-9]/g, "")}_` : "";
+  return `https://t.me/${TRADEBOT_USERNAME}?start=ca_${chain}${coin.address}`;
+};
 
 // Raw URLs for the post-render auto-link pass (entity URLs, not markup).
 function postUrls(coin) {
@@ -503,6 +522,14 @@ function postUrls(coin) {
     telegram: links.telegram || "",
     xUrl: (coin && coin.xUrl) || "",
     tradeUrl: tradeUrlOf(coin),
+    // Paste-proof name link: ONLY the name (not the "({symbol})") on the 💲 line
+    // links to the token's Dexvra page, even when an admin pasted the template as
+    // plain text (stripping the [name](url) markup). coinLabel = "name (symbol)"
+    // is the unique locator (the header says "name live", never "name ("), so we
+    // find the 💲 line without colliding with the header, then link just the name.
+    coinUrl: coin ? coinUrl(coin) : "",
+    coinName: coin ? clean(coin.name) : "",
+    coinLabel: coin ? `${clean(coin.name)} (${clean(sym(coin.symbol))})` : "",
     ...channelLinks(),
   };
 }
@@ -632,4 +659,4 @@ function rankupPost(coin, rank, change24h) {
   }), postUrls(coin));
 }
 
-module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName };
+module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };

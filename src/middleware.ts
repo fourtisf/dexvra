@@ -36,6 +36,18 @@ async function authed(req: NextRequest): Promise<boolean> {
 }
 
 export async function middleware(req: NextRequest) {
+  // ── Crash guard: bogus Server Action requests ──────────────────────────
+  // Next.js 14.2.x crashes the whole Node process when it receives a Server
+  // Action request (a POST carrying a `Next-Action` header) whose action ID
+  // isn't in the current build — stale browser tabs after a redeploy, or bots
+  // probing the site. This app ships NO Server Actions ("use server" is unused),
+  // so every such request is bogus. Short-circuit it here, before Next's action
+  // handler can throw an uncaught error and take the server down (the recurring
+  // "Failed to find Server Action" pm2 restart loop).
+  if (req.headers.get("next-action")) {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
   const host = req.headers.get("host") ?? "";
   const { pathname } = req.nextUrl;
   const onAdminHost = isAdminHost(host);

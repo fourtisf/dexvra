@@ -59,6 +59,26 @@ export const SEED_ROWS: ListingRow[] = [
   { chain: "bsc", address: "0xfb5B838b6cfEEdC2873aB27866079AC55363D37E", sym: "$FLOKI", name: "Floki", emoji: "🐺", logoUrl: "https://dd.dexscreener.com/ds-data/tokens/bsc/0xfb5b838b6cfeedc2873ab27866079ac55363d37e.png?size=lg", tier: "PLATINUM", trendingRank: 4, listedMin: 90, tax: 0, holders: 470000, price: 0.00015, chg24h: 9.4, mcap: 1450000000, liq: 16000000, vol24h: 52000000, buyShare: 0.55, tx24h: 28000 },
 ];
 
+// Real socials for the well-known SEED/demo tokens, so the sample board never
+// shows a token with no links. Real listings carry their own socials (from the
+// listing form) and always take precedence over this map.
+export const SEED_SOCIALS: Record<string, { website?: string; twitter?: string; telegram?: string }> = {
+  BONK: { website: "https://bonkcoin.com", twitter: "https://x.com/bonk_inu", telegram: "https://t.me/bonk_inu" },
+  WIF: { website: "https://dogwifcoin.org", twitter: "https://x.com/dogwifcoin", telegram: "https://t.me/dogwifhatcto" },
+  POPCAT: { website: "https://www.popcat.click", twitter: "https://x.com/Popcatsolana" },
+  JUP: { website: "https://jup.ag", twitter: "https://x.com/JupiterExchange", telegram: "https://t.me/jup_dao" },
+  MEW: { website: "https://mew.xyz", twitter: "https://x.com/mew" },
+  PEPE: { website: "https://www.pepe.vip", twitter: "https://x.com/pepecoineth", telegram: "https://t.me/pepecoineth" },
+  SHIB: { website: "https://shibatoken.com", twitter: "https://x.com/Shibtoken", telegram: "https://t.me/ShibaInu_Dogecoinkiller" },
+  MOG: { website: "https://www.mogcoin.xyz", twitter: "https://x.com/MogCoin", telegram: "https://t.me/MogCoinCommunity" },
+  TURBO: { website: "https://turbotoad.com", twitter: "https://x.com/TurboToadToken", telegram: "https://t.me/turbotoadportal" },
+  BRETT: { website: "https://www.basedbrett.com", twitter: "https://x.com/basedbrett", telegram: "https://t.me/BrettBaseChain" },
+  DEGEN: { website: "https://www.degen.tips", twitter: "https://x.com/degentokenbase", telegram: "https://t.me/degentokenbase" },
+  TOSHI: { website: "https://www.toshithecat.com", twitter: "https://x.com/Toshi_base", telegram: "https://t.me/ToshiOnBase" },
+  CAKE: { website: "https://pancakeswap.finance", twitter: "https://x.com/PancakeSwap", telegram: "https://t.me/pancakeswap" },
+  FLOKI: { website: "https://floki.com", twitter: "https://x.com/RealFlokiInu", telegram: "https://t.me/FLOKIVIKINGS" },
+};
+
 const PERIOD_FACTOR: Record<PeriodKey, number> = { "5m": 0.05, "1h": 0.17, "6h": 0.48, "24h": 1 };
 
 function perPeriod(base: number): Record<PeriodKey, number> {
@@ -126,14 +146,23 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     source: "seed",
     tier: r.tier,
     trendingRank: r.trendingRank ?? null,
-    listedMinutesAgo: r.listedAt ? Math.max(0, Math.floor((Date.now() - r.listedAt) / 60000)) : r.listedMin,
+    // Seed/demo tokens are long-standing coins, not fresh paid listings — age
+    // them past the 48h tier-tag window (+3 days) so they carry NO tier badge
+    // (only genuinely recent real listings do). Real rows use their real time.
+    listedMinutesAgo: r.listedAt ? Math.max(0, Math.floor((Date.now() - r.listedAt) / 60000)) : r.listedMin + 4320,
     score,
     poolAddress: null,
-    links: {
-      website: r.website ?? `https://dexscreener.com/${r.chain}/${r.address}`,
-      twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
-      telegram: r.telegram ?? null,
-    },
+    // Only REAL socials: the listing's own (always wins), else the known-good
+    // seed map for demo tokens. Never a fabricated dexscreener/X-search link —
+    // the UI hides any icon whose link is missing.
+    links: (() => {
+      const s = SEED_SOCIALS[r.sym.replace(/^\$/, "").toUpperCase()] ?? {};
+      return {
+        website: r.website ?? s.website ?? null,
+        twitter: r.twitter ?? s.twitter ?? null,
+        telegram: r.telegram ?? s.telegram ?? null,
+      };
+    })(),
     overview: r.overview ?? null,
   };
 }

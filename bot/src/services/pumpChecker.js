@@ -11,9 +11,15 @@ const fmt = require("../channels/format");
 const post = require("../channels/post");
 const bannerTemplate = require("../bannerTemplate");
 const x = require("../twitter");
+const { fmtPrice, formatNumber } = require("../helpers/format");
 const { DedupSet, loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
 
+// Alert window (min%/max%) is admin-configurable via pumpConfig — read fresh
+// each poll so an @dexvraadminbot change applies next cycle. Above the ceiling
+// is almost always bad market data (thin liquidity / a bad tick), so it's
+// skipped rather than posted.
+const pumpConfig = require("./pumpConfig");
 const BASE_FILE = "pumpbase.json";
 let baseline = loadJSONSync(BASE_FILE, {});
 const latch = new DedupSet("pumplatch.json");
@@ -32,6 +38,50 @@ function coinOf(r, price, mcap) {
     links: { website: r.website, twitter: r.twitter, telegram: r.telegram },
     siteUrl: `${SITE_URL}/token/${r.chain}/${r.address}`,
   };
+}
+
+/** Fetch a token logo into a Buffer (relative /api/media/… → public SITE_URL). */
+async function fetchLogoBuffer(logoUrl) {
+  if (!logoUrl) return null;
+  const url = logoUrl.startsWith("http") ? logoUrl : `${SITE_URL}${logoUrl}`;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return null;
+    return Buffer.from(await r.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+/** Build the pump-alert media. When the admin has set a pump GIF/video, the
+ *  token overlay (▲ +N% · old→new price · MCAP pill · logo ring · cyan $ticker)
+ *  is composited onto it — the same auto-fill the listing/trending banners get,
+ *  but with pump's DISTINCT layout. Falls back to the raw clip on any failure,
+ *  and null when no clip is set (caller then posts a plain text reply). */
+async function pumpMedia(r, base, m, pct) {
+  const media = bannerTemplate.mediaOverride("pump"); // admin GIF/video (null → text reply)
+  if (!media) return null;
+  try {
+    const logoBuffer = await fetchLogoBuffer(r.logoUrl);
+    const filled = await bannerTemplate.composeOntoClip("pump", media, logoBuffer, {
+      symbol: r.sym,
+      name: r.name,
+      chain: r.chain,
+      change: `+${Math.round(pct)}%`,
+      priceFrom: fmtPrice(base.price),
+      priceTo: fmtPrice(m.priceUsd),
+      price: fmtPrice(m.priceUsd),
+      mcap: m.mcap ? "$" + formatNumber(m.mcap) : null,
+    });
+    if (filled) {
+      log.info(`[pump] ${r.sym} media: admin clip + pump overlay ✔`);
+      return filled;
+    }
+    log.warn(`[pump] ${r.sym} media: overlay composite failed — sending clip as-is`);
+  } catch (e) {
+    log.warn(`[pump] ${r.sym} overlay: ${e.message}`);
+  }
+  return media;
 }
 
 function start(tg) {
@@ -58,14 +108,15 @@ function start(tg) {
       const base = baseline[key];
       if (!base.price || m.priceUsd < base.price) continue;
       const pct = ((m.priceUsd - base.price) / base.price) * 100;
-      if (pct < 100 || pct >= 5000) continue; // 100% floor, 50× ceiling (fourtis: 5000)
+      const { minPct, maxPct } = pumpConfig.get(); // admin-set window (default 100%–2000%)
+      if (pct < minPct || pct > maxPct) continue;
       if (latch.has(key)) continue;
 
       await latch.add(key);
       const coin = coinOf(r, m.priceUsd, m.mcap);
       const ids = postids.get(r.chain, r.address);
       const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
-      const media = bannerTemplate.mediaOverride("pump"); // admin GIF/video (null → text reply)
+      const media = await pumpMedia(r, base, m, pct); // admin pump clip + overlay (null → text reply)
       try {
         await post.sendMedia(CHANNELS.listing, media, card, { replyTo: ids.listingMsgId });
         if (ids.annMsgId) await post.sendMedia(CHANNELS.announce, media, card, { replyTo: ids.annMsgId });

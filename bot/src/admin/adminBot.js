@@ -8,10 +8,14 @@ const fss = require("node:fs");
 const path = require("node:path");
 const { isAdminUser, ADMIN_BOT_TOKEN } = require("../config/constants");
 const { getMediaFileId } = require("../helpers/message");
-const { escapeHtml } = require("../helpers/format");
+const { escapeHtml, fmtPrice } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
+const pumpConfig = require("../services/pumpConfig");
+const trendingBoard = require("../services/trendingBoard");
+const autoTrend = require("../services/autoTrend");
+const gramjs = require("../gramjs");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
@@ -57,6 +61,8 @@ function mainKb() {
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
+    [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
+    [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -78,6 +84,9 @@ const SAMPLE_VARS = {
   hours: "48", size: "728×90", slot: "Wide Banner", duration: "3 Days", usd: "670",
   endsAt: "Jul 22, 14:00 UTC", discount: "20", field: "name",
   postLinks: "🚨 Listing post: https://t.me/dexvralisting/6\n📢 Announcement: https://t.me/dexvraio/9",
+  announceX: "🐦 [Announce on X 𝕏](https://x.com/i/status/1)",
+  site: "https://dexvra.io", listing: "https://t.me/dexvralisting",
+  trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
   emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "@dexvrabot",
 };
@@ -193,7 +202,8 @@ const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
 // Token banners whose animated clip is auto-filled with the token's logo/$ticker/price.
-const BT_FILL_KINDS = new Set(["listing", "trending"]);
+// Pump is a fill kind too, but with its OWN layout (▲ +N% · old→new price · MCAP).
+const BT_FILL_KINDS = new Set(["listing", "trending", "pump"]);
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
@@ -250,16 +260,174 @@ function btKindKb(kind) {
   if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Remove clip", `bt_medrm:${kind}`));
   if (!BT_ARTWORK_KINDS.has(kind)) {
     const rows = [clipRow];
-    if (bannerTpl.mediaOverride(kind)) rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+    if (bannerTpl.mediaOverride(kind)) {
+      // Pump (a fill kind) auto-fills the clip, so it gets the full layout editor
+      // + auto-text toggle just like listing/trending — its own ▲%/price/MCAP.
+      if (BT_FILL_KINDS.has(kind)) {
+        const textOn = bannerTpl.getSettings(kind).showText !== false;
+        rows.push([Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)]);
+        rows.push([Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)]);
+      }
+      rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+    }
+    // Pump alert trigger window (min%/max%) — configurable, applies to the alert
+    // logic regardless of whether a clip is set.
+    if (kind === "pump") {
+      const { minPct, maxPct } = pumpConfig.get();
+      rows.push([Markup.button.callback(`⚙ Alert window · ${minPct}%–${maxPct}%`, "pth")]);
+    }
     rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
+  const textOn = bannerTpl.getSettings(kind).showText !== false;
   return Markup.inlineKeyboard([
     [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
     clipRow,
     [Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)],
+    [Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)],
     [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
     [Markup.button.callback("⬅ Artwork menu", "bt")],
+  ]);
+}
+
+// ── Pump alert window editor (min% / max%) ──────────────────────────────────
+// A token fires a pump alert only when it's up between min% and max% from its
+// baseline. Adjustable here so the operator tunes sensitivity without a redeploy.
+function pthText() {
+  const { minPct, maxPct } = pumpConfig.get();
+  const mid = Math.round((minPct + maxPct) / 2);
+  return (
+    `⚙ <b>Pump alert window</b>\n\n` +
+    `A token fires a 📈 <b>Pump alert</b> when it's up between <b>${minPct}%</b> and <b>${maxPct}%</b> ` +
+    `from its baseline (the first price the bot saw ≈ listing time).\n\n` +
+    `• Below <b>${minPct}%</b> → too small, no alert\n` +
+    `• Above <b>${maxPct}%</b> → almost always bad market data, skipped\n\n` +
+    `Tap to adjust, or ⌨ type both exactly. Applies on the next check (~no restart).\n\n` +
+    `👁 <b>Preview</b> the alert at <b>${minPct}%</b> (min) · <b>${mid}%</b> · <b>${maxPct}%</b> (max), or a custom %.`
+  );
+}
+function pthKb() {
+  const cb = Markup.button.callback;
+  const { minPct, maxPct } = pumpConfig.get();
+  const mid = Math.round((minPct + maxPct) / 2);
+  return Markup.inlineKeyboard([
+    [cb("Min ➖25", "pwmin:-25"), cb("➖5", "pwmin:-5"), cb("➕5", "pwmin:5"), cb("➕25", "pwmin:25")],
+    [cb("Max ➖250", "pwmax:-250"), cb("➖50", "pwmax:-50"), cb("➕50", "pwmax:50"), cb("➕250", "pwmax:250")],
+    [cb("⌨ Type min,max", "pwset")],
+    [cb(`👁 ${minPct}%`, `pwpv:${minPct}`), cb(`👁 ${mid}%`, `pwpv:${mid}`), cb(`👁 ${maxPct}%`, `pwpv:${maxPct}`)],
+    [cb("👁 Preview @ custom %", "pwpvc")],
+    [cb(`↩️ Reset (${pumpConfig.DEFAULT_MIN}–${pumpConfig.DEFAULT_MAX})`, "pwrst"), cb("⬅ Back", "btk:pump")],
+  ]);
+}
+
+// ── Trending board editor (pinned @dexvratrending message look) ─────────────
+// The chain logo emoji + rank badges 1–10 shown on the live trending board.
+// Editor marker: ✅ = the operator has set a custom emoji here, ▫️ = still the
+// built-in default (answers "which have I already given a premium emoji?").
+const TB_SET = "✅";
+const TB_DEFAULT = "▫️";
+// Turn the admin's emoji message into a storable fragment. A PREMIUM (custom)
+// emoji arrives as a fallback char + a custom_emoji entity → store it as markup
+// "[fallback](emoji/ID)" so the board renders it premium (GramJS). A plain emoji
+// → just the first token. UTF-16 offsets (what Telegram gives) index JS strings.
+function emojiFragment(msg) {
+  const raw = String((msg && msg.text) || "");
+  const ce = ((msg && msg.entities) || []).find((e) => e.type === "custom_emoji");
+  if (ce && ce.custom_emoji_id) {
+    const fallback = raw.substring(ce.offset, ce.offset + ce.length).trim();
+    if (fallback) return `[${fallback}](emoji/${ce.custom_emoji_id})`;
+  }
+  return raw.trim().split(/\s+/)[0] || "";
+}
+function tbText() {
+  const n = trendingBoard.RANK_SLOTS;
+  const badges = trendingBoard
+    .rankEmojis()
+    .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${trendingBoard.displayEmoji(e)}`)
+    .join("  ");
+  // How many slots carry a PREMIUM emoji (stored as "[x](emoji/ID)" markup) and
+  // whether the premium account that actually renders them is connected.
+  const isPrem = (e) => /\(emoji\//.test(String(e || ""));
+  const nPrem =
+    trendingBoard.rankEmojis().filter(isPrem).length +
+    trendingBoard.chainList().filter((c) => isPrem(c.logo)).length;
+  const premLine = nPrem
+    ? gramjs.available()
+      ? `💎 Premium emoji: <b>🟢 ready</b> — ${nPrem} set, posting via the premium account.`
+      : `💎 Premium emoji: <b>🔴 NOT rendering</b> — ${nPrem} set, but the premium account isn't connected. Run <code>node scripts/gramjs-login.js</code>. Until then the board shows the plain fallback.`
+    : `💎 Premium emoji: send a <b>premium</b> emoji when setting a badge/logo to use one (needs the premium account connected).`;
+  return (
+    `🔥 <b>Trending board</b>\n\n` +
+    `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
+    `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
+    `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
+    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n` +
+    `${premLine}\n` +
+    `<i>Note: custom/premium emoji only look premium to Telegram Premium users — everyone else sees the normal fallback emoji.</i>\n\n` +
+    `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
+    `Send any emoji when asked. Applies on the next board refresh.`
+  );
+}
+function tbKb() {
+  const cb = Markup.button.callback;
+  const badges = trendingBoard.rankEmojis();
+  const rankBtns = badges.map((e, i) => {
+    const mark = trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT;
+    return cb(`${mark} ${i + 1} ${trendingBoard.displayEmoji(e)}`, `tbr:${i + 1}`);
+  });
+  // Five per row so 1–10 fits two clean rows (grows automatically with RANK_SLOTS).
+  const rows = [];
+  for (let i = 0; i < rankBtns.length; i += 5) rows.push(rankBtns.slice(i, i + 5));
+  rows.push([cb("🔗 Chain logos", "tbc")]);
+  rows.push([cb("↩️ Reset board", "tbrst"), cb("⬅ Back", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+function tbChainsText() {
+  return (
+    `🔗 <b>Chain logos</b>\n\n` +
+    `The emoji shown before each chain's header on the trending board ` +
+    `(e.g. <code>🟣 SOLANA - Trending</code>).\n\n` +
+    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n\n` +
+    `Tap a chain, then send the emoji you want. ⬅ Back to the board.`
+  );
+}
+function tbChainsKb() {
+  const cb = Markup.button.callback;
+  const chains = trendingBoard.chainList();
+  const rows = [];
+  for (let i = 0; i < chains.length; i += 2) {
+    rows.push(
+      chains.slice(i, i + 2).map((c) => cb(`${c.custom ? TB_SET : TB_DEFAULT} ${trendingBoard.displayEmoji(c.logo)} ${c.label}`, `tbcl:${c.id}`)),
+    );
+  }
+  rows.push([cb("⬅ Back", "tb")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+// ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
+function atText() {
+  const c = autoTrend.get();
+  return (
+    `🤖 <b>Auto Trending</b>\n\n` +
+    `Keeps the Trending board alive between paid slots: when a slot expires it ` +
+    `auto-promotes a <b>random</b> listed token for a <b>random</b> duration, at ` +
+    `<b>random</b> intervals. Paid tiers always stay on top.\n\n` +
+    `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
+    `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
+    `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    `🎯 Keep featured: <b>${c.target}</b> tokens\n\n` +
+    `Tune with the steppers below. Applies on the next cycle.`
+  );
+}
+function atKb() {
+  const cb = Markup.button.callback;
+  const c = autoTrend.get();
+  return Markup.inlineKeyboard([
+    [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
+    [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
+    [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
+    [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
 }
 
@@ -356,10 +524,10 @@ function btEditorCaption(kind, elem) {
   let detail;
   if (elem === "logo") {
     detail = rect
-      ? `Slot <b>${s.slotW}×${s.slotH}px</b> di (${s.logoX}, ${s.logoY})`
-      : `<b>${s.logoSize}px</b> di (${s.logoX}, ${s.logoY})`;
+      ? `Slot <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})`
+      : `<b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})`;
   } else {
-    detail = `<b>${s[e.sizeKey]}px</b> di (${s[e.xKey]}, ${s[e.yKey]})`;
+    detail = `<b>${s[e.sizeKey]}px</b> at (${s[e.xKey]}, ${s[e.yKey]})`;
   }
   return (
     `🖱 <b>${BT_KINDS[kind]} — layout editor</b>\n` +
@@ -404,15 +572,15 @@ function btEditorKb(kind, elem) {
     const szStep = elem === "logo" ? BT_NUDGE : BT_ELEMS[elem].step;
     const cur = elem === "logo" ? `${s.logoSize}px` : `${s[BT_ELEMS[elem].sizeKey]}px`;
     rows.push([
-      cb("➖ Kecil", `bt_esz:${kind}:${elem}:${-szStep}`),
+      cb("➖ Smaller", `bt_esz:${kind}:${elem}:${-szStep}`),
       cb(cur, `bt_pos:${kind}`),
-      cb("➕ Besar", `bt_esz:${kind}:${elem}:${szStep}`),
+      cb("➕ Bigger", `bt_esz:${kind}:${elem}:${szStep}`),
     ]);
   }
   if (!rect) {
     rows.push([cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bt_badge:${kind}`)]);
   }
-  rows.push([cb("↩️ Reset layout", `bt_erst:${kind}`), cb("✅ Selesai", `bt_done:${kind}`)]);
+  rows.push([cb("↩️ Reset layout", `bt_erst:${kind}`), cb("✅ Done", `bt_done:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -420,9 +588,7 @@ async function btEditorImage(kind, elem) {
   // editorStill draws the token overlay onto the still artwork OR — when only an empty
   // animated template is uploaded — onto a frame of that clip, so positioning matches
   // the real look either way.
-  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), {
-    symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge",
-  });
+  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), sampleData(kind));
   if (!buf) return null;
   return btGuideOverlay(buf, kind, elem).catch(() => buf);
 }
@@ -480,10 +646,37 @@ function sampleMedia(kind) {
 // layout settings the still + animated compositors use, so tuning here applies
 // everywhere. Callback namespace: bx*.
 const BX_SAMPLE = { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" };
+// Sample token data for every preview / the layout editor. Pump gets its
+// DISTINCT fields (▲ +N% · old→new price) so its preview shows the real pump
+// layout. The pump % defaults to the configured window MINIMUM (so the example
+// matches what actually triggers an alert), or an explicit `pct` to preview a
+// specific gain; the old→new price is derived from that %.
+function sampleData(kind, pct) {
+  if (kind === "pump") {
+    const p = Number.isFinite(pct) ? pct : pumpConfig.get().minPct;
+    const base = 0.032; // sample baseline price
+    const now = base * (1 + p / 100);
+    return {
+      symbol: "DEXV",
+      name: "Dexvra",
+      chain: "SOLANA",
+      change: `+${Math.round(p)}%`,
+      priceFrom: fmtPrice(base),
+      priceTo: fmtPrice(now),
+      price: fmtPrice(now),
+      mcap: "$120M",
+      badge: "Sample Badge",
+    };
+  }
+  return BX_SAMPLE;
+}
 const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
   name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
+  // Pump-only elements: the big "▲ +N%" headline and the "old → new" price line.
+  pct: { label: "📈 % Change", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
+  price: { label: "💱 Price →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
   meta: { label: "📊 Chips (chain·price·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
   badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
 };
@@ -504,6 +697,7 @@ function bxMenuText(kind) {
 function bxMenuKb(kind) {
   const s = bannerTpl.getSettings(kind);
   const rect = s.slotShape === "rect";
+  const isPump = kind === "pump";
   const cb = Markup.button.callback;
   const rows = [];
   if (rect) {
@@ -512,12 +706,21 @@ function bxMenuKb(kind) {
     const showText = s.showText !== false;
     const showBadge = s.showBadge !== false;
     rows.push([cb(`🪙 Logo · ${s.logoSize}px`, `bxe:${kind}:logo`)]);
-    if (showText) {
+    if (showText && isPump) {
+      // Pump: its own elements — ▲%, old→new price, ticker/name, MCAP pill.
+      rows.push([cb(`📈 % Change · ${s.pctFontSize}px`, `bxe:${kind}:pct`), cb(`💱 Price → · ${s.priceFontSize}px`, `bxe:${kind}:price`)]);
+      rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
+      rows.push([cb(`💰 MCAP pill · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
+    } else if (showText) {
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
       rows.push([cb(`📊 Chips (chain·price·MC) · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
-    rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
-    if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
+    if (isPump) {
+      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`)]);
+    } else {
+      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
+      if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
+    }
   }
   rows.push([cb("👁 Preview", `bxp:${kind}`)]);
   rows.push([cb("🔄 Reset layout", `bxr:${kind}`), cb("⬅ Back", `btk:${kind}`)]);
@@ -573,7 +776,7 @@ async function bxPreview(ctx, kind) {
   // With a clip set, render and send the REAL animated result (exactly what posts),
   // not just a still frame. Falls back to a still if ffmpeg compositing isn't available.
   if (media) {
-    const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), BX_SAMPLE).catch(() => null);
+    const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind)).catch(() => null);
     if (filled) {
       await ctx
         .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Animated preview</b> — your GIF/video template with this exact layout (sample data). This is what posts.", parse_mode: "HTML" })
@@ -581,7 +784,7 @@ async function bxPreview(ctx, kind) {
       return;
     }
   }
-  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), BX_SAMPLE).catch(() => null);
+  const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), sampleData(kind)).catch(() => null);
   if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas / ffmpeg may be missing on the server.").catch(() => {});
   const cap = media
     ? "👁 Layout preview (still frame — animated compositing failed; check ffmpeg on the server). Live posts still play the animated version."
@@ -589,20 +792,33 @@ async function bxPreview(ctx, kind) {
   await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
 
-async function btPreview(ctx, kind) {
+async function btPreview(ctx, kind, pct) {
+  // `pct` (pump only) previews the alert at a specific % gain; omitted → the
+  // configured window minimum, so the default example matches a real trigger.
+  const data = sampleData(kind, pct);
+  const pctNote = kind === "pump" ? ` — showing <b>${data.change}</b> (${data.priceFrom} → ${data.priceTo})` : "";
   // A GIF/video clip WINS over the still artwork in real posts, so preview IT — this is
   // exactly what will play above every post, letting the admin verify it before going live.
   const media = bannerTpl.mediaOverride(kind);
   if (media) {
+    // Diagnostic: which exact clip file the preview resolved to (path+size+mtime).
+    // If a stale-clip report ever recurs, this line pins whether the newest file
+    // was picked, without guessing.
+    try {
+      const st = fss.statSync(media.source);
+      log.info(`[adminbot] btPreview ${kind}: clip → ${media.source} (${st.size}B, mtime ${new Date(st.mtimeMs).toISOString()})`);
+    } catch {
+      /* stat is best-effort diagnostics */
+    }
     // Token banners: preview the clip WITH sample token data composited on — exactly what
     // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
     if (BT_FILL_KINDS.has(kind)) {
       const filled = await bannerTpl
-        .composeOntoClip(kind, media, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" })
+        .composeOntoClip(kind, media, sampleMedia(kind), data)
         .catch(() => null);
       if (filled) {
         await ctx
-          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b> — your animated template with the token's <b>logo, $ticker, name and price/MC drawn on automatically</b> (sample data). Tune positions in 🖱 Logo editor.`, parse_mode: "HTML" })
+          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b>${pctNote} — your animated template with the token's data <b>drawn on automatically</b> (sample data). Tune positions in 🎛 Layout editor.`, parse_mode: "HTML" })
           .catch(() => {});
         return;
       }
@@ -623,10 +839,10 @@ async function btPreview(ctx, kind) {
   if (!bannerTpl.hasTemplate(kind)) {
     return ctx.reply(`❌ No ${BT_KINDS[kind]} artwork or clip yet. Tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
   }
-  const buf = await bannerTpl.compose(kind, sampleMedia(kind), { symbol: "SAMPLE", name: "Sample Token", chain: "SOLANA", price: "$0.0042", mcap: "$1.2M", badge: "Sample Badge" });
+  const buf = await bannerTpl.compose(kind, sampleMedia(kind), data);
   if (!buf) return ctx.reply("⚠️ Preview failed — check pm2 logs.").catch(() => {});
   await ctx
-    .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview — tune the slot/text until it sits perfectly.` })
+    .replyWithPhoto({ source: buf }, { caption: `👁 ${BT_KINDS[kind]} preview${pctNote} — tune the slot/text until it sits perfectly.` })
     .catch(() => {});
 }
 
@@ -649,6 +865,8 @@ const PH_HELP = {
   trending: "the Trending channel link",
   announce: "the Announcements channel link",
   xUrl: "link to the X announcement post (auto after tweeting)",
+  announceX: "the “Announce on X” link line (auto — shows after a tweet, hidden otherwise)",
+  postLinks: "the posted-message links (Listing/Trending/Announcement — auto)",
   tradeUrl: "deep link that opens this token in the Dexvra Trade Bot",
   change: "24h change sentence",
   tierEmoji: "tier emoji (from the paid tier)",
@@ -689,7 +907,7 @@ const PH_HELP = {
 const AUTO_PH = new Set([
   "head", "tierLine", "logoEmoji", "overview", "socials", "footer",
   "chainEmoji", "twitter", "website", "telegram", "site", "listing", "trending", "announce",
-  "xUrl", "tradeUrl", "change", "tierEmoji",
+  "xUrl", "tradeUrl", "change", "tierEmoji", "announceX", "postLinks",
 ]);
 
 // A friendly legend: split the template's placeholders into "your values" vs
@@ -780,11 +998,43 @@ async function edit(ctx, text, kb) {
 async function saveBanner(telegram, fileId) {
   await downloadTo(telegram, fileId, tpl.BANNER_PATH);
 }
+/** Download a Telegram file to a Buffer, resiliently. Two failure modes are
+ *  handled explicitly instead of surfacing a bare "fetch failed":
+ *   • getFileLink throws for files over the Bot API's 20 MB getFile ceiling →
+ *     a clear "too big" message with the actual limit.
+ *   • the GET itself fails transiently (a DNS/TLS/connection-reset blip to
+ *     api.telegram.org — undici reports these as "fetch failed") → retried a few
+ *     times with backoff, and the REAL cause (e.cause.code) is surfaced. */
+async function fetchTelegramFileBuffer(telegram, fileId, { timeoutMs = 30000, tries = 3 } = {}) {
+  let link;
+  try {
+    link = await telegram.getFileLink(fileId);
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (/too big|file is too big|413|420/i.test(msg)) {
+      throw new Error("file is too big — a Telegram bot can only fetch files up to 20 MB. Compress the clip or send a shorter one.");
+    }
+    throw new Error(`couldn't get the file link: ${msg}`);
+  }
+  const url = link.href || String(link);
+  let lastErr = "unknown error";
+  for (let i = 1; i <= tries; i++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) {
+      // undici hides the real transport reason in .cause — that's the useful bit.
+      const cause = e && e.cause && (e.cause.code || e.cause.message);
+      lastErr = cause ? `${e.message} (${cause})` : (e && e.message) || String(e);
+      log.warn(`[adminbot] telegram download attempt ${i}/${tries} failed: ${lastErr}`);
+      if (i < tries) await new Promise((r) => setTimeout(r, 800 * i)); // 0.8s → 1.6s backoff
+    }
+  }
+  throw new Error(`download failed after ${tries} tries (${lastErr}) — Telegram may be briefly unreachable from the server; try again in a moment.`);
+}
 async function downloadTo(telegram, fileId, destPath) {
-  const link = await telegram.getFileLink(fileId);
-  const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`download ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
+  const buf = await fetchTelegramFileBuffer(telegram, fileId, { timeoutMs: 20000 });
   await fs.mkdir(path.dirname(destPath), { recursive: true });
   await fs.writeFile(destPath, buf);
 }
@@ -1065,23 +1315,155 @@ function build() {
     await edit(ctx, btHomeText(), btHomeKb());
   });
 
+  // ── Pump alert window (min%/max%) ──
+  bot.action("pth", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, pthText(), pthKb());
+  });
+  bot.action(/^pwmin:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const cur = pumpConfig.get();
+    const res = await pumpConfig.set({ minPct: cur.minPct + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Min ${res.minPct}%`).catch(() => {});
+    await edit(ctx, pthText(), pthKb());
+  });
+  bot.action(/^pwmax:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const cur = pumpConfig.get();
+    const res = await pumpConfig.set({ maxPct: cur.maxPct + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Max ${res.maxPct}%`).catch(() => {});
+    await edit(ctx, pthText(), pthKb());
+  });
+  bot.action("pwset", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "pumpwindow" };
+    const { minPct, maxPct } = pumpConfig.get();
+    await ctx.reply(
+      `⌨ <b>Pump alert window</b>\nNow: <b>${minPct}%–${maxPct}%</b>\n\nSend the new window as <code>MIN,MAX</code> (percent, min first).\n👉 Example: <code>100,2000</code>\n\n/cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("pwrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    const res = await pumpConfig.reset();
+    log.info(`[adminbot] pump window reset to ${res.minPct}%–${res.maxPct}% by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(`↩️ Reset ${res.minPct}%–${res.maxPct}%`).catch(() => {});
+    await edit(ctx, pthText(), pthKb());
+  });
+  // Preview the pump alert at a chosen % gain (min / mid / max shortcuts).
+  bot.action(/^pwpv:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery("Rendering…").catch(() => {});
+    if (!guard(ctx)) return;
+    if (!bannerTpl.mediaOverride("pump")) {
+      return ctx.reply("❌ No pump clip yet — tap 🎞 Upload GIF/Video first, then preview.").catch(() => {});
+    }
+    await btPreview(ctx, "pump", Number(ctx.match[1]));
+  });
+  bot.action("pwpvc", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "pumppreviewpct" };
+    const { minPct, maxPct } = pumpConfig.get();
+    await ctx.reply(
+      `⌨ <b>Preview at what %?</b>\nWindow is <b>${minPct}%–${maxPct}%</b>.\n\nSend a number, e.g. <code>${minPct}</code>, <code>${Math.round((minPct + maxPct) / 2)}</code> or <code>${maxPct}</code>.\n\n/cancel to abort.`,
+      HTML,
+    );
+  });
+
+  // ── Auto Trending (auto-fill slots, random duration/timing, max 18h) ──
+  bot.action("at", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, atText(), atKb());
+  });
+  bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
+  bot.action("aten", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ enabled: !autoTrend.get().enabled });
+    log.info(`[adminbot] auto-trend ${c.enabled ? "ENABLED" : "disabled"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.enabled ? "🟢 Auto Trending ON" : "🔴 Auto Trending OFF").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
+  const atStep = (key, label) => async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ [key]: autoTrend.get()[key] + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`${label}: ${c[key]}`).catch(() => {});
+    await edit(ctx, atText(), atKb());
+  };
+  bot.action(/^athmin:(-?\d+)$/, atStep("minHours", "Min hours"));
+  bot.action(/^athmax:(-?\d+)$/, atStep("maxHours", "Max hours"));
+  bot.action(/^atgmin:(-?\d+)$/, atStep("minGapMin", "Min gap"));
+  bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
+  bot.action(/^attgt:(-?\d+)$/, atStep("target", "Target"));
+  bot.action("atrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    await autoTrend.reset();
+    ctx.answerCbQuery("↩️ Reset").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
+
+  // ── Trending board (chain logos + rank badges 1–10) ──
+  bot.action("tb", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, tbText(), tbKb());
+  });
+  bot.action(/^tbr:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const pos = Number(ctx.match[1]);
+    ctx.session.awaitingBt = { mode: "tbrank", pos };
+    await ctx.reply(
+      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.displayEmoji(trendingBoard.rankEmojis()[pos - 1])}).\n\n` +
+        `Tip: send a <b>premium</b> emoji and it renders premium on the board (posted via the premium account). /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbc", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, tbChainsText(), tbChainsKb());
+  });
+  bot.action(/^tbcl:([a-z0-9]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const chain = ctx.match[1];
+    ctx.session.awaitingBt = { mode: "tbchain", chain };
+    await ctx.reply(
+      `⌨ Send the new logo emoji for <b>${chain.toUpperCase()}</b> (current: ${trendingBoard.chainLogo(chain)}).\n\nSend a single emoji. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    await trendingBoard.reset();
+    log.info(`[adminbot] trending board reset by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery("↩️ Board reset to defaults").catch(() => {});
+    await edit(ctx, tbText(), tbKb());
+  });
+
   // Interactive layout editor: element selector + nudge + resize, all editing
   // one photo message in place. Element rides in the callback data (stateless).
   const E = "(logo|ticker|meta|badge)";
   // ── Fourtis-style layout editor handlers (bx*) ────────────────────────────
-  const EX = "(logo|ticker|name|meta|badge|slot)";
-  bot.action(new RegExp(`^bxo:${K}$`), async (ctx) => {
+  const EX = "(logo|ticker|name|meta|badge|pct|price|slot)";
+  // Layout-editor kinds — the still-artwork kinds PLUS pump (a clip-only fill
+  // kind that auto-fills its OWN ▲%/price/MCAP layout). rank-up has no layout.
+  const KL = "(listing|trending|banner|pump)";
+  bot.action(new RegExp(`^bxo:${KL}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     await bxOpen(ctx, ctx.match[1]);
   });
-  bot.action(new RegExp(`^bxe:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxe:${KL}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxsd:${K}:(logo|ticker|name|meta|badge|slotw|sloth):(-?\\d+)$`), async (ctx) => {
+  bot.action(new RegExp(`^bxsd:${KL}:(logo|ticker|name|meta|badge|pct|price|slotw|sloth):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem, ds] = ctx.match;
     const s = bannerTpl.getSettings(kind);
@@ -1112,7 +1494,7 @@ function build() {
     }
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxmd:${K}:${EX}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
+  bot.action(new RegExp(`^bxmd:${KL}:${EX}:(-?\\d+):(-?\\d+)$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem, dxs, dys] = ctx.match;
     const s = bannerTpl.getSettings(kind);
@@ -1124,7 +1506,7 @@ function build() {
     ctx.answerCbQuery(`📍 ${x}, ${y}`).catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxc:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxc:${KL}:${EX}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     const c = elem === "slot" ? { xKey: "logoX" } : BX[elem];
@@ -1133,7 +1515,7 @@ function build() {
     ctx.answerCbQuery("🎯 Centred horizontally").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
-  bot.action(new RegExp(`^bxsn:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxsn:${KL}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
@@ -1153,7 +1535,7 @@ function build() {
       );
     }
   });
-  bot.action(new RegExp(`^bxmn:${K}:${EX}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxmn:${KL}:${EX}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
@@ -1172,12 +1554,12 @@ function build() {
       HTML,
     );
   });
-  bot.action(new RegExp(`^bxp:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxp:${KL}$`), async (ctx) => {
     ctx.answerCbQuery("Rendering…").catch(() => {});
     if (!guard(ctx)) return;
     await bxPreview(ctx, ctx.match[1]);
   });
-  bot.action(new RegExp(`^bxr:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxr:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     await bannerTpl.resetSettings(kind);
@@ -1185,7 +1567,7 @@ function build() {
     ctx.answerCbQuery("🔄 Layout reset to defaults").catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
   });
-  bot.action(new RegExp(`^bxt:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxt:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showText !== false;
@@ -1193,7 +1575,7 @@ function build() {
     ctx.answerCbQuery(`🔤 Text ${on ? "OFF" : "ON"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
   });
-  bot.action(new RegExp(`^bxb:${K}$`), async (ctx) => {
+  bot.action(new RegExp(`^bxb:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showBadge !== false;
@@ -1201,7 +1583,18 @@ function build() {
     ctx.answerCbQuery(`🏷 Badge ${on ? "OFF" : "ON"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
   });
-  bot.action(new RegExp(`^bt_ed:${K}$`), async (ctx) => {
+  // One-tap auto-text toggle straight from the kind menu — when a designed clip
+  // already carries text ("Trending Alert" etc.), hiding the auto-drawn
+  // $ticker/name/chips stops them overlapping; the bot then draws only the logo.
+  bot.action(new RegExp(`^bt_txt:${KL}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const on = bannerTpl.getSettings(kind).showText !== false;
+    await bannerTpl.updateSettings(kind, { showText: !on });
+    ctx.answerCbQuery(on ? "🔤 Auto-text hidden — logo only (no overlap)" : "🔤 Auto-text shown").catch(() => {});
+    await edit(ctx, btKindText(kind), btKindKb(kind));
+  });
+  bot.action(new RegExp(`^bt_ed:${KL}$`), async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     await bxOpen(ctx, ctx.match[1]);
@@ -1263,11 +1656,11 @@ function build() {
     const kind = ctx.match[1];
     await bannerTpl.resetSettings(kind);
     log.info(`[adminbot] ${kind} banner layout reset to defaults by @${ctx.from.username || ctx.from.id}`);
-    ctx.answerCbQuery("↩️ Layout kembali ke default").catch(() => {});
+    ctx.answerCbQuery("↩️ Layout reset to default").catch(() => {});
     await btEditorRefresh(ctx, kind, "logo");
   });
   bot.action(new RegExp(`^bt_done:${K}$`), async (ctx) => {
-    ctx.answerCbQuery("✅ Tersimpan").catch(() => {});
+    ctx.answerCbQuery("✅ Saved").catch(() => {});
     if (!guard(ctx)) return;
     const kind = ctx.match[1];
     await ctx.reply(btKindText(kind), { ...HTML, ...btKindKb(kind) }).catch(() => {});
@@ -1453,10 +1846,44 @@ function build() {
     // Banner-artwork settings input (per service: logo spot / creative slot /
     // text overlay)
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
-      const { mode, kind, elem } = ctx.session.awaitingBt;
+      const { mode, kind, elem, pos, chain } = ctx.session.awaitingBt;
       ctx.session.awaitingBt = null;
       const low = text.trim().toLowerCase();
       const cv = (v) => (v === "center" ? "center" : Number(v));
+      // ── Pump alert window: "MIN,MAX" (or "MIN MAX") ──
+      if (mode === "pumpwindow") {
+        const m = low.match(/^(\d+)\s*[, ]\s*(\d+)$/);
+        if (!m) return ctx.reply("❌ Format: <code>MIN,MAX</code> — e.g. <code>100,2000</code>.", HTML).catch(() => {});
+        const res = await pumpConfig.set({ minPct: Number(m[1]), maxPct: Number(m[2]) });
+        await ctx.reply(`✅ Pump alert window set to <b>${res.minPct}%–${res.maxPct}%</b>.`, { ...HTML, ...pthKb() }).catch(() => {});
+        return;
+      }
+      // ── Pump preview at a typed % ──
+      if (mode === "pumppreviewpct") {
+        const n = Math.round(Number(low));
+        if (!Number.isFinite(n) || n <= 0) return ctx.reply("❌ Send a positive number, e.g. <code>100</code>.", HTML).catch(() => {});
+        if (!bannerTpl.mediaOverride("pump")) return ctx.reply("❌ No pump clip yet — upload one first.", HTML).catch(() => {});
+        await btPreview(ctx, "pump", n);
+        return;
+      }
+      // ── Trending board: set a rank badge / chain logo. A PREMIUM emoji is
+      //    stored as markup ("[fallback](emoji/ID)") so it renders premium on
+      //    the board (posted via the GramJS premium account); a plain emoji is
+      //    stored as-is. ──
+      if (mode === "tbrank") {
+        const frag = emojiFragment(ctx.message);
+        if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setRankEmoji(pos || 1, frag).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
+        await ctx.reply(`✅ Rank ${pos} badge → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbKb() }).catch(() => {});
+        return;
+      }
+      if (mode === "tbchain") {
+        const frag = emojiFragment(ctx.message);
+        if (!frag || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setChainLogo(chain, frag).catch((e) => log.warn(`[adminbot] setChainLogo: ${e.message}`));
+        await ctx.reply(`✅ ${chain.toUpperCase()} logo → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbChainsKb() }).catch(() => {});
+        return;
+      }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
       if (mode === "bxsize" || mode === "bxslotsize" || mode === "bxmove") {
         try {
@@ -1559,14 +1986,15 @@ function build() {
       if (!fileId) return ctx.reply("Send a GIF or a video (or an mp4/gif file).").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
-        const link = await ctx.telegram.getFileLink(fileId);
-        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(30000) });
-        if (!res.ok) throw new Error(`download ${res.status}`);
-        const buf = Buffer.from(await res.arrayBuffer());
-        const { type, bytes } = await bannerTpl.saveMedia(kind, buf, ext);
-        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B)`);
+        // Clips can be up to ~20 MB, so allow a generous timeout, and retry the
+        // download so a transient "fetch failed" doesn't lose the whole upload.
+        const buf = await fetchTelegramFileBuffer(ctx.telegram, fileId, { timeoutMs: 45000 });
+        const { type, bytes, path: savedPath } = await bannerTpl.saveMedia(kind, buf, ext);
+        log.info(`[adminbot] ${kind} ${type} clip uploaded by @${ctx.from.username || ctx.from.id} (${bytes}B → ${savedPath})`);
         const mb = (bytes / 1048576).toFixed(2);
-        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 Preview to see it.`, { ...HTML, ...btKindKb(kind) });
+        // ONE preview only, and it's admin-triggered — auto-previewing here on top
+        // of the admin tapping 👁 Preview produced two identical previews.
+        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 <b>Preview</b> below to see this exact clip.`, { ...HTML, ...btKindKb(kind) });
       } catch (e) {
         await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
       }
@@ -1579,10 +2007,7 @@ function build() {
       if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo or file.").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
-        const link = await ctx.telegram.getFileLink(fileId);
-        const res = await fetch(link.href || String(link), { signal: AbortSignal.timeout(20000) });
-        if (!res.ok) throw new Error(`download ${res.status}`);
-        const artBuf = Buffer.from(await res.arrayBuffer());
+        const artBuf = await fetchTelegramFileBuffer(ctx.telegram, fileId, { timeoutMs: 30000 });
         await bannerTpl.saveTemplate(kind, artBuf);
         let sizeNote = "";
         try {
@@ -1648,6 +2073,7 @@ async function startAdminBot() {
   try {
     await require("../helpers/persist").hydrate();
     await require("../db/jobMirror").restoreAll(); // so /reviewbroadcasts sees pending jobs after a VPS reset
+    await require("../db/mediaMirror").hydrate(); // restore banner clips/artwork so the editor previews them
   } catch (e) {
     log.warn(`[adminbot] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }
@@ -1680,3 +2106,5 @@ async function startAdminBot() {
 module.exports = { startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
+// Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
+module.exports._net = { fetchTelegramFileBuffer };

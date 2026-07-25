@@ -2,7 +2,17 @@
 // uses `import type` only, which is erased at compile time).
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { SEED_ROWS, type ListingRow } from "./listings";
+import { SEED_ROWS, SEED_SOCIALS, type ListingRow } from "./listings";
+
+/** Fill a seed/demo row's missing socials from the known-good map (its own
+ *  values always win). Keyed by ticker. Mutates in place. */
+function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; telegram?: string }): void {
+  const s = SEED_SOCIALS[String(r.sym).replace(/^\$/, "").toUpperCase()];
+  if (!s) return;
+  if (!r.website) r.website = s.website;
+  if (!r.twitter) r.twitter = s.twitter;
+  if (!r.telegram) r.telegram = s.telegram;
+}
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
@@ -33,13 +43,17 @@ let tmpSeq = 0;
 let createdSeq = 1; // monotonic stamp for FIFO ordering of new rows
 
 function seed(): StoredListing[] {
-  return SEED_ROWS.map((r, i) => ({
-    ...r,
-    id: `seed-${i}`,
-    status: "approved" as ListingStatus,
-    createdAt: 0,
-    source: "seed" as const,
-  }));
+  return SEED_ROWS.map((r, i) => {
+    const row: StoredListing = {
+      ...r,
+      id: `seed-${i}`,
+      status: "approved" as ListingStatus,
+      createdAt: 0,
+      source: "seed" as const,
+    };
+    fillSeedSocials(row); // demo tokens carry their real socials
+    return row;
+  });
 }
 
 /** Heal rows persisted BEFORE seed rows gained logoUrl: an existing
@@ -55,6 +69,10 @@ function healSeedLogos(rows: StoredListing[]): void {
       const l = seedLogo.get(`${r.chain}:${String(r.address).toLowerCase()}`);
       if (l) r.logoUrl = l;
     }
+    // Same reason as logos: a data/listings.json persisted before seed tokens
+    // gained socials would keep them link-less on the bot's trending board.
+    // Backfill missing socials on SEED rows only (real listings keep their own).
+    if (r.source === "seed") fillSeedSocials(r);
   }
 }
 
