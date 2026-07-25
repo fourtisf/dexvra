@@ -47,6 +47,14 @@ const DEFAULT_CHAIN_LOGOS = {
 };
 const FALLBACK_LOGO = "🔹";
 
+// The emoji at the head of the board's TITLE line ("🔥 Dexvra Trending — live
+// featured slots"). Plain unicode by default: no verified premium id exists for
+// a fire, and a GUESSED id makes Telegram reject the whole message with
+// EMOJI_INVALID — i.e. no board at all. The operator sets their own premium fire
+// from @dexvraadminbot, which stores it as "[🔥](emoji/<id>)" like every other
+// slot.
+const DEFAULT_TITLE_EMOJI = "🔥";
+
 /** The built-in badge for a rank: premium markup when we have an id for it. */
 function defaultRank(pos) {
   return DEFAULT_RANK_EMOJIS[pos - 1] || "";
@@ -67,6 +75,10 @@ function isBuiltinRank(pos, value) {
   if (!v) return true;
   const d = defaultRank(pos);
   return v === d || v === pe.charOf(d) || v === LEGACY_RANK_DEFAULTS[pos - 1];
+}
+function isBuiltinTitleEmoji(value) {
+  const v = String(value || "").trim();
+  return !v || v === DEFAULT_TITLE_EMOJI || v === pe.charOf(DEFAULT_TITLE_EMOJI);
 }
 function isBuiltinChainLogo(chain, value) {
   const v = String(value || "").trim();
@@ -92,7 +104,9 @@ function load() {
     const s = v == null ? "" : String(v).trim();
     if (s && !isBuiltinChainLogo(chain, s)) chainLogos[chain] = s;
   }
-  return { chainLogos, rankEmojis };
+  const t = c.titleEmoji == null ? "" : String(c.titleEmoji).trim();
+  const titleEmoji = t && !isBuiltinTitleEmoji(t) ? t : null;
+  return { chainLogos, rankEmojis, titleEmoji };
 }
 
 // A badge/logo may be stored as PLAIN emoji ("🥇") or as premium-emoji MARKUP
@@ -128,6 +142,32 @@ function resolveRank(cfg, pos) {
 function resolveChainLogo(cfg, chain) {
   const v = sanitizeFragment(cfg.chainLogos[chain]);
   return v ? pe.promoteChain(chain, v) : defaultChainLogo(chain);
+}
+
+function resolveTitle(cfg) {
+  const v = sanitizeFragment(cfg.titleEmoji);
+  return v ? pe.promote(v) : DEFAULT_TITLE_EMOJI;
+}
+
+/** The emoji that opens the board's title line. */
+function titleEmoji() {
+  return resolveTitle(load());
+}
+/** Has the admin set their own title emoji (vs the built-in 🔥)? */
+function isTitleCustom() {
+  return !!load().titleEmoji;
+}
+/** Will the title emoji render as a real (animated) premium emoji? */
+function isTitlePremium() {
+  return pe.isPremium(titleEmoji());
+}
+
+async function setTitleEmoji(emoji) {
+  const c = load();
+  const v = sanitizeFragment(emoji);
+  c.titleEmoji = !v || isBuiltinTitleEmoji(v) ? null : v;
+  await saveJSON(FILE, c);
+  return c.titleEmoji;
 }
 
 /** The rank badge for a 1-based position (1..). 1–10 are configurable; 11+ are "N.". */
@@ -174,9 +214,11 @@ function premiumCoverage() {
   const chains = CHAIN_ORDER.filter((id) => chainOf(id));
   const ranks = DEFAULT_RANK_EMOJIS.map((_, i) => pe.isPremium(resolveRank(cfg, i + 1)));
   const logos = chains.map((id) => pe.isPremium(resolveChainLogo(cfg, id)));
+  const title = pe.isPremium(resolveTitle(cfg));
   return {
-    premium: [...ranks, ...logos].filter(Boolean).length,
-    total: ranks.length + logos.length,
+    premium: [...ranks, ...logos, title].filter(Boolean).length,
+    total: ranks.length + logos.length + 1,
+    titlePremium: title,
     ranksPremium: ranks.filter(Boolean).length,
     ranksTotal: ranks.length,
     chainsPremium: logos.filter(Boolean).length,
@@ -228,7 +270,7 @@ async function setChainLogo(chain, emoji) {
 
 /** Clear every override — the board falls back to the built-in (premium) look. */
 async function reset() {
-  await saveJSON(FILE, { chainLogos: {}, rankEmojis: [] });
+  await saveJSON(FILE, { chainLogos: {}, rankEmojis: [], titleEmoji: null });
 }
 
 module.exports = {
@@ -245,6 +287,11 @@ module.exports = {
   premiumCoverage,
   setRankEmoji,
   setChainLogo,
+  titleEmoji,
+  setTitleEmoji,
+  isTitleCustom,
+  isTitlePremium,
   reset,
   DEFAULT_RANK_EMOJIS,
+  DEFAULT_TITLE_EMOJI,
 };

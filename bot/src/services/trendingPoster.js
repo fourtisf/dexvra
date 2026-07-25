@@ -86,7 +86,9 @@ async function buildText() {
   const byChain = {};
   for (const r of featured) (byChain[r.chain] ||= []).push(r);
 
-  const lines = ["🔥 **Dexvra Trending** — live featured slots"];
+  // Title emoji is admin-settable (@dexvraadminbot → Trending board) so the
+  // operator can make it a premium, animated fire without a redeploy.
+  const lines = [`${board.titleEmoji()} **Dexvra Trending** — live featured slots`];
   for (const chain of CHAIN_ORDER) {
     const arr = byChain[chain];
     if (!arr || !arr.length) continue;
@@ -125,7 +127,10 @@ async function buildText() {
       lines.push(segs.filter(Boolean).join(" "));
     });
   }
-  lines.push(`\n🌐 [View all on Dexvra](${mkUrl(SITE_URL + "/trending")})`);
+  // No footer link. Every $TICKER and market cap on the board is already a link
+  // (to the token's socials and its Dexvra page), so a trailing "View all on
+  // Dexvra" only added a line of chrome to a board that is edited in place and
+  // read at a glance — operator's call, 2026-07-25.
   return lines.join("\n");
 }
 

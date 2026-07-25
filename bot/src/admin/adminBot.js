@@ -369,6 +369,8 @@ function tbText() {
     `🔥 <b>Trending board</b>\n\n` +
     `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
     `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
+    `<b>Title emoji:</b> ${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} ` +
+    `${trendingBoard.displayEmoji(trendingBoard.titleEmoji())} <i>Dexvra Trending — live featured slots</i>\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
     `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n` +
     `${premLine}\n` +
@@ -387,6 +389,12 @@ function tbKb() {
   // Five per row so 1–10 fits two clean rows (grows automatically with RANK_SLOTS).
   const rows = [];
   for (let i = 0; i < rankBtns.length; i += 5) rows.push(rankBtns.slice(i, i + 5));
+  rows.push([
+    cb(
+      `${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} Title emoji ${trendingBoard.displayEmoji(trendingBoard.titleEmoji())}`,
+      "tbt",
+    ),
+  ]);
   rows.push([cb("🔗 Chain logos", "tbc")]);
   rows.push([cb("💎 Premium status", "tbdiag")]);
   rows.push([cb("↩️ Restore premium defaults", "tbrst"), cb("⬅ Back", "home")]);
@@ -1646,6 +1654,18 @@ function build() {
       HTML,
     );
   });
+  bot.action("tbt", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "tbtitle" };
+    await ctx.reply(
+      `⌨ Send the emoji for the board's <b>title line</b> (current: ${trendingBoard.displayEmoji(trendingBoard.titleEmoji())}` +
+        `${trendingBoard.isTitlePremium() ? " — 💎 premium" : ""}).\n\n` +
+        `It opens “<i>Dexvra Trending — live featured slots</i>”. Send a <b>premium</b> emoji and it animates on the board ` +
+        `(posted via the premium account). /cancel to abort.`,
+      HTML,
+    );
+  });
   bot.action("tbc", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -2120,6 +2140,20 @@ function build() {
         log.info(`[adminbot] rank ${p} badge → ${rendered} by @${ctx.from.username || ctx.from.id}`);
         await ctx
           .reply(`✅ Rank ${p} badge → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}`, { ...HTML, ...tbKb() })
+          .catch(() => {});
+        return;
+      }
+      if (mode === "tbtitle") {
+        const frag = emojiFragment(ctx.message);
+        if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setTitleEmoji(frag).catch((e) => log.warn(`[adminbot] setTitleEmoji: ${e.message}`));
+        const rendered = trendingBoard.titleEmoji();
+        log.info(`[adminbot] board title emoji → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(`✅ Board title → ${trendingBoard.displayEmoji(rendered)} Dexvra Trending${savedNote(rendered)}`, {
+            ...HTML,
+            ...tbKb(),
+          })
           .catch(() => {});
         return;
       }

@@ -187,3 +187,49 @@ test("poster: no featured tokens → null (nothing to post)", async () => {
   api.getListings = async () => [{ status: "approved", trendingRank: null, chain: "solana", address: "x", sym: "X" }];
   assert.strictEqual(await poster.buildText(), null);
 });
+
+// ── Board title emoji ───────────────────────────────────────────────────────
+// The 🔥 opening the title line used to be hard-coded, so making it a premium
+// (animated) fire meant a redeploy. It is a settable slot now — and the default
+// stays PLAIN unicode on purpose: there is no verified premium id for a fire,
+// and a guessed id makes Telegram reject the entire message (EMOJI_INVALID),
+// which would take the whole board down rather than one emoji.
+test("board title: plain 🔥 by default, and it opens the title line", async () => {
+  await tb.reset();
+  assert.strictEqual(tb.titleEmoji(), "🔥");
+  assert.strictEqual(tb.isTitleCustom(), false);
+  assert.strictEqual(tb.isTitlePremium(), false);
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
+  ];
+  const text = await poster.buildText();
+  assert.ok(text.startsWith("🔥 **Dexvra Trending**"), text.slice(0, 60));
+});
+
+test("board title: an admin's premium fire renders on the board", async () => {
+  await tb.setTitleEmoji("[🔥](emoji/5445284980978621387)");
+  assert.strictEqual(tb.isTitlePremium(), true, "stored as premium markup");
+  assert.strictEqual(tb.isTitleCustom(), true);
+  assert.strictEqual(tb.displayEmoji(tb.titleEmoji()), "🔥", "the editor shows the plain fallback");
+  assert.ok(tb.premiumCoverage().titlePremium, "counted in the editor's coverage line");
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
+  ];
+  const parsed = require("../src/premium").parse(await poster.buildText());
+  assert.ok(
+    parsed.entities.some((e) => e.type === "custom_emoji" && e.custom_emoji_id === "5445284980978621387"),
+    "title fire → custom_emoji entity",
+  );
+  assert.ok(parsed.text.startsWith("🔥 Dexvra Trending"), parsed.text.slice(0, 40));
+  await tb.reset();
+  assert.strictEqual(tb.titleEmoji(), "🔥", "reset restores the built-in fire");
+});
+
+test("board: the footer link is gone — the board ends on the last token", async () => {
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "wif", sym: "WIF", tier: "DIAMOND" },
+  ];
+  const text = await poster.buildText();
+  assert.ok(!/View all on Dexvra/.test(text), text);
+  assert.ok(!/dexvra\.io\/trending/.test(text), "…and its link with it");
+});
