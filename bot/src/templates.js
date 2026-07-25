@@ -249,30 +249,32 @@ const DEFAULTS = {
     "🔹 Already paid? Contact support with order ID `{order}`.",
   payment_snag:
     "⚠️ **We're on it**\n\n🔹 Your payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete your order.",
+  // Receipt shape follows the reference bot the operator asked for: one congrats
+  // line, the token's page as a BARE url, then every post that went out, each
+  // labelled by destination as a raw visible link. No footer row — the links
+  // above already reach every channel, and a receipt is read once, fast.
   // Xpress buyers get a listing and nothing else — no tier, no trending slot —
-  // so the receipt says exactly that. `success_listing` keeps its key so an
+  // so the copy says exactly that. `success_listing` keeps its key so an
   // operator's saved override survives; only its label changed.
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! **{symbol}** ({name}) is officially listed on Dexvra! 🎉\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
-    "💎 Want a tier badge and a Trending run? Send /start → **🏆 Listing & Trending**.\n\n" +
-    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+    "⚡ Congrats! Your token **{name}** ({symbol}) is officially listed!\n" +
+    "{siteUrl}\n\n" +
+    "{postLinks}{announceX}",
   // Listing & Trending buys three things at once — the listing, a ranked tier
-  // badge and a timed Trending run — and the receipt has to account for all of
-  // them, or the buyer cannot tell what they paid extra for. {hours} and
-  // {tierEmoji}/{tier} exist only here.
+  // badge and a timed Trending run — so the second line accounts for the two a
+  // buyer cannot see in the links. {tier}/{tierEmoji}/{hours} exist only here.
   success_listing_tiered:
     "✅ **Payment Confirmed**\n\n" +
-    "🏆 Congratulations! **{symbol}** ({name}) is listed on Dexvra with the **{tierEmoji} {tier}** tier! 🎉\n\n" +
-    "🔥 **Trending:** featured on the board for the next **{hours} hours**\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
-    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+    "🏆 Congrats! Your token **{name}** ({symbol}) is officially listed!\n" +
+    "{tierEmoji} **{tier}** tier · 🔥 Trending for **{hours}h**\n" +
+    "{siteUrl}\n\n" +
+    "{postLinks}{announceX}",
   success_trending:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! **{symbol}** is now **Trending** on Dexvra for the next **{hours} hours**, announced across our channels! 🔥\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
-    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+    "🔥 Congrats! **{symbol}** is Trending on Dexvra for the next **{hours}h**!\n" +
+    "{siteUrl}\n\n" +
+    "{postLinks}\n{announceX}",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
     // No "banner" after {slot} — every slot name already ends in "Banner".

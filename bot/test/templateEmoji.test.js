@@ -17,7 +17,9 @@ const premium = require("../src/premium");
 const KEY = "session_expired"; // small, and its default is a plain markup string
 
 test("lists every emoji in a default template, in reading order", () => {
-  const list = tpl.listEmojis("success_listing");
+  // `welcome` is the emoji-heaviest default and stays that way; the receipts got
+  // deliberately terse, so they are a poor sample for "several emoji".
+  const list = tpl.listEmojis("welcome");
   assert.ok(list.length >= 5, `expected several emoji, got ${list.length}`);
   assert.deepStrictEqual(list.map((e) => e.i), list.map((_, i) => i), "indexed 0..n in order");
   assert.ok(list.every((e) => e.start < e.end), "each carries its own span");

@@ -268,17 +268,20 @@ async function fulfillListing(ctx, order) {
     // Pinning is silent (disable_notification), and the trending channel is
     // deliberately NOT pinned here: its pin belongs to the Trending board.
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true });
-    if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    if (listingMsg) links.push({ label: "🔔 Dexvra Listing", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    // The tweet sits right under its channel post, as a raw url like the rest —
+    // it is one of the things they bought, not a footnote.
+    if (coin.xUrl) links.push({ label: "🔔 Dexvra Listing (X)", url: coin.xUrl });
 
     const annMsg = tierAnnounces(input.tier)
       ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin), { pin: true })
       : null;
-    if (annMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
+    if (annMsg) links.push({ label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
     if (hours > 0) {
       const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, `Trending ${hours}H`);
       const trendingMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
-      if (trendingMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
+      if (trendingMsg) links.push({ label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
     }
     await postids.set(input.chain, input.address, {
       listingMsgId: listingMsg && listingMsg.message_id,
@@ -321,10 +324,10 @@ async function fulfillTrending(ctx, order) {
   const links = [];
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
-    if (tMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
+    if (tMsg) links.push({ label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
     if (p.hours >= 24) {
       const aMsg = await post.sendMedia(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
-      if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
+      if (aMsg) links.push({ label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
     }
   } catch (e) {
     log.warn(`[fulfil] trending posts: ${e.message}`);
@@ -398,12 +401,14 @@ function linkLines(links) {
 // The editable {announceX} placeholder — a clean "Announce on X" link when a
 // tweet exists, empty otherwise (collapseGaps drops the blank line).
 function announceXLine(xUrl) {
-  return xUrl ? `🐦 [Announce on X 𝕏](${xUrl})` : "";
+  return xUrl ? `🔔 Dexvra (X): ${xUrl}` : "";
 }
 /** The buyer's receipt. Xpress and Listing & Trending are different products —
  *  one is a listing, the other adds a ranked tier and a timed Trending run — so
  *  they get separate, separately-editable templates. */
 function successListing(coin, links, { hours = 0 } = {}) {
+  // The tweet is already IN postLinks (right under its channel post), so
+  // {announceX} must stay empty here or a legacy template prints it twice.
   const tiered = coin.tier && String(coin.tier).toUpperCase() !== "XPRESS";
   return tpl.render(tiered ? "success_listing_tiered" : "success_listing", {
     symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
@@ -413,8 +418,8 @@ function successListing(coin, links, { hours = 0 } = {}) {
     hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
-    announceX: announceXLine(coin.xUrl),
-    ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} → clickable footer
+    announceX: "", // already inside postLinks — see the note above
+    ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} stay available
   });
 }
 function successTrending(coin, hours, links) {

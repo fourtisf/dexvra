@@ -32,8 +32,39 @@ test("the tiered receipt accounts for what the extra money bought", () => {
     site: "https://dexvra.io", listing: "https://t.me/l", trending: "https://t.me/t", announce: "https://t.me/a",
   }).text;
   assert.ok(text.includes("Diamond"), text);
-  assert.ok(/48\s*hours/.test(text), `the trending run is stated: ${text}`);
+  assert.ok(/48h/.test(text), `the trending run is stated: ${text}`);
   assert.ok(!/\{|\}/.test(text), "no unfilled placeholders");
+});
+
+test("the receipt lists every post that went out, as raw labelled links", () => {
+  // The reference shape the operator asked for: congrats line, the token page as
+  // a BARE url, then one labelled raw link per destination. A markdown link
+  // hides the url, and a buyer forwards these as proof of delivery.
+  const links = [
+    "🔔 Dexvra Listing: https://t.me/dexvralisting/8733",
+    "🔔 Dexvra Listing (X): https://x.com/dexvralisting/status/207487",
+    "🔔 Dexvra Announcement: https://t.me/dexvraio/11993",
+    "🔔 Dexvra Trending: https://t.me/dexvratrending/9106",
+  ].join("\n");
+  const text = tpl.render("success_listing_tiered", {
+    symbol: "$CASHCAT", name: "Cash Cat", tier: "Diamond", tierEmoji: "💎", hours: 48,
+    siteUrl: "https://dexvra.io/token/robinhood/0x020b", postLinks: links, announceX: "",
+    site: "s", listing: "l", trending: "t", announce: "a",
+  }).text;
+  for (const l of links.split("\n")) assert.ok(text.includes(l), `missing: ${l}`);
+  assert.ok(text.includes("https://dexvra.io/token/robinhood/0x020b"), "the token page is a bare url");
+  assert.ok(!/\]\(/.test(text), "no markdown links — the urls are visible");
+  assert.ok(!/dexvra\.io\s*\|/.test(text), "no footer row: the links above already reach every channel");
+  assert.ok(!/\n\s*$/.test(text), "no trailing blank line when there is no extra X line");
+});
+
+test("the tweet sits under its own channel post, and only once", () => {
+  const src = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  const iListing = src.indexOf('label: "🔔 Dexvra Listing"');
+  const iX = src.indexOf('label: "🔔 Dexvra Listing (X)"');
+  const iAnn = src.indexOf('label: "🔔 Dexvra Announcement"');
+  assert.ok(iListing > -1 && iX > iListing && iAnn > iX, "order: listing → X → announcement");
+  assert.match(src, /announceX: "", \/\/ already inside postLinks/, "…so {announceX} must not repeat it");
 });
 
 test("the Xpress receipt promises nothing it doesn't deliver", () => {
@@ -41,9 +72,11 @@ test("the Xpress receipt promises nothing it doesn't deliver", () => {
     symbol: "$X", name: "X", siteUrl: "u", postLinks: "", announceX: "",
     site: "s", listing: "l", trending: "t", announce: "a",
   }).text;
-  // Xpress has no tier and no trending slot (TIER_TREND_HOURS.XPRESS = 0).
-  assert.ok(!/tier badge on every post|hours/i.test(text.split("Want a tier")[0]), text);
-  assert.match(text, /Want a tier badge and a Trending run/i, "…and points at the upgrade instead");
+  // Xpress has no tier and no trending slot (TIER_TREND_HOURS.XPRESS = 0), so
+  // the receipt must not mention either.
+  assert.ok(!/tier/i.test(text), text);
+  assert.ok(!/trending for/i.test(text), text);
+  assert.match(text, /officially listed/i);
 });
 
 test("fulfilment picks the receipt from the tier, not from the flow", () => {
