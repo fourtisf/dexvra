@@ -657,19 +657,45 @@ function pumpPost(coin, percent, firstMc, lastMc) {
   }), postUrls(coin));
 }
 
+/**
+ * The banner-ad announcement, built from what the ADVERTISER supplied:
+ * headline → their own description → contract address → their socials →
+ * the Dexvra links. Anything they left out drops out with its header line,
+ * because a campaign for a service or an event has no token and may have no
+ * socials at all.
+ */
 function bannerPost(booking, xUrl) {
-  // No token on a banner post — any social lines an admin adds strip away. The
-  // pseudo-coin carries only xUrl, so the "Announce On X" line survives when the
-  // campaign was tweeted and is cut (paragraph and all) when it wasn't.
-  const val = stripForCoin("post_banner", xUrl ? { links: {}, xUrl } : null);
-  return autoSocials(tpl.renderValue(val, {
-    title: booking.title ? clean(booking.title) : "A featured project",
-    slot: clean(booking.slot),
-    linkUrl: cleanUrl(booking.linkUrl),
-    xUrl: xUrl ? cleanUrl(xUrl) : "",
-    ...channelLinks(),
-    footer: legacyFooter(),
-  }), { ...channelLinks(), xUrl: xUrl || "" });
+  const website = booking.website || booking.linkUrl || "";
+  const coinish = {
+    links: { twitter: booking.twitter || "", website, telegram: booking.telegram || "" },
+    xUrl: xUrl || "",
+  };
+  // Socials row + "Announce On X" go through the shared stripper…
+  let val = stripForCoin("post_banner", coinish);
+  // …and the two advertiser-copy blocks are stripped the same way. Each sits in
+  // its own paragraph, so dropParagraph takes the "📄 CA" header with the value.
+  const missing = [];
+  if (!booking.description) missing.push("description");
+  if (!booking.address) missing.push("address");
+  if (missing.length) {
+    val = stripLines(val, { all: ["description", "address"], missing, dropParagraph: true });
+  }
+  return autoSocials(
+    tpl.renderValue(val, {
+      title: booking.title ? clean(booking.title) : "A featured project",
+      slot: clean(booking.slot),
+      linkUrl: cleanUrl(booking.linkUrl),
+      description: booking.description ? clean(booking.description) : "",
+      address: booking.address ? clean(booking.address) : "",
+      twitter: coinish.links.twitter ? cleanUrl(coinish.links.twitter) : "",
+      website: website ? cleanUrl(website) : "",
+      telegram: coinish.links.telegram ? cleanUrl(coinish.links.telegram) : "",
+      xUrl: xUrl ? cleanUrl(xUrl) : "",
+      ...channelLinks(),
+      footer: legacyFooter(),
+    }),
+    { ...postUrls(coinish), ...channelLinks() },
+  );
 }
 
 const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");

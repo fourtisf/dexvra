@@ -265,3 +265,45 @@ test("a socials row with no links at all still drops entirely", () => {
   assert.ok(!/Website|Telegram/.test(text.split("Dexvra\n").pop() || ""), "no orphan labels");
   assert.ok(!/\n{3,}/.test(text), "no hole where the paragraph was");
 });
+
+// ── Banner ad post (NTM-style: description → CA → socials → Dexvra links) ───
+test("banner post follows the advertiser's own copy, in order", () => {
+  const card = fmt.bannerPost(
+    {
+      title: "IDLE Protocol",
+      slot: "Wide Banner",
+      linkUrl: "https://idle.io",
+      description: "IDLE Protocol is the first universal earnings layer for idle resources.",
+      address: "8sQ2xk9pump",
+      twitter: "https://x.com/idle",
+      telegram: "https://t.me/idle",
+    },
+    "https://x.com/i/status/1",
+  );
+  const t = card.text;
+  // The order the operator asked for — description, then CA, then socials, then
+  // the Dexvra links.
+  const iDesc = t.indexOf("universal earnings layer");
+  const iCa = t.indexOf("8sQ2xk9pump");
+  const iSoc = t.indexOf("Socials");
+  const iDex = t.indexOf("Dexvra.io");
+  assert.ok(iDesc > 0 && iDesc < iCa, `description above the CA: ${t}`);
+  assert.ok(iCa < iSoc, "CA above the socials");
+  assert.ok(iSoc < iDex, "socials above the Dexvra links");
+  assert.ok(card.entities.some((e) => e.type === "code"), "the CA is copyable");
+  assert.ok(!/\*\*|\]\(/.test(t), "no raw markup leaks (a bold-inside-link did exactly that)");
+  const urls = card.entities.filter((e) => e.type === "text_link").map((e) => e.url);
+  assert.ok(urls.includes("https://idle.io"), "the title links to the campaign");
+  assert.ok(urls.includes("https://x.com/idle") && urls.includes("https://t.me/idle"), "socials linked");
+  assert.ok(urls.includes("https://x.com/i/status/1"), "Announce On X present");
+});
+
+test("banner post: an advertiser with no token or socials still gets a clean card", () => {
+  // A service or an event has neither — the blocks must vanish with their
+  // header lines rather than leaving "📄 CA" over an empty line.
+  const t = fmt.bannerPost({ title: "Nine Hood", slot: "Standard Banner", linkUrl: "https://ninehood.io" }).text;
+  assert.ok(!/CA/.test(t), t);
+  assert.ok(!/Announce On X/.test(t), "no tweet → no X line");
+  assert.ok(!/\n{3,}/.test(t), "no hole where a block was");
+  assert.ok(t.includes("Nine Hood"), t);
+});

@@ -151,7 +151,16 @@ const KINDS = {
     label: "📢 Banner ad",
     channels: () => [CHANNELS.announce],
     async send() {
-      const booking = { title: "A featured project", slot: "Wide banner", linkUrl: SITE_URL };
+      const booking = {
+        title: "Nine Hood",
+        slot: "Wide Banner",
+        linkUrl: SITE_URL,
+        description:
+          "Nine Hood is a community-owned meme ecosystem on Solana — staking, a merch drop and a creator fund, all governed by holders.",
+        address: "9hoodXk3vM2r8sQ2yTt1cUj7pLwq5FhN4dRzB6aKpump",
+        twitter: "https://x.com/dexvraio",
+        telegram: "https://t.me/dexvraio",
+      };
       const media = await postMedia("banner", { symbol: "", name: booking.title, chain: "" }, null, null, null, null).catch(
         () => null,
       );

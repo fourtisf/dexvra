@@ -211,6 +211,18 @@ const DEFAULTS = {
     "🖼 **Upload your creative**\n\n🔹 Send your banner as a photo — recommended size **{size}**, PNG or JPG, clean and readable at a glance:",
   banner_link_prompt:
     "🔗 **Target Link**\n\n🔹 Send the **click-through URL** (https://…) — visitors who tap your banner land here:",
+  banner_desc_prompt:
+    "📝 **Description**\n\n" +
+    "🔹 Send the text you want under your banner in the announcement — what the project does, in your own words.\n\n" +
+    "Send **/skip** to leave it out.",
+  banner_ca_prompt:
+    "📄 **Contract Address**\n\n" +
+    "🔹 Paste your token's contract address — it will be shown as copyable text under your description.\n\n" +
+    "Send **/skip** if your campaign has no token.",
+  banner_socials_prompt:
+    "🔗 **Socials**\n\n" +
+    "🔹 Paste your links in ONE message — **X**, **Telegram** and **Website** (any order, one per line is fine).\n\n" +
+    "Send **/skip** to leave them out.",
   banner_title_prompt:
     "🏷 **Campaign Title**\n\n🔹 Send a short title for your campaign (shown in the announcement) — or /skip:",
   banner_pay_prompt:
@@ -343,10 +355,18 @@ const DEFAULTS = {
   // bot output: what is running, where, and one link out. The "Announce On X"
   // line carries the campaign's tweet and drops itself when there is none.
   post_banner:
-    `${em("📢", E.megaphone)} **New Campaign on Dexvra**\n\n` +
-    `**{title}** is now live on the dexvra.io homepage — **{slot}** placement, ` +
-    `in front of every visitor.\n\n` +
-    `👉 [Open the campaign]({linkUrl})\n\n` +
+    `${em("⚡", E.zap)} **BANNER LIVE ON DEXVRA** ${em("⚡", E.zap)}\n\n` +
+    // The title is the click-through. NOT bold-inside-link: the markup parser
+    // doesn't nest, and `[**x**](url)` leaks its asterisks into the post.
+    `▶️ [{title}]({linkUrl})  ·  {slot}\n\n` +
+    // The advertiser's OWN copy. Each block below is its own paragraph so it
+    // disappears cleanly (header line included) when they didn't supply it —
+    // plenty of campaigns are a service or an event with no token behind them.
+    `{description}\n\n` +
+    `${em("📄", E.clip)} **CA**\n` +
+    "`{address}`\n\n" +
+    `${em("🔗", E.link)} **Socials**\n` +
+    `${em("❌", E.cross)} [X]({twitter}) · 🌐 [Website]({website}) · ✈️ [Telegram]({telegram})\n\n` +
     `[Announce On X 𝕏]({xUrl})\n\n` +
     FOOTER_BLOCK,
   // Rank-up is a TICKER post, not an article: the clip carries the hype and the
@@ -452,6 +472,9 @@ const META = {
   banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size"] },
   banner_link_prompt: { group: "Bot Messages", label: "Banner: link prompt", ph: [] },
   banner_title_prompt: { group: "Bot Messages", label: "Banner: title prompt", ph: [] },
+  banner_desc_prompt: { group: "Bot Messages", label: "Banner: description prompt", ph: [] },
+  banner_ca_prompt: { group: "Bot Messages", label: "Banner: contract prompt", ph: [] },
+  banner_socials_prompt: { group: "Bot Messages", label: "Banner: socials prompt", ph: [] },
   banner_pay_prompt: { group: "Bot Messages", label: "Banner: pay-method picker", ph: ["slot", "size", "duration", "usd"] },
   price_feed_down: { group: "Bot Messages", label: "Error: price feed down", ph: [] },
   checking_payment: { group: "Bot Messages", label: "Payment: checking", ph: ["chain", "amount", "native"] },
@@ -480,7 +503,7 @@ const META = {
   post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "xUrl", "site", "listing", "trending", "announce"] },
+  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },

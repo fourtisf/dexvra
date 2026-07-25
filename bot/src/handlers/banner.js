@@ -1,5 +1,11 @@
 // Banner Ads flow: pick a banner type → duration → upload the creative → link →
-// (optional) title → choose a pay currency (USD price converted to native) → pay.
+// title → description → contract address → socials → choose a pay currency
+// (USD price converted to native) → pay.
+//
+// Everything after the link is the ADVERTISER'S OWN COPY for the @dexvraio
+// announcement (see post_banner): their description, their CA, their socials.
+// Each step takes /skip, because plenty of campaigns are a service or an event
+// with no token and no channels — the post drops whatever is missing.
 const { answer, toast, sendCard, getMediaFileId } = require("../helpers/message");
 const { nativeOf } = require("../config/chains");
 const { BANNERS, bannerByKey } = require("../config/packages");
@@ -78,9 +84,45 @@ async function handleText(ctx) {
   }
   if (s.awaitingField === "banner_title") {
     bf.title = input === "/skip" ? null : input.slice(0, 60);
+    s.awaitingField = "banner_desc";
+    return sendCard(ctx, require("../templates").render("banner_desc_prompt"), menu.withHome([]));
+  }
+  if (s.awaitingField === "banner_desc") {
+    // One clean paragraph, capped: this goes into a channel post whose caption
+    // Telegram limits to 1024 characters, shared with the rest of the card.
+    bf.description = input === "/skip" ? null : input.replace(/\s+\n/g, "\n").trim().slice(0, 500);
+    s.awaitingField = "banner_ca";
+    return sendCard(ctx, require("../templates").render("banner_ca_prompt"), menu.withHome([]));
+  }
+  if (s.awaitingField === "banner_ca") {
+    // No chain validation on purpose — an advertiser may be on a chain Dexvra
+    // doesn't sell listings for, and this is only ever displayed, never used to
+    // look anything up.
+    bf.address = input === "/skip" ? null : input.split(/\s+/)[0].slice(0, 120);
+    s.awaitingField = "banner_socials";
+    return sendCard(ctx, require("../templates").render("banner_socials_prompt"), menu.withHome([]));
+  }
+  if (s.awaitingField === "banner_socials") {
+    if (input !== "/skip") Object.assign(bf, parseSocials(input));
     s.awaitingField = null;
     return showPayMethods(ctx);
   }
+}
+
+/**
+ * Sort pasted links into X / Telegram / website by host, so the buyer sends ONE
+ * message instead of answering three prompts. Anything that isn't X or Telegram
+ * is treated as the website — the common case being a bare project URL.
+ */
+function parseSocials(text) {
+  const out = {};
+  for (const url of String(text).match(/https?:\/\/\S+/gi) || []) {
+    const u = url.replace(/[),.]+$/, "");
+    if (/^https?:\/\/(www\.)?(x|twitter)\.com\//i.test(u)) out.twitter = out.twitter || u;
+    else if (/^https?:\/\/(www\.)?(t\.me|telegram\.(me|dog))\//i.test(u)) out.telegram = out.telegram || u;
+    else out.website = out.website || u;
+  }
+  return out;
 }
 
 async function showPayMethods(ctx) {
@@ -117,7 +159,17 @@ async function payPick(ctx) {
     humanAmount: q.human,
     label: `Banner · ${bf.slot} (${bf.size}) · ${bf.duration}`,
     payload: {
-      rec: { slot: bf.slot, size: bf.size, linkUrl: bf.linkUrl, title: bf.title || undefined },
+      rec: {
+        slot: bf.slot,
+        size: bf.size,
+        linkUrl: bf.linkUrl,
+        title: bf.title || undefined,
+        description: bf.description || undefined,
+        address: bf.address || undefined,
+        twitter: bf.twitter || undefined,
+        website: bf.website || undefined,
+        telegram: bf.telegram || undefined,
+      },
       imageFileId: bf.imageFileId,
       hours: bf.hours,
     },
@@ -130,4 +182,5 @@ async function yesNo(ctx) {
   await answer(ctx);
 }
 
-module.exports = { entryBanner, typePick, durationPick, payPick, yesNo, handleText, handlePhoto };
+module.exports = {
+  parseSocials, entryBanner, typePick, durationPick, payPick, yesNo, handleText, handlePhoto };

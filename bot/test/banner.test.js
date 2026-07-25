@@ -71,3 +71,23 @@ test("a queued banner receipt tells the buyer it is not live yet, and when it st
   assert.ok(!/not live yet/i.test(live), live);
   assert.ok(live.includes("Wide Banner"), live);
 });
+
+// The banner flow now collects the advertiser's own copy for the announcement.
+// Socials are asked for in ONE message and sorted by host, so a paying customer
+// answers one prompt instead of three.
+test("socials paste: X / Telegram / website sorted by host", () => {
+  const { parseSocials } = require("../src/handlers/banner");
+  const p = parseSocials("https://x.com/idle\nhttps://t.me/idleportal\nhttps://idle.io");
+  assert.strictEqual(p.twitter, "https://x.com/idle");
+  assert.strictEqual(p.telegram, "https://t.me/idleportal");
+  assert.strictEqual(p.website, "https://idle.io");
+  // twitter.com is still X; a trailing comma or bracket from pasted prose is trimmed.
+  const q = parseSocials("see https://twitter.com/foo, and https://telegram.me/foo.");
+  assert.strictEqual(q.twitter, "https://twitter.com/foo");
+  assert.strictEqual(q.telegram, "https://telegram.me/foo");
+  // Nothing usable → nothing set, so the post drops the row instead of showing
+  // an empty "Socials" header.
+  assert.deepStrictEqual(parseSocials("no links here"), {});
+  // First of a kind wins; a second X link doesn't overwrite it.
+  assert.strictEqual(parseSocials("https://x.com/a https://x.com/b").twitter, "https://x.com/a");
+});

@@ -114,7 +114,19 @@ async function sendTemplateAudit(ctx, arg = "") {
     post_trending: () => fmt.trendingPost(sampleCoin),
     post_pump: () => fmt.pumpPost(sampleCoin, 137.6, 310000, 1300000),
     post_rankup: () => fmt.rankupPost(sampleCoin, 2, 82),
-    post_banner: () => fmt.bannerPost({ title: "The Bull Cat", slot: "Wide Banner", linkUrl: "https://bullcat.io" }),
+    post_banner: () =>
+      fmt.bannerPost(
+        {
+          title: "The Bull Cat",
+          slot: "Wide Banner",
+          linkUrl: "https://bullcat.io",
+          description: "The Bull Cat is a community-driven memecoin on Solana with a deflationary burn on every trade.",
+          address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+          twitter: "https://x.com/bullcat",
+          telegram: "https://t.me/bullcat",
+        },
+        "https://x.com/i/status/1",
+      ),
   };
   const cleanOf = (k) => {
     try {
