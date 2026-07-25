@@ -13,8 +13,8 @@ import { activeBanners, addBanner, allBanners, removeBanner } from "@/lib/banner
 // is the operator's own house banner: it fills the row like a Wide, but isn't
 // tagged as sold inventory on the site.
 const SLOTS: Record<string, { slot: string; size: string }> = {
-  standard: { slot: "Standard Banner", size: "728 × 90" },
-  wide: { slot: "Wide Banner", size: "1022 × 115" },
+  standard: { slot: "Standard Banner", size: "600 × 250" },
+  wide: { slot: "Wide Banner", size: "1200 × 250" },
   house: { slot: "Homepage Banner", size: "full width" },
 };
 

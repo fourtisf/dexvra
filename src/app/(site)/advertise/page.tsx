@@ -146,7 +146,8 @@ export default function AdvertisePage() {
               <img
                 src={b.name.toLowerCase().includes("wide") ? "/ads/example-wide.png" : "/ads/example-standard.png"}
                 alt=""
-                style={{ width: b.name.toLowerCase().includes("wide") ? "100%" : "71%" }}
+                // 600 vs 1200 — the example is shown at its true share of the row
+                style={{ width: b.name.toLowerCase().includes("wide") ? "100%" : "50%" }}
               />
               <span className="banner-example-cap">
                 {b.name.toLowerCase().includes("wide") ? "Fills the row alone" : "Shares the row with one other"}
