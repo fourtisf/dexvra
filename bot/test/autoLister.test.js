@@ -223,3 +223,40 @@ test("config rails: an impossible band or a runaway cap is clamped", async () =>
   await al.reset();
   assert.deepStrictEqual(al.get(), { ...al.DEFAULTS }, "reset returns the shipped defaults");
 });
+
+// ── Package selection ───────────────────────────────────────────────────────
+// The operator picks what an auto-listed token receives: a plain free listing,
+// an Xpress Listing, or Listing & Trending.
+test("package: xpress hands out the real XPRESS tier", async () => {
+  await al.set({ pkg: "xpress" });
+  const input = al.listingInput("solana", "So1ana1", healthy(), al.get(), now);
+  assert.strictEqual(input.tier, "XPRESS");
+  assert.strictEqual(input.trendingRank, undefined, "xpress is a listing, not a trending slot");
+});
+
+test("package: trending adds a time-boxed slot but NOT a paid tier", async () => {
+  await al.set({ pkg: "trending", trendHours: 12 });
+  const input = al.listingInput("solana", "So1ana1", healthy(), al.get(), now);
+  assert.strictEqual(input.tier, "FREE", "paid tiers must still sort above it on the board");
+  assert.strictEqual(input.trendingRank, 1);
+  assert.strictEqual(input.trendStart, now);
+  assert.strictEqual(input.trendExp, now + 12 * HOUR, "the slot expires on its own");
+});
+
+test("package: free is the default and stays plain", async () => {
+  await al.reset();
+  assert.strictEqual(al.get().pkg, "free");
+  const input = al.listingInput("solana", "So1ana1", healthy(), al.get(), now);
+  assert.strictEqual(input.tier, "FREE");
+  assert.strictEqual(input.trendExp, undefined);
+});
+
+test("package: an unknown value falls back to free, never to a paid tier", async () => {
+  await al.set({ pkg: "diamond_please" });
+  assert.strictEqual(al.get().pkg, "free");
+  assert.strictEqual(al.pkgOf("nonsense").tier, "FREE");
+  // …and the trending window is railed, so a fat-finger can't hand out 30 days.
+  await al.set({ pkg: "trending", trendHours: 9999 });
+  assert.ok(al.get().trendHours <= 48, `trendHours railed: ${al.get().trendHours}`);
+  await al.reset();
+});

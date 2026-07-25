@@ -16,9 +16,11 @@
 // trying to avoid. Hashing the address means a token has to genuinely climb to
 // ITS number, and the number never moves.
 //
-// An auto listing is created with tier "FREE": not a package anyone can buy, so
-// it can never be mistaken for (or dilute) a paid Bronze placement. Its channel
-// post carries no tier badge at all.
+// WHAT AN AUTO-LISTED TOKEN GETS is the operator's choice — see PACKAGES below:
+// a plain free listing (default), an Xpress Listing, or Listing & Trending with
+// a time-boxed slot on the board. Only the Xpress option hands out a real tier;
+// the others use "FREE", which is not a package anyone can buy, so an auto
+// listing can never be mistaken for (or dilute) a paid placement.
 const crypto = require("node:crypto");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const ds = require("../dexscreener");
@@ -47,8 +49,26 @@ const DEFAULTS = {
   maxLookupsPerRun: 40, // politeness toward the DexScreener API
   minGapMin: 25, // random wait between scans (never a fixed heartbeat)
   maxGapMin: 90,
+  pkg: "free", // which package an auto listing gets — see PACKAGES
+  trendHours: 12, // only used by the "trending" package
   postChannel: false, // list on the site only, until the operator says otherwise
 };
+
+// What an auto-listed token receives. The operator picks one; "free" is the
+// default because it is the only option that cannot be confused with something
+// somebody paid for.
+//
+//   free     — listed on the site with a "Free" badge. No tier, no trending.
+//   xpress   — treated as an Xpress Listing: tier XPRESS, the Xpress post card.
+//   trending — listed AND featured on the Trending board for `trendHours`,
+//              with the Trending card as well. Tier stays FREE, so every paid
+//              tier still sorts above it on the board.
+const PACKAGES = {
+  free: { label: "Free listing", tier: "FREE", trending: false },
+  xpress: { label: "Xpress Listing", tier: "XPRESS", trending: false },
+  trending: { label: "Listing & Trending", tier: "FREE", trending: true },
+};
+const pkgOf = (key) => PACKAGES[key] || PACKAGES.free;
 
 // Rails: a fat-finger in the admin editor must not be able to list the whole
 // market or spam the channel.
@@ -61,6 +81,7 @@ const HARD = {
   perRun: [1, 25],
   lookups: [5, 200],
   gapMin: [5, 1440],
+  trendHours: [1, 48],
 };
 
 function clampInt(v, [lo, hi], fb) {
@@ -87,6 +108,8 @@ function get() {
   g.minGapMin = clampInt(c.minGapMin, HARD.gapMin, DEFAULTS.minGapMin);
   g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, DEFAULTS.maxGapMin);
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
+  g.pkg = PACKAGES[c.pkg] ? c.pkg : DEFAULTS.pkg;
+  g.trendHours = clampInt(c.trendHours, HARD.trendHours, DEFAULTS.trendHours);
   return g;
 }
 
@@ -166,20 +189,31 @@ function rejectReason(info, cfg, trigger, now = Date.now()) {
   return null;
 }
 
-/** The listing payload the site expects for an auto-listed token. */
-function listingInput(chain, address, info) {
-  return {
+/** The listing payload the site expects for an auto-listed token, shaped by the
+ *  package the operator chose. */
+function listingInput(chain, address, info, cfg = get(), now = Date.now()) {
+  const p = pkgOf(cfg.pkg);
+  const input = {
     chain,
     address,
     sym: sanitizeTicker(info.symbol),
     name: String(info.name).slice(0, 60),
     emoji: "🪙",
-    tier: "FREE", // NOT a purchasable package — see lib/packages.ts
+    // "FREE" is not a purchasable package (see lib/packages.ts) — only the
+    // xpress package hands out a real tier, and only because the operator asked
+    // for auto listings to BE Xpress listings.
+    tier: p.tier,
     logoUrl: info.logoUrl && /^https:\/\//.test(info.logoUrl) ? info.logoUrl : undefined,
     website: info.website || undefined,
     twitter: info.twitter || undefined,
     telegram: info.telegram || undefined,
   };
+  if (p.trending) {
+    input.trendingRank = 1; // sub-order only; tier FREE keeps it under paid slots
+    input.trendStart = now;
+    input.trendExp = now + cfg.trendHours * 3_600_000;
+  }
+  return input;
 }
 
 /**
@@ -238,7 +272,7 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
       continue;
     }
 
-    const input = listingInput(c.chain, c.address, info);
+    const input = listingInput(c.chain, c.address, info, cfg, now);
     let listing;
     try {
       listing = await api.createListing(input);
@@ -255,17 +289,45 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     await saveJSON(STATE_FILE, state).catch(() => {});
     log.info(
       `[autolist] listed ${input.sym} on ${c.chain} at $${Math.round(info.mcap).toLocaleString("en-US")} ` +
-        `(its trigger was $${trigger.toLocaleString("en-US")}) — ${today}/${cfg.maxPerDay} today`,
+        `(its trigger was $${trigger.toLocaleString("en-US")}) as "${pkgOf(cfg.pkg).label}" — ` +
+        `${today}/${cfg.maxPerDay} today`,
     );
 
-    if (cfg.postChannel && tg) await announce(tg, c, info, input).catch(() => {});
+    if (cfg.postChannel && tg) await announce(tg, c, info, input, cfg).catch(() => {});
   }
   return listedNow;
 }
 
-/** Channel post for an auto listing — the normal listing card, with NO tier
- *  badge: it wasn't bought, so it must not wear a package's colours. */
-async function announce(tg, c, info, input) {
+/** The banner/artwork for one of the two cards — same pipeline a paid listing
+ *  uses, so an auto listing looks like every other post. */
+function postMediaFor(kind, c, info, input) {
+  const { postMedia } = require("../fulfillment");
+  return postMedia(
+    kind,
+    {
+      symbol: input.sym,
+      name: input.name,
+      chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
+      price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
+      mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
+      links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
+    },
+    null,
+    null,
+    input.logoUrl || "",
+    null,
+  );
+}
+
+/**
+ * Channel post(s) for an auto listing, following the chosen package:
+ *   free     → the listing card with NO tier badge (it wasn't bought, so it
+ *              must not wear a package's colours)
+ *   xpress   → the Xpress card, same as a paid Xpress listing
+ *   trending → the listing card AND the Trending card in @dexvratrending
+ */
+async function announce(tg, c, info, input, cfg = get()) {
+  const p = pkgOf(cfg.pkg);
   const coin = {
     name: input.name,
     symbol: input.sym,
@@ -274,27 +336,20 @@ async function announce(tg, c, info, input) {
     price: info.priceUsd,
     mcap: info.mcap,
     liq: info.liq,
+    // Only the xpress package carries a tier into the post — that IS the
+    // package. free/trending post without a badge.
+    tier: p.tier === "XPRESS" ? "XPRESS" : undefined,
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
   };
   try {
-    const { postMedia } = require("../fulfillment");
-    const media = await postMedia(
-      "listing",
-      {
-        symbol: coin.symbol,
-        name: coin.name,
-        chain: String(chainOf(c.chain) ? chainOf(c.chain).label : c.chain).toUpperCase(),
-        price: info.priceUsd ? `$${Number(info.priceUsd).toPrecision(4)}` : "TBA",
-        mcap: info.mcap ? `$${Math.round(info.mcap).toLocaleString("en-US")}` : null,
-        links: coin.links,
-      },
-      null,
-      null,
-      input.logoUrl || "",
-      null,
-    ).catch(() => null);
+    const media = await postMediaFor("listing", c, info, input).catch(() => null);
     const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin));
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
+    if (p.trending) {
+      const tMedia = await postMediaFor("trending", c, info, input).catch(() => null);
+      const tMsg = await post.sendMedia(CHANNELS.trending, tMedia, fmt.trendingPost(coin));
+      if (tMsg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.trending}/${tMsg.message_id}`);
+    }
   } catch (e) {
     log.warn(`[autolist] post ${input.sym}: ${e.message}`);
   }
@@ -348,5 +403,7 @@ module.exports = {
   triggerMcap,
   rejectReason,
   listingInput,
+  PACKAGES,
+  pkgOf,
   DEFAULTS,
 };

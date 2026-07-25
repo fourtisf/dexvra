@@ -616,6 +616,9 @@ function alText() {
     `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
     `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +
     `🔢 Max <b>${c.maxPerDay}</b>/day, <b>${c.maxPerRun}</b>/scan · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    `📦 Package: <b>${autoLister.pkgOf(c.pkg).label}</b>` +
+    (c.pkg === "trending" ? ` <i>(${c.trendHours}h on the board)</i>` : "") +
+    `\n` +
     `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n\n` +
     `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
     (recent ? `${recent}\n\n` : "\n") +
@@ -633,6 +636,14 @@ function alKb() {
     [cb(`💧 Liq ${usd(c.minLiq)}`, "alnop"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
     [cb(`📊 Vol ${usd(c.minVol24)}`, "alnop"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
     [cb(`🔢 ${c.maxPerDay}/day`, "alnop"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
+    [
+      cb(`${c.pkg === "free" ? "🟢" : "▫️"} Free`, "alpkg:free"),
+      cb(`${c.pkg === "xpress" ? "🟢" : "▫️"} Xpress`, "alpkg:xpress"),
+      cb(`${c.pkg === "trending" ? "🟢" : "▫️"} + Trending`, "alpkg:trending"),
+    ],
+    ...(c.pkg === "trending"
+      ? [[cb(`🔥 Slot ${c.trendHours}h`, "alnop"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
+      : []),
     [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
@@ -1652,6 +1663,19 @@ function build() {
     if (!guard(ctx)) return;
     const c = await autoLister.set({ maxPerDay: autoLister.get().maxPerDay + Number(ctx.match[1]) });
     ctx.answerCbQuery(`Max/day: ${c.maxPerDay}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action(/^alpkg:(free|xpress|trending)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ pkg: ctx.match[1] });
+    log.info(`[adminbot] auto-listing package → ${c.pkg} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(`📦 ${autoLister.pkgOf(c.pkg).label}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action(/^alth:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ trendHours: autoLister.get().trendHours + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`🔥 Slot: ${c.trendHours}h`).catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   bot.action("alrst", async (ctx) => {
