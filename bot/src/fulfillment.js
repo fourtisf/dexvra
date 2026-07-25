@@ -142,8 +142,10 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
         }
         log.warn(`[fulfil] ${kind} media: overlay composite failed — sending clip as-is`);
       }
+      // A raw .gif would arrive as a file card over MTProto — convert it so it
+      // plays inline, the same as the clips composeOntoClip already produces.
       log.info(`[fulfil] ${kind} media: admin ${media.type} clip ✔`);
-      return media;
+      return await bannerTemplate.toInlineClip(media);
     }
     // Rank-up has its OWN dynamic banner (rank medallion + big % gain). It can't
     // be a static composited artwork (the rank/% change every alert), so skip

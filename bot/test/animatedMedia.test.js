@@ -83,3 +83,71 @@ test("bot-api fallback uses sendAnimation (never sendDocument)", async () => {
     gramjs.available = realAvail;
   }
 });
+
+// ── GIF → MP4 ───────────────────────────────────────────────────────────────
+// DocumentAttributeAnimated (above) is necessary but NOT sufficient. Telegram
+// autoplays a clip only when it is an MP4 — the official clients convert GIF →
+// MP4 before uploading and the server never does it for us. A raw .gif sent
+// over MTProto is a file card, which is what the rank-up alert looked like
+// ("banner-media-rankup.gif · 783 KB") while the trending post played fine:
+// trending clips go through composeOntoClip, which already outputs MP4.
+const bannerTemplate = require("../src/bannerTemplate");
+const { postMedia } = require("../src/fulfillment");
+
+const ffmpegOk = (() => {
+  try {
+    require("fluent-ffmpeg");
+    require("@ffmpeg-installer/ffmpeg");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+// A real, tiny GIF with ODD dimensions — 321×241 would make an MP4 encoder fail
+// without the even-dimension scale filter, which is a genuine way this breaks.
+async function makeGif(dir) {
+  const ffmpeg = require("fluent-ffmpeg");
+  ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
+  const out = path.join(dir, "banner-media-rankup.gif");
+  await new Promise((resolve, reject) => {
+    ffmpeg()
+      .input("testsrc=size=321x241:rate=10:duration=1")
+      .inputFormat("lavfi")
+      .outputOptions(["-t", "1"])
+      .save(out)
+      .on("end", resolve)
+      .on("error", reject);
+  });
+  return out;
+}
+
+test("a .gif clip is converted to MP4 so it plays inline", async (t) => {
+  if (!ffmpegOk) return t.skip("ffmpeg not installed");
+  const src = await makeGif(process.env.BOT_DATA_DIR);
+  const out = await bannerTemplate.toInlineClip({ type: "animation", source: src });
+  assert.match(out.source, /\.mp4$/, "the container has to change, not just the attribute");
+  assert.strictEqual(out.type, "animation", "still an animation — autoplay, no player controls");
+  const head = fss.readFileSync(out.source).subarray(0, 12).toString("latin1");
+  assert.ok(head.includes("ftyp"), "a real MP4, not a renamed GIF");
+  // Re-encoding on every alert would be wasteful; the cache is keyed on mtime.
+  const again = await bannerTemplate.toInlineClip({ type: "animation", source: src });
+  assert.strictEqual(again.source, out.source, "converted once, reused after");
+});
+
+test("anything that is not a .gif is left exactly as it was", async () => {
+  const mp4 = { type: "video", source: "/tmp/whatever.mp4" };
+  assert.strictEqual(await bannerTemplate.toInlineClip(mp4), mp4);
+  const buf = { type: "animation", source: Buffer.from("gif") };
+  assert.strictEqual(await bannerTemplate.toInlineClip(buf), buf, "a Buffer has no path to convert");
+  assert.strictEqual(await bannerTemplate.toInlineClip(null), null);
+});
+
+test("the rank-up poster sends the CONVERTED clip (the actual regression)", async (t) => {
+  if (!ffmpegOk) return t.skip("ffmpeg not installed");
+  await makeGif(process.env.BOT_DATA_DIR); // admin-uploaded rank-up clip
+  const coin = { symbol: "$BONK", name: "Bonk", chain: "SOLANA", price: "$0.000002", mcap: "$257M" };
+  const media = await postMedia("rankup", coin, null, null, "", null, { rank: 1, change: 42 });
+  assert.match(media.source, /\.mp4$/, `rank-up must not post the raw .gif: ${media.source}`);
+  assert.strictEqual(media.type, "animation");
+});

@@ -81,7 +81,9 @@ async function pumpMedia(r, base, m, pct) {
   } catch (e) {
     log.warn(`[pump] ${r.sym} overlay: ${e.message}`);
   }
-  return media;
+  // Raw clip: a .gif has to become an MP4 or Telegram posts it as a file card
+  // instead of playing it (see bannerTemplate.toInlineClip).
+  return bannerTemplate.toInlineClip(media);
 }
 
 function start(tg) {

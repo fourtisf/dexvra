@@ -715,6 +715,63 @@ function ffmpegLib() {
   }
   return _FF;
 }
+/**
+ * Make an admin-uploaded clip PLAY INLINE in a channel.
+ *
+ * Telegram autoplays a clip only when it is an MP4. The official clients
+ * convert GIF → MP4 *before* uploading; the server does not, and neither does
+ * MTProto. So a raw .gif sent over GramJS lands as a FILE CARD —
+ * "banner-media-rankup.gif · 783 KB" — which is exactly what the rank-up alert
+ * looked like, while the trending post played fine because its clip goes
+ * through composeOntoClip, whose ffmpeg step already outputs MP4.
+ * DocumentAttributeAnimated (see gramjs.js) is necessary but NOT sufficient:
+ * the container itself has to change.
+ *
+ * Anything that isn't a .gif is returned untouched. Conversions are cached in
+ * tmp under the source's mtime, so a clip is re-encoded only after the admin
+ * uploads a new one — not once per alert. Failure returns the original, so the
+ * worst case stays "posts as a file", never "posts nothing".
+ */
+async function toInlineClip(media) {
+  if (!media || typeof media.source !== "string" || !/\.gif$/i.test(media.source)) return media;
+  const ffmpeg = ffmpegLib();
+  const st = fss.existsSync(media.source) ? fss.statSync(media.source) : null;
+  if (!ffmpeg || !st) {
+    if (!ffmpeg) log.warn("[bannerTpl] gif→mp4 skipped (no ffmpeg) — the clip will post as a FILE CARD");
+    return media;
+  }
+  const out = path.join(os.tmpdir(), `bt-gif-${path.basename(media.source, ".gif")}-${Math.round(st.mtimeMs)}.mp4`);
+  if (exists(out)) return { type: "animation", source: out };
+  try {
+    await new Promise((resolve, reject) => {
+      ffmpeg(media.source)
+        // yuv420p + even dimensions is the combination every Telegram client can
+        // decode; -an because an animation must be silent (a soundtrack makes
+        // Telegram treat it as a video, with controls, not an autoplaying GIF).
+        .outputOptions([
+          "-movflags",
+          "+faststart",
+          "-pix_fmt",
+          "yuv420p",
+          "-vf",
+          "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+          "-an",
+          "-t",
+          "20",
+        ])
+        .save(out)
+        .on("end", resolve)
+        .on("error", reject);
+    });
+    log.info(`[bannerTpl] gif→mp4 ✔ ${path.basename(media.source)} → ${path.basename(out)} (plays inline)`);
+    return { type: "animation", source: out };
+  } catch (e) {
+    log.warn(`[bannerTpl] gif→mp4 failed (${e.message}) — sending the .gif as-is (posts as a file card)`);
+    fss.promises.unlink(out).catch(() => {});
+    return media;
+  }
+}
+
 async function composeOntoClip(kind, media, logoBuffer, data) {
   const ffmpeg = ffmpegLib();
   if (!ffmpeg || !media || !media.source) return null;
@@ -880,6 +937,7 @@ module.exports = {
   removeTemplate,
   mediaOverride,
   composeOntoClip,
+  toInlineClip,
   clipFrame,
   editorStill,
   saveMedia,
