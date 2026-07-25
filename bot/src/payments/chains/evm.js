@@ -27,6 +27,38 @@ async function getBalance(chain, address) {
   return provider(chain).getBalance(address);
 }
 
+/** The fee cap to sign with on an EIP-1559 chain.
+ *
+ *  Whatever cap is set, the node RESERVES gasLimit × cap and charges only
+ *  gasLimit × (baseFee + tip); the difference is refunded — back into the temp
+ *  wallet, as dust worth less than the gas it would cost to collect. So the
+ *  cap is not free headroom: every gwei of it is money left behind on every
+ *  order.
+ *
+ *  ethers' getFeeData quotes 2×baseFee + tip, which is right for a user's
+ *  time-sensitive transaction and wasteful for a sweep. The protocol caps the
+ *  base fee rise at 12.5% per block, so 1.5× still covers roughly three blocks
+ *  of worst-case increase — and a sweep that does sit pending is not an
+ *  incident: the funds are safe where they are and sweepRetry comes back.
+ *
+ *  Halving the headroom halves the leftover. On a legacy-gas chain (BSC) there
+ *  is no refund at all: the price reserved is the price charged, so the wallet
+ *  ends at exactly zero. */
+const FEE_CAP_TENTHS = 15n; // ×1.5 of base fee, plus the tip
+
+async function feeCap(p, fee) {
+  try {
+    const blk = await p.getBlock("latest");
+    if (blk && blk.baseFeePerGas != null) {
+      const tip = BigInt(fee.maxPriorityFeePerGas);
+      return (BigInt(blk.baseFeePerGas) * FEE_CAP_TENTHS) / 10n + tip;
+    }
+  } catch (e) {
+    log.debug(`[evm] baseFee lookup failed, using the RPC's own cap: ${e.message}`);
+  }
+  return BigInt(fee.maxFeePerGas); // safe fallback: the generous quote
+}
+
 /** Gas this exact send needs. 21000 is only right for an EOA recipient — a
  *  treasury that is a contract (Safe/multisig, exchange deposit proxy) runs
  *  code on receive, and a hardcoded 21000 burns the gas on an out-of-gas
@@ -58,7 +90,7 @@ async function sweep(chain, wallet, treasury) {
       const eip1559 = fee.maxFeePerGas != null && fee.maxPriorityFeePerGas != null;
       // The node's balance check is against the PRICE CAP, not the price it
       // will charge, so that is exactly what has to be held back.
-      const priceCap = eip1559 ? BigInt(fee.maxFeePerGas) : fee.gasPrice != null ? BigInt(fee.gasPrice) : null;
+      const priceCap = eip1559 ? await feeCap(p, fee) : fee.gasPrice != null ? BigInt(fee.gasPrice) : null;
       if (!priceCap) return { ok: false, error: "no gas price from RPC" };
 
       const gasLimit = await gasFor(p, wallet.address, treasury);
@@ -78,7 +110,7 @@ async function sweep(chain, wallet, treasury) {
         value,
         gasLimit,
         ...(eip1559
-          ? { maxFeePerGas: fee.maxFeePerGas, maxPriorityFeePerGas: fee.maxPriorityFeePerGas }
+          ? { maxFeePerGas: priceCap, maxPriorityFeePerGas: fee.maxPriorityFeePerGas }
           : { gasPrice: fee.gasPrice }),
       };
       sent = await signer.sendTransaction(tx);

@@ -20,6 +20,8 @@ const state = {
   balance: 0n,
   feeData: { maxFeePerGas: 20n * GWEI, maxPriorityFeePerGas: 1n * GWEI, gasPrice: 15n * GWEI },
   gasEstimate: 21000n,
+  baseFee: 10n * GWEI,
+  blockThrows: false,
   estimateThrows: false,
   balanceFailures: 0,
   sendThrows: null,
@@ -41,6 +43,10 @@ class JsonRpcProvider {
   }
   async getFeeData() {
     return state.feeData;
+  }
+  async getBlock() {
+    if (state.blockThrows) throw new Error("no block");
+    return { baseFeePerGas: state.baseFee };
   }
   async estimateGas(tx) {
     state.lastEstimateArgs = tx;
@@ -85,6 +91,8 @@ function reset(balance) {
   state.balance = balance;
   state.feeData = { maxFeePerGas: 20n * GWEI, maxPriorityFeePerGas: 1n * GWEI, gasPrice: 15n * GWEI };
   state.gasEstimate = 21000n;
+  state.baseFee = 10n * GWEI;
+  state.blockThrows = false;
   state.estimateThrows = false;
   state.balanceFailures = 0;
   state.sendThrows = null;
@@ -92,16 +100,41 @@ function reset(balance) {
   state.sent = [];
 }
 
-test("only the gas the node actually reserves is held back", async () => {
-  // The node's check is value + gasLimit × maxFeePerGas ≤ balance. Holding back
-  // 2× that (the old code) strands 21,000 × 20 gwei = 0.00042 ETH per order.
-  reset(1000000000000000000n); // 1 ETH
+test("the fee cap is 1.5× base fee + tip, not the RPC's generous 2×", async () => {
+  // Whatever cap is signed, the node RESERVES gasLimit × cap and charges only
+  // gasLimit × (base + tip); the refund lands back in the temp wallet as dust
+  // worth less than the gas to collect it. So the cap is money left behind on
+  // every order, and halving the headroom halves it.
+  reset(1000000000000000000n); // 1 ETH, base 10 gwei, tip 1 gwei
   const r = await evm.sweep("ethereum", WALLET, TREASURY);
   assert.ok(r.ok, r.error);
-  const reserve = 21000n * 20n * GWEI;
-  assert.strictEqual(state.sent[0].value, 1000000000000000000n - reserve);
-  // …and that value still passes the node's own balance check.
-  assert.ok(state.sent[0].value + 21000n * 20n * GWEI <= state.balance);
+  const cap = 16n * GWEI; // 10 × 1.5 + 1
+  assert.strictEqual(state.sent[0].maxFeePerGas, cap, "signed with the tightened cap");
+  assert.strictEqual(state.sent[0].value, 1000000000000000000n - 21000n * cap, "…and reserves exactly that");
+  // The value must still clear the node's own check: value + gas × cap ≤ balance.
+  assert.ok(state.sent[0].value + 21000n * cap <= state.balance);
+  // What is actually left: gas × (cap − base − tip) = 21,000 × 5 gwei.
+  const leftBehind = 21000n * (cap - 11n * GWEI);
+  assert.strictEqual(leftBehind, 105000000000000n, "0.000105 ETH — half of what the RPC quote would strand");
+});
+
+test("the cap still covers a base fee that rises while the tx waits", async () => {
+  // The protocol caps the rise at 12.5% per block, so 1.5× survives ~3 blocks
+  // of worst case. Pinned as a number so nobody tightens it into a stuck sweep.
+  reset(1000000000000000000n);
+  await evm.sweep("ethereum", WALLET, TREASURY);
+  const cap = Number(state.sent[0].maxFeePerGas) / 1e9;
+  let base = 10;
+  for (let block = 0; block < 3; block++) base *= 1.125;
+  assert.ok(cap >= base, `cap ${cap} gwei must outlast 3 blocks of max increase (${base.toFixed(2)} gwei)`);
+});
+
+test("if the base fee cannot be read, the RPC's own cap is used — never a guess", async () => {
+  reset(1000000000000000000n);
+  state.blockThrows = true;
+  const r = await evm.sweep("ethereum", WALLET, TREASURY);
+  assert.ok(r.ok, r.error);
+  assert.strictEqual(state.sent[0].maxFeePerGas, 20n * GWEI, "falls back to getFeeData's quote");
 });
 
 test("a legacy-gas chain sweeps clean, with nothing left behind", async () => {
