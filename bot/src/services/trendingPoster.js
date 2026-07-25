@@ -42,7 +42,14 @@ const tierPrio = (tier) => {
 };
 // Full comma number + "$" (fourtis style: 23,868,066$).
 const mcapStr = (n) => (Number.isFinite(n) && n > 0 ? `${Math.round(n).toLocaleString("en-US")}$` : "");
-const pctStr = (n) => (Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "");
+// Last line of defence before a number reaches a PINNED public board. A six-
+// digit percentage is always broken upstream data (a pool created hours ago
+// measured against a near-zero opening tick) — printing nothing is honest,
+// printing "+521366.00%" is not. marketdata.js filters these at the source;
+// this is here because the board is what subscribers actually read.
+const SANE_PCT = 5000;
+const pctStr = (n) =>
+  Number.isFinite(n) && Math.abs(n) <= SANE_PCT ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "";
 // Normalize a token's Telegram (handle / t.me / full url) into a t.me URL, or null.
 function tgUrl(tg) {
   if (!tg) return null;
