@@ -21,6 +21,7 @@ const BOOT_DELAY_MS = 90 * 1000; // let the bot finish starting first
 const MAX_PER_PASS = 25; // bounded RPC work per pass
 const GAP_MS = 1500; // public RPC endpoints rate-limit hard
 const MAX_AGE_MS = 90 * 24 * 3600 * 1000;
+const ALERT_AFTER_TRIES = 4; // ~a day of 6h passes — past a transient RPC blip
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -62,9 +63,30 @@ async function runOnce() {
         swept++;
         await orders.setStatus(o.id, o.status, { sweptAt: Date.now(), sweptTx: r.txid || "" });
         log.info(`[sweepretry] recovered ${o.chain} order ${o.id} (tx=${r.txid})`);
+      } else if (r && r.dust) {
+        // Worth less than the gas to move it. Retrying forever would spend
+        // more on RPC calls than the balance is worth.
+        await orders.setStatus(o.id, o.status, { sweptAt: Date.now(), sweptNote: `dust: ${r.error}` });
+        log.info(`[sweepretry] ${o.chain} order ${o.id} left as dust (${r.error})`);
       } else {
         // Left unmarked on purpose: the next pass tries again.
-        log.warn(`[sweepretry] ${o.chain} order ${o.id} still stuck: ${(r && r.error) || "unknown"}`);
+        const tries = (o.sweepTries || 0) + 1;
+        await orders.setStatus(o.id, o.status, { sweepTries: tries });
+        log.warn(`[sweepretry] ${o.chain} order ${o.id} still stuck (try ${tries}): ${(r && r.error) || "unknown"}`);
+        // A wallet that survives a full day of retries is not a blip. Say so
+        // where a human will see it — silence is how the SOL sweep stayed
+        // broken through every order.
+        if (tries === ALERT_AFTER_TRIES) {
+          log.report(
+            `⚠️ <b>Sweep stuck</b>\n` +
+              `<b>Chain:</b> ${String(o.chain).toUpperCase()}\n` +
+              `<b>Wallet:</b> <code>${o.address}</code>\n` +
+              `<b>Balance:</b> <code>${bal}</code> (smallest units)\n` +
+              `<b>Order:</b> <code>${o.id}</code>\n` +
+              `<b>Last error:</b> ${(r && r.error) || "unknown"}\n` +
+              `The key is stored — funds are recoverable, but they are NOT in the treasury.`,
+          );
+        }
       }
     } catch (e) {
       log.debug(`[sweepretry] ${o.id}: ${e.message}`);

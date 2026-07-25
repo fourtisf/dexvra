@@ -71,6 +71,34 @@ test("it is wired into the running bot, not just defined", () => {
   assert.match(src, /require\("\.\/sweepRetry"\)\.start\(\)/, "sweepRetry must actually start");
 });
 
+test("dust is retired, a real failure is not", () => {
+  // A balance that cannot pay for its own gas would otherwise be re-checked
+  // every 6 hours until the order aged out — spending more on RPC calls than
+  // the dust is worth. A genuine failure must stay un-marked so it retries.
+  const src = fss.readFileSync(require.resolve("../src/services/sweepRetry.js"), "utf8");
+  assert.match(src, /r\.dust/, "the adapters' dust flag is honoured");
+  const dustBranch = src.slice(src.indexOf("r.dust"), src.indexOf("r.dust") + 400);
+  assert.match(dustBranch, /sweptAt: Date\.now\(\)/, "dust is marked done");
+  assert.match(src, /Left unmarked on purpose/, "…and a real failure is not");
+  for (const chain of ["solana", "evm", "tron"]) {
+    const a = fss.readFileSync(require.resolve(`../src/payments/chains/${chain}.js`), "utf8");
+    assert.match(a, /dust: (true|bal <)/, `${chain} must report dust distinctly from a failure`);
+  }
+});
+
+test("a wallet stuck for a full day pages the operator", () => {
+  // Silence is exactly how the broken SOL sweep survived every order: a
+  // warn-level log nobody reads. After ~a day of failed passes it goes to the
+  // log channel with the address and the balance.
+  const src = fss.readFileSync(require.resolve("../src/services/sweepRetry.js"), "utf8");
+  assert.match(src, /ALERT_AFTER_TRIES/, "there is a threshold");
+  assert.match(src, /log\.report\(/, "…and it reaches the log channel, not just the file");
+  const alert = src.slice(src.indexOf("log.report("), src.indexOf("log.report(") + 600);
+  assert.match(alert, /o\.address/, "the alert names the wallet");
+  assert.match(alert, /bal/, "…and the amount at stake");
+  assert.match(src, /sweepTries: tries/, "attempts are persisted, so the count survives a restart");
+});
+
 test("a successful sweep on the normal path marks the order, a failure does not", () => {
   // The retry pass finds work by the ABSENCE of sweptAt — so marking on failure
   // would silently strand the funds it exists to recover.

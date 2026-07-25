@@ -79,7 +79,9 @@ async function sweep(_chain, wallet, treasury) {
       // Quote against a same-shaped message (the amount doesn't change the fee).
       const fee = await feeFor(c, build(1));
       const value = bal - fee;
-      if (value <= 0n) return { ok: false, error: `balance ${bal} does not cover fee ${fee}` };
+      // Dust: it cannot pay for its own sweep, so it stays. Flagged so the
+      // retry pass stops re-checking it every six hours forever.
+      if (value <= 0n) return { ok: false, dust: true, error: `balance ${bal} does not cover fee ${fee}` };
 
       const sig = await sendAndConfirmTransaction(c, build(Number(value)), [kp], {
         commitment: "confirmed",
