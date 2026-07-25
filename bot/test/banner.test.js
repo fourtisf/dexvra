@@ -62,7 +62,9 @@ test("a queued banner receipt tells the buyer it is not live yet, and when it st
   const run = { slot: "Wide Banner", startsAt, endsAt: startsAt + 86_400_000 };
   const queued = fulfil._successBanner(run, [], "", true).text;
   assert.ok(/not live yet/i.test(queued), queued);
-  assert.ok(queued.includes(new Date(startsAt).toUTCString()), "the start time is stated in the note itself");
+  // UTC, never GMT and never server-local — the buyer is in another timezone.
+  assert.ok(/30 Jul 2026, 12:00 UTC/.test(queued), `start time stated in the note itself: ${queued}`);
+  assert.ok(!/GMT/.test(queued), "GMT is not the label Dexvra uses");
   assert.ok(/announcement post/i.test(queued), "explains the post going out now");
   // An immediate booking gets none of that — no phantom "starts later" note.
   const live = fulfil._successBanner(run, [], "", false).text;

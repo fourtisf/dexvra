@@ -397,6 +397,17 @@ function successTrending(coin, hours, links) {
     ...fmt.channelLinks(),
   });
 }
+// Buyer-facing timestamp: "30 Jul 2026, 12:00 UTC". Always UTC — the buyer and
+// the server are rarely in the same timezone, so a local time would be wrong for
+// one of them. Built field by field rather than from toUTCString(), which labels
+// the same instant "GMT"; Dexvra says UTC everywhere and one vocabulary is worth
+// the six lines. Seconds are dropped — noise on an ad run measured in days.
+const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function utcStamp(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCDate()} ${UTC_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+}
 // {startsAt}/{endsAt} describe the run the site actually scheduled. {queueNote}
 // is the honest line for a sale made while every slot was taken — the order went
 // through, the banner just starts later. Empty (and collapsed away) otherwise.
@@ -408,7 +419,7 @@ function successTrending(coin, hours, links) {
 // the note also says so — a buyer who sees their @dexvraio post go out the same
 // minute would otherwise expect the banner to be live too.
 function successBanner(run, links, xUrl, queued) {
-  const when = (ms) => new Date(ms).toUTCString();
+  const when = utcStamp;
   return tpl.render("success_banner", {
     slot: premium.sanitizeVar(run.slot),
     startsAt: when(run.startsAt),
