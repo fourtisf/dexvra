@@ -176,13 +176,29 @@ test("Announce On X line: shown with a tweet link, dropped without one", () => {
   assert.ok(!/\n{3,}/.test(withoutX.text));
 });
 
-test("pump post payload shows percent + MCs", () => {
+test("pump post is a short ticker: multiple, MC move, CA", () => {
   const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
   const card = fmt.pumpPost(coin, 137.6, 310000, 128400000);
-  assert.ok(card.text.includes("+138%"));
-  assert.ok(card.text.includes("Market cap"));
+  assert.ok(card.text.includes("$T"), card.text);
   assert.ok(card.text.includes("2.4×"), "shows the × multiple"); // 1 + 137.6/100 = 2.376 → 2.4×
   assert.ok(card.text.includes("🚀"), "rocket emoji present (unicode fallback)");
+  assert.ok(card.text.includes("$310K") && card.text.includes("$128.4M"), "the market-cap move");
+  assert.ok(card.text.includes("0xabc"), "the contract address");
+  assert.ok(card.entities.some((e) => e.type === "code"), "CA is copyable");
+  // The clip carries the hype — the caption stays a ticker, not an article.
+  assert.ok(card.text.length < 400, `caption should stay short, got ${card.text.length}`);
+  assert.ok(!/since it listed|still climbing/.test(card.text), "no long-form copy");
+});
+
+test("pump: {percent} stays available for admins who want the number", async () => {
+  const tpl = require("../src/templates");
+  const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
+  await tpl.setTemplate("post_pump", "{symbol} +{percent}%");
+  try {
+    assert.ok(fmt.pumpPost(coin, 137.6, 310000, 128400000).text.includes("+138%"));
+  } finally {
+    await tpl.resetTemplate("post_pump");
+  }
 });
 
 test("overview truncation never splits surrogate pairs (no U+FFFD)", () => {

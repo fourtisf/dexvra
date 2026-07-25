@@ -8,6 +8,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
+import { earliestStartIn, pickForDisplay } from "./bannerSchedule";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
 const MIRROR_KEY = "banners";
@@ -30,6 +31,11 @@ export interface BannerBooking {
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const FILE = path.join(DATA_DIR, "banners.json");
 const MAX = 200; // hard cap; oldest ended bookings evicted past it
+
+// Inventory rules (capacity, scheduling, house-yields-to-paid) live in
+// lib/bannerSchedule.ts as pure functions so they can be tested without the
+// store; this module just feeds them the persisted bookings.
+export { ROW_CAPACITY, slotUnits } from "./bannerSchedule";
 
 let cache: BannerBooking[] | null = null;
 let writeChain: Promise<void> = Promise.resolve();
@@ -89,6 +95,30 @@ export async function activeBanners(now = Date.now()): Promise<BannerBooking[]> 
   return (await load())
     .filter((b) => b.startsAt <= now && b.endsAt > now)
     .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * What the homepage should actually show: every live PAID booking, plus house
+ * banners only while capacity is left over. A house banner is the operator's
+ * own filler, so the moment paid ads fill the row it steps aside on its own —
+ * no one has to remember to take it down.
+ */
+export async function displayBanners(now = Date.now()): Promise<BannerBooking[]> {
+  return pickForDisplay(await activeBanners(now));
+}
+
+/**
+ * Earliest moment ≥ `from` at which `units` fit for `durationMs` without taking
+ * a row past ROW_CAPACITY. Only PAID bookings count — a house banner yields.
+ *
+ * Usage only changes when a booking starts or ends, so the answer is always one
+ * of those instants: try `from`, then each existing end. The last candidate is
+ * the latest end, where nothing overlaps, so this always terminates with a real
+ * answer instead of failing the sale.
+ */
+export async function earliestStart(units: number, durationMs: number, from = Date.now()): Promise<number> {
+  const paid = (await load()).filter((b) => b.source !== "admin");
+  return earliestStartIn(paid, units, durationMs, from);
 }
 
 export async function addBanner(

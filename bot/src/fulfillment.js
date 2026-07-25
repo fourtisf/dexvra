@@ -333,7 +333,13 @@ async function fulfillBanner(ctx, order) {
   }
   if (!rec.imageUrl) throw new Error("banner creative missing (upload failed)");
   const booking = await api.bookBanner(rec); // hard step
-  log.info(`[fulfil] banner booked ${rec.slot} until ${new Date(rec.endsAt).toISOString()}`);
+  // The site may have scheduled the run later than requested (row full) — from
+  // here on the BOOKING's window is the truth, never the requested one.
+  const run = booking && booking.startsAt ? booking : rec;
+  log.info(
+    `[fulfil] banner booked ${rec.slot} ${new Date(run.startsAt).toISOString()} → ${new Date(run.endsAt).toISOString()}` +
+      (booking && booking.queued ? " (QUEUED — slots were full)" : ""),
+  );
 
   const links = [];
   try {
@@ -356,7 +362,7 @@ async function fulfillBanner(ctx, order) {
     new Promise((r) => setTimeout(r, 20000, null)),
   ]);
   const bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
-  await dm(ctx, successBanner(rec, links, bXUrl), menu.postPurchase(SITE_URL));
+  await dm(ctx, successBanner(run, links, bXUrl, booking && booking.queued), menu.postPurchase(SITE_URL));
   return booking;
 }
 
@@ -391,10 +397,18 @@ function successTrending(coin, hours, links) {
     ...fmt.channelLinks(),
   });
 }
-function successBanner(rec, links, xUrl) {
+// {startsAt}/{endsAt} describe the run the site actually scheduled. {queueNote}
+// is the honest line for a sale made while every slot was taken — the order went
+// through, the banner just starts later. Empty (and collapsed away) otherwise.
+function successBanner(run, links, xUrl, queued) {
+  const when = (ms) => new Date(ms).toUTCString();
   return tpl.render("success_banner", {
-    slot: premium.sanitizeVar(rec.slot),
-    endsAt: new Date(rec.endsAt).toUTCString(),
+    slot: premium.sanitizeVar(run.slot),
+    startsAt: when(run.startsAt),
+    endsAt: when(run.endsAt),
+    queueNote: queued
+      ? "⏳ **All banner slots are booked right now** — your run is reserved and starts automatically at the time above. Nothing else to do."
+      : "",
     postLinks: linkLines(links),
     announceX: announceXLine(xUrl),
     ...fmt.channelLinks(),

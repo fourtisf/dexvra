@@ -72,9 +72,13 @@ async function expireTrending() {
 }
 
 // ── Banners ──────────────────────────────────────────────────────────────────
+// Returns the booking as SCHEDULED by the site (its window can be later than
+// the one requested when paid slots are full) plus `queued` — the bot has to
+// tell the buyer which it is instead of promising "live now".
 async function bookBanner(rec) {
   const out = await call("POST", "/api/internal/banners", rec);
-  return out?.banner || null;
+  if (!out?.banner) return null;
+  return { ...out.banner, queued: Boolean(out.queued) };
 }
 
 // ── Upload (multipart) ───────────────────────────────────────────────────────

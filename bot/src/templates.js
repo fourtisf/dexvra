@@ -238,7 +238,9 @@ const DEFAULTS = {
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n{announceX}\n\n" +
+    "⚡ Your **{slot}** banner is booked on the dexvra.io homepage.\n\n" +
+    "🗓 **Runs:** {startsAt} → {endsAt}\n" +
+    "{queueNote}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   group_start:
     "🟢 **Dexvra Buy Bot**\n\n" +
@@ -335,13 +337,17 @@ const DEFAULTS = {
     `${em("📄", E.clip)} **CA**\n` +
     "`{address}`\n\n" +
     `🔥 [Trending]({trending}) | ${em("💎", E.diamond)} [Dexvra.io]({site})`,
+  // Same ticker shape as post_rankup: the clip carries the hype, the caption
+  // states the fact. The old version buried "+2,400%" under four paragraphs of
+  // copy, a social row and a footer — by the time a reader got to the number it
+  // had stopped being news. {percent}, {name} and {chain} stay available.
   post_pump:
-    `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
-    `[{name}]({coinUrl}) is up **+{percent}%** since it listed — and still climbing.\n\n` +
-    `${em("📊", E.chart)} **Market cap:** {firstMc} → **{lastMc}**\n` +
-    `{chainEmoji} **Chain:** {chain}\n\n` +
-    `${em("🟢", E.green)} [Chart & trade {symbol} on Dexvra]({coinUrl})\n\n` +
-    `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
+    `{chainEmoji} **{symbol}** ${em("🚀", E.rocket)} {multiple} since listing\n` +
+    `[{coinUrlLabel}]({coinUrl})\n\n` +
+    `${em("📊", E.chart)} **{firstMc} → {lastMc}**\n\n` +
+    `${em("📄", E.clip)} **CA**\n` +
+    "`{address}`\n\n" +
+    `🔥 [Trending]({trending}) | ${em("💎", E.diamond)} [Dexvra.io]({site})`,
   // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
   // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
   // Edit an emoji to rebrand a network everywhere at once.
@@ -427,7 +433,7 @@ const META = {
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
   success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
   buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
@@ -446,7 +452,7 @@ const META = {
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "site", "listing", "trending", "announce"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },

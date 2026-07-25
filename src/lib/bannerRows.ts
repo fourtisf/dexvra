@@ -34,6 +34,25 @@ export function unitsOf(b: BannerLike): number {
   return ROW_UNITS;
 }
 
+/**
+ * Aspect ratio the TILE is drawn at — taken from the size that was SOLD
+ * ("600 × 240"), not from whatever the advertiser happened to upload. Two
+ * advertisers uploading different shapes would otherwise produce a ragged row
+ * of mismatched heights; keyed off the spec, every booking of the same slot
+ * lines up, and an off-spec upload is cropped to fit rather than deciding the
+ * layout. Falls back to the slot's own spec when the string is unusable.
+ */
+export function aspectOf(size: string, slot: string): number {
+  const m = String(size || "").match(/(\d+)\s*[×x]\s*(\d+)/);
+  if (m) {
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (w > 0 && h > 0) return w / h;
+  }
+  const u = unitsOf({ slot });
+  return u === 1 ? 600 / 240 : u === 2 ? 1200 / 240 : 1440 / 240;
+}
+
 /** Short public label for a slot: "Wide" / "Standard", or "" for the operator's
  *  own homepage banner (which isn't sold inventory, so it gets a plain "Ad"). */
 export function slotLabel(slot: string): string {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { activeBanners } from "@/lib/banners";
+import { displayBanners } from "@/lib/banners";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // creatives render in the ad row only, so the same one never shows twice.
 export async function GET() {
   try {
-    const active = await activeBanners();
+    const active = await displayBanners();
     const banners = active.map((b) => ({
       slot: b.slot,
       size: b.size,

@@ -18,7 +18,7 @@
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./AppState";
-import { packBannerRows, unitsOf, slotLabel } from "@/lib/bannerRows";
+import { packBannerRows, unitsOf, slotLabel, aspectOf } from "@/lib/bannerRows";
 
 type Banner = {
   slot: string;
@@ -77,7 +77,10 @@ export function HomeBannerStrip() {
             className="home-banner"
             // Flex weight, not a fixed column: a sold-out row splits 2:1:1 while
             // a half-empty one stretches to fill instead of leaving a gap.
-            style={{ "--u": unitsOf(b) } as React.CSSProperties}
+            // --u = flex weight; aspect-ratio comes from the SOLD size, so every
+            // booking of the same slot is the same height whatever the
+            // advertiser uploaded.
+            style={{ "--u": unitsOf(b), aspectRatio: String(aspectOf(b.size, b.slot)) } as React.CSSProperties}
             href={b.linkUrl}
             target="_blank"
             rel="noopener noreferrer nofollow"

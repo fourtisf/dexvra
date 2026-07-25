@@ -3,7 +3,7 @@
 // Wide must sit to the LEFT of the Standards sharing its row.
 import test from "node:test";
 import assert from "node:assert";
-import { packBannerRows, unitsOf, slotLabel, ROW_UNITS } from "./bannerRows.ts";
+import { packBannerRows, unitsOf, slotLabel, aspectOf, ROW_UNITS } from "./bannerRows.ts";
 
 const std = (id: string) => ({ slot: "Standard Banner", id });
 const wide = (id: string) => ({ slot: "Wide Banner", id });
@@ -75,4 +75,18 @@ test("slot tag names the package a visitor is looking at", () => {
   // The operator's own homepage banner isn't sold inventory — plain "Ad".
   assert.strictEqual(slotLabel("Homepage Banner"), "");
   assert.strictEqual(slotLabel(""), "");
+});
+
+test("tile ratio comes from the SOLD size, not the upload", () => {
+  assert.strictEqual(aspectOf("600 × 240", "Standard Banner"), 2.5);
+  assert.strictEqual(aspectOf("1200 × 240", "Wide Banner"), 5);
+  assert.strictEqual(aspectOf("600x240", "Standard Banner"), 2.5, "plain x works too");
+  // A legacy booking keeps the spec IT was sold at — 728 × 90 stayed a strip.
+  assert.ok(Math.abs(aspectOf("728 × 90", "Standard Banner") - 728 / 90) < 1e-9);
+  // Unusable size → fall back to the slot's own spec, never NaN (which would
+  // collapse the tile to nothing).
+  assert.strictEqual(aspectOf("", "Standard Banner"), 2.5);
+  assert.strictEqual(aspectOf("carousel", "Wide Banner"), 5);
+  assert.strictEqual(aspectOf("0 × 0", "Standard Banner"), 2.5);
+  assert.ok(Number.isFinite(aspectOf("", "")), "an unknown slot still gets a real ratio");
 });

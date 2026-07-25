@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { internalAuthorized, unauthorizedInternal } from "@/lib/internalAuth";
-import { addBanner, allBanners, type BannerBooking } from "@/lib/banners";
+import { addBanner, allBanners, earliestStart, slotUnits, type BannerBooking } from "@/lib/banners";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,18 +30,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid window" }, { status: 400 });
   }
 
+  // The row holds 4 units. When paid ads already fill it, the sale still goes
+  // through — the run is SHIFTED to the first moment a slot frees. Rejecting a
+  // paid order (or overbooking the row and shrinking what earlier advertisers
+  // paid for) are both worse than a start time the buyer is told about.
+  const slot = String(b.slot ?? "Banner").slice(0, 40);
+  const duration = Math.round(endsAt) - Math.round(startsAt);
+  const start = await earliestStart(slotUnits(slot), duration, Math.round(startsAt));
+  const queued = start > Math.round(startsAt);
+
   const rec: Omit<BannerBooking, "id" | "createdAt"> = {
-    slot: String(b.slot ?? "Banner").slice(0, 40),
+    slot,
     size: String(b.size ?? "").slice(0, 24),
     imageUrl,
     linkUrl,
     title: b.title ? String(b.title).slice(0, 60) : undefined,
     chain: b.chain ? String(b.chain).slice(0, 20) : undefined,
     address: b.address ? String(b.address).slice(0, 80) : undefined,
-    startsAt: Math.round(startsAt),
-    endsAt: Math.round(endsAt),
+    startsAt: start,
+    endsAt: start + duration,
     source: "bot",
   };
   const banner = await addBanner(rec);
-  return NextResponse.json({ banner });
+  // `queued` lets the bot tell the buyer their run starts later instead of
+  // promising "live now" for a banner that isn't.
+  return NextResponse.json({ banner, queued });
 }

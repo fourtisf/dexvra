@@ -19,9 +19,10 @@ test("t() renders a channel-post template with real values", () => {
     coinUrl: "https://dexvra.io/x",
     footer: "",
   });
-  assert.ok(out.includes("137%"));
   assert.ok(out.includes("$JIM"));
-  assert.ok(out.includes("Market cap"));
+  // The pump card is a ticker now: the market-cap MOVE, not a labelled table.
+  assert.ok(out.includes("$310K") && out.includes("$128M"), out);
+  assert.ok(out.includes("So1..."), "the CA is in the post");
 });
 
 test("every default template key has editor metadata + a group", () => {

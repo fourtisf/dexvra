@@ -317,14 +317,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
    fills it completely (~296px), neither letterboxed; the row centres whatever
    is left over. */
 .home-banner{flex:var(--u,1) 1 0;min-width:0;max-width:calc(var(--u,1) * 50%)}
-/* The CREATIVE decides the height (width:100% + height:auto), so an advertiser
-   sees exactly what they uploaded — a thin 728×90 strip stays thin, a chunky
-   2:1 design stays chunky. The old `object-fit:cover` + fixed `max-height:150px`
-   sliced the top and bottom off anything that wasn't that exact shape; keying
-   the box off the BOOKED size instead would letterbox every creative that isn't
-   pixel-perfect to spec. The cap only bites on an absurdly tall upload, where
-   `contain` then letterboxes rather than distorts. */
-.home-banner img{width:100%;height:auto;max-height:300px;object-fit:contain;display:block}
+/* The tile's aspect-ratio comes from the SOLD size (set inline), so a row of
+   bookings in the same slot always lines up. `cover` then fills that box: an
+   advertiser who supplies the spec size sees their creative untouched, and one
+   who supplies a different shape is cropped rather than being allowed to set
+   the row's height for everyone else. */
+.home-banner img{width:100%;height:100%;object-fit:cover;display:block}
 .home-banner-tag{position:absolute;top:8px;right:10px;font-family:var(--fm);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:rgba(0,0,0,.5);color:#fff;padding:2px 8px;border-radius:999px}
 .home-banner-tag i{font-style:normal;font-weight:500;opacity:.7}
 .home-ads-dots{display:flex;gap:6px;justify-content:center}
