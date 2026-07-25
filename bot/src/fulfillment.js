@@ -289,7 +289,7 @@ async function fulfillListing(ctx, order) {
   }
 
   // 6. Buyer DM (the tweet was posted before the channel posts above).
-  await dm(ctx, successListing(coin, links), menu.postPurchase(coin.siteUrl));
+  await dm(ctx, successListing(coin, links, { hours }), menu.postPurchase(coin.siteUrl));
 }
 
 // ── Trending (standalone slot on an already-listed token) ────────────────────
@@ -400,10 +400,17 @@ function linkLines(links) {
 function announceXLine(xUrl) {
   return xUrl ? `🐦 [Announce on X 𝕏](${xUrl})` : "";
 }
-function successListing(coin, links) {
-  return tpl.render("success_listing", {
+/** The buyer's receipt. Xpress and Listing & Trending are different products —
+ *  one is a listing, the other adds a ranked tier and a timed Trending run — so
+ *  they get separate, separately-editable templates. */
+function successListing(coin, links, { hours = 0 } = {}) {
+  const tiered = coin.tier && String(coin.tier).toUpperCase() !== "XPRESS";
+  return tpl.render(tiered ? "success_listing_tiered" : "success_listing", {
     symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
     name: premium.sanitizeVar(coin.name),
+    tier: coin.tier ? premium.sanitizeVar(tierLabel(coin.tier)) : "",
+    tierEmoji: coin.tier ? fmt.tierBadge(String(coin.tier).toUpperCase()) : "",
+    hours,
     siteUrl: coin.siteUrl,
     postLinks: linkLines(links),
     announceX: announceXLine(coin.xUrl),

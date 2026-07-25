@@ -249,9 +249,23 @@ const DEFAULTS = {
     "🔹 Already paid? Contact support with order ID `{order}`.",
   payment_snag:
     "⚠️ **We're on it**\n\n🔹 Your payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete your order.",
+  // Xpress buyers get a listing and nothing else — no tier, no trending slot —
+  // so the receipt says exactly that. `success_listing` keeps its key so an
+  // operator's saved override survives; only its label changed.
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congratulations! **{symbol}** ({name}) is officially listed on Dexvra! 🎉\n\n" +
+    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
+    "💎 Want a tier badge and a Trending run? Send /start → **🏆 Listing & Trending**.\n\n" +
+    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+  // Listing & Trending buys three things at once — the listing, a ranked tier
+  // badge and a timed Trending run — and the receipt has to account for all of
+  // them, or the buyer cannot tell what they paid extra for. {hours} and
+  // {tierEmoji}/{tier} exist only here.
+  success_listing_tiered:
+    "✅ **Payment Confirmed**\n\n" +
+    "🏆 Congratulations! **{symbol}** ({name}) is listed on Dexvra with the **{tierEmoji} {tier}** tier! 🎉\n\n" +
+    "🔥 **Trending:** featured on the board for the next **{hours} hours**\n" +
     "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_trending:
@@ -497,7 +511,8 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
-  success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
