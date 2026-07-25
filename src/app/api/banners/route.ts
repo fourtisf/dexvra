@@ -21,7 +21,12 @@ export async function GET() {
     }));
     return NextResponse.json(
       { banners },
-      { headers: { "Cache-Control": "public, max-age=30, stale-while-revalidate=60" } },
+      // no-store, deliberately. This list is edited live from the admin panel,
+      // and a 30s max-age + 60s stale-while-revalidate meant a banner kept
+      // showing for up to 90s after it was removed — indistinguishable from a
+      // delete that silently failed. The payload is a few hundred bytes on an
+      // already force-dynamic route, so there is nothing to save by caching it.
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch {
     return NextResponse.json({ banners: [] });
