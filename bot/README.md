@@ -131,6 +131,24 @@ promoted automatically (`PREMIUM_EMOJI_PROMOTE=0` to disable). Markers:
 💎 premium · ✅ your plain emoji · ▫️ built-in default. "↩️ Restore premium
 defaults" clears every override.
 
+## Force post (see a post without waiting for the event)
+
+Every channel post normally fires on a real event — a paid order, a rank change,
+a pump — so checking a template or a freshly uploaded clip meant waiting for one.
+`@dexvraadminbot` → **🚀 Force post to channel** publishes any type on demand:
+Xpress listing · Listing + Trending · Trending · Rank-up · Pump · Banner ad.
+
+It runs the production path (same template, same banner/clip, same layout) and
+builds the post from your newest **approved** listing, so it carries a real logo,
+price and links. It is a **public** post — the confirm screen names the exact
+channels, and the result card links each message so you can delete a test.
+
+The admin bot only *queues* the request (`data/forcepost/`); the **main** bot
+publishes it within ~3 s. That split is deliberate: `@dexvraadminbot` isn't a
+channel admin, and a second GramJS client on the same session would risk
+`AUTH_KEY_DUPLICATED` and revoke the premium login. A request the main bot never
+picks up **expires after 5 minutes** rather than surprising the channel later.
+
 ## Go-live checklist
 
 1. **Web app**: set `INTERNAL_API_TOKEN` (≥24 chars) in the Next app's `.env.local`

@@ -236,9 +236,19 @@ async function resolveFile(media) {
   return null; // bot-api file_id or unknown → not usable here
 }
 
+/** Extra document attributes for an upload. Telegram decides "plays inline" vs
+ *  "file card" from DocumentAttributeAnimated — NOT from the extension — and
+ *  GramJS never adds it (Utils.getAttributes only sets filename/video/audio), so
+ *  an uploaded .gif arrived in the channel as a 783 KB DOCUMENT card instead of
+ *  a playing GIF. Attributes merge by class, so this keeps the filename and (for
+ *  mp4) video attributes GramJS derived. `undefined` = leave them untouched. */
+function fileAttributes(mediaType, Api) {
+  return mediaType === "animation" ? [new Api.DocumentAttributeAnimated()] : undefined;
+}
+
 /** Send a message/photo with premium-emoji entities to a channel the logged-in
  *  user can post in. Returns a Bot-API-shaped { message_id, chat } or throws. */
-async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
+async function sendToChannel(channel, { text, entities, media, mediaType, replyTo, pin }) {
   try {
     const c = await getClient();
     const t = lib();
@@ -248,12 +258,14 @@ async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
     const file = media ? await resolveFile(media) : null;
     if (media && !file) throw new Error("media not gramjs-compatible");
     if (file) {
+      const attributes = fileAttributes(mediaType, t.Api);
       sent = await c.sendFile(target, {
         file,
         caption: text || "",
         formattingEntities,
         replyTo: replyTo || undefined,
         forceDocument: false,
+        attributes,
         workers: 1,
       });
     } else {
@@ -370,6 +382,7 @@ module.exports = {
   pinChannelMessage,
   isPremiumEmojiError,
   recordEmojiRefusal,
+  _fileAttributes: fileAttributes,
   diagnose,
   _resolveFile: resolveFile,
 };

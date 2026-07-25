@@ -15,6 +15,8 @@ const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
 const trendingBoard = require("../services/trendingBoard");
 const autoTrend = require("../services/autoTrend");
+const forcePost = require("./forcePost");
+const fpStore = require("../forcepost/store");
 const gramjs = require("../gramjs");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
@@ -61,6 +63,7 @@ function mainKb() {
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
+    [Markup.button.callback("🚀 Force post to channel (test live)", "fp")],
     [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
     [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
     [Markup.button.callback("📣 Broadcast", "bc")],
@@ -489,6 +492,69 @@ async function premiumReportText() {
   if (d.cooldownSec) L.push(`\n⏳ Post cooldown active in this process: ${d.cooldownSec}s (after a recent failure).`);
   L.push(`\n<i>Non-premium viewers always see the plain fallback emoji — that is Telegram's behaviour, not a bug.</i>`);
   return L.join("\n");
+}
+
+// ── Force post ──────────────────────────────────────────────────────────────
+// Publish any post type on demand, so a template or a freshly uploaded clip can
+// be SEEN in its real channel without waiting for a paid order / rank change /
+// pump. It runs the production code path, so this posts PUBLICLY — always
+// behind a confirm that names the exact channels.
+function fpText() {
+  return (
+    `🚀 <b>Force post to channel</b>\n\n` +
+    `Publishes a <b>real</b> post of the type you pick, right now, into its normal channel — ` +
+    `same template, same banner/clip, same layout as the live event would produce.\n\n` +
+    `Use it to check a template or a new clip end-to-end instead of waiting for an order, ` +
+    `a rank change or a pump.\n\n` +
+    `It builds the post from your <b>newest approved listing</b> (real logo, price and links).\n\n` +
+    `⚠️ <b>This is a public post</b> — subscribers see it. Delete it afterwards if it was only a test.`
+  );
+}
+function fpKb() {
+  const cb = Markup.button.callback;
+  const rows = forcePost.kindIds().map((id) => [cb(forcePost.labelOf(id), `fpk:${id}`)]);
+  rows.push([cb("⬅ Back", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+function fpConfirmText(kind) {
+  const chans = forcePost.channelsOf(kind);
+  return (
+    `🚀 <b>Post ${escapeHtml(forcePost.labelOf(kind))} now?</b>\n\n` +
+    `It will be published to:\n${chans.map((c) => `• <code>${escapeHtml(c)}</code>`).join("\n")}\n\n` +
+    `⚠️ Real, public post — subscribers will see it.`
+  );
+}
+// Wait for the main bot to report back (it polls every ~3s). Bounded — if it
+// never answers the operator gets a "still working" card with a re-check button
+// instead of a spinner that lies.
+async function waitForJob(id, { tries = 12, gapMs = 1500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    await new Promise((r) => setTimeout(r, gapMs));
+    const job = fpStore.get(id);
+    if (job && job.status !== "pending" && job.status !== "running") return job;
+  }
+  return fpStore.get(id);
+}
+function fpResultText(kind, job) {
+  const label = escapeHtml(forcePost.labelOf(kind));
+  if (job.status === "expired") {
+    return `⚠️ <b>${label} expired</b>\n\nThe main bot never picked it up. Check <code>pm2 ls</code> — <code>dexvra-bot</code> must be running.`;
+  }
+  if (job.error) return `⚠️ <b>${label} failed</b>\n\n<code>${escapeHtml(job.error)}</code>`;
+  const lines = (job.results || []).map((r) =>
+    r.ok
+      ? `✅ <a href="${r.url}">${escapeHtml(r.channel)} #${r.messageId}</a>`
+      : `❌ <code>${escapeHtml(r.channel)}</code> — not posted (see <code>pm2 logs dexvra-bot</code>)`,
+  );
+  return (
+    `🚀 <b>${label}</b>\n\n${lines.join("\n") || "No channel accepted the post."}\n\n` +
+    `<i>Tap a link to open it. Delete it in the channel if it was only a test.</i>`
+  );
+}
+function fpResultKb() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🚀 Post another", "fp"), Markup.button.callback("⬅ Menu", "home")],
+  ]);
 }
 
 // ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
@@ -1495,6 +1561,71 @@ function build() {
     await autoTrend.reset();
     ctx.answerCbQuery("↩️ Reset").catch(() => {});
     await edit(ctx, atText(), atKb());
+  });
+
+  // ── Force post: pick a kind → confirm → publish for real ──
+  bot.action("fp", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, fpText(), fpKb());
+  });
+  bot.action(/^fpk:([a-z_]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    if (!forcePost.kindIds().includes(kind)) return;
+    await edit(
+      ctx,
+      fpConfirmText(kind),
+      Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Post it now", `fpgo:${kind}`)],
+        [Markup.button.callback("⬅ Cancel", "fp")],
+      ]),
+    );
+  });
+  bot.action(/^fpgo:([a-z_]+)$/, async (ctx) => {
+    ctx.answerCbQuery("Queued…").catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    if (!forcePost.kindIds().includes(kind)) return;
+    const who = ctx.from.username ? `@${ctx.from.username}` : String(ctx.from.id);
+    // The MAIN bot publishes it — this process can't (see forcepost/store.js).
+    let job;
+    try {
+      job = await fpStore.request(kind, { by: who });
+    } catch (e) {
+      log.warn(`[adminbot] force post ${kind} by ${who}: ${e.message}`);
+      return edit(ctx, `⚠️ <b>Couldn't queue it</b>\n\n<code>${escapeHtml(e.message)}</code>`, Markup.inlineKeyboard([[Markup.button.callback("⬅ Back", "fp")]]));
+    }
+    log.info(`[adminbot] force post ${kind} queued by ${who} (${job.id})`);
+    await edit(ctx, `⏳ Publishing <b>${escapeHtml(forcePost.labelOf(kind))}</b>…`, Markup.inlineKeyboard([]));
+    // Poll the job file for the main bot's result — a public post should confirm
+    // itself here, not leave the operator guessing whether it went out.
+    const done = await waitForJob(job.id);
+    if (!done || done.status === "pending" || done.status === "running") {
+      return edit(
+        ctx,
+        `⏳ <b>Still working…</b>\n\nThe request is queued but the main bot hasn't reported back. ` +
+          `If this persists, check that <code>dexvra-bot</code> is running (<code>pm2 ls</code>).`,
+        Markup.inlineKeyboard([[Markup.button.callback("🔄 Check again", `fpst:${job.id}`), Markup.button.callback("⬅ Back", "fp")]]),
+      );
+    }
+    await edit(ctx, fpResultText(kind, done), fpResultKb());
+  });
+  // Re-check a job whose result hadn't landed yet.
+  bot.action(/^fpst:(fp_[a-z0-9]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const job = fpStore.get(ctx.match[1]);
+    if (!job) return edit(ctx, "⚠️ That request is gone (it may have expired).", fpResultKb());
+    if (job.status === "pending" || job.status === "running") {
+      return edit(
+        ctx,
+        `⏳ <b>Still working…</b>\n\nStatus: <code>${escapeHtml(job.status)}</code>. Is <code>dexvra-bot</code> running?`,
+        Markup.inlineKeyboard([[Markup.button.callback("🔄 Check again", `fpst:${job.id}`), Markup.button.callback("⬅ Back", "fp")]]),
+      );
+    }
+    await edit(ctx, fpResultText(job.kind, job), fpResultKb());
   });
 
   // ── Trending board (chain logos + rank badges 1–10) ──

@@ -59,13 +59,16 @@ function gramMedia(media) {
   return false;
 }
 
-async function viaGramJs(channel, media, p, { replyTo, pin }) {
+async function viaGramJs(channel, media, p, { replyTo, pin, mediaType }) {
   if (!p.entities || !gramjs.available() || !gramMedia(media)) return null;
   try {
     const msg = await gramjs.sendToChannel(channel, {
       text: p.text,
       entities: p.entities,
       media: media || null,
+      // Carried all the way down: without it a GIF/MP4 uploads as a document and
+      // Telegram renders a file card instead of an inline, autoplaying clip.
+      mediaType,
       replyTo,
       pin,
     });
@@ -109,7 +112,7 @@ async function sendPhoto(channel, photo, payload, { replyTo, pin } = {}) {
   if (!tg) throw new Error("channels/post not attached to a bot");
   if (!photo) return sendText(channel, payload, { replyTo, pin });
   const p = fitCaption(norm(payload));
-  const viaGram = await viaGramJs(channel, photo, p, { replyTo, pin });
+  const viaGram = await viaGramJs(channel, photo, p, { replyTo, pin, mediaType: "photo" });
   if (viaGram) return viaGram;
   try {
     const msg = await tg.sendPhoto(channel, photo, {
@@ -146,8 +149,10 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   if (type === "photo") return sendPhoto(channel, input, payload, { replyTo, pin });
 
   const p = fitCaption(norm(payload));
-  const viaGram = await viaGramJs(channel, input, p, { replyTo, pin });
+  const viaGram = await viaGramJs(channel, input, p, { replyTo, pin, mediaType: type });
   if (viaGram) return viaGram;
+  // Bot API: sendAnimation already marks the document animated (and converts a
+  // GIF to MP4 server-side), so this path was never the broken one.
   const method = type === "video" ? "sendVideo" : "sendAnimation";
   try {
     const msg = await tg[method](channel, input, {

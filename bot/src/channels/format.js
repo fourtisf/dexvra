@@ -649,13 +649,25 @@ function changeSentence(change24h) {
   return `\n\n**+${withCommas(Math.round(v))}%** over the last 24h — and still climbing.`;
 }
 
+// Compact 24h gain for a one-line post ("+42%"), "" when there's nothing good
+// to show. Same absurd-reading cap as changeSentence — a +490,749% low-liquidity
+// print reads as spam, so past the cap the number is dropped, not published.
+function gainStr(change24h) {
+  const v = Number(change24h);
+  if (!Number.isFinite(v) || v <= 0 || v > 5000) return "";
+  return `+${withCommas(Math.round(v))}%`;
+}
+
 function rankupPost(coin, rank, change24h) {
   const val = stripForCoin("post_rankup", coin);
   return autoSocials(tpl.renderValue(val, {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     rank,
+    // {change} = the full sentence (legacy long copy); {gain} = compact "+42%"
+    // for a one-line ticker post. Both are offered so an admin can pick either.
     change: changeSentence(change24h),
+    gain: gainStr(change24h),
   }), postUrls(coin));
 }
 

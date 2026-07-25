@@ -324,11 +324,17 @@ const DEFAULTS = {
     `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
     `👉 [View the campaign]({linkUrl})\n\n` +
     FOOTER_BLOCK,
+  // Rank-up is a TICKER post, not an article: the clip carries the hype and the
+  // caption just says which token moved, where to read it, and the CA. Kept
+  // deliberately short (Moontok-style) — the long version buried the ticker
+  // under three paragraphs of copy. {change} (a sentence) and {gain} (compact
+  // "+42%") stay available for admins who want the number back.
   post_rankup:
-    `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
-    `[{name}]({coinUrl}) just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
-    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n` +
-    `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
+    `{chainEmoji} **{symbol}** ${em("📈", E.chartUp)} #{rank} Rank ↑\n` +
+    `[{coinUrlLabel}]({coinUrl})\n\n` +
+    `${em("📄", E.clip)} **CA**\n` +
+    "`{address}`\n\n" +
+    `🔥 [Trending]({trending}) | ${em("💎", E.diamond)} [Dexvra.io]({site})`,
   post_pump:
     `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
     `[{name}]({coinUrl}) is up **+{percent}%** since it listed — and still climbing.\n\n` +
@@ -439,7 +445,7 @@ const META = {
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "site", "listing", "trending", "announce"] },
-  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "rank", "change", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },

@@ -62,22 +62,42 @@ test("fetchMarket 24h change falls back to DexScreener when GT lacks price/mcap"
   }
 });
 
-test("post_rankup renders rank + change with premium entities, clamps negatives", () => {
+test("post_rankup is a short ticker post: token, rank, link, CA", () => {
   const coin = { name: "Pepe", symbol: "$PEPE", chain: "ethereum", address: "0xabc", links: {}, siteUrl: "https://dexvra.io/t" };
   const card = fmt.rankupPost(coin, 2, 137.6);
-  assert.ok(card.text.includes("$PEPE"));
-  assert.ok(card.text.includes("#2"));
-  assert.ok(card.text.includes("+138%"), card.text);
+  assert.ok(card.text.includes("$PEPE"), card.text);
+  assert.ok(card.text.includes("#2"), card.text);
   assert.ok(card.text.includes("📈"), "chart-up emoji present (unicode fallback)");
-  // a non-positive change omits the 24h sentence entirely (no minus, no junk %)
-  const neg = fmt.rankupPost(coin, 1, -0.4);
-  assert.ok(neg.text.includes("#1"));
-  assert.ok(!/over the last 24h/.test(neg.text));
-  assert.ok(!neg.text.includes("%"));
-  // absurd low-liquidity readings are never printed as a giant number
-  const absurd = fmt.rankupPost(coin, 2, 490749);
-  assert.ok(!absurd.text.includes("490"), "absurd % not shown");
-  assert.ok(/Momentum/.test(absurd.text));
+  assert.ok(card.text.includes("0xabc"), "the contract address is in the post");
+  assert.ok(card.text.includes("🔷"), "chain emoji leads the line");
+  // The clip carries the hype — the caption stays a ticker, not an article.
+  assert.ok(card.text.length < 400, `caption should stay short, got ${card.text.length}`);
+  assert.ok(!/just climbed to|top gainers/.test(card.text), "no long-form copy");
+  // Links that must survive: the token page and the channel footer.
+  const links = card.entities.filter((e) => e.type === "text_link").map((e) => e.url);
+  assert.ok(links.some((u) => u.includes("dexvra.io/t")), `token page linked: ${links}`);
+  assert.ok(card.entities.some((e) => e.type === "code"), "CA is copyable (code entity)");
+  assert.ok(!/\*\*|\]\(/.test(card.text), "no raw markup leaks into the post");
+});
+
+test("rank-up gain/change vars: clamped, and dropped when not positive", async () => {
+  // {gain} (compact) and {change} (sentence) stay available for admins who want
+  // the number back — with the same guards, so a low-liquidity +490,749% print
+  // never reaches the channel.
+  const tpl = require("../src/templates");
+  const coin = { name: "Pepe", symbol: "$PEPE", chain: "ethereum", address: "0xabc", links: {}, siteUrl: "https://dexvra.io/t" };
+  await tpl.setTemplate("post_rankup", "{symbol} #{rank} [{gain}]{change}");
+  try {
+    assert.ok(fmt.rankupPost(coin, 2, 137.6).text.includes("+138%"), "compact gain rounds");
+    assert.ok(/over the last 24h/.test(fmt.rankupPost(coin, 2, 137.6).text), "sentence form still works");
+    const neg = fmt.rankupPost(coin, 1, -0.4).text;
+    assert.ok(!neg.includes("%"), `no % at all when the token isn't up: ${neg}`);
+    const absurd = fmt.rankupPost(coin, 2, 490749).text;
+    assert.ok(!absurd.includes("490"), "absurd % not shown");
+    assert.ok(/Momentum/.test(absurd), "…replaced by a momentum line");
+  } finally {
+    await tpl.resetTemplate("post_rankup");
+  }
 });
 
 // The climb logic, unit-tested in isolation (mirrors rankUpChecker's rule).
