@@ -101,6 +101,15 @@ Two things have to be true for them to actually animate in the channel:
    `node scripts/gramjs-login.js` once on the server (needs `API_ID`/`API_HASH`
    from [my.telegram.org/apps](https://my.telegram.org/apps)), logged in with an
    account that **has Telegram Premium** and can post in `@dexvratrending`.
+   Run it on its own — it asks for phone → code → 2FA one at a time, and the
+   code arrives as a Telegram **message**, not an SMS. The script is quiet by
+   default (`--verbose` for the full GramJS connection log): Telegram migrates
+   the login to the account's home DC right after the code is requested, which
+   times out GramJS's keep-alive ping and prints a scary
+   `TIMEOUT` / `AUTH_KEY_UNREGISTERED (caused by users.GetUsers)` wall. That is
+   harmless — the session simply isn't bound to a user until you enter the code
+   — but it used to bury the prompt and made people ctrl-C a working login.
+   It ends by telling you whether the account has Premium.
 2. **The viewer's own client**: non-Premium viewers always see the fallback
    emoji. That is Telegram's behaviour, not a bug.
 

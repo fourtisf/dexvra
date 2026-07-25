@@ -78,6 +78,16 @@ async function connectClient() {
       connectionRetries: 5,
       timeout: 30,
     });
+    // GramJS is chatty: every connect/disconnect at INFO, plus a full stack dump
+    // whenever its 9s keep-alive ping times out (routine on a reconnect). That
+    // floods pm2 logs and hides our own [gramjs]/[trendposter] lines. Keep real
+    // errors, route the rest through our logger; GRAMJS_LOG_LEVEL overrides.
+    try {
+      c.setLogLevel(process.env.GRAMJS_LOG_LEVEL || "error");
+      c.onError = async (err) => log.debug(`[gramjs] client: ${err && err.message}`);
+    } catch {
+      /* older GramJS without these setters — just keep the defaults */
+    }
     await c.connect();
     // Never call start()'s interactive auth flow in the bot process: with a
     // revoked/expired session its signInUser() retries in a while(1) microtask
