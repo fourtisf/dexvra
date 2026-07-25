@@ -27,12 +27,13 @@ function lastStatus() {
   const s = loadJSONSync(STATUS_FILE, null);
   return s && typeof s === "object" ? s : null;
 }
+const STATUS_KEYS = ["ok", "account", "premium", "error", "emojiRefused", "postError"];
 function recordStatus(patch) {
   const prev = lastStatus() || {};
   const next = { ...prev, ...patch, at: Date.now() };
   // Skip the write when nothing meaningful moved (posts are frequent, this is
   // a diagnostic, and every saveJSON also fans out to the Mongo mirror).
-  const same = ["ok", "account", "premium", "error", "emojiRefused"].every((k) => prev[k] === next[k]);
+  const same = STATUS_KEYS.every((k) => prev[k] === next[k]);
   if (same && prev.at) return;
   saveJSON(STATUS_FILE, next).catch(() => {});
 }
@@ -40,6 +41,16 @@ function recordStatus(patch) {
  *  signal for "why is the board plain?", and it outranks a stale getMe. */
 function recordEmojiRefusal(error) {
   recordStatus({ emojiRefused: true, emojiError: String(error || "") });
+}
+// A connected, Premium account still posts nothing if it can't write to the
+// channel — being an admin there is a property of the USER account, not of the
+// bot that's already an admin. That failure is silent from the channel (the
+// board just falls back to Bot API and looks unchanged), so record it.
+function recordPostFailure(channel, err) {
+  recordStatus({ postError: `${channel}: ${(err && err.message) || err}` });
+}
+function recordPostOk() {
+  recordStatus({ postError: null });
 }
 
 function lib() {
@@ -111,6 +122,7 @@ async function connectClient() {
     }
     client = c;
     clientFailedAt = 0;
+    dialogsWarmed = false; // new client → new entity cache
     // WHO is posting, and can they send custom emoji at all? Telegram only lets
     // PREMIUM accounts do that — a non-premium login is the difference between
     // an animated board and a plain one, and it's invisible from the channel.
@@ -180,6 +192,25 @@ function invalidateOnAuthError(err) {
   }
 }
 
+// A FRESH string session has an EMPTY entity cache. `@username` still resolves
+// (contacts.ResolveUsername), but a numeric/private channel id carries no
+// access_hash, so getEntity() throws "Could not find the input entity for …"
+// even when the account is an admin there — and the board silently falls back
+// to the Bot API, i.e. plain unicode. Fetching the dialog list once fills that
+// cache. Done lazily (only after a miss) so the normal path pays nothing.
+let dialogsWarmed = false;
+async function resolveTarget(c, channel) {
+  try {
+    return await c.getEntity(channel);
+  } catch (e) {
+    if (dialogsWarmed) throw e;
+    dialogsWarmed = true;
+    log.info(`[gramjs] ${channel} not in the session's entity cache (${e.message}) — loading dialogs once`);
+    await c.getDialogs({ limit: 100 });
+    return c.getEntity(channel);
+  }
+}
+
 /** Resolve media into something GramJS can upload. Bot API file_ids are NOT
  *  usable over MTProto → null (caller falls back to Bot API). */
 async function resolveFile(media) {
@@ -211,7 +242,7 @@ async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
   try {
     const c = await getClient();
     const t = lib();
-    const target = await c.getEntity(channel);
+    const target = await resolveTarget(c, channel);
     const formattingEntities = premium.toGramJs(entities || [], t.Api);
     let sent;
     const file = media ? await resolveFile(media) : null;
@@ -240,11 +271,21 @@ async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
         log.debug(`[gramjs] pin: ${e.message}`);
       }
     }
+    recordPostOk();
     return { message_id: sent.id, chat: { id: Number(target.id) || target.id } };
   } catch (e) {
     invalidateOnAuthError(e);
+    if (!isPremiumEmojiError(e)) recordPostFailure(channel, e); // emoji refusal has its own field
     throw e;
   }
+}
+
+/** Pin a message (silently). Used to make sure the board we maintain is the one
+ *  readers actually see at the top of the channel. */
+async function pinChannelMessage(channel, messageId) {
+  const c = await getClient();
+  const target = await resolveTarget(c, channel);
+  await c.pinMessage(target, messageId, { notify: false });
 }
 
 /** Delete a message this account posted. Best-effort — used so switching
@@ -252,7 +293,7 @@ async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
 async function deleteChannelMessage(channel, messageId) {
   try {
     const c = await getClient();
-    const target = await c.getEntity(channel);
+    const target = await resolveTarget(c, channel);
     await c.deleteMessages(target, [messageId], { revoke: true });
   } catch (e) {
     invalidateOnAuthError(e);
@@ -303,7 +344,7 @@ async function editChannelMessage(channel, messageId, { text, entities }) {
   try {
     const c = await getClient();
     const t = lib();
-    const target = await c.getEntity(channel);
+    const target = await resolveTarget(c, channel);
     const formattingEntities = premium.toGramJs(entities || [], t.Api);
     await c.editMessage(target, {
       message: messageId,
@@ -311,9 +352,11 @@ async function editChannelMessage(channel, messageId, { text, entities }) {
       formattingEntities,
       linkPreview: false,
     });
+    recordPostOk();
     return { message_id: messageId, chat: { id: Number(target.id) || target.id } };
   } catch (e) {
     invalidateOnAuthError(e);
+    if (!isPremiumEmojiError(e) && !/not modified/i.test(e.message || "")) recordPostFailure(channel, e);
     throw e;
   }
 }
@@ -324,6 +367,7 @@ module.exports = {
   sendToChannel,
   editChannelMessage,
   deleteChannelMessage,
+  pinChannelMessage,
   isPremiumEmojiError,
   recordEmojiRefusal,
   diagnose,

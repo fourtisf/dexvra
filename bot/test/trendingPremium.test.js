@@ -34,7 +34,10 @@ function harness() {
       calls.push({ via: "bot", op: "edit", id, entities: extra.entities });
       return true;
     },
-    pinChatMessage: async () => true,
+    pinChatMessage: async (chat, id) => {
+      calls.push({ via: "bot", op: "pin", id });
+      return true;
+    },
     deleteMessage: async (chat, id) => {
       calls.push({ via: "bot", op: "delete", id });
       return true;
@@ -155,6 +158,34 @@ test("premium comes online later → the board re-renders even though the text i
     calls.some((c) => c.op === "delete" && c.id === 101),
     `the stale bot-api board is deleted: ${JSON.stringify(calls)}`,
   );
+});
+
+test("the board it edits is the one pinned — a stale duplicate can't keep the pin", async () => {
+  // A leftover board from an older run stayed pinned while the poster quietly
+  // edited a DIFFERENT message: readers saw a board that never changed, and
+  // posting logs looked perfectly healthy. Pin what we actually maintain.
+  const { tg } = harness();
+  const pins = [];
+  withGramjs({
+    available: () => true,
+    sendToChannel: async () => ({ message_id: 7 }),
+    editChannelMessage: async (c, id) => ({ message_id: id }),
+    pinChannelMessage: async (c, id) => pins.push(id),
+  });
+  await poster.runOnce(tg);
+  assert.deepStrictEqual(pins, [7], "pins the message it maintains");
+  // …but only once per process — no pin spam on every refresh.
+  const base = await api.getListings();
+  api.getListings = async () => [
+    ...base,
+    { status: "approved", trendingRank: 2, trendExp: 0, chain: "bsc", address: "0xf", sym: "FLOKI", tier: "GOLD" },
+  ];
+  try {
+    await poster.runOnce(tg);
+    assert.deepStrictEqual(pins, [7], "no re-pin on later refreshes");
+  } finally {
+    api.getListings = async () => base;
+  }
 });
 
 test("a non-emoji GramJS failure still falls back to the Bot API", async () => {

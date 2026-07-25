@@ -462,6 +462,15 @@ async function premiumReportText() {
     );
   else {
     L.push(`\n✅ Connected as <b>${escapeHtml(last.account || "?")}</b> <i>(${AGO(last.at)})</i>`);
+    if (last.postError) {
+      // A connected, Premium account still posts nothing if it can't WRITE to
+      // the channel. Being an admin there is a property of this USER account —
+      // the bot already being an admin doesn't help it.
+      fail(
+        "The account could not post to a channel",
+        `<code>${escapeHtml(last.postError)}</code>\nOpen that channel → <b>Administrators</b> → add <b>${escapeHtml(last.account || "the account")}</b> with <b>Post Messages</b> (and Delete/Pin so it can maintain the board). Until then the board falls back to the Bot API and looks unchanged.`,
+      );
+    }
     if (last.emojiRefused) {
       fail(
         "Telegram REFUSED the custom emoji",
@@ -474,7 +483,7 @@ async function premiumReportText() {
       );
     } else if (last.premium) {
       L.push(`💎 Telegram Premium: <b>yes</b> — custom emoji render animated.`);
-      L.push(`📢 If a specific channel still looks plain, check the account is an admin there with <b>Post Messages</b>.`);
+      if (!last.postError) L.push(`📢 Last channel post: <b>OK</b>.`);
     }
   }
   if (d.cooldownSec) L.push(`\n⏳ Post cooldown active in this process: ${d.cooldownSec}s (after a recent failure).`);

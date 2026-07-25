@@ -142,6 +142,24 @@ async function dropMessage(tg, owner, messageId) {
   }
 }
 
+// Make sure the board we maintain is the message readers actually see pinned.
+// A duplicate board left by an older run (transport flip used to strand one) can
+// otherwise stay pinned forever while we quietly edit a DIFFERENT message — the
+// pinned board then "never changes" no matter how well posting works. Once per
+// process, best-effort; re-pinning an already-pinned message is a no-op.
+let pinnedThisRun = false;
+async function ensurePinned(tg, transport) {
+  if (pinnedThisRun || !state.messageId) return;
+  pinnedThisRun = true;
+  try {
+    if (transport === "gramjs") await gramjs.pinChannelMessage(CHANNELS.trending, state.messageId);
+    else await tg.pinChatMessage(CHANNELS.trending, state.messageId, { disable_notification: true });
+    log.info(`[trendposter] board #${state.messageId} pinned (${transport})`);
+  } catch (e) {
+    log.debug(`[trendposter] pin #${state.messageId}: ${e.message}`);
+  }
+}
+
 // Edit (or, on failure, re-post) the board through ONE transport. A message can
 // only be edited by the account that sent it, so the transport that owns the
 // current message must match; otherwise we post fresh, record the new owner and
@@ -175,24 +193,31 @@ async function postVia(tg, transport, payload, markup, mode) {
     state.transport = transport;
     if (prev) await dropMessage(tg, prev.owner, prev.id);
   };
-  const settle = async () => {
+  const settle = async (how) => {
     state.lastText = markup;
     state.lastMode = mode;
     await saveJSON(STATE_FILE, state);
+    // ONE line per publish, at info: transport, render mode and how many premium
+    // emoji actually went out. Without it "the board never changes" is
+    // unanswerable from pm2 logs — a silent success and a silent failure look
+    // exactly the same in the channel.
+    const nPrem = (payload.entities || []).filter((e) => e.type === "custom_emoji").length;
+    log.info(`[trendposter] board ${how} via ${transport} — ${mode}, ${nPrem} premium emoji → #${state.messageId}`);
+    await ensurePinned(tg, transport);
   };
 
   if (state.messageId && state.transport === transport) {
     try {
       await editIt();
-      return settle();
+      return settle("edited");
     } catch (e) {
-      if (/not modified/i.test(e.message || "")) return settle();
+      if (/not modified/i.test(e.message || "")) return settle("unchanged");
       if (transport === "gramjs" && gramjs.isPremiumEmojiError(e)) throw e; // caller degrades in place
       log.debug(`[trendposter] ${transport} edit failed (${e.message}) — posting fresh`);
     }
   }
   await sendFresh(); // throws with state.messageId untouched, so no phantom id
-  return settle();
+  return settle("posted");
 }
 
 // One refresh cycle. Exported so the premium / degrade paths are testable
@@ -247,7 +272,11 @@ async function runOnce(tg) {
     }
     await postVia(tg, "bot", { text: parsed.text, entities: botEntities }, markup, "plain");
   } catch (e) {
-    log.debug(`[trendposter] ${e.message}`);
+    // A cycle that dies here publishes NOTHING, and at debug level that is
+    // invisible — "the board just never changes" with no trace in pm2 logs.
+    // Throttled so a persistent outage doesn't flood the log channel.
+    warnOnce("cycle-failed", `[trendposter] refresh cycle FAILED: ${e.message}`);
+    log.debug(`[trendposter] ${e.stack || e.message}`);
   }
 }
 
@@ -268,5 +297,6 @@ module.exports = { start, runOnce, buildText };
 module.exports._resetState = () => {
   state = { messageId: null, lastText: null, lastMode: null };
   premiumBlockedUntil = 0;
+  pinnedThisRun = false;
   warnedAt.clear();
 };
