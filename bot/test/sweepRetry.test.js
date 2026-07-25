@@ -22,7 +22,8 @@ fss.writeFileSync(
     pending: order("pending", { status: "pending" }),
     expired: order("expired", { status: "expired" }),
     free: order("free", { status: "fulfilled", adminFree: true }),
-    done: order("done", { status: "fulfilled", sweptAt: now - 1000 }),
+    justSwept: order("justSwept", { status: "fulfilled", sweptAt: now - 1000 }),
+    done: order("done", { status: "fulfilled", sweptAt: now - 30 * DAY }),
     ancient: order("ancient", { status: "fulfilled", createdAt: now - 400 * DAY }),
     noaddr: { id: "noaddr", status: "fulfilled", chain: "solana", createdAt: now - DAY },
   }),
@@ -35,7 +36,9 @@ const sweepRetry = require("../src/services/sweepRetry");
 const ids = (list) => list.map((o) => o.id).sort();
 
 test("only wallets whose order was actually paid for are candidates", () => {
-  assert.deepStrictEqual(ids(sweepRetry.candidates(now)), ["fulfilled", "paid"]);
+  // justSwept is in the post-sweep re-check window (buyers do pay twice), so
+  // it is watched too — but nothing pending or free ever is.
+  assert.deepStrictEqual(ids(sweepRetry.candidates(now)), ["fulfilled", "justSwept", "paid"]);
 });
 
 test("a pending order's wallet is never swept", () => {
@@ -49,8 +52,12 @@ test("a FREE admin test order has no funds to chase", () => {
   assert.ok(!sweepRetry.candidates(now).some((o) => o.adminFree));
 });
 
-test("an order already marked swept is not re-checked forever", () => {
-  assert.ok(!sweepRetry.candidates(now).some((o) => o.id === "done"));
+test("a swept order is re-checked for a while, then retired", () => {
+  // Not forever — a wallet emptied a month ago is not going to receive a
+  // second payment, and each pass costs a balance call.
+  const got = ids(sweepRetry.candidates(now));
+  assert.ok(got.includes("justSwept"), "swept seconds ago: still watched");
+  assert.ok(!got.includes("done"), "swept 30 days ago: retired");
 });
 
 test("orders without an address, or long past recovery, are skipped", () => {

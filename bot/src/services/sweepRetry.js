@@ -22,6 +22,12 @@ const MAX_PER_PASS = 25; // bounded RPC work per pass
 const GAP_MS = 1500; // public RPC endpoints rate-limit hard
 const MAX_AGE_MS = 90 * 24 * 3600 * 1000;
 const ALERT_AFTER_TRIES = 4; // ~a day of 6h passes — past a transient RPC blip
+// A swept wallet is NOT retired immediately. Buyers do pay twice — a "did it
+// go through?" re-send, an exchange splitting a withdrawal — and the second
+// transfer lands on an address we already emptied. Retiring on the first
+// success meant that money was never looked at again. Keep re-checking for a
+// week after the sweep, which costs one balance call per pass.
+const RECHECK_AFTER_SWEEP_MS = 7 * 24 * 3600 * 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -35,7 +41,7 @@ function candidates(now = Date.now()) {
         !o.adminFree &&
         o.chain &&
         o.address &&
-        !o.sweptAt &&
+        (!o.sweptAt || now - o.sweptAt < RECHECK_AFTER_SWEEP_MS) &&
         now - (o.createdAt || 0) < MAX_AGE_MS,
     )
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -56,8 +62,11 @@ async function runOnce() {
       const bal = BigInt(await wallets.getBalance(o.chain, o.address));
       checked++;
       if (bal === 0n) {
-        // Already emptied (the normal path swept it) — stop re-checking it.
         empty++;
+        if (o.sweptAt) continue; // already accounted for; the re-check window runs out on its own
+        // Emptied, but not by us — there is no transaction to point at. Marked
+        // done so it stops being re-checked forever, with the reason recorded
+        // so the report never calls it "swept".
         await orders.setStatus(o.id, o.status, { sweptAt: Date.now(), sweptNote: "already empty" });
         log.info(`[sweepretry] ${o.chain} order ${o.id} wallet is empty — nothing to recover`);
         continue;

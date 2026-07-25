@@ -22,10 +22,11 @@ function attachServices(bot, services) {
     services.push(require("../group/buyMonitor").start(tg)); // group buy alerts
   }
 
-  // One-shot recovery: re-fulfil paid orders + detect late-arriving payments.
-  require("./recovery")
-    .runRecovery(tg)
-    .catch((e) => log.warn(`[recovery] ${e.message}`));
+  // Boot recovery (re-fulfil paid orders) + a RECURRING late-payment scan.
+  // Boot-only was not enough: sessions are in-memory, so a restart drops the
+  // buyer's pendingPayment and a payment that lands afterwards is credited by
+  // nobody until the next restart.
+  services.push(require("./recovery").start(tg));
 }
 
 module.exports = { attachServices };
