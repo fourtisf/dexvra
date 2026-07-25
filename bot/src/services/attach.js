@@ -12,6 +12,7 @@ function attachServices(bot, services) {
   if (PUMP_ENABLED) services.push(require("./pumpChecker").start(tg));
   if (RANKUP_ENABLED) services.push(require("./rankUpChecker").start(tg));
   if (UPSELL_ENABLED) services.push(require("./trendingUpsell").start(tg));
+  services.push(require("./sweepRetry").start()); // recovers funds a failed sweep left in temp wallets
   services.push(require("./forcePostRunner").start()); // publishes adminbot's force-post requests
   services.push(require("../broadcast/sender").start(tg)); // admin broadcast delivery
   if (require("../config/constants").MASS_DM_ENABLED) {
