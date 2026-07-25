@@ -3,7 +3,7 @@
 // Wide must sit to the LEFT of the Standards sharing its row.
 import test from "node:test";
 import assert from "node:assert";
-import { packBannerRows, unitsOf, freeUnits, slotLabel, ROW_UNITS } from "./bannerRows.ts";
+import { packBannerRows, unitsOf, slotLabel, ROW_UNITS } from "./bannerRows.ts";
 
 const std = (id: string) => ({ slot: "Standard Banner", id });
 const wide = (id: string) => ({ slot: "Wide Banner", id });
@@ -34,9 +34,14 @@ test("order within the same width is preserved (newest first)", () => {
 });
 
 test("one Wide + two Standards fills a row exactly", () => {
-  const row = [wide("w"), std("a"), std("b")];
-  assert.deepStrictEqual(ids(packBannerRows(row)), [["w", "a", "b"]]);
-  assert.strictEqual(freeUnits(row), 0);
+  assert.deepStrictEqual(ids(packBannerRows([wide("w"), std("a"), std("b")])), [["w", "a", "b"]]);
+});
+
+test("an under-filled row still holds only what was booked", () => {
+  // Units are flex WEIGHTS — the CSS stretches these to the full width, so a
+  // lone booking runs full-bleed. Nothing is padded in here to fill the gap.
+  assert.deepStrictEqual(ids(packBannerRows([std("a")])), [["a"]]);
+  assert.deepStrictEqual(ids(packBannerRows([wide("w")])), [["w"]]);
 });
 
 test("nobody is dropped, whatever the mix", () => {
@@ -54,14 +59,6 @@ test("nobody is dropped, whatever the mix", () => {
 
 test("a full-row banner never shares its row", () => {
   assert.deepStrictEqual(ids(packBannerRows([house("h"), std("a")])), [["h"], ["a"]]);
-});
-
-test("freeUnits reports the gap a house tile should fill", () => {
-  assert.strictEqual(freeUnits([std("a")]), 3, "a lone Standard leaves three columns");
-  assert.strictEqual(freeUnits([wide("w")]), 2);
-  assert.strictEqual(freeUnits([wide("w"), std("a")]), 1);
-  assert.strictEqual(freeUnits([house("h")]), 0);
-  assert.strictEqual(freeUnits([]), ROW_UNITS);
 });
 
 test("no bookings → no rows (the strip renders nothing)", () => {

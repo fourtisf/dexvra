@@ -3,7 +3,8 @@
 // The homepage ad row: every LIVE banner booking (sold by the Telegram bot,
 // stored via /api/internal/banners) rendered side by side on a 4-column grid —
 // a Wide banner takes 2 columns and always sits on the LEFT, Standard banners
-// take 1 each to its right.
+// take 1 each to its right. A row that isn't sold out stretches to fill the
+// width, so a single booking runs full-bleed rather than sitting in a quarter.
 //
 // WHY A ROW AND NOT ONE BANNER: this used to render banners[0] only, so with two
 // advertisers running at once the earlier one vanished from the site even though
@@ -14,9 +15,10 @@
 //
 // Deliberately ONE placement. More ad spots on the page would read as spam —
 // extra inventory belongs in this row, not in a new strip somewhere else.
+import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./AppState";
-import { packBannerRows, unitsOf, freeUnits, slotLabel } from "@/lib/bannerRows";
+import { packBannerRows, unitsOf, slotLabel } from "@/lib/bannerRows";
 
 type Banner = {
   slot: string;
@@ -72,7 +74,10 @@ export function HomeBannerStrip() {
         {current.map((b, i) => (
           <a
             key={`${b.imageUrl}:${i}`}
-            className={`home-banner span-${unitsOf(b)}`}
+            className="home-banner"
+            // Flex weight, not a fixed column: a sold-out row splits 2:1:1 while
+            // a half-empty one stretches to fill instead of leaving a gap.
+            style={{ "--u": unitsOf(b) } as React.CSSProperties}
             href={b.linkUrl}
             target="_blank"
             rel="noopener noreferrer nofollow"
@@ -88,14 +93,6 @@ export function HomeBannerStrip() {
             </span>
           </a>
         ))}
-        {/* Unsold columns become a quiet house tile rather than dead space —
-            NOT a new ad placement, just the unsold part of one that already
-            exists, and it never shows on a homepage with no bookings at all. */}
-        {freeUnits(current) > 0 && (
-          <a className={`home-banner is-empty span-${freeUnits(current)}`} href="/advertise">
-            <span>Advertise here →</span>
-          </a>
-        )}
       </div>
       {pages.length > 1 && (
         <div className="home-ads-dots">

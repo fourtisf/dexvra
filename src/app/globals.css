@@ -305,15 +305,18 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 /* Homepage ad row — every live booking side by side (Standard = half the row,
    Wide = the whole row). One placement only; extra inventory pages inside it. */
 .home-ads{display:flex;flex-direction:column;gap:8px}
-.home-ads-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}
+.home-ads-row{display:flex;gap:13px;justify-content:center}
 .home-banner{position:relative;display:block;border-radius:16px;overflow:hidden;border:1px solid var(--line2);box-shadow:0 10px 30px rgba(0,0,0,.28);line-height:0;background:rgba(255,255,255,.02)}
-/* Column span per slot: Standard 1, Wide 2, house banner the whole row. A slot
-   never stretches past what the advertiser paid for — the leftover columns
-   become the "Advertise here" tile instead. */
-.home-banner.span-1{grid-column:span 1}
-.home-banner.span-2{grid-column:span 2}
-.home-banner.span-3{grid-column:span 3}
-.home-banner.span-4{grid-column:1/-1}
+/* --u is the slot's weight (Standard 1, Wide 2, house 4). flex-basis:0 makes the
+   widths purely proportional, so a sold-out row is exactly 2:1:1 while a row
+   that isn't sold out stretches to fill instead of leaving dead space.
+   max-width caps that stretch at 2× the slot's designed share: a creative can
+   only grow so far before its own aspect ratio makes it too tall and the height
+   cap letterboxes it inside its tile — a lone Standard at full width did exactly
+   that. Capped, a lone Standard runs at half the row (~294px) and a lone Wide
+   fills it completely (~296px), neither letterboxed; the row centres whatever
+   is left over. */
+.home-banner{flex:var(--u,1) 1 0;min-width:0;max-width:calc(var(--u,1) * 50%)}
 /* The CREATIVE decides the height (width:100% + height:auto), so an advertiser
    sees exactly what they uploaded — a thin 728×90 strip stays thin, a chunky
    2:1 design stays chunky. The old `object-fit:cover` + fixed `max-height:150px`
@@ -321,12 +324,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
    the box off the BOOKED size instead would letterbox every creative that isn't
    pixel-perfect to spec. The cap only bites on an absurdly tall upload, where
    `contain` then letterboxes rather than distorts. */
-.home-banner img{width:100%;height:auto;max-height:280px;object-fit:contain;display:block}
+.home-banner img{width:100%;height:auto;max-height:300px;object-fit:contain;display:block}
 .home-banner-tag{position:absolute;top:8px;right:10px;font-family:var(--fm);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:rgba(0,0,0,.5);color:#fff;padding:2px 8px;border-radius:999px}
 .home-banner-tag i{font-style:normal;font-weight:500;opacity:.7}
-.home-banner.is-empty{display:flex;align-items:center;justify-content:center;min-height:72px;border-style:dashed;box-shadow:none;background:rgba(255,255,255,.015);text-decoration:none}
-.home-banner.is-empty span{font-family:var(--fm);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);line-height:1}
-.home-banner.is-empty:hover span{color:var(--muted)}
 .home-ads-dots{display:flex;gap:6px;justify-content:center}
 /* /advertise: a real creative at this package's size, shown at its true width
    relative to the other package so the difference is visible, not just stated */
@@ -336,8 +336,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .home-ads-dots button{width:18px;height:4px;border-radius:99px;border:0;padding:0;cursor:pointer;background:rgba(255,255,255,.18);transition:background .2s}
 .home-ads-dots button.on{background:var(--grad)}
 /* Phones: one banner per row — two half-width ads would be unreadable. */
-@media (max-width:900px){.home-ads-row{grid-template-columns:repeat(2,minmax(0,1fr))}.home-banner.span-2,.home-banner.span-3,.home-banner.span-4{grid-column:1/-1}}
-@media (max-width:700px){.home-ads-row{grid-template-columns:minmax(0,1fr)}.home-banner{grid-column:1/-1}}
+/* Phones: stack them — side-by-side quarters would be unreadable. */
+@media (max-width:820px){.home-ads-row{flex-wrap:wrap}.home-banner{flex-basis:100%}}
 .fg{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
 .fg svg{width:122px;height:70px;flex:none;overflow:visible}
 .fg-col{display:flex;flex-direction:column;min-width:0}

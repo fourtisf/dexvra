@@ -70,9 +70,3 @@ export function packBannerRows<T extends BannerLike>(list: T[], unitsPerRow = RO
   return rows;
 }
 
-/** Columns still free in a row — the ad row fills them with a quiet "Advertise
- *  here" tile rather than leaving dead space. */
-export function freeUnits<T extends BannerLike>(row: T[], unitsPerRow = ROW_UNITS): number {
-  const used = row.reduce((n, b) => n + Math.min(unitsOf(b), unitsPerRow), 0);
-  return Math.max(0, unitsPerRow - used);
-}
