@@ -18,6 +18,7 @@ const { familyOf } = require("../src/config/chains");
 const LIVE = process.argv.includes("--live");
 const ok = (s) => `\x1b[32m${s}\x1b[0m`;
 const bad = (s) => `\x1b[31m${s}\x1b[0m`;
+const warn = (s) => `\x1b[33m${s}\x1b[0m`;
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 
 // Family → the chains that pay into it, so an unset treasury names what breaks.
@@ -80,6 +81,7 @@ async function reportFunds() {
   }
   console.log(`\n── Temp wallets (${all.length} order(s)${LIVE ? ", live balances" : ", --live for balances"}) ──`);
   let held = 0;
+  let noTx = 0;
   for (const o of all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 40)) {
     let balTxt = dim("(not checked)");
     if (LIVE) {
@@ -91,14 +93,32 @@ async function reportFunds() {
         balTxt = bad(`error: ${e.message.slice(0, 60)}`);
       }
     }
-    const swept = o.sweptAt ? ok("swept") : o.status === "pending" ? dim("pending") : bad("UNSWEPT");
+    // "swept" must never be printed for a wallet nothing was sent FROM. An
+    // order gets marked done either because a sweep landed (there is a tx
+    // hash) or because the wallet was found empty — and "found empty" says
+    // nothing about where the money went. Conflating the two is how an
+    // operator concludes funds reached the treasury when they did not.
+    let swept;
+    if (o.sweptTx) swept = ok(`swept tx=${o.sweptTx}`);
+    else if (o.sweptAt) swept = warn(`closed: ${o.sweptNote || "no tx recorded"}`);
+    else if (o.status === "pending") swept = dim("pending");
+    else swept = bad("UNSWEPT");
     console.log(`  ${String(o.chain).padEnd(9)} ${o.address}`);
-    console.log(`    ${dim(o.id)}  status=${o.status}  ${swept}  ${balTxt}${o.sweptTx ? dim("  tx=" + o.sweptTx) : ""}`);
+    console.log(`    ${dim(o.id)}  status=${o.status}  ${swept}  ${balTxt}`);
+    noTx += o.sweptAt && !o.sweptTx && o.status !== "pending" ? 1 : 0;
   }
   if (LIVE && held) {
     console.log(
       bad(`\n  ${held} wallet(s) still hold funds.`) +
         " sweepRetry re-tries every 6h and 90s after boot;\n  a treasury marked NOT SET above is the usual reason nothing moves.",
+    );
+  }
+  if (noTx) {
+    console.log(
+      warn(`\n  ${noTx} paid order(s) closed with no sweep transaction.`) +
+        "\n  Their wallet was empty when checked — the funds left by some other route\n" +
+        "  (a manual transfer, or a sweep from before this was recorded). Confirm on\n" +
+        "  an explorer where they actually went; the bot cannot vouch for it.",
     );
   }
 }
