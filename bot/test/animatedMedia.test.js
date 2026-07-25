@@ -124,7 +124,14 @@ async function makeGif(dir) {
 
 test("a .gif clip is converted to MP4 so it plays inline", async (t) => {
   if (!ffmpegOk) return t.skip("ffmpeg not installed");
-  const src = await makeGif(process.env.BOT_DATA_DIR);
+  // require() succeeding doesn't mean the bundled binary RUNS — a server with a
+  // different libc fails here, and that is a toolchain problem, not a red test.
+  let src;
+  try {
+    src = await makeGif(process.env.BOT_DATA_DIR);
+  } catch (e) {
+    return t.skip(`ffmpeg cannot run here: ${e.message}`);
+  }
   const out = await bannerTemplate.toInlineClip({ type: "animation", source: src });
   assert.match(out.source, /\.mp4$/, "the container has to change, not just the attribute");
   assert.strictEqual(out.type, "animation", "still an animation — autoplay, no player controls");
@@ -145,7 +152,11 @@ test("anything that is not a .gif is left exactly as it was", async () => {
 
 test("the rank-up poster sends the CONVERTED clip (the actual regression)", async (t) => {
   if (!ffmpegOk) return t.skip("ffmpeg not installed");
-  await makeGif(process.env.BOT_DATA_DIR); // admin-uploaded rank-up clip
+  try {
+    await makeGif(process.env.BOT_DATA_DIR); // admin-uploaded rank-up clip
+  } catch (e) {
+    return t.skip(`ffmpeg cannot run here: ${e.message}`);
+  }
   const coin = { symbol: "$BONK", name: "Bonk", chain: "SOLANA", price: "$0.000002", mcap: "$257M" };
   const media = await postMedia("rankup", coin, null, null, "", null, { rank: 1, change: 42 });
   assert.match(media.source, /\.mp4$/, `rank-up must not post the raw .gif: ${media.source}`);
