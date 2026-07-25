@@ -166,15 +166,20 @@ function start(tg) {
       // those entities so it shows the unicode fallback; GramJS keeps them.
       const botEntities = parsed.entities.filter((e) => e.type !== "custom_emoji");
 
-      // Prefer the GramJS premium account (premium emoji render). On ANY GramJS
-      // failure fall back to the Bot API for this cycle (fallback unicode).
+      const hasPremiumEmoji = parsed.entities.some((e) => e.type === "custom_emoji");
+      // Prefer the GramJS premium account (the ONLY way custom emoji render). On
+      // ANY GramJS failure fall back to the Bot API for this cycle — which STRIPS
+      // custom emoji to their unicode fallback. Log the reason loudly when there
+      // ARE premium badges to render but we can't, so the operator can diagnose.
       if (gramjs.available()) {
         try {
           await postVia(tg, "gramjs", { text: parsed.text, entities: parsed.entities }, markup);
           return;
         } catch (e) {
-          log.debug(`[trendposter] gramjs path failed (${e.message}) → bot api`);
+          log.warn(`[trendposter] premium (gramjs) post FAILED → bot-api fallback (unicode): ${e.message}`);
         }
+      } else if (hasPremiumEmoji) {
+        log.warn("[trendposter] premium badges set but premium account NOT connected — board shows UNICODE. Run: node scripts/gramjs-login.js");
       }
       await postVia(tg, "bot", { text: parsed.text, entities: botEntities }, markup);
     } catch (e) {

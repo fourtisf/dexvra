@@ -15,6 +15,7 @@ const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
 const trendingBoard = require("../services/trendingBoard");
 const autoTrend = require("../services/autoTrend");
+const gramjs = require("../gramjs");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
 const log = require("../helpers/logger");
@@ -344,12 +345,25 @@ function tbText() {
     .rankEmojis()
     .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${trendingBoard.displayEmoji(e)}`)
     .join("  ");
+  // How many slots carry a PREMIUM emoji (stored as "[x](emoji/ID)" markup) and
+  // whether the premium account that actually renders them is connected.
+  const isPrem = (e) => /\(emoji\//.test(String(e || ""));
+  const nPrem =
+    trendingBoard.rankEmojis().filter(isPrem).length +
+    trendingBoard.chainList().filter((c) => isPrem(c.logo)).length;
+  const premLine = nPrem
+    ? gramjs.available()
+      ? `💎 Premium emoji: <b>🟢 ready</b> — ${nPrem} set, posting via the premium account.`
+      : `💎 Premium emoji: <b>🔴 NOT rendering</b> — ${nPrem} set, but the premium account isn't connected. Run <code>node scripts/gramjs-login.js</code>. Until then the board shows the plain fallback.`
+    : `💎 Premium emoji: send a <b>premium</b> emoji when setting a badge/logo to use one (needs the premium account connected).`;
   return (
     `🔥 <b>Trending board</b>\n\n` +
     `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
     `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
-    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n\n` +
+    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n` +
+    `${premLine}\n` +
+    `<i>Note: custom/premium emoji only look premium to Telegram Premium users — everyone else sees the normal fallback emoji.</i>\n\n` +
     `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
     `Send any emoji when asked. Applies on the next board refresh.`
   );
