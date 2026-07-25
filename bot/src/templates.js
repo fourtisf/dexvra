@@ -333,13 +333,21 @@ const DEFAULTS = {
   // 💠 Platinum tier 🐶". An untiered listing drops just the tier SEGMENT —
   // channels/format.js keeps the header itself.
   post_listing_tiered:
-    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · {tierEmoji} **{tier} tier** {logoEmoji}\n\n` +
+    // No medal/trophy emoji beside the tier (operator preference, 2026-07-25):
+    // the tier NAME carries it. {tierEmoji} stays an available placeholder for
+    // anyone who wants the badge back.
+    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · **{tier} tier** {logoEmoji}\n\n` +
     LISTING_BODY,
   post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  // Advertiser-facing, so it reads like an ad placement announcement rather than
+  // bot output: what is running, where, and one link out. The "Announce On X"
+  // line carries the campaign's tweet and drops itself when there is none.
   post_banner:
-    `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
-    `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
-    `👉 [View the campaign]({linkUrl})\n\n` +
+    `${em("📢", E.megaphone)} **New Campaign on Dexvra**\n\n` +
+    `**{title}** is now live on the dexvra.io homepage — **{slot}** placement, ` +
+    `in front of every visitor.\n\n` +
+    `👉 [Open the campaign]({linkUrl})\n\n` +
+    `[Announce On X 𝕏]({xUrl})\n\n` +
     FOOTER_BLOCK,
   // Rank-up is a TICKER post, not an article: the clip carries the hype and the
   // caption just says which token moved, where to read it, and the CA — then the
@@ -472,7 +480,7 @@ const META = {
   post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "site", "listing", "trending", "announce"] },
+  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "xUrl", "site", "listing", "trending", "announce"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },

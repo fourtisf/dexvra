@@ -657,16 +657,19 @@ function pumpPost(coin, percent, firstMc, lastMc) {
   }), postUrls(coin));
 }
 
-function bannerPost(booking) {
-  // No token on a banner post — any social lines an admin adds strip away.
-  const val = stripForCoin("post_banner", null);
+function bannerPost(booking, xUrl) {
+  // No token on a banner post — any social lines an admin adds strip away. The
+  // pseudo-coin carries only xUrl, so the "Announce On X" line survives when the
+  // campaign was tweeted and is cut (paragraph and all) when it wasn't.
+  const val = stripForCoin("post_banner", xUrl ? { links: {}, xUrl } : null);
   return autoSocials(tpl.renderValue(val, {
     title: booking.title ? clean(booking.title) : "A featured project",
     slot: clean(booking.slot),
     linkUrl: cleanUrl(booking.linkUrl),
+    xUrl: xUrl ? cleanUrl(xUrl) : "",
     ...channelLinks(),
     footer: legacyFooter(),
-  }), { ...channelLinks() });
+  }), { ...channelLinks(), xUrl: xUrl || "" });
 }
 
 const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");

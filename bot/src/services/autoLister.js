@@ -349,7 +349,8 @@ async function announce(tg, c, info, input, cfg = get()) {
       .ensureFromUrl({ chain: c.chain, address: c.address, symbol: input.sym }, input.logoUrl)
       .catch(() => null);
     const media = await postMediaFor("listing", c, info, input).catch(() => null);
-    const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin));
+    // Same rule as a paid listing: it pins itself in the listing channel.
+    const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin), { pin: true });
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
     if (p.trending) {
       const tMedia = await postMediaFor("trending", c, info, input).catch(() => null);

@@ -95,7 +95,7 @@ const KINDS = {
       const coin = await coinOf({ ...row, tier: "XPRESS" });
       await ensureEmoji(coin, row);
       const media = await mediaFor("listing", coin, row);
-      return [await deliver(CHANNELS.listing, media, fmt.listingPost(coin))];
+      return [await deliver(CHANNELS.listing, media, fmt.listingPost(coin), { pin: true })];
     },
   },
   listing_trending: {
@@ -106,8 +106,8 @@ const KINDS = {
       await ensureEmoji(coin, row);
       const listMedia = await mediaFor("listing", coin, row);
       const trendMedia = await mediaFor("trending", coin, row);
-      const out = [await deliver(CHANNELS.listing, listMedia, fmt.listingPost(coin))];
-      out.push(await deliver(CHANNELS.announce, listMedia, fmt.listingPost(coin)));
+      const out = [await deliver(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true })];
+      out.push(await deliver(CHANNELS.announce, listMedia, fmt.listingPost(coin), { pin: true }));
       out.push(await deliver(CHANNELS.trending, trendMedia, fmt.trendingPost(coin)));
       return out;
     },
@@ -177,8 +177,8 @@ async function mediaFor(kind, coin, row, opts = {}) {
   });
 }
 
-async function deliver(channel, media, payload) {
-  const msg = await post.sendMedia(channel, media, payload);
+async function deliver(channel, media, payload, { pin = false } = {}) {
+  const msg = await post.sendMedia(channel, media, payload, { pin });
   return { channel, ok: !!msg, messageId: msg && msg.message_id, url: msg ? tmeLink(channel, msg.message_id) : null };
 }
 

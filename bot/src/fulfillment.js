@@ -263,11 +263,15 @@ async function fulfillListing(ctx, order) {
 
   const links = [];
   try {
-    const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin));
+    // Every listing PINS itself in the channel it lands in (operator rule,
+    // 2026-07-25) — the newest listing is what a visitor should see first.
+    // Pinning is silent (disable_notification), and the trending channel is
+    // deliberately NOT pinned here: its pin belongs to the Trending board.
+    const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true });
     if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
 
     const annMsg = tierAnnounces(input.tier)
-      ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin))
+      ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin), { pin: true })
       : null;
     if (annMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
@@ -357,6 +361,8 @@ async function fulfillBanner(ctx, order) {
   );
 
   const links = [];
+  let bTweetId = null;
+  let bXUrl = "";
   try {
     // Frame the creative in the Banner Ads artwork when one is set (admin
     // upload or bundled); otherwise post the raw creative as before.
@@ -366,17 +372,19 @@ async function fulfillBanner(ctx, order) {
       const framed = await bannerTemplate.compose("banner", creative, {});
       if (framed) adMedia = { source: framed };
     }
-    const aMsg = await post.sendMedia(CHANNELS.announce, adMedia, fmt.bannerPost(rec));
+    // Tweet FIRST (timeboxed), so the channel post can carry the "Announce On X"
+    // link — same ordering as a listing. The line drops itself when X is off or
+    // the tweet failed.
+    bTweetId = await Promise.race([
+      x.postBanner(rec).catch(() => null),
+      new Promise((r) => setTimeout(r, 20000, null)),
+    ]);
+    bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
+    const aMsg = await post.sendMedia(CHANNELS.announce, adMedia, fmt.bannerPost(rec, bXUrl));
     if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
   }
-  // Tweet the banner (timeboxed) and surface the "Announce on X" link in the DM.
-  const bTweetId = await Promise.race([
-    x.postBanner(rec).catch(() => null),
-    new Promise((r) => setTimeout(r, 20000, null)),
-  ]);
-  const bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
   await dm(ctx, successBanner(run, links, bXUrl, booking && booking.queued), menu.postPurchase(SITE_URL));
   return booking;
 }

@@ -86,6 +86,27 @@ async function pumpMedia(r, base, m, pct) {
   return bannerTemplate.toInlineClip(media);
 }
 
+/**
+ * Where a pump alert is allowed to appear for this token: ONLY a channel where
+ * it HAS a listing post to reply to. That is the whole rule, and it is a
+ * business rule, not just a Telegram one:
+ *
+ *   Xpress Listing            → @dexvralisting only. An Xpress buyer gets no
+ *                               @dexvraio announcement, so there is nothing to
+ *                               reply to there and no pump alert there either.
+ *   Listing & Trending (top   → both channels, each replying to ITS OWN post.
+ *   tiers, which do announce)
+ *
+ * An empty list means NO alert. A pump alert must never be posted stand-alone:
+ * out of thread it reads as an ad for a token the channel never listed.
+ */
+function pumpTargets(ids = {}) {
+  const out = [];
+  if (ids.listingMsgId) out.push({ channel: CHANNELS.listing, replyTo: ids.listingMsgId });
+  if (ids.annMsgId) out.push({ channel: CHANNELS.announce, replyTo: ids.annMsgId });
+  return out;
+}
+
 function start(tg) {
   const run = async () => {
     let listings;
@@ -114,17 +135,35 @@ function start(tg) {
       if (pct < minPct || pct > maxPct) continue;
       if (latch.has(key)) continue;
 
-      await latch.add(key);
-      const coin = coinOf(r, m.priceUsd, m.mcap);
       const ids = postids.get(r.chain, r.address);
+      const targets = pumpTargets(ids);
+      if (!targets.length) {
+        // Nothing to reply to — usually a token listed before post ids were
+        // recorded, or one whose listing post failed. No latch: if the id shows
+        // up later the pump can still be announced.
+        log.debug(`[pump] ${r.sym || r.address}: no listing post to reply to — skipped`);
+        continue;
+      }
+      const coin = coinOf(r, m.priceUsd, m.mcap);
       const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
       const media = await pumpMedia(r, base, m, pct); // admin pump clip + overlay (null → text reply)
+      let posted = null;
       try {
-        await post.sendMedia(CHANNELS.listing, media, card, { replyTo: ids.listingMsgId });
-        if (ids.annMsgId) await post.sendMedia(CHANNELS.announce, media, card, { replyTo: ids.annMsgId });
+        for (const t of targets) {
+          const msg = await post.sendMedia(t.channel, media, card, { replyTo: t.replyTo });
+          if (t.channel === CHANNELS.listing) posted = msg;
+        }
       } catch (e) {
         log.warn(`[pump] post: ${e.message}`);
       }
+      // Latch only AFTER the alert really posted. Spending the once-per-token
+      // budget at DETECTION time meant a failed post burned it forever and the
+      // token could never alert again.
+      if (!posted) {
+        log.warn(`[pump] ${r.sym || r.address}: alert did not post — not latching, will retry next cycle`);
+        continue;
+      }
+      await latch.add(key);
       // Quote the original listing tweet on X (falls back to a standalone
       // tweet when the listing tweet id isn't known).
       x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId).catch(() => {});
@@ -141,4 +180,4 @@ function start(tg) {
   };
 }
 
-module.exports = { start };
+module.exports = { start, pumpTargets };
