@@ -176,13 +176,45 @@ test("Announce On X line: shown with a tweet link, dropped without one", () => {
   assert.ok(!/\n{3,}/.test(withoutX.text));
 });
 
-test("pump post payload shows percent + MCs", () => {
+test("pump post is a short ticker: multiple, MC move, CA", () => {
   const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
   const card = fmt.pumpPost(coin, 137.6, 310000, 128400000);
-  assert.ok(card.text.includes("+138%"));
-  assert.ok(card.text.includes("Market cap"));
+  assert.ok(card.text.includes("$T"), card.text);
   assert.ok(card.text.includes("2.4×"), "shows the × multiple"); // 1 + 137.6/100 = 2.376 → 2.4×
   assert.ok(card.text.includes("🚀"), "rocket emoji present (unicode fallback)");
+  assert.ok(card.text.includes("$310K") && card.text.includes("$128.4M"), "the market-cap move");
+  assert.ok(card.text.includes("0xabc"), "the contract address");
+  assert.ok(card.entities.some((e) => e.type === "code"), "CA is copyable");
+  // The clip carries the hype — the caption stays a ticker, not an article.
+  assert.ok(card.text.length < 400, `caption should stay short, got ${card.text.length}`);
+  assert.ok(!/since it listed|still climbing/.test(card.text), "no long-form copy");
+});
+
+// A short post is not an excuse to link fewer places: the pump alert once ended
+// with Trending + Dexvra.io only, and a reader had no way to reach the listings
+// or announcements channel from it.
+test("pump post links EVERY Dexvra destination", () => {
+  const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
+  const urls = fmt.pumpPost(coin, 137.6, 310000, 128400000).entities
+    .filter((e) => e.type === "text_link")
+    .map((e) => e.url);
+  // The four DESTINATIONS by name — channelLinks() also carries the sales bot,
+  // which belongs in the auto-spotlight card, not here.
+  const links = fmt.channelLinks();
+  for (const name of ["site", "listing", "trending", "announce"]) {
+    assert.ok(urls.includes(links[name]), `${name} (${links[name]}) missing from the pump post: ${urls}`);
+  }
+});
+
+test("pump: {percent} stays available for admins who want the number", async () => {
+  const tpl = require("../src/templates");
+  const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
+  await tpl.setTemplate("post_pump", "{symbol} +{percent}%");
+  try {
+    assert.ok(fmt.pumpPost(coin, 137.6, 310000, 128400000).text.includes("+138%"));
+  } finally {
+    await tpl.resetTemplate("post_pump");
+  }
 });
 
 test("overview truncation never splits surrogate pairs (no U+FFFD)", () => {
@@ -200,4 +232,118 @@ test("overview truncation never splits surrogate pairs (no U+FFFD)", () => {
   const emojiOnly = "🚀".repeat(400);
   const card2 = fmt.listingPost({ ...base, overview: emojiOnly });
   assert.ok(!card2.text.includes("�"));
+});
+
+// The tier used to be stacked on its own line UNDER the header, and the token's
+// emoji sat before it — the operator wants one line: header · tier, token emoji
+// last. The untiered case is the trap: "drop every line whose placeholders are
+// all empty" would have deleted the post's title along with the tier.
+test("listing header: tier beside the title, token emoji last", () => {
+  const coin = {
+    name: "Floki", symbol: "$FLOKI", chain: "bsc", address: "0xfb5",
+    tier: "PLATINUM", links: {}, siteUrl: "u",
+  };
+  const first = fmt.listingPost(coin).text.split("\n")[0];
+  assert.ok(/New Listing on Dexvra/.test(first), first);
+  assert.ok(/Platinum tier/i.test(first), `tier must be on the SAME line: ${first}`);
+  assert.ok(first.indexOf("tier") < first.length - 1, "…and the token emoji closes the line");
+  assert.ok(!/\n\s*\S*\s*Platinum tier/.test(fmt.listingPost(coin).text), "never stacked below");
+});
+
+test("listing header: an untiered listing keeps its title, loses only the tier", () => {
+  const coin = { name: "Auto", symbol: "$AUTO", chain: "bsc", address: "0xa", links: {}, siteUrl: "u" };
+  const text = fmt.listingPost(coin).text;
+  const first = text.split("\n")[0];
+  assert.ok(/New Listing on Dexvra/.test(first), `the header must survive: ${JSON.stringify(first)}`);
+  assert.ok(!/tier/i.test(text), `no empty tier badge left behind: ${first}`);
+  assert.ok(!/·\s*$/.test(first), "…and no dangling separator");
+});
+
+test("a socials row with no links at all still drops entirely", () => {
+  // The same strip path — this is the behaviour the header fix must not break.
+  const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xa", tier: "GOLD", links: {}, siteUrl: "u" };
+  const text = fmt.listingPost(coin).text;
+  assert.ok(!/social links/i.test(text), text);
+  assert.ok(!/Website|Telegram/.test(text.split("Dexvra\n").pop() || ""), "no orphan labels");
+  assert.ok(!/\n{3,}/.test(text), "no hole where the paragraph was");
+});
+
+// ── Banner ad post (NTM-style: description → CA → socials → Dexvra links) ───
+test("banner post follows the advertiser's own copy, in order", () => {
+  const card = fmt.bannerPost(
+    {
+      title: "IDLE Protocol",
+      slot: "Wide Banner",
+      linkUrl: "https://idle.io",
+      description: "IDLE Protocol is the first universal earnings layer for idle resources.",
+      address: "8sQ2xk9pump",
+      twitter: "https://x.com/idle",
+      telegram: "https://t.me/idle",
+    },
+    "https://x.com/i/status/1",
+  );
+  const t = card.text;
+  // The order the operator asked for — description, then CA, then socials, then
+  // the Dexvra links.
+  const iDesc = t.indexOf("universal earnings layer");
+  const iCa = t.indexOf("8sQ2xk9pump");
+  const iSoc = t.indexOf("Socials");
+  const iDex = t.indexOf("Dexvra.io");
+  assert.ok(iDesc > 0 && iDesc < iCa, `description above the CA: ${t}`);
+  assert.ok(iCa < iSoc, "CA above the socials");
+  assert.ok(iSoc < iDex, "socials above the Dexvra links");
+  assert.ok(card.entities.some((e) => e.type === "code"), "the CA is copyable");
+  assert.ok(!/\*\*|\]\(/.test(t), "no raw markup leaks (a bold-inside-link did exactly that)");
+  const urls = card.entities.filter((e) => e.type === "text_link").map((e) => e.url);
+  assert.ok(urls.includes("https://idle.io"), "the title links to the campaign");
+  assert.ok(urls.includes("https://x.com/idle") && urls.includes("https://t.me/idle"), "socials linked");
+  assert.ok(urls.includes("https://x.com/i/status/1"), "Announce On X present");
+});
+
+test("banner post: an advertiser with no token or socials still gets a clean card", () => {
+  // A service or an event has neither — the blocks must vanish with their
+  // header lines rather than leaving "📄 CA" over an empty line.
+  const t = fmt.bannerPost({ title: "Nine Hood", slot: "Standard Banner", linkUrl: "https://ninehood.io" }).text;
+  assert.ok(!/CA/.test(t), t);
+  assert.ok(!/Announce On X/.test(t), "no tweet → no X line");
+  assert.ok(!/\n{3,}/.test(t), "no hole where a block was");
+  assert.ok(t.includes("Nine Hood"), t);
+});
+
+// An admin can rewrite ANY channel post from @dexvraadminbot by pasting a
+// message — including one with PREMIUM custom emoji, which is stored as
+// {text, entities} rather than markup. The banner post strips blocks the
+// advertiser didn't fill in, and stripping the entity form means re-mapping
+// every entity offset: get that wrong and the premium emoji slide onto the
+// wrong characters, or the post comes out corrupted.
+test("banner post: an admin's premium-emoji template survives the strip pass", async () => {
+  const tpl = require("../src/templates");
+  // "🔥 BANNER LIVE" where 🔥 is a premium custom emoji, plus the blocks that
+  // drop when a booking doesn't carry them.
+  const text = "🔥 BANNER LIVE\n\n▶️ {title}\n\n{description}\n\n📄 CA\n{address}\n\n🔗 {twitter}\n\n💎 {site}";
+  const entities = [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "5445284980978621387" }];
+  await tpl.setTemplate("post_banner", { text, entities });
+  try {
+    // Full booking: everything renders, the emoji stays on the fire.
+    const full = fmt.bannerPost({
+      title: "IDLE", slot: "Wide Banner", linkUrl: "https://idle.io",
+      description: "An earnings layer for idle resources.", address: "8sQ2xk9pump", twitter: "https://x.com/idle",
+    });
+    const ce = full.entities.find((e) => e.type === "custom_emoji");
+    assert.ok(ce, "the premium emoji survived rendering");
+    assert.strictEqual(full.text.substr(ce.offset, ce.length), "🔥", "…and still sits on ITS character");
+    assert.ok(full.text.includes("8sQ2xk9pump"), full.text);
+
+    // Minimal booking: the description and CA blocks are cut out of the middle,
+    // which is exactly where offset re-mapping goes wrong.
+    const min = fmt.bannerPost({ title: "Nine Hood", slot: "Standard Banner", linkUrl: "https://ninehood.io" });
+    const ce2 = min.entities.find((e) => e.type === "custom_emoji");
+    assert.ok(ce2, "still there after two blocks were removed");
+    assert.strictEqual(min.text.substr(ce2.offset, ce2.length), "🔥", `emoji drifted: ${JSON.stringify(min.text)}`);
+    assert.ok(!min.text.includes("CA"), "the CA block went with its header");
+    assert.ok(!/\{|\}/.test(min.text), `no unfilled placeholders left: ${min.text}`);
+    for (const e of min.entities) assert.ok(e.offset + e.length <= min.text.length, "every entity stays in bounds");
+  } finally {
+    await tpl.resetTemplate("post_banner");
+  }
 });

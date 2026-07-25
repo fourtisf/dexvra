@@ -60,12 +60,17 @@ const em = (emoji) => emoji;
 const SOCIALS_BLOCK =
   `${em("🔗", E.link)} **{symbol} social links**\n` +
   `${em("❌", E.cross)} [X]({twitter}) · 🌐 [Website]({website}) · ✈️ [Telegram]({telegram})`;
-const FOOTER_BLOCK =
-  `${em("📎", E.clip)} **Dexvra**\n` +
+// EVERY Dexvra destination, side by side on ONE row. Split out of FOOTER_BLOCK
+// so the short ticker posts (rank-up / pump) carry the SAME complete set without
+// the "📎 Dexvra" header line above it — a reader who lands on any post can
+// reach the site and all three channels. Never trim this to a subset: a pump
+// alert that linked only Trending + Dexvra.io was the operator's complaint.
+const LINKS_ROW =
   `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
   `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
   `🔥 [Trending]({trending}) · ` +
   `${em("📢", E.megaphone)} [Announcements]({announce})`;
+const FOOTER_BLOCK = `${em("📎", E.clip)} **Dexvra**\n` + LINKS_ROW;
 // Shared body of the listing/trending cards (below their distinct headers).
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
 // exactly where to trade it. {price}/{mcap}/{liq} come from live data.
@@ -187,9 +192,15 @@ const DEFAULTS = {
   invalid_address:
     "❌ That doesn't look like a valid **{chain}** contract address.\n\n🔹 Double-check and paste it again:",
   invalid_url: "❌ That must be a full **https://** URL.\n\n🔹 Please try again:",
+  // The site's rule, said in the user's words (see helpers/ticker.js).
+  invalid_ticker:
+    "❌ That ticker can't be used — letters and numbers only (`.` `_` `-` are fine), " +
+    "up to 24 characters, no spaces or emoji.\n\n🔹 Send the ticker again (e.g. **PEPE**):",
   listing_incomplete: "⚠️ Please set a **name, symbol and a valid contract address** before confirming.",
   pricing_unavailable: "⚠️ Pricing isn't available for this network yet — please pick another.",
   session_expired: "⌛ Your session expired — send /start to begin again.",
+  // Sent when a handler throws or times out, so a failure is never just silence.
+  error_retry: "⚠️ Something went wrong on our side — nothing was charged.\n\n🔹 Please try that again, or send /start to begin fresh.",
   trending_service_down: "⚠️ We couldn't reach the listings service — please try again in a moment.",
   banner_duration_prompt:
     "📢 **{name}** · {size}\n\n" +
@@ -200,10 +211,22 @@ const DEFAULTS = {
     "🖼 **Upload your creative**\n\n🔹 Send your banner as a photo — recommended size **{size}**, PNG or JPG, clean and readable at a glance:",
   banner_link_prompt:
     "🔗 **Target Link**\n\n🔹 Send the **click-through URL** (https://…) — visitors who tap your banner land here:",
+  banner_desc_prompt:
+    "📝 **Description**\n\n" +
+    "🔹 Send the text you want under your banner in the announcement — what the project does, in your own words.\n\n" +
+    "Send **/skip** to leave it out.",
+  banner_ca_prompt:
+    "📄 **Contract Address**\n\n" +
+    "🔹 Paste your token's contract address — it will be shown as copyable text under your description.\n\n" +
+    "Send **/skip** if your campaign has no token.",
+  banner_socials_prompt:
+    "🔗 **Socials**\n\n" +
+    "🔹 Paste your links in ONE message — **X**, **Telegram** and **Website** (any order, one per line is fine).\n\n" +
+    "Send **/skip** to leave them out.",
   banner_title_prompt:
     "🏷 **Campaign Title**\n\n🔹 Send a short title for your campaign (shown in the announcement) — or /skip:",
   banner_pay_prompt:
-    "💳 **{slot}** · {duration} — **${usd}**\n\n" +
+    "💳 **{slot}** · `{size}` · {duration} — **${usd}**\n\n" +
     "🔹 Choose the currency you'd like to pay with — the exact amount is calculated at the live market rate:",
   price_feed_down: "⚠️ The price feed is unavailable right now — please try again in a minute.",
   checking_payment:
@@ -226,19 +249,44 @@ const DEFAULTS = {
     "🔹 Already paid? Contact support with order ID `{order}`.",
   payment_snag:
     "⚠️ **We're on it**\n\n🔹 Your payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete your order.",
+  // Receipt shape follows the reference bot the operator asked for: one congrats
+  // line, the token's page as a BARE url, then one line per post that went out.
+  // Each destination is its OWN line with its OWN label, so the operator can
+  // reword or reorder them — a single auto-generated {postLinks} blob could not
+  // be edited at all. A line whose link doesn't exist (an Xpress buyer has no
+  // announcement and no trending post) disappears completely; see
+  // dropEmptyLines. {postLinks}/{announceX} still work for older saved copies.
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! **{symbol}** ({name}) is officially listed on Dexvra! 🎉\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
-    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+    "⚡ Congrats! Your token **{name}** ({symbol}) is officially listed!\n" +
+    "{siteUrl}\n\n" +
+    "🔔 Dexvra Listing: {listingUrl}\n" +
+    "🔔 Dexvra Listing (X): {xUrl}",
+  // Listing & Trending buys three things at once — the listing, a ranked tier
+  // badge and a timed Trending run — so the second line accounts for the two a
+  // buyer cannot read off the links. {tier}/{tierEmoji}/{hours} exist only here.
+  success_listing_tiered:
+    "✅ **Payment Confirmed**\n\n" +
+    "🏆 Congrats! Your token **{name}** ({symbol}) is officially listed!\n" +
+    "{tierEmoji} **{tier}** tier · 🔥 Trending for **{hours}h**\n" +
+    "{siteUrl}\n\n" +
+    "🔔 Dexvra Listing: {listingUrl}\n" +
+    "🔔 Dexvra Listing (X): {xUrl}\n" +
+    "🔔 Dexvra Announcement: {announceUrl}\n" +
+    "🔔 Dexvra Trending: {trendingUrl}",
   success_trending:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! **{symbol}** is now **Trending** on Dexvra for the next **{hours} hours**, announced across our channels! 🔥\n\n" +
-    "🌐 **Dexvra listing:** {siteUrl}\n{postLinks}\n{announceX}\n\n" +
-    "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+    "🔥 Congrats! **{symbol}** is Trending on Dexvra for the next **{hours}h**!\n" +
+    "{siteUrl}\n\n" +
+    "🔔 Dexvra Trending: {trendingUrl}\n" +
+    "🔔 Dexvra Announcement: {announceUrl}\n" +
+    "🔔 Dexvra (X): {xUrl}",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Congratulations! Your **{slot}** banner is now live on the dexvra.io homepage until {endsAt}, announced in our channel! 📢\n{postLinks}\n{announceX}\n\n" +
+    // No "banner" after {slot} — every slot name already ends in "Banner".
+    "⚡ Your **{slot}** is booked on the dexvra.io homepage.\n\n" +
+    "🗓 **Runs:** {startsAt} → {endsAt}\n" +
+    "{queueNote}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   group_start:
     "🟢 **Dexvra Buy Bot**\n\n" +
@@ -314,28 +362,75 @@ const DEFAULTS = {
   // the markup parser and leak as raw text.
   post_listing_xpress:
     `${em("⚡", E.zap)} **Xpress Listing — {name} live on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  // Tier sits BESIDE the header, not stacked under it, and the token's own
+  // emoji closes the line (operator preference): "New Listing on Dexvra ·
+  // 💠 Platinum tier 🐶". An untiered listing drops just the tier SEGMENT —
+  // channels/format.js keeps the header itself.
   post_listing_tiered:
-    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** {logoEmoji}\n` +
-    `{tierEmoji} **{tier} tier**\n\n` +
+    // {tierEmoji} is whatever the operator set for that tier in the
+    // `tier_emojis` template below — a premium emoji if they sent one. It was
+    // briefly removed when the badge was a hardcoded trophy nobody chose; the
+    // objection was to the emoji, not to the badge.
+    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · {tierEmoji} **{tier} tier** {logoEmoji}\n\n` +
     LISTING_BODY,
   post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  // Advertiser-facing, so it reads like an ad placement announcement rather than
+  // bot output: what is running, where, and one link out. The "Announce On X"
+  // line carries the campaign's tweet and drops itself when there is none.
   post_banner:
-    `${em("📢", E.megaphone)} **Now featured on Dexvra**\n\n` +
-    `{title} has launched a **{slot}** campaign across dexvra.io.\n\n` +
-    `👉 [View the campaign]({linkUrl})\n\n` +
+    `${em("⚡", E.zap)} **BANNER LIVE ON DEXVRA** ${em("⚡", E.zap)}\n\n` +
+    // The title is the click-through. NOT bold-inside-link: the markup parser
+    // doesn't nest, and `[**x**](url)` leaks its asterisks into the post.
+    `▶️ [{title}]({linkUrl})  ·  {slot}\n\n` +
+    // The advertiser's OWN copy. Each block below is its own paragraph so it
+    // disappears cleanly (header line included) when they didn't supply it —
+    // plenty of campaigns are a service or an event with no token behind them.
+    `{description}\n\n` +
+    `${em("📄", E.clip)} **CA**\n` +
+    "`{address}`\n\n" +
+    `${em("🔗", E.link)} **Socials**\n` +
+    `${em("❌", E.cross)} [X]({twitter}) · 🌐 [Website]({website}) · ✈️ [Telegram]({telegram})\n\n` +
+    `[Announce On X 𝕏]({xUrl})\n\n` +
     FOOTER_BLOCK,
+  // Rank-up is a TICKER post, not an article: the clip carries the hype and the
+  // caption just says which token moved, where to read it, and the CA — then the
+  // full Dexvra link row. Kept deliberately short (Moontok-style) — the long
+  // version buried the ticker under three paragraphs of copy. {change} (a
+  // sentence) and {gain} (compact "+42%") stay available for admins who want the
+  // number back.
   post_rankup:
-    `${em("📈", E.chartUp)} **{symbol} is trending up on Dexvra**\n\n` +
-    `[{name}]({coinUrl}) just climbed to **#{rank}** on the Dexvra Trending board — one of today's top gainers by 24h performance.{change}\n\n` +
-    `${em("🟢", E.green)} [Trade & track {symbol} on Dexvra]({coinUrl})\n\n` +
-    `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
+    `{chainEmoji} **{symbol}** ${em("📈", E.chartUp)} Rank ↑ **#{rank}** on Dexvra Trending\n` +
+    `[{coinUrlLabel}]({coinUrl})\n\n` +
+    `${em("📄", E.clip)} **CA**\n` +
+    "`{address}`\n\n" +
+    LINKS_ROW,
+  // Same ticker shape as post_rankup: the clip carries the hype, the caption
+  // states the fact. The old version buried "+2,400%" under four paragraphs of
+  // copy and a per-token social row — by the time a reader got to the number it
+  // had stopped being news. What was cut was the PROSE, not the destinations:
+  // the Dexvra link row stays complete. {percent}, {name} and {chain} stay
+  // available.
   post_pump:
-    `${em("🚀", E.rocket)} **{symbol} pump {multiple} on Dexvra**\n\n` +
-    `[{name}]({coinUrl}) is up **+{percent}%** since it listed — and still climbing.\n\n` +
-    `${em("📊", E.chart)} **Market cap:** {firstMc} → **{lastMc}**\n` +
-    `{chainEmoji} **Chain:** {chain}\n\n` +
-    `${em("🟢", E.green)} [Chart & trade {symbol} on Dexvra]({coinUrl})\n\n` +
-    `${SOCIALS_BLOCK}\n\n${FOOTER_BLOCK}`,
+    `{chainEmoji} **{symbol}** ${em("🚀", E.rocket)} **{multiple}** since listing\n` +
+    `[{coinUrlLabel}]({coinUrl})\n\n` +
+    // Labelled, so the two numbers read as a market-cap move and not as a
+    // price, a range, or a target.
+    `${em("📊", E.chart)} **Market cap:** {firstMc} → {lastMc}\n\n` +
+    `${em("📄", E.clip)} **CA**\n` +
+    "`{address}`\n\n" +
+    LINKS_ROW,
+  // Per-TIER badge shown beside the header on a listing post ("New Listing on
+  // Dexvra · 💎 Diamond tier"). Same shape as chain_emojis: one `tier = emoji`
+  // per line. Send a PREMIUM emoji here and the badge animates in the channel —
+  // that is the whole point of it being a template rather than code.
+  // A tier missing from this list falls back to the emoji in config/packages.js.
+  tier_emojis:
+    "diamond = 💎\n" +
+    "gold = 🥇\n" +
+    "platinum = 🏆\n" +
+    "silver = 🥈\n" +
+    "bronze = 🥉\n" +
+    "xpress = ⚡",
   // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
   // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
   // Edit an emoji to rebrand a network everywhere at once.
@@ -402,15 +497,20 @@ const META = {
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
   invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
   invalid_url: { group: "Bot Messages", label: "Error: invalid URL", ph: [] },
+  invalid_ticker: { group: "Bot Messages", label: "Error: invalid ticker", ph: [] },
   listing_incomplete: { group: "Bot Messages", label: "Error: listing incomplete", ph: [] },
   pricing_unavailable: { group: "Bot Messages", label: "Error: pricing unavailable", ph: [] },
   session_expired: { group: "Bot Messages", label: "Error: session expired", ph: [] },
+  error_retry: { group: "Bot Messages", label: "Error: try again", ph: [] },
   trending_service_down: { group: "Bot Messages", label: "Error: listings service down", ph: [] },
   banner_duration_prompt: { group: "Bot Messages", label: "Banner: duration picker", ph: ["name", "size"] },
   banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size"] },
   banner_link_prompt: { group: "Bot Messages", label: "Banner: link prompt", ph: [] },
   banner_title_prompt: { group: "Bot Messages", label: "Banner: title prompt", ph: [] },
-  banner_pay_prompt: { group: "Bot Messages", label: "Banner: pay-method picker", ph: ["slot", "duration", "usd"] },
+  banner_desc_prompt: { group: "Bot Messages", label: "Banner: description prompt", ph: [] },
+  banner_ca_prompt: { group: "Bot Messages", label: "Banner: contract prompt", ph: [] },
+  banner_socials_prompt: { group: "Bot Messages", label: "Banner: socials prompt", ph: [] },
+  banner_pay_prompt: { group: "Bot Messages", label: "Banner: pay-method picker", ph: ["slot", "size", "duration", "usd"] },
   price_feed_down: { group: "Bot Messages", label: "Error: price feed down", ph: [] },
   checking_payment: { group: "Bot Messages", label: "Payment: checking", ph: ["chain", "amount", "native"] },
   still_checking: { group: "Bot Messages", label: "Payment: still checking", ph: [] },
@@ -419,9 +519,10 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
-  success_listing: { group: "Bot Messages", label: "Success: listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "endsAt", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "listingUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "listingUrl", "xUrl", "announceUrl", "trendingUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
   buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
@@ -438,9 +539,10 @@ const META = {
   post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "site", "listing", "trending", "announce"] },
-  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["symbol", "name", "rank", "change", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chainEmoji", "chain", "coinUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
@@ -474,15 +576,21 @@ function substitute(tpl, vars) {
  *  so their links/emoji render instead of showing raw markup; in the legacy
  *  HTML mode every var is markup-stripped AND HTML-escaped so user values can
  *  neither leak markup nor break Telegram's HTML parser. */
-function render(key, vars) {
+function render(key, vars, opts) {
   const val = loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
-  return renderValue(val, vars);
+  return renderValue(val, vars, opts);
 }
 
 /** Render a RESOLVED template value (markup string or {text, entities}) — the
  *  body of render() without the key lookup. channels/format.js uses it to
  *  render a template AFTER stripping social/tier lines the token lacks. */
-function renderValue(val, vars) {
+function renderValue(rawVal, vars, opts) {
+  // OPT-IN only. A blanket "drop lines whose placeholders are empty" also eats
+  // a channel-post header like "🔥 **New Trending on Dexvra** {logoEmoji}" when
+  // the token has no emoji — real copy, one empty placeholder. Channel posts do
+  // their own, smarter stripping in channels/format.js; this is for the buyer
+  // receipts, where every link line is exactly "label: {url}".
+  const val = opts && opts.dropEmpty ? dropEmptyLines(rawVal, vars) : rawVal;
   if (val && typeof val === "object" && val.text != null) {
     // Admin-pasted template stored with real entity arrays (premium emoji kept).
     const rich = {};
@@ -528,6 +636,67 @@ function collapseGaps(s) {
   return String(s).replace(/\n{3,}/g, "\n\n");
 }
 
+/**
+ * Drop every line whose placeholders ALL resolve to empty.
+ *
+ * This is what lets a receipt spell its links out as editable lines —
+ * "🔔 Dexvra Trending: {trendingUrl}" — instead of hiding them behind one
+ * auto-generated {postLinks} blob the operator cannot reword. An Xpress buyer
+ * has no announcement and no trending post, so those lines have to disappear
+ * completely rather than leave a label pointing at nothing.
+ *
+ * A line with no placeholders is never touched, and a line keeps its place as
+ * long as ONE of its placeholders has a value. Works on both stored shapes: for
+ * an admin-pasted {text, entities} template the entity offsets are re-mapped
+ * around the removed lines, so premium emoji stay on their characters.
+ */
+function dropEmptyLines(val, vars) {
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? val.text : String(val || "");
+  if (!text.includes("{")) return val;
+  const filled = (k) => vars && vars[k] != null && String(vars[k]) !== "";
+  const lines = text.split("\n");
+  const cuts = []; // [start, end) ranges to remove, in order
+  let off = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const start = off;
+    off += line.length + 1;
+    const keys = [...line.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+    if (!keys.length || keys.some(filled)) continue;
+    // Take the line's own trailing newline so the gap closes behind it.
+    cuts.push([start, i < lines.length - 1 ? start + line.length + 1 : start + line.length]);
+  }
+  if (!cuts.length) return val;
+  // Merge touching/overlapping ranges — the offset maths below assumes disjoint
+  // cuts, and two dropped neighbours would otherwise be counted twice.
+  const merged = [];
+  for (const [a, b] of cuts) {
+    const prev = merged[merged.length - 1];
+    if (prev && a <= prev[1]) prev[1] = Math.max(prev[1], b);
+    else merged.push([a, b]);
+  }
+  cuts.length = 0;
+  cuts.push(...merged);
+  // A cut that runs to the end of the text has no newline of its own to take,
+  // so it swallows the ones in front of it — including the blank separator that
+  // introduced the block. Otherwise a receipt whose whole link block is empty
+  // ends on dangling blank lines.
+  const last = cuts[cuts.length - 1];
+  if (last[1] === text.length) {
+    const floor = cuts.length > 1 ? cuts[cuts.length - 2][1] : 0;
+    while (last[0] > floor && text[last[0] - 1] === "\n") last[0]--;
+  }
+  const cut = (s) => cuts.reduceRight((acc, [a, b]) => acc.slice(0, a) + acc.slice(b), s);
+  if (!isEntity) return cut(text);
+  const removedBefore = (pos) => cuts.reduce((n, [a, b]) => (b <= pos ? n + (b - a) : n), 0);
+  const inCut = (pos) => cuts.some(([a, b]) => pos >= a && pos < b);
+  const entities = (val.entities || [])
+    .filter((e) => !inCut(e.offset))
+    .map((e) => ({ ...e, offset: e.offset - removedBefore(e.offset) }));
+  return { ...val, text: cut(text), entities };
+}
+
 /** Plain-text resolve (markup stripped to clean text) — for previews/tests. */
 function t(key, vars) {
   const r = render(key, vars);
@@ -543,6 +712,110 @@ function getRaw(key) {
 function getRawValue(key) {
   return loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
 }
+// ── Per-emoji editing ───────────────────────────────────────────────────────
+// Editing a template means re-sending the WHOLE message, which is fine for
+// rewording but absurd for swapping one emoji in a 12-line welcome card. These
+// two functions let the admin bot list the emoji in a template and replace ONE
+// of them in place — keeping every other character, and every other entity,
+// exactly where it was.
+//
+// A template value comes in two shapes and both are handled here:
+//   • markup string (all DEFAULTS)  — a premium emoji is "[😀](emoji/123)"
+//   • {text, entities} (admin paste) — a premium emoji is a custom_emoji entity
+//     over its fallback char, so replacing text in the middle means re-mapping
+//     every entity offset after the cut.
+const EMOJI_RE =
+  /(?:\p{RI}\p{RI}|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*|[0-9#*]\uFE0F?\u20E3)/gu;
+const PREMIUM_FRAG_RE = /\[([^\]\n]+)\]\(emoji\/(\d+)\)/g;
+
+/** Parse a replacement the admin sent: "😀" or "[😀](emoji/123)". */
+function parseFragment(fragment) {
+  const f = String(fragment || "").trim();
+  const m = /^\[([^\]\n]+)\]\(emoji\/(\d+)\)$/.exec(f);
+  return m ? { char: m[1], id: m[2] } : { char: f, id: null };
+}
+
+/**
+ * Every emoji in a template, in reading order:
+ *   { i, char, id, start, end }   — id set only for premium ones
+ * `start`/`end` index into the RAW value (markup string or entity text), which
+ * is what replaceEmojiAt() splices.
+ */
+function listEmojis(key) {
+  const val = getRawValue(key);
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? val.text : String(val || "");
+  const out = [];
+  if (!isEntity) {
+    // Premium fragments first — they own their whole "[char](emoji/id)" span,
+    // so the plain scan below must not also match the char inside them.
+    const taken = [];
+    PREMIUM_FRAG_RE.lastIndex = 0;
+    for (let m; (m = PREMIUM_FRAG_RE.exec(text)); ) {
+      out.push({ char: m[1], id: m[2], start: m.index, end: m.index + m[0].length });
+      taken.push([m.index, m.index + m[0].length]);
+    }
+    EMOJI_RE.lastIndex = 0;
+    for (let m; (m = EMOJI_RE.exec(text)); ) {
+      const at = m.index;
+      if (taken.some(([a, b]) => at >= a && at < b)) continue;
+      out.push({ char: m[0], id: null, start: at, end: at + m[0].length });
+    }
+  } else {
+    const ce = (val.entities || []).filter((e) => e.type === "custom_emoji");
+    EMOJI_RE.lastIndex = 0;
+    for (let m; (m = EMOJI_RE.exec(text)); ) {
+      const at = m.index;
+      const hit = ce.find((e) => e.offset === at);
+      out.push({ char: m[0], id: hit ? hit.custom_emoji_id : null, start: at, end: at + m[0].length });
+    }
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out.map((e, i) => ({ i, ...e }));
+}
+
+/**
+ * Replace emoji #i with `fragment` and persist. Returns the emoji list after
+ * the change, so the caller can redraw its keyboard.
+ */
+async function replaceEmojiAt(key, i, fragment) {
+  const list = listEmojis(key);
+  const target = list[i];
+  if (!target) throw new Error(`no emoji #${i + 1} in this template`);
+  const { char, id } = parseFragment(fragment);
+  if (!char) throw new Error("send a single emoji");
+  const val = getRawValue(key);
+  const isEntity = val && typeof val === "object" && val.text != null;
+
+  if (!isEntity) {
+    const text = String(val || "");
+    const replacement = id ? `[${char}](emoji/${id})` : char;
+    await setTemplate(key, text.slice(0, target.start) + replacement + text.slice(target.end));
+    return listEmojis(key);
+  }
+
+  // Entity form: splice the text, then move every entity that sits after the
+  // cut and stretch every entity that CONTAINS it. Getting this wrong slides
+  // premium emoji onto the wrong characters — the bug this whole file guards.
+  const text = val.text;
+  const delta = char.length - (target.end - target.start);
+  const next = [];
+  for (const e of val.entities || []) {
+    const end = e.offset + e.length;
+    if (e.type === "custom_emoji" && e.offset === target.start && end === target.end) continue; // the old one
+    if (end <= target.start) next.push({ ...e });
+    else if (e.offset >= target.end) next.push({ ...e, offset: e.offset + delta });
+    else next.push({ ...e, length: Math.max(0, e.length + delta) }); // spans the cut
+  }
+  if (id) next.push({ type: "custom_emoji", offset: target.start, length: char.length, custom_emoji_id: id });
+  next.sort((a, b) => a.offset - b.offset);
+  await setTemplate(key, {
+    text: text.slice(0, target.start) + char + text.slice(target.end),
+    entities: next,
+  });
+  return listEmojis(key);
+}
+
 function isCustom(key) {
   return loadJSONSync(FILE, {})[key] != null;
 }
@@ -594,6 +867,8 @@ module.exports = {
   FOOTER_BLOCK,
   getRaw,
   getRawValue,
+  listEmojis,
+  replaceEmojiAt,
   isCustom,
   overrideCount,
   setTemplate,
@@ -603,6 +878,7 @@ module.exports = {
   meta,
   groups,
   substitute,
+  dropEmptyLines,
   DEFAULTS,
   BANNER_PATH,
   EMOJI: E,

@@ -1,9 +1,11 @@
 "use client";
 
-// Admin panel section: homepage banner manager. Upload an image, set the
-// click-through link (+ optional title & duration) → it becomes the carousel's
-// sponsored slide immediately. Existing bookings (bot-paid or admin) are
-// listed with live/expired state and can be removed.
+// Admin panel section: homepage ad-row manager. Upload an image, pick the SLOT
+// (the same Standard / Wide the bot sells, or a full-width house banner), set
+// the click-through link (+ optional title & duration) → it goes live in the
+// homepage ad row immediately, no bot purchase needed. Existing bookings
+// (bot-paid or admin) are listed with slot, size and live/expired state, and
+// can be removed.
 import { useCallback, useEffect, useState } from "react";
 
 type Row = {
@@ -12,13 +14,22 @@ type Row = {
   linkUrl: string;
   title?: string;
   slot: string;
+  size?: string;
   startsAt: number;
   endsAt: number;
   source?: string;
   active?: boolean;
 };
 
-const emptyForm = { imageUrl: "", linkUrl: "", title: "", days: "30" };
+// Keep in sync with SLOTS in /api/admin/banners (which is itself keyed to the
+// bot's packages). `hint` is what the operator needs to decide, not jargon.
+const SLOT_OPTIONS = [
+  { key: "house", label: "Full width (house banner)", size: "any wide image", hint: "Spans all 4 columns. Not tagged as sold inventory." },
+  { key: "wide", label: "Wide Banner", size: "1200 × 240", hint: "Takes 2 of 4 columns, always on the LEFT. Tagged “Ad · Wide”." },
+  { key: "standard", label: "Standard Banner", size: "600 × 240", hint: "Takes 1 of 4 columns, to the right of any Wide. Tagged “Ad · Standard”." },
+];
+
+const emptyForm = { imageUrl: "", linkUrl: "", title: "", days: "30", slot: "house" };
 
 export function BannerManager() {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -94,8 +105,10 @@ export function BannerManager() {
     }
   };
 
-  const set = (k: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((s) => ({ ...s, [k]: e.target.value }));
+  // Inputs and the slot <select> share one setter.
+  const set =
+    (k: keyof typeof emptyForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      setForm((s) => ({ ...s, [k]: e.target.value }));
 
   const live = (rows ?? []).filter((r) => r.active);
 
@@ -106,8 +119,9 @@ export function BannerManager() {
       </div>
       <div className="asec-body">
         <div className="a-chain" style={{ marginBottom: 12 }}>
-          Upload a banner image and a target link — the newest live banner shows as a plain banner strip on the homepage;
-          clicking it opens the link in a new tab.
+          Upload an image, pick a slot and set a target link — it goes live in the homepage ad row straight away (no bot
+          purchase needed). Every live banner is shown: two Standard banners share a row, a Wide or full-width one takes
+          the row alone, and anything beyond that pages through automatically.
         </div>
 
         {/* create */}
@@ -119,6 +133,19 @@ export function BannerManager() {
               <img src={form.imageUrl} alt="banner preview" style={{ maxHeight: 72, borderRadius: 8, objectFit: "cover", border: "1px solid rgba(255,255,255,.12)" }} />
             ) : null}
             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={upload} disabled={uploading} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span className="a-chain">Slot</span>
+            <select value={form.slot} onChange={set("slot")}>
+              {SLOT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label} · {o.size}
+                </option>
+              ))}
+            </select>
+            <span className="a-chain" style={{ fontSize: 11, opacity: 0.75 }}>
+              {SLOT_OPTIONS.find((o) => o.key === form.slot)?.hint}
+            </span>
           </label>
           <label style={{ display: "grid", gap: 4 }}>
             <span className="a-chain">Target link (opens on click)</span>
@@ -152,6 +179,9 @@ export function BannerManager() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600 }}>
                     {r.title || r.slot} {r.active ? <span style={{ color: "#4EE6A8" }}>· LIVE</span> : <span className="a-chain">· ended</span>}
+                    {/* Slot + size on every row: with three slot types in play,
+                        "which banner is this?" has to be answerable at a glance. */}
+                    <span className="a-chain"> · {r.slot}{r.size ? ` (${r.size})` : ""}</span>
                     {r.source ? <span className="a-chain"> · {r.source}</span> : null}
                   </div>
                   <a href={r.linkUrl} target="_blank" rel="noopener noreferrer" className="a-chain" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

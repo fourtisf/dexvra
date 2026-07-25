@@ -1,12 +1,12 @@
 // Entry point. Loads .env, installs non-fatal process guards (a stray RPC/HTTP
 // rejection must never crash the bot), then boots.
-// override:true — bot/.env is the source of truth. PM2 snapshots the env at
-// the FIRST `pm2 start` and re-injects it on every restart (--update-env only
-// overlays the current shell), so without override a stale snapshot silently
-// beats an edited .env (live incident: POST_BANNERS=0 survived every restart).
-require("dotenv").config({ override: true });
+const envFiles = require("./src/config/loadEnv").loadEnv();
 
 const log = require("./src/helpers/logger");
+// Named out loud: "which .env is this process actually reading" is the first
+// question behind every setting that appears not to apply.
+log.info(envFiles.length ? `[env] loaded ${envFiles.join(", ")}` : "[env] no .env found — using process env only");
+require("./src/helpers/net").preferIPv4(); // before any socket opens
 
 const NON_FATAL = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|network|timeout/i;
 

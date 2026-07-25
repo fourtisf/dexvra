@@ -8,7 +8,12 @@ export interface TxSplit {
 
 // Listing packages (the tag every listed token carries). Ranked #1 Diamond →
 // #5 Bronze, plus Xpress (instant, unranked). Pricing lives in lib/packages.ts.
-export type ListingTier = "DIAMOND" | "GOLD" | "PLATINUM" | "SILVER" | "BRONZE" | "XPRESS";
+// "FREE" is NOT a package anyone can buy — it marks a token the bot auto-listed
+// when it climbed past the operator's market-cap threshold. It is deliberately
+// absent from LISTING_TIERS (the pricing UI iterates that), so it can never show
+// up for sale, while still carrying its own badge instead of impersonating a
+// paid Bronze listing.
+export type ListingTier = "DIAMOND" | "GOLD" | "PLATINUM" | "SILVER" | "BRONZE" | "XPRESS" | "FREE";
 
 export interface BoardToken {
   key: string; // `${chain}:${address}` — stable identity across refreshes

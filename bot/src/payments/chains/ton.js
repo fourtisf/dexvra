@@ -35,37 +35,49 @@ async function getBalance(_chain, address) {
   return BigInt(bal);
 }
 
-async function sweep(_chain, wallet, treasury) {
-  try {
-    const { ton, core, crypto } = libs();
-    const client = makeClient(ton);
-    const mnemonic = String(wallet.privateKey).trim().split(/\s+/);
-    const key = await crypto.mnemonicToPrivateKey(mnemonic);
-    const w = ton.WalletContractV4.create({ workchain: 0, publicKey: key.publicKey });
-    const balance = await client.getBalance(w.address);
-    if (balance <= 0n) return { ok: false, error: "empty" };
+const ATTEMPTS = 2; // toncenter's public endpoint rate-limits aggressively
 
-    const contract = client.open(w);
-    let seqno = 0;
-    try {
-      seqno = await contract.getSeqno();
-    } catch {
-      seqno = 0; // not deployed yet → first transfer deploys it
-    }
-    const internal = ton.internal || core.internal;
-    await contract.sendTransfer({
-      secretKey: key.secretKey,
-      seqno,
-      sendMode: 128, // CARRY_ALL_REMAINING_BALANCE — sweep everything
-      messages: [
-        internal({ to: core.Address.parse(treasury), value: 0n, bounce: false, body: "Dexvra sweep" }),
-      ],
-    });
-    return { ok: true, txid: `seqno:${seqno}` };
-  } catch (e) {
-    log.debug(`[ton] sweep error: ${e.message}`);
-    return { ok: false, error: e.message };
+async function sweepOnce(wallet, treasury) {
+  const { ton, core, crypto } = libs();
+  const client = makeClient(ton);
+  const mnemonic = String(wallet.privateKey).trim().split(/\s+/);
+  const key = await crypto.mnemonicToPrivateKey(mnemonic);
+  const w = ton.WalletContractV4.create({ workchain: 0, publicKey: key.publicKey });
+  const balance = await client.getBalance(w.address);
+  if (balance <= 0n) return { ok: false, error: "empty" };
+
+  const contract = client.open(w);
+  let seqno = 0;
+  try {
+    seqno = await contract.getSeqno();
+  } catch {
+    seqno = 0; // not deployed yet → first transfer deploys it
   }
+  const internal = ton.internal || core.internal;
+  await contract.sendTransfer({
+    secretKey: key.secretKey,
+    seqno,
+    sendMode: 128, // CARRY_ALL_REMAINING_BALANCE — sweep everything
+    messages: [internal({ to: core.Address.parse(treasury), value: 0n, bounce: false, body: "Dexvra sweep" })],
+  });
+  log.info(`[ton] swept ${balance} nanoton → ${treasury} (seqno ${seqno})`);
+  // sendMode 128 carries the whole remaining balance, so there is nothing left
+  // to reserve — but the send is only BROADCAST here, never confirmed. The
+  // retry pass re-checks the balance, which is the only real proof.
+  return { ok: true, txid: `seqno:${seqno}` };
+}
+
+async function sweep(_chain, wallet, treasury) {
+  let last = "unknown";
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    try {
+      return await sweepOnce(wallet, treasury);
+    } catch (e) {
+      last = e.message;
+      log.debug(`[ton] sweep attempt ${attempt}/${ATTEMPTS}: ${e.message}`);
+    }
+  }
+  return { ok: false, error: last };
 }
 
 module.exports = { family: "ton", generate, getBalance, sweep };

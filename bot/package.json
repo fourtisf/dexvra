@@ -8,7 +8,8 @@
     "start": "node main.js",
     "check": "node scripts/smoke.js",
     "mongo:check": "node scripts/mongo-check.js",
-    "test": "node --test"
+    "treasury": "node scripts/treasury.js",
+    "test": "node scripts/run-tests.js"
   },
   "engines": {
     "node": ">=18"

@@ -1,11 +1,22 @@
-// Admin banner management — the homepage carousel banner with a click-through
-// link. Admin uploads an image via /api/admin/upload, then creates a booking
-// here (source:"admin"); the newest active booking is what PromoCarousel shows
-// and links. DELETE removes a booking (paid bot bookings included — admin's
-// call). Auth: same cookie guard as the rest of the panel.
+// Admin banner management — create ANY homepage ad-row banner without going
+// through the bot's paid flow. Admin uploads an image via /api/admin/upload,
+// picks the slot, then creates a booking here (source:"admin"). DELETE removes
+// a booking (paid bot bookings included — admin's call). Auth: same cookie guard
+// as the rest of the panel.
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin, unauthorized } from "@/lib/adminGuard";
 import { activeBanners, addBanner, allBanners, removeBanner } from "@/lib/banners";
+
+// The slots the panel can create. Names and sizes MUST match what the bot sells
+// (bot/src/config/packages.js) — the homepage lays a booking out by its slot
+// name, so a typo here would silently render at the wrong width. "Full Width"
+// is the operator's own house banner: it fills the row like a Wide, but isn't
+// tagged as sold inventory on the site.
+const SLOTS: Record<string, { slot: string; size: string }> = {
+  standard: { slot: "Standard Banner", size: "600 × 240" },
+  wide: { slot: "Wide Banner", size: "1200 × 240" },
+  house: { slot: "Homepage Banner", size: "full width" },
+};
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,10 +45,11 @@ export async function POST(req: NextRequest) {
   if (!/^https?:\/\/[^\s]+$/i.test(linkUrl)) {
     return NextResponse.json({ error: "Target link must be a valid http(s) URL" }, { status: 400 });
   }
+  const pick = SLOTS[String(body.slot || "house").toLowerCase()] || SLOTS.house;
   const now = Date.now();
   const banner = await addBanner({
-    slot: "Homepage Banner",
-    size: "carousel",
+    slot: pick.slot,
+    size: pick.size,
     imageUrl,
     linkUrl,
     title: title || undefined,

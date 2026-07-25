@@ -14,6 +14,7 @@ const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
+const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
 const { payloadArgs } = require("./helpers/message");
 const premium = require("./premium");
 const { chainOf } = require("./config/chains");
@@ -141,8 +142,10 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
         }
         log.warn(`[fulfil] ${kind} media: overlay composite failed — sending clip as-is`);
       }
+      // A raw .gif would arrive as a file card over MTProto — convert it so it
+      // plays inline, the same as the clips composeOntoClip already produces.
       log.info(`[fulfil] ${kind} media: admin ${media.type} clip ✔`);
-      return media;
+      return await bannerTemplate.toInlineClip(media);
     }
     // Rank-up has its OWN dynamic banner (rank medallion + big % gain). It can't
     // be a static composited artwork (the rank/% change every alert), so skip
@@ -192,6 +195,18 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
 async function fulfillListing(ctx, order) {
   const p = order.payload; // { listingInput, logoFileId?, trendHours }
   const input = { ...p.listingInput };
+
+  // 0. Last line of defence on the ticker. The buyer has PAID by the time we
+  // get here, so a ticker the site would refuse must be REPAIRED, not raised:
+  // createListing answering "400: Invalid ticker" leaves the order 'paid' with
+  // nothing delivered (incident 2026-07-23). handlers/listing.js is what
+  // normally stops this reaching here — a line in the log means one slipped
+  // past input validation, so it is worth reading.
+  if (!isValidTicker(input.sym)) {
+    const fixed = sanitizeTicker(input.sym) || sanitizeTicker(input.name);
+    log.warn(`[fulfil] ticker "${input.sym}" would be rejected by the site → using "${fixed || "(none)"}"`);
+    if (fixed) input.sym = fixed;
+  }
 
   // 1. Logo (best-effort): upload the Telegram photo to dexvra media.
   let logoBuffer = null;
@@ -248,18 +263,25 @@ async function fulfillListing(ctx, order) {
 
   const links = [];
   try {
-    const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin));
-    if (listingMsg) links.push({ label: "🚨 Listing post", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    // Every listing PINS itself in the channel it lands in (operator rule,
+    // 2026-07-25) — the newest listing is what a visitor should see first.
+    // Pinning is silent (disable_notification), and the trending channel is
+    // deliberately NOT pinned here: its pin belongs to the Trending board.
+    const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true });
+    if (listingMsg) links.push({ kind: "listing", label: "🔔 Dexvra Listing", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    // The tweet sits right under its channel post, as a raw url like the rest —
+    // it is one of the things they bought, not a footnote.
+    if (coin.xUrl) links.push({ kind: "x", label: "🔔 Dexvra Listing (X)", url: coin.xUrl });
 
     const annMsg = tierAnnounces(input.tier)
-      ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin))
+      ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin), { pin: true })
       : null;
-    if (annMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
+    if (annMsg) links.push({ kind: "announce", label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
     if (hours > 0) {
       const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, `Trending ${hours}H`);
       const trendingMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
-      if (trendingMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
+      if (trendingMsg) links.push({ kind: "trending", label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
     }
     await postids.set(input.chain, input.address, {
       listingMsgId: listingMsg && listingMsg.message_id,
@@ -270,7 +292,7 @@ async function fulfillListing(ctx, order) {
   }
 
   // 6. Buyer DM (the tweet was posted before the channel posts above).
-  await dm(ctx, successListing(coin, links), menu.postPurchase(coin.siteUrl));
+  await dm(ctx, successListing(coin, links, { hours }), menu.postPurchase(coin.siteUrl));
 }
 
 // ── Trending (standalone slot on an already-listed token) ────────────────────
@@ -302,10 +324,10 @@ async function fulfillTrending(ctx, order) {
   const links = [];
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
-    if (tMsg) links.push({ label: "🔥 Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
+    if (tMsg) links.push({ kind: "trending", label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
     if (p.hours >= 24) {
       const aMsg = await post.sendMedia(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
-      if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
+      if (aMsg) links.push({ kind: "announce", label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
     }
   } catch (e) {
     log.warn(`[fulfil] trending posts: ${e.message}`);
@@ -333,9 +355,17 @@ async function fulfillBanner(ctx, order) {
   }
   if (!rec.imageUrl) throw new Error("banner creative missing (upload failed)");
   const booking = await api.bookBanner(rec); // hard step
-  log.info(`[fulfil] banner booked ${rec.slot} until ${new Date(rec.endsAt).toISOString()}`);
+  // The site may have scheduled the run later than requested (row full) — from
+  // here on the BOOKING's window is the truth, never the requested one.
+  const run = booking && booking.startsAt ? booking : rec;
+  log.info(
+    `[fulfil] banner booked ${rec.slot} ${new Date(run.startsAt).toISOString()} → ${new Date(run.endsAt).toISOString()}` +
+      (booking && booking.queued ? " (QUEUED — slots were full)" : ""),
+  );
 
   const links = [];
+  let bTweetId = null;
+  let bXUrl = "";
   try {
     // Frame the creative in the Banner Ads artwork when one is set (admin
     // upload or bundled); otherwise post the raw creative as before.
@@ -345,18 +375,20 @@ async function fulfillBanner(ctx, order) {
       const framed = await bannerTemplate.compose("banner", creative, {});
       if (framed) adMedia = { source: framed };
     }
-    const aMsg = await post.sendMedia(CHANNELS.announce, adMedia, fmt.bannerPost(rec));
+    // Tweet FIRST (timeboxed), so the channel post can carry the "Announce On X"
+    // link — same ordering as a listing. The line drops itself when X is off or
+    // the tweet failed.
+    bTweetId = await Promise.race([
+      x.postBanner(rec).catch(() => null),
+      new Promise((r) => setTimeout(r, 20000, null)),
+    ]);
+    bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
+    const aMsg = await post.sendMedia(CHANNELS.announce, adMedia, fmt.bannerPost(rec, bXUrl));
     if (aMsg) links.push({ label: "📢 Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
   } catch (e) {
     log.warn(`[fulfil] banner post: ${e.message}`);
   }
-  // Tweet the banner (timeboxed) and surface the "Announce on X" link in the DM.
-  const bTweetId = await Promise.race([
-    x.postBanner(rec).catch(() => null),
-    new Promise((r) => setTimeout(r, 20000, null)),
-  ]);
-  const bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
-  await dm(ctx, successBanner(rec, links, bXUrl), menu.postPurchase(SITE_URL));
+  await dm(ctx, successBanner(run, links, bXUrl, booking && booking.queued), menu.postPurchase(SITE_URL));
   return booking;
 }
 
@@ -369,32 +401,95 @@ function linkLines(links) {
 // The editable {announceX} placeholder — a clean "Announce on X" link when a
 // tweet exists, empty otherwise (collapseGaps drops the blank line).
 function announceXLine(xUrl) {
-  return xUrl ? `🐦 [Announce on X 𝕏](${xUrl})` : "";
+  return xUrl ? `🔔 Dexvra (X): ${xUrl}` : "";
 }
-function successListing(coin, links) {
-  return tpl.render("success_listing", {
-    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
-    name: premium.sanitizeVar(coin.name),
-    siteUrl: coin.siteUrl,
-    postLinks: linkLines(links),
-    announceX: announceXLine(coin.xUrl),
-    ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} → clickable footer
-  });
+/** The buyer's receipt. Xpress and Listing & Trending are different products —
+ *  one is a listing, the other adds a ranked tier and a timed Trending run — so
+ *  they get separate, separately-editable templates. */
+/** The posted-message urls keyed by destination, so each can be its own editable
+ *  line in the template. Empty string = that post didn't happen, and
+ *  dropEmptyLines removes the line together with its label.
+ *
+ *  Keyed on an explicit `kind`, never on the label text: "Dexvra Listing" is a
+ *  prefix of "Dexvra Listing (X)", so substring matching hands the listing line
+ *  the tweet's url — and the label is exactly the thing an operator is free to
+ *  reword. */
+function linkVars(links) {
+  const url = (kind) => {
+    const hit = (links || []).find((l) => l.kind === kind);
+    return hit ? hit.url : "";
+  };
+  return { listingUrl: url("listing"), xUrl: url("x"), announceUrl: url("announce"), trendingUrl: url("trending") };
+}
+
+function successListing(coin, links, { hours = 0 } = {}) {
+  const tiered = coin.tier && String(coin.tier).toUpperCase() !== "XPRESS";
+  return tpl.render(
+    tiered ? "success_listing_tiered" : "success_listing",
+    {
+      symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
+      name: premium.sanitizeVar(coin.name),
+      tier: coin.tier ? premium.sanitizeVar(tierLabel(coin.tier)) : "",
+      tierEmoji: coin.tier ? fmt.tierBadge(String(coin.tier).toUpperCase()) : "",
+      hours,
+      siteUrl: coin.siteUrl,
+      ...linkVars(links),
+      postLinks: linkLines(links), // legacy shape, for templates saved before the split
+      announceX: "", // the tweet has its own line now — never print it twice
+      ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} stay available
+    },
+    // A destination with no post drops its whole line, label included.
+    { dropEmpty: true },
+  );
 }
 function successTrending(coin, hours, links) {
-  return tpl.render("success_trending", {
-    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
-    hours,
-    siteUrl: coin.siteUrl,
-    postLinks: linkLines(links),
-    announceX: announceXLine(coin.xUrl),
-    ...fmt.channelLinks(),
-  });
+  return tpl.render(
+    "success_trending",
+    {
+      symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
+      hours,
+      siteUrl: coin.siteUrl,
+      ...linkVars(links),
+      xUrl: coin.xUrl || "",
+      postLinks: linkLines(links),
+      announceX: "",
+      ...fmt.channelLinks(),
+    },
+    { dropEmpty: true },
+  );
 }
-function successBanner(rec, links, xUrl) {
+// Buyer-facing timestamp: "30 Jul 2026, 12:00 UTC". Always UTC — the buyer and
+// the server are rarely in the same timezone, so a local time would be wrong for
+// one of them. Built field by field rather than from toUTCString(), which labels
+// the same instant "GMT"; Dexvra says UTC everywhere and one vocabulary is worth
+// the six lines. Seconds are dropped — noise on an ad run measured in days.
+const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function utcStamp(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCDate()} ${UTC_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+}
+// {startsAt}/{endsAt} describe the run the site actually scheduled. {queueNote}
+// is the honest line for a sale made while every slot was taken — the order went
+// through, the banner just starts later. Empty (and collapsed away) otherwise.
+//
+// The note repeats the start time INSIDE itself rather than pointing at the line
+// above: this is the one message a queued buyer has to understand, they may skim
+// it, and "booked on the homepage" must never be read as "already on screen".
+// The announcement post is NOT held back for a queued run (operator's call), so
+// the note also says so — a buyer who sees their @dexvraio post go out the same
+// minute would otherwise expect the banner to be live too.
+function successBanner(run, links, xUrl, queued) {
+  const when = utcStamp;
   return tpl.render("success_banner", {
-    slot: premium.sanitizeVar(rec.slot),
-    endsAt: new Date(rec.endsAt).toUTCString(),
+    slot: premium.sanitizeVar(run.slot),
+    startsAt: when(run.startsAt),
+    endsAt: when(run.endsAt),
+    queueNote: queued
+      ? "⏳ **Not live yet — every banner slot is taken right now.** Your run is reserved: it goes live " +
+        `automatically on **${when(run.startsAt)}** and runs the full time you paid for — nothing else to do. ` +
+        "Your announcement post is going out now."
+      : "",
     postLinks: linkLines(links),
     announceX: announceXLine(xUrl),
     ...fmt.channelLinks(),
@@ -465,4 +560,12 @@ async function fulfillOrder(ctx, order) {
   }
 }
 
-module.exports = { fulfillOrder, fulfillListing, fulfillTrending, fulfillBanner, fulfillMassDm, postMedia };
+module.exports = {
+  fulfillOrder,
+  fulfillListing,
+  fulfillTrending,
+  fulfillBanner,
+  fulfillMassDm,
+  postMedia,
+  _successBanner: successBanner, // buyer copy — tested directly (see banner.test.js)
+};

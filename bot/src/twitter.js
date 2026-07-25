@@ -65,7 +65,10 @@ async function send(account, text, mediaBuffer, mimeType, quoteTweetId) {
 const chainLabel = (c) => (chainOf(c) ? chainOf(c).label : String(c || ""));
 const mcOf = (m) => (m && m > 0 ? "$" + formatNumber(m) : "TBA");
 
-const X_TIER_EMOJI = { DIAMOND: "💎", GOLD: "🥇", PLATINUM: "🏆", SILVER: "🥈", BRONZE: "🥉" };
+// Tier badge for the tweet — the SAME admin setting the channel post uses,
+// flattened to its plain character because X has no custom emoji. A second
+// hardcoded map lived here and silently ignored the operator's choice.
+const xTierEmoji = (tier) => require("./channels/format").tierBadgeChar(tier) || "💎";
 // @mention the project's X account, parsed from the twitter link they submitted.
 function xMention(links) {
   const t = links && links.twitter;
@@ -90,7 +93,7 @@ function listingText(coin) {
     mcap: mcOf(coin.mcap),
   };
   if (tier && tier !== "XPRESS") {
-    return tpl.t("x_listing_tiered", { ...vars, tier, tierEmoji: X_TIER_EMOJI[tier] || "💎" });
+    return tpl.t("x_listing_tiered", { ...vars, tier, tierEmoji: xTierEmoji(tier) });
   }
   return tpl.t("x_listing", vars);
 }

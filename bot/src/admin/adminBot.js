@@ -15,6 +15,9 @@ const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
 const trendingBoard = require("../services/trendingBoard");
 const autoTrend = require("../services/autoTrend");
+const autoLister = require("../services/autoLister");
+const forcePost = require("./forcePost");
+const fpStore = require("../forcepost/store");
 const gramjs = require("../gramjs");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
@@ -61,8 +64,10 @@ function mainKb() {
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
+    [Markup.button.callback("🚀 Force post to channel (test live)", "fp")],
     [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
     [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
+    [Markup.button.callback("🆓 Auto Listing (free, $1M+ projects)", "al")],
     [Markup.button.callback("📣 Broadcast", "bc")],
   ]);
 }
@@ -109,7 +114,19 @@ async function sendTemplateAudit(ctx, arg = "") {
     post_trending: () => fmt.trendingPost(sampleCoin),
     post_pump: () => fmt.pumpPost(sampleCoin, 137.6, 310000, 1300000),
     post_rankup: () => fmt.rankupPost(sampleCoin, 2, 82),
-    post_banner: () => fmt.bannerPost({ title: "The Bull Cat", slot: "Wide Banner", linkUrl: "https://bullcat.io" }),
+    post_banner: () =>
+      fmt.bannerPost(
+        {
+          title: "The Bull Cat",
+          slot: "Wide Banner",
+          linkUrl: "https://bullcat.io",
+          description: "The Bull Cat is a community-driven memecoin on Solana with a deflationary burn on every trade.",
+          address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+          twitter: "https://x.com/bullcat",
+          telegram: "https://t.me/bullcat",
+        },
+        "https://x.com/i/status/1",
+      ),
   };
   const cleanOf = (k) => {
     try {
@@ -174,10 +191,11 @@ function groupText(name, p, pages) {
   return `<b>${escapeHtml(name)}</b>${head}\n\nPick a template:`;
 }
 function viewKb(key) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)],
-    [Markup.button.callback("⬅ Back", `grp:${groupIdOf(key)}`)],
-  ]);
+  const rows = [[Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)]];
+  // Only offer the emoji swap when there is something to swap.
+  if (tpl.listEmojis(key).length) rows.push([Markup.button.callback("😀 Swap emoji", `tem:${key}`)]);
+  rows.push([Markup.button.callback("⬅ Back", `grp:${groupIdOf(key)}`)]);
+  return Markup.inlineKeyboard(rows);
 }
 function bannerKb() {
   const has = bannerExists();
@@ -334,61 +352,77 @@ function emojiFragment(msg) {
   const raw = String((msg && msg.text) || "");
   const ce = ((msg && msg.entities) || []).find((e) => e.type === "custom_emoji");
   if (ce && ce.custom_emoji_id) {
-    const fallback = raw.substring(ce.offset, ce.offset + ce.length).trim();
+    // The fallback char is what non-premium viewers see; strip markup chars from
+    // it so it can't break out of the [char](emoji/id) fragment it goes into.
+    const fallback = raw.substring(ce.offset, ce.offset + ce.length).replace(/[[\]()`*]/g, "").trim();
     if (fallback) return `[${fallback}](emoji/${ce.custom_emoji_id})`;
   }
-  return raw.trim().split(/\s+/)[0] || "";
+  // Plain emoji: first token only, markup characters removed — this value is
+  // spliced straight into the channel post's markup.
+  return (raw.trim().split(/\s+/)[0] || "").replace(/[[\]()`*]/g, "");
 }
+const TB_PREMIUM = "💎"; // this slot renders as a real (animated) premium emoji
+// Per-slot marker: 💎 premium · ✅ your own plain emoji · ▫️ built-in default.
+const tbMark = (premium, custom) => (premium ? TB_PREMIUM : custom ? TB_SET : TB_DEFAULT);
 function tbText() {
   const n = trendingBoard.RANK_SLOTS;
   const badges = trendingBoard
     .rankEmojis()
-    .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${trendingBoard.displayEmoji(e)}`)
-    .join("  ");
-  // How many slots carry a PREMIUM emoji (stored as "[x](emoji/ID)" markup) and
-  // whether the premium account that actually renders them is connected.
-  const isPrem = (e) => /\(emoji\//.test(String(e || ""));
-  const nPrem =
-    trendingBoard.rankEmojis().filter(isPrem).length +
-    trendingBoard.chainList().filter((c) => isPrem(c.logo)).length;
-  const premLine = nPrem
-    ? gramjs.available()
-      ? `💎 Premium emoji: <b>🟢 ready</b> — ${nPrem} set, posting via the premium account.`
-      : `💎 Premium emoji: <b>🔴 NOT rendering</b> — ${nPrem} set, but the premium account isn't connected. Run <code>node scripts/gramjs-login.js</code>. Until then the board shows the plain fallback.`
-    : `💎 Premium emoji: send a <b>premium</b> emoji when setting a badge/logo to use one (needs the premium account connected).`;
+    .map((e, i) => `${tbMark(trendingBoard.isRankPremium(i + 1), trendingBoard.isRankCustom(i + 1))}${i + 1} ${trendingBoard.displayEmoji(e)}`)
+    .join("   ");
+  // Coverage = how many board slots carry a premium emoji. Ranks 1–9 and the
+  // major chains ship premium BUILT-IN, so this is high with no setup; the
+  // remaining slots are ones with no verified id (rank 10, newer L2s). Shown in
+  // BOTH states — "how much is premium" and "is it actually rendering" are
+  // different questions and the operator needs both answers at once.
+  const cov = trendingBoard.premiumCoverage();
+  const covLine = `${cov.premium}/${cov.total} slots premium (ranks ${cov.ranksPremium}/${cov.ranksTotal} · chains ${cov.chainsPremium}/${cov.chainsTotal})`;
+  const premLine = gramjs.available()
+    ? `💎 Premium emoji: <b>🟢 account connected</b> — ${covLine}.`
+    : `💎 Premium emoji: <b>🔴 NOT rendering</b> — ${covLine}, but the premium account isn't connected so the board posts plain fallbacks. Run <code>node scripts/gramjs-login.js</code>, then tap <b>💎 Premium status</b>.`;
   return (
     `🔥 <b>Trending board</b>\n\n` +
     `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
     `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
+    `<b>Title emoji:</b> ${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} ` +
+    `${trendingBoard.displayEmoji(trendingBoard.titleEmoji())} <i>Dexvra Trending — live featured slots</i>\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
-    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n` +
+    `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n` +
     `${premLine}\n` +
-    `<i>Note: custom/premium emoji only look premium to Telegram Premium users — everyone else sees the normal fallback emoji.</i>\n\n` +
+    `<i>Note: premium emoji only animate for Telegram Premium viewers — everyone else sees the fallback emoji. That's normal.</i>\n\n` +
     `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
-    `Send any emoji when asked. Applies on the next board refresh.`
+    `Send a <b>premium</b> emoji to make that slot premium. Applies on the next board refresh.`
   );
 }
 function tbKb() {
   const cb = Markup.button.callback;
   const badges = trendingBoard.rankEmojis();
   const rankBtns = badges.map((e, i) => {
-    const mark = trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT;
+    const mark = tbMark(trendingBoard.isRankPremium(i + 1), trendingBoard.isRankCustom(i + 1));
     return cb(`${mark} ${i + 1} ${trendingBoard.displayEmoji(e)}`, `tbr:${i + 1}`);
   });
   // Five per row so 1–10 fits two clean rows (grows automatically with RANK_SLOTS).
   const rows = [];
   for (let i = 0; i < rankBtns.length; i += 5) rows.push(rankBtns.slice(i, i + 5));
+  rows.push([
+    cb(
+      `${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} Title emoji ${trendingBoard.displayEmoji(trendingBoard.titleEmoji())}`,
+      "tbt",
+    ),
+  ]);
   rows.push([cb("🔗 Chain logos", "tbc")]);
-  rows.push([cb("↩️ Reset board", "tbrst"), cb("⬅ Back", "home")]);
+  rows.push([cb("💎 Premium status", "tbdiag")]);
+  rows.push([cb("↩️ Restore premium defaults", "tbrst"), cb("⬅ Back", "home")]);
   return Markup.inlineKeyboard(rows);
 }
 function tbChainsText() {
   return (
     `🔗 <b>Chain logos</b>\n\n` +
     `The emoji shown before each chain's header on the trending board ` +
-    `(e.g. <code>🟣 SOLANA - Trending</code>).\n\n` +
-    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n\n` +
-    `Tap a chain, then send the emoji you want. ⬅ Back to the board.`
+    `(e.g. <code>🔶 BSC - Trending</code>).\n\n` +
+    `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n\n` +
+    `Solana / BSC / Ethereum / Base / Tron / Plasma / Sui ship a premium logo built in. ` +
+    `Tap a chain, then send the emoji you want to change it. ⬅ Back to the board.`
   );
 }
 function tbChainsKb() {
@@ -397,11 +431,153 @@ function tbChainsKb() {
   const rows = [];
   for (let i = 0; i < chains.length; i += 2) {
     rows.push(
-      chains.slice(i, i + 2).map((c) => cb(`${c.custom ? TB_SET : TB_DEFAULT} ${trendingBoard.displayEmoji(c.logo)} ${c.label}`, `tbcl:${c.id}`)),
+      chains
+        .slice(i, i + 2)
+        .map((c) => cb(`${tbMark(c.premium, c.custom)} ${trendingBoard.displayEmoji(c.logo)} ${c.label}`, `tbcl:${c.id}`)),
     );
   }
   rows.push([cb("⬅ Back", "tb")]);
   return Markup.inlineKeyboard(rows);
+}
+
+// ── Premium-emoji readiness report ──────────────────────────────────────────
+// "The board still shows plain emoji" has several causes that are identical from
+// the channel side: GramJS off, no session, revoked session, the account isn't
+// Telegram Premium, or Telegram refused the emoji. This names the actual one.
+//
+// Config is checked locally; live facts come from what the MAIN bot recorded on
+// its last connect/post (gramjs.diagnose() never opens its own MTProto client —
+// a second client on the same session would risk revoking the login).
+const AGO = (ms) => {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}min ago`;
+  return `${Math.round(s / 3600)}h ago`;
+};
+async function premiumReportText() {
+  const cov = trendingBoard.premiumCoverage();
+  const d = gramjs.diagnose();
+  const L = [`💎 <b>Premium emoji status</b>\n`];
+  const fail = (why, fix) => L.push(`\n❌ <b>${why}</b>\n${fix}`);
+
+  L.push(
+    `Board slots premium: <b>${cov.premium}/${cov.total}</b> (ranks ${cov.ranksPremium}/${cov.ranksTotal} · chains ${cov.chainsPremium}/${cov.chainsTotal})`,
+  );
+
+  const last = d.last;
+  if (!d.enabled) fail("GramJS is disabled", "Set <code>GRAMJS_ENABLED=1</code> in <code>.env</code> and restart both bots.");
+  else if (!d.apiCreds)
+    fail(
+      "API_ID / API_HASH missing",
+      'Create them at <a href="https://my.telegram.org/apps">my.telegram.org/apps</a> with the premium account, put them in <code>.env</code>, restart.',
+    );
+  else if (!d.libInstalled) fail("The <code>telegram</code> package isn't installed", "Run <code>npm install</code> in the bot directory, then restart.");
+  else if (!d.sessionPresent)
+    fail(
+      "No premium-account session",
+      `Run <code>node scripts/gramjs-login.js</code> on the server and log in with the <b>Telegram Premium</b> account, then <code>pm2 restart dexvra-bot</code>.`,
+    );
+  else if (!last)
+    L.push(
+      `\n⏳ <b>Session present, not used yet.</b>\nThe main bot reports here the first time it posts a channel message (≤5 min). Re-check then.`,
+    );
+  else if (last.ok === false)
+    fail(
+      `Last connection FAILED (${AGO(last.at)})`,
+      `<code>${escapeHtml(last.error || "unknown error")}</code>\nIf it mentions unauthorized/revoked, re-run <code>node scripts/gramjs-login.js</code> and restart the bot.`,
+    );
+  else {
+    L.push(`\n✅ Connected as <b>${escapeHtml(last.account || "?")}</b> <i>(${AGO(last.at)})</i>`);
+    if (last.postError) {
+      // A connected, Premium account still posts nothing if it can't WRITE to
+      // the channel. Being an admin there is a property of this USER account —
+      // the bot already being an admin doesn't help it.
+      fail(
+        "The account could not post to a channel",
+        `<code>${escapeHtml(last.postError)}</code>\nOpen that channel → <b>Administrators</b> → add <b>${escapeHtml(last.account || "the account")}</b> with <b>Post Messages</b> (and Delete/Pin so it can maintain the board). Until then the board falls back to the Bot API and looks unchanged.`,
+      );
+    }
+    if (last.emojiRefused) {
+      fail(
+        "Telegram REFUSED the custom emoji",
+        `<code>${escapeHtml(last.emojiError || "")}</code>\nAlmost always: the account is not Telegram <b>Premium</b>. The board keeps posting with the plain fallback and retries automatically every 30 min.`,
+      );
+    } else if (last.premium === false) {
+      fail(
+        "That account does NOT have Telegram Premium",
+        "Telegram only lets <b>Premium</b> accounts send custom emoji — without it every badge posts as its plain fallback. Buy Premium for this account, or log in with one that has it (<code>node scripts/gramjs-login.js</code>).",
+      );
+    } else if (last.premium) {
+      L.push(`💎 Telegram Premium: <b>yes</b> — custom emoji render animated.`);
+      if (!last.postError) L.push(`📢 Last channel post: <b>OK</b>.`);
+    }
+  }
+  if (d.cooldownSec) L.push(`\n⏳ Post cooldown active in this process: ${d.cooldownSec}s (after a recent failure).`);
+  L.push(`\n<i>Non-premium viewers always see the plain fallback emoji — that is Telegram's behaviour, not a bug.</i>`);
+  return L.join("\n");
+}
+
+// ── Force post ──────────────────────────────────────────────────────────────
+// Publish any post type on demand, so a template or a freshly uploaded clip can
+// be SEEN in its real channel without waiting for a paid order / rank change /
+// pump. It runs the production code path, so this posts PUBLICLY — always
+// behind a confirm that names the exact channels.
+function fpText() {
+  return (
+    `🚀 <b>Force post to channel</b>\n\n` +
+    `Publishes a <b>real</b> post of the type you pick, right now, into its normal channel — ` +
+    `same template, same banner/clip, same layout as the live event would produce.\n\n` +
+    `Use it to check a template or a new clip end-to-end instead of waiting for an order, ` +
+    `a rank change or a pump.\n\n` +
+    `It builds the post from your <b>newest approved listing</b> (real logo, price and links).\n\n` +
+    `⚠️ <b>This is a public post</b> — subscribers see it. Delete it afterwards if it was only a test.`
+  );
+}
+function fpKb() {
+  const cb = Markup.button.callback;
+  const rows = forcePost.kindIds().map((id) => [cb(forcePost.labelOf(id), `fpk:${id}`)]);
+  rows.push([cb("⬅ Back", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+function fpConfirmText(kind) {
+  const chans = forcePost.channelsOf(kind);
+  return (
+    `🚀 <b>Post ${escapeHtml(forcePost.labelOf(kind))} now?</b>\n\n` +
+    `It will be published to:\n${chans.map((c) => `• <code>${escapeHtml(c)}</code>`).join("\n")}\n\n` +
+    `⚠️ Real, public post — subscribers will see it.`
+  );
+}
+// Wait for the main bot to report back (it polls every ~3s). Bounded — if it
+// never answers the operator gets a "still working" card with a re-check button
+// instead of a spinner that lies.
+async function waitForJob(id, { tries = 12, gapMs = 1500 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    await new Promise((r) => setTimeout(r, gapMs));
+    const job = fpStore.get(id);
+    if (job && job.status !== "pending" && job.status !== "running") return job;
+  }
+  return fpStore.get(id);
+}
+function fpResultText(kind, job) {
+  const label = escapeHtml(forcePost.labelOf(kind));
+  if (job.status === "expired") {
+    return `⚠️ <b>${label} expired</b>\n\nThe main bot never picked it up. Check <code>pm2 ls</code> — <code>dexvra-bot</code> must be running.`;
+  }
+  if (job.error) return `⚠️ <b>${label} failed</b>\n\n<code>${escapeHtml(job.error)}</code>`;
+  const lines = (job.results || []).map((r) =>
+    r.ok
+      ? `✅ <a href="${r.url}">${escapeHtml(r.channel)} #${r.messageId}</a>`
+      : `❌ <code>${escapeHtml(r.channel)}</code> — not posted (see <code>pm2 logs dexvra-bot</code>)`,
+  );
+  return (
+    `🚀 <b>${label}</b>\n\n${lines.join("\n") || "No channel accepted the post."}\n\n` +
+    `<i>Tap a link to open it. Delete it in the channel if it was only a test.</i>`
+  );
+}
+function fpResultKb() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🚀 Post another", "fp"), Markup.button.callback("⬅ Menu", "home")],
+  ]);
 }
 
 // ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
@@ -416,6 +592,14 @@ function atText() {
     `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
     `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
     `🎯 Keep featured: <b>${c.target}</b> tokens\n\n` +
+    `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
+    (c.announce ? ` <i>(max ${c.announcePerDay}/day · ${c.announceGapMin}min apart · ${c.announceCooldownDays}d per token)</i>` : "") +
+    `\n` +
+    `<i>Auto slots post the SAME card as a paid Trending purchase (the <b>Post: Trending</b> template) — never pinned, ` +
+    `never @dexvraio. The channel feed is chronological: unlike the board, it does NOT rank paid above auto.</i>\n\n` +
+    `⚡ <b>Run now — per chain</b>\n` +
+    `The board groups by network, so a chain with nothing featured shows nothing at all. ` +
+    `Tap a chain below to promote a token there immediately (works even while Auto Trending is off).\n\n` +
     `Tune with the steppers below. Applies on the next cycle.`
   );
 }
@@ -427,9 +611,86 @@ function atKb() {
     [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
     [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
     [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    [cb(`📣 Announce: ${c.announce ? "ON" : "OFF"}`, "atann")],
+    ...(c.announce
+      ? [[cb(`📣 ${c.announcePerDay}/day`, "atnop"), cb("➖", "atapd:-1"), cb("➕", "atapd:1")]]
+      : []),
+    ...atChainRows(cb),
     [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
 }
+
+// ── Auto-Listing editor (free listings for projects crossing the threshold) ──
+const usd = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("en-US");
+function alText() {
+  const c = autoLister.get();
+  const s = autoLister.stats();
+  const recent = autoLister
+    .history(5)
+    .map((h) => `• <b>${h.sym || h.key}</b> at ${usd(h.mcap)}`)
+    .join("\n");
+  return (
+    `🆓 <b>Auto Listing</b>\n\n` +
+    `Watches DexScreener across every supported chain and lists a project for ` +
+    `<b>free</b> once it climbs past its own trigger. Each token's trigger is a ` +
+    `different number inside the band below — so listings land at ${usd(1_100_000)}, ` +
+    `${usd(1_370_000)}, ${usd(1_420_000)}… instead of every single one at a ` +
+    `suspiciously round ${usd(1_000_000)}.\n\n` +
+    `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
+    `🎯 Trigger band: <b>${usd(c.minMcap)} – ${usd(c.maxMcap)}</b>\n` +
+    `🚫 Ignore above: <b>${usd(c.maxMcapHard)}</b>\n` +
+    `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
+    `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +
+    `🔢 Max <b>${c.maxPerDay}</b>/day, <b>${c.maxPerRun}</b>/scan · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    `📦 Package: <b>${autoLister.pkgOf(c.pkg).label}</b>` +
+    (c.pkg === "trending" ? ` <i>(${c.trendHours}h on the board)</i>` : "") +
+    `\n` +
+    `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n\n` +
+    `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
+    (recent ? `${recent}\n\n` : "\n") +
+    `Auto listings carry a <b>Free</b> badge — never a paid tier, so they can't be ` +
+    `mistaken for a Bronze customer.`
+  );
+}
+function alKb() {
+  const cb = Markup.button.callback;
+  const c = autoLister.get();
+  return Markup.inlineKeyboard([
+    [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "alen")],
+    [cb(`🎯 From ${usd(c.minMcap)}`, "alnop"), cb("➖", "almin:-100000"), cb("➕", "almin:100000")],
+    [cb(`   To ${usd(c.maxMcap)}`, "alnop"), cb("➖", "almax:-100000"), cb("➕", "almax:100000")],
+    [cb(`💧 Liq ${usd(c.minLiq)}`, "alnop"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
+    [cb(`📊 Vol ${usd(c.minVol24)}`, "alnop"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
+    [cb(`🔢 ${c.maxPerDay}/day`, "alnop"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
+    [
+      cb(`${c.pkg === "free" ? "🟢" : "▫️"} Free`, "alpkg:free"),
+      cb(`${c.pkg === "xpress" ? "🟢" : "▫️"} Xpress`, "alpkg:xpress"),
+      cb(`${c.pkg === "trending" ? "🟢" : "▫️"} + Trending`, "alpkg:trending"),
+    ],
+    ...(c.pkg === "trending"
+      ? [[cb(`🔥 Slot ${c.trendHours}h`, "alnop"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
+      : []),
+    [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
+    [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
+  ]);
+}
+
+/** "⚡ Run now" buttons, one per chain the board can show. Each button carries
+ *  the chain's CURRENT featured count, so an operator can see which network is
+ *  empty without leaving the panel. */
+function atChainRows(cb, counts = _atCounts) {
+  const chains = trendingBoard.chainList();
+  const btns = chains.map((c) => {
+    const n = (counts[c.id] && counts[c.id].featured) || 0;
+    return cb(`⚡ ${trendingBoard.displayEmoji(c.logo)} ${c.label}${n ? ` (${n})` : ""}`, `atrun:${c.id}`);
+  });
+  const rows = [];
+  for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
+  return rows;
+}
+// Last per-chain snapshot, refreshed whenever the panel is opened. Kept out of
+// the keyboard builder so drawing the panel never blocks on the API.
+let _atCounts = {};
 
 // ── Interactive layout editor — one PHOTO message that edits itself in place ─
 // A full listing-example preview (logo + $TICKER + name + chain·price·MC
@@ -990,7 +1251,10 @@ function currentCopyable(key) {
 async function edit(ctx, text, kb) {
   try {
     await ctx.editMessageText(text, { ...HTML, ...(kb || {}) });
-  } catch {
+  } catch (e) {
+    // "message is not modified" means the panel already shows this exactly —
+    // re-sending it as a NEW message just stacks duplicates down the chat.
+    if (/not modified/i.test(e && e.message ? e.message : "")) return;
     await ctx.reply(text, { ...HTML, ...(kb || {}) });
   }
 }
@@ -1145,6 +1409,12 @@ function build() {
     await sendTemplateAudit(ctx, "");
   });
 
+  // Why isn't the trending board premium? — names the actual blocking cause.
+  bot.command("premium", async (ctx) => {
+    if (!guard(ctx)) return;
+    await ctx.reply(await premiumReportText(), { ...HTML, ...Markup.inlineKeyboard([[Markup.button.callback("⬅ Trending board", "tb")]]) }).catch(() => {});
+  });
+
   // Reset ALL templates to their code defaults — destructive, so gate behind a
   // confirm. Counts how many custom overrides exist before wiping.
   bot.action("resetall", async (ctx) => {
@@ -1225,6 +1495,33 @@ function build() {
     );
   });
 
+  // ── Swap ONE emoji in a template ─────────────────────────────────────────
+  // Editing a template means re-sending the whole message; swapping a single
+  // emoji in a 12-line card that way is absurd, and it is the most common edit
+  // an operator actually wants.
+  bot.action(/^tem:(.+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    if (!tpl.keys().includes(key)) return;
+    await sendEmojiPicker(ctx, key);
+  });
+  bot.action(/^temx:([^:]+):(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    const i = Number(ctx.match[2]);
+    const cur = tpl.listEmojis(key)[i];
+    if (!cur) return;
+    ctx.session.awaitingEmoji = { key, i };
+    await ctx.reply(
+      `⌨ Send the emoji to put in place of <b>${escapeHtml(cur.char)}</b> (#${i + 1})` +
+        `${cur.id ? " — 💎 currently premium" : ""}.\n\n` +
+        `Send a <b>premium</b> emoji and it stays premium. Everything else in the template is left untouched. /cancel to abort.`,
+      HTML,
+    );
+  });
+
   bot.action(/^r:(.+)$/, async (ctx) => {
     ctx.answerCbQuery("Reset to default").catch(() => {});
     if (!guard(ctx)) return;
@@ -1233,6 +1530,44 @@ function build() {
     await tpl.resetTemplate(key);
     await sendTemplateView(ctx, key);
   });
+
+  /** For a `key = emoji` template, the key belonging to each emoji in reading
+   *  order (empty array for ordinary prose templates). */
+  function mapKeyLabels(key) {
+    const val = tpl.getRawValue(key);
+    const text = val && typeof val === "object" && val.text != null ? val.text : String(val || "");
+    const lines = text.split("\n").filter((l) => /^[^=\n]+=/.test(l));
+    // Only treat it as a map when EVERY non-empty line is `key = value`.
+    if (!lines.length || lines.length !== text.split("\n").filter((l) => l.trim()).length) return [];
+    return lines.map((l) => l.split("=")[0].trim());
+  }
+
+  async function sendEmojiPicker(ctx, key) {
+    const list = tpl.listEmojis(key);
+    if (!list.length) {
+      return ctx.reply("This template has no emoji to swap — use ✏️ Edit to change the text.", HTML).catch(() => {});
+    }
+    const cb = Markup.button.callback;
+    // A `key = emoji` map (tier_emojis / chain_emojis) gets its KEY on the
+    // button. Without it the picker is a row of near-identical coloured circles
+    // — 🔷 vs 🔵 vs 🔹 with nothing saying which is Ethereum, Base or TON.
+    const labels = mapKeyLabels(key);
+    const btns = list
+      .slice(0, 48)
+      .map((e) => cb(`${e.id ? "💎" : ""}${e.char}${labels[e.i] ? ` ${labels[e.i]}` : ""}`, `temx:${key}:${e.i}`));
+    const perRow = labels.length ? 3 : 6;
+    const rows = [];
+    for (let i = 0; i < btns.length; i += perRow) rows.push(btns.slice(i, i + perRow));
+    rows.push([cb("⬅ Back", `v:${key}`)]); // the view handler is v:, not t: — this button was dead
+    await ctx
+      .reply(
+        `😀 <b>Swap an emoji</b> — ${escapeHtml(tpl.meta(key).label)}\n\n` +
+          `Tap the one you want to change. 💎 marks the ones that are already premium.` +
+          (list.length > 48 ? `\n\n<i>Showing the first 48 of ${list.length}.</i>` : ""),
+        { ...HTML, ...Markup.inlineKeyboard(rows) },
+      )
+      .catch(() => {});
+  }
 
   bot.action("banner", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -1376,6 +1711,37 @@ function build() {
   bot.action("at", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
+    _atCounts = await autoTrend.featuredByChain().catch(() => ({}));
+    await edit(ctx, atText(), atKb());
+  });
+  bot.action("atann", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ announce: !autoTrend.get().announce });
+    log.info(`[adminbot] auto-trend announce ${c.announce ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.announce ? "📣 Auto slots post a Spotlight card" : "🤫 Board only, no channel post").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
+  bot.action(/^atrun:([a-z0-9]+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const chain = ctx.match[1];
+    const res = await autoTrend.forceChain(chain).catch((e) => {
+      log.warn(`[adminbot] forced auto-trend ${chain}: ${e.message}`);
+      return { promoted: 0, syms: [], reason: e.message };
+    });
+    log.info(
+      `[adminbot] forced auto-trend on ${chain} → ${res.promoted} promoted (${res.reason || res.syms.join(", ")}) ` +
+        `by @${ctx.from.username || ctx.from.id}`,
+    );
+    // EXACTLY ONE answerCbQuery: Telegram accepts the first per callback and
+    // drops the rest, so an early "working…" toast silently ate the result —
+    // which is what "the button does nothing" actually was.
+    await ctx
+      .answerCbQuery(
+        res.promoted ? `✅ Now trending on ${chain}: ${res.syms.join(", ")}` : `⚠️ ${res.reason}`,
+        { show_alert: true },
+      )
+      .catch(() => {});
+    _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
     await edit(ctx, atText(), atKb());
   });
   bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
@@ -1397,11 +1763,143 @@ function build() {
   bot.action(/^atgmin:(-?\d+)$/, atStep("minGapMin", "Min gap"));
   bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
   bot.action(/^attgt:(-?\d+)$/, atStep("target", "Target"));
+  bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();
     ctx.answerCbQuery("↩️ Reset").catch(() => {});
     await edit(ctx, atText(), atKb());
+  });
+
+  // ── Auto Listing ──
+  bot.action("al", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons
+  bot.action("alen", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ enabled: !autoLister.get().enabled });
+    log.info(`[adminbot] auto-listing ${c.enabled ? "ENABLED" : "disabled"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.enabled ? "🟢 Auto Listing ON" : "🔴 Auto Listing OFF").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alpost", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ postChannel: !autoLister.get().postChannel });
+    log.info(`[adminbot] auto-listing channel post ${c.postChannel ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.postChannel ? "📣 Posts to the listing channel" : "🤫 Site only").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  const alStep = (key, label) => async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ [key]: autoLister.get()[key] + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`${label}: ${usd(c[key])}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  };
+  bot.action(/^almin:(-?\d+)$/, alStep("minMcap", "From"));
+  bot.action(/^almax:(-?\d+)$/, alStep("maxMcap", "To"));
+  bot.action(/^alliq:(-?\d+)$/, alStep("minLiq", "Min liquidity"));
+  bot.action(/^alvol:(-?\d+)$/, alStep("minVol24", "Min 24h volume"));
+  bot.action(/^alday:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ maxPerDay: autoLister.get().maxPerDay + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Max/day: ${c.maxPerDay}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action(/^alpkg:(free|xpress|trending)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ pkg: ctx.match[1] });
+    log.info(`[adminbot] auto-listing package → ${c.pkg} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(`📦 ${autoLister.pkgOf(c.pkg).label}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action(/^alth:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ trendHours: autoLister.get().trendHours + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`🔥 Slot: ${c.trendHours}h`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    await autoLister.reset();
+    ctx.answerCbQuery("↩️ Reset").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alclr", async (ctx) => {
+    // After clearing listings on the site: without this a token already
+    // auto-listed would never be considered again.
+    if (!guard(ctx)) return;
+    await autoLister.resetState();
+    log.info(`[adminbot] auto-listing history cleared by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery("🧹 History cleared — those tokens can be listed again").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+
+  // ── Force post: pick a kind → confirm → publish for real ──
+  bot.action("fp", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, fpText(), fpKb());
+  });
+  bot.action(/^fpk:([a-z_]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    if (!forcePost.kindIds().includes(kind)) return;
+    await edit(
+      ctx,
+      fpConfirmText(kind),
+      Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Post it now", `fpgo:${kind}`)],
+        [Markup.button.callback("⬅ Cancel", "fp")],
+      ]),
+    );
+  });
+  bot.action(/^fpgo:([a-z_]+)$/, async (ctx) => {
+    ctx.answerCbQuery("Queued…").catch(() => {});
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    if (!forcePost.kindIds().includes(kind)) return;
+    const who = ctx.from.username ? `@${ctx.from.username}` : String(ctx.from.id);
+    // The MAIN bot publishes it — this process can't (see forcepost/store.js).
+    let job;
+    try {
+      job = await fpStore.request(kind, { by: who });
+    } catch (e) {
+      log.warn(`[adminbot] force post ${kind} by ${who}: ${e.message}`);
+      return edit(ctx, `⚠️ <b>Couldn't queue it</b>\n\n<code>${escapeHtml(e.message)}</code>`, Markup.inlineKeyboard([[Markup.button.callback("⬅ Back", "fp")]]));
+    }
+    log.info(`[adminbot] force post ${kind} queued by ${who} (${job.id})`);
+    await edit(ctx, `⏳ Publishing <b>${escapeHtml(forcePost.labelOf(kind))}</b>…`, Markup.inlineKeyboard([]));
+    // Poll the job file for the main bot's result — a public post should confirm
+    // itself here, not leave the operator guessing whether it went out.
+    const done = await waitForJob(job.id);
+    if (!done || done.status === "pending" || done.status === "running") {
+      return edit(
+        ctx,
+        `⏳ <b>Still working…</b>\n\nThe request is queued but the main bot hasn't reported back. ` +
+          `If this persists, check that <code>dexvra-bot</code> is running (<code>pm2 ls</code>).`,
+        Markup.inlineKeyboard([[Markup.button.callback("🔄 Check again", `fpst:${job.id}`), Markup.button.callback("⬅ Back", "fp")]]),
+      );
+    }
+    await edit(ctx, fpResultText(kind, done), fpResultKb());
+  });
+  // Re-check a job whose result hadn't landed yet.
+  bot.action(/^fpst:(fp_[a-z0-9]+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const job = fpStore.get(ctx.match[1]);
+    if (!job) return edit(ctx, "⚠️ That request is gone (it may have expired).", fpResultKb());
+    if (job.status === "pending" || job.status === "running") {
+      return edit(
+        ctx,
+        `⏳ <b>Still working…</b>\n\nStatus: <code>${escapeHtml(job.status)}</code>. Is <code>dexvra-bot</code> running?`,
+        Markup.inlineKeyboard([[Markup.button.callback("🔄 Check again", `fpst:${job.id}`), Markup.button.callback("⬅ Back", "fp")]]),
+      );
+    }
+    await edit(ctx, fpResultText(job.kind, job), fpResultKb());
   });
 
   // ── Trending board (chain logos + rank badges 1–10) ──
@@ -1415,9 +1913,22 @@ function build() {
     if (!guard(ctx)) return;
     const pos = Number(ctx.match[1]);
     ctx.session.awaitingBt = { mode: "tbrank", pos };
+    const cur = trendingBoard.rankEmojis()[pos - 1];
     await ctx.reply(
-      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.displayEmoji(trendingBoard.rankEmojis()[pos - 1])}).\n\n` +
+      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.displayEmoji(cur)}${trendingBoard.isRankPremium(pos) ? " — 💎 premium" : ""}).\n\n` +
         `Tip: send a <b>premium</b> emoji and it renders premium on the board (posted via the premium account). /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbt", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "tbtitle" };
+    await ctx.reply(
+      `⌨ Send the emoji for the board's <b>title line</b> (current: ${trendingBoard.displayEmoji(trendingBoard.titleEmoji())}` +
+        `${trendingBoard.isTitlePremium() ? " — 💎 premium" : ""}).\n\n` +
+        `It opens “<i>Dexvra Trending — live featured slots</i>”. Send a <b>premium</b> emoji and it animates on the board ` +
+        `(posted via the premium account). /cancel to abort.`,
       HTML,
     );
   });
@@ -1431,8 +1942,11 @@ function build() {
     if (!guard(ctx)) return;
     const chain = ctx.match[1];
     ctx.session.awaitingBt = { mode: "tbchain", chain };
+    // displayEmoji(), never the raw fragment — a premium logo is stored as
+    // "[🔶](emoji/…)" markup and would otherwise be shown to the admin verbatim.
     await ctx.reply(
-      `⌨ Send the new logo emoji for <b>${chain.toUpperCase()}</b> (current: ${trendingBoard.chainLogo(chain)}).\n\nSend a single emoji. /cancel to abort.`,
+      `⌨ Send the new logo emoji for <b>${chain.toUpperCase()}</b> (current: ${trendingBoard.displayEmoji(trendingBoard.chainLogo(chain))}` +
+        `${trendingBoard.isChainPremium(chain) ? " — 💎 premium" : ""}).\n\nSend a single emoji. /cancel to abort.`,
       HTML,
     );
   });
@@ -1440,8 +1954,13 @@ function build() {
     if (!guard(ctx)) return;
     await trendingBoard.reset();
     log.info(`[adminbot] trending board reset by @${ctx.from.username || ctx.from.id}`);
-    ctx.answerCbQuery("↩️ Board reset to defaults").catch(() => {});
+    ctx.answerCbQuery("↩️ Restored the built-in premium defaults").catch(() => {});
     await edit(ctx, tbText(), tbKb());
+  });
+  bot.action("tbdiag", async (ctx) => {
+    ctx.answerCbQuery("Checking…").catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, await premiumReportText(), Markup.inlineKeyboard([[Markup.button.callback("🔄 Re-check", "tbdiag"), Markup.button.callback("⬅ Back", "tb")]]));
   });
 
   // Interactive layout editor: element selector + nudge + resize, all editing
@@ -1770,6 +2289,9 @@ function build() {
   bot.command("cancel", async (ctx) => {
     if (!guard(ctx)) return;
     ctx.session.awaitingTemplate = null;
+    // Without this a "cancelled" swap stayed armed and ate the NEXT plain
+    // message — including a full template someone sent for a different key.
+    ctx.session.awaitingEmoji = null;
     ctx.session.awaitingBanner = false;
     ctx.session.awaitingBroadcast = false;
     ctx.session.awaitingBt = null;
@@ -1870,18 +2392,52 @@ function build() {
       //    stored as markup ("[fallback](emoji/ID)") so it renders premium on
       //    the board (posted via the GramJS premium account); a plain emoji is
       //    stored as-is. ──
+      // Echo back what the board will ACTUALLY render (after the plain→premium
+      // promotion), so "did my premium emoji take?" is answered on the spot.
+      const savedNote = (rendered) =>
+        /\(emoji\//.test(rendered)
+          ? gramjs.available()
+            ? " — 💎 premium"
+            : " — 💎 premium (⚠️ account offline, posts as fallback until you run gramjs-login.js)"
+          : " — plain emoji";
       if (mode === "tbrank") {
         const frag = emojiFragment(ctx.message);
         if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
-        await trendingBoard.setRankEmoji(pos || 1, frag).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
-        await ctx.reply(`✅ Rank ${pos} badge → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbKb() }).catch(() => {});
+        const p = pos || 1;
+        await trendingBoard.setRankEmoji(p, frag).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
+        const rendered = trendingBoard.rankBadge(p);
+        log.info(`[adminbot] rank ${p} badge → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(`✅ Rank ${p} badge → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}`, { ...HTML, ...tbKb() })
+          .catch(() => {});
+        return;
+      }
+      if (mode === "tbtitle") {
+        const frag = emojiFragment(ctx.message);
+        if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setTitleEmoji(frag).catch((e) => log.warn(`[adminbot] setTitleEmoji: ${e.message}`));
+        const rendered = trendingBoard.titleEmoji();
+        log.info(`[adminbot] board title emoji → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(`✅ Board title → ${trendingBoard.displayEmoji(rendered)} Dexvra Trending${savedNote(rendered)}`, {
+            ...HTML,
+            ...tbKb(),
+          })
+          .catch(() => {});
         return;
       }
       if (mode === "tbchain") {
         const frag = emojiFragment(ctx.message);
         if (!frag || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
         await trendingBoard.setChainLogo(chain, frag).catch((e) => log.warn(`[adminbot] setChainLogo: ${e.message}`));
-        await ctx.reply(`✅ ${chain.toUpperCase()} logo → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbChainsKb() }).catch(() => {});
+        const rendered = trendingBoard.chainLogo(chain);
+        log.info(`[adminbot] ${chain} logo → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(`✅ ${chain.toUpperCase()} logo → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}`, {
+            ...HTML,
+            ...tbChainsKb(),
+          })
+          .catch(() => {});
         return;
       }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
@@ -1945,6 +2501,27 @@ function build() {
         : HTML;
       await ctx.reply(text, prevExtra).catch(() => {});
       await ctx.reply("Send this broadcast?", bcControlKb(bcStore.audience().length));
+      return;
+    }
+    if (ctx.session.awaitingEmoji) {
+      const { key, i } = ctx.session.awaitingEmoji;
+      ctx.session.awaitingEmoji = null;
+      const frag = emojiFragment(ctx.message);
+      if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+      try {
+        await tpl.replaceEmojiAt(key, i, frag);
+      } catch (e) {
+        return ctx.reply(`⚠️ ${escapeHtml(e.message)}`, HTML).catch(() => {});
+      }
+      const now = tpl.listEmojis(key)[i];
+      log.info(`[adminbot] template '${key}' emoji #${i + 1} → ${frag} by @${ctx.from.username || ctx.from.id}`);
+      await ctx
+        .reply(
+          `✅ Swapped to ${escapeHtml(now ? now.char : frag)}${now && now.id ? " — 💎 premium" : ""}. Live within ~30s.`,
+          HTML,
+        )
+        .catch(() => {});
+      await sendEmojiPicker(ctx, key);
       return;
     }
     const key = ctx.session.awaitingTemplate;
@@ -2106,5 +2683,7 @@ async function startAdminBot() {
 module.exports = { startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
+// Exposed for tests: the trending-board editor + the premium-emoji report.
+module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, emojiFragment, premiumReportText };
 // Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
 module.exports._net = { fetchTelegramFileBuffer };

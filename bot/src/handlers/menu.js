@@ -50,11 +50,29 @@ function idxButtons(prefix, items, labelFn) {
   return withHome(rows);
 }
 
-function confirmPayment() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("✅ I've Paid — Confirm", "confirm_pay")],
-    [homeBtn()],
-  ]);
+/** One-tap clipboard copy (Bot API 8.0 `copy_text`). Telegraf 4.16 has no
+ *  builder for it, so the raw button object is used — Telegraf passes
+ *  reply_markup through to Telegram untouched. Telegram copies the text
+ *  client-side: no callback fires, nothing to handle. */
+function copyBtn(label, text) {
+  return { text: label, copy_text: { text: String(text) } };
+}
+
+/** The pay card's keyboard. The address is long enough that a mistyped
+ *  character means lost funds, so copying it must not depend on the buyer
+ *  finding the tap-to-copy monospace run. */
+function confirmPayment(address) {
+  const rows = [];
+  if (address) rows.push([copyBtn("📋 Copy Address", address)]);
+  rows.push([Markup.button.callback("✅ I've Paid — Confirm", "confirm_pay")]);
+  rows.push([homeBtn()]);
+  return Markup.inlineKeyboard(rows);
+}
+
+/** Standalone copy affordance for messages that re-show the address (the
+ *  "payment not detected" nudge) without the full pay-card keyboard. */
+function copyAddress(address) {
+  return address ? Markup.inlineKeyboard([[copyBtn("📋 Copy Address", address)]]) : {};
 }
 
 function yesNo(field) {
@@ -92,6 +110,8 @@ module.exports = {
   chainMenu,
   idxButtons,
   confirmPayment,
+  copyAddress,
+  copyBtn,
   yesNo,
   postPurchase,
   WELCOME,

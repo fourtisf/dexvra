@@ -128,11 +128,31 @@ export default function AdvertisePage() {
       {/* ── Banner ads ───────────────────────────────────────────────── */}
       <h3 className="pkg-h">Banner Ads</h3>
       <p className="pkg-sub">Rotating homepage banner slots, billed in USD by run length.</p>
+      <p className="pkg-sub">
+        Both sizes run in the same homepage row, directly under the market pulse. A{" "}
+        <b>Wide</b> banner takes half the row and sits on the left; <b>Standard</b> banners sit to its right, two of them filling the rest.
+      </p>
       <div className="banner-grid">
         {BANNERS.map((b) => (
           <div className="pkg banner-card" key={b.name}>
             <div className="pkg-name">{b.name}</div>
             <div className="banner-size">{b.size}px</div>
+            {/* A real example at this exact size — "which one am I buying?" was
+                impossible to answer from a price table alone. The wrapper keeps
+                the two cards' examples at their true RELATIVE widths, so Wide
+                visibly reads wider than Standard instead of both filling their
+                card identically. */}
+            <div className="banner-example" aria-hidden>
+              <img
+                src={b.name.toLowerCase().includes("wide") ? "/ads/example-wide.png" : "/ads/example-standard.png"}
+                alt=""
+                // 600 vs 1200 — the example is shown at its true share of the row
+                style={{ width: b.name.toLowerCase().includes("wide") ? "100%" : "50%" }}
+              />
+              <span className="banner-example-cap">
+                {b.name.toLowerCase().includes("wide") ? "Half the row, on the left" : "A quarter of the row, on the right"}
+              </span>
+            </div>
             <table className="ptable flush">
               <tbody>
                 {b.rows.map((r) => (

@@ -8,8 +8,8 @@
 // @dexvraadminbot without touching code.
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { chainOf } = require("../config/chains");
-const { tierLabel } = require("../config/packages");
-const { SITE_URL, CHANNELS, TRADEBOT_USERNAME } = require("../config/constants");
+const { tierLabel, tierEmoji: pkgTierEmoji } = require("../config/packages");
+const { SITE_URL, CHANNELS, TRADEBOT_USERNAME, BOT_USERNAME } = require("../config/constants");
 const premium = require("../premium");
 const tpl = require("../templates");
 const tokenEmoji = require("../tokenEmoji");
@@ -28,8 +28,18 @@ const chainName = (c) => (chainOf(c) ? chainOf(c).label : String(c).toUpperCase(
 // {text, entities} and the text alone only carries the unicode fallback — so
 // rebuild each mapping as premium markup ([fallback](emoji/ID)) from the
 // entities, letting the custom emoji survive into the rendered post.
-function chainEmojiMap() {
-  const val = tpl.getRawValue("chain_emojis");
+/**
+ * Parse a `key = emoji` template into a map, rebuilding premium custom emoji as
+ * markup so they survive into the post.
+ *
+ * The offset arithmetic is why this is ONE function and not two: an
+ * admin-pasted template is stored as {text, entities} where a premium emoji is
+ * a custom_emoji entity over its fallback character, so each value has to be
+ * re-assembled from the entities that fall inside its span. Duplicating that
+ * for a second map is how the two drift.
+ */
+function emojiMapTemplate(key) {
+  const val = tpl.getRawValue(key);
   const isEntity = val && typeof val === "object" && val.text != null;
   const text = isEntity ? val.text : String(val || "");
   const ents = ((isEntity && val.entities) || []).filter((e) => e.type === "custom_emoji" && e.custom_emoji_id);
@@ -64,6 +74,10 @@ function chainEmojiMap() {
   }
   return map;
 }
+
+const chainEmojiMap = () => emojiMapTemplate("chain_emojis");
+const tierEmojiMap = () => emojiMapTemplate("tier_emojis");
+
 function chainEmoji(chain) {
   const id = (chainOf(chain) && chainOf(chain).id) || String(chain || "").toLowerCase();
   return chainEmojiMap()[id] || "💠";
@@ -74,14 +88,24 @@ const tme = (handle) => `https://t.me/${String(handle).replace(/^@/, "")}`;
 const clean = (v) => premium.sanitizeVar(v); // user-supplied values → markup-safe
 const cleanUrl = (v) => premium.sanitizeUrl(v); // user URLs → can't close [label](url)
 
-// Tier badges — premium where fourtis has proven IDs, unicode otherwise.
-const TIER_EMOJI = {
-  DIAMOND: em("💎", E.diamond),
-  GOLD: em("🥇", E.gold),
-  SILVER: "🥈",
-  BRONZE: "🥉",
-  XPRESS: em("⚡", E.zap),
+// Tier badges (Diamond → Bronze + Xpress) come from the ADMIN-EDITABLE
+// `tier_emojis` template, exactly like the per-chain logos: send a PREMIUM
+// emoji in @dexvraadminbot and the badge animates in the post. packages.js is
+// the fallback, so a tier can never render as a blank badge — PLATINUM was
+// missing from the old hardcoded map and posted as "New Listing on Dexvra ·
+// Platinum tier", separator, double space and all.
+const tierBadge = (key) => {
+  const k = String(key || "").toLowerCase();
+  return tierEmojiMap()[k] || pkgTierEmoji(String(key || "").toUpperCase()) || "";
 };
+
+/** The tier badge as a PLAIN character — for surfaces that cannot render a
+ *  premium custom emoji: X posts (plain text) and the bot's own inline keyboard
+ *  (Telegram strips custom emoji from a regular bot). Same setting, one source:
+ *  before this, twitter.js and the tier chooser each carried their own
+ *  hardcoded map, so changing the badge in the admin bot moved the Telegram
+ *  post and left the tweet and the buy button behind. */
+const tierBadgeChar = (key) => premium.parse(String(tierBadge(key) || "")).text;
 
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 
@@ -118,8 +142,17 @@ function stripLines(val, { all, missing, dropParagraph }) {
   for (let i = 0; i < lines.length; i++) {
     const r = refs(lines[i], all);
     if (!r.length) continue;
-    if (r.every((k) => missing.includes(k))) drop[i] = true; // whole line dead
-    else segCuts.push(...segmentCuts(lines[i], starts[i], r.filter((k) => missing.includes(k))));
+    if (r.every((k) => missing.includes(k))) {
+      // Every tracked placeholder on this line is dead. That USUALLY means the
+      // line goes — but a placeholder can share a line with real copy: the tier
+      // badge now sits beside the "New Listing on Dexvra" header, and dropping
+      // the line with it would delete the post's title. So cut the dead
+      // segments first and only drop the line when nothing readable is left
+      // (which is still what happens to a socials row with no links at all).
+      const cuts = segmentCuts(lines[i], starts[i], r);
+      if (cuts.length && hasCopy(remainder(lines[i], starts[i], cuts))) segCuts.push(...cuts);
+      else drop[i] = true;
+    } else segCuts.push(...segmentCuts(lines[i], starts[i], r.filter((k) => missing.includes(k))));
   }
   if (dropParagraph) {
     let start = 0;
@@ -170,6 +203,27 @@ function segCutRange(segs, j) {
   const cutStart = j > 0 ? segs[j - 1].end : segs[j].start;
   const cutEnd = j > 0 ? segs[j].end : segs[j + 1] ? segs[j + 1].start : segs[j].end;
   return [cutStart, cutEnd];
+}
+
+/** What survives on `line` once `cuts` (absolute ranges) are removed. */
+function remainder(line, base, cuts) {
+  let out = "";
+  let pos = 0;
+  for (const [s, e] of mergeRanges(cuts)) {
+    out += line.slice(pos, Math.max(pos, s - base));
+    pos = Math.max(pos, e - base);
+  }
+  return out + line.slice(pos);
+}
+
+/** Is there anything a reader would call content here? Placeholders and pure
+ *  markup/separators don't count — "🚨 **New Listing**" does, " · " doesn't. */
+function hasCopy(s) {
+  return /[\p{L}\p{N}]/u.test(
+    String(s || "")
+      .replace(/\{[^}]*\}/g, "")
+      .replace(/[*_`[\]()·|]/g, " "),
+  );
 }
 
 function segmentCuts(line, base, missKeys) {
@@ -541,6 +595,10 @@ function channelLinks() {
     listing: tme(CHANNELS.listing),
     trending: tme(CHANNELS.trending),
     announce: tme(CHANNELS.announce),
+    // The sales bot — a post that gives something away for free should say
+    // where the paid version lives.
+    bot: tme(BOT_USERNAME),
+    botName: `@${String(BOT_USERNAME).replace(/^@/, "")}`,
   };
 }
 
@@ -589,7 +647,7 @@ function listingPost(coin) {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    tierEmoji: coin.tier ? TIER_EMOJI[String(coin.tier).toUpperCase()] || "" : "",
+    tierEmoji: coin.tier ? tierBadge(String(coin.tier).toUpperCase()) : "",
     tier: coin.tier ? clean(tierLabel(coin.tier)) : "",
     overview: overviewBlock(coin.overview || autoOverview(coin, "listing")), // legacy
   }), postUrls(coin));
@@ -623,16 +681,45 @@ function pumpPost(coin, percent, firstMc, lastMc) {
   }), postUrls(coin));
 }
 
-function bannerPost(booking) {
-  // No token on a banner post — any social lines an admin adds strip away.
-  const val = stripForCoin("post_banner", null);
-  return autoSocials(tpl.renderValue(val, {
-    title: booking.title ? clean(booking.title) : "A featured project",
-    slot: clean(booking.slot),
-    linkUrl: cleanUrl(booking.linkUrl),
-    ...channelLinks(),
-    footer: legacyFooter(),
-  }), { ...channelLinks() });
+/**
+ * The banner-ad announcement, built from what the ADVERTISER supplied:
+ * headline → their own description → contract address → their socials →
+ * the Dexvra links. Anything they left out drops out with its header line,
+ * because a campaign for a service or an event has no token and may have no
+ * socials at all.
+ */
+function bannerPost(booking, xUrl) {
+  const website = booking.website || booking.linkUrl || "";
+  const coinish = {
+    links: { twitter: booking.twitter || "", website, telegram: booking.telegram || "" },
+    xUrl: xUrl || "",
+  };
+  // Socials row + "Announce On X" go through the shared stripper…
+  let val = stripForCoin("post_banner", coinish);
+  // …and the two advertiser-copy blocks are stripped the same way. Each sits in
+  // its own paragraph, so dropParagraph takes the "📄 CA" header with the value.
+  const missing = [];
+  if (!booking.description) missing.push("description");
+  if (!booking.address) missing.push("address");
+  if (missing.length) {
+    val = stripLines(val, { all: ["description", "address"], missing, dropParagraph: true });
+  }
+  return autoSocials(
+    tpl.renderValue(val, {
+      title: booking.title ? clean(booking.title) : "A featured project",
+      slot: clean(booking.slot),
+      linkUrl: cleanUrl(booking.linkUrl),
+      description: booking.description ? clean(booking.description) : "",
+      address: booking.address ? clean(booking.address) : "",
+      twitter: coinish.links.twitter ? cleanUrl(coinish.links.twitter) : "",
+      website: website ? cleanUrl(website) : "",
+      telegram: coinish.links.telegram ? cleanUrl(coinish.links.telegram) : "",
+      xUrl: xUrl ? cleanUrl(xUrl) : "",
+      ...channelLinks(),
+      footer: legacyFooter(),
+    }),
+    { ...postUrls(coinish), ...channelLinks() },
+  );
 }
 
 const withCommas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -649,14 +736,26 @@ function changeSentence(change24h) {
   return `\n\n**+${withCommas(Math.round(v))}%** over the last 24h — and still climbing.`;
 }
 
+// Compact 24h gain for a one-line post ("+42%"), "" when there's nothing good
+// to show. Same absurd-reading cap as changeSentence — a +490,749% low-liquidity
+// print reads as spam, so past the cap the number is dropped, not published.
+function gainStr(change24h) {
+  const v = Number(change24h);
+  if (!Number.isFinite(v) || v <= 0 || v > 5000) return "";
+  return `+${withCommas(Math.round(v))}%`;
+}
+
 function rankupPost(coin, rank, change24h) {
   const val = stripForCoin("post_rankup", coin);
   return autoSocials(tpl.renderValue(val, {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     rank,
+    // {change} = the full sentence (legacy long copy); {gain} = compact "+42%"
+    // for a one-line ticker post. Both are offered so an admin can pick either.
     change: changeSentence(change24h),
+    gain: gainStr(change24h),
   }), postUrls(coin));
 }
 
-module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
+module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
