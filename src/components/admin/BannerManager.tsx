@@ -24,9 +24,9 @@ type Row = {
 // Keep in sync with SLOTS in /api/admin/banners (which is itself keyed to the
 // bot's packages). `hint` is what the operator needs to decide, not jargon.
 const SLOT_OPTIONS = [
-  { key: "house", label: "Full width (house banner)", size: "any wide image", hint: "Fills the row on its own. Not tagged as sold inventory." },
-  { key: "wide", label: "Wide Banner", size: "1440 × 150", hint: "Fills the row on its own. Tagged “Ad · Wide”." },
-  { key: "standard", label: "Standard Banner", size: "720 × 150", hint: "Shares the row with one other. Tagged “Ad · Standard”." },
+  { key: "house", label: "Full width (house banner)", size: "any wide image", hint: "Spans all 4 columns. Not tagged as sold inventory." },
+  { key: "wide", label: "Wide Banner", size: "1200 × 240", hint: "Takes 2 of 4 columns, always on the LEFT. Tagged “Ad · Wide”." },
+  { key: "standard", label: "Standard Banner", size: "600 × 240", hint: "Takes 1 of 4 columns, to the right of any Wide. Tagged “Ad · Standard”." },
 ];
 
 const emptyForm = { imageUrl: "", linkUrl: "", title: "", days: "30", slot: "house" };

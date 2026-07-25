@@ -103,15 +103,16 @@ const trendingAnnounces = (duration) => /^(24|48)H$/i.test(String(duration).trim
 // ── Banner ads (billed in USD by run length) ─────────────────────────────────
 // The homepage sizes each tile from the CREATIVE, so these numbers decide how
 // big an ad looks on the site — not any CSS. Tuned against the competition:
-// 728 × 90 was far too thin (~72px tall in a half-row column, a footnote), and
-// 2.4:1 cards overshot the other way (~245px, dominating the page). 4.8:1 lands
-// a Standard at ~150px — the same share of the row the competition runs.
-// A Wide is exactly two Standards wide at the same height.
+// The ad row is a 4-COLUMN grid: a Wide takes 2 columns (left), a Standard 1
+// (right). At those widths 2.5:1 and 5:1 both land ~145px tall — the same share
+// of the row the rest of the market runs. 728 × 90 was far too thin (~72px, a
+// footnote); the same card ratios on an earlier 2-column grid overshot to
+// ~250px. A Wide is exactly two Standards wide, at the same height.
 // Changing these numbers changes what advertisers upload — keep them in sync
 // with src/lib/packages.ts and the SLOTS map in /api/admin/banners.
 const BANNERS = [
   {
-    name: "Standard Banner", size: "720 × 150", key: "standard",
+    name: "Standard Banner", size: "600 × 240", key: "standard",
     rows: [
       { duration: "1 Day", hours: 24, usd: 225, discount: 10 },
       { duration: "3 Days", hours: 72, usd: 670, discount: 20 },
@@ -119,7 +120,7 @@ const BANNERS = [
     ],
   },
   {
-    name: "Wide Banner", size: "1440 × 150", key: "wide",
+    name: "Wide Banner", size: "1200 × 240", key: "wide",
     rows: [
       { duration: "1 Day", hours: 24, usd: 400, discount: 10 },
       { duration: "3 Days", hours: 72, usd: 1080, discount: 20 },

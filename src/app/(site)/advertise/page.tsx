@@ -130,7 +130,7 @@ export default function AdvertisePage() {
       <p className="pkg-sub">Rotating homepage banner slots, billed in USD by run length.</p>
       <p className="pkg-sub">
         Both sizes run in the same homepage row, directly under the market pulse. A{" "}
-        <b>Wide</b> banner takes the full row on its own; two <b>Standard</b> banners share it.
+        <b>Wide</b> banner takes half the row and sits on the left; <b>Standard</b> banners sit to its right, two of them filling the rest.
       </p>
       <div className="banner-grid">
         {BANNERS.map((b) => (
@@ -150,7 +150,7 @@ export default function AdvertisePage() {
                 style={{ width: b.name.toLowerCase().includes("wide") ? "100%" : "50%" }}
               />
               <span className="banner-example-cap">
-                {b.name.toLowerCase().includes("wide") ? "Fills the row alone" : "Shares the row with one other"}
+                {b.name.toLowerCase().includes("wide") ? "Half the row, on the left" : "A quarter of the row, on the right"}
               </span>
             </div>
             <table className="ptable flush">

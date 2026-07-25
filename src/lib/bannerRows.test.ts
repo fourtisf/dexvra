@@ -1,76 +1,74 @@
 // Every live booking must reach the screen — that's what the advertiser paid
-// for, and what /advertise promises ("Rotating homepage banner slots").
+// for, and what /advertise promises ("Rotating homepage banner slots") — and a
+// Wide must sit to the LEFT of the Standards sharing its row.
 import test from "node:test";
 import assert from "node:assert";
-import { packBannerRows, isHalfSlot, isFullWidthSlot, freeUnits, slotLabel, unitsOf, ROW_UNITS } from "./bannerRows.ts";
+import { packBannerRows, unitsOf, freeUnits, slotLabel, ROW_UNITS } from "./bannerRows.ts";
 
 const std = (id: string) => ({ slot: "Standard Banner", id });
 const wide = (id: string) => ({ slot: "Wide Banner", id });
 const house = (id: string) => ({ slot: "Homepage Banner", id }); // admin panel
 const ids = (rows: { id: string }[][]) => rows.map((r) => r.map((b) => b.id));
 
-test("only the sold Standard is a half-slot; everything else fills the row", () => {
-  assert.strictEqual(isHalfSlot("Standard Banner"), true);
-  assert.strictEqual(isHalfSlot("standard banner"), true, "case-insensitive — the slot string comes from the bot");
+test("column spans: Standard 1, Wide 2, anything else the whole row", () => {
+  assert.strictEqual(ROW_UNITS, 4);
   assert.strictEqual(unitsOf(std("a")), 1);
-  // Wide (bot), Homepage Banner (admin panel) and any slot added later.
-  for (const slot of ["Wide Banner", "Homepage Banner", "Takeover 2026", ""]) {
-    assert.strictEqual(isFullWidthSlot(slot), true, `${slot || "(empty)"} must take the whole row`);
-    assert.strictEqual(unitsOf({ slot }), ROW_UNITS);
+  assert.strictEqual(unitsOf(wide("a")), 2);
+  assert.strictEqual(unitsOf({ slot: "standard banner" }), 1, "case-insensitive — the string comes from the bot");
+  // An unknown slot spans the row: the harmless failure, vs. a mystery banner
+  // squeezed into a quarter column.
+  for (const slot of ["Homepage Banner", "Takeover 2026", ""]) {
+    assert.strictEqual(unitsOf({ slot }), ROW_UNITS, `${slot || "(empty)"} spans the row`);
   }
 });
 
-test("an admin-panel banner is full width, not a half with a gap", () => {
-  // The panel writes slot:"Homepage Banner" — matching /wide/ instead would have
-  // rendered the operator's own banner at half width beside dead space.
-  assert.deepStrictEqual(ids(packBannerRows([house("h")])), [["h"]]);
-  assert.strictEqual(freeUnits([house("h")]), 0, "it fills the row on its own");
+test("a Wide sits on the LEFT of the Standards sharing its row", () => {
+  // Booking order is newest-first; the layout must still put the big one first.
+  assert.deepStrictEqual(ids(packBannerRows([std("a"), std("b"), wide("w")])), [["w", "a", "b"]]);
+  assert.deepStrictEqual(ids(packBannerRows([std("a"), wide("w")])), [["w", "a"]]);
 });
 
-test("freeUnits reports the gap a house tile should fill", () => {
-  assert.strictEqual(freeUnits([std("a")]), 1, "a lone Standard leaves half the row");
-  assert.strictEqual(freeUnits([std("a"), std("b")]), 0);
-  assert.strictEqual(freeUnits([wide("w")]), 0);
-  assert.strictEqual(freeUnits([]), ROW_UNITS);
+test("order within the same width is preserved (newest first)", () => {
+  assert.deepStrictEqual(ids(packBannerRows([std("a"), std("b"), std("c"), std("d")])), [["a", "b", "c", "d"]]);
+  assert.deepStrictEqual(ids(packBannerRows([wide("w1"), wide("w2")])), [["w1", "w2"]]);
 });
 
-test("two Standards share a row, like the reference layout", () => {
-  assert.deepStrictEqual(ids(packBannerRows([std("a"), std("b")])), [["a", "b"]]);
-});
-
-test("a Wide never shares its row", () => {
-  assert.deepStrictEqual(ids(packBannerRows([wide("w"), std("a"), std("b")])), [["w"], ["a", "b"]]);
-  // …including when it lands mid-sequence: the half before it keeps its row.
-  assert.deepStrictEqual(ids(packBannerRows([std("a"), wide("w"), std("b")])), [["a"], ["w"], ["b"]]);
+test("one Wide + two Standards fills a row exactly", () => {
+  const row = [wide("w"), std("a"), std("b")];
+  assert.deepStrictEqual(ids(packBannerRows(row)), [["w", "a", "b"]]);
+  assert.strictEqual(freeUnits(row), 0);
 });
 
 test("nobody is dropped, whatever the mix", () => {
   for (const list of [
     [std("a")],
-    [std("a"), std("b"), std("c")],
-    [wide("w1"), wide("w2")],
-    [std("a"), std("b"), wide("w"), std("c"), std("d"), std("e")],
+    [std("a"), std("b"), std("c"), std("d"), std("e")],
+    [wide("w1"), wide("w2"), wide("w3")],
+    [house("h"), std("a"), wide("w")],
   ]) {
     const flat = packBannerRows(list).flat();
-    assert.deepStrictEqual(
-      flat.map((b) => b.id),
-      list.map((b) => b.id),
-      "same bookings, same order — a paid booking is never skipped",
-    );
+    assert.strictEqual(flat.length, list.length, "every paid booking is laid out");
+    for (const b of list) assert.ok(flat.includes(b), `${b.id} kept`);
   }
 });
 
-test("an odd Standard still gets its own row (never silently cut)", () => {
-  assert.deepStrictEqual(ids(packBannerRows([std("a"), std("b"), std("c")])), [["a", "b"], ["c"]]);
+test("a full-row banner never shares its row", () => {
+  assert.deepStrictEqual(ids(packBannerRows([house("h"), std("a")])), [["h"], ["a"]]);
+});
+
+test("freeUnits reports the gap a house tile should fill", () => {
+  assert.strictEqual(freeUnits([std("a")]), 3, "a lone Standard leaves three columns");
+  assert.strictEqual(freeUnits([wide("w")]), 2);
+  assert.strictEqual(freeUnits([wide("w"), std("a")]), 1);
+  assert.strictEqual(freeUnits([house("h")]), 0);
+  assert.strictEqual(freeUnits([]), ROW_UNITS);
 });
 
 test("no bookings → no rows (the strip renders nothing)", () => {
   assert.deepStrictEqual(packBannerRows([]), []);
 });
 
-test("a Wide can't overflow a narrower row (mobile: 1 unit per row)", () => {
-  // Phones drop to one banner per row; a Wide must still occupy exactly one row
-  // rather than being packed away or producing an empty one.
+test("a Wide can't overflow a narrower row (mobile: 1 column)", () => {
   assert.deepStrictEqual(ids(packBannerRows([wide("w"), std("a")], 1)), [["w"], ["a"]]);
 });
 

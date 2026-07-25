@@ -1,8 +1,9 @@
 "use client";
 
 // The homepage ad row: every LIVE banner booking (sold by the Telegram bot,
-// stored via /api/internal/banners) rendered side by side — a Standard banner
-// takes half the row, a Wide banner takes the whole row.
+// stored via /api/internal/banners) rendered side by side on a 4-column grid —
+// a Wide banner takes 2 columns and always sits on the LEFT, Standard banners
+// take 1 each to its right.
 //
 // WHY A ROW AND NOT ONE BANNER: this used to render banners[0] only, so with two
 // advertisers running at once the earlier one vanished from the site even though
@@ -15,7 +16,7 @@
 // extra inventory belongs in this row, not in a new strip somewhere else.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./AppState";
-import { packBannerRows, isFullWidthSlot, freeUnits, slotLabel } from "@/lib/bannerRows";
+import { packBannerRows, unitsOf, freeUnits, slotLabel } from "@/lib/bannerRows";
 
 type Banner = {
   slot: string;
@@ -71,7 +72,7 @@ export function HomeBannerStrip() {
         {current.map((b, i) => (
           <a
             key={`${b.imageUrl}:${i}`}
-            className={`home-banner${isFullWidthSlot(b.slot) ? " is-wide" : ""}`}
+            className={`home-banner span-${unitsOf(b)}`}
             href={b.linkUrl}
             target="_blank"
             rel="noopener noreferrer nofollow"
@@ -87,12 +88,11 @@ export function HomeBannerStrip() {
             </span>
           </a>
         ))}
-        {/* A lone Standard leaves half the row empty. Fill it with a quiet
-            house tile rather than dead space — it is NOT a new ad placement,
-            just the unsold half of one that already exists, and it never shows
-            on a homepage with no bookings at all. */}
+        {/* Unsold columns become a quiet house tile rather than dead space —
+            NOT a new ad placement, just the unsold part of one that already
+            exists, and it never shows on a homepage with no bookings at all. */}
         {freeUnits(current) > 0 && (
-          <a className="home-banner is-empty" href="/advertise">
+          <a className={`home-banner is-empty span-${freeUnits(current)}`} href="/advertise">
             <span>Advertise here →</span>
           </a>
         )}

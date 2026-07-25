@@ -1,43 +1,62 @@
 // How live banner bookings are laid out in the homepage ad row.
 //
 // Kept out of the component and pure because this decides WHICH paying
-// advertisers are on screen: the previous version rendered banners[0] only, so a
+// advertisers are on screen: the first version rendered banners[0] only, so a
 // second concurrent booking was invisible for its whole paid run. /advertise
 // sells "Rotating homepage banner slots" — this is the code that has to keep
 // that promise.
+//
+// THE GRID IS 4 UNITS WIDE:
+//   Wide Banner     2 units — the big one, always on the LEFT
+//   Standard Banner 1 unit  — the smaller ones, to its right
+//   house banner    4 units — the operator's own, spans everything
+// A 2-unit grid was tried first and it forced a Standard to half the row, which
+// made it far too tall for its shape. Four units is the layout the rest of the
+// market uses (one big + two small), and it is why the sold sizes are 2.5:1 for
+// a Standard and 5:1 for a Wide — both land ~145px tall on the real grid.
 
 export interface BannerLike {
   slot: string;
 }
 
-/** A row holds this many slot-units: two Standard banners, or one full-width. */
-export const ROW_UNITS = 2;
+/** Columns in one ad row. */
+export const ROW_UNITS = 4;
+
+const isStandard = (slot: string) => /standard/i.test(slot || "");
+const isWide = (slot: string) => /wide/i.test(slot || "");
+
+/** Columns this booking occupies. An unknown slot spans the full row — the
+ *  harmless failure, vs. a mystery banner squeezed into a quarter. */
+export function unitsOf(b: BannerLike): number {
+  const slot = b.slot || "";
+  if (isStandard(slot)) return 1;
+  if (isWide(slot)) return 2;
+  return ROW_UNITS;
+}
+
+/** Short public label for a slot: "Wide" / "Standard", or "" for the operator's
+ *  own homepage banner (which isn't sold inventory, so it gets a plain "Ad"). */
+export function slotLabel(slot: string): string {
+  if (isWide(slot)) return "Wide";
+  if (isStandard(slot)) return "Standard";
+  return "";
+}
 
 /**
- * ONLY the sold "Standard Banner" (728 × 90) is a half-slot. Everything else —
- * "Wide Banner" from the bot, "Homepage Banner" created in the admin panel, and
- * any slot name added later — takes the whole row.
+ * Pack bookings into rows of ROW_UNITS. Widest first, so a Wide always sits on
+ * the LEFT of the Standards sharing its row — the arrangement the operator
+ * asked for and the one every comparable site runs. Sort is stable, so within
+ * the same width the store's order (newest first) is preserved.
  *
- * The rule is written this way round on purpose: matching /wide/ instead would
- * silently render an admin's own homepage banner at half width with a blank gap
- * beside it, and would do the same to every future slot name. An unknown slot
- * defaulting to full width is the safe failure.
- */
-export const isHalfSlot = (slot: string): boolean => /standard/i.test(slot || "");
-export const isFullWidthSlot = (slot: string): boolean => !isHalfSlot(slot);
-export const unitsOf = (b: BannerLike): number => (isHalfSlot(b.slot) ? 1 : ROW_UNITS);
-
-/**
- * Pack bookings into rows of ROW_UNITS, preserving order (newest first, the
- * order activeBanners() returns). A Wide banner never shares its row; two
- * Standards pair up. Rows past the first are paged through on a timer, so every
- * booking is shown regardless of how many are live at once.
+ * Rows past the first are paged through on a timer, so every booking is shown
+ * regardless of how many are live at once.
  */
 export function packBannerRows<T extends BannerLike>(list: T[], unitsPerRow = ROW_UNITS): T[][] {
+  const ordered = [...list].sort((a, b) => unitsOf(b) - unitsOf(a));
   const rows: T[][] = [];
   let row: T[] = [];
   let used = 0;
-  for (const b of list) {
+  for (const b of ordered) {
     const u = Math.min(unitsOf(b), unitsPerRow);
     if (used + u > unitsPerRow) {
       rows.push(row);
@@ -51,17 +70,8 @@ export function packBannerRows<T extends BannerLike>(list: T[], unitsPerRow = RO
   return rows;
 }
 
-/** Short public label for a slot: "Wide" / "Standard", or "" for the operator's
- *  own homepage banner (which isn't sold inventory, so it gets a plain "Ad"). */
-export function slotLabel(slot: string): string {
-  const v = String(slot || "");
-  if (/wide/i.test(v)) return "Wide";
-  if (/standard/i.test(v)) return "Standard";
-  return "";
-}
-
-/** Slot-units still free in a row — a lone Standard leaves one half empty, which
- *  the ad row fills with a quiet "Advertise here" tile instead of dead space. */
+/** Columns still free in a row — the ad row fills them with a quiet "Advertise
+ *  here" tile rather than leaving dead space. */
 export function freeUnits<T extends BannerLike>(row: T[], unitsPerRow = ROW_UNITS): number {
   const used = row.reduce((n, b) => n + Math.min(unitsOf(b), unitsPerRow), 0);
   return Math.max(0, unitsPerRow - used);
