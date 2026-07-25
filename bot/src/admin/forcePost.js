@@ -19,6 +19,7 @@ const { chainOf } = require("../config/chains");
 const { fetchMarket } = require("../marketdata");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
+const tokenEmoji = require("../tokenEmoji");
 const { postMedia } = require("../fulfillment");
 const log = require("../helpers/logger");
 
@@ -92,6 +93,7 @@ const KINDS = {
     channels: () => [CHANNELS.listing],
     async send(row) {
       const coin = await coinOf({ ...row, tier: "XPRESS" });
+      await ensureEmoji(coin, row);
       const media = await mediaFor("listing", coin, row);
       return [await deliver(CHANNELS.listing, media, fmt.listingPost(coin))];
     },
@@ -101,6 +103,7 @@ const KINDS = {
     channels: () => [CHANNELS.listing, CHANNELS.announce, CHANNELS.trending],
     async send(row) {
       const coin = await coinOf({ ...row, tier: row.tier && row.tier !== "XPRESS" ? row.tier : "DIAMOND" });
+      await ensureEmoji(coin, row);
       const listMedia = await mediaFor("listing", coin, row);
       const trendMedia = await mediaFor("trending", coin, row);
       const out = [await deliver(CHANNELS.listing, listMedia, fmt.listingPost(coin))];
@@ -114,6 +117,7 @@ const KINDS = {
     channels: () => [CHANNELS.trending],
     async send(row) {
       const coin = await coinOf(row);
+      await ensureEmoji(coin, row);
       const media = await mediaFor("trending", coin, row);
       return [await deliver(CHANNELS.trending, media, fmt.trendingPost(coin))];
     },
@@ -155,6 +159,16 @@ const KINDS = {
     },
   },
 };
+
+/** Create the token's animated custom emoji before a card is rendered.
+ *  fmt.*Post() reads the pack id synchronously, so without this a forced post
+ *  shows the plain fallback char where the token's logo belongs — the paid
+ *  listing path has always done it, this one hadn't. */
+async function ensureEmoji(coin, row) {
+  await tokenEmoji
+    .ensureFromUrl({ chain: coin.chain, address: coin.address, symbol: coin.symbol }, row.logoUrl)
+    .catch((e) => log.debug(`[forcepost] token emoji: ${e.message}`));
+}
 
 async function mediaFor(kind, coin, row, opts = {}) {
   return postMedia(kind, bannerCoinOf(coin), null, null, row.logoUrl || "", null, opts).catch((e) => {

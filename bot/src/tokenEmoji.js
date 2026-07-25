@@ -297,6 +297,32 @@ function getEmojiId(chain, address) {
 
 /** Premium-markup tag `[💠](emoji/123…)` + trailing space, or "" — safe to
  *  interpolate unconditionally into channel-post templates. */
+/**
+ * Ensure the pack from a logo URL — for callers that have a URL but no buffer.
+ *
+ * Every path that PUBLISHES a listing card has to do this before rendering it:
+ * emojiTag() reads the store synchronously, so a token whose pack was never
+ * created shows the plain fallback char instead of its animated logo. Paid
+ * listings did it; force-post and auto-listing did not, which is why their
+ * cards came out with a generic emoji where the token's logo belonged.
+ *
+ * Best-effort in every direction — a missing logo, a dead URL or a Telegram
+ * hiccup just means the fallback char, never a failed post.
+ */
+async function ensureFromUrl({ chain, address, symbol }, logoUrl, opts = {}) {
+  if (!chain || !address || !logoUrl) return null;
+  if (!opts.force && getEmojiId(chain, address)) return null; // already have it
+  let buf = null;
+  try {
+    const r = await fetch(logoUrl, { signal: AbortSignal.timeout(12000) });
+    if (r.ok) buf = Buffer.from(await r.arrayBuffer());
+  } catch (e) {
+    log.warn(`[tokenEmoji] logo fetch failed for ${symbol || address}: ${e.message}`);
+  }
+  if (!buf || !buf.length) return null;
+  return ensureTokenEmoji({ chain, address, symbol }, buf, opts);
+}
+
 function emojiTag(chain, address, symbol) {
   const id = getEmojiId(chain, address);
   // No pack for this token (creation failed, or the pack bot isn't configured)
@@ -312,6 +338,7 @@ function emojiTag(chain, address, symbol) {
 
 module.exports = {
   ensureTokenEmoji,
+  ensureFromUrl,
   getEmojiId,
   emojiTag,
   available,

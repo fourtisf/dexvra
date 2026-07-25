@@ -75,3 +75,28 @@ test("emojiTag: falls back to the plain char without a stored id", () => {
   assert.ok(tag.trim().length, "the slot is filled");
   assert.ok(!tag.includes("emoji/"), "…but it is not premium markup — there is no pack");
 });
+
+// Every path that publishes a listing card has to create the pack FIRST —
+// emojiTag() reads the store synchronously, so a card rendered before the pack
+// exists shows the plain fallback char where the token's logo belongs. The paid
+// listing path always did this; force-post and auto-listing did not, which is
+// why their posts came out with a generic emoji.
+test("force post and auto-listing create the token emoji before rendering", () => {
+  const fp = fss.readFileSync(require.resolve("../src/admin/forcePost.js"), "utf8");
+  assert.match(fp, /ensureEmoji\(coin, row\)/, "force post must ensure the pack");
+  // …and it has to happen BEFORE the card is built, not after.
+  for (const kind of ["listing", "trending"]) {
+    const i = fp.indexOf("await ensureEmoji");
+    const j = fp.indexOf(`mediaFor("${kind}"`);
+    assert.ok(i > -1 && j > -1 && i < j, `${kind}: ensure must come first`);
+  }
+  const alSrc = fss.readFileSync(require.resolve("../src/services/autoLister.js"), "utf8");
+  assert.match(alSrc, /ensureFromUrl/, "auto-listing must ensure the pack too");
+});
+
+test("ensureFromUrl: no logo, no pack, no throw", async () => {
+  await assert.doesNotReject(async () => {
+    assert.strictEqual(await te.ensureFromUrl({ chain: "solana", address: "X", symbol: "$X" }, null), null);
+    assert.strictEqual(await te.ensureFromUrl({ chain: null, address: null }, "https://x/y.png"), null);
+  });
+});

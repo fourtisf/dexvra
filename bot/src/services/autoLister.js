@@ -342,6 +342,12 @@ async function announce(tg, c, info, input, cfg = get()) {
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
   };
   try {
+    // Same as a paid listing: create the token's animated custom emoji BEFORE
+    // the card is rendered, or the post shows the plain fallback char where the
+    // logo belongs (fmt.listingPost reads the pack id synchronously).
+    await require("../tokenEmoji")
+      .ensureFromUrl({ chain: c.chain, address: c.address, symbol: input.sym }, input.logoUrl)
+      .catch(() => null);
     const media = await postMediaFor("listing", c, info, input).catch(() => null);
     const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin));
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
