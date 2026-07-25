@@ -47,6 +47,9 @@ async function runOnce() {
   if (!due.length) return { checked: 0, swept: 0 };
   let checked = 0;
   let swept = 0;
+  let empty = 0;
+  let stuck = 0;
+  let unreadable = 0;
   for (const o of due.slice(0, MAX_PER_PASS)) {
     try {
       // BigInt() because ethers returns its own bigint-ish type per version.
@@ -54,7 +57,9 @@ async function runOnce() {
       checked++;
       if (bal === 0n) {
         // Already emptied (the normal path swept it) — stop re-checking it.
+        empty++;
         await orders.setStatus(o.id, o.status, { sweptAt: Date.now(), sweptNote: "already empty" });
+        log.info(`[sweepretry] ${o.chain} order ${o.id} wallet is empty — nothing to recover`);
         continue;
       }
       log.warn(`[sweepretry] ${o.chain}/${o.address} still holds ${bal} (order ${o.id}) — sweeping`);
@@ -70,6 +75,7 @@ async function runOnce() {
         log.info(`[sweepretry] ${o.chain} order ${o.id} left as dust (${r.error})`);
       } else {
         // Left unmarked on purpose: the next pass tries again.
+        stuck++;
         const tries = (o.sweepTries || 0) + 1;
         await orders.setStatus(o.id, o.status, { sweepTries: tries });
         log.warn(`[sweepretry] ${o.chain} order ${o.id} still stuck (try ${tries}): ${(r && r.error) || "unknown"}`);
@@ -89,12 +95,20 @@ async function runOnce() {
         }
       }
     } catch (e) {
-      log.debug(`[sweepretry] ${o.id}: ${e.message}`);
+      // A balance we couldn't even READ is not "nothing to do" — say so at
+      // warn, or a dead RPC looks identical to a clean pass.
+      unreadable++;
+      log.warn(`[sweepretry] ${o.chain} order ${o.id}: could not read balance — ${e.message}`);
     }
     await sleep(GAP_MS);
   }
-  if (checked) log.info(`[sweepretry] checked ${checked} wallet(s), recovered ${swept}`);
-  return { checked, swept };
+  // "checked 1, recovered 0" is ambiguous on its own — it reads the same
+  // whether the wallet was already empty or a sweep is failing. Break it out.
+  log.info(
+    `[sweepretry] pass: ${due.length} candidate(s), checked ${checked}, recovered ${swept}, ` +
+      `already empty ${empty}, still stuck ${stuck}, unreadable ${unreadable}`,
+  );
+  return { checked, swept, empty, stuck, unreadable };
 }
 
 function start() {
