@@ -276,15 +276,23 @@ async function sendToChannel(channel, { text, entities, media, mediaType, replyT
         linkPreview: false,
       });
     }
+    // Pinning can fail on its own while the POST succeeded — the premium user
+    // account is often an admin only for posting, and CHAT_ADMIN_REQUIRED here
+    // means "no pin rights". That was invisible at debug level and looked
+    // exactly like "the bot doesn't pin". Report it, and tell the caller so it
+    // can pin with the BOT instead (pinning, unlike editing, is not restricted
+    // to the message's author).
+    let pinned = false;
     if (pin) {
       try {
         await c.pinMessage(target, sent.id, { notify: false });
+        pinned = true;
       } catch (e) {
-        log.debug(`[gramjs] pin: ${e.message}`);
+        log.warn(`[gramjs] pin ${channel}/${sent.id} failed (${e.message}) — will try the bot`);
       }
     }
     recordPostOk();
-    return { message_id: sent.id, chat: { id: Number(target.id) || target.id } };
+    return { message_id: sent.id, chat: { id: Number(target.id) || target.id }, pinned };
   } catch (e) {
     invalidateOnAuthError(e);
     if (!isPremiumEmojiError(e)) recordPostFailure(channel, e); // emoji refusal has its own field

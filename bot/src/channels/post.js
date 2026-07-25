@@ -87,19 +87,48 @@ function botApiExtra(p, forCaption) {
   return forCaption ? { caption_entities: ents } : { entities: ents };
 }
 
+/**
+ * Pin a message we just posted — with the BOT, whatever posted it.
+ *
+ * Pinning is not author-restricted the way editing is: the bot can pin a
+ * message the GramJS premium account sent, and vice versa. That matters,
+ * because the premium account is frequently an admin for POSTING only, so its
+ * own pin call fails with CHAT_ADMIN_REQUIRED while the post lands fine — which
+ * looks exactly like "the bot doesn't pin".
+ *
+ * Awaited and logged, never fire-and-forget: a swallowed .catch(() => {}) is
+ * why this went unnoticed. If BOTH transports are refused, the warning names
+ * the channel and the reason, so the fix (give the bot "Pin Messages" in that
+ * channel) is one read away.
+ */
+async function ensurePinned(channel, msg, alreadyPinned) {
+  if (!msg || !msg.message_id || alreadyPinned) return Boolean(alreadyPinned);
+  try {
+    await tg.pinChatMessage(channel, msg.message_id, { disable_notification: true });
+    log.info(`[channels] pinned ${channel}/${msg.message_id}`);
+    return true;
+  } catch (e) {
+    log.warn(`[channels] pin ${channel}/${msg.message_id} FAILED: ${e.message} — is the bot an admin with "Pin Messages" there?`);
+    return false;
+  }
+}
+
 /** Send a text post; optionally pin. Returns { message_id, ... } or null. */
 async function sendText(channel, payload, { replyTo, pin } = {}) {
   if (!tg) throw new Error("channels/post not attached to a bot");
   const p = norm(payload);
   const viaGram = await viaGramJs(channel, null, p, { replyTo, pin });
-  if (viaGram) return viaGram;
+  if (viaGram) {
+    if (pin) await ensurePinned(channel, viaGram, viaGram.pinned);
+    return viaGram;
+  }
   try {
     const msg = await tg.sendMessage(channel, p.text, {
       ...botApiExtra(p, false),
       disable_web_page_preview: true,
       ...replyParams(replyTo),
     });
-    if (pin) tg.pinChatMessage(channel, msg.message_id, { disable_notification: true }).catch(() => {});
+    if (pin) await ensurePinned(channel, msg, false);
     return msg;
   } catch (e) {
     log.warn(`[channels] sendText ${channel}: ${e.message}`);
@@ -113,14 +142,17 @@ async function sendPhoto(channel, photo, payload, { replyTo, pin } = {}) {
   if (!photo) return sendText(channel, payload, { replyTo, pin });
   const p = fitCaption(norm(payload));
   const viaGram = await viaGramJs(channel, photo, p, { replyTo, pin, mediaType: "photo" });
-  if (viaGram) return viaGram;
+  if (viaGram) {
+    if (pin) await ensurePinned(channel, viaGram, viaGram.pinned);
+    return viaGram;
+  }
   try {
     const msg = await tg.sendPhoto(channel, photo, {
       caption: p.text,
       ...botApiExtra(p, true),
       ...replyParams(replyTo),
     });
-    if (pin) tg.pinChatMessage(channel, msg.message_id, { disable_notification: true }).catch(() => {});
+    if (pin) await ensurePinned(channel, msg, false);
     return msg;
   } catch (e) {
     // Loud on purpose — a swallowed photo failure is exactly why a banner
@@ -150,7 +182,10 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
 
   const p = fitCaption(norm(payload));
   const viaGram = await viaGramJs(channel, input, p, { replyTo, pin, mediaType: type });
-  if (viaGram) return viaGram;
+  if (viaGram) {
+    if (pin) await ensurePinned(channel, viaGram, viaGram.pinned);
+    return viaGram;
+  }
   // Bot API: sendAnimation already marks the document animated (and converts a
   // GIF to MP4 server-side), so this path was never the broken one.
   const method = type === "video" ? "sendVideo" : "sendAnimation";
@@ -160,7 +195,7 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
       ...botApiExtra(p, true),
       ...replyParams(replyTo),
     });
-    if (pin) tg.pinChatMessage(channel, msg.message_id, { disable_notification: true }).catch(() => {});
+    if (pin) await ensurePinned(channel, msg, false);
     return msg;
   } catch (e) {
     log.warn(`[channels] ${method} ${channel} failed (${e.message}) → text-only fallback`);
@@ -168,5 +203,5 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   }
 }
 
-module.exports = { attach, sendText, sendPhoto, sendMedia, CHANNELS, isAttached: () => !!tg };
+module.exports = { attach, sendText, sendPhoto, sendMedia, ensurePinned, CHANNELS, isAttached: () => !!tg };
 module.exports._fitCaption = fitCaption; // exposed for tests
