@@ -78,3 +78,74 @@ test("autotrend: already at target → no-op", async () => {
   assert.strictEqual(booked, 0);
   await autoTrend.reset();
 });
+
+// Forced per-chain run: the board groups by network, so a chain with nothing
+// featured shows nothing at all — and waiting for the random cycle to happen to
+// pick that chain is not a plan. The admin panel's "⚡ Run now" needs a run that
+// targets ONE chain and ignores the global target.
+test("forced run promotes on the requested chain only", async () => {
+  const rows = [
+    { status: "approved", chain: "solana", address: "s1", sym: "S1" },
+    { status: "approved", chain: "solana", address: "s2", sym: "S2" },
+    { status: "approved", chain: "bsc", address: "b1", sym: "B1" },
+  ];
+  const booked = [];
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  api.getListings = async () => rows;
+  api.bookTrending = async (chain, address, hours) => {
+    booked.push({ chain, address, hours });
+    return {};
+  };
+  try {
+    await autoTrend.set({ enabled: false }); // forced runs work with the service OFF
+    assert.strictEqual(await autoTrend.runOnce({ chain: "bsc" }), 1);
+    assert.strictEqual(booked.length, 1);
+    assert.strictEqual(booked[0].chain, "bsc", `promoted the wrong chain: ${JSON.stringify(booked)}`);
+    const cfg = autoTrend.get();
+    assert.ok(booked[0].hours >= cfg.minHours && booked[0].hours <= cfg.maxHours, "duration stays inside the configured band");
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+  }
+});
+
+test("forced run: nothing eligible on that chain → 0, not an error", async () => {
+  const now = Date.now();
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  let booked = 0;
+  // The only Solana token is already featured.
+  api.getListings = async () => [
+    { status: "approved", chain: "solana", address: "s1", sym: "S1", trendingRank: 1, trendExp: now + 3_600_000 },
+  ];
+  api.bookTrending = async () => {
+    booked++;
+    return {};
+  };
+  try {
+    assert.strictEqual(await autoTrend.runOnce({ chain: "solana" }), 0);
+    assert.strictEqual(booked, 0);
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+  }
+});
+
+test("featuredByChain counts what the panel shows", async () => {
+  const now = Date.now();
+  const realGet = api.getListings;
+  api.getListings = async () => [
+    { status: "approved", chain: "solana", address: "s1", trendingRank: 1, trendExp: now + 3_600_000 },
+    { status: "approved", chain: "solana", address: "s2" },
+    { status: "approved", chain: "bsc", address: "b1" },
+    { status: "pending", chain: "bsc", address: "b2" }, // not approved → invisible
+  ];
+  try {
+    const by = await autoTrend.featuredByChain(now);
+    assert.deepStrictEqual(by.solana, { featured: 1, eligible: 1 });
+    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 1 });
+  } finally {
+    api.getListings = realGet;
+  }
+});

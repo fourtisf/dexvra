@@ -60,9 +60,17 @@ async function reset() {
 /** One top-up pass: promote random eligible listings until `target` are featured.
  *  `rng` is injectable so tests are deterministic. Returns how many were promoted.
  *  Never throws — a hiccup must not take down the service loop. */
-async function runOnce({ rng = Math.random } = {}) {
+/**
+ * One top-up pass. `chain` restricts it to a single network and makes the run
+ * FORCED: it ignores the enabled switch and the global target, and promotes up
+ * to `count` tokens on that chain. That is what the admin panel's per-chain
+ * "Run now" needs — the board groups by chain, so a chain with no featured
+ * token shows nothing at all, and waiting for the random cycle to happen to
+ * pick that chain is not a plan.
+ */
+async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
   const cfg = get();
-  if (!cfg.enabled) return 0;
+  if (!cfg.enabled && !chain) return 0; // a forced per-chain run is deliberate
   let listings;
   try {
     listings = await api.getListings();
@@ -72,12 +80,19 @@ async function runOnce({ rng = Math.random } = {}) {
   }
   const now = Date.now();
   const isFeatured = (r) => r.status === "approved" && r.trendingRank != null && (!r.trendExp || r.trendExp > now);
-  const featured = listings.filter(isFeatured);
-  const need = cfg.target - featured.length;
+  const onChain = (r) => !chain || String(r.chain).toLowerCase() === String(chain).toLowerCase();
+  const featured = listings.filter((r) => isFeatured(r) && onChain(r));
+  // Forced per-chain run: promote `count` regardless of the global target.
+  const need = chain ? count : cfg.target - featured.length;
   if (need <= 0) return 0;
 
-  // Eligible = approved but not currently featured. Shuffle for variety.
-  const eligible = listings.filter((r) => r.status === "approved" && !isFeatured(r));
+  // Eligible = approved, on the requested chain, not currently featured.
+  // Shuffle for variety.
+  const eligible = listings.filter((r) => r.status === "approved" && !isFeatured(r) && onChain(r));
+  if (chain && !eligible.length) {
+    log.info(`[autotrend] forced run on ${chain}: nothing eligible (every listed token there is already featured?)`);
+    return 0;
+  }
   for (let i = eligible.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
@@ -90,7 +105,9 @@ async function runOnce({ rng = Math.random } = {}) {
     try {
       await api.bookTrending(r.chain, r.address, hours);
       promoted++;
-      log.info(`[autotrend] promoted ${r.chain}/${String(r.address).slice(0, 8)}… (${r.sym || "?"}) for ${hours}h`);
+      log.info(
+        `[autotrend] ${chain ? "FORCED " : ""}promoted ${r.chain}/${String(r.address).slice(0, 8)}… (${r.sym || "?"}) for ${hours}h`,
+      );
     } catch (e) {
       log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
     }
@@ -129,4 +146,25 @@ function start() {
   };
 }
 
-module.exports = { get, set, reset, runOnce, start, DEFAULTS, HARD };
+/** How many tokens are featured per chain right now — the panel shows this so
+ *  the operator can see WHICH chain is empty before forcing one. */
+async function featuredByChain(now = Date.now()) {
+  const out = {};
+  let listings = [];
+  try {
+    listings = await api.getListings();
+  } catch (e) {
+    log.debug(`[autotrend] featuredByChain: ${e.message}`);
+    return out;
+  }
+  for (const r of listings) {
+    if (r.status !== "approved") continue;
+    const id = String(r.chain || "").toLowerCase();
+    out[id] = out[id] || { featured: 0, eligible: 0 };
+    if (r.trendingRank != null && (!r.trendExp || r.trendExp > now)) out[id].featured++;
+    else out[id].eligible++;
+  }
+  return out;
+}
+
+module.exports = { get, set, reset, runOnce, featuredByChain, start, DEFAULTS, HARD };

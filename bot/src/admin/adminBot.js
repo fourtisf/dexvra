@@ -191,10 +191,11 @@ function groupText(name, p, pages) {
   return `<b>${escapeHtml(name)}</b>${head}\n\nPick a template:`;
 }
 function viewKb(key) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)],
-    [Markup.button.callback("⬅ Back", `grp:${groupIdOf(key)}`)],
-  ]);
+  const rows = [[Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)]];
+  // Only offer the emoji swap when there is something to swap.
+  if (tpl.listEmojis(key).length) rows.push([Markup.button.callback("😀 Swap emoji", `tem:${key}`)]);
+  rows.push([Markup.button.callback("⬅ Back", `grp:${groupIdOf(key)}`)]);
+  return Markup.inlineKeyboard(rows);
 }
 function bannerKb() {
   const has = bannerExists();
@@ -591,6 +592,9 @@ function atText() {
     `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
     `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
     `🎯 Keep featured: <b>${c.target}</b> tokens\n\n` +
+    `⚡ <b>Run now — per chain</b>\n` +
+    `The board groups by network, so a chain with nothing featured shows nothing at all. ` +
+    `Tap a chain below to promote a token there immediately (works even while Auto Trending is off).\n\n` +
     `Tune with the steppers below. Applies on the next cycle.`
   );
 }
@@ -602,6 +606,7 @@ function atKb() {
     [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
     [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
     [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    ...atChainRows(cb),
     [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
 }
@@ -660,6 +665,23 @@ function alKb() {
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
 }
+
+/** "⚡ Run now" buttons, one per chain the board can show. Each button carries
+ *  the chain's CURRENT featured count, so an operator can see which network is
+ *  empty without leaving the panel. */
+function atChainRows(cb, counts = _atCounts) {
+  const chains = trendingBoard.chainList();
+  const btns = chains.map((c) => {
+    const n = (counts[c.id] && counts[c.id].featured) || 0;
+    return cb(`⚡ ${trendingBoard.displayEmoji(c.logo)} ${c.label}${n ? ` (${n})` : ""}`, `atrun:${c.id}`);
+  });
+  const rows = [];
+  for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
+  return rows;
+}
+// Last per-chain snapshot, refreshed whenever the panel is opened. Kept out of
+// the keyboard builder so drawing the panel never blocks on the API.
+let _atCounts = {};
 
 // ── Interactive layout editor — one PHOTO message that edits itself in place ─
 // A full listing-example preview (logo + $TICKER + name + chain·price·MC
@@ -1461,6 +1483,33 @@ function build() {
     );
   });
 
+  // ── Swap ONE emoji in a template ─────────────────────────────────────────
+  // Editing a template means re-sending the whole message; swapping a single
+  // emoji in a 12-line card that way is absurd, and it is the most common edit
+  // an operator actually wants.
+  bot.action(/^tem:(.+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    if (!tpl.keys().includes(key)) return;
+    await sendEmojiPicker(ctx, key);
+  });
+  bot.action(/^temx:([^:]+):(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    const i = Number(ctx.match[2]);
+    const cur = tpl.listEmojis(key)[i];
+    if (!cur) return;
+    ctx.session.awaitingEmoji = { key, i };
+    await ctx.reply(
+      `⌨ Send the emoji to put in place of <b>${escapeHtml(cur.char)}</b> (#${i + 1})` +
+        `${cur.id ? " — 💎 currently premium" : ""}.\n\n` +
+        `Send a <b>premium</b> emoji and it stays premium. Everything else in the template is left untouched. /cancel to abort.`,
+      HTML,
+    );
+  });
+
   bot.action(/^r:(.+)$/, async (ctx) => {
     ctx.answerCbQuery("Reset to default").catch(() => {});
     if (!guard(ctx)) return;
@@ -1469,6 +1518,26 @@ function build() {
     await tpl.resetTemplate(key);
     await sendTemplateView(ctx, key);
   });
+
+  async function sendEmojiPicker(ctx, key) {
+    const list = tpl.listEmojis(key);
+    if (!list.length) {
+      return ctx.reply("This template has no emoji to swap — use ✏️ Edit to change the text.", HTML).catch(() => {});
+    }
+    const cb = Markup.button.callback;
+    const btns = list.slice(0, 48).map((e) => cb(`${e.id ? "💎" : ""}${e.char}`, `temx:${key}:${e.i}`));
+    const rows = [];
+    for (let i = 0; i < btns.length; i += 6) rows.push(btns.slice(i, i + 6));
+    rows.push([cb("⬅ Back", `t:${key}`)]);
+    await ctx
+      .reply(
+        `😀 <b>Swap an emoji</b> — ${escapeHtml(tpl.meta(key).label)}\n\n` +
+          `Tap the one you want to change. 💎 marks the ones that are already premium.` +
+          (list.length > 48 ? `\n\n<i>Showing the first 48 of ${list.length}.</i>` : ""),
+        { ...HTML, ...Markup.inlineKeyboard(rows) },
+      )
+      .catch(() => {});
+  }
 
   bot.action("banner", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -1612,6 +1681,25 @@ function build() {
   bot.action("at", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
+    _atCounts = await autoTrend.featuredByChain().catch(() => ({}));
+    await edit(ctx, atText(), atKb());
+  });
+  bot.action(/^atrun:([a-z0-9]+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const chain = ctx.match[1];
+    ctx.answerCbQuery(`⚡ Promoting on ${chain}…`).catch(() => {});
+    const n = await autoTrend.runOnce({ chain }).catch((e) => {
+      log.warn(`[adminbot] forced auto-trend ${chain}: ${e.message}`);
+      return 0;
+    });
+    log.info(`[adminbot] forced auto-trend on ${chain} → ${n} promoted by @${ctx.from.username || ctx.from.id}`);
+    ctx
+      .answerCbQuery(
+        n ? `✅ ${n} token now trending on ${chain}` : `⚠️ Nothing eligible on ${chain} — every listed token there is already featured`,
+        { show_alert: !n },
+      )
+      .catch(() => {});
+    _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
     await edit(ctx, atText(), atKb());
   });
   bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
@@ -2367,6 +2455,27 @@ function build() {
         : HTML;
       await ctx.reply(text, prevExtra).catch(() => {});
       await ctx.reply("Send this broadcast?", bcControlKb(bcStore.audience().length));
+      return;
+    }
+    if (ctx.session.awaitingEmoji) {
+      const { key, i } = ctx.session.awaitingEmoji;
+      ctx.session.awaitingEmoji = null;
+      const frag = emojiFragment(ctx.message);
+      if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+      try {
+        await tpl.replaceEmojiAt(key, i, frag);
+      } catch (e) {
+        return ctx.reply(`⚠️ ${escapeHtml(e.message)}`, HTML).catch(() => {});
+      }
+      const now = tpl.listEmojis(key)[i];
+      log.info(`[adminbot] template '${key}' emoji #${i + 1} → ${frag} by @${ctx.from.username || ctx.from.id}`);
+      await ctx
+        .reply(
+          `✅ Swapped to ${escapeHtml(now ? now.char : frag)}${now && now.id ? " — 💎 premium" : ""}. Live within ~30s.`,
+          HTML,
+        )
+        .catch(() => {});
+      await sendEmojiPicker(ctx, key);
       return;
     }
     const key = ctx.session.awaitingTemplate;

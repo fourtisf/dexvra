@@ -608,6 +608,110 @@ function getRaw(key) {
 function getRawValue(key) {
   return loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
 }
+// ── Per-emoji editing ───────────────────────────────────────────────────────
+// Editing a template means re-sending the WHOLE message, which is fine for
+// rewording but absurd for swapping one emoji in a 12-line welcome card. These
+// two functions let the admin bot list the emoji in a template and replace ONE
+// of them in place — keeping every other character, and every other entity,
+// exactly where it was.
+//
+// A template value comes in two shapes and both are handled here:
+//   • markup string (all DEFAULTS)  — a premium emoji is "[😀](emoji/123)"
+//   • {text, entities} (admin paste) — a premium emoji is a custom_emoji entity
+//     over its fallback char, so replacing text in the middle means re-mapping
+//     every entity offset after the cut.
+const EMOJI_RE =
+  /(?:\p{RI}\p{RI}|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*|[0-9#*]\uFE0F?\u20E3)/gu;
+const PREMIUM_FRAG_RE = /\[([^\]\n]+)\]\(emoji\/(\d+)\)/g;
+
+/** Parse a replacement the admin sent: "😀" or "[😀](emoji/123)". */
+function parseFragment(fragment) {
+  const f = String(fragment || "").trim();
+  const m = /^\[([^\]\n]+)\]\(emoji\/(\d+)\)$/.exec(f);
+  return m ? { char: m[1], id: m[2] } : { char: f, id: null };
+}
+
+/**
+ * Every emoji in a template, in reading order:
+ *   { i, char, id, start, end }   — id set only for premium ones
+ * `start`/`end` index into the RAW value (markup string or entity text), which
+ * is what replaceEmojiAt() splices.
+ */
+function listEmojis(key) {
+  const val = getRawValue(key);
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? val.text : String(val || "");
+  const out = [];
+  if (!isEntity) {
+    // Premium fragments first — they own their whole "[char](emoji/id)" span,
+    // so the plain scan below must not also match the char inside them.
+    const taken = [];
+    PREMIUM_FRAG_RE.lastIndex = 0;
+    for (let m; (m = PREMIUM_FRAG_RE.exec(text)); ) {
+      out.push({ char: m[1], id: m[2], start: m.index, end: m.index + m[0].length });
+      taken.push([m.index, m.index + m[0].length]);
+    }
+    EMOJI_RE.lastIndex = 0;
+    for (let m; (m = EMOJI_RE.exec(text)); ) {
+      const at = m.index;
+      if (taken.some(([a, b]) => at >= a && at < b)) continue;
+      out.push({ char: m[0], id: null, start: at, end: at + m[0].length });
+    }
+  } else {
+    const ce = (val.entities || []).filter((e) => e.type === "custom_emoji");
+    EMOJI_RE.lastIndex = 0;
+    for (let m; (m = EMOJI_RE.exec(text)); ) {
+      const at = m.index;
+      const hit = ce.find((e) => e.offset === at);
+      out.push({ char: m[0], id: hit ? hit.custom_emoji_id : null, start: at, end: at + m[0].length });
+    }
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out.map((e, i) => ({ i, ...e }));
+}
+
+/**
+ * Replace emoji #i with `fragment` and persist. Returns the emoji list after
+ * the change, so the caller can redraw its keyboard.
+ */
+async function replaceEmojiAt(key, i, fragment) {
+  const list = listEmojis(key);
+  const target = list[i];
+  if (!target) throw new Error(`no emoji #${i + 1} in this template`);
+  const { char, id } = parseFragment(fragment);
+  if (!char) throw new Error("send a single emoji");
+  const val = getRawValue(key);
+  const isEntity = val && typeof val === "object" && val.text != null;
+
+  if (!isEntity) {
+    const text = String(val || "");
+    const replacement = id ? `[${char}](emoji/${id})` : char;
+    await setTemplate(key, text.slice(0, target.start) + replacement + text.slice(target.end));
+    return listEmojis(key);
+  }
+
+  // Entity form: splice the text, then move every entity that sits after the
+  // cut and stretch every entity that CONTAINS it. Getting this wrong slides
+  // premium emoji onto the wrong characters — the bug this whole file guards.
+  const text = val.text;
+  const delta = char.length - (target.end - target.start);
+  const next = [];
+  for (const e of val.entities || []) {
+    const end = e.offset + e.length;
+    if (e.type === "custom_emoji" && e.offset === target.start && end === target.end) continue; // the old one
+    if (end <= target.start) next.push({ ...e });
+    else if (e.offset >= target.end) next.push({ ...e, offset: e.offset + delta });
+    else next.push({ ...e, length: Math.max(0, e.length + delta) }); // spans the cut
+  }
+  if (id) next.push({ type: "custom_emoji", offset: target.start, length: char.length, custom_emoji_id: id });
+  next.sort((a, b) => a.offset - b.offset);
+  await setTemplate(key, {
+    text: text.slice(0, target.start) + char + text.slice(target.end),
+    entities: next,
+  });
+  return listEmojis(key);
+}
+
 function isCustom(key) {
   return loadJSONSync(FILE, {})[key] != null;
 }
@@ -659,6 +763,8 @@ module.exports = {
   FOOTER_BLOCK,
   getRaw,
   getRawValue,
+  listEmojis,
+  replaceEmojiAt,
   isCustom,
   overrideCount,
   setTemplate,
