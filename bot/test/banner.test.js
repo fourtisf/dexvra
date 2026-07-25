@@ -50,3 +50,22 @@ test("renderer never throws on missing/garbage fields", async () => {
     await br.renderMainBanner();
   });
 });
+
+// A banner sold while the row is full is SCHEDULED, not rejected (see
+// src/lib/bannerSchedule.ts on the site). The buyer paid, so the one thing that
+// must never regress is that their receipt says plainly that the banner is not
+// on screen yet and when it will be — the announcement post goes out
+// immediately, which on its own reads as "you're live".
+test("a queued banner receipt tells the buyer it is not live yet, and when it starts", () => {
+  const fulfil = require("../src/fulfillment");
+  const startsAt = Date.UTC(2026, 6, 30, 12, 0, 0);
+  const run = { slot: "Wide Banner", startsAt, endsAt: startsAt + 86_400_000 };
+  const queued = fulfil._successBanner(run, [], "", true).text;
+  assert.ok(/not live yet/i.test(queued), queued);
+  assert.ok(queued.includes(new Date(startsAt).toUTCString()), "the start time is stated in the note itself");
+  assert.ok(/announcement post/i.test(queued), "explains the post going out now");
+  // An immediate booking gets none of that — no phantom "starts later" note.
+  const live = fulfil._successBanner(run, [], "", false).text;
+  assert.ok(!/not live yet/i.test(live), live);
+  assert.ok(live.includes("Wide Banner"), live);
+});

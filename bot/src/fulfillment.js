@@ -400,6 +400,13 @@ function successTrending(coin, hours, links) {
 // {startsAt}/{endsAt} describe the run the site actually scheduled. {queueNote}
 // is the honest line for a sale made while every slot was taken — the order went
 // through, the banner just starts later. Empty (and collapsed away) otherwise.
+//
+// The note repeats the start time INSIDE itself rather than pointing at the line
+// above: this is the one message a queued buyer has to understand, they may skim
+// it, and "booked on the homepage" must never be read as "already on screen".
+// The announcement post is NOT held back for a queued run (operator's call), so
+// the note also says so — a buyer who sees their @dexvraio post go out the same
+// minute would otherwise expect the banner to be live too.
 function successBanner(run, links, xUrl, queued) {
   const when = (ms) => new Date(ms).toUTCString();
   return tpl.render("success_banner", {
@@ -407,7 +414,9 @@ function successBanner(run, links, xUrl, queued) {
     startsAt: when(run.startsAt),
     endsAt: when(run.endsAt),
     queueNote: queued
-      ? "⏳ **All banner slots are booked right now** — your run is reserved and starts automatically at the time above. Nothing else to do."
+      ? "⏳ **Not live yet — every banner slot is taken right now.** Your run is reserved: it goes live " +
+        `automatically on **${when(run.startsAt)}** and runs the full time you paid for — nothing else to do. ` +
+        "Your announcement post is going out now."
       : "",
     postLinks: linkLines(links),
     announceX: announceXLine(xUrl),
@@ -479,4 +488,12 @@ async function fulfillOrder(ctx, order) {
   }
 }
 
-module.exports = { fulfillOrder, fulfillListing, fulfillTrending, fulfillBanner, fulfillMassDm, postMedia };
+module.exports = {
+  fulfillOrder,
+  fulfillListing,
+  fulfillTrending,
+  fulfillBanner,
+  fulfillMassDm,
+  postMedia,
+  _successBanner: successBanner, // buyer copy — tested directly (see banner.test.js)
+};

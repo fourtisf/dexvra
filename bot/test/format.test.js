@@ -190,6 +190,20 @@ test("pump post is a short ticker: multiple, MC move, CA", () => {
   assert.ok(!/since it listed|still climbing/.test(card.text), "no long-form copy");
 });
 
+// A short post is not an excuse to link fewer places: the pump alert once ended
+// with Trending + Dexvra.io only, and a reader had no way to reach the listings
+// or announcements channel from it.
+test("pump post links EVERY Dexvra destination", () => {
+  const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };
+  const urls = fmt.pumpPost(coin, 137.6, 310000, 128400000).entities
+    .filter((e) => e.type === "text_link")
+    .map((e) => e.url);
+  const links = fmt.channelLinks();
+  for (const [name, url] of Object.entries(links)) {
+    assert.ok(urls.includes(url), `${name} (${url}) missing from the pump post: ${urls}`);
+  }
+});
+
 test("pump: {percent} stays available for admins who want the number", async () => {
   const tpl = require("../src/templates");
   const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xabc", links: {}, siteUrl: "u" };

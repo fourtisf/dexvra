@@ -60,12 +60,17 @@ const em = (emoji) => emoji;
 const SOCIALS_BLOCK =
   `${em("🔗", E.link)} **{symbol} social links**\n` +
   `${em("❌", E.cross)} [X]({twitter}) · 🌐 [Website]({website}) · ✈️ [Telegram]({telegram})`;
-const FOOTER_BLOCK =
-  `${em("📎", E.clip)} **Dexvra**\n` +
+// EVERY Dexvra destination, side by side on ONE row. Split out of FOOTER_BLOCK
+// so the short ticker posts (rank-up / pump) carry the SAME complete set without
+// the "📎 Dexvra" header line above it — a reader who lands on any post can
+// reach the site and all three channels. Never trim this to a subset: a pump
+// alert that linked only Trending + Dexvra.io was the operator's complaint.
+const LINKS_ROW =
   `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
   `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
   `🔥 [Trending]({trending}) · ` +
   `${em("📢", E.megaphone)} [Announcements]({announce})`;
+const FOOTER_BLOCK = `${em("📎", E.clip)} **Dexvra**\n` + LINKS_ROW;
 // Shared body of the listing/trending cards (below their distinct headers).
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
 // exactly where to trade it. {price}/{mcap}/{liq} come from live data.
@@ -238,7 +243,8 @@ const DEFAULTS = {
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
-    "⚡ Your **{slot}** banner is booked on the dexvra.io homepage.\n\n" +
+    // No "banner" after {slot} — every slot name already ends in "Banner".
+    "⚡ Your **{slot}** is booked on the dexvra.io homepage.\n\n" +
     "🗓 **Runs:** {startsAt} → {endsAt}\n" +
     "{queueNote}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
@@ -327,27 +333,32 @@ const DEFAULTS = {
     `👉 [View the campaign]({linkUrl})\n\n` +
     FOOTER_BLOCK,
   // Rank-up is a TICKER post, not an article: the clip carries the hype and the
-  // caption just says which token moved, where to read it, and the CA. Kept
-  // deliberately short (Moontok-style) — the long version buried the ticker
-  // under three paragraphs of copy. {change} (a sentence) and {gain} (compact
-  // "+42%") stay available for admins who want the number back.
+  // caption just says which token moved, where to read it, and the CA — then the
+  // full Dexvra link row. Kept deliberately short (Moontok-style) — the long
+  // version buried the ticker under three paragraphs of copy. {change} (a
+  // sentence) and {gain} (compact "+42%") stay available for admins who want the
+  // number back.
   post_rankup:
-    `{chainEmoji} **{symbol}** ${em("📈", E.chartUp)} #{rank} Rank ↑\n` +
+    `{chainEmoji} **{symbol}** ${em("📈", E.chartUp)} Rank ↑ **#{rank}** on Dexvra Trending\n` +
     `[{coinUrlLabel}]({coinUrl})\n\n` +
     `${em("📄", E.clip)} **CA**\n` +
     "`{address}`\n\n" +
-    `🔥 [Trending]({trending}) | ${em("💎", E.diamond)} [Dexvra.io]({site})`,
+    LINKS_ROW,
   // Same ticker shape as post_rankup: the clip carries the hype, the caption
   // states the fact. The old version buried "+2,400%" under four paragraphs of
-  // copy, a social row and a footer — by the time a reader got to the number it
-  // had stopped being news. {percent}, {name} and {chain} stay available.
+  // copy and a per-token social row — by the time a reader got to the number it
+  // had stopped being news. What was cut was the PROSE, not the destinations:
+  // the Dexvra link row stays complete. {percent}, {name} and {chain} stay
+  // available.
   post_pump:
-    `{chainEmoji} **{symbol}** ${em("🚀", E.rocket)} {multiple} since listing\n` +
+    `{chainEmoji} **{symbol}** ${em("🚀", E.rocket)} **{multiple}** since listing\n` +
     `[{coinUrlLabel}]({coinUrl})\n\n` +
-    `${em("📊", E.chart)} **{firstMc} → {lastMc}**\n\n` +
+    // Labelled, so the two numbers read as a market-cap move and not as a
+    // price, a range, or a target.
+    `${em("📊", E.chart)} **Market cap:** {firstMc} → {lastMc}\n\n` +
     `${em("📄", E.clip)} **CA**\n` +
     "`{address}`\n\n" +
-    `🔥 [Trending]({trending}) | ${em("💎", E.diamond)} [Dexvra.io]({site})`,
+    LINKS_ROW,
   // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
   // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
   // Edit an emoji to rebrand a network everywhere at once.
