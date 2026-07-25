@@ -149,3 +149,83 @@ test("featuredByChain counts what the panel shows", async () => {
     api.getListings = realGet;
   }
 });
+
+// forceChain() exists because a button has to explain a zero. "0 promoted" has
+// three very different causes and the operator can only act on the right one;
+// silence on a tap reads as "the button is broken", which is how this was
+// reported.
+test("forceChain: promotes and names what it promoted", async () => {
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [
+    { status: "approved", chain: "bsc", address: "b1", sym: "$B1" },
+    { status: "approved", chain: "solana", address: "s1", sym: "$S1" },
+  ];
+  api.bookTrending = async () => ({});
+  try {
+    const r = await autoTrend.forceChain("bsc");
+    assert.strictEqual(r.promoted, 1);
+    assert.match(r.syms[0], /\$B1 \d+h/, `names the token and its run: ${JSON.stringify(r.syms)}`);
+    assert.strictEqual(r.reason, "", "no reason needed when it worked");
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+  }
+});
+
+test("forceChain: each kind of zero explains itself", async () => {
+  const now = Date.now();
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  try {
+    // 1. nothing listed on that chain
+    api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", sym: "$B1" }];
+    api.bookTrending = async () => ({});
+    let r = await autoTrend.forceChain("solana");
+    assert.strictEqual(r.promoted, 0);
+    assert.match(r.reason, /no listings on solana/i, r.reason);
+
+    // 2. everything there is already trending
+    api.getListings = async () => [
+      { status: "approved", chain: "solana", address: "s1", sym: "$S1", trendingRank: 1, trendExp: now + 3_600_000 },
+    ];
+    r = await autoTrend.forceChain("solana");
+    assert.strictEqual(r.promoted, 0);
+    assert.match(r.reason, /already trending/i, r.reason);
+
+    // 3. the site refused the booking — the reason must carry the API's words
+    api.getListings = async () => [{ status: "approved", chain: "solana", address: "s2", sym: "$S2" }];
+    api.bookTrending = async () => {
+      throw new Error("400: token not found");
+    };
+    r = await autoTrend.forceChain("solana");
+    assert.strictEqual(r.promoted, 0);
+    assert.match(r.reason, /refused|400/i, r.reason);
+
+    // 4. the listings API is down
+    api.getListings = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    r = await autoTrend.forceChain("solana");
+    assert.strictEqual(r.promoted, 0);
+    assert.match(r.reason, /unavailable/i, r.reason);
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+  }
+});
+
+test("forceChain works while Auto Trending is OFF — it is a deliberate act", async () => {
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [{ status: "approved", chain: "base", address: "x1", sym: "$X1" }];
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.set({ enabled: false });
+    const r = await autoTrend.forceChain("base");
+    assert.strictEqual(r.promoted, 1);
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+  }
+});

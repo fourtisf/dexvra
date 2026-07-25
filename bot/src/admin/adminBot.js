@@ -1242,7 +1242,10 @@ function currentCopyable(key) {
 async function edit(ctx, text, kb) {
   try {
     await ctx.editMessageText(text, { ...HTML, ...(kb || {}) });
-  } catch {
+  } catch (e) {
+    // "message is not modified" means the panel already shows this exactly —
+    // re-sending it as a NEW message just stacks duplicates down the chat.
+    if (/not modified/i.test(e && e.message ? e.message : "")) return;
     await ctx.reply(text, { ...HTML, ...(kb || {}) });
   }
 }
@@ -1687,16 +1690,21 @@ function build() {
   bot.action(/^atrun:([a-z0-9]+)$/, async (ctx) => {
     if (!guard(ctx)) return;
     const chain = ctx.match[1];
-    ctx.answerCbQuery(`⚡ Promoting on ${chain}…`).catch(() => {});
-    const n = await autoTrend.runOnce({ chain }).catch((e) => {
+    const res = await autoTrend.forceChain(chain).catch((e) => {
       log.warn(`[adminbot] forced auto-trend ${chain}: ${e.message}`);
-      return 0;
+      return { promoted: 0, syms: [], reason: e.message };
     });
-    log.info(`[adminbot] forced auto-trend on ${chain} → ${n} promoted by @${ctx.from.username || ctx.from.id}`);
-    ctx
+    log.info(
+      `[adminbot] forced auto-trend on ${chain} → ${res.promoted} promoted (${res.reason || res.syms.join(", ")}) ` +
+        `by @${ctx.from.username || ctx.from.id}`,
+    );
+    // EXACTLY ONE answerCbQuery: Telegram accepts the first per callback and
+    // drops the rest, so an early "working…" toast silently ate the result —
+    // which is what "the button does nothing" actually was.
+    await ctx
       .answerCbQuery(
-        n ? `✅ ${n} token now trending on ${chain}` : `⚠️ Nothing eligible on ${chain} — every listed token there is already featured`,
-        { show_alert: !n },
+        res.promoted ? `✅ Now trending on ${chain}: ${res.syms.join(", ")}` : `⚠️ ${res.reason}`,
+        { show_alert: true },
       )
       .catch(() => {});
     _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);

@@ -146,6 +146,56 @@ function start() {
   };
 }
 
+/**
+ * Force a promotion on ONE chain and say what happened.
+ *
+ * runOnce() returns a count, which is all the scheduler needs — but a button in
+ * the admin panel has to explain a zero, and "0" has three very different
+ * causes: nothing listed on that chain, everything there already trending, or
+ * the API refused the booking. Silence on a tap reads as "the button is
+ * broken", which is exactly how this was reported.
+ *
+ * @returns {Promise<{promoted:number, syms:string[], reason:string}>}
+ */
+async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
+  const cfg = get();
+  const id = String(chain || "").toLowerCase();
+  let listings;
+  try {
+    listings = await api.getListings();
+  } catch (e) {
+    return { promoted: 0, syms: [], reason: `listings unavailable (${e.message})` };
+  }
+  const now = Date.now();
+  const isFeatured = (r) => r.status === "approved" && r.trendingRank != null && (!r.trendExp || r.trendExp > now);
+  const onChain = (r) => String(r.chain || "").toLowerCase() === id;
+  const approved = listings.filter((r) => r.status === "approved" && onChain(r));
+  if (!approved.length) return { promoted: 0, syms: [], reason: `no listings on ${id} yet` };
+  const eligible = approved.filter((r) => !isFeatured(r));
+  if (!eligible.length) {
+    return { promoted: 0, syms: [], reason: `all ${approved.length} listed token(s) on ${id} are already trending` };
+  }
+  for (let i = eligible.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
+  }
+  const syms = [];
+  let lastErr = null;
+  for (const r of eligible.slice(0, Math.max(1, count))) {
+    const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
+    try {
+      await api.bookTrending(r.chain, r.address, hours);
+      syms.push(`${r.sym || String(r.address).slice(0, 6)} ${hours}h`);
+      log.info(`[autotrend] FORCED ${r.chain}/${String(r.address).slice(0, 8)}… (${r.sym || "?"}) for ${hours}h`);
+    } catch (e) {
+      lastErr = e.message;
+      log.warn(`[autotrend] forced bookTrending ${r.sym || r.address}: ${e.message}`);
+    }
+  }
+  if (!syms.length) return { promoted: 0, syms, reason: `the site refused the booking (${lastErr || "unknown"})` };
+  return { promoted: syms.length, syms, reason: "" };
+}
+
 /** How many tokens are featured per chain right now — the panel shows this so
  *  the operator can see WHICH chain is empty before forcing one. */
 async function featuredByChain(now = Date.now()) {
@@ -167,4 +217,4 @@ async function featuredByChain(now = Date.now()) {
   return out;
 }
 
-module.exports = { get, set, reset, runOnce, featuredByChain, start, DEFAULTS, HARD };
+module.exports = { get, set, reset, runOnce, forceChain, featuredByChain, start, DEFAULTS, HARD };
