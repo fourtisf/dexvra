@@ -28,8 +28,18 @@ const chainName = (c) => (chainOf(c) ? chainOf(c).label : String(c).toUpperCase(
 // {text, entities} and the text alone only carries the unicode fallback — so
 // rebuild each mapping as premium markup ([fallback](emoji/ID)) from the
 // entities, letting the custom emoji survive into the rendered post.
-function chainEmojiMap() {
-  const val = tpl.getRawValue("chain_emojis");
+/**
+ * Parse a `key = emoji` template into a map, rebuilding premium custom emoji as
+ * markup so they survive into the post.
+ *
+ * The offset arithmetic is why this is ONE function and not two: an
+ * admin-pasted template is stored as {text, entities} where a premium emoji is
+ * a custom_emoji entity over its fallback character, so each value has to be
+ * re-assembled from the entities that fall inside its span. Duplicating that
+ * for a second map is how the two drift.
+ */
+function emojiMapTemplate(key) {
+  const val = tpl.getRawValue(key);
   const isEntity = val && typeof val === "object" && val.text != null;
   const text = isEntity ? val.text : String(val || "");
   const ents = ((isEntity && val.entities) || []).filter((e) => e.type === "custom_emoji" && e.custom_emoji_id);
@@ -64,6 +74,10 @@ function chainEmojiMap() {
   }
   return map;
 }
+
+const chainEmojiMap = () => emojiMapTemplate("chain_emojis");
+const tierEmojiMap = () => emojiMapTemplate("tier_emojis");
+
 function chainEmoji(chain) {
   const id = (chainOf(chain) && chainOf(chain).id) || String(chain || "").toLowerCase();
   return chainEmojiMap()[id] || "💠";
@@ -74,18 +88,24 @@ const tme = (handle) => `https://t.me/${String(handle).replace(/^@/, "")}`;
 const clean = (v) => premium.sanitizeVar(v); // user-supplied values → markup-safe
 const cleanUrl = (v) => premium.sanitizeUrl(v); // user URLs → can't close [label](url)
 
-// Tier badges — premium where fourtis has proven IDs, unicode otherwise.
-// Tiers whose badge has a PREMIUM twin; everything else falls back to the emoji
-// packages.js already defines for that tier. Keeping only the exceptions here
-// means a tier can never render as a blank badge — PLATINUM was missing from
-// this map and posted as "New Listing on Dexvra ·  Platinum tier", separator,
-// double space and all.
-const TIER_EMOJI = {
-  DIAMOND: em("💎", E.diamond),
-  GOLD: em("🥇", E.gold),
-  XPRESS: em("⚡", E.zap),
+// Tier badges (Diamond → Bronze + Xpress) come from the ADMIN-EDITABLE
+// `tier_emojis` template, exactly like the per-chain logos: send a PREMIUM
+// emoji in @dexvraadminbot and the badge animates in the post. packages.js is
+// the fallback, so a tier can never render as a blank badge — PLATINUM was
+// missing from the old hardcoded map and posted as "New Listing on Dexvra ·
+// Platinum tier", separator, double space and all.
+const tierBadge = (key) => {
+  const k = String(key || "").toLowerCase();
+  return tierEmojiMap()[k] || pkgTierEmoji(String(key || "").toUpperCase()) || "";
 };
-const tierBadge = (key) => TIER_EMOJI[key] || pkgTierEmoji(key) || "";
+
+/** The tier badge as a PLAIN character — for surfaces that cannot render a
+ *  premium custom emoji: X posts (plain text) and the bot's own inline keyboard
+ *  (Telegram strips custom emoji from a regular bot). Same setting, one source:
+ *  before this, twitter.js and the tier chooser each carried their own
+ *  hardcoded map, so changing the badge in the admin bot moved the Telegram
+ *  post and left the tweet and the buy button behind. */
+const tierBadgeChar = (key) => premium.parse(String(tierBadge(key) || "")).text;
 
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 
@@ -738,4 +758,4 @@ function rankupPost(coin, rank, change24h) {
   }), postUrls(coin));
 }
 
-module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
+module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };

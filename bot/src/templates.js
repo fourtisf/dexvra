@@ -345,10 +345,11 @@ const DEFAULTS = {
   // 💠 Platinum tier 🐶". An untiered listing drops just the tier SEGMENT —
   // channels/format.js keeps the header itself.
   post_listing_tiered:
-    // No medal/trophy emoji beside the tier (operator preference, 2026-07-25):
-    // the tier NAME carries it. {tierEmoji} stays an available placeholder for
-    // anyone who wants the badge back.
-    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · **{tier} tier** {logoEmoji}\n\n` +
+    // {tierEmoji} is whatever the operator set for that tier in the
+    // `tier_emojis` template below — a premium emoji if they sent one. It was
+    // briefly removed when the badge was a hardcoded trophy nobody chose; the
+    // objection was to the emoji, not to the badge.
+    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · {tierEmoji} **{tier} tier** {logoEmoji}\n\n` +
     LISTING_BODY,
   post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
   // Advertiser-facing, so it reads like an ad placement announcement rather than
@@ -396,6 +397,18 @@ const DEFAULTS = {
     `${em("📄", E.clip)} **CA**\n` +
     "`{address}`\n\n" +
     LINKS_ROW,
+  // Per-TIER badge shown beside the header on a listing post ("New Listing on
+  // Dexvra · 💎 Diamond tier"). Same shape as chain_emojis: one `tier = emoji`
+  // per line. Send a PREMIUM emoji here and the badge animates in the channel —
+  // that is the whole point of it being a template rather than code.
+  // A tier missing from this list falls back to the emoji in config/packages.js.
+  tier_emojis:
+    "diamond = 💎\n" +
+    "gold = 🥇\n" +
+    "platinum = 🏆\n" +
+    "silver = 🥈\n" +
+    "bronze = 🥉\n" +
+    "xpress = ⚡",
   // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
   // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
   // Edit an emoji to rebrand a network everywhere at once.
@@ -506,6 +519,7 @@ const META = {
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },

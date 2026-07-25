@@ -301,8 +301,11 @@ async function approve(ctx) {
   // Listing & Trending → tier chooser
   const chain = f.chain;
   const native = payNativeOf(chain);
+  // Same badge the channel post will carry (plain char — a bot keyboard can't
+  // render a premium emoji), so the buyer sees in the chooser what they get.
+  const badge = (key) => require("../channels/format").tierBadgeChar(key) || tierEmoji(key);
   const rows = RANKED_TIERS.map((t) => [
-    Markup.button.callback(`${tierEmoji(t.key)} ${t.label} · ${tierPrice(t.key, chain)} ${native}`, `lt_${t.key}`),
+    Markup.button.callback(`${badge(t.key)} ${t.label} · ${tierPrice(t.key, chain)} ${native}`, `lt_${t.key}`),
   ]);
   await sendCard(ctx, tpl.render("tier_chooser", { native }), menu.withHome(rows));
 }

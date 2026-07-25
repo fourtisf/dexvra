@@ -1531,16 +1531,34 @@ function build() {
     await sendTemplateView(ctx, key);
   });
 
+  /** For a `key = emoji` template, the key belonging to each emoji in reading
+   *  order (empty array for ordinary prose templates). */
+  function mapKeyLabels(key) {
+    const val = tpl.getRawValue(key);
+    const text = val && typeof val === "object" && val.text != null ? val.text : String(val || "");
+    const lines = text.split("\n").filter((l) => /^[^=\n]+=/.test(l));
+    // Only treat it as a map when EVERY non-empty line is `key = value`.
+    if (!lines.length || lines.length !== text.split("\n").filter((l) => l.trim()).length) return [];
+    return lines.map((l) => l.split("=")[0].trim());
+  }
+
   async function sendEmojiPicker(ctx, key) {
     const list = tpl.listEmojis(key);
     if (!list.length) {
       return ctx.reply("This template has no emoji to swap — use ✏️ Edit to change the text.", HTML).catch(() => {});
     }
     const cb = Markup.button.callback;
-    const btns = list.slice(0, 48).map((e) => cb(`${e.id ? "💎" : ""}${e.char}`, `temx:${key}:${e.i}`));
+    // A `key = emoji` map (tier_emojis / chain_emojis) gets its KEY on the
+    // button. Without it the picker is a row of near-identical coloured circles
+    // — 🔷 vs 🔵 vs 🔹 with nothing saying which is Ethereum, Base or TON.
+    const labels = mapKeyLabels(key);
+    const btns = list
+      .slice(0, 48)
+      .map((e) => cb(`${e.id ? "💎" : ""}${e.char}${labels[e.i] ? ` ${labels[e.i]}` : ""}`, `temx:${key}:${e.i}`));
+    const perRow = labels.length ? 3 : 6;
     const rows = [];
-    for (let i = 0; i < btns.length; i += 6) rows.push(btns.slice(i, i + 6));
-    rows.push([cb("⬅ Back", `t:${key}`)]);
+    for (let i = 0; i < btns.length; i += perRow) rows.push(btns.slice(i, i + perRow));
+    rows.push([cb("⬅ Back", `v:${key}`)]); // the view handler is v:, not t: — this button was dead
     await ctx
       .reply(
         `😀 <b>Swap an emoji</b> — ${escapeHtml(tpl.meta(key).label)}\n\n` +
@@ -2271,6 +2289,9 @@ function build() {
   bot.command("cancel", async (ctx) => {
     if (!guard(ctx)) return;
     ctx.session.awaitingTemplate = null;
+    // Without this a "cancelled" swap stayed armed and ate the NEXT plain
+    // message — including a full template someone sent for a different key.
+    ctx.session.awaitingEmoji = null;
     ctx.session.awaitingBanner = false;
     ctx.session.awaitingBroadcast = false;
     ctx.session.awaitingBt = null;
