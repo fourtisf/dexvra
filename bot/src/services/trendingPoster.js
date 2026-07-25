@@ -14,7 +14,25 @@ const log = require("../helpers/logger");
 
 const STATE_FILE = "trendpost.json";
 const MAX_PER_CHAIN = 10;
-let state = loadJSONSync(STATE_FILE, { messageId: null, lastText: null });
+// lastMode = how the last successful post RENDERED ("premium" = custom-emoji
+// entities went out via the premium account, "plain" = unicode fallbacks). It's
+// part of the skip check: without it a board whose text never changes would stay
+// stuck on unicode forever after the premium account finally came online.
+let state = loadJSONSync(STATE_FILE, { messageId: null, lastText: null, lastMode: null });
+
+// After Telegram REFUSES our custom emoji (account isn't Premium / dead emoji
+// id) stop paying for the doomed premium attempt for a while. It expires on its
+// own, so the board upgrades itself once the account is fixed — no restart.
+const PREMIUM_RETRY_MS = 30 * 60 * 1000;
+let premiumBlockedUntil = 0;
+// This loop runs every few minutes — warn at most hourly per distinct reason.
+const warnedAt = new Map();
+function warnOnce(key, msg) {
+  const now = Date.now();
+  if (now - (warnedAt.get(key) || 0) < 60 * 60 * 1000) return;
+  warnedAt.set(key, now);
+  log.warn(msg);
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Board priority: paid tier first (Diamond=1 … Bronze=5), then Xpress/none last.
@@ -111,10 +129,29 @@ async function buildText() {
   return lines.join("\n");
 }
 
-// Edit (or, on any failure, re-post) the board through ONE transport. A message
-// can only be edited by the account that sent it, so the transport that owns the
-// current message must match; otherwise we post fresh and record the new owner.
-async function postVia(tg, transport, payload, markup) {
+// Remove a superseded board message so the channel never accumulates duplicate
+// boards (the visible symptom of a transport flip). Only the identity that POSTED
+// a message may delete it, so this routes by the recorded owner. Best-effort.
+async function dropMessage(tg, owner, messageId) {
+  try {
+    if (owner === "gramjs") await gramjs.deleteChannelMessage(CHANNELS.trending, messageId);
+    else await tg.deleteMessage(CHANNELS.trending, messageId);
+    log.info(`[trendposter] removed superseded board message #${messageId} (${owner})`);
+  } catch (e) {
+    log.debug(`[trendposter] could not delete old board #${messageId}: ${e.message}`);
+  }
+}
+
+// Edit (or, on failure, re-post) the board through ONE transport. A message can
+// only be edited by the account that sent it, so the transport that owns the
+// current message must match; otherwise we post fresh, record the new owner and
+// delete the old message — posting FIRST so the channel is never boardless.
+//
+// A premium-emoji rejection is rethrown untouched: re-posting would fail
+// identically, and flipping transport would strand a duplicate board. The caller
+// retries on this same transport with the custom emoji stripped, which then just
+// EDITS the existing message.
+async function postVia(tg, transport, payload, markup, mode) {
   const editIt = () =>
     transport === "gramjs"
       ? gramjs.editChannelMessage(CHANNELS.trending, state.messageId, payload)
@@ -123,6 +160,7 @@ async function postVia(tg, transport, payload, markup) {
           disable_web_page_preview: true,
         });
   const sendFresh = async () => {
+    const prev = state.messageId ? { id: state.messageId, owner: state.transport } : null;
     let msg;
     if (transport === "gramjs") {
       msg = await gramjs.sendToChannel(CHANNELS.trending, { text: payload.text, entities: payload.entities, pin: true });
@@ -135,57 +173,86 @@ async function postVia(tg, transport, payload, markup) {
     }
     state.messageId = msg.message_id;
     state.transport = transport;
+    if (prev) await dropMessage(tg, prev.owner, prev.id);
+  };
+  const settle = async () => {
+    state.lastText = markup;
+    state.lastMode = mode;
+    await saveJSON(STATE_FILE, state);
   };
 
   if (state.messageId && state.transport === transport) {
     try {
       await editIt();
+      return settle();
     } catch (e) {
-      if (/not modified/i.test(e.message || "")) {
-        state.lastText = markup;
-        return;
-      }
+      if (/not modified/i.test(e.message || "")) return settle();
+      if (transport === "gramjs" && gramjs.isPremiumEmojiError(e)) throw e; // caller degrades in place
       log.debug(`[trendposter] ${transport} edit failed (${e.message}) — posting fresh`);
-      state.messageId = null;
-      await sendFresh();
     }
-  } else {
-    await sendFresh();
   }
-  state.lastText = markup;
-  await saveJSON(STATE_FILE, state);
+  await sendFresh(); // throws with state.messageId untouched, so no phantom id
+  return settle();
+}
+
+// One refresh cycle. Exported so the premium / degrade paths are testable
+// without waiting on the interval. Never throws — a bad cycle just skips.
+async function runOnce(tg) {
+  try {
+    const markup = await buildText();
+    if (!markup) return;
+    const parsed = premium.parse(markup);
+    // Bot API can't render custom (premium) emoji from a non-owner bot — drop
+    // those entities so it shows the unicode fallback; GramJS keeps them.
+    const botEntities = parsed.entities.filter((e) => e.type !== "custom_emoji");
+    const hasPremiumEmoji = parsed.entities.length !== botEntities.length;
+
+    const premiumUsable = hasPremiumEmoji && gramjs.available() && Date.now() >= premiumBlockedUntil;
+    const mode = premiumUsable ? "premium" : "plain";
+    // Re-render when the TEXT changed OR when the board can render in a different
+    // MODE than last time (premium account just came online / just went away).
+    if (markup === state.lastText && mode === state.lastMode) return;
+
+    // Prefer the GramJS premium account — the ONLY way custom emoji render.
+    if (premiumUsable) {
+      try {
+        await postVia(tg, "gramjs", { text: parsed.text, entities: parsed.entities }, markup, "premium");
+        return;
+      } catch (e) {
+        if (gramjs.isPremiumEmojiError(e)) {
+          // Telegram refused the emoji themselves — the account almost certainly
+          // isn't Telegram Premium (or an id is dead). Degrade IN PLACE on the
+          // same transport (same message, no duplicate) and back off.
+          premiumBlockedUntil = Date.now() + PREMIUM_RETRY_MS;
+          gramjs.recordEmojiRefusal(e.message); // surfaces in /premium (admin bot)
+          warnOnce(
+            "premium-refused",
+            `[trendposter] Telegram REFUSED the premium emoji (${e.message}) — is the GramJS account actually Telegram Premium? Board renders UNICODE; retrying in ${Math.round(PREMIUM_RETRY_MS / 60000)}min. Diagnose with /premium in @dexvraadminbot.`,
+          );
+          try {
+            await postVia(tg, "gramjs", { text: parsed.text, entities: botEntities }, markup, "plain");
+            return;
+          } catch (e2) {
+            log.warn(`[trendposter] gramjs unicode post also failed → bot-api fallback: ${e2.message}`);
+          }
+        } else {
+          log.warn(`[trendposter] premium (gramjs) post FAILED → bot-api fallback (unicode): ${e.message}`);
+        }
+      }
+    } else if (hasPremiumEmoji && !gramjs.available()) {
+      warnOnce(
+        "premium-offline",
+        "[trendposter] board has premium emoji but the premium account is NOT connected — posting UNICODE. Run: node scripts/gramjs-login.js (diagnose with /premium in @dexvraadminbot)",
+      );
+    }
+    await postVia(tg, "bot", { text: parsed.text, entities: botEntities }, markup, "plain");
+  } catch (e) {
+    log.debug(`[trendposter] ${e.message}`);
+  }
 }
 
 function start(tg) {
-  const run = async () => {
-    try {
-      const markup = await buildText();
-      if (!markup || markup === state.lastText) return;
-      const parsed = premium.parse(markup);
-      // Bot API can't render custom (premium) emoji from a non-owner bot — drop
-      // those entities so it shows the unicode fallback; GramJS keeps them.
-      const botEntities = parsed.entities.filter((e) => e.type !== "custom_emoji");
-
-      const hasPremiumEmoji = parsed.entities.some((e) => e.type === "custom_emoji");
-      // Prefer the GramJS premium account (the ONLY way custom emoji render). On
-      // ANY GramJS failure fall back to the Bot API for this cycle — which STRIPS
-      // custom emoji to their unicode fallback. Log the reason loudly when there
-      // ARE premium badges to render but we can't, so the operator can diagnose.
-      if (gramjs.available()) {
-        try {
-          await postVia(tg, "gramjs", { text: parsed.text, entities: parsed.entities }, markup);
-          return;
-        } catch (e) {
-          log.warn(`[trendposter] premium (gramjs) post FAILED → bot-api fallback (unicode): ${e.message}`);
-        }
-      } else if (hasPremiumEmoji) {
-        log.warn("[trendposter] premium badges set but premium account NOT connected — board shows UNICODE. Run: node scripts/gramjs-login.js");
-      }
-      await postVia(tg, "bot", { text: parsed.text, entities: botEntities }, markup);
-    } catch (e) {
-      log.debug(`[trendposter] ${e.message}`);
-    }
-  };
+  const run = () => runOnce(tg);
   const iv = setInterval(run, TRENDING_POST_MS);
   const kick = setTimeout(run, 8000);
   return {
@@ -196,4 +263,10 @@ function start(tg) {
   };
 }
 
-module.exports = { start, buildText };
+module.exports = { start, runOnce, buildText };
+// Exposed for tests: reset the in-memory post state between cases.
+module.exports._resetState = () => {
+  state = { messageId: null, lastText: null, lastMode: null };
+  premiumBlockedUntil = 0;
+  warnedAt.clear();
+};

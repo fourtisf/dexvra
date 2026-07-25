@@ -8,6 +8,7 @@ const fss = require("node:fs");
 const fs = require("node:fs/promises");
 const { API_ID, API_HASH, GRAMJS_SESSION_FILE, GRAMJS_ENABLED } = require("./config/constants");
 const premium = require("./premium");
+const { loadJSONSync, saveJSON } = require("./helpers/persist");
 const log = require("./helpers/logger");
 
 let TG = null; // lazy-loaded 'telegram' module (heavy) — only when actually used
@@ -15,6 +16,31 @@ let client = null;
 let clientFailedAt = 0;
 let connecting = null; // in-flight getClient(), memoized — never two clients on one session
 const CLIENT_COOLDOWN_MS = 5 * 60 * 1000;
+
+// Cross-process premium-emoji status. Only the MAIN bot connects (two MTProto
+// clients on one session string risks AUTH_KEY_DUPLICATED, which would revoke
+// the login and kill premium posting outright), so it publishes what it learned
+// into the shared data dir and the ADMIN bot reads it for /premium. Small file,
+// written only when something actually changes.
+const STATUS_FILE = "gramjsStatus.json";
+function lastStatus() {
+  const s = loadJSONSync(STATUS_FILE, null);
+  return s && typeof s === "object" ? s : null;
+}
+function recordStatus(patch) {
+  const prev = lastStatus() || {};
+  const next = { ...prev, ...patch, at: Date.now() };
+  // Skip the write when nothing meaningful moved (posts are frequent, this is
+  // a diagnostic, and every saveJSON also fans out to the Mongo mirror).
+  const same = ["ok", "account", "premium", "error", "emojiRefused"].every((k) => prev[k] === next[k]);
+  if (same && prev.at) return;
+  saveJSON(STATUS_FILE, next).catch(() => {});
+}
+/** Called when Telegram rejects our custom emoji — the single most useful
+ *  signal for "why is the board plain?", and it outranks a stale getMe. */
+function recordEmojiRefusal(error) {
+  recordStatus({ emojiRefused: true, emojiError: String(error || "") });
+}
 
 function lib() {
   if (TG === undefined) return null;
@@ -75,10 +101,30 @@ async function connectClient() {
     }
     client = c;
     clientFailedAt = 0;
-    log.info("[gramjs] connected (premium emoji posting active)");
+    // WHO is posting, and can they send custom emoji at all? Telegram only lets
+    // PREMIUM accounts do that — a non-premium login is the difference between
+    // an animated board and a plain one, and it's invisible from the channel.
+    let account = null;
+    let isPremium = null;
+    try {
+      const me = await c.getMe();
+      account = me.username ? `@${me.username}` : [me.firstName, me.lastName].filter(Boolean).join(" ") || String(me.id);
+      isPremium = Boolean(me.premium);
+    } catch {
+      /* identity is a nice-to-have; posting still works */
+    }
+    recordStatus({ ok: true, account, premium: isPremium, error: null, emojiRefused: false, emojiError: null });
+    if (isPremium === false) {
+      log.warn(
+        `[gramjs] connected as ${account || "?"} but that account is NOT Telegram Premium — custom emoji will post as their plain fallback.`,
+      );
+    } else {
+      log.info(`[gramjs] connected as ${account || "?"}${isPremium ? " (Premium ✓)" : ""} — premium emoji posting active`);
+    }
     return client;
   } catch (e) {
     clientFailedAt = Date.now();
+    recordStatus({ ok: false, error: e.message });
     if (client) {
       try {
         client.disconnect();
@@ -191,6 +237,55 @@ async function sendToChannel(channel, { text, entities, media, replyTo, pin }) {
   }
 }
 
+/** Delete a message this account posted. Best-effort — used so switching
+ *  transports (or re-posting a board) never leaves a stale duplicate behind. */
+async function deleteChannelMessage(channel, messageId) {
+  try {
+    const c = await getClient();
+    const target = await c.getEntity(channel);
+    await c.deleteMessages(target, [messageId], { revoke: true });
+  } catch (e) {
+    invalidateOnAuthError(e);
+    throw e;
+  }
+}
+
+/** Telegram refused the message BECAUSE of its custom (premium) emoji — the
+ *  account isn't Premium, or an id is dead/unavailable. The caller should retry
+ *  the same send without custom_emoji entities rather than change transport:
+ *  the text is identical, so the board keeps its one message instead of
+ *  spawning a duplicate under the other identity. */
+function isPremiumEmojiError(err) {
+  const m = String((err && (err.errorMessage || err.message)) || "");
+  return /PREMIUM_ACCOUNT_REQUIRED|EMOJI_INVALID|EMOJI_NOT_FOUND|CUSTOM_EMOJI|DOCUMENT_INVALID/i.test(m);
+}
+
+/** Premium-emoji readiness — the answer to "why is the board still plain
+ *  unicode?", which has several causes that look identical from the channel.
+ *
+ *  Deliberately does NOT connect: the admin bot is a separate process and a
+ *  second MTProto client on the same session string risks AUTH_KEY_DUPLICATED,
+ *  which revokes the login and takes premium posting down for real. Local config
+ *  is checked directly (that covers the most common cause — no session at all);
+ *  live facts come from what the MAIN bot recorded on its last connect/post. */
+function diagnose() {
+  const out = {
+    enabled: GRAMJS_ENABLED,
+    apiCreds: Boolean(API_ID && API_HASH),
+    sessionFile: GRAMJS_SESSION_FILE,
+    sessionPresent: false,
+    libInstalled: Boolean(lib()),
+    cooldownSec: clientFailedAt ? Math.max(0, Math.ceil((CLIENT_COOLDOWN_MS - (Date.now() - clientFailedAt)) / 1000)) : 0,
+    last: lastStatus(), // { at, ok, account, premium, error, emojiRefused, emojiError }
+  };
+  try {
+    out.sessionPresent = fss.existsSync(GRAMJS_SESSION_FILE) && fss.statSync(GRAMJS_SESSION_FILE).size > 10;
+  } catch {
+    out.sessionPresent = false;
+  }
+  return out;
+}
+
 /** Edit an existing message (text + premium-emoji entities) that the logged-in
  *  user posted — used to keep the pinned Trending board's custom emoji live.
  *  Returns a Bot-API-shaped { message_id } or throws. */
@@ -213,4 +308,14 @@ async function editChannelMessage(channel, messageId, { text, entities }) {
   }
 }
 
-module.exports = { available, getClient, sendToChannel, editChannelMessage, _resolveFile: resolveFile };
+module.exports = {
+  available,
+  getClient,
+  sendToChannel,
+  editChannelMessage,
+  deleteChannelMessage,
+  isPremiumEmojiError,
+  recordEmojiRefusal,
+  diagnose,
+  _resolveFile: resolveFile,
+};

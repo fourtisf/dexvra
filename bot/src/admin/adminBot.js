@@ -334,61 +334,69 @@ function emojiFragment(msg) {
   const raw = String((msg && msg.text) || "");
   const ce = ((msg && msg.entities) || []).find((e) => e.type === "custom_emoji");
   if (ce && ce.custom_emoji_id) {
-    const fallback = raw.substring(ce.offset, ce.offset + ce.length).trim();
+    // The fallback char is what non-premium viewers see; strip markup chars from
+    // it so it can't break out of the [char](emoji/id) fragment it goes into.
+    const fallback = raw.substring(ce.offset, ce.offset + ce.length).replace(/[[\]()`*]/g, "").trim();
     if (fallback) return `[${fallback}](emoji/${ce.custom_emoji_id})`;
   }
-  return raw.trim().split(/\s+/)[0] || "";
+  // Plain emoji: first token only, markup characters removed — this value is
+  // spliced straight into the channel post's markup.
+  return (raw.trim().split(/\s+/)[0] || "").replace(/[[\]()`*]/g, "");
 }
+const TB_PREMIUM = "💎"; // this slot renders as a real (animated) premium emoji
+// Per-slot marker: 💎 premium · ✅ your own plain emoji · ▫️ built-in default.
+const tbMark = (premium, custom) => (premium ? TB_PREMIUM : custom ? TB_SET : TB_DEFAULT);
 function tbText() {
   const n = trendingBoard.RANK_SLOTS;
   const badges = trendingBoard
     .rankEmojis()
-    .map((e, i) => `${trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT}${i + 1}${trendingBoard.displayEmoji(e)}`)
-    .join("  ");
-  // How many slots carry a PREMIUM emoji (stored as "[x](emoji/ID)" markup) and
-  // whether the premium account that actually renders them is connected.
-  const isPrem = (e) => /\(emoji\//.test(String(e || ""));
-  const nPrem =
-    trendingBoard.rankEmojis().filter(isPrem).length +
-    trendingBoard.chainList().filter((c) => isPrem(c.logo)).length;
-  const premLine = nPrem
-    ? gramjs.available()
-      ? `💎 Premium emoji: <b>🟢 ready</b> — ${nPrem} set, posting via the premium account.`
-      : `💎 Premium emoji: <b>🔴 NOT rendering</b> — ${nPrem} set, but the premium account isn't connected. Run <code>node scripts/gramjs-login.js</code>. Until then the board shows the plain fallback.`
-    : `💎 Premium emoji: send a <b>premium</b> emoji when setting a badge/logo to use one (needs the premium account connected).`;
+    .map((e, i) => `${tbMark(trendingBoard.isRankPremium(i + 1), trendingBoard.isRankCustom(i + 1))}${i + 1} ${trendingBoard.displayEmoji(e)}`)
+    .join("   ");
+  // Coverage = how many board slots carry a premium emoji. Ranks 1–9 and the
+  // major chains ship premium BUILT-IN, so this is high with no setup; the
+  // remaining slots are ones with no verified id (rank 10, newer L2s). Shown in
+  // BOTH states — "how much is premium" and "is it actually rendering" are
+  // different questions and the operator needs both answers at once.
+  const cov = trendingBoard.premiumCoverage();
+  const covLine = `${cov.premium}/${cov.total} slots premium (ranks ${cov.ranksPremium}/${cov.ranksTotal} · chains ${cov.chainsPremium}/${cov.chainsTotal})`;
+  const premLine = gramjs.available()
+    ? `💎 Premium emoji: <b>🟢 account connected</b> — ${covLine}.`
+    : `💎 Premium emoji: <b>🔴 NOT rendering</b> — ${covLine}, but the premium account isn't connected so the board posts plain fallbacks. Run <code>node scripts/gramjs-login.js</code>, then tap <b>💎 Premium status</b>.`;
   return (
     `🔥 <b>Trending board</b>\n\n` +
     `The pinned <b>Dexvra Trending</b> board in the channel: a live, tier-ranked list per chain ` +
     `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
-    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n` +
+    `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n` +
     `${premLine}\n` +
-    `<i>Note: custom/premium emoji only look premium to Telegram Premium users — everyone else sees the normal fallback emoji.</i>\n\n` +
+    `<i>Note: premium emoji only animate for Telegram Premium viewers — everyone else sees the fallback emoji. That's normal.</i>\n\n` +
     `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
-    `Send any emoji when asked. Applies on the next board refresh.`
+    `Send a <b>premium</b> emoji to make that slot premium. Applies on the next board refresh.`
   );
 }
 function tbKb() {
   const cb = Markup.button.callback;
   const badges = trendingBoard.rankEmojis();
   const rankBtns = badges.map((e, i) => {
-    const mark = trendingBoard.isRankCustom(i + 1) ? TB_SET : TB_DEFAULT;
+    const mark = tbMark(trendingBoard.isRankPremium(i + 1), trendingBoard.isRankCustom(i + 1));
     return cb(`${mark} ${i + 1} ${trendingBoard.displayEmoji(e)}`, `tbr:${i + 1}`);
   });
   // Five per row so 1–10 fits two clean rows (grows automatically with RANK_SLOTS).
   const rows = [];
   for (let i = 0; i < rankBtns.length; i += 5) rows.push(rankBtns.slice(i, i + 5));
   rows.push([cb("🔗 Chain logos", "tbc")]);
-  rows.push([cb("↩️ Reset board", "tbrst"), cb("⬅ Back", "home")]);
+  rows.push([cb("💎 Premium status", "tbdiag")]);
+  rows.push([cb("↩️ Restore premium defaults", "tbrst"), cb("⬅ Back", "home")]);
   return Markup.inlineKeyboard(rows);
 }
 function tbChainsText() {
   return (
     `🔗 <b>Chain logos</b>\n\n` +
     `The emoji shown before each chain's header on the trending board ` +
-    `(e.g. <code>🟣 SOLANA - Trending</code>).\n\n` +
-    `<i>${TB_SET} = your custom emoji · ${TB_DEFAULT} = still default</i>\n\n` +
-    `Tap a chain, then send the emoji you want. ⬅ Back to the board.`
+    `(e.g. <code>🔶 BSC - Trending</code>).\n\n` +
+    `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n\n` +
+    `Solana / BSC / Ethereum / Base / Tron / Plasma / Sui ship a premium logo built in. ` +
+    `Tap a chain, then send the emoji you want to change it. ⬅ Back to the board.`
   );
 }
 function tbChainsKb() {
@@ -397,11 +405,81 @@ function tbChainsKb() {
   const rows = [];
   for (let i = 0; i < chains.length; i += 2) {
     rows.push(
-      chains.slice(i, i + 2).map((c) => cb(`${c.custom ? TB_SET : TB_DEFAULT} ${trendingBoard.displayEmoji(c.logo)} ${c.label}`, `tbcl:${c.id}`)),
+      chains
+        .slice(i, i + 2)
+        .map((c) => cb(`${tbMark(c.premium, c.custom)} ${trendingBoard.displayEmoji(c.logo)} ${c.label}`, `tbcl:${c.id}`)),
     );
   }
   rows.push([cb("⬅ Back", "tb")]);
   return Markup.inlineKeyboard(rows);
+}
+
+// ── Premium-emoji readiness report ──────────────────────────────────────────
+// "The board still shows plain emoji" has several causes that are identical from
+// the channel side: GramJS off, no session, revoked session, the account isn't
+// Telegram Premium, or Telegram refused the emoji. This names the actual one.
+//
+// Config is checked locally; live facts come from what the MAIN bot recorded on
+// its last connect/post (gramjs.diagnose() never opens its own MTProto client —
+// a second client on the same session would risk revoking the login).
+const AGO = (ms) => {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}min ago`;
+  return `${Math.round(s / 3600)}h ago`;
+};
+async function premiumReportText() {
+  const cov = trendingBoard.premiumCoverage();
+  const d = gramjs.diagnose();
+  const L = [`💎 <b>Premium emoji status</b>\n`];
+  const fail = (why, fix) => L.push(`\n❌ <b>${why}</b>\n${fix}`);
+
+  L.push(
+    `Board slots premium: <b>${cov.premium}/${cov.total}</b> (ranks ${cov.ranksPremium}/${cov.ranksTotal} · chains ${cov.chainsPremium}/${cov.chainsTotal})`,
+  );
+
+  const last = d.last;
+  if (!d.enabled) fail("GramJS is disabled", "Set <code>GRAMJS_ENABLED=1</code> in <code>.env</code> and restart both bots.");
+  else if (!d.apiCreds)
+    fail(
+      "API_ID / API_HASH missing",
+      'Create them at <a href="https://my.telegram.org/apps">my.telegram.org/apps</a> with the premium account, put them in <code>.env</code>, restart.',
+    );
+  else if (!d.libInstalled) fail("The <code>telegram</code> package isn't installed", "Run <code>npm install</code> in the bot directory, then restart.");
+  else if (!d.sessionPresent)
+    fail(
+      "No premium-account session",
+      `Run <code>node scripts/gramjs-login.js</code> on the server and log in with the <b>Telegram Premium</b> account, then <code>pm2 restart dexvra-bot</code>.`,
+    );
+  else if (!last)
+    L.push(
+      `\n⏳ <b>Session present, not used yet.</b>\nThe main bot reports here the first time it posts a channel message (≤5 min). Re-check then.`,
+    );
+  else if (last.ok === false)
+    fail(
+      `Last connection FAILED (${AGO(last.at)})`,
+      `<code>${escapeHtml(last.error || "unknown error")}</code>\nIf it mentions unauthorized/revoked, re-run <code>node scripts/gramjs-login.js</code> and restart the bot.`,
+    );
+  else {
+    L.push(`\n✅ Connected as <b>${escapeHtml(last.account || "?")}</b> <i>(${AGO(last.at)})</i>`);
+    if (last.emojiRefused) {
+      fail(
+        "Telegram REFUSED the custom emoji",
+        `<code>${escapeHtml(last.emojiError || "")}</code>\nAlmost always: the account is not Telegram <b>Premium</b>. The board keeps posting with the plain fallback and retries automatically every 30 min.`,
+      );
+    } else if (last.premium === false) {
+      fail(
+        "That account does NOT have Telegram Premium",
+        "Telegram only lets <b>Premium</b> accounts send custom emoji — without it every badge posts as its plain fallback. Buy Premium for this account, or log in with one that has it (<code>node scripts/gramjs-login.js</code>).",
+      );
+    } else if (last.premium) {
+      L.push(`💎 Telegram Premium: <b>yes</b> — custom emoji render animated.`);
+      L.push(`📢 If a specific channel still looks plain, check the account is an admin there with <b>Post Messages</b>.`);
+    }
+  }
+  if (d.cooldownSec) L.push(`\n⏳ Post cooldown active in this process: ${d.cooldownSec}s (after a recent failure).`);
+  L.push(`\n<i>Non-premium viewers always see the plain fallback emoji — that is Telegram's behaviour, not a bug.</i>`);
+  return L.join("\n");
 }
 
 // ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
@@ -1145,6 +1223,12 @@ function build() {
     await sendTemplateAudit(ctx, "");
   });
 
+  // Why isn't the trending board premium? — names the actual blocking cause.
+  bot.command("premium", async (ctx) => {
+    if (!guard(ctx)) return;
+    await ctx.reply(await premiumReportText(), { ...HTML, ...Markup.inlineKeyboard([[Markup.button.callback("⬅ Trending board", "tb")]]) }).catch(() => {});
+  });
+
   // Reset ALL templates to their code defaults — destructive, so gate behind a
   // confirm. Counts how many custom overrides exist before wiping.
   bot.action("resetall", async (ctx) => {
@@ -1415,8 +1499,9 @@ function build() {
     if (!guard(ctx)) return;
     const pos = Number(ctx.match[1]);
     ctx.session.awaitingBt = { mode: "tbrank", pos };
+    const cur = trendingBoard.rankEmojis()[pos - 1];
     await ctx.reply(
-      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.displayEmoji(trendingBoard.rankEmojis()[pos - 1])}).\n\n` +
+      `⌨ Send the new badge emoji for <b>rank ${pos}</b> (current: ${trendingBoard.displayEmoji(cur)}${trendingBoard.isRankPremium(pos) ? " — 💎 premium" : ""}).\n\n` +
         `Tip: send a <b>premium</b> emoji and it renders premium on the board (posted via the premium account). /cancel to abort.`,
       HTML,
     );
@@ -1431,8 +1516,11 @@ function build() {
     if (!guard(ctx)) return;
     const chain = ctx.match[1];
     ctx.session.awaitingBt = { mode: "tbchain", chain };
+    // displayEmoji(), never the raw fragment — a premium logo is stored as
+    // "[🔶](emoji/…)" markup and would otherwise be shown to the admin verbatim.
     await ctx.reply(
-      `⌨ Send the new logo emoji for <b>${chain.toUpperCase()}</b> (current: ${trendingBoard.chainLogo(chain)}).\n\nSend a single emoji. /cancel to abort.`,
+      `⌨ Send the new logo emoji for <b>${chain.toUpperCase()}</b> (current: ${trendingBoard.displayEmoji(trendingBoard.chainLogo(chain))}` +
+        `${trendingBoard.isChainPremium(chain) ? " — 💎 premium" : ""}).\n\nSend a single emoji. /cancel to abort.`,
       HTML,
     );
   });
@@ -1440,8 +1528,13 @@ function build() {
     if (!guard(ctx)) return;
     await trendingBoard.reset();
     log.info(`[adminbot] trending board reset by @${ctx.from.username || ctx.from.id}`);
-    ctx.answerCbQuery("↩️ Board reset to defaults").catch(() => {});
+    ctx.answerCbQuery("↩️ Restored the built-in premium defaults").catch(() => {});
     await edit(ctx, tbText(), tbKb());
+  });
+  bot.action("tbdiag", async (ctx) => {
+    ctx.answerCbQuery("Checking…").catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, await premiumReportText(), Markup.inlineKeyboard([[Markup.button.callback("🔄 Re-check", "tbdiag"), Markup.button.callback("⬅ Back", "tb")]]));
   });
 
   // Interactive layout editor: element selector + nudge + resize, all editing
@@ -1870,18 +1963,38 @@ function build() {
       //    stored as markup ("[fallback](emoji/ID)") so it renders premium on
       //    the board (posted via the GramJS premium account); a plain emoji is
       //    stored as-is. ──
+      // Echo back what the board will ACTUALLY render (after the plain→premium
+      // promotion), so "did my premium emoji take?" is answered on the spot.
+      const savedNote = (rendered) =>
+        /\(emoji\//.test(rendered)
+          ? gramjs.available()
+            ? " — 💎 premium"
+            : " — 💎 premium (⚠️ account offline, posts as fallback until you run gramjs-login.js)"
+          : " — plain emoji";
       if (mode === "tbrank") {
         const frag = emojiFragment(ctx.message);
         if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
-        await trendingBoard.setRankEmoji(pos || 1, frag).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
-        await ctx.reply(`✅ Rank ${pos} badge → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbKb() }).catch(() => {});
+        const p = pos || 1;
+        await trendingBoard.setRankEmoji(p, frag).catch((e) => log.warn(`[adminbot] setRankEmoji: ${e.message}`));
+        const rendered = trendingBoard.rankBadge(p);
+        log.info(`[adminbot] rank ${p} badge → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(`✅ Rank ${p} badge → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}`, { ...HTML, ...tbKb() })
+          .catch(() => {});
         return;
       }
       if (mode === "tbchain") {
         const frag = emojiFragment(ctx.message);
         if (!frag || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
         await trendingBoard.setChainLogo(chain, frag).catch((e) => log.warn(`[adminbot] setChainLogo: ${e.message}`));
-        await ctx.reply(`✅ ${chain.toUpperCase()} logo → ${trendingBoard.displayEmoji(frag)}`, { ...HTML, ...tbChainsKb() }).catch(() => {});
+        const rendered = trendingBoard.chainLogo(chain);
+        log.info(`[adminbot] ${chain} logo → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(`✅ ${chain.toUpperCase()} logo → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}`, {
+            ...HTML,
+            ...tbChainsKb(),
+          })
+          .catch(() => {});
         return;
       }
       // ── Fourtis-style editor: exact size / slot size / move ──────────────
@@ -2106,5 +2219,7 @@ async function startAdminBot() {
 module.exports = { startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
+// Exposed for tests: the trending-board editor + the premium-emoji report.
+module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, emojiFragment, premiumReportText };
 // Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
 module.exports._net = { fetchTelegramFileBuffer };
