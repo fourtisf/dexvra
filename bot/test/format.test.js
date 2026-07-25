@@ -307,3 +307,41 @@ test("banner post: an advertiser with no token or socials still gets a clean car
   assert.ok(!/\n{3,}/.test(t), "no hole where a block was");
   assert.ok(t.includes("Nine Hood"), t);
 });
+
+// An admin can rewrite ANY channel post from @dexvraadminbot by pasting a
+// message — including one with PREMIUM custom emoji, which is stored as
+// {text, entities} rather than markup. The banner post strips blocks the
+// advertiser didn't fill in, and stripping the entity form means re-mapping
+// every entity offset: get that wrong and the premium emoji slide onto the
+// wrong characters, or the post comes out corrupted.
+test("banner post: an admin's premium-emoji template survives the strip pass", async () => {
+  const tpl = require("../src/templates");
+  // "🔥 BANNER LIVE" where 🔥 is a premium custom emoji, plus the blocks that
+  // drop when a booking doesn't carry them.
+  const text = "🔥 BANNER LIVE\n\n▶️ {title}\n\n{description}\n\n📄 CA\n{address}\n\n🔗 {twitter}\n\n💎 {site}";
+  const entities = [{ type: "custom_emoji", offset: 0, length: 2, custom_emoji_id: "5445284980978621387" }];
+  await tpl.setTemplate("post_banner", { text, entities });
+  try {
+    // Full booking: everything renders, the emoji stays on the fire.
+    const full = fmt.bannerPost({
+      title: "IDLE", slot: "Wide Banner", linkUrl: "https://idle.io",
+      description: "An earnings layer for idle resources.", address: "8sQ2xk9pump", twitter: "https://x.com/idle",
+    });
+    const ce = full.entities.find((e) => e.type === "custom_emoji");
+    assert.ok(ce, "the premium emoji survived rendering");
+    assert.strictEqual(full.text.substr(ce.offset, ce.length), "🔥", "…and still sits on ITS character");
+    assert.ok(full.text.includes("8sQ2xk9pump"), full.text);
+
+    // Minimal booking: the description and CA blocks are cut out of the middle,
+    // which is exactly where offset re-mapping goes wrong.
+    const min = fmt.bannerPost({ title: "Nine Hood", slot: "Standard Banner", linkUrl: "https://ninehood.io" });
+    const ce2 = min.entities.find((e) => e.type === "custom_emoji");
+    assert.ok(ce2, "still there after two blocks were removed");
+    assert.strictEqual(min.text.substr(ce2.offset, ce2.length), "🔥", `emoji drifted: ${JSON.stringify(min.text)}`);
+    assert.ok(!min.text.includes("CA"), "the CA block went with its header");
+    assert.ok(!/\{|\}/.test(min.text), `no unfilled placeholders left: ${min.text}`);
+    for (const e of min.entities) assert.ok(e.offset + e.length <= min.text.length, "every entity stays in bounds");
+  } finally {
+    await tpl.resetTemplate("post_banner");
+  }
+});
