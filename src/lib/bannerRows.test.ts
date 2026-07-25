@@ -2,7 +2,7 @@
 // for, and what /advertise promises ("Rotating homepage banner slots").
 import test from "node:test";
 import assert from "node:assert";
-import { packBannerRows, isHalfSlot, isFullWidthSlot, freeUnits, unitsOf, ROW_UNITS } from "./bannerRows.ts";
+import { packBannerRows, isHalfSlot, isFullWidthSlot, freeUnits, slotLabel, unitsOf, ROW_UNITS } from "./bannerRows.ts";
 
 const std = (id: string) => ({ slot: "Standard Banner", id });
 const wide = (id: string) => ({ slot: "Wide Banner", id });
@@ -72,4 +72,12 @@ test("a Wide can't overflow a narrower row (mobile: 1 unit per row)", () => {
   // Phones drop to one banner per row; a Wide must still occupy exactly one row
   // rather than being packed away or producing an empty one.
   assert.deepStrictEqual(ids(packBannerRows([wide("w"), std("a")], 1)), [["w"], ["a"]]);
+});
+
+test("slot tag names the package a visitor is looking at", () => {
+  assert.strictEqual(slotLabel("Wide Banner"), "Wide");
+  assert.strictEqual(slotLabel("Standard Banner"), "Standard");
+  // The operator's own homepage banner isn't sold inventory — plain "Ad".
+  assert.strictEqual(slotLabel("Homepage Banner"), "");
+  assert.strictEqual(slotLabel(""), "");
 });

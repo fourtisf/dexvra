@@ -98,7 +98,7 @@ async function showPayMethods(ctx) {
   }
   await sendCard(
     ctx,
-    require("../templates").render("banner_pay_prompt", { slot: bf.slot, duration: bf.duration, usd: bf.usd }),
+    require("../templates").render("banner_pay_prompt", { slot: bf.slot, size: bf.size, duration: bf.duration, usd: bf.usd }),
     menu.withHome(rows),
   );
 }
@@ -115,7 +115,7 @@ async function payPick(ctx) {
     chain,
     native: nativeOf(chain),
     humanAmount: q.human,
-    label: `Banner · ${bf.slot} · ${bf.duration}`,
+    label: `Banner · ${bf.slot} (${bf.size}) · ${bf.duration}`,
     payload: {
       rec: { slot: bf.slot, size: bf.size, linkUrl: bf.linkUrl, title: bf.title || undefined },
       imageFileId: bf.imageFileId,

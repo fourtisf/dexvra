@@ -51,6 +51,15 @@ export function packBannerRows<T extends BannerLike>(list: T[], unitsPerRow = RO
   return rows;
 }
 
+/** Short public label for a slot: "Wide" / "Standard", or "" for the operator's
+ *  own homepage banner (which isn't sold inventory, so it gets a plain "Ad"). */
+export function slotLabel(slot: string): string {
+  const v = String(slot || "");
+  if (/wide/i.test(v)) return "Wide";
+  if (/standard/i.test(v)) return "Standard";
+  return "";
+}
+
 /** Slot-units still free in a row — a lone Standard leaves one half empty, which
  *  the ad row fills with a quiet "Advertise here" tile instead of dead space. */
 export function freeUnits<T extends BannerLike>(row: T[], unitsPerRow = ROW_UNITS): number {

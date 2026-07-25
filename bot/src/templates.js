@@ -203,7 +203,7 @@ const DEFAULTS = {
   banner_title_prompt:
     "🏷 **Campaign Title**\n\n🔹 Send a short title for your campaign (shown in the announcement) — or /skip:",
   banner_pay_prompt:
-    "💳 **{slot}** · {duration} — **${usd}**\n\n" +
+    "💳 **{slot}** · `{size}` · {duration} — **${usd}**\n\n" +
     "🔹 Choose the currency you'd like to pay with — the exact amount is calculated at the live market rate:",
   price_feed_down: "⚠️ The price feed is unavailable right now — please try again in a minute.",
   checking_payment:
@@ -416,7 +416,7 @@ const META = {
   banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size"] },
   banner_link_prompt: { group: "Bot Messages", label: "Banner: link prompt", ph: [] },
   banner_title_prompt: { group: "Bot Messages", label: "Banner: title prompt", ph: [] },
-  banner_pay_prompt: { group: "Bot Messages", label: "Banner: pay-method picker", ph: ["slot", "duration", "usd"] },
+  banner_pay_prompt: { group: "Bot Messages", label: "Banner: pay-method picker", ph: ["slot", "size", "duration", "usd"] },
   price_feed_down: { group: "Bot Messages", label: "Error: price feed down", ph: [] },
   checking_payment: { group: "Bot Messages", label: "Payment: checking", ph: ["chain", "amount", "native"] },
   still_checking: { group: "Bot Messages", label: "Payment: still checking", ph: [] },

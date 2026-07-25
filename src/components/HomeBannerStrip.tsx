@@ -15,7 +15,7 @@
 // extra inventory belongs in this row, not in a new strip somewhere else.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./AppState";
-import { packBannerRows, isFullWidthSlot, freeUnits } from "@/lib/bannerRows";
+import { packBannerRows, isFullWidthSlot, freeUnits, slotLabel } from "@/lib/bannerRows";
 
 type Banner = {
   slot: string;
@@ -79,7 +79,12 @@ export function HomeBannerStrip() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={b.imageUrl} alt={b.title ?? ""} />
-            <span className="home-banner-tag">Ad</span>
+            {/* "Ad" is the disclosure every visitor needs; the slot name next to
+                it tells a prospective advertiser exactly which package this is —
+                the row doubles as the inventory's own shop window. */}
+            <span className="home-banner-tag">
+              Ad{slotLabel(b.slot) && <i> · {slotLabel(b.slot)}</i>}
+            </span>
           </a>
         ))}
         {/* A lone Standard leaves half the row empty. Fill it with a quiet
