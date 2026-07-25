@@ -180,7 +180,49 @@ function hasAuthoredFormatting(entities) {
   return (entities || []).some((e) => AUTHORED_TYPES.has(e.type));
 }
 
+/** Guarantee a `code` entity over every occurrence of `value` in a rendered
+ *  payload — Telegram's clients copy a monospace run to the clipboard when it
+ *  is tapped, which is the whole reason a deposit address is formatted at all.
+ *
+ *  Applied at SEND time, not left to the template: the defaults do wrap the
+ *  address in backticks, but an operator who re-saves the pay card from the
+ *  admin bot pastes plain text, the entity is gone, and the buyer is left
+ *  hand-typing a 44-character address. Formatting the money-critical value is
+ *  not the operator's decision to lose.
+ *
+ *  A range already covered by ANY entity is left alone — code cannot nest
+ *  inside bold/italic (Telegram rejects the combination), and an operator who
+ *  bolded the address chose that. The Copy button covers that case. */
+function ensureCode(payload, ...values) {
+  if (!payload || typeof payload !== "object") return payload;
+  const wanted = values.map((v) => String(v == null ? "" : v)).filter((v) => v.length > 1);
+  if (!wanted.length) return payload;
+
+  if (payload.html != null) {
+    let html = String(payload.html);
+    for (const v of wanted) {
+      if (!html.includes(v) || html.includes(`<code>${v}</code>`)) continue;
+      html = html.split(v).join(`<code>${v}</code>`);
+    }
+    return { ...payload, html };
+  }
+
+  const text = String(payload.text || "");
+  const entities = [...(payload.entities || [])];
+  const overlaps = (off, len) =>
+    entities.some((e) => e.offset < off + len && off < e.offset + (e.length || 0));
+  for (const v of wanted) {
+    // indexOf counts UTF-16 code units — the unit Telegram entities use.
+    for (let i = text.indexOf(v); i !== -1; i = text.indexOf(v, i + v.length)) {
+      if (!overlaps(i, v.length)) entities.push({ type: "code", offset: i, length: v.length });
+    }
+  }
+  entities.sort((a, b) => a.offset - b.offset);
+  return { ...payload, entities };
+}
+
 module.exports = {
+  ensureCode,
   parse,
   toGramJs,
   substituteEntities,

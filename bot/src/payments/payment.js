@@ -17,6 +17,7 @@ const wallets = require("./wallets");
 const verify = require("./verify");
 const orders = require("./orders");
 const tpl = require("../templates");
+const premium = require("../premium");
 const log = require("../helpers/logger");
 
 const SERVICE_LABEL = {
@@ -92,14 +93,21 @@ async function confirmPayHandler(ctx) {
     }
 
     if (!paid) {
+      // The buyer is most likely about to re-send: keep the address copyable
+      // here too, same as on the pay card.
+      const menu = require("../handlers/menu");
       await toast(
         ctx,
-        tpl.render("payment_not_detected", {
-          amount: order.humanAmount,
-          native: order.native,
+        premium.ensureCode(
+          tpl.render("payment_not_detected", {
+            amount: order.humanAmount,
+            native: order.native,
+            address,
+            order: order.id,
+          }),
           address,
-          order: order.id,
-        }),
+        ),
+        menu.copyAddress(address),
       );
       return;
     }
