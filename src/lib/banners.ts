@@ -1,6 +1,8 @@
 // Server-only banner-ad booking store (node:fs). The Telegram bot sells Banner
 // Ad packages, takes payment, and books a slot here via the internal API; the
-// homepage carousel + /advertise read active bookings via /api/banners.
+// homepage ad row (components/HomeBannerStrip) reads the active bookings via
+// /api/banners and shows them side by side. NOTE: PromoCarousel is NOT a reader
+// — its slides come from /api/promo (admin-managed house promos).
 // Persisted as data/banners.json (gitignored, survives restarts). Mirrors the
 // listings store's atomic-write + serialized-mutation pattern.
 import { promises as fs } from "node:fs";

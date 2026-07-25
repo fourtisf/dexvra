@@ -3,8 +3,11 @@ import { activeBanners } from "@/lib/banners";
 
 export const dynamic = "force-dynamic";
 
-// Public: currently-running banner bookings for the homepage carousel takeover
-// slot + the /advertise page. Only the fields the client needs to render.
+// Public: currently-running banner bookings for the homepage ad row
+// (components/HomeBannerStrip). Only the fields the client needs to render —
+// `slot` decides whether a booking takes half the row (Standard) or all of it
+// (Wide). The "carousel takeover" this once mentioned was never wired: booked
+// creatives render in the ad row only, so the same one never shows twice.
 export async function GET() {
   try {
     const active = await activeBanners();
