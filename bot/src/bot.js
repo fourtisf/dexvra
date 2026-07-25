@@ -14,6 +14,8 @@ const { registerHandlers } = require("./handlers/registry");
 const { setupMonitoring } = require("./services/monitoring");
 const api = require("./api/dexvra");
 const log = require("./helpers/logger");
+const tpl = require("./templates");
+const { toast } = require("./helpers/message");
 
 let middlewareApplied = false;
 
@@ -50,10 +52,60 @@ function applyMiddleware(bot) {
   registerHandlers(bot);
   setupMonitoring(bot);
 
-  bot.catch((err, ctx) =>
-    log.error(`[telegraf] ${ctx && ctx.updateType} handler error: ${err && err.message}`),
-  );
+  bot.catch(onHandlerError);
   return bot;
+}
+
+/**
+ * What the user gets when a handler throws or hits the 120s handlerTimeout.
+ *
+ * Logging alone was the old behaviour, and it meant the person who tapped the
+ * button saw nothing at all — for real, for two minutes at a time, while this
+ * VPS's IPv6 route to Telegram was dead (pm2: "Promise timed out after 120000
+ * ms"). Best-effort and never throws: we are already in the failure path, and a
+ * second exception here would take the whole update down with it.
+ */
+async function onHandlerError(err, ctx) {
+  log.error(`[telegraf] ${ctx && ctx.updateType} handler error: ${err && err.message}`);
+  try {
+    if (ctx && ctx.callbackQuery && ctx.answerCbQuery) {
+      await ctx.answerCbQuery("Something went wrong — please try again").catch(() => {});
+    }
+    if (ctx && ctx.chat) await toast(ctx, tpl.render("error_retry"));
+  } catch (e) {
+    log.debug(`[telegraf] error notice failed: ${e && e.message}`);
+  }
+}
+
+// Setting the command menu is not worth blocking the boot for, but ONE
+// transient failure used to leave it unset for the whole process lifetime —
+// pm2 logged "setMyCommands failed: connect ETIMEDOUT …:443" over and over,
+// once per restart, and /start never appeared in Telegram's menu. Retried in
+// the background with backoff instead.
+const COMMANDS = [
+  { command: "start", description: "Open the Dexvra menu" },
+  { command: "home", description: "Back to the menu" },
+  { command: "help", description: "How it works" },
+];
+
+async function setCommandsWithRetry(bot, attempts = 4, baseDelay = 5000) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await bot.telegram.setMyCommands(COMMANDS);
+      if (i) log.info(`[start] setMyCommands ok on attempt ${i + 1}`);
+      return true;
+    } catch (e) {
+      const last = i + 1 >= attempts;
+      const wait = baseDelay * 2 ** i;
+      log.warn(
+        `[start] setMyCommands failed (${i + 1}/${attempts}): ${e.message}` +
+          (last ? " — giving up; the command menu keeps its previous value" : ` — retrying in ${wait / 1000}s`),
+      );
+      if (last) return false;
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  return false;
 }
 
 async function startBot() {
@@ -80,15 +132,8 @@ async function startBot() {
 
   // All pre-launch work happens here — in Telegraf v4, launch() only resolves
   // when the bot STOPS, so anything after `await launch()` never runs.
-  try {
-    await bot.telegram.setMyCommands([
-      { command: "start", description: "Open the Dexvra menu" },
-      { command: "home", description: "Back to the menu" },
-      { command: "help", description: "How it works" },
-    ]);
-  } catch (e) {
-    log.warn(`[start] setMyCommands failed: ${e.message}`);
-  }
+  // Background, retried — polling must not wait on Telegram's command API.
+  setCommandsWithRetry(bot).catch(() => {});
 
   api.ping().then((ok) => log.info(`[start] internal API reachable: ${ok}`));
 
@@ -131,4 +176,11 @@ async function startBot() {
   log.info("[telegraf] polling started ✔");
 }
 
-module.exports = { startBot, applyMiddleware, generateSessionKey, rateLimitConfig };
+module.exports = {
+  startBot,
+  applyMiddleware,
+  generateSessionKey,
+  rateLimitConfig,
+  setCommandsWithRetry,
+  onHandlerError,
+};

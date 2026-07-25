@@ -199,6 +199,8 @@ const DEFAULTS = {
   listing_incomplete: "⚠️ Please set a **name, symbol and a valid contract address** before confirming.",
   pricing_unavailable: "⚠️ Pricing isn't available for this network yet — please pick another.",
   session_expired: "⌛ Your session expired — send /start to begin again.",
+  // Sent when a handler throws or times out, so a failure is never just silence.
+  error_retry: "⚠️ Something went wrong on our side — nothing was charged.\n\n🔹 Please try that again, or send /start to begin fresh.",
   trending_service_down: "⚠️ We couldn't reach the listings service — please try again in a moment.",
   banner_duration_prompt:
     "📢 **{name}** · {size}\n\n" +
@@ -433,6 +435,7 @@ const META = {
   listing_incomplete: { group: "Bot Messages", label: "Error: listing incomplete", ph: [] },
   pricing_unavailable: { group: "Bot Messages", label: "Error: pricing unavailable", ph: [] },
   session_expired: { group: "Bot Messages", label: "Error: session expired", ph: [] },
+  error_retry: { group: "Bot Messages", label: "Error: try again", ph: [] },
   trending_service_down: { group: "Bot Messages", label: "Error: listings service down", ph: [] },
   banner_duration_prompt: { group: "Bot Messages", label: "Banner: duration picker", ph: ["name", "size"] },
   banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size"] },
