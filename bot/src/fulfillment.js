@@ -268,20 +268,20 @@ async function fulfillListing(ctx, order) {
     // Pinning is silent (disable_notification), and the trending channel is
     // deliberately NOT pinned here: its pin belongs to the Trending board.
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true });
-    if (listingMsg) links.push({ label: "🔔 Dexvra Listing", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    if (listingMsg) links.push({ kind: "listing", label: "🔔 Dexvra Listing", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
     // The tweet sits right under its channel post, as a raw url like the rest —
     // it is one of the things they bought, not a footnote.
-    if (coin.xUrl) links.push({ label: "🔔 Dexvra Listing (X)", url: coin.xUrl });
+    if (coin.xUrl) links.push({ kind: "x", label: "🔔 Dexvra Listing (X)", url: coin.xUrl });
 
     const annMsg = tierAnnounces(input.tier)
       ? await post.sendMedia(CHANNELS.announce, listMedia, fmt.listingPost(coin), { pin: true })
       : null;
-    if (annMsg) links.push({ label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
+    if (annMsg) links.push({ kind: "announce", label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, annMsg.message_id) });
 
     if (hours > 0) {
       const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, p.logoFileId, input.logoUrl, `Trending ${hours}H`);
       const trendingMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
-      if (trendingMsg) links.push({ label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
+      if (trendingMsg) links.push({ kind: "trending", label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, trendingMsg.message_id) });
     }
     await postids.set(input.chain, input.address, {
       listingMsgId: listingMsg && listingMsg.message_id,
@@ -324,10 +324,10 @@ async function fulfillTrending(ctx, order) {
   const links = [];
   try {
     const tMsg = await post.sendMedia(CHANNELS.trending, trendMedia, fmt.trendingPost(coin));
-    if (tMsg) links.push({ label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
+    if (tMsg) links.push({ kind: "trending", label: "🔔 Dexvra Trending", url: tmeLink(CHANNELS.trending, tMsg.message_id) });
     if (p.hours >= 24) {
       const aMsg = await post.sendMedia(CHANNELS.announce, trendMedia, fmt.trendingPost(coin));
-      if (aMsg) links.push({ label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
+      if (aMsg) links.push({ kind: "announce", label: "🔔 Dexvra Announcement", url: tmeLink(CHANNELS.announce, aMsg.message_id) });
     }
   } catch (e) {
     log.warn(`[fulfil] trending posts: ${e.message}`);
@@ -406,31 +406,57 @@ function announceXLine(xUrl) {
 /** The buyer's receipt. Xpress and Listing & Trending are different products —
  *  one is a listing, the other adds a ranked tier and a timed Trending run — so
  *  they get separate, separately-editable templates. */
+/** The posted-message urls keyed by destination, so each can be its own editable
+ *  line in the template. Empty string = that post didn't happen, and
+ *  dropEmptyLines removes the line together with its label.
+ *
+ *  Keyed on an explicit `kind`, never on the label text: "Dexvra Listing" is a
+ *  prefix of "Dexvra Listing (X)", so substring matching hands the listing line
+ *  the tweet's url — and the label is exactly the thing an operator is free to
+ *  reword. */
+function linkVars(links) {
+  const url = (kind) => {
+    const hit = (links || []).find((l) => l.kind === kind);
+    return hit ? hit.url : "";
+  };
+  return { listingUrl: url("listing"), xUrl: url("x"), announceUrl: url("announce"), trendingUrl: url("trending") };
+}
+
 function successListing(coin, links, { hours = 0 } = {}) {
-  // The tweet is already IN postLinks (right under its channel post), so
-  // {announceX} must stay empty here or a legacy template prints it twice.
   const tiered = coin.tier && String(coin.tier).toUpperCase() !== "XPRESS";
-  return tpl.render(tiered ? "success_listing_tiered" : "success_listing", {
-    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
-    name: premium.sanitizeVar(coin.name),
-    tier: coin.tier ? premium.sanitizeVar(tierLabel(coin.tier)) : "",
-    tierEmoji: coin.tier ? fmt.tierBadge(String(coin.tier).toUpperCase()) : "",
-    hours,
-    siteUrl: coin.siteUrl,
-    postLinks: linkLines(links),
-    announceX: "", // already inside postLinks — see the note above
-    ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} stay available
-  });
+  return tpl.render(
+    tiered ? "success_listing_tiered" : "success_listing",
+    {
+      symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
+      name: premium.sanitizeVar(coin.name),
+      tier: coin.tier ? premium.sanitizeVar(tierLabel(coin.tier)) : "",
+      tierEmoji: coin.tier ? fmt.tierBadge(String(coin.tier).toUpperCase()) : "",
+      hours,
+      siteUrl: coin.siteUrl,
+      ...linkVars(links),
+      postLinks: linkLines(links), // legacy shape, for templates saved before the split
+      announceX: "", // the tweet has its own line now — never print it twice
+      ...fmt.channelLinks(), // {site}/{listing}/{trending}/{announce} stay available
+    },
+    // A destination with no post drops its whole line, label included.
+    { dropEmpty: true },
+  );
 }
 function successTrending(coin, hours, links) {
-  return tpl.render("success_trending", {
-    symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
-    hours,
-    siteUrl: coin.siteUrl,
-    postLinks: linkLines(links),
-    announceX: announceXLine(coin.xUrl),
-    ...fmt.channelLinks(),
-  });
+  return tpl.render(
+    "success_trending",
+    {
+      symbol: premium.sanitizeVar(fmt.sym(coin.symbol)),
+      hours,
+      siteUrl: coin.siteUrl,
+      ...linkVars(links),
+      xUrl: coin.xUrl || "",
+      postLinks: linkLines(links),
+      announceX: "",
+      ...fmt.channelLinks(),
+    },
+    { dropEmpty: true },
+  );
 }
 // Buyer-facing timestamp: "30 Jul 2026, 12:00 UTC". Always UTC — the buyer and
 // the server are rarely in the same timezone, so a local time would be wrong for

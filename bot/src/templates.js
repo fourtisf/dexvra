@@ -250,31 +250,37 @@ const DEFAULTS = {
   payment_snag:
     "⚠️ **We're on it**\n\n🔹 Your payment for order `{order}` arrived, but finalizing hit a snag. Your funds are safe — contact support and we'll complete your order.",
   // Receipt shape follows the reference bot the operator asked for: one congrats
-  // line, the token's page as a BARE url, then every post that went out, each
-  // labelled by destination as a raw visible link. No footer row — the links
-  // above already reach every channel, and a receipt is read once, fast.
-  // Xpress buyers get a listing and nothing else — no tier, no trending slot —
-  // so the copy says exactly that. `success_listing` keeps its key so an
-  // operator's saved override survives; only its label changed.
+  // line, the token's page as a BARE url, then one line per post that went out.
+  // Each destination is its OWN line with its OWN label, so the operator can
+  // reword or reorder them — a single auto-generated {postLinks} blob could not
+  // be edited at all. A line whose link doesn't exist (an Xpress buyer has no
+  // announcement and no trending post) disappears completely; see
+  // dropEmptyLines. {postLinks}/{announceX} still work for older saved copies.
   success_listing:
     "✅ **Payment Confirmed**\n\n" +
     "⚡ Congrats! Your token **{name}** ({symbol}) is officially listed!\n" +
     "{siteUrl}\n\n" +
-    "{postLinks}{announceX}",
+    "🔔 Dexvra Listing: {listingUrl}\n" +
+    "🔔 Dexvra Listing (X): {xUrl}",
   // Listing & Trending buys three things at once — the listing, a ranked tier
   // badge and a timed Trending run — so the second line accounts for the two a
-  // buyer cannot see in the links. {tier}/{tierEmoji}/{hours} exist only here.
+  // buyer cannot read off the links. {tier}/{tierEmoji}/{hours} exist only here.
   success_listing_tiered:
     "✅ **Payment Confirmed**\n\n" +
     "🏆 Congrats! Your token **{name}** ({symbol}) is officially listed!\n" +
     "{tierEmoji} **{tier}** tier · 🔥 Trending for **{hours}h**\n" +
     "{siteUrl}\n\n" +
-    "{postLinks}{announceX}",
+    "🔔 Dexvra Listing: {listingUrl}\n" +
+    "🔔 Dexvra Listing (X): {xUrl}\n" +
+    "🔔 Dexvra Announcement: {announceUrl}\n" +
+    "🔔 Dexvra Trending: {trendingUrl}",
   success_trending:
     "✅ **Payment Confirmed**\n\n" +
     "🔥 Congrats! **{symbol}** is Trending on Dexvra for the next **{hours}h**!\n" +
     "{siteUrl}\n\n" +
-    "{postLinks}\n{announceX}",
+    "🔔 Dexvra Trending: {trendingUrl}\n" +
+    "🔔 Dexvra Announcement: {announceUrl}\n" +
+    "🔔 Dexvra (X): {xUrl}",
   success_banner:
     "✅ **Payment Confirmed**\n\n" +
     // No "banner" after {slot} — every slot name already ends in "Banner".
@@ -513,9 +519,9 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
-  success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "listingUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "listingUrl", "xUrl", "announceUrl", "trendingUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
@@ -570,15 +576,21 @@ function substitute(tpl, vars) {
  *  so their links/emoji render instead of showing raw markup; in the legacy
  *  HTML mode every var is markup-stripped AND HTML-escaped so user values can
  *  neither leak markup nor break Telegram's HTML parser. */
-function render(key, vars) {
+function render(key, vars, opts) {
   const val = loadAll()[key] != null ? loadAll()[key] : DEFAULTS[key] || "";
-  return renderValue(val, vars);
+  return renderValue(val, vars, opts);
 }
 
 /** Render a RESOLVED template value (markup string or {text, entities}) — the
  *  body of render() without the key lookup. channels/format.js uses it to
  *  render a template AFTER stripping social/tier lines the token lacks. */
-function renderValue(val, vars) {
+function renderValue(rawVal, vars, opts) {
+  // OPT-IN only. A blanket "drop lines whose placeholders are empty" also eats
+  // a channel-post header like "🔥 **New Trending on Dexvra** {logoEmoji}" when
+  // the token has no emoji — real copy, one empty placeholder. Channel posts do
+  // their own, smarter stripping in channels/format.js; this is for the buyer
+  // receipts, where every link line is exactly "label: {url}".
+  const val = opts && opts.dropEmpty ? dropEmptyLines(rawVal, vars) : rawVal;
   if (val && typeof val === "object" && val.text != null) {
     // Admin-pasted template stored with real entity arrays (premium emoji kept).
     const rich = {};
@@ -622,6 +634,67 @@ function renderValue(val, vars) {
 // remapping premium-emoji offsets, so they keep the admin's literal spacing.
 function collapseGaps(s) {
   return String(s).replace(/\n{3,}/g, "\n\n");
+}
+
+/**
+ * Drop every line whose placeholders ALL resolve to empty.
+ *
+ * This is what lets a receipt spell its links out as editable lines —
+ * "🔔 Dexvra Trending: {trendingUrl}" — instead of hiding them behind one
+ * auto-generated {postLinks} blob the operator cannot reword. An Xpress buyer
+ * has no announcement and no trending post, so those lines have to disappear
+ * completely rather than leave a label pointing at nothing.
+ *
+ * A line with no placeholders is never touched, and a line keeps its place as
+ * long as ONE of its placeholders has a value. Works on both stored shapes: for
+ * an admin-pasted {text, entities} template the entity offsets are re-mapped
+ * around the removed lines, so premium emoji stay on their characters.
+ */
+function dropEmptyLines(val, vars) {
+  const isEntity = val && typeof val === "object" && val.text != null;
+  const text = isEntity ? val.text : String(val || "");
+  if (!text.includes("{")) return val;
+  const filled = (k) => vars && vars[k] != null && String(vars[k]) !== "";
+  const lines = text.split("\n");
+  const cuts = []; // [start, end) ranges to remove, in order
+  let off = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const start = off;
+    off += line.length + 1;
+    const keys = [...line.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+    if (!keys.length || keys.some(filled)) continue;
+    // Take the line's own trailing newline so the gap closes behind it.
+    cuts.push([start, i < lines.length - 1 ? start + line.length + 1 : start + line.length]);
+  }
+  if (!cuts.length) return val;
+  // Merge touching/overlapping ranges — the offset maths below assumes disjoint
+  // cuts, and two dropped neighbours would otherwise be counted twice.
+  const merged = [];
+  for (const [a, b] of cuts) {
+    const prev = merged[merged.length - 1];
+    if (prev && a <= prev[1]) prev[1] = Math.max(prev[1], b);
+    else merged.push([a, b]);
+  }
+  cuts.length = 0;
+  cuts.push(...merged);
+  // A cut that runs to the end of the text has no newline of its own to take,
+  // so it swallows the ones in front of it — including the blank separator that
+  // introduced the block. Otherwise a receipt whose whole link block is empty
+  // ends on dangling blank lines.
+  const last = cuts[cuts.length - 1];
+  if (last[1] === text.length) {
+    const floor = cuts.length > 1 ? cuts[cuts.length - 2][1] : 0;
+    while (last[0] > floor && text[last[0] - 1] === "\n") last[0]--;
+  }
+  const cut = (s) => cuts.reduceRight((acc, [a, b]) => acc.slice(0, a) + acc.slice(b), s);
+  if (!isEntity) return cut(text);
+  const removedBefore = (pos) => cuts.reduce((n, [a, b]) => (b <= pos ? n + (b - a) : n), 0);
+  const inCut = (pos) => cuts.some(([a, b]) => pos >= a && pos < b);
+  const entities = (val.entities || [])
+    .filter((e) => !inCut(e.offset))
+    .map((e) => ({ ...e, offset: e.offset - removedBefore(e.offset) }));
+  return { ...val, text: cut(text), entities };
 }
 
 /** Plain-text resolve (markup stripped to clean text) — for previews/tests. */
@@ -805,6 +878,7 @@ module.exports = {
   meta,
   groups,
   substitute,
+  dropEmptyLines,
   DEFAULTS,
   BANNER_PATH,
   EMOJI: E,
