@@ -11,6 +11,7 @@
 //   2. Which temp wallets still hold money, and for which order?
 //
 // Prints addresses and balances only. Private keys are never read here.
+const envFiles = require("../src/config/loadEnv").loadEnv();
 const { TREASURY, RPC, WALLETS_DIR, WALLET_ENC_KEY } = require("../src/config/constants");
 const { familyOf } = require("../src/config/chains");
 
@@ -35,6 +36,10 @@ const SHAPE = {
 };
 
 function reportConfig() {
+  console.log("\n── .env actually read ────────────────────────────────────────");
+  if (envFiles.length) envFiles.forEach((f) => console.log(`  ${ok("✓")} ${f}`));
+  else console.log(`  ${bad("✗")} none found — every value below is a default or from the shell`);
+
   console.log("\n── Treasury (sweep destinations) ─────────────────────────────");
   let missing = 0;
   for (const [fam, addr] of Object.entries(TREASURY)) {
