@@ -15,7 +15,7 @@
 // extra inventory belongs in this row, not in a new strip somewhere else.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./AppState";
-import { packBannerRows, isWideSlot } from "@/lib/bannerRows";
+import { packBannerRows, isFullWidthSlot, freeUnits } from "@/lib/bannerRows";
 
 type Banner = {
   slot: string;
@@ -71,7 +71,7 @@ export function HomeBannerStrip() {
         {current.map((b, i) => (
           <a
             key={`${b.imageUrl}:${i}`}
-            className={`home-banner${isWideSlot(b.slot) ? " is-wide" : ""}`}
+            className={`home-banner${isFullWidthSlot(b.slot) ? " is-wide" : ""}`}
             href={b.linkUrl}
             target="_blank"
             rel="noopener noreferrer nofollow"
@@ -82,6 +82,15 @@ export function HomeBannerStrip() {
             <span className="home-banner-tag">Ad</span>
           </a>
         ))}
+        {/* A lone Standard leaves half the row empty. Fill it with a quiet
+            house tile rather than dead space — it is NOT a new ad placement,
+            just the unsold half of one that already exists, and it never shows
+            on a homepage with no bookings at all. */}
+        {freeUnits(current) > 0 && (
+          <a className="home-banner is-empty" href="/advertise">
+            <span>Advertise here →</span>
+          </a>
+        )}
       </div>
       {pages.length > 1 && (
         <div className="home-ads-dots">

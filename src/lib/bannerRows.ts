@@ -10,12 +10,22 @@ export interface BannerLike {
   slot: string;
 }
 
-/** A row holds this many slot-units: two Standard banners, or one Wide. */
+/** A row holds this many slot-units: two Standard banners, or one full-width. */
 export const ROW_UNITS = 2;
 
-/** Wide bookings are sold as the full-width slot; everything else is a half. */
-export const isWideSlot = (slot: string): boolean => /wide/i.test(slot || "");
-export const unitsOf = (b: BannerLike): number => (isWideSlot(b.slot) ? ROW_UNITS : 1);
+/**
+ * ONLY the sold "Standard Banner" (728 × 90) is a half-slot. Everything else —
+ * "Wide Banner" from the bot, "Homepage Banner" created in the admin panel, and
+ * any slot name added later — takes the whole row.
+ *
+ * The rule is written this way round on purpose: matching /wide/ instead would
+ * silently render an admin's own homepage banner at half width with a blank gap
+ * beside it, and would do the same to every future slot name. An unknown slot
+ * defaulting to full width is the safe failure.
+ */
+export const isHalfSlot = (slot: string): boolean => /standard/i.test(slot || "");
+export const isFullWidthSlot = (slot: string): boolean => !isHalfSlot(slot);
+export const unitsOf = (b: BannerLike): number => (isHalfSlot(b.slot) ? 1 : ROW_UNITS);
 
 /**
  * Pack bookings into rows of ROW_UNITS, preserving order (newest first, the
@@ -39,4 +49,11 @@ export function packBannerRows<T extends BannerLike>(list: T[], unitsPerRow = RO
   }
   if (row.length) rows.push(row);
   return rows;
+}
+
+/** Slot-units still free in a row — a lone Standard leaves one half empty, which
+ *  the ad row fills with a quiet "Advertise here" tile instead of dead space. */
+export function freeUnits<T extends BannerLike>(row: T[], unitsPerRow = ROW_UNITS): number {
+  const used = row.reduce((n, b) => n + Math.min(unitsOf(b), unitsPerRow), 0);
+  return Math.max(0, unitsPerRow - used);
 }
