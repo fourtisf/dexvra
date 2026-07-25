@@ -77,8 +77,9 @@ test("post_rankup is a short ticker post: token, rank, link, CA", () => {
   const links = card.entities.filter((e) => e.type === "text_link").map((e) => e.url);
   assert.ok(links.some((u) => u.includes("dexvra.io/t")), `token page linked: ${links}`);
   // Being short is no reason to link fewer places — site AND all three channels.
-  for (const [name, url] of Object.entries(fmt.channelLinks())) {
-    assert.ok(links.includes(url), `${name} (${url}) missing from the rank-up post: ${links}`);
+  const ch = fmt.channelLinks();
+  for (const name of ["site", "listing", "trending", "announce"]) {
+    assert.ok(links.includes(ch[name]), `${name} (${ch[name]}) missing from the rank-up post: ${links}`);
   }
   assert.ok(card.entities.some((e) => e.type === "code"), "CA is copyable (code entity)");
   assert.ok(!/\*\*|\]\(/.test(card.text), "no raw markup leaks into the post");

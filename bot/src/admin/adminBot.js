@@ -592,6 +592,11 @@ function atText() {
     `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
     `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
     `🎯 Keep featured: <b>${c.target}</b> tokens\n\n` +
+    `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
+    (c.announce ? ` <i>(max ${c.announcePerDay}/day · ${c.announceGapMin}min apart · ${c.announceCooldownDays}d per token)</i>` : "") +
+    `\n` +
+    `<i>Auto slots post a “👀 Spotlight” card — never the paid “New Trending” one, never pinned, never @dexvraio. ` +
+    `Note the channel feed is chronological: unlike the board, it does NOT rank paid above auto.</i>\n\n` +
     `⚡ <b>Run now — per chain</b>\n` +
     `The board groups by network, so a chain with nothing featured shows nothing at all. ` +
     `Tap a chain below to promote a token there immediately (works even while Auto Trending is off).\n\n` +
@@ -606,6 +611,10 @@ function atKb() {
     [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
     [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
     [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    [cb(`📣 Announce: ${c.announce ? "ON" : "OFF"}`, "atann")],
+    ...(c.announce
+      ? [[cb(`📣 ${c.announcePerDay}/day`, "atnop"), cb("➖", "atapd:-1"), cb("➕", "atapd:1")]]
+      : []),
     ...atChainRows(cb),
     [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
@@ -1687,6 +1696,13 @@ function build() {
     _atCounts = await autoTrend.featuredByChain().catch(() => ({}));
     await edit(ctx, atText(), atKb());
   });
+  bot.action("atann", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ announce: !autoTrend.get().announce });
+    log.info(`[adminbot] auto-trend announce ${c.announce ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(c.announce ? "📣 Auto slots post a Spotlight card" : "🤫 Board only, no channel post").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
   bot.action(/^atrun:([a-z0-9]+)$/, async (ctx) => {
     if (!guard(ctx)) return;
     const chain = ctx.match[1];
@@ -1729,6 +1745,7 @@ function build() {
   bot.action(/^atgmin:(-?\d+)$/, atStep("minGapMin", "Min gap"));
   bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
   bot.action(/^attgt:(-?\d+)$/, atStep("target", "Target"));
+  bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();

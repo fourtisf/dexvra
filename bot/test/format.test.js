@@ -198,9 +198,11 @@ test("pump post links EVERY Dexvra destination", () => {
   const urls = fmt.pumpPost(coin, 137.6, 310000, 128400000).entities
     .filter((e) => e.type === "text_link")
     .map((e) => e.url);
+  // The four DESTINATIONS by name — channelLinks() also carries the sales bot,
+  // which belongs in the auto-spotlight card, not here.
   const links = fmt.channelLinks();
-  for (const [name, url] of Object.entries(links)) {
-    assert.ok(urls.includes(url), `${name} (${url}) missing from the pump post: ${urls}`);
+  for (const name of ["site", "listing", "trending", "announce"]) {
+    assert.ok(urls.includes(links[name]), `${name} (${links[name]}) missing from the pump post: ${urls}`);
   }
 });
 

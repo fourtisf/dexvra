@@ -229,3 +229,110 @@ test("forceChain works while Auto Trending is OFF — it is a deliberate act", a
     api.bookTrending = realBook;
   }
 });
+
+// ── Announcing an auto-promotion ────────────────────────────────────────────
+// Posting these publicly is the operator's call, but the volume is not: a slot
+// lasts 3-18h and the target is 8, so refills alone are ~18 promotions a day.
+// Every rail below exists to keep that from burying the PAID posts in the same
+// channel — including the deep link a buyer was just DM'd as proof of delivery.
+test("announce is OFF by default and every rail is railed", async () => {
+  await autoTrend.reset();
+  const c = autoTrend.get();
+  assert.strictEqual(c.announce, false, "publishing must be opt-in");
+  const wild = await autoTrend.set({ announcePerDay: 9999, announceGapMin: 0, announceCooldownDays: -5 });
+  assert.ok(wild.announcePerDay <= 24, `daily cap railed: ${wild.announcePerDay}`);
+  assert.ok(wild.announceGapMin >= 5, `spacing railed: ${wild.announceGapMin}`);
+  assert.ok(wild.announceCooldownDays >= 0, `cooldown railed: ${wild.announceCooldownDays}`);
+  await autoTrend.reset();
+});
+
+test("announceReason names every refusal", async () => {
+  const now = 1_800_000_000_000;
+  const DAY = 86_400_000;
+  const row = { chain: "solana", address: "s1", sym: "$S1" };
+  const cfg = { announce: true, announcePerDay: 3, announceGapMin: 60, announceCooldownDays: 7 };
+  const empty = { announced: {}, day: null, lastAt: 0, pending: [] };
+  assert.strictEqual(autoTrend.announceReason(row, empty, cfg, now), null, "a clean state may post");
+  assert.match(autoTrend.announceReason(row, empty, { ...cfg, announce: false }, now), /off/i);
+  assert.match(
+    autoTrend.announceReason(row, { ...empty, day: { key: new Date(now).toISOString().slice(0, 10), n: 3 } }, cfg, now),
+    /daily cap/i,
+  );
+  assert.match(autoTrend.announceReason(row, { ...empty, lastAt: now - 60_000 }, cfg, now), /too soon/i);
+  assert.match(
+    autoTrend.announceReason(row, { ...empty, announced: { "solana:s1": now - 2 * DAY } }, cfg, now),
+    /cooldown/i,
+  );
+  // …and past the cooldown the same token is allowed again.
+  assert.strictEqual(
+    autoTrend.announceReason(row, { ...empty, announced: { "solana:s1": now - 8 * DAY } }, cfg, now),
+    null,
+  );
+});
+
+test("XPRESS tokens are never auto-promoted", async () => {
+  // packages.js records the operator decision: "Xpress is listing-ONLY: no
+  // trending slot, no trending-channel post". The upgrade path sold to an
+  // Xpress buyer is to come back and BUY trending.
+  assert.ok(autoTrend.NEVER_PROMOTE_TIERS.has("XPRESS"));
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  const booked = [];
+  api.getListings = async () => [
+    { status: "approved", chain: "solana", address: "x1", sym: "$X1", tier: "XPRESS" },
+    { status: "approved", chain: "solana", address: "f1", sym: "$F1", tier: "FREE" },
+  ];
+  api.bookTrending = async (chain, address) => {
+    booked.push(address);
+    return {};
+  };
+  try {
+    await autoTrend.set({ enabled: true, target: 8, announce: false });
+    await autoTrend.runOnce();
+    assert.ok(!booked.includes("x1"), `the Xpress token must be left alone: ${booked}`);
+    assert.ok(booked.includes("f1"), "…while the free one is fair game");
+    // The forced per-chain path shares the rule.
+    booked.length = 0;
+    api.getListings = async () => [{ status: "approved", chain: "bsc", address: "x2", sym: "$X2", tier: "XPRESS" }];
+    const r = await autoTrend.forceChain("bsc");
+    assert.strictEqual(r.promoted, 0, "forced runs must not smuggle Xpress in");
+    assert.strictEqual(booked.length, 0);
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});
+
+test("a forced run QUEUES its announcement — the admin process cannot post", async () => {
+  // channels/post.attach() happens only in src/bot.js (the main bot), so a post
+  // from the admin process would throw "not attached to a bot". forceChain
+  // hands the announcement over instead.
+  const realGet = api.getListings;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [{ status: "approved", chain: "base", address: "b9", sym: "$B9" }];
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.resetAnnounceState();
+    await autoTrend.set({ announce: true });
+    const r = await autoTrend.forceChain("base");
+    assert.strictEqual(r.promoted, 1);
+    const state = JSON.parse(fss.readFileSync(path.join(process.env.BOT_DATA_DIR, "autoTrendState.json"), "utf8"));
+    assert.strictEqual(state.pending.length, 1, "queued for the main process");
+    assert.strictEqual(state.pending[0].address, "b9");
+  } finally {
+    api.getListings = realGet;
+    api.bookTrending = realBook;
+    await autoTrend.resetAnnounceState();
+    await autoTrend.reset();
+  }
+});
+
+test("the announce path never posts to the announcement channel", () => {
+  // A @dexvraio headline is a 24H/48H PAID inclusion. Auto runs cap at 18h, so
+  // today this holds by accident — pin it on purpose.
+  const src = fss.readFileSync(require.resolve("../src/services/autoTrend.js"), "utf8");
+  assert.ok(!/CHANNELS\.announce/.test(src), "autoTrend must never reference the announcement channel");
+  assert.ok(/CHANNELS\.trending/.test(src), "…only the trending channel");
+  assert.ok(!/pin:\s*true/.test(src), "and never pin — that pin belongs to the board");
+});

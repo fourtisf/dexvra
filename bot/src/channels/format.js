@@ -9,7 +9,7 @@
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { chainOf } = require("../config/chains");
 const { tierLabel, tierEmoji: pkgTierEmoji } = require("../config/packages");
-const { SITE_URL, CHANNELS, TRADEBOT_USERNAME } = require("../config/constants");
+const { SITE_URL, CHANNELS, TRADEBOT_USERNAME, BOT_USERNAME } = require("../config/constants");
 const premium = require("../premium");
 const tpl = require("../templates");
 const tokenEmoji = require("../tokenEmoji");
@@ -575,6 +575,10 @@ function channelLinks() {
     listing: tme(CHANNELS.listing),
     trending: tme(CHANNELS.trending),
     announce: tme(CHANNELS.announce),
+    // The sales bot — a post that gives something away for free should say
+    // where the paid version lives.
+    bot: tme(BOT_USERNAME),
+    botName: `@${String(BOT_USERNAME).replace(/^@/, "")}`,
   };
 }
 
@@ -627,6 +631,20 @@ function listingPost(coin) {
     tier: coin.tier ? clean(tierLabel(coin.tier)) : "",
     overview: overviewBlock(coin.overview || autoOverview(coin, "listing")), // legacy
   }), postUrls(coin));
+}
+
+/** The AUTO-trending spotlight — a different card from the paid one on purpose.
+ *  See post_trending_auto in templates.js. */
+function trendingAutoPost(coin) {
+  const val = stripForCoin("post_trending_auto", coin);
+  return autoSocials(
+    tpl.renderValue(val, {
+      ...coinVars(coin),
+      address: addressVar(val, coin.address),
+      logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
+    }),
+    postUrls(coin),
+  );
 }
 
 function trendingPost(coin) {
@@ -734,4 +752,4 @@ function rankupPost(coin, rank, change24h) {
   }), postUrls(coin));
 }
 
-module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
+module.exports = { listingPost, trendingPost, trendingAutoPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
