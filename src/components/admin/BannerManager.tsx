@@ -25,8 +25,8 @@ type Row = {
 // bot's packages). `hint` is what the operator needs to decide, not jargon.
 const SLOT_OPTIONS = [
   { key: "house", label: "Full width (house banner)", size: "any wide image", hint: "Fills the row on its own. Not tagged as sold inventory." },
-  { key: "wide", label: "Wide Banner", size: "1200 × 250", hint: "Fills the row on its own. Tagged “Ad · Wide”." },
-  { key: "standard", label: "Standard Banner", size: "600 × 250", hint: "Shares the row with one other. Tagged “Ad · Standard”." },
+  { key: "wide", label: "Wide Banner", size: "1440 × 150", hint: "Fills the row on its own. Tagged “Ad · Wide”." },
+  { key: "standard", label: "Standard Banner", size: "720 × 150", hint: "Shares the row with one other. Tagged “Ad · Standard”." },
 ];
 
 const emptyForm = { imageUrl: "", linkUrl: "", title: "", days: "30", slot: "house" };

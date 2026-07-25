@@ -183,7 +183,7 @@ export interface BannerPack {
 export const BANNERS: BannerPack[] = [
   {
     name: "Standard Banner",
-    size: "600 × 250",
+    size: "720 × 150",
     rows: [
       { duration: "1 Day", usd: 225, discount: 10 },
       { duration: "3 Days", usd: 670, discount: 20 },
@@ -192,7 +192,7 @@ export const BANNERS: BannerPack[] = [
   },
   {
     name: "Wide Banner",
-    size: "1200 × 250",
+    size: "1440 × 150",
     rows: [
       { duration: "1 Day", usd: 400, discount: 10 },
       { duration: "3 Days", usd: 1080, discount: 20 },
