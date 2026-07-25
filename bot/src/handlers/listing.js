@@ -7,6 +7,7 @@ const { RANKED_TIERS, tierPrice, tierLabel, tierEmoji, tierTrendingHours } = req
 const { fetchMarket, fetchTokenDescription } = require("../marketdata");
 const { fetchTokenInfo } = require("../dexscreener");
 const { escapeHtml } = require("../helpers/format");
+const { normalizeTicker, isValidTicker, sanitizeTicker } = require("../helpers/ticker");
 const { startPayment } = require("./pay");
 const menu = require("./menu");
 const { Markup } = menu;
@@ -110,14 +111,25 @@ async function handleText(ctx) {
       const symbol = (ds && ds.symbol) || (gt && gt.symbol);
       const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
       if (desc && !f.overview) f.overview = cleanOverview(desc);
-      if (name || symbol) {
-        f.name = f.name || name || symbol;
-        f.sym = f.sym || String(symbol || name || "").replace(/^\$+/, "").toUpperCase();
+      // An AUTOFILLED ticker has to satisfy the site's rule too. DexScreener and
+      // GeckoTerminal return whatever the token deployer wrote — "SAFE MOON",
+      // "PEPE🐸" — and storing that verbatim only failed at fulfilment, i.e.
+      // after the buyer paid. Repair what we can; when nothing valid survives,
+      // ASK instead of carrying a ticker the site will reject.
+      const autoSym = sanitizeTicker(symbol || name);
+      if (name || autoSym) {
+        f.name = f.name || name || autoSym;
+        if (!f.sym && autoSym) f.sym = autoSym;
         if (logoUrl && !f.logoUrl) f.logoUrl = logoUrl;
         if (ds) {
           if (ds.website && !f.website) f.website = ds.website;
           if (ds.twitter && !f.twitter) f.twitter = ds.twitter;
           if (ds.telegram && !f.telegram) f.telegram = ds.telegram;
+        }
+        if (!f.sym) {
+          log.warn(`[listing] autofill gave no usable ticker for ${f.chain}/${input} (symbol=${symbol ?? "-"})`);
+          s.awaitingField = "symbol";
+          return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
         }
         s.awaitingField = null;
         return showReview(ctx);
@@ -134,7 +146,10 @@ async function handleText(ctx) {
       s.awaitingField = null;
       return showReview(ctx);
     case "symbol":
-      f.sym = input.replace(/^\$+/, "").toUpperCase().slice(0, 24);
+      // Checked HERE, not at fulfilment: the site rejects a bad ticker with a
+      // 400, and by fulfilment the buyer has already paid.
+      if (!isValidTicker(input)) return toast(ctx, tpl.render("invalid_ticker"));
+      f.sym = normalizeTicker(input);
       if (!s.reviewShown) {
         s.awaitingField = "logo";
         return sendCard(ctx, tpl.render("listing_logo_prompt"), menu.withHome([]));
@@ -272,6 +287,14 @@ async function approve(ctx) {
   if (!f.chain || !f.address || !f.name || !f.sym) {
     await toast(ctx, tpl.render("listing_incomplete"));
     return showReview(ctx);
+  }
+  // The last gate before money changes hands. A ticker can still be bad here —
+  // autofilled, or carried over from an older session — and the site would only
+  // say so at fulfilment, with the payment already taken.
+  if (!isValidTicker(f.sym)) {
+    await toast(ctx, tpl.render("invalid_ticker"));
+    ctx.session.awaitingField = "symbol";
+    return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
   }
   if (ctx.session.type === "xpress_listing") return goPay(ctx, "XPRESS");
 

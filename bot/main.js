@@ -7,6 +7,7 @@
 require("dotenv").config({ override: true });
 
 const log = require("./src/helpers/logger");
+require("./src/helpers/net").preferIPv4(); // before any socket opens
 
 const NON_FATAL = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|network|timeout/i;
 

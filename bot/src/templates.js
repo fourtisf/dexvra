@@ -192,6 +192,10 @@ const DEFAULTS = {
   invalid_address:
     "❌ That doesn't look like a valid **{chain}** contract address.\n\n🔹 Double-check and paste it again:",
   invalid_url: "❌ That must be a full **https://** URL.\n\n🔹 Please try again:",
+  // The site's rule, said in the user's words (see helpers/ticker.js).
+  invalid_ticker:
+    "❌ That ticker can't be used — letters and numbers only (`.` `_` `-` are fine), " +
+    "up to 24 characters, no spaces or emoji.\n\n🔹 Send the ticker again (e.g. **PEPE**):",
   listing_incomplete: "⚠️ Please set a **name, symbol and a valid contract address** before confirming.",
   pricing_unavailable: "⚠️ Pricing isn't available for this network yet — please pick another.",
   session_expired: "⌛ Your session expired — send /start to begin again.",
@@ -425,6 +429,7 @@ const META = {
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
   invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
   invalid_url: { group: "Bot Messages", label: "Error: invalid URL", ph: [] },
+  invalid_ticker: { group: "Bot Messages", label: "Error: invalid ticker", ph: [] },
   listing_incomplete: { group: "Bot Messages", label: "Error: listing incomplete", ph: [] },
   pricing_unavailable: { group: "Bot Messages", label: "Error: pricing unavailable", ph: [] },
   session_expired: { group: "Bot Messages", label: "Error: session expired", ph: [] },

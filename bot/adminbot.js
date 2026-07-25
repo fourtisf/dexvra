@@ -4,6 +4,7 @@
 require("dotenv").config({ override: true });
 
 const log = require("./src/helpers/logger");
+require("./src/helpers/net").preferIPv4(); // same flaky-IPv6 workaround as main.js
 
 process.on("unhandledRejection", (r) => log.warn(`[adminbot] unhandledRejection: ${r && r.message ? r.message : r}`));
 process.on("uncaughtException", (e) => log.warn(`[adminbot] uncaughtException: ${e && e.message}`));

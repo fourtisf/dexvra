@@ -14,6 +14,7 @@ const menu = require("./handlers/menu");
 const { SITE_URL, CHANNELS } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
+const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
 const { payloadArgs } = require("./helpers/message");
 const premium = require("./premium");
 const { chainOf } = require("./config/chains");
@@ -192,6 +193,18 @@ async function postMedia(kind, bannerCoin, logoBuffer, logoFileId, logoUrl, badg
 async function fulfillListing(ctx, order) {
   const p = order.payload; // { listingInput, logoFileId?, trendHours }
   const input = { ...p.listingInput };
+
+  // 0. Last line of defence on the ticker. The buyer has PAID by the time we
+  // get here, so a ticker the site would refuse must be REPAIRED, not raised:
+  // createListing answering "400: Invalid ticker" leaves the order 'paid' with
+  // nothing delivered (incident 2026-07-23). handlers/listing.js is what
+  // normally stops this reaching here — a line in the log means one slipped
+  // past input validation, so it is worth reading.
+  if (!isValidTicker(input.sym)) {
+    const fixed = sanitizeTicker(input.sym) || sanitizeTicker(input.name);
+    log.warn(`[fulfil] ticker "${input.sym}" would be rejected by the site → using "${fixed || "(none)"}"`);
+    if (fixed) input.sym = fixed;
+  }
 
   // 1. Logo (best-effort): upload the Telegram photo to dexvra media.
   let logoBuffer = null;
