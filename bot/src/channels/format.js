@@ -8,7 +8,7 @@
 // @dexvraadminbot without touching code.
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { chainOf } = require("../config/chains");
-const { tierLabel } = require("../config/packages");
+const { tierLabel, tierEmoji: pkgTierEmoji } = require("../config/packages");
 const { SITE_URL, CHANNELS, TRADEBOT_USERNAME } = require("../config/constants");
 const premium = require("../premium");
 const tpl = require("../templates");
@@ -75,13 +75,17 @@ const clean = (v) => premium.sanitizeVar(v); // user-supplied values → markup-
 const cleanUrl = (v) => premium.sanitizeUrl(v); // user URLs → can't close [label](url)
 
 // Tier badges — premium where fourtis has proven IDs, unicode otherwise.
+// Tiers whose badge has a PREMIUM twin; everything else falls back to the emoji
+// packages.js already defines for that tier. Keeping only the exceptions here
+// means a tier can never render as a blank badge — PLATINUM was missing from
+// this map and posted as "New Listing on Dexvra ·  Platinum tier", separator,
+// double space and all.
 const TIER_EMOJI = {
   DIAMOND: em("💎", E.diamond),
   GOLD: em("🥇", E.gold),
-  SILVER: "🥈",
-  BRONZE: "🥉",
   XPRESS: em("⚡", E.zap),
 };
+const tierBadge = (key) => TIER_EMOJI[key] || pkgTierEmoji(key) || "";
 
 const liqStr = (n) => (n && Number(n) > 0 ? "$" + formatNumber(n) : "—");
 
@@ -118,8 +122,17 @@ function stripLines(val, { all, missing, dropParagraph }) {
   for (let i = 0; i < lines.length; i++) {
     const r = refs(lines[i], all);
     if (!r.length) continue;
-    if (r.every((k) => missing.includes(k))) drop[i] = true; // whole line dead
-    else segCuts.push(...segmentCuts(lines[i], starts[i], r.filter((k) => missing.includes(k))));
+    if (r.every((k) => missing.includes(k))) {
+      // Every tracked placeholder on this line is dead. That USUALLY means the
+      // line goes — but a placeholder can share a line with real copy: the tier
+      // badge now sits beside the "New Listing on Dexvra" header, and dropping
+      // the line with it would delete the post's title. So cut the dead
+      // segments first and only drop the line when nothing readable is left
+      // (which is still what happens to a socials row with no links at all).
+      const cuts = segmentCuts(lines[i], starts[i], r);
+      if (cuts.length && hasCopy(remainder(lines[i], starts[i], cuts))) segCuts.push(...cuts);
+      else drop[i] = true;
+    } else segCuts.push(...segmentCuts(lines[i], starts[i], r.filter((k) => missing.includes(k))));
   }
   if (dropParagraph) {
     let start = 0;
@@ -170,6 +183,27 @@ function segCutRange(segs, j) {
   const cutStart = j > 0 ? segs[j - 1].end : segs[j].start;
   const cutEnd = j > 0 ? segs[j].end : segs[j + 1] ? segs[j + 1].start : segs[j].end;
   return [cutStart, cutEnd];
+}
+
+/** What survives on `line` once `cuts` (absolute ranges) are removed. */
+function remainder(line, base, cuts) {
+  let out = "";
+  let pos = 0;
+  for (const [s, e] of mergeRanges(cuts)) {
+    out += line.slice(pos, Math.max(pos, s - base));
+    pos = Math.max(pos, e - base);
+  }
+  return out + line.slice(pos);
+}
+
+/** Is there anything a reader would call content here? Placeholders and pure
+ *  markup/separators don't count — "🚨 **New Listing**" does, " · " doesn't. */
+function hasCopy(s) {
+  return /[\p{L}\p{N}]/u.test(
+    String(s || "")
+      .replace(/\{[^}]*\}/g, "")
+      .replace(/[*_`[\]()·|]/g, " "),
+  );
 }
 
 function segmentCuts(line, base, missKeys) {
@@ -589,7 +623,7 @@ function listingPost(coin) {
     ...coinVars(coin),
     address: addressVar(val, coin.address),
     logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    tierEmoji: coin.tier ? TIER_EMOJI[String(coin.tier).toUpperCase()] || "" : "",
+    tierEmoji: coin.tier ? tierBadge(String(coin.tier).toUpperCase()) : "",
     tier: coin.tier ? clean(tierLabel(coin.tier)) : "",
     overview: overviewBlock(coin.overview || autoOverview(coin, "listing")), // legacy
   }), postUrls(coin));

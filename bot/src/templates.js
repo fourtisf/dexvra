@@ -328,9 +328,12 @@ const DEFAULTS = {
   // the markup parser and leak as raw text.
   post_listing_xpress:
     `${em("⚡", E.zap)} **Xpress Listing — {name} live on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  // Tier sits BESIDE the header, not stacked under it, and the token's own
+  // emoji closes the line (operator preference): "New Listing on Dexvra ·
+  // 💠 Platinum tier 🐶". An untiered listing drops just the tier SEGMENT —
+  // channels/format.js keeps the header itself.
   post_listing_tiered:
-    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** {logoEmoji}\n` +
-    `{tierEmoji} **{tier} tier**\n\n` +
+    `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · {tierEmoji} **{tier} tier** {logoEmoji}\n\n` +
     LISTING_BODY,
   post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
   post_banner:

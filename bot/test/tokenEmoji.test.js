@@ -66,6 +66,12 @@ test("animated webm render: VP9 loop under the 64KB custom-emoji cap", async (t)
   assert.strictEqual(buf.readUInt32BE(0), 0x1a45dfa3);
 });
 
-test("emojiTag: empty without a stored id, markup tag with one", () => {
-  assert.strictEqual(te.emojiTag("solana", "NoSuchAddr", "$X"), "");
+test("emojiTag: falls back to the plain char without a stored id", () => {
+  // It used to return "" — which left a visible gap in the post header, right
+  // after the tier badge, and made the listing look half-rendered. The plain
+  // char is what a non-premium viewer sees for a token that DOES have a pack,
+  // so the header reads the same either way.
+  const tag = te.emojiTag("solana", "NoSuchAddr", "$X");
+  assert.ok(tag.trim().length, "the slot is filled");
+  assert.ok(!tag.includes("emoji/"), "…but it is not premium markup — there is no pack");
 });

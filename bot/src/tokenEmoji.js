@@ -299,8 +299,15 @@ function getEmojiId(chain, address) {
  *  interpolate unconditionally into channel-post templates. */
 function emojiTag(chain, address, symbol) {
   const id = getEmojiId(chain, address);
-  if (!id) return "";
-  return `[${pickFallbackChar(symbol)}](emoji/${id}) `;
+  // No pack for this token (creation failed, or the pack bot isn't configured)
+  // → still fill the slot with the plain fallback char. It is EXACTLY what a
+  // non-premium viewer sees for a token that does have a pack, so the header
+  // reads the same either way — where returning "" left a visible gap after the
+  // tier badge and made the post look half-rendered.
+  // No trailing space: every template puts {logoEmoji} at the END of its header
+  // line, so one would just leave invisible trailing whitespace in the post.
+  if (!id) return pickFallbackChar(symbol);
+  return `[${pickFallbackChar(symbol)}](emoji/${id})`;
 }
 
 module.exports = {

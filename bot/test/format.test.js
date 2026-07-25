@@ -231,3 +231,37 @@ test("overview truncation never splits surrogate pairs (no U+FFFD)", () => {
   const card2 = fmt.listingPost({ ...base, overview: emojiOnly });
   assert.ok(!card2.text.includes("�"));
 });
+
+// The tier used to be stacked on its own line UNDER the header, and the token's
+// emoji sat before it — the operator wants one line: header · tier, token emoji
+// last. The untiered case is the trap: "drop every line whose placeholders are
+// all empty" would have deleted the post's title along with the tier.
+test("listing header: tier beside the title, token emoji last", () => {
+  const coin = {
+    name: "Floki", symbol: "$FLOKI", chain: "bsc", address: "0xfb5",
+    tier: "PLATINUM", links: {}, siteUrl: "u",
+  };
+  const first = fmt.listingPost(coin).text.split("\n")[0];
+  assert.ok(/New Listing on Dexvra/.test(first), first);
+  assert.ok(/Platinum tier/i.test(first), `tier must be on the SAME line: ${first}`);
+  assert.ok(first.indexOf("tier") < first.length - 1, "…and the token emoji closes the line");
+  assert.ok(!/\n\s*\S*\s*Platinum tier/.test(fmt.listingPost(coin).text), "never stacked below");
+});
+
+test("listing header: an untiered listing keeps its title, loses only the tier", () => {
+  const coin = { name: "Auto", symbol: "$AUTO", chain: "bsc", address: "0xa", links: {}, siteUrl: "u" };
+  const text = fmt.listingPost(coin).text;
+  const first = text.split("\n")[0];
+  assert.ok(/New Listing on Dexvra/.test(first), `the header must survive: ${JSON.stringify(first)}`);
+  assert.ok(!/tier/i.test(text), `no empty tier badge left behind: ${first}`);
+  assert.ok(!/·\s*$/.test(first), "…and no dangling separator");
+});
+
+test("a socials row with no links at all still drops entirely", () => {
+  // The same strip path — this is the behaviour the header fix must not break.
+  const coin = { name: "T", symbol: "$T", chain: "bsc", address: "0xa", tier: "GOLD", links: {}, siteUrl: "u" };
+  const text = fmt.listingPost(coin).text;
+  assert.ok(!/social links/i.test(text), text);
+  assert.ok(!/Website|Telegram/.test(text.split("Dexvra\n").pop() || ""), "no orphan labels");
+  assert.ok(!/\n{3,}/.test(text), "no hole where the paragraph was");
+});
