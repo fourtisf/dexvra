@@ -351,22 +351,6 @@ const DEFAULTS = {
     `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · **{tier} tier** {logoEmoji}\n\n` +
     LISTING_BODY,
   post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
-  // AUTO-trending spotlight — deliberately NOT the paid card. "New Trending on
-  // Dexvra" is a deliverable someone paid for (see trending_ca_prompt: "Instant
-  // activation alert on @dexvratrending"); a free auto-promotion must not wear
-  // the same words. No "Announce On X" line either — the X post is sold as part
-  // of the paid package. The closing line is the point of posting these at all:
-  // it turns a free slot into a lead for the paid one.
-  post_trending_auto:
-    `👀 **Spotlight on Dexvra** {logoEmoji}\n\n` +
-    `${em("💲", E.dollar)} [{name}]({coinUrl}) ({symbol})\n\n` +
-    `{chainEmoji} **Network:** {chain}\n` +
-    `📄 **Contract address:**\n{address}\n\n` +
-    `${em("🏦", E.dollar)} **Market cap:** {mcap} · ${em("📊", E.chart)} **Price:** {price}\n\n` +
-    `[⚡ Buy / Sell on Dexvra Trade Bot]({tradeUrl})\n\n` +
-    `${SOCIALS_BLOCK}\n\n` +
-    `${em("💎", E.diamond)} **Want a guaranteed Trending slot?** → [{botName}]({bot})\n\n` +
-    FOOTER_BLOCK,
   // Advertiser-facing, so it reads like an ad placement announcement rather than
   // bot output: what is running, where, and one link out. The "Announce On X"
   // line carries the campaign's tweet and drops itself when there is none.
@@ -518,7 +502,6 @@ const META = {
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
   post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_trending_auto: { group: "Channel Posts", label: "Post: Trending (auto spotlight)", ph: ["name", "symbol", "logoEmoji", "coinUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "bot", "botName", "site", "listing", "trending", "announce"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },

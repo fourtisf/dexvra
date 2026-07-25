@@ -595,8 +595,8 @@ function atText() {
     `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
     (c.announce ? ` <i>(max ${c.announcePerDay}/day · ${c.announceGapMin}min apart · ${c.announceCooldownDays}d per token)</i>` : "") +
     `\n` +
-    `<i>Auto slots post a “👀 Spotlight” card — never the paid “New Trending” one, never pinned, never @dexvraio. ` +
-    `Note the channel feed is chronological: unlike the board, it does NOT rank paid above auto.</i>\n\n` +
+    `<i>Auto slots post the SAME card as a paid Trending purchase (the <b>Post: Trending</b> template) — never pinned, ` +
+    `never @dexvraio. The channel feed is chronological: unlike the board, it does NOT rank paid above auto.</i>\n\n` +
     `⚡ <b>Run now — per chain</b>\n` +
     `The board groups by network, so a chain with nothing featured shows nothing at all. ` +
     `Tap a chain below to promote a token there immediately (works even while Auto Trending is off).\n\n` +

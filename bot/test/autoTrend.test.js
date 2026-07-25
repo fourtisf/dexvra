@@ -328,6 +328,19 @@ test("a forced run QUEUES its announcement — the admin process cannot post", a
   }
 });
 
+test("the auto post uses the SAME template as a paid trending purchase", () => {
+  // Operator's call (2026-07-25): "templatenya harus sama dengan trending yang
+  // sudah di set, nothing beda". So there is no separate auto template — an
+  // edit to Post: Trending in the admin bot must change BOTH.
+  const src = fss.readFileSync(require.resolve("../src/services/autoTrend.js"), "utf8");
+  assert.match(src, /fmt\.trendingPost\(coin\)/, "renders the paid trending card");
+  assert.ok(!/trendingAutoPost|post_trending_auto/.test(src), "no separate auto card");
+  const tpl = require("../src/templates");
+  assert.ok(!tpl.keys().includes("post_trending_auto"), "the separate template is gone from the editor too");
+  // …and the artwork badge states the slot's real length, like a paid run.
+  assert.match(src, /Trending \$\{hours\}H/, "same badge shape as fulfillment.js");
+});
+
 test("the announce path never posts to the announcement channel", () => {
   // A @dexvraio headline is a 24H/48H PAID inclusion. Auto runs cap at 18h, so
   // today this holds by accident — pin it on purpose.

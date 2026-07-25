@@ -22,6 +22,10 @@ const DEFAULTS = {
   // 8 ÷ 10.5h × 24 ≈ 18 promotions a day. Announcing every one would bury the
   // paid posts (and the deep link a buyer was just DM'd as proof of delivery),
   // so the caps below are the feature, not decoration.
+  // The card is IDENTICAL to a paid trending post — same post_trending
+  // template, same artwork, same badge (operator's explicit call, 2026-07-25:
+  // "templatenya harus sama dengan trending yang sudah di set, nothing beda").
+  // The rails below are what keeps that from drowning the paid posts.
   announce: false, // OFF until the operator turns it on — it publishes in public
   announcePerDay: 3,
   announceGapMin: 60, // minimum spacing between two auto posts
@@ -140,7 +144,7 @@ function announceReason(row, st, cfg, now = Date.now()) {
  * is attached there. Best-effort: the promotion has already happened and must
  * never be undone by a failed post.
  */
-async function announceOne(row) {
+async function announceOne(row, hours) {
   const post = require("../channels/post");
   const fmt = require("../channels/format");
   const { CHANNELS, SITE_URL } = require("../config/constants");
@@ -155,8 +159,7 @@ async function announceOne(row) {
     symbol: row.sym || row.symbol,
     chain: row.chain,
     address: row.address,
-    // No tier on the card: the slot wasn't bought, so it must not wear a
-    // package's colours (same rule autoLister follows).
+    tier: row.tier,
     price: live && live.priceUsd,
     mcap: live && live.mcap,
     liq: live && live.liq,
@@ -180,20 +183,19 @@ async function announceOne(row) {
     null,
     null,
     row.logoUrl || "",
-    // NEVER a "Trending 5H" badge: auto runs are 3–18h and no package sells
-    // those durations, so the badge would be a price tag on a free giveaway.
-    null,
+    // Same badge a paid run gets, stating this slot's REAL length.
+    hours ? `Trending ${hours}H` : null,
   ).catch(() => null);
   // Never pinned (the Trending board owns that pin) and never @dexvraio (the
   // announcement headline is a 24H/48H paid inclusion).
-  return post.sendMedia(CHANNELS.trending, media, fmt.trendingAutoPost(coin));
+  return post.sendMedia(CHANNELS.trending, media, fmt.trendingPost(coin));
 }
 
 /**
  * Announce `row` if every rail allows it, and record it. Returns the reason it
  * was skipped, or null when it posted.
  */
-async function tryAnnounce(row, { now = Date.now() } = {}) {
+async function tryAnnounce(row, { now = Date.now(), hours = 0 } = {}) {
   const cfg = get();
   const st = loadState();
   const why = announceReason(row, st, cfg, now);
@@ -203,7 +205,7 @@ async function tryAnnounce(row, { now = Date.now() } = {}) {
   }
   let msg = null;
   try {
-    msg = await announceOne(row);
+    msg = await announceOne(row, hours);
   } catch (e) {
     log.warn(`[autotrend] announce ${row.sym || row.address}: ${e.message}`);
     return `post failed (${e.message})`;
@@ -220,11 +222,11 @@ async function tryAnnounce(row, { now = Date.now() } = {}) {
 }
 
 /** Queue an announcement for the MAIN process (used by the admin bot). */
-async function queueAnnounce(row) {
+async function queueAnnounce(row, hours = 0) {
   const st = loadState();
   st.pending = [
     ...st.pending.filter((p) => keyOf(p.chain, p.address) !== keyOf(row.chain, row.address)),
-    { chain: row.chain, address: row.address, at: Date.now() },
+    { chain: row.chain, address: row.address, hours, at: Date.now() },
   ].slice(-20);
   await saveState(st);
 }
@@ -244,7 +246,7 @@ async function drainPending({ now = Date.now() } = {}) {
   }
   const row = listings.find((r) => keyOf(r.chain, r.address) === keyOf(next.chain, next.address));
   if (!row) return 0;
-  return (await tryAnnounce(row, { now })) ? 0 : 1;
+  return (await tryAnnounce(row, { now, hours: next.hours })) ? 0 : 1;
 }
 
 /** One top-up pass: promote random eligible listings until `target` are featured.
@@ -308,7 +310,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
       // At most ONE public post per cycle, whatever the top-up size: a cold
       // start promotes up to `target` tokens at once, and eight cards in a row
       // is a firehose, not a feed.
-      if (!announcedThisRun) announcedThisRun = (await tryAnnounce(r).catch(() => "error")) === null;
+      if (!announcedThisRun) announcedThisRun = (await tryAnnounce(r, { hours }).catch(() => "error")) === null;
     } catch (e) {
       log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
     }
@@ -404,7 +406,7 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
       // forceChain runs in the ADMIN process, where channels/post was never
       // attach()ed — posting from here throws. Hand it to the main bot, which
       // drains the queue within a minute.
-      if (get().announce) await queueAnnounce(r).catch(() => {});
+      if (get().announce) await queueAnnounce(r, hours).catch(() => {});
     } catch (e) {
       lastErr = e.message;
       log.warn(`[autotrend] forced bookTrending ${r.sym || r.address}: ${e.message}`);

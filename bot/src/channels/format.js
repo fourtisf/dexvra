@@ -633,20 +633,6 @@ function listingPost(coin) {
   }), postUrls(coin));
 }
 
-/** The AUTO-trending spotlight — a different card from the paid one on purpose.
- *  See post_trending_auto in templates.js. */
-function trendingAutoPost(coin) {
-  const val = stripForCoin("post_trending_auto", coin);
-  return autoSocials(
-    tpl.renderValue(val, {
-      ...coinVars(coin),
-      address: addressVar(val, coin.address),
-      logoEmoji: tokenEmoji.emojiTag(coin.chain, coin.address, coin.symbol),
-    }),
-    postUrls(coin),
-  );
-}
-
 function trendingPost(coin) {
   const val = stripForCoin("post_trending", coin);
   return autoSocials(tpl.renderValue(val, {
@@ -752,4 +738,4 @@ function rankupPost(coin, rank, change24h) {
   }), postUrls(coin));
 }
 
-module.exports = { listingPost, trendingPost, trendingAutoPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
+module.exports = { listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
