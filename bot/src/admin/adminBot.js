@@ -1029,8 +1029,9 @@ function bxElemText(kind, elem) {
         ? `✅ Kotak sudah di tengah (kiri–kanan).\n`
         : `⚠️ Kotak belum di tengah — ruang kosong lebih banyak di <b>${side}</b>. Tekan <b>⬌ Ke tengah</b>.\n`) +
       `\n<b>Fungsi tombol</b>\n` +
-      `• <b>Lebar ➕ / ➖</b> — perbesar atau perkecil kotak ke samping\n` +
-      `• <b>Tinggi ➕ / ➖</b> — perbesar atau perkecil kotak ke atas-bawah\n` +
+      `• <b>➕ Perbesar / ➖ Perkecil</b> — ubah ukuran kotak sekaligus, bentuknya tetap\n` +
+      `• <b>Lebar ➕ / ➖</b> — perbesar atau perkecil kotak ke samping saja\n` +
+      `• <b>Tinggi ➕ / ➖</b> — perbesar atau perkecil kotak ke atas-bawah saja\n` +
       `• <b>⬅ ⬆ ⬇ ➡</b> — geser kotaknya\n` +
       `• <b>⬌ Ke tengah</b> — taruh di tengah, kiri–kanan\n` +
       `• <b>⬍ Ke tengah</b> — taruh di tengah, atas–bawah\n` +
@@ -1060,6 +1061,10 @@ function bxElemKb(kind, elem) {
     // head before it could be acted on — twice, first the word, then the
     // comparison. "Lebar ➕" needs neither.
     return Markup.inlineKeyboard([
+      // Whole-box resize FIRST — it is what "make it bigger/smaller" means, and
+      // doing it with the per-axis pair meant tapping two buttons different
+      // numbers of times and watching the shape drift.
+      [cb("➕ Perbesar", `bxscale:${kind}:up`), cb("➖ Perkecil", `bxscale:${kind}:down`)],
       [cb("Lebar ➕", `bxsd:${kind}:slotw:20`), cb("Lebar ➖", `bxsd:${kind}:slotw:-20`)],
       [cb("Tinggi ➕", `bxsd:${kind}:sloth:20`), cb("Tinggi ➖", `bxsd:${kind}:sloth:-20`)],
       [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
@@ -2173,6 +2178,21 @@ function build() {
     await bannerTpl.updateSettings(kind, { showText: !on });
     ctx.answerCbQuery(`🔤 Tulisan ${on ? "MATI" : "AKTIF"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
+  // Scale the WHOLE box, keeping its shape. 8% a tap: fine enough to stop on
+  // the right size, coarse enough that a big change is a few taps and not
+  // twenty. Both sides move together, so the box never drifts out of shape the
+  // way it did when the only controls were per-axis.
+  bot.action(new RegExp(`^bxscale:${KL}:(up|down)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, dir] = ctx.match;
+    const s = bannerTpl.getSettings(kind);
+    const f = dir === "up" ? 1.08 : 1 / 1.08;
+    const w = Math.max(200, Math.min(2560, Math.round((Number(s.slotW) || 1548) * f)));
+    const h = Math.max(120, Math.min(1280, Math.round((Number(s.slotH) || 760) * f)));
+    await bannerTpl.updateSettings(kind, { slotW: w, slotH: h });
+    ctx.answerCbQuery(`${dir === "up" ? "➕" : "➖"} ${w} × ${h}`).catch(() => {});
+    await bxElemOpen(ctx, kind, "slot");
   });
   // How a client picture whose shape differs from the box is fitted. Default is
   // "muat semua" (contain) — cropping artwork the advertiser paid for is not a

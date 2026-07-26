@@ -122,3 +122,24 @@ test("the artwork-saved message points at a button that exists", () => {
   assert.ok(!admin.includes("🖱 Logo editor"), "a control that does not exist cannot be opened");
   assert.match(admin, /Buka 🎛 Atur tata letak/, "the real button is named instead");
 });
+
+test("the box can be resized as a whole, keeping its shape", () => {
+  // "Lebar ➖" and "Tinggi ➖" could shrink a box, but only by tapping two
+  // buttons a different number of times each — and the shape drifted while you
+  // did it. "Make it smaller" needed to be one button.
+  assert.match(admin, /\^bxscale:\$\{KL\}:\(up\|down\)\$/, "there is a whole-box scale handler");
+  const h = admin.slice(admin.indexOf("bxscale:${KL}"), admin.indexOf("bxscale:${KL}") + 800);
+  assert.match(h, /slotW: w, slotH: h/, "both sides move together");
+  assert.match(h, /1 \/ 1\.08/, "…by the same factor, which is what keeps the shape");
+  const kb = admin.slice(admin.indexOf("function bxElemKb"));
+  const slotKb = kb.slice(0, kb.indexOf("const c = BX[elem];"));
+  const labels = [...slotKb.matchAll(/cb\("([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(labels.includes("➕ Perbesar") && labels.includes("➖ Perkecil"), "and it is the first thing on the screen");
+  assert.strictEqual(labels[0], "➕ Perbesar", "top row — it is the control people look for");
+});
+
+test("scaling stays inside the canvas, in both directions", () => {
+  const h = admin.slice(admin.indexOf("bxscale:${KL}"), admin.indexOf("bxscale:${KL}") + 800);
+  assert.match(h, /Math\.max\(200, Math\.min\(2560,/, "width is clamped to the canvas");
+  assert.match(h, /Math\.max\(120, Math\.min\(1280,/, "height too");
+});
