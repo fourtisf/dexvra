@@ -106,7 +106,7 @@ async function snipeCycle() {
         try {
           const bal = await core.ethBalance(addr, SNIPE_CHAIN);
           const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(SNIPE_CHAIN);
-          if (bal < need) return _shortfall(u, SNIPE_CHAIN, bal, need);
+          if (_affordCheck(u, SNIPE_CHAIN, bal, need)) return;
         } catch (_) { return; }
         try {
           const r = await core.buy(u.chatId, ca, u.snipe.ethAmount, SNIPE_CHAIN);
@@ -122,34 +122,46 @@ async function snipeCycle() {
     }
   }
 }
-// A wallet that cannot afford its own snipe is a SETTING, not an incident.
+// Can this user afford the snipe? Returns true when they CANNOT (skip them).
 //
-// The old code skipped it silently — which was right — but the pre-check
-// reserved CFG.gasBufferEth (0.0004) while buy() reserved ETH_GAS_BUFFER
-// (0.006), so on Ethereum the skip never fired: the buy ran, threw
-// "insufficient ETH — need ~0.016, have 0.01499", and the failure notice went
-// out on every new pair, for ever, "muted 5 min" notwithstanding. Both checks
-// now read core.gasBufferWei, so this path is reached instead of that one.
+// The old code skipped silently — right idea — but the pre-check reserved
+// CFG.gasBufferEth (0.0004) while buy() reserved ETH_GAS_BUFFER (0.006), so on
+// Ethereum the skip never fired: the buy ran, threw "insufficient ETH — need
+// ~0.016, have 0.01499", and that notice went out on every new pair, for ever,
+// "muted 5 min" notwithstanding. Both now read core.gasBufferWei, so a wallet
+// that is short lands here instead of in the failure handler.
 //
-// Silence alone is wrong too: sniping is ON and never fires, and the user is
-// never told why. So they are told ONCE, and again only if their balance has
-// actually moved since — topping up and still being short earns a fresh
-// notice; sitting at the same balance for a week earns none.
-const _shortAt = new Map();   // chatId:chain -> balance (wei) at the last notice
-function _shortfall(u, chainKey, bal, need) {
-  const key = u.chatId + ':' + chainKey;
-  if (_shortAt.get(key) === bal) return;   // same balance, already said
-  _shortAt.set(key, bal);
-  const ch = core.chainOf(chainKey);
-  const native = (ch && ch.native) || 'ETH';
-  _notify(
-    u.chatId,
-    `⏸ <b>Snipe skipped — not enough ${esc(native)}</b>\n` +
-      `Need <b>${ethers.formatEther(need)}</b> (${u.snipe.ethAmount} + gas), wallet has <b>${Number(ethers.formatEther(bal)).toFixed(5)}</b>.\n` +
-      `Top up, or lower the snipe amount. Sniping stays on — this is the only notice until your balance changes.`,
-    undefined,
-    'snipe',
-  );
+// Told ONCE. Not once per hour, not once per balance — once. A wallet's balance
+// drifts constantly (gas spent elsewhere, dust arriving), so keying the notice
+// on the balance still produced a stream of them; keying it on a timer produces
+// one per window for as long as the wallet stays small, which is for ever. The
+// flag lives on the user record and is persisted, so a restart does not
+// re-announce it either.
+//
+// It re-arms on exactly one event: the wallet becoming able to afford the snipe
+// again. That is the problem being solved, and a problem that recurs later is a
+// new problem worth one new notice.
+function _affordCheck(u, chainKey, bal, need) {
+  const flags = (u._shortAlert = u._shortAlert || {});
+  if (bal >= need) {
+    if (flags[chainKey]) { delete flags[chainKey]; core.saveStoreNow(); }   // fixed → arm for next time
+    return false;
+  }
+  if (!flags[chainKey]) {
+    flags[chainKey] = true;
+    core.saveStoreNow();
+    const ch = core.chainOf(chainKey);
+    const native = (ch && ch.native) || 'ETH';
+    _notify(
+      u.chatId,
+      `⏸ <b>Snipe skipped — not enough ${esc(native)}</b>\n` +
+        `Need <b>${ethers.formatEther(need)}</b> (${u.snipe.ethAmount} + gas), wallet has <b>${Number(ethers.formatEther(bal)).toFixed(5)}</b>.\n` +
+        `Sniping stays on. Top up or lower the amount — you will not be told about this again.`,
+      undefined,
+      'snipe',
+    );
+  }
+  return true;
 }
 
 // Users with the master copy switch ON who follow ≥1 dev wallet (launch mode) on `chainKey`.
@@ -254,7 +266,7 @@ async function _dexSnipeChain(ch) {
       try {
         const bal = await core.ethBalance(addr, ch.key);
         const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(ch.key);
-        if (bal < need) return _shortfall(u, ch.key, bal, need);
+        if (_affordCheck(u, ch.key, bal, need)) return;
       } catch (_) { return; }
       try {
         const r = await core.buy(u.chatId, token, u.snipe.ethAmount, ch.key);

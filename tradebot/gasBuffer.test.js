@@ -72,19 +72,33 @@ test("Ethereum reserves far more than the L2 default — that is the point", (t)
   assert.ok(bal > ethers.parseEther("0.01") + l2, "…but it DID clear the old, smaller check");
 });
 
-test("a wallet that cannot afford it is told once, not once per pair", () => {
+test("a wallet that cannot afford it is told ONCE — not per pair, hour or balance", () => {
   const w = code("watchers.js");
-  assert.match(w, /function _shortfall\(u, chainKey, bal, need\)/);
-  // Keyed on the BALANCE, not on a clock: the same balance never speaks twice,
-  // and a top-up that is still short earns a fresh notice.
-  assert.match(w, /if \(_shortAt\.get\(key\) === bal\) return;/);
-  assert.ok(!/_shortAt[\s\S]{0,200}Date\.now\(\)/.test(w), "no timer — the condition is a balance, not a moment");
-  assert.match(w, /Snipe skipped/, "and it says what happened");
-  assert.match(w, /Top up, or lower the snipe amount/, "…and what to do about it");
+  assert.match(w, /function _affordCheck\(u, chainKey, bal, need\)/);
+  // Once means once. A balance drifts constantly (gas spent elsewhere, dust
+  // arriving), so keying on it still produced a stream; keying on a clock
+  // produces one per window for as long as the wallet stays small, for ever.
+  assert.match(w, /if \(!flags\[chainKey\]\) \{/, "the flag is the gate");
+  // The function BODY, not the call sites — the buy-failure handler right below
+  // one of them legitimately uses a clock.
+  const body = w.slice(w.indexOf("function _affordCheck("));
+  assert.ok(!body.slice(0, body.indexOf("\n}\n")).includes("Date.now()"), "no timer in the decision itself");
+  assert.ok(!/_shortAt/.test(w), "the old balance-keyed map is gone");
+  assert.match(w, /Snipe skipped/, "it says what happened");
+  assert.match(w, /you will not be told about this again/, "…and promises exactly what it does");
+});
+
+test("the notice survives a restart, and re-arms only when the wallet can afford it", () => {
+  const w = code("watchers.js");
+  // On the user record, not in memory: a restart must not re-announce it.
+  assert.match(w, /u\._shortAlert = u\._shortAlert \|\| \{\}/);
+  assert.match(w, /core\.saveStoreNow\(\)/, "and is persisted");
+  // The one event that clears it is the problem going away.
+  assert.match(w, /if \(bal >= need\) \{[\s\S]{0,160}delete flags\[chainKey\]/);
 });
 
 test("both snipe paths route a shortfall through it", () => {
   const w = code("watchers.js");
-  const calls = w.match(/return _shortfall\(u, [^)]+\)/g) || [];
+  const calls = w.match(/if \(_affordCheck\(u, [^)]+\)\) return;/g) || [];
   assert.strictEqual(calls.length, 2, "the launch sniper and the DEX-pair sniper");
 });
