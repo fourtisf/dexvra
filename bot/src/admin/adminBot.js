@@ -222,6 +222,12 @@ const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
 // Token banners whose animated clip is auto-filled with the token's logo/$ticker/price.
 // Pump is a fill kind too, but with its OWN layout (▲ +N% · old→new price · MCAP).
 const BT_FILL_KINDS = new Set(["listing", "trending", "pump"]);
+// Kinds whose animated clip gets something composited onto every frame. Banner
+// Ads joins the fill kinds here but with a different payload: not token data,
+// the ADVERTISER'S CREATIVE, dropped into the frame's slot. Without this a
+// banner clip played as pure decoration and the ad the buyer paid for never
+// appeared in it at all.
+const BT_CLIP_FILL_KINDS = new Set([...BT_FILL_KINDS, "banner"]);
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
@@ -1072,26 +1078,38 @@ async function btPreview(ctx, kind, pct) {
       /* stat is best-effort diagnostics */
     }
     // Token banners: preview the clip WITH sample token data composited on — exactly what
-    // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
-    if (BT_FILL_KINDS.has(kind)) {
+    // posts. Banner Ads composites the ADVERTISER'S CREATIVE into the frame's slot
+    // instead of token data, which is the whole point of an ad template: the buyer's
+    // artwork sits inside your frame, on every frame of the clip.
+    // Falls back to the raw clip if ffmpeg compositing isn't available.
+    if (BT_CLIP_FILL_KINDS.has(kind)) {
       const filled = await bannerTpl
-        .composeOntoClip(kind, media, sampleMedia(kind), data)
+        .composeOntoClip(kind, media, sampleMedia(kind), kind === "banner" ? {} : data)
         .catch(() => null);
       if (filled) {
+        const what =
+          kind === "banner"
+            ? `the <b>advertiser's creative</b> drawn into the frame's slot (sample creative)`
+            : `the token's data <b>drawn on automatically</b> (sample data)`;
         await ctx
-          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b>${pctNote} — your animated template with the token's data <b>drawn on automatically</b> (sample data). Tune positions in 🎛 Layout editor.`, parse_mode: "HTML" })
+          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b>${pctNote} — your animated template with ${what}. Tune the slot in 🎛 Layout editor.`, parse_mode: "HTML" })
           .catch(() => {});
         return;
       }
     }
-    const isVid = media.type === "video";
+    // Preview the clip the way it will POST: normalised to a silent MP4 and
+    // sent as an animation. Previewing the raw upload was misleading — an .mp4
+    // came back as a video card with a play button, which is not what the
+    // channel gets.
+    const playable = await bannerTpl.toInlineClip(media).catch(() => media);
     const note = BT_FILL_KINDS.has(kind)
       ? ` In posts the bot draws the token's logo/$ticker/price onto it (couldn't composite here — check ffmpeg on the server).`
-      : ` Played as-is; token details go in the caption.`;
-    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — ${isVid ? "video" : "GIF"} clip.${note}`;
+      : kind === "banner"
+        ? ` In posts the advertiser's creative is drawn into the frame's slot.`
+        : ` Played as-is; token details go in the caption.`;
+    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — autoplaying clip.${note}`;
     try {
-      if (isVid) await ctx.replyWithVideo({ source: media.source }, { caption: cap, parse_mode: "HTML" });
-      else await ctx.replyWithAnimation({ source: media.source }, { caption: cap, parse_mode: "HTML" });
+      await ctx.replyWithAnimation({ source: playable.source }, { caption: cap, parse_mode: "HTML" });
     } catch (e) {
       await ctx.reply(`⚠️ Couldn't preview the clip: ${e.message}`).catch(() => {});
     }

@@ -372,8 +372,22 @@ async function fulfillBanner(ctx, order) {
     let adMedia = p.imageFileId || photoSource(null, rec.imageUrl);
     if (bannerTemplate.postingEnabled()) {
       const creative = buffer || (await fetchLogoUrl(rec.imageUrl));
-      const framed = await bannerTemplate.compose("banner", creative, {});
-      if (framed) adMedia = { source: framed };
+      // An uploaded CLIP wins over the still artwork, exactly as it does for
+      // listing/trending — but the ad clip has to carry the buyer's creative in
+      // its frame, on every frame. Playing it bare made the animated template
+      // pure decoration: the advertiser paid for a banner that never appeared.
+      const clip = bannerTemplate.mediaOverride("banner");
+      const framedClip = clip
+        ? await bannerTemplate.composeOntoClip("banner", clip, creative, {}).catch(() => null)
+        : null;
+      if (framedClip) {
+        log.info("[fulfil] banner media: admin clip + advertiser creative ✔");
+        adMedia = framedClip;
+      } else {
+        if (clip) log.warn("[fulfil] banner media: clip composite failed — falling back to the still frame");
+        const framed = await bannerTemplate.compose("banner", creative, {});
+        if (framed) adMedia = { source: framed };
+      }
     }
     // Tweet FIRST (timeboxed), so the channel post can carry the "Announce On X"
     // link — same ordering as a listing. The line drops itself when X is off or

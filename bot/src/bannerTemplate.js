@@ -727,20 +727,34 @@ function ffmpegLib() {
  * DocumentAttributeAnimated (see gramjs.js) is necessary but NOT sufficient:
  * the container itself has to change.
  *
- * Anything that isn't a .gif is returned untouched. Conversions are cached in
- * tmp under the source's mtime, so a clip is re-encoded only after the admin
- * uploads a new one — not once per alert. Failure returns the original, so the
- * worst case stays "posts as a file", never "posts nothing".
+ * MP4 uploads go through the SAME conversion, because the container is only
+ * half the problem. A clip whose extension is .mp4 was being sent with
+ * sendVideo, which renders a player with a play button — the viewer has to tap
+ * it, and it does not loop. That is a video, not a GIF, and it is what "the
+ * banner ad is still a file" means in practice. The distinction Telegram makes
+ * is not the extension but the AUDIO TRACK: strip it and mark the document
+ * animated and the same MP4 autoplays, loops, and shows no controls. Every
+ * template clip is therefore normalised to a silent MP4 and sent as an
+ * animation — these are decorative loops above a post, never something anyone
+ * wants to press play on.
+ *
+ * Conversions are cached in tmp under the source's mtime, so a clip is
+ * re-encoded only after the admin uploads a new one — not once per alert.
+ * Failure returns the original, so the worst case stays "posts as a file",
+ * never "posts nothing".
  */
+const CLIP_RE = /\.(gif|mp4|webm|mov)$/i;
+
 async function toInlineClip(media) {
-  if (!media || typeof media.source !== "string" || !/\.gif$/i.test(media.source)) return media;
+  if (!media || typeof media.source !== "string" || !CLIP_RE.test(media.source)) return media;
   const ffmpeg = ffmpegLib();
   const st = fss.existsSync(media.source) ? fss.statSync(media.source) : null;
   if (!ffmpeg || !st) {
-    if (!ffmpeg) log.warn("[bannerTpl] gif→mp4 skipped (no ffmpeg) — the clip will post as a FILE CARD");
+    if (!ffmpeg) log.warn("[bannerTpl] clip→animation skipped (no ffmpeg) — it will post as a FILE CARD");
     return media;
   }
-  const out = path.join(os.tmpdir(), `bt-gif-${path.basename(media.source, ".gif")}-${Math.round(st.mtimeMs)}.mp4`);
+  const stem = path.basename(media.source).replace(CLIP_RE, "");
+  const out = path.join(os.tmpdir(), `bt-clip-${stem}-${Math.round(st.mtimeMs)}.mp4`);
   if (exists(out)) return { type: "animation", source: out };
   try {
     await new Promise((resolve, reject) => {
@@ -763,10 +777,10 @@ async function toInlineClip(media) {
         .on("end", resolve)
         .on("error", reject);
     });
-    log.info(`[bannerTpl] gif→mp4 ✔ ${path.basename(media.source)} → ${path.basename(out)} (plays inline)`);
+    log.info(`[bannerTpl] clip→animation ✔ ${path.basename(media.source)} → ${path.basename(out)} (autoplays, loops, no controls)`);
     return { type: "animation", source: out };
   } catch (e) {
-    log.warn(`[bannerTpl] gif→mp4 failed (${e.message}) — sending the .gif as-is (posts as a file card)`);
+    log.warn(`[bannerTpl] clip→animation failed (${e.message}) — sending as-is (may post as a file card)`);
     fss.promises.unlink(out).catch(() => {});
     return media;
   }
