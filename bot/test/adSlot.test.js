@@ -100,3 +100,25 @@ test("the slot buttons are Indonesian nouns, not English comparatives", () => {
   // Telegram truncates a two-column row; these have to stay short.
   for (const l of labels) assert.ok(l.length <= 16, `"${l}" is ${l.length} chars — it will be cut off`);
 });
+
+test("the resize toast names the thing, not an internal variable", () => {
+  // It printed `${key} ${v}px` where key holds "slotW"/"slotH" — the operator
+  // was shown "slotW 1548px", a field name from the config file.
+  assert.match(admin, /\$\{elem === "slotw" \? "Lebar" : "Tinggi"\} \$\{v\}px/);
+  assert.ok(!admin.includes("answerCbQuery(`${key} ${v}px`)"), "the raw key must not reach a human");
+});
+
+test("one control keeps one name across both screens", () => {
+  // The auto-text toggle was "Auto-text" on one screen and "Text" on another —
+  // the same switch under two names reads as two different settings.
+  assert.ok(!/🔤 Text: \$\{showText/.test(admin), "the old second name is gone");
+  assert.match(admin, /🔤 Tulisan: \$\{showText \? "AKTIF" : "MATI"\}/);
+  assert.match(admin, /🔤 Tulisan otomatis: AKTIF/, "…and the long form agrees with it");
+});
+
+test("the artwork-saved message points at a button that exists", () => {
+  // It said "Open 🖱 Logo editor" — grep found exactly one occurrence of that
+  // name in the whole file, because no such button was ever built.
+  assert.ok(!admin.includes("🖱 Logo editor"), "a control that does not exist cannot be opened");
+  assert.match(admin, /Buka 🎛 Atur tata letak/, "the real button is named instead");
+});

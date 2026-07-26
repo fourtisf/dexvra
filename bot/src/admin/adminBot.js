@@ -862,7 +862,7 @@ async function btEditorImage(kind, elem) {
 
 async function btEditorOpen(ctx, kind, elem = "logo") {
   if (!bannerTpl.hasTemplate(kind) && !bannerTpl.hasMedia(kind)) {
-    return ctx.reply(`❌ No ${BT_KINDS[kind]} template yet — tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
+    return ctx.reply(`❌ Belum ada template ${BT_KINDS[kind]} — tekan ⬆ Upload gambar atau 🎞 Upload GIF/Video dulu.`).catch(() => {});
   }
   const img = await btEditorImage(kind, elem);
   if (!img) return ctx.reply("⚠️ Editor render failed — check pm2 logs.").catch(() => {});
@@ -977,20 +977,20 @@ function bxMenuKb(kind) {
       // Pump: its own elements — ▲%, old→new price, ticker/name, MCAP pill.
       rows.push([cb(`📈 % Change · ${s.pctFontSize}px`, `bxe:${kind}:pct`), cb(`💱 Price → · ${s.priceFontSize}px`, `bxe:${kind}:price`)]);
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
-      rows.push([cb(`💰 MCAP pill · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
+      rows.push([cb(`💰 MCAP · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     } else if (showText) {
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
       rows.push([cb(`📊 Chips (chain·price·MC) · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
     if (isPump) {
-      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`)]);
+      rows.push([cb(`🔤 Tulisan: ${showText ? "AKTIF" : "MATI"}`, `bxt:${kind}`)]);
     } else {
-      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
-      if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
+      rows.push([cb(`🔤 Tulisan: ${showText ? "AKTIF" : "MATI"}`, `bxt:${kind}`), cb(`🏷 Label tier: ${showBadge ? "AKTIF" : "MATI"}`, `bxb:${kind}`)]);
+      if (showBadge) rows.push([cb(`🏷 Label tier · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
     }
   }
-  rows.push([cb("👁 Preview", `bxp:${kind}`)]);
-  rows.push([cb("🔄 Reset layout", `bxr:${kind}`), cb("⬅ Back", `btk:${kind}`)]);
+  rows.push([cb("👁 Lihat hasil", `bxp:${kind}`)]);
+  rows.push([cb("🔄 Kembalikan awal", `bxr:${kind}`), cb("⬅ Kembali", `btk:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 async function bxOpen(ctx, kind) {
@@ -1696,7 +1696,7 @@ function build() {
     if (!guard(ctx)) return;
     ctx.session.awaitingBt = { mode: "upload", kind: ctx.match[1] };
     await ctx.reply(
-      `⬆ Send the <b>${BT_KINDS[ctx.match[1]]} artwork</b> — ideally <b>2560×1280 PNG sent as a FILE/document</b> (Telegram compresses photos to ~1280px; a photo still works, it just gets upscaled). Send /cancel to abort.`,
+      `⬆ Kirim <b>gambar ${BT_KINDS[ctx.match[1]]}</b> — sebaiknya <b>PNG 2560×1280 dikirim sebagai FILE/dokumen</b> (Telegram mengompres foto jadi ~1280px; foto biasa tetap bisa, cuma diperbesar otomatis).\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2052,7 +2052,7 @@ function build() {
       const lim = elem === "slotw" ? [200, 2560] : [120, 1280];
       const v = Math.max(lim[0], Math.min(lim[1], Number(s[key]) + d));
       await bannerTpl.updateSettings(kind, { [key]: v });
-      ctx.answerCbQuery(`${key} ${v}px`).catch(() => {});
+      ctx.answerCbQuery(`${elem === "slotw" ? "Lebar" : "Tinggi"} ${v}px`).catch(() => {});
       return void bxElemOpen(ctx, kind, "slot");
     }
     const c = BX[elem];
@@ -2101,7 +2101,7 @@ function build() {
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     const c = elem === "slot" ? { yKey: "logoY" } : BX[elem];
-    if (!c || c.nomove || !c.yKey) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    if (!c || c.nomove || !c.yKey) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.yKey]: "center" });
     ctx.answerCbQuery("⬍ Sudah di tengah (atas–bawah)").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
@@ -2150,7 +2150,7 @@ function build() {
     );
   });
   bot.action(new RegExp(`^bxp:${KL}$`), async (ctx) => {
-    ctx.answerCbQuery("Rendering…").catch(() => {});
+    ctx.answerCbQuery("Sedang membuat gambar…").catch(() => {});
     if (!guard(ctx)) return;
     await bxPreview(ctx, ctx.match[1]);
   });
@@ -2278,10 +2278,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "pos", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `📍 <b>Logo spot — ${BT_KINDS[kind]}</b>\n` +
-        `Current: <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
-        `Send: <code>SIZE X,Y</code> — e.g. <code>420 1890,410</code>\n` +
-        `(<code>center</code> works for X or Y). /cancel to abort.`,
+      `📍 <b>Posisi logo — ${BT_KINDS[kind]}</b>\n` +
+        `Sekarang: <b>${s.logoSize}px</b> di (${s.logoX}, ${s.logoY})\n\n` +
+        `Kirim: <b>ukuran posisi</b>\n` +
+        `👉 Contoh: <code>420 1890,410</code>\n` +
+        `👉 Atau: <code>420 center,center</code>\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2307,10 +2308,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "text", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `🔤 <b>Text overlay — ${BT_KINDS[kind]}</b> ($TICKER + name on the artwork).\n` +
-        `Current: <b>${s.showText ? "on" : "off"}</b>, ${s.tickerFontSize}px at (${s.tickerX}, ${s.tickerY})\n\n` +
-        `Send: <code>SIZE X,Y</code> — e.g. <code>96 430,660</code>\n` +
-        `Or <code>off</code> / <code>on</code> to toggle it.\n\n/cancel to abort.`,
+      `🔤 <b>Tulisan otomatis — ${BT_KINDS[kind]}</b> ($TICKER + nama token di gambar).\n` +
+        `Sekarang: <b>${s.showText ? "aktif" : "mati"}</b>, ${s.tickerFontSize}px di (${s.tickerX}, ${s.tickerY})\n\n` +
+        `Kirim: <b>ukuran posisi</b>\n` +
+        `👉 Contoh: <code>96 430,660</code>\n` +
+        `👉 Atau tulis <code>off</code> / <code>on</code> untuk mematikan/menyalakan.\n\n/cancel untuk batal.`,
       HTML,
     );
   });
