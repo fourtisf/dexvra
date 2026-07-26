@@ -89,6 +89,19 @@ const log = {
     out("EVENT", [text]);
     forward(text);
   },
+  // Operational page to the ERROR channel: something is broken, or something
+  // that was broken has recovered. NOT de-duplicated — the health monitor owns
+  // its own "have I already said this" state machine, and folding an alert into
+  // a 15-minute window would swallow a second, genuinely new outage inside it.
+  // Console keeps it at WARN: an alert is a thing to look at, not a stack trace.
+  alert: (html) => {
+    out("ALERT", [String(html).replace(/<[^>]+>/g, "").replace(/\n/g, " | ")]);
+    const to = errorChannel || logChannel;
+    if (!botRef || !to) return;
+    botRef.telegram
+      .sendMessage(to, String(html).slice(0, 3800), { parse_mode: "HTML", disable_web_page_preview: true })
+      .catch(() => {});
+  },
   // Rich HTML report to the log channel (visitor / purchase reports). Console
   // gets a tag-stripped line. NOT de-duplicated: these are business events
   // (a purchase, a new visitor) where two identical-looking lines are two real
