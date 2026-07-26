@@ -121,6 +121,21 @@ export const tierGlyph = (key: string): string => TIER_MAP[key]?.glyph ?? "●";
 export const tierRank = (key: string): number => TIER_MAP[key]?.rank ?? 0;
 
 /** Native-coin price of a tier on a given chain, e.g. Diamond on Solana → 5. */
+// Hours of trending each listing tier includes. The bot has had this table
+// since launch (TIER_TREND_HOURS in bot/src/config/packages.js) and the site
+// never did, so the pricing pages could not show what is arguably the strongest
+// thing a tier buys — Diamond carries two full days of it. Kept byte-identical
+// to the bot's; a test compares them.
+export const TIER_TREND_HOURS: Record<string, number> = {
+  DIAMOND: 48,
+  GOLD: 24,
+  PLATINUM: 18,
+  SILVER: 12,
+  BRONZE: 6,
+  XPRESS: 0,
+};
+export const tierTrendingHours = (key: string): number => TIER_TREND_HOURS[key] ?? 0;
+
 export const tierPrice = (key: string, chain: string): number | null => {
   const m = TIER_MAP[key];
   if (!m) return null;

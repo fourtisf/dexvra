@@ -5,7 +5,7 @@ import { PageHead } from "@/components/PageHead";
 import { ChainLogo } from "@/components/ChainLogo";
 import { BOT_URL, BRAND_NAME, TELEGRAM_HANDLE, TELEGRAM_URL, X_URL } from "@/config/brand";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
-import { LISTING_TIERS, fmtNative, nativeOf, tierPrice } from "@/lib/packages";
+import { LISTING_TIERS, fmtNative, nativeOf, tierPrice, tierTrendingHours } from "@/lib/packages";
 
 // This page used to sell verification on its own for "1.5 SOL / one-time" — a
 // price that appears in no package on the site and in no product in the bot, so
@@ -69,24 +69,28 @@ export default function VerifiedPage() {
       <div className="pkg-grid">
         {cards.map((tier) => {
           const price = tierPrice(tier.key, chain);
-          const perks = tier.verified
-            ? [
-                { label: "Verified badge", has: true },
-                { label: "Announcement post", has: true },
-                { label: `Tier #${tier.rank} placement`, has: true },
-              ]
-            : [
-                { label: "Instant activation", has: true },
-                { label: "Priority verification — reviewed first", has: true },
-                { label: "Verified badge", has: false },
-              ];
+          const hours = tierTrendingHours(tier.key);
+          // Built from the tier's own data, never written per card. Every
+          // package is tweeted (fulfillment calls x.postListing unconditionally),
+          // only announce tiers get the @dexvraio post (it is gated on
+          // tierAnnounces), and the trending hours come from the same table the
+          // bot bills against. A × means the tier genuinely does not include it.
+          const perks = [
+            { label: "Verified badge", has: tier.verified },
+            { label: `Announcement post in ${TELEGRAM_HANDLE}`, has: tier.announce },
+            { label: hours > 0 ? `Auto trending for ${hours}h` : "Auto trending", has: hours > 0 },
+            { label: "Announcement on X", has: true },
+            tier.instant
+              ? { label: "Instant activation — no review wait", has: true }
+              : { label: `Tier #${tier.rank} placement`, has: true },
+          ];
           return (
             <div
               className={`pkg ${tier.rank === 1 ? "featured" : ""}`}
               key={tier.key}
               style={{ "--tc": tier.color } as CSSProperties}
             >
-              {tier.rank === 1 && <span className="pkg-flag">TOP TIER</span>}
+              {tier.rank === 1 && <span className="pkg-flag">BEST SELLER</span>}
               {tier.instant && <span className="pkg-flag alt">INSTANT</span>}
               <div className="pkg-name">
                 <span className="pkg-glyph">{tier.glyph}</span>

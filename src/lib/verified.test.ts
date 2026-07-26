@@ -86,8 +86,8 @@ test("Xpress is on the page, and its card says what it does not include", async 
   // as NOT included rather than that being left to a footnote below the fold.
   const src = rendered();
   assert.match(src, /const cards = xpress \? \[\.\.\.withBadge, xpress\] : withBadge/, "Xpress is a card, not a footnote");
-  assert.match(src, /Priority verification — reviewed first/);
-  assert.match(src, /\{ label: "Verified badge", has: false \}/, "the badge is explicitly excluded");
+  assert.match(src, /Priority verification — reviewed first|Instant activation — no review wait/);
+  assert.match(src, /\{ label: "Verified badge", has: tier\.verified \}/, "the badge is included or excluded from the tier's own flag");
   assert.match(src, /className=\{p\.has \? "" : "no"\}/, "and rendered differently from an included perk");
   assert.match(read("src/app/globals.css"), /\.pkg-perks li\.no::before\{content:"×"/, "a ×, not a ✓");
 });
@@ -96,8 +96,66 @@ test("no card ever claims a perk its tier does not have", async () => {
   // The whole page exists because a badge was promised in a place that did not
   // include it. The included/excluded split must come from the tier data.
   const src = rendered();
-  assert.match(src, /tier\.verified\s*\?/, "the perk list branches on the tier's own flag");
+  assert.match(src, /has: tier\.verified/, "the perk list reads the tier's own flag");
   const xpress = LISTING_TIERS.find((t) => t.instant)!;
   assert.strictEqual(xpress.verified, false, "Xpress does not include the badge");
   assert.match(xpress.blurb, /priority verification/i, "…it includes priority REVIEW, which the card says");
+});
+
+test("the perks name everything a tier actually includes", () => {
+  // The cards listed three things and the tiers deliver five. The strongest one
+  // — Diamond carries two full days of trending — was not on the page at all.
+  const src = rendered();
+  assert.match(src, /Verified badge/);
+  assert.match(src, /Announcement post in \$\{TELEGRAM_HANDLE\}/, "the channel is named, not just 'announcement post'");
+  assert.match(src, /Auto trending for \$\{hours\}h/, "and the hours, which come from the tier table");
+  assert.match(src, /Announcement on X/);
+  assert.match(src, /tierTrendingHours\(tier\.key\)/, "read from data, never written per card");
+});
+
+test("each perk's included/excluded state comes from the tier, not the page", () => {
+  const src = rendered();
+  assert.match(src, /has: tier\.verified/);
+  assert.match(src, /has: tier\.announce/, "only announce tiers get the @dexvraio post — fulfilment gates on this");
+  assert.match(src, /has: hours > 0/);
+});
+
+test("Xpress shows what it does and does not get", async () => {
+  const { LISTING_TIERS, tierTrendingHours } = await import("./packages.ts");
+  const x = LISTING_TIERS.find((t) => t.instant)!;
+  assert.strictEqual(x.verified, false, "no badge");
+  assert.strictEqual(x.announce, false, "no @dexvraio post — fulfilment skips it, so the page must not promise it");
+  assert.strictEqual(tierTrendingHours(x.key), 0, "no trending slot");
+  // But it IS tweeted: fulfilment calls x.postListing for every listing.
+  assert.match(rendered(), /\{ label: "Announcement on X", has: true \}/);
+});
+
+test("the top tier is flagged BEST SELLER", () => {
+  const src = rendered();
+  assert.match(src, /pkg-flag">BEST SELLER</);
+  assert.ok(!/pkg-flag">TOP TIER</.test(src), "one flag per card — the rank is already printed beside the name");
+});
+
+test("the site and the bot agree on trending hours, not just on price", async () => {
+  // The bot bills a Diamond buyer for 48h. If the page said 24 it would be
+  // underselling; if it said 72 it would be a promise nothing keeps.
+  const { TIER_TREND_HOURS } = await import("./packages.ts");
+  const botSrc = read("bot/src/config/packages.js");
+  const m = /const TIER_TREND_HOURS = \{([^}]*)\}/.exec(botSrc);
+  assert.ok(m, "the bot's table moved — this check must follow it");
+  for (const [key, hours] of Object.entries(TIER_TREND_HOURS)) {
+    const bm = new RegExp(`${key}:\\s*(\\d+)`).exec(m[1]);
+    assert.ok(bm, `${key} missing from the bot's table`);
+    assert.strictEqual(Number(bm[1]), hours, `${key}: site ${hours}h, bot ${bm[1]}h`);
+  }
+});
+
+test("/advertise lists the same five perks, from the same data", () => {
+  // Two pricing pages describing one product must not disagree about what it
+  // includes; a buyer who reads both and sees different lists trusts neither.
+  const src = read("src/app/(site)/advertise/page.tsx");
+  assert.match(src, /tierTrendingHours\(tier\.key\)/);
+  assert.match(src, /Announcement post in \$\{TELEGRAM_HANDLE\}/);
+  assert.match(src, /Announcement on X/);
+  assert.ok(!/tier\.rank <= 3/.test(src), "nothing is inferred from rank any more");
 });
