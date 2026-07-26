@@ -1,7 +1,8 @@
 // Minimal leveled console logger with timestamps. Optionally mirrors warn/error
 // to a Telegram log channel once a bot instance is attached (attach()).
 let botRef = null;
-let logChannel = "";
+let logChannel = ""; // business feed: /start, purchases — what the operator reads
+let errorChannel = ""; // warn/error; same channel unless ERROR_CHANNEL is set
 
 const ts = () => new Date().toISOString().replace("T", " ").replace(/\..+/, "");
 
@@ -55,29 +56,31 @@ function admit(text, now) {
   return { send: true, folded };
 }
 
-function forward(text) {
-  if (!botRef || !logChannel) return;
+function forward(text, channel) {
+  const to = channel || logChannel;
+  if (!botRef || !to) return;
   const { send, folded } = admit(text, Date.now());
   if (!send) return;
   const body = folded > 0 ? `${text}\n(+${folded} more like this in the last ${DEDUPE_MS / 60000} min)` : text;
   botRef.telegram
-    .sendMessage(logChannel, body.slice(0, 3800), { disable_web_page_preview: true })
+    .sendMessage(to, body.slice(0, 3800), { disable_web_page_preview: true })
     .catch(() => {});
 }
 
 const log = {
-  attach(bot, channel) {
+  attach(bot, channel, errors) {
     botRef = bot;
     logChannel = channel || "";
+    errorChannel = errors || channel || "";
   },
   info: (...a) => out("INFO", a),
   warn: (...a) => {
     out("WARN", a);
-    forward(`⚠️ ${a.map(String).join(" ")}`);
+    forward(`⚠️ ${a.map(String).join(" ")}`, errorChannel);
   },
   error: (...a) => {
     out("ERROR", a);
-    forward(`🚨 ${a.map(String).join(" ")}`);
+    forward(`🚨 ${a.map(String).join(" ")}`, errorChannel);
   },
   debug: (...a) => {
     if (process.env.DEBUG) out("DEBUG", a);

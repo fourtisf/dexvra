@@ -105,8 +105,8 @@ async function snipeCycle() {
         const addr = core.activeAddress(u); if (!addr) return;
         try {
           const bal = await core.ethBalance(addr, SNIPE_CHAIN);
-          const need = ethers.parseEther(String(u.snipe.ethAmount)) + ethers.parseEther(core.CFG.gasBufferEth);
-          if (bal < need) return;   // can't afford → skip silently (no spam)
+          const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(SNIPE_CHAIN);
+          if (bal < need) return _shortfall(u, SNIPE_CHAIN, bal, need);
         } catch (_) { return; }
         try {
           const r = await core.buy(u.chatId, ca, u.snipe.ethAmount, SNIPE_CHAIN);
@@ -122,6 +122,36 @@ async function snipeCycle() {
     }
   }
 }
+// A wallet that cannot afford its own snipe is a SETTING, not an incident.
+//
+// The old code skipped it silently — which was right — but the pre-check
+// reserved CFG.gasBufferEth (0.0004) while buy() reserved ETH_GAS_BUFFER
+// (0.006), so on Ethereum the skip never fired: the buy ran, threw
+// "insufficient ETH — need ~0.016, have 0.01499", and the failure notice went
+// out on every new pair, for ever, "muted 5 min" notwithstanding. Both checks
+// now read core.gasBufferWei, so this path is reached instead of that one.
+//
+// Silence alone is wrong too: sniping is ON and never fires, and the user is
+// never told why. So they are told ONCE, and again only if their balance has
+// actually moved since — topping up and still being short earns a fresh
+// notice; sitting at the same balance for a week earns none.
+const _shortAt = new Map();   // chatId:chain -> balance (wei) at the last notice
+function _shortfall(u, chainKey, bal, need) {
+  const key = u.chatId + ':' + chainKey;
+  if (_shortAt.get(key) === bal) return;   // same balance, already said
+  _shortAt.set(key, bal);
+  const ch = core.chainOf(chainKey);
+  const native = (ch && ch.native) || 'ETH';
+  _notify(
+    u.chatId,
+    `⏸ <b>Snipe skipped — not enough ${esc(native)}</b>\n` +
+      `Need <b>${ethers.formatEther(need)}</b> (${u.snipe.ethAmount} + gas), wallet has <b>${Number(ethers.formatEther(bal)).toFixed(5)}</b>.\n` +
+      `Top up, or lower the snipe amount. Sniping stays on — this is the only notice until your balance changes.`,
+    undefined,
+    'snipe',
+  );
+}
+
 // Users with the master copy switch ON who follow ≥1 dev wallet (launch mode) on `chainKey`.
 function launchFollowers(chainKey) {
   return core.allUsers().filter((u) => u.copy && u.copy.on && Array.isArray(u.copy.targets) && u.copy.targets.some((t) => t.mode === 'launches' && t.chain === chainKey));
@@ -223,8 +253,8 @@ async function _dexSnipeChain(ch) {
       const addr = core.activeAddress(u); if (!addr) return;
       try {
         const bal = await core.ethBalance(addr, ch.key);
-        const need = ethers.parseEther(String(u.snipe.ethAmount)) + ethers.parseEther(core.CFG.gasBufferEth);
-        if (bal < need) return;
+        const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(ch.key);
+        if (bal < need) return _shortfall(u, ch.key, bal, need);
       } catch (_) { return; }
       try {
         const r = await core.buy(u.chatId, token, u.snipe.ethAmount, ch.key);

@@ -7,7 +7,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "preflight:solana": "node scripts/solana-preflight.js"
+    "preflight:solana": "node scripts/solana-preflight.js",
+    "test": "node --test *.test.js"
   },
   "engines": {
     "node": ">=18"

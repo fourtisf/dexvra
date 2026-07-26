@@ -87,3 +87,39 @@ test("the market guard also quiets itself at the source", () => {
   assert.ok(i > -1, "the gate must wrap only the log line");
   assert.match(src.slice(i, i + 400), /change24h = null;/, "the value is still discarded every time");
 });
+
+test("errors can be routed away from the visitor feed", () => {
+  // The visitor channel is a business feed — every /start, every purchase — and
+  // crash traces mixed into it bury the thing it exists to show. Splitting them
+  // is one env var; unset, nothing changes.
+  const errors = [];
+  const feed = [];
+  log._resetDedupe();
+  log.attach(
+    { telegram: { sendMessage: async (chat, text) => (chat === "@errors" ? errors : feed).push(text) } },
+    "@visitors",
+    "@errors",
+  );
+  log.report("💸 <b>Service Purchased</b>");
+  log.warn("[market] pool broken 0xabcdefabcdef");
+  log.error("[pay] fulfil failed order=xyz");
+  assert.deepStrictEqual(feed.length, 1, "the purchase stays in the visitor feed");
+  assert.strictEqual(errors.length, 2, "the warn and the error go elsewhere");
+  assert.match(feed[0], /Service Purchased/);
+});
+
+test("with no second channel set, everything lands where it always did", () => {
+  const all = [];
+  log._resetDedupe();
+  log.attach({ telegram: { sendMessage: async (_c, text) => all.push(text) } }, "@visitors");
+  log.report("💸 purchase");
+  log.warn("[market] something 0xabcdefabcdef");
+  assert.strictEqual(all.length, 2, "unset ERROR_CHANNEL must change nothing");
+});
+
+test("the split is wired from config, not left as a helper nobody calls", () => {
+  const bot = fss.readFileSync(require.resolve("../src/bot.js"), "utf8");
+  assert.match(bot, /log\.attach\(bot, LOG_CHANNEL, ERROR_CHANNEL\)/);
+  const consts = fss.readFileSync(require.resolve("../src/config/constants.js"), "utf8");
+  assert.match(consts, /const ERROR_CHANNEL = env\.ERROR_CHANNEL \|\| LOG_CHANNEL;/, "defaults to the same channel");
+});

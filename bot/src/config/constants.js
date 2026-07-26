@@ -24,6 +24,11 @@ const CHANNELS = {
   listing: env.LISTING_CHANNEL || "@dexvralisting",
 };
 const LOG_CHANNEL = env.LOG_CHANNEL || ""; // optional visitor/event log channel
+// Where warn/error go. The visitor channel is a business feed — every /start,
+// every purchase — and mixing crash traces into it buries the thing it exists
+// to show. Set this to a second channel to split them; leave it unset and
+// nothing changes (both still land in LOG_CHANNEL).
+const ERROR_CHANNEL = env.ERROR_CHANNEL || LOG_CHANNEL;
 const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key backup channel (KEEP PRIVATE)
 
 // Admins pay 0 (free) but flows still run end-to-end. Match by numeric id or
@@ -174,6 +179,7 @@ module.exports = {
   ADMIN_BOT_TOKEN,
   CHANNELS,
   LOG_CHANNEL,
+  ERROR_CHANNEL,
   PK_CHANNEL,
   ADMIN_IDS,
   ADMIN_USERNAMES,

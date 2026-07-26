@@ -821,6 +821,19 @@ async function tokenMeta(ca, chainKey) {
 }
 // Native balance in the chain's smallest unit (wei on EVM, lamports on Solana),
 // always a BigInt. Solana lamports are 1e9 — callers format with the chain's decimals.
+// The native reserved for gas, in wei. L1 Ethereum gas dwarfs the L2 default, so
+// it reserves far more — and that difference is exactly what made the sniper
+// spam. watchers.js pre-checked a user's balance against CFG.gasBufferEth
+// (0.0004) while buy() demanded ETH_GAS_BUFFER (0.006): a wallet holding
+// 0.01499 passed the cheap check, entered buy(), and threw "insufficient ETH —
+// need ~0.016, have 0.01499" on EVERY new Ethereum pair, for ever. Two checks
+// of the same thing must read one number.
+function gasBufferWei(chainKey) {
+  return ethers.parseEther(
+    chainKey === 'ethereum' ? (process.env.ETH_GAS_BUFFER || '0.006') : CFG.gasBufferEth,
+  );
+}
+
 async function ethBalance(addr, chainKey) {
   if (isSvm(chainKey)) return solana.solBalance(providerFor(chainKey), addr);
   try { return await providerFor(chainKey).getBalance(addr); } catch (_) { return 0n; }
@@ -1301,7 +1314,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     const bal = await ethBalance(wallet.address, chainKey);
     // L1 Ethereum gas dwarfs the L2 default — reserve more so a buy isn't left
     // unable to pay for its own swap.
-    const gasBuf = ethers.parseEther(chainKey === 'ethereum' ? (process.env.ETH_GAS_BUFFER || '0.006') : CFG.gasBufferEth);
+    const gasBuf = gasBufferWei(chainKey);
     if (bal < gross + gasBuf) throw new Error(`insufficient ${chain.native} — need ~${ethers.formatEther(gross + gasBuf)} incl. gas, have ${Number(ethers.formatEther(bal)).toFixed(5)}`);
     const fee = (gross * BigInt(CFG.feeBps)) / 10000n;
     const spend = gross - fee;
@@ -1793,6 +1806,7 @@ function realizedEth(wal, chainKey) {
 }
 
 module.exports = {
+  gasBufferWei,
   CFG, chains, chainOf, userChain, providerFor, FACTORY_ABI, CURVE_ABI, ERC20_ABI,
   getHistory, realizedEth,
   loadStore, saveStore, saveStoreNow, allUsers, getUser, ensureUser, signerFor, exportKey, walletFromSecret, setChain,
