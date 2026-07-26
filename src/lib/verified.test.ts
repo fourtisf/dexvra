@@ -27,7 +27,7 @@ test("no price on the page that the bot cannot charge", () => {
   assert.ok(!/\d+(\.\d+)?\s*(SOL|BNB|ETH|TON|TRX)/.test(src), "no hardcoded amount survives");
 });
 
-test("the tiers shown are exactly the ones that include the badge", () => {
+test("the badge tiers are exactly the ones whose blurbs promise it", () => {
   const src = rendered();
   assert.match(src, /LISTING_TIERS\.filter\(\(t\) => t\.verified\)/);
   const withBadge = LISTING_TIERS.filter((t) => t.verified).map((t) => t.key);
@@ -78,4 +78,26 @@ test("every chain the page offers has a price for every badge tier", () => {
       assert.ok(tierPrice(t.key, chain) != null, `${t.key} has no price on ${chain}`);
     }
   }
+});
+
+test("Xpress is on the page, and its card says what it does not include", async () => {
+  // Leaving the cheapest package off a pricing page sends a buyer to /advertise
+  // to find it — and some of them just leave. It is shown, with the badge marked
+  // as NOT included rather than that being left to a footnote below the fold.
+  const src = rendered();
+  assert.match(src, /const cards = xpress \? \[\.\.\.withBadge, xpress\] : withBadge/, "Xpress is a card, not a footnote");
+  assert.match(src, /Priority verification — reviewed first/);
+  assert.match(src, /\{ label: "Verified badge", has: false \}/, "the badge is explicitly excluded");
+  assert.match(src, /className=\{p\.has \? "" : "no"\}/, "and rendered differently from an included perk");
+  assert.match(read("src/app/globals.css"), /\.pkg-perks li\.no::before\{content:"×"/, "a ×, not a ✓");
+});
+
+test("no card ever claims a perk its tier does not have", async () => {
+  // The whole page exists because a badge was promised in a place that did not
+  // include it. The included/excluded split must come from the tier data.
+  const src = rendered();
+  assert.match(src, /tier\.verified\s*\?/, "the perk list branches on the tier's own flag");
+  const xpress = LISTING_TIERS.find((t) => t.instant)!;
+  assert.strictEqual(xpress.verified, false, "Xpress does not include the badge");
+  assert.match(xpress.blurb, /priority verification/i, "…it includes priority REVIEW, which the card says");
 });

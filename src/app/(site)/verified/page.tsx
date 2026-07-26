@@ -21,8 +21,12 @@ export default function VerifiedPage() {
   const [chain, setChain] = useState("solana");
   const native = nativeOf(chain);
   const withBadge = LISTING_TIERS.filter((t) => t.verified);
+  // Xpress is shown here too: it is the cheapest way onto the board and it
+  // moves you to the front of the review queue. It does NOT include the badge,
+  // and its card says so with a × rather than leaving that to a footnote —
+  // omitting the package entirely just sent people to /advertise to find it.
   const xpress = LISTING_TIERS.find((t) => t.instant);
-  const xpressPrice = xpress ? tierPrice(xpress.key, chain) : null;
+  const cards = xpress ? [...withBadge, xpress] : withBadge;
 
   return (
     <section className="view">
@@ -57,14 +61,25 @@ export default function VerifiedPage() {
         </div>
       </div>
 
-      <h3 className="pkg-h">Tiers that include verification</h3>
+      <h3 className="pkg-h">Packages and verification</h3>
       <p className="pkg-sub">
-        Priced in {CHAINS[chain].label}&rsquo;s own coin. These are the same tiers at the same prices that{" "}
-        <b>@dexvrabot</b> charges — this page and the bot read one list.
+        Priced in {CHAINS[chain].label}&rsquo;s own coin. These are the same packages at the same prices
+        that <b>@dexvrabot</b> charges — this page and the bot read one list.
       </p>
       <div className="pkg-grid">
-        {withBadge.map((tier) => {
+        {cards.map((tier) => {
           const price = tierPrice(tier.key, chain);
+          const perks = tier.verified
+            ? [
+                { label: "Verified badge", has: true },
+                { label: "Announcement post", has: true },
+                { label: `Tier #${tier.rank} placement`, has: true },
+              ]
+            : [
+                { label: "Instant activation", has: true },
+                { label: "Priority verification — reviewed first", has: true },
+                { label: "Verified badge", has: false },
+              ];
           return (
             <div
               className={`pkg ${tier.rank === 1 ? "featured" : ""}`}
@@ -72,16 +87,19 @@ export default function VerifiedPage() {
               style={{ "--tc": tier.color } as CSSProperties}
             >
               {tier.rank === 1 && <span className="pkg-flag">TOP TIER</span>}
+              {tier.instant && <span className="pkg-flag alt">INSTANT</span>}
               <div className="pkg-name">
                 <span className="pkg-glyph">{tier.glyph}</span>
                 {tier.label}
-                <span className="pkg-rank">#{tier.rank}</span>
+                {tier.rank > 0 && <span className="pkg-rank">#{tier.rank}</span>}
               </div>
               <div className="pkg-price">{price != null ? fmtNative(price, native) : "—"}</div>
               <ul className="pkg-perks">
-                <li>Verified badge</li>
-                <li>Announcement post</li>
-                <li>Tier #{tier.rank} placement</li>
+                {perks.map((p) => (
+                  <li key={p.label} className={p.has ? "" : "no"}>
+                    {p.label}
+                  </li>
+                ))}
               </ul>
               <a className="btn-primary pkg-cta" href={BOT_URL} target="_blank" rel="noopener noreferrer">
                 List with {tier.label}
@@ -91,15 +109,12 @@ export default function VerifiedPage() {
         })}
       </div>
 
-      {xpress && (
-        <div className="panel soc-note" style={{ marginTop: 14 }}>
-          <b>Listed on a lower tier already?</b> Silver and Bronze do not carry the badge.{" "}
-          {xpress.label} ({xpressPrice != null ? fmtNative(xpressPrice, native) : "—"}) lists you instantly
-          and puts you in the review queue first, but the badge itself comes with{" "}
-          {withBadge.map((t) => t.label).join(", ")}. Message us on Telegram and we will tell you what an
-          upgrade costs from where you are.
-        </div>
-      )}
+      <div className="panel soc-note" style={{ marginTop: 14 }}>
+        <b>Listed on Silver or Bronze already?</b> Those tiers do not carry the badge, and neither does{" "}
+        {xpress ? xpress.label : "Xpress"} on its own. The badge comes with{" "}
+        {withBadge.map((t) => t.label).join(", ")}. Message us on Telegram and we will tell you what an
+        upgrade costs from where you are.
+      </div>
 
       <div className="verify-contact">
         Questions first? Reach {BRAND_NAME} on{" "}

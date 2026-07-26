@@ -976,6 +976,10 @@ body{
 .pkg-perks{list-style:none;display:flex;flex-direction:column;gap:6px;margin-bottom:14px;flex:1}
 .pkg-perks li{font-size:11.5px;color:var(--muted);display:flex;gap:6px}
 .pkg-perks li::before{content:"✓";color:var(--tc);font-weight:800}
+/* A perk the tier does NOT include. Same list, opposite mark — a buyer must be
+   able to see what is missing without reading a paragraph underneath. */
+.pkg-perks li.no{color:var(--faint);opacity:.8}
+.pkg-perks li.no::before{content:"×";color:var(--faint)}
 .pkg-cta{width:100%;justify-content:center;margin-top:auto}
 
 .ptable-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;margin-bottom:8px}
