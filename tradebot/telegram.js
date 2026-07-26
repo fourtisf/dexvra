@@ -282,8 +282,12 @@ function chainScreen(chatId) {
   kb.push([btn('« Menu', 'menu')]);
   return { text: `🌐 <b>Select chain</b>\n\nYour wallet is the same address on all of them, and pasting a CA <b>auto-detects its chain</b> — this only sets the default for deposits, snipes and quick commands:`, kb: { inline_keyboard: kb } };
 }
-async function tokenCard(chatId, ca, chainKey, walletId) {
+// `opts.multi` opens the wallet toggles INLINE on the card (Maestro's 🟢 Multi
+// panel) instead of pushing the user to a separate screen — the price, liquidity
+// and per-wallet bags stay on screen while you choose which wallets to trade.
+async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   const u = core.ensureUser(chatId);
+  const multiOpen = !!(opts && opts.multi);
   chainKey = (chainKey && core.chainOf(chainKey)) ? chainKey : core.userChain(u);
   const ch = core.chainOf(chainKey);
   const list = core.walletList(u);
@@ -383,9 +387,9 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     const totEth = across.rows.reduce((s, r) => s + r.eth, 0);
     if (totTok > 1e-9) L.push(`Σ <b>${fmt(totTok)} $${esc(sym)}</b> ≈ <b>${usdOf(totTok)}</b> · ${totEth.toFixed(4)} ${nat} across ${across.rows.length} wallets`);
     if (pos && posCost(pos) > 0 && !selN) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`PnL (${esc(core.walletLabel(w, wi))}): <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`); }
-    if (sel.all) L.push(`<i>Trading all ${list.length} wallets — tap 👛 below to change.</i>`);
-    else if (selN >= 1) L.push(`<i>Trading ${selN} selected wallet${selN > 1 ? 's' : ''} — tap 👛 below to change.</i>`);
-    else L.push(`<i>Trading ${esc(core.walletLabel(w, wi))}${autoSwitched ? ' (holds this token)' : ''} — tap 👛 to use several.</i>`);
+    if (sel.all) L.push(`<i>Trading all ${list.length} wallets — every Buy runs on each one.</i>`);
+    else if (selN >= 1) L.push(`<i>Trading ${selN} selected wallet${selN > 1 ? 's' : ''} — every Buy runs on each one.</i>`);
+    else L.push(`<i>Trading ${esc(core.walletLabel(w, wi))}${autoSwitched ? ' (holds this token)' : ''} — tap 🔴 Multi to use several at once.</i>`);
   } else {
     // Single wallet: ALWAYS show the bag (even "none") and the wallet's native
     // balance, so the card answers "what do I hold and what can I spend" at a glance.
@@ -405,9 +409,27 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   // 6-char preset (capped in setBuyPresets). Keep those caps if you touch this.
   const lastRow = [btn('🔁 DCA', `dca:${chainKey}:${wi}:${ca}`), btn('🔔 Alert', `alt:${chainKey}:${wi}:${ca}`), btn('🔄 Refresh', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')];
   if (safety.supported(chainKey)) lastRow.unshift(btn('🛡 Safety', `sec:${chainKey}:${ca}`));   // GoPlus (EVM) / RugCheck (Solana)
-  // Multi-wallet users get a picker row: choose one / several / ALL wallets to trade from.
+  // Multi-wallet: one row when closed, the toggle grid below it when open.
+  // NOTE the 64-byte callback limit again — worst case here is
+  // `wtc:robinhood:99:<42-char ca>:10` = 62 bytes. Adding a field overflows it.
   const selLabel = sel.all ? `👛 Trading: ALL ${list.length} wallets` : (selN >= 1 ? `👛 Trading: ${selN} wallet${selN > 1 ? 's' : ''}` : `👛 Trade from: ${core.walletLabel(w, wi)}`);
-  const walletRow = list.length > 1 ? [[btn(selLabel, `wsel:${chainKey}:${ca}`)]] : [];
+  const walletRow = [];
+  if (list.length > 1) {
+    const multiLabel = selN > 1 ? `🟢 Multi | ${sel.all ? 'ALL' : selN}` : '🔴 Multi';
+    walletRow.push([btn(selLabel, `wsel:${chainKey}:${ca}`), btn(multiLabel, `${multiOpen ? 'wex0' : 'wex1'}:${chainKey}:${wi}:${ca}`)]);
+    if (multiOpen) {
+      // Two per row: the dot is what a wallet DOES on the next Buy/Sell, so in
+      // single mode the card's own wallet is already lit — it is the one trading.
+      for (let i = 0; i < list.length; i += 2) {
+        walletRow.push(list.slice(i, i + 2).map((wobj, j) => {
+          const n = i + j + 1;
+          const on = selN ? selIds.has(wobj.id) : wobj.id === w.id;
+          return btn(`${on ? '🟢' : '🔴'} ${core.walletLabel(wobj, n)}`, `wtc:${chainKey}:${wi}:${ca}:${n}`);
+        }));
+      }
+      walletRow.push([btn('🟢 All ON', `wtcA:${chainKey}:${wi}:${ca}`), btn('🔴 All OFF', `wtcN:${chainKey}:${wi}:${ca}`)]);
+    }
+  }
   const ikb = [
     ...walletRow,
     [btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)],
@@ -1207,8 +1229,9 @@ async function onCallback(q) {
   const data = q.data || '';
   const [k, ca, arg] = data.split(':');
   // Fire-and-forget the ack (clears the button's spinner) so the handler proceeds without
-  // waiting on a Telegram round-trip — noticeably snappier taps. 'oc'/'al' answer with text.
-  if (k !== 'oc' && k !== 'al') answer(q.id).catch(() => {});
+  // waiting on a Telegram round-trip — noticeably snappier taps. 'oc'/'al'/'wtc' answer
+  // with text instead, and a query can only be answered once.
+  if (k !== 'oc' && k !== 'al' && k !== 'wtc') answer(q.id).catch(() => {});
 
   if (k === 'bccancel') { const pp = pending.get(chatId); if (pp && pp.action === 'confirm_buy' && pp.confirmId === ca) pending.delete(chatId); return edit(chatId, mid, 'Buy cancelled.', mainMenu()); }
   if (k === 'bcok') {
@@ -1259,6 +1282,41 @@ async function onCallback(q) {
   if (k === 'sec') { const parts = data.split(':'); const s = await safetyScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   // Multi-wallet trade picker: wsel opens it; wtg toggles one wallet; wtgA all; wtgN clear.
   if (k === 'wsel') { const parts = data.split(':'); const s = await walletPickScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
+  // ── Inline multi-wallet panel on the token card (🟢 Multi) ──────────────────
+  // wex1/wex0 open and close it; wtc/wtcA/wtcN mutate the selection and redraw
+  // the SAME card with the panel still open, so a run of taps is one message.
+  if (k === 'wex1' || k === 'wex0' || k === 'wtc' || k === 'wtcA' || k === 'wtcN') {
+    const p = data.split(':');
+    const chainK = p[1], mca = p[3];
+    const list = core.walletList(core.ensureUser(chatId));
+    const card = list[Number(p[2]) - 1];               // the wallet this card is bound to
+    const wid = card ? card.id : undefined;
+    if (k === 'wtcA') { try { core.setTradeAll(chatId, true); } catch (_) {} }
+    else if (k === 'wtcN') { try { core.setTradeAll(chatId, false); } catch (_) {} }
+    else if (k === 'wtc') {
+      // This branch owns the ack (see the top of onCallback) because it is the
+      // one that sometimes has something to say.
+      const target = list[Number(p[4]) - 1];
+      const sel = core.tradeSelection(chatId);
+      // Single mode has no selection list, yet the card's wallet was shown lit
+      // because it IS the one that trades. Seed it before adding the tapped one,
+      // or "tap a second wallet" would silently REPLACE the first.
+      const seed = !sel.all && sel.ids.length === 0;
+      if (target && seed && target.id === wid) {
+        answer(q.id, 'Already the wallet that trades — tap another one to add it.').catch(() => {});
+      } else {
+        answer(q.id).catch(() => {});
+        if (target) {
+          try {
+            if (seed && wid) core.toggleTradeWallet(chatId, wid);
+            core.toggleTradeWallet(chatId, target.id);
+          } catch (_) {}
+        }
+      }
+    }
+    const c = await tokenCard(chatId, mca, chainK, wid, { multi: k !== 'wex0' });
+    return edit(chatId, mid, c.text, c.kb);
+  }
   if (k === 'wtg') { const parts = data.split(':'); const wobj = core.walletList(core.ensureUser(chatId))[Number(parts[2]) - 1]; if (wobj) { try { core.toggleTradeWallet(chatId, wobj.id); } catch (_) {} } const s = await walletPickScreen(chatId, parts[3], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'wtgA') { const parts = data.split(':'); try { core.setTradeAll(chatId, !core.tradeSelection(chatId).all); } catch (_) {} const s = await walletPickScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'wtgN') { const parts = data.split(':'); try { core.setTradeAll(chatId, false); } catch (_) {} const s = await walletPickScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
