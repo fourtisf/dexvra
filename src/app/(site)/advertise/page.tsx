@@ -3,7 +3,7 @@
 import { useState, type CSSProperties } from "react";
 import { PageHead } from "@/components/PageHead";
 import { ChainLogo } from "@/components/ChainLogo";
-import { BOT_URL, TELEGRAM_HANDLE } from "@/config/brand";
+import { BOT_URL, TELEGRAM_HANDLE, TELEGRAM_LISTING_HANDLE } from "@/config/brand";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
 import {
   BANNERS,
@@ -49,8 +49,9 @@ export default function AdvertisePage() {
       {/* ── Listing packages ─────────────────────────────────────────── */}
       <h3 className="pkg-h">Listing Packages</h3>
       <p className="pkg-sub">
-        A one-time listing on Dexvra. Higher tiers get better placement, the verified badge, and an
-        announcement post. Your token carries its tier tag everywhere.
+        A one-time listing on Dexvra. Every package — Xpress included — is posted to{" "}
+        <b>{TELEGRAM_LISTING_HANDLE}</b> and to X. Higher tiers add the <b>{TELEGRAM_HANDLE}</b>{" "}
+        announcement, a trending run, and the verified badge. Your token carries its tier tag everywhere.
       </p>
       <div className="pkg-grid">
         {LISTING_TIERS.map((tier) => {
@@ -63,7 +64,7 @@ export default function AdvertisePage() {
           const hrs = tierTrendingHours(tier.key);
           const perks = [
             tier.verified ? "Verified badge" : "Search + discovery indexed",
-            tier.announce ? `Announcement post in ${TELEGRAM_HANDLE}` : "Listing alert on Telegram",
+            tier.announce ? `Announcement post in ${TELEGRAM_HANDLE}` : `Listing post in ${TELEGRAM_LISTING_HANDLE}`,
             hrs > 0 ? `Auto trending for ${hrs}h` : "Instant activation — no review wait",
             "Announcement on X",
             tier.instant ? "Priority verification — reviewed first" : `Tier #${tier.rank} placement`,

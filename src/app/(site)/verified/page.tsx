@@ -3,7 +3,15 @@
 import { useState, type CSSProperties } from "react";
 import { PageHead } from "@/components/PageHead";
 import { ChainLogo } from "@/components/ChainLogo";
-import { BOT_URL, BRAND_NAME, TELEGRAM_HANDLE, TELEGRAM_URL, X_URL } from "@/config/brand";
+import {
+  BOT_URL,
+  BRAND_NAME,
+  TELEGRAM_HANDLE,
+  TELEGRAM_LISTING_HANDLE,
+  TELEGRAM_TRENDING_HANDLE,
+  TELEGRAM_URL,
+  X_URL,
+} from "@/config/brand";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
 import { LISTING_TIERS, fmtNative, nativeOf, tierPrice, tierTrendingHours } from "@/lib/packages";
 
@@ -64,21 +72,31 @@ export default function VerifiedPage() {
       <h3 className="pkg-h">Packages and verification</h3>
       <p className="pkg-sub">
         Priced in {CHAINS[chain].label}&rsquo;s own coin. These are the same packages at the same prices
-        that <b>@dexvrabot</b> charges — this page and the bot read one list.
+        that <b>@dexvrabot</b> charges — this page and the bot read one list. Every package, Xpress
+        included, is posted to <b>{TELEGRAM_LISTING_HANDLE}</b> and to X; the higher tiers add the{" "}
+        <b>{TELEGRAM_HANDLE}</b> announcement and a trending run in <b>{TELEGRAM_TRENDING_HANDLE}</b>.
       </p>
       <div className="pkg-grid">
         {cards.map((tier) => {
           const price = tierPrice(tier.key, chain);
           const hours = tierTrendingHours(tier.key);
-          // Built from the tier's own data, never written per card. Every
-          // package is tweeted (fulfillment calls x.postListing unconditionally),
-          // only announce tiers get the @dexvraio post (it is gated on
-          // tierAnnounces), and the trending hours come from the same table the
-          // bot bills against. A × means the tier genuinely does not include it.
+          // Built from the tier's own data, never written per card, and every
+          // line traces to something fulfilment actually does:
+          //   listing post  — post.sendMedia(CHANNELS.listing) runs for EVERY
+          //                   package, Xpress included. It is the one thing
+          //                   every buyer gets, and no card was naming it.
+          //   X post        — x.postListing is called unconditionally too.
+          //   @dexvraio     — gated on tierAnnounces, so announce tiers only.
+          //   trending      — hours from the table the bot bills against.
+          // A × means the tier genuinely does not include it.
           const perks = [
             { label: "Verified badge", has: tier.verified },
             { label: `Announcement post in ${TELEGRAM_HANDLE}`, has: tier.announce },
-            { label: hours > 0 ? `Auto trending for ${hours}h` : "Auto trending", has: hours > 0 },
+            {
+              label: hours > 0 ? `Auto trending ${hours}h in ${TELEGRAM_TRENDING_HANDLE}` : "Auto trending",
+              has: hours > 0,
+            },
+            { label: `Listing post in ${TELEGRAM_LISTING_HANDLE}`, has: true },
             { label: "Announcement on X", has: true },
             tier.instant
               ? { label: "Instant activation — no review wait", has: true }

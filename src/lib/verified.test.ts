@@ -108,7 +108,8 @@ test("the perks name everything a tier actually includes", () => {
   const src = rendered();
   assert.match(src, /Verified badge/);
   assert.match(src, /Announcement post in \$\{TELEGRAM_HANDLE\}/, "the channel is named, not just 'announcement post'");
-  assert.match(src, /Auto trending for \$\{hours\}h/, "and the hours, which come from the tier table");
+  assert.match(src, /Auto trending \$\{hours\}h in \$\{TELEGRAM_TRENDING_HANDLE\}/, "the hours AND where it runs");
+  assert.match(src, /Listing post in \$\{TELEGRAM_LISTING_HANDLE\}/, "the one post every package gets");
   assert.match(src, /Announcement on X/);
   assert.match(src, /tierTrendingHours\(tier\.key\)/, "read from data, never written per card");
 });
@@ -158,4 +159,27 @@ test("/advertise lists the same five perks, from the same data", () => {
   assert.match(src, /Announcement post in \$\{TELEGRAM_HANDLE\}/);
   assert.match(src, /Announcement on X/);
   assert.ok(!/tier\.rank <= 3/.test(src), "nothing is inferred from rank any more");
+});
+
+test("every package's listing post is named — it is what all of them buy", async () => {
+  // post.sendMedia(CHANNELS.listing) runs for EVERY package, Xpress included,
+  // and no card was saying so. The one thing every buyer gets was the one thing
+  // the pricing pages did not mention.
+  const src = rendered();
+  assert.match(src, /\{ label: `Listing post in \$\{TELEGRAM_LISTING_HANDLE\}`, has: true \}/);
+  // Said once in prose too, so it is clear before a buyer compares columns.
+  assert.match(src, /Every package, Xpress\s*\n?\s*included, is posted to/);
+  const adv = read("src/app/(site)/advertise/page.tsx");
+  assert.match(adv, /TELEGRAM_LISTING_HANDLE/, "/advertise says it as well");
+  assert.match(adv, /Every package — Xpress included — is posted to/);
+});
+
+test("the perk lines name the channel, not just the action", async () => {
+  // "Announcement post" left a buyer wondering where it lands. Every post perk
+  // names the account it lands in, and those come from the socials list.
+  const src = rendered();
+  for (const h of ["TELEGRAM_HANDLE", "TELEGRAM_LISTING_HANDLE", "TELEGRAM_TRENDING_HANDLE"]) {
+    assert.ok(src.includes(h), `${h} must appear in a perk label`);
+  }
+  assert.ok(!/@dexvra(io|listing|trending)/.test(src), "no handle is hardcoded on the page");
 });

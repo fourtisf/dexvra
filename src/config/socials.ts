@@ -10,7 +10,9 @@
 export const TELEGRAM_URL = "https://t.me/dexvraio"; // announcements + community
 export const TELEGRAM_HANDLE = "@dexvraio";
 export const TELEGRAM_LISTING_URL = "https://t.me/dexvralisting";
+export const TELEGRAM_LISTING_HANDLE = "@dexvralisting";
 export const TELEGRAM_TRENDING_URL = "https://t.me/dexvratrending";
+export const TELEGRAM_TRENDING_HANDLE = "@dexvratrending";
 export const X_URL = "https://x.com/dexvra";
 export const BOT_URL = "https://t.me/dexvrabot";
 export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
