@@ -125,7 +125,7 @@ function decrypt(blob) {
 
 // ---------------------------------------------------------------- store (JSON, atomic)
 const STORE_FILE = path.join(CFG.dataDir, 'tradebot.json');
-let DB = { users: {}, refByCode: {}, report: null };
+let DB = { users: {}, refByCode: {}, report: null, ops: {} };
 function _emptyReport() { return { since: Date.now(), trades: 0, vol: {}, fee: {}, lifetime: { trades: 0, vol: {}, fee: {} }, lastRecapDate: null }; }
 function _todayUTC() { const d = new Date(); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'); }
 // True once per UTC day, at/after `hourUtc` — a stable DAILY trigger that survives
@@ -136,6 +136,20 @@ function recapDue(hourUtc) {
   return new Date().getUTCHours() >= (Number(hourUtc) || 0);
 }
 function markRecap() { const r = DB.report || (DB.report = _emptyReport()); r.lastRecapDate = _todayUTC(); saveStore(); }
+// ---- ops throttle -----------------------------------------------------------
+// A pm2 restart is not news. The "Trade Bot online" card and the off-site store
+// backup both fired unconditionally at startup, so a deploy afternoon dropped
+// three archives and three identical boot cards into the ops channel within
+// minutes. Both now ask opsDue() first, and the answer is PERSISTED, so a
+// restart re-reads when the thing last happened instead of assuming never.
+function opsDue(key, minGapMs) {
+  const last = Number((DB.ops || {})[key] || 0);
+  if (!(last > 0)) return true;
+  return (Date.now() - last) >= Math.max(0, Number(minGapMs) || 0);
+}
+// Write-through: the mark exists to survive a restart, so it must be on disk
+// before the next one — a debounced write loses exactly the case it guards.
+function markOps(key) { const o = DB.ops || (DB.ops = {}); o[key] = Date.now(); saveStoreNow(); return o[key]; }
 function loadStore() {
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch (_) { parsed = {}; }
@@ -144,6 +158,7 @@ function loadStore() {
   DB.users = (parsed && parsed.users) || {};
   DB.refByCode = (parsed && parsed.refByCode) || {};
   DB.report = (parsed && parsed.report) || _emptyReport();
+  DB.ops = (parsed && parsed.ops) || {};   // last-time-we-did-X marks (see opsDue)
   if (!DB.report.lifetime) DB.report.lifetime = { trades: 0, vol: {}, fee: {} };
   if (!DB.report.lastRecapDate) DB.report.lastRecapDate = _todayUTC();   // first run: baseline today (first daily recap fires tomorrow)
   wireShutdownFlush();
@@ -1810,7 +1825,7 @@ module.exports = {
   CFG, chains, chainOf, userChain, providerFor, FACTORY_ABI, CURVE_ABI, ERC20_ABI,
   getHistory, realizedEth,
   loadStore, saveStore, saveStoreNow, allUsers, getUser, ensureUser, signerFor, exportKey, walletFromSecret, setChain,
-  noteUser, findUser, recordTrade, reportSnapshot, resetReportWindow, recapDue, markRecap,
+  noteUser, findUser, recordTrade, reportSnapshot, resetReportWindow, recapDue, markRecap, opsDue, markOps,
   walletList, walletById, activeWallet, activeAddress, addWallet, switchWallet, removeWallet, listWallets, WALLET_CAP,
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,

@@ -1751,9 +1751,14 @@ async function getMe() { try { const r = await tg('getMe', {}); if (r && r.ok) B
 // report channel (operator preference: one private channel for everything);
 // override with BACKUP_TG_CHANNEL, or set it EMPTY to disable (?? not ||, so
 // an empty env var means off). Ships the encrypted store, gzipped, every
-// BACKUP_TG_HOURS (default 6) — off-box without rclone/SSH. Ciphertext only;
+// BACKUP_TG_HOURS (default 24) — off-box without rclone/SSH. Ciphertext only;
 // WALLET_SECRET is never included, so the channel alone can't decrypt anything.
 const backupChannel = () => String(process.env.BACKUP_TG_CHANNEL ?? process.env.REPORT_CHANNEL_ID ?? '-1003885406672').trim();
+const DAY_MS = 24 * 3600 * 1000;
+// How often we ASK whether a backup is due — not how often one is sent. Short
+// enough that a restart-heavy day still gets its one archive, cheap because a
+// not-due check reads a number and returns.
+const BACKUP_CHECK_MS = 30 * 60 * 1000;
 async function tgBackupOnce() {
   const ch = backupChannel();
   if (!ch) return false;
@@ -1833,20 +1838,40 @@ async function start() {
       }
     })();
     console.log(`ops reporting ENABLED → channel (daily recap ~${recapHour}:00 UTC)`);
-    // Announce the fee treasury to the channel at boot so the operator always
-    // knows (and can verify on-chain) which wallet the 1% fee is collected to.
-    const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
-    report.post(`🟢 <b>Dexvra Trade Bot online</b> — @${BOT_USERNAME || '?'}\n💰 <b>Fee treasury (1% per trade)</b>` +
-      (evmT ? `\n  EVM: <code>${esc(evmT)}</code>` : '') +
-      (solT ? `\n  SOL: <code>${esc(solT)}</code>` : '') +
-      `\n\n<i>Every trade sends its fee here. Cross-check the balance against the daily report.</i>`).catch(() => {});
+    // Announce the fee treasury to the channel so the operator always knows
+    // (and can verify on-chain) which wallet the 1% fee is collected to.
+    // AT MOST ONCE A DAY: this used to post on every boot, and a deploy session
+    // is a dozen boots — the same card, minute after minute, on top of the feed
+    // it exists to keep readable. The mark is persisted, so restarts stay quiet.
+    if (core.opsDue('boot_announce', DAY_MS)) {
+      core.markOps('boot_announce');   // mark FIRST: a crash-loop must not out-race the send
+      const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
+      report.post(`🟢 <b>Dexvra Trade Bot online</b> — @${BOT_USERNAME || '?'}\n💰 <b>Fee treasury (1% per trade)</b>` +
+        (evmT ? `\n  EVM: <code>${esc(evmT)}</code>` : '') +
+        (solT ? `\n  SOL: <code>${esc(solT)}</code>` : '') +
+        `\n\n<i>Every trade sends its fee here. Cross-check the balance against the daily report.</i>`).catch(() => {});
+    }
   }
   // Off-site store backup to a private Telegram channel (see tgBackupOnce).
+  // The archive used to be uploaded unconditionally at boot AND on a fresh
+  // setInterval, so every restart shipped another one — two archives three
+  // minutes apart is what the operator actually saw. Now the TIMER is what runs
+  // often; the UPLOAD only happens when one is genuinely due, measured from the
+  // persisted time of the last successful upload rather than from process start.
   if (backupChannel()) {
-    const hours = Math.max(1, Number(process.env.BACKUP_TG_HOURS || 6));
-    tgBackupOnce();   // one at boot so a fresh deploy is covered immediately
-    setInterval(tgBackupOnce, hours * 3600 * 1000);
-    console.log(`telegram store backup ENABLED → channel every ${hours}h`);
+    const hours = Math.max(1, Number(process.env.BACKUP_TG_HOURS || 24));
+    const gap = hours * 3600 * 1000;
+    const backupIfDue = async () => {
+      if (!core.opsDue('tg_backup', gap)) return false;
+      // Marked only on a confirmed upload: a failed send should retry at the
+      // next check, not silently skip the day it was meant to cover.
+      const ok = await tgBackupOnce();
+      if (ok) core.markOps('tg_backup');
+      return ok;
+    };
+    backupIfDue();
+    setInterval(backupIfDue, BACKUP_CHECK_MS);
+    console.log(`telegram store backup ENABLED → channel at most every ${hours}h`);
   }
   console.log(`Dexvra Trade Bot up as @${BOT_USERNAME || '?'} — chains: ${core.chains.ENABLED.join(', ')}`);
 
