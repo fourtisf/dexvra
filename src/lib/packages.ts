@@ -52,6 +52,10 @@ export interface ListingTierMeta {
   color: string;
   announce: boolean;
   instant: boolean;
+  /** This tier includes the verified badge. Data, not inferred from rank: two
+   *  pages were each deciding it with `rank <= 3`, and /verified was selling
+   *  the badge separately as though no tier included it. */
+  verified: boolean;
   price: Record<string, number>; // by native symbol
   blurb: string;
 }
@@ -59,37 +63,37 @@ export interface ListingTierMeta {
 export const LISTING_TIERS: ListingTierMeta[] = [
   {
     key: "DIAMOND", rank: 1, label: "Diamond", glyph: "◆", color: "#8FE3FF",
-    announce: true, instant: false,
+    announce: true, instant: false, verified: true,
     price: { BNB: 1.5, SOL: 5, ETH: 0.26, TON: 250, TRX: 5000 },
     blurb: "Diamond · Tier #1 — top listing placement, verified badge, announcement post.",
   },
   {
     key: "GOLD", rank: 2, label: "Gold", glyph: "★", color: "#E7C77A",
-    announce: true, instant: false,
+    announce: true, instant: false, verified: true,
     price: { BNB: 1.25, SOL: 4.5, ETH: 0.24, TON: 225, TRX: 4500 },
     blurb: "Gold · Tier #2 — high placement, verified badge, announcement post.",
   },
   {
     key: "PLATINUM", rank: 3, label: "Platinum", glyph: "◈", color: "#D8DEE9",
-    announce: true, instant: false,
+    announce: true, instant: false, verified: true,
     price: { BNB: 1.15, SOL: 4, ETH: 0.22, TON: 200, TRX: 4000 },
     blurb: "Platinum · Tier #3 — priority placement, verified badge, announcement post.",
   },
   {
     key: "SILVER", rank: 4, label: "Silver", glyph: "●", color: "#AAB2BD",
-    announce: false, instant: false,
+    announce: false, instant: false, verified: false,
     price: { BNB: 1, SOL: 3.5, ETH: 0.2, TON: 175, TRX: 3500 },
     blurb: "Silver · Tier #4 — standard listing on the board & discovery.",
   },
   {
     key: "BRONZE", rank: 5, label: "Bronze", glyph: "●", color: "#CB8E5E",
-    announce: false, instant: false,
+    announce: false, instant: false, verified: false,
     price: { BNB: 0.75, SOL: 3, ETH: 0.18, TON: 150, TRX: 3000 },
     blurb: "Bronze · Tier #5 — entry listing on the board & discovery.",
   },
   {
     key: "XPRESS", rank: 0, label: "Xpress", glyph: "⚡", color: "#4CC7D4",
-    announce: false, instant: true,
+    announce: false, instant: true, verified: false,
     price: { ETH: 0.06, SOL: 1, BNB: 0.25, TON: 40, TRX: 900 },
     blurb: "Xpress — instant activation, listed live on TG + trending board, priority verification.",
   },
@@ -101,7 +105,7 @@ export const LISTING_TIERS: ListingTierMeta[] = [
 // display goes through, so the badge reads "Free" instead of a raw key.
 export const FREE_TIER: ListingTierMeta = {
   key: "FREE", rank: 0, label: "Free", glyph: "○", color: "#8A93A6",
-  announce: false, instant: true, price: {},
+  announce: false, instant: true, verified: false, price: {},
   blurb: "Auto-listed by Dexvra — a free listing, not a paid placement.",
 };
 

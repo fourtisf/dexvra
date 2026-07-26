@@ -58,7 +58,7 @@ export default function AdvertisePage() {
             ? ["Instant activation", "Listing alert on Telegram", "Priority verification"]
             : [
                 tier.rank <= 3 ? "Announcement post" : "Standard board listing",
-                tier.rank <= 3 ? "Verified badge" : "Search + discovery indexed",
+                tier.verified ? "Verified badge" : "Search + discovery indexed",
                 `Tier #${tier.rank} placement`,
               ];
           return (
