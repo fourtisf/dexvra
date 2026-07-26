@@ -76,7 +76,7 @@ test("the editor screen is in Indonesian, and explains every button on it", () =
   assert.match(t, /Ruang kosong:/, "says how much empty room is on each side");
   assert.match(t, /ruang kosong lebih banyak di/, "and which side has more");
   assert.match(t, /Kotak sudah di tengah/);
-  assert.match(t, /selalu memenuhi seluruh kotak/, "empty space means the box is wrong, not the picture");
+  assert.match(t, /Muat semua|Isi penuh/, "says how a differently-shaped client picture is fitted");
   assert.match(t, /Fungsi tombol/, "every button is explained on the same screen");
   assert.match(t, /perbesar atau perkecil/, "in the words the operator actually asked for");
   for (const banned of ["cover-fit", "canvas", "Narrower", "Shorter", "Wider", "Taller", "Empty space"]) {

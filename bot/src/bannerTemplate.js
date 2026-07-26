@@ -240,7 +240,9 @@ const KIND_DEFAULTS = {
     metaY: 902,
     metaFontSize: 44,
   },
-  banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
+  // slotFit "contain": the advertiser's whole creative is shown, never cropped.
+  // See the fit block in compose() for why cover is wrong for paid artwork.
+  banner: { ...BASE_DEFAULTS, slotShape: "rect", slotFit: "contain", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
 const DEFAULTS = BASE_DEFAULTS; // back-compat export
@@ -431,10 +433,38 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         }
         ctx.closePath();
         ctx.clip();
-        const s = Math.max(sw / img.width, sh / img.height);
-        const w = img.width * s;
-        const h = img.height * s;
-        ctx.drawImage(img, lx + sw / 2 - w / 2, ly + sh / 2 - h / 2, w, h);
+        // How a picture whose shape differs from the box is fitted.
+        //
+        //   cover   — scale until the box is full, crop what sticks out.
+        //   contain — scale until the whole picture fits, fill the gap with a
+        //             blurred, dimmed copy of itself so it reads as design.
+        //
+        // A token logo is cover-fitted: it is a square in a circle, nothing is
+        // lost. An ADVERTISER'S CREATIVE is not. Cover was cutting paid artwork
+        // to pieces — a Wide Banner is sold at 1200×240 (5:1) and the frame is
+        // 1548×760 (2:1), so cover threw away 59% of its WIDTH: the buyer paid
+        // for a banner and roughly its middle third was published. contain is
+        // therefore the default for a rectangular (ad) slot, and an operator who
+        // wants edge-to-edge fill can still choose cover per service.
+        const fit = isRect ? (cfg.slotFit === "cover" ? "cover" : "contain") : "cover";
+        const place = (scale) => {
+          const w = img.width * scale;
+          const h = img.height * scale;
+          ctx.drawImage(img, lx + sw / 2 - w / 2, ly + sh / 2 - h / 2, w, h);
+        };
+        if (fit === "contain") {
+          // Backdrop first: the same picture, blown up to fill and blurred, so
+          // the letterbox gap is never a flat black bar.
+          ctx.save();
+          ctx.filter = "blur(28px)";
+          ctx.globalAlpha = 0.5;
+          place(Math.max(sw / img.width, sh / img.height));
+          ctx.restore();
+          // Then the creative itself, whole and uncropped.
+          place(Math.min(sw / img.width, sh / img.height));
+        } else {
+          place(Math.max(sw / img.width, sh / img.height));
+        }
         ctx.restore();
         if (!isRect) {
           ctx.beginPath();

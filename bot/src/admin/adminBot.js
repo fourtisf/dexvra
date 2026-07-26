@@ -1035,8 +1035,11 @@ function bxElemText(kind, elem) {
       `• <b>⬌ Ke tengah</b> — taruh di tengah, kiri–kanan\n` +
       `• <b>⬍ Ke tengah</b> — taruh di tengah, atas–bawah\n` +
       `• <b>⌨ Atur ukuran / Atur posisi</b> — ketik angkanya langsung\n` +
-      `\nGambar client selalu memenuhi seluruh kotak (bagian lebihnya dipotong). ` +
-      `Jadi kalau ada ruang kosong, yang salah <b>kotaknya</b> — bukan gambarnya.`
+      (s.slotFit === "cover"
+        ? `\n🖼 <b>Isi penuh</b>: gambar client diperbesar sampai kotak penuh, sisi yang lebih <b>dipotong</b>. ` +
+          `Kalau bentuk gambarnya beda jauh dari kotak, bagian pinggirnya hilang.`
+        : `\n🖼 <b>Muat semua</b>: gambar client ditampilkan <b>utuh</b>, tidak ada yang dipotong. ` +
+          `Sisa ruangnya diisi versi buram dari gambar itu sendiri. Ukuran banner client boleh beda-beda — otomatis menyesuaikan.`)
     );
   }
   const c = BX[elem];
@@ -1061,6 +1064,7 @@ function bxElemKb(kind, elem) {
       [cb("Tinggi ➕", `bxsd:${kind}:sloth:20`), cb("Tinggi ➖", `bxsd:${kind}:sloth:-20`)],
       [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
       [cb("⬌ Ke tengah", `bxc:${kind}:slot`), cb("⬍ Ke tengah", `bxcy:${kind}:slot`)],
+      [cb(bannerTpl.getSettings(kind).slotFit === "cover" ? "🖼 Isi penuh (terpotong)" : "🖼 Muat semua (utuh)", `bxfit:${kind}`)],
       [cb("⌨ Atur ukuran", `bxsn:${kind}:slot`), cb("⌨ Atur posisi", `bxmn:${kind}:slot`)],
       [cb("👁 Lihat hasil", `bxp:${kind}`), cb("⬅ Kembali", `bxo:${kind}`)],
     ]);
@@ -2167,8 +2171,19 @@ function build() {
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showText !== false;
     await bannerTpl.updateSettings(kind, { showText: !on });
-    ctx.answerCbQuery(`🔤 Text ${on ? "OFF" : "ON"}`).catch(() => {});
+    ctx.answerCbQuery(`🔤 Tulisan ${on ? "MATI" : "AKTIF"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
+  // How a client picture whose shape differs from the box is fitted. Default is
+  // "muat semua" (contain) — cropping artwork the advertiser paid for is not a
+  // default anyone should get by accident.
+  bot.action(new RegExp(`^bxfit:${KL}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const cover = bannerTpl.getSettings(kind).slotFit === "cover";
+    await bannerTpl.updateSettings(kind, { slotFit: cover ? "contain" : "cover" });
+    ctx.answerCbQuery(cover ? "🖼 Muat semua — gambar utuh" : "🖼 Isi penuh — pinggirnya dipotong").catch(() => {});
+    await bxElemOpen(ctx, kind, "slot");
   });
   bot.action(new RegExp(`^bxb:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
