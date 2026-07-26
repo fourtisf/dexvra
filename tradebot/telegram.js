@@ -317,7 +317,10 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   const sym = (api && api.symbol) || meta.sym;
 
   const L = [];
-  const SEP = '━━━━━━━━━━━━━━━━';
+  // A blank line between blocks, not a drawn rule. Rules add a line of noise per
+  // section; whitespace does the same grouping and lets the eye land on the
+  // numbers. Nothing in the card may run more than four lines without a break.
+  const gap = () => { if (L.length && L[L.length - 1] !== '') L.push(''); };
   // ── Header: name · symbol, then chain · venue · age, then the contract ──
   // Age sits here rather than buried in a stats line: "6 minutes old" changes how
   // you read every number under it, so it belongs beside the name.
@@ -334,7 +337,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // nothing to compare it against — and silently DROPPED whole lines when a
   // source returned nothing, so a chain with no indexer rendered three lines and
   // read like a broken card rather than a thin token.
-  L.push(SEP);
+  gap();
   const mcapUsd = (api && api.marketCapUsd) || (info.mcapEth * nativeUsd(nat));
   const priceStr = priceUsd > 0 ? '$' + priceUsd.toPrecision(3) : px.toExponential(2) + ' ' + nat;
   const mcapStr = mcapUsd > 0 ? '$' + fmt(mcapUsd) : usd(info.mcapEth, nat);
@@ -344,7 +347,8 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // whole story of a token, and the card used to leave the reader to divide it.
   if (info.liquidityNative != null) {
     const liqUsd = info.liquidityNative * nativeUsd(nat);
-    const share = mcapUsd > 0 && liqUsd > 0 ? `   ·   <b>${((liqUsd / mcapUsd) * 100).toFixed(1)}%</b> of mcap` : '';
+    const pctOfCap = mcapUsd > 0 && liqUsd > 0 ? (liqUsd / mcapUsd) * 100 : 0;
+    const share = pctOfCap > 0 ? `   ·   <b>${pctOfCap < 0.1 ? '<0.1' : pctOfCap.toFixed(1)}%</b> of mcap` : '';
     // Decimals that match the magnitude: 0.020 ETH and 210.4 ETH both want to be
     // read at a glance, and one fixed precision cannot do both.
     const q = info.liquidityNative;
@@ -357,7 +361,8 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // Thin-pool warning: indexer sees far deeper liquidity than the pool the bot can trade.
   if (info.liquidityNative != null && mkt && mkt.liqUsd > 0) {
     const poolUsd = info.liquidityNative * nativeUsd(nat);
-    if (mkt.liqUsd > Math.max(poolUsd, 1) * 5) L.push(`⚠️ <b>Thin tradeable pool</b> — the market's <b>$${fmt(mkt.liqUsd)}</b> sits on a pool this bot can't reach. Buys here move the price hard.`);
+    // Its own block: a warning buried between two stat lines is read as a stat.
+    if (mkt.liqUsd > Math.max(poolUsd, 1) * 5) { gap(); L.push(`⚠️ <b>Thin tradeable pool</b> — the market's <b>$${fmt(mkt.liqUsd)}</b> sits on a pool this bot can't reach. Buys here move the price hard.`); gap(); }
   }
   if (mkt) {
     const chg = (v) => (v == null ? null : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`);
@@ -375,17 +380,21 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   if (vol24 != null) volParts.push(`$${fmt(vol24)}`);
   if (mkt && (mkt.buysH24 != null || mkt.sellsH24 != null)) volParts.push(`${mkt.buysH24 || 0} buys / ${mkt.sellsH24 || 0} sells`);
   if (volParts.length) L.push(`🔄 <b>Vol 24h</b> ${volParts.join('   ·   ')}`);
-  // Safety line: holders, LP, tax and the red flags, each named rather than left
-  // as a bare word the reader has to interpret.
-  const safe = [];
-  if (sec && sec.holders != null) safe.push(`👥 ${sec.holders} holders`);
-  if (sec && sec.lpLockedPct != null) safe.push(`🔒 LP ${Math.round(sec.lpLockedPct)}% locked`);
-  else if (ch.curve && info.graduated) safe.push('🔒 LP burned');
-  if (sec) safe.push(`⚖️ Tax ${taxStr(sec.buyTaxPct)} buy / ${taxStr(sec.sellTaxPct)} sell`);
-  else if (ch.curve) safe.push('⚖️ Fair launch · 0% tax');   // launchpad tokens can't set a tax
-  if (sec && sec.honeypot) safe.push('🚨 HONEYPOT');
-  if (sec && sec.openSource === false) safe.push('⚠️ closed-source');
-  if (safe.length) L.push(safe.join('   ·   '));
+  // Safety, in its own block: holders and LP on one line, tax and flags on the
+  // next. Three long labels joined on a single line wrap on a phone, and a
+  // wrapped line reads as two lines that lost their bullet.
+  const holdLp = [];
+  if (sec && sec.holders != null) holdLp.push(`👥 ${sec.holders} holders`);
+  if (sec && sec.lpLockedPct != null) holdLp.push(`🔒 LP ${Math.round(sec.lpLockedPct)}% locked`);
+  else if (ch.curve && info.graduated) holdLp.push('🔒 LP burned');
+  const flags = [];
+  if (sec) flags.push(`⚖️ Tax ${taxStr(sec.buyTaxPct)} buy / ${taxStr(sec.sellTaxPct)} sell`);
+  else if (ch.curve) flags.push('⚖️ Fair launch · 0% tax');   // launchpad tokens can't set a tax
+  if (sec && sec.honeypot) flags.push('🚨 HONEYPOT');
+  if (sec && sec.openSource === false) flags.push('⚠️ closed-source');
+  if (holdLp.length || flags.length) gap();
+  if (holdLp.length) L.push(holdLp.join('   ·   '));
+  if (flags.length) L.push(flags.join('   ·   '));
   // What a trade costs, which the card could never answer. On a cheap L2 "about
   // four cents" is often what decides whether a small buy is worth making.
   if (info.gas && info.gas.gwei > 0) {
@@ -396,6 +405,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // Say what is missing instead of just omitting the lines. A card that shrinks
   // to three lines on a chain with no indexer looks broken; saying so once tells
   // the reader the numbers above are still real, and read straight from chain.
+  gap();
   const gaps = [];
   if (!mkt) gaps.push('volume', 'price change');
   if (!sec) { gaps.push('holder count'); if (!ch.curve) gaps.push('tax'); }
@@ -416,7 +426,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   if (list.length > 1) {
     // Per-wallet balance table (Maestro "Balance" panel): ✅ marks the wallet(s) a
     // Buy/Sell will act on (single, a selected subset, or ALL). Shows each bag's USD worth.
-    L.push(SEP);
+    gap();
     L.push(`👛 <b>Balance across wallets</b> (${esc(sym)} · USD · ${nat})`);
     const held = across.rows.filter((r) => r.tokens > 1e-9 || r.eth > 1e-5);
     const show = (held.length ? held : across.rows).slice(0, 10);
@@ -430,13 +440,14 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     const totEth = across.rows.reduce((s, r) => s + r.eth, 0);
     if (totTok > 1e-9) L.push(`Σ <b>${fmt(totTok)} $${esc(sym)}</b> ≈ <b>${usdOf(totTok)}</b> · ${totEth.toFixed(4)} ${nat} across ${across.rows.length} wallets`);
     if (pos && posCost(pos) > 0 && !selN) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`PnL (${esc(core.walletLabel(w, wi))}): <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`); }
+    gap();
     if (sel.all) L.push(`<i>Trading all ${list.length} wallets — every Buy runs on each one.</i>`);
     else if (selN >= 1) L.push(`<i>Trading ${selN} selected wallet${selN > 1 ? 's' : ''} — every Buy runs on each one.</i>`);
     else L.push(`<i>Trading ${esc(core.walletLabel(w, wi))}${autoSwitched ? ' (holds this token)' : ''} — tap 🔴 Multi to use several at once.</i>`);
   } else {
     // Single wallet: ALWAYS show the bag (even "none") and the wallet's native
     // balance, so the card answers "what do I hold and what can I spend" at a glance.
-    L.push(SEP);
+    gap();
     if (pos && posCost(pos) > 0) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`Your bag: <b>${fmt(bal)} $${esc(sym)}</b> · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`); }
     else if (bal > 0) L.push(`Your bag: <b>${fmt(bal)} $${esc(sym)}</b> · ${usd(valueEth, nat)}`);
     else L.push(`Your bag: <i>none yet</i>`);
@@ -522,13 +533,14 @@ async function portfolioScreen(chatId) {
     const multStr = mult > 0 ? mult.toFixed(2) + '×' : '—';
     const pnlPct = r.ethIn > 0 ? (mult - 1) * 100 : 0;
     const who = (r.holders && r.holders.length) ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(', ') : '—';
-    body += `<b>$${esc(r.sym)}</b> · ${usd(r.valueEth, nat)} · <b>${multStr}</b> ${r.ethIn > 0 ? `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(0)}%)` : ''}\n   ${fmt(r.tokens)} · in ${r.ethIn.toFixed(4)} → now ${r.valueEth.toFixed(4)} ${nat} · PnL <b>${r.unrealizedEth >= 0 ? '+' : ''}${r.unrealizedEth.toFixed(4)}</b>\n   held: ${who}\n   <code>${r.ca}</code>\n`;
+    body += `<b>$${esc(r.sym)}</b> · ${usd(r.valueEth, nat)} · <b>${multStr}</b> ${r.ethIn > 0 ? `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(0)}%)` : ''}\n   ${fmt(r.tokens)} · in ${r.ethIn.toFixed(4)} → now ${r.valueEth.toFixed(4)} ${nat} · PnL <b>${r.unrealizedEth >= 0 ? '+' : ''}${r.unrealizedEth.toFixed(4)}</b>\n   held: ${who}\n   <code>${r.ca}</code>\n\n`;
   }
   const pMult = totalIn > 0 ? (pf.totalValueEth + totalOut) / totalIn : 0;
   const pPct = totalIn > 0 ? (pMult - 1) * 100 : 0;
-  const text = `📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n` +
+  const text = `📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n\n` +
     `Value <b>${usd(pf.totalValueEth, nat)}</b> · ${pf.totalValueEth.toFixed(4)} ${nat}${totalIn > 0 ? ` · <b>${pMult.toFixed(2)}×</b> (${pPct >= 0 ? '+' : ''}${pPct.toFixed(0)}%)` : ''}\n\n${body}\n` +
-    `Invested <b>${totalIn.toFixed(4)}</b> · out <b>${totalOut.toFixed(4)}</b> ${nat}\nUnrealized PnL: <b>${totalUnreal >= 0 ? '+' : ''}${totalUnreal.toFixed(4)} ${nat}</b> (${usd(Math.abs(totalUnreal), nat)})`;
+    `Invested <b>${totalIn.toFixed(4)}</b> · out <b>${totalOut.toFixed(4)}</b> ${nat}\n` +
+    `Unrealized PnL: <b>${totalUnreal >= 0 ? '+' : ''}${totalUnreal.toFixed(4)} ${nat}</b> (${usd(Math.abs(totalUnreal), nat)})`;
   return { text, kb: rows([btn('🔄 Refresh', 'pos'), btn('🧾 History', 'hist'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
 }
 function historyScreen(chatId) {
@@ -548,7 +560,7 @@ function historyScreen(chatId) {
       ? `🟢 <b>BUY</b> $${esc(t.sym || '')} · ${Number(t.ethAmount || 0).toFixed(4)} ${c.native} · ${when} ago\n`
       : `🔴 <b>SELL</b> $${esc(t.sym || '')} ${t.pct || 100}% · ${Number(t.ethAmount || 0).toFixed(4)} ${c.native} · ${when} ago\n`;
   }
-  return { text: `🧾 <b>History</b> · Wallet ${wi} · ${ch.emoji} ${esc(ch.name)}\nNet PnL (this chain): <b>${rp} ${ch.native}</b>\n<i>proceeds − total cost; a partly-sold bag reads low until fully exited</i>\n\n${body}`, kb: rows([btn('🔄 Refresh', 'hist'), btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]) };
+  return { text: `🧾 <b>History</b> · Wallet ${wi} · ${ch.emoji} ${esc(ch.name)}\n\nNet PnL (this chain): <b>${rp} ${ch.native}</b>\n<i>proceeds − total cost; a partly-sold bag reads low until fully exited</i>\n\n${body}`, kb: rows([btn('🔄 Refresh', 'hist'), btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]) };
 }
 function snipeScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -691,13 +703,16 @@ function settingsScreen(chatId) {
   const gasName = gasLabel(core.userGasBoost(u));
   return {
     text: `⚙️ <b>Settings</b>\n\n` +
+      `<b>Trading</b>\n` +
       `Active chain: <b>${ch.emoji} ${esc(ch.name)}</b>\n` +
       `Slippage: <b>${esc(String(slip))}</b>\n` +
       `Gas priority: <b>${esc(gasName)}</b>\n` +
-      `Quick-buy (${esc(ch.name)}): <b>${esc(bp)} ${ch.native}</b>${perChain}\n` +
+      `Quick-buy (${esc(ch.name)}): <b>${esc(bp)} ${ch.native}</b>${perChain}\n\n` +
+      `<b>How buys behave</b>\n` +
       `Confirm before buy: <b>${onoff(s.confirmBuy)}</b>\n` +
       `Fast mode: <b>${onoff(s.expert)}</b>\n` +
-      `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n` +
+      `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n\n` +
+      `<b>Automatic exits</b>\n` +
       `Auto-exit after buy: <b>${(s.autoTpPct > 0 || s.autoSlPct > 0) ? [(s.autoTpPct > 0 ? 'TP +' + s.autoTpPct + '%' : ''), (s.autoSlPct > 0 ? 'SL −' + s.autoSlPct + '%' : '')].filter(Boolean).join(' · ') : '⚪ OFF'}</b>\n` +
       `🛡 Auto-protect (rug guard): <b>${onoff(s.autoProtect)}</b>\n\n` +
       `<i>Quick-buy amounts are per-chain. Fast mode skips the "buying…" message. Auto-buy buys instantly on paste. Auto-protect auto-sells only on a ~60% loss vs entry or a honeypot — never a profitable dip.</i>`,
@@ -1771,7 +1786,7 @@ function statsText(snap, totalUsers) {
   let treasury = '\n\n💰 <b>Fee treasury</b>';
   if (evmT) treasury += `\n  EVM: <code>${esc(evmT)}</code>`;
   if (solT) treasury += `\n  SOL: <code>${esc(solT)}</code>`;
-  return `📊 <b>Bot stats</b>\n👥 Total users: <b>${totalUsers}</b>\n\n` +
+  return `📊 <b>Bot stats</b>\n\n👥 Total users: <b>${totalUsers}</b>\n\n` +
     `<b>Today (~${hrs}h)</b> · <b>${snap.trades}</b> trades · vol <b>$${fmt(w.volUsd)}</b> · fees <b>$${fmt(w.feeUsd)}</b>\n${w.lines}\n` +
     `<b>Lifetime</b> · <b>${snap.lifetime.trades}</b> trades · vol <b>$${fmt(l.volUsd)}</b> · fees <b>$${fmt(l.feeUsd)}</b>\n${l.lines}` +
     treasury;

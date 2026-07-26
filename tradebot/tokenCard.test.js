@@ -26,6 +26,7 @@ function render(f) {
     .filter((l) => !/^\s*(const sel =|const selIds =|const selN =|const usdOf =)/.test(l))
     .join("\n");
   const L = [];
+  const gap = () => { if (L.length && L[L.length - 1] !== '') L.push(''); };
   const SEP = "━━━━━━━━━━━━━━━━";
   const { info, ch, api, sec, name, sym, nat, px, priceUsd, ca } = f;
   const esc = (x) => String(x);
