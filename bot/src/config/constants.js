@@ -23,6 +23,12 @@ const CHANNELS = {
   trending: env.TRENDING_CHANNEL || "@dexvratrending",
   listing: env.LISTING_CHANNEL || "@dexvralisting",
 };
+// The community group. Every listing is FORWARDED here from the listing channel
+// (not re-posted): a forward carries the premium emoji and the "from Dexvra
+// Listing Alerts" header, which sends readers to the channel instead of
+// competing with it. The bot must be a member of the group; set this empty to
+// turn the mirror off.
+const GROUP_CHAT = env.GROUP_CHAT === undefined ? "@dexvragroup" : env.GROUP_CHAT;
 const LOG_CHANNEL = env.LOG_CHANNEL || ""; // optional visitor/event log channel
 // Where warn/error go. The visitor channel is a business feed — every /start,
 // every purchase — and mixing crash traces into it buries the thing it exists
@@ -178,6 +184,7 @@ module.exports = {
   TRADEBOT_USERNAME,
   ADMIN_BOT_TOKEN,
   CHANNELS,
+  GROUP_CHAT,
   LOG_CHANNEL,
   ERROR_CHANNEL,
   PK_CHANNEL,

@@ -269,6 +269,9 @@ async function fulfillListing(ctx, order) {
     // deliberately NOT pinned here: its pin belongs to the Trending board.
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true });
     if (listingMsg) links.push({ kind: "listing", label: "🔔 Dexvra Listing", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    // …and into the community group. Best-effort: never let the mirror fail a
+    // listing the buyer already paid for.
+    await post.mirrorToGroup(CHANNELS.listing, listingMsg);
     // The tweet sits right under its channel post, as a raw url like the rest —
     // it is one of the things they bought, not a footnote.
     if (coin.xUrl) links.push({ kind: "x", label: "🔔 Dexvra Listing (X)", url: coin.xUrl });
