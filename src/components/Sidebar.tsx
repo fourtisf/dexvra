@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { BRAND_NAME, BRAND_SUB } from "@/config/brand";
 import { Logo } from "./Logo";
 import { useApp } from "./AppState";
-import { BOT_URL } from "@/config/brand";
+import { BOT_URL, TELEGRAM_HANDLE, TELEGRAM_URL, X_URL } from "@/config/brand";
 
 export interface NavItem {
   href: string;
@@ -94,6 +94,24 @@ export function Sidebar() {
       <NavGroup label="Signals" items={SIGNALS} pathname={pathname} />
       <NavGroup label="Grow" items={GROW} pathname={pathname} />
       <NavGroup label="App" items={APP} pathname={pathname} />
+
+      {/* Community links. The footer carries the same two, but the footer sits
+          below the fold on every long board — the sidebar is where someone
+          looks for "where do I follow this". */}
+      <div className="side-soc">
+        <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer" title={`Telegram ${TELEGRAM_HANDLE}`}>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M21.9 4.3 18.9 19c-.2 1-.8 1.2-1.7.8l-4.6-3.4-2.2 2.2c-.3.3-.5.4-.9.4l.3-4.7 8.5-7.7c.4-.3-.1-.5-.6-.2L7.2 12.9 2.6 11.5c-1-.3-1-1 .2-1.5l18-6.9c.8-.3 1.5.2 1.1 1.2z" />
+          </svg>
+          <span>Telegram</span>
+        </a>
+        <a href={X_URL} target="_blank" rel="noopener noreferrer" title="X">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M18.2 2h3.3l-7.2 8.3L23 22h-6.7l-5.2-6.8L5.1 22H1.8l7.7-8.8L1 2h6.8l4.7 6.2L18.2 2zm-1.2 18h1.8L7.1 3.9H5.2L17 20z" />
+          </svg>
+          <span>X</span>
+        </a>
+      </div>
     </aside>
   );
 }
