@@ -1006,7 +1006,27 @@ const BX_STEP = 24; // px per arrow tap (single step — kept simple, no coarse/
 function bxElemText(kind, elem) {
   const s = bannerTpl.getSettings(kind);
   if (elem === "slot") {
-    return `🖼 <b>${BT_KINDS[kind]} — ad slot</b>\nSize <b>${s.slotW}×${s.slotH}px</b> · at <b>(${s.logoX}, ${s.logoY})</b>`;
+    // Raw pixels alone say nothing about whether the slot sits inside the
+    // frame — the canvas is 2560×1280 and every template puts its frame
+    // somewhere different. The share of the canvas and the margins either side
+    // are what actually tell an operator "this is off to the right".
+    const W = 2560;
+    const H = 1280;
+    const w = Number(s.slotW) || 0;
+    const h = Number(s.slotH) || 0;
+    const cx = s.logoX === "center";
+    const cy = s.logoY === "center";
+    const x = cx ? Math.round((W - w) / 2) : Number(s.logoX) || 0;
+    const y = cy ? Math.round((H - h) / 2) : Number(s.logoY) || 0;
+    const gap = `left <b>${x}</b> · right <b>${W - x - w}</b>`;
+    const even = Math.abs(x - (W - x - w)) <= 2;
+    return (
+      `🖼 <b>${BT_KINDS[kind]} — ad slot</b>\n` +
+      `Size <b>${w}×${h}px</b> (${Math.round((w / W) * 100)}% × ${Math.round((h / H) * 100)}% of the canvas)\n` +
+      `At <b>(${cx ? "center" : x}, ${cy ? "center" : y})</b> · ${gap}\n` +
+      (even ? `✅ horizontally centred` : `↔️ ${x > W - x - w ? "more space on the LEFT" : "more space on the RIGHT"} — tap ⬌ Centre if the frame is centred`) +
+      `\n\nThe creative is <b>cover-fitted</b>: it fills the slot and crops the overflow, so empty space means the SLOT is wrong, never the creative.`
+    );
   }
   const c = BX[elem];
   const pos = c.nomove ? "" : ` · at <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
@@ -1016,11 +1036,17 @@ function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
   const M = BX_STEP;
   if (elem === "slot") {
+    // Centring and exact-size entry were both already implemented (bxc / bxsn
+    // handle elem "slot"), but neither button was ever rendered here — so the
+    // one control that fixes "the creative sits off to one side with dead space
+    // beside it" was unreachable, and the only way to move a slot 300px was 15
+    // taps of ➡.
     return Markup.inlineKeyboard([
       [cb("Wider ➕", `bxsd:${kind}:slotw:20`), cb("Narrower ➖", `bxsd:${kind}:slotw:-20`)],
       [cb("Taller ➕", `bxsd:${kind}:sloth:20`), cb("Shorter ➖", `bxsd:${kind}:sloth:-20`)],
       [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
-      [cb("⌨ Type X,Y", `bxmn:${kind}:slot`)],
+      [cb("⬌ Centre", `bxc:${kind}:slot`), cb("⬍ Centre", `bxcy:${kind}:slot`)],
+      [cb("⌨ Type W×H", `bxsn:${kind}:slot`), cb("⌨ Type X,Y", `bxmn:${kind}:slot`)],
       [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
     ]);
   }
@@ -1030,7 +1056,8 @@ function bxElemKb(kind, elem) {
     rows.push([cb("⌨ Type exact size", `bxsn:${kind}:${elem}`)]);
   } else {
     rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-M}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-M}`), cb("⬇", `bxmd:${kind}:${elem}:0:${M}`), cb("➡", `bxmd:${kind}:${elem}:${M}:0`)]);
-    rows.push([cb("🎯 Center", `bxc:${kind}:${elem}`), cb("⌨ Type X,Y", `bxmn:${kind}:${elem}`)]);
+    rows.push([cb("⬌ Centre", `bxc:${kind}:${elem}`), cb("⬍ Centre", `bxcy:${kind}:${elem}`)]);
+    rows.push([cb("⌨ Type X,Y", `bxmn:${kind}:${elem}`)]);
   }
   rows.push([cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)]);
   return Markup.inlineKeyboard(rows);
@@ -2049,7 +2076,19 @@ function build() {
     const c = elem === "slot" ? { xKey: "logoX" } : BX[elem];
     if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.xKey]: "center" });
-    ctx.answerCbQuery("🎯 Centred horizontally").catch(() => {});
+    ctx.answerCbQuery("⬌ Centred horizontally").catch(() => {});
+    await bxElemOpen(ctx, kind, elem);
+  });
+  // Vertical twin of bxc. Horizontal-only centring is enough for a token logo
+  // sitting on a designed row, but an ad slot has to land inside a frame, and
+  // that frame is centred on both axes on most templates.
+  bot.action(new RegExp(`^bxcy:${KL}:${EX}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    const c = elem === "slot" ? { yKey: "logoY" } : BX[elem];
+    if (!c || c.nomove || !c.yKey) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    await bannerTpl.updateSettings(kind, { [c.yKey]: "center" });
+    ctx.answerCbQuery("⬍ Centred vertically").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxsn:${KL}:${EX}$`), async (ctx) => {
@@ -2475,7 +2514,7 @@ function build() {
             await ctx.reply(bxElemText(kind, "slot"), { ...HTML, ...bxElemKb(kind, "slot") });
           } else {
             const m = low.match(/^(center|-?\d+)\s*,\s*(center|-?\d+)$/);
-            if (!m) return ctx.reply("❌ Format: <code>X,Y</code> — e.g. <code>1890,410</code> (<code>center</code> allowed for X).", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Format: <code>X,Y</code> — e.g. <code>1890,410</code>. <code>center</code> works for either axis, e.g. <code>center,center</code>.", HTML).catch(() => {});
             const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
             await bannerTpl.updateSettings(kind, { [c.xKey]: cv(m[1]), [c.yKey]: cv(m[2]) });
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });

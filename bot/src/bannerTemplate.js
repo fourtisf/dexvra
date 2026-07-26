@@ -260,10 +260,32 @@ function savedLayout(saved, kind) {
   return s && s.layoutVersion === LAYOUT_VERSION ? s : {};
 }
 
+/** True once the operator has supplied their OWN artwork or clip for a kind. */
+function isCustomArt(kind) {
+  try {
+    return hasUploaded(kind) || !!mediaOverride(kind);
+  } catch {
+    return false;
+  }
+}
+
 function loadConfig() {
   const saved = loadJSONSync(CONFIG_FILE, {});
   const out = {};
-  for (const k of LAYOUT_KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
+  for (const k of LAYOUT_KINDS) {
+    const base = defaultsFor(k);
+    // The bundled artwork's slot coordinates are MEASURED against the bundled
+    // artwork — the ad frame sits right of centre there, so logoX is 836. The
+    // moment an operator uploads their own template we no longer know where its
+    // frame is, and those coordinates become a wrong guess dressed as a default:
+    // on a centred design the creative lands off to one side with dead space
+    // beside it. Centre is the only defensible starting point for an unknown
+    // design. Any explicit admin tweak still wins — this only fills the gap
+    // where nothing has been tuned yet.
+    const unknownDesign = base.slotShape === "rect" && isCustomArt(k);
+    const start = unknownDesign ? { ...base, logoX: "center", logoY: "center" } : base;
+    out[k] = { ...start, ...savedLayout(saved, k) };
+  }
   return out;
 }
 
