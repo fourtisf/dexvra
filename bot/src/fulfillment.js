@@ -376,16 +376,20 @@ async function fulfillBanner(ctx, order) {
       // listing/trending — but the ad clip has to carry the buyer's creative in
       // its frame, on every frame. Playing it bare made the animated template
       // pure decoration: the advertiser paid for a banner that never appeared.
+      // The sold size decides the shape of the box in the post, so a Standard
+      // (2.5:1) and a Wide (5:1) each land edge to edge instead of sharing one
+      // compromise rectangle that fits neither.
+      const shape = { slotSize: rec.size };
       const clip = bannerTemplate.mediaOverride("banner");
       const framedClip = clip
-        ? await bannerTemplate.composeOntoClip("banner", clip, creative, {}).catch(() => null)
+        ? await bannerTemplate.composeOntoClip("banner", clip, creative, shape).catch(() => null)
         : null;
       if (framedClip) {
         log.info("[fulfil] banner media: admin clip + advertiser creative ✔");
         adMedia = framedClip;
       } else {
         if (clip) log.warn("[fulfil] banner media: clip composite failed — falling back to the still frame");
-        const framed = await bannerTemplate.compose("banner", creative, {});
+        const framed = await bannerTemplate.compose("banner", creative, shape);
         if (framed) adMedia = { source: framed };
       }
     }

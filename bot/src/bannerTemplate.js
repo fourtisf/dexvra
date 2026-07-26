@@ -262,6 +262,18 @@ function savedLayout(saved, kind) {
   return s && s.layoutVersion === LAYOUT_VERSION ? s : {};
 }
 
+/** "600 × 240" → 2.5. The sold size string is the single source of truth for a
+ *  banner's shape — the same string the website's tile aspect is keyed off — so
+ *  the channel post and the homepage slot can never disagree about it.
+ *  Anything unparseable returns 0, meaning "use the operator's box as drawn". */
+function aspectOfSize(size) {
+  const m = String(size || "").match(/(\d+)\s*[×x]\s*(\d+)/);
+  if (!m) return 0;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return w > 0 && h > 0 ? w / h : 0;
+}
+
 /** True once the operator has supplied their OWN artwork or clip for a kind. */
 function isCustomArt(kind) {
   try {
@@ -378,7 +390,7 @@ function lightenHex(hex, amt) {
 
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge, change, priceFrom, priceTo } = {}, opts = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge, change, priceFrom, priceTo, slotSize } = {}, opts = {}) {
   // `opts.transparent` renders ONLY the token overlay (logo + $ticker + name + chips +
   // badge) on a CLEAR canvas — used to composite that data onto an animated GIF/video
   // template. Otherwise this draws the still artwork background + the same overlay.
@@ -412,10 +424,30 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
     // Media slot: token logo circle-clipped into the ring, or (banner ads)
     // the advertiser's creative cover-fitted into a rounded rectangular frame.
     const isRect = cfg.slotShape === "rect";
-    const sw = isRect ? Number(cfg.slotW) || 1680 : Number(cfg.logoSize) || BASE_DEFAULTS.logoSize;
-    const sh = isRect ? Number(cfg.slotH) || 800 : sw;
-    const lx = cfg.logoX === "center" ? (W - sw) / 2 : Number(cfg.logoX) || 0;
-    const ly = cfg.logoY === "center" ? (H - sh) / 2 : Number(cfg.logoY) || 0;
+    // The box the operator drew is the BOUNDING area…
+    const bw = isRect ? Number(cfg.slotW) || 1680 : Number(cfg.logoSize) || BASE_DEFAULTS.logoSize;
+    const bh = isRect ? Number(cfg.slotH) || 800 : bw;
+    const bx = cfg.logoX === "center" ? (W - bw) / 2 : Number(cfg.logoX) || 0;
+    const by = cfg.logoY === "center" ? (H - bh) / 2 : Number(cfg.logoY) || 0;
+    // …and the box actually drawn takes the SOLD shape of this booking, fitted
+    // inside it and centred.
+    //
+    // A Standard Banner is sold at 600×240 (2.5:1) and a Wide at 1200×240
+    // (5:1) — two different shapes, and neither is the frame's. With one fixed
+    // box, an advertiser who sent exactly what we asked for still could not
+    // fill it: either the sides were cropped, or a blurred band appeared above
+    // and below. Drawing the box at the shape we sold means a correct upload
+    // lands edge to edge, with nothing cropped and nothing filled in, for both
+    // products. An off-spec upload still falls back to the fit rule below.
+    let sw = bw;
+    let sh = bh;
+    const soldAspect = isRect ? aspectOfSize(slotSize) : 0;
+    if (soldAspect > 0) {
+      if (bw / bh > soldAspect) sw = Math.round(bh * soldAspect);
+      else sh = Math.round(bw / soldAspect);
+    }
+    const lx = bx + (bw - sw) / 2;
+    const ly = by + (bh - sh) / 2;
     if (logoBuffer) {
       try {
         const img = await cv.loadImage(logoBuffer);

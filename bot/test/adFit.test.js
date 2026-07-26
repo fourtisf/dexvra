@@ -97,3 +97,47 @@ test("the operator can switch it, and the screen says which is on", () => {
   assert.match(admin, /🖼 Isi penuh \(terpotong\)/);
   assert.match(admin, /Ukuran banner client boleh beda-beda — otomatis menyesuaikan/, "the screen answers the question that prompted this");
 });
+
+test("each product's box takes the shape it was SOLD at", async (t) => {
+  // Standard is 600×240 (2.5:1) and Wide is 1200×240 (5:1) — two different
+  // products, two different shapes, and one fixed 2:1 box could serve neither.
+  // An advertiser who sent exactly what we asked for still got letterboxed.
+  if (!cv) return t.skip("@napi-rs/canvas not installed");
+  const exact = (w, h) => {
+    const c = cv.createCanvas(w, h);
+    const g = c.getContext("2d");
+    g.fillStyle = "#101010";
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = "#00FF00";
+    g.fillRect(0, 0, Math.round(w * 0.04), h);
+    g.fillStyle = "#FF0000";
+    g.fillRect(w - Math.round(w * 0.04), 0, Math.round(w * 0.04), h);
+    return c.toBuffer("image/png");
+  };
+  for (const [size, w, h] of [["600 × 240", 600, 240], ["1200 × 240", 1200, 240]]) {
+    const out = await bannerTpl.compose("banner", exact(w, h), { slotSize: size });
+    if (!out) return t.skip("no bundled banner artwork in this checkout");
+    // A correct upload must reach both edges — with no blurred band, which is
+    // what appears the moment the drawn box is a different shape.
+    assert.ok(await hasColour(out, [0, 255, 0]), `${size}: left edge missing`);
+    assert.ok(await hasColour(out, [255, 0, 0]), `${size}: right edge missing`);
+  }
+});
+
+test("the shape comes from the sold size string, the site's own source of truth", () => {
+  const src = fss.readFileSync(require.resolve("../src/bannerTemplate.js"), "utf8");
+  assert.match(src, /function aspectOfSize/, "parsed from \"600 × 240\"");
+  assert.match(src, /const soldAspect = isRect \? aspectOfSize\(slotSize\) : 0;/);
+  // The operator's box stays the BOUNDING area; the sold shape is fitted inside
+  // it and centred, so their positioning still means something.
+  assert.match(src, /const lx = bx \+ \(bw - sw\) \/ 2;/);
+  const ful = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  assert.match(ful, /const shape = \{ slotSize: rec\.size \};/, "fulfilment passes the booked size");
+});
+
+test("an unknown size falls back to the operator's box, never to a guess", () => {
+  const src = fss.readFileSync(require.resolve("../src/bannerTemplate.js"), "utf8");
+  const i = src.indexOf("function aspectOfSize");
+  assert.match(src.slice(i, i + 400), /if \(!m\) return 0;/);
+  assert.match(src.slice(i, i + 400), /w > 0 && h > 0 \? w \/ h : 0/);
+});

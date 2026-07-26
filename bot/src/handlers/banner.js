@@ -57,7 +57,10 @@ async function durationPick(ctx) {
   bf.usd = row.usd;
   bf.duration = row.duration;
   ctx.session.awaitingField = "banner_image";
-  await sendCard(ctx, require("../templates").render("banner_image_prompt", { size: bf.size }), menu.withHome([]));
+  // {size2x} is the same shape at twice the pixels — Telegram compresses photos,
+  // so uploading at the literal sold size lands soft in a 2560-wide post.
+  const dbl = String(bf.size).replace(/(\d+)/g, (n) => String(Number(n) * 2));
+  await sendCard(ctx, require("../templates").render("banner_image_prompt", { size: bf.size, size2x: dbl }), menu.withHome([]));
 }
 
 async function handlePhoto(ctx) {
