@@ -1,11 +1,7 @@
-"use client";
-
-import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
-import { BRAND_NAME } from "@/config/brand";
+import { BOT_URL, BRAND_NAME, TELEGRAM_HANDLE, TELEGRAM_URL, X_URL } from "@/config/brand";
 
 export default function VerifiedPage() {
-  const { toast } = useApp();
   return (
     <section className="view">
       <PageHead icon="✅" title="Get Verified" sub={`The green check tells degens your project passed ${BRAND_NAME} review.`} />
@@ -20,13 +16,25 @@ export default function VerifiedPage() {
           <div style={{ fontFamily: "var(--fm)", fontWeight: 800, fontSize: 22, color: "var(--mint)" }}>
             1.5 SOL <span style={{ fontSize: 11, color: "var(--faint)" }}>/ one-time</span>
           </div>
-          <button
+          {/* This was a button that popped "Verification request sent ✓" and
+              sent nothing anywhere — the applicant went away believing they had
+              applied. Verification is handled by a human over Telegram, so the
+              CTA goes where the work actually happens, exactly like /advertise. */}
+          <a
             className="btn-primary"
             style={{ marginLeft: "auto" }}
-            onClick={() => toast("Verification request sent ✓ — reviewed within 24h")}
+            href={BOT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
           >
             ✅ Apply for verification
-          </button>
+          </a>
+        </div>
+        <div className="verify-contact">
+          Questions first? Reach {BRAND_NAME} on{" "}
+          <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer">Telegram {TELEGRAM_HANDLE}</a>
+          {" · "}
+          <a href={X_URL} target="_blank" rel="noopener noreferrer">X</a>
         </div>
       </div>
     </section>

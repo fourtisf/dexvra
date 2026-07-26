@@ -55,3 +55,35 @@ test("the sidebar carries the community links too", () => {
   assert.match(src, /className="side-soc"/);
   assert.match(read("src/app/globals.css"), /\.side-soc\{/, "the row must be styled, not inherit nav spacing");
 });
+
+test("Get Verified sends the applicant somewhere real", () => {
+  // It was a button that popped "Verification request sent ✓ — reviewed within
+  // 24h" and sent nothing anywhere. The applicant walked away believing they
+  // had applied, and nobody was ever told.
+  const src = read("src/app/(site)/verified/page.tsx");
+  // The comment above the fix quotes the old string on purpose, so match the
+  // CALL, not the words.
+  assert.ok(!/toast\(["'][^"']*Verification request sent/.test(src), "the page must not claim something it did not do");
+  assert.ok(!src.includes("useApp"), "…and no longer needs the toast at all");
+  assert.match(src, /href=\{BOT_URL\}/, "the CTA goes to the bot, exactly like /advertise");
+  assert.match(src, /href=\{TELEGRAM_URL\}/, "and Dexvra is reachable before paying 1.5 SOL");
+  assert.match(src, /href=\{X_URL\}/);
+});
+
+test("no page fakes an action with a toast", () => {
+  // One page doing it is a bug; the pattern spreading is a habit. This fails
+  // the moment another "sent ✓" button appears anywhere under (site).
+  const dir = path.join(process.cwd(), "src/app/(site)");
+  const walk = (d: string): string[] =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(d, e.name);
+      return e.isDirectory() ? walk(p) : p.endsWith(".tsx") ? [p] : [];
+    });
+  for (const file of walk(dir)) {
+    const src = fs.readFileSync(file, "utf8");
+    assert.ok(
+      !/onClick=\{\(\) => toast\(["'][^"']*(sent|submitted|request)/i.test(src),
+      `${path.relative(process.cwd(), file)} pretends an action succeeded without doing it`,
+    );
+  }
+});
