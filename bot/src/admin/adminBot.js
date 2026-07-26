@@ -957,8 +957,8 @@ function bxMenuText(kind) {
   return (
     `🎛 <b>${BT_KINDS[kind]} — Layout editor</b>\n\n` +
     (rect
-      ? `Tap the creative slot to <b>resize</b> and <b>move</b> it, then 👁 Preview.`
-      : `Tap an element to <b>resize ➖➕ and move</b> it on one screen. Tap 👁 <b>Preview</b> anytime to see it on your ${anim ? "<b>animated template</b>" : "banner"}.`)
+      ? `Here you set the <b>box</b> where the client's picture goes.\n\nTap the box below to change its <b>size</b> and <b>place</b>, then tap 👁 <b>Preview</b> to see the result.`
+      : `Tap a part below to change its <b>size ➖ ➕</b> and its <b>place</b>. Tap 👁 <b>Preview</b> any time to see it on your ${anim ? "<b>moving template</b>" : "banner"}.`)
   );
 }
 function bxMenuKb(kind) {
@@ -968,7 +968,7 @@ function bxMenuKb(kind) {
   const cb = Markup.button.callback;
   const rows = [];
   if (rect) {
-    rows.push([cb(`🖼 Creative slot · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
+    rows.push([cb(`🖼 Picture box · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
   } else {
     const showText = s.showText !== false;
     const showBadge = s.showBadge !== false;
@@ -1006,10 +1006,10 @@ const BX_STEP = 24; // px per arrow tap (single step — kept simple, no coarse/
 function bxElemText(kind, elem) {
   const s = bannerTpl.getSettings(kind);
   if (elem === "slot") {
-    // Raw pixels alone say nothing about whether the slot sits inside the
-    // frame — the canvas is 2560×1280 and every template puts its frame
-    // somewhere different. The share of the canvas and the margins either side
-    // are what actually tell an operator "this is off to the right".
+    // Read by operators whose first language is not English. Every line is a
+    // short sentence built from common words: "box", "picture", "space",
+    // "middle". No comparatives ("narrower"), no design jargon ("cover-fit",
+    // "canvas", "viewport") — the operator asked what "Wider" even meant.
     const W = 2560;
     const H = 1280;
     const w = Number(s.slotW) || 0;
@@ -1018,14 +1018,25 @@ function bxElemText(kind, elem) {
     const cy = s.logoY === "center";
     const x = cx ? Math.round((W - w) / 2) : Number(s.logoX) || 0;
     const y = cy ? Math.round((H - h) / 2) : Number(s.logoY) || 0;
-    const gap = `left <b>${x}</b> · right <b>${W - x - w}</b>`;
-    const even = Math.abs(x - (W - x - w)) <= 2;
+    const right = W - x - w;
+    const even = Math.abs(x - right) <= 2;
+    const side = x > right ? "LEFT" : "RIGHT";
     return (
-      `🖼 <b>${BT_KINDS[kind]} — ad slot</b>\n` +
-      `Size <b>${w}×${h}px</b> (${Math.round((w / W) * 100)}% × ${Math.round((h / H) * 100)}% of the canvas)\n` +
-      `At <b>(${cx ? "center" : x}, ${cy ? "center" : y})</b> · ${gap}\n` +
-      (even ? `✅ horizontally centred` : `↔️ ${x > W - x - w ? "more space on the LEFT" : "more space on the RIGHT"} — tap ⬌ Centre if the frame is centred`) +
-      `\n\nThe creative is <b>cover-fitted</b>: it fills the slot and crops the overflow, so empty space means the SLOT is wrong, never the creative.`
+      `🖼 <b>${BT_KINDS[kind]} — the box for the client's picture</b>\n\n` +
+      `📏 <b>Box size:</b> ${w} × ${h} px — ${Math.round((w / W) * 100)}% of the full width\n` +
+      `📍 <b>Empty space:</b> ${x} px on the left, ${right} px on the right\n` +
+      (even
+        ? `✅ The box is in the middle (left–right).\n`
+        : `⚠️ The box is not in the middle — there is more empty space on the <b>${side}</b>. Tap <b>⬌ Centre</b>.\n`) +
+      `\n<b>What the buttons do</b>\n` +
+      `• <b>Width +/−</b> — make the box wide or narrow\n` +
+      `• <b>Height +/−</b> — make the box tall or short\n` +
+      `• <b>⬅ ⬆ ⬇ ➡</b> — move the box\n` +
+      `• <b>⬌ Centre</b> — put it in the middle, left–right\n` +
+      `• <b>⬍ Centre</b> — put it in the middle, up–down\n` +
+      `• <b>⌨ Set size / Set place</b> — type the numbers directly\n` +
+      `\nThe client's picture always fills the whole box (the extra part is cut off). ` +
+      `So if you see empty space, the <b>box</b> is wrong — not the picture.`
     );
   }
   const c = BX[elem];
@@ -1041,12 +1052,15 @@ function bxElemKb(kind, elem) {
     // one control that fixes "the creative sits off to one side with dead space
     // beside it" was unreachable, and the only way to move a slot 300px was 15
     // taps of ➡.
+    // "Wider"/"Narrower"/"Taller"/"Shorter" are comparative adjectives — a
+    // reader has to translate them before acting, and the operator asked
+    // outright what "Wider" meant. A noun plus + / − needs no translating.
     return Markup.inlineKeyboard([
-      [cb("Wider ➕", `bxsd:${kind}:slotw:20`), cb("Narrower ➖", `bxsd:${kind}:slotw:-20`)],
-      [cb("Taller ➕", `bxsd:${kind}:sloth:20`), cb("Shorter ➖", `bxsd:${kind}:sloth:-20`)],
+      [cb("Width ➕", `bxsd:${kind}:slotw:20`), cb("Width ➖", `bxsd:${kind}:slotw:-20`)],
+      [cb("Height ➕", `bxsd:${kind}:sloth:20`), cb("Height ➖", `bxsd:${kind}:sloth:-20`)],
       [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
       [cb("⬌ Centre", `bxc:${kind}:slot`), cb("⬍ Centre", `bxcy:${kind}:slot`)],
-      [cb("⌨ Type W×H", `bxsn:${kind}:slot`), cb("⌨ Type X,Y", `bxmn:${kind}:slot`)],
+      [cb("⌨ Set size", `bxsn:${kind}:slot`), cb("⌨ Set place", `bxmn:${kind}:slot`)],
       [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
     ]);
   }
@@ -2100,7 +2114,10 @@ function build() {
     const label = elem === "slot" ? "🖼 Ad slot" : (BX[elem] && BX[elem].label) || elem;
     if (elem === "slot") {
       await ctx.reply(
-        `⌨ <b>${BT_KINDS[kind]} — ${label} size</b>\nNow: <b>${s.slotW}×${s.slotH}px</b>\n\nSend the new size as <code>WIDTH HEIGHT</code> (in pixels).\n👉 Example: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel to abort.`,
+        `⌨ <b>${BT_KINDS[kind]} — box size</b>\nNow: <b>${s.slotW} × ${s.slotH}</b>\n\n` +
+          `Send two numbers: <b>width</b> then <b>height</b>.\n` +
+          `The full picture is 2560 wide and 1280 tall.\n\n` +
+          `👉 Like this: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel to stop.`,
         HTML,
       );
     } else {
@@ -2123,10 +2140,11 @@ function build() {
     const cy = s[c.yKey];
     await ctx.reply(
       `⌨ <b>${BT_KINDS[kind]} — move ${c.label}</b>\nNow at: <b>(${cx}, ${cy})</b>\n\n` +
-        `Send the new position as <code>X,Y</code>:\n` +
-        `• <b>X</b> = left → right (0 = far left, 2560 = far right)\n` +
-        `• <b>Y</b> = top → bottom (0 = top, 1280 = bottom)\n\n` +
-        `👉 Example: <code>${cx === "center" ? "1280" : cx},${cy}</code>  ·  or <code>center,${cy}</code> to centre it.\n\n/cancel to abort.`,
+        `Send two numbers, separated by a comma:\n` +
+        `• first = <b>left to right</b> (0 = far left, 2560 = far right)\n` +
+        `• second = <b>top to bottom</b> (0 = top, 1280 = bottom)\n\n` +
+        `👉 Like this: <code>${cx === "center" ? "1280" : cx},${cy}</code>\n` +
+        `👉 Or write <code>center</code> instead of a number: <code>center,center</code>\n\n/cancel to stop.`,
       HTML,
     );
   });
@@ -2273,10 +2291,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "slot", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `📐 <b>Creative slot — ${BT_KINDS[kind]}</b>\n` +
-        `Current: <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
-        `Send: <code>WIDTH HEIGHT X,Y</code> — e.g. <code>1680 800 690,310</code>\n` +
-        `(<code>center</code> works for X or Y). /cancel to abort.`,
+      `📐 <b>Picture box — ${BT_KINDS[kind]}</b>\n` +
+        `Now: <b>${s.slotW} × ${s.slotH}</b> at (${s.logoX}, ${s.logoY})\n\n` +
+        `Send four numbers: <b>width height place</b>\n` +
+        `👉 Like this: <code>1680 800 690,310</code>\n` +
+        `👉 Or: <code>1680 800 center,center</code>\n\n/cancel to stop.`,
       HTML,
     );
   });
@@ -2509,12 +2528,12 @@ function build() {
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
           } else if (mode === "bxslotsize") {
             const m = low.match(/^(\d+)\s+(\d+)$/);
-            if (!m) return ctx.reply("❌ Format: <code>W H</code> — e.g. <code>1548 760</code>.", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Send two numbers with a space between them — width first, then height.\n👉 Like this: <code>1548 760</code>", HTML).catch(() => {});
             await bannerTpl.updateSettings(kind, { slotW: Math.max(200, Math.min(2560, Number(m[1]))), slotH: Math.max(120, Math.min(1280, Number(m[2]))) });
             await ctx.reply(bxElemText(kind, "slot"), { ...HTML, ...bxElemKb(kind, "slot") });
           } else {
             const m = low.match(/^(center|-?\d+)\s*,\s*(center|-?\d+)$/);
-            if (!m) return ctx.reply("❌ Format: <code>X,Y</code> — e.g. <code>1890,410</code>. <code>center</code> works for either axis, e.g. <code>center,center</code>.", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Send two numbers with a comma between them — left-to-right first, then top-to-bottom.\n👉 Like this: <code>1890,410</code>\n👉 Or: <code>center,center</code>", HTML).catch(() => {});
             const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
             await bannerTpl.updateSettings(kind, { [c.xKey]: cv(m[1]), [c.yKey]: cv(m[2]) });
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
