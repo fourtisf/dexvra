@@ -127,6 +127,33 @@ test("daily is the default, and it is still tunable", () => {
   assert.match(tgSrc, /at most every \$\{hours\}h/, "the log line must not promise a fixed cadence it no longer keeps");
 });
 
+test("a trade is reported the moment it confirms — never batched, never throttled", () => {
+  // The reason the channel exists. Quieting the boot noise is only safe if the
+  // thing the operator is watching FOR still arrives instantly, so this fails
+  // the moment a future "less spam" change reaches for onTrade.
+  const c = code("core.js");
+  const calls = c.match(/_afterTrade\(u, '(buy|sell)', res\)/g) || [];
+  assert.strictEqual(calls.length, 4, "EVM buy/sell and Solana buy/sell all report");
+  const fn = c.slice(c.indexOf("async function _afterTrade("));
+  const body = fn.slice(0, fn.indexOf("\n}"));
+  assert.match(body, /report\.onTrade\(\{/, "posts the card itself, not a counter");
+  assert.ok(!/opsDue|markOps|recapDue|setTimeout|setInterval/.test(body), "no gate, no queue, no timer between the fill and the post");
+  // And the report module must not grow one either.
+  const r = code("report.js");
+  assert.ok(!/opsDue|dedupe|_recent|suppress/i.test(r), "report.js must stay a plain sender");
+  assert.match(r, /function onTrade\(d\)/);
+  assert.match(r, /🟢 <b>BUY<\/b>/);
+  assert.match(r, /🔴 <b>SELL<\/b>/);
+});
+
+test("two identical trades are two cards", () => {
+  // Same user, same token, same size, twice — that is two real fills and two
+  // fees. Collapsing them the way a warning would be collapsed hides revenue.
+  const r = code("report.js");
+  const fn = r.slice(r.indexOf("function onTrade(d)"));
+  assert.match(fn.slice(0, fn.indexOf("\n}")), /return post\(/, "onTrade returns the send directly — nothing sits in front of it");
+});
+
 test("the daily trade report is untouched", () => {
   // It is already once a day and it is the message the channel exists for.
   // Quieting the boot noise must not quieten the signal with it.
