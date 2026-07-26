@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { BOT_URL, BRAND_NAME, TELEGRAM_TRENDING_URL, TELEGRAM_URL, X_URL } from "@/config/brand";
 import { AppProvider } from "@/components/AppState";
 import { WalletModal } from "@/components/WalletModal";
@@ -33,6 +34,7 @@ export default function SiteLayout({ children }: { children: ReactNode }) {
                 <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer">Telegram</a>
                 <a href={TELEGRAM_TRENDING_URL} target="_blank" rel="noopener noreferrer">Trending</a>
                 <a href={BOT_URL} target="_blank" rel="noopener noreferrer">Bot</a>
+                <Link href="/community">All channels</Link>
               </span>
             </footer>
           </main>

@@ -564,6 +564,29 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .verify-contact a{color:var(--mint);font-weight:600}
 .verify-contact a:hover{text-decoration:underline}
 
+/* ── /community — every official channel in one place ─────────────────────── */
+.soc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:14px}
+.soc-card{display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px solid var(--line2);border-radius:14px;
+  background:var(--panel);transition:border-color .15s,background .15s,transform .15s}
+.soc-card:hover{border-color:var(--mint);background:rgba(255,255,255,.03);transform:translateY(-1px)}
+.soc-card.primary{border-color:rgba(80,230,180,.35)}
+.soc-ic{flex:none;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  background:rgba(255,255,255,.05);color:var(--faint)}
+.soc-card:hover .soc-ic{color:var(--mint)}
+.soc-card.telegram .soc-ic{background:rgba(42,171,238,.14);color:#2AABEE}
+.soc-card.x .soc-ic{background:rgba(255,255,255,.08);color:#e8e8e8}
+.soc-ic svg{width:19px;height:19px}
+.soc-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+.soc-name{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:var(--txt)}
+.soc-tag{font-family:var(--fm);font-size:9px;font-weight:800;letter-spacing:.08em;padding:2px 6px;border-radius:999px;
+  background:rgba(80,230,180,.16);color:var(--mint)}
+.soc-handle{font-family:var(--fm);font-size:11.5px;color:var(--mint)}
+.soc-blurb{font-size:12.5px;color:var(--faint);line-height:1.45}
+.soc-go{margin-left:auto;align-self:center;color:var(--faint);font-size:15px}
+.soc-card:hover .soc-go{color:var(--mint)}
+.soc-note{font-size:12.5px;color:var(--faint);line-height:1.6}
+@media (max-width:520px){.soc-grid{grid-template-columns:1fr}}
+
 /* ============ RESPONSIVE ============ */
 @media (max-width:1420px){.c-liq{display:none}.row{grid-template-columns:50px minmax(200px,1.7fr) 118px 92px 108px 108px 148px 128px 44px}.np .row{grid-template-columns:50px minmax(200px,1.7fr) 96px 118px 92px 148px 44px}}
 @media (max-width:1240px){.c-info{display:none}.row{grid-template-columns:50px minmax(190px,1.7fr) 116px 92px 106px 106px 146px 44px}.top-stat{display:none}}

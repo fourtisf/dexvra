@@ -37,6 +37,7 @@ const GROW: NavItem[] = [
 ];
 
 const APP: NavItem[] = [
+  { href: "/community", label: "Community", icon: <svg viewBox="0 0 24 24" {...stroke}><path d="M4 9h9l4 3.5V9h3V4H4v5z" /><path d="M8 13v4h8l4 3v-3h0" /></svg> },
   { href: "/install", label: "Install App", icon: <svg viewBox="0 0 24 24" {...stroke}><path d="M12 3v11M8 10l4 4 4-4" /><path d="M5 19h14" /></svg> },
   { href: "/account", label: "Account", icon: <svg viewBox="0 0 24 24" {...stroke}><circle cx="12" cy="8.5" r="3.8" /><path d="M4.5 20c1.4-3.4 4.1-5 7.5-5s6.1 1.6 7.5 5" /></svg> },
 ];
@@ -95,9 +96,8 @@ export function Sidebar() {
       <NavGroup label="Grow" items={GROW} pathname={pathname} />
       <NavGroup label="App" items={APP} pathname={pathname} />
 
-      {/* Community links. The footer carries the same two, but the footer sits
-          below the fold on every long board — the sidebar is where someone
-          looks for "where do I follow this". */}
+      {/* Quick reach for the two primary accounts. The full list — listing,
+          trending, bot — lives on /community, linked in the App group above. */}
       <div className="side-soc">
         <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer" title={`Telegram ${TELEGRAM_HANDLE}`}>
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

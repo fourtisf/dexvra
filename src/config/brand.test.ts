@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_URL } from "./brand.ts";
+import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_URL } from "./socials.ts";
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
 
@@ -86,4 +86,44 @@ test("no page fakes an action with a toast", () => {
       `${path.relative(process.cwd(), file)} pretends an action succeeded without doing it`,
     );
   }
+});
+
+test("/community lists every channel, from the one shared list", () => {
+  // The same accounts are named by the bot's CHANNELS config, printed on the
+  // channel artwork, and linked from the footer and sidebar. The page must read
+  // the list, not restate it — a hand-written copy is what goes stale.
+  const src = read("src/app/(site)/community/page.tsx");
+  assert.match(src, /from "@\/config\/socials"/);
+  assert.match(src, /SOCIALS\.map/);
+  assert.ok(!/t\.me\/|x\.com\//.test(src), "no URL is hardcoded on the page itself");
+});
+
+test("every channel entry is complete and reachable", async () => {
+  const { SOCIALS } = await import("./socials.ts");
+  const keys = new Set<string>();
+  for (const s of SOCIALS) {
+    assert.ok(!keys.has(s.key), `duplicate key ${s.key}`);
+    keys.add(s.key);
+    assert.match(s.url, /^https:\/\/(t\.me|x\.com)\//, `${s.key}: ${s.url}`);
+    assert.match(s.handle, /^@\w+$/, `${s.key} handle looks wrong: ${s.handle}`);
+    assert.ok(s.blurb.length > 20, `${s.key} needs a reason to tap, not just a name`);
+    assert.ok(["telegram", "x"].includes(s.kind));
+    // The handle and the URL must name the SAME account, or the card lies.
+    assert.ok(s.url.toLowerCase().endsWith(s.handle.slice(1).toLowerCase()), `${s.key}: ${s.handle} vs ${s.url}`);
+  }
+  assert.ok(SOCIALS.some((s) => s.primary), "at least one must be marked as where to start");
+});
+
+test("the page is reachable — a page nobody can find is not a page", () => {
+  assert.match(read("src/components/Sidebar.tsx"), /href: "\/community"/, "it is in the sidebar nav");
+  assert.match(read("src/app/(site)/layout.tsx"), /href="\/community"/, "and in the footer");
+});
+
+test("the page warns about impersonation, because a listing site attracts it", () => {
+  // A lookalike channel DMing a project mid-listing to ask for a "fee" is the
+  // standard scam here. Naming the real handles in one place is the defence.
+  const src = read("src/app/(site)/community/page.tsx");
+  assert.match(src, /never DM you first/);
+  assert.match(src, /seed\s*\n?\s*phrase/);
+  assert.match(src, /@dexvrabot/);
 });
