@@ -107,11 +107,17 @@ test("every channel entry is complete and reachable", async () => {
     assert.match(s.url, /^https:\/\/(t\.me|x\.com)\//, `${s.key}: ${s.url}`);
     assert.match(s.handle, /^@\w+$/, `${s.key} handle looks wrong: ${s.handle}`);
     assert.ok(s.blurb.length > 20, `${s.key} needs a reason to tap, not just a name`);
-    assert.ok(["telegram", "x"].includes(s.kind));
+    assert.ok(["telegram", "group", "x", "bot"].includes(s.kind), `${s.key}: unknown kind ${s.kind}`);
     // The handle and the URL must name the SAME account, or the card lies.
     assert.ok(s.url.toLowerCase().endsWith(s.handle.slice(1).toLowerCase()), `${s.key}: ${s.handle} vs ${s.url}`);
   }
   assert.ok(SOCIALS.some((s) => s.primary), "at least one must be marked as where to start");
+  // START HERE on more than a third of the cards stops meaning anything.
+  assert.ok(SOCIALS.filter((s) => s.primary).length <= 2, "too many are marked primary to be a signal");
+  // A group is a two-way chat and a bot is a tool; both are mislabelled the
+  // moment they are filed as broadcast channels.
+  assert.strictEqual(SOCIALS.find((s) => s.key === "group")?.kind, "group");
+  assert.strictEqual(SOCIALS.find((s) => s.key === "tradebot")?.kind, "bot");
 });
 
 test("the page is reachable — a page nobody can find is not a page", () => {
@@ -123,7 +129,53 @@ test("the page warns about impersonation, because a listing site attracts it", (
   // A lookalike channel DMing a project mid-listing to ask for a "fee" is the
   // standard scam here. Naming the real handles in one place is the defence.
   const src = read("src/app/(site)/community/page.tsx");
-  assert.match(src, /never DM you first/);
+  assert.match(src, /never sends the first direct message/);
   assert.match(src, /seed\s*\n?\s*phrase/);
   assert.match(src, /@dexvrabot/);
+  // The scope bug the copy panel caught: folding "outside @dexvrabot" into the
+  // list of things Dexvra never asks for reads as "inside the bot, we do".
+  assert.ok(!/never (take payment|ask)[^.]*outside <b>@dexvrabot/.test(src), "the two claims must stay separate sentences");
+});
+
+test("every blurb survives the constraints the copy was written to", async () => {
+  const { SOCIALS } = await import("./socials.ts");
+  // Hype and in-group jargon: a project founder reading English as a second
+  // language stops dead on these, and they make the product sound like every
+  // other listing site.
+  const banned = [
+    "moon", "gem", "alpha", "degen", "ape", "100x", "don't miss", "join now",
+    "stay tuned", "gateway", "one-stop", "revolution", "pump alert", "shill",
+    "calls", "the whole shop", "tell apart", "as it stands", "mirrored",
+  ];
+  for (const s of SOCIALS) {
+    const low = s.blurb.toLowerCase();
+    for (const w of banned) assert.ok(!low.includes(w), `${s.key}: "${w}" — ${s.blurb}`);
+    assert.ok(!s.blurb.includes("!"), `${s.key} uses an exclamation mark`);
+    const words = s.blurb.split(/\s+/).length;
+    assert.ok(words >= 8 && words <= 18, `${s.key}: ${words} words — ${s.blurb}`);
+    // A blurb that repeats the card's own name says nothing the reader cannot
+    // already see one line above it.
+    assert.notStrictEqual(low.trim(), s.name.toLowerCase().trim());
+  }
+});
+
+test("the two bots can never be mistaken for each other", async () => {
+  // One sells placement, the other trades tokens. A reader who confuses them
+  // either pays for an ad expecting a trade, or waits for a listing that is
+  // actually a swap. Each line leads with its own verb.
+  const { SOCIALS } = await import("./socials.ts");
+  const shop = SOCIALS.find((s) => s.key === "bot")!;
+  const trade = SOCIALS.find((s) => s.key === "tradebot")!;
+  assert.match(shop.blurb, /^Book /, `the shop bot must lead with what it sells: ${shop.blurb}`);
+  assert.match(trade.blurb, /^Buy and sell /, `the trading bot must lead with trading: ${trade.blurb}`);
+  assert.ok(!shop.blurb.toLowerCase().includes("trade"), "the shop bot must not mention trading");
+  assert.ok(!trade.blurb.toLowerCase().includes("banner"), "the trading bot must not mention placement");
+});
+
+test("the group reads as two-way without needing the word 'channel'", async () => {
+  const { SOCIALS } = await import("./socials.ts");
+  const g = SOCIALS.find((s) => s.key === "group")!;
+  // Behaviour, not a label: "anyone can post" is understood by a reader who has
+  // never thought about the difference between a group and a channel.
+  assert.match(g.blurb, /Anyone can post/i, g.blurb);
 });

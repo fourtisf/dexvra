@@ -5,7 +5,7 @@ import { SOCIALS, type SocialKind } from "@/config/socials";
 
 export const metadata: Metadata = {
   title: `${BRAND_NAME} — Community`,
-  description: `Every official ${BRAND_NAME} channel: Telegram announcements, listing and trending alerts, the bot, and X.`,
+  description: `Every official ${BRAND_NAME} account: listing and trending alerts, announcements, the community group, the listing bot, the trading bot, and X.`,
 };
 
 // Inline so the page has no runtime dependency and renders as static HTML.
@@ -51,7 +51,7 @@ export default function CommunityPage() {
       <PageHead
         icon="📣"
         title="Community"
-        sub={`Every official ${BRAND_NAME} channel. Anything not on this page is not us — check the handle before you trust it.`}
+        sub={`Every official ${BRAND_NAME} account: what each one posts, where projects buy listings and trending slots, and which bot trades tokens.`}
       />
 
       <div className="soc-grid">
@@ -80,12 +80,17 @@ export default function CommunityPage() {
       </div>
 
       {/* Impersonation is the standard scam against a listing site: a lookalike
-          channel DMs a project mid-listing and asks for a "fee". Naming the real
-          handles in one place is the cheapest defence there is. */}
+          channel messages a project mid-listing and asks for a "fee". Naming the
+          real handles in one place is the cheapest defence there is.
+
+          The two sentences are kept separate on purpose. Folding "outside
+          @dexvrabot" into the list of things Dexvra never asks for reads, on a
+          plain parse, as "inside the bot we DO ask for your seed phrase". */}
       <div className="panel soc-note">
-        <b>⚠️ Beware of impersonators.</b> {BRAND_NAME} will never DM you first, never ask for your seed
-        phrase, and never take payment outside <b>@dexvrabot</b>. Every real channel is listed above and
-        linked from <b>{BRAND_DOMAIN}</b>.
+        <b>⚠️ Beware of impersonators.</b> {BRAND_NAME} never sends the first direct message, and never
+        asks for an extra fee, a wallet key or a seed phrase. <b>@dexvrabot</b> quotes every price and
+        generates every payment address, and the accounts listed on this page — all linked from{" "}
+        <b>{BRAND_DOMAIN}</b> — are the only official ones.
       </div>
     </section>
   );

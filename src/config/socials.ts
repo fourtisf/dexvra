@@ -28,7 +28,9 @@ export interface Social {
   handle: string;
   url: string;
   /** What someone gets by following it — the reason to tap, not a restatement
-   *  of the name. */
+   *  of the name. 8–16 words, plain English, no in-group jargon: this page is
+   *  read by project founders deciding where to spend a budget, many of whom
+   *  read English as a second language. */
   blurb: string;
   /** The one to follow first, if you only follow one. */
   primary?: boolean;
@@ -36,13 +38,60 @@ export interface Social {
 
 export const SOCIALS: Social[] = [
   {
+    key: "listing",
+    kind: "telegram",
+    name: "New listings",
+    handle: "@dexvralisting",
+    url: TELEGRAM_LISTING_URL,
+    // "pump alert" is glossed rather than used: a founder who is not a Telegram
+    // trader has no way to know what it means, and a card has no room to explain.
+    blurb: "Every listing as it goes live: contract, chain, price, market cap, and alerts when a token doubles.",
+    primary: true,
+  },
+  {
+    key: "bot",
+    kind: "bot",
+    name: "Listing and placement bot",
+    handle: "@dexvrabot",
+    url: BOT_URL,
+    blurb: "Book listings, trending slots and homepage banners, paid in SOL, BNB, ETH, TRX or TON.",
+    primary: true,
+  },
+  {
     key: "announce",
     kind: "telegram",
     name: "Announcements",
     handle: "@dexvraio",
     url: TELEGRAM_URL,
-    blurb: "Product news, new features, and the tokens we highlight. Start here.",
-    primary: true,
+    blurb: "Product and feature news, plus the extra post that higher-tier listings receive.",
+  },
+  {
+    key: "trending",
+    kind: "telegram",
+    name: "Trending board",
+    handle: "@dexvratrending",
+    url: TELEGRAM_TRENDING_URL,
+    blurb: "Every token that enters a trending slot, each rank change, and the board reposted regularly.",
+  },
+  {
+    key: "group",
+    kind: "group",
+    name: "Community group",
+    handle: "@dexvragroup",
+    url: TELEGRAM_GROUP_URL,
+    // Says two-way through BEHAVIOUR ("anyone can post") rather than through a
+    // label, which is what makes the difference from a channel land.
+    blurb: "Anyone can post here, not only Dexvra: traders and project teams talk directly.",
+  },
+  {
+    key: "tradebot",
+    kind: "bot",
+    name: "Trading bot",
+    handle: "@dexvratradebot",
+    url: TRADEBOT_URL,
+    // The two bots must never be confused — one sells placement, this one
+    // trades — so each line leads with its own verb.
+    blurb: "Buy and sell tokens inside Telegram; every listing and trending post has a buy button.",
   },
   {
     key: "x",
@@ -50,31 +99,6 @@ export const SOCIALS: Social[] = [
     name: "X",
     handle: "@dexvra",
     url: X_URL,
-    blurb: "The same calls as the channels, for the timeline crowd.",
-    primary: true,
-  },
-  {
-    key: "listing",
-    kind: "telegram",
-    name: "Listing Alerts",
-    handle: "@dexvralisting",
-    url: TELEGRAM_LISTING_URL,
-    blurb: "Every token the moment it lists — contract, chain and market cap.",
-  },
-  {
-    key: "trending",
-    kind: "telegram",
-    name: "Trending",
-    handle: "@dexvratrending",
-    url: TELEGRAM_TRENDING_URL,
-    blurb: "The live trending board, reposted as it moves.",
-  },
-  {
-    key: "bot",
-    kind: "telegram",
-    name: "Dexvra Bot",
-    handle: "@dexvrabot",
-    url: BOT_URL,
-    blurb: "List a token, book trending, buy a banner — the whole shop.",
+    blurb: "Every listing and announcement also goes to X, for people who do not use Telegram.",
   },
 ];
