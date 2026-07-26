@@ -318,53 +318,96 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
 
   const L = [];
   const SEP = '━━━━━━━━━━━━━━━━';
-  // ── Header: name · symbol, then chain · live trading venue, then the contract ──
+  // ── Header: name · symbol, then chain · venue · age, then the contract ──
+  // Age sits here rather than buried in a stats line: "6 minutes old" changes how
+  // you read every number under it, so it belongs beside the name.
+  const mkt = info.market;
+  const created = (api && api.createdAt) || (mkt && mkt.createdAt);
   const statusBadge = info.dex ? `◆ DEX${info.dexVenue === 'v3' ? ' · V3 pool' : ''}` : (info.graduated ? '◆ Graduated' : `◈ Bonding curve · ${(info.progressPct || 0).toFixed(0)}%`);
   L.push(`<b>${esc(name)}</b> · <b>$${esc(sym)}</b>`);
-  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}`);
+  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}${created ? `  ·  ${fmtAge(created)} old` : ''}`);
   L.push(`<code>${ca}</code>`);
   if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`); }
-  // ── Market stats (compact: paired values per line, minimal icons) ──
+  // ── Market ─────────────────────────────────────────────────────────────────
+  // Every value is labelled and every line leads with what it is. The old card
+  // printed bare fragments — "LP burned" alone on a line, "Liq 0.02 ETH" with
+  // nothing to compare it against — and silently DROPPED whole lines when a
+  // source returned nothing, so a chain with no indexer rendered three lines and
+  // read like a broken card rather than a thin token.
   L.push(SEP);
-  const mkt = info.market;
   const mcapUsd = (api && api.marketCapUsd) || (info.mcapEth * nativeUsd(nat));
   const priceStr = priceUsd > 0 ? '$' + priceUsd.toPrecision(3) : px.toExponential(2) + ' ' + nat;
   const mcapStr = mcapUsd > 0 ? '$' + fmt(mcapUsd) : usd(info.mcapEth, nat);
-  L.push(`Price <b>${priceStr}</b>  ·  MC <b>${mcapStr}</b>`);
-  // Liquidity / Raised · Vol 24h
-  const line2 = [];
-  if (info.liquidityNative != null) line2.push(`Liq <b>${info.liquidityNative.toFixed(2)} ${nat}</b> (${usd(info.liquidityNative, nat)})`);
-  else if (info.raised != null) line2.push(`Raised <b>${info.raised.toFixed(2)}/${(info.target || 0).toFixed(1)} ${nat}</b>`);
-  const vol24 = (api && api.volume && api.volume.h24Usd != null) ? api.volume.h24Usd : (mkt && mkt.volH24Usd != null ? mkt.volH24Usd : null);
-  if (vol24 != null) line2.push(`Vol 24h <b>$${fmt(vol24)}</b>`);
-  if (line2.length) L.push(line2.join('  ·  '));
+  L.push(`💵 <b>Price</b> ${priceStr}   ·   🌍 <b>Mcap</b> ${mcapStr}`);
+  // Liquidity carries the number that actually answers "can I get out again":
+  // how it compares to the market cap. $36 of liquidity under a $2.59K cap is the
+  // whole story of a token, and the card used to leave the reader to divide it.
+  if (info.liquidityNative != null) {
+    const liqUsd = info.liquidityNative * nativeUsd(nat);
+    const share = mcapUsd > 0 && liqUsd > 0 ? `   ·   <b>${((liqUsd / mcapUsd) * 100).toFixed(1)}%</b> of mcap` : '';
+    // Decimals that match the magnitude: 0.020 ETH and 210.4 ETH both want to be
+    // read at a glance, and one fixed precision cannot do both.
+    const q = info.liquidityNative;
+    const qStr = q < 1 ? q.toFixed(3) : q < 100 ? q.toFixed(2) : q.toFixed(1);
+    L.push(`💧 <b>Liquidity</b> ${qStr} ${nat} (${usd(info.liquidityNative, nat)})${share}`);
+  } else if (info.raised != null) {
+    const pct = info.target > 0 ? (info.raised / info.target) * 100 : 0;
+    L.push(`🚀 <b>Raised</b> ${info.raised.toFixed(2)} / ${(info.target || 0).toFixed(1)} ${nat}   ·   <b>${pct.toFixed(0)}%</b> to graduation`);
+  }
   // Thin-pool warning: indexer sees far deeper liquidity than the pool the bot can trade.
   if (info.liquidityNative != null && mkt && mkt.liqUsd > 0) {
     const poolUsd = info.liquidityNative * nativeUsd(nat);
-    if (mkt.liqUsd > Math.max(poolUsd, 1) * 5) L.push(`⚠️ Thin tradeable pool — market liq <b>$${fmt(mkt.liqUsd)}</b> sits on a pool this bot can't reach; buys move the price hard.`);
+    if (mkt.liqUsd > Math.max(poolUsd, 1) * 5) L.push(`⚠️ <b>Thin tradeable pool</b> — the market's <b>$${fmt(mkt.liqUsd)}</b> sits on a pool this bot can't reach. Buys here move the price hard.`);
   }
-  // Change · Txns
   if (mkt) {
     const chg = (v) => (v == null ? null : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`);
     const c1 = chg(mkt.chgH1), c24 = chg(mkt.chgH24);
-    const line3 = [];
-    if (c1 != null || c24 != null) line3.push([c1 != null ? `1h ${c1}` : null, c24 != null ? `24h ${c24}` : null].filter(Boolean).join(' · '));
-    if (mkt.buysH24 != null || mkt.sellsH24 != null) line3.push(`${mkt.buysH24 || 0} buys / ${mkt.sellsH24 || 0} sells`);
-    if (line3.length) L.push(line3.join('  ·  '));
+    // An arrow makes the direction readable before the number is: a wall of
+    // percentages is what people skim past.
+    const arrow = (v) => (v == null ? '' : (v >= 0 ? '🟢 ' : '🔴 '));
+    const parts = [];
+    if (c1 != null) parts.push(`1h ${arrow(mkt.chgH1)}${c1}`);
+    if (c24 != null) parts.push(`24h ${arrow(mkt.chgH24)}${c24}`);
+    if (parts.length) L.push(`📈 <b>Change</b> ${parts.join('   ·   ')}`);
   }
-  // Holders · LP · Tax · flags · Age (one line)
-  const line4 = [];
-  if (sec && sec.holders != null) line4.push(`${sec.holders} holders`);
-  if (sec && sec.lpLockedPct != null) line4.push(`LP ${Math.round(sec.lpLockedPct)}% locked`);
-  else if (ch.curve && info.graduated) line4.push('LP burned');
-  if (sec) line4.push(`Tax ${taxStr(sec.buyTaxPct)}/${taxStr(sec.sellTaxPct)}`);
-  if (sec && sec.honeypot) line4.push('🔴 HONEYPOT');
-  if (sec && sec.openSource === false) line4.push('closed-source');
-  const created = (api && api.createdAt) || (mkt && mkt.createdAt);
-  if (created) line4.push(`Age ${fmtAge(created)}`);
-  if (line4.length) L.push(line4.join('  ·  '));
-  else if (ch.curve && !sec) L.push(`Fair-launch · 0% tax · LP burned on graduation`);
-  if (api && api.links) { const lk = []; if (api.links.website) lk.push(`<a href="${esc(api.links.website)}">Web</a>`); if (api.links.twitter) lk.push(`<a href="${esc(api.links.twitter)}">X</a>`); if (api.links.telegram) lk.push(`<a href="${esc(api.links.telegram)}">TG</a>`); if (lk.length) L.push(lk.join(' · ')); }
+  const vol24 = (api && api.volume && api.volume.h24Usd != null) ? api.volume.h24Usd : (mkt && mkt.volH24Usd != null ? mkt.volH24Usd : null);
+  const volParts = [];
+  if (vol24 != null) volParts.push(`$${fmt(vol24)}`);
+  if (mkt && (mkt.buysH24 != null || mkt.sellsH24 != null)) volParts.push(`${mkt.buysH24 || 0} buys / ${mkt.sellsH24 || 0} sells`);
+  if (volParts.length) L.push(`🔄 <b>Vol 24h</b> ${volParts.join('   ·   ')}`);
+  // Safety line: holders, LP, tax and the red flags, each named rather than left
+  // as a bare word the reader has to interpret.
+  const safe = [];
+  if (sec && sec.holders != null) safe.push(`👥 ${sec.holders} holders`);
+  if (sec && sec.lpLockedPct != null) safe.push(`🔒 LP ${Math.round(sec.lpLockedPct)}% locked`);
+  else if (ch.curve && info.graduated) safe.push('🔒 LP burned');
+  if (sec) safe.push(`⚖️ Tax ${taxStr(sec.buyTaxPct)} buy / ${taxStr(sec.sellTaxPct)} sell`);
+  else if (ch.curve) safe.push('⚖️ Fair launch · 0% tax');   // launchpad tokens can't set a tax
+  if (sec && sec.honeypot) safe.push('🚨 HONEYPOT');
+  if (sec && sec.openSource === false) safe.push('⚠️ closed-source');
+  if (safe.length) L.push(safe.join('   ·   '));
+  // What a trade costs, which the card could never answer. On a cheap L2 "about
+  // four cents" is often what decides whether a small buy is worth making.
+  if (info.gas && info.gas.gwei > 0) {
+    const feeUsd = info.gas.feeNative * nativeUsd(nat);
+    const feeStr = feeUsd > 0 ? ` · ≈<b>$${feeUsd < 0.01 ? feeUsd.toFixed(4) : feeUsd.toFixed(2)}</b> per trade` : '';
+    L.push(`⛽ <b>Gas</b> ${info.gas.gwei < 1 ? info.gas.gwei.toFixed(3) : info.gas.gwei.toFixed(1)} gwei${feeStr}`);
+  }
+  // Say what is missing instead of just omitting the lines. A card that shrinks
+  // to three lines on a chain with no indexer looks broken; saying so once tells
+  // the reader the numbers above are still real, and read straight from chain.
+  const gaps = [];
+  if (!mkt) gaps.push('volume', 'price change');
+  if (!sec) { gaps.push('holder count'); if (!ch.curve) gaps.push('tax'); }
+  if (gaps.length) {
+    const listed = gaps.length > 1 ? `${gaps.slice(0, -1).join(', ')} and ${gaps[gaps.length - 1]}` : gaps[0];
+    L.push(`ℹ️ <i>No indexer covers ${esc(ch.name)} yet — ${listed} unavailable. The prices above are read straight from the chain.</i>`);
+  }
+  // Maestro's own card shows a timestamp because its numbers can be minutes old.
+  // Ours are fetched on render — saying so is what makes a stale-looking price
+  // trustworthy, and points at the button that refetches it.
+  L.push(`🕐 <i>Updated ${new Date().toISOString().slice(11, 19)} UTC · tap 🔄 Refresh for a new read</i>`);
+  if (api && api.links) { const lk = []; if (api.links.website) lk.push(`<a href="${esc(api.links.website)}">Web</a>`); if (api.links.twitter) lk.push(`<a href="${esc(api.links.twitter)}">X</a>`); if (api.links.telegram) lk.push(`<a href="${esc(api.links.telegram)}">TG</a>`); if (lk.length) L.push(`🔗 ${lk.join(' · ')}`); }
   const valueEth = bal * px;
   const sel = core.tradeSelection(chatId);
   const selIds = new Set(core.tradeWalletIds(chatId));

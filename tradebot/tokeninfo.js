@@ -91,6 +91,22 @@ async function marketStats(ca, chainKey) {
   } catch (_) { return null; }
 }
 
+// Live gas price, and what one swap costs at it. "What will this trade cost me"
+// is the question the card could not answer at all, and on a cheap L2 the answer
+// ("about four cents") is often what decides whether a small buy is worth making.
+// The PRICE is read from the chain; the units are a representative swap, so the
+// cost is shown with a ≈ and never presented as a quote.
+const SWAP_GAS_UNITS = 300000n;
+async function gasSnapshot(chainKey) {
+  try {
+    if (core.chains.isSvm(chainKey)) return null;   // Solana fees are flat, tiny, and not gwei
+    const fd = await core.providerFor(chainKey).getFeeData();
+    const price = fd.gasPrice || fd.maxFeePerGas;
+    if (!price || price <= 0n) return null;
+    return { gwei: Number(ethers.formatUnits(price, 'gwei')), feeNative: Number(ethers.formatEther(price * SWAP_GAS_UNITS)) };
+  } catch (_) { return null; }
+}
+
 // Launchpad public API token record (Robinhood-chain launches only).
 async function launchpadApi(ca) {
   try {
@@ -128,6 +144,7 @@ async function enrich(ca, chainKey) {
   }).catch(() => { info.liquidityNative = null; }));
   if (chain.curve) tasks.push(launchpadApi(ca).then((a) => { info.api = a; }));
   tasks.push(marketStats(ca, chainKey).then((m) => { if (m) info.market = m; }));
+  tasks.push(gasSnapshot(chainKey).then((g) => { info.gas = g; }));
   if (goplus.supported(chainKey)) tasks.push(goplus.tokenSecurity(chainKey, ca).then((s) => { info.security = s; }).catch(() => {}));
   // Each task swallows its own errors, so Promise.all never rejects; the timeout
   // caps total latency and any unfinished task simply leaves its field undefined.
@@ -135,4 +152,4 @@ async function enrich(ca, chainKey) {
   return info;
 }
 
-module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi, marketStats };
+module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi, marketStats, gasSnapshot };
