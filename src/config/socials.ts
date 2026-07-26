@@ -13,8 +13,13 @@ export const TELEGRAM_LISTING_URL = "https://t.me/dexvralisting";
 export const TELEGRAM_TRENDING_URL = "https://t.me/dexvratrending";
 export const X_URL = "https://x.com/dexvra";
 export const BOT_URL = "https://t.me/dexvrabot";
+export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
+export const TRADEBOT_URL = "https://t.me/dexvratradebot";
 
-export type SocialKind = "telegram" | "x";
+// "group" is deliberately its own kind, not a flavour of telegram: a two-way
+// chat and a broadcast channel are different things to join, and a reader who
+// confuses them posts a question into a channel that cannot reply.
+export type SocialKind = "telegram" | "group" | "x" | "bot";
 
 export interface Social {
   key: string;

@@ -9,11 +9,32 @@ export const metadata: Metadata = {
 };
 
 // Inline so the page has no runtime dependency and renders as static HTML.
+// A group and a bot get their own marks: they are different things to join, and
+// five identical paper planes would tell a reader nothing about which is which.
 function Icon({ kind }: { kind: SocialKind }) {
   if (kind === "x") {
     return (
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="M18.2 2h3.3l-7.2 8.3L23 22h-6.7l-5.2-6.8L5.1 22H1.8l7.7-8.8L1 2h6.8l4.7 6.2L18.2 2zm-1.2 18h1.8L7.1 3.9H5.2L17 20z" />
+      </svg>
+    );
+  }
+  if (kind === "group") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+        <circle cx="9" cy="8.5" r="3.2" />
+        <path d="M2.8 19.5c1-2.9 3.3-4.3 6.2-4.3s5.2 1.4 6.2 4.3" />
+        <circle cx="17" cy="7" r="2.4" />
+        <path d="M17 12.2c2 .1 3.5 1.2 4.2 3.1" />
+      </svg>
+    );
+  }
+  if (kind === "bot") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+        <rect x="4" y="8" width="16" height="11" rx="3.2" />
+        <path d="M12 8V4.8M9.5 13v1.4M14.5 13v1.4M2.5 12.5v3M21.5 12.5v3" />
+        <circle cx="12" cy="4" r="1.2" fill="currentColor" stroke="none" />
       </svg>
     );
   }
