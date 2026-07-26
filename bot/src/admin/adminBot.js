@@ -63,7 +63,7 @@ function mainKb() {
     [Markup.button.callback("🔍 Preview all templates", "audit")],
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
-    [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
+    [Markup.button.callback("🎨 Gambar Banner Channel", "bt")],
     [Markup.button.callback("🚀 Force post to channel (test live)", "fp")],
     [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
     [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
@@ -230,58 +230,58 @@ const BT_FILL_KINDS = new Set(["listing", "trending", "pump"]);
 const BT_CLIP_FILL_KINDS = new Set([...BT_FILL_KINDS, "banner"]);
 
 function btHomeText() {
-  const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
+  const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ punya sendiri" : bannerTpl.hasTemplate(k) ? "💎 bawaan" : "— belum ada");
   const on = bannerTpl.postingEnabled();
   return (
-    `🎨 <b>Channel Banner Artwork</b>\n\n` +
-    `Designed artwork per service; the bot composites each token's <b>logo</b> ` +
-    `(or the advertiser's <b>creative</b> for Banner Ads) into the artwork's slot, ` +
-    `plus an optional <b>$TICKER + name</b> overlay.\n\n` +
-    `Banner posts: <b>${on ? "🟢 ON" : "🔴 OFF — channel posts fall back to the raw token logo!"}</b>\n\n` +
+    `🎨 <b>Gambar Banner Channel</b>\n\n` +
+    `Setiap layanan punya gambar sendiri. Bot menempelkan <b>logo</b> token ` +
+    `(atau <b>gambar client</b> untuk Banner Ads) ke dalam kotak di gambar itu, ` +
+    `plus tulisan <b>$TICKER + nama</b> kalau diaktifkan.\n\n` +
+    `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
     `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n\n` +
-    `Pick a service to configure:`
+    `Pilih layanan yang mau diatur:`
   );
 }
 function btHomeKb() {
   const on = bannerTpl.postingEnabled();
   return Markup.inlineKeyboard([
-    [Markup.button.callback(on ? "🟢 Banner posts: ON — tap to turn OFF" : "🔴 Banner posts: OFF — tap to turn ON", `bt_on:${on ? 0 : 1}`)],
+    [Markup.button.callback(on ? "🟢 Kirim banner: AKTIF — tekan untuk matikan" : "🔴 Kirim banner: MATI — tekan untuk nyalakan", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
     [Markup.button.callback(BT_KINDS.rankup, "btk:rankup")],
-    [Markup.button.callback("⬅ Back", "home")],
+    [Markup.button.callback("⬅ Kembali", "home")],
   ]);
 }
 function btKindText(kind) {
   const clip = bannerTpl.mediaOverride(kind);
-  const clipLine = clip ? `🎞 GIF/Video: <b>${clip.type} set — overrides the still</b>\n` : `🎞 GIF/Video: <b>— none</b>\n`;
+  const clipLine = clip ? `🎞 GIF/Video: <b>sudah ada — dipakai menggantikan gambar diam</b>\n` : `🎞 GIF/Video: <b>— belum ada</b>\n`;
   if (!BT_ARTWORK_KINDS.has(kind)) {
     // media-only kinds (pump alert = text card; rank-up = auto dynamic banner). A clip
     // plays above / overrides the default.
     const note =
       kind === "rankup"
-        ? `\nRank-up alerts post an <b>auto-generated banner</b> by default (rank medallion + % gain). A GIF/video here <b>overrides</b> it and plays above every rank-up post.`
-        : `\nUpload a GIF or short MP4 to play above every ${BT_KINDS[kind].replace(/^\S+\s/, "")} post. Token details stay in the caption text.`;
+        ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
+        : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
     return `🎨 <b>${BT_KINDS[kind]}</b>\n\n` + clipLine + note;
   }
   const s = bannerTpl.getSettings(kind);
-  const src = bannerTpl.hasUploaded(kind) ? "✅ custom uploaded" : bannerTpl.hasTemplate(kind) ? "💎 bundled default" : "— none (auto-banner used)";
+  const src = bannerTpl.hasUploaded(kind) ? "✅ upload sendiri" : bannerTpl.hasTemplate(kind) ? "💎 bawaan" : "— belum ada (pakai banner otomatis)";
   const slot =
     s.slotShape === "rect"
-      ? `slot <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})`
-      : `logo <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})`;
+      ? `kotak <b>${s.slotW}×${s.slotH}px</b> di (${s.logoX}, ${s.logoY})`
+      : `logo <b>${s.logoSize}px</b> di (${s.logoX}, ${s.logoY})`;
   return (
-    `🎨 <b>${BT_KINDS[kind]} artwork</b>\n\n` +
-    `Artwork: ${src}\n` +
+    `🎨 <b>Gambar ${BT_KINDS[kind]}</b>\n\n` +
+    `Gambar: ${src}\n` +
     clipLine +
-    `Media slot: ${slot}\n` +
-    `Text overlay: <b>${s.showText ? "on" : "off"}</b> (${s.tickerFontSize}px at ${s.tickerX}, ${s.tickerY})\n\n` +
-    `Settings are separate per service. A GIF/video, when set, is used instead of the still artwork.`
+    `Kotak gambar: ${slot}\n` +
+    `Tulisan otomatis: <b>${s.showText ? "aktif" : "mati"}</b> (${s.tickerFontSize}px di ${s.tickerX}, ${s.tickerY})\n\n` +
+    `Setelan terpisah untuk tiap layanan. Kalau GIF/video diisi, itu yang dipakai — bukan gambar diamnya.`
   );
 }
 function btKindKb(kind) {
   const clipRow = [Markup.button.callback("🎞 Upload GIF/Video", `bt_med:${kind}`)];
-  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Remove clip", `bt_medrm:${kind}`));
+  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Hapus GIF/Video", `bt_medrm:${kind}`));
   if (!BT_ARTWORK_KINDS.has(kind)) {
     const rows = [clipRow];
     if (bannerTpl.mediaOverride(kind)) {
@@ -289,10 +289,10 @@ function btKindKb(kind) {
       // + auto-text toggle just like listing/trending — its own ▲%/price/MCAP.
       if (BT_FILL_KINDS.has(kind)) {
         const textOn = bannerTpl.getSettings(kind).showText !== false;
-        rows.push([Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)]);
-        rows.push([Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)]);
+        rows.push([Markup.button.callback("🎛 Atur tata letak — ukuran · posisi", `bxo:${kind}`)]);
+        rows.push([Markup.button.callback(textOn ? "🔤 Tulisan otomatis: AKTIF — tekan untuk sembunyikan" : "🔤 Tulisan otomatis: MATI — logo saja", `bt_txt:${kind}`)]);
       }
-      rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+      rows.push([Markup.button.callback("👁 Lihat hasil", `bt_prev:${kind}`)]);
     }
     // Pump alert trigger window (min%/max%) — configurable, applies to the alert
     // logic regardless of whether a clip is set.
@@ -300,17 +300,17 @@ function btKindKb(kind) {
       const { minPct, maxPct } = pumpConfig.get();
       rows.push([Markup.button.callback(`⚙ Alert window · ${minPct}%–${maxPct}%`, "pth")]);
     }
-    rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
+    rows.push([Markup.button.callback("⬅ Menu gambar", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
   const textOn = bannerTpl.getSettings(kind).showText !== false;
   return Markup.inlineKeyboard([
-    [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
+    [Markup.button.callback("⬆ Upload gambar", `bt_up:${kind}`)],
     clipRow,
-    [Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)],
-    [Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)],
-    [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
-    [Markup.button.callback("⬅ Artwork menu", "bt")],
+    [Markup.button.callback("🎛 Atur tata letak — ukuran · posisi", `bxo:${kind}`)],
+    [Markup.button.callback(textOn ? "🔤 Tulisan otomatis: AKTIF — tekan untuk sembunyikan" : "🔤 Tulisan otomatis: MATI — logo saja", `bt_txt:${kind}`)],
+    [Markup.button.callback("👁 Lihat hasil", `bt_prev:${kind}`), Markup.button.callback("🗑 Hapus gambar", `bt_rm:${kind}`)],
+    [Markup.button.callback("⬅ Menu gambar", "bt")],
   ]);
 }
 
@@ -712,7 +712,7 @@ const BT_ELEMS = {
   logo: { label: "🪙 Logo", xKey: "logoX", yKey: "logoY" },
   ticker: { label: "🔤 Ticker+Name", xKey: "tickerX", yKey: "tickerY", sizeKey: "tickerFontSize", step: 8 },
   meta: { label: "📊 Chips", xKey: "metaX", yKey: "metaY", sizeKey: "metaFontSize", step: 4 },
-  badge: { label: "🏷 Badge", xKey: "badgeX", yKey: "badgeY", sizeKey: "badgeFontSize", step: 4 },
+  badge: { label: "🏷 Label tier", xKey: "badgeX", yKey: "badgeY", sizeKey: "badgeFontSize", step: 4 },
 };
 const BT_ELEM_KEYS = Object.keys(BT_ELEMS);
 
@@ -940,12 +940,12 @@ function sampleData(kind, pct) {
 const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
-  name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
+  name: { label: "📝 Nama token", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
   // Pump-only elements: the big "▲ +N%" headline and the "old → new" price line.
-  pct: { label: "📈 % Change", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
-  price: { label: "💱 Price →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
-  meta: { label: "📊 Chips (chain·price·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
-  badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  pct: { label: "📈 % Kenaikan", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
+  price: { label: "💱 Harga →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
+  meta: { label: "📊 Info (chain·harga·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  badge: { label: "🏷 Label tier", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
 };
 const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
 const BX_MOVE_FINE = 10;
@@ -955,10 +955,10 @@ function bxMenuText(kind) {
   const rect = s.slotShape === "rect";
   const anim = !!bannerTpl.mediaOverride(kind);
   return (
-    `🎛 <b>${BT_KINDS[kind]} — Layout editor</b>\n\n` +
+    `🎛 <b>${BT_KINDS[kind]} — Atur tata letak</b>\n\n` +
     (rect
-      ? `Here you set the <b>box</b> where the client's picture goes.\n\nTap the box below to change its <b>size</b> and <b>place</b>, then tap 👁 <b>Preview</b> to see the result.`
-      : `Tap a part below to change its <b>size ➖ ➕</b> and its <b>place</b>. Tap 👁 <b>Preview</b> any time to see it on your ${anim ? "<b>moving template</b>" : "banner"}.`)
+      ? `Di sini Anda atur <b>kotak</b> tempat gambar client ditaruh.\n\nTekan kotaknya di bawah untuk mengubah <b>ukuran</b> dan <b>posisi</b>, lalu tekan 👁 <b>Lihat hasil</b>.`
+      : `Tekan salah satu bagian di bawah untuk mengubah <b>ukuran ➖ ➕</b> dan <b>posisi</b>-nya. Tekan 👁 <b>Lihat hasil</b> kapan saja untuk melihatnya di ${anim ? "<b>template bergerak</b>" : "banner"} Anda.`)
   );
 }
 function bxMenuKb(kind) {
@@ -968,7 +968,7 @@ function bxMenuKb(kind) {
   const cb = Markup.button.callback;
   const rows = [];
   if (rect) {
-    rows.push([cb(`🖼 Picture box · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
+    rows.push([cb(`🖼 Kotak gambar · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
   } else {
     const showText = s.showText !== false;
     const showBadge = s.showBadge !== false;
@@ -1020,28 +1020,28 @@ function bxElemText(kind, elem) {
     const y = cy ? Math.round((H - h) / 2) : Number(s.logoY) || 0;
     const right = W - x - w;
     const even = Math.abs(x - right) <= 2;
-    const side = x > right ? "LEFT" : "RIGHT";
+    const side = x > right ? "KIRI" : "KANAN";
     return (
-      `🖼 <b>${BT_KINDS[kind]} — the box for the client's picture</b>\n\n` +
-      `📏 <b>Box size:</b> ${w} × ${h} px — ${Math.round((w / W) * 100)}% of the full width\n` +
-      `📍 <b>Empty space:</b> ${x} px on the left, ${right} px on the right\n` +
+      `🖼 <b>${BT_KINDS[kind]} — kotak untuk gambar client</b>\n\n` +
+      `📏 <b>Ukuran kotak:</b> ${w} × ${h} px — ${Math.round((w / W) * 100)}% dari lebar penuh\n` +
+      `📍 <b>Ruang kosong:</b> ${x} px di kiri, ${right} px di kanan\n` +
       (even
-        ? `✅ The box is in the middle (left–right).\n`
-        : `⚠️ The box is not in the middle — there is more empty space on the <b>${side}</b>. Tap <b>⬌ Centre</b>.\n`) +
-      `\n<b>What the buttons do</b>\n` +
-      `• <b>Width +/−</b> — make the box wide or narrow\n` +
-      `• <b>Height +/−</b> — make the box tall or short\n` +
-      `• <b>⬅ ⬆ ⬇ ➡</b> — move the box\n` +
-      `• <b>⬌ Centre</b> — put it in the middle, left–right\n` +
-      `• <b>⬍ Centre</b> — put it in the middle, up–down\n` +
-      `• <b>⌨ Set size / Set place</b> — type the numbers directly\n` +
-      `\nThe client's picture always fills the whole box (the extra part is cut off). ` +
-      `So if you see empty space, the <b>box</b> is wrong — not the picture.`
+        ? `✅ Kotak sudah di tengah (kiri–kanan).\n`
+        : `⚠️ Kotak belum di tengah — ruang kosong lebih banyak di <b>${side}</b>. Tekan <b>⬌ Ke tengah</b>.\n`) +
+      `\n<b>Fungsi tombol</b>\n` +
+      `• <b>Lebar ➕ / ➖</b> — perbesar atau perkecil kotak ke samping\n` +
+      `• <b>Tinggi ➕ / ➖</b> — perbesar atau perkecil kotak ke atas-bawah\n` +
+      `• <b>⬅ ⬆ ⬇ ➡</b> — geser kotaknya\n` +
+      `• <b>⬌ Ke tengah</b> — taruh di tengah, kiri–kanan\n` +
+      `• <b>⬍ Ke tengah</b> — taruh di tengah, atas–bawah\n` +
+      `• <b>⌨ Atur ukuran / Atur posisi</b> — ketik angkanya langsung\n` +
+      `\nGambar client selalu memenuhi seluruh kotak (bagian lebihnya dipotong). ` +
+      `Jadi kalau ada ruang kosong, yang salah <b>kotaknya</b> — bukan gambarnya.`
     );
   }
   const c = BX[elem];
-  const pos = c.nomove ? "" : ` · at <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
-  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nSize <b>${s[c.sizeKey]}px</b>${pos}`;
+  const pos = c.nomove ? "" : ` · di <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
+  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nUkuran <b>${s[c.sizeKey]}px</b>${pos}`;
 }
 function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
@@ -1052,28 +1052,29 @@ function bxElemKb(kind, elem) {
     // one control that fixes "the creative sits off to one side with dead space
     // beside it" was unreachable, and the only way to move a slot 300px was 15
     // taps of ➡.
-    // "Wider"/"Narrower"/"Taller"/"Shorter" are comparative adjectives — a
-    // reader has to translate them before acting, and the operator asked
-    // outright what "Wider" meant. A noun plus + / − needs no translating.
+    // Indonesian: this panel's only readers are the operator and their admins,
+    // and they asked for it. "Wider"/"Narrower" had to be translated in the
+    // head before it could be acted on — twice, first the word, then the
+    // comparison. "Lebar ➕" needs neither.
     return Markup.inlineKeyboard([
-      [cb("Width ➕", `bxsd:${kind}:slotw:20`), cb("Width ➖", `bxsd:${kind}:slotw:-20`)],
-      [cb("Height ➕", `bxsd:${kind}:sloth:20`), cb("Height ➖", `bxsd:${kind}:sloth:-20`)],
+      [cb("Lebar ➕", `bxsd:${kind}:slotw:20`), cb("Lebar ➖", `bxsd:${kind}:slotw:-20`)],
+      [cb("Tinggi ➕", `bxsd:${kind}:sloth:20`), cb("Tinggi ➖", `bxsd:${kind}:sloth:-20`)],
       [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
-      [cb("⬌ Centre", `bxc:${kind}:slot`), cb("⬍ Centre", `bxcy:${kind}:slot`)],
-      [cb("⌨ Set size", `bxsn:${kind}:slot`), cb("⌨ Set place", `bxmn:${kind}:slot`)],
-      [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
+      [cb("⬌ Ke tengah", `bxc:${kind}:slot`), cb("⬍ Ke tengah", `bxcy:${kind}:slot`)],
+      [cb("⌨ Atur ukuran", `bxsn:${kind}:slot`), cb("⌨ Atur posisi", `bxmn:${kind}:slot`)],
+      [cb("👁 Lihat hasil", `bxp:${kind}`), cb("⬅ Kembali", `bxo:${kind}`)],
     ]);
   }
   const c = BX[elem];
-  const rows = [[cb("➖ Smaller", `bxsd:${kind}:${elem}:${-c.sc}`), cb("➕ Bigger", `bxsd:${kind}:${elem}:${c.sc}`)]];
+  const rows = [[cb("Ukuran ➖", `bxsd:${kind}:${elem}:${-c.sc}`), cb("Ukuran ➕", `bxsd:${kind}:${elem}:${c.sc}`)]];
   if (c.nomove) {
-    rows.push([cb("⌨ Type exact size", `bxsn:${kind}:${elem}`)]);
+    rows.push([cb("⌨ Atur ukuran", `bxsn:${kind}:${elem}`)]);
   } else {
     rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-M}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-M}`), cb("⬇", `bxmd:${kind}:${elem}:0:${M}`), cb("➡", `bxmd:${kind}:${elem}:${M}:0`)]);
-    rows.push([cb("⬌ Centre", `bxc:${kind}:${elem}`), cb("⬍ Centre", `bxcy:${kind}:${elem}`)]);
-    rows.push([cb("⌨ Type X,Y", `bxmn:${kind}:${elem}`)]);
+    rows.push([cb("⬌ Ke tengah", `bxc:${kind}:${elem}`), cb("⬍ Ke tengah", `bxcy:${kind}:${elem}`)]);
+    rows.push([cb("⌨ Atur posisi", `bxmn:${kind}:${elem}`)]);
   }
-  rows.push([cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)]);
+  rows.push([cb("👁 Lihat hasil", `bxp:${kind}`), cb("⬅ Kembali", `bxo:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 async function bxElemOpen(ctx, kind, elem) {
@@ -1087,16 +1088,16 @@ async function bxPreview(ctx, kind) {
     const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind)).catch(() => null);
     if (filled) {
       await ctx
-        .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Animated preview</b> — your GIF/video template with this exact layout (sample data). This is what posts.", parse_mode: "HTML" })
+        .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Hasil gerak</b> — template GIF/video Anda dengan tata letak ini (data contoh). Beginilah yang akan diposting.", parse_mode: "HTML" })
         .catch(() => {});
       return;
     }
   }
   const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), sampleData(kind)).catch(() => null);
-  if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas / ffmpeg may be missing on the server.").catch(() => {});
+  if (!buf) return ctx.reply("⚠️ Gagal membuat gambar — cek pm2 logs ([bannerTpl]); @napi-rs/canvas atau ffmpeg mungkin belum ada di server.").catch(() => {});
   const cap = media
-    ? "👁 Layout preview (still frame — animated compositing failed; check ffmpeg on the server). Live posts still play the animated version."
-    : "👁 Layout preview (sample data).";
+    ? "👁 Hasil tata letak (gambar diam — penggabungan versi gerak gagal; cek ffmpeg di server). Post asli tetap memutar versi geraknya."
+    : "👁 Hasil tata letak (data contoh).";
   await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
 
@@ -1152,7 +1153,7 @@ async function btPreview(ctx, kind, pct) {
     try {
       await ctx.replyWithAnimation({ source: playable.source }, { caption: cap, parse_mode: "HTML" });
     } catch (e) {
-      await ctx.reply(`⚠️ Couldn't preview the clip: ${e.message}`).catch(() => {});
+      await ctx.reply(`⚠️ Gagal menampilkan GIF/video: ${e.message}`).catch(() => {});
     }
     return;
   }
@@ -1680,7 +1681,7 @@ function build() {
         ? `\n\n⚠️ Banner Ads play the advertiser's clip <b>as-is</b> — token data is not drawn onto it.`
         : "";
     await ctx.reply(
-      `🎞 Send the <b>${BT_KINDS[kind]} GIF or video</b> — a GIF/animation or a short MP4 (send as a <b>file/document</b> for best quality, ≤ ~20 MB). It plays above every ${BT_KINDS[kind]} post.${fillNote}\n\n/cancel to abort.`,
+      `🎞 Kirim <b>GIF atau video untuk ${BT_KINDS[kind]}</b> — GIF/animasi atau MP4 pendek (kirim sebagai <b>file/dokumen</b> supaya kualitasnya bagus, maks ~20 MB). Ini diputar di atas setiap post ${BT_KINDS[kind]}.${fillNote}\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -1748,7 +1749,7 @@ function build() {
   });
   // Preview the pump alert at a chosen % gain (min / mid / max shortcuts).
   bot.action(/^pwpv:(\d+)$/, async (ctx) => {
-    ctx.answerCbQuery("Rendering…").catch(() => {});
+    ctx.answerCbQuery("Sedang membuat gambar…").catch(() => {});
     if (!guard(ctx)) return;
     if (!bannerTpl.mediaOverride("pump")) {
       return ctx.reply("❌ No pump clip yet — tap 🎞 Upload GIF/Video first, then preview.").catch(() => {});
@@ -2077,7 +2078,7 @@ function build() {
     const [, kind, elem, dxs, dys] = ctx.match;
     const s = bannerTpl.getSettings(kind);
     const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
-    if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    if (!c || c.nomove) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
     const x = Math.max(-800, Math.min(3200, btNum(s[c.xKey], 1070) + Number(dxs)));
     const y = Math.max(-800, Math.min(3200, btNum(s[c.yKey], 430) + Number(dys)));
     await bannerTpl.updateSettings(kind, { [c.xKey]: x, [c.yKey]: y });
@@ -2088,9 +2089,9 @@ function build() {
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     const c = elem === "slot" ? { xKey: "logoX" } : BX[elem];
-    if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    if (!c || c.nomove) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.xKey]: "center" });
-    ctx.answerCbQuery("⬌ Centred horizontally").catch(() => {});
+    ctx.answerCbQuery("⬌ Sudah di tengah (kiri–kanan)").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
   // Vertical twin of bxc. Horizontal-only centring is enough for a token logo
@@ -2102,7 +2103,7 @@ function build() {
     const c = elem === "slot" ? { yKey: "logoY" } : BX[elem];
     if (!c || c.nomove || !c.yKey) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.yKey]: "center" });
-    ctx.answerCbQuery("⬍ Centred vertically").catch(() => {});
+    ctx.answerCbQuery("⬍ Sudah di tengah (atas–bawah)").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxsn:${KL}:${EX}$`), async (ctx) => {
@@ -2114,16 +2115,16 @@ function build() {
     const label = elem === "slot" ? "🖼 Ad slot" : (BX[elem] && BX[elem].label) || elem;
     if (elem === "slot") {
       await ctx.reply(
-        `⌨ <b>${BT_KINDS[kind]} — box size</b>\nNow: <b>${s.slotW} × ${s.slotH}</b>\n\n` +
-          `Send two numbers: <b>width</b> then <b>height</b>.\n` +
-          `The full picture is 2560 wide and 1280 tall.\n\n` +
-          `👉 Like this: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel to stop.`,
+        `⌨ <b>${BT_KINDS[kind]} — ukuran kotak</b>\nSekarang: <b>${s.slotW} × ${s.slotH}</b>\n\n` +
+          `Kirim dua angka: <b>lebar</b> lalu <b>tinggi</b>.\n` +
+          `Ukuran gambar penuh: lebar 2560, tinggi 1280.\n\n` +
+          `👉 Contoh: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel untuk batal.`,
         HTML,
       );
     } else {
       const cur = s[BX[elem].sizeKey];
       await ctx.reply(
-        `⌨ <b>${BT_KINDS[kind]} — ${label} size</b>\nNow: <b>${cur}px</b>\n\nJust send a number (bigger = larger text).\n👉 Example: <code>${cur}</code>  ·  try <code>${Math.round(cur * 1.25)}</code> for bigger, <code>${Math.max(BX[elem].smin, Math.round(cur * 0.8))}</code> for smaller.\n\n/cancel to abort.`,
+        `⌨ <b>${BT_KINDS[kind]} — ukuran ${label}</b>\nSekarang: <b>${cur}px</b>\n\nKirim satu angka saja (makin besar angkanya, makin besar tampilannya).\n👉 Contoh: <code>${cur}</code>  ·  coba <code>${Math.round(cur * 1.25)}</code> untuk perbesar, <code>${Math.max(BX[elem].smin, Math.round(cur * 0.8))}</code> untuk perkecil.\n\n/cancel untuk batal.`,
         HTML,
       );
     }
@@ -2139,12 +2140,12 @@ function build() {
     const cx = s[c.xKey];
     const cy = s[c.yKey];
     await ctx.reply(
-      `⌨ <b>${BT_KINDS[kind]} — move ${c.label}</b>\nNow at: <b>(${cx}, ${cy})</b>\n\n` +
-        `Send two numbers, separated by a comma:\n` +
-        `• first = <b>left to right</b> (0 = far left, 2560 = far right)\n` +
-        `• second = <b>top to bottom</b> (0 = top, 1280 = bottom)\n\n` +
-        `👉 Like this: <code>${cx === "center" ? "1280" : cx},${cy}</code>\n` +
-        `👉 Or write <code>center</code> instead of a number: <code>center,center</code>\n\n/cancel to stop.`,
+      `⌨ <b>${BT_KINDS[kind]} — geser ${c.label}</b>\nSekarang di: <b>(${cx}, ${cy})</b>\n\n` +
+        `Kirim dua angka, dipisah koma:\n` +
+        `• angka pertama = <b>kiri ke kanan</b> (0 = paling kiri, 2560 = paling kanan)\n` +
+        `• angka kedua = <b>atas ke bawah</b> (0 = paling atas, 1280 = paling bawah)\n\n` +
+        `👉 Contoh: <code>${cx === "center" ? "1280" : cx},${cy}</code>\n` +
+        `👉 Atau tulis <code>center</code> sebagai ganti angka: <code>center,center</code>\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2291,11 +2292,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "slot", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `📐 <b>Picture box — ${BT_KINDS[kind]}</b>\n` +
-        `Now: <b>${s.slotW} × ${s.slotH}</b> at (${s.logoX}, ${s.logoY})\n\n` +
-        `Send four numbers: <b>width height place</b>\n` +
-        `👉 Like this: <code>1680 800 690,310</code>\n` +
-        `👉 Or: <code>1680 800 center,center</code>\n\n/cancel to stop.`,
+      `📐 <b>Kotak gambar — ${BT_KINDS[kind]}</b>\n` +
+        `Sekarang: <b>${s.slotW} × ${s.slotH}</b> di (${s.logoX}, ${s.logoY})\n\n` +
+        `Kirim: <b>lebar tinggi posisi</b>\n` +
+        `👉 Contoh: <code>1680 800 690,310</code>\n` +
+        `👉 Atau: <code>1680 800 center,center</code>\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2528,12 +2529,12 @@ function build() {
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
           } else if (mode === "bxslotsize") {
             const m = low.match(/^(\d+)\s+(\d+)$/);
-            if (!m) return ctx.reply("❌ Send two numbers with a space between them — width first, then height.\n👉 Like this: <code>1548 760</code>", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Kirim dua angka dipisah spasi — lebar dulu, lalu tinggi.\n👉 Contoh: <code>1548 760</code>", HTML).catch(() => {});
             await bannerTpl.updateSettings(kind, { slotW: Math.max(200, Math.min(2560, Number(m[1]))), slotH: Math.max(120, Math.min(1280, Number(m[2]))) });
             await ctx.reply(bxElemText(kind, "slot"), { ...HTML, ...bxElemKb(kind, "slot") });
           } else {
             const m = low.match(/^(center|-?\d+)\s*,\s*(center|-?\d+)$/);
-            if (!m) return ctx.reply("❌ Send two numbers with a comma between them — left-to-right first, then top-to-bottom.\n👉 Like this: <code>1890,410</code>\n👉 Or: <code>center,center</code>", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Kirim dua angka dipisah koma — kiri-ke-kanan dulu, lalu atas-ke-bawah.\n👉 Contoh: <code>1890,410</code>\n👉 Atau: <code>center,center</code>", HTML).catch(() => {});
             const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
             await bannerTpl.updateSettings(kind, { [c.xKey]: cv(m[1]), [c.yKey]: cv(m[2]) });
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
@@ -2551,7 +2552,7 @@ function build() {
           const m = low.match(/^(\d+)\s+(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
           if (!m) return ctx.reply("❌ Format: <code>WIDTH HEIGHT X,Y</code> — e.g. <code>1680 800 690,310</code>", HTML).catch(() => {});
           await bannerTpl.updateSettings(kind, { slotW: Number(m[1]), slotH: Number(m[2]), logoX: cv(m[3]), logoY: cv(m[4]) });
-          await ctx.reply(`✅ ${BT_KINDS[kind]}: slot saved. Previewing…`, HTML);
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: kotak tersimpan. Sedang menampilkan hasil…`, HTML);
         } else {
           const m = low.match(/^(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
           if (!m) return ctx.reply("❌ Format: <code>SIZE X,Y</code> — e.g. <code>420 1890,410</code>", HTML).catch(() => {});
@@ -2560,7 +2561,7 @@ function build() {
               ? { logoSize: Number(m[1]), logoX: cv(m[2]), logoY: cv(m[3]) }
               : { tickerFontSize: Number(m[1]), tickerX: cv(m[2]), tickerY: cv(m[3]), showText: true };
           await bannerTpl.updateSettings(kind, patch);
-          await ctx.reply(`✅ ${BT_KINDS[kind]}: saved. Previewing…`, HTML);
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: tersimpan. Sedang menampilkan hasil…`, HTML);
         }
         if (bannerTpl.hasTemplate(kind)) await btPreview(ctx, kind);
       } catch (e) {
@@ -2636,7 +2637,7 @@ function build() {
         const fn = String(m.document.file_name || "").toLowerCase();
         ext = fn.endsWith(".gif") ? "gif" : fn.endsWith(".webm") ? "webm" : fn.endsWith(".mov") ? "mov" : "mp4";
       }
-      if (!fileId) return ctx.reply("Send a GIF or a video (or an mp4/gif file).").catch(() => {});
+      if (!fileId) return ctx.reply("Kirim GIF atau video (atau file mp4/gif).").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
         // Clips can be up to ~20 MB, so allow a generous timeout, and retry the
@@ -2647,9 +2648,9 @@ function build() {
         const mb = (bytes / 1048576).toFixed(2);
         // ONE preview only, and it's admin-triggered — auto-previewing here on top
         // of the admin tapping 👁 Preview produced two identical previews.
-        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 <b>Preview</b> below to see this exact clip.`, { ...HTML, ...btKindKb(kind) });
+        await ctx.reply(`✅ <b>GIF/video ${BT_KINDS[kind]} tersimpan</b> (${mb} MB). Sekarang diputar di atas setiap post ${BT_KINDS[kind]} (menggantikan gambar diamnya).\n\nTekan 👁 <b>Lihat hasil</b> di bawah untuk melihatnya.`, { ...HTML, ...btKindKb(kind) });
       } catch (e) {
-        await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
+        await ctx.reply(`⚠️ Gagal menyimpan GIF/video: ${e.message}`).catch(() => {});
       }
       return;
     }
@@ -2657,7 +2658,7 @@ function build() {
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "upload") {
       const { kind } = ctx.session.awaitingBt;
       const fileId = getMediaFileId(ctx);
-      if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo or file.").catch(() => {});
+      if (!fileId) return ctx.reply("Gambarnya tidak terbaca — kirim sebagai foto atau file.").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
         const artBuf = await fetchTelegramFileBuffer(ctx.telegram, fileId, { timeoutMs: 30000 });
@@ -2666,12 +2667,12 @@ function build() {
         try {
           const im = await require("@napi-rs/canvas").loadImage(artBuf);
           if (im.width < 2000) {
-            sizeNote = `\n\n⚠️ Sent at ${im.width}×${im.height}px (Telegram compresses photos). It'll still be used — auto-upscaled to 2560×1280 — but for best quality re-send it as a <b>File/document</b>.`;
+            sizeNote = `\n\n⚠️ Terkirim ${im.width}×${im.height}px (Telegram mengompres foto). Tetap dipakai — otomatis diperbesar ke 2560×1280 — tapi supaya tajam, kirim ulang sebagai <b>File/dokumen</b>.`;
           }
         } catch { /* dimension probe is best-effort */ }
         log.info(`[adminbot] ${kind} banner artwork uploaded by @${ctx.from.username || ctx.from.id}`);
         await ctx.reply(
-          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Open 🖱 Logo editor to place the logo/text, then 👁 Preview.${sizeNote}`,
+          `✅ <b>Gambar ${BT_KINDS[kind]} tersimpan.</b> Buka 🎛 Atur tata letak untuk menaruh logo/tulisan, lalu 👁 Lihat hasil.${sizeNote}`,
           { ...HTML, ...btKindKb(kind) },
         );
         await btPreview(ctx, kind);

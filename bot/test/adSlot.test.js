@@ -65,37 +65,38 @@ test("both axes accept `center` when typed by hand", () => {
   // The parser always allowed it; the prompt and the error only mentioned X,
   // which is how an operator concludes it cannot be done.
   assert.match(admin, /\^\(center\|-\?\\d\+\)\\s\*,\\s\*\(center\|-\?\\d\+\)\$/);
-  assert.match(admin, /Or write <code>center<\/code> instead of a number/, "the prompt says so");
-  assert.match(admin, /Or: <code>center,center<\/code>/, "and so does the error");
+  assert.match(admin, /Atau tulis <code>center<\/code> sebagai ganti angka/, "the prompt says so");
+  assert.match(admin, /Atau: <code>center,center<\/code>/, "and so does the error");
 });
 
-test("the editor says where the box sits, in words a beginner reads instantly", () => {
-  // 1548x760 at (836, 296) tells an operator nothing about whether that is
-  // inside their frame. The empty space on each side does. And the operator
-  // asked outright what "Wider" meant, so no comparatives and no jargon.
-  const t = admin.slice(admin.indexOf("the box for the client's picture") - 200);
-  assert.match(t, /Empty space:/, "says how much room is left on each side");
-  assert.match(t, /more empty space on the/, "and which side has more");
-  assert.match(t, /The box is in the middle/);
-  assert.match(t, /always fills the whole box/, "and that empty space means the box is wrong");
-  assert.match(t, /What the buttons do/, "every button is explained on the same screen");
-  for (const banned of ["cover-fit", "canvas", "Narrower", "Shorter", "Wider", "Taller"]) {
-    assert.ok(!t.slice(0, 1600).includes(banned), `"${banned}" is exactly the wording that was not understood`);
+test("the editor screen is in Indonesian, and explains every button on it", () => {
+  // The operator reads Indonesian. "1548x760 at (836, 296)" told them nothing;
+  // neither did "Wider". This screen is the one they were stuck on.
+  const t = admin.slice(admin.indexOf("kotak untuk gambar client") - 200);
+  assert.match(t, /Ruang kosong:/, "says how much empty room is on each side");
+  assert.match(t, /ruang kosong lebih banyak di/, "and which side has more");
+  assert.match(t, /Kotak sudah di tengah/);
+  assert.match(t, /selalu memenuhi seluruh kotak/, "empty space means the box is wrong, not the picture");
+  assert.match(t, /Fungsi tombol/, "every button is explained on the same screen");
+  assert.match(t, /perbesar atau perkecil/, "in the words the operator actually asked for");
+  for (const banned of ["cover-fit", "canvas", "Narrower", "Shorter", "Wider", "Taller", "Empty space"]) {
+    assert.ok(!t.slice(0, 1800).includes(banned), `"${banned}" is exactly the wording that was not understood`);
   }
 });
 
-test("the buttons name the thing, not the comparison", () => {
+test("the slot buttons are Indonesian nouns, not English comparatives", () => {
   const kb = admin.slice(admin.indexOf("function bxElemKb"));
   const slotKb = kb.slice(0, kb.indexOf("const c = BX[elem];"));
-  assert.match(slotKb, /"Width ➕"/);
-  assert.match(slotKb, /"Height ➖"/);
-  assert.match(slotKb, /"⌨ Set size"/);
-  assert.match(slotKb, /"⌨ Set place"/);
-  // Only the LABELS — the comment above them quotes the old words on purpose,
-  // to explain to the next reader why they were replaced.
   const labels = [...slotKb.matchAll(/cb\("([^"]+)"/g)].map((m) => m[1]);
   assert.ok(labels.length >= 8, `expected the slot keyboard's labels, got ${labels.length}`);
-  for (const banned of ["Wider", "Narrower", "Taller", "Shorter", "Type W×H", "Type X,Y"]) {
-    assert.ok(!labels.includes(banned), `button label "${banned}" needs translating before it can be acted on`);
+  for (const want of ["Lebar ➕", "Lebar ➖", "Tinggi ➕", "Tinggi ➖", "⬌ Ke tengah", "⬍ Ke tengah", "⌨ Atur ukuran", "⌨ Atur posisi"]) {
+    assert.ok(labels.includes(want), `missing button: ${want}`);
   }
+  // Only the LABELS — the comment above them quotes the old words on purpose,
+  // to explain to the next reader why they were replaced.
+  for (const banned of ["Wider", "Narrower", "Taller", "Shorter", "Width ➕", "Height ➖", "Type W×H", "Type X,Y", "Set size", "Set place"]) {
+    assert.ok(!labels.includes(banned), `button label "${banned}" has to be translated before it can be acted on`);
+  }
+  // Telegram truncates a two-column row; these have to stay short.
+  for (const l of labels) assert.ok(l.length <= 16, `"${l}" is ${l.length} chars — it will be cut off`);
 });
