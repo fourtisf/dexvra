@@ -52,6 +52,20 @@ const SANE_CHANGE_PCT = 5000;
 // next — a 5,000× "move" in five minutes.
 const MCAP_DISAGREE_FACTOR = 20;
 
+// One complaint per token per hour about a broken pool. Bounded so a long-lived
+// process cannot accumulate an entry per token it has ever priced.
+const BROKEN_POOL_QUIET_MS = 60 * 60 * 1000;
+const _brokenPool = new Map(); // "chain/address" → last complaint (ms)
+function noteBrokenPool(chain, address) {
+  const key = `${chain}/${address}`;
+  const now = Date.now();
+  const last = _brokenPool.get(key);
+  if (last && now - last < BROKEN_POOL_QUIET_MS) return false;
+  if (_brokenPool.size > 1000) _brokenPool.clear();
+  _brokenPool.set(key, now);
+  return true;
+}
+
 /** The pool a token's numbers should come from: the DEEPEST one, not whichever
  *  GeckoTerminal happened to list first. A thin, freshly-created pool is where
  *  the absurd percentages and fake valuations live. */
@@ -90,7 +104,14 @@ async function fetchGT(chain, address) {
     // Publish nothing rather than nonsense: the board prints this straight.
     let change24h = rawChange;
     if (rawChange != null && Math.abs(rawChange) > SANE_CHANGE_PCT) {
-      log.warn(`[market] GT ${chain}/${address}: ignoring absurd 24h change ${rawChange}% (pool data is broken)`);
+      // Once per token per hour, not once per poll. A pool with a broken
+      // opening tick stays broken, and this runs on the board's refresh
+      // interval — one BSC token produced a warning every three minutes,
+      // indefinitely. The rejection itself is silent and permanent; the
+      // operator only needs to be told the token exists.
+      if (noteBrokenPool(chain, address)) {
+        log.warn(`[market] GT ${chain}/${address}: ignoring absurd 24h change ${rawChange}% (pool data is broken)`);
+      }
       change24h = null;
     }
     const img = attr.image_url;
