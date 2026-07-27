@@ -674,9 +674,12 @@ test("Run now ignores the floor — the admin asked for it", async () => {
   }
 });
 
-test("the board order puts Robinhood directly below Base", () => {
-  // Operator's call. It is one array, and a chain added in the wrong place
-  // silently reshuffles a pinned public board.
+test("Robinhood is the third section on the board, not the last", () => {
+  // Operator's call: it is Dexvra's own chain, and it was sitting under
+  // Ethereum and Base at the bottom of its own board. One array drives the
+  // board, the chain picker and the admin panel's rows, so a chain inserted in
+  // the wrong place silently reshuffles a pinned public message.
   const { CHAIN_ORDER } = require("../src/config/chains");
-  assert.deepStrictEqual(CHAIN_ORDER.slice(0, 5), ["solana", "bsc", "ethereum", "base", "robinhood"]);
+  assert.deepStrictEqual(CHAIN_ORDER.slice(0, 5), ["solana", "bsc", "robinhood", "ethereum", "base"]);
+  assert.strictEqual(CHAIN_ORDER.indexOf("robinhood"), 2, "third, counting from one");
 });
