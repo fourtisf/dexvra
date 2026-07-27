@@ -587,43 +587,86 @@ function fpResultKb() {
 }
 
 // ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
+// The panel used to be six steppers crammed onto two rows, which Telegram
+// truncated to "🕐 Mi…" and "Max 1…" — settings nobody could read, let alone
+// change with confidence. And it showed the config without ever showing the
+// BOARD, so "why is Robinhood still empty" had no answer on screen.
+//
+// One setting per row (three buttons fit; six do not), and a live per-chain
+// readout above them.
+
+/** The board, per chain, as the operator needs to read it: how many are
+ *  featured against the target, and — when it is short — whether anything is
+ *  left to promote. A chain with no listings can never be filled, and that is a
+ *  different problem from a chain the loop has not reached yet. */
+function atBoardLines(c, counts = _atCounts) {
+  const rows = [];
+  for (const id of c.chains) {
+    const meta = trendingBoard.chainList().find((x) => x.id === id);
+    const label = meta ? meta.label : id;
+    const glyph = meta ? trendingBoard.displayEmoji(meta.logo) : "•";
+    const n = (counts[id] && counts[id].featured) || 0;
+    const spare = (counts[id] && counts[id].eligible) || 0;
+    let mark = "✅";
+    let note = "";
+    if (n < c.perChain) {
+      if (spare > 0) {
+        mark = "⏳";
+        note = ` · ${spare} ready to promote`;
+      } else {
+        mark = "🔴";
+        note = ` · <i>no listings left on this chain</i>`;
+      }
+    }
+    rows.push(`${mark} ${glyph} <b>${label}</b> — ${n}/${c.perChain}${note}`);
+  }
+  return rows.join("\n");
+}
+
 function atText() {
   const c = autoTrend.get();
+  const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChain);
+  const blocked = short.filter((id) => !((_atCounts[id] && _atCounts[id].eligible) || 0));
   return (
-    `🤖 <b>Auto Trending</b>\n\n` +
-    `Keeps the Trending board alive between paid slots: when a slot expires it ` +
-    `auto-promotes a <b>random</b> listed token for a <b>random</b> duration, at ` +
-    `<b>random</b> intervals. Paid tiers always stay on top.\n\n` +
-    `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
-    `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
-    `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
-    `🎯 Keep featured: <b>${c.perChain}</b> tokens <b>per chain</b>\n` +
-    `🌐 Chains: <b>${c.chains.join(", ")}</b>\n\n` +
+    `🤖 <b>Auto Trending</b> — ${c.enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
+    `Fills the Trending board between paid slots: promotes a <b>random</b> listed ` +
+    `token for a <b>random</b> ${c.minHours}–${c.maxHours}h, every ${c.minGapMin}–${c.maxGapMin} min. ` +
+    `Paid tiers always sort above auto ones.\n\n` +
+    `📊 <b>Board right now</b> — target <b>${c.perChain}</b> per chain\n` +
+    atBoardLines(c) +
+    `\n\n` +
+    (short.length === 0
+      ? `✅ <i>Every chain is at target. Nothing to do until a slot expires.</i>`
+      : blocked.length
+        ? `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings. ` +
+          `That needs more tokens listed there, not another cycle.</i>`
+        : `⏳ <i>${short.length} chain(s) below target; the next cycle tops them up. ` +
+          `Tap a chain below to do it now.</i>`) +
+    `\n\n` +
     `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
-    (c.announce ? ` <i>(max ${c.announcePerDay}/day · ${c.announceGapMin}min apart · ${c.announceCooldownDays}d per token)</i>` : "") +
-    `\n` +
-    `<i>Auto slots post the SAME card as a paid Trending purchase (the <b>Post: Trending</b> template) — never pinned, ` +
-    `never @dexvraio. The channel feed is chronological: unlike the board, it does NOT rank paid above auto.</i>\n\n` +
-    `⚡ <b>Run now — per chain</b>\n` +
-    `The board groups by network, so a chain with nothing featured shows nothing at all. ` +
-    `Tap a chain below to promote a token there immediately (works even while Auto Trending is off).\n\n` +
-    `Tune with the steppers below. Applies on the next cycle.`
+    (c.announce ? ` <i>(max ${c.announcePerDay}/day, ${c.announceGapMin} min apart, ${c.announceCooldownDays}d per token)</i>` : "") +
+    `\n<i>Auto posts use the SAME card as a paid Trending purchase — never pinned, never @dexvraio.</i>\n\n` +
+    `⚡ <b>Run now</b> — tap a chain to promote one token there immediately, even while this is off.`
   );
 }
+
 function atKb() {
   const cb = Markup.button.callback;
   const c = autoTrend.get();
+  // THREE buttons per row. Six fit in the code and not on a phone: the label is
+  // the first thing Telegram drops, so the row that needs reading most is the
+  // one that becomes "Mi…".
   return Markup.inlineKeyboard([
     [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
-    [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
-    [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
-    [cb(`🎯 ${c.perChain} per chain`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    [cb("➖", "attgt:-1"), cb(`🎯 ${c.perChain} per chain`, "atnop"), cb("➕", "attgt:1")],
+    [cb("➖", "athmin:-1"), cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➕", "athmin:1")],
+    [cb("➖", "athmax:-1"), cb(`⏱ Max ${c.maxHours}h`, "atnop"), cb("➕", "athmax:1")],
+    [cb("➖", "atgmin:-10"), cb(`🔁 Every ${c.minGapMin}m`, "atnop"), cb("➕", "atgmin:10")],
+    [cb("➖", "atgmax:-10"), cb(`🔁 to ${c.maxGapMin}m`, "atnop"), cb("➕", "atgmax:10")],
     [cb(`📣 Announce: ${c.announce ? "ON" : "OFF"}`, "atann")],
-    ...(c.announce
-      ? [[cb(`📣 ${c.announcePerDay}/day`, "atnop"), cb("➖", "atapd:-1"), cb("➕", "atapd:1")]]
-      : []),
+    ...(c.announce ? [[cb("➖", "atapd:-1"), cb(`📣 ${c.announcePerDay}/day`, "atnop"), cb("➕", "atapd:1")]] : []),
     ...atChainRows(cb),
-    [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
+    [cb("🔄 Refresh", "atref"), cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
 }
 
@@ -686,11 +729,28 @@ function alKb() {
  *  the chain's CURRENT featured count, so an operator can see which network is
  *  empty without leaving the panel. */
 function atChainRows(cb, counts = _atCounts) {
-  const chains = trendingBoard.chainList();
-  const btns = chains.map((c) => {
-    const n = (counts[c.id] && counts[c.id].featured) || 0;
-    return cb(`⚡ ${trendingBoard.displayEmoji(c.logo)} ${c.label}${n ? ` (${n})` : ""}`, `atrun:${c.id}`);
-  });
+  const c = autoTrend.get();
+  const meta = new Map(trendingBoard.chainList().map((x) => [x.id, x]));
+  const btn = (id, withTarget) => {
+    const m = meta.get(id);
+    if (!m) return null;
+    const n = (counts[id] && counts[id].featured) || 0;
+    // "5/5" answers the question the button sits next to. A bare "(5)" does not
+    // — and a fraction on a chain with no target would invent one.
+    const label = withTarget ? `${n}/${c.perChain}` : n ? `(${n})` : "";
+    return cb(`⚡ ${trendingBoard.displayEmoji(m.logo)} ${m.label}${label ? " " + label : ""}`, `atrun:${id}`);
+  };
+  // The auto-filled chains first, in the order they are configured — those are
+  // the ones the panel above is about.
+  const btns = c.chains.map((id) => btn(id, true)).filter(Boolean);
+  // Then any OTHER chain that actually has a listing, so a one-off force is
+  // still one tap away. Chains with nothing listed are omitted entirely: the
+  // list was 20 rows of "0/5" for networks nobody has listed on, and a Run now
+  // there can only fail.
+  const extra = Object.keys(counts)
+    .filter((id) => !c.chains.includes(id) && meta.has(id) && ((counts[id].featured || 0) + (counts[id].eligible || 0)) > 0)
+    .sort();
+  for (const id of extra) btns.push(btn(id, false));
   const rows = [];
   for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
   return rows;
@@ -1815,6 +1875,15 @@ function build() {
     await edit(ctx, atText(), atKb());
   });
   bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
+  // The board readout is a snapshot taken when the panel opened. Re-reading it
+  // is the one thing the operator wants after a Run now, or after waiting out a
+  // cycle, and reopening the whole menu to get it is not obvious.
+  bot.action("atref", async (ctx) => {
+    if (!guard(ctx)) return;
+    _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
+    ctx.answerCbQuery("Board refreshed").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
   bot.action("aten", async (ctx) => {
     if (!guard(ctx)) return;
     const c = await autoTrend.set({ enabled: !autoTrend.get().enabled });
@@ -2795,7 +2864,10 @@ async function startAdminBot() {
   log.info("[adminbot] polling started ✔");
 }
 
-module.exports = { startAdminBot, build };
+module.exports = {
+  // Panel-rendering seam: the layout is the thing that was wrong, so a test
+  // (and the preview script) must be able to render it without a bot.
+  _test: { atText, atKb, atBoardLines, setAtCounts: (c) => (_atCounts = c) }, startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
 // Exposed for tests: the trending-board editor + the premium-emoji report.
