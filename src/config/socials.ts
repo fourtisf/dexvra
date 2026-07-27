@@ -13,7 +13,7 @@ export const TELEGRAM_LISTING_URL = "https://t.me/dexvralisting";
 export const TELEGRAM_LISTING_HANDLE = "@dexvralisting";
 export const TELEGRAM_TRENDING_URL = "https://t.me/dexvratrending";
 export const TELEGRAM_TRENDING_HANDLE = "@dexvratrending";
-export const X_URL = "https://x.com/dexvra";
+export const X_URL = "https://x.com/dexvraio";
 export const BOT_URL = "https://t.me/dexvrabot";
 export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
 export const TRADEBOT_URL = "https://t.me/dexvratradebot";
@@ -99,7 +99,7 @@ export const SOCIALS: Social[] = [
     key: "x",
     kind: "x",
     name: "X",
-    handle: "@dexvra",
+    handle: "@dexvraio",
     url: X_URL,
     blurb: "Every listing and announcement also goes to X, for people who do not use Telegram.",
   },

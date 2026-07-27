@@ -23,6 +23,20 @@ test("the handles match the accounts the bot actually posts from", () => {
   assert.strictEqual(TELEGRAM_LISTING_URL, "https://t.me/dexvralisting");
   assert.strictEqual(TELEGRAM_TRENDING_URL, "https://t.me/dexvratrending");
   assert.strictEqual(BOT_URL, "https://t.me/dexvrabot");
+  // @dexvra was never the account — the real one is @dexvraio, matching the
+  // Telegram handle. A wrong X link sends every visitor to someone else's
+  // profile, and on a listing site that someone is usually an impersonator.
+  assert.strictEqual(X_URL, "https://x.com/dexvraio");
+});
+
+test("the bot tweets from the same account the site links to", () => {
+  // The bot @-mentions X_HANDLE in its ad posts. If that default and the site's
+  // X_URL name different accounts, half the audience is sent to the wrong one
+  // and neither is obviously wrong on its own.
+  const consts = fs.readFileSync(path.join(process.cwd(), "bot/src/config/constants.js"), "utf8");
+  const m = consts.match(/const X_HANDLE = \(env\.X_HANDLE \|\| "([^"]+)"\)/);
+  assert.ok(m, "X_HANDLE default not found — did constants.js move?");
+  assert.strictEqual(`https://x.com/${m[1]}`, X_URL, `bot tweets as @${m[1]}, site links ${X_URL}`);
 });
 
 test("the footer's social links have a real href and open safely", () => {

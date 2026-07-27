@@ -155,6 +155,25 @@ test("the daily heartbeat is the only check that survives the bot dying", async 
   assert.match(beat, /If this line stops arriving, the bot is down/, "it must explain its own purpose");
 });
 
+test("the heartbeat reads the pass's clock, not the wall clock", async () => {
+  // Mixing the two meant one pass could ask "did I already send today's?"
+  // against a different day than the one it was checking. Harmless 23 hours out
+  // of 24, and then a duplicate (or a skipped) heartbeat exactly at the UTC
+  // rollover — which is the one moment nobody is watching.
+  const { sent, tg } = harness({ heartbeatDate: "2026-07-25" });
+  await setOrders([]);
+  // A pass dated the 26th must mark the 26th, whatever today happens to be.
+  await health._test.runOnce(tg, Date.parse("2026-07-26T01:30:00Z"));
+  assert.strictEqual(health._test.getState().lastHeartbeatDate, "2026-07-26");
+  assert.strictEqual(sent.filter((x) => x.includes("daily health")).length, 1);
+  // …and a later pass on the SAME dated day must not send a second.
+  await health._test.runOnce(tg, Date.parse("2026-07-26T23:59:00Z"));
+  assert.strictEqual(sent.filter((x) => x.includes("daily health")).length, 1);
+  // The next day does send one.
+  await health._test.runOnce(tg, Date.parse("2026-07-27T01:00:00Z"));
+  assert.strictEqual(sent.filter((x) => x.includes("daily health")).length, 2);
+});
+
 test("the heartbeat fires once a day, not once per restart", async () => {
   const { sent, tg } = harness({ heartbeatDate: "2026-07-25" });
   await setOrders([]);

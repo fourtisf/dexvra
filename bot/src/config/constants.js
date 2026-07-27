@@ -126,7 +126,7 @@ const X = {
     accessSecret: env.X_O_ACCESS_SECRET || "",
   },
 };
-const X_HANDLE = (env.X_HANDLE || "dexvra").replace(/^@/, "");
+const X_HANDLE = (env.X_HANDLE || "dexvraio").replace(/^@/, "");
 // Enabled only when the listing account's 4 keys are all present AND not forced off.
 const X_ENABLED =
   bool(env.X_ENABLED, true) &&

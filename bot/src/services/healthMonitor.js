@@ -42,7 +42,12 @@ const BOOTS_KEPT = 20;
 const DAY_MS = 24 * 3600 * 1000;
 const HEARTBEAT_HOUR_UTC = Number(process.env.HEALTH_HEARTBEAT_HOUR_UTC || 1); // 08:00 WIB
 
-const todayUTC = () => new Date().toISOString().slice(0, 10);
+// The UTC day OF THE PASS, not of the wall clock. Every other decision in a
+// check pass is made against the `now` handed to it; reading the real clock here
+// meant one pass could compare "have I already sent today's heartbeat" against a
+// different day than the one it was checking — the exact straddle that happens
+// once every 24h, at the moment the date rolls over.
+const dayOf = (now) => new Date(now).toISOString().slice(0, 10);
 const mins = (ms) => Math.round(ms / 60000);
 
 let state = null; // { boots: number[], lastHeartbeatDate: string }
@@ -166,9 +171,9 @@ function checkCrashLoop(now) {
 
 /** One 💚 a day. Its ABSENCE is the alert — see the header. */
 async function heartbeat(now) {
-  if (state.lastHeartbeatDate === todayUTC()) return;
+  if (state.lastHeartbeatDate === dayOf(now)) return;
   if (new Date(now).getUTCHours() < HEARTBEAT_HOUR_UTC) return;
-  state.lastHeartbeatDate = todayUTC();
+  state.lastHeartbeatDate = dayOf(now);
   await persist();
   const all = orders.allOrders();
   const since = now - DAY_MS;
