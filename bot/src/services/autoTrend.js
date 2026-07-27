@@ -100,8 +100,19 @@ function get() {
     if (ids.length) g.chains = [...new Set(ids)];
   }
   if (typeof c.announce === "boolean") g.announce = c.announce;
-  g.announcePerDay = clampInt(c.announcePerDay, ...HARD.announcePerDay, DEFAULTS.announcePerDay);
-  g.announceGapMin = clampInt(c.announceGapMin, ...HARD.announceGapMin, DEFAULTS.announceGapMin);
+  // One-time migration. These two were saved under the OLD policy, where the
+  // rails decided WHICH promotions got announced and most were dropped. Under
+  // the current one — every trending token gets its post — a stored 3/day and
+  // 60min are not a preference, they are a leftover that makes the policy
+  // impossible: three posts a day against ~57 promotions, and the rest sit in
+  // the queue until their slots expire. A value that still equals the old
+  // default is treated as never-set.
+  const OLD_PER_DAY = 3;
+  const OLD_GAP_MIN = 60;
+  const perDay = c.announcePerDay === OLD_PER_DAY ? undefined : c.announcePerDay;
+  const gapMin = c.announceGapMin === OLD_GAP_MIN ? undefined : c.announceGapMin;
+  g.announcePerDay = clampInt(perDay, ...HARD.announcePerDay, DEFAULTS.announcePerDay);
+  g.announceGapMin = clampInt(gapMin, ...HARD.announceGapMin, DEFAULTS.announceGapMin);
   g.announceCooldownDays = clampInt(c.announceCooldownDays, ...HARD.announceCooldownDays, DEFAULTS.announceCooldownDays);
   return g;
 }

@@ -633,6 +633,22 @@ function atBoardLines(c, counts = _atCounts) {
   return rows.join("\n");
 }
 
+/** Can the current settings actually post everything the board promotes? The
+ *  policy is "every trending token gets its post", and two numbers can quietly
+ *  make that impossible — a daily cap below the churn, or a gap so wide the day
+ *  runs out. Silence there looks exactly like a broken announcer. */
+function atThroughputNote(c) {
+  const churn = Math.round((c.perChain * c.chains.length * 24) / ((c.minHours + c.maxHours) / 2));
+  const byGap = Math.floor((24 * 60) / Math.max(1, c.announceGapMin));
+  const ceiling = Math.min(c.announcePerDay, byGap);
+  if (ceiling >= churn) return `\n<i>≈${churn} promotions a day, and up to ${ceiling} can post — every one gets through.</i>`;
+  const blame = c.announcePerDay < byGap ? `the <b>${c.announcePerDay}/day</b> cap` : `the <b>${c.announceGapMin} min</b> gap`;
+  return (
+    `\n⚠️ <i>≈${churn} promotions a day but only <b>${ceiling}</b> can post — ${blame} is the limit. ` +
+    `The rest wait in the queue and their slots expire first. Raise it below.</i>`
+  );
+}
+
 function atText() {
   const c = autoTrend.get();
   const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChain);
@@ -655,7 +671,8 @@ function atText() {
     `\n\n` +
     `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
     (c.announce && _atPending > 0 ? ` · <b>${_atPending}</b> waiting to post` : "") +
-    (c.announce ? ` <i>(max ${c.announcePerDay}/day, ${c.announceGapMin} min apart, ${c.announceCooldownDays}d per token)</i>` : "") +
+    (c.announce ? ` — every promotion is posted, one per <b>${c.announceGapMin} min</b>` : "") +
+    (c.announce ? atThroughputNote(c) : "") +
     `\n<i>Auto posts use the SAME card as a paid Trending purchase — never pinned, never @dexvraio.</i>\n\n` +
     `⚡ <b>Run now</b> — tap a chain to place its best 24h mover there immediately, even while this is off.`
   );
@@ -675,7 +692,12 @@ function atKb() {
     [cb("➖", "atgmin:-10"), cb(`🔁 Every ${c.minGapMin}m`, "atnop"), cb("➕", "atgmin:10")],
     [cb("➖", "atgmax:-10"), cb(`🔁 to ${c.maxGapMin}m`, "atnop"), cb("➕", "atgmax:10")],
     [cb(`📣 Announce: ${c.announce ? "ON" : "OFF"}`, "atann")],
-    ...(c.announce ? [[cb("➖", "atapd:-1"), cb(`📣 ${c.announcePerDay}/day`, "atnop"), cb("➕", "atapd:1")]] : []),
+    ...(c.announce
+      ? [
+          [cb("➖", "atapd:-10"), cb(`📣 max ${c.announcePerDay}/day`, "atnop"), cb("➕", "atapd:10")],
+          [cb("➖", "atagap:-5"), cb(`📣 1 per ${c.announceGapMin}m`, "atnop"), cb("➕", "atagap:5")],
+        ]
+      : []),
     ...atChainRows(cb),
     [cb("🔄 Refresh", "atref"), cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
@@ -1920,6 +1942,7 @@ function build() {
   bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
   bot.action(/^attgt:(-?\d+)$/, atStep("perChain", "Per-chain target"));
   bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
+  bot.action(/^atagap:(-?\d+)$/, atStep("announceGapMin", "Announce gap"));
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();

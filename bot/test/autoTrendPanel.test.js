@@ -159,3 +159,32 @@ test("a chain with genuinely nothing listed still reads as nothing listed", asyn
   assert.match(text, /needs more tokens listed there/, text);
   assert.ok(!text.includes("Xpress"), "nothing here is blocked by a tier rule");
 });
+
+test("the panel says whether the settings can actually deliver the policy", async () => {
+  // "every trending token gets its post" is the policy, and two numbers can
+  // quietly make it impossible — a daily cap below the churn, or a gap so wide
+  // the day runs out. Both look exactly like a broken announcer from outside.
+  const ok = await panel(COUNTS, { announce: true, perChain: 5, announcePerDay: 100, announceGapMin: 15 });
+  assert.match(ok.text, /every one gets through/, ok.text);
+
+  const capped = await panel(COUNTS, { announce: true, perChain: 5, announcePerDay: 10, announceGapMin: 15 });
+  assert.match(capped.text, /⚠️.*only 10 can post/s, capped.text);
+  assert.match(capped.text, /the 10\/day cap is the limit/, "it must name WHICH number is the bottleneck");
+  assert.match(capped.text, /their slots expire first/, "…and what that costs");
+
+  const slow = await panel(COUNTS, { announce: true, perChain: 5, announcePerDay: 200, announceGapMin: 120 });
+  assert.match(slow.text, /the 120 min gap is the limit/, slow.text);
+  await autoTrend.set({ announcePerDay: 100, announceGapMin: 15 });
+});
+
+test("the announce rails are reachable in a sane number of taps", async () => {
+  // ±1 against a cap of 100 is 97 taps. The gap had no control at all, and it
+  // is the number that actually paces the channel now.
+  const { kb } = await panel(COUNTS, { announce: true });
+  const flat = kb.flat();
+  assert.ok(flat.some((t) => /max \d+\/day/.test(t)), flat.join(" | "));
+  assert.ok(flat.some((t) => /1 per \d+m/.test(t)), "the gap needs its own row");
+  const src = fss.readFileSync(require.resolve("../src/admin/adminBot.js"), "utf8");
+  assert.match(src, /"atapd:-10"/, "the daily cap steps by 10");
+  assert.match(src, /bot\.action\(\/\^atagap:\(-\?\\d\+\)\$\/, atStep\("announceGapMin"/, "and the gap stepper is wired");
+});
