@@ -7,6 +7,9 @@
 // loop re-reads config each cycle, so changes apply without a restart.
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const api = require("../api/dexvra");
+// Imported as a MODULE, not destructured: a captured binding cannot be swapped,
+// and the price source has to be stubbable to test the ranking at all.
+const market = require("../marketdata");
 const { CHAINS } = require("../config/chains");
 const log = require("../helpers/logger");
 
@@ -51,19 +54,12 @@ const DEFAULTS = {
   announceCooldownDays: 7, // per token: never announce the same one twice in a week
 };
 
-// Tiers the AUTOMATIC cycle skips. Xpress is listing-only by an explicit
-// operator decision recorded in config/packages.js, and the upgrade path sold to
-// an Xpress buyer is literally "come back and buy Trending" — handing them a
-// free slot, unasked, sells against ourselves.
-//
-// This is a rule about the FREE give-away and nothing else. Any listed token, on
-// ANY package, can BUY Trending — the paid flow (handlers/trending.js →
-// fulfillTrending) has no tier check at all and never has. And a forced per-chain
-// run is an ADMIN saying "put something there now", which is a deliberate act,
-// not the automatic policy: it may promote an Xpress token like any other.
-// Conflating the two left a chain visibly stuck with the operator unable to
-// override it from the panel.
-const NEVER_PROMOTE_TIERS = new Set(["XPRESS"]);
+// NOTE: there is deliberately NO tier gate in this file. Operator's rule, in
+// their words: every listed token can get trending, free or paid — Xpress
+// included. An earlier version excluded Xpress from the free fill to protect an
+// upsell, which left chains visibly stuck and was not what was wanted. The paid
+// flow (handlers/trending.js → fulfillTrending) has never had a tier check
+// either. Do not reintroduce one in either place.
 // Sanity rails so a fat-finger can't set a 48h run or a runaway target.
 const HARD = {
   hoursMin: 1,
@@ -322,6 +318,50 @@ function pendingCount() {
 /** One top-up pass: promote random eligible listings until `target` are featured.
  *  `rng` is injectable so tests are deterministic. Returns how many were promoted.
  *  Never throws — a hiccup must not take down the service loop. */
+// ── Ranking: top gainers ─────────────────────────────────────────────────────
+// A trending board is a claim about what is MOVING. Filling it at random made
+// that claim false — a token down 80% sat next to one up 40% with nothing to
+// tell them apart, and the operator could not point at the board and say why
+// anything on it was there.
+//
+// Live 24h change per candidate, best first. Bounded and paced, because this
+// runs on a timer and the price API is shared with the board poster:
+//   • at most PROBE_CAP candidates per chain get a lookup
+//   • PROBE_GAP_MS between calls
+//   • a token whose price cannot be read sorts LAST but is still available —
+//     never promoting an unpriced token would quietly exclude every new listing
+//     on a chain no indexer covers, which is most of Robinhood.
+const PROBE_CAP = 25;
+const PROBE_GAP_MS = 250;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function byGain(rows, rng = Math.random) {
+  if (rows.length <= 1) return rows.slice();
+  const probe = rows.slice(0, PROBE_CAP);
+  const rest = rows.slice(PROBE_CAP);
+  const scored = [];
+  for (const r of probe) {
+    let change = null;
+    try {
+      const m = await market.fetchMarket(r.chain, r.address);
+      if (m && Number.isFinite(m.change24h)) change = m.change24h;
+    } catch {
+      /* unpriced — handled below */
+    }
+    scored.push({ r, change });
+    await sleep(PROBE_GAP_MS);
+  }
+  const priced = scored.filter((x) => x.change != null).sort((a, b) => b.change - a.change);
+  // Unpriced candidates keep a random order among themselves, so a chain with no
+  // price data at all still rotates instead of promoting the same token forever.
+  const unpriced = scored.filter((x) => x.change == null).map((x) => x.r);
+  for (let i = unpriced.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [unpriced[i], unpriced[j]] = [unpriced[j], unpriced[i]];
+  }
+  return [...priced.map((x) => x.r), ...unpriced, ...rest];
+}
+
 /**
  * One top-up pass. `chain` restricts it to a single network and makes the run
  * FORCED: it ignores the enabled switch and the global target, and promotes up
@@ -363,32 +403,19 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
       (r) =>
         r.status === "approved" &&
         !isFeatured(r) &&
-        on(r, step.id) &&
-        // Forced = an admin asked for it. The tier rule guards the automatic
-        // give-away, not the operator's own hands.
-        (step.forced || !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase())),
+        on(r, step.id),
     );
     if (!eligible.length) {
-      const blockedN = listings.filter(
-        (r) => r.status === "approved" && !isFeatured(r) && on(r, step.id) && NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
-      ).length;
-      if (blockedN && !step.forced) {
-        short.push(`${step.id} (needs ${step.need}; ${blockedN} left are Xpress — auto-fill skips those, tap Run now or sell them Trending)`);
-        continue;
-      }
-      // Say so. A chain that silently cannot be filled looks identical to a
-      // chain the loop never got round to, and the operator cannot tell which
-      // one Robinhood is without this line.
       if (step.forced) log.info(`[autotrend] forced run on ${step.id}: nothing eligible (every listed token there is already featured?)`);
       else short.push(`${step.id} (needs ${step.need}, none eligible)`);
       continue;
     }
     if (eligible.length < step.need) short.push(`${step.id} (needs ${step.need}, only ${eligible.length} eligible)`);
-    for (let i = eligible.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
-    }
-    for (const r of eligible.slice(0, step.need)) {
+    // TOP GAINERS, not a shuffle. A trending board is a claim about what is
+    // moving; filling it at random made that claim false, and put a token down
+    // 80% next to one up 40% with nothing to tell them apart.
+    const ranked = await byGain(eligible, rng);
+    for (const r of ranked.slice(0, step.need)) {
       // Random duration in [minHours, maxHours] — different per token, so the
       // slots expire at staggered (random) times and refill naturally.
       const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
@@ -497,13 +524,10 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
   if (!eligible.length) {
     return { promoted: 0, syms: [], reason: `all ${approved.length} listed token(s) on ${id} are already trending` };
   }
-  for (let i = eligible.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
-  }
+  const ranked = await byGain(eligible, rng);
   const syms = [];
   let lastErr = null;
-  for (const r of eligible.slice(0, Math.max(1, count))) {
+  for (const r of ranked.slice(0, Math.max(1, count))) {
     const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
     try {
       await api.bookTrending(r.chain, r.address, hours);
@@ -536,14 +560,8 @@ async function featuredByChain(now = Date.now()) {
   for (const r of listings) {
     if (r.status !== "approved") continue;
     const id = String(r.chain || "").toLowerCase();
-    out[id] = out[id] || { featured: 0, eligible: 0, blocked: 0 };
+    out[id] = out[id] || { featured: 0, eligible: 0 };
     if (r.trendingRank != null && (!r.trendExp || r.trendExp > now)) out[id].featured++;
-    // An Xpress listing can never be auto-promoted (NEVER_PROMOTE_TIERS), so
-    // counting it as "eligible" made the panel promise tokens the promoter
-    // would never touch — while Run now on the same chain answered "all 5 are
-    // already trending". Both wrong, in opposite directions, and between them
-    // they made a chain look permanently stuck for no visible reason.
-    else if (NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase())) out[id].blocked++;
     else out[id].eligible++;
   }
   return out;
@@ -568,10 +586,10 @@ module.exports = {
   tryAnnounce,
   drainPending,
   isRetryable,
+  byGain,
   pendingCount,
   resetAnnounceState,
   start,
   DEFAULTS,
   HARD,
-  NEVER_PROMOTE_TIERS,
 };

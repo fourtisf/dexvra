@@ -223,8 +223,9 @@ test("featuredByChain counts what the panel shows", async () => {
   ];
   try {
     const by = await autoTrend.featuredByChain(now);
-    assert.deepStrictEqual(by.solana, { featured: 1, eligible: 1, blocked: 0 });
-    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 1, blocked: 2 });
+    assert.deepStrictEqual(by.solana, { featured: 1, eligible: 1 });
+    // Xpress counts as eligible like anything else — it is promotable.
+    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 3 });
   } finally {
     api.getListings = realGet;
   }
@@ -350,10 +351,10 @@ test("announceReason names every refusal", async () => {
   );
 });
 
-test("the automatic cycle leaves Xpress alone — the free slot stays sellable", async () => {
-  // Xpress is listing-only, and the upgrade sold to that buyer is literally
-  // "come back and buy Trending". Handing them a free slot, unasked, sells
-  // against ourselves. This is a rule about the GIVE-AWAY and nothing else.
+test("every listed token is eligible — no package is skipped", async () => {
+  // The operator's rule, in their words: every listed token can get trending,
+  // free or paid. An earlier version held Xpress back from the free fill to
+  // protect an upsell; it left chains visibly stuck and was not what was wanted.
   await autoTrend.set({ enabled: true, perChain: 5 });
   const realGet = api.getListings;
   api.getListings = async () => [
@@ -364,11 +365,22 @@ test("the automatic cycle leaves Xpress alone — the free slot stays sellable",
   api.bookTrending = async (chain, address) => (calls.push(address), {});
   try {
     await autoTrend.runOnce({ rng: () => 0.5 });
-    assert.deepStrictEqual(calls, ["g1"], "the paid tier goes up; the Xpress one is left to be sold");
+    assert.deepStrictEqual(calls.sort(), ["g1", "x1"], "both go up; the package is not a gate");
   } finally {
     api.getListings = realGet;
   }
 });
+
+test("no tier gate survives anywhere in the promoter", () => {
+  // Cheap and blunt on purpose: this rule has been re-broken once already.
+  const fss = require("node:fs");
+  const src = fss
+    .readFileSync(require.resolve("../src/services/autoTrend.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/XPRESS|NEVER_PROMOTE/.test(src), "a tier exclusion is back in autoTrend");
+});
+
 
 test("Run now promotes ANY package — it is the admin's own hand, not the policy", async () => {
   // The operator's rule, in their words: a listed token, whatever package it
@@ -480,3 +492,104 @@ test("the announce path never posts to the announcement channel", () => {
 
 
 
+
+// ── Top gainers ──────────────────────────────────────────────────────────────
+const market = require("../src/marketdata");
+
+test("the board is filled by 24h gain, best first — not by a coin flip", async () => {
+  // "trending di liat dari top gainers." A trending board is a claim about what
+  // is moving; a random fill made that claim false, and put a token down 80%
+  // beside one up 40% with nothing to tell them apart.
+  const realFetch = market.fetchMarket;
+  const gains = { a: 5, b: 140, c: -62, d: 38 };
+  market.fetchMarket = async (_chain, address) => ({ change24h: gains[address] });
+  try {
+    const rows = ["a", "b", "c", "d"].map((address) => ({ chain: "bsc", address }));
+    const ranked = await autoTrend.byGain(rows);
+    assert.deepStrictEqual(ranked.map((r) => r.address), ["b", "d", "a", "c"]);
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("only the top N are promoted, and they are the top N", async () => {
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const gains = { s1: 12, s2: 300, s3: -40, s4: 90, s5: 2 };
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.getListings = async () =>
+    Object.keys(gains).map((address) => ({ status: "approved", chain: "solana", address, sym: address, trendingRank: null }));
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, perChain: 2, chains: ["solana"] });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(calls, ["s2", "s4"], `promoted ${calls.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, perChain: 5 });
+  }
+});
+
+test("a token with no price still gets a turn — it just goes last", async () => {
+  // Robinhood has no indexer, so most of its listings price as null. Dropping
+  // them would quietly mean that chain is never auto-filled at all.
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async (_c, address) => (address === "priced" ? { change24h: 7 } : null);
+  try {
+    const rows = ["dark1", "priced", "dark2"].map((address) => ({ chain: "robinhood", address }));
+    const ranked = await autoTrend.byGain(rows, () => 0);
+    assert.strictEqual(ranked[0].address, "priced", "a real gain outranks an unknown");
+    assert.deepStrictEqual(ranked.slice(1).map((r) => r.address).sort(), ["dark1", "dark2"], "…but the rest are still there");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("a price lookup that throws does not take the cycle down", async () => {
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async () => { throw new Error("429 rate limited"); };
+  try {
+    const rows = [{ chain: "bsc", address: "a" }, { chain: "bsc", address: "b" }];
+    const ranked = await autoTrend.byGain(rows, () => 0);
+    assert.strictEqual(ranked.length, 2, "everything is still promotable");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("Run now places the best mover, not an arbitrary one", async () => {
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const gains = { b1: -5, b2: 210, b3: 44 };
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.getListings = async () =>
+    Object.keys(gains).map((address) => ({ status: "approved", chain: "bsc", address, sym: address, trendingRank: null }));
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    const res = await autoTrend.forceChain("bsc");
+    assert.strictEqual(res.promoted, 1);
+    assert.deepStrictEqual(calls, ["b2"], `placed ${calls.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+  }
+});
+
+test("the price probe is bounded — this runs on a timer", async () => {
+  // A chain with 400 listings must not fire 400 lookups every cycle at the same
+  // API the board poster is using.
+  const realFetch = market.fetchMarket;
+  let calls = 0;
+  market.fetchMarket = async () => (calls++, { change24h: 1 });
+  try {
+    const rows = Array.from({ length: 60 }, (_, i) => ({ chain: "bsc", address: `t${i}` }));
+    const ranked = await autoTrend.byGain(rows, () => 0);
+    assert.ok(calls <= 25, `probed ${calls} candidates`);
+    assert.strictEqual(ranked.length, 60, "the unprobed tail is still eligible, just unranked");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});

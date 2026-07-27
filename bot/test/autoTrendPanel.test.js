@@ -134,24 +134,17 @@ test("changing the per-chain target moves every number on the panel together", a
   await autoTrend.set({ perChain: 5 });
 });
 
-test("an Xpress-only chain reads as sellable, never as 'can never trend'", async () => {
-  // Two wrong readings had to go. "No listings left" sent the operator off to
-  // list more, which would not have helped. And "never auto-promoted" read as
-  // "Xpress can never trend" — false, and the kind of false that loses a sale:
-  // any listed token, on any package, can BUY Trending and gets it.
-  const { text } = await panel({
-    solana: { featured: 5, eligible: 3, blocked: 0 },
-    bsc: { featured: 2, eligible: 0, blocked: 3 },
-    ethereum: { featured: 5, eligible: 1, blocked: 0 },
-    base: { featured: 5, eligible: 1, blocked: 0 },
-    robinhood: { featured: 5, eligible: 1, blocked: 0 },
-  });
-  assert.match(text, /⚡ .*BSC — 2\/5 · 3 Xpress — auto-fill skips them; tap ⚡ below to place one now/, text);
-  assert.match(text, /Run now.*places one anyway/s, text);
-  assert.match(text, /any package can buy Trending and will get it/, text);
-  assert.ok(!text.includes("no spare listings"), "there ARE listings here");
-  assert.ok(!/never auto-promoted|cannot be filled/.test(text), "nothing here is permanently stuck");
+test("the panel says how tokens are chosen, because that is the product claim", async () => {
+  // A trending board asserts "these are moving". Filling it at random made the
+  // assertion false, and the panel described it as random in so many words.
+  const { text } = await panel();
+  assert.match(text, /top gainers/, text);
+  assert.match(text, /biggest 24h/, text);
+  assert.match(text, /any package/, text, "no tier is held back — Xpress included");
+  assert.match(text, /best 24h mover/, "Run now places the best one, not an arbitrary one");
+  assert.ok(!/\brandom\b listed/.test(text), "the old claim must be gone");
 });
+
 
 
 test("a chain with genuinely nothing listed still reads as nothing listed", async () => {

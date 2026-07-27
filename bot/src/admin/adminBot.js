@@ -617,20 +617,12 @@ function atBoardLines(c, counts = _atCounts) {
     const glyph = meta ? trendingBoard.displayEmoji(meta.logo) : "•";
     const n = (counts[id] && counts[id].featured) || 0;
     const spare = (counts[id] && counts[id].eligible) || 0;
-    const blocked = (counts[id] && counts[id].blocked) || 0;
     let mark = "✅";
     let note = "";
     if (n < c.perChain) {
       if (spare > 0) {
         mark = "⏳";
         note = ` · ${spare} ready to promote`;
-      } else if (blocked > 0) {
-        // There ARE tokens here — the automatic cycle just leaves Xpress alone so
-        // the slot stays sellable. "No listings left" sent the operator off to
-        // list more, which would not have helped; and "never auto-promoted" read
-        // as "can never trend", which is false and could lose a sale.
-        mark = "⚡";
-        note = ` · <i>${blocked} Xpress — auto-fill skips them; tap ⚡ below to place one now</i>`;
       } else {
         mark = "🔴";
         note = ` · <i>no listings left on this chain</i>`;
@@ -645,24 +637,19 @@ function atText() {
   const c = autoTrend.get();
   const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChain);
   const blocked = short.filter((id) => !((_atCounts[id] && _atCounts[id].eligible) || 0));
-  const xpressOnly = blocked.filter((id) => ((_atCounts[id] && _atCounts[id].blocked) || 0) > 0);
   return (
     `🤖 <b>Auto Trending</b> — ${c.enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
-    `Fills the Trending board between paid slots: promotes a <b>random</b> listed ` +
-    `token for a <b>random</b> ${c.minHours}–${c.maxHours}h, every ${c.minGapMin}–${c.maxGapMin} min. ` +
-    `Paid tiers always sort above auto ones.\n\n` +
+    `Fills the Trending board between paid slots with the <b>top gainers</b> — the biggest 24h ` +
+    `movers among listed tokens, any package — for a random ${c.minHours}–${c.maxHours}h, every ` +
+    `${c.minGapMin}–${c.maxGapMin} min. Paid tiers still sort above auto ones on the board.\n\n` +
     `📊 <b>Board right now</b> — target <b>${c.perChain}</b> per chain\n` +
     atBoardLines(c) +
     `\n\n` +
     (short.length === 0
       ? `✅ <i>Every chain is at target. Nothing to do until a slot expires.</i>`
       : blocked.length
-        ? xpressOnly.length
-          ? `⚡ <i>${xpressOnly.length} chain(s) have only <b>Xpress</b> listings left. The automatic cycle leaves those alone ` +
-            `so the slot stays sellable — but <b>Run now</b> below places one anyway, and any listed token on <b>any</b> ` +
-            `package can buy Trending and will get it.</i>`
-          : `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings. ` +
-            `That needs more tokens listed there, not another cycle.</i>`
+        ? `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings. ` +
+          `That needs more tokens listed there, not another cycle.</i>`
         : `⏳ <i>${short.length} chain(s) below target; the next cycle tops them up. ` +
           `Tap a chain below to do it now.</i>`) +
     `\n\n` +
@@ -670,7 +657,7 @@ function atText() {
     (c.announce && _atPending > 0 ? ` · <b>${_atPending}</b> waiting to post` : "") +
     (c.announce ? ` <i>(max ${c.announcePerDay}/day, ${c.announceGapMin} min apart, ${c.announceCooldownDays}d per token)</i>` : "") +
     `\n<i>Auto posts use the SAME card as a paid Trending purchase — never pinned, never @dexvraio.</i>\n\n` +
-    `⚡ <b>Run now</b> — tap a chain to promote one token there immediately, even while this is off.`
+    `⚡ <b>Run now</b> — tap a chain to place its best 24h mover there immediately, even while this is off.`
   );
 }
 
