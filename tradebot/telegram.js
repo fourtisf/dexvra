@@ -1085,13 +1085,52 @@ async function doSell(chatId, ca, pct, chain, walletId) {
   } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `❌ <b>Sell didn't go through</b>\n\n${esc(friendlyError(e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
 }
 
+// The group notice exists for ONE reader: someone who typed a command at the bot
+// in a group. Everything else that arrives as `message` used to trigger it too —
+// and in Telegram a member joining IS a message. The group filled with "please
+// DM me privately" every time anyone walked in, from a bot nobody had addressed.
+//
+// So: service messages (joins, leaves, title/photo changes, pins) are silent,
+// ordinary chatter is silent, and a command gets ONE answer per group per hour.
+// Repeating it to a room that has already been told is the same spam in slow
+// motion.
+const GROUP_NOTICE_QUIET_MS = 60 * 60 * 1000;
+const _groupNoticeAt = new Map();
+function _shouldAnswerInGroup(msg, chatId) {
+  if (!msg) return false;
+  // A service message carries no text and no author intent — it is Telegram
+  // narrating the room, not a person talking to the bot.
+  const SERVICE = [
+    'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo',
+    'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
+    'channel_chat_created', 'message_auto_delete_timer_changed', 'migrate_to_chat_id',
+    'migrate_from_chat_id', 'pinned_message', 'video_chat_started', 'video_chat_ended',
+    'video_chat_participants_invited', 'video_chat_scheduled', 'forum_topic_created',
+    'forum_topic_edited', 'forum_topic_closed', 'forum_topic_reopened', 'users_shared',
+    'chat_shared', 'boost_added', 'giveaway_created', 'successful_payment',
+  ];
+  for (const k of SERVICE) if (msg[k] !== undefined) return false;
+  const text = String(msg.text || msg.caption || '').trim();
+  if (!text.startsWith('/')) return false;   // chatter is not addressed to us
+  const now = Date.now();
+  const last = _groupNoticeAt.get(chatId) || 0;
+  if (now - last < GROUP_NOTICE_QUIET_MS) return false;
+  _groupNoticeAt.set(chatId, now);
+  if (_groupNoticeAt.size > 500) {           // bounded: a bot in many groups must not leak
+    for (const [k, t] of _groupNoticeAt) if (now - t > GROUP_NOTICE_QUIET_MS) _groupNoticeAt.delete(k);
+  }
+  return true;
+}
+
 // ------------------------------------------------------------ router
 async function handleUpdate(up) {
   try {
     const chat = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
     if (chat && chat.type !== 'private') {
       if (up.callback_query) await answer(up.callback_query.id, 'DM me privately — group use is disabled.');
-      else if (up.message) await send(chat.id, 'This is a custodial trading bot — please DM me privately. Group use is disabled for security.');
+      else if (_shouldAnswerInGroup(up.message, chat.id)) {
+        await send(chat.id, 'This is a custodial trading bot — please DM me privately. Group use is disabled for security.');
+      }
       return;
     }
     const from = (up.message && up.message.from) || (up.callback_query && up.callback_query.from);
@@ -2000,5 +2039,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
