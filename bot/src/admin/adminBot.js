@@ -392,6 +392,9 @@ function tbText() {
     `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
     `<b>Title emoji:</b> ${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} ` +
     `${trendingBoard.displayEmoji(trendingBoard.titleEmoji())} <i>Dexvra Trending — live featured slots</i>\n\n` +
+    `<b>New-entry marker:</b> ${tbMark(trendingBoard.isNewPremium(), trendingBoard.isNewCustom())} ` +
+    `${trendingBoard.displayEmoji(trendingBoard.newEmoji())} — shown beside any token whose trending slot ` +
+    `started in the last <b>${trendingBoard.newHours()}h</b>, with a one-line legend under the board.\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
     `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n` +
     `${premLine}\n` +
@@ -415,6 +418,13 @@ function tbKb() {
       `${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} Title emoji ${trendingBoard.displayEmoji(trendingBoard.titleEmoji())}`,
       "tbt",
     ),
+  ]);
+  rows.push([
+    cb(
+      `${tbMark(trendingBoard.isNewPremium(), trendingBoard.isNewCustom())} New marker ${trendingBoard.displayEmoji(trendingBoard.newEmoji())}`,
+      "tbn",
+    ),
+    cb(`⏱ ${trendingBoard.newHours()}h window`, "tbnh"),
   ]);
   rows.push([cb("🔗 Chain logos", "tbc")]);
   rows.push([cb("💎 Premium status", "tbdiag")]);
@@ -2071,6 +2081,29 @@ function build() {
       HTML,
     );
   });
+  bot.action("tbn", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "tbnew" };
+    await ctx.reply(
+      `⌨ Send the emoji that marks a <b>newly entered</b> token (current: ${trendingBoard.displayEmoji(trendingBoard.newEmoji())}` +
+        `${trendingBoard.isNewPremium() ? " — 💎 premium" : ""}).\n\n` +
+        `It appears beside any token whose slot started in the last <b>${trendingBoard.newHours()}h</b>, and in the legend ` +
+        `under the board. Send a <b>premium</b> emoji and it animates. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbnh", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "tbnewhours" };
+    await ctx.reply(
+      `⌨ How many hours counts as <b>newly entered</b>? Send a number from ` +
+        `<b>${trendingBoard.NEW_HOURS_MIN}</b> to <b>${trendingBoard.NEW_HOURS_MAX}</b> (current: <b>${trendingBoard.newHours()}h</b>).\n\n` +
+        `<i>Short is the point — a mark that lasts a day stops meaning "just now". /cancel to abort.</i>`,
+      HTML,
+    );
+  });
   bot.action("tbc", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -2608,6 +2641,32 @@ function build() {
             ...tbKb(),
           })
           .catch(() => {});
+        return;
+      }
+      if (mode === "tbnew") {
+        const frag = emojiFragment(ctx.message);
+        if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setNewEmoji(frag).catch((e) => log.warn(`[adminbot] setNewEmoji: ${e.message}`));
+        const rendered = trendingBoard.newEmoji();
+        log.info(`[adminbot] new-entry marker → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(
+            `✅ New-entry marker → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}\n\n` +
+              `<i>Legend on the board: ${trendingBoard.displayEmoji(rendered)} = Newly Entered Trending (slot started in the last ${trendingBoard.newHours()}h)</i>`,
+            { ...HTML, ...tbKb() },
+          )
+          .catch(() => {});
+        return;
+      }
+      if (mode === "tbnewhours") {
+        const n = Math.round(Number(String(ctx.message.text || "").trim()));
+        if (!Number.isFinite(n)) return ctx.reply("❌ Send a number, e.g. <code>3</code>.", HTML).catch(() => {});
+        const saved = await trendingBoard.setNewHours(n);
+        // Say what was STORED, not what was typed: 99 becomes 48 and the admin
+        // must not walk away believing otherwise.
+        const note = saved !== n ? ` <i>(clamped from ${n} — the range is ${trendingBoard.NEW_HOURS_MIN}–${trendingBoard.NEW_HOURS_MAX})</i>` : "";
+        log.info(`[adminbot] new-entry window → ${saved}h by @${ctx.from.username || ctx.from.id}`);
+        await ctx.reply(`✅ Newly-entered window → <b>${saved}h</b>${note}`, { ...HTML, ...tbKb() }).catch(() => {});
         return;
       }
       if (mode === "tbchain") {
