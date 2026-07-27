@@ -314,7 +314,7 @@ test("announce is OFF by default and every rail is railed", async () => {
   const c = autoTrend.get();
   assert.strictEqual(c.announce, false, "publishing must be opt-in");
   const wild = await autoTrend.set({ announcePerDay: 9999, announceGapMin: 0, announceCooldownDays: -5 });
-  assert.ok(wild.announcePerDay <= 24, `daily cap railed: ${wild.announcePerDay}`);
+  assert.ok(wild.announcePerDay <= 200, `daily cap railed: ${wild.announcePerDay}`);
   assert.ok(wild.announceGapMin >= 5, `spacing railed: ${wild.announceGapMin}`);
   assert.ok(wild.announceCooldownDays >= 0, `cooldown railed: ${wild.announceCooldownDays}`);
   await autoTrend.reset();

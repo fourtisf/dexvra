@@ -38,8 +38,16 @@ const DEFAULTS = {
   // "templatenya harus sama dengan trending yang sudah di set, nothing beda").
   // The rails below are what keeps that from drowning the paid posts.
   announce: false, // OFF until the operator turns it on — it publishes in public
-  announcePerDay: 3,
-  announceGapMin: 60, // minimum spacing between two auto posts
+  // A token on the board WITHOUT a post is a product nobody can see, so every
+  // promotion is announced — the rails below space them out, they no longer
+  // decide which ones happen. That distinction is the whole design: a
+  // promotion that cannot post right now is QUEUED, not dropped.
+  //
+  // The arithmetic they have to survive: 5 chains × 5 slots = 25 live, each
+  // lasting 3–18h (~10.5h average), so steady state is roughly 57 promotions a
+  // day. A 60-minute gap could clear 24 of them — the queue would grow forever.
+  announcePerDay: 100, // a safety valve, not a policy: 0 = announce nothing
+  announceGapMin: 15, // spacing between two auto posts
   announceCooldownDays: 7, // per token: never announce the same one twice in a week
 };
 
@@ -57,7 +65,10 @@ const HARD = {
   gapMax: 1440,
   perChainMin: 0,   // 0 = leave this chain to paid slots only
   perChainMax: 20,
-  announcePerDay: [0, 24],
+  // The old ceiling was 24/day, which is BELOW the ~57 promotions a day that 5
+  // chains × 5 slots actually produce — so "announce everything" was
+  // unreachable no matter how the panel was set.
+  announcePerDay: [0, 200],
   announceGapMin: [5, 1440],
   announceCooldownDays: [0, 90],
 };
@@ -142,6 +153,12 @@ async function resetAnnounceState() {
 
 /** Why this token is NOT getting announced, or null when it may be. One
  *  function so every refusal is a readable log line rather than a silent skip. */
+// Refusals that are a matter of TIME. A promotion blocked by one of these has
+// not been rejected — it is waiting, and the queue must hold on to it. Anything
+// else ("off", "already announced this week") is a real no.
+const RETRYABLE = /^(daily cap reached|too soon)/;
+const isRetryable = (why) => !!why && RETRYABLE.test(why);
+
 function announceReason(row, st, cfg, now = Date.now()) {
   if (!cfg.announce) return "announcements are off";
   if (!row || !row.chain || !row.address) return "no token";
@@ -162,7 +179,9 @@ function announceReason(row, st, cfg, now = Date.now()) {
  * is attached there. Best-effort: the promotion has already happened and must
  * never be undone by a failed post.
  */
+let _announcer = null; // test seam: swap the channel post for a recorder
 async function announceOne(row, hours) {
+  if (_announcer) return _announcer(row, hours);
   const post = require("../channels/post");
   const fmt = require("../channels/format");
   const { CHANNELS, SITE_URL } = require("../config/constants");
@@ -245,7 +264,9 @@ async function queueAnnounce(row, hours = 0) {
   st.pending = [
     ...st.pending.filter((p) => keyOf(p.chain, p.address) !== keyOf(row.chain, row.address)),
     { chain: row.chain, address: row.address, hours, at: Date.now() },
-  ].slice(-20);
+    // A cold start across five chains can enqueue 25 at once, and a slow drain
+    // must not silently discard the tail. Bounded, but generously.
+  ].slice(-200);
   await saveState(st);
 }
 
@@ -253,9 +274,21 @@ async function queueAnnounce(row, hours = 0) {
 async function drainPending({ now = Date.now() } = {}) {
   const st = loadState();
   if (!st.pending.length) return 0;
-  const [next, ...rest] = st.pending;
-  st.pending = rest;
+  const next = st.pending[0];
+  // Look BEFORE removing. The old order popped the head, saved, and then tried
+  // to post — so a "too soon, 12 min to go" threw the promotion away, and the
+  // token sat on the board with no post for its whole slot. Nothing may leave
+  // this queue until it has either posted or been refused for good.
+  const cfg = get();
+  const why = announceReason({ chain: next.chain, address: next.address }, st, cfg, now);
+  if (isRetryable(why)) return 0; // still queued; the next tick tries again
+
+  st.pending = st.pending.slice(1);
   await saveState(st);
+  if (why) {
+    log.debug(`[autotrend] dropping queued ${next.chain}/${next.address}: ${why}`);
+    return 0;
+  }
   let listings = [];
   try {
     listings = await api.getListings();
@@ -264,7 +297,19 @@ async function drainPending({ now = Date.now() } = {}) {
   }
   const row = listings.find((r) => keyOf(r.chain, r.address) === keyOf(next.chain, next.address));
   if (!row) return 0;
+  // The queue can be hours deep, and a slot lasts 3–18h. Announcing a token
+  // whose slot has already ended posts a card for something no longer on the
+  // board — worse than not posting it.
+  if (row.trendingRank == null || (row.trendExp && row.trendExp <= now)) {
+    log.debug(`[autotrend] dropping queued ${row.sym || row.address}: its slot ended before the queue reached it`);
+    return 0;
+  }
   return (await tryAnnounce(row, { now, hours: next.hours })) ? 0 : 1;
+}
+
+/** How many promotions are waiting to be posted (shown in the admin panel). */
+function pendingCount() {
+  return loadState().pending.length;
 }
 
 /** One top-up pass: promote random eligible listings until `target` are featured.
@@ -337,7 +382,18 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
         log.info(
           `[autotrend] ${step.forced ? "FORCED " : ""}promoted ${r.chain}/${String(r.address).slice(0, 8)}… (${r.sym || "?"}) for ${hours}h`,
         );
-        if (!announcedThisRun) announcedThisRun = (await tryAnnounce(r, { hours }).catch(() => "error")) === null;
+        // The first promotion of a run posts immediately; the rest queue and
+        // drain on the 45s timer, spaced by announceGapMin. A cold start tops
+        // up five networks at once — posting all 25 in a burst is the firehose
+        // this used to avoid by DROPPING them, which left tokens on the board
+        // with no post at all. Queue, don't drop.
+        if (!announcedThisRun) {
+          const why = await tryAnnounce(r, { hours }).catch(() => "error");
+          announcedThisRun = why === null;
+          if (isRetryable(why)) await queueAnnounce(r, hours);
+        } else {
+          await queueAnnounce(r, hours);
+        }
       } catch (e) {
         log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
       }
@@ -473,7 +529,14 @@ async function featuredByChain(now = Date.now()) {
 }
 
 module.exports = {
-  _test: { resetShortWarn: () => (lastShortWarnAt = 0) },
+  _test: {
+    resetShortWarn: () => (lastShortWarnAt = 0),
+    setAnnouncer: (fn) => (_announcer = fn),
+    setLastAt: async (t) => { const st = loadState(); st.lastAt = t; await saveState(st); },
+    setAnnounced: async (chain, address, t) => { const st = loadState(); st.announced[keyOf(chain, address)] = t; await saveState(st); },
+  },
+  resetState: resetAnnounceState,
+  queueAnnounce,
   get,
   set,
   reset,
@@ -483,6 +546,8 @@ module.exports = {
   announceReason,
   tryAnnounce,
   drainPending,
+  isRetryable,
+  pendingCount,
   resetAnnounceState,
   start,
   DEFAULTS,

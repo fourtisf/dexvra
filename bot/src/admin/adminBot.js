@@ -654,6 +654,7 @@ function atText() {
           `Tap a chain below to do it now.</i>`) +
     `\n\n` +
     `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
+    (c.announce && _atPending > 0 ? ` · <b>${_atPending}</b> waiting to post` : "") +
     (c.announce ? ` <i>(max ${c.announcePerDay}/day, ${c.announceGapMin} min apart, ${c.announceCooldownDays}d per token)</i>` : "") +
     `\n<i>Auto posts use the SAME card as a paid Trending purchase — never pinned, never @dexvraio.</i>\n\n` +
     `⚡ <b>Run now</b> — tap a chain to promote one token there immediately, even while this is off.`
@@ -768,6 +769,9 @@ function atChainRows(cb, counts = _atCounts) {
 // Last per-chain snapshot, refreshed whenever the panel is opened. Kept out of
 // the keyboard builder so drawing the panel never blocks on the API.
 let _atCounts = {};
+// Queue depth, refreshed with the counts. Every promotion is announced now, so
+// a backlog is normal — but an unmoving one means the gap is too wide.
+let _atPending = 0;
 
 // ── Interactive layout editor — one PHOTO message that edits itself in place ─
 // A full listing-example preview (logo + $TICKER + name + chain·price·MC
@@ -1852,6 +1856,7 @@ function build() {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     _atCounts = await autoTrend.featuredByChain().catch(() => ({}));
+    _atPending = autoTrend.pendingCount();
     await edit(ctx, atText(), atKb());
   });
   bot.action("atann", async (ctx) => {
@@ -1882,6 +1887,7 @@ function build() {
       )
       .catch(() => {});
     _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
+    _atPending = autoTrend.pendingCount();
     await edit(ctx, atText(), atKb());
   });
   bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
@@ -1891,6 +1897,7 @@ function build() {
   bot.action("atref", async (ctx) => {
     if (!guard(ctx)) return;
     _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
+    _atPending = autoTrend.pendingCount();
     ctx.answerCbQuery("Board refreshed").catch(() => {});
     await edit(ctx, atText(), atKb());
   });
@@ -2926,7 +2933,7 @@ async function startAdminBot() {
 module.exports = {
   // Panel-rendering seam: the layout is the thing that was wrong, so a test
   // (and the preview script) must be able to render it without a bot.
-  _test: { atText, atKb, atBoardLines, setAtCounts: (c) => (_atCounts = c) }, startAdminBot, build };
+  _test: { atText, atKb, atBoardLines, setAtCounts: (c) => (_atCounts = c), setAtPending: (n) => (_atPending = n) }, startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
 // Exposed for tests: the trending-board editor + the premium-emoji report.
