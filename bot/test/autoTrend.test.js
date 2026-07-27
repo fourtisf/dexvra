@@ -8,8 +8,9 @@ const test = require("node:test");
 const assert = require("node:assert");
 const api = require("../src/api/dexvra");
 const autoTrend = require("../src/services/autoTrend");
+const log = require("../src/helpers/logger");
 
-test("autotrend: defaults + rails (max 18h, valid ranges, capped target)", async () => {
+test("autotrend: defaults + rails (max 18h, valid ranges, capped per-chain target)", async () => {
   const d = autoTrend.get();
   assert.strictEqual(d.enabled, false);
   assert.strictEqual(d.maxHours, 18);
@@ -21,8 +22,15 @@ test("autotrend: defaults + rails (max 18h, valid ranges, capped target)", async
   // max can't drop below min; target and gap stay within rails.
   c = await autoTrend.set({ minHours: 10, maxHours: 4 });
   assert.ok(c.maxHours >= c.minHours, "max kept >= min");
-  c = await autoTrend.set({ target: 9999 });
-  assert.strictEqual(c.target, autoTrend.HARD.targetMax, "target capped");
+  c = await autoTrend.set({ perChain: 9999 });
+  assert.strictEqual(c.perChain, autoTrend.HARD.perChainMax, "per-chain target capped");
+  // An unknown network would be topped up forever with nothing eligible.
+  c = await autoTrend.set({ chains: ["solana", "not-a-chain", "BSC"] });
+  assert.deepStrictEqual(c.chains, ["solana", "bsc"], "unknown ids dropped, case normalised");
+  // An empty list is a mistake, not an instruction — "auto-trend nothing" is
+  // what the enabled switch is for. It falls back to the shipped set.
+  c = await autoTrend.set({ chains: [] });
+  assert.deepStrictEqual(c.chains, autoTrend.DEFAULTS.chains);
   c = await autoTrend.set({ minGapMin: 200, maxGapMin: 50 });
   assert.ok(c.maxGapMin >= c.minGapMin, "gap range kept valid");
   await autoTrend.reset();
@@ -38,51 +46,117 @@ test("autotrend: disabled → no promotions", async () => {
   assert.strictEqual(booked, 0, "nothing promoted while disabled");
 });
 
-test("autotrend: tops up to target with random durations ≤ maxHours", async () => {
-  await autoTrend.set({ enabled: true, target: 3, minHours: 3, maxHours: 18 });
+test("every chain is topped up against its OWN count, not one shared pool", async () => {
+  // THE bug, in one fixture. The board groups by network, and a single global
+  // target let the network with the most listings win every shuffle: the live
+  // board showed 5 Solana tokens, one BSC, one Ethereum, one Base — and no
+  // Robinhood at all. Five listings per chain must produce five per chain.
+  await autoTrend.set({ enabled: true, perChain: 5, minHours: 3, maxHours: 18 });
   const now = Date.now();
-  api.getListings = async () => [
-    // one already featured
-    { status: "approved", chain: "solana", address: "feat", sym: "F", trendingRank: 1, trendExp: now + 3600e3 },
-    // eligible (not featured)
-    { status: "approved", chain: "solana", address: "e1", sym: "E1", trendingRank: null },
-    { status: "approved", chain: "bsc", address: "e2", sym: "E2", trendingRank: null },
-    { status: "approved", chain: "base", address: "e3", sym: "E3", trendingRank: null },
-    { status: "approved", chain: "eth", address: "e4", sym: "E4", trendingRank: null },
-    // not approved → never eligible
-    { status: "pending", chain: "solana", address: "np", sym: "NP", trendingRank: null },
-  ];
+  const rows = [];
+  for (const chain of ["solana", "bsc", "ethereum", "base", "robinhood"]) {
+    // Solana is the crowded one — 12 candidates against everyone else's 5. Under
+    // the old code that head start was the whole board.
+    const n = chain === "solana" ? 12 : 5;
+    for (let i = 0; i < n; i++) rows.push({ status: "approved", chain, address: `${chain}${i}`, sym: `${chain}${i}`, trendingRank: null });
+  }
+  api.getListings = async () => rows;
   const calls = [];
   api.bookTrending = async (chain, address, hours) => (calls.push({ chain, address, hours }), {});
-  const rng = () => 0.5; // deterministic
-  const promoted = await autoTrend.runOnce({ rng });
-  assert.strictEqual(promoted, 2, "featured=1, target=3 → promote 2");
-  assert.strictEqual(calls.length, 2);
-  for (const c of calls) {
-    assert.ok(c.hours >= 3 && c.hours <= 18, `duration ${c.hours} within 3–18h`);
-    assert.notStrictEqual(c.address, "np", "never promotes a non-approved listing");
-    assert.notStrictEqual(c.address, "feat", "never re-promotes an already-featured one");
-  }
+  const promoted = await autoTrend.runOnce({ rng: () => 0.5 });
+
+  const byChain = {};
+  for (const c of calls) byChain[c.chain] = (byChain[c.chain] || 0) + 1;
+  assert.deepStrictEqual(byChain, { solana: 5, bsc: 5, ethereum: 5, base: 5, robinhood: 5 }, JSON.stringify(byChain));
+  assert.strictEqual(promoted, 25);
+  for (const c of calls) assert.ok(c.hours >= 3 && c.hours <= 18, `duration ${c.hours} within 3–18h`);
+  void now;
 });
 
-test("autotrend: already at target → no-op", async () => {
-  await autoTrend.set({ enabled: true, target: 1 });
+test("a chain already at its count is left alone; a short one is topped up", async () => {
+  await autoTrend.set({ enabled: true, perChain: 2 });
   const now = Date.now();
   api.getListings = async () => [
-    { status: "approved", chain: "solana", address: "feat", sym: "F", trendingRank: 1, trendExp: now + 3600e3 },
-    { status: "approved", chain: "solana", address: "e1", sym: "E1", trendingRank: null },
+    // solana: two already featured → nothing needed
+    { status: "approved", chain: "solana", address: "s1", trendingRank: 1, trendExp: now + 3600e3 },
+    { status: "approved", chain: "solana", address: "s2", trendingRank: 2, trendExp: now + 3600e3 },
+    { status: "approved", chain: "solana", address: "s3", trendingRank: null },
+    // bsc: one featured, one free → needs exactly one
+    { status: "approved", chain: "bsc", address: "b1", trendingRank: 3, trendExp: now + 3600e3 },
+    { status: "approved", chain: "bsc", address: "b2", trendingRank: null },
+    // an EXPIRED slot is not featured — it is the whole reason this loop exists
+    { status: "approved", chain: "base", address: "x1", trendingRank: 9, trendExp: now - 1000 },
+    { status: "approved", chain: "base", address: "x2", trendingRank: null },
+    // never eligible
+    { status: "pending", chain: "solana", address: "np", trendingRank: null },
   ];
-  let booked = 0;
-  api.bookTrending = async () => (booked++, {});
-  assert.strictEqual(await autoTrend.runOnce(), 0);
-  assert.strictEqual(booked, 0);
-  await autoTrend.reset();
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push({ chain, address }), {});
+  await autoTrend.runOnce({ rng: () => 0.5 });
+  const got = calls.map((c) => c.address).sort();
+  assert.deepStrictEqual(got, ["b2", "x1", "x2"], `promoted ${got.join(",")}`);
+  assert.ok(!got.includes("s3"), "solana was already at 2 — do not overfill it");
+  assert.ok(!got.includes("np"), "never promotes a non-approved listing");
 });
 
-// Forced per-chain run: the board groups by network, so a chain with nothing
-// featured shows nothing at all — and waiting for the random cycle to happen to
-// pick that chain is not a plan. The admin panel's "⚡ Run now" needs a run that
-// targets ONE chain and ignores the global target.
+test("only the configured chains are filled", async () => {
+  // Tron has no listings and nobody sells trending there; topping it up every
+  // cycle would just log a failure forever.
+  await autoTrend.set({ enabled: true, perChain: 3, chains: ["solana", "robinhood"] });
+  api.getListings = async () => [
+    { status: "approved", chain: "solana", address: "s1", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "r1", trendingRank: null },
+    { status: "approved", chain: "tron", address: "t1", trendingRank: null },
+    { status: "approved", chain: "ethereum", address: "e1", trendingRank: null },
+  ];
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push(address), {});
+  await autoTrend.runOnce({ rng: () => 0.5 });
+  assert.deepStrictEqual(calls.sort(), ["r1", "s1"]);
+  await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+});
+
+test("a chain that CANNOT be filled says so — silence looks identical to 'not yet'", async () => {
+  // Robinhood with two listings can never reach five, and no number of cycles
+  // will change that. Without this line the operator waits for a loop that has
+  // already done everything it can.
+  await autoTrend.set({ enabled: true, perChain: 5 });
+  api.getListings = async () => [{ status: "approved", chain: "robinhood", address: "r1", trendingRank: null }];
+  api.bookTrending = async () => ({});
+  const warns = [];
+  const realWarn = log.warn;
+  log.warn = (...a) => warns.push(a.join(" "));
+  autoTrend._test.resetShortWarn();
+  try {
+    await autoTrend.runOnce({ rng: () => 0.5 });
+  } finally {
+    log.warn = realWarn;
+  }
+  const line = warns.join("\n");
+  assert.match(line, /board below target/, line);
+  assert.match(line, /robinhood \(needs 5, only 1 eligible\)/, line);
+  assert.match(line, /solana \(needs 5, none eligible\)/, line);
+  assert.match(line, /list more tokens on those chains, or lower the per-chain target/, "it must say what to DO");
+});
+
+test("the shortfall warning does not repeat every cycle", async () => {
+  // It is a standing condition on a loop that runs every few minutes. Saying it
+  // each time is how a real warning becomes wallpaper.
+  await autoTrend.set({ enabled: true, perChain: 5 });
+  api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
+  api.bookTrending = async () => ({});
+  const warns = [];
+  const realWarn = log.warn;
+  log.warn = (...a) => warns.push(a.join(" "));
+  autoTrend._test.resetShortWarn();
+  try {
+    for (let i = 0; i < 5; i++) await autoTrend.runOnce({ rng: () => 0.5 });
+  } finally {
+    log.warn = realWarn;
+  }
+  assert.strictEqual(warns.filter((w) => w.includes("board below target")).length, 1, warns.join("\n"));
+});
+
 test("forced run promotes on the requested chain only", async () => {
   const rows = [
     { status: "approved", chain: "solana", address: "s1", sym: "S1" },

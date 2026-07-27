@@ -7,6 +7,7 @@
 // loop re-reads config each cycle, so changes apply without a restart.
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const api = require("../api/dexvra");
+const { CHAINS } = require("../config/chains");
 const log = require("../helpers/logger");
 
 const FILE = "autoTrend.json";
@@ -16,7 +17,17 @@ const DEFAULTS = {
   maxHours: 18, // HARD CAP — deliberately never 24 or 48
   minGapMin: 20, // random wait between top-ups
   maxGapMin: 120,
-  target: 8, // keep at least this many tokens featured (across all chains)
+  // PER CHAIN, not board-wide. A single global target sounded equivalent and was
+  // not: the eligible pool is dominated by whichever network has the most
+  // listings, so one shuffle across all of them put 5 Solana tokens on the board
+  // and left BSC, Ethereum and Base with one each — and Robinhood with none at
+  // all. The board GROUPS by chain, so a chain with nothing featured renders as
+  // nothing, and the operator sees a Solana board with three footnotes.
+  perChain: 5,
+  // The networks auto-trending keeps alive. Everything else is paid-only: a
+  // chain nobody has listed on cannot be filled, and pretending otherwise just
+  // logs a failure every cycle.
+  chains: ["solana", "bsc", "ethereum", "base", "robinhood"],
   // ── Public announcement of an auto-promotion ──
   // A slot lasts 3–18h and the target is 8, so refills alone produce roughly
   // 8 ÷ 10.5h × 24 ≈ 18 promotions a day. Announcing every one would bury the
@@ -44,8 +55,8 @@ const HARD = {
   hoursMax: 18,
   gapMin: 5,
   gapMax: 1440,
-  targetMin: 1,
-  targetMax: 50,
+  perChainMin: 0,   // 0 = leave this chain to paid slots only
+  perChainMax: 20,
   announcePerDay: [0, 24],
   announceGapMin: [5, 1440],
   announceCooldownDays: [0, 90],
@@ -67,7 +78,13 @@ function get() {
   g.minGapMin = clampInt(c.minGapMin, HARD.gapMin, HARD.gapMax, DEFAULTS.minGapMin);
   g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, HARD.gapMax, DEFAULTS.maxGapMin);
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
-  g.target = clampInt(c.target, HARD.targetMin, HARD.targetMax, DEFAULTS.target);
+  g.perChain = clampInt(c.perChain, HARD.perChainMin, HARD.perChainMax, DEFAULTS.perChain);
+  // An unknown chain id would be topped up forever with nothing eligible, so the
+  // list is filtered against the real chain table rather than trusted.
+  if (Array.isArray(c.chains)) {
+    const ids = c.chains.map((x) => String(x).toLowerCase()).filter((x) => CHAINS[x]);
+    if (ids.length) g.chains = [...new Set(ids)];
+  }
   if (typeof c.announce === "boolean") g.announce = c.announce;
   g.announcePerDay = clampInt(c.announcePerDay, ...HARD.announcePerDay, DEFAULTS.announcePerDay);
   g.announceGapMin = clampInt(c.announceGapMin, ...HARD.announceGapMin, DEFAULTS.announceGapMin);
@@ -80,9 +97,10 @@ async function set(patch = {}) {
   const next = { ...get() };
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (typeof patch.announce === "boolean") next.announce = patch.announce;
-  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "target", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
+  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChain", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
     if (patch[k] != null) next[k] = patch[k];
   }
+  if (Array.isArray(patch.chains)) next.chains = patch.chains;
   await saveJSON(FILE, next);
   return get();
 }
@@ -272,51 +290,68 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
   }
   const now = Date.now();
   const isFeatured = (r) => r.status === "approved" && r.trendingRank != null && (!r.trendExp || r.trendExp > now);
-  const onChain = (r) => !chain || String(r.chain).toLowerCase() === String(chain).toLowerCase();
-  const featured = listings.filter((r) => isFeatured(r) && onChain(r));
-  // Forced per-chain run: promote `count` regardless of the global target.
-  const need = chain ? count : cfg.target - featured.length;
-  if (need <= 0) return 0;
+  const on = (r, id) => String(r.chain).toLowerCase() === String(id).toLowerCase();
 
-  // Eligible = approved, on the requested chain, not currently featured.
-  // Shuffle for variety.
-  const eligible = listings.filter(
-    (r) =>
-      r.status === "approved" &&
-      !isFeatured(r) &&
-      onChain(r) &&
-      !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
-  );
-  if (chain && !eligible.length) {
-    log.info(`[autotrend] forced run on ${chain}: nothing eligible (every listed token there is already featured?)`);
-    return 0;
-  }
-  for (let i = eligible.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
-  }
+  // Each chain is topped up against ITS OWN count. Doing this globally meant the
+  // network with the most listings won every shuffle and the rest of the board
+  // stayed empty — see DEFAULTS.perChain.
+  const plan = chain
+    ? [{ id: chain, need: count, forced: true }]
+    : cfg.chains.map((id) => ({ id, need: cfg.perChain - listings.filter((r) => isFeatured(r) && on(r, id)).length, forced: false }));
+
   let promoted = 0;
+  // ONE public post per run, across every chain — not one per chain. A cold
+  // start tops up five networks at once, and five cards in a row is a firehose.
   let announcedThisRun = false;
-  for (const r of eligible.slice(0, need)) {
-    // Random duration in [minHours, maxHours] — different per token, so the
-    // slots expire at staggered (random) times and refill naturally.
-    const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
-    try {
-      await api.bookTrending(r.chain, r.address, hours);
-      promoted++;
-      log.info(
-        `[autotrend] ${chain ? "FORCED " : ""}promoted ${r.chain}/${String(r.address).slice(0, 8)}… (${r.sym || "?"}) for ${hours}h`,
-      );
-      // At most ONE public post per cycle, whatever the top-up size: a cold
-      // start promotes up to `target` tokens at once, and eight cards in a row
-      // is a firehose, not a feed.
-      if (!announcedThisRun) announcedThisRun = (await tryAnnounce(r, { hours }).catch(() => "error")) === null;
-    } catch (e) {
-      log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
+  const short = [];
+
+  for (const step of plan) {
+    if (step.need <= 0) continue;
+    const eligible = listings.filter(
+      (r) =>
+        r.status === "approved" &&
+        !isFeatured(r) &&
+        on(r, step.id) &&
+        !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
+    );
+    if (!eligible.length) {
+      // Say so. A chain that silently cannot be filled looks identical to a
+      // chain the loop never got round to, and the operator cannot tell which
+      // one Robinhood is without this line.
+      if (step.forced) log.info(`[autotrend] forced run on ${step.id}: nothing eligible (every listed token there is already featured?)`);
+      else short.push(`${step.id} (needs ${step.need}, none eligible)`);
+      continue;
     }
+    if (eligible.length < step.need) short.push(`${step.id} (needs ${step.need}, only ${eligible.length} eligible)`);
+    for (let i = eligible.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
+    }
+    for (const r of eligible.slice(0, step.need)) {
+      // Random duration in [minHours, maxHours] — different per token, so the
+      // slots expire at staggered (random) times and refill naturally.
+      const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
+      try {
+        await api.bookTrending(r.chain, r.address, hours);
+        promoted++;
+        log.info(
+          `[autotrend] ${step.forced ? "FORCED " : ""}promoted ${r.chain}/${String(r.address).slice(0, 8)}… (${r.sym || "?"}) for ${hours}h`,
+        );
+        if (!announcedThisRun) announcedThisRun = (await tryAnnounce(r, { hours }).catch(() => "error")) === null;
+      } catch (e) {
+        log.debug(`[autotrend] bookTrending ${r.sym}: ${e.message}`);
+      }
+    }
+  }
+  // The board is short and nothing here can fix it: those chains need LISTINGS,
+  // not another cycle. Once an hour so it registers without becoming noise.
+  if (short.length && Date.now() - lastShortWarnAt > 3600_000) {
+    lastShortWarnAt = Date.now();
+    log.warn(`[autotrend] board below target on ${short.join(", ")} — list more tokens on those chains, or lower the per-chain target`);
   }
   return promoted;
 }
+let lastShortWarnAt = 0;
 
 const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 
@@ -438,6 +473,7 @@ async function featuredByChain(now = Date.now()) {
 }
 
 module.exports = {
+  _test: { resetShortWarn: () => (lastShortWarnAt = 0) },
   get,
   set,
   reset,
