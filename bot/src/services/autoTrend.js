@@ -360,6 +360,13 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
         !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
     );
     if (!eligible.length) {
+      const blockedN = listings.filter(
+        (r) => r.status === "approved" && !isFeatured(r) && on(r, step.id) && NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
+      ).length;
+      if (blockedN && !step.forced) {
+        short.push(`${step.id} (needs ${step.need}; ${blockedN} left but all Xpress, which is never auto-promoted)`);
+        continue;
+      }
       // Say so. A chain that silently cannot be filled looks identical to a
       // chain the loop never got round to, and the operator cannot tell which
       // one Robinhood is without this line.
@@ -480,6 +487,21 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
     (r) => !isFeatured(r) && !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
   );
   if (!eligible.length) {
+    // "Already trending" was asserted whenever the pool was empty, whatever
+    // emptied it. When the leftovers are Xpress the operator needs to hear that
+    // — it is a product rule, not a full board, and no amount of waiting or
+    // re-tapping changes it.
+    const blocked = approved.filter((r) => NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()));
+    const trending = approved.filter(isFeatured).length;
+    if (blocked.length && trending + blocked.length >= approved.length) {
+      return {
+        promoted: 0,
+        syms: [],
+        reason:
+          `${id}: ${trending} trending, and the other ${blocked.length} are Xpress — ` +
+          `Xpress is listing-only, so it is never auto-promoted. List a token on a paid tier there, or sell it Trending.`,
+      };
+    }
     return { promoted: 0, syms: [], reason: `all ${approved.length} listed token(s) on ${id} are already trending` };
   }
   for (let i = eligible.length - 1; i > 0; i--) {
@@ -521,8 +543,14 @@ async function featuredByChain(now = Date.now()) {
   for (const r of listings) {
     if (r.status !== "approved") continue;
     const id = String(r.chain || "").toLowerCase();
-    out[id] = out[id] || { featured: 0, eligible: 0 };
+    out[id] = out[id] || { featured: 0, eligible: 0, blocked: 0 };
     if (r.trendingRank != null && (!r.trendExp || r.trendExp > now)) out[id].featured++;
+    // An Xpress listing can never be auto-promoted (NEVER_PROMOTE_TIERS), so
+    // counting it as "eligible" made the panel promise tokens the promoter
+    // would never touch — while Run now on the same chain answered "all 5 are
+    // already trending". Both wrong, in opposite directions, and between them
+    // they made a chain look permanently stuck for no visible reason.
+    else if (NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase())) out[id].blocked++;
     else out[id].eligible++;
   }
   return out;

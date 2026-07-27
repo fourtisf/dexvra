@@ -213,12 +213,18 @@ test("featuredByChain counts what the panel shows", async () => {
     { status: "approved", chain: "solana", address: "s1", trendingRank: 1, trendExp: now + 3_600_000 },
     { status: "approved", chain: "solana", address: "s2" },
     { status: "approved", chain: "bsc", address: "b1" },
+    // Xpress is listing-only and can never be auto-promoted, so counting it as
+    // "eligible" made the panel promise a token the promoter would never touch
+    // — while Run now on the same chain answered "all listed tokens are already
+    // trending". It gets its own bucket.
+    { status: "approved", chain: "bsc", address: "b3", tier: "XPRESS" },
+    { status: "approved", chain: "bsc", address: "b4", tier: "xpress" }, // case must not matter
     { status: "pending", chain: "bsc", address: "b2" }, // not approved → invisible
   ];
   try {
     const by = await autoTrend.featuredByChain(now);
-    assert.deepStrictEqual(by.solana, { featured: 1, eligible: 1 });
-    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 1 });
+    assert.deepStrictEqual(by.solana, { featured: 1, eligible: 1, blocked: 0 });
+    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 1, blocked: 2 });
   } finally {
     api.getListings = realGet;
   }
@@ -422,4 +428,44 @@ test("the announce path never posts to the announcement channel", () => {
   assert.ok(!/CHANNELS\.announce/.test(src), "autoTrend must never reference the announcement channel");
   assert.ok(/CHANNELS\.trending/.test(src), "…only the trending channel");
   assert.ok(!/pin:\s*true/.test(src), "and never pin — that pin belongs to the board");
+});
+
+test("Run now on an Xpress-only chain names the real reason", async () => {
+  // It answered "all 5 listed token(s) on bsc are already trending" whenever the
+  // pool was empty, whatever emptied it. Two of those five were trending; the
+  // other three were Xpress. The operator re-tapped, waited, re-tapped — and
+  // nothing could ever change, because it is a product rule, not a full board.
+  const realGet = api.getListings;
+  api.getListings = async () => [
+    { status: "approved", chain: "bsc", address: "b1", sym: "A", trendingRank: 1, trendExp: Date.now() + 3600e3 },
+    { status: "approved", chain: "bsc", address: "b2", sym: "B", trendingRank: 2, trendExp: Date.now() + 3600e3 },
+    { status: "approved", chain: "bsc", address: "b3", sym: "C", tier: "XPRESS" },
+    { status: "approved", chain: "bsc", address: "b4", sym: "D", tier: "XPRESS" },
+    { status: "approved", chain: "bsc", address: "b5", sym: "E", tier: "XPRESS" },
+  ];
+  try {
+    const res = await autoTrend.forceChain("bsc");
+    assert.strictEqual(res.promoted, 0);
+    assert.match(res.reason, /2 trending, and the other 3 are Xpress/, res.reason);
+    assert.match(res.reason, /never auto-promoted/, res.reason);
+    assert.match(res.reason, /sell it Trending/, "…and what to do about it");
+    assert.ok(!/all 5 listed token\(s\).*already trending/.test(res.reason), "that claim was false");
+  } finally {
+    api.getListings = realGet;
+  }
+});
+
+test("a genuinely full chain still says so", async () => {
+  const realGet = api.getListings;
+  const soon = Date.now() + 3600e3;
+  api.getListings = async () => [
+    { status: "approved", chain: "base", address: "x1", trendingRank: 1, trendExp: soon },
+    { status: "approved", chain: "base", address: "x2", trendingRank: 2, trendExp: soon },
+  ];
+  try {
+    const res = await autoTrend.forceChain("base");
+    assert.match(res.reason, /all 2 listed token\(s\) on base are already trending/, res.reason);
+  } finally {
+    api.getListings = realGet;
+  }
 });
