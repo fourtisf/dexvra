@@ -51,11 +51,18 @@ const DEFAULTS = {
   announceCooldownDays: 7, // per token: never announce the same one twice in a week
 };
 
-// Tiers that must NEVER be auto-promoted. Xpress is listing-ONLY by an explicit
-// operator decision recorded in config/packages.js ("no trending slot, no
-// trending-channel post"), and the upgrade path sold to an Xpress buyer is
-// literally "come back and buy Trending" — handing them a free slot, let alone a
-// free announcement, sells against ourselves.
+// Tiers the AUTOMATIC cycle skips. Xpress is listing-only by an explicit
+// operator decision recorded in config/packages.js, and the upgrade path sold to
+// an Xpress buyer is literally "come back and buy Trending" — handing them a
+// free slot, unasked, sells against ourselves.
+//
+// This is a rule about the FREE give-away and nothing else. Any listed token, on
+// ANY package, can BUY Trending — the paid flow (handlers/trending.js →
+// fulfillTrending) has no tier check at all and never has. And a forced per-chain
+// run is an ADMIN saying "put something there now", which is a deliberate act,
+// not the automatic policy: it may promote an Xpress token like any other.
+// Conflating the two left a chain visibly stuck with the operator unable to
+// override it from the panel.
 const NEVER_PROMOTE_TIERS = new Set(["XPRESS"]);
 // Sanity rails so a fat-finger can't set a 48h run or a runaway target.
 const HARD = {
@@ -357,14 +364,16 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
         r.status === "approved" &&
         !isFeatured(r) &&
         on(r, step.id) &&
-        !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
+        // Forced = an admin asked for it. The tier rule guards the automatic
+        // give-away, not the operator's own hands.
+        (step.forced || !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase())),
     );
     if (!eligible.length) {
       const blockedN = listings.filter(
         (r) => r.status === "approved" && !isFeatured(r) && on(r, step.id) && NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
       ).length;
       if (blockedN && !step.forced) {
-        short.push(`${step.id} (needs ${step.need}; ${blockedN} left but all Xpress, which is never auto-promoted)`);
+        short.push(`${step.id} (needs ${step.need}; ${blockedN} left are Xpress — auto-fill skips those, tap Run now or sell them Trending)`);
         continue;
       }
       // Say so. A chain that silently cannot be filled looks identical to a
@@ -483,25 +492,9 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
   const onChain = (r) => String(r.chain || "").toLowerCase() === id;
   const approved = listings.filter((r) => r.status === "approved" && onChain(r));
   if (!approved.length) return { promoted: 0, syms: [], reason: `no listings on ${id} yet` };
-  const eligible = approved.filter(
-    (r) => !isFeatured(r) && !NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()),
-  );
+  // No tier filter: this is the admin's own "put one there now" button.
+  const eligible = approved.filter((r) => !isFeatured(r));
   if (!eligible.length) {
-    // "Already trending" was asserted whenever the pool was empty, whatever
-    // emptied it. When the leftovers are Xpress the operator needs to hear that
-    // — it is a product rule, not a full board, and no amount of waiting or
-    // re-tapping changes it.
-    const blocked = approved.filter((r) => NEVER_PROMOTE_TIERS.has(String(r.tier || "").toUpperCase()));
-    const trending = approved.filter(isFeatured).length;
-    if (blocked.length && trending + blocked.length >= approved.length) {
-      return {
-        promoted: 0,
-        syms: [],
-        reason:
-          `${id}: ${trending} trending, and the other ${blocked.length} are Xpress — ` +
-          `Xpress is listing-only, so it is never auto-promoted. List a token on a paid tier there, or sell it Trending.`,
-      };
-    }
     return { promoted: 0, syms: [], reason: `all ${approved.length} listed token(s) on ${id} are already trending` };
   }
   for (let i = eligible.length - 1; i > 0; i--) {

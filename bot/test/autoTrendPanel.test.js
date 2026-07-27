@@ -134,13 +134,11 @@ test("changing the per-chain target moves every number on the panel together", a
   await autoTrend.set({ perChain: 5 });
 });
 
-test("a chain left with only Xpress listings says THAT, not 'no listings left'", async () => {
-  // The state that made a chain look permanently stuck for no visible reason:
-  // the panel promised "3 ready to promote" while Run now on the same chain
-  // answered "all 5 listed tokens are already trending". Neither was true —
-  // the three were Xpress, which is listing-only by design and can never be
-  // auto-promoted. The operator's next move differs completely: not "wait", not
-  // "list more", but "sell those buyers Trending".
+test("an Xpress-only chain reads as sellable, never as 'can never trend'", async () => {
+  // Two wrong readings had to go. "No listings left" sent the operator off to
+  // list more, which would not have helped. And "never auto-promoted" read as
+  // "Xpress can never trend" — false, and the kind of false that loses a sale:
+  // any listed token, on any package, can BUY Trending and gets it.
   const { text } = await panel({
     solana: { featured: 5, eligible: 3, blocked: 0 },
     bsc: { featured: 2, eligible: 0, blocked: 3 },
@@ -148,11 +146,13 @@ test("a chain left with only Xpress listings says THAT, not 'no listings left'",
     base: { featured: 5, eligible: 1, blocked: 0 },
     robinhood: { featured: 5, eligible: 1, blocked: 0 },
   });
-  assert.match(text, /🔴 .*BSC — 2\/5 · 3 left, all Xpress — never auto-promoted/, text);
-  assert.match(text, /Xpress is listing-only/, text);
-  assert.match(text, /Selling those buyers Trending/, text);
-  assert.ok(!text.includes("no spare listings"), "there ARE listings here — that line would send them off to list more");
+  assert.match(text, /⚡ .*BSC — 2\/5 · 3 Xpress — auto-fill skips them; tap ⚡ below to place one now/, text);
+  assert.match(text, /Run now.*places one anyway/s, text);
+  assert.match(text, /any package can buy Trending and will get it/, text);
+  assert.ok(!text.includes("no spare listings"), "there ARE listings here");
+  assert.ok(!/never auto-promoted|cannot be filled/.test(text), "nothing here is permanently stuck");
 });
+
 
 test("a chain with genuinely nothing listed still reads as nothing listed", async () => {
   const { text } = await panel({

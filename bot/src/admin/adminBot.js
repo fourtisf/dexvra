@@ -625,11 +625,12 @@ function atBoardLines(c, counts = _atCounts) {
         mark = "⏳";
         note = ` · ${spare} ready to promote`;
       } else if (blocked > 0) {
-        // The state that looked identical to "nothing listed" and is not: there
-        // ARE tokens here, they just can't be auto-promoted. Saying "no listings
-        // left" sent the operator off to list more, which would not have helped.
-        mark = "🔴";
-        note = ` · <i>${blocked} left, all Xpress — never auto-promoted</i>`;
+        // There ARE tokens here — the automatic cycle just leaves Xpress alone so
+        // the slot stays sellable. "No listings left" sent the operator off to
+        // list more, which would not have helped; and "never auto-promoted" read
+        // as "can never trend", which is false and could lose a sale.
+        mark = "⚡";
+        note = ` · <i>${blocked} Xpress — auto-fill skips them; tap ⚡ below to place one now</i>`;
       } else {
         mark = "🔴";
         note = ` · <i>no listings left on this chain</i>`;
@@ -656,12 +657,12 @@ function atText() {
     (short.length === 0
       ? `✅ <i>Every chain is at target. Nothing to do until a slot expires.</i>`
       : blocked.length
-        ? `ℹ️ <i>${blocked.length} chain(s) cannot be filled` +
-          (xpressOnly.length
-            ? ` — ${xpressOnly.length} of them only have <b>Xpress</b> listings left, and Xpress is listing-only ` +
-              `(no trending slot, by design). Selling those buyers Trending, or listing a paid tier there, is what unblocks it.`
-            : ` — they have no spare listings. That needs more tokens listed there, not another cycle.`) +
-          `</i>`
+        ? xpressOnly.length
+          ? `⚡ <i>${xpressOnly.length} chain(s) have only <b>Xpress</b> listings left. The automatic cycle leaves those alone ` +
+            `so the slot stays sellable — but <b>Run now</b> below places one anyway, and any listed token on <b>any</b> ` +
+            `package can buy Trending and will get it.</i>`
+          : `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings. ` +
+            `That needs more tokens listed there, not another cycle.</i>`
         : `⏳ <i>${short.length} chain(s) below target; the next cycle tops them up. ` +
           `Tap a chain below to do it now.</i>`) +
     `\n\n` +

@@ -350,39 +350,86 @@ test("announceReason names every refusal", async () => {
   );
 });
 
-test("XPRESS tokens are never auto-promoted", async () => {
-  // packages.js records the operator decision: "Xpress is listing-ONLY: no
-  // trending slot, no trending-channel post". The upgrade path sold to an
-  // Xpress buyer is to come back and BUY trending.
-  assert.ok(autoTrend.NEVER_PROMOTE_TIERS.has("XPRESS"));
+test("the automatic cycle leaves Xpress alone — the free slot stays sellable", async () => {
+  // Xpress is listing-only, and the upgrade sold to that buyer is literally
+  // "come back and buy Trending". Handing them a free slot, unasked, sells
+  // against ourselves. This is a rule about the GIVE-AWAY and nothing else.
+  await autoTrend.set({ enabled: true, perChain: 5 });
   const realGet = api.getListings;
-  const realBook = api.bookTrending;
-  const booked = [];
   api.getListings = async () => [
-    { status: "approved", chain: "solana", address: "x1", sym: "$X1", tier: "XPRESS" },
-    { status: "approved", chain: "solana", address: "f1", sym: "$F1", tier: "FREE" },
+    { status: "approved", chain: "solana", address: "x1", sym: "X1", tier: "XPRESS", trendingRank: null },
+    { status: "approved", chain: "solana", address: "g1", sym: "G1", tier: "GOLD", trendingRank: null },
   ];
-  api.bookTrending = async (chain, address) => {
-    booked.push(address);
-    return {};
-  };
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, target: 8, announce: false });
-    await autoTrend.runOnce();
-    assert.ok(!booked.includes("x1"), `the Xpress token must be left alone: ${booked}`);
-    assert.ok(booked.includes("f1"), "…while the free one is fair game");
-    // The forced per-chain path shares the rule.
-    booked.length = 0;
-    api.getListings = async () => [{ status: "approved", chain: "bsc", address: "x2", sym: "$X2", tier: "XPRESS" }];
-    const r = await autoTrend.forceChain("bsc");
-    assert.strictEqual(r.promoted, 0, "forced runs must not smuggle Xpress in");
-    assert.strictEqual(booked.length, 0);
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(calls, ["g1"], "the paid tier goes up; the Xpress one is left to be sold");
   } finally {
     api.getListings = realGet;
-    api.bookTrending = realBook;
-    await autoTrend.reset();
   }
 });
+
+test("Run now promotes ANY package — it is the admin's own hand, not the policy", async () => {
+  // The operator's rule, in their words: a listed token, whatever package it
+  // holds, gets trending when it is asked for. Applying the give-away rule to
+  // this button left a chain visibly stuck with no way to override it, and the
+  // alert claimed "all 5 are already trending" when two were.
+  const realGet = api.getListings;
+  const soon = Date.now() + 3600e3;
+  api.getListings = async () => [
+    { status: "approved", chain: "bsc", address: "b1", sym: "A", trendingRank: 1, trendExp: soon },
+    { status: "approved", chain: "bsc", address: "b2", sym: "B", trendingRank: 2, trendExp: soon },
+    { status: "approved", chain: "bsc", address: "b3", sym: "C", tier: "XPRESS" },
+  ];
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push(address), {});
+  try {
+    const res = await autoTrend.forceChain("bsc");
+    assert.strictEqual(res.promoted, 1, res.reason);
+    assert.deepStrictEqual(calls, ["b3"], "the Xpress token is placed, because the admin asked");
+    assert.strictEqual(res.reason, "");
+  } finally {
+    api.getListings = realGet;
+  }
+});
+
+test("a genuinely full chain still says so", async () => {
+  const realGet = api.getListings;
+  const soon = Date.now() + 3600e3;
+  api.getListings = async () => [
+    { status: "approved", chain: "base", address: "x1", trendingRank: 1, trendExp: soon },
+    { status: "approved", chain: "base", address: "x2", trendingRank: 2, trendExp: soon },
+  ];
+  try {
+    const res = await autoTrend.forceChain("base");
+    assert.match(res.reason, /all 2 listed token\(s\) on base are already trending/, res.reason);
+  } finally {
+    api.getListings = realGet;
+  }
+});
+
+test("a PAID trending order is never refused for its package", () => {
+  // The guarantee behind all of the above: "token yang sudah listing, mau apapun
+  // package, kalau client pesan trending harus dilakukan." The purchase flow
+  // resolves the listing by address and books it — there is no tier check, and
+  // adding one would be refusing a sale.
+  const fss = require("node:fs");
+  const flow = fss.readFileSync(require.resolve("../src/handlers/trending.js"), "utf8");
+  // The listing lookup is the only gate: approved, and the address matches.
+  // A tier term anywhere in that filter would be refusing a sale. (The file does
+  // mention Xpress — as the button offered when the token is NOT listed yet.)
+  const lookup = flow.slice(flow.indexOf("listing = all.find("), flow.indexOf("if (!listing)"));
+  assert.match(lookup, /r\.status === "approved"/);
+  assert.ok(!/tier/i.test(lookup), `the purchase flow filters on tier: ${lookup}`);
+  assert.ok(!/NEVER_PROMOTE/.test(flow));
+  const fulfil = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  const fn = fulfil.slice(fulfil.indexOf("async function fulfillTrending("));
+  const body = fn.slice(0, fn.indexOf("\n}\n"));
+  assert.match(body, /await api\.bookTrending\(p\.chain, p\.address, p\.hours\)/, "it books what was paid for");
+  assert.ok(!/XPRESS|NEVER_PROMOTE/.test(body), "…unconditionally");
+});
+
 
 test("a forced run QUEUES its announcement — the admin process cannot post", async () => {
   // channels/post.attach() happens only in src/bot.js (the main bot), so a post
@@ -430,42 +477,6 @@ test("the announce path never posts to the announcement channel", () => {
   assert.ok(!/pin:\s*true/.test(src), "and never pin — that pin belongs to the board");
 });
 
-test("Run now on an Xpress-only chain names the real reason", async () => {
-  // It answered "all 5 listed token(s) on bsc are already trending" whenever the
-  // pool was empty, whatever emptied it. Two of those five were trending; the
-  // other three were Xpress. The operator re-tapped, waited, re-tapped — and
-  // nothing could ever change, because it is a product rule, not a full board.
-  const realGet = api.getListings;
-  api.getListings = async () => [
-    { status: "approved", chain: "bsc", address: "b1", sym: "A", trendingRank: 1, trendExp: Date.now() + 3600e3 },
-    { status: "approved", chain: "bsc", address: "b2", sym: "B", trendingRank: 2, trendExp: Date.now() + 3600e3 },
-    { status: "approved", chain: "bsc", address: "b3", sym: "C", tier: "XPRESS" },
-    { status: "approved", chain: "bsc", address: "b4", sym: "D", tier: "XPRESS" },
-    { status: "approved", chain: "bsc", address: "b5", sym: "E", tier: "XPRESS" },
-  ];
-  try {
-    const res = await autoTrend.forceChain("bsc");
-    assert.strictEqual(res.promoted, 0);
-    assert.match(res.reason, /2 trending, and the other 3 are Xpress/, res.reason);
-    assert.match(res.reason, /never auto-promoted/, res.reason);
-    assert.match(res.reason, /sell it Trending/, "…and what to do about it");
-    assert.ok(!/all 5 listed token\(s\).*already trending/.test(res.reason), "that claim was false");
-  } finally {
-    api.getListings = realGet;
-  }
-});
 
-test("a genuinely full chain still says so", async () => {
-  const realGet = api.getListings;
-  const soon = Date.now() + 3600e3;
-  api.getListings = async () => [
-    { status: "approved", chain: "base", address: "x1", trendingRank: 1, trendExp: soon },
-    { status: "approved", chain: "base", address: "x2", trendingRank: 2, trendExp: soon },
-  ];
-  try {
-    const res = await autoTrend.forceChain("base");
-    assert.match(res.reason, /all 2 listed token\(s\) on base are already trending/, res.reason);
-  } finally {
-    api.getListings = realGet;
-  }
-});
+
+
