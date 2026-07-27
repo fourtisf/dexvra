@@ -593,3 +593,90 @@ test("the price probe is bounded — this runs on a timer", async () => {
     market.fetchMarket = realFetch;
   }
 });
+
+test("a token that is DOWN is never auto-promoted onto a top-gainers board", async () => {
+  // The board carried $Z at -99.94% with a $1,648 market cap. Ranking alone
+  // could not stop that: five slots, five candidates, and sorting still
+  // promotes the worst of them. A floor is what makes the board's claim true.
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const gains = { up1: 40, down1: -8, down2: -99.94, up2: 3 };
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.getListings = async () =>
+    Object.keys(gains).map((address) => ({ status: "approved", chain: "bsc", address, sym: address, trendingRank: null }));
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, perChain: 5, chains: ["bsc"], minGainPct: 0 });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(calls, ["up1", "up2"], `promoted ${calls.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+  }
+});
+
+test("an unpriced token is exempt from the floor — otherwise Robinhood never fills", async () => {
+  // Most Robinhood listings price as null: no indexer covers that chain.
+  // Judging them against a number nobody can read would exclude the whole
+  // network from the automatic fill, permanently and silently.
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  market.fetchMarket = async () => null;
+  api.getListings = async () => [
+    { status: "approved", chain: "robinhood", address: "r1", sym: "R1", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "r2", sym: "R2", trendingRank: null },
+  ];
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, perChain: 5, chains: ["robinhood"], minGainPct: 0 });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.strictEqual(calls.length, 2, "both unpriced tokens are still promotable");
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+  }
+});
+
+test("a lone candidate is priced too — no shortcut past the floor", async () => {
+  // byGain used to return a single row untouched, so the floor saw an
+  // unannotated candidate and could not tell "no price" from "never looked".
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async () => ({ change24h: -50 });
+  try {
+    const [only] = await autoTrend.byGain([{ chain: "bsc", address: "solo" }]);
+    assert.strictEqual(only._change, -50, "a lone candidate is still measured");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("Run now ignores the floor — the admin asked for it", async () => {
+  // A deliberate act, not the automatic policy: sometimes the operator wants
+  // SOMETHING on an empty chain, whatever the day's prices look like.
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  market.fetchMarket = async () => ({ change24h: -30 });
+  api.getListings = async () => [{ status: "approved", chain: "base", address: "d1", sym: "D1", trendingRank: null }];
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ minGainPct: 0 });
+    const res = await autoTrend.forceChain("base");
+    assert.strictEqual(res.promoted, 1, res.reason);
+    assert.deepStrictEqual(calls, ["d1"]);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+  }
+});
+
+test("the board order puts Robinhood directly below Base", () => {
+  // Operator's call. It is one array, and a chain added in the wrong place
+  // silently reshuffles a pinned public board.
+  const { CHAIN_ORDER } = require("../src/config/chains");
+  assert.deepStrictEqual(CHAIN_ORDER.slice(0, 5), ["solana", "bsc", "ethereum", "base", "robinhood"]);
+});

@@ -657,7 +657,8 @@ function atText() {
     `🤖 <b>Auto Trending</b> — ${c.enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
     `Fills the Trending board between paid slots with the <b>top gainers</b> — the biggest 24h ` +
     `movers among listed tokens, any package — for a random ${c.minHours}–${c.maxHours}h, every ` +
-    `${c.minGapMin}–${c.maxGapMin} min. Paid tiers still sort above auto ones on the board.\n\n` +
+    `${c.minGapMin}–${c.maxGapMin} min. Only tokens up <b>${c.minGainPct}%</b> or more are picked, so a ` +
+    `top-gainers board never carries a token that is down. Paid tiers still sort above auto ones.\n\n` +
     `📊 <b>Board right now</b> — target <b>${c.perChain}</b> per chain\n` +
     atBoardLines(c) +
     `\n\n` +
@@ -687,6 +688,7 @@ function atKb() {
   return Markup.inlineKeyboard([
     [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
     [cb("➖", "attgt:-1"), cb(`🎯 ${c.perChain} per chain`, "atnop"), cb("➕", "attgt:1")],
+    [cb("➖", "atgain:-5"), cb(`📈 min +${c.minGainPct}% 24h`, "atnop"), cb("➕", "atgain:5")],
     [cb("➖", "athmin:-1"), cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➕", "athmin:1")],
     [cb("➖", "athmax:-1"), cb(`⏱ Max ${c.maxHours}h`, "atnop"), cb("➕", "athmax:1")],
     [cb("➖", "atgmin:-10"), cb(`🔁 Every ${c.minGapMin}m`, "atnop"), cb("➕", "atgmin:10")],
@@ -1943,6 +1945,7 @@ function build() {
   bot.action(/^attgt:(-?\d+)$/, atStep("perChain", "Per-chain target"));
   bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
   bot.action(/^atagap:(-?\d+)$/, atStep("announceGapMin", "Announce gap"));
+  bot.action(/^atgain:(-?\d+)$/, atStep("minGainPct", "Min 24h gain"));
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();

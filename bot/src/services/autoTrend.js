@@ -27,6 +27,13 @@ const DEFAULTS = {
   // all. The board GROUPS by chain, so a chain with nothing featured renders as
   // nothing, and the operator sees a Solana board with three footnotes.
   perChain: 5,
+  // A "top gainers" board that carries a token down 99.94% at a $1,648 market
+  // cap is not a top-gainers board. Ranking alone could not prevent that: with
+  // five slots and five candidates, sorting still promotes the worst of them.
+  // A candidate must be at least this far UP to be auto-promoted. Unpriced
+  // tokens are exempt — Robinhood has no indexer, and judging them by a number
+  // nobody can read would mean never filling that chain at all.
+  minGainPct: 0,
   // The networks auto-trending keeps alive. Everything else is paid-only: a
   // chain nobody has listed on cannot be filled, and pretending otherwise just
   // logs a failure every cycle.
@@ -68,6 +75,7 @@ const HARD = {
   gapMax: 1440,
   perChainMin: 0,   // 0 = leave this chain to paid slots only
   perChainMax: 20,
+  minGainPct: [-100, 500],
   // The old ceiling was 24/day, which is BELOW the ~57 promotions a day that 5
   // chains × 5 slots actually produce — so "announce everything" was
   // unreachable no matter how the panel was set.
@@ -93,6 +101,7 @@ function get() {
   g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, HARD.gapMax, DEFAULTS.maxGapMin);
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
   g.perChain = clampInt(c.perChain, HARD.perChainMin, HARD.perChainMax, DEFAULTS.perChain);
+  g.minGainPct = clampInt(c.minGainPct, ...HARD.minGainPct, DEFAULTS.minGainPct);
   // An unknown chain id would be topped up forever with nothing eligible, so the
   // list is filtered against the real chain table rather than trusted.
   if (Array.isArray(c.chains)) {
@@ -122,7 +131,7 @@ async function set(patch = {}) {
   const next = { ...get() };
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (typeof patch.announce === "boolean") next.announce = patch.announce;
-  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChain", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
+  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChain", "minGainPct", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
     if (patch[k] != null) next[k] = patch[k];
   }
   if (Array.isArray(patch.chains)) next.chains = patch.chains;
@@ -347,7 +356,9 @@ const PROBE_GAP_MS = 250;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function byGain(rows, rng = Math.random) {
-  if (rows.length <= 1) return rows.slice();
+  // No shortcut for a single candidate: it still has to be PRICED, or the
+  // caller's floor sees an unannotated row and reads it as "never looked" —
+  // which is how the one token on a chain silently stopped being promotable.
   const probe = rows.slice(0, PROBE_CAP);
   const rest = rows.slice(PROBE_CAP);
   const scored = [];
@@ -359,6 +370,7 @@ async function byGain(rows, rng = Math.random) {
     } catch {
       /* unpriced — handled below */
     }
+    r._change = change;   // carried so the caller can apply a floor without re-fetching
     scored.push({ r, change });
     await sleep(PROBE_GAP_MS);
   }
@@ -370,6 +382,9 @@ async function byGain(rows, rng = Math.random) {
     const j = Math.floor(rng() * (i + 1));
     [unpriced[i], unpriced[j]] = [unpriced[j], unpriced[i]];
   }
+  // The unprobed tail keeps _change undefined rather than null, so the floor can
+  // tell "we looked and there is no price" from "we never looked".
+  for (const r of rest) r._change = undefined;
   return [...priced.map((x) => x.r), ...unpriced, ...rest];
 }
 
@@ -426,7 +441,17 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
     // moving; filling it at random made that claim false, and put a token down
     // 80% next to one up 40% with nothing to tell them apart.
     const ranked = await byGain(eligible, rng);
-    for (const r of ranked.slice(0, step.need)) {
+    // Losers are not promoted. `change` is attached by byGain; null means the
+    // price could not be read, and those stay eligible on purpose.
+    const worthy = step.forced ? ranked : ranked.filter((r) => r._change === null || r._change >= cfg.minGainPct);
+    if (!worthy.length) {
+      short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s), none up ${cfg.minGainPct}% or more)`);
+      continue;
+    }
+    if (worthy.length < step.need) {
+      short.push(`${step.id} (needs ${step.need}, only ${worthy.length} up ${cfg.minGainPct}% or more)`);
+    }
+    for (const r of worthy.slice(0, step.need)) {
       // Random duration in [minHours, maxHours] — different per token, so the
       // slots expire at staggered (random) times and refill naturally.
       const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
