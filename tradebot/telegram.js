@@ -1026,10 +1026,16 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const wi = walletIndex(chatId, targets[0].id);
       const mUsd = nativeUsd(nat || 'ETH');
       const head = `✅ <b>Bought $${esc(sym || '')}</b> · ${okN}/${targets.length} wallets\nTotal: <b>${fmt(totTok)} $${esc(sym || '')}</b> · spent <b>${totSpent.toFixed(5)} ${esc(nat || 'ETH')}</b>${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''}`;
-      const kb = rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
+      const kb = rows([btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       const txt = head + '\n' + lines.join('\n');
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
+      // The multi-wallet branch never opened a monitor and its receipt had no 📍
+      // button either, so anyone trading more than one wallet got a fill and
+      // nothing to watch it with. Bound to the first wallet that actually
+      // filled — the monitor is per token, and that is the one holding a bag.
+      const filled = results.findIndex((res) => res.status === 'fulfilled');
+      if (okN > 0) startMonitor(chatId, ca, chainKey, targets[filled >= 0 ? filled : 0].id).catch(() => {});
     }
   } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `❌ <b>Buy didn't go through</b>\n\n${esc(friendlyError(e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
   finally { _inflightBuy.delete(key); }
@@ -1497,7 +1503,13 @@ async function onCallback(q) {
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
     const wid = wobj ? wobj.id : undefined;   // stale/removed index → fall back to the active wallet
     if (k === 'mon') { const p2 = await monitorPayload(chatId, tca, ch, wid); return edit(chatId, mid, p2.text, p2.kb); }
-    if (k === 'monn') { startMonitor(chatId, tca, ch, wid); return answer(q.id, '📍 Monitor started'); }
+    if (k === 'monn') {
+      // Await it and report what happened. It used to fire-and-forget and then
+      // claim "Monitor started" unconditionally — so every failure above this
+      // line showed the user a success toast and no monitor.
+      const started = await startMonitor(chatId, tca, ch, wid).catch(() => false);
+      return answer(q.id, started ? '📍 Monitor started' : '⚠️ Could not open the monitor — try again');
+    }
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
@@ -1683,7 +1695,7 @@ function exportKeyMsg(chatId, walletId) {
 // EDITING it (every 45s, for 30 min, bounded) so the position report is live:
 // initial vs worth, P/L %, tokens, price/MC. Manual 🔄 works anytime; ✖ Stop
 // ends the auto-refresh. One interval per message, cleaned up on stop/error.
-const _monitors = new Map();   // `${chatId}:${msgId}` → interval timer
+const _monitors = new Map();   // `${chatId}:${msgId}` → { timer, until, chainKey, wid, closedStreak, stopped }
 // "Sell some %" picker — opened from the 🔻 Sell X% button on the card or the
 // live Monitor. Shows the live bag + what each preset would sell (in tokens AND
 // dollars), so the choice is obvious. Presets fire a normal Sell; ✏️ Custom lets
@@ -1732,7 +1744,13 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const w = (wid && core.walletById(u, wid)) || core.activeWallet(u);
   const wi = walletIndex(chatId, w && w.id);
   const pos = w && (w.positions || {})[core.posKey(chainKey, ca)];
-  const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 6000, null);
+  // PARALLEL. These two reads are independent and used to run in series, so a
+  // slow chain paid both timeouts back to back — up to 11s per refresh, on a
+  // card whose whole job is to feel live.
+  const [snap, rawBal] = await Promise.all([
+    withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), SNAP_TMO_MS, null),
+    withTmo(core.tokenBalanceOrNull(ca, wAddr(w, chainKey), chainKey).catch(() => null), BAL_TMO_MS, null),
+  ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
@@ -1740,12 +1758,31 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}\n`];
   // Read the LIVE on-chain balance (not pos.tokens) so tokens sent out via 📤
   // Send don't leave the Monitor showing a phantom bag with fake PnL.
+  //
+  // A FAILED read is not a zero balance. tokenBalance() collapsed both to 0n, so
+  // one flaky RPC right after a buy rendered "No open position", and the next
+  // tick then unpinned and killed the monitor for good — on a position that had
+  // filled. tokenBalanceOrNull() returns null on failure, and only a real,
+  // successful zero is allowed to close anything.
   let balNow = 0;
-  try { const raw = await withTmo(core.tokenBalance(ca, wAddr(w, chainKey), chainKey).catch(() => null), 5000, null); if (raw != null) balNow = Number(ethers.formatUnits(raw, (pos && pos.dec) || 18)); else if (pos && pos.tokens != null) balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); } catch (_) {}
+  let balKnown = false;
+  if (rawBal != null) {
+    balNow = Number(ethers.formatUnits(rawBal, (pos && pos.dec) || 18));
+    balKnown = true;
+  } else if (pos && pos.tokens != null) {
+    // Fall back to what the buy recorded. This branch existed before but was
+    // unreachable, because the failure it was written for arrived as 0n.
+    try { balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); } catch (_) { balNow = 0; }
+  }
   const cost = posCost(pos);
-  if (!pos || !(cost > 0) || !(balNow > 0)) {
+  const noPosition = !pos || !(cost > 0);
+  if (noPosition || (balKnown && !(balNow > 0))) {
     closed = true;
     L.push('<i>No open position right now — you have sold it, or have not bought yet.</i>');
+  } else if (!balKnown && !(balNow > 0)) {
+    // We hold a position on record but could not read the chain and have no
+    // recorded size. Say so instead of declaring it closed.
+    L.push('<i>Balance unavailable right now — retrying.</i>');
   } else {
     const px = snap && snap.priceEth > 0 ? snap.priceEth : 0;
     const val = balNow * px;
@@ -1762,7 +1799,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
     L.push(`\n📈 <b>Price:</b> ${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}  ·  <b>Market cap:</b> ${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}`);
   }
-  L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 16)} UTC</i>`);
+  L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
   // Quick-sell straight from the live tracker: 25 / 50 / 75 / 100, plus "other %"
   // for anything in between. Sell buttons only appear while a bag is open.
   const kbRows = [[btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)]];
@@ -1777,39 +1814,125 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
 }
 const _monitorByToken = new Map();   // `${chatId}:${ca}` → msgId of the live monitor for that token
 function stopMonitor(chatId, mid) {
-  const k = chatId + ':' + mid; const t = _monitors.get(k);
-  if (t) { clearInterval(t); _monitors.delete(k); }
-  for (const [tk, m] of _monitorByToken) if (m === mid) _monitorByToken.delete(tk);
+  const k = chatId + ':' + mid;
+  const st = _monitors.get(k);
+  if (st) { st.stopped = true; if (st.timer) clearTimeout(st.timer); _monitors.delete(k); }
+  // Scoped to THIS chat. Matching on message id alone deleted other chats'
+  // entries whenever two users happened to share a message id — which for
+  // per-chat counters is routine, not a coincidence.
+  const prefix = chatId + ':';
+  for (const [tk, m] of _monitorByToken) if (m === mid && tk.startsWith(prefix)) _monitorByToken.delete(tk);
 }
+
+// Timings. The old card refreshed every 45s with two SERIAL network reads
+// behind it, so its median data age was ~24s and its worst case near two
+// minutes — for a live PnL tracker on a memecoin that is not live, it is a
+// screenshot. The reads are parallel now and the loop is self-rescheduling, so
+// a slow tick delays the next one instead of stacking on top of it.
+const MON_EVERY_MS = Math.max(5000, Number(process.env.MONITOR_REFRESH_MS || 10000));
+const MON_WINDOW_MS = Math.max(60000, Number(process.env.MONITOR_WINDOW_MS || 60 * 60 * 1000));
+const SNAP_TMO_MS = 6000;
+const BAL_TMO_MS = 5000;
+// A position must read as gone TWICE running before the monitor closes itself.
+// One bad RPC used to be enough, and it unpinned and stopped the tracker for a
+// bag the user still held.
+const CLOSED_STREAK_TO_STOP = 2;
+// Telegram errors that mean the message is gone for good. Anything else — 429,
+// a timeout, a network blip — is transient and must NEVER end the monitor.
+const MON_FATAL_TG = /message to edit not found|message can't be edited|MESSAGE_ID_INVALID|chat not found|bot was blocked|user is deactivated/i;
+
+/** Opens (or adopts) the pinned live-position card. Returns TRUE only when a
+ *  monitor is on screen AND something is driving it — the 📍 button reports
+ *  that verbatim instead of claiming success it never checked. */
 async function startMonitor(chatId, ca, chainKey, wid) {
+  const tkey = chatId + ':' + String(ca).toLowerCase();
   try {
-    // ONE live monitor per token — a repeat buy (or the 📍 button) reuses/replaces
-    // the existing pinned monitor instead of spamming a new message each time.
-    const tkey = chatId + ':' + String(ca).toLowerCase();
+    // ONE live monitor per token — a repeat buy (or the 📍 button) reuses the
+    // existing pinned card instead of posting a duplicate.
     const existing = _monitorByToken.get(tkey);
     if (existing) {
-      // refresh the existing monitor in place and keep it; don't post a duplicate.
-      try { const np = await monitorPayload(chatId, ca, chainKey, wid); await edit(chatId, existing, np.text, np.kb); return; } catch (_) { stopMonitor(chatId, existing); }
+      let ok = false;
+      try {
+        const np = await monitorPayload(chatId, ca, chainKey, wid);
+        const er = await edit(chatId, existing, np.text, np.kb);
+        // CHECK THE RESULT. edit() resolves with {ok:false} on a Telegram
+        // rejection — it does not throw — so the old `try/catch … return` here
+        // silently no-opped whenever the card had been deleted: no refresh, no
+        // new monitor, and a receipt with nothing under it.
+        ok = !!(er && (er.ok || /message is not modified/i.test(er.description || '')));
+      } catch (e) {
+        console.error('[monitor] reuse failed', chatId, ca, e && (e.message || e));
+      }
+      if (ok) {
+        // Keep the card, and push the window out — a fresh buy deserves a fresh
+        // hour, which the old code never granted.
+        const live = _monitors.get(chatId + ':' + existing);
+        if (live) { live.until = Date.now() + MON_WINDOW_MS; live.chainKey = chainKey; live.wid = wid; return true; }
+        // The card is editable but nothing is driving it (window expired, or a
+        // restart). Adopt it rather than leaving a frozen "updates
+        // automatically" card on screen.
+        runMonitorLoop(chatId, ca, chainKey, wid, existing, tkey);
+        return true;
+      }
+      stopMonitor(chatId, existing);
     }
     const p = await monitorPayload(chatId, ca, chainKey, wid);
     const r = await send(chatId, p.text, p.kb);
     const mid = r && r.ok && r.result && r.result.message_id;
-    if (!mid) return;
+    if (!mid) {
+      // Was silent. A 429 or a blocked bot produced a receipt with no monitor
+      // and nothing in the logs to say why.
+      console.error('[monitor] send failed', chatId, ca, (r && r.description) || 'no message_id');
+      return false;
+    }
     _monitorByToken.set(tkey, mid);
-    // Pin it (silently) so it stays at the top of the chat as a live position tracker.
     tg('pinChatMessage', { chat_id: chatId, message_id: mid, disable_notification: true }).catch(() => {});
-    const until = Date.now() + 30 * 60 * 1000;
-    const timer = setInterval(async () => {
-      if (Date.now() > until) return stopMonitor(chatId, mid);
+    runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey);
+    return true;
+  } catch (e) {
+    console.error('[monitor] startMonitor failed', chatId, ca, e && (e.message || e));
+    return false;
+  }
+}
+
+/** Self-rescheduling refresh. A setTimeout chain, not setInterval: a tick that
+ *  outlives its period delays the next one instead of running on top of it. */
+function runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey) {
+  const k = chatId + ':' + mid;
+  if (_monitors.has(k)) return;   // already driven — never two loops on one card
+  const state = { until: Date.now() + MON_WINDOW_MS, chainKey, wid, closedStreak: 0, timer: null, stopped: false };
+  _monitors.set(k, state);
+
+  const finish = (unpin) => {
+    if (unpin) tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {});
+    stopMonitor(chatId, mid);
+  };
+  const tick = async () => {
+    if (state.stopped) return;
+    if (Date.now() > state.until) {
+      // Do not leave a pinned card still claiming it updates automatically.
       try {
-        const np = await monitorPayload(chatId, ca, chainKey, wid);
-        const er = await edit(chatId, mid, np.text, np.kb);
-        if (er && er.ok === false && /not found|can't be edited/i.test(er.description || '')) return stopMonitor(chatId, mid);
-        if (np.closed) { tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); stopMonitor(chatId, mid); }   // position gone → unpin + freeze
-      } catch (_) { stopMonitor(chatId, mid); }
-    }, 45000);
-    _monitors.set(chatId + ':' + mid, timer);
-  } catch (_) {}
+        const np = await monitorPayload(chatId, ca, state.chainKey, state.wid);
+        await edit(chatId, mid, np.text.replace(/🔄 Updates automatically · last updated/, '⏸ Paused · last updated'), np.kb);
+      } catch (_) { /* the sign-off is best-effort */ }
+      return finish(true);
+    }
+    try {
+      const np = await monitorPayload(chatId, ca, state.chainKey, state.wid);
+      const er = await edit(chatId, mid, np.text, np.kb);
+      if (er && er.ok === false && MON_FATAL_TG.test(er.description || '')) return finish(false);
+      // Only a CONFIRMED close, seen twice, ends it. A single reading is one
+      // RPC away from being wrong, and being wrong here is permanent.
+      state.closedStreak = np.closed ? state.closedStreak + 1 : 0;
+      if (state.closedStreak >= CLOSED_STREAK_TO_STOP) return finish(true);
+    } catch (e) {
+      // Transient. The old code stopped the monitor here, so one network blip
+      // ended the tracker for the rest of its window.
+      console.error('[monitor] tick failed', chatId, ca, e && (e.message || e));
+    }
+    if (!state.stopped) state.timer = setTimeout(tick, MON_EVERY_MS);
+  };
+  state.timer = setTimeout(tick, MON_EVERY_MS);
 }
 
 function askExport(chatId) {

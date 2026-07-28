@@ -860,6 +860,18 @@ async function tokenBalance(ca, addr, chainKey) {
   if (isSvm(chainKey)) { const { raw } = await solana.splBalance(providerFor(chainKey), addr, ca); return raw; }
   try { return await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).balanceOf(addr); } catch (_) { return 0n; }
 }
+/** Same read, but a FAILURE is distinguishable from a genuine zero.
+ *
+ *  tokenBalance() collapses both to 0n, which is fine for a display but wrong
+ *  wherever the answer decides something: the live monitor read a failed RPC as
+ *  "position closed", unpinned itself and stopped forever, one blip after a buy
+ *  that had actually filled. Callers that ACT on the number must use this. */
+async function tokenBalanceOrNull(ca, addr, chainKey) {
+  try {
+    if (isSvm(chainKey)) { const { raw } = await solana.splBalance(providerFor(chainKey), addr, ca); return raw; }
+    return await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).balanceOf(addr);
+  } catch (_) { return null; }
+}
 // Maestro-style: this token's balance (+ native) across EVERY one of the user's
 // wallets, read LIVE on-chain (so tokens acquired outside the bot — e.g. a token
 // you launched on the site — still show up). Best-effort: a failed read is 0, never
@@ -1827,6 +1839,6 @@ module.exports = {
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
-  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenAcrossWallets, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
+  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
 };

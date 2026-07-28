@@ -71,18 +71,22 @@ test("a filled buy opens the live position by itself", () => {
 });
 
 test("the monitor it opens is the live one, not a snapshot", () => {
-  const mon = TG.slice(TG.indexOf("async function startMonitor("));
-  const body = mon.slice(0, mon.indexOf("\nfunction ") > -1 ? mon.indexOf("\nfunction ") : 3000);
-  assert.match(body, /setInterval\(/, "it refreshes itself");
-  assert.match(body, /pinChatMessage/, "and pins, so it stays at the top of the chat");
-  assert.match(body, /if \(np\.closed\)/, "…and closes when the position is gone");
+  const start = TG.slice(TG.indexOf("async function startMonitor("), TG.indexOf("function runMonitorLoop("));
+  const loop = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));
+  assert.match(start, /pinChatMessage/, "it pins, so it stays at the top of the chat");
+  // A self-rescheduling chain, not setInterval: a slow tick delays the next one
+  // rather than running on top of it.
+  assert.match(loop, /state\.timer = setTimeout\(tick, MON_EVERY_MS\);/, "it refreshes itself");
+  assert.match(loop, /state\.closedStreak >= CLOSED_STREAK_TO_STOP/, "…and closes when the position is really gone");
 });
 
 test("a repeat buy does not stack monitors", () => {
   // Buying the same token three times must not leave three pinned trackers.
-  const mon = TG.slice(TG.indexOf("async function startMonitor("));
-  assert.match(mon.slice(0, 900), /const existing = _monitorByToken\.get\(tkey\);/);
-  assert.match(mon.slice(0, 900), /return; \} catch \(_\) \{ stopMonitor/, "it refreshes the existing one in place");
+  const start = TG.slice(TG.indexOf("async function startMonitor("), TG.indexOf("function runMonitorLoop("));
+  assert.match(start, /const existing = _monitorByToken\.get\(tkey\);/);
+  assert.match(start, /live\.until = Date\.now\(\) \+ MON_WINDOW_MS;/, "it refreshes the existing one and extends its window");
+  const loop = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));
+  assert.match(loop, /if \(_monitors\.has\(k\)\) return;/, "…and never puts two loops on one card");
 });
 
 test("a monitor that fails to open cannot break the buy", () => {
