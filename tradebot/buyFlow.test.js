@@ -71,7 +71,7 @@ test("a filled buy opens the live position by itself", () => {
 });
 
 test("the monitor it opens is the live one, not a snapshot", () => {
-  const start = TG.slice(TG.indexOf("async function startMonitor("), TG.indexOf("function runMonitorLoop("));
+  const start = TG.slice(TG.indexOf("async function _startMonitor("), TG.indexOf("function runMonitorLoop("));
   const loop = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));
   assert.match(start, /pinChatMessage/, "it pins, so it stays at the top of the chat");
   // A self-rescheduling chain, not setInterval: a slow tick delays the next one
@@ -82,7 +82,7 @@ test("the monitor it opens is the live one, not a snapshot", () => {
 
 test("a repeat buy does not stack monitors", () => {
   // Buying the same token three times must not leave three pinned trackers.
-  const start = TG.slice(TG.indexOf("async function startMonitor("), TG.indexOf("function runMonitorLoop("));
+  const start = TG.slice(TG.indexOf("async function _startMonitor("), TG.indexOf("function runMonitorLoop("));
   assert.match(start, /const existing = _monitorByToken\.get\(tkey\);/);
   assert.match(start, /live\.until = Date\.now\(\) \+ MON_WINDOW_MS;/, "it refreshes the existing one and extends its window");
   const loop = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));

@@ -150,6 +150,16 @@ function opsDue(key, minGapMs) {
 // Write-through: the mark exists to survive a restart, so it must be on disk
 // before the next one — a debounced write loses exactly the case it guards.
 function markOps(key) { const o = DB.ops || (DB.ops = {}); o[key] = Date.now(); saveStoreNow(); return o[key]; }
+// ---- live-monitor registry (persisted) --------------------------------------
+// The pinned "Live position" cards used to live only in a Map in telegram.js, so
+// a pm2 restart — i.e. every deploy — left them on screen still promising
+// "🔄 Updates automatically" with nothing left alive to update them, and no
+// record that would let the next boot adopt or retire them. A buy of the same
+// token afterwards then pinned a SECOND card. Written through (not debounced):
+// the whole point is to survive the restart that may come at any moment.
+function monitorsAll() { return DB.monitors || (DB.monitors = {}); }
+function monitorSave(key, rec) { monitorsAll()[key] = rec; saveStoreNow(); }
+function monitorDrop(key) { const m = monitorsAll(); if (m[key] === undefined) return; delete m[key]; saveStoreNow(); }
 function loadStore() {
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch (_) { parsed = {}; }
@@ -159,6 +169,7 @@ function loadStore() {
   DB.refByCode = (parsed && parsed.refByCode) || {};
   DB.report = (parsed && parsed.report) || _emptyReport();
   DB.ops = (parsed && parsed.ops) || {};   // last-time-we-did-X marks (see opsDue)
+  DB.monitors = (parsed && parsed.monitors) || {};   // live position cards, so a restart can adopt them
   if (!DB.report.lifetime) DB.report.lifetime = { trades: 0, vol: {}, fee: {} };
   if (!DB.report.lastRecapDate) DB.report.lastRecapDate = _todayUTC();   // first run: baseline today (first daily recap fires tomorrow)
   wireShutdownFlush();
@@ -1831,6 +1842,7 @@ module.exports = {
   getHistory, realizedEth,
   loadStore, saveStore, saveStoreNow, allUsers, getUser, ensureUser, signerFor, exportKey, walletFromSecret, setChain,
   noteUser, findUser, recordTrade, reportSnapshot, resetReportWindow, recapDue, markRecap, opsDue, markOps,
+  monitorsAll, monitorSave, monitorDrop,
   walletList, walletById, activeWallet, activeAddress, addWallet, switchWallet, removeWallet, listWallets, WALLET_CAP,
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,

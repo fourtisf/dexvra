@@ -34,12 +34,14 @@ const CORE = fs
   .readFileSync(path.join(__dirname, "core.js"), "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/^\s*\/\/.*$/gm, "");
-const START = TG.slice(TG.indexOf("async function startMonitor("), TG.indexOf("function runMonitorLoop("));
+const START = TG.slice(TG.indexOf("async function _startMonitor("), TG.indexOf("function runMonitorLoop("));
 // stopMonitor sits ABOVE startMonitor in the file, so slicing to it would give
 // an empty string and every assertion below would vacuously pass.
 const LOOP = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));
 assert.ok(LOOP.includes("const tick = async () =>"), "the loop slice is wrong — fix the markers before trusting anything below");
-const PAYLOAD = TG.slice(TG.indexOf("async function monitorPayload("), TG.indexOf("async function startMonitor("));
+const PAYLOAD = TG.slice(TG.indexOf("async function monitorPayload("), TG.indexOf("const _monitorByToken"));
+assert.ok(START.includes("const existing = _monitorByToken.get(tkey);") && PAYLOAD.includes("const [snap, rawBal]"),
+  "a slice marker is stale — fix it before trusting anything below");
 
 // ── not automatic ───────────────────────────────────────────────────────────
 
@@ -178,4 +180,51 @@ test("the timestamp changes every tick", () => {
   // At minute resolution ~25% of refreshes produced byte-identical text, which
   // Telegram rejects as "message is not modified" — the card visibly froze.
   assert.match(PAYLOAD, /toISOString\(\)\.slice\(11, 19\)/);
+});
+
+// ── surviving a restart ─────────────────────────────────────────────────────
+// Added after a runtime audit: every source assertion above passes on code that
+// still loses every monitor on `pm2 restart`, because the registry was a Map.
+// liveMonitorRuntime.test.js exercises these for real; these pin the wiring.
+
+test("the registry is on disk, so a deploy does not orphan every pinned card", () => {
+  assert.match(CORE, /function monitorSave\(key, rec\) \{ monitorsAll\(\)\[key\] = rec; saveStoreNow\(\); \}/,
+    "written through — the restart it guards can come at any moment");
+  assert.match(CORE, /DB\.monitors = \(parsed && parsed\.monitors\) \|\| \{\};/, "…and read back at boot");
+  assert.match(TG, /core\.monitorSave\(tkey, \{ mid, ca, chainKey, wid, until: state\.until \}\);/);
+  assert.match(TG, /_monitorByToken\.delete\(tk\); core\.monitorDrop\(tk\);/, "a stopped monitor leaves no record behind");
+});
+
+test("boot adopts the cards still in their window and retires the rest", () => {
+  const fn = TG.slice(TG.indexOf("async function resumeMonitors("), TG.indexOf("function askExport("));
+  assert.match(fn, /adoptMonitor\(chatId, rec\.ca, rec\.chainKey, rec\.wid, rec\.mid, Number\(rec\.until\)\)/);
+  assert.match(fn, /⏸ Paused · last updated/, "an expired card is signed off, not left claiming to be live");
+  assert.match(fn, /unpinChatMessage/);
+  assert.match(TG, /resumeMonitors\(\)\.catch\(/, "and it runs at boot");
+  const boot = TG.slice(TG.indexOf("async function start()"));
+  assert.ok(boot.indexOf("resumeMonitors()") < boot.indexOf("let offset = 0;"), "before the first update is polled");
+});
+
+test("two starts on one token cannot post two pinned cards", () => {
+  // _monitorByToken is written AFTER an await, so concurrent callers both saw an
+  // empty map. A buy finishing while the user taps 📍 is exactly that race.
+  assert.match(TG, /const _monitorStarting = new Map\(\);/);
+  assert.match(TG, /running\s*\?\s*running\.catch\(\(\) => \{\}\)\.then\(\(\) => _startMonitor\(chatId, ca, chainKey, wid\)\)/,
+    "the second caller queues behind the first and then takes the reuse path");
+  assert.match(TG, /_monitorStarting\.delete\(tkey\)/, "…and the guard is always released");
+});
+
+test("🔄 Refresh revives an undriven card instead of updating it once", () => {
+  const h = TG.slice(TG.indexOf("if (k === 'mon') {"));
+  const body = h.slice(0, h.indexOf("if (k === 'monn')"));
+  assert.match(body, /if \(er && er\.ok && !p2\.closed\) adoptMonitor\(chatId, tca, ch, wid, mid\);/);
+  assert.match(TG, /function adoptMonitor\(chatId, ca, chainKey, wid, mid, until\)/);
+  assert.match(TG, /if \(_monitors\.has\(chatId \+ ':' \+ mid\)\) return true;/, "idempotent — no second loop on a live card");
+});
+
+test("a fallback bag is labelled, and a missing USD feed does not blank a known price", () => {
+  assert.match(PAYLOAD, /balStale \? ' <i>\(last known — chain unreachable\)<\/i>' : ''/,
+    "a recorded bag rendered identically to a live read");
+  assert.match(PAYLOAD, /snap\.mcapEth > 0 \? fmt\(snap\.mcapEth\) \+ ' ' \+ nat : '—'/,
+    "the card knows the market cap in native units — printing — is it looking broken over a problem it does not have");
 });

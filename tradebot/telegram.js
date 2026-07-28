@@ -1502,7 +1502,15 @@ async function onCallback(q) {
     const parts = data.split(':'); const ch = parts[1], wi = parts[2], tca = parts[3], a = parts[4];
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
     const wid = wobj ? wobj.id : undefined;   // stale/removed index → fall back to the active wallet
-    if (k === 'mon') { const p2 = await monitorPayload(chatId, tca, ch, wid); return edit(chatId, mid, p2.text, p2.kb); }
+    if (k === 'mon') {
+      const p2 = await monitorPayload(chatId, tca, ch, wid);
+      const er = await edit(chatId, mid, p2.text, p2.kb);
+      // A manual refresh on a card nothing is driving (a restart orphaned it, or
+      // its window ran out) used to update it exactly once and go quiet again.
+      // Adopt it, so tapping 🔄 makes it live rather than static.
+      if (er && er.ok && !p2.closed) adoptMonitor(chatId, tca, ch, wid, mid);
+      return er;
+    }
     if (k === 'monn') {
       // Await it and report what happened. It used to fire-and-forget and then
       // claim "Monitor started" unconditionally — so every failure above this
@@ -1766,13 +1774,14 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // successful zero is allowed to close anything.
   let balNow = 0;
   let balKnown = false;
+  let balStale = false;
   if (rawBal != null) {
     balNow = Number(ethers.formatUnits(rawBal, (pos && pos.dec) || 18));
     balKnown = true;
   } else if (pos && pos.tokens != null) {
     // Fall back to what the buy recorded. This branch existed before but was
     // unreachable, because the failure it was written for arrived as 0n.
-    try { balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); } catch (_) { balNow = 0; }
+    try { balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); balStale = balNow > 0; } catch (_) { balNow = 0; }
   }
   const cost = posCost(pos);
   const noPosition = !pos || !(cost > 0);
@@ -1786,7 +1795,10 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   } else {
     const px = snap && snap.priceEth > 0 ? snap.priceEth : 0;
     const val = balNow * px;
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}`);
+    // Say when the bag is the one the BUY recorded rather than one read from the
+    // chain just now — otherwise a failing RPC renders identically to a live
+    // read, and tokens sent out with 📤 would show as a bag the user still has.
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
@@ -1795,9 +1807,17 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     }
   }
   if (snap) {
+    // Fall back to NATIVE units when the USD feed is down (PRICES.* is 0 until
+    // the first Coinbase call lands, and stays 0 while it keeps failing). The
+    // price is known in ETH/BNB/SOL either way, and printing "—" for a number we
+    // hold is the card looking broken over a problem it does not have.
     const pxUsd = (snap.priceEth || 0) * usdRate;
     const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
-    L.push(`\n📈 <b>Price:</b> ${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}  ·  <b>Market cap:</b> ${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}`);
+    const pxStr = pxUsd > 0 ? '$' + pxUsd.toPrecision(3)
+      : (snap.priceEth > 0 ? snap.priceEth.toPrecision(3) + ' ' + nat : '—');
+    const mcStr = mcUsd > 0 ? '$' + fmt(mcUsd)
+      : (snap.mcapEth > 0 ? fmt(snap.mcapEth) + ' ' + nat : '—');
+    L.push(`\n📈 <b>Price:</b> ${pxStr}  ·  <b>Market cap:</b> ${mcStr}`);
   }
   L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
   // Quick-sell straight from the live tracker: 25 / 50 / 75 / 100, plus "other %"
@@ -1813,6 +1833,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   return { text: L.join('\n'), kb, closed };
 }
 const _monitorByToken = new Map();   // `${chatId}:${ca}` → msgId of the live monitor for that token
+const monKey = (chatId, ca) => chatId + ':' + String(ca).toLowerCase();
 function stopMonitor(chatId, mid) {
   const k = chatId + ':' + mid;
   const st = _monitors.get(k);
@@ -1821,7 +1842,7 @@ function stopMonitor(chatId, mid) {
   // entries whenever two users happened to share a message id — which for
   // per-chat counters is routine, not a coincidence.
   const prefix = chatId + ':';
-  for (const [tk, m] of _monitorByToken) if (m === mid && tk.startsWith(prefix)) _monitorByToken.delete(tk);
+  for (const [tk, m] of _monitorByToken) if (m === mid && tk.startsWith(prefix)) { _monitorByToken.delete(tk); core.monitorDrop(tk); }
 }
 
 // Timings. The old card refreshed every 45s with two SERIAL network reads
@@ -1844,8 +1865,25 @@ const MON_FATAL_TG = /message to edit not found|message can't be edited|MESSAGE_
 /** Opens (or adopts) the pinned live-position card. Returns TRUE only when a
  *  monitor is on screen AND something is driving it — the 📍 button reports
  *  that verbatim instead of claiming success it never checked. */
-async function startMonitor(chatId, ca, chainKey, wid) {
-  const tkey = chatId + ':' + String(ca).toLowerCase();
+// One start at a time per token. `_monitorByToken` is only written AFTER an
+// await, so two callers arriving together (a buy finishing while the user taps
+// 📍) both saw an empty map, both posted a card, and the chat ended up with two
+// pinned monitors for one position — each with its own loop editing its own copy.
+const _monitorStarting = new Map();
+function startMonitor(chatId, ca, chainKey, wid) {
+  const tkey = monKey(chatId, ca);
+  const running = _monitorStarting.get(tkey);
+  // Chain onto the in-flight start rather than racing it: the second caller then
+  // takes the reuse path and refreshes the card the first one posted.
+  const p = running
+    ? running.catch(() => {}).then(() => _startMonitor(chatId, ca, chainKey, wid))
+    : _startMonitor(chatId, ca, chainKey, wid);
+  const tracked = p.finally(() => { if (_monitorStarting.get(tkey) === tracked) _monitorStarting.delete(tkey); });
+  _monitorStarting.set(tkey, tracked);
+  return tracked;
+}
+async function _startMonitor(chatId, ca, chainKey, wid) {
+  const tkey = monKey(chatId, ca);
   try {
     // ONE live monitor per token — a repeat buy (or the 📍 button) reuses the
     // existing pinned card instead of posting a duplicate.
@@ -1867,7 +1905,11 @@ async function startMonitor(chatId, ca, chainKey, wid) {
         // Keep the card, and push the window out — a fresh buy deserves a fresh
         // hour, which the old code never granted.
         const live = _monitors.get(chatId + ':' + existing);
-        if (live) { live.until = Date.now() + MON_WINDOW_MS; live.chainKey = chainKey; live.wid = wid; return true; }
+        if (live) {
+          live.until = Date.now() + MON_WINDOW_MS; live.chainKey = chainKey; live.wid = wid;
+          core.monitorSave(tkey, { mid: existing, ca, chainKey, wid, until: live.until });
+          return true;
+        }
         // The card is editable but nothing is driving it (window expired, or a
         // restart). Adopt it rather than leaving a frozen "updates
         // automatically" card on screen.
@@ -1897,11 +1939,14 @@ async function startMonitor(chatId, ca, chainKey, wid) {
 
 /** Self-rescheduling refresh. A setTimeout chain, not setInterval: a tick that
  *  outlives its period delays the next one instead of running on top of it. */
-function runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey) {
+function runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey, until) {
   const k = chatId + ':' + mid;
   if (_monitors.has(k)) return;   // already driven — never two loops on one card
-  const state = { until: Date.now() + MON_WINDOW_MS, chainKey, wid, closedStreak: 0, timer: null, stopped: false };
+  const state = { until: until || (Date.now() + MON_WINDOW_MS), chainKey, wid, closedStreak: 0, timer: null, stopped: false };
   _monitors.set(k, state);
+  // On disk from the first tick, so the next boot can adopt this card instead of
+  // leaving it pinned and frozen (see resumeMonitors).
+  core.monitorSave(tkey, { mid, ca, chainKey, wid, until: state.until });
 
   const finish = (unpin) => {
     if (unpin) tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {});
@@ -1933,6 +1978,48 @@ function runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey) {
     if (!state.stopped) state.timer = setTimeout(tick, MON_EVERY_MS);
   };
   state.timer = setTimeout(tick, MON_EVERY_MS);
+}
+
+/** Put a loop back on a card that is on screen but undriven — after a restart,
+ *  or when the user taps 🔄 Refresh on one. Idempotent. */
+function adoptMonitor(chatId, ca, chainKey, wid, mid, until) {
+  if (!mid) return false;
+  if (_monitors.has(chatId + ':' + mid)) return true;
+  const tkey = monKey(chatId, ca);
+  _monitorByToken.set(tkey, mid);
+  runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey, until);
+  return true;
+}
+
+/** Called once at boot. Every deploy is a pm2 restart, and the pinned cards
+ *  outlive the process that was driving them — so without this the user's
+ *  monitor is on screen saying "🔄 Updates automatically" and never does. Cards
+ *  still inside their window get their loop back; expired ones are signed off
+ *  and unpinned rather than left lying. */
+async function resumeMonitors() {
+  const saved = core.monitorsAll();
+  const now = Date.now();
+  let live = 0, retired = 0;
+  for (const [tkey, rec] of Object.entries(saved)) {
+    const chatId = Number(String(tkey).split(':')[0]);
+    if (!rec || !rec.mid || !Number.isFinite(chatId)) { core.monitorDrop(tkey); continue; }
+    if (!(Number(rec.until) > now)) {
+      // Its window ran out while the bot was down. Do not leave a card claiming
+      // to be live — say so, unpin, forget.
+      try {
+        const np = await monitorPayload(chatId, rec.ca, rec.chainKey, rec.wid);
+        await edit(chatId, rec.mid, np.text.replace(/🔄 Updates automatically · last updated/, '⏸ Paused · last updated'), np.kb);
+      } catch (_) { /* best-effort sign-off */ }
+      tg('unpinChatMessage', { chat_id: chatId, message_id: rec.mid }).catch(() => {});
+      core.monitorDrop(tkey);
+      retired++;
+      continue;
+    }
+    adoptMonitor(chatId, rec.ca, rec.chainKey, rec.wid, rec.mid, Number(rec.until));
+    live++;
+  }
+  if (live || retired) console.log(`monitors resumed: ${live} live, ${retired} retired`);
+  return { live, retired };
 }
 
 function askExport(chatId) {
@@ -2142,6 +2229,9 @@ async function start() {
     return send(chatId, text, kb).catch(() => {});
   });
   watchers.start();
+  // Pinned live-position cards outlive the process that drove them. Give them
+  // their loop back (or retire them) before the first update is polled.
+  resumeMonitors().catch((e) => console.error('[monitor] resume failed', e && (e.message || e)));
   // Periodic volume/fee recap to the admin channel (default every 24h). Posts only when
   // there were trades, then resets the window. Never touches the trade path.
   if (report.enabled()) {
@@ -2207,5 +2297,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
