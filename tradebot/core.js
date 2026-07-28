@@ -1358,36 +1358,12 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
       const pick = await bestDexVenue(ca, chainKey);
-      // Price-impact ceiling, enforced ENGINE-SIDE so it also covers snipe /
-      // copy-trade / DCA / limit fills (which call core.buy directly).
-      //
-      // This used to REFUSE anything over 10% ("never buy into a small LP, no
-      // override"). The operator reversed that: a buy the competition fills and
-      // we decline is a lost user, and the slippage the user set is their own
-      // statement of what they will accept. What is left is a catastrophe stop,
-      // not a policy — PRICE_IMPACT_MAX_PCT (default 50%), and the user's own
-      // slippage raises it further because they asked for it explicitly.
-      //
-      // NOT applied to V3. A V2 pair's WETH balance IS its depth, so
-      // spend/(reserve+spend) is the real impact there. A V3 pool's balance is
-      // NOT: liquidity is concentrated, so a pool holding 0.8 ETH can fill a
-      // 0.05 ETH buy at almost no impact. Running the constant-product formula
-      // over it invented an 11% number and refused a trade that fills fine —
-      // which is exactly the report that got this changed.
-      if (pick && pick.kind !== 'v3') {
-        const reserve = pick.wethBal != null ? pick.wethBal : 0n;
-        if (reserve > 0n) {
-          const impactBps = Number((spend * 10000n) / (reserve + spend));
-          const hardBps = Math.max(1, Number(process.env.PRICE_IMPACT_MAX_PCT || 50)) * 100;
-          const ceilingBps = Math.max(hardBps, Number(slip));
-          if (impactBps >= ceilingBps) {
-            throw new Error(
-              `buy blocked: ~${(impactBps / 100).toFixed(0)}% price impact into ~${Number(ethers.formatEther(reserve)).toFixed(4)} ${chain.native} of depth — ` +
-              `past the ${(ceilingBps / 100).toFixed(0)}% ceiling. Buy a smaller amount, or raise your slippage in Settings if you accept the price.`,
-            );
-          }
-        }
-      }
+      // NO price-impact ceiling. Operator's rule: the user must always be able
+      // to buy. Their slippage is the only limit that applies, and the on-chain
+      // minOut below enforces it — a trade that would fill worse than they
+      // asked for reverts by itself, which is the protection that actually
+      // works. A pre-trade refusal only ever lost trades the competition took.
+      // Do not reintroduce one here or in the UI.
       if (pick.kind === 'v3') {
         // Deepest liquidity is a Uniswap V3 pool. minOut is floored off the pool's
         // slot0 SPOT (v3ExpectedOutRaw has no depth term) using ONLY the user's own

@@ -129,8 +129,11 @@ test("a lit dot means that wallet trades on the next tap — nothing else", () =
 
 test("the selection actually drives the trade, on both sides", () => {
   const tg = code("telegram.js");
-  assert.match(tg, /const results = await Promise\.allSettled\(targets\.map\(\(t\) => core\.buy\(chatId, ca, amt, chain, t\.id\)\)\);/,
+  // Started as one Promise.allSettled over every target — parallel, and (since
+  // the latency work) in flight before the progress message is awaited.
+  assert.match(tg, /Promise\.allSettled\(targets\.map\(\(t\) => core\.buy\(chatId, ca, amt, chain, t\.id\)\)\)/,
     "a multi Buy runs on every selected wallet, in parallel");
+  assert.match(tg, /const results = await buys;/, "…and every one of them is awaited");
   const sell = tg.slice(tg.indexOf("async function doSell("));
   assert.match(sell, /const targets = tradeTargets\(chatId, walletId\);/, "Sell reads the same selection");
   // Both report per wallet, so a partial failure is visible rather than averaged

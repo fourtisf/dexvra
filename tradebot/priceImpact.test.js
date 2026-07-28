@@ -23,65 +23,69 @@ const TG = strip("telegram.js");
 
 test("a V3 pool is never judged by the constant-product formula", () => {
   // THE bug. A V3 pool's WETH balance is not its depth at spot, so this formula
-  // invents an impact that is not there and refuses a trade that fills.
-  // Anchored on CODE, not on a comment — strip() removes the comments, and a
-  // test that pins prose passes against a rewrite that broke the behaviour.
-  const block = CORE.slice(CORE.indexOf("if (pick && pick.kind !== 'v3')"), CORE.indexOf("if (pick.kind === 'v3') {"));
-  assert.ok(block.length > 0, "the V2-only gate is what makes the number meaningful");
-  assert.match(block, /const impactBps = Number\(\(spend \* 10000n\) \/ \(reserve \+ spend\)\);/,
-    "the constant-product formula lives INSIDE the V2-only branch");
-  assert.match(TG, /pick\.kind !== 'v3'/, "and the UI must not re-add it");
+  // invents an impact that is not there — and it refused a trade Maestro filled.
+  const fn = TG.slice(TG.indexOf("async function impactNote("));
+  const body = fn.slice(0, fn.indexOf("\n}"));
+  assert.match(body, /if \(!pick \|\| pick\.kind === 'v3' \|\| pick\.wethBal == null\) return '';/);
+  assert.match(body, /\(amtN \/ \(reserve \+ amtN\)\) \* 100/, "the formula runs only past that gate");
 });
 
-test("the engine ceiling is a catastrophe stop, not a policy", () => {
-  // It was 10% with no override. A trade the competition fills and we decline
-  // is a lost user.
-  assert.match(CORE, /Number\(process\.env\.PRICE_IMPACT_MAX_PCT \|\| 50\)/, "default raised from 10 to 50");
-  assert.match(CORE, /const ceilingBps = Math\.max\(hardBps, Number\(slip\)\);/,
-    "the user's own slippage raises it further — they asked for that price explicitly");
+test("nothing refuses a buy any more — not the engine, not the UI", () => {
+  // Operator's rule: the user must always be able to buy. Their slippage is the
+  // only limit, and the on-chain minOut enforces it — a fill worse than they
+  // asked for reverts by itself, which is the protection that actually works.
+  assert.ok(!/PRICE_IMPACT_MAX_PCT/.test(CORE), "the engine ceiling is gone");
+  assert.ok(!/PRICE_IMPACT_MAX_PCT/.test(TG), "…and the UI never had its own to keep");
+  assert.ok(!/Buy blocked/.test(TG) && !/buy blocked/.test(CORE), "no refusal path is left");
+  assert.match(CORE, /const minTok = expTok \* \(10000n - slip\) \/ 10000n;/, "the real guard is still there");
 });
 
-test("the numbers from the incident now fill", () => {
-  // Reported case: 0.813 ETH tradeable depth, a 0.05 ETH buy, ~11% impact —
-  // refused at the old 10% ceiling.
-  const reserve = 0.813;
-  const spend = 0.05;
-  const impactPct = (spend / (reserve + spend)) * 100;
-  assert.ok(impactPct > 5 && impactPct < 7, `sanity: ~${impactPct.toFixed(1)}%`);
-  // (The bot's 11% came from halving the reported liquidity before dividing —
-  // the same figure the V2 formula produces on a pool it does not describe.)
-  const oldCeiling = 10;
-  const newCeiling = 50;
-  assert.ok(impactPct < newCeiling, "fills now");
-  void oldCeiling;
-});
-
-test("the UI measures and TELLS, instead of refusing", () => {
-  assert.ok(!/🚫 <b>Buy blocked — thin pool<\/b>/.test(TG), "the refusal card is gone");
-  assert.match(TG, /⚠️ Thin pool — this size moves the price ~<b>\$\{impact\.toFixed\(0\)\}%<\/b>/);
-  assert.match(TG, /if \(impact >= 5\)/, "a 1% impact is not news");
-  // …and it rides along with the buy rather than gating it.
-  assert.match(TG, /⏳ <b>Buying \$\{esc\(amt\)\} \$\{chG\.native\}…<\/b>\$\{impactNote\}/);
-});
-
-test("an unreadable pool never stops a trade", () => {
-  // Failing closed here would refuse every token the depth probe times out on,
-  // which on a chain with no indexer is most of them.
+test("the trade starts before ANYTHING is awaited", () => {
+  // The latency the user felt: a bestDexVenue probe with a 6s timeout, then a
+  // Telegram round-trip for "Buying…", both in series ahead of the buy. Up to
+  // ~6.5s before a single on-chain call, against a bot that fills immediately.
   const fn = TG.slice(TG.indexOf("async function doBuy("));
-  const probe = fn.slice(0, fn.indexOf("const key = chatId"));
-  assert.match(probe, /catch \(_\) \{ \/\* unreadable pool: not a reason to stop a trade \*\/ \}|catch \(_\) \{\s*\}/);
-  assert.ok(!/return send\(chatId,/.test(probe), "nothing in the pre-check may return early any more");
+  const single = fn.slice(fn.indexOf("if (targets.length <= 1)"), fn.indexOf("} else {"));
+  const iBuy = single.indexOf("const buying = core.buy(");
+  const iProgress = single.indexOf("const progress = expert ? null : await send(");
+  const iProbe = single.indexOf("const impactP = impactNote(");
+  assert.ok(iBuy > -1 && iProgress > -1 && iProbe > -1, single);
+  assert.ok(iBuy < iProgress, "the buy must be in flight before the progress message is awaited");
+  assert.ok(iBuy < iProbe, "…and before the depth probe");
+  assert.ok(!/await core\.buy\(/.test(single), "core.buy is started, not awaited, on that line");
+  assert.match(single, /const r = await buying;/, "awaited only once there is nothing else to do");
+});
+
+test("the multi-wallet buy and the sell start the same way", () => {
+  const fn = TG.slice(TG.indexOf("async function doBuy("));
+  const multi = fn.slice(fn.indexOf("} else {"));
+  assert.ok(
+    multi.indexOf("const buys = Promise.allSettled(") < multi.indexOf("const progress = expert ? null : await send("),
+    "every wallet's buy is in flight before the progress message",
+  );
+  const sell = TG.slice(TG.indexOf("async function doSell("));
+  assert.ok(
+    sell.indexOf("const selling = sellWithRetry(") < sell.indexOf("progress = expert ? null : await send("),
+    "an exit is where a round-trip of delay is felt most",
+  );
+});
+
+test("the probe's result still reaches the user — it is just no longer in the way", () => {
+  const fn = TG.slice(TG.indexOf("async function doBuy("));
+  assert.match(fn, /const note = await impactP\.catch\(\(\) => ''\);/, "and a failed probe cannot break the receipt");
+  assert.match(fn, /edit\(chatId, pid, receipt \+ note, kb\)/);
+});
+
+test("an unreadable pool says nothing, rather than stopping anything", () => {
+  const fn = TG.slice(TG.indexOf("async function impactNote("));
+  const body = fn.slice(0, fn.indexOf("\n}"));
+  assert.match(body, /return '';\s*\/\/ an unreadable pool is not a reason to say anything/);
+  assert.ok(!/throw|return send\(/.test(body), "it can only ever produce a string");
 });
 
 test("the message no longer claims the bot cannot trade V3", () => {
-  // It can — core.buy has a full V3 path (pick.kind === 'v3'). Telling the user
-  // to go to the DEX instead sent away a trade the bot would have filled.
+  // It can — core.buy has a full V3 path. Telling the user to go to the DEX
+  // instead sent away a trade the bot would have filled.
   assert.ok(!/this bot can't trade it/.test(TG));
-  assert.match(CORE, /if \(pick\.kind === 'v3'\) \{/, "the V3 swap path is right there");
-});
-
-test("what is left still says what to DO about it", () => {
-  const guard = CORE.slice(CORE.indexOf("buy blocked: ~"));
-  const msg = guard.slice(0, 400);
-  assert.match(msg, /Buy a smaller amount, or raise your slippage/, msg);
+  assert.match(CORE, /if \(pick\.kind === 'v3'\) \{/);
 });

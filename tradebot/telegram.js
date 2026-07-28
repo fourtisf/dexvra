@@ -904,35 +904,32 @@ async function _placeAutoExit(chatId, r, walletId) {
     return msgs.length ? `\nAuto-exit: <b>${msgs.join(' · ')}</b>` : '';
   } catch (_) { return ''; }   /* order cap reached or unpriceable — skip silently */
 }
+// Price impact for the size being bought — INFORMATION, never a gate (operator
+// rule: the user must always be able to buy). Returns "" when it cannot be
+// measured, and it is never awaited ahead of the trade.
+//
+// V2 only: a V2 pair's WETH balance IS its depth, so spend/(reserve+spend) is
+// the real impact. A V3 pool's balance is NOT — its liquidity is concentrated,
+// so a pool holding 0.8 ETH can fill a 0.05 ETH buy at almost no impact.
+// Running the constant-product formula over one invented an 11% figure and
+// refused a trade Maestro filled.
+async function impactNote(ca, chG, amt) {
+  if (core.chains.isSvm(chG.key)) return '';
+  try {
+    const pick = await withTmo(core.bestDexVenue(ca, chG.key).catch(() => null), 6000, null);
+    if (!pick || pick.kind === 'v3' || pick.wethBal == null) return '';
+    const reserve = Number(ethers.formatEther(pick.wethBal));
+    const amtN = Number(amt) || 0;
+    const impact = reserve > 0 ? (amtN / (reserve + amtN)) * 100 : 0;
+    return impact >= 5 ? `\n⚠️ Thin pool — this size moved the price ~<b>${impact.toFixed(0)}%</b>.` : '';
+  } catch (_) {
+    return '';   // an unreadable pool is not a reason to say anything
+  }
+}
+
 async function doBuy(chatId, ca, amt, chain, walletId) {
   const u = core.ensureUser(chatId);
-  // Price impact: MEASURED, then shown — no longer a refusal.
-  //
-  // This was a hard block at 10% with no override ("the bot must NEVER buy into
-  // a small LP"). The operator reversed it after watching Maestro fill a buy
-  // this bot declined: a trade the competition takes and we refuse is a lost
-  // user, and the slippage they set is their own statement of what they accept.
-  // The engine keeps a catastrophe ceiling (core.buy, default 50%); everything
-  // below that fills, with the number in front of them so it is still an
-  // informed trade rather than a silent one.
-  //
-  // V3 is deliberately not measured this way: its balance is not its depth
-  // (concentrated liquidity), so the constant-product formula invents an impact
-  // that is not there — which is what refused the buy in the first place.
   const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
-  let impactNote = '';
-  if (!core.chains.isSvm(chG.key)) {
-    try {
-      const pick = await withTmo(core.bestDexVenue(ca, chG.key).catch(() => null), 6000, null);
-      if (pick && pick.kind !== 'v3' && pick.wethBal != null) {
-        const reserve = Number(ethers.formatEther(pick.wethBal));
-        const amtN = Number(amt) || 0;
-        const impact = reserve > 0 ? (amtN / (reserve + amtN)) * 100 : 0;
-        // Only when it is worth saying. A 1% impact is not news.
-        if (impact >= 5) impactNote = `\n⚠️ Thin pool — this size moves the price ~<b>${impact.toFixed(0)}%</b>.`;
-      }
-    } catch (_) { /* unreadable pool: not a reason to stop a trade */ }
-  }
   const key = chatId + ':' + (chain || core.userChain(u)) + ':' + String(ca).toLowerCase();
   if (_inflightBuy.has(key)) return send(chatId, '⏳ Already buying that token — wait for the result before buying again.');
   _inflightBuy.add(key);
@@ -941,9 +938,22 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
   try {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
-      // One message: a short "Buying…" that we EDIT into the receipt (no second message).
-      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}…</b>${impactNote}`);
-      const r = await core.buy(chatId, ca, amt, chain, wid);
+      // SPEED: the trade starts on the very first line of this block. Nothing
+      // is awaited before it — not the "Buying…" message, not the depth probe.
+      //
+      // Those two used to run in series ahead of the buy: a bestDexVenue call
+      // with a 6s timeout, purely to compute a warning line, and then a
+      // Telegram round-trip for the progress message. Up to ~6.5s of the user's
+      // latency was spent before a single on-chain call, on a bot competing
+      // with one that fills immediately.
+      //
+      // Now the buy, the progress message and the depth probe are all in
+      // flight at once, and the probe's result is folded into the receipt if it
+      // arrives in time. Nothing about the trade waits on either of them.
+      const buying = core.buy(chatId, ca, amt, chain, wid);
+      const impactP = impactNote(ca, chG, amt);
+      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}…</b>`);
+      const r = await buying;
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
       const spent = Number(r.spentEth) || 0, got = Number(r.gotTokens) || 0;
@@ -974,11 +984,17 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
         [{ text: '🔍 Tx', url: `${exp2.explorer}/tx/${r.hash}` }, btn('📍 Monitor', `monn:${r.chain}:${wi}:${ca}`)],
         [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
       ] };
+      // The probe ran alongside the trade; whatever it found is a footnote on
+      // the receipt now, and never cost the trade a millisecond.
+      const note = await impactP.catch(() => '');
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
-      if (pid) await edit(chatId, pid, receipt, kb); else await send(chatId, receipt, kb);
+      if (pid) await edit(chatId, pid, receipt + note, kb); else await send(chatId, receipt + note, kb);
     } else {
+      // Same order as the single-wallet path: every buy is in flight before the
+      // progress message is awaited.
+      const buys = Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
       const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native} on ${targets.length} wallets…</b>`);
-      const results = await Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
+      const results = await buys;
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
@@ -1040,8 +1056,15 @@ async function doSell(chatId, ca, pct, chain, walletId) {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
       const sym0 = quickSym(chatId, ca, chain, wid);
-      const progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% of ${sym0 ? '$' + esc(sym0) : 'your token'}…</b>`);
-      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => (progress && progress.ok && progress.result) ? edit(chatId, progress.result.message_id, `⚙️ <b>Retry ${n}/2</b> — raising gas &amp; slippage to complete the sell…`).catch(() => {}) : null);
+      // The sell is in flight before the progress message is awaited — an exit
+      // is the one trade where a round-trip of delay is felt most.
+      let progress = null;
+      const selling = sellWithRetry(chatId, ca, pct, chain, wid, (n) =>
+        (progress && progress.ok && progress.result)
+          ? edit(chatId, progress.result.message_id, `⚙️ <b>Retry ${n}/2</b> — raising gas &amp; slippage to complete the sell…`).catch(() => {})
+          : null);
+      progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% of ${sym0 ? '$' + esc(sym0) : 'your token'}…</b>`);
+      const r = await selling;
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
