@@ -913,6 +913,11 @@ async function _placeAutoExit(chatId, r, walletId) {
 // so a pool holding 0.8 ETH can fill a 0.05 ETH buy at almost no impact.
 // Running the constant-product formula over one invented an 11% figure and
 // refused a trade Maestro filled.
+// How long the "Buying…" line waits for a market cap before going out without
+// one. The trade is already in flight by then, so this is never execution
+// latency — only how long the user stares at a message with a blank in it.
+const ENTRY_MC_WAIT_MS = 1200;
+
 async function impactNote(ca, chG, amt) {
   if (core.chains.isSvm(chG.key)) return '';
   try {
@@ -952,7 +957,17 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // arrives in time. Nothing about the trade waits on either of them.
       const buying = core.buy(chatId, ca, amt, chain, wid);
       const impactP = impactNote(ca, chG, amt);
-      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}…</b>`);
+      // Entry snapshot, started WITH the trade. The buy is already in flight, so
+      // the short wait below costs execution nothing — it only decides whether
+      // the "Buying…" line can name the market cap being entered at. "At what
+      // MC did I get in" is the first thing anyone asks, and afterwards it can
+      // only be reconstructed.
+      const entryP = withTmo(core.tokenSnapshot(ca, chG.key).catch(() => null), 6000, null);
+      const entry = await Promise.race([entryP, new Promise((res) => setTimeout(res, ENTRY_MC_WAIT_MS, null))]);
+      const eRate = nativeUsd(chG.native);
+      const eMc = entry ? (entry.mcapUsd || (entry.mcapEth || 0) * eRate) : 0;
+      const atMc = eMc > 0 ? ` at MC <b>$${fmt(eMc)}</b>` : '';
+      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}</b>${atMc}…`);
       const r = await buying;
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
@@ -963,7 +978,10 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       let holdUsd = usdRate > 0 && spent > 0 ? usd2(spent) : '—';
       let statLine = '';
       try {
-        const snap = await withTmo(core.tokenSnapshot(ca, r.chain).catch(() => null), 4000, null);
+        // The snapshot started with the trade — reuse it rather than fetching a
+        // second time. It is also the more honest "entry": taken as the buy went
+        // out, not seconds after it landed.
+        const snap = await entryP;
         if (snap && snap.priceEth > 0) {
           if (usdRate > 0 && got > 0) holdUsd = `$${(got * snap.priceEth * usdRate).toFixed(2)}`;
           const pxUsd = snap.priceEth * usdRate;
@@ -989,6 +1007,10 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const note = await impactP.catch(() => '');
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       if (pid) await edit(chatId, pid, receipt + note, kb); else await send(chatId, receipt + note, kb);
+      // Straight into the live position — pinned, refreshing itself, closing on
+      // exit. It already existed behind the 📍 button; making someone tap for it
+      // after a buy is asking them to do the obvious thing by hand.
+      startMonitor(chatId, ca, r.chain, wid).catch(() => {});
     } else {
       // Same order as the single-wallet path: every buy is in flight before the
       // progress message is awaited.
