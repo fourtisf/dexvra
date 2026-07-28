@@ -906,32 +906,32 @@ async function _placeAutoExit(chatId, r, walletId) {
 }
 async function doBuy(chatId, ca, amt, chain, walletId) {
   const u = core.ensureUser(chatId);
-  // HARD thin-pool block (operator rule: the bot must NEVER buy into a small
-  // LP). Estimated V2 impact = amt / (poolNativeReserve + amt); at or above
-  // PRICE_IMPACT_MAX_PCT (default 10%) the buy is refused — no override
-  // button. Covers every manual path incl. auto-buy-on-paste, since they all
-  // execute through doBuy. Fails open only if the pool can't be read at all.
+  // Price impact: MEASURED, then shown — no longer a refusal.
+  //
+  // This was a hard block at 10% with no override ("the bot must NEVER buy into
+  // a small LP"). The operator reversed it after watching Maestro fill a buy
+  // this bot declined: a trade the competition takes and we refuse is a lost
+  // user, and the slippage they set is their own statement of what they accept.
+  // The engine keeps a catastrophe ceiling (core.buy, default 50%); everything
+  // below that fills, with the number in front of them so it is still an
+  // informed trade rather than a silent one.
+  //
+  // V3 is deliberately not measured this way: its balance is not its depth
+  // (concentrated liquidity), so the constant-product formula invents an impact
+  // that is not there — which is what refused the buy in the first place.
   const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
+  let impactNote = '';
   if (!core.chains.isSvm(chG.key)) {
     try {
-      // Depth of the venue the trade would ACTUALLY use (V2 pair or deepest V3
-      // pool) — so deep-V3 tokens aren't falsely blocked by a dusty V2 pair.
       const pick = await withTmo(core.bestDexVenue(ca, chG.key).catch(() => null), 6000, null);
-      const liq = pick && pick.wethBal != null ? Number(ethers.formatEther(pick.wethBal)) * 2 : null;
-      if (liq != null && liq >= 0) {
+      if (pick && pick.kind !== 'v3' && pick.wethBal != null) {
+        const reserve = Number(ethers.formatEther(pick.wethBal));
         const amtN = Number(amt) || 0;
-        const impact = (amtN / (liq / 2 + amtN)) * 100;
-        const maxAt = Math.max(1, Number(process.env.PRICE_IMPACT_MAX_PCT || 10));
-        if (impact >= maxAt) {
-          const maxSafe = (maxAt / 100) * (liq / 2) / (1 - maxAt / 100);
-          return send(chatId,
-            `🚫 <b>Buy blocked — thin pool</b>\n\nTradeable liquidity for <code>${short(ca)}</code> is only <b>${liq.toFixed(3)} ${chG.native}</b> (${usd(liq, chG.native)}). A <b>${esc(String(amt))} ${chG.native}</b> buy would move the price ~<b>${impact.toFixed(0)}%</b> — over the ${maxAt}% limit, so the bot refuses to fill it.` +
-            `${maxSafe > 0.00001 ? `\n\nLargest buy within the limit: ~<b>${maxSafe.toFixed(5)} ${chG.native}</b>.` : ''}` +
-            `\nIf the token's real depth sits on a V3 pool, this bot can't trade it — use the DEX directly for this one.`,
-            rows([btn('🔄 Card', `tok:${chG.key}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')]));
-        }
+        const impact = reserve > 0 ? (amtN / (reserve + amtN)) * 100 : 0;
+        // Only when it is worth saying. A 1% impact is not news.
+        if (impact >= 5) impactNote = `\n⚠️ Thin pool — this size moves the price ~<b>${impact.toFixed(0)}%</b>.`;
       }
-    } catch (_) {}
+    } catch (_) { /* unreadable pool: not a reason to stop a trade */ }
   }
   const key = chatId + ':' + (chain || core.userChain(u)) + ':' + String(ca).toLowerCase();
   if (_inflightBuy.has(key)) return send(chatId, '⏳ Already buying that token — wait for the result before buying again.');
@@ -942,7 +942,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
       // One message: a short "Buying…" that we EDIT into the receipt (no second message).
-      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}…</b>`);
+      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}…</b>${impactNote}`);
       const r = await core.buy(chatId, ca, amt, chain, wid);
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
