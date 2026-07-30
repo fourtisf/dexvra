@@ -12,6 +12,7 @@ const { startPayment } = require("./pay");
 const menu = require("./menu");
 const { Markup } = menu;
 const tpl = require("../templates");
+const listed = require("../helpers/listedGuard");
 const log = require("../helpers/logger");
 
 const URL_RE = /^https?:\/\/\S+$/i;
@@ -98,6 +99,10 @@ async function handleText(ctx) {
       if (!isValidAddress(f.chain, input)) {
         return toast(ctx, tpl.render("invalid_address", { chain: chainOf(f.chain).label }));
       }
+      // One token, one listing. Checked BEFORE the autofill round-trip so a
+      // repeat contract is answered immediately, and before any of the form is
+      // filled in for a listing that can never be sold.
+      if (await listed.blockIfListed(ctx, input, f.chain)) return;
       f.address = input;
       // Autofill from DexScreener (name/symbol/logo + socials: X/Telegram/Website)
       // and GeckoTerminal (name/symbol/logo + project overview). DexScreener
@@ -295,6 +300,19 @@ async function approve(ctx) {
     await toast(ctx, tpl.render("invalid_ticker"));
     ctx.session.awaitingField = "symbol";
     return sendCard(ctx, tpl.render("listing_symbol_prompt"), menu.withHome([]));
+  }
+  // Re-checked here, at the last gate before money moves: the contract step ran
+  // minutes ago and the same token may have been listed in between. FAIL CLOSED
+  // — unlike the earlier check, an unreachable listings API stops the sale
+  // rather than risking a payment for a listing that would OVERWRITE an existing
+  // one (see helpers/listedGuard.js), and fulfilment could not have created it
+  // through that same API anyway.
+  try {
+    const dup = await listed.existingListing(f.address, f.chain);
+    if (dup) return listed.sendAlreadyListed(ctx, dup);
+  } catch (e) {
+    log.warn(`[listing] duplicate re-check failed for ${f.chain}/${f.address}: ${e.message}`);
+    return toast(ctx, tpl.render("trending_service_down"));
   }
   if (ctx.session.type === "xpress_listing") return goPay(ctx, "XPRESS");
 
