@@ -98,13 +98,21 @@ should land in `@dexvralisting`.
 ```bash
 cd /path/to/dexvra && git pull
 npm ci && npm run build && pm2 restart dexvra --update-env
-cd bot && npm ci && pm2 restart dexvra-bot --update-env
+cd bot && npm ci && pm2 restart ecosystem.config.js --update-env
 ```
+
+> Restart via **`ecosystem.config.js`**, not `pm2 restart dexvra-bot`. This
+> directory runs TWO processes — `dexvra-bot` (main.js) and `dexvra-adminbot`
+> (adminbot.js) — and naming only the first leaves the admin bot on the old
+> code after every deploy. It fails silently and confusingly: the main bot
+> shows a new feature working while @dexvraadminbot has no editor entry for it,
+> which reads as "the template is missing" rather than "that process is stale".
+> Confirm both came back with `pm2 ls` before you call the deploy done.
 
 ## Rollback
 
 ```bash
-pm2 stop dexvra-bot          # bot only — the site keeps running
+pm2 stop dexvra-bot dexvra-adminbot   # bots only — the site keeps running
 # revert web: git checkout <previous main commit> && npm ci && npm run build && pm2 restart dexvra
 ```
 
