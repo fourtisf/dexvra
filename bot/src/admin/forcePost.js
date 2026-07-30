@@ -188,6 +188,11 @@ async function mediaFor(kind, coin, row, opts = {}) {
 
 async function deliver(channel, media, payload, { pin = false } = {}) {
   const msg = await post.sendMedia(channel, media, payload, { pin });
+  // The one choke-point every force-post kind goes through, so mirroring here
+  // covers Xpress AND Listing+Trending without either remembering to. Only the
+  // listing post is mirrored: the group wants new listings, not a second copy
+  // of the same card from the announce and trending channels.
+  if (channel === CHANNELS.listing) await post.mirrorToGroup(channel, msg, { label: "force-post listing" });
   return { channel, ok: !!msg, messageId: msg && msg.message_id, url: msg ? tmeLink(channel, msg.message_id) : null };
 }
 

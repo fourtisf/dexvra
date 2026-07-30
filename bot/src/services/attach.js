@@ -22,6 +22,11 @@ function attachServices(bot, services) {
     services.push(require("../group/buyMonitor").start(tg)); // group buy alerts
   }
 
+  // Is any of the above actually working? Nothing answered that until now: a
+  // wedged poller, a vanished Mongo, or an order that took money and stalled
+  // were all invisible until a customer complained.
+  services.push(require("./healthMonitor").start(tg));
+
   // Boot recovery (re-fulfil paid orders) + a RECURRING late-payment scan.
   // Boot-only was not enough: sessions are in-memory, so a restart drops the
   // buyer's pendingPayment and a payment that lands afterwards is credited by

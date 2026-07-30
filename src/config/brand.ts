@@ -6,5 +6,18 @@ export const BRAND_MARK = "D"; // logo monogram letter
 export const BRAND_TAGLINE = "Find the next Moonshot";
 export const BRAND_DOMAIN = "dexvra.io";
 
-// Public Telegram bot — every "List Token" CTA leads here.
-export const BOT_URL = "https://t.me/dexvrabot";
+// Social destinations — defined in ./socials beside the channel list they
+// describe, and re-exported here so the many callers that just want BOT_URL
+// keep importing from one obvious place. Handles match the accounts the bot
+// posts from (its CHANNELS config and X_HANDLE) and the ones printed on the
+// channel artwork.
+export {
+  BOT_URL, // every "List Token" CTA leads here
+  TELEGRAM_URL,
+  TELEGRAM_HANDLE,
+  TELEGRAM_LISTING_URL,
+  TELEGRAM_LISTING_HANDLE,
+  TELEGRAM_TRENDING_URL,
+  TELEGRAM_TRENDING_HANDLE,
+  X_URL,
+} from "./socials";

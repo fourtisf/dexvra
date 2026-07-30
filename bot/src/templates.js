@@ -208,7 +208,10 @@ const DEFAULTS = {
     "💰 Longer runs carry bigger discounts.\n\n" +
     "🔹 Choose your campaign duration:",
   banner_image_prompt:
-    "🖼 **Upload your creative**\n\n🔹 Send your banner as a photo — recommended size **{size}**, PNG or JPG, clean and readable at a glance:",
+    "🖼 **Upload your creative**\n\n" +
+    "🔹 Send your banner as a **photo** — PNG or JPG, clean and readable at a glance.\n\n" +
+    "📐 **Exact size: {size}** (or any image with the same shape — {size2x} is ideal for a sharp result).\n" +
+    "🔹 This exact shape is used **both** on the dexvra.io homepage and in the announcement post, so a banner at this size is never cropped.",
   banner_link_prompt:
     "🔗 **Target Link**\n\n🔹 Send the **click-through URL** (https://…) — visitors who tap your banner land here:",
   banner_desc_prompt:
@@ -504,7 +507,7 @@ const META = {
   error_retry: { group: "Bot Messages", label: "Error: try again", ph: [] },
   trending_service_down: { group: "Bot Messages", label: "Error: listings service down", ph: [] },
   banner_duration_prompt: { group: "Bot Messages", label: "Banner: duration picker", ph: ["name", "size"] },
-  banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size"] },
+  banner_image_prompt: { group: "Bot Messages", label: "Banner: image prompt", ph: ["size", "size2x"] },
   banner_link_prompt: { group: "Bot Messages", label: "Banner: link prompt", ph: [] },
   banner_title_prompt: { group: "Bot Messages", label: "Banner: title prompt", ph: [] },
   banner_desc_prompt: { group: "Bot Messages", label: "Banner: description prompt", ph: [] },

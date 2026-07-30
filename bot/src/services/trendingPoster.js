@@ -96,6 +96,7 @@ async function buildText() {
   // Title emoji is admin-settable (@dexvraadminbot → Trending board) so the
   // operator can make it a premium, animated fire without a redeploy.
   const lines = [`${board.titleEmoji()} **Dexvra Trending** — live featured slots`];
+  let newCount = 0;
   for (const chain of CHAIN_ORDER) {
     const arr = byChain[chain];
     if (!arr || !arr.length) continue;
@@ -128,8 +129,13 @@ async function buildText() {
       const pct = pctStr(e.change);
       const mc = mcapStr(e.mcap);
       const mcLink = mc ? `[${mc}](${mkUrl(dexUrl)})` : "";
-      // {badge} {+%} | $TICKER(→TG) | {mcap}$(→Dexvra)  — parts drop cleanly if missing
-      const segs = [board.rankBadge(i + 1), pct, "|", link];
+      // {badge} {🌩} {+%} | $TICKER(→TG) | {mcap}$(→Dexvra) — parts drop cleanly
+      // if missing. The 🌩 marks a slot that STARTED in the last few hours: the
+      // board is edited in place, so without it the message looks identical at
+      // 09:00 and 15:00 and a returning reader cannot see what just entered.
+      const isNew = board.isNewlyTrending(e.r, now);
+      if (isNew) newCount++;
+      const segs = [board.rankBadge(i + 1), isNew ? board.newEmoji() : "", pct, "|", link];
       if (mcLink) segs.push("|", mcLink);
       lines.push(segs.filter(Boolean).join(" "));
     });
@@ -138,6 +144,15 @@ async function buildText() {
   // (to the token's socials and its Dexvra page), so a trailing "View all on
   // Dexvra" only added a line of chrome to a board that is edited in place and
   // read at a glance — operator's call, 2026-07-25.
+  //
+  // The legend is the exception, and only when it has something to explain: a
+  // symbol nobody defined is noise, and printing "🌩 = newly entered" on a board
+  // with no 🌩 on it is worse — it sends the reader hunting for a mark that is
+  // not there.
+  if (newCount > 0) {
+    const h = board.newHours();
+    lines.push(`\n${board.newEmoji()} = Newly Entered Trending (slot started in the last ${h} hour${h === 1 ? "" : "s"})`);
+  }
   return lines.join("\n");
 }
 

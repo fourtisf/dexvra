@@ -269,6 +269,9 @@ async function fulfillListing(ctx, order) {
     // deliberately NOT pinned here: its pin belongs to the Trending board.
     const listingMsg = await post.sendMedia(CHANNELS.listing, listMedia, fmt.listingPost(coin), { pin: true });
     if (listingMsg) links.push({ kind: "listing", label: "🔔 Dexvra Listing", url: tmeLink(CHANNELS.listing, listingMsg.message_id) });
+    // …and into the community group. Best-effort: never let the mirror fail a
+    // listing the buyer already paid for.
+    await post.mirrorToGroup(CHANNELS.listing, listingMsg);
     // The tweet sits right under its channel post, as a raw url like the rest —
     // it is one of the things they bought, not a footnote.
     if (coin.xUrl) links.push({ kind: "x", label: "🔔 Dexvra Listing (X)", url: coin.xUrl });
@@ -372,8 +375,26 @@ async function fulfillBanner(ctx, order) {
     let adMedia = p.imageFileId || photoSource(null, rec.imageUrl);
     if (bannerTemplate.postingEnabled()) {
       const creative = buffer || (await fetchLogoUrl(rec.imageUrl));
-      const framed = await bannerTemplate.compose("banner", creative, {});
-      if (framed) adMedia = { source: framed };
+      // An uploaded CLIP wins over the still artwork, exactly as it does for
+      // listing/trending — but the ad clip has to carry the buyer's creative in
+      // its frame, on every frame. Playing it bare made the animated template
+      // pure decoration: the advertiser paid for a banner that never appeared.
+      // The sold size decides the shape of the box in the post, so a Standard
+      // (2.5:1) and a Wide (5:1) each land edge to edge instead of sharing one
+      // compromise rectangle that fits neither.
+      const shape = { slotSize: rec.size };
+      const clip = bannerTemplate.mediaOverride("banner");
+      const framedClip = clip
+        ? await bannerTemplate.composeOntoClip("banner", clip, creative, shape).catch(() => null)
+        : null;
+      if (framedClip) {
+        log.info("[fulfil] banner media: admin clip + advertiser creative ✔");
+        adMedia = framedClip;
+      } else {
+        if (clip) log.warn("[fulfil] banner media: clip composite failed — falling back to the still frame");
+        const framed = await bannerTemplate.compose("banner", creative, shape);
+        if (framed) adMedia = { source: framed };
+      }
     }
     // Tweet FIRST (timeboxed), so the channel post can carry the "Announce On X"
     // link — same ordering as a listing. The line drops itself when X is off or

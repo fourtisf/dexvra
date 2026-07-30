@@ -125,7 +125,7 @@ function decrypt(blob) {
 
 // ---------------------------------------------------------------- store (JSON, atomic)
 const STORE_FILE = path.join(CFG.dataDir, 'tradebot.json');
-let DB = { users: {}, refByCode: {}, report: null };
+let DB = { users: {}, refByCode: {}, report: null, ops: {} };
 function _emptyReport() { return { since: Date.now(), trades: 0, vol: {}, fee: {}, lifetime: { trades: 0, vol: {}, fee: {} }, lastRecapDate: null }; }
 function _todayUTC() { const d = new Date(); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'); }
 // True once per UTC day, at/after `hourUtc` — a stable DAILY trigger that survives
@@ -136,6 +136,30 @@ function recapDue(hourUtc) {
   return new Date().getUTCHours() >= (Number(hourUtc) || 0);
 }
 function markRecap() { const r = DB.report || (DB.report = _emptyReport()); r.lastRecapDate = _todayUTC(); saveStore(); }
+// ---- ops throttle -----------------------------------------------------------
+// A pm2 restart is not news. The "Trade Bot online" card and the off-site store
+// backup both fired unconditionally at startup, so a deploy afternoon dropped
+// three archives and three identical boot cards into the ops channel within
+// minutes. Both now ask opsDue() first, and the answer is PERSISTED, so a
+// restart re-reads when the thing last happened instead of assuming never.
+function opsDue(key, minGapMs) {
+  const last = Number((DB.ops || {})[key] || 0);
+  if (!(last > 0)) return true;
+  return (Date.now() - last) >= Math.max(0, Number(minGapMs) || 0);
+}
+// Write-through: the mark exists to survive a restart, so it must be on disk
+// before the next one — a debounced write loses exactly the case it guards.
+function markOps(key) { const o = DB.ops || (DB.ops = {}); o[key] = Date.now(); saveStoreNow(); return o[key]; }
+// ---- live-monitor registry (persisted) --------------------------------------
+// The pinned "Live position" cards used to live only in a Map in telegram.js, so
+// a pm2 restart — i.e. every deploy — left them on screen still promising
+// "🔄 Updates automatically" with nothing left alive to update them, and no
+// record that would let the next boot adopt or retire them. A buy of the same
+// token afterwards then pinned a SECOND card. Written through (not debounced):
+// the whole point is to survive the restart that may come at any moment.
+function monitorsAll() { return DB.monitors || (DB.monitors = {}); }
+function monitorSave(key, rec) { monitorsAll()[key] = rec; saveStoreNow(); }
+function monitorDrop(key) { const m = monitorsAll(); if (m[key] === undefined) return; delete m[key]; saveStoreNow(); }
 function loadStore() {
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')); } catch (_) { parsed = {}; }
@@ -144,6 +168,8 @@ function loadStore() {
   DB.users = (parsed && parsed.users) || {};
   DB.refByCode = (parsed && parsed.refByCode) || {};
   DB.report = (parsed && parsed.report) || _emptyReport();
+  DB.ops = (parsed && parsed.ops) || {};   // last-time-we-did-X marks (see opsDue)
+  DB.monitors = (parsed && parsed.monitors) || {};   // live position cards, so a restart can adopt them
   if (!DB.report.lifetime) DB.report.lifetime = { trades: 0, vol: {}, fee: {} };
   if (!DB.report.lastRecapDate) DB.report.lastRecapDate = _todayUTC();   // first run: baseline today (first daily recap fires tomorrow)
   wireShutdownFlush();
@@ -821,6 +847,19 @@ async function tokenMeta(ca, chainKey) {
 }
 // Native balance in the chain's smallest unit (wei on EVM, lamports on Solana),
 // always a BigInt. Solana lamports are 1e9 — callers format with the chain's decimals.
+// The native reserved for gas, in wei. L1 Ethereum gas dwarfs the L2 default, so
+// it reserves far more — and that difference is exactly what made the sniper
+// spam. watchers.js pre-checked a user's balance against CFG.gasBufferEth
+// (0.0004) while buy() demanded ETH_GAS_BUFFER (0.006): a wallet holding
+// 0.01499 passed the cheap check, entered buy(), and threw "insufficient ETH —
+// need ~0.016, have 0.01499" on EVERY new Ethereum pair, for ever. Two checks
+// of the same thing must read one number.
+function gasBufferWei(chainKey) {
+  return ethers.parseEther(
+    chainKey === 'ethereum' ? (process.env.ETH_GAS_BUFFER || '0.006') : CFG.gasBufferEth,
+  );
+}
+
 async function ethBalance(addr, chainKey) {
   if (isSvm(chainKey)) return solana.solBalance(providerFor(chainKey), addr);
   try { return await providerFor(chainKey).getBalance(addr); } catch (_) { return 0n; }
@@ -831,6 +870,18 @@ async function ethBalance(addr, chainKey) {
 async function tokenBalance(ca, addr, chainKey) {
   if (isSvm(chainKey)) { const { raw } = await solana.splBalance(providerFor(chainKey), addr, ca); return raw; }
   try { return await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).balanceOf(addr); } catch (_) { return 0n; }
+}
+/** Same read, but a FAILURE is distinguishable from a genuine zero.
+ *
+ *  tokenBalance() collapses both to 0n, which is fine for a display but wrong
+ *  wherever the answer decides something: the live monitor read a failed RPC as
+ *  "position closed", unpinned itself and stopped forever, one blip after a buy
+ *  that had actually filled. Callers that ACT on the number must use this. */
+async function tokenBalanceOrNull(ca, addr, chainKey) {
+  try {
+    if (isSvm(chainKey)) { const { raw } = await solana.splBalance(providerFor(chainKey), addr, ca); return raw; }
+    return await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).balanceOf(addr);
+  } catch (_) { return null; }
 }
 // Maestro-style: this token's balance (+ native) across EVERY one of the user's
 // wallets, read LIVE on-chain (so tokens acquired outside the bot — e.g. a token
@@ -1301,7 +1352,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     const bal = await ethBalance(wallet.address, chainKey);
     // L1 Ethereum gas dwarfs the L2 default — reserve more so a buy isn't left
     // unable to pay for its own swap.
-    const gasBuf = ethers.parseEther(chainKey === 'ethereum' ? (process.env.ETH_GAS_BUFFER || '0.006') : CFG.gasBufferEth);
+    const gasBuf = gasBufferWei(chainKey);
     if (bal < gross + gasBuf) throw new Error(`insufficient ${chain.native} — need ~${ethers.formatEther(gross + gasBuf)} incl. gas, have ${Number(ethers.formatEther(bal)).toFixed(5)}`);
     const fee = (gross * BigInt(CFG.feeBps)) / 10000n;
     const spend = gross - fee;
@@ -1330,19 +1381,12 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
       const pick = await bestDexVenue(ca, chainKey);
-      // Thin-pool HARD guard, enforced ENGINE-SIDE so it also covers snipe /
-      // copy-trade / DCA / limit fills (which call core.buy directly and used to
-      // bypass the UI's guard). Impact ≈ spend/(nativeReserve+spend) on the
-      // venue that will actually trade; over PRICE_IMPACT_MAX_PCT (default 10%)
-      // the buy is refused. Automated callers catch this and skip.
-      {
-        const reserve = pick && pick.wethBal != null ? pick.wethBal : 0n;
-        if (reserve > 0n) {
-          const impactBps = Number((spend * 10000n) / (reserve + spend));
-          const maxPct = Math.max(1, Number(process.env.PRICE_IMPACT_MAX_PCT || 10));
-          if (impactBps >= maxPct * 100) throw new Error(`buy blocked: ~${(impactBps / 100).toFixed(0)}% price impact into a thin pool (~${Number(ethers.formatEther(reserve)).toFixed(4)} ${chain.native} tradeable depth) — over the ${maxPct}% limit. Real depth may be on a pool type this bot can't reach.`);
-        }
-      }
+      // NO price-impact ceiling. Operator's rule: the user must always be able
+      // to buy. Their slippage is the only limit that applies, and the on-chain
+      // minOut below enforces it — a trade that would fill worse than they
+      // asked for reverts by itself, which is the protection that actually
+      // works. A pre-trade refusal only ever lost trades the competition took.
+      // Do not reintroduce one here or in the UI.
       if (pick.kind === 'v3') {
         // Deepest liquidity is a Uniswap V3 pool. minOut is floored off the pool's
         // slot0 SPOT (v3ExpectedOutRaw has no depth term) using ONLY the user's own
@@ -1793,10 +1837,12 @@ function realizedEth(wal, chainKey) {
 }
 
 module.exports = {
+  gasBufferWei,
   CFG, chains, chainOf, userChain, providerFor, FACTORY_ABI, CURVE_ABI, ERC20_ABI,
   getHistory, realizedEth,
   loadStore, saveStore, saveStoreNow, allUsers, getUser, ensureUser, signerFor, exportKey, walletFromSecret, setChain,
-  noteUser, findUser, recordTrade, reportSnapshot, resetReportWindow, recapDue, markRecap,
+  noteUser, findUser, recordTrade, reportSnapshot, resetReportWindow, recapDue, markRecap, opsDue, markOps,
+  monitorsAll, monitorSave, monitorDrop,
   walletList, walletById, activeWallet, activeAddress, addWallet, switchWallet, removeWallet, listWallets, WALLET_CAP,
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,
@@ -1805,6 +1851,6 @@ module.exports = {
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
-  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenAcrossWallets, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
+  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
 };

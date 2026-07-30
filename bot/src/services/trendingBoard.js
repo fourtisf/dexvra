@@ -54,6 +54,14 @@ const FALLBACK_LOGO = "🔹";
 // from @dexvraadminbot, which stores it as "[🔥](emoji/<id>)" like every other
 // slot.
 const DEFAULT_TITLE_EMOJI = "🔥";
+// Marks a token whose trend slot STARTED recently. A board that is edited in
+// place looks the same at 09:00 and 15:00 unless something says what changed,
+// and "what just entered" is the only thing a returning reader is looking for.
+// Settable (premium included) from @dexvraadminbot, same as the title.
+const DEFAULT_NEW_EMOJI = "🌩";
+const DEFAULT_NEW_HOURS = 3; // Fourtis uses 3h; short enough that the mark means "now"
+const NEW_HOURS_MIN = 1;
+const NEW_HOURS_MAX = 48;
 
 /** The built-in badge for a rank: premium markup when we have an id for it. */
 function defaultRank(pos) {
@@ -75,6 +83,9 @@ function isBuiltinRank(pos, value) {
   if (!v) return true;
   const d = defaultRank(pos);
   return v === d || v === pe.charOf(d) || v === LEGACY_RANK_DEFAULTS[pos - 1];
+}
+function isBuiltinNewEmoji(value) {
+  return String(value || "").trim() === DEFAULT_NEW_EMOJI;
 }
 function isBuiltinTitleEmoji(value) {
   const v = String(value || "").trim();
@@ -106,7 +117,14 @@ function load() {
   }
   const t = c.titleEmoji == null ? "" : String(c.titleEmoji).trim();
   const titleEmoji = t && !isBuiltinTitleEmoji(t) ? t : null;
-  return { chainLogos, rankEmojis, titleEmoji };
+  const n = c.newEmoji == null ? "" : String(c.newEmoji).trim();
+  const newEmoji = n && !isBuiltinNewEmoji(n) ? n : null;
+  // Number(null) is 0, and 0 is finite — so a stored null read back as "clamp to
+  // the minimum", silently turning a 3h window into 1h. Absence has to be
+  // checked before the value is parsed, not after.
+  const h = c.newHours == null ? NaN : Math.round(Number(c.newHours));
+  const newHours = Number.isFinite(h) ? Math.max(NEW_HOURS_MIN, Math.min(NEW_HOURS_MAX, h)) : null;
+  return { chainLogos, rankEmojis, titleEmoji, newEmoji, newHours };
 }
 
 // A badge/logo may be stored as PLAIN emoji ("🥇") or as premium-emoji MARKUP
@@ -144,6 +162,10 @@ function resolveChainLogo(cfg, chain) {
   return v ? pe.promoteChain(chain, v) : defaultChainLogo(chain);
 }
 
+function resolveNew(cfg) {
+  const v = sanitizeFragment(cfg.newEmoji);
+  return v ? pe.promote(v) : DEFAULT_NEW_EMOJI;
+}
 function resolveTitle(cfg) {
   const v = sanitizeFragment(cfg.titleEmoji);
   return v ? pe.promote(v) : DEFAULT_TITLE_EMOJI;
@@ -168,6 +190,49 @@ async function setTitleEmoji(emoji) {
   c.titleEmoji = !v || isBuiltinTitleEmoji(v) ? null : v;
   await saveJSON(FILE, c);
   return c.titleEmoji;
+}
+
+/** The marker put in front of a token that entered trending recently, and the
+ *  window that counts as "recently". Both settable from @dexvraadminbot. */
+function newEmoji() {
+  return resolveNew(load());
+}
+function newHours() {
+  return load().newHours ?? DEFAULT_NEW_HOURS;
+}
+/** Has the admin set their own MARKER (vs the built-in 🌩)? Deliberately about
+ *  the emoji only: it drives the ✅/▫️ beside the emoji button, and the window
+ *  has its own button showing its own value. */
+function isNewCustom() {
+  return !!load().newEmoji;
+}
+function isNewPremium() {
+  return pe.isPremium(newEmoji());
+}
+async function setNewEmoji(emoji) {
+  const c = load();
+  const v = sanitizeFragment(emoji);
+  c.newEmoji = !v || isBuiltinNewEmoji(v) ? null : v;
+  await saveJSON(FILE, c);
+  return c.newEmoji;
+}
+async function setNewHours(h) {
+  const c = load();
+  const n = Math.round(Number(h));
+  const clamped = Number.isFinite(n) ? Math.max(NEW_HOURS_MIN, Math.min(NEW_HOURS_MAX, n)) : DEFAULT_NEW_HOURS;
+  // Store nothing when it matches the default — same rule as every other slot
+  // here, and it keeps "is this customised" answerable from the file alone.
+  c.newHours = clamped === DEFAULT_NEW_HOURS ? null : clamped;
+  await saveJSON(FILE, c);
+  return clamped;
+}
+/** True when this listing's trend slot started inside the window. Written as a
+ *  predicate rather than inline so the board and its legend can never disagree
+ *  about what the mark means. */
+function isNewlyTrending(row, now = Date.now()) {
+  const start = Number(row && row.trendStart);
+  if (!Number.isFinite(start) || start <= 0) return false;
+  return now - start < newHours() * 3600 * 1000;
 }
 
 /** The rank badge for a 1-based position (1..). 1–10 are configurable; 11+ are "N.". */
@@ -291,7 +356,18 @@ module.exports = {
   setTitleEmoji,
   isTitleCustom,
   isTitlePremium,
+  newEmoji,
+  setNewEmoji,
+  newHours,
+  setNewHours,
+  isNewCustom,
+  isNewPremium,
+  isNewlyTrending,
+  NEW_HOURS_MIN,
+  NEW_HOURS_MAX,
   reset,
   DEFAULT_RANK_EMOJIS,
   DEFAULT_TITLE_EMOJI,
+  DEFAULT_NEW_EMOJI,
+  DEFAULT_NEW_HOURS,
 };

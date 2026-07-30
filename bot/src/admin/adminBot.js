@@ -63,7 +63,7 @@ function mainKb() {
     [Markup.button.callback("🔍 Preview all templates", "audit")],
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
-    [Markup.button.callback("🎨 Channel Banner Artwork", "bt")],
+    [Markup.button.callback("🎨 Gambar Banner Channel", "bt")],
     [Markup.button.callback("🚀 Force post to channel (test live)", "fp")],
     [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
     [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
@@ -222,60 +222,66 @@ const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
 // Token banners whose animated clip is auto-filled with the token's logo/$ticker/price.
 // Pump is a fill kind too, but with its OWN layout (▲ +N% · old→new price · MCAP).
 const BT_FILL_KINDS = new Set(["listing", "trending", "pump"]);
+// Kinds whose animated clip gets something composited onto every frame. Banner
+// Ads joins the fill kinds here but with a different payload: not token data,
+// the ADVERTISER'S CREATIVE, dropped into the frame's slot. Without this a
+// banner clip played as pure decoration and the ad the buyer paid for never
+// appeared in it at all.
+const BT_CLIP_FILL_KINDS = new Set([...BT_FILL_KINDS, "banner"]);
 
 function btHomeText() {
-  const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ custom" : bannerTpl.hasTemplate(k) ? "💎 bundled" : "— none");
+  const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ punya sendiri" : bannerTpl.hasTemplate(k) ? "💎 bawaan" : "— belum ada");
   const on = bannerTpl.postingEnabled();
   return (
-    `🎨 <b>Channel Banner Artwork</b>\n\n` +
-    `Designed artwork per service; the bot composites each token's <b>logo</b> ` +
-    `(or the advertiser's <b>creative</b> for Banner Ads) into the artwork's slot, ` +
-    `plus an optional <b>$TICKER + name</b> overlay.\n\n` +
-    `Banner posts: <b>${on ? "🟢 ON" : "🔴 OFF — channel posts fall back to the raw token logo!"}</b>\n\n` +
+    `🎨 <b>Gambar Banner Channel</b>\n\n` +
+    `Setiap layanan punya gambar sendiri. Bot menempelkan <b>logo</b> token ` +
+    `(atau <b>gambar client</b> untuk Banner Ads) ke dalam kotak di gambar itu, ` +
+    `plus tulisan <b>$TICKER + nama</b> kalau diaktifkan.\n\n` +
+    `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
     `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n\n` +
-    `Pick a service to configure:`
+    `Pilih layanan yang mau diatur:`
   );
 }
 function btHomeKb() {
   const on = bannerTpl.postingEnabled();
   return Markup.inlineKeyboard([
-    [Markup.button.callback(on ? "🟢 Banner posts: ON — tap to turn OFF" : "🔴 Banner posts: OFF — tap to turn ON", `bt_on:${on ? 0 : 1}`)],
+    [Markup.button.callback(on ? "🟢 Kirim banner: AKTIF — tekan untuk matikan" : "🔴 Kirim banner: MATI — tekan untuk nyalakan", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
     [Markup.button.callback(BT_KINDS.rankup, "btk:rankup")],
-    [Markup.button.callback("⬅ Back", "home")],
+    [Markup.button.callback("⬅ Kembali", "home")],
   ]);
 }
 function btKindText(kind) {
   const clip = bannerTpl.mediaOverride(kind);
-  const clipLine = clip ? `🎞 GIF/Video: <b>${clip.type} set — overrides the still</b>\n` : `🎞 GIF/Video: <b>— none</b>\n`;
+  const clipLine = clip ? `🎞 GIF/Video: <b>sudah ada — dipakai menggantikan gambar diam</b>\n` : `🎞 GIF/Video: <b>— belum ada</b>\n`;
   if (!BT_ARTWORK_KINDS.has(kind)) {
     // media-only kinds (pump alert = text card; rank-up = auto dynamic banner). A clip
     // plays above / overrides the default.
     const note =
       kind === "rankup"
-        ? `\nRank-up alerts post an <b>auto-generated banner</b> by default (rank medallion + % gain). A GIF/video here <b>overrides</b> it and plays above every rank-up post.`
-        : `\nUpload a GIF or short MP4 to play above every ${BT_KINDS[kind].replace(/^\S+\s/, "")} post. Token details stay in the caption text.`;
+        ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
+        : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
     return `🎨 <b>${BT_KINDS[kind]}</b>\n\n` + clipLine + note;
   }
   const s = bannerTpl.getSettings(kind);
-  const src = bannerTpl.hasUploaded(kind) ? "✅ custom uploaded" : bannerTpl.hasTemplate(kind) ? "💎 bundled default" : "— none (auto-banner used)";
+  const src = bannerTpl.hasUploaded(kind) ? "✅ upload sendiri" : bannerTpl.hasTemplate(kind) ? "💎 bawaan" : "— belum ada (pakai banner otomatis)";
   const slot =
     s.slotShape === "rect"
-      ? `slot <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})`
-      : `logo <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})`;
+      ? `kotak <b>${s.slotW}×${s.slotH}px</b> di (${s.logoX}, ${s.logoY})`
+      : `logo <b>${s.logoSize}px</b> di (${s.logoX}, ${s.logoY})`;
   return (
-    `🎨 <b>${BT_KINDS[kind]} artwork</b>\n\n` +
-    `Artwork: ${src}\n` +
+    `🎨 <b>Gambar ${BT_KINDS[kind]}</b>\n\n` +
+    `Gambar: ${src}\n` +
     clipLine +
-    `Media slot: ${slot}\n` +
-    `Text overlay: <b>${s.showText ? "on" : "off"}</b> (${s.tickerFontSize}px at ${s.tickerX}, ${s.tickerY})\n\n` +
-    `Settings are separate per service. A GIF/video, when set, is used instead of the still artwork.`
+    `Kotak gambar: ${slot}\n` +
+    `Tulisan otomatis: <b>${s.showText ? "aktif" : "mati"}</b> (${s.tickerFontSize}px di ${s.tickerX}, ${s.tickerY})\n\n` +
+    `Setelan terpisah untuk tiap layanan. Kalau GIF/video diisi, itu yang dipakai — bukan gambar diamnya.`
   );
 }
 function btKindKb(kind) {
   const clipRow = [Markup.button.callback("🎞 Upload GIF/Video", `bt_med:${kind}`)];
-  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Remove clip", `bt_medrm:${kind}`));
+  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Hapus GIF/Video", `bt_medrm:${kind}`));
   if (!BT_ARTWORK_KINDS.has(kind)) {
     const rows = [clipRow];
     if (bannerTpl.mediaOverride(kind)) {
@@ -283,10 +289,10 @@ function btKindKb(kind) {
       // + auto-text toggle just like listing/trending — its own ▲%/price/MCAP.
       if (BT_FILL_KINDS.has(kind)) {
         const textOn = bannerTpl.getSettings(kind).showText !== false;
-        rows.push([Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)]);
-        rows.push([Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)]);
+        rows.push([Markup.button.callback("🎛 Atur tata letak — ukuran · posisi", `bxo:${kind}`)]);
+        rows.push([Markup.button.callback(textOn ? "🔤 Tulisan otomatis: AKTIF — tekan untuk sembunyikan" : "🔤 Tulisan otomatis: MATI — logo saja", `bt_txt:${kind}`)]);
       }
-      rows.push([Markup.button.callback("👁 Preview clip", `bt_prev:${kind}`)]);
+      rows.push([Markup.button.callback("👁 Lihat hasil", `bt_prev:${kind}`)]);
     }
     // Pump alert trigger window (min%/max%) — configurable, applies to the alert
     // logic regardless of whether a clip is set.
@@ -294,17 +300,17 @@ function btKindKb(kind) {
       const { minPct, maxPct } = pumpConfig.get();
       rows.push([Markup.button.callback(`⚙ Alert window · ${minPct}%–${maxPct}%`, "pth")]);
     }
-    rows.push([Markup.button.callback("⬅ Artwork menu", "bt")]);
+    rows.push([Markup.button.callback("⬅ Menu gambar", "bt")]);
     return Markup.inlineKeyboard(rows);
   }
   const textOn = bannerTpl.getSettings(kind).showText !== false;
   return Markup.inlineKeyboard([
-    [Markup.button.callback("⬆ Upload artwork", `bt_up:${kind}`)],
+    [Markup.button.callback("⬆ Upload gambar", `bt_up:${kind}`)],
     clipRow,
-    [Markup.button.callback("🎛 Layout editor — size · move · preview", `bxo:${kind}`)],
-    [Markup.button.callback(textOn ? "🔤 Auto-text: ON — tap to hide (fixes overlap)" : "🔤 Auto-text: OFF — logo only", `bt_txt:${kind}`)],
-    [Markup.button.callback("👁 Preview", `bt_prev:${kind}`), Markup.button.callback("🗑 Remove custom", `bt_rm:${kind}`)],
-    [Markup.button.callback("⬅ Artwork menu", "bt")],
+    [Markup.button.callback("🎛 Atur tata letak — ukuran · posisi", `bxo:${kind}`)],
+    [Markup.button.callback(textOn ? "🔤 Tulisan otomatis: AKTIF — tekan untuk sembunyikan" : "🔤 Tulisan otomatis: MATI — logo saja", `bt_txt:${kind}`)],
+    [Markup.button.callback("👁 Lihat hasil", `bt_prev:${kind}`), Markup.button.callback("🗑 Hapus gambar", `bt_rm:${kind}`)],
+    [Markup.button.callback("⬅ Menu gambar", "bt")],
   ]);
 }
 
@@ -386,6 +392,9 @@ function tbText() {
     `(top-tier buyers first), up to <b>${n}</b> tokens each, auto-updated.\n\n` +
     `<b>Title emoji:</b> ${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} ` +
     `${trendingBoard.displayEmoji(trendingBoard.titleEmoji())} <i>Dexvra Trending — live featured slots</i>\n\n` +
+    `<b>New-entry marker:</b> ${tbMark(trendingBoard.isNewPremium(), trendingBoard.isNewCustom())} ` +
+    `${trendingBoard.displayEmoji(trendingBoard.newEmoji())} — shown beside any token whose trending slot ` +
+    `started in the last <b>${trendingBoard.newHours()}h</b>, with a one-line legend under the board.\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
     `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n` +
     `${premLine}\n` +
@@ -409,6 +418,13 @@ function tbKb() {
       `${tbMark(trendingBoard.isTitlePremium(), trendingBoard.isTitleCustom())} Title emoji ${trendingBoard.displayEmoji(trendingBoard.titleEmoji())}`,
       "tbt",
     ),
+  ]);
+  rows.push([
+    cb(
+      `${tbMark(trendingBoard.isNewPremium(), trendingBoard.isNewCustom())} New marker ${trendingBoard.displayEmoji(trendingBoard.newEmoji())}`,
+      "tbn",
+    ),
+    cb(`⏱ ${trendingBoard.newHours()}h window`, "tbnh"),
   ]);
   rows.push([cb("🔗 Chain logos", "tbc")]);
   rows.push([cb("💎 Premium status", "tbdiag")]);
@@ -581,42 +597,111 @@ function fpResultKb() {
 }
 
 // ── Auto-Trending editor (auto-fill trending slots with random duration/timing) ─
-function atText() {
-  const c = autoTrend.get();
+// The panel used to be six steppers crammed onto two rows, which Telegram
+// truncated to "🕐 Mi…" and "Max 1…" — settings nobody could read, let alone
+// change with confidence. And it showed the config without ever showing the
+// BOARD, so "why is Robinhood still empty" had no answer on screen.
+//
+// One setting per row (three buttons fit; six do not), and a live per-chain
+// readout above them.
+
+/** The board, per chain, as the operator needs to read it: how many are
+ *  featured against the target, and — when it is short — whether anything is
+ *  left to promote. A chain with no listings can never be filled, and that is a
+ *  different problem from a chain the loop has not reached yet. */
+function atBoardLines(c, counts = _atCounts) {
+  const rows = [];
+  for (const id of c.chains) {
+    const meta = trendingBoard.chainList().find((x) => x.id === id);
+    const label = meta ? meta.label : id;
+    const glyph = meta ? trendingBoard.displayEmoji(meta.logo) : "•";
+    const n = (counts[id] && counts[id].featured) || 0;
+    const spare = (counts[id] && counts[id].eligible) || 0;
+    let mark = "✅";
+    let note = "";
+    if (n < c.perChain) {
+      if (spare > 0) {
+        mark = "⏳";
+        note = ` · ${spare} ready to promote`;
+      } else {
+        mark = "🔴";
+        note = ` · <i>no listings left on this chain</i>`;
+      }
+    }
+    rows.push(`${mark} ${glyph} <b>${label}</b> — ${n}/${c.perChain}${note}`);
+  }
+  return rows.join("\n");
+}
+
+/** Can the current settings actually post everything the board promotes? The
+ *  policy is "every trending token gets its post", and two numbers can quietly
+ *  make that impossible — a daily cap below the churn, or a gap so wide the day
+ *  runs out. Silence there looks exactly like a broken announcer. */
+function atThroughputNote(c) {
+  const churn = Math.round((c.perChain * c.chains.length * 24) / ((c.minHours + c.maxHours) / 2));
+  const byGap = Math.floor((24 * 60) / Math.max(1, c.announceGapMin));
+  const ceiling = Math.min(c.announcePerDay, byGap);
+  if (ceiling >= churn) return `\n<i>≈${churn} promotions a day, and up to ${ceiling} can post — every one gets through.</i>`;
+  const blame = c.announcePerDay < byGap ? `the <b>${c.announcePerDay}/day</b> cap` : `the <b>${c.announceGapMin} min</b> gap`;
   return (
-    `🤖 <b>Auto Trending</b>\n\n` +
-    `Keeps the Trending board alive between paid slots: when a slot expires it ` +
-    `auto-promotes a <b>random</b> listed token for a <b>random</b> duration, at ` +
-    `<b>random</b> intervals. Paid tiers always stay on top.\n\n` +
-    `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
-    `⏱ Duration: <b>${c.minHours}–${c.maxHours}h</b>  <i>(max ${autoTrend.HARD.hoursMax}h — never 24/48)</i>\n` +
-    `🔁 Refill every: <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
-    `🎯 Keep featured: <b>${c.target}</b> tokens\n\n` +
-    `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
-    (c.announce ? ` <i>(max ${c.announcePerDay}/day · ${c.announceGapMin}min apart · ${c.announceCooldownDays}d per token)</i>` : "") +
-    `\n` +
-    `<i>Auto slots post the SAME card as a paid Trending purchase (the <b>Post: Trending</b> template) — never pinned, ` +
-    `never @dexvraio. The channel feed is chronological: unlike the board, it does NOT rank paid above auto.</i>\n\n` +
-    `⚡ <b>Run now — per chain</b>\n` +
-    `The board groups by network, so a chain with nothing featured shows nothing at all. ` +
-    `Tap a chain below to promote a token there immediately (works even while Auto Trending is off).\n\n` +
-    `Tune with the steppers below. Applies on the next cycle.`
+    `\n⚠️ <i>≈${churn} promotions a day but only <b>${ceiling}</b> can post — ${blame} is the limit. ` +
+    `The rest wait in the queue and their slots expire first. Raise it below.</i>`
   );
 }
+
+function atText() {
+  const c = autoTrend.get();
+  const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChain);
+  const blocked = short.filter((id) => !((_atCounts[id] && _atCounts[id].eligible) || 0));
+  return (
+    `🤖 <b>Auto Trending</b> — ${c.enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
+    `Fills the Trending board between paid slots with the <b>top gainers</b> — the biggest 24h ` +
+    `movers among listed tokens, any package — for a random ${c.minHours}–${c.maxHours}h, every ` +
+    `${c.minGapMin}–${c.maxGapMin} min. Only tokens up <b>${c.minGainPct}%</b> or more are picked, so a ` +
+    `top-gainers board never carries a token that is down. Paid tiers still sort above auto ones.\n\n` +
+    `📊 <b>Board right now</b> — target <b>${c.perChain}</b> per chain\n` +
+    atBoardLines(c) +
+    `\n\n` +
+    (short.length === 0
+      ? `✅ <i>Every chain is at target. Nothing to do until a slot expires.</i>`
+      : blocked.length
+        ? `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings. ` +
+          `That needs more tokens listed there, not another cycle.</i>`
+        : `⏳ <i>${short.length} chain(s) below target; the next cycle tops them up. ` +
+          `Tap a chain below to do it now.</i>`) +
+    `\n\n` +
+    `📣 Announce in channel: <b>${c.announce ? "🟢 ON" : "🔴 OFF"}</b>` +
+    (c.announce && _atPending > 0 ? ` · <b>${_atPending}</b> waiting to post` : "") +
+    (c.announce ? ` — every promotion is posted, one per <b>${c.announceGapMin} min</b>` : "") +
+    (c.announce ? atThroughputNote(c) : "") +
+    `\n<i>Auto posts use the SAME card as a paid Trending purchase — never pinned, never @dexvraio.</i>\n\n` +
+    `⚡ <b>Run now</b> — tap a chain to place its best 24h mover there immediately, even while this is off.`
+  );
+}
+
 function atKb() {
   const cb = Markup.button.callback;
   const c = autoTrend.get();
+  // THREE buttons per row. Six fit in the code and not on a phone: the label is
+  // the first thing Telegram drops, so the row that needs reading most is the
+  // one that becomes "Mi…".
   return Markup.inlineKeyboard([
     [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
-    [cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➖", "athmin:-1"), cb("➕", "athmin:1"), cb(`Max ${c.maxHours}h`, "atnop"), cb("➖", "athmax:-1"), cb("➕", "athmax:1")],
-    [cb(`🔁 Gap ${c.minGapMin}m`, "atnop"), cb("➖", "atgmin:-10"), cb("➕", "atgmin:10"), cb(`${c.maxGapMin}m`, "atnop"), cb("➖", "atgmax:-10"), cb("➕", "atgmax:10")],
-    [cb(`🎯 Target ${c.target}`, "atnop"), cb("➖", "attgt:-1"), cb("➕", "attgt:1")],
+    [cb("➖", "attgt:-1"), cb(`🎯 ${c.perChain} per chain`, "atnop"), cb("➕", "attgt:1")],
+    [cb("➖", "atgain:-5"), cb(`📈 min +${c.minGainPct}% 24h`, "atnop"), cb("➕", "atgain:5")],
+    [cb("➖", "athmin:-1"), cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➕", "athmin:1")],
+    [cb("➖", "athmax:-1"), cb(`⏱ Max ${c.maxHours}h`, "atnop"), cb("➕", "athmax:1")],
+    [cb("➖", "atgmin:-10"), cb(`🔁 Every ${c.minGapMin}m`, "atnop"), cb("➕", "atgmin:10")],
+    [cb("➖", "atgmax:-10"), cb(`🔁 to ${c.maxGapMin}m`, "atnop"), cb("➕", "atgmax:10")],
     [cb(`📣 Announce: ${c.announce ? "ON" : "OFF"}`, "atann")],
     ...(c.announce
-      ? [[cb(`📣 ${c.announcePerDay}/day`, "atnop"), cb("➖", "atapd:-1"), cb("➕", "atapd:1")]]
+      ? [
+          [cb("➖", "atapd:-10"), cb(`📣 max ${c.announcePerDay}/day`, "atnop"), cb("➕", "atapd:10")],
+          [cb("➖", "atagap:-5"), cb(`📣 1 per ${c.announceGapMin}m`, "atnop"), cb("➕", "atagap:5")],
+        ]
       : []),
     ...atChainRows(cb),
-    [cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
+    [cb("🔄 Refresh", "atref"), cb("↩️ Reset", "atrst"), cb("⬅ Back", "home")],
   ]);
 }
 
@@ -679,11 +764,28 @@ function alKb() {
  *  the chain's CURRENT featured count, so an operator can see which network is
  *  empty without leaving the panel. */
 function atChainRows(cb, counts = _atCounts) {
-  const chains = trendingBoard.chainList();
-  const btns = chains.map((c) => {
-    const n = (counts[c.id] && counts[c.id].featured) || 0;
-    return cb(`⚡ ${trendingBoard.displayEmoji(c.logo)} ${c.label}${n ? ` (${n})` : ""}`, `atrun:${c.id}`);
-  });
+  const c = autoTrend.get();
+  const meta = new Map(trendingBoard.chainList().map((x) => [x.id, x]));
+  const btn = (id, withTarget) => {
+    const m = meta.get(id);
+    if (!m) return null;
+    const n = (counts[id] && counts[id].featured) || 0;
+    // "5/5" answers the question the button sits next to. A bare "(5)" does not
+    // — and a fraction on a chain with no target would invent one.
+    const label = withTarget ? `${n}/${c.perChain}` : n ? `(${n})` : "";
+    return cb(`⚡ ${trendingBoard.displayEmoji(m.logo)} ${m.label}${label ? " " + label : ""}`, `atrun:${id}`);
+  };
+  // The auto-filled chains first, in the order they are configured — those are
+  // the ones the panel above is about.
+  const btns = c.chains.map((id) => btn(id, true)).filter(Boolean);
+  // Then any OTHER chain that actually has a listing, so a one-off force is
+  // still one tap away. Chains with nothing listed are omitted entirely: the
+  // list was 20 rows of "0/5" for networks nobody has listed on, and a Run now
+  // there can only fail.
+  const extra = Object.keys(counts)
+    .filter((id) => !c.chains.includes(id) && meta.has(id) && ((counts[id].featured || 0) + (counts[id].eligible || 0)) > 0)
+    .sort();
+  for (const id of extra) btns.push(btn(id, false));
   const rows = [];
   for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
   return rows;
@@ -691,6 +793,9 @@ function atChainRows(cb, counts = _atCounts) {
 // Last per-chain snapshot, refreshed whenever the panel is opened. Kept out of
 // the keyboard builder so drawing the panel never blocks on the API.
 let _atCounts = {};
+// Queue depth, refreshed with the counts. Every promotion is announced now, so
+// a backlog is normal — but an unmoving one means the gap is too wide.
+let _atPending = 0;
 
 // ── Interactive layout editor — one PHOTO message that edits itself in place ─
 // A full listing-example preview (logo + $TICKER + name + chain·price·MC
@@ -706,7 +811,7 @@ const BT_ELEMS = {
   logo: { label: "🪙 Logo", xKey: "logoX", yKey: "logoY" },
   ticker: { label: "🔤 Ticker+Name", xKey: "tickerX", yKey: "tickerY", sizeKey: "tickerFontSize", step: 8 },
   meta: { label: "📊 Chips", xKey: "metaX", yKey: "metaY", sizeKey: "metaFontSize", step: 4 },
-  badge: { label: "🏷 Badge", xKey: "badgeX", yKey: "badgeY", sizeKey: "badgeFontSize", step: 4 },
+  badge: { label: "🏷 Label tier", xKey: "badgeX", yKey: "badgeY", sizeKey: "badgeFontSize", step: 4 },
 };
 const BT_ELEM_KEYS = Object.keys(BT_ELEMS);
 
@@ -856,7 +961,7 @@ async function btEditorImage(kind, elem) {
 
 async function btEditorOpen(ctx, kind, elem = "logo") {
   if (!bannerTpl.hasTemplate(kind) && !bannerTpl.hasMedia(kind)) {
-    return ctx.reply(`❌ No ${BT_KINDS[kind]} template yet — tap ⬆ Upload artwork or 🎞 Upload GIF/Video first.`).catch(() => {});
+    return ctx.reply(`❌ Belum ada template ${BT_KINDS[kind]} — tekan ⬆ Upload gambar atau 🎞 Upload GIF/Video dulu.`).catch(() => {});
   }
   const img = await btEditorImage(kind, elem);
   if (!img) return ctx.reply("⚠️ Editor render failed — check pm2 logs.").catch(() => {});
@@ -934,12 +1039,12 @@ function sampleData(kind, pct) {
 const BX = {
   logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
   ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
-  name: { label: "📝 Name", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
+  name: { label: "📝 Nama token", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
   // Pump-only elements: the big "▲ +N%" headline and the "old → new" price line.
-  pct: { label: "📈 % Change", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
-  price: { label: "💱 Price →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
-  meta: { label: "📊 Chips (chain·price·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
-  badge: { label: "🏷 Badge", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  pct: { label: "📈 % Kenaikan", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
+  price: { label: "💱 Harga →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
+  meta: { label: "📊 Info (chain·harga·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  badge: { label: "🏷 Label tier", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
 };
 const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
 const BX_MOVE_FINE = 10;
@@ -949,10 +1054,10 @@ function bxMenuText(kind) {
   const rect = s.slotShape === "rect";
   const anim = !!bannerTpl.mediaOverride(kind);
   return (
-    `🎛 <b>${BT_KINDS[kind]} — Layout editor</b>\n\n` +
+    `🎛 <b>${BT_KINDS[kind]} — Atur tata letak</b>\n\n` +
     (rect
-      ? `Tap the creative slot to <b>resize</b> and <b>move</b> it, then 👁 Preview.`
-      : `Tap an element to <b>resize ➖➕ and move</b> it on one screen. Tap 👁 <b>Preview</b> anytime to see it on your ${anim ? "<b>animated template</b>" : "banner"}.`)
+      ? `Di sini Anda atur <b>kotak</b> tempat gambar client ditaruh.\n\nTekan kotaknya di bawah untuk mengubah <b>ukuran</b> dan <b>posisi</b>, lalu tekan 👁 <b>Lihat hasil</b>.`
+      : `Tekan salah satu bagian di bawah untuk mengubah <b>ukuran ➖ ➕</b> dan <b>posisi</b>-nya. Tekan 👁 <b>Lihat hasil</b> kapan saja untuk melihatnya di ${anim ? "<b>template bergerak</b>" : "banner"} Anda.`)
   );
 }
 function bxMenuKb(kind) {
@@ -962,7 +1067,7 @@ function bxMenuKb(kind) {
   const cb = Markup.button.callback;
   const rows = [];
   if (rect) {
-    rows.push([cb(`🖼 Creative slot · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
+    rows.push([cb(`🖼 Kotak gambar · ${s.slotW}×${s.slotH}`, `bxe:${kind}:slot`)]);
   } else {
     const showText = s.showText !== false;
     const showBadge = s.showBadge !== false;
@@ -971,20 +1076,20 @@ function bxMenuKb(kind) {
       // Pump: its own elements — ▲%, old→new price, ticker/name, MCAP pill.
       rows.push([cb(`📈 % Change · ${s.pctFontSize}px`, `bxe:${kind}:pct`), cb(`💱 Price → · ${s.priceFontSize}px`, `bxe:${kind}:price`)]);
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
-      rows.push([cb(`💰 MCAP pill · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
+      rows.push([cb(`💰 MCAP · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     } else if (showText) {
       rows.push([cb(`🔤 Ticker · ${s.tickerFontSize}px`, `bxe:${kind}:ticker`), cb(`📝 Name · ${s.nameFontSize}px`, `bxe:${kind}:name`)]);
       rows.push([cb(`📊 Chips (chain·price·MC) · ${s.metaFontSize}px`, `bxe:${kind}:meta`)]);
     }
     if (isPump) {
-      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`)]);
+      rows.push([cb(`🔤 Tulisan: ${showText ? "AKTIF" : "MATI"}`, `bxt:${kind}`)]);
     } else {
-      rows.push([cb(`🔤 Text: ${showText ? "ON" : "OFF"}`, `bxt:${kind}`), cb(`🏷 Badge: ${showBadge ? "ON" : "OFF"}`, `bxb:${kind}`)]);
-      if (showBadge) rows.push([cb(`🏷 Badge · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
+      rows.push([cb(`🔤 Tulisan: ${showText ? "AKTIF" : "MATI"}`, `bxt:${kind}`), cb(`🏷 Label tier: ${showBadge ? "AKTIF" : "MATI"}`, `bxb:${kind}`)]);
+      if (showBadge) rows.push([cb(`🏷 Label tier · ${s.badgeFontSize}px`, `bxe:${kind}:badge`)]);
     }
   }
-  rows.push([cb("👁 Preview", `bxp:${kind}`)]);
-  rows.push([cb("🔄 Reset layout", `bxr:${kind}`), cb("⬅ Back", `btk:${kind}`)]);
+  rows.push([cb("👁 Lihat hasil", `bxp:${kind}`)]);
+  rows.push([cb("🔄 Kembalikan awal", `bxr:${kind}`), cb("⬅ Kembali", `btk:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 async function bxOpen(ctx, kind) {
@@ -1000,33 +1105,84 @@ const BX_STEP = 24; // px per arrow tap (single step — kept simple, no coarse/
 function bxElemText(kind, elem) {
   const s = bannerTpl.getSettings(kind);
   if (elem === "slot") {
-    return `🖼 <b>${BT_KINDS[kind]} — ad slot</b>\nSize <b>${s.slotW}×${s.slotH}px</b> · at <b>(${s.logoX}, ${s.logoY})</b>`;
+    // Read by operators whose first language is not English. Every line is a
+    // short sentence built from common words: "box", "picture", "space",
+    // "middle". No comparatives ("narrower"), no design jargon ("cover-fit",
+    // "canvas", "viewport") — the operator asked what "Wider" even meant.
+    const W = 2560;
+    const H = 1280;
+    const w = Number(s.slotW) || 0;
+    const h = Number(s.slotH) || 0;
+    const cx = s.logoX === "center";
+    const cy = s.logoY === "center";
+    const x = cx ? Math.round((W - w) / 2) : Number(s.logoX) || 0;
+    const y = cy ? Math.round((H - h) / 2) : Number(s.logoY) || 0;
+    const right = W - x - w;
+    const even = Math.abs(x - right) <= 2;
+    const side = x > right ? "KIRI" : "KANAN";
+    return (
+      `🖼 <b>${BT_KINDS[kind]} — kotak untuk gambar client</b>\n\n` +
+      `📏 <b>Ukuran kotak:</b> ${w} × ${h} px — ${Math.round((w / W) * 100)}% dari lebar penuh\n` +
+      `📍 <b>Ruang kosong:</b> ${x} px di kiri, ${right} px di kanan\n` +
+      (even
+        ? `✅ Kotak sudah di tengah (kiri–kanan).\n`
+        : `⚠️ Kotak belum di tengah — ruang kosong lebih banyak di <b>${side}</b>. Tekan <b>⬌ Ke tengah</b>.\n`) +
+      `\n<b>Fungsi tombol</b>\n` +
+      `• <b>➕ Perbesar / ➖ Perkecil</b> — ubah ukuran kotak sekaligus, bentuknya tetap\n` +
+      `• <b>Lebar ➕ / ➖</b> — perbesar atau perkecil kotak ke samping saja\n` +
+      `• <b>Tinggi ➕ / ➖</b> — perbesar atau perkecil kotak ke atas-bawah saja\n` +
+      `• <b>⬅ ⬆ ⬇ ➡</b> — geser kotaknya\n` +
+      `• <b>⬌ Ke tengah</b> — taruh di tengah, kiri–kanan\n` +
+      `• <b>⬍ Ke tengah</b> — taruh di tengah, atas–bawah\n` +
+      `• <b>⌨ Atur ukuran / Atur posisi</b> — ketik angkanya langsung\n` +
+      (s.slotFit === "cover"
+        ? `\n🖼 <b>Isi penuh</b>: gambar client diperbesar sampai kotak penuh, sisi yang lebih <b>dipotong</b>. ` +
+          `Kalau bentuk gambarnya beda jauh dari kotak, bagian pinggirnya hilang.`
+        : `\n🖼 <b>Muat semua</b>: gambar client ditampilkan <b>utuh</b>, tidak ada yang dipotong. ` +
+          `Sisa ruangnya diisi versi buram dari gambar itu sendiri. Ukuran banner client boleh beda-beda — otomatis menyesuaikan.`)
+    );
   }
   const c = BX[elem];
-  const pos = c.nomove ? "" : ` · at <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
-  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nSize <b>${s[c.sizeKey]}px</b>${pos}`;
+  const pos = c.nomove ? "" : ` · di <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
+  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nUkuran <b>${s[c.sizeKey]}px</b>${pos}`;
 }
 function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
   const M = BX_STEP;
   if (elem === "slot") {
+    // Centring and exact-size entry were both already implemented (bxc / bxsn
+    // handle elem "slot"), but neither button was ever rendered here — so the
+    // one control that fixes "the creative sits off to one side with dead space
+    // beside it" was unreachable, and the only way to move a slot 300px was 15
+    // taps of ➡.
+    // Indonesian: this panel's only readers are the operator and their admins,
+    // and they asked for it. "Wider"/"Narrower" had to be translated in the
+    // head before it could be acted on — twice, first the word, then the
+    // comparison. "Lebar ➕" needs neither.
     return Markup.inlineKeyboard([
-      [cb("Wider ➕", `bxsd:${kind}:slotw:20`), cb("Narrower ➖", `bxsd:${kind}:slotw:-20`)],
-      [cb("Taller ➕", `bxsd:${kind}:sloth:20`), cb("Shorter ➖", `bxsd:${kind}:sloth:-20`)],
+      // Whole-box resize FIRST — it is what "make it bigger/smaller" means, and
+      // doing it with the per-axis pair meant tapping two buttons different
+      // numbers of times and watching the shape drift.
+      [cb("➕ Perbesar", `bxscale:${kind}:up`), cb("➖ Perkecil", `bxscale:${kind}:down`)],
+      [cb("Lebar ➕", `bxsd:${kind}:slotw:20`), cb("Lebar ➖", `bxsd:${kind}:slotw:-20`)],
+      [cb("Tinggi ➕", `bxsd:${kind}:sloth:20`), cb("Tinggi ➖", `bxsd:${kind}:sloth:-20`)],
       [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
-      [cb("⌨ Type X,Y", `bxmn:${kind}:slot`)],
-      [cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)],
+      [cb("⬌ Ke tengah", `bxc:${kind}:slot`), cb("⬍ Ke tengah", `bxcy:${kind}:slot`)],
+      [cb(bannerTpl.getSettings(kind).slotFit === "cover" ? "🖼 Isi penuh (terpotong)" : "🖼 Muat semua (utuh)", `bxfit:${kind}`)],
+      [cb("⌨ Atur ukuran", `bxsn:${kind}:slot`), cb("⌨ Atur posisi", `bxmn:${kind}:slot`)],
+      [cb("👁 Lihat hasil", `bxp:${kind}`), cb("⬅ Kembali", `bxo:${kind}`)],
     ]);
   }
   const c = BX[elem];
-  const rows = [[cb("➖ Smaller", `bxsd:${kind}:${elem}:${-c.sc}`), cb("➕ Bigger", `bxsd:${kind}:${elem}:${c.sc}`)]];
+  const rows = [[cb("Ukuran ➖", `bxsd:${kind}:${elem}:${-c.sc}`), cb("Ukuran ➕", `bxsd:${kind}:${elem}:${c.sc}`)]];
   if (c.nomove) {
-    rows.push([cb("⌨ Type exact size", `bxsn:${kind}:${elem}`)]);
+    rows.push([cb("⌨ Atur ukuran", `bxsn:${kind}:${elem}`)]);
   } else {
     rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-M}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-M}`), cb("⬇", `bxmd:${kind}:${elem}:0:${M}`), cb("➡", `bxmd:${kind}:${elem}:${M}:0`)]);
-    rows.push([cb("🎯 Center", `bxc:${kind}:${elem}`), cb("⌨ Type X,Y", `bxmn:${kind}:${elem}`)]);
+    rows.push([cb("⬌ Ke tengah", `bxc:${kind}:${elem}`), cb("⬍ Ke tengah", `bxcy:${kind}:${elem}`)]);
+    rows.push([cb("⌨ Atur posisi", `bxmn:${kind}:${elem}`)]);
   }
-  rows.push([cb("👁 Preview", `bxp:${kind}`), cb("⬅ Back", `bxo:${kind}`)]);
+  rows.push([cb("👁 Lihat hasil", `bxp:${kind}`), cb("⬅ Kembali", `bxo:${kind}`)]);
   return Markup.inlineKeyboard(rows);
 }
 async function bxElemOpen(ctx, kind, elem) {
@@ -1040,16 +1196,16 @@ async function bxPreview(ctx, kind) {
     const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind)).catch(() => null);
     if (filled) {
       await ctx
-        .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Animated preview</b> — your GIF/video template with this exact layout (sample data). This is what posts.", parse_mode: "HTML" })
+        .replyWithAnimation({ source: filled.source }, { caption: "👁 <b>Hasil gerak</b> — template GIF/video Anda dengan tata letak ini (data contoh). Beginilah yang akan diposting.", parse_mode: "HTML" })
         .catch(() => {});
       return;
     }
   }
   const buf = await bannerTpl.editorStill(kind, sampleMedia(kind), sampleData(kind)).catch(() => null);
-  if (!buf) return ctx.reply("⚠️ Preview render failed — check pm2 logs ([bannerTpl]); @napi-rs/canvas / ffmpeg may be missing on the server.").catch(() => {});
+  if (!buf) return ctx.reply("⚠️ Gagal membuat gambar — cek pm2 logs ([bannerTpl]); @napi-rs/canvas atau ffmpeg mungkin belum ada di server.").catch(() => {});
   const cap = media
-    ? "👁 Layout preview (still frame — animated compositing failed; check ffmpeg on the server). Live posts still play the animated version."
-    : "👁 Layout preview (sample data).";
+    ? "👁 Hasil tata letak (gambar diam — penggabungan versi gerak gagal; cek ffmpeg di server). Post asli tetap memutar versi geraknya."
+    : "👁 Hasil tata letak (data contoh).";
   await ctx.replyWithPhoto({ source: buf }, { caption: cap }).catch(() => {});
 }
 
@@ -1072,28 +1228,40 @@ async function btPreview(ctx, kind, pct) {
       /* stat is best-effort diagnostics */
     }
     // Token banners: preview the clip WITH sample token data composited on — exactly what
-    // posts. Falls back to the raw clip if ffmpeg compositing isn't available.
-    if (BT_FILL_KINDS.has(kind)) {
+    // posts. Banner Ads composites the ADVERTISER'S CREATIVE into the frame's slot
+    // instead of token data, which is the whole point of an ad template: the buyer's
+    // artwork sits inside your frame, on every frame of the clip.
+    // Falls back to the raw clip if ffmpeg compositing isn't available.
+    if (BT_CLIP_FILL_KINDS.has(kind)) {
       const filled = await bannerTpl
-        .composeOntoClip(kind, media, sampleMedia(kind), data)
+        .composeOntoClip(kind, media, sampleMedia(kind), kind === "banner" ? {} : data)
         .catch(() => null);
       if (filled) {
+        const what =
+          kind === "banner"
+            ? `the <b>advertiser's creative</b> drawn into the frame's slot (sample creative)`
+            : `the token's data <b>drawn on automatically</b> (sample data)`;
         await ctx
-          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b>${pctNote} — your animated template with the token's data <b>drawn on automatically</b> (sample data). Tune positions in 🎛 Layout editor.`, parse_mode: "HTML" })
+          .replyWithAnimation({ source: filled.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b>${pctNote} — your animated template with ${what}. Tune the slot in 🎛 Layout editor.`, parse_mode: "HTML" })
           .catch(() => {});
         return;
       }
     }
-    const isVid = media.type === "video";
+    // Preview the clip the way it will POST: normalised to a silent MP4 and
+    // sent as an animation. Previewing the raw upload was misleading — an .mp4
+    // came back as a video card with a play button, which is not what the
+    // channel gets.
+    const playable = await bannerTpl.toInlineClip(media).catch(() => media);
     const note = BT_FILL_KINDS.has(kind)
       ? ` In posts the bot draws the token's logo/$ticker/price onto it (couldn't composite here — check ffmpeg on the server).`
-      : ` Played as-is; token details go in the caption.`;
-    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — ${isVid ? "video" : "GIF"} clip.${note}`;
+      : kind === "banner"
+        ? ` In posts the advertiser's creative is drawn into the frame's slot.`
+        : ` Played as-is; token details go in the caption.`;
+    const cap = `👁 <b>${BT_KINDS[kind]} preview</b> — autoplaying clip.${note}`;
     try {
-      if (isVid) await ctx.replyWithVideo({ source: media.source }, { caption: cap, parse_mode: "HTML" });
-      else await ctx.replyWithAnimation({ source: media.source }, { caption: cap, parse_mode: "HTML" });
+      await ctx.replyWithAnimation({ source: playable.source }, { caption: cap, parse_mode: "HTML" });
     } catch (e) {
-      await ctx.reply(`⚠️ Couldn't preview the clip: ${e.message}`).catch(() => {});
+      await ctx.reply(`⚠️ Gagal menampilkan GIF/video: ${e.message}`).catch(() => {});
     }
     return;
   }
@@ -1621,7 +1789,7 @@ function build() {
         ? `\n\n⚠️ Banner Ads play the advertiser's clip <b>as-is</b> — token data is not drawn onto it.`
         : "";
     await ctx.reply(
-      `🎞 Send the <b>${BT_KINDS[kind]} GIF or video</b> — a GIF/animation or a short MP4 (send as a <b>file/document</b> for best quality, ≤ ~20 MB). It plays above every ${BT_KINDS[kind]} post.${fillNote}\n\n/cancel to abort.`,
+      `🎞 Kirim <b>GIF atau video untuk ${BT_KINDS[kind]}</b> — GIF/animasi atau MP4 pendek (kirim sebagai <b>file/dokumen</b> supaya kualitasnya bagus, maks ~20 MB). Ini diputar di atas setiap post ${BT_KINDS[kind]}.${fillNote}\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -1636,7 +1804,7 @@ function build() {
     if (!guard(ctx)) return;
     ctx.session.awaitingBt = { mode: "upload", kind: ctx.match[1] };
     await ctx.reply(
-      `⬆ Send the <b>${BT_KINDS[ctx.match[1]]} artwork</b> — ideally <b>2560×1280 PNG sent as a FILE/document</b> (Telegram compresses photos to ~1280px; a photo still works, it just gets upscaled). Send /cancel to abort.`,
+      `⬆ Kirim <b>gambar ${BT_KINDS[ctx.match[1]]}</b> — sebaiknya <b>PNG 2560×1280 dikirim sebagai FILE/dokumen</b> (Telegram mengompres foto jadi ~1280px; foto biasa tetap bisa, cuma diperbesar otomatis).\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -1689,7 +1857,7 @@ function build() {
   });
   // Preview the pump alert at a chosen % gain (min / mid / max shortcuts).
   bot.action(/^pwpv:(\d+)$/, async (ctx) => {
-    ctx.answerCbQuery("Rendering…").catch(() => {});
+    ctx.answerCbQuery("Sedang membuat gambar…").catch(() => {});
     if (!guard(ctx)) return;
     if (!bannerTpl.mediaOverride("pump")) {
       return ctx.reply("❌ No pump clip yet — tap 🎞 Upload GIF/Video first, then preview.").catch(() => {});
@@ -1712,6 +1880,7 @@ function build() {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
     _atCounts = await autoTrend.featuredByChain().catch(() => ({}));
+    _atPending = autoTrend.pendingCount();
     await edit(ctx, atText(), atKb());
   });
   bot.action("atann", async (ctx) => {
@@ -1742,9 +1911,20 @@ function build() {
       )
       .catch(() => {});
     _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
+    _atPending = autoTrend.pendingCount();
     await edit(ctx, atText(), atKb());
   });
   bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
+  // The board readout is a snapshot taken when the panel opened. Re-reading it
+  // is the one thing the operator wants after a Run now, or after waiting out a
+  // cycle, and reopening the whole menu to get it is not obvious.
+  bot.action("atref", async (ctx) => {
+    if (!guard(ctx)) return;
+    _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
+    _atPending = autoTrend.pendingCount();
+    ctx.answerCbQuery("Board refreshed").catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
   bot.action("aten", async (ctx) => {
     if (!guard(ctx)) return;
     const c = await autoTrend.set({ enabled: !autoTrend.get().enabled });
@@ -1762,8 +1942,10 @@ function build() {
   bot.action(/^athmax:(-?\d+)$/, atStep("maxHours", "Max hours"));
   bot.action(/^atgmin:(-?\d+)$/, atStep("minGapMin", "Min gap"));
   bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
-  bot.action(/^attgt:(-?\d+)$/, atStep("target", "Target"));
+  bot.action(/^attgt:(-?\d+)$/, atStep("perChain", "Per-chain target"));
   bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
+  bot.action(/^atagap:(-?\d+)$/, atStep("announceGapMin", "Announce gap"));
+  bot.action(/^atgain:(-?\d+)$/, atStep("minGainPct", "Min 24h gain"));
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();
@@ -1932,6 +2114,29 @@ function build() {
       HTML,
     );
   });
+  bot.action("tbn", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "tbnew" };
+    await ctx.reply(
+      `⌨ Send the emoji that marks a <b>newly entered</b> token (current: ${trendingBoard.displayEmoji(trendingBoard.newEmoji())}` +
+        `${trendingBoard.isNewPremium() ? " — 💎 premium" : ""}).\n\n` +
+        `It appears beside any token whose slot started in the last <b>${trendingBoard.newHours()}h</b>, and in the legend ` +
+        `under the board. Send a <b>premium</b> emoji and it animates. /cancel to abort.`,
+      HTML,
+    );
+  });
+  bot.action("tbnh", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "tbnewhours" };
+    await ctx.reply(
+      `⌨ How many hours counts as <b>newly entered</b>? Send a number from ` +
+        `<b>${trendingBoard.NEW_HOURS_MIN}</b> to <b>${trendingBoard.NEW_HOURS_MAX}</b> (current: <b>${trendingBoard.newHours()}h</b>).\n\n` +
+        `<i>Short is the point — a mark that lasts a day stops meaning "just now". /cancel to abort.</i>`,
+      HTML,
+    );
+  });
   bot.action("tbc", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -1992,7 +2197,7 @@ function build() {
       const lim = elem === "slotw" ? [200, 2560] : [120, 1280];
       const v = Math.max(lim[0], Math.min(lim[1], Number(s[key]) + d));
       await bannerTpl.updateSettings(kind, { [key]: v });
-      ctx.answerCbQuery(`${key} ${v}px`).catch(() => {});
+      ctx.answerCbQuery(`${elem === "slotw" ? "Lebar" : "Tinggi"} ${v}px`).catch(() => {});
       return void bxElemOpen(ctx, kind, "slot");
     }
     const c = BX[elem];
@@ -2018,7 +2223,7 @@ function build() {
     const [, kind, elem, dxs, dys] = ctx.match;
     const s = bannerTpl.getSettings(kind);
     const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
-    if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    if (!c || c.nomove) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
     const x = Math.max(-800, Math.min(3200, btNum(s[c.xKey], 1070) + Number(dxs)));
     const y = Math.max(-800, Math.min(3200, btNum(s[c.yKey], 430) + Number(dys)));
     await bannerTpl.updateSettings(kind, { [c.xKey]: x, [c.yKey]: y });
@@ -2029,9 +2234,21 @@ function build() {
     if (!guard(ctx)) return;
     const [, kind, elem] = ctx.match;
     const c = elem === "slot" ? { xKey: "logoX" } : BX[elem];
-    if (!c || c.nomove) return ctx.answerCbQuery("This element can't be moved.").catch(() => {});
+    if (!c || c.nomove) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.xKey]: "center" });
-    ctx.answerCbQuery("🎯 Centred horizontally").catch(() => {});
+    ctx.answerCbQuery("⬌ Sudah di tengah (kiri–kanan)").catch(() => {});
+    await bxElemOpen(ctx, kind, elem);
+  });
+  // Vertical twin of bxc. Horizontal-only centring is enough for a token logo
+  // sitting on a designed row, but an ad slot has to land inside a frame, and
+  // that frame is centred on both axes on most templates.
+  bot.action(new RegExp(`^bxcy:${KL}:${EX}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    const c = elem === "slot" ? { yKey: "logoY" } : BX[elem];
+    if (!c || c.nomove || !c.yKey) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
+    await bannerTpl.updateSettings(kind, { [c.yKey]: "center" });
+    ctx.answerCbQuery("⬍ Sudah di tengah (atas–bawah)").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxsn:${KL}:${EX}$`), async (ctx) => {
@@ -2043,13 +2260,16 @@ function build() {
     const label = elem === "slot" ? "🖼 Ad slot" : (BX[elem] && BX[elem].label) || elem;
     if (elem === "slot") {
       await ctx.reply(
-        `⌨ <b>${BT_KINDS[kind]} — ${label} size</b>\nNow: <b>${s.slotW}×${s.slotH}px</b>\n\nSend the new size as <code>WIDTH HEIGHT</code> (in pixels).\n👉 Example: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel to abort.`,
+        `⌨ <b>${BT_KINDS[kind]} — ukuran kotak</b>\nSekarang: <b>${s.slotW} × ${s.slotH}</b>\n\n` +
+          `Kirim dua angka: <b>lebar</b> lalu <b>tinggi</b>.\n` +
+          `Ukuran gambar penuh: lebar 2560, tinggi 1280.\n\n` +
+          `👉 Contoh: <code>${s.slotW} ${s.slotH}</code>\n\n/cancel untuk batal.`,
         HTML,
       );
     } else {
       const cur = s[BX[elem].sizeKey];
       await ctx.reply(
-        `⌨ <b>${BT_KINDS[kind]} — ${label} size</b>\nNow: <b>${cur}px</b>\n\nJust send a number (bigger = larger text).\n👉 Example: <code>${cur}</code>  ·  try <code>${Math.round(cur * 1.25)}</code> for bigger, <code>${Math.max(BX[elem].smin, Math.round(cur * 0.8))}</code> for smaller.\n\n/cancel to abort.`,
+        `⌨ <b>${BT_KINDS[kind]} — ukuran ${label}</b>\nSekarang: <b>${cur}px</b>\n\nKirim satu angka saja (makin besar angkanya, makin besar tampilannya).\n👉 Contoh: <code>${cur}</code>  ·  coba <code>${Math.round(cur * 1.25)}</code> untuk perbesar, <code>${Math.max(BX[elem].smin, Math.round(cur * 0.8))}</code> untuk perkecil.\n\n/cancel untuk batal.`,
         HTML,
       );
     }
@@ -2065,16 +2285,17 @@ function build() {
     const cx = s[c.xKey];
     const cy = s[c.yKey];
     await ctx.reply(
-      `⌨ <b>${BT_KINDS[kind]} — move ${c.label}</b>\nNow at: <b>(${cx}, ${cy})</b>\n\n` +
-        `Send the new position as <code>X,Y</code>:\n` +
-        `• <b>X</b> = left → right (0 = far left, 2560 = far right)\n` +
-        `• <b>Y</b> = top → bottom (0 = top, 1280 = bottom)\n\n` +
-        `👉 Example: <code>${cx === "center" ? "1280" : cx},${cy}</code>  ·  or <code>center,${cy}</code> to centre it.\n\n/cancel to abort.`,
+      `⌨ <b>${BT_KINDS[kind]} — geser ${c.label}</b>\nSekarang di: <b>(${cx}, ${cy})</b>\n\n` +
+        `Kirim dua angka, dipisah koma:\n` +
+        `• angka pertama = <b>kiri ke kanan</b> (0 = paling kiri, 2560 = paling kanan)\n` +
+        `• angka kedua = <b>atas ke bawah</b> (0 = paling atas, 1280 = paling bawah)\n\n` +
+        `👉 Contoh: <code>${cx === "center" ? "1280" : cx},${cy}</code>\n` +
+        `👉 Atau tulis <code>center</code> sebagai ganti angka: <code>center,center</code>\n\n/cancel untuk batal.`,
       HTML,
     );
   });
   bot.action(new RegExp(`^bxp:${KL}$`), async (ctx) => {
-    ctx.answerCbQuery("Rendering…").catch(() => {});
+    ctx.answerCbQuery("Sedang membuat gambar…").catch(() => {});
     if (!guard(ctx)) return;
     await bxPreview(ctx, ctx.match[1]);
   });
@@ -2091,8 +2312,34 @@ function build() {
     const kind = ctx.match[1];
     const on = bannerTpl.getSettings(kind).showText !== false;
     await bannerTpl.updateSettings(kind, { showText: !on });
-    ctx.answerCbQuery(`🔤 Text ${on ? "OFF" : "ON"}`).catch(() => {});
+    ctx.answerCbQuery(`🔤 Tulisan ${on ? "MATI" : "AKTIF"}`).catch(() => {});
     await edit(ctx, bxMenuText(kind), bxMenuKb(kind));
+  });
+  // Scale the WHOLE box, keeping its shape. 8% a tap: fine enough to stop on
+  // the right size, coarse enough that a big change is a few taps and not
+  // twenty. Both sides move together, so the box never drifts out of shape the
+  // way it did when the only controls were per-axis.
+  bot.action(new RegExp(`^bxscale:${KL}:(up|down)$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, dir] = ctx.match;
+    const s = bannerTpl.getSettings(kind);
+    const f = dir === "up" ? 1.08 : 1 / 1.08;
+    const w = Math.max(200, Math.min(2560, Math.round((Number(s.slotW) || 1548) * f)));
+    const h = Math.max(120, Math.min(1280, Math.round((Number(s.slotH) || 760) * f)));
+    await bannerTpl.updateSettings(kind, { slotW: w, slotH: h });
+    ctx.answerCbQuery(`${dir === "up" ? "➕" : "➖"} ${w} × ${h}`).catch(() => {});
+    await bxElemOpen(ctx, kind, "slot");
+  });
+  // How a client picture whose shape differs from the box is fitted. Default is
+  // "muat semua" (contain) — cropping artwork the advertiser paid for is not a
+  // default anyone should get by accident.
+  bot.action(new RegExp(`^bxfit:${KL}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const kind = ctx.match[1];
+    const cover = bannerTpl.getSettings(kind).slotFit === "cover";
+    await bannerTpl.updateSettings(kind, { slotFit: cover ? "contain" : "cover" });
+    ctx.answerCbQuery(cover ? "🖼 Muat semua — gambar utuh" : "🖼 Isi penuh — pinggirnya dipotong").catch(() => {});
+    await bxElemOpen(ctx, kind, "slot");
   });
   bot.action(new RegExp(`^bxb:${KL}$`), async (ctx) => {
     if (!guard(ctx)) return;
@@ -2202,10 +2449,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "pos", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `📍 <b>Logo spot — ${BT_KINDS[kind]}</b>\n` +
-        `Current: <b>${s.logoSize}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
-        `Send: <code>SIZE X,Y</code> — e.g. <code>420 1890,410</code>\n` +
-        `(<code>center</code> works for X or Y). /cancel to abort.`,
+      `📍 <b>Posisi logo — ${BT_KINDS[kind]}</b>\n` +
+        `Sekarang: <b>${s.logoSize}px</b> di (${s.logoX}, ${s.logoY})\n\n` +
+        `Kirim: <b>ukuran posisi</b>\n` +
+        `👉 Contoh: <code>420 1890,410</code>\n` +
+        `👉 Atau: <code>420 center,center</code>\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2216,10 +2464,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "slot", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `📐 <b>Creative slot — ${BT_KINDS[kind]}</b>\n` +
-        `Current: <b>${s.slotW}×${s.slotH}px</b> at (${s.logoX}, ${s.logoY})\n\n` +
-        `Send: <code>WIDTH HEIGHT X,Y</code> — e.g. <code>1680 800 690,310</code>\n` +
-        `(<code>center</code> works for X or Y). /cancel to abort.`,
+      `📐 <b>Kotak gambar — ${BT_KINDS[kind]}</b>\n` +
+        `Sekarang: <b>${s.slotW} × ${s.slotH}</b> di (${s.logoX}, ${s.logoY})\n\n` +
+        `Kirim: <b>lebar tinggi posisi</b>\n` +
+        `👉 Contoh: <code>1680 800 690,310</code>\n` +
+        `👉 Atau: <code>1680 800 center,center</code>\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2230,10 +2479,11 @@ function build() {
     ctx.session.awaitingBt = { mode: "text", kind };
     const s = bannerTpl.getSettings(kind);
     await ctx.reply(
-      `🔤 <b>Text overlay — ${BT_KINDS[kind]}</b> ($TICKER + name on the artwork).\n` +
-        `Current: <b>${s.showText ? "on" : "off"}</b>, ${s.tickerFontSize}px at (${s.tickerX}, ${s.tickerY})\n\n` +
-        `Send: <code>SIZE X,Y</code> — e.g. <code>96 430,660</code>\n` +
-        `Or <code>off</code> / <code>on</code> to toggle it.\n\n/cancel to abort.`,
+      `🔤 <b>Tulisan otomatis — ${BT_KINDS[kind]}</b> ($TICKER + nama token di gambar).\n` +
+        `Sekarang: <b>${s.showText ? "aktif" : "mati"}</b>, ${s.tickerFontSize}px di (${s.tickerX}, ${s.tickerY})\n\n` +
+        `Kirim: <b>ukuran posisi</b>\n` +
+        `👉 Contoh: <code>96 430,660</code>\n` +
+        `👉 Atau tulis <code>off</code> / <code>on</code> untuk mematikan/menyalakan.\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -2426,6 +2676,32 @@ function build() {
           .catch(() => {});
         return;
       }
+      if (mode === "tbnew") {
+        const frag = emojiFragment(ctx.message);
+        if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+        await trendingBoard.setNewEmoji(frag).catch((e) => log.warn(`[adminbot] setNewEmoji: ${e.message}`));
+        const rendered = trendingBoard.newEmoji();
+        log.info(`[adminbot] new-entry marker → ${rendered} by @${ctx.from.username || ctx.from.id}`);
+        await ctx
+          .reply(
+            `✅ New-entry marker → ${trendingBoard.displayEmoji(rendered)}${savedNote(rendered)}\n\n` +
+              `<i>Legend on the board: ${trendingBoard.displayEmoji(rendered)} = Newly Entered Trending (slot started in the last ${trendingBoard.newHours()}h)</i>`,
+            { ...HTML, ...tbKb() },
+          )
+          .catch(() => {});
+        return;
+      }
+      if (mode === "tbnewhours") {
+        const n = Math.round(Number(String(ctx.message.text || "").trim()));
+        if (!Number.isFinite(n)) return ctx.reply("❌ Send a number, e.g. <code>3</code>.", HTML).catch(() => {});
+        const saved = await trendingBoard.setNewHours(n);
+        // Say what was STORED, not what was typed: 99 becomes 48 and the admin
+        // must not walk away believing otherwise.
+        const note = saved !== n ? ` <i>(clamped from ${n} — the range is ${trendingBoard.NEW_HOURS_MIN}–${trendingBoard.NEW_HOURS_MAX})</i>` : "";
+        log.info(`[adminbot] new-entry window → ${saved}h by @${ctx.from.username || ctx.from.id}`);
+        await ctx.reply(`✅ Newly-entered window → <b>${saved}h</b>${note}`, { ...HTML, ...tbKb() }).catch(() => {});
+        return;
+      }
       if (mode === "tbchain") {
         const frag = emojiFragment(ctx.message);
         if (!frag || !chain) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
@@ -2452,12 +2728,12 @@ function build() {
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
           } else if (mode === "bxslotsize") {
             const m = low.match(/^(\d+)\s+(\d+)$/);
-            if (!m) return ctx.reply("❌ Format: <code>W H</code> — e.g. <code>1548 760</code>.", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Kirim dua angka dipisah spasi — lebar dulu, lalu tinggi.\n👉 Contoh: <code>1548 760</code>", HTML).catch(() => {});
             await bannerTpl.updateSettings(kind, { slotW: Math.max(200, Math.min(2560, Number(m[1]))), slotH: Math.max(120, Math.min(1280, Number(m[2]))) });
             await ctx.reply(bxElemText(kind, "slot"), { ...HTML, ...bxElemKb(kind, "slot") });
           } else {
             const m = low.match(/^(center|-?\d+)\s*,\s*(center|-?\d+)$/);
-            if (!m) return ctx.reply("❌ Format: <code>X,Y</code> — e.g. <code>1890,410</code> (<code>center</code> allowed for X).", HTML).catch(() => {});
+            if (!m) return ctx.reply("❌ Kirim dua angka dipisah koma — kiri-ke-kanan dulu, lalu atas-ke-bawah.\n👉 Contoh: <code>1890,410</code>\n👉 Atau: <code>center,center</code>", HTML).catch(() => {});
             const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
             await bannerTpl.updateSettings(kind, { [c.xKey]: cv(m[1]), [c.yKey]: cv(m[2]) });
             await ctx.reply(bxElemText(kind, elem), { ...HTML, ...bxElemKb(kind, elem) });
@@ -2475,7 +2751,7 @@ function build() {
           const m = low.match(/^(\d+)\s+(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
           if (!m) return ctx.reply("❌ Format: <code>WIDTH HEIGHT X,Y</code> — e.g. <code>1680 800 690,310</code>", HTML).catch(() => {});
           await bannerTpl.updateSettings(kind, { slotW: Number(m[1]), slotH: Number(m[2]), logoX: cv(m[3]), logoY: cv(m[4]) });
-          await ctx.reply(`✅ ${BT_KINDS[kind]}: slot saved. Previewing…`, HTML);
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: kotak tersimpan. Sedang menampilkan hasil…`, HTML);
         } else {
           const m = low.match(/^(\d+)\s+(center|-?\d+)\s*,\s*(center|-?\d+)$/);
           if (!m) return ctx.reply("❌ Format: <code>SIZE X,Y</code> — e.g. <code>420 1890,410</code>", HTML).catch(() => {});
@@ -2484,7 +2760,7 @@ function build() {
               ? { logoSize: Number(m[1]), logoX: cv(m[2]), logoY: cv(m[3]) }
               : { tickerFontSize: Number(m[1]), tickerX: cv(m[2]), tickerY: cv(m[3]), showText: true };
           await bannerTpl.updateSettings(kind, patch);
-          await ctx.reply(`✅ ${BT_KINDS[kind]}: saved. Previewing…`, HTML);
+          await ctx.reply(`✅ ${BT_KINDS[kind]}: tersimpan. Sedang menampilkan hasil…`, HTML);
         }
         if (bannerTpl.hasTemplate(kind)) await btPreview(ctx, kind);
       } catch (e) {
@@ -2560,7 +2836,7 @@ function build() {
         const fn = String(m.document.file_name || "").toLowerCase();
         ext = fn.endsWith(".gif") ? "gif" : fn.endsWith(".webm") ? "webm" : fn.endsWith(".mov") ? "mov" : "mp4";
       }
-      if (!fileId) return ctx.reply("Send a GIF or a video (or an mp4/gif file).").catch(() => {});
+      if (!fileId) return ctx.reply("Kirim GIF atau video (atau file mp4/gif).").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
         // Clips can be up to ~20 MB, so allow a generous timeout, and retry the
@@ -2571,9 +2847,9 @@ function build() {
         const mb = (bytes / 1048576).toFixed(2);
         // ONE preview only, and it's admin-triggered — auto-previewing here on top
         // of the admin tapping 👁 Preview produced two identical previews.
-        await ctx.reply(`✅ <b>${BT_KINDS[kind]} ${type} saved</b> (${mb} MB). It now plays above every ${BT_KINDS[kind]} post (overrides the still artwork).\n\nTap 👁 <b>Preview</b> below to see this exact clip.`, { ...HTML, ...btKindKb(kind) });
+        await ctx.reply(`✅ <b>GIF/video ${BT_KINDS[kind]} tersimpan</b> (${mb} MB). Sekarang diputar di atas setiap post ${BT_KINDS[kind]} (menggantikan gambar diamnya).\n\nTekan 👁 <b>Lihat hasil</b> di bawah untuk melihatnya.`, { ...HTML, ...btKindKb(kind) });
       } catch (e) {
-        await ctx.reply(`⚠️ Couldn't save the clip: ${e.message}`).catch(() => {});
+        await ctx.reply(`⚠️ Gagal menyimpan GIF/video: ${e.message}`).catch(() => {});
       }
       return;
     }
@@ -2581,7 +2857,7 @@ function build() {
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "upload") {
       const { kind } = ctx.session.awaitingBt;
       const fileId = getMediaFileId(ctx);
-      if (!fileId) return ctx.reply("Couldn't read that image — send it as a photo or file.").catch(() => {});
+      if (!fileId) return ctx.reply("Gambarnya tidak terbaca — kirim sebagai foto atau file.").catch(() => {});
       ctx.session.awaitingBt = null;
       try {
         const artBuf = await fetchTelegramFileBuffer(ctx.telegram, fileId, { timeoutMs: 30000 });
@@ -2590,12 +2866,12 @@ function build() {
         try {
           const im = await require("@napi-rs/canvas").loadImage(artBuf);
           if (im.width < 2000) {
-            sizeNote = `\n\n⚠️ Sent at ${im.width}×${im.height}px (Telegram compresses photos). It'll still be used — auto-upscaled to 2560×1280 — but for best quality re-send it as a <b>File/document</b>.`;
+            sizeNote = `\n\n⚠️ Terkirim ${im.width}×${im.height}px (Telegram mengompres foto). Tetap dipakai — otomatis diperbesar ke 2560×1280 — tapi supaya tajam, kirim ulang sebagai <b>File/dokumen</b>.`;
           }
         } catch { /* dimension probe is best-effort */ }
         log.info(`[adminbot] ${kind} banner artwork uploaded by @${ctx.from.username || ctx.from.id}`);
         await ctx.reply(
-          `✅ <b>${BT_KINDS[kind]} artwork saved.</b> Open 🖱 Logo editor to place the logo/text, then 👁 Preview.${sizeNote}`,
+          `✅ <b>Gambar ${BT_KINDS[kind]} tersimpan.</b> Buka 🎛 Atur tata letak untuk menaruh logo/tulisan, lalu 👁 Lihat hasil.${sizeNote}`,
           { ...HTML, ...btKindKb(kind) },
         );
         await btPreview(ctx, kind);
@@ -2680,7 +2956,10 @@ async function startAdminBot() {
   log.info("[adminbot] polling started ✔");
 }
 
-module.exports = { startAdminBot, build };
+module.exports = {
+  // Panel-rendering seam: the layout is the thing that was wrong, so a test
+  // (and the preview script) must be able to render it without a bot.
+  _test: { atText, atKb, atBoardLines, setAtCounts: (c) => (_atCounts = c), setAtPending: (n) => (_atPending = n) }, startAdminBot, build };
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
 // Exposed for tests: the trending-board editor + the premium-emoji report.

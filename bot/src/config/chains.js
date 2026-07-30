@@ -170,8 +170,13 @@ const CHAINS = {
 };
 
 // Menu / selector order across the bot (mirrors the website's chain order).
+// Order of the trending board's sections, the chain picker, and the admin
+// panel's per-chain rows — one list, so those three can never disagree.
+// Robinhood sits THIRD by operator decision: it is Dexvra's own chain, and
+// burying it under Ethereum and Base put the network the product is built
+// around at the bottom of its own board.
 const CHAIN_ORDER = [
-  "solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton", "sui", "plasma",
+  "solana", "bsc", "robinhood", "ethereum", "base", "tron", "ton", "sui", "plasma",
   "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract",
   "apechain", "blast", "sei", "aptos", "unichain",
 ];

@@ -282,8 +282,12 @@ function chainScreen(chatId) {
   kb.push([btn('« Menu', 'menu')]);
   return { text: `🌐 <b>Select chain</b>\n\nYour wallet is the same address on all of them, and pasting a CA <b>auto-detects its chain</b> — this only sets the default for deposits, snipes and quick commands:`, kb: { inline_keyboard: kb } };
 }
-async function tokenCard(chatId, ca, chainKey, walletId) {
+// `opts.multi` opens the wallet toggles INLINE on the card (Maestro's 🟢 Multi
+// panel) instead of pushing the user to a separate screen — the price, liquidity
+// and per-wallet bags stay on screen while you choose which wallets to trade.
+async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   const u = core.ensureUser(chatId);
+  const multiOpen = !!(opts && opts.multi);
   chainKey = (chainKey && core.chainOf(chainKey)) ? chainKey : core.userChain(u);
   const ch = core.chainOf(chainKey);
   const list = core.walletList(u);
@@ -313,54 +317,107 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   const sym = (api && api.symbol) || meta.sym;
 
   const L = [];
-  const SEP = '━━━━━━━━━━━━━━━━';
-  // ── Header: name · symbol, then chain · live trading venue, then the contract ──
+  // A blank line between blocks, not a drawn rule. Rules add a line of noise per
+  // section; whitespace does the same grouping and lets the eye land on the
+  // numbers. Nothing in the card may run more than four lines without a break.
+  const gap = () => { if (L.length && L[L.length - 1] !== '') L.push(''); };
+  // ── Header: name · symbol, then chain · venue · age, then the contract ──
+  // Age sits here rather than buried in a stats line: "6 minutes old" changes how
+  // you read every number under it, so it belongs beside the name.
+  const mkt = info.market;
+  const created = (api && api.createdAt) || (mkt && mkt.createdAt);
   const statusBadge = info.dex ? `◆ DEX${info.dexVenue === 'v3' ? ' · V3 pool' : ''}` : (info.graduated ? '◆ Graduated' : `◈ Bonding curve · ${(info.progressPct || 0).toFixed(0)}%`);
   L.push(`<b>${esc(name)}</b> · <b>$${esc(sym)}</b>`);
-  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}`);
+  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}${created ? `  ·  ${fmtAge(created)} old` : ''}`);
   L.push(`<code>${ca}</code>`);
   if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`); }
-  // ── Market stats (compact: paired values per line, minimal icons) ──
-  L.push(SEP);
-  const mkt = info.market;
+  // ── Market ─────────────────────────────────────────────────────────────────
+  // Every value is labelled and every line leads with what it is. The old card
+  // printed bare fragments — "LP burned" alone on a line, "Liq 0.02 ETH" with
+  // nothing to compare it against — and silently DROPPED whole lines when a
+  // source returned nothing, so a chain with no indexer rendered three lines and
+  // read like a broken card rather than a thin token.
+  gap();
   const mcapUsd = (api && api.marketCapUsd) || (info.mcapEth * nativeUsd(nat));
   const priceStr = priceUsd > 0 ? '$' + priceUsd.toPrecision(3) : px.toExponential(2) + ' ' + nat;
   const mcapStr = mcapUsd > 0 ? '$' + fmt(mcapUsd) : usd(info.mcapEth, nat);
-  L.push(`Price <b>${priceStr}</b>  ·  MC <b>${mcapStr}</b>`);
-  // Liquidity / Raised · Vol 24h
-  const line2 = [];
-  if (info.liquidityNative != null) line2.push(`Liq <b>${info.liquidityNative.toFixed(2)} ${nat}</b> (${usd(info.liquidityNative, nat)})`);
-  else if (info.raised != null) line2.push(`Raised <b>${info.raised.toFixed(2)}/${(info.target || 0).toFixed(1)} ${nat}</b>`);
-  const vol24 = (api && api.volume && api.volume.h24Usd != null) ? api.volume.h24Usd : (mkt && mkt.volH24Usd != null ? mkt.volH24Usd : null);
-  if (vol24 != null) line2.push(`Vol 24h <b>$${fmt(vol24)}</b>`);
-  if (line2.length) L.push(line2.join('  ·  '));
+  L.push(`💵 <b>Price</b> ${priceStr}   ·   🌍 <b>Mcap</b> ${mcapStr}`);
+  // Liquidity carries the number that actually answers "can I get out again":
+  // how it compares to the market cap. $36 of liquidity under a $2.59K cap is the
+  // whole story of a token, and the card used to leave the reader to divide it.
+  if (info.liquidityNative != null) {
+    const liqUsd = info.liquidityNative * nativeUsd(nat);
+    const pctOfCap = mcapUsd > 0 && liqUsd > 0 ? (liqUsd / mcapUsd) * 100 : 0;
+    const share = pctOfCap > 0 ? `   ·   <b>${pctOfCap < 0.1 ? '<0.1' : pctOfCap.toFixed(1)}%</b> of mcap` : '';
+    // Decimals that match the magnitude: 0.020 ETH and 210.4 ETH both want to be
+    // read at a glance, and one fixed precision cannot do both.
+    const q = info.liquidityNative;
+    const qStr = q < 1 ? q.toFixed(3) : q < 100 ? q.toFixed(2) : q.toFixed(1);
+    L.push(`💧 <b>Liquidity</b> ${qStr} ${nat} (${usd(info.liquidityNative, nat)})${share}`);
+  } else if (info.raised != null) {
+    const pct = info.target > 0 ? (info.raised / info.target) * 100 : 0;
+    L.push(`🚀 <b>Raised</b> ${info.raised.toFixed(2)} / ${(info.target || 0).toFixed(1)} ${nat}   ·   <b>${pct.toFixed(0)}%</b> to graduation`);
+  }
   // Thin-pool warning: indexer sees far deeper liquidity than the pool the bot can trade.
   if (info.liquidityNative != null && mkt && mkt.liqUsd > 0) {
     const poolUsd = info.liquidityNative * nativeUsd(nat);
-    if (mkt.liqUsd > Math.max(poolUsd, 1) * 5) L.push(`⚠️ Thin tradeable pool — market liq <b>$${fmt(mkt.liqUsd)}</b> sits on a pool this bot can't reach; buys move the price hard.`);
+    // Its own block: a warning buried between two stat lines is read as a stat.
+    if (mkt.liqUsd > Math.max(poolUsd, 1) * 5) { gap(); L.push(`⚠️ <b>Thin tradeable pool</b> — the market's <b>$${fmt(mkt.liqUsd)}</b> sits on a pool this bot can't reach. Buys here move the price hard.`); gap(); }
   }
-  // Change · Txns
   if (mkt) {
     const chg = (v) => (v == null ? null : `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%`);
     const c1 = chg(mkt.chgH1), c24 = chg(mkt.chgH24);
-    const line3 = [];
-    if (c1 != null || c24 != null) line3.push([c1 != null ? `1h ${c1}` : null, c24 != null ? `24h ${c24}` : null].filter(Boolean).join(' · '));
-    if (mkt.buysH24 != null || mkt.sellsH24 != null) line3.push(`${mkt.buysH24 || 0} buys / ${mkt.sellsH24 || 0} sells`);
-    if (line3.length) L.push(line3.join('  ·  '));
+    // An arrow makes the direction readable before the number is: a wall of
+    // percentages is what people skim past.
+    const arrow = (v) => (v == null ? '' : (v >= 0 ? '🟢 ' : '🔴 '));
+    const parts = [];
+    if (c1 != null) parts.push(`1h ${arrow(mkt.chgH1)}${c1}`);
+    if (c24 != null) parts.push(`24h ${arrow(mkt.chgH24)}${c24}`);
+    if (parts.length) L.push(`📈 <b>Change</b> ${parts.join('   ·   ')}`);
   }
-  // Holders · LP · Tax · flags · Age (one line)
-  const line4 = [];
-  if (sec && sec.holders != null) line4.push(`${sec.holders} holders`);
-  if (sec && sec.lpLockedPct != null) line4.push(`LP ${Math.round(sec.lpLockedPct)}% locked`);
-  else if (ch.curve && info.graduated) line4.push('LP burned');
-  if (sec) line4.push(`Tax ${taxStr(sec.buyTaxPct)}/${taxStr(sec.sellTaxPct)}`);
-  if (sec && sec.honeypot) line4.push('🔴 HONEYPOT');
-  if (sec && sec.openSource === false) line4.push('closed-source');
-  const created = (api && api.createdAt) || (mkt && mkt.createdAt);
-  if (created) line4.push(`Age ${fmtAge(created)}`);
-  if (line4.length) L.push(line4.join('  ·  '));
-  else if (ch.curve && !sec) L.push(`Fair-launch · 0% tax · LP burned on graduation`);
-  if (api && api.links) { const lk = []; if (api.links.website) lk.push(`<a href="${esc(api.links.website)}">Web</a>`); if (api.links.twitter) lk.push(`<a href="${esc(api.links.twitter)}">X</a>`); if (api.links.telegram) lk.push(`<a href="${esc(api.links.telegram)}">TG</a>`); if (lk.length) L.push(lk.join(' · ')); }
+  const vol24 = (api && api.volume && api.volume.h24Usd != null) ? api.volume.h24Usd : (mkt && mkt.volH24Usd != null ? mkt.volH24Usd : null);
+  const volParts = [];
+  if (vol24 != null) volParts.push(`$${fmt(vol24)}`);
+  if (mkt && (mkt.buysH24 != null || mkt.sellsH24 != null)) volParts.push(`${mkt.buysH24 || 0} buys / ${mkt.sellsH24 || 0} sells`);
+  if (volParts.length) L.push(`🔄 <b>Vol 24h</b> ${volParts.join('   ·   ')}`);
+  // Safety, in its own block: holders and LP on one line, tax and flags on the
+  // next. Three long labels joined on a single line wrap on a phone, and a
+  // wrapped line reads as two lines that lost their bullet.
+  const holdLp = [];
+  if (sec && sec.holders != null) holdLp.push(`👥 ${sec.holders} holders`);
+  if (sec && sec.lpLockedPct != null) holdLp.push(`🔒 LP ${Math.round(sec.lpLockedPct)}% locked`);
+  else if (ch.curve && info.graduated) holdLp.push('🔒 LP burned');
+  const flags = [];
+  if (sec) flags.push(`⚖️ Tax ${taxStr(sec.buyTaxPct)} buy / ${taxStr(sec.sellTaxPct)} sell`);
+  else if (ch.curve) flags.push('⚖️ Fair launch · 0% tax');   // launchpad tokens can't set a tax
+  if (sec && sec.honeypot) flags.push('🚨 HONEYPOT');
+  if (sec && sec.openSource === false) flags.push('⚠️ closed-source');
+  if (holdLp.length || flags.length) gap();
+  if (holdLp.length) L.push(holdLp.join('   ·   '));
+  if (flags.length) L.push(flags.join('   ·   '));
+  // What a trade costs, which the card could never answer. On a cheap L2 "about
+  // four cents" is often what decides whether a small buy is worth making.
+  if (info.gas && info.gas.gwei > 0) {
+    const feeUsd = info.gas.feeNative * nativeUsd(nat);
+    const feeStr = feeUsd > 0 ? ` · ≈<b>$${feeUsd < 0.01 ? feeUsd.toFixed(4) : feeUsd.toFixed(2)}</b> per trade` : '';
+    L.push(`⛽ <b>Gas</b> ${info.gas.gwei < 1 ? info.gas.gwei.toFixed(3) : info.gas.gwei.toFixed(1)} gwei${feeStr}`);
+  }
+  // Say what is missing instead of just omitting the lines. A card that shrinks
+  // to three lines on a chain with no indexer looks broken; saying so once tells
+  // the reader the numbers above are still real, and read straight from chain.
+  gap();
+  const gaps = [];
+  if (!mkt) gaps.push('volume', 'price change');
+  if (!sec) { gaps.push('holder count'); if (!ch.curve) gaps.push('tax'); }
+  if (gaps.length) {
+    const listed = gaps.length > 1 ? `${gaps.slice(0, -1).join(', ')} and ${gaps[gaps.length - 1]}` : gaps[0];
+    L.push(`ℹ️ <i>No indexer covers ${esc(ch.name)} yet — ${listed} unavailable. The prices above are read straight from the chain.</i>`);
+  }
+  // Maestro's own card shows a timestamp because its numbers can be minutes old.
+  // Ours are fetched on render — saying so is what makes a stale-looking price
+  // trustworthy, and points at the button that refetches it.
+  L.push(`🕐 <i>Updated ${new Date().toISOString().slice(11, 19)} UTC · tap 🔄 Refresh for a new read</i>`);
+  if (api && api.links) { const lk = []; if (api.links.website) lk.push(`<a href="${esc(api.links.website)}">Web</a>`); if (api.links.twitter) lk.push(`<a href="${esc(api.links.twitter)}">X</a>`); if (api.links.telegram) lk.push(`<a href="${esc(api.links.telegram)}">TG</a>`); if (lk.length) L.push(`🔗 ${lk.join(' · ')}`); }
   const valueEth = bal * px;
   const sel = core.tradeSelection(chatId);
   const selIds = new Set(core.tradeWalletIds(chatId));
@@ -369,7 +426,7 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   if (list.length > 1) {
     // Per-wallet balance table (Maestro "Balance" panel): ✅ marks the wallet(s) a
     // Buy/Sell will act on (single, a selected subset, or ALL). Shows each bag's USD worth.
-    L.push(SEP);
+    gap();
     L.push(`👛 <b>Balance across wallets</b> (${esc(sym)} · USD · ${nat})`);
     const held = across.rows.filter((r) => r.tokens > 1e-9 || r.eth > 1e-5);
     const show = (held.length ? held : across.rows).slice(0, 10);
@@ -383,13 +440,14 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
     const totEth = across.rows.reduce((s, r) => s + r.eth, 0);
     if (totTok > 1e-9) L.push(`Σ <b>${fmt(totTok)} $${esc(sym)}</b> ≈ <b>${usdOf(totTok)}</b> · ${totEth.toFixed(4)} ${nat} across ${across.rows.length} wallets`);
     if (pos && posCost(pos) > 0 && !selN) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`PnL (${esc(core.walletLabel(w, wi))}): <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`); }
-    if (sel.all) L.push(`<i>Trading all ${list.length} wallets — tap 👛 below to change.</i>`);
-    else if (selN >= 1) L.push(`<i>Trading ${selN} selected wallet${selN > 1 ? 's' : ''} — tap 👛 below to change.</i>`);
-    else L.push(`<i>Trading ${esc(core.walletLabel(w, wi))}${autoSwitched ? ' (holds this token)' : ''} — tap 👛 to use several.</i>`);
+    gap();
+    if (sel.all) L.push(`<i>Trading all ${list.length} wallets — every Buy runs on each one.</i>`);
+    else if (selN >= 1) L.push(`<i>Trading ${selN} selected wallet${selN > 1 ? 's' : ''} — every Buy runs on each one.</i>`);
+    else L.push(`<i>Trading ${esc(core.walletLabel(w, wi))}${autoSwitched ? ' (holds this token)' : ''} — tap 🔴 Multi to use several at once.</i>`);
   } else {
     // Single wallet: ALWAYS show the bag (even "none") and the wallet's native
     // balance, so the card answers "what do I hold and what can I spend" at a glance.
-    L.push(SEP);
+    gap();
     if (pos && posCost(pos) > 0) { const cb = posCost(pos); const unreal = valueEth - cb; const pct = cb > 0 ? (unreal / cb) * 100 : 0; L.push(`Your bag: <b>${fmt(bal)} $${esc(sym)}</b> · ${usd(valueEth, nat)} · PnL <b>${unreal >= 0 ? '+' : ''}${unreal.toFixed(4)} ${nat}</b> (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`); }
     else if (bal > 0) L.push(`Your bag: <b>${fmt(bal)} $${esc(sym)}</b> · ${usd(valueEth, nat)}`);
     else L.push(`Your bag: <i>none yet</i>`);
@@ -405,9 +463,27 @@ async function tokenCard(chatId, ca, chainKey, walletId) {
   // 6-char preset (capped in setBuyPresets). Keep those caps if you touch this.
   const lastRow = [btn('🔁 DCA', `dca:${chainKey}:${wi}:${ca}`), btn('🔔 Alert', `alt:${chainKey}:${wi}:${ca}`), btn('🔄 Refresh', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')];
   if (safety.supported(chainKey)) lastRow.unshift(btn('🛡 Safety', `sec:${chainKey}:${ca}`));   // GoPlus (EVM) / RugCheck (Solana)
-  // Multi-wallet users get a picker row: choose one / several / ALL wallets to trade from.
+  // Multi-wallet: one row when closed, the toggle grid below it when open.
+  // NOTE the 64-byte callback limit again — worst case here is
+  // `wtc:robinhood:99:<42-char ca>:10` = 62 bytes. Adding a field overflows it.
   const selLabel = sel.all ? `👛 Trading: ALL ${list.length} wallets` : (selN >= 1 ? `👛 Trading: ${selN} wallet${selN > 1 ? 's' : ''}` : `👛 Trade from: ${core.walletLabel(w, wi)}`);
-  const walletRow = list.length > 1 ? [[btn(selLabel, `wsel:${chainKey}:${ca}`)]] : [];
+  const walletRow = [];
+  if (list.length > 1) {
+    const multiLabel = selN > 1 ? `🟢 Multi | ${sel.all ? 'ALL' : selN}` : '🔴 Multi';
+    walletRow.push([btn(selLabel, `wsel:${chainKey}:${ca}`), btn(multiLabel, `${multiOpen ? 'wex0' : 'wex1'}:${chainKey}:${wi}:${ca}`)]);
+    if (multiOpen) {
+      // Two per row: the dot is what a wallet DOES on the next Buy/Sell, so in
+      // single mode the card's own wallet is already lit — it is the one trading.
+      for (let i = 0; i < list.length; i += 2) {
+        walletRow.push(list.slice(i, i + 2).map((wobj, j) => {
+          const n = i + j + 1;
+          const on = selN ? selIds.has(wobj.id) : wobj.id === w.id;
+          return btn(`${on ? '🟢' : '🔴'} ${core.walletLabel(wobj, n)}`, `wtc:${chainKey}:${wi}:${ca}:${n}`);
+        }));
+      }
+      walletRow.push([btn('🟢 All ON', `wtcA:${chainKey}:${wi}:${ca}`), btn('🔴 All OFF', `wtcN:${chainKey}:${wi}:${ca}`)]);
+    }
+  }
   const ikb = [
     ...walletRow,
     [btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)],
@@ -457,13 +533,14 @@ async function portfolioScreen(chatId) {
     const multStr = mult > 0 ? mult.toFixed(2) + '×' : '—';
     const pnlPct = r.ethIn > 0 ? (mult - 1) * 100 : 0;
     const who = (r.holders && r.holders.length) ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(', ') : '—';
-    body += `<b>$${esc(r.sym)}</b> · ${usd(r.valueEth, nat)} · <b>${multStr}</b> ${r.ethIn > 0 ? `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(0)}%)` : ''}\n   ${fmt(r.tokens)} · in ${r.ethIn.toFixed(4)} → now ${r.valueEth.toFixed(4)} ${nat} · PnL <b>${r.unrealizedEth >= 0 ? '+' : ''}${r.unrealizedEth.toFixed(4)}</b>\n   held: ${who}\n   <code>${r.ca}</code>\n`;
+    body += `<b>$${esc(r.sym)}</b> · ${usd(r.valueEth, nat)} · <b>${multStr}</b> ${r.ethIn > 0 ? `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(0)}%)` : ''}\n   ${fmt(r.tokens)} · in ${r.ethIn.toFixed(4)} → now ${r.valueEth.toFixed(4)} ${nat} · PnL <b>${r.unrealizedEth >= 0 ? '+' : ''}${r.unrealizedEth.toFixed(4)}</b>\n   held: ${who}\n   <code>${r.ca}</code>\n\n`;
   }
   const pMult = totalIn > 0 ? (pf.totalValueEth + totalOut) / totalIn : 0;
   const pPct = totalIn > 0 ? (pMult - 1) * 100 : 0;
-  const text = `📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n` +
+  const text = `📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n\n` +
     `Value <b>${usd(pf.totalValueEth, nat)}</b> · ${pf.totalValueEth.toFixed(4)} ${nat}${totalIn > 0 ? ` · <b>${pMult.toFixed(2)}×</b> (${pPct >= 0 ? '+' : ''}${pPct.toFixed(0)}%)` : ''}\n\n${body}\n` +
-    `Invested <b>${totalIn.toFixed(4)}</b> · out <b>${totalOut.toFixed(4)}</b> ${nat}\nUnrealized PnL: <b>${totalUnreal >= 0 ? '+' : ''}${totalUnreal.toFixed(4)} ${nat}</b> (${usd(Math.abs(totalUnreal), nat)})`;
+    `Invested <b>${totalIn.toFixed(4)}</b> · out <b>${totalOut.toFixed(4)}</b> ${nat}\n` +
+    `Unrealized PnL: <b>${totalUnreal >= 0 ? '+' : ''}${totalUnreal.toFixed(4)} ${nat}</b> (${usd(Math.abs(totalUnreal), nat)})`;
   return { text, kb: rows([btn('🔄 Refresh', 'pos'), btn('🧾 History', 'hist'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
 }
 function historyScreen(chatId) {
@@ -483,7 +560,7 @@ function historyScreen(chatId) {
       ? `🟢 <b>BUY</b> $${esc(t.sym || '')} · ${Number(t.ethAmount || 0).toFixed(4)} ${c.native} · ${when} ago\n`
       : `🔴 <b>SELL</b> $${esc(t.sym || '')} ${t.pct || 100}% · ${Number(t.ethAmount || 0).toFixed(4)} ${c.native} · ${when} ago\n`;
   }
-  return { text: `🧾 <b>History</b> · Wallet ${wi} · ${ch.emoji} ${esc(ch.name)}\nNet PnL (this chain): <b>${rp} ${ch.native}</b>\n<i>proceeds − total cost; a partly-sold bag reads low until fully exited</i>\n\n${body}`, kb: rows([btn('🔄 Refresh', 'hist'), btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]) };
+  return { text: `🧾 <b>History</b> · Wallet ${wi} · ${ch.emoji} ${esc(ch.name)}\n\nNet PnL (this chain): <b>${rp} ${ch.native}</b>\n<i>proceeds − total cost; a partly-sold bag reads low until fully exited</i>\n\n${body}`, kb: rows([btn('🔄 Refresh', 'hist'), btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]) };
 }
 function snipeScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -626,13 +703,16 @@ function settingsScreen(chatId) {
   const gasName = gasLabel(core.userGasBoost(u));
   return {
     text: `⚙️ <b>Settings</b>\n\n` +
+      `<b>Trading</b>\n` +
       `Active chain: <b>${ch.emoji} ${esc(ch.name)}</b>\n` +
       `Slippage: <b>${esc(String(slip))}</b>\n` +
       `Gas priority: <b>${esc(gasName)}</b>\n` +
-      `Quick-buy (${esc(ch.name)}): <b>${esc(bp)} ${ch.native}</b>${perChain}\n` +
+      `Quick-buy (${esc(ch.name)}): <b>${esc(bp)} ${ch.native}</b>${perChain}\n\n` +
+      `<b>How buys behave</b>\n` +
       `Confirm before buy: <b>${onoff(s.confirmBuy)}</b>\n` +
       `Fast mode: <b>${onoff(s.expert)}</b>\n` +
-      `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n` +
+      `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n\n` +
+      `<b>Automatic exits</b>\n` +
       `Auto-exit after buy: <b>${(s.autoTpPct > 0 || s.autoSlPct > 0) ? [(s.autoTpPct > 0 ? 'TP +' + s.autoTpPct + '%' : ''), (s.autoSlPct > 0 ? 'SL −' + s.autoSlPct + '%' : '')].filter(Boolean).join(' · ') : '⚪ OFF'}</b>\n` +
       `🛡 Auto-protect (rug guard): <b>${onoff(s.autoProtect)}</b>\n\n` +
       `<i>Quick-buy amounts are per-chain. Fast mode skips the "buying…" message. Auto-buy buys instantly on paste. Auto-protect auto-sells only on a ~60% loss vs entry or a honeypot — never a profitable dip.</i>`,
@@ -824,35 +904,37 @@ async function _placeAutoExit(chatId, r, walletId) {
     return msgs.length ? `\nAuto-exit: <b>${msgs.join(' · ')}</b>` : '';
   } catch (_) { return ''; }   /* order cap reached or unpriceable — skip silently */
 }
+// Price impact for the size being bought — INFORMATION, never a gate (operator
+// rule: the user must always be able to buy). Returns "" when it cannot be
+// measured, and it is never awaited ahead of the trade.
+//
+// V2 only: a V2 pair's WETH balance IS its depth, so spend/(reserve+spend) is
+// the real impact. A V3 pool's balance is NOT — its liquidity is concentrated,
+// so a pool holding 0.8 ETH can fill a 0.05 ETH buy at almost no impact.
+// Running the constant-product formula over one invented an 11% figure and
+// refused a trade Maestro filled.
+// How long the "Buying…" line waits for a market cap before going out without
+// one. The trade is already in flight by then, so this is never execution
+// latency — only how long the user stares at a message with a blank in it.
+const ENTRY_MC_WAIT_MS = 1200;
+
+async function impactNote(ca, chG, amt) {
+  if (core.chains.isSvm(chG.key)) return '';
+  try {
+    const pick = await withTmo(core.bestDexVenue(ca, chG.key).catch(() => null), 6000, null);
+    if (!pick || pick.kind === 'v3' || pick.wethBal == null) return '';
+    const reserve = Number(ethers.formatEther(pick.wethBal));
+    const amtN = Number(amt) || 0;
+    const impact = reserve > 0 ? (amtN / (reserve + amtN)) * 100 : 0;
+    return impact >= 5 ? `\n⚠️ Thin pool — this size moved the price ~<b>${impact.toFixed(0)}%</b>.` : '';
+  } catch (_) {
+    return '';   // an unreadable pool is not a reason to say anything
+  }
+}
+
 async function doBuy(chatId, ca, amt, chain, walletId) {
   const u = core.ensureUser(chatId);
-  // HARD thin-pool block (operator rule: the bot must NEVER buy into a small
-  // LP). Estimated V2 impact = amt / (poolNativeReserve + amt); at or above
-  // PRICE_IMPACT_MAX_PCT (default 10%) the buy is refused — no override
-  // button. Covers every manual path incl. auto-buy-on-paste, since they all
-  // execute through doBuy. Fails open only if the pool can't be read at all.
   const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
-  if (!core.chains.isSvm(chG.key)) {
-    try {
-      // Depth of the venue the trade would ACTUALLY use (V2 pair or deepest V3
-      // pool) — so deep-V3 tokens aren't falsely blocked by a dusty V2 pair.
-      const pick = await withTmo(core.bestDexVenue(ca, chG.key).catch(() => null), 6000, null);
-      const liq = pick && pick.wethBal != null ? Number(ethers.formatEther(pick.wethBal)) * 2 : null;
-      if (liq != null && liq >= 0) {
-        const amtN = Number(amt) || 0;
-        const impact = (amtN / (liq / 2 + amtN)) * 100;
-        const maxAt = Math.max(1, Number(process.env.PRICE_IMPACT_MAX_PCT || 10));
-        if (impact >= maxAt) {
-          const maxSafe = (maxAt / 100) * (liq / 2) / (1 - maxAt / 100);
-          return send(chatId,
-            `🚫 <b>Buy blocked — thin pool</b>\n\nTradeable liquidity for <code>${short(ca)}</code> is only <b>${liq.toFixed(3)} ${chG.native}</b> (${usd(liq, chG.native)}). A <b>${esc(String(amt))} ${chG.native}</b> buy would move the price ~<b>${impact.toFixed(0)}%</b> — over the ${maxAt}% limit, so the bot refuses to fill it.` +
-            `${maxSafe > 0.00001 ? `\n\nLargest buy within the limit: ~<b>${maxSafe.toFixed(5)} ${chG.native}</b>.` : ''}` +
-            `\nIf the token's real depth sits on a V3 pool, this bot can't trade it — use the DEX directly for this one.`,
-            rows([btn('🔄 Card', `tok:${chG.key}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')]));
-        }
-      }
-    } catch (_) {}
-  }
   const key = chatId + ':' + (chain || core.userChain(u)) + ':' + String(ca).toLowerCase();
   if (_inflightBuy.has(key)) return send(chatId, '⏳ Already buying that token — wait for the result before buying again.');
   _inflightBuy.add(key);
@@ -861,9 +943,32 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
   try {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
-      // One message: a short "Buying…" that we EDIT into the receipt (no second message).
-      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}…</b>`);
-      const r = await core.buy(chatId, ca, amt, chain, wid);
+      // SPEED: the trade starts on the very first line of this block. Nothing
+      // is awaited before it — not the "Buying…" message, not the depth probe.
+      //
+      // Those two used to run in series ahead of the buy: a bestDexVenue call
+      // with a 6s timeout, purely to compute a warning line, and then a
+      // Telegram round-trip for the progress message. Up to ~6.5s of the user's
+      // latency was spent before a single on-chain call, on a bot competing
+      // with one that fills immediately.
+      //
+      // Now the buy, the progress message and the depth probe are all in
+      // flight at once, and the probe's result is folded into the receipt if it
+      // arrives in time. Nothing about the trade waits on either of them.
+      const buying = core.buy(chatId, ca, amt, chain, wid);
+      const impactP = impactNote(ca, chG, amt);
+      // Entry snapshot, started WITH the trade. The buy is already in flight, so
+      // the short wait below costs execution nothing — it only decides whether
+      // the "Buying…" line can name the market cap being entered at. "At what
+      // MC did I get in" is the first thing anyone asks, and afterwards it can
+      // only be reconstructed.
+      const entryP = withTmo(core.tokenSnapshot(ca, chG.key).catch(() => null), 6000, null);
+      const entry = await Promise.race([entryP, new Promise((res) => setTimeout(res, ENTRY_MC_WAIT_MS, null))]);
+      const eRate = nativeUsd(chG.native);
+      const eMc = entry ? (entry.mcapUsd || (entry.mcapEth || 0) * eRate) : 0;
+      const atMc = eMc > 0 ? ` at MC <b>$${fmt(eMc)}</b>` : '';
+      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}</b>${atMc}…`);
+      const r = await buying;
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
       const spent = Number(r.spentEth) || 0, got = Number(r.gotTokens) || 0;
@@ -873,7 +978,10 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       let holdUsd = usdRate > 0 && spent > 0 ? usd2(spent) : '—';
       let statLine = '';
       try {
-        const snap = await withTmo(core.tokenSnapshot(ca, r.chain).catch(() => null), 4000, null);
+        // The snapshot started with the trade — reuse it rather than fetching a
+        // second time. It is also the more honest "entry": taken as the buy went
+        // out, not seconds after it landed.
+        const snap = await entryP;
         if (snap && snap.priceEth > 0) {
           if (usdRate > 0 && got > 0) holdUsd = `$${(got * snap.priceEth * usdRate).toFixed(2)}`;
           const pxUsd = snap.priceEth * usdRate;
@@ -894,11 +1002,21 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
         [{ text: '🔍 Tx', url: `${exp2.explorer}/tx/${r.hash}` }, btn('📍 Monitor', `monn:${r.chain}:${wi}:${ca}`)],
         [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
       ] };
+      // The probe ran alongside the trade; whatever it found is a footnote on
+      // the receipt now, and never cost the trade a millisecond.
+      const note = await impactP.catch(() => '');
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
-      if (pid) await edit(chatId, pid, receipt, kb); else await send(chatId, receipt, kb);
+      if (pid) await edit(chatId, pid, receipt + note, kb); else await send(chatId, receipt + note, kb);
+      // Straight into the live position — pinned, refreshing itself, closing on
+      // exit. It already existed behind the 📍 button; making someone tap for it
+      // after a buy is asking them to do the obvious thing by hand.
+      startMonitor(chatId, ca, r.chain, wid).catch(() => {});
     } else {
+      // Same order as the single-wallet path: every buy is in flight before the
+      // progress message is awaited.
+      const buys = Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
       const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native} on ${targets.length} wallets…</b>`);
-      const results = await Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
+      const results = await buys;
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
@@ -908,10 +1026,16 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const wi = walletIndex(chatId, targets[0].id);
       const mUsd = nativeUsd(nat || 'ETH');
       const head = `✅ <b>Bought $${esc(sym || '')}</b> · ${okN}/${targets.length} wallets\nTotal: <b>${fmt(totTok)} $${esc(sym || '')}</b> · spent <b>${totSpent.toFixed(5)} ${esc(nat || 'ETH')}</b>${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''}`;
-      const kb = rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
+      const kb = rows([btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       const txt = head + '\n' + lines.join('\n');
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
+      // The multi-wallet branch never opened a monitor and its receipt had no 📍
+      // button either, so anyone trading more than one wallet got a fill and
+      // nothing to watch it with. Bound to the first wallet that actually
+      // filled — the monitor is per token, and that is the one holding a bag.
+      const filled = results.findIndex((res) => res.status === 'fulfilled');
+      if (okN > 0) startMonitor(chatId, ca, chainKey, targets[filled >= 0 ? filled : 0].id).catch(() => {});
     }
   } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `❌ <b>Buy didn't go through</b>\n\n${esc(friendlyError(e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
   finally { _inflightBuy.delete(key); }
@@ -960,8 +1084,15 @@ async function doSell(chatId, ca, pct, chain, walletId) {
     if (targets.length <= 1) {
       const wid = targets[0] ? targets[0].id : walletId;
       const sym0 = quickSym(chatId, ca, chain, wid);
-      const progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% of ${sym0 ? '$' + esc(sym0) : 'your token'}…</b>`);
-      const r = await sellWithRetry(chatId, ca, pct, chain, wid, (n) => (progress && progress.ok && progress.result) ? edit(chatId, progress.result.message_id, `⚙️ <b>Retry ${n}/2</b> — raising gas &amp; slippage to complete the sell…`).catch(() => {}) : null);
+      // The sell is in flight before the progress message is awaited — an exit
+      // is the one trade where a round-trip of delay is felt most.
+      let progress = null;
+      const selling = sellWithRetry(chatId, ca, pct, chain, wid, (n) =>
+        (progress && progress.ok && progress.result)
+          ? edit(chatId, progress.result.message_id, `⚙️ <b>Retry ${n}/2</b> — raising gas &amp; slippage to complete the sell…`).catch(() => {})
+          : null);
+      progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% of ${sym0 ? '$' + esc(sym0) : 'your token'}…</b>`);
+      const r = await selling;
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
@@ -1005,13 +1136,52 @@ async function doSell(chatId, ca, pct, chain, walletId) {
   } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `❌ <b>Sell didn't go through</b>\n\n${esc(friendlyError(e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
 }
 
+// The group notice exists for ONE reader: someone who typed a command at the bot
+// in a group. Everything else that arrives as `message` used to trigger it too —
+// and in Telegram a member joining IS a message. The group filled with "please
+// DM me privately" every time anyone walked in, from a bot nobody had addressed.
+//
+// So: service messages (joins, leaves, title/photo changes, pins) are silent,
+// ordinary chatter is silent, and a command gets ONE answer per group per hour.
+// Repeating it to a room that has already been told is the same spam in slow
+// motion.
+const GROUP_NOTICE_QUIET_MS = 60 * 60 * 1000;
+const _groupNoticeAt = new Map();
+function _shouldAnswerInGroup(msg, chatId) {
+  if (!msg) return false;
+  // A service message carries no text and no author intent — it is Telegram
+  // narrating the room, not a person talking to the bot.
+  const SERVICE = [
+    'new_chat_members', 'left_chat_member', 'new_chat_title', 'new_chat_photo',
+    'delete_chat_photo', 'group_chat_created', 'supergroup_chat_created',
+    'channel_chat_created', 'message_auto_delete_timer_changed', 'migrate_to_chat_id',
+    'migrate_from_chat_id', 'pinned_message', 'video_chat_started', 'video_chat_ended',
+    'video_chat_participants_invited', 'video_chat_scheduled', 'forum_topic_created',
+    'forum_topic_edited', 'forum_topic_closed', 'forum_topic_reopened', 'users_shared',
+    'chat_shared', 'boost_added', 'giveaway_created', 'successful_payment',
+  ];
+  for (const k of SERVICE) if (msg[k] !== undefined) return false;
+  const text = String(msg.text || msg.caption || '').trim();
+  if (!text.startsWith('/')) return false;   // chatter is not addressed to us
+  const now = Date.now();
+  const last = _groupNoticeAt.get(chatId) || 0;
+  if (now - last < GROUP_NOTICE_QUIET_MS) return false;
+  _groupNoticeAt.set(chatId, now);
+  if (_groupNoticeAt.size > 500) {           // bounded: a bot in many groups must not leak
+    for (const [k, t] of _groupNoticeAt) if (now - t > GROUP_NOTICE_QUIET_MS) _groupNoticeAt.delete(k);
+  }
+  return true;
+}
+
 // ------------------------------------------------------------ router
 async function handleUpdate(up) {
   try {
     const chat = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
     if (chat && chat.type !== 'private') {
       if (up.callback_query) await answer(up.callback_query.id, 'DM me privately — group use is disabled.');
-      else if (up.message) await send(chat.id, 'This is a custodial trading bot — please DM me privately. Group use is disabled for security.');
+      else if (_shouldAnswerInGroup(up.message, chat.id)) {
+        await send(chat.id, 'This is a custodial trading bot — please DM me privately. Group use is disabled for security.');
+      }
       return;
     }
     const from = (up.message && up.message.from) || (up.callback_query && up.callback_query.from);
@@ -1207,8 +1377,9 @@ async function onCallback(q) {
   const data = q.data || '';
   const [k, ca, arg] = data.split(':');
   // Fire-and-forget the ack (clears the button's spinner) so the handler proceeds without
-  // waiting on a Telegram round-trip — noticeably snappier taps. 'oc'/'al' answer with text.
-  if (k !== 'oc' && k !== 'al') answer(q.id).catch(() => {});
+  // waiting on a Telegram round-trip — noticeably snappier taps. 'oc'/'al'/'wtc' answer
+  // with text instead, and a query can only be answered once.
+  if (k !== 'oc' && k !== 'al' && k !== 'wtc') answer(q.id).catch(() => {});
 
   if (k === 'bccancel') { const pp = pending.get(chatId); if (pp && pp.action === 'confirm_buy' && pp.confirmId === ca) pending.delete(chatId); return edit(chatId, mid, 'Buy cancelled.', mainMenu()); }
   if (k === 'bcok') {
@@ -1259,6 +1430,41 @@ async function onCallback(q) {
   if (k === 'sec') { const parts = data.split(':'); const s = await safetyScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   // Multi-wallet trade picker: wsel opens it; wtg toggles one wallet; wtgA all; wtgN clear.
   if (k === 'wsel') { const parts = data.split(':'); const s = await walletPickScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
+  // ── Inline multi-wallet panel on the token card (🟢 Multi) ──────────────────
+  // wex1/wex0 open and close it; wtc/wtcA/wtcN mutate the selection and redraw
+  // the SAME card with the panel still open, so a run of taps is one message.
+  if (k === 'wex1' || k === 'wex0' || k === 'wtc' || k === 'wtcA' || k === 'wtcN') {
+    const p = data.split(':');
+    const chainK = p[1], mca = p[3];
+    const list = core.walletList(core.ensureUser(chatId));
+    const card = list[Number(p[2]) - 1];               // the wallet this card is bound to
+    const wid = card ? card.id : undefined;
+    if (k === 'wtcA') { try { core.setTradeAll(chatId, true); } catch (_) {} }
+    else if (k === 'wtcN') { try { core.setTradeAll(chatId, false); } catch (_) {} }
+    else if (k === 'wtc') {
+      // This branch owns the ack (see the top of onCallback) because it is the
+      // one that sometimes has something to say.
+      const target = list[Number(p[4]) - 1];
+      const sel = core.tradeSelection(chatId);
+      // Single mode has no selection list, yet the card's wallet was shown lit
+      // because it IS the one that trades. Seed it before adding the tapped one,
+      // or "tap a second wallet" would silently REPLACE the first.
+      const seed = !sel.all && sel.ids.length === 0;
+      if (target && seed && target.id === wid) {
+        answer(q.id, 'Already the wallet that trades — tap another one to add it.').catch(() => {});
+      } else {
+        answer(q.id).catch(() => {});
+        if (target) {
+          try {
+            if (seed && wid) core.toggleTradeWallet(chatId, wid);
+            core.toggleTradeWallet(chatId, target.id);
+          } catch (_) {}
+        }
+      }
+    }
+    const c = await tokenCard(chatId, mca, chainK, wid, { multi: k !== 'wex0' });
+    return edit(chatId, mid, c.text, c.kb);
+  }
   if (k === 'wtg') { const parts = data.split(':'); const wobj = core.walletList(core.ensureUser(chatId))[Number(parts[2]) - 1]; if (wobj) { try { core.toggleTradeWallet(chatId, wobj.id); } catch (_) {} } const s = await walletPickScreen(chatId, parts[3], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'wtgA') { const parts = data.split(':'); try { core.setTradeAll(chatId, !core.tradeSelection(chatId).all); } catch (_) {} const s = await walletPickScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'wtgN') { const parts = data.split(':'); try { core.setTradeAll(chatId, false); } catch (_) {} const s = await walletPickScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
@@ -1296,8 +1502,22 @@ async function onCallback(q) {
     const parts = data.split(':'); const ch = parts[1], wi = parts[2], tca = parts[3], a = parts[4];
     const wobj = core.walletList(core.ensureUser(chatId))[Number(wi) - 1];
     const wid = wobj ? wobj.id : undefined;   // stale/removed index → fall back to the active wallet
-    if (k === 'mon') { const p2 = await monitorPayload(chatId, tca, ch, wid); return edit(chatId, mid, p2.text, p2.kb); }
-    if (k === 'monn') { startMonitor(chatId, tca, ch, wid); return answer(q.id, '📍 Monitor started'); }
+    if (k === 'mon') {
+      const p2 = await monitorPayload(chatId, tca, ch, wid);
+      const er = await edit(chatId, mid, p2.text, p2.kb);
+      // A manual refresh on a card nothing is driving (a restart orphaned it, or
+      // its window ran out) used to update it exactly once and go quiet again.
+      // Adopt it, so tapping 🔄 makes it live rather than static.
+      if (er && er.ok && !p2.closed) adoptMonitor(chatId, tca, ch, wid, mid);
+      return er;
+    }
+    if (k === 'monn') {
+      // Await it and report what happened. It used to fire-and-forget and then
+      // claim "Monitor started" unconditionally — so every failure above this
+      // line showed the user a success toast and no monitor.
+      const started = await startMonitor(chatId, tca, ch, wid).catch(() => false);
+      return answer(q.id, started ? '📍 Monitor started' : '⚠️ Could not open the monitor — try again');
+    }
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
@@ -1483,7 +1703,7 @@ function exportKeyMsg(chatId, walletId) {
 // EDITING it (every 45s, for 30 min, bounded) so the position report is live:
 // initial vs worth, P/L %, tokens, price/MC. Manual 🔄 works anytime; ✖ Stop
 // ends the auto-refresh. One interval per message, cleaned up on stop/error.
-const _monitors = new Map();   // `${chatId}:${msgId}` → interval timer
+const _monitors = new Map();   // `${chatId}:${msgId}` → { timer, until, chainKey, wid, closedStreak, stopped }
 // "Sell some %" picker — opened from the 🔻 Sell X% button on the card or the
 // live Monitor. Shows the live bag + what each preset would sell (in tokens AND
 // dollars), so the choice is obvious. Presets fire a normal Sell; ✏️ Custom lets
@@ -1532,7 +1752,13 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const w = (wid && core.walletById(u, wid)) || core.activeWallet(u);
   const wi = walletIndex(chatId, w && w.id);
   const pos = w && (w.positions || {})[core.posKey(chainKey, ca)];
-  const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 6000, null);
+  // PARALLEL. These two reads are independent and used to run in series, so a
+  // slow chain paid both timeouts back to back — up to 11s per refresh, on a
+  // card whose whole job is to feel live.
+  const [snap, rawBal] = await Promise.all([
+    withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), SNAP_TMO_MS, null),
+    withTmo(core.tokenBalanceOrNull(ca, wAddr(w, chainKey), chainKey).catch(() => null), BAL_TMO_MS, null),
+  ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
@@ -1540,16 +1766,39 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}\n`];
   // Read the LIVE on-chain balance (not pos.tokens) so tokens sent out via 📤
   // Send don't leave the Monitor showing a phantom bag with fake PnL.
+  //
+  // A FAILED read is not a zero balance. tokenBalance() collapsed both to 0n, so
+  // one flaky RPC right after a buy rendered "No open position", and the next
+  // tick then unpinned and killed the monitor for good — on a position that had
+  // filled. tokenBalanceOrNull() returns null on failure, and only a real,
+  // successful zero is allowed to close anything.
   let balNow = 0;
-  try { const raw = await withTmo(core.tokenBalance(ca, wAddr(w, chainKey), chainKey).catch(() => null), 5000, null); if (raw != null) balNow = Number(ethers.formatUnits(raw, (pos && pos.dec) || 18)); else if (pos && pos.tokens != null) balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); } catch (_) {}
+  let balKnown = false;
+  let balStale = false;
+  if (rawBal != null) {
+    balNow = Number(ethers.formatUnits(rawBal, (pos && pos.dec) || 18));
+    balKnown = true;
+  } else if (pos && pos.tokens != null) {
+    // Fall back to what the buy recorded. This branch existed before but was
+    // unreachable, because the failure it was written for arrived as 0n.
+    try { balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); balStale = balNow > 0; } catch (_) { balNow = 0; }
+  }
   const cost = posCost(pos);
-  if (!pos || !(cost > 0) || !(balNow > 0)) {
+  const noPosition = !pos || !(cost > 0);
+  if (noPosition || (balKnown && !(balNow > 0))) {
     closed = true;
     L.push('<i>No open position right now — you have sold it, or have not bought yet.</i>');
+  } else if (!balKnown && !(balNow > 0)) {
+    // We hold a position on record but could not read the chain and have no
+    // recorded size. Say so instead of declaring it closed.
+    L.push('<i>Balance unavailable right now — retrying.</i>');
   } else {
     const px = snap && snap.priceEth > 0 ? snap.priceEth : 0;
     const val = balNow * px;
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}`);
+    // Say when the bag is the one the BUY recorded rather than one read from the
+    // chain just now — otherwise a failing RPC renders identically to a live
+    // read, and tokens sent out with 📤 would show as a bag the user still has.
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
@@ -1558,11 +1807,19 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     }
   }
   if (snap) {
+    // Fall back to NATIVE units when the USD feed is down (PRICES.* is 0 until
+    // the first Coinbase call lands, and stays 0 while it keeps failing). The
+    // price is known in ETH/BNB/SOL either way, and printing "—" for a number we
+    // hold is the card looking broken over a problem it does not have.
     const pxUsd = (snap.priceEth || 0) * usdRate;
     const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
-    L.push(`\n📈 <b>Price:</b> ${pxUsd > 0 ? '$' + pxUsd.toPrecision(3) : '—'}  ·  <b>Market cap:</b> ${mcUsd > 0 ? '$' + fmt(mcUsd) : '—'}`);
+    const pxStr = pxUsd > 0 ? '$' + pxUsd.toPrecision(3)
+      : (snap.priceEth > 0 ? snap.priceEth.toPrecision(3) + ' ' + nat : '—');
+    const mcStr = mcUsd > 0 ? '$' + fmt(mcUsd)
+      : (snap.mcapEth > 0 ? fmt(snap.mcapEth) + ' ' + nat : '—');
+    L.push(`\n📈 <b>Price:</b> ${pxStr}  ·  <b>Market cap:</b> ${mcStr}`);
   }
-  L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 16)} UTC</i>`);
+  L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
   // Quick-sell straight from the live tracker: 25 / 50 / 75 / 100, plus "other %"
   // for anything in between. Sell buttons only appear while a bag is open.
   const kbRows = [[btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)]];
@@ -1576,40 +1833,193 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   return { text: L.join('\n'), kb, closed };
 }
 const _monitorByToken = new Map();   // `${chatId}:${ca}` → msgId of the live monitor for that token
+const monKey = (chatId, ca) => chatId + ':' + String(ca).toLowerCase();
 function stopMonitor(chatId, mid) {
-  const k = chatId + ':' + mid; const t = _monitors.get(k);
-  if (t) { clearInterval(t); _monitors.delete(k); }
-  for (const [tk, m] of _monitorByToken) if (m === mid) _monitorByToken.delete(tk);
+  const k = chatId + ':' + mid;
+  const st = _monitors.get(k);
+  if (st) { st.stopped = true; if (st.timer) clearTimeout(st.timer); _monitors.delete(k); }
+  // Scoped to THIS chat. Matching on message id alone deleted other chats'
+  // entries whenever two users happened to share a message id — which for
+  // per-chat counters is routine, not a coincidence.
+  const prefix = chatId + ':';
+  for (const [tk, m] of _monitorByToken) if (m === mid && tk.startsWith(prefix)) { _monitorByToken.delete(tk); core.monitorDrop(tk); }
 }
-async function startMonitor(chatId, ca, chainKey, wid) {
+
+// Timings. The old card refreshed every 45s with two SERIAL network reads
+// behind it, so its median data age was ~24s and its worst case near two
+// minutes — for a live PnL tracker on a memecoin that is not live, it is a
+// screenshot. The reads are parallel now and the loop is self-rescheduling, so
+// a slow tick delays the next one instead of stacking on top of it.
+const MON_EVERY_MS = Math.max(5000, Number(process.env.MONITOR_REFRESH_MS || 10000));
+const MON_WINDOW_MS = Math.max(60000, Number(process.env.MONITOR_WINDOW_MS || 60 * 60 * 1000));
+const SNAP_TMO_MS = 6000;
+const BAL_TMO_MS = 5000;
+// A position must read as gone TWICE running before the monitor closes itself.
+// One bad RPC used to be enough, and it unpinned and stopped the tracker for a
+// bag the user still held.
+const CLOSED_STREAK_TO_STOP = 2;
+// Telegram errors that mean the message is gone for good. Anything else — 429,
+// a timeout, a network blip — is transient and must NEVER end the monitor.
+const MON_FATAL_TG = /message to edit not found|message can't be edited|MESSAGE_ID_INVALID|chat not found|bot was blocked|user is deactivated/i;
+
+/** Opens (or adopts) the pinned live-position card. Returns TRUE only when a
+ *  monitor is on screen AND something is driving it — the 📍 button reports
+ *  that verbatim instead of claiming success it never checked. */
+// One start at a time per token. `_monitorByToken` is only written AFTER an
+// await, so two callers arriving together (a buy finishing while the user taps
+// 📍) both saw an empty map, both posted a card, and the chat ended up with two
+// pinned monitors for one position — each with its own loop editing its own copy.
+const _monitorStarting = new Map();
+function startMonitor(chatId, ca, chainKey, wid) {
+  const tkey = monKey(chatId, ca);
+  const running = _monitorStarting.get(tkey);
+  // Chain onto the in-flight start rather than racing it: the second caller then
+  // takes the reuse path and refreshes the card the first one posted.
+  const p = running
+    ? running.catch(() => {}).then(() => _startMonitor(chatId, ca, chainKey, wid))
+    : _startMonitor(chatId, ca, chainKey, wid);
+  const tracked = p.finally(() => { if (_monitorStarting.get(tkey) === tracked) _monitorStarting.delete(tkey); });
+  _monitorStarting.set(tkey, tracked);
+  return tracked;
+}
+async function _startMonitor(chatId, ca, chainKey, wid) {
+  const tkey = monKey(chatId, ca);
   try {
-    // ONE live monitor per token — a repeat buy (or the 📍 button) reuses/replaces
-    // the existing pinned monitor instead of spamming a new message each time.
-    const tkey = chatId + ':' + String(ca).toLowerCase();
+    // ONE live monitor per token — a repeat buy (or the 📍 button) reuses the
+    // existing pinned card instead of posting a duplicate.
     const existing = _monitorByToken.get(tkey);
     if (existing) {
-      // refresh the existing monitor in place and keep it; don't post a duplicate.
-      try { const np = await monitorPayload(chatId, ca, chainKey, wid); await edit(chatId, existing, np.text, np.kb); return; } catch (_) { stopMonitor(chatId, existing); }
+      let ok = false;
+      try {
+        const np = await monitorPayload(chatId, ca, chainKey, wid);
+        const er = await edit(chatId, existing, np.text, np.kb);
+        // CHECK THE RESULT. edit() resolves with {ok:false} on a Telegram
+        // rejection — it does not throw — so the old `try/catch … return` here
+        // silently no-opped whenever the card had been deleted: no refresh, no
+        // new monitor, and a receipt with nothing under it.
+        ok = !!(er && (er.ok || /message is not modified/i.test(er.description || '')));
+      } catch (e) {
+        console.error('[monitor] reuse failed', chatId, ca, e && (e.message || e));
+      }
+      if (ok) {
+        // Keep the card, and push the window out — a fresh buy deserves a fresh
+        // hour, which the old code never granted.
+        const live = _monitors.get(chatId + ':' + existing);
+        if (live) {
+          live.until = Date.now() + MON_WINDOW_MS; live.chainKey = chainKey; live.wid = wid;
+          core.monitorSave(tkey, { mid: existing, ca, chainKey, wid, until: live.until });
+          return true;
+        }
+        // The card is editable but nothing is driving it (window expired, or a
+        // restart). Adopt it rather than leaving a frozen "updates
+        // automatically" card on screen.
+        runMonitorLoop(chatId, ca, chainKey, wid, existing, tkey);
+        return true;
+      }
+      stopMonitor(chatId, existing);
     }
     const p = await monitorPayload(chatId, ca, chainKey, wid);
     const r = await send(chatId, p.text, p.kb);
     const mid = r && r.ok && r.result && r.result.message_id;
-    if (!mid) return;
+    if (!mid) {
+      // Was silent. A 429 or a blocked bot produced a receipt with no monitor
+      // and nothing in the logs to say why.
+      console.error('[monitor] send failed', chatId, ca, (r && r.description) || 'no message_id');
+      return false;
+    }
     _monitorByToken.set(tkey, mid);
-    // Pin it (silently) so it stays at the top of the chat as a live position tracker.
     tg('pinChatMessage', { chat_id: chatId, message_id: mid, disable_notification: true }).catch(() => {});
-    const until = Date.now() + 30 * 60 * 1000;
-    const timer = setInterval(async () => {
-      if (Date.now() > until) return stopMonitor(chatId, mid);
+    runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey);
+    return true;
+  } catch (e) {
+    console.error('[monitor] startMonitor failed', chatId, ca, e && (e.message || e));
+    return false;
+  }
+}
+
+/** Self-rescheduling refresh. A setTimeout chain, not setInterval: a tick that
+ *  outlives its period delays the next one instead of running on top of it. */
+function runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey, until) {
+  const k = chatId + ':' + mid;
+  if (_monitors.has(k)) return;   // already driven — never two loops on one card
+  const state = { until: until || (Date.now() + MON_WINDOW_MS), chainKey, wid, closedStreak: 0, timer: null, stopped: false };
+  _monitors.set(k, state);
+  // On disk from the first tick, so the next boot can adopt this card instead of
+  // leaving it pinned and frozen (see resumeMonitors).
+  core.monitorSave(tkey, { mid, ca, chainKey, wid, until: state.until });
+
+  const finish = (unpin) => {
+    if (unpin) tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {});
+    stopMonitor(chatId, mid);
+  };
+  const tick = async () => {
+    if (state.stopped) return;
+    if (Date.now() > state.until) {
+      // Do not leave a pinned card still claiming it updates automatically.
       try {
-        const np = await monitorPayload(chatId, ca, chainKey, wid);
-        const er = await edit(chatId, mid, np.text, np.kb);
-        if (er && er.ok === false && /not found|can't be edited/i.test(er.description || '')) return stopMonitor(chatId, mid);
-        if (np.closed) { tg('unpinChatMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); stopMonitor(chatId, mid); }   // position gone → unpin + freeze
-      } catch (_) { stopMonitor(chatId, mid); }
-    }, 45000);
-    _monitors.set(chatId + ':' + mid, timer);
-  } catch (_) {}
+        const np = await monitorPayload(chatId, ca, state.chainKey, state.wid);
+        await edit(chatId, mid, np.text.replace(/🔄 Updates automatically · last updated/, '⏸ Paused · last updated'), np.kb);
+      } catch (_) { /* the sign-off is best-effort */ }
+      return finish(true);
+    }
+    try {
+      const np = await monitorPayload(chatId, ca, state.chainKey, state.wid);
+      const er = await edit(chatId, mid, np.text, np.kb);
+      if (er && er.ok === false && MON_FATAL_TG.test(er.description || '')) return finish(false);
+      // Only a CONFIRMED close, seen twice, ends it. A single reading is one
+      // RPC away from being wrong, and being wrong here is permanent.
+      state.closedStreak = np.closed ? state.closedStreak + 1 : 0;
+      if (state.closedStreak >= CLOSED_STREAK_TO_STOP) return finish(true);
+    } catch (e) {
+      // Transient. The old code stopped the monitor here, so one network blip
+      // ended the tracker for the rest of its window.
+      console.error('[monitor] tick failed', chatId, ca, e && (e.message || e));
+    }
+    if (!state.stopped) state.timer = setTimeout(tick, MON_EVERY_MS);
+  };
+  state.timer = setTimeout(tick, MON_EVERY_MS);
+}
+
+/** Put a loop back on a card that is on screen but undriven — after a restart,
+ *  or when the user taps 🔄 Refresh on one. Idempotent. */
+function adoptMonitor(chatId, ca, chainKey, wid, mid, until) {
+  if (!mid) return false;
+  if (_monitors.has(chatId + ':' + mid)) return true;
+  const tkey = monKey(chatId, ca);
+  _monitorByToken.set(tkey, mid);
+  runMonitorLoop(chatId, ca, chainKey, wid, mid, tkey, until);
+  return true;
+}
+
+/** Called once at boot. Every deploy is a pm2 restart, and the pinned cards
+ *  outlive the process that was driving them — so without this the user's
+ *  monitor is on screen saying "🔄 Updates automatically" and never does. Cards
+ *  still inside their window get their loop back; expired ones are signed off
+ *  and unpinned rather than left lying. */
+async function resumeMonitors() {
+  const saved = core.monitorsAll();
+  const now = Date.now();
+  let live = 0, retired = 0;
+  for (const [tkey, rec] of Object.entries(saved)) {
+    const chatId = Number(String(tkey).split(':')[0]);
+    if (!rec || !rec.mid || !Number.isFinite(chatId)) { core.monitorDrop(tkey); continue; }
+    if (!(Number(rec.until) > now)) {
+      // Its window ran out while the bot was down. Do not leave a card claiming
+      // to be live — say so, unpin, forget.
+      try {
+        const np = await monitorPayload(chatId, rec.ca, rec.chainKey, rec.wid);
+        await edit(chatId, rec.mid, np.text.replace(/🔄 Updates automatically · last updated/, '⏸ Paused · last updated'), np.kb);
+      } catch (_) { /* best-effort sign-off */ }
+      tg('unpinChatMessage', { chat_id: chatId, message_id: rec.mid }).catch(() => {});
+      core.monitorDrop(tkey);
+      retired++;
+      continue;
+    }
+    adoptMonitor(chatId, rec.ca, rec.chainKey, rec.wid, rec.mid, Number(rec.until));
+    live++;
+  }
+  if (live || retired) console.log(`monitors resumed: ${live} live, ${retired} retired`);
+  return { live, retired };
 }
 
 function askExport(chatId) {
@@ -1670,7 +2080,7 @@ function statsText(snap, totalUsers) {
   let treasury = '\n\n💰 <b>Fee treasury</b>';
   if (evmT) treasury += `\n  EVM: <code>${esc(evmT)}</code>`;
   if (solT) treasury += `\n  SOL: <code>${esc(solT)}</code>`;
-  return `📊 <b>Bot stats</b>\n👥 Total users: <b>${totalUsers}</b>\n\n` +
+  return `📊 <b>Bot stats</b>\n\n👥 Total users: <b>${totalUsers}</b>\n\n` +
     `<b>Today (~${hrs}h)</b> · <b>${snap.trades}</b> trades · vol <b>$${fmt(w.volUsd)}</b> · fees <b>$${fmt(w.feeUsd)}</b>\n${w.lines}\n` +
     `<b>Lifetime</b> · <b>${snap.lifetime.trades}</b> trades · vol <b>$${fmt(l.volUsd)}</b> · fees <b>$${fmt(l.feeUsd)}</b>\n${l.lines}` +
     treasury;
@@ -1751,9 +2161,14 @@ async function getMe() { try { const r = await tg('getMe', {}); if (r && r.ok) B
 // report channel (operator preference: one private channel for everything);
 // override with BACKUP_TG_CHANNEL, or set it EMPTY to disable (?? not ||, so
 // an empty env var means off). Ships the encrypted store, gzipped, every
-// BACKUP_TG_HOURS (default 6) — off-box without rclone/SSH. Ciphertext only;
+// BACKUP_TG_HOURS (default 24) — off-box without rclone/SSH. Ciphertext only;
 // WALLET_SECRET is never included, so the channel alone can't decrypt anything.
 const backupChannel = () => String(process.env.BACKUP_TG_CHANNEL ?? process.env.REPORT_CHANNEL_ID ?? '-1003885406672').trim();
+const DAY_MS = 24 * 3600 * 1000;
+// How often we ASK whether a backup is due — not how often one is sent. Short
+// enough that a restart-heavy day still gets its one archive, cheap because a
+// not-due check reads a number and returns.
+const BACKUP_CHECK_MS = 30 * 60 * 1000;
 async function tgBackupOnce() {
   const ch = backupChannel();
   if (!ch) return false;
@@ -1814,6 +2229,9 @@ async function start() {
     return send(chatId, text, kb).catch(() => {});
   });
   watchers.start();
+  // Pinned live-position cards outlive the process that drove them. Give them
+  // their loop back (or retire them) before the first update is polled.
+  resumeMonitors().catch((e) => console.error('[monitor] resume failed', e && (e.message || e)));
   // Periodic volume/fee recap to the admin channel (default every 24h). Posts only when
   // there were trades, then resets the window. Never touches the trade path.
   if (report.enabled()) {
@@ -1833,20 +2251,40 @@ async function start() {
       }
     })();
     console.log(`ops reporting ENABLED → channel (daily recap ~${recapHour}:00 UTC)`);
-    // Announce the fee treasury to the channel at boot so the operator always
-    // knows (and can verify on-chain) which wallet the 1% fee is collected to.
-    const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
-    report.post(`🟢 <b>Dexvra Trade Bot online</b> — @${BOT_USERNAME || '?'}\n💰 <b>Fee treasury (1% per trade)</b>` +
-      (evmT ? `\n  EVM: <code>${esc(evmT)}</code>` : '') +
-      (solT ? `\n  SOL: <code>${esc(solT)}</code>` : '') +
-      `\n\n<i>Every trade sends its fee here. Cross-check the balance against the daily report.</i>`).catch(() => {});
+    // Announce the fee treasury to the channel so the operator always knows
+    // (and can verify on-chain) which wallet the 1% fee is collected to.
+    // AT MOST ONCE A DAY: this used to post on every boot, and a deploy session
+    // is a dozen boots — the same card, minute after minute, on top of the feed
+    // it exists to keep readable. The mark is persisted, so restarts stay quiet.
+    if (core.opsDue('boot_announce', DAY_MS)) {
+      core.markOps('boot_announce');   // mark FIRST: a crash-loop must not out-race the send
+      const evmT = core.CFG.feeWallet, solT = core.CFG.solFeeWallet;
+      report.post(`🟢 <b>Dexvra Trade Bot online</b> — @${BOT_USERNAME || '?'}\n💰 <b>Fee treasury (1% per trade)</b>` +
+        (evmT ? `\n  EVM: <code>${esc(evmT)}</code>` : '') +
+        (solT ? `\n  SOL: <code>${esc(solT)}</code>` : '') +
+        `\n\n<i>Every trade sends its fee here. Cross-check the balance against the daily report.</i>`).catch(() => {});
+    }
   }
   // Off-site store backup to a private Telegram channel (see tgBackupOnce).
+  // The archive used to be uploaded unconditionally at boot AND on a fresh
+  // setInterval, so every restart shipped another one — two archives three
+  // minutes apart is what the operator actually saw. Now the TIMER is what runs
+  // often; the UPLOAD only happens when one is genuinely due, measured from the
+  // persisted time of the last successful upload rather than from process start.
   if (backupChannel()) {
-    const hours = Math.max(1, Number(process.env.BACKUP_TG_HOURS || 6));
-    tgBackupOnce();   // one at boot so a fresh deploy is covered immediately
-    setInterval(tgBackupOnce, hours * 3600 * 1000);
-    console.log(`telegram store backup ENABLED → channel every ${hours}h`);
+    const hours = Math.max(1, Number(process.env.BACKUP_TG_HOURS || 24));
+    const gap = hours * 3600 * 1000;
+    const backupIfDue = async () => {
+      if (!core.opsDue('tg_backup', gap)) return false;
+      // Marked only on a confirmed upload: a failed send should retry at the
+      // next check, not silently skip the day it was meant to cover.
+      const ok = await tgBackupOnce();
+      if (ok) core.markOps('tg_backup');
+      return ok;
+    };
+    backupIfDue();
+    setInterval(backupIfDue, BACKUP_CHECK_MS);
+    console.log(`telegram store backup ENABLED → channel at most every ${hours}h`);
   }
   console.log(`Dexvra Trade Bot up as @${BOT_USERNAME || '?'} — chains: ${core.chains.ENABLED.join(', ')}`);
 
@@ -1859,5 +2297,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

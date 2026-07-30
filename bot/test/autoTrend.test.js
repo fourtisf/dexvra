@@ -8,8 +8,9 @@ const test = require("node:test");
 const assert = require("node:assert");
 const api = require("../src/api/dexvra");
 const autoTrend = require("../src/services/autoTrend");
+const log = require("../src/helpers/logger");
 
-test("autotrend: defaults + rails (max 18h, valid ranges, capped target)", async () => {
+test("autotrend: defaults + rails (max 18h, valid ranges, capped per-chain target)", async () => {
   const d = autoTrend.get();
   assert.strictEqual(d.enabled, false);
   assert.strictEqual(d.maxHours, 18);
@@ -21,8 +22,15 @@ test("autotrend: defaults + rails (max 18h, valid ranges, capped target)", async
   // max can't drop below min; target and gap stay within rails.
   c = await autoTrend.set({ minHours: 10, maxHours: 4 });
   assert.ok(c.maxHours >= c.minHours, "max kept >= min");
-  c = await autoTrend.set({ target: 9999 });
-  assert.strictEqual(c.target, autoTrend.HARD.targetMax, "target capped");
+  c = await autoTrend.set({ perChain: 9999 });
+  assert.strictEqual(c.perChain, autoTrend.HARD.perChainMax, "per-chain target capped");
+  // An unknown network would be topped up forever with nothing eligible.
+  c = await autoTrend.set({ chains: ["solana", "not-a-chain", "BSC"] });
+  assert.deepStrictEqual(c.chains, ["solana", "bsc"], "unknown ids dropped, case normalised");
+  // An empty list is a mistake, not an instruction — "auto-trend nothing" is
+  // what the enabled switch is for. It falls back to the shipped set.
+  c = await autoTrend.set({ chains: [] });
+  assert.deepStrictEqual(c.chains, autoTrend.DEFAULTS.chains);
   c = await autoTrend.set({ minGapMin: 200, maxGapMin: 50 });
   assert.ok(c.maxGapMin >= c.minGapMin, "gap range kept valid");
   await autoTrend.reset();
@@ -38,51 +46,117 @@ test("autotrend: disabled → no promotions", async () => {
   assert.strictEqual(booked, 0, "nothing promoted while disabled");
 });
 
-test("autotrend: tops up to target with random durations ≤ maxHours", async () => {
-  await autoTrend.set({ enabled: true, target: 3, minHours: 3, maxHours: 18 });
+test("every chain is topped up against its OWN count, not one shared pool", async () => {
+  // THE bug, in one fixture. The board groups by network, and a single global
+  // target let the network with the most listings win every shuffle: the live
+  // board showed 5 Solana tokens, one BSC, one Ethereum, one Base — and no
+  // Robinhood at all. Five listings per chain must produce five per chain.
+  await autoTrend.set({ enabled: true, perChain: 5, minHours: 3, maxHours: 18 });
   const now = Date.now();
-  api.getListings = async () => [
-    // one already featured
-    { status: "approved", chain: "solana", address: "feat", sym: "F", trendingRank: 1, trendExp: now + 3600e3 },
-    // eligible (not featured)
-    { status: "approved", chain: "solana", address: "e1", sym: "E1", trendingRank: null },
-    { status: "approved", chain: "bsc", address: "e2", sym: "E2", trendingRank: null },
-    { status: "approved", chain: "base", address: "e3", sym: "E3", trendingRank: null },
-    { status: "approved", chain: "eth", address: "e4", sym: "E4", trendingRank: null },
-    // not approved → never eligible
-    { status: "pending", chain: "solana", address: "np", sym: "NP", trendingRank: null },
-  ];
+  const rows = [];
+  for (const chain of ["solana", "bsc", "ethereum", "base", "robinhood"]) {
+    // Solana is the crowded one — 12 candidates against everyone else's 5. Under
+    // the old code that head start was the whole board.
+    const n = chain === "solana" ? 12 : 5;
+    for (let i = 0; i < n; i++) rows.push({ status: "approved", chain, address: `${chain}${i}`, sym: `${chain}${i}`, trendingRank: null });
+  }
+  api.getListings = async () => rows;
   const calls = [];
   api.bookTrending = async (chain, address, hours) => (calls.push({ chain, address, hours }), {});
-  const rng = () => 0.5; // deterministic
-  const promoted = await autoTrend.runOnce({ rng });
-  assert.strictEqual(promoted, 2, "featured=1, target=3 → promote 2");
-  assert.strictEqual(calls.length, 2);
-  for (const c of calls) {
-    assert.ok(c.hours >= 3 && c.hours <= 18, `duration ${c.hours} within 3–18h`);
-    assert.notStrictEqual(c.address, "np", "never promotes a non-approved listing");
-    assert.notStrictEqual(c.address, "feat", "never re-promotes an already-featured one");
-  }
+  const promoted = await autoTrend.runOnce({ rng: () => 0.5 });
+
+  const byChain = {};
+  for (const c of calls) byChain[c.chain] = (byChain[c.chain] || 0) + 1;
+  assert.deepStrictEqual(byChain, { solana: 5, bsc: 5, ethereum: 5, base: 5, robinhood: 5 }, JSON.stringify(byChain));
+  assert.strictEqual(promoted, 25);
+  for (const c of calls) assert.ok(c.hours >= 3 && c.hours <= 18, `duration ${c.hours} within 3–18h`);
+  void now;
 });
 
-test("autotrend: already at target → no-op", async () => {
-  await autoTrend.set({ enabled: true, target: 1 });
+test("a chain already at its count is left alone; a short one is topped up", async () => {
+  await autoTrend.set({ enabled: true, perChain: 2 });
   const now = Date.now();
   api.getListings = async () => [
-    { status: "approved", chain: "solana", address: "feat", sym: "F", trendingRank: 1, trendExp: now + 3600e3 },
-    { status: "approved", chain: "solana", address: "e1", sym: "E1", trendingRank: null },
+    // solana: two already featured → nothing needed
+    { status: "approved", chain: "solana", address: "s1", trendingRank: 1, trendExp: now + 3600e3 },
+    { status: "approved", chain: "solana", address: "s2", trendingRank: 2, trendExp: now + 3600e3 },
+    { status: "approved", chain: "solana", address: "s3", trendingRank: null },
+    // bsc: one featured, one free → needs exactly one
+    { status: "approved", chain: "bsc", address: "b1", trendingRank: 3, trendExp: now + 3600e3 },
+    { status: "approved", chain: "bsc", address: "b2", trendingRank: null },
+    // an EXPIRED slot is not featured — it is the whole reason this loop exists
+    { status: "approved", chain: "base", address: "x1", trendingRank: 9, trendExp: now - 1000 },
+    { status: "approved", chain: "base", address: "x2", trendingRank: null },
+    // never eligible
+    { status: "pending", chain: "solana", address: "np", trendingRank: null },
   ];
-  let booked = 0;
-  api.bookTrending = async () => (booked++, {});
-  assert.strictEqual(await autoTrend.runOnce(), 0);
-  assert.strictEqual(booked, 0);
-  await autoTrend.reset();
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push({ chain, address }), {});
+  await autoTrend.runOnce({ rng: () => 0.5 });
+  const got = calls.map((c) => c.address).sort();
+  assert.deepStrictEqual(got, ["b2", "x1", "x2"], `promoted ${got.join(",")}`);
+  assert.ok(!got.includes("s3"), "solana was already at 2 — do not overfill it");
+  assert.ok(!got.includes("np"), "never promotes a non-approved listing");
 });
 
-// Forced per-chain run: the board groups by network, so a chain with nothing
-// featured shows nothing at all — and waiting for the random cycle to happen to
-// pick that chain is not a plan. The admin panel's "⚡ Run now" needs a run that
-// targets ONE chain and ignores the global target.
+test("only the configured chains are filled", async () => {
+  // Tron has no listings and nobody sells trending there; topping it up every
+  // cycle would just log a failure forever.
+  await autoTrend.set({ enabled: true, perChain: 3, chains: ["solana", "robinhood"] });
+  api.getListings = async () => [
+    { status: "approved", chain: "solana", address: "s1", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "r1", trendingRank: null },
+    { status: "approved", chain: "tron", address: "t1", trendingRank: null },
+    { status: "approved", chain: "ethereum", address: "e1", trendingRank: null },
+  ];
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push(address), {});
+  await autoTrend.runOnce({ rng: () => 0.5 });
+  assert.deepStrictEqual(calls.sort(), ["r1", "s1"]);
+  await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+});
+
+test("a chain that CANNOT be filled says so — silence looks identical to 'not yet'", async () => {
+  // Robinhood with two listings can never reach five, and no number of cycles
+  // will change that. Without this line the operator waits for a loop that has
+  // already done everything it can.
+  await autoTrend.set({ enabled: true, perChain: 5 });
+  api.getListings = async () => [{ status: "approved", chain: "robinhood", address: "r1", trendingRank: null }];
+  api.bookTrending = async () => ({});
+  const warns = [];
+  const realWarn = log.warn;
+  log.warn = (...a) => warns.push(a.join(" "));
+  autoTrend._test.resetShortWarn();
+  try {
+    await autoTrend.runOnce({ rng: () => 0.5 });
+  } finally {
+    log.warn = realWarn;
+  }
+  const line = warns.join("\n");
+  assert.match(line, /board below target/, line);
+  assert.match(line, /robinhood \(needs 5, only 1 eligible\)/, line);
+  assert.match(line, /solana \(needs 5, none eligible\)/, line);
+  assert.match(line, /list more tokens on those chains, or lower the per-chain target/, "it must say what to DO");
+});
+
+test("the shortfall warning does not repeat every cycle", async () => {
+  // It is a standing condition on a loop that runs every few minutes. Saying it
+  // each time is how a real warning becomes wallpaper.
+  await autoTrend.set({ enabled: true, perChain: 5 });
+  api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
+  api.bookTrending = async () => ({});
+  const warns = [];
+  const realWarn = log.warn;
+  log.warn = (...a) => warns.push(a.join(" "));
+  autoTrend._test.resetShortWarn();
+  try {
+    for (let i = 0; i < 5; i++) await autoTrend.runOnce({ rng: () => 0.5 });
+  } finally {
+    log.warn = realWarn;
+  }
+  assert.strictEqual(warns.filter((w) => w.includes("board below target")).length, 1, warns.join("\n"));
+});
+
 test("forced run promotes on the requested chain only", async () => {
   const rows = [
     { status: "approved", chain: "solana", address: "s1", sym: "S1" },
@@ -139,12 +213,19 @@ test("featuredByChain counts what the panel shows", async () => {
     { status: "approved", chain: "solana", address: "s1", trendingRank: 1, trendExp: now + 3_600_000 },
     { status: "approved", chain: "solana", address: "s2" },
     { status: "approved", chain: "bsc", address: "b1" },
+    // Xpress is listing-only and can never be auto-promoted, so counting it as
+    // "eligible" made the panel promise a token the promoter would never touch
+    // — while Run now on the same chain answered "all listed tokens are already
+    // trending". It gets its own bucket.
+    { status: "approved", chain: "bsc", address: "b3", tier: "XPRESS" },
+    { status: "approved", chain: "bsc", address: "b4", tier: "xpress" }, // case must not matter
     { status: "pending", chain: "bsc", address: "b2" }, // not approved → invisible
   ];
   try {
     const by = await autoTrend.featuredByChain(now);
     assert.deepStrictEqual(by.solana, { featured: 1, eligible: 1 });
-    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 1 });
+    // Xpress counts as eligible like anything else — it is promotable.
+    assert.deepStrictEqual(by.bsc, { featured: 0, eligible: 3 });
   } finally {
     api.getListings = realGet;
   }
@@ -240,7 +321,7 @@ test("announce is OFF by default and every rail is railed", async () => {
   const c = autoTrend.get();
   assert.strictEqual(c.announce, false, "publishing must be opt-in");
   const wild = await autoTrend.set({ announcePerDay: 9999, announceGapMin: 0, announceCooldownDays: -5 });
-  assert.ok(wild.announcePerDay <= 24, `daily cap railed: ${wild.announcePerDay}`);
+  assert.ok(wild.announcePerDay <= 200, `daily cap railed: ${wild.announcePerDay}`);
   assert.ok(wild.announceGapMin >= 5, `spacing railed: ${wild.announceGapMin}`);
   assert.ok(wild.announceCooldownDays >= 0, `cooldown railed: ${wild.announceCooldownDays}`);
   await autoTrend.reset();
@@ -270,39 +351,97 @@ test("announceReason names every refusal", async () => {
   );
 });
 
-test("XPRESS tokens are never auto-promoted", async () => {
-  // packages.js records the operator decision: "Xpress is listing-ONLY: no
-  // trending slot, no trending-channel post". The upgrade path sold to an
-  // Xpress buyer is to come back and BUY trending.
-  assert.ok(autoTrend.NEVER_PROMOTE_TIERS.has("XPRESS"));
+test("every listed token is eligible — no package is skipped", async () => {
+  // The operator's rule, in their words: every listed token can get trending,
+  // free or paid. An earlier version held Xpress back from the free fill to
+  // protect an upsell; it left chains visibly stuck and was not what was wanted.
+  await autoTrend.set({ enabled: true, perChain: 5 });
   const realGet = api.getListings;
-  const realBook = api.bookTrending;
-  const booked = [];
   api.getListings = async () => [
-    { status: "approved", chain: "solana", address: "x1", sym: "$X1", tier: "XPRESS" },
-    { status: "approved", chain: "solana", address: "f1", sym: "$F1", tier: "FREE" },
+    { status: "approved", chain: "solana", address: "x1", sym: "X1", tier: "XPRESS", trendingRank: null },
+    { status: "approved", chain: "solana", address: "g1", sym: "G1", tier: "GOLD", trendingRank: null },
   ];
-  api.bookTrending = async (chain, address) => {
-    booked.push(address);
-    return {};
-  };
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, target: 8, announce: false });
-    await autoTrend.runOnce();
-    assert.ok(!booked.includes("x1"), `the Xpress token must be left alone: ${booked}`);
-    assert.ok(booked.includes("f1"), "…while the free one is fair game");
-    // The forced per-chain path shares the rule.
-    booked.length = 0;
-    api.getListings = async () => [{ status: "approved", chain: "bsc", address: "x2", sym: "$X2", tier: "XPRESS" }];
-    const r = await autoTrend.forceChain("bsc");
-    assert.strictEqual(r.promoted, 0, "forced runs must not smuggle Xpress in");
-    assert.strictEqual(booked.length, 0);
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(calls.sort(), ["g1", "x1"], "both go up; the package is not a gate");
   } finally {
     api.getListings = realGet;
-    api.bookTrending = realBook;
-    await autoTrend.reset();
   }
 });
+
+test("no tier gate survives anywhere in the promoter", () => {
+  // Cheap and blunt on purpose: this rule has been re-broken once already.
+  const fss = require("node:fs");
+  const src = fss
+    .readFileSync(require.resolve("../src/services/autoTrend.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/XPRESS|NEVER_PROMOTE/.test(src), "a tier exclusion is back in autoTrend");
+});
+
+
+test("Run now promotes ANY package — it is the admin's own hand, not the policy", async () => {
+  // The operator's rule, in their words: a listed token, whatever package it
+  // holds, gets trending when it is asked for. Applying the give-away rule to
+  // this button left a chain visibly stuck with no way to override it, and the
+  // alert claimed "all 5 are already trending" when two were.
+  const realGet = api.getListings;
+  const soon = Date.now() + 3600e3;
+  api.getListings = async () => [
+    { status: "approved", chain: "bsc", address: "b1", sym: "A", trendingRank: 1, trendExp: soon },
+    { status: "approved", chain: "bsc", address: "b2", sym: "B", trendingRank: 2, trendExp: soon },
+    { status: "approved", chain: "bsc", address: "b3", sym: "C", tier: "XPRESS" },
+  ];
+  const calls = [];
+  api.bookTrending = async (chain, address) => (calls.push(address), {});
+  try {
+    const res = await autoTrend.forceChain("bsc");
+    assert.strictEqual(res.promoted, 1, res.reason);
+    assert.deepStrictEqual(calls, ["b3"], "the Xpress token is placed, because the admin asked");
+    assert.strictEqual(res.reason, "");
+  } finally {
+    api.getListings = realGet;
+  }
+});
+
+test("a genuinely full chain still says so", async () => {
+  const realGet = api.getListings;
+  const soon = Date.now() + 3600e3;
+  api.getListings = async () => [
+    { status: "approved", chain: "base", address: "x1", trendingRank: 1, trendExp: soon },
+    { status: "approved", chain: "base", address: "x2", trendingRank: 2, trendExp: soon },
+  ];
+  try {
+    const res = await autoTrend.forceChain("base");
+    assert.match(res.reason, /all 2 listed token\(s\) on base are already trending/, res.reason);
+  } finally {
+    api.getListings = realGet;
+  }
+});
+
+test("a PAID trending order is never refused for its package", () => {
+  // The guarantee behind all of the above: "token yang sudah listing, mau apapun
+  // package, kalau client pesan trending harus dilakukan." The purchase flow
+  // resolves the listing by address and books it — there is no tier check, and
+  // adding one would be refusing a sale.
+  const fss = require("node:fs");
+  const flow = fss.readFileSync(require.resolve("../src/handlers/trending.js"), "utf8");
+  // The listing lookup is the only gate: approved, and the address matches.
+  // A tier term anywhere in that filter would be refusing a sale. (The file does
+  // mention Xpress — as the button offered when the token is NOT listed yet.)
+  const lookup = flow.slice(flow.indexOf("listing = all.find("), flow.indexOf("if (!listing)"));
+  assert.match(lookup, /r\.status === "approved"/);
+  assert.ok(!/tier/i.test(lookup), `the purchase flow filters on tier: ${lookup}`);
+  assert.ok(!/NEVER_PROMOTE/.test(flow));
+  const fulfil = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  const fn = fulfil.slice(fulfil.indexOf("async function fulfillTrending("));
+  const body = fn.slice(0, fn.indexOf("\n}\n"));
+  assert.match(body, /await api\.bookTrending\(p\.chain, p\.address, p\.hours\)/, "it books what was paid for");
+  assert.ok(!/XPRESS|NEVER_PROMOTE/.test(body), "…unconditionally");
+});
+
 
 test("a forced run QUEUES its announcement — the admin process cannot post", async () => {
   // channels/post.attach() happens only in src/bot.js (the main bot), so a post
@@ -348,4 +487,199 @@ test("the announce path never posts to the announcement channel", () => {
   assert.ok(!/CHANNELS\.announce/.test(src), "autoTrend must never reference the announcement channel");
   assert.ok(/CHANNELS\.trending/.test(src), "…only the trending channel");
   assert.ok(!/pin:\s*true/.test(src), "and never pin — that pin belongs to the board");
+});
+
+
+
+
+
+// ── Top gainers ──────────────────────────────────────────────────────────────
+const market = require("../src/marketdata");
+
+test("the board is filled by 24h gain, best first — not by a coin flip", async () => {
+  // "trending di liat dari top gainers." A trending board is a claim about what
+  // is moving; a random fill made that claim false, and put a token down 80%
+  // beside one up 40% with nothing to tell them apart.
+  const realFetch = market.fetchMarket;
+  const gains = { a: 5, b: 140, c: -62, d: 38 };
+  market.fetchMarket = async (_chain, address) => ({ change24h: gains[address] });
+  try {
+    const rows = ["a", "b", "c", "d"].map((address) => ({ chain: "bsc", address }));
+    const ranked = await autoTrend.byGain(rows);
+    assert.deepStrictEqual(ranked.map((r) => r.address), ["b", "d", "a", "c"]);
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("only the top N are promoted, and they are the top N", async () => {
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const gains = { s1: 12, s2: 300, s3: -40, s4: 90, s5: 2 };
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.getListings = async () =>
+    Object.keys(gains).map((address) => ({ status: "approved", chain: "solana", address, sym: address, trendingRank: null }));
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, perChain: 2, chains: ["solana"] });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(calls, ["s2", "s4"], `promoted ${calls.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, perChain: 5 });
+  }
+});
+
+test("a token with no price still gets a turn — it just goes last", async () => {
+  // Robinhood has no indexer, so most of its listings price as null. Dropping
+  // them would quietly mean that chain is never auto-filled at all.
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async (_c, address) => (address === "priced" ? { change24h: 7 } : null);
+  try {
+    const rows = ["dark1", "priced", "dark2"].map((address) => ({ chain: "robinhood", address }));
+    const ranked = await autoTrend.byGain(rows, () => 0);
+    assert.strictEqual(ranked[0].address, "priced", "a real gain outranks an unknown");
+    assert.deepStrictEqual(ranked.slice(1).map((r) => r.address).sort(), ["dark1", "dark2"], "…but the rest are still there");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("a price lookup that throws does not take the cycle down", async () => {
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async () => { throw new Error("429 rate limited"); };
+  try {
+    const rows = [{ chain: "bsc", address: "a" }, { chain: "bsc", address: "b" }];
+    const ranked = await autoTrend.byGain(rows, () => 0);
+    assert.strictEqual(ranked.length, 2, "everything is still promotable");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("Run now places the best mover, not an arbitrary one", async () => {
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const gains = { b1: -5, b2: 210, b3: 44 };
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.getListings = async () =>
+    Object.keys(gains).map((address) => ({ status: "approved", chain: "bsc", address, sym: address, trendingRank: null }));
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    const res = await autoTrend.forceChain("bsc");
+    assert.strictEqual(res.promoted, 1);
+    assert.deepStrictEqual(calls, ["b2"], `placed ${calls.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+  }
+});
+
+test("the price probe is bounded — this runs on a timer", async () => {
+  // A chain with 400 listings must not fire 400 lookups every cycle at the same
+  // API the board poster is using.
+  const realFetch = market.fetchMarket;
+  let calls = 0;
+  market.fetchMarket = async () => (calls++, { change24h: 1 });
+  try {
+    const rows = Array.from({ length: 60 }, (_, i) => ({ chain: "bsc", address: `t${i}` }));
+    const ranked = await autoTrend.byGain(rows, () => 0);
+    assert.ok(calls <= 25, `probed ${calls} candidates`);
+    assert.strictEqual(ranked.length, 60, "the unprobed tail is still eligible, just unranked");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("a token that is DOWN is never auto-promoted onto a top-gainers board", async () => {
+  // The board carried $Z at -99.94% with a $1,648 market cap. Ranking alone
+  // could not stop that: five slots, five candidates, and sorting still
+  // promotes the worst of them. A floor is what makes the board's claim true.
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const gains = { up1: 40, down1: -8, down2: -99.94, up2: 3 };
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.getListings = async () =>
+    Object.keys(gains).map((address) => ({ status: "approved", chain: "bsc", address, sym: address, trendingRank: null }));
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, perChain: 5, chains: ["bsc"], minGainPct: 0 });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.deepStrictEqual(calls, ["up1", "up2"], `promoted ${calls.join(",")}`);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+  }
+});
+
+test("an unpriced token is exempt from the floor — otherwise Robinhood never fills", async () => {
+  // Most Robinhood listings price as null: no indexer covers that chain.
+  // Judging them against a number nobody can read would exclude the whole
+  // network from the automatic fill, permanently and silently.
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  market.fetchMarket = async () => null;
+  api.getListings = async () => [
+    { status: "approved", chain: "robinhood", address: "r1", sym: "R1", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "r2", sym: "R2", trendingRank: null },
+  ];
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, perChain: 5, chains: ["robinhood"], minGainPct: 0 });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    assert.strictEqual(calls.length, 2, "both unpriced tokens are still promotable");
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains });
+  }
+});
+
+test("a lone candidate is priced too — no shortcut past the floor", async () => {
+  // byGain used to return a single row untouched, so the floor saw an
+  // unannotated candidate and could not tell "no price" from "never looked".
+  const realFetch = market.fetchMarket;
+  market.fetchMarket = async () => ({ change24h: -50 });
+  try {
+    const [only] = await autoTrend.byGain([{ chain: "bsc", address: "solo" }]);
+    assert.strictEqual(only._change, -50, "a lone candidate is still measured");
+  } finally {
+    market.fetchMarket = realFetch;
+  }
+});
+
+test("Run now ignores the floor — the admin asked for it", async () => {
+  // A deliberate act, not the automatic policy: sometimes the operator wants
+  // SOMETHING on an empty chain, whatever the day's prices look like.
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  market.fetchMarket = async () => ({ change24h: -30 });
+  api.getListings = async () => [{ status: "approved", chain: "base", address: "d1", sym: "D1", trendingRank: null }];
+  const calls = [];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ minGainPct: 0 });
+    const res = await autoTrend.forceChain("base");
+    assert.strictEqual(res.promoted, 1, res.reason);
+    assert.deepStrictEqual(calls, ["d1"]);
+  } finally {
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+  }
+});
+
+test("Robinhood is the third section on the board, not the last", () => {
+  // Operator's call: it is Dexvra's own chain, and it was sitting under
+  // Ethereum and Base at the bottom of its own board. One array drives the
+  // board, the chain picker and the admin panel's rows, so a chain inserted in
+  // the wrong place silently reshuffles a pinned public message.
+  const { CHAIN_ORDER } = require("../src/config/chains");
+  assert.deepStrictEqual(CHAIN_ORDER.slice(0, 5), ["solana", "bsc", "robinhood", "ethereum", "base"]);
+  assert.strictEqual(CHAIN_ORDER.indexOf("robinhood"), 2, "third, counting from one");
 });

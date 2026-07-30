@@ -3,7 +3,7 @@
 import { useState, type CSSProperties } from "react";
 import { PageHead } from "@/components/PageHead";
 import { ChainLogo } from "@/components/ChainLogo";
-import { BOT_URL } from "@/config/brand";
+import { BOT_URL, TELEGRAM_HANDLE, TELEGRAM_LISTING_HANDLE } from "@/config/brand";
 import { CHAINS, CHAIN_IDS } from "@/config/chains";
 import {
   BANNERS,
@@ -12,6 +12,7 @@ import {
   fmtUsd,
   nativeOf,
   tierPrice,
+  tierTrendingHours,
   trendingForChain,
 } from "@/lib/packages";
 
@@ -48,19 +49,26 @@ export default function AdvertisePage() {
       {/* ── Listing packages ─────────────────────────────────────────── */}
       <h3 className="pkg-h">Listing Packages</h3>
       <p className="pkg-sub">
-        A one-time listing on Dexvra. Higher tiers get better placement, the verified badge, and an
-        announcement post. Your token carries its tier tag everywhere.
+        A one-time listing on Dexvra. Every package — Xpress included — is posted to{" "}
+        <b>{TELEGRAM_LISTING_HANDLE}</b> and to X. Higher tiers add the <b>{TELEGRAM_HANDLE}</b>{" "}
+        announcement, a trending run, and the verified badge. Your token carries its tier tag everywhere.
       </p>
       <div className="pkg-grid">
         {LISTING_TIERS.map((tier) => {
           const price = tierPrice(tier.key, chain);
-          const perks = tier.instant
-            ? ["Instant activation", "Listing alert on Telegram", "Priority verification"]
-            : [
-                tier.rank <= 3 ? "Announcement post" : "Standard board listing",
-                tier.rank <= 3 ? "Verified badge" : "Search + discovery indexed",
-                `Tier #${tier.rank} placement`,
-              ];
+          // Every listing is tweeted (fulfilment calls x.postListing for all of
+          // them), the @dexvraio post is gated on the tier's announce flag, and
+          // the trending hours come from the table the bot bills against. The
+          // page used to name none of the three, so the strongest thing a tier
+          // buys — Diamond carries two full days of trending — was invisible.
+          const hrs = tierTrendingHours(tier.key);
+          const perks = [
+            tier.verified ? "Verified badge" : "Search + discovery indexed",
+            tier.announce ? `Announcement post in ${TELEGRAM_HANDLE}` : `Listing post in ${TELEGRAM_LISTING_HANDLE}`,
+            hrs > 0 ? `Auto trending for ${hrs}h` : "Instant activation — no review wait",
+            "Announcement on X",
+            tier.instant ? "Priority verification — reviewed first" : `Tier #${tier.rank} placement`,
+          ];
           return (
             <div
               className={`pkg ${tier.rank === 1 ? "featured" : ""}`}

@@ -8,7 +8,7 @@
 // The bot must be an admin in each target channel; for GramJS the logged-in
 // premium USER must be able to post there. attach() wires the bot's telegram
 // instance at boot.
-const { CHANNELS } = require("../config/constants");
+const { CHANNELS, GROUP_CHAT } = require("../config/constants");
 const gramjs = require("../gramjs");
 const log = require("../helpers/logger");
 
@@ -113,6 +113,28 @@ async function ensurePinned(channel, msg, alreadyPinned) {
   }
 }
 
+// ── Community-group mirror ───────────────────────────────────────────────────
+// Every listing also lands in the group. FORWARD rather than re-post, for three
+// reasons that all matter: a forward keeps the premium custom emoji (a Bot-API
+// re-post would strip them), it costs one call with no media re-upload, and it
+// carries the "Forwarded from Dexvra Listing Alerts" header — so the group post
+// drives readers to the channel instead of competing with it.
+//
+// Best-effort by construction: a listing must never fail because the bot was
+// removed from the group or the group went read-only. The failure is logged
+// once with what to check, and the caller is told nothing.
+async function mirrorToGroup(fromChannel, msg, { label = "listing" } = {}) {
+  if (!tg || !GROUP_CHAT || !msg || !msg.message_id) return null;
+  try {
+    const fwd = await tg.forwardMessage(GROUP_CHAT, fromChannel, msg.message_id);
+    log.info(`[channels] mirrored ${label} ${fromChannel}/${msg.message_id} → ${GROUP_CHAT}`);
+    return fwd;
+  } catch (e) {
+    log.warn(`[channels] mirror ${label} → ${GROUP_CHAT} FAILED: ${e.message} — is the bot a member of the group, and can it post there?`);
+    return null;
+  }
+}
+
 /** Send a text post; optionally pin. Returns { message_id, ... } or null. */
 async function sendText(channel, payload, { replyTo, pin } = {}) {
   if (!tg) throw new Error("channels/post not attached to a bot");
@@ -203,5 +225,5 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   }
 }
 
-module.exports = { attach, sendText, sendPhoto, sendMedia, ensurePinned, CHANNELS, isAttached: () => !!tg };
+module.exports = { attach, sendText, sendPhoto, sendMedia, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg };
 module.exports._fitCaption = fitCaption; // exposed for tests

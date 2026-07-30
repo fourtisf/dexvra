@@ -9,6 +9,7 @@ const {
   RATE_WINDOW,
   RATE_LIMIT,
   LOG_CHANNEL,
+  ERROR_CHANNEL,
 } = require("./config/constants");
 const { registerHandlers } = require("./handlers/registry");
 const { setupMonitoring } = require("./services/monitoring");
@@ -127,7 +128,7 @@ async function startBot() {
 
   const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 120000 });
   applyMiddleware(bot);
-  log.attach(bot, LOG_CHANNEL);
+  log.attach(bot, LOG_CHANNEL, ERROR_CHANNEL);
   require("./channels/post").attach(bot.telegram); // channel posts use the bot's Telegram
 
   // All pre-launch work happens here — in Telegraf v4, launch() only resolves

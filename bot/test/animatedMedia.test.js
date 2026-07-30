@@ -142,12 +142,64 @@ test("a .gif clip is converted to MP4 so it plays inline", async (t) => {
   assert.strictEqual(again.source, out.source, "converted once, reused after");
 });
 
-test("anything that is not a .gif is left exactly as it was", async () => {
-  const mp4 = { type: "video", source: "/tmp/whatever.mp4" };
-  assert.strictEqual(await bannerTemplate.toInlineClip(mp4), mp4);
+test("an .mp4 clip is converted too — a video card is not a GIF", async (t) => {
+  // The container was only half the problem. An upload that arrived as .mp4 was
+  // sent with sendVideo, which renders a player with a play button: the viewer
+  // has to tap it and it never loops. That is what "the banner ad is still a
+  // file" meant. Telegram's distinction is the AUDIO TRACK, not the extension —
+  // strip it, mark the document animated, and the same MP4 autoplays silently.
+  if (!ffmpegOk) return t.skip("ffmpeg not installed");
+  const ffmpeg = require("fluent-ffmpeg");
+  ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
+  const src = path.join(process.env.BOT_DATA_DIR, "banner-media-banner.mp4");
+  try {
+    await new Promise((resolve, reject) => {
+      ffmpeg()
+        .input("testsrc=size=320x240:rate=10:duration=1")
+        .inputFormat("lavfi")
+        .input("sine=frequency=440:duration=1") // WITH audio — the thing to strip
+        .inputFormat("lavfi")
+        .outputOptions(["-t", "1", "-pix_fmt", "yuv420p"])
+        .save(src)
+        .on("end", resolve)
+        .on("error", reject);
+    });
+  } catch (e) {
+    return t.skip(`ffmpeg cannot run here: ${e.message}`);
+  }
+  const out = await bannerTemplate.toInlineClip({ type: "video", source: src });
+  assert.strictEqual(out.type, "animation", "sent as an animation, not a video with controls");
+  assert.notStrictEqual(out.source, src, "it must be re-encoded, not passed through");
+  assert.match(out.source, /\.mp4$/);
+  assert.ok(fss.readFileSync(out.source).subarray(0, 12).toString("latin1").includes("ftyp"), "a real MP4");
+  // The audio strip is what makes Telegram treat it as an animation at all.
+  const code = fss.readFileSync(require.resolve("../src/bannerTemplate.js"), "utf8");
+  assert.ok(code.includes('"-an"'), "-an must stay in the encode options");
+});
+
+test("what cannot be converted is left exactly as it was", async () => {
+  const other = { type: "photo", source: "/tmp/whatever.png" };
+  assert.strictEqual(await bannerTemplate.toInlineClip(other), other, "not a clip at all");
+  const missing = { type: "video", source: "/tmp/does-not-exist-xyz.mp4" };
+  assert.strictEqual(await bannerTemplate.toInlineClip(missing), missing, "no file → nothing to re-encode");
   const buf = { type: "animation", source: Buffer.from("gif") };
   assert.strictEqual(await bannerTemplate.toInlineClip(buf), buf, "a Buffer has no path to convert");
   assert.strictEqual(await bannerTemplate.toInlineClip(null), null);
+});
+
+test("the Banner Ads clip carries the advertiser's creative, not just decoration", () => {
+  // A banner clip used to play bare: the buyer's artwork was composited only
+  // into the STILL template, so an operator who uploaded an animated frame
+  // published an ad with no ad in it.
+  const src = fss.readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  const i = src.indexOf('mediaOverride("banner")');
+  assert.ok(i > -1, "fulfillBanner must look for an uploaded clip");
+  const around = src.slice(i, i + 500);
+  assert.match(around, /composeOntoClip\("banner", clip, creative/, "…and composite the creative onto it");
+  assert.match(around, /falling back to the still frame/, "…with the still frame as the fallback, never a bare clip");
+  // The admin preview must show the same thing, or the slot is tuned blind.
+  const admin = fss.readFileSync(require.resolve("../src/admin/adminBot.js"), "utf8");
+  assert.match(admin, /BT_CLIP_FILL_KINDS = new Set\(\[\.\.\.BT_FILL_KINDS, "banner"\]\)/);
 });
 
 test("the rank-up poster sends the CONVERTED clip (the actual regression)", async (t) => {

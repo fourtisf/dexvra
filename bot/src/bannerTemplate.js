@@ -240,7 +240,9 @@ const KIND_DEFAULTS = {
     metaY: 902,
     metaFontSize: 44,
   },
-  banner: { ...BASE_DEFAULTS, slotShape: "rect", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
+  // slotFit "contain": the advertiser's whole creative is shown, never cropped.
+  // See the fit block in compose() for why cover is wrong for paid artwork.
+  banner: { ...BASE_DEFAULTS, slotShape: "rect", slotFit: "contain", logoX: 836, logoY: 296, slotW: 1548, slotH: 760, showText: false },
 };
 const defaultsFor = (kind) => KIND_DEFAULTS[kind] || BASE_DEFAULTS;
 const DEFAULTS = BASE_DEFAULTS; // back-compat export
@@ -260,10 +262,44 @@ function savedLayout(saved, kind) {
   return s && s.layoutVersion === LAYOUT_VERSION ? s : {};
 }
 
+/** "600 × 240" → 2.5. The sold size string is the single source of truth for a
+ *  banner's shape — the same string the website's tile aspect is keyed off — so
+ *  the channel post and the homepage slot can never disagree about it.
+ *  Anything unparseable returns 0, meaning "use the operator's box as drawn". */
+function aspectOfSize(size) {
+  const m = String(size || "").match(/(\d+)\s*[×x]\s*(\d+)/);
+  if (!m) return 0;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return w > 0 && h > 0 ? w / h : 0;
+}
+
+/** True once the operator has supplied their OWN artwork or clip for a kind. */
+function isCustomArt(kind) {
+  try {
+    return hasUploaded(kind) || !!mediaOverride(kind);
+  } catch {
+    return false;
+  }
+}
+
 function loadConfig() {
   const saved = loadJSONSync(CONFIG_FILE, {});
   const out = {};
-  for (const k of LAYOUT_KINDS) out[k] = { ...defaultsFor(k), ...savedLayout(saved, k) };
+  for (const k of LAYOUT_KINDS) {
+    const base = defaultsFor(k);
+    // The bundled artwork's slot coordinates are MEASURED against the bundled
+    // artwork — the ad frame sits right of centre there, so logoX is 836. The
+    // moment an operator uploads their own template we no longer know where its
+    // frame is, and those coordinates become a wrong guess dressed as a default:
+    // on a centred design the creative lands off to one side with dead space
+    // beside it. Centre is the only defensible starting point for an unknown
+    // design. Any explicit admin tweak still wins — this only fills the gap
+    // where nothing has been tuned yet.
+    const unknownDesign = base.slotShape === "rect" && isCustomArt(k);
+    const start = unknownDesign ? { ...base, logoX: "center", logoY: "center" } : base;
+    out[k] = { ...start, ...savedLayout(saved, k) };
+  }
   return out;
 }
 
@@ -354,7 +390,7 @@ function lightenHex(hex, amt) {
 
 /** Composite the kind's template with the token logo (+ optional text).
  *  Returns a PNG Buffer, or null when no template / any failure. */
-async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge, change, priceFrom, priceTo } = {}, opts = {}) {
+async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, badge, change, priceFrom, priceTo, slotSize } = {}, opts = {}) {
   // `opts.transparent` renders ONLY the token overlay (logo + $ticker + name + chips +
   // badge) on a CLEAR canvas — used to composite that data onto an animated GIF/video
   // template. Otherwise this draws the still artwork background + the same overlay.
@@ -388,10 +424,30 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
     // Media slot: token logo circle-clipped into the ring, or (banner ads)
     // the advertiser's creative cover-fitted into a rounded rectangular frame.
     const isRect = cfg.slotShape === "rect";
-    const sw = isRect ? Number(cfg.slotW) || 1680 : Number(cfg.logoSize) || BASE_DEFAULTS.logoSize;
-    const sh = isRect ? Number(cfg.slotH) || 800 : sw;
-    const lx = cfg.logoX === "center" ? (W - sw) / 2 : Number(cfg.logoX) || 0;
-    const ly = cfg.logoY === "center" ? (H - sh) / 2 : Number(cfg.logoY) || 0;
+    // The box the operator drew is the BOUNDING area…
+    const bw = isRect ? Number(cfg.slotW) || 1680 : Number(cfg.logoSize) || BASE_DEFAULTS.logoSize;
+    const bh = isRect ? Number(cfg.slotH) || 800 : bw;
+    const bx = cfg.logoX === "center" ? (W - bw) / 2 : Number(cfg.logoX) || 0;
+    const by = cfg.logoY === "center" ? (H - bh) / 2 : Number(cfg.logoY) || 0;
+    // …and the box actually drawn takes the SOLD shape of this booking, fitted
+    // inside it and centred.
+    //
+    // A Standard Banner is sold at 600×240 (2.5:1) and a Wide at 1200×240
+    // (5:1) — two different shapes, and neither is the frame's. With one fixed
+    // box, an advertiser who sent exactly what we asked for still could not
+    // fill it: either the sides were cropped, or a blurred band appeared above
+    // and below. Drawing the box at the shape we sold means a correct upload
+    // lands edge to edge, with nothing cropped and nothing filled in, for both
+    // products. An off-spec upload still falls back to the fit rule below.
+    let sw = bw;
+    let sh = bh;
+    const soldAspect = isRect ? aspectOfSize(slotSize) : 0;
+    if (soldAspect > 0) {
+      if (bw / bh > soldAspect) sw = Math.round(bh * soldAspect);
+      else sh = Math.round(bw / soldAspect);
+    }
+    const lx = bx + (bw - sw) / 2;
+    const ly = by + (bh - sh) / 2;
     if (logoBuffer) {
       try {
         const img = await cv.loadImage(logoBuffer);
@@ -409,10 +465,38 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         }
         ctx.closePath();
         ctx.clip();
-        const s = Math.max(sw / img.width, sh / img.height);
-        const w = img.width * s;
-        const h = img.height * s;
-        ctx.drawImage(img, lx + sw / 2 - w / 2, ly + sh / 2 - h / 2, w, h);
+        // How a picture whose shape differs from the box is fitted.
+        //
+        //   cover   — scale until the box is full, crop what sticks out.
+        //   contain — scale until the whole picture fits, fill the gap with a
+        //             blurred, dimmed copy of itself so it reads as design.
+        //
+        // A token logo is cover-fitted: it is a square in a circle, nothing is
+        // lost. An ADVERTISER'S CREATIVE is not. Cover was cutting paid artwork
+        // to pieces — a Wide Banner is sold at 1200×240 (5:1) and the frame is
+        // 1548×760 (2:1), so cover threw away 59% of its WIDTH: the buyer paid
+        // for a banner and roughly its middle third was published. contain is
+        // therefore the default for a rectangular (ad) slot, and an operator who
+        // wants edge-to-edge fill can still choose cover per service.
+        const fit = isRect ? (cfg.slotFit === "cover" ? "cover" : "contain") : "cover";
+        const place = (scale) => {
+          const w = img.width * scale;
+          const h = img.height * scale;
+          ctx.drawImage(img, lx + sw / 2 - w / 2, ly + sh / 2 - h / 2, w, h);
+        };
+        if (fit === "contain") {
+          // Backdrop first: the same picture, blown up to fill and blurred, so
+          // the letterbox gap is never a flat black bar.
+          ctx.save();
+          ctx.filter = "blur(28px)";
+          ctx.globalAlpha = 0.5;
+          place(Math.max(sw / img.width, sh / img.height));
+          ctx.restore();
+          // Then the creative itself, whole and uncropped.
+          place(Math.min(sw / img.width, sh / img.height));
+        } else {
+          place(Math.max(sw / img.width, sh / img.height));
+        }
         ctx.restore();
         if (!isRect) {
           ctx.beginPath();
@@ -727,20 +811,34 @@ function ffmpegLib() {
  * DocumentAttributeAnimated (see gramjs.js) is necessary but NOT sufficient:
  * the container itself has to change.
  *
- * Anything that isn't a .gif is returned untouched. Conversions are cached in
- * tmp under the source's mtime, so a clip is re-encoded only after the admin
- * uploads a new one — not once per alert. Failure returns the original, so the
- * worst case stays "posts as a file", never "posts nothing".
+ * MP4 uploads go through the SAME conversion, because the container is only
+ * half the problem. A clip whose extension is .mp4 was being sent with
+ * sendVideo, which renders a player with a play button — the viewer has to tap
+ * it, and it does not loop. That is a video, not a GIF, and it is what "the
+ * banner ad is still a file" means in practice. The distinction Telegram makes
+ * is not the extension but the AUDIO TRACK: strip it and mark the document
+ * animated and the same MP4 autoplays, loops, and shows no controls. Every
+ * template clip is therefore normalised to a silent MP4 and sent as an
+ * animation — these are decorative loops above a post, never something anyone
+ * wants to press play on.
+ *
+ * Conversions are cached in tmp under the source's mtime, so a clip is
+ * re-encoded only after the admin uploads a new one — not once per alert.
+ * Failure returns the original, so the worst case stays "posts as a file",
+ * never "posts nothing".
  */
+const CLIP_RE = /\.(gif|mp4|webm|mov)$/i;
+
 async function toInlineClip(media) {
-  if (!media || typeof media.source !== "string" || !/\.gif$/i.test(media.source)) return media;
+  if (!media || typeof media.source !== "string" || !CLIP_RE.test(media.source)) return media;
   const ffmpeg = ffmpegLib();
   const st = fss.existsSync(media.source) ? fss.statSync(media.source) : null;
   if (!ffmpeg || !st) {
-    if (!ffmpeg) log.warn("[bannerTpl] gif→mp4 skipped (no ffmpeg) — the clip will post as a FILE CARD");
+    if (!ffmpeg) log.warn("[bannerTpl] clip→animation skipped (no ffmpeg) — it will post as a FILE CARD");
     return media;
   }
-  const out = path.join(os.tmpdir(), `bt-gif-${path.basename(media.source, ".gif")}-${Math.round(st.mtimeMs)}.mp4`);
+  const stem = path.basename(media.source).replace(CLIP_RE, "");
+  const out = path.join(os.tmpdir(), `bt-clip-${stem}-${Math.round(st.mtimeMs)}.mp4`);
   if (exists(out)) return { type: "animation", source: out };
   try {
     await new Promise((resolve, reject) => {
@@ -763,10 +861,10 @@ async function toInlineClip(media) {
         .on("end", resolve)
         .on("error", reject);
     });
-    log.info(`[bannerTpl] gif→mp4 ✔ ${path.basename(media.source)} → ${path.basename(out)} (plays inline)`);
+    log.info(`[bannerTpl] clip→animation ✔ ${path.basename(media.source)} → ${path.basename(out)} (autoplays, loops, no controls)`);
     return { type: "animation", source: out };
   } catch (e) {
-    log.warn(`[bannerTpl] gif→mp4 failed (${e.message}) — sending the .gif as-is (posts as a file card)`);
+    log.warn(`[bannerTpl] clip→animation failed (${e.message}) — sending as-is (may post as a file card)`);
     fss.promises.unlink(out).catch(() => {});
     return media;
   }

@@ -23,7 +23,18 @@ const CHANNELS = {
   trending: env.TRENDING_CHANNEL || "@dexvratrending",
   listing: env.LISTING_CHANNEL || "@dexvralisting",
 };
+// The community group. Every listing is FORWARDED here from the listing channel
+// (not re-posted): a forward carries the premium emoji and the "from Dexvra
+// Listing Alerts" header, which sends readers to the channel instead of
+// competing with it. The bot must be a member of the group; set this empty to
+// turn the mirror off.
+const GROUP_CHAT = env.GROUP_CHAT === undefined ? "@dexvragroup" : env.GROUP_CHAT;
 const LOG_CHANNEL = env.LOG_CHANNEL || ""; // optional visitor/event log channel
+// Where warn/error go. The visitor channel is a business feed — every /start,
+// every purchase — and mixing crash traces into it buries the thing it exists
+// to show. Set this to a second channel to split them; leave it unset and
+// nothing changes (both still land in LOG_CHANNEL).
+const ERROR_CHANNEL = env.ERROR_CHANNEL || LOG_CHANNEL;
 const PK_CHANNEL = env.PK_CHANNEL || ""; // optional: temp-wallet private-key backup channel (KEEP PRIVATE)
 
 // Admins pay 0 (free) but flows still run end-to-end. Match by numeric id or
@@ -115,7 +126,7 @@ const X = {
     accessSecret: env.X_O_ACCESS_SECRET || "",
   },
 };
-const X_HANDLE = (env.X_HANDLE || "dexvra").replace(/^@/, "");
+const X_HANDLE = (env.X_HANDLE || "dexvraio").replace(/^@/, "");
 // Enabled only when the listing account's 4 keys are all present AND not forced off.
 const X_ENABLED =
   bool(env.X_ENABLED, true) &&
@@ -173,7 +184,9 @@ module.exports = {
   TRADEBOT_USERNAME,
   ADMIN_BOT_TOKEN,
   CHANNELS,
+  GROUP_CHAT,
   LOG_CHANNEL,
+  ERROR_CHANNEL,
   PK_CHANNEL,
   ADMIN_IDS,
   ADMIN_USERNAMES,
