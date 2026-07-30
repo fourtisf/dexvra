@@ -126,7 +126,7 @@ test("a chain that CANNOT be filled says so — silence looks identical to 'not 
   const warns = [];
   const realWarn = log.warn;
   log.warn = (...a) => warns.push(a.join(" "));
-  autoTrend._test.resetShortWarn();
+  await autoTrend._test.resetShortWarn();
   try {
     await autoTrend.runOnce({ rng: () => 0.5 });
   } finally {
@@ -148,7 +148,7 @@ test("the shortfall warning does not repeat every cycle", async () => {
   const warns = [];
   const realWarn = log.warn;
   log.warn = (...a) => warns.push(a.join(" "));
-  autoTrend._test.resetShortWarn();
+  await autoTrend._test.resetShortWarn();
   try {
     for (let i = 0; i < 5; i++) await autoTrend.runOnce({ rng: () => 0.5 });
   } finally {
@@ -682,4 +682,46 @@ test("Robinhood is the third section on the board, not the last", () => {
   const { CHAIN_ORDER } = require("../src/config/chains");
   assert.deepStrictEqual(CHAIN_ORDER.slice(0, 5), ["solana", "bsc", "robinhood", "ethereum", "base"]);
   assert.strictEqual(CHAIN_ORDER.indexOf("robinhood"), 2, "third, counting from one");
+});
+
+test("the shortfall warning survives a restart — it is the reason it spammed", async () => {
+  // The bug the operator saw: five identical "board below target" warnings in
+  // the log channel inside ninety minutes, on a message that carried an HOURLY
+  // guard. Both the guard (`lastShortWarnAt`) and the logger's own 15-minute
+  // de-duplication lived in process memory, so every pm2 restart re-armed them
+  // — and a deploy afternoon is a dozen restarts.
+  const ops = require("../src/helpers/opsThrottle");
+  await autoTrend.set({ enabled: true, perChain: 5 });
+  api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
+  api.bookTrending = async () => ({});
+  const warns = [];
+  const realWarn = log.warn;
+  log.warn = (...a) => warns.push(a.join(" "));
+  await autoTrend._test.resetShortWarn();
+  try {
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    // A restart clears every module-level variable in the process. The mark is
+    // on disk, so it must still be in force.
+    delete require.cache[require.resolve("../src/services/autoTrend")];
+    delete require.cache[require.resolve("../src/helpers/opsThrottle")];
+    const fresh = require("../src/services/autoTrend");
+    fresh._test.setAnnouncer(() => {});
+    await fresh.runOnce({ rng: () => 0.5 });
+  } finally {
+    log.warn = realWarn;
+  }
+  assert.strictEqual(
+    warns.filter((w) => w.includes("board below target")).length,
+    1,
+    `a restart must not re-arm the warning:\n${warns.join("\n")}`,
+  );
+  // Read through a module instance that never saw the first run: the mark can
+  // only come from disk.
+  assert.strictEqual(ops.due("autotrend_board_short", 3600_000), false, "the mark is persisted, not in memory");
+});
+
+test("the advice is daily, not hourly — it is a standing condition, not an incident", () => {
+  const src = fss.readFileSync(require.resolve("../src/services/autoTrend"), "utf8");
+  assert.match(src, /AUTOTREND_SHORT_WARN_HOURS \|\| 24/, "default is once a day");
+  assert.match(src, /log\.debug\(line\);/, "…and pm2 logs still get it every cycle");
 });

@@ -11,6 +11,7 @@ const api = require("../api/dexvra");
 // and the price source has to be stubbable to test the ranking at all.
 const market = require("../marketdata");
 const { CHAINS } = require("../config/chains");
+const ops = require("../helpers/opsThrottle");
 const log = require("../helpers/logger");
 
 const FILE = "autoTrend.json";
@@ -479,14 +480,26 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
     }
   }
   // The board is short and nothing here can fix it: those chains need LISTINGS,
-  // not another cycle. Once an hour so it registers without becoming noise.
-  if (short.length && Date.now() - lastShortWarnAt > 3600_000) {
-    lastShortWarnAt = Date.now();
-    log.warn(`[autotrend] board below target on ${short.join(", ")} — list more tokens on those chains, or lower the per-chain target`);
+  // not another cycle. It is ADVICE about a semi-permanent condition, not an
+  // incident — so it goes out once a DAY, and the mark is on disk.
+  //
+  // It used to be an hourly in-memory guard and it spammed the operator's
+  // channel anyway: `lastShortWarnAt` and the logger's own 15-minute
+  // de-duplication both live in process memory, so every pm2 restart re-armed
+  // both. A deploy afternoon put five identical warnings in the channel inside
+  // ninety minutes. pm2 logs still get the line every cycle at debug level.
+  if (short.length) {
+    const line = `[autotrend] board below target on ${short.join(", ")} — list more tokens on those chains, or lower the per-chain target`;
+    log.debug(line);
+    if (ops.due(SHORT_WARN_KEY, SHORT_WARN_MS)) {
+      await ops.mark(SHORT_WARN_KEY).catch(() => {});
+      log.warn(line);
+    }
   }
   return promoted;
 }
-let lastShortWarnAt = 0;
+const SHORT_WARN_KEY = "autotrend_board_short";
+const SHORT_WARN_MS = Math.max(3600_000, Number(process.env.AUTOTREND_SHORT_WARN_HOURS || 24) * 3600_000);
 
 const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 
@@ -605,7 +618,8 @@ async function featuredByChain(now = Date.now()) {
 
 module.exports = {
   _test: {
-    resetShortWarn: () => (lastShortWarnAt = 0),
+    resetShortWarn: () => ops.clear(SHORT_WARN_KEY),
+    SHORT_WARN_KEY,
     setAnnouncer: (fn) => (_announcer = fn),
     setLastAt: async (t) => { const st = loadState(); st.lastAt = t; await saveState(st); },
     setAnnounced: async (chain, address, t) => { const st = loadState(); st.announced[keyOf(chain, address)] = t; await saveState(st); },
