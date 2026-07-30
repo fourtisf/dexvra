@@ -126,18 +126,48 @@ async function reset() {
   return get();
 }
 
-/** Forget what has been auto-listed (and today's count). The operator needs this
- *  after clearing listings on the site: a token this service already listed is
- *  otherwise never considered again, so it could never come back. */
+/** Forget EVERYTHING this service knows — what it auto-listed, today's count,
+ *  and the ever-listed ledger below. The deliberate operator escape hatch
+ *  ("🧹 Clear history"), used after wiping the site's listings so it can
+ *  repopulate. Nothing else may clear the ledger. */
 async function resetState() {
-  await saveJSON(STATE_FILE, { listed: {}, day: null });
+  await saveJSON(STATE_FILE, { listed: {}, day: null, everListed: {} });
 }
 
 // ── State: what we already listed, and today's count ────────────────────────
+//
+// `everListed` is a PERMANENT ledger of every contract that has ever appeared
+// on the site, whatever put it there. It exists because the other two guards
+// both have holes: `state.listed` only knows this service's own picks, and the
+// live `getListings()` set disappears the moment a row is deleted. Delete a
+// listing on the site — including one somebody PAID for — and without this the
+// auto-lister happily hands the same token back out for free on the next scan.
+// Once a contract is in here it is never free-listed again.
 const loadState = () => {
   const s = loadJSONSync(STATE_FILE, {}) || {};
-  return { listed: s.listed && typeof s.listed === "object" ? s.listed : {}, day: s.day || null };
+  const obj = (v) => (v && typeof v === "object" ? v : {});
+  return { listed: obj(s.listed), day: s.day || null, everListed: obj(s.everListed) };
 };
+
+/** Remember contracts as listed, forever. Called with everything currently on
+ *  the site at the top of each scan, and by the paid-listing path the moment a
+ *  purchase goes live — a token bought and then deleted before the next scan
+ *  would otherwise never make it into the ledger at all. */
+async function rememberListed(rows, now = Date.now()) {
+  const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
+  if (!list.length) return 0;
+  const state = loadState();
+  let added = 0;
+  for (const r of list) {
+    if (!r || !r.chain || !r.address) continue;
+    const k = keyOf(r.chain, r.address);
+    if (state.everListed[k]) continue;
+    state.everListed[k] = now;
+    added++;
+  }
+  if (added) await saveJSON(STATE_FILE, state).catch(() => {});
+  return added;
+}
 const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
 const todayCount = (state, now) => (state.day && state.day.key === dayKey(now) ? state.day.n : 0);
 
@@ -152,7 +182,11 @@ function history(limit = 10) {
 
 function stats(now = Date.now()) {
   const state = loadState();
-  return { total: Object.keys(state.listed).length, today: todayCount(state, now) };
+  return {
+    total: Object.keys(state.listed).length,
+    today: todayCount(state, now),
+    everListed: Object.keys(state.everListed).length,
+  };
 }
 
 const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
@@ -227,7 +261,7 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
   const discover = deps.fetchDiscovery || ds.fetchDiscovery;
   const price = deps.fetchTokenInfo || ds.fetchTokenInfo;
 
-  const state = loadState();
+  let state = loadState();
   let today = todayCount(state, now);
   if (today >= cfg.maxPerDay) {
     log.debug(`[autolist] daily cap reached (${today}/${cfg.maxPerDay})`);
@@ -246,7 +280,16 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
   // Anything already on the site is off the table, however it got there.
   let known = new Set();
   try {
-    known = new Set((await api.getListings()).map((r) => keyOf(r.chain, r.address)));
+    const rows = await api.getListings();
+    known = new Set(rows.map((r) => keyOf(r.chain, r.address)));
+    // …and it stays off the table after it is gone. Fold today's listings into
+    // the permanent ledger BEFORE picking anything, so a row deleted later can
+    // never come back as a free auto-listing.
+    const added = await rememberListed(rows, now);
+    if (added) {
+      state = loadState(); // rememberListed wrote through — re-read before use
+      log.debug(`[autolist] ledger +${added} (${Object.keys(state.everListed).length} contracts remembered)`);
+    }
   } catch (e) {
     // Without this list we could double-list a paying customer's token — that is
     // worse than skipping a cycle, so bail instead of guessing.
@@ -260,7 +303,10 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     if (listedNow >= cfg.maxPerRun || today >= cfg.maxPerDay) break;
     if (lookups >= cfg.maxLookupsPerRun) break;
     const key = keyOf(c.chain, c.address);
-    if (state.listed[key] || known.has(key)) continue;
+    // Three separate reasons to leave it alone: this service already picked it,
+    // it is on the site right now, or it EVER was. The third is the one that
+    // stops a deleted (or previously paid-for) listing being handed back free.
+    if (state.listed[key] || known.has(key) || state.everListed[key]) continue;
     if (!chainOf(c.chain)) continue;
 
     lookups++;
@@ -283,6 +329,7 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     if (!listing) continue;
 
     state.listed[key] = { at: now, sym: input.sym, mcap: Math.round(info.mcap), trigger };
+    state.everListed[key] = state.everListed[key] || now;
     today += 1;
     listedNow += 1;
     state.day = { key: dayKey(now), n: today };
@@ -404,6 +451,7 @@ module.exports = {
   set,
   reset,
   resetState,
+  rememberListed,
   start,
   runOnce,
   stats,

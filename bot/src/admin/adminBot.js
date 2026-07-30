@@ -733,6 +733,9 @@ function alText() {
     `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n\n` +
     `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
     (recent ? `${recent}\n\n` : "\n") +
+    `🔒 <b>Never re-listed:</b> ${s.everListed} contracts — everything that has ever ` +
+    `been on the site, so a token that was listed before (including a paid one that ` +
+    `was later deleted) can never come back as a free auto listing.\n\n` +
     `Auto listings carry a <b>Free</b> badge — never a paid tier, so they can't be ` +
     `mistaken for a Bronze customer.`
   );
@@ -2011,11 +2014,13 @@ function build() {
   });
   bot.action("alclr", async (ctx) => {
     // After clearing listings on the site: without this a token already
-    // auto-listed would never be considered again.
+    // auto-listed would never be considered again. This is ALSO the only thing
+    // that wipes the never-re-list ledger, so it re-opens every contract the
+    // site has ever held — deliberate, and only from this button.
     if (!guard(ctx)) return;
     await autoLister.resetState();
     log.info(`[adminbot] auto-listing history cleared by @${ctx.from.username || ctx.from.id}`);
-    ctx.answerCbQuery("🧹 History cleared — those tokens can be listed again").catch(() => {});
+    ctx.answerCbQuery("🧹 History cleared — previously listed tokens can be auto-listed again").catch(() => {});
     await edit(ctx, alText(), alKb());
   });
 
