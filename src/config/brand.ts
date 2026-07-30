@@ -20,4 +20,6 @@ export {
   TELEGRAM_TRENDING_URL,
   TELEGRAM_TRENDING_HANDLE,
   X_URL,
+  X_LISTING_URL,
+  X_LISTING_HANDLE,
 } from "./socials";

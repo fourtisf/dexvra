@@ -9,7 +9,7 @@
 const { fmtPrice, formatNumber } = require("../helpers/format");
 const { chainOf } = require("../config/chains");
 const { tierLabel, tierEmoji: pkgTierEmoji } = require("../config/packages");
-const { SITE_URL, CHANNELS, TRADEBOT_USERNAME, BOT_USERNAME } = require("../config/constants");
+const { SITE_URL, CHANNELS, TRADEBOT_USERNAME, BOT_USERNAME, X_LISTING_URL } = require("../config/constants");
 const premium = require("../premium");
 const tpl = require("../templates");
 const tokenEmoji = require("../tokenEmoji");
@@ -595,6 +595,8 @@ function channelLinks() {
     listing: tme(CHANNELS.listing),
     trending: tme(CHANNELS.trending),
     announce: tme(CHANNELS.announce),
+    // The X account the listing/trending/pump tweets go out from.
+    xlisting: X_LISTING_URL,
     // The sales bot — a post that gives something away for free should say
     // where the paid version lives.
     bot: tme(BOT_USERNAME),

@@ -87,11 +87,18 @@ test("social lines drop individually; tier badge line drops without a tier", () 
   // only a website → X + Telegram SEGMENTS cut from the row, header + Website kept
   const partial = fmt.listingPost({ ...base, tier: "XPRESS", links: { website: "https://bullcat.io" } });
   assert.ok(partial.text.includes("social links\n🌐 Website\n"), partial.text);
-  assert.ok(!/❌ X/.test(partial.text), partial.text);
-  assert.ok(!partial.text.includes("Telegram"), partial.text);
+  // Scoped to the TOKEN's social row. The footer legitimately carries Dexvra's
+  // own X account, so a whole-text "no ❌ X" check would now be testing the
+  // wrong thing — and the token's link is what has to disappear here.
+  const socialRow = (t) => (t.match(/social links\n(.*)/) || ["", ""])[1];
+  assert.ok(!/❌/.test(socialRow(partial.text)), partial.text);
+  assert.ok(!socialRow(partial.text).includes("Telegram"), partial.text);
   // two present, one missing → the row keeps its separator between survivors
   const two = fmt.listingPost({ ...base, tier: "XPRESS", links: { twitter: "https://x.com/bc", website: "https://bullcat.io" } });
   assert.ok(two.text.includes("❌ X · 🌐 Website\n"), two.text);
+  // The token's X and Dexvra's must never read as the same link.
+  assert.ok(two.text.includes("❌ Dexvra on X"), "the footer names its own account");
+  assert.ok(!/❌ X[^·\n]*\n[\s\S]*❌ X\b/.test(two.text.replace(/❌ Dexvra on X/g, "")), "no two bare 'X' links");
   // tiered template without a tier → no orphan " tier" badge line
   const noTier = fmt.listingPost({ ...base, tier: null, links: {} });
   assert.ok(noTier.text.includes("New Listing on Dexvra"));

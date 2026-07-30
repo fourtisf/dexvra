@@ -127,6 +127,14 @@ const X = {
   },
 };
 const X_HANDLE = (env.X_HANDLE || "dexvraio").replace(/^@/, "");
+// The X account LISTING ALERTS are tweeted from. A separate account from
+// X_HANDLE on purpose: twitter.js already posts listings, trending and pump
+// alerts through the `listing` credential set (X_API_KEY…) and only banner ads
+// through `official` (X_O_…). Until now nothing named the listing account, so
+// nothing could link to it — the site and every post pointed readers at
+// @dexvraio, which does not carry the listing feed.
+const X_LISTING_HANDLE = (env.X_LISTING_HANDLE || "dexvralisting").replace(/^@/, "");
+const X_LISTING_URL = `https://x.com/${X_LISTING_HANDLE}`;
 // Enabled only when the listing account's 4 keys are all present AND not forced off.
 const X_ENABLED =
   bool(env.X_ENABLED, true) &&
@@ -210,6 +218,8 @@ module.exports = {
   MONGO_DB,
   X,
   X_HANDLE,
+  X_LISTING_HANDLE,
+  X_LISTING_URL,
   X_ENABLED,
   RATE_WINDOW,
   RATE_LIMIT,
