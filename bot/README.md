@@ -149,6 +149,68 @@ channel admin, and a second GramJS client on the same session would risk
 `AUTH_KEY_DUPLICATED` and revoke the premium login. A request the main bot never
 picks up **expires after 5 minutes** rather than surprising the channel later.
 
+## Top Gainers banner (`@dexvraadminbot` → 📊 Banner Top Gainers)
+
+Generates a premium banner of the **live 24h top movers** across every Dexvra
+listing and posts it to a channel — the fourtis "gainers banner" idea, rebuilt
+here with no designed JPGs and no Python: every pixel is drawn by
+`src/gainersBanner.js` with `@napi-rs/canvas`.
+
+**Six layouts**, all in the Dexvra palette with gold/silver/bronze podium metals,
+glass cards, logo rings and a green/red % pill:
+
+| id | layout | slots |
+|---|---|---|
+| `hero1` | 👑 #1 Spotlight — one hero card, the gain as the headline | 1 |
+| `podium` | 🏆 Top 3 Podium — gold/silver/bronze pedestals | 3 |
+| `cards4` | 🃏 Top 4 Cards — 2×2 feature cards | 4 |
+| `list5` | 📋 Top 5 List — ranked leaderboard rows (the default) | 5 |
+| `rail8` | 🎞 Top 8 Rail — two columns of four | 8 |
+| `grid10` | 🔟 Top 10 Grid — two compact columns of five | 10 |
+
+See them without a bot token: `node scripts/gainers-preview.js` writes all six to
+`/tmp` from sample data (`--live` uses the real sources, `OUT_DIR=…` to redirect).
+
+**The data is real, or there is no post.** `src/gainers.js` reads the site board
+(`/api/tokens` — the exact rows dexvra.io shows) and keeps only rows marked
+`source: "live"`, so the site's demo/seed listings (real addresses, frozen
+figures) can never reach a channel. If the web process is unreachable it prices
+the approved listings itself via `marketdata.fetchMarket`. A token with no live
+24h change is **left off**, absurd pool percentages (>5000%) are dropped, and a
+day where nothing qualifies posts **nothing** — with the reason shown in the
+panel. The layout follows how many real gainers there are (three movers on the
+Top-5 layout draws three rows, titled "TOP 3 GAINERS"), so a thin day never
+publishes empty slots.
+
+**In the panel:** pick a layout → preview the real artwork *and* the exact
+caption → **📤 Post to channel**. Also there:
+
+- **✏️ Swap a token** — replace any slot with a contract address / dexvra.io /
+  DexScreener link. Its live 24h change is required, so a hand-picked slot can't
+  become a made-up number; the re-render is labelled as no longer purely the live
+  ranking.
+- **📡 Check live data** — what each source returns and how many rows pass the
+  filters, without rendering anything.
+- **⚙️ Settings** — target channel, default layout + 🎲 random rotation, daily
+  auto-post time & timezone, minimum gain %, minimum liquidity, date line, market
+  cap in the caption, pin, and a custom **background artwork** upload.
+
+The **caption is a template** like every other post — edit it under
+📢 Channel Posts → *"Post: Top Gainers banner"*. Its `{list}` placeholder is the
+ranked block, and each rank badge is the same one the trending board uses, so a
+premium emoji set there animates here too.
+
+**Daily auto-post is OFF until you turn it on** (a deploy must never start
+posting to a public channel by itself). Once on, `services/gainersPoster.js`
+posts once per local day at the configured `HH:MM`; the day is claimed *before*
+the send, and released again if nothing was published, so a failure retries and a
+success never double-posts.
+
+Same two-process split as force post: the admin bot renders and queues
+(`data/gainerspost/`), the **main** bot publishes within ~3 s. A job the main bot
+never collects **expires after 10 minutes** — a stale leaderboard posted an hour
+late is worse than no post.
+
 ## Go-live checklist
 
 1. **Web app**: set `INTERNAL_API_TOKEN` (≥24 chars) in the Next app's `.env.local`

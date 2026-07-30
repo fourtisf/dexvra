@@ -14,6 +14,7 @@ function attachServices(bot, services) {
   if (UPSELL_ENABLED) services.push(require("./trendingUpsell").start(tg));
   services.push(require("./sweepRetry").start()); // recovers funds a failed sweep left in temp wallets
   services.push(require("./forcePostRunner").start()); // publishes adminbot's force-post requests
+  services.push(require("./gainersPoster").start()); // publishes adminbot's Top-Gainers banners + the daily one
   services.push(require("../broadcast/sender").start(tg)); // admin broadcast delivery
   if (require("../config/constants").MASS_DM_ENABLED) {
     services.push(require("../massdm/sender").start(tg)); // paid Mass DM delivery (approved jobs only)

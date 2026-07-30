@@ -126,4 +126,7 @@ async function fetchDiscovery(feeds = DISCOVERY_FEEDS) {
   return out;
 }
 
-module.exports = { fetchTokenInfo, fetchDiscovery, DISCOVERY_FEEDS };
+// DS_CHAIN is exported because the token-logo CDN path is keyed on DexScreener's
+// chain slug (dd.dexscreener.com/ds-data/tokens/<slug>/<addr>.png) — gainers.js
+// builds that URL as a logo fallback and must not keep a second copy of the map.
+module.exports = { fetchTokenInfo, fetchDiscovery, DISCOVERY_FEEDS, DS_CHAIN };

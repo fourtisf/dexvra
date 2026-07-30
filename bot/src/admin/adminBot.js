@@ -18,6 +18,7 @@ const autoTrend = require("../services/autoTrend");
 const autoLister = require("../services/autoLister");
 const forcePost = require("./forcePost");
 const fpStore = require("../forcepost/store");
+const gainersMenu = require("./gainersMenu");
 const gramjs = require("../gramjs");
 const { toSendBuffer } = require("../helpers/encodeImage");
 const tpl = require("../templates");
@@ -65,6 +66,7 @@ function mainKb() {
     [Markup.button.callback("🖼 Banner Image", "banner")],
     [Markup.button.callback("🎨 Gambar Banner Channel", "bt")],
     [Markup.button.callback("🚀 Force post to channel (test live)", "fp")],
+    [Markup.button.callback("📊 Banner Top Gainers (live 24h movers)", "gn")],
     [Markup.button.callback("🔥 Trending board (chain logos · ranks 1–10)", "tb")],
     [Markup.button.callback("🤖 Auto Trending (auto-fill slots)", "at")],
     [Markup.button.callback("🆓 Auto Listing (free, $1M+ projects)", "al")],
@@ -2551,6 +2553,10 @@ function build() {
     ctx.session.awaitingBroadcast = false;
     ctx.session.awaitingBt = null;
     ctx.session.bcDraft = null;
+    // Top-Gainers state too, for the same reason: an armed "send me a token link"
+    // that /cancel didn't clear would eat the next plain message.
+    ctx.session.awaitingGn = null;
+    ctx.session.gn = null;
     await ctx.reply("Cancelled.", { ...HTML, ...mainKb() });
   });
 
@@ -2613,6 +2619,12 @@ function build() {
     }
     await ctx.reply(`🚫 Rejected <code>${escapeHtml(job.ref || job.id)}</code>.`, HTML);
   });
+
+  // The Top-Gainers banner generator owns its own keyboards and awaited inputs.
+  // Registered HERE, before the two generic handlers below: neither of them calls
+  // next(), so anything registered after them never sees a message. gainersMenu's
+  // own handlers pass through everything they aren't waiting for.
+  gainersMenu.register(bot, { guard, edit, HTML, fetchTelegramFileBuffer });
 
   // Text = new template value (when awaiting)
   bot.on("text", async (ctx) => {
@@ -2939,6 +2951,7 @@ async function startAdminBot() {
   await bot.telegram.setMyCommands([
     { command: "start", description: "Open the template editor" },
     { command: "preview", description: "Audit all templates at once" },
+    { command: "gainers", description: "Top Gainers banner (live 24h movers)" },
     { command: "home", description: "Back to the menu" },
     { command: "cancel", description: "Cancel the current edit" },
   ]).catch(() => {});
