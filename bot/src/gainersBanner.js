@@ -277,8 +277,8 @@ function surface(ctx, x, y, w, h, r, { accent = null, S = 1, lift = 1, fill = SI
   ctx.save();
   roundRect(ctx, x, y, w, h, r);
   const b = ctx.createLinearGradient(0, y, 0, y + h);
-  b.addColorStop(0, accent ? hexA(accent, 0.38) : "rgba(255,255,255,.17)");
-  b.addColorStop(1, accent ? hexA(accent, 0.12) : "rgba(255,255,255,.06)");
+  b.addColorStop(0, accent ? hexA(accent, 0.42) : "rgba(255,255,255,.2)");
+  b.addColorStop(1, accent ? hexA(accent, 0.14) : "rgba(255,255,255,.08)");
   ctx.lineWidth = Math.max(1, 1.2 * S);
   ctx.strokeStyle = b;
   ctx.stroke();
@@ -597,9 +597,9 @@ function backdrop(cv, ctx, S, spec, bg) {
   } else {
     ctx.fillStyle = SITE.bg;
     ctx.fillRect(0, 0, W, H);
-    radial(ctx, W * 0.8, -H * 0.18, W * 0.6, SITE.mint, 0.13);
-    radial(ctx, -W * 0.06, H * 0.16, W * 0.5, SITE.violetDeep, 0.14);
-    radial(ctx, W * 0.55, H * 1.08, W * 0.55, SITE.cyan, 0.06);
+    radial(ctx, W * 0.8, -H * 0.18, W * 0.62, SITE.mint, 0.17);
+    radial(ctx, -W * 0.1, H * 0.1, W * 0.42, SITE.violetDeep, 0.08);
+    radial(ctx, W * 0.55, H * 1.08, W * 0.55, SITE.cyan, 0.07);
   }
   // whisper grid
   ctx.save();
@@ -612,7 +612,6 @@ function backdrop(cv, ctx, S, spec, bg) {
     ctx.stroke();
   }
   ctx.restore();
-  grain(cv, ctx, W, H, S);
   // vignette so the corners fall away
   const vg = ctx.createRadialGradient(W / 2, H * 0.44, H * 0.5, W / 2, H / 2, H * 1.12);
   vg.addColorStop(0, "rgba(0,0,0,0)");
@@ -659,22 +658,42 @@ function header(ctx, S, spec, { n, dateText }) {
   ctx.fill();
 
   // kicker + title
-  microLabel(ctx, x + 2 * S, 164 * S, "Ranked by 24h change · live from dexvra.io", { size: 12 * S, color: SITE.mint, track: 0.24 });
+  microLabel(ctx, x + 2 * S, 160 * S, "Ranked by 24h change · live from dexvra.io", { size: 12 * S, color: SITE.mint, track: 0.24 });
   const title = String(spec.title(n) || "");
-  let size = 62 * S;
+  let size = 72 * S;
   ctx.font = `700 ${size}px ${F.d7}`;
-  while (size > 36 * S && ctx.measureText(title).width > W - 2 * PAD * S - 120 * S) {
+  while (size > 38 * S && ctx.measureText(title).width > W - 2 * PAD * S - 120 * S) {
     size -= 2 * S;
     ctx.font = `700 ${size}px ${F.d7}`;
   }
-  const tw = displayText(ctx, x, 232 * S, title, size, { weight: 700 });
+  // Two-tone: the last word carries the mint→cyan brand sweep. The colour the
+  // flat pass lost lives HERE, in the type itself — not in glow around it.
+  const words = title.split(" ");
+  const accentWord = words.pop();
+  const lead = words.length ? words.join(" ") + " " : "";
+  ctx.save();
+  ctx.font = `700 ${size}px ${F.d7}`;
+  ctx.letterSpacing = `${(-0.018 * size).toFixed(1)}px`;
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  const baseline = 238 * S;
+  ctx.fillStyle = SITE.text;
+  ctx.fillText(lead, x, baseline);
+  const leadW = ctx.measureText(lead).width;
+  const accW = ctx.measureText(accentWord).width;
+  const ag = ctx.createLinearGradient(x + leadW, 0, x + leadW + accW, 0);
+  ag.addColorStop(0, SITE.mint);
+  ag.addColorStop(1, SITE.cyan);
+  ctx.fillStyle = ag;
+  ctx.fillText(accentWord, x + leadW, baseline);
+  ctx.letterSpacing = "0px";
+  ctx.restore();
+  const tw = leadW + accW;
   const ug = ctx.createLinearGradient(x, 0, x + tw, 0);
   ug.addColorStop(0, hexA(spec.accent, 0.9));
   ug.addColorStop(1, hexA(spec.accent, 0));
   ctx.fillStyle = ug;
-  // Full rendered width: a rule that terminates inside a glyph group reads as
-  // arbitrary; spanning the whole title (with the gradient fade) reads designed.
-  roundRect(ctx, x + 2 * S, 248 * S, tw, Math.max(2, 3 * S), 2 * S);
+  roundRect(ctx, x + 2 * S, 256 * S, tw, Math.max(2, 3 * S), 2 * S);
   ctx.fill();
 }
 
