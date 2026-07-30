@@ -37,6 +37,10 @@ const {
   F,
   SITE,
   rankColor,
+  medalOf,
+  metalGrad,
+  sparkle,
+  trackedCenter,
   hexA,
   radial,
   roundRect,
@@ -253,6 +257,16 @@ function displayText(ctx, x, y, text, size, { weight = 700, color = SITE.text, a
 /** A surface: the site's `--card` fill, hairline border, soft shadow, and a
  *  1px top light — the "lit from above" edge every polished dark UI has. */
 function surface(ctx, x, y, w, h, r, { accent = null, S = 1, lift = 1, fill = SITE.card } = {}) {
+  // coloured halo behind an accented card — the neon seat
+  if (accent) {
+    ctx.save();
+    roundRect(ctx, x, y, w, h, r);
+    ctx.shadowColor = hexA(accent, 0.4);
+    ctx.shadowBlur = 40 * S * lift;
+    ctx.fillStyle = hexA(accent, 0.05);
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,.5)";
   ctx.shadowBlur = 36 * S * lift;
@@ -261,13 +275,23 @@ function surface(ctx, x, y, w, h, r, { accent = null, S = 1, lift = 1, fill = SI
   ctx.fillStyle = fill;
   ctx.fill();
   ctx.restore();
+  // glass coat: a white gradient wash over the dark base
+  ctx.save();
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+  const gl = ctx.createLinearGradient(x, y, x, y + h);
+  gl.addColorStop(0, "rgba(255,255,255,.075)");
+  gl.addColorStop(1, "rgba(255,255,255,.015)");
+  ctx.fillStyle = gl;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
   if (accent) {
     ctx.save();
     roundRect(ctx, x, y, w, h, r);
     ctx.clip();
     const g = ctx.createLinearGradient(x, y, x + w * 0.9, y + h);
-    g.addColorStop(0, hexA(accent, 0.1));
-    g.addColorStop(0.55, hexA(accent, 0.02));
+    g.addColorStop(0, hexA(accent, 0.12));
+    g.addColorStop(0.55, hexA(accent, 0.025));
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = g;
     ctx.fillRect(x, y, w, h);
@@ -312,8 +336,8 @@ function pctChip(ctx, x, y, text, size, S, { align = "c" } = {}) {
   g.addColorStop(0, up ? SITE.upTo : SITE.downTo);
   g.addColorStop(1, up ? SITE.upFrom : SITE.downFrom);
   ctx.shadowColor = hexA(up ? SITE.mint : SITE.red, 0.3);
-  ctx.shadowBlur = 16 * S;
-  ctx.shadowOffsetY = 4 * S;
+  ctx.shadowBlur = 22 * S;
+  ctx.shadowOffsetY = 5 * S;
   ctx.fillStyle = g;
   ctx.fill();
   ctx.shadowBlur = 0;
@@ -454,6 +478,64 @@ function avatar(ctx, img, cx, cy, d, symbol, S) {
   ctx.lineWidth = Math.max(1.5, 2 * S);
   ctx.strokeStyle = "rgba(255,255,255,.14)";
   ctx.stroke();
+}
+
+/** The avatar's metal ring — gold/silver/bronze for the podium ranks, drawn
+ *  OVER the neutral rim so table rows can opt in per rank. */
+function metalRing(ctx, cx, cy, d, rank, S) {
+  if (rank > 3) return;
+  const r = d / 2;
+  const m = medalOf(rank);
+  radial(ctx, cx, cy, r * 1.55, m.glow, 0.28);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + Math.max(1.5, d * 0.03), 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(2, d * 0.06);
+  ctx.strokeStyle = metalGrad(ctx, cx, cy, r, m);
+  ctx.shadowColor = hexA(m.glow, 0.5);
+  ctx.shadowBlur = 14 * S;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Podium medallion — metallic gold/silver/bronze ring, dark glass face, the
+ *  rank numeral, a sparkle on the champion. The bold system's rank voice. */
+function medal(ctx, cx, cy, r, rank, S) {
+  const m = medalOf(rank);
+  radial(ctx, cx, cy, r * 2, m.glow, 0.3);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "#080F16";
+  ctx.shadowColor = "rgba(0,0,0,.6)";
+  ctx.shadowBlur = 14 * S;
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(2, r * 0.24);
+  ctx.strokeStyle = metalGrad(ctx, cx, cy, r, m);
+  ctx.stroke();
+  // top sheen on the ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI * 1.1, Math.PI * 1.6);
+  ctx.lineWidth = Math.max(2, r * 0.24);
+  ctx.strokeStyle = "rgba(255,255,255,.5)";
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  ctx.font = `800 ${Math.round(r * 1.02)}px ${F.m8}`;
+  const g = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+  g.addColorStop(0, "#FFFFFF");
+  g.addColorStop(1, m.light);
+  ctx.fillStyle = g;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(rank), cx, cy + r * 0.06);
+  ctx.restore();
+  if (rank === 1 && r >= 16 * S) sparkle(ctx, cx + r * 0.9, cy - r * 0.85, r * 0.32, m.light);
 }
 
 /** Rank as an editorial two-digit numeral — "01", faint, mono. */
@@ -597,27 +679,50 @@ function backdrop(cv, ctx, S, spec, bg) {
   } else {
     ctx.fillStyle = SITE.bg;
     ctx.fillRect(0, 0, W, H);
-    radial(ctx, W * 0.8, -H * 0.18, W * 0.62, SITE.mint, 0.17);
-    radial(ctx, -W * 0.1, H * 0.1, W * 0.42, SITE.violetDeep, 0.08);
-    radial(ctx, W * 0.55, H * 1.08, W * 0.55, SITE.cyan, 0.07);
+    // the bold aurora: a mint crown behind the title, cyan rising from the
+    // bottom, a violet whisper on the left so the field isn't monochrome
+    radial(ctx, W * 0.5, -H * 0.22, W * 0.72, SITE.mint, 0.2);
+    radial(ctx, W * 0.94, H * 1.04, W * 0.5, SITE.cyan, 0.13);
+    radial(ctx, -W * 0.08, H * 0.55, W * 0.4, SITE.violetDeep, 0.1);
+    // one diagonal catch-light across the whole card
+    ctx.save();
+    ctx.translate(W * 0.64, -H * 0.1);
+    ctx.rotate(0.42);
+    const ray = ctx.createLinearGradient(0, 0, 340 * S, 0);
+    ray.addColorStop(0, "rgba(150,245,225,0)");
+    ray.addColorStop(0.5, "rgba(150,245,225,.05)");
+    ray.addColorStop(1, "rgba(150,245,225,0)");
+    ctx.fillStyle = ray;
+    ctx.fillRect(0, 0, 340 * S, H * 1.6);
+    ctx.restore();
   }
-  // whisper grid
+  // fine dot grid — trading-terminal texture, kept whisper-quiet
   ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,.016)";
-  ctx.lineWidth = 1;
-  for (let x = PAD * S; x <= W - PAD * S + 1; x += 64 * S) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-    ctx.stroke();
+  ctx.fillStyle = "rgba(150,195,200,.05)";
+  const step = 38 * S;
+  for (let gy = step; gy < H; gy += step) {
+    for (let gx = step; gx < W; gx += step) {
+      ctx.beginPath();
+      ctx.arc(gx, gy, Math.max(0.8, S), 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
   // vignette so the corners fall away
   const vg = ctx.createRadialGradient(W / 2, H * 0.44, H * 0.5, W / 2, H / 2, H * 1.12);
   vg.addColorStop(0, "rgba(0,0,0,0)");
-  vg.addColorStop(1, "rgba(0,0,0,.42)");
+  vg.addColorStop(1, "rgba(0,0,0,.46)");
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
+  // inner hairline frame with a mint→cyan sweep — the poster's edge
+  roundRect(ctx, 20 * S, 20 * S, W - 40 * S, H - 40 * S, 30 * S);
+  const fr = ctx.createLinearGradient(0, 0, W, H);
+  fr.addColorStop(0, hexA(SITE.mint, 0.3));
+  fr.addColorStop(0.5, "rgba(255,255,255,.05)");
+  fr.addColorStop(1, hexA(SITE.cyan, 0.26));
+  ctx.lineWidth = Math.max(1, 1.5 * S);
+  ctx.strokeStyle = fr;
+  ctx.stroke();
   // mint→cyan keyline across the very top
   const kl = ctx.createLinearGradient(0, 0, W, 0);
   kl.addColorStop(0, "rgba(61,245,159,0)");
@@ -628,7 +733,9 @@ function backdrop(cv, ctx, S, spec, bg) {
   ctx.fillRect(0, 0, W, Math.max(2, 3 * S));
 }
 
-/** Brand lockup + date/live chips + kicker + title. */
+/** Brand lockup top-left, live/date chips top-right, then the POSTER title:
+ *  centred caps in a metallic white→mint gradient with a single-pass glow —
+ *  the bold voice, carried by the type itself. */
 function header(ctx, S, spec, { n, dateText }) {
   const W = REF_W * S;
   const x = PAD * S;
@@ -642,8 +749,6 @@ function header(ctx, S, spec, { n, dateText }) {
   // top-right: LIVE pill + date chip on one row
   let rx = right;
   if (dateText) rx -= chip(ctx, rx, 74 * S, dateText, 12.5 * S, S, { align: "right", color: SITE.muted }) + 14 * S;
-  // Leading spaces reserve the dot's slot INSIDE the pill — a dot floating in
-  // the gap outside the border read as a stray artifact, not a live indicator.
   const liveW = chip(ctx, rx, 74 * S, "   Live · 24H", 12.5 * S, S, {
     align: "right",
     color: SITE.mint,
@@ -657,43 +762,47 @@ function header(ctx, S, spec, { n, dateText }) {
   ctx.fillStyle = SITE.mint;
   ctx.fill();
 
-  // kicker + title
-  microLabel(ctx, x + 2 * S, 160 * S, "Ranked by 24h change · live from dexvra.io", { size: 12 * S, color: SITE.mint, track: 0.24 });
-  const title = String(spec.title(n) || "");
-  let size = 72 * S;
+  // centred kicker
+  const cx = W / 2;
+  microLabel(ctx, cx, 156 * S, "Ranked by 24h change · live from dexvra.io", { size: 12 * S, color: SITE.mint, track: 0.26, align: "center" });
+
+  // centred metallic caps title
+  const title = String(spec.title(n) || "").toUpperCase();
+  let size = 76 * S;
+  const track = () => 5 * S;
   ctx.font = `700 ${size}px ${F.d7}`;
-  while (size > 38 * S && ctx.measureText(title).width > W - 2 * PAD * S - 120 * S) {
-    size -= 2 * S;
+  const runW = () => {
     ctx.font = `700 ${size}px ${F.d7}`;
-  }
-  // Two-tone: the last word carries the mint→cyan brand sweep. The colour the
-  // flat pass lost lives HERE, in the type itself — not in glow around it.
-  const words = title.split(" ");
-  const accentWord = words.pop();
-  const lead = words.length ? words.join(" ") + " " : "";
+    return ctx.measureText(title).width + track() * Math.max(0, title.length - 1);
+  };
+  while (size > 40 * S && runW() > W - 2 * PAD * S - 60 * S) size -= 2 * S;
+  const baseline = 236 * S;
   ctx.save();
   ctx.font = `700 ${size}px ${F.d7}`;
-  ctx.letterSpacing = `${(-0.018 * size).toFixed(1)}px`;
   ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "left";
-  const baseline = 238 * S;
-  ctx.fillStyle = SITE.text;
-  ctx.fillText(lead, x, baseline);
-  const leadW = ctx.measureText(lead).width;
-  const accW = ctx.measureText(accentWord).width;
-  const ag = ctx.createLinearGradient(x + leadW, 0, x + leadW + accW, 0);
-  ag.addColorStop(0, SITE.mint);
-  ag.addColorStop(1, SITE.cyan);
-  ctx.fillStyle = ag;
-  ctx.fillText(accentWord, x + leadW, baseline);
-  ctx.letterSpacing = "0px";
+  // depth shadow first, then ONE gradient pass carrying its own glow — the
+  // per-glyph glow accumulation of the very first build is what made narrow
+  // letters bloom into detached bars.
+  ctx.fillStyle = "rgba(0,0,0,.5)";
+  trackedCenter(ctx, cx + 2 * S, baseline + 3 * S, title, track());
+  const tg = ctx.createLinearGradient(0, baseline - size * 0.86, 0, baseline + size * 0.2);
+  tg.addColorStop(0, "#FFFFFF");
+  tg.addColorStop(0.55, "#EAF7F4");
+  tg.addColorStop(1, SITE.mint);
+  ctx.fillStyle = tg;
+  ctx.shadowColor = hexA(SITE.mint, 0.5);
+  ctx.shadowBlur = 30 * S;
+  const tw = trackedCenter(ctx, cx, baseline, title, track());
   ctx.restore();
-  const tw = leadW + accW;
-  const ug = ctx.createLinearGradient(x, 0, x + tw, 0);
-  ug.addColorStop(0, hexA(spec.accent, 0.9));
+
+  // centred underline fading both ways
+  const uw = Math.min(tw, W * 0.4);
+  const ug = ctx.createLinearGradient(cx - uw / 2, 0, cx + uw / 2, 0);
+  ug.addColorStop(0, hexA(spec.accent, 0));
+  ug.addColorStop(0.5, hexA(spec.accent, 0.95));
   ug.addColorStop(1, hexA(spec.accent, 0));
   ctx.fillStyle = ug;
-  roundRect(ctx, x + 2 * S, 256 * S, tw, Math.max(2, 3 * S), 2 * S);
+  roundRect(ctx, cx - uw / 2, 254 * S, uw, Math.max(2, 3 * S), 2 * S);
   ctx.fill();
 }
 
@@ -828,9 +937,11 @@ function layoutList(ctx, S, spec, coins) {
         const cy = y + rowH / 2;
         rowBase(ctx, S, { x, w, y, h: rowH, first: i === 0, leader: rank === 1, accent: spec.accent });
 
-        rankNum(ctx, x + 52 * S, cy, rank, 17 * S);
+        if (rank <= 3) medal(ctx, x + 38 * S, cy, 15 * S, rank, S);
+        else rankNum(ctx, x + 52 * S, cy, rank, 17 * S);
         const d = Math.min(54 * S, rowH * 0.62);
         avatar(ctx, c.img, x + 78 * S + d / 2, cy, d, c.symbol, S);
+        metalRing(ctx, x + 78 * S + d / 2, cy, d, rank, S);
 
         const tx = x + 78 * S + d + 20 * S;
         const tw = sparkR - sparkW - 40 * S - tx;
@@ -909,9 +1020,11 @@ function layoutColumns(ctx, S, spec, coins, { rowsPerCol, big }) {
           const cy = y + rowH / 2;
           rowBase(ctx, S, { x: px, w: panelW, y, h: rowH, first: i === 0, leader: rank === 1, accent: spec.accent });
 
-          rankNum(ctx, px + 46 * S, cy, rank, (big ? 16 : 15) * S);
+          if (rank <= 3) medal(ctx, px + 34 * S, cy, (big ? 14 : 13) * S, rank, S);
+          else rankNum(ctx, px + 46 * S, cy, rank, (big ? 16 : 15) * S);
           const d = Math.min((big ? 52 : 44) * S, rowH * 0.6);
           avatar(ctx, c.img, px + 70 * S + d / 2, cy, d, c.symbol, S);
+          metalRing(ctx, px + 70 * S + d / 2, cy, d, rank, S);
 
           // Same information architecture as list5 — ticker + chain pill on the
           // first line, project name muted underneath — so the three table
@@ -966,20 +1079,14 @@ function layoutCards(ctx, S, spec, coins) {
     surface(ctx, x, y, cardW, cardH, 22 * S, { S, accent: rank === 1 ? spec.accent : null });
 
     // faint editorial rank numeral, top-right
-    // Ghost numeral: gold for the winner ONLY, one neutral tone for the rest.
-    // Tinting #3 orange made the eye pair 01+03 as "the special cards" and
-    // rank 02 as an also-ran — a medal scale has to read 1 > 2 > 3 or not at all.
-    ctx.save();
-    ctx.font = `800 ${84 * S}px ${F.m8}`;
-    ctx.fillStyle = rank === 1 ? hexA(rankColor(1), 0.16) : "rgba(255,255,255,.09)";
-    ctx.textAlign = "right";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillText(String(rank).padStart(2, "0"), x + cardW - 24 * S, y + 92 * S);
-    ctx.restore();
+    // Medallion in the corner — the bold system's rank voice (the ghost
+    // numerals belonged to the flat pass and read as low-opacity smears here).
+    medal(ctx, x + cardW - 52 * S, y + 56 * S, 22 * S, rank, S);
 
     const padL = x + 30 * S;
     const d = 58 * S;
     avatar(ctx, c.img, padL + d / 2, y + 32 * S + d / 2, d, c.symbol, S);
+    metalRing(ctx, padL + d / 2, y + 32 * S + d / 2, d, rank, S);
     const tx = padL + d + 18 * S;
     const tw = cardW - 220 * S - (tx - x);
     ctx.save();
@@ -1038,6 +1145,8 @@ function layoutPodium(ctx, S, spec, coins) {
     const lcy = y + h * 0.3;
     if (winner) radial(ctx, cx, lcy, d * 1.35, SITE.mint, 0.14);
     avatar(ctx, c.img, cx, lcy, d, c.symbol, S);
+    metalRing(ctx, cx, lcy, d, rank, S);
+    medal(ctx, cx + d * 0.42, lcy + d * 0.38, (winner ? 21 : 18) * S, rank, S);
 
     // Winner's type must OUTRANK the sides (≥1.4× on the figure), or the three
     // metric blocks read as equals and the podium is carried only by elevation.
@@ -1170,6 +1279,8 @@ function layoutHero(ctx, S, spec, coins) {
   // hero avatar + gold #1 chip
   radial(ctx, heroX, heroY, heroD * 0.95, SITE.mint, 0.16);
   avatar(ctx, c.img, heroX, heroY, heroD, c.symbol, S);
+  metalRing(ctx, heroX, heroY, heroD, 1, S);
+  medal(ctx, heroX + heroD * 0.4, heroY + heroD * 0.38, 26 * S, 1, S);
   chip(ctx, heroX, heroY + heroD / 2 + 34 * S, "#1 Gainer", 13 * S, S, {
     align: "center",
     color: SITE.gold,
