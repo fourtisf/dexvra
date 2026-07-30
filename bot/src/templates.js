@@ -60,24 +60,23 @@ const em = (emoji) => emoji;
 const SOCIALS_BLOCK =
   `${em("🔗", E.link)} **{symbol} social links**\n` +
   `${em("❌", E.cross)} [X]({twitter}) · 🌐 [Website]({website}) · ✈️ [Telegram]({telegram})`;
-// EVERY Dexvra destination, side by side on ONE row. Split out of FOOTER_BLOCK
-// so the short ticker posts (rank-up / pump) carry the SAME complete set without
-// the "📎 Dexvra" header line above it — a reader who lands on any post can
-// reach the site and all three channels. Never trim this to a subset: a pump
-// alert that linked only Trending + Dexvra.io was the operator's complaint.
+// The site + all three Telegram channels, side by side on ONE row. Split out of
+// FOOTER_BLOCK so the short ticker posts (rank-up / pump) carry the SAME set
+// without the "📎 Dexvra" header line above it — a reader who lands on any post
+// can reach the site and every channel. Never trim it to a SUBSET of these
+// four: a pump alert that linked only Trending + Dexvra.io was the operator's
+// complaint.
 const LINKS_ROW =
   `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
   `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
   `🔥 [Trending]({trending}) · ` +
-  `${em("📢", E.megaphone)} [Announcements]({announce}) · ` +
-  // Listing alerts are tweeted from @dexvralisting (twitter.js posts them
-  // through the `listing` credentials). Nothing linked that account before, so
-  // every reader outside Telegram was sent to @dexvraio, which does not carry
-  // the feed. Labelled "Dexvra on X", never a bare "X": the token's OWN social
-  // row a few lines above already says "❌ X", and this row is also printed
-  // header-less on the short rank-up / pump posts — two identical "X" links to
-  // different accounts in one post is a reader picking at random.
-  `${em("❌", E.cross)} [Dexvra on X]({xlisting})`;
+  `${em("📢", E.megaphone)} [Announcements]({announce})`;
+// NOTE: Telegram destinations ONLY — operator's rule. Dexvra's X account is
+// deliberately NOT in this row: the token's own social row a few lines above
+// already prints "❌ X", and this row is also rendered header-less on the short
+// rank-up / pump posts, so a second X link reads as a duplicate of the token's.
+// {xlisting} stays an available placeholder, so an admin who wants it back can
+// add it from the editor without a deploy.
 const FOOTER_BLOCK = `${em("📎", E.clip)} **Dexvra**\n` + LINKS_ROW;
 // Shared body of the listing/trending cards (below their distinct headers).
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
