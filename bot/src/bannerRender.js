@@ -3,121 +3,34 @@
 // + real social icons, composited onto a premium aurora background — rendered
 // with @napi-rs/canvas (prebuilt, no Chromium at runtime). Returns a PNG Buffer.
 // Never throws (caller falls back to a static banner, then the token logo).
-const path = require("node:path");
-const fss = require("node:fs");
 const { toSendBuffer } = require("./helpers/encodeImage");
 const log = require("./helpers/logger");
-
-let CV = null; // lazy — only load the native lib when a banner is actually rendered
-// Each weight registered under its own family so weight selection is exact
-// (napi-rs weight matching across faces of one family is unreliable).
-const F = {
-  x: "sans-serif", // 800  display
-  b: "sans-serif", // 700  bold
-  s: "sans-serif", // 600  semibold
-  m: "sans-serif", // 500  medium
-  r: "sans-serif", // 400  regular
-};
-function canvasLib() {
-  if (CV === undefined) return null;
-  if (CV) return CV;
-  try {
-    CV = require("@napi-rs/canvas");
-    const DIR = path.join(__dirname, "..", "assets", "fonts");
-    const reg = (file, fam, key) => {
-      const p = path.join(DIR, file);
-      if (fss.existsSync(p) && CV.GlobalFonts.registerFromPath(p, fam)) F[key] = `"${fam}"`;
-    };
-    reg("Sora-800.ttf", "Sora XBold", "x");
-    reg("Sora-700.ttf", "Sora Bold", "b");
-    reg("Sora-600.ttf", "Sora Semi", "s");
-    reg("Sora-500.ttf", "Sora Med", "m");
-    reg("Sora-400.ttf", "Sora Reg", "r");
-    // fallbacks so the module still renders if the premium fonts are missing
-    reg("LiberationSans-Bold.ttf", "DexBold", "x");
-    if (F.b === "sans-serif") F.b = F.x;
-    if (F.s === "sans-serif") F.s = F.x;
-    reg("LiberationSans-Regular.ttf", "DexReg", "m");
-    if (F.r === "sans-serif") F.r = F.m;
-  } catch (e) {
-    log.warn(`[banner] canvas unavailable, using static/logo fallback: ${e.message}`);
-    CV = undefined;
-    return null;
-  }
-  return CV;
-}
+// Canvas plumbing, the brand palette and the shared primitives (gem, glow,
+// rounded rect, brand sweep, podium metals) live in helpers/canvasKit.js so this
+// module and the Top-Gainers banners cannot drift apart visually.
+const {
+  canvasLib,
+  F,
+  MINT,
+  CYAN,
+  DEEP,
+  INK,
+  SOFT,
+  MUTE,
+  FAINT,
+  MEDAL,
+  medalOf,
+  hexA,
+  radial,
+  roundRect,
+  brandGrad,
+  metalGrad,
+  drawGem,
+  sparkle,
+} = require("./helpers/canvasKit");
 
 const W = 1200,
   H = 628;
-// Brand palette — refined, not neon
-const MINT = "#4EE6A8",
-  CYAN = "#38D8F0",
-  DEEP = "#0E9BD6",
-  INK = "#F4F9F8",
-  SOFT = "#C4D6D2",
-  MUTE = "#8DA6AB",
-  FAINT = "#5A6E74";
-
-const hexA = (hex, a) => {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-};
-function radial(ctx, cx, cy, r, color, a0, a1 = 0) {
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-  g.addColorStop(0, hexA(color, a0));
-  g.addColorStop(1, hexA(color, a1));
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
-}
-function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
-function brandGrad(ctx, x0, y0, x1, y1) {
-  const g = ctx.createLinearGradient(x0, y0, x1, y1);
-  g.addColorStop(0, MINT);
-  g.addColorStop(0.5, CYAN);
-  g.addColorStop(1, DEEP);
-  return g;
-}
-
-// ── Dexvra gem mark ──────────────────────────────────────────────────────────
-function drawGem(ctx, x, y, size) {
-  const s = size / 48;
-  const P = (px, py) => [x + px * s, y + py * s];
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(...P(15, 12));
-  ctx.lineTo(...P(33, 12));
-  ctx.lineTo(...P(39, 19));
-  ctx.lineTo(...P(24, 37));
-  ctx.lineTo(...P(9, 19));
-  ctx.closePath();
-  ctx.fillStyle = brandGrad(ctx, ...P(9, 12), ...P(39, 37));
-  ctx.fill();
-  ctx.strokeStyle = "rgba(8,14,20,.5)";
-  ctx.lineWidth = Math.max(1, 1.1 * s);
-  const seg = (a, b, c, d) => {
-    ctx.beginPath();
-    ctx.moveTo(...P(a, b));
-    ctx.lineTo(...P(c, d));
-    ctx.stroke();
-  };
-  seg(9, 19, 39, 19);
-  seg(15, 12, 20, 19);
-  seg(33, 12, 28, 19);
-  seg(20, 19, 24, 37);
-  seg(28, 19, 24, 37);
-  ctx.restore();
-}
 
 // ── Social icons (drawn, not text) ───────────────────────────────────────────
 const ICON = {
@@ -505,27 +418,9 @@ const renderTrendingBanner = (coin, logo) => render(coin, logo, { pill: "TRENDIN
 // sweeps the whole width, the hero is the GAIN (big green ▲ +N%), and the token
 // logo carries a rank medallion. Dynamic rank + % is why this is procedural
 // (the static-artwork compositor can only paste a logo + fixed text).
-const RISE = "#37E29B"; // gain green
-
-// Podium metals — #1 gold, #2 silver, #3 bronze; anything lower falls back to
-// the brand mint so the medallion always reads as a premium badge.
-const MEDAL = {
-  1: { light: "#FFF3C0", mid: "#FFD24D", dark: "#B07A0C", glow: "#FFCE4D" },
-  2: { light: "#FFFFFF", mid: "#D6DEE2", dark: "#88949C", glow: "#D6DEE2" },
-  3: { light: "#FFD9A8", mid: "#E38A3C", dark: "#8A4B1E", glow: "#E38A3C" },
-};
-const medalOf = (rank) => MEDAL[rank] || { light: "#CFF6E6", mid: MINT, dark: "#137A54", glow: MINT };
-
-/** A 45° metallic sheen gradient across a box (light→mid→dark→mid→light). */
-function metalGrad(ctx, x, y, s, m) {
-  const g = ctx.createLinearGradient(x - s, y - s, x + s, y + s);
-  g.addColorStop(0, m.light);
-  g.addColorStop(0.34, m.mid);
-  g.addColorStop(0.6, m.dark);
-  g.addColorStop(0.82, m.mid);
-  g.addColorStop(1, m.light);
-  return g;
-}
+// RISE (gain green) and the podium metals live in helpers/canvasKit.js — the
+// gainers leaderboard uses the same green and the same gold/silver/bronze.
+const { RISE } = require("./helpers/canvasKit");
 
 /** Smooth rising chart (bezier) with faint gridlines + a glowing pulse tip. */
 function drawRisingChart(ctx, accent) {
@@ -625,22 +520,6 @@ class Path2DLine {
       if (i === pts.length - 2) ctx.lineTo(x1, y1);
     }
   }
-}
-
-function sparkle(ctx, x, y, r, color) {
-  ctx.save();
-  ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 10;
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const a = (Math.PI / 4) * i;
-    const rad = i % 2 ? r * 0.34 : r;
-    ctx[i ? "lineTo" : "moveTo"](x + Math.cos(a) * rad, y + Math.sin(a) * rad);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
 }
 
 /** Frosted glass panel — soft drop shadow, hairline border, top sheen. Groups

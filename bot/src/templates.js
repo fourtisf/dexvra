@@ -396,6 +396,18 @@ const DEFAULTS = {
     `${em("🚨", E.sirenHead)} **New Listing on Dexvra** · {tierEmoji} **{tier} tier** {logoEmoji}\n\n` +
     LISTING_BODY,
   post_trending: `🔥 **New Trending on Dexvra** {logoEmoji}\n\n` + LISTING_BODY,
+  // The caption under a Top-Gainers banner. {list} is the ranked leaderboard,
+  // built by gainers.js — one line per token, each carrying its rank badge (the
+  // same badges the trending board uses, so a premium one animates here too),
+  // a link to the token's Dexvra page, its X handle when it has one, and the 24h
+  // move. It arrives as ONE placeholder because the number of lines depends on
+  // how many live gainers exist; everything around it is yours to reword.
+  post_gainers:
+    `${em("📈", E.chartUp)} **TOP GAINERS ON DEXVRA**\n` +
+    `🗓 {date}\n\n` +
+    `{list}\n\n` +
+    `${em("📊", E.chart)} Ranked by **24h change** across every token listed on Dexvra.\n\n` +
+    LINKS_ROW,
   // Advertiser-facing, so it reads like an ad placement announcement rather than
   // bot output: what is running, where, and one link out. The "Announce On X"
   // line carries the campaign's tweet and drops itself when there is none.
@@ -565,6 +577,7 @@ const META = {
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
   post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_gainers: { group: "Channel Posts", label: "Post: Top Gainers banner", ph: ["date", "list", "count", "site", "listing", "trending", "announce", "xlisting"] },
   tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },

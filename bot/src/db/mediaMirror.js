@@ -19,7 +19,10 @@ const SESSION_BLOB = "gramjs-session";
 
 // Binary files worth backing up (NOT the .json stores — those go via kv, and a
 // .tmp write-in-progress must never be mirrored).
-const BLOB_RE = /^(banner-media-.+\.(gif|mp4|webm|mov)|banner-template-.+\.png|banner)$/i;
+// gainers-background.png is the artwork an admin uploads for the Top-Gainers
+// banner; like every other uploaded asset it must survive a container replace,
+// or the operator silently loses their background on the next deploy.
+const BLOB_RE = /^(banner-media-.+\.(gif|mp4|webm|mov)|banner-template-.+\.png|gainers-background\.png|banner)$/i;
 const isBlob = (name) => BLOB_RE.test(name) && !name.endsWith(".tmp");
 
 function localBlobs() {
