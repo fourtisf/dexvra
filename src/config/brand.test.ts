@@ -55,7 +55,8 @@ test("every channel-link filler offers the same placeholders", () => {
   }
   // …and the shared footer row every post carries must link it.
   const tpl = fs.readFileSync(path.join(process.cwd(), "bot/src/templates.js"), "utf8");
-  assert.match(tpl, /\[X\]\(\{xlisting\}\)/, "the channel-post links row must carry the X account");
+  // Match the LINK, not the label — the wording is the operator's to change.
+  assert.match(tpl, /\[[^\]]*X[^\]]*\]\(\{xlisting\}\)/, "the channel-post links row must carry the X account");
 });
 
 test("the bot tweets from the same account the site links to", () => {
