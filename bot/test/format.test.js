@@ -96,9 +96,11 @@ test("social lines drop individually; tier badge line drops without a tier", () 
   // two present, one missing → the row keeps its separator between survivors
   const two = fmt.listingPost({ ...base, tier: "XPRESS", links: { twitter: "https://x.com/bc", website: "https://bullcat.io" } });
   assert.ok(two.text.includes("❌ X · 🌐 Website\n"), two.text);
-  // The token's X and Dexvra's must never read as the same link.
-  assert.ok(two.text.includes("❌ Dexvra on X"), "the footer names its own account");
-  assert.ok(!/❌ X[^·\n]*\n[\s\S]*❌ X\b/.test(two.text.replace(/❌ Dexvra on X/g, "")), "no two bare 'X' links");
+  // The Dexvra row is Telegram destinations ONLY (operator's rule), so the only
+  // X link in a post is the TOKEN's own — one ❌ in the whole message.
+  const dexvraRow = (two.text.match(/📎 Dexvra\n(.*)/) || ["", ""])[1];
+  assert.ok(!/❌|X\b/.test(dexvraRow), `the Dexvra row must stay Telegram-only: ${dexvraRow}`);
+  assert.strictEqual((two.text.match(/❌/g) || []).length, 1, "exactly one X link — the token's");
   // tiered template without a tier → no orphan " tier" badge line
   const noTier = fmt.listingPost({ ...base, tier: null, links: {} });
   assert.ok(noTier.text.includes("New Listing on Dexvra"));

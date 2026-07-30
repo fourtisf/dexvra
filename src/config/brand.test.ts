@@ -53,10 +53,17 @@ test("every channel-link filler offers the same placeholders", () => {
     assert.match(start, new RegExp(`\\b${key}:`), `start.js never fills {${key}}`);
     assert.match(format, new RegExp(`\\b${key}:`), `channels/format.js never fills {${key}}`);
   }
-  // …and the shared footer row every post carries must link it.
+  // The welcome card links the account by name. Match the LINK, not the label —
+  // the wording is the operator's to change from the editor.
   const tpl = fs.readFileSync(path.join(process.cwd(), "bot/src/templates.js"), "utf8");
-  // Match the LINK, not the label — the wording is the operator's to change.
-  assert.match(tpl, /\[[^\]]*X[^\]]*\]\(\{xlisting\}\)/, "the channel-post links row must carry the X account");
+  assert.match(tpl, /\[[^\]]*\]\(\{xlisting\}\)/, "no template links the X account at all");
+  // The CHANNEL-POST footer row is deliberately Telegram-only (operator's rule):
+  // the token's own social row already prints an X link, and this row is also
+  // rendered header-less on rank-up / pump posts, so a second one reads as a
+  // duplicate of the token's. {xlisting} stays available to add from the editor.
+  const row = tpl.match(/const LINKS_ROW =[\s\S]*?;\n/);
+  assert.ok(row, "LINKS_ROW not found — did templates.js move?");
+  assert.ok(!row[0].includes("{xlisting}"), "the Dexvra links row must stay Telegram destinations only");
 });
 
 test("the bot tweets from the same account the site links to", () => {
