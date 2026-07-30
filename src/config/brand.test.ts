@@ -5,12 +5,12 @@ import test from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_URL } from "./socials.ts";
+import { BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL } from "./socials.ts";
 
 const read = (p: string) => fs.readFileSync(path.join(process.cwd(), p), "utf8");
 
 test("every social constant is an absolute https URL", () => {
-  for (const [name, url] of Object.entries({ BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_URL })) {
+  for (const [name, url] of Object.entries({ BOT_URL, TELEGRAM_URL, TELEGRAM_LISTING_URL, TELEGRAM_TRENDING_URL, X_LISTING_URL, X_URL })) {
     assert.match(url, /^https:\/\//, `${name} must be absolute — a relative one resolves against dexvra.io`);
     assert.doesNotMatch(url, /\s|@$/, `${name} looks malformed: ${url}`);
   }
@@ -29,6 +29,35 @@ test("the handles match the accounts the bot actually posts from", () => {
   assert.strictEqual(X_URL, "https://x.com/dexvraio");
 });
 
+test("listing alerts on X point at the account that actually posts them", () => {
+  // twitter.js sends every listing / trending / pump tweet through the `listing`
+  // credential set, NOT the official one. Until this account was named, the
+  // site and every channel post linked @dexvraio for "we also post on X" —
+  // which does not carry the listing feed at all.
+  assert.strictEqual(X_LISTING_URL, "https://x.com/dexvralisting");
+  assert.notStrictEqual(X_LISTING_URL, X_URL, "the two accounts must stay distinct");
+  const consts = fs.readFileSync(path.join(process.cwd(), "bot/src/config/constants.js"), "utf8");
+  const m = consts.match(/const X_LISTING_HANDLE = \(env\.X_LISTING_HANDLE \|\| "([^"]+)"\)/);
+  assert.ok(m, "X_LISTING_HANDLE default not found in the bot config");
+  assert.strictEqual(`https://x.com/${m[1]}`, X_LISTING_URL, `bot links @${m[1]}, site links ${X_LISTING_URL}`);
+});
+
+test("every channel-link filler offers the same placeholders", () => {
+  // Two places build the {site}/{listing}/{trending}/{announce}/{xlisting} set —
+  // start.js for the bot's own cards, channels/format.js for every channel post.
+  // A key added to one and not the other renders as a literal "{xlisting}" in
+  // half the output, which is exactly how the X link would have gone missing.
+  const start = fs.readFileSync(path.join(process.cwd(), "bot/src/handlers/start.js"), "utf8");
+  const format = fs.readFileSync(path.join(process.cwd(), "bot/src/channels/format.js"), "utf8");
+  for (const key of ["site", "listing", "trending", "announce", "xlisting"]) {
+    assert.match(start, new RegExp(`\\b${key}:`), `start.js never fills {${key}}`);
+    assert.match(format, new RegExp(`\\b${key}:`), `channels/format.js never fills {${key}}`);
+  }
+  // …and the shared footer row every post carries must link it.
+  const tpl = fs.readFileSync(path.join(process.cwd(), "bot/src/templates.js"), "utf8");
+  assert.match(tpl, /\[X\]\(\{xlisting\}\)/, "the channel-post links row must carry the X account");
+});
+
 test("the bot tweets from the same account the site links to", () => {
   // The bot @-mentions X_HANDLE in its ad posts. If that default and the site's
   // X_URL name different accounts, half the audience is sent to the wrong one
@@ -41,7 +70,7 @@ test("the bot tweets from the same account the site links to", () => {
 
 test("the footer's social links have a real href and open safely", () => {
   const src = read("src/app/(site)/layout.tsx");
-  for (const v of ["TELEGRAM_URL", "X_URL", "BOT_URL", "TELEGRAM_TRENDING_URL"]) {
+  for (const v of ["TELEGRAM_URL", "X_URL", "X_LISTING_URL", "BOT_URL", "TELEGRAM_TRENDING_URL"]) {
     assert.ok(src.includes(`href={${v}}`), `the footer must link ${v}`);
   }
   // target=_blank without noopener hands the opened tab a window.opener handle.

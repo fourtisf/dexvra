@@ -34,12 +34,15 @@ function bannerPhoto() {
 // manual template editing (change a channel via env → the link follows).
 const tme = (h) => `https://t.me/${String(h).replace(/^@/, "")}`;
 function channelVars() {
-  const { CHANNELS, SITE_URL } = require("../config/constants");
+  const { CHANNELS, SITE_URL, X_LISTING_URL } = require("../config/constants");
   return {
     site: SITE_URL,
     announce: tme(CHANNELS.announce),
     listing: tme(CHANNELS.listing),
     trending: tme(CHANNELS.trending),
+    // Listing alerts are tweeted from here. Must be filled everywhere the
+    // channel links are, or {xlisting} renders as a literal in the card.
+    xlisting: X_LISTING_URL,
   };
 }
 

@@ -69,7 +69,15 @@ const LINKS_ROW =
   `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
   `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
   `🔥 [Trending]({trending}) · ` +
-  `${em("📢", E.megaphone)} [Announcements]({announce})`;
+  `${em("📢", E.megaphone)} [Announcements]({announce}) · ` +
+  // Listing alerts are tweeted from @dexvralisting (twitter.js posts them
+  // through the `listing` credentials). Nothing linked that account before, so
+  // every reader outside Telegram was sent to @dexvraio, which does not carry
+  // the feed. Labelled "Dexvra on X", never a bare "X": the token's OWN social
+  // row a few lines above already says "❌ X", and this row is also printed
+  // header-less on the short rank-up / pump posts — two identical "X" links to
+  // different accounts in one post is a reader picking at random.
+  `${em("❌", E.cross)} [Dexvra on X]({xlisting})`;
 const FOOTER_BLOCK = `${em("📎", E.clip)} **Dexvra**\n` + LINKS_ROW;
 // Shared body of the listing/trending cards (below their distinct headers).
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
@@ -115,7 +123,8 @@ const DEFAULTS = {
     "🌐 [Website]({site})\n" +
     "📢 [Announcements Channel]({announce})\n" +
     "🚨 [Listings Channel]({listing})\n" +
-    "📈 [Trending Channel]({trending})\n\n" +
+    "📈 [Trending Channel]({trending})\n" +
+    "❌ [Listing Alerts on X]({xlisting})\n\n" +
     "👇 Pick a service below — each step is fully guided.",
   intro_xpress:
     "⚡ **Xpress Listing**\n\n" +
@@ -123,7 +132,7 @@ const DEFAULTS = {
     "**What you get**\n" +
     "✅ Listed on [dexvra.io](https://dexvra.io)\n" +
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
-    "🐦 Automatic post on X\n\n" +
+    "🐦 Automatic post on X — [@dexvralisting](https://x.com/dexvralisting)\n\n" +
     "💎 Want Trending + a tier badge too? Choose **🏆 Listing & Trending**.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
   intro_tiered:
@@ -134,7 +143,7 @@ const DEFAULTS = {
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
     "🔥 Featured Trending run on [@dexvratrending](https://t.me/dexvratrending)\n" +
     "📢 Announcement headline on [@dexvraio](https://t.me/dexvraio) (top tiers)\n" +
-    "🐦 Automatic post on X\n" +
+    "🐦 Automatic post on X — [@dexvralisting](https://x.com/dexvralisting)\n" +
     "💎 A ranked tier badge on every post\n\n" +
     "⚠️ Only **Diamond, Gold & Platinum** get the bonus @dexvraio announcement.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
@@ -155,7 +164,7 @@ const DEFAULTS = {
     "**What you get**\n" +
     "🖼 A homepage banner with your own click-through link\n" +
     "📢 An announcement on [@dexvraio](https://t.me/dexvraio)\n" +
-    "🐦 An automatic post on X\n\n" +
+    "🐦 An automatic post on X — [@dexvralisting](https://x.com/dexvralisting)\n\n" +
     "💰 USD pricing — bigger discounts on longer runs.\n\n" +
     "🔹 Please have your banner ready (GIF, JPG or PNG). Choose a format:",
   listing_ca_prompt:
@@ -495,7 +504,7 @@ const DEFAULTS = {
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
 const META = {
-  welcome: { group: "Bot Messages", label: "Welcome / Start", ph: ["site", "announce", "listing", "trending"] },
+  welcome: { group: "Bot Messages", label: "Welcome / Start", ph: ["site", "announce", "listing", "trending", "xlisting"] },
   intro_xpress: { group: "Bot Messages", label: "Intro: Xpress Listing", ph: [] },
   intro_tiered: { group: "Bot Messages", label: "Intro: Listing & Trending", ph: [] },
   tier_chooser: { group: "Bot Messages", label: "Tier chooser", ph: ["native"] },
@@ -534,10 +543,10 @@ const META = {
   pay_card_admin: { group: "Bot Messages", label: "Payment card (admin free)", ph: ["label"] },
   payment_not_detected: { group: "Bot Messages", label: "Payment not detected", ph: ["amount", "native", "address", "order"] },
   payment_snag: { group: "Bot Messages", label: "Payment snag", ph: ["order"] },
-  success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "listingUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "listingUrl", "xUrl", "announceUrl", "trendingUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
-  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce"] },
+  success_listing: { group: "Bot Messages", label: "Success: Xpress listing", ph: ["symbol", "name", "siteUrl", "listingUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
+  success_listing_tiered: { group: "Bot Messages", label: "Success: Listing & Trending", ph: ["symbol", "name", "tier", "tierEmoji", "hours", "siteUrl", "listingUrl", "xUrl", "announceUrl", "trendingUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
+  success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
+  success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
   buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
@@ -551,12 +560,12 @@ const META = {
   massdm_enqueue_failed: { group: "Mass DM", label: "Mass DM: enqueue failed", ph: ["ref"] },
   massdm_test_queued: { group: "Mass DM", label: "Mass DM: test queued", ph: [] },
   massdm_done: { group: "Mass DM", label: "Mass DM: delivered receipt", ph: ["ref", "reached"] },
-  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce"] },
-  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce"] },
+  post_listing_xpress: { group: "Channel Posts", label: "Post: Xpress Listing", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },

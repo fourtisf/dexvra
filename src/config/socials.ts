@@ -14,6 +14,12 @@ export const TELEGRAM_LISTING_HANDLE = "@dexvralisting";
 export const TELEGRAM_TRENDING_URL = "https://t.me/dexvratrending";
 export const TELEGRAM_TRENDING_HANDLE = "@dexvratrending";
 export const X_URL = "https://x.com/dexvraio";
+// Listing alerts are tweeted from their OWN account, not from @dexvraio: the
+// bot's twitter.js posts every listing, trending and pump alert through the
+// `listing` credential set. Nothing linked it before, so readers who do not use
+// Telegram were sent to @dexvraio, which does not carry that feed.
+export const X_LISTING_URL = "https://x.com/dexvralisting";
+export const X_LISTING_HANDLE = "@dexvralisting";
 export const BOT_URL = "https://t.me/dexvrabot";
 export const TELEGRAM_GROUP_URL = "https://t.me/dexvragroup"; // open two-way chat
 export const TRADEBOT_URL = "https://t.me/dexvratradebot";
@@ -96,11 +102,21 @@ export const SOCIALS: Social[] = [
     blurb: "Buy and sell tokens inside Telegram; every listing and trending post has a buy button.",
   },
   {
+    key: "xlisting",
+    kind: "x",
+    name: "Listing alerts on X",
+    handle: "@dexvralisting",
+    url: X_LISTING_URL,
+    blurb: "Every new listing posted to X as it goes live, for people who do not use Telegram.",
+  },
+  {
     key: "x",
     kind: "x",
     name: "X",
     handle: "@dexvraio",
+    // Split from the listing feed above: two X accounts saying "everything goes
+    // here" would make neither worth following.
+    blurb: "Product news and campaign announcements, the same posts as the Telegram announcements channel.",
     url: X_URL,
-    blurb: "Every listing and announcement also goes to X, for people who do not use Telegram.",
   },
 ];
