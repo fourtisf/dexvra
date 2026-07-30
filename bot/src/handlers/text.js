@@ -4,11 +4,34 @@ const log = require("../helpers/logger");
 
 const LISTING = new Set(["xpress_listing", "tiered_listing"]);
 
+/** A contract pasted with nothing running. Answered only when it really is a
+ *  contract AND already listed — anything else stays silent, because this path
+ *  sees every stray message in every DM. */
+async function bareContract(ctx, raw) {
+  if (raw.startsWith("/")) return;
+  const listed = require("../helpers/listedGuard");
+  const hit = listed.extractAddress(raw);
+  if (!hit) return;
+  try {
+    const row = await listed.existingListing(hit.address, hit.chain);
+    if (row) await listed.sendAlreadyListed(ctx, row);
+  } catch (e) {
+    // Not listed, or we could not tell: say nothing. An unprompted error card
+    // for a message the user never asked us to act on is worse than silence.
+    log.warn(`[text] bare-contract lookup: ${e.message}`);
+  }
+}
+
 async function textRouter(ctx) {
   if (!ctx.chat || ctx.chat.type !== "private") return;
   const s = ctx.session || {};
-  if (!s.type) return; // no active flow — ignore chatter
-  const text = ctx.message && ctx.message.text ? ctx.message.text : "";
+  const raw = ctx.message && ctx.message.text ? ctx.message.text : "";
+  // No flow running. Pasting a contract straight into the chat is the most
+  // common thing a project owner does, and it used to fall into "ignore
+  // chatter" — the bot said nothing at all. If the token is already on the
+  // site, answer with its page and point at Book Trending.
+  if (!s.type) return await bareContract(ctx, raw);
+  const text = raw;
   // Let real commands fall through to their bot.command handlers (except /skip,
   // which flows consume as an inline "skip this field").
   if (text.startsWith("/") && text !== "/skip") return;

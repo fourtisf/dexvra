@@ -172,6 +172,17 @@ const DEFAULTS = {
     "📢 24H & 48H runs also headline on [@dexvraio](https://t.me/dexvraio)\n\n" +
     "⌛ Slots run up to **48 hours** — longer runs carry bigger discounts.\n\n" +
     "🔹 Paste the **contract address** of your listed token (or its dexvra.io link):",
+  // One token, one listing. Shown whenever a contract that is already on the
+  // site is submitted again — in the listing form, or just pasted into the chat.
+  // It has to answer "so what now?", hence Book Trending as the next step.
+  already_listed:
+    "✅ **{name} (${symbol})** is already listed on [dexvra.io]({site})!\n\n" +
+    "🔗 **View your token**\n" +
+    "{url}\n\n" +
+    "📊 **Chain:** {chain}\n\n" +
+    "🔹 A contract can only be listed once — it is already live on the site.\n\n" +
+    "📈 **Want more eyes on it?**\n\n" +
+    "💡 Tap **🔥 Book Trending** below to push it to the top of the board.",
   trending_not_found:
     "❌ **Not listed yet**\n\n" +
     "🔹 We couldn't find that token on Dexvra.\n\n" +
@@ -495,6 +506,7 @@ const META = {
   listing_symbol_prompt: { group: "Bot Messages", label: "Prompt: token symbol", ph: [] },
   listing_logo_prompt: { group: "Bot Messages", label: "Prompt: logo", ph: [] },
   trending_ca_prompt: { group: "Bot Messages", label: "Prompt: trending CA", ph: [] },
+  already_listed: { group: "Bot Messages", label: "Listing: token already listed", ph: ["name", "symbol", "chain", "address", "url", "site"] },
   trending_not_found: { group: "Bot Messages", label: "Trending: token not listed", ph: [] },
   review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram"] },
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
