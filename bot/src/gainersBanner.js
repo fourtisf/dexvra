@@ -806,40 +806,52 @@ function header(ctx, S, spec, { n, dateText }) {
   ctx.fill();
 }
 
-/** Footer: tagline left, the site's `.btn-primary` gradient CTA right. */
+/** Footer: tagline left, the site's `.btn-primary` gradient CTA right.
+ *
+ *  The whole strip is laid out around ONE centreline so the left text and the
+ *  CTA pill are optically level — and the pill stays INSIDE the inner frame:
+ *  it used to run 46px tall from y+16, putting its bottom at 882 on an 880px
+ *  frame edge, with an 8px-offset glow smearing across the hairline. */
 function footer(ctx, S) {
   const W = REF_W * S;
   const x = PAD * S;
   const y = 820 * S;
+  // frame bottom edge sits at H-20 (backdrop); keep everything clear of it
+  const frameBottom = (REF_H - 20) * S;
   ctx.fillStyle = SITE.line;
   ctx.fillRect(x, y, W - 2 * PAD * S, 1);
 
-  const bw0 = microLabel(ctx, x, y + 40 * S, "Dexvra · Discovery", { size: 12 * S, color: SITE.faint, track: 0.2 });
+  // one centreline for the whole strip, centred between rule and frame
+  const midY = (y + frameBottom) / 2;
+
+  const bw0 = microLabel(ctx, x, midY + 4.5 * S, "Dexvra · Discovery", { size: 12 * S, color: SITE.faint, track: 0.2 });
   ctx.save();
   ctx.font = `500 ${16 * S}px ${F.d5}`;
   ctx.fillStyle = SITE.muted;
-  ctx.textBaseline = "alphabetic";
+  ctx.textBaseline = "middle";
   // Tied to the brand cluster (fixed 24px gap) so the footer reads as one
   // left group + the CTA, not two strays and a hole.
-  ctx.fillText("Find the next Moonshot", x + bw0 + 24 * S, y + 40 * S);
+  ctx.fillText("Find the next Moonshot", x + bw0 + 24 * S, midY + 1 * S);
   ctx.restore();
 
-  // CTA — the site's primary button: mint→cyan gradient, dark ink, top inset light
+  // CTA — the site's primary button: mint→cyan gradient, dark ink, top inset
+  // light. Sized to clear the frame with visible air on both sides, glow kept
+  // tight so it can't bleed over the hairline below.
   const label = "dexvra.io";
   ctx.save();
-  ctx.font = `700 ${17 * S}px ${F.d7}`;
+  ctx.font = `700 ${16 * S}px ${F.d7}`;
   const tw = ctx.measureText(label).width;
-  const bh = 46 * S;
-  const bw = tw + 56 * S;
+  const bh = 40 * S;
+  const bw = tw + 48 * S;
   const bx = W - PAD * S - bw;
-  const by = y + 16 * S;
+  const by = midY - bh / 2;
   roundRect(ctx, bx, by, bw, bh, bh / 2);
   const g = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
   g.addColorStop(0, SITE.mint);
   g.addColorStop(1, SITE.cyan);
-  ctx.shadowColor = "rgba(61,245,159,.32)";
-  ctx.shadowBlur = 24 * S;
-  ctx.shadowOffsetY = 8 * S;
+  ctx.shadowColor = "rgba(61,245,159,.3)";
+  ctx.shadowBlur = 14 * S;
+  ctx.shadowOffsetY = 3 * S;
   ctx.fillStyle = g;
   ctx.fill();
   ctx.shadowBlur = 0;
@@ -849,7 +861,7 @@ function footer(ctx, S) {
   roundRect(ctx, bx, by, bw, bh, bh / 2);
   ctx.clip();
   ctx.fillStyle = "rgba(255,255,255,.5)";
-  ctx.fillRect(bx + bh / 3, by + 1, bw - bh / 1.5, Math.max(1, 1.4 * S));
+  ctx.fillRect(bx + bh / 3, by + 1, bw - bh / 1.5, Math.max(1, 1.3 * S));
   ctx.restore();
   ctx.fillStyle = "#03150B";
   ctx.textAlign = "center";
