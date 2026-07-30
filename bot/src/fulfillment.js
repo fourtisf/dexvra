@@ -235,6 +235,17 @@ async function fulfillListing(ctx, order) {
   const listing = await api.createListing(input);
   log.info(`[fulfil] listing ${listing && listing.id} live: ${input.chain}/${input.address}`);
 
+  // Remember it as listed, permanently. The auto-lister folds the site's rows
+  // into its ledger on each scan, but a token bought and then deleted BEFORE
+  // the next scan would slip through that window — and handing a contract
+  // somebody just paid for back out as a free auto-listing is the worst version
+  // of this bug. Best-effort: a ledger write must never fail a paid order.
+  try {
+    await require("./services/autoLister").rememberListed([{ chain: input.chain, address: input.address }]);
+  } catch (e) {
+    log.warn(`[fulfil] ledger note for ${input.chain}/${input.address}: ${e.message}`);
+  }
+
   // 4. Channel posts (best-effort) — dynamic per-token banners.
   if (!logoBuffer && input.logoUrl) logoBuffer = await fetchLogoUrl(input.logoUrl);
   // Animated logo custom-emoji (per-token pack, shown inline in channel posts
