@@ -79,11 +79,13 @@ test("rank(): positive, sane, sorted, capped — never padded", () => {
   assert.strictEqual(gainers.rank(coins, { limit: 99 }).length, 3, "limit is capped at MAX_SLOTS' worth of real gainers");
 });
 
-test("pctLabel: precision shrinks as the move grows, sign always shown", () => {
+test("pctLabel: ONE precision rule (integer ≥100, one decimal below), sign always shown", () => {
   assert.strictEqual(gainers.pctLabel(204.44), "+204%");
   assert.strictEqual(gainers.pctLabel(27.72), "+27.7%");
-  assert.strictEqual(gainers.pctLabel(4.567), "+4.57%");
-  assert.strictEqual(gainers.pctLabel(-3.4), "-3.40%");
+  // One decimal below 100 — never two. "+8.20%" beside "+22.1%" in an aligned
+  // mono column is the formatting tell a design review flags.
+  assert.strictEqual(gainers.pctLabel(4.567), "+4.6%");
+  assert.strictEqual(gainers.pctLabel(-3.4), "-3.4%");
   assert.strictEqual(gainers.pctLabel(null), "");
   assert.strictEqual(gainers.pctLabel("nonsense"), "");
 });

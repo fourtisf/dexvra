@@ -49,20 +49,20 @@ function formatNumber(num) {
   return String(Math.floor(v));
 }
 
-/** Signed 24h-change label: "+204%", "+27.7%", "-3.42%", "" when there is no
- *  number. Precision shrinks as the move grows — nobody needs two decimals on a
- *  triple-digit pump, and "+204.00%" reads like a spreadsheet, not a banner.
- *  Shared by the gainers banner and its caption so the two can never disagree
- *  about what the same token moved. */
+/** Signed 24h-change label: "+204%", "+27.7%", "+4.6%", "" when there is no
+ *  number. ONE precision rule — integers at triple digits, one decimal below —
+ *  because these labels sit in an aligned mono column: a "+8.20%" beside a
+ *  "+22.1%" reads as untuned formatting, the kind of tell a design review
+ *  catches instantly. Shared by the gainers banner and its caption so the two
+ *  can never disagree about what the same token moved. */
 function fmtPct(n) {
   // Absence has to be checked BEFORE the parse: Number(null) is 0 and 0 is
-  // finite, so a token with no 24h change read back as a flat "0.00%" — a number
+  // finite, so a token with no 24h change read back as a flat "0.0%" — a number
   // nobody measured, printed on a public banner as though it had been.
   if (n === null || n === undefined || n === "") return "";
   const v = Number(n);
   if (!Number.isFinite(v)) return "";
-  const a = Math.abs(v);
-  const s = a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
+  const s = Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
   return `${v > 0 ? "+" : ""}${s}%`;
 }
 

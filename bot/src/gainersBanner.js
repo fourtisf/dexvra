@@ -184,9 +184,19 @@ function bannerTrend(sym, chg24h) {
   const pts = [];
   let v = 50;
   const up = (Number(chg24h) || 0) >= 0;
-  const drift = up ? 2.3 : -2.3;
+  // Slope tracks the SIZE of the real move (log-scaled) and the wobble varies
+  // per symbol — five rows of one cloned waveform is placeholder art, and a
+  // +204% should visibly out-climb a +27%.
+  const a = Math.abs(Number(chg24h) || 0);
+  const slope = 0.8 + Math.min(2.4, Math.log10(1 + a) * 1.05);
+  const drift = (up ? 1 : -1) * slope;
+  // Wobble varies per symbol but is CAPPED against the slope — a seed whose
+  // amplitude out-muscles the drift renders a sideways heart-monitor line, and
+  // one flat row in a column of risers reads as broken data.
+  const amp = Math.min(2.0 + (i % 5) * 0.55, slope * 1.1);
+  const jag = Math.min(0.5 + ((i >> 2) % 3) * 0.35, slope * 0.4);
   for (let k = 0; k < 26; k++) {
-    v += drift + Math.sin(i * 3.7 + k * 1.3) * 2.7 + (((k * i) % 5) - 2) * 0.8;
+    v += drift + Math.sin(i * 3.7 + k * (1.05 + (i % 4) * 0.16)) * amp + (((k * i) % 5) - 2) * jag;
     v = Math.max(6, Math.min(94, v));
     pts.push(v);
   }
@@ -410,20 +420,35 @@ function avatar(ctx, img, cx, cy, d, symbol, S) {
   if (img) {
     drawCover(ctx, img, cx - r, cy - r, d, d);
   } else {
-    const [c0, c1, c2] = jewelFor(symbol);
-    const g = ctx.createRadialGradient(cx - r * 0.36, cy - r * 0.48, r * 0.1, cx, cy, r * 1.15);
-    g.addColorStop(0, c0);
-    g.addColorStop(0.45, c1);
+    // FLAT disc — a soft vertical ramp within the jewel's mid/deep tones and a
+    // white monogram. The radial-with-hotspot version read as a glossy Web-2.0
+    // orb against the flat panels, which is exactly the "programmer art" tell.
+    const [, c1, c2] = jewelFor(symbol);
+    const g = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
+    g.addColorStop(0, c1);
     g.addColorStop(1, c2);
     ctx.fillStyle = g;
     ctx.fillRect(cx - r, cy - r, d, d);
-    ctx.fillStyle = "rgba(255,255,255,.94)";
-    ctx.font = `700 ${Math.round(d * 0.38)}px ${F.d7}`;
+    ctx.fillStyle = "rgba(241,245,251,.95)";
+    ctx.font = `700 ${Math.round(d * 0.36)}px ${F.d7}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(monogramOf(symbol), cx, cy + d * 0.02);
   }
   ctx.restore();
+  // ambient seat for the big feature avatars so the disc sits IN the card
+  if (d >= 100 * S) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.shadowColor = "rgba(0,0,0,.45)";
+    ctx.shadowBlur = 30 * S;
+    ctx.shadowOffsetY = 10 * S;
+    ctx.strokeStyle = "rgba(0,0,0,.01)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.lineWidth = Math.max(1.5, 2 * S);
@@ -455,23 +480,42 @@ function sparkline(ctx, x, y, w, h, sym, pct, S, { alpha = 1 } = {}) {
   const py = (v) => y + h - ((v - min) / span) * h;
   ctx.save();
   ctx.globalAlpha = alpha;
-  // area
-  ctx.beginPath();
-  ctx.moveTo(px(0), y + h);
-  ctx.lineTo(px(0), py(pts[0]));
-  for (let k = 0; k < pts.length - 1; k++) {
-    const mx = (px(k) + px(k + 1)) / 2;
-    const my = (py(pts[k]) + py(pts[k + 1])) / 2;
-    ctx.quadraticCurveTo(px(k), py(pts[k]), mx, my);
+  // Area fill on an OFFSCREEN tile so its trailing edge can be faded out with
+  // destination-out — closed in place, the fill ended in a hard vertical wall
+  // under the endpoint ("flag pole"), the tell of an unclipped polygon.
+  try {
+    const kit = require("./helpers/canvasKit");
+    const cv2 = kit.canvasLib();
+    const off = cv2.createCanvas(Math.max(2, Math.ceil(w + 2)), Math.max(2, Math.ceil(h + 2)));
+    const o = off.getContext("2d");
+    const opx = (k) => (k / (pts.length - 1)) * w;
+    const opy = (v) => h - ((v - min) / span) * h;
+    o.beginPath();
+    o.moveTo(opx(0), h);
+    o.lineTo(opx(0), opy(pts[0]));
+    for (let k = 0; k < pts.length - 1; k++) {
+      const mx = (opx(k) + opx(k + 1)) / 2;
+      const my = (opy(pts[k]) + opy(pts[k + 1])) / 2;
+      o.quadraticCurveTo(opx(k), opy(pts[k]), mx, my);
+    }
+    o.lineTo(opx(pts.length - 1), opy(pts[pts.length - 1]));
+    o.lineTo(opx(pts.length - 1), h);
+    o.closePath();
+    const fg = o.createLinearGradient(0, 0, 0, h);
+    fg.addColorStop(0, hexA(col, 0.2));
+    fg.addColorStop(1, hexA(col, 0));
+    o.fillStyle = fg;
+    o.fill();
+    o.globalCompositeOperation = "destination-out";
+    const fade = o.createLinearGradient(Math.max(0, w - 40), 0, w, 0);
+    fade.addColorStop(0, "rgba(0,0,0,0)");
+    fade.addColorStop(1, "rgba(0,0,0,1)");
+    o.fillStyle = fade;
+    o.fillRect(Math.max(0, w - 40), 0, 42, h + 2);
+    ctx.drawImage(off, x, y);
+  } catch {
+    /* fill is a finish, never a failure — the stroke below still draws */
   }
-  ctx.lineTo(px(pts.length - 1), py(pts[pts.length - 1]));
-  ctx.lineTo(px(pts.length - 1), y + h);
-  ctx.closePath();
-  const fillG = ctx.createLinearGradient(0, y, 0, y + h);
-  fillG.addColorStop(0, hexA(col, 0.22));
-  fillG.addColorStop(1, hexA(col, 0));
-  ctx.fillStyle = fillG;
-  ctx.fill();
   // line
   ctx.beginPath();
   ctx.moveTo(px(0), py(pts[0]));
@@ -599,17 +643,18 @@ function header(ctx, S, spec, { n, dateText }) {
   // top-right: LIVE pill + date chip on one row
   let rx = right;
   if (dateText) rx -= chip(ctx, rx, 74 * S, dateText, 12.5 * S, S, { align: "right", color: SITE.muted }) + 14 * S;
-  const liveW = chip(ctx, rx, 74 * S, "Live · 24H", 12.5 * S, S, {
+  // Leading spaces reserve the dot's slot INSIDE the pill — a dot floating in
+  // the gap outside the border read as a stray artifact, not a live indicator.
+  const liveW = chip(ctx, rx, 74 * S, "   Live · 24H", 12.5 * S, S, {
     align: "right",
     color: SITE.mint,
     border: hexA(SITE.mint, 0.35),
     bg: hexA(SITE.mint, 0.08),
   });
-  // pulse dot in the gap to the LIVE chip's left — the site's .dot-live
-  const dotX = rx - liveW - 16 * S;
-  radial(ctx, dotX, 70 * S, 13 * S, SITE.mint, 0.55);
+  const dotX = rx - liveW + 17 * S;
+  radial(ctx, dotX, 71.5 * S, 12 * S, SITE.mint, 0.55);
   ctx.beginPath();
-  ctx.arc(dotX, 70 * S, 3.6 * S, 0, Math.PI * 2);
+  ctx.arc(dotX, 71.5 * S, 3.4 * S, 0, Math.PI * 2);
   ctx.fillStyle = SITE.mint;
   ctx.fill();
 
@@ -627,7 +672,9 @@ function header(ctx, S, spec, { n, dateText }) {
   ug.addColorStop(0, hexA(spec.accent, 0.9));
   ug.addColorStop(1, hexA(spec.accent, 0));
   ctx.fillStyle = ug;
-  roundRect(ctx, x + 2 * S, 248 * S, Math.max(160 * S, tw * 0.6), Math.max(2, 3 * S), 2 * S);
+  // Full rendered width: a rule that terminates inside a glyph group reads as
+  // arbitrary; spanning the whole title (with the gradient fade) reads designed.
+  roundRect(ctx, x + 2 * S, 248 * S, tw, Math.max(2, 3 * S), 2 * S);
   ctx.fill();
 }
 
@@ -639,12 +686,14 @@ function footer(ctx, S) {
   ctx.fillStyle = SITE.line;
   ctx.fillRect(x, y, W - 2 * PAD * S, 1);
 
-  microLabel(ctx, x, y + 40 * S, "Dexvra · Discovery", { size: 12 * S, color: SITE.faint, track: 0.2 });
+  const bw0 = microLabel(ctx, x, y + 40 * S, "Dexvra · Discovery", { size: 12 * S, color: SITE.faint, track: 0.2 });
   ctx.save();
   ctx.font = `500 ${16 * S}px ${F.d5}`;
   ctx.fillStyle = SITE.muted;
   ctx.textBaseline = "alphabetic";
-  ctx.fillText("Find the next Moonshot", x + 226 * S, y + 40 * S);
+  // Tied to the brand cluster (fixed 24px gap) so the footer reads as one
+  // left group + the CTA, not two strays and a hole.
+  ctx.fillText("Find the next Moonshot", x + bw0 + 24 * S, y + 40 * S);
   ctx.restore();
 
   // CTA — the site's primary button: mint→cyan gradient, dark ink, top inset light
@@ -726,11 +775,14 @@ function layoutList(ctx, S, spec, coins) {
   const w = (REF_W - 2 * PAD) * S;
   const n = coins.length;
   // column x-positions (right edges for numeric columns)
+  // Even rhythm across the data half: TREND / PRICE / MCAP / 24H roughly
+  // equidistant, so the table has no hollow band between the token cluster and
+  // the first data column.
   const cChg = x + w - 28 * S;
-  const cMcap = x + w - 208 * S;
-  const cPrice = x + w - 404 * S;
-  const sparkR = x + w - 600 * S;
-  const sparkW = 148 * S;
+  const cMcap = x + w - 268 * S;
+  const cPrice = x + w - 490 * S;
+  const sparkR = x + w - 700 * S;
+  const sparkW = 190 * S;
   boardPanel(
     ctx,
     S,
@@ -842,22 +894,22 @@ function layoutColumns(ctx, S, spec, coins, { rowsPerCol, big }) {
           const d = Math.min((big ? 52 : 44) * S, rowH * 0.6);
           avatar(ctx, c.img, px + 70 * S + d / 2, cy, d, c.symbol, S);
 
+          // Same information architecture as list5 — ticker + chain pill on the
+          // first line, project name muted underneath — so the three table
+          // layouts read as one system rather than three.
           const tx = px + 70 * S + d + 16 * S;
           const tw = (big ? sparkR - sparkW - 24 * S : cMcap - 84 * S) - tx;
+          const tickY = big ? cy - 2 * S : cy - 3 * S;
           ctx.save();
           ctx.textBaseline = "alphabetic";
           ctx.fillStyle = SITE.text;
-          ctx.fillText(fitText(ctx, `$${c.symbol}`, tw, { weight: 700, size: (big ? 22 : 20) * S, min: 13 * S, family: F.d7 }), tx, big ? cy - 2 * S : cy - 1 * S);
+          const symTxt = fitText(ctx, `$${c.symbol}`, tw - 58 * S, { weight: 700, size: (big ? 22 : 20) * S, min: 13 * S, family: F.d7 });
+          ctx.fillText(symTxt, tx, tickY);
+          const symW = ctx.measureText(symTxt).width;
+          ctx.fillStyle = SITE.muted;
+          ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: (big ? 13.5 : 12.5) * S, min: 10 * S, family: F.d5 }), tx, cy + 20 * S);
           ctx.restore();
-          if (big) {
-            ctx.save();
-            ctx.textBaseline = "alphabetic";
-            ctx.fillStyle = SITE.muted;
-            ctx.fillText(fitText(ctx, c.name || chainName(c.chain), tw, { weight: 500, size: 13.5 * S, min: 10 * S, family: F.d5 }), tx, cy + 20 * S);
-            ctx.restore();
-          } else {
-            microLabel(ctx, tx, cy + 20 * S, chainShort(c.chain), { size: 10 * S, track: 0.16, color: SITE.faint });
-          }
+          chip(ctx, tx + symW + 10 * S, tickY - 6 * S, chainShort(c.chain), (big ? 9.5 : 9) * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
 
           if (big) sparkline(ctx, sparkR - sparkW, cy - 15 * S, sparkW, 30 * S, c.symbol, c.pct, S, { alpha: 0.95 });
           if (c.mcap) {
@@ -895,9 +947,12 @@ function layoutCards(ctx, S, spec, coins) {
     surface(ctx, x, y, cardW, cardH, 22 * S, { S, accent: rank === 1 ? spec.accent : null });
 
     // faint editorial rank numeral, top-right
+    // Ghost numeral: gold for the winner ONLY, one neutral tone for the rest.
+    // Tinting #3 orange made the eye pair 01+03 as "the special cards" and
+    // rank 02 as an also-ran — a medal scale has to read 1 > 2 > 3 or not at all.
     ctx.save();
     ctx.font = `800 ${84 * S}px ${F.m8}`;
-    ctx.fillStyle = rank <= 3 ? hexA(rankColor(rank), 0.14) : "rgba(255,255,255,.05)";
+    ctx.fillStyle = rank === 1 ? hexA(rankColor(1), 0.16) : "rgba(255,255,255,.09)";
     ctx.textAlign = "right";
     ctx.textBaseline = "alphabetic";
     ctx.fillText(String(rank).padStart(2, "0"), x + cardW - 24 * S, y + 92 * S);
@@ -922,10 +977,12 @@ function layoutCards(ctx, S, spec, coins) {
 
     // footer micro-stats
     const fy = y + cardH - 26 * S;
+    // muted, not faint: this line carries DATA, and at social-feed scale the
+    // faint tone fell below comfortable legibility.
     microLabel(ctx, padL, fy, `${chainShort(c.chain)}${c.price ? `  ·  ${fmtPrice(c.price)}` : ""}${c.mcap ? `  ·  MC ${fmtCap(c.mcap)}` : ""}`, {
       size: 11.5 * S,
       track: 0.14,
-      color: SITE.faint,
+      color: SITE.muted,
     });
   });
 }
@@ -951,13 +1008,6 @@ function layoutPodium(ctx, S, spec, coins) {
     const cx = x + colW / 2;
     surface(ctx, x, y, colW, h, 24 * S, { S, accent: rc, lift: winner ? 1.5 : 1 });
 
-    // trend area across the card's lower half, clipped, whisper-quiet
-    ctx.save();
-    roundRect(ctx, x, y, colW, h, 24 * S);
-    ctx.clip();
-    sparkline(ctx, x - 8 * S, y + h * 0.52, colW + 16 * S, h * 0.46, c.symbol, c.pct, S, { alpha: 0.16 });
-    ctx.restore();
-
     chip(ctx, cx, y + 42 * S, winner ? "#1 · Top gainer" : `#${rank}`, 12.5 * S, S, {
       align: "center",
       color: rc,
@@ -970,21 +1020,36 @@ function layoutPodium(ctx, S, spec, coins) {
     if (winner) radial(ctx, cx, lcy, d * 1.35, SITE.mint, 0.14);
     avatar(ctx, c.img, cx, lcy, d, c.symbol, S);
 
+    // Winner's type must OUTRANK the sides (≥1.4× on the figure), or the three
+    // metric blocks read as equals and the podium is carried only by elevation.
+    const tickSize = winner ? 44 : 31;
+    const pctSize = winner ? 68 : 44;
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = SITE.text;
-    ctx.font = `700 ${(winner ? 38 : 33) * S}px ${F.d7}`;
-    ctx.letterSpacing = `${(-0.02 * (winner ? 38 : 33) * S).toFixed(1)}px`;
-    ctx.fillText(fitText(ctx, `$${c.symbol}`, colW - 56 * S, { weight: 700, size: (winner ? 38 : 33) * S, min: 18 * S, family: F.d7 }), cx, lcy + d / 2 + 46 * S);
+    ctx.font = `700 ${tickSize * S}px ${F.d7}`;
+    ctx.letterSpacing = `${(-0.02 * tickSize * S).toFixed(1)}px`;
+    const tickerY = lcy + d / 2 + 42 * S;
+    ctx.fillText(fitText(ctx, `$${c.symbol}`, colW - 56 * S, { weight: 700, size: tickSize * S, min: 18 * S, family: F.d7 }), cx, tickerY);
     ctx.letterSpacing = "0px";
     ctx.fillStyle = SITE.muted;
-    ctx.fillText(fitText(ctx, c.name || "", colW - 60 * S, { weight: 500, size: 16 * S, min: 11 * S, family: F.d5 }), cx, lcy + d / 2 + 74 * S);
+    ctx.fillText(fitText(ctx, c.name || "", colW - 60 * S, { weight: 500, size: 16 * S, min: 11 * S, family: F.d5 }), cx, tickerY + 28 * S);
     ctx.restore();
 
-    // the hero figure
-    microLabel(ctx, cx, y + h * 0.62, "24h change", { size: 10.5 * S, track: 0.24, align: "center", color: SITE.faint });
-    bigPct(ctx, cx, y + h * 0.62 + (winner ? 66 : 58) * S, c.pctLabel, (winner ? 58 : 48) * S, S, { align: "center" });
+    // the hero figure — positioned OFF the name, so no fixed fraction can ever
+    // collide with the identity block above it. No "24H CHANGE" label here: the
+    // header kicker already says it, and a label was what collided last time.
+    bigPct(ctx, cx, tickerY + 28 * S + (winner ? 96 : 78) * S, c.pctLabel, pctSize * S, S, { align: "center" });
+
+    // a clean sparkline strip between the figure and the stat divider — its own
+    // band, clipped, so the curve can never slice through a glyph or the rule
+    const stripTop = y + h - 84 * S - 56 * S;
+    ctx.save();
+    roundRect(ctx, x, y, colW, h, 24 * S);
+    ctx.clip();
+    sparkline(ctx, cx - (colW - 140 * S) / 2, stripTop, colW - 140 * S, 42 * S, c.symbol, c.pct, S, { alpha: 0.8 });
+    ctx.restore();
 
     // footer stats split by a hairline
     ctx.fillStyle = SITE.line;
@@ -1016,25 +1081,27 @@ function layoutHero(ctx, S, spec, coins) {
   const h = BAND_H * S;
   surface(ctx, x, y, w, h, 26 * S, { S, accent: SITE.mint, lift: 1.5 });
 
-  // big trend area across the card's right half, under everything
+  // The avatar sits at ~0.70w so it bridges the text stack and the right edge
+  // instead of leaving a hollow centre; the editorial "01" lives at the far
+  // right where the avatar no longer buries it; the trend area rises through
+  // the card's midfield underneath both.
+  const heroD = 190 * S;
+  const heroX = x + w * 0.70;
+  const heroY = y + h * 0.40;
   ctx.save();
   roundRect(ctx, x, y, w, h, 26 * S);
   ctx.clip();
-  sparkline(ctx, x + w * 0.4, y + h * 0.34, w * 0.62, h * 0.62, c.symbol, c.pct, S, { alpha: 0.22 });
-  // editorial watermark
-  ctx.font = `800 ${300 * S}px ${F.m8}`;
-  ctx.fillStyle = "rgba(255,255,255,.035)";
+  sparkline(ctx, x + w * 0.44, y + h * 0.30, w * 0.53, h * 0.62, c.symbol, c.pct, S, { alpha: 0.2 });
+  ctx.font = `800 ${290 * S}px ${F.m8}`;
+  ctx.fillStyle = "rgba(255,255,255,.04)";
   ctx.textAlign = "right";
   ctx.textBaseline = "alphabetic";
-  ctx.fillText("01", x + w - 30 * S, y + 288 * S);
+  ctx.fillText("01", x + w - 26 * S, y + 300 * S);
   ctx.restore();
 
   const px = x + 52 * S;
   microLabel(ctx, px, y + 62 * S, "Biggest 24h mover", { size: 13 * S, color: SITE.mint, track: 0.26 });
 
-  const heroD = 210 * S;
-  const heroX = x + w - 64 * S - heroD / 2;
-  const heroY = y + h * 0.42;
   const textW = w - 220 * S - heroD;
 
   ctx.save();
@@ -1062,7 +1129,12 @@ function layoutHero(ctx, S, spec, coins) {
     const tx = px + i * (tileW + 16 * S);
     const ty = y + h - 44 * S - tileH;
     roundRect(ctx, tx, ty, tileW, tileH, 14 * S);
-    ctx.fillStyle = "rgba(255,255,255,.035)";
+    // Opaque surface: a trend line showing through a stat chip reads as noise
+    // inside the data, not depth.
+    ctx.fillStyle = "rgba(13,17,25,.92)";
+    ctx.fill();
+    roundRect(ctx, tx, ty, tileW, tileH, 14 * S);
+    ctx.fillStyle = "rgba(255,255,255,.04)";
     ctx.fill();
     ctx.lineWidth = Math.max(1, 1.1 * S);
     ctx.strokeStyle = SITE.line;
