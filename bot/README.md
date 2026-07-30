@@ -156,15 +156,23 @@ listing and posts it to a channel — the fourtis "gainers banner" idea, rebuilt
 here with no designed JPGs and no Python: every pixel is drawn by
 `src/gainersBanner.js` with `@napi-rs/canvas`.
 
-**Six layouts**, all in the Dexvra palette with gold/silver/bronze podium metals,
-glass cards, logo rings and a green/red % pill:
+**They are drawn as dexvra.io, not as a crypto flyer.** The banners use the site's
+own design tokens (`helpers/canvasKit.js → SITE`, copied value-for-value from
+`globals.css`): the `#090C12` page under its mint and violet blooms, `#101624`
+cards with hairline borders, the real logo mark from `components/Logo.tsx`, the
+site's two typefaces — **Space Grotesk** for display and **JetBrains Mono** for
+every stat and wide-tracked micro-label — and the board's own change pill drawn
+to the `.chg.up` spec. No glowing titles, no metallic medallions, no sparkles:
+someone who knows the site should recognise the artwork before reading a word.
+
+**Six layouts:**
 
 | id | layout | slots |
 |---|---|---|
-| `hero1` | 👑 #1 Spotlight — one hero card, the gain as the headline | 1 |
-| `podium` | 🏆 Top 3 Podium — gold/silver/bronze pedestals | 3 |
-| `cards4` | 🃏 Top 4 Cards — 2×2 feature cards | 4 |
-| `list5` | 📋 Top 5 List — ranked leaderboard rows (the default) | 5 |
+| `hero1` | 👑 #1 Spotlight — one hero card, the move as the headline | 1 |
+| `podium` | 🏆 Top 3 Podium — three tall cards, the winner raised | 3 |
+| `cards4` | 🃏 Top 4 Cards — 2×2, identity left / the move right | 4 |
+| `list5` | 📋 Top 5 List — the board itself, with real columns (the default) | 5 |
 | `rail8` | 🎞 Top 8 Rail — two columns of four | 8 |
 | `grid10` | 🔟 Top 10 Grid — two compact columns of five | 10 |
 

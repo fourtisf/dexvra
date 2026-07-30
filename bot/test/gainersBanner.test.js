@@ -36,10 +36,13 @@ test("every template declares a label, a slot count and a title", () => {
 });
 
 test("titles count the coins ACTUALLY drawn, not the template's size", () => {
-  assert.strictEqual(gb.specOf("list5").title(5), "TOP 5 GAINERS");
-  assert.strictEqual(gb.specOf("list5").title(2), "TOP 2 GAINERS");
-  assert.strictEqual(gb.specOf("podium").title(3), "TOP 3 GAINERS");
-  assert.strictEqual(gb.specOf("podium").title(1), "TOP 1 GAINER", "singular, and never 'TOP 3' with one card");
+  // Title case, not caps: the site sets its headings in Space Grotesk title case
+  // ("New Listings", "Trending"), and a shouted heading is the first thing that
+  // makes artwork look like a flyer instead of the product.
+  assert.strictEqual(gb.specOf("list5").title(5), "Top 5 Gainers");
+  assert.strictEqual(gb.specOf("list5").title(2), "Top 2 Gainers");
+  assert.strictEqual(gb.specOf("podium").title(3), "Top 3 Gainers");
+  assert.strictEqual(gb.specOf("podium").title(1), "Top 1 Gainer", "singular, and never 'Top 3' with one card");
 });
 
 test("pickTemplate: explicit wins, random is bounded by the pool", () => {
