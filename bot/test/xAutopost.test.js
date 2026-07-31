@@ -384,3 +384,63 @@ test("a blocked network is never reported as 'X refused your keys'", () => {
     assert.strictEqual(classify(new Error(m)).kind, "network", m);
   }
 });
+
+test("X's new-app crypto rule is not mistaken for a bad access token", () => {
+  // A brand-new X app may not post contract addresses for its first 7 days.
+  // It arrives as a 403 — the same status as a read-only token — so the naive
+  // mapping told the operator to regenerate credentials that were perfectly
+  // fine. (Hit for real on the first live listing: @dexvralisting authenticated
+  // the same day, and the Catjak card was refused for its CA line.)
+  const { classify } = require("../src/twitter")._diag;
+  const res = classify(
+    Object.assign(new Error("Request failed with code 403"), {
+      code: 403,
+      data: { status: 403, detail: "Crypto addresses are prohibited for the first 7 days after authentication." },
+    }),
+  );
+  assert.strictEqual(res.kind, "newapp-crypto", res.message);
+  assert.match(res.message, /NOT a key problem/);
+  assert.ok(!/READ-ONLY/.test(res.message), "must not send the operator to regenerate the token");
+});
+
+test("a refused listing is retried without its CA, keeping the token link", () => {
+  const { stripCryptoAddresses: strip } = require("../src/twitter")._diag;
+  const full = x._text.listingText({
+    name: "Catjak",
+    symbol: "CATJAK",
+    chain: "solana",
+    address: "3taE4SdY29sa3fnwyWqfshudJ95gMb9LoFTy5Uuppump",
+    tier: "XPRESS",
+    price: 0.000549,
+    mcap: 541_400,
+    links: {},
+  });
+  assert.match(full, /CA: 3taE4SdY/, "precondition: the card carries a bare CA");
+
+  const safe = strip(full);
+  assert.ok(!/CA:/.test(safe), `the CA line must go, label included:\n${safe}`);
+  // The token page URL embeds the same address — it must SURVIVE. X shortens
+  // every url to t.co, so the link is not what the rule is scanning for, and
+  // dropping it would cost the tweet its only route back to Dexvra.
+  assert.match(safe, /https:\/\/dexvra\.io\/token\/solana\/3taE4SdY/, `the token link was dropped:\n${safe}`);
+  assert.match(safe, /CATJAK/, "the ticker survived");
+  assert.match(safe, /\$541\.4K/, "the market cap survived");
+  assert.ok(!/\n{3,}/.test(safe), "removing the line left a hole");
+  assert.ok(tweetLength(safe) <= 280);
+
+  // Every chain shape the bot lists on, not just Solana.
+  for (const addr of [
+    "0x2170ed0880ac9a755fd29b2688956bd959f933f8",
+    "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    "EQCcGZm1AqBCTBc0Kkm8kdmuOZfE7SFrRA0TnCLLtnQZlkOB",
+  ]) {
+    const s = strip(`Header\n\nCA: ${addr}\n\nhttps://dexvra.io/token/x/${addr}\n\n#Dexvra`);
+    assert.ok(!/CA:/.test(s), `${addr} not stripped:\n${s}`);
+    assert.match(s, /dexvra\.io\/token/, `${addr}: link should survive:\n${s}`);
+  }
+
+  // A tweet with no address at all must come back untouched — the fallback
+  // fires on every kind of post, and the gainers board has no CA to lose.
+  const gainers = x._text.gainersText("1. $A  +12%\n2. $B  +8%", "Friday");
+  assert.strictEqual(strip(gainers), gainers.trim());
+});

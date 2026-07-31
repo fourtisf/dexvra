@@ -140,6 +140,27 @@ rank-up alert can quote it).
 Nothing here can fail an order. Every X call is best-effort and returns `null`
 instead of throwing — a dead X API costs you the tweet, never the sale.
 
+### The first 7 days: no contract addresses
+
+X refuses contract addresses from a **newly authenticated app** for its first
+7 days (anti-spam, aimed at throwaway shill accounts). The listing cards carry a
+`CA:` line, so they are refused during that window — as a `403`, confusingly the
+same status as a read-only token.
+
+The bot handles it: the tweet is **retried once with the `CA:` line removed**, so
+the listing still reaches X with its ticker, price, market cap and token-page
+link intact. The token page URL survives (X shortens every link to t.co, so it
+isn't what the rule scans). Once the app passes 7 days, the full card — CA line
+included — goes out again with no change on your side.
+
+You'll see this in the log, and it is not an error to act on:
+
+```
+WARN [x] Crypto addresses are prohibited for the first 7 days… — this is X's new-app rule, NOT a key problem.
+INFO [x] retrying without the contract address…
+INFO [x] tweeted (listing) id=…
+```
+
 ---
 
 ## 5. Editing the copy — no redeploy
@@ -178,6 +199,7 @@ credentials. If you see that, fix the network first; the keys may be perfect.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `could not reach api.x.com` | firewall / proxy / egress allowlist | allow `api.x.com` + `upload.twitter.com`; the keys were never tested |
+| `Crypto addresses are prohibited for the first 7 days` | X's new-app rule — **nothing to fix** | the bot re-posts the same card without its `CA:` line; the full card returns by itself once the app is 7 days past authentication |
 | `403` in `[x] tweet failed` | access token is read-only | set the app to *Read and write*, **regenerate** the token |
 | `401` | the four keys aren't from one app, or were regenerated | copy all four again from the same app |
 | `429` | X post cap for your tier/window | wait, or raise the tier — the bot retries on the next event |
