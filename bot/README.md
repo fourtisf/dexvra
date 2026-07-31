@@ -22,7 +22,10 @@ Telegram user ──▶ bot (Telegraf, long-polling)
                     │       writer of data/listings.json, no cross-process races)
                     │
                     ├─▶ @dexvralisting / @dexvraio / @dexvratrending   (Bot API posts)
-                    └─▶ X / Twitter                                     (optional, keyed)
+                    └─▶ X @dexvralisting    every listing, trending, banner,
+                                            rank-up, pump + the daily gainers
+                                            board                (4 keys — see
+                                            X-AUTOPOST.md; off until they're set)
 ```
 
 Payment model (matches fourtisbot): the bot generates a **fresh receiving
@@ -43,6 +46,7 @@ cd bot
 cp .env.example .env      # fill in BOT_TOKEN + INTERNAL_API_TOKEN (+ treasuries)
 npm install
 npm run check             # boot-wiring smoke test (no network)
+npm run x:check           # is X auto-posting configured + do the keys work?
 npm start                 # node main.js (long-polling)
 ```
 
@@ -67,7 +71,7 @@ pm2 save
 | `src/handlers/` | `start`, `listing`, `trending`, `banner`, `text`, `menu`, `registry` |
 | `src/payments/` | temp-wallet gen, balance poll, sweep, confirm handler (per-chain adapters) |
 | `src/channels/` | Bot-API channel posting + post formatters |
-| `src/twitter.js` | X posting (disabled unless keys present) |
+| `src/twitter.js` | X posting — every post type (disabled unless keys present) |
 | `src/services/` | trending poster, trending sweeper, pump checker |
 
 ## Admin bot & editable templates
@@ -236,8 +240,12 @@ late is worse than no post.
    board still posts with plain fallback emoji.
 5. **Admins**: add your Telegram id to `ADMIN_IDS` (admins pay 0 — use the free
    test order to verify listing → post end-to-end without spending).
-6. **X (optional)**: paste the 4 `X_*` keys to enable auto-tweeting; leave blank
-   to keep it off.
+6. **X auto-posting**: paste the 4 OAuth 1.0a keys — `X_API_KEY`,
+   `X_API_KEY_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET` — from
+   console.x.com → your app → *Keys and tokens*, with app permissions set to
+   **Read and write before** the access token is generated. Verify with
+   `npm run x:check`. Full walkthrough + troubleshooting:
+   [`X-AUTOPOST.md`](X-AUTOPOST.md). Leave the four blank to keep X off.
 7. `npm run check` → `npm test` → `npm start`.
 8. **Security**: rotate the bot token in @BotFather if it was ever shared, then
    update `.env`.

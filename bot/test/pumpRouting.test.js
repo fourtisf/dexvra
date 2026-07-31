@@ -51,3 +51,31 @@ test("the latch is spent only after the alert posts", () => {
   assert.ok(iPost < iLatch, "latch.add must come AFTER the post, not before it");
   assert.match(src, /if \(!posted\)/, "a failed post must skip the latch");
 });
+
+test("an announce-only token latches after posting — it must not re-fire forever", () => {
+  // `posted` used to be assigned ONLY for CHANNELS.listing. A token with an
+  // @dexvraio announcement but no listing-channel post (its listing post failed,
+  // or an admin force-posted just the announcement) therefore posted to
+  // @dexvraio successfully, left `posted` null, skipped the latch, and alerted
+  // again on EVERY poll — and once the tweet moved ahead of the post, it tweeted
+  // again every poll too. The fix is that ANY target counts as posted.
+  const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
+  const loop = src.slice(src.indexOf("for (const t of targets)"), src.indexOf("if (!posted)"));
+  assert.ok(
+    !/t\.channel === CHANNELS\.listing/.test(loop),
+    `"did it post?" must not be scoped to one channel:\n${loop}`,
+  );
+  assert.match(loop, /if \(msg\) posted = posted \|\| msg/, "any successful target must count as posted");
+});
+
+test("the pump tweet is fired BEFORE the card is built, so the card can link it", () => {
+  // post_pump carries an "Announce On X" line that reads coin.xUrl. A tweet
+  // fired after fmt.pumpPost() can never reach it — the line silently strips
+  // itself and the alert loses its X link, with nothing in the logs.
+  const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
+  const iTweet = src.indexOf("x.postPump");
+  const iXUrl = src.indexOf("coin.xUrl =");
+  const iCard = src.indexOf("fmt.pumpPost");
+  assert.ok(iTweet > -1 && iXUrl > -1 && iCard > -1, "all three steps present");
+  assert.ok(iTweet < iXUrl && iXUrl < iCard, "order must be: tweet → set xUrl → build card");
+});

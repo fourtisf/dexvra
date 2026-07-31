@@ -3,7 +3,7 @@
 // observed by the bot ≈ listing time). Posts as a REPLY to the original listing
 // post (like fourtis) and tweets; carries the admin's pump GIF/video clip when
 // one is set. Baseline + once-only latch persist across restarts.
-const { PUMP_CHECK_MS, CHANNELS, SITE_URL } = require("../config/constants");
+const { PUMP_CHECK_MS, CHANNELS, SITE_URL, X_POST_TIMEOUT_MS } = require("../config/constants");
 const api = require("../api/dexvra");
 const { fetchMarket } = require("../marketdata");
 const postids = require("../channels/postids");
@@ -145,13 +145,29 @@ function start(tg) {
         continue;
       }
       const coin = coinOf(r, m.priceUsd, m.mcap);
-      const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
       const media = await pumpMedia(r, base, m, pct); // admin pump clip + overlay (null → text reply)
+      // Tweet BEFORE the channel card is BUILT, not after it is sent: the card
+      // carries an "Announce On X" line, and a tweet fired afterwards can never
+      // reach it (the line then strips itself and the alert loses its X link).
+      // Timeboxed and best-effort — the alert still goes out if X is slow/off.
+      // Quotes the token's listing tweet when we know it; standalone otherwise.
+      const pumpTweetId = await Promise.race([
+        x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId).catch(() => null),
+        new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
+      ]);
+      if (pumpTweetId) coin.xUrl = `https://x.com/i/status/${pumpTweetId}`;
+      const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
+      // "Did the alert post?" means ANY target took it, not specifically the
+      // listing channel. Counting only CHANNELS.listing left a token that has an
+      // @dexvraio announcement but no listing-channel post (the listing post
+      // failed, or an admin force-posted only the announcement) posting to
+      // @dexvraio successfully, never latching, and re-firing on EVERY poll —
+      // duplicate announcements forever, and now a duplicate tweet with them.
       let posted = null;
       try {
         for (const t of targets) {
           const msg = await post.sendMedia(t.channel, media, card, { replyTo: t.replyTo });
-          if (t.channel === CHANNELS.listing) posted = msg;
+          if (msg) posted = posted || msg;
         }
       } catch (e) {
         log.warn(`[pump] post: ${e.message}`);
@@ -164,9 +180,6 @@ function start(tg) {
         continue;
       }
       await latch.add(key);
-      // Quote the original listing tweet on X (falls back to a standalone
-      // tweet when the listing tweet id isn't known).
-      x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId).catch(() => {});
       log.event(`📈 Pump: ${r.sym} +${Math.round(pct)}% since listing (${r.chain})`);
     }
   };

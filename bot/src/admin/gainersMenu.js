@@ -307,6 +307,12 @@ function register(bot, deps) {
       channel,
       template: sess.template,
       symbols: coins.map((c) => c.symbol),
+      // The same board as plain text so the main bot can tweet it — an
+      // admin-posted banner reached the channel and nothing else, while the
+      // identical DAILY banner was tweeted. Built here because this is where the
+      // coin objects are; the X client only exists in the main process.
+      xList: gainers.listText(coins, { showMcap: cfg.showMcap }),
+      xDate: cfg.showDate ? gainers.dateText(cfg.tz) : "",
       by: `@${ctx.from.username || ctx.from.id}`,
       pin: cfg.pin,
     });

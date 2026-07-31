@@ -70,13 +70,18 @@ const LINKS_ROW =
   `${em("💎", E.diamond)} [Dexvra.io]({site}) · ` +
   `${em("🚨", E.sirenHead)} [Listings]({listing}) · ` +
   `🔥 [Trending]({trending}) · ` +
-  `${em("📢", E.megaphone)} [Announcements]({announce})`;
-// NOTE: Telegram destinations ONLY — operator's rule. Dexvra's X account is
-// deliberately NOT in this row: the token's own social row a few lines above
-// already prints "❌ X", and this row is also rendered header-less on the short
-// rank-up / pump posts, so a second X link reads as a duplicate of the token's.
-// {xlisting} stays an available placeholder, so an admin who wants it back can
-// add it from the editor without a deploy.
+  `${em("📢", E.megaphone)} [Announcements]({announce}) · ` +
+  `𝕏 [X Alerts]({xlisting})`;
+// The row is the full Dexvra destination set — the three Telegram channels, the
+// site, AND the X account the listing feed is tweeted from ({xlisting} →
+// X_LISTING_URL, @dexvralisting by default). X was previously left out on the
+// grounds that the token's own social row a few lines above already prints
+// "❌ X"; that reads as a duplicate only if you assume both point at the same
+// account, which they never do — one is the PROJECT's X, this one is DEXVRA's.
+// The row is also rendered header-less on the short rank-up / pump posts, which
+// carry no social row at all, so there it was the only X link a reader could
+// have followed. The label is what channels/format.js re-links by, so keep the
+// words "X Alerts" if you reword the rest of the row.
 const FOOTER_BLOCK = `${em("📎", E.clip)} **Dexvra**\n` + LINKS_ROW;
 // Shared body of the listing/trending cards (below their distinct headers).
 // Clear, labelled stats so a reader sees the token, its market at a glance, and
@@ -131,7 +136,7 @@ const DEFAULTS = {
     "**What you get**\n" +
     "✅ Listed on [dexvra.io](https://dexvra.io)\n" +
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
-    "🐦 Automatic post on X — [@dexvralisting](https://x.com/dexvralisting)\n\n" +
+    "𝕏 Automatic post on X — [@dexvralisting]({xlisting})\n\n" +
     "💎 Want Trending + a tier badge too? Choose **🏆 Listing & Trending**.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
   intro_tiered:
@@ -142,7 +147,7 @@ const DEFAULTS = {
     "🚨 Launch post on [@dexvralisting](https://t.me/dexvralisting)\n" +
     "🔥 Featured Trending run on [@dexvratrending](https://t.me/dexvratrending)\n" +
     "📢 Announcement headline on [@dexvraio](https://t.me/dexvraio) (top tiers)\n" +
-    "🐦 Automatic post on X — [@dexvralisting](https://x.com/dexvralisting)\n" +
+    "𝕏 Automatic post on X — [@dexvralisting]({xlisting})\n" +
     "💎 A ranked tier badge on every post\n\n" +
     "⚠️ Only **Diamond, Gold & Platinum** get the bonus @dexvraio announcement.\n\n" +
     "🔹 Only one step away — **select your network** below to begin:",
@@ -163,7 +168,7 @@ const DEFAULTS = {
     "**What you get**\n" +
     "🖼 A homepage banner with your own click-through link\n" +
     "📢 An announcement on [@dexvraio](https://t.me/dexvraio)\n" +
-    "🐦 An automatic post on X — [@dexvralisting](https://x.com/dexvralisting)\n\n" +
+    "𝕏 An automatic post on X — [@dexvralisting]({xlisting})\n\n" +
     "💰 USD pricing — bigger discounts on longer runs.\n\n" +
     "🔹 Please have your banner ready (GIF, JPG or PNG). Choose a format:",
   listing_ca_prompt:
@@ -177,7 +182,8 @@ const DEFAULTS = {
     "**What you get**\n" +
     "🔝 Featured placement on the Trending board\n" +
     "🔥 Instant activation alert on [@dexvratrending](https://t.me/dexvratrending)\n" +
-    "📢 24H & 48H runs also headline on [@dexvraio](https://t.me/dexvraio)\n\n" +
+    "📢 24H & 48H runs also headline on [@dexvraio](https://t.me/dexvraio)\n" +
+    "𝕏 An automatic post on X — [@dexvralisting]({xlisting})\n\n" +
     "⌛ Slots run up to **48 hours** — longer runs carry bigger discounts.\n\n" +
     "🔹 Paste the **contract address** of your listed token (or its dexvra.io link):",
   // One token, one listing. Shown whenever a contract that is already on the
@@ -190,7 +196,8 @@ const DEFAULTS = {
     "📊 **Chain:** {chain}\n\n" +
     "🔹 A contract can only be listed once — it is already live on the site.\n\n" +
     "📈 **Want more eyes on it?**\n\n" +
-    "💡 Tap **🔥 Book Trending** below to push it to the top of the board.",
+    "💡 Tap **🔥 Book Trending** below to push it to the top of the board.\n\n" +
+    "𝕏 Every Dexvra listing is announced on X — [{xlisting}]({xlisting})",
   trending_not_found:
     "❌ **Not listed yet**\n\n" +
     "🔹 We couldn't find that token on Dexvra.\n\n" +
@@ -319,7 +326,8 @@ const DEFAULTS = {
     "3. Done — buys start posting here\n\n" +
     "**Handy commands**\n" +
     "`/buybot` — status · `/setminbuy 50` — only alert buys ≥ $50 · `/buybot off` — pause\n\n" +
-    "Want to list, trend or advertise your token? DM me → {bot}",
+    "Want to list, trend or advertise your token? DM me → {bot}\n" +
+    "𝕏 Listing alerts on X → {xlisting}",
   buybot_help:
     `${em("🟢", E.green)} **Dexvra Buy Bot — free for your group**\n\n` +
     "Add @dexvrabot to your project's Telegram group and it posts a live alert on **every on-chain buy** of your token — amount, price, market cap, all automatic.\n\n" +
@@ -328,7 +336,8 @@ const DEFAULTS = {
     "2. Make the bot an **admin** (so it can post)\n" +
     "3. In the group send `/settoken <your contract address>`\n" +
     "4. Done — buys start posting. Tune with `/setminbuy <usd>`, pause with `/buybot off`\n\n" +
-    "Works on Solana, BSC, Ethereum, Base, Tron, TON, Sui, Plasma & Robinhood.",
+    "Works on Solana, BSC, Ethereum, Base, Tron, TON, Sui, Plasma & Robinhood.\n\n" +
+    "𝕏 Every listing is announced on X too — [Listing Alerts]({xlisting})",
   group_buy_alert:
     "{emoji}\n" +
     `${em("🟢", E.green)} **{symbol} Buy!**\n\n` +
@@ -407,6 +416,10 @@ const DEFAULTS = {
     `🗓 {date}\n\n` +
     `{list}\n\n` +
     `${em("📊", E.chart)} Ranked by **24h change** across every token listed on Dexvra.\n\n` +
+    // The board's own tweet. Unlike the coin cards this template is rendered
+    // with dropEmpty (it has no stripForCoin path), so the line disappears with
+    // its blank separator when the board wasn't tweeted.
+    `[Announce On X 𝕏]({xUrl})\n\n` +
     LINKS_ROW,
   // Advertiser-facing, so it reads like an ad placement announcement rather than
   // bot output: what is running, where, and one link out. The "Announce On X"
@@ -437,6 +450,9 @@ const DEFAULTS = {
     `[{coinUrlLabel}]({coinUrl})\n\n` +
     `${em("📄", E.clip)} **CA**\n` +
     "`{address}`\n\n" +
+    // Links the rank-up's OWN tweet; the line drops itself when there is none
+    // (X off, or the post failed) — see stripForCoin/autoSocialCuts.
+    `[Announce On X 𝕏]({xUrl})\n\n` +
     LINKS_ROW,
   // Same ticker shape as post_rankup: the clip carries the hype, the caption
   // states the fact. The old version buried "+2,400%" under four paragraphs of
@@ -452,6 +468,9 @@ const DEFAULTS = {
     `${em("📊", E.chart)} **Market cap:** {firstMc} → {lastMc}\n\n` +
     `${em("📄", E.clip)} **CA**\n` +
     "`{address}`\n\n" +
+    // The pump alert's own tweet (a QUOTE of the token's listing tweet), so the
+    // channel post and the X post point at each other. Drops when there is none.
+    `[Announce On X 𝕏]({xUrl})\n\n` +
     LINKS_ROW,
   // Per-TIER badge shown beside the header on a listing post ("New Listing on
   // Dexvra · 💎 Diamond tier"). Same shape as chain_emojis: one `tier = emoji`
@@ -511,22 +530,46 @@ const DEFAULTS = {
     "MC: {firstMc} → {lastMc}\n" +
     "{url}\n\n" +
     "#Dexvra #Pump #Altcoin #DYOR",
+  // Also a QUOTE of the listing tweet — the token's own card underneath is what
+  // makes "climbed to #2" mean anything. {gain} is "+42%" or empty when the
+  // reading was absurd/negative, so keep it on its own segment.
+  x_rankup:
+    "📈 Rank Up — ${tag} is #{rank} on Dexvra Trending\n\n" +
+    "{name}{mention} {gain} (24h)\n" +
+    "{url}\n\n" +
+    "#Dexvra #Trending #{tag} #DYOR",
+  // Banner ads. Was hardcoded in twitter.js and ignored the editor entirely —
+  // an advertiser's announcement is exactly the copy an operator wants to tune.
+  x_banner:
+    "📢 Banner Live on Dexvra\n\n" +
+    "{title}{mention} is now featured on {handle}\n" +
+    "{url}\n\n" +
+    "#Dexvra #Ad",
+  // The daily Top Gainers board. {list} is built by gainers.js as PLAIN text
+  // (X has no markdown and no custom emoji) — one ranked line per token.
+  x_gainers:
+    "📈 TOP GAINERS ON DEXVRA\n" +
+    "{date}\n\n" +
+    "{list}\n\n" +
+    "Ranked by 24h change across every token listed on Dexvra.\n" +
+    "{site}\n\n" +
+    "#Dexvra #TopGainers #Altcoin #DYOR",
 };
 
 // ── Editor metadata: groups + placeholder hints ──────────────────────────────
 const META = {
   welcome: { group: "Bot Messages", label: "Welcome / Start", ph: ["site", "announce", "listing", "trending", "xlisting"] },
-  intro_xpress: { group: "Bot Messages", label: "Intro: Xpress Listing", ph: [] },
-  intro_tiered: { group: "Bot Messages", label: "Intro: Listing & Trending", ph: [] },
-  tier_chooser: { group: "Bot Messages", label: "Tier chooser", ph: ["native"] },
-  trending_durations: { group: "Bot Messages", label: "Trending: duration picker", ph: ["symbol", "chain", "native"] },
-  intro_banner: { group: "Bot Messages", label: "Intro: Banner Ads", ph: [] },
+  intro_xpress: { group: "Bot Messages", label: "Intro: Xpress Listing", ph: ["site", "listing", "trending", "announce", "xlisting"] },
+  intro_tiered: { group: "Bot Messages", label: "Intro: Listing & Trending", ph: ["site", "listing", "trending", "announce", "xlisting"] },
+  tier_chooser: { group: "Bot Messages", label: "Tier chooser", ph: ["native", "site", "listing", "trending", "announce", "xlisting"] },
+  trending_durations: { group: "Bot Messages", label: "Trending: duration picker", ph: ["symbol", "chain", "native", "site", "listing", "trending", "announce", "xlisting"] },
+  intro_banner: { group: "Bot Messages", label: "Intro: Banner Ads", ph: ["site", "listing", "trending", "announce", "xlisting"] },
   listing_ca_prompt: { group: "Bot Messages", label: "Prompt: contract address", ph: ["chain"] },
   listing_name_prompt: { group: "Bot Messages", label: "Prompt: token name", ph: [] },
   listing_symbol_prompt: { group: "Bot Messages", label: "Prompt: token symbol", ph: [] },
   listing_logo_prompt: { group: "Bot Messages", label: "Prompt: logo", ph: [] },
-  trending_ca_prompt: { group: "Bot Messages", label: "Prompt: trending CA", ph: [] },
-  already_listed: { group: "Bot Messages", label: "Listing: token already listed", ph: ["name", "symbol", "chain", "address", "url", "site"] },
+  trending_ca_prompt: { group: "Bot Messages", label: "Prompt: trending CA", ph: ["site", "listing", "trending", "announce", "xlisting"] },
+  already_listed: { group: "Bot Messages", label: "Listing: token already listed", ph: ["name", "symbol", "chain", "address", "url", "site", "listing", "trending", "announce", "xlisting"] },
   trending_not_found: { group: "Bot Messages", label: "Trending: token not listed", ph: [] },
   review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram"] },
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
@@ -559,8 +602,8 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
-  group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot"] },
-  buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: [] },
+  group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
+  buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain"] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },
@@ -575,15 +618,18 @@ const META = {
   post_listing_tiered: { group: "Channel Posts", label: "Post: Listing & Trending", ph: ["name", "symbol", "logoEmoji", "tierEmoji", "tier", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_trending: { group: "Channel Posts", label: "Post: Trending", ph: ["name", "symbol", "logoEmoji", "coinUrl", "xUrl", "tradeUrl", "chainEmoji", "chain", "address", "liq", "mcap", "price", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_banner: { group: "Channel Posts", label: "Post: Banner ad", ph: ["title", "slot", "linkUrl", "description", "address", "twitter", "website", "telegram", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
-  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
-  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
-  post_gainers: { group: "Channel Posts", label: "Post: Top Gainers banner", ph: ["date", "list", "count", "site", "listing", "trending", "announce", "xlisting"] },
+  post_rankup: { group: "Channel Posts", label: "Post: Rank-up alert", ph: ["chainEmoji", "symbol", "name", "rank", "gain", "change", "address", "coinUrl", "coinUrlLabel", "xUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "xUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
+  post_gainers: { group: "Channel Posts", label: "Post: Top Gainers banner", ph: ["date", "list", "count", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
   tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
   chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
-  x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap"] },
-  x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap"] },
-  x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag"] },
-  x_pump: { group: "X Posts", label: "X post: pump alert", ph: ["tag", "name", "mention", "percent", "firstMc", "lastMc", "url"] },
+  x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap", "chain", "handle"] },
+  x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap", "chain", "handle"] },
+  x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag", "mention", "handle"] },
+  x_pump: { group: "X Posts", label: "X post: pump alert", ph: ["tag", "name", "mention", "percent", "firstMc", "lastMc", "url", "handle"] },
+  x_rankup: { group: "X Posts", label: "X post: rank-up alert", ph: ["tag", "name", "mention", "rank", "gain", "chain", "url", "handle"] },
+  x_banner: { group: "X Posts", label: "X post: banner ad", ph: ["title", "slot", "url", "site", "handle", "mention"] },
+  x_gainers: { group: "X Posts", label: "X post: Top Gainers board", ph: ["list", "date", "site", "handle"] },
 };
 
 // ── Load / cache with auto-refresh ───────────────────────────────────────────
@@ -617,10 +663,45 @@ function render(key, vars, opts) {
   return renderValue(val, vars, opts);
 }
 
+/**
+ * Dexvra's OWN destinations, available to EVERY template without the call site
+ * having to pass them: {site} {listing} {trending} {announce} {xlisting} {bot}
+ * {botName}. They are constants — the same values on every render — so the only
+ * thing threading them through each caller ever achieved was that a template
+ * gained a link and then rendered it blank until someone remembered to update
+ * the one handler that renders it. An admin can now drop {xlisting} into ANY
+ * template from @dexvraadminbot and it resolves, with no deploy.
+ *
+ * Explicit vars always win, so nothing that passes its own {site} changes.
+ * Required lazily: config/constants reads process.env at load time and main.js
+ * loads .env before it, an order a top-level require here would break.
+ */
+function baseVars() {
+  try {
+    const { SITE_URL, CHANNELS, BOT_USERNAME, X_LISTING_URL } = require("./config/constants");
+    const tme = (c) => (String(c || "").startsWith("@") ? `https://t.me/${String(c).slice(1)}` : String(c || ""));
+    return {
+      site: SITE_URL,
+      listing: tme(CHANNELS.listing),
+      trending: tme(CHANNELS.trending),
+      announce: tme(CHANNELS.announce),
+      xlisting: X_LISTING_URL,
+      bot: tme(`@${BOT_USERNAME}`),
+      botName: `@${String(BOT_USERNAME).replace(/^@/, "")}`,
+    };
+  } catch {
+    return {}; // constants unavailable (a unit test in isolation) — render bare
+  }
+}
+
 /** Render a RESOLVED template value (markup string or {text, entities}) — the
  *  body of render() without the key lookup. channels/format.js uses it to
  *  render a template AFTER stripping social/tier lines the token lacks. */
-function renderValue(rawVal, vars, opts) {
+function renderValue(rawVal, varsIn, opts) {
+  // Dexvra's own links underneath whatever the caller passed (caller wins), so
+  // {xlisting} & friends resolve in every template. Applied BEFORE dropEmptyLines
+  // so a line carrying only {xlisting} counts as filled and survives.
+  const vars = { ...baseVars(), ...(varsIn || {}) };
   // OPT-IN only. A blanket "drop lines whose placeholders are empty" also eats
   // a channel-post header like "🔥 **New Trending on Dexvra** {logoEmoji}" when
   // the token has no emoji — real copy, one empty placeholder. Channel posts do

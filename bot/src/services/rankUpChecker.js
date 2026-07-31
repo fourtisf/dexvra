@@ -9,11 +9,20 @@
 // number, so this posts "climbing by 24h performance", not a board position.
 //
 // Best-effort: an API/market blip skips the cycle, never throws.
-const { RANKUP_CHECK_MS, RANKUP_TOP, RANKUP_MIN_CHANGE, CHANNELS } = require("../config/constants");
+const {
+  RANKUP_CHECK_MS,
+  RANKUP_TOP,
+  RANKUP_MIN_CHANGE,
+  CHANNELS,
+  X_RANKUP_ENABLED,
+  X_POST_TIMEOUT_MS,
+} = require("../config/constants");
 const api = require("../api/dexvra");
 const { fetchMarket } = require("../marketdata");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
+const postids = require("../channels/postids");
+const x = require("../twitter");
 const { postMedia } = require("../fulfillment");
 const { chainOf } = require("../config/chains");
 const { SITE_URL } = require("../config/constants");
@@ -94,7 +103,6 @@ async function scanOnce(tg) {
   for (const a of alerts) {
     try {
       const coin = coinOf(a.r, a.m);
-      const payload = fmt.rankupPost(coin, a.rank, a.change);
       // Dedicated "trending up" banner: rank medallion (#1 gold / #2 silver /
       // #3 bronze) + big % gain, rendered per alert. Degrades to text if the
       // banner pipeline is off/unavailable; admin GIF/video override wins.
@@ -102,12 +110,29 @@ async function scanOnce(tg) {
         rank: a.rank,
         change: a.change,
       }).catch(() => null);
+      // Tweet FIRST (timeboxed) so the channel card can carry its "Announce On
+      // X" link — the same ordering every other post type uses. Quotes the
+      // token's listing tweet when we have one: "#2 on Dexvra Trending" only
+      // means something with the token's own card underneath it.
+      await tweetRankUp(coin, a);
+      const payload = fmt.rankupPost(coin, a.rank, a.change);
       await post.sendMedia(CHANNELS.trending, media, payload);
       log.info(`[rankup] ${a.r.sym || a.r.address} climbed to #${a.rank} (+${a.change.toFixed(1)}% 24h)`);
     } catch (e) {
       log.debug(`[rankup] post failed: ${e.message}`);
     }
   }
+}
+
+/** Tweet one rank-up and hang the url on `coin.xUrl` (mutates, so the caller's
+ *  coin carries it into the channel card). Never throws. */
+async function tweetRankUp(coin, a) {
+  if (!X_RANKUP_ENABLED || !x.enabled()) return null;
+  const quote = postids.get(a.r.chain, a.r.address).listingTweetId || null;
+  const tweetP = x.postRankUp(coin, a.rank, a.change, quote).catch(() => null);
+  const id = await Promise.race([tweetP, new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null))]);
+  if (id) coin.xUrl = `https://x.com/i/status/${id}`;
+  return id;
 }
 
 function start(tg) {
@@ -122,4 +147,4 @@ function start(tg) {
   };
 }
 
-module.exports = { start, scanOnce };
+module.exports = { start, scanOnce, tweetRankUp };

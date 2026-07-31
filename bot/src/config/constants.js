@@ -112,6 +112,21 @@ const MONGO_URI = env.MONGO_URI || "";
 const MONGO_DB = env.MONGO_DB || ""; // optional; default DB comes from the URI
 
 // ── Twitter / X (built, disabled unless keys present) ────────────────────────
+// FOUR keys, all four required, all four from the SAME app in the X Developer
+// Console (console.x.com → your project → app → "Keys and tokens"):
+//
+//   X_API_KEY         ← OAuth 1.0a "Consumer Key" (a.k.a. API Key)
+//   X_API_KEY_SECRET  ← OAuth 1.0a "Consumer Secret" (a.k.a. API Key Secret)
+//   X_ACCESS_TOKEN    ← OAuth 1.0a "Access Token"    (Generate, for @dexvralisting)
+//   X_ACCESS_SECRET   ← OAuth 1.0a "Access Token Secret"
+//
+// The Access Token pair must read "Read and Write" — a token generated while
+// the app was still Read-only tweets 403 forever. Change the permission in
+// "User authentication settings", then REGENERATE the access token; the old one
+// keeps its old scope. The OAuth 2.0 Client ID / Client Secret and the Bearer
+// Token are NOT used here: posting on behalf of an account over OAuth 1.0a is
+// what twitter-api-v2's `v2.tweet()` needs, and v1 media upload accepts nothing
+// else.
 const X = {
   listing: {
     appKey: env.X_API_KEY || "",
@@ -126,19 +141,39 @@ const X = {
     accessSecret: env.X_O_ACCESS_SECRET || "",
   },
 };
+/** The 4 env var names behind an account, in the order the console lists them. */
+const X_KEY_NAMES = {
+  listing: ["X_API_KEY", "X_API_KEY_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"],
+  official: ["X_O_API_KEY", "X_O_API_KEY_SECRET", "X_O_ACCESS_TOKEN", "X_O_ACCESS_SECRET"],
+};
+/** Which of an account's 4 keys are still blank — the whole diagnostic. */
+const xMissingKeys = (account = "listing") =>
+  X_KEY_NAMES[account].filter((n) => !String(env[n] || "").trim());
+const xComplete = (account = "listing") => xMissingKeys(account).length === 0;
+
 const X_HANDLE = (env.X_HANDLE || "dexvraio").replace(/^@/, "");
 // The X account LISTING ALERTS are tweeted from. A separate account from
-// X_HANDLE on purpose: twitter.js already posts listings, trending and pump
-// alerts through the `listing` credential set (X_API_KEY…) and only banner ads
-// through `official` (X_O_…). Until now nothing named the listing account, so
-// nothing could link to it — the site and every post pointed readers at
-// @dexvraio, which does not carry the listing feed.
+// X_HANDLE on purpose: twitter.js posts listings, trending, rank-ups, pumps and
+// the gainers board through the `listing` credential set (X_API_KEY…), and only
+// falls back to `official` (X_O_…) for banner ads WHEN a second account is
+// configured. One account is the normal setup: leave X_O_* blank and everything
+// — banner ads included — goes out from @dexvralisting.
 const X_LISTING_HANDLE = (env.X_LISTING_HANDLE || "dexvralisting").replace(/^@/, "");
 const X_LISTING_URL = `https://x.com/${X_LISTING_HANDLE}`;
 // Enabled only when the listing account's 4 keys are all present AND not forced off.
-const X_ENABLED =
-  bool(env.X_ENABLED, true) &&
-  Boolean(X.listing.appKey && X.listing.appSecret && X.listing.accessToken && X.listing.accessSecret);
+const X_ENABLED = bool(env.X_ENABLED, true) && xComplete("listing");
+// Auto-posting for FREE auto-listings (services/autoLister). Paid listings always
+// tweet; this switch exists because auto-listings can run at a high daily cap and
+// an operator may want the X feed to stay purchase-only. Default ON — "every
+// listing gets posted to X" is the operator's rule.
+const X_AUTOLIST_ENABLED = bool(env.X_AUTOLIST_ENABLED, true);
+// Tweet the rank-up / pump / gainers alerts too (all default ON).
+const X_RANKUP_ENABLED = bool(env.X_RANKUP_ENABLED, true);
+const X_GAINERS_ENABLED = bool(env.X_GAINERS_ENABLED, true);
+// How long fulfilment waits for the X API before posting to Telegram without an
+// "Announce On X" link. The tweet still lands (and is still recorded) after the
+// timeout — this only bounds how long a buyer waits.
+const X_POST_TIMEOUT_MS = Math.max(5000, int(env.X_POST_TIMEOUT_MS, 20000));
 
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);
@@ -217,10 +252,17 @@ module.exports = {
   MONGO_URI,
   MONGO_DB,
   X,
+  X_KEY_NAMES,
+  xMissingKeys,
+  xComplete,
   X_HANDLE,
   X_LISTING_HANDLE,
   X_LISTING_URL,
   X_ENABLED,
+  X_AUTOLIST_ENABLED,
+  X_RANKUP_ENABLED,
+  X_GAINERS_ENABLED,
+  X_POST_TIMEOUT_MS,
   RATE_WINDOW,
   RATE_LIMIT,
   TRENDING_POST_MS,

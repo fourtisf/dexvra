@@ -69,7 +69,15 @@ Phase 1 needs no env vars. Phases 2/3 add: `DATABASE_URL`, `REDIS_URL`,
 
 The Dexvra Telegram bot (`bot/`, its own package — see [`bot/README.md`](bot/README.md))
 sells Listing / Xpress / Trending / Banner packages, verifies on-chain payment
-(temp wallet + poll + sweep), and auto-posts to the Dexvra channels + Twitter.
+(temp wallet + poll + sweep), and auto-posts to the Dexvra channels **and X**.
+
+**X auto-posting** — every listing (paid *and* free auto-listing), trending
+activation, banner ad, rank-up, pump alert and the daily Top-Gainers board is
+tweeted from [@dexvralisting](https://x.com/dexvralisting). It needs four OAuth
+1.0a keys (`X_API_KEY`, `X_API_KEY_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`)
+in the bot's `.env`; leave them blank and X posting stays off with no other
+effect. Setup, verification (`npm run x:check`) and troubleshooting:
+[`bot/X-AUTOPOST.md`](bot/X-AUTOPOST.md).
 It writes approved listings and trending/banner bookings back through a
 token-guarded **internal API** (`/api/internal/*`) so the Next.js process stays
 the sole writer of `data/listings.json`.
