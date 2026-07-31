@@ -444,3 +444,20 @@ test("a refused listing is retried without its CA, keeping the token link", () =
   const gainers = x._text.gainersText("1. $A  +12%\n2. $B  +8%", "Friday");
   assert.strictEqual(strip(gainers), gainers.trim());
 });
+
+test("the block window is probed again, so the CA returns without a restart", (t) => {
+  // The window ends on X's clock, not ours. If the latch never expired the CA
+  // line would stay gone until somebody noticed and restarted the bot — and the
+  // failure mode being guarded here is "it silently kept working the degraded
+  // way", which nothing in the logs would ever complain about.
+  const { caBlocked, _resetCaLatch } = require("../src/twitter")._diag;
+  t.after(() => _resetCaLatch());
+  _resetCaLatch();
+  assert.strictEqual(caBlocked(), false, "nothing is latched at rest");
+
+  const src = require("node:fs").readFileSync(require.resolve("../src/twitter.js"), "utf8");
+  assert.match(src, /caBlockedUntil = Date\.now\(\) \+ CA_BLOCK_TTL_MS/, "the latch must be time-bounded");
+  assert.match(src, /const caBlocked = \(\) => Date\.now\(\) < caBlockedUntil/, "expiry must be time-based");
+  assert.match(src, /caBlockedUntil = 0;[\s\S]{0,80}accepted again/, "a full card that posts must clear the latch at once");
+  assert.ok(!/caBlock\w*[^\n]*(saveJSON|persist|writeFile)/i.test(src), "the latch must stay in memory");
+});

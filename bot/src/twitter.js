@@ -147,6 +147,21 @@ function stripCryptoAddresses(text) {
   return kept.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// Remembers that X is currently refusing contract addresses, so the window is
+// not paid for twice per listing (Pay-Per-Use bills every request, and the
+// rejected attempt is a request). Deliberately IN-MEMORY and short-lived:
+//
+//   • in-memory — the rule ends on its own, and a latch that outlived the
+//     process would need a way to be cleared, which is a support ticket waiting
+//     to happen. A restart simply costs one probe.
+//   • short-lived — expiry is what makes it self-healing. When the 7 days are
+//     up the next post after the window probes the FULL card again, it works,
+//     the latch clears, and the CA line is back with no restart, no config and
+//     nobody watching a calendar.
+const CA_BLOCK_TTL_MS = 60 * 60 * 1000; // re-probe at most an hour later
+let caBlockedUntil = 0;
+const caBlocked = () => Date.now() < caBlockedUntil;
+
 async function send(account, text, mediaBuffer, mimeType, quoteTweetId, _retriedWithoutCa) {
   if (!X_ENABLED) {
     const missing = xMissingKeys("listing");
@@ -171,8 +186,24 @@ async function send(account, text, mediaBuffer, mimeType, quoteTweetId, _retried
     const opts = {};
     if (mediaIds) opts.media = { media_ids: mediaIds };
     if (quoteTweetId) opts.quote_tweet_id = String(quoteTweetId); // quote the listing tweet
-    const res = await client.api.v2.tweet(text, Object.keys(opts).length ? opts : undefined);
+    // Inside a known block window, post the CA-less version straight away
+    // instead of paying for a rejection first. The latch expires, so the full
+    // card is re-probed within the hour and comes back the moment X allows it.
+    let body = text;
+    if (!_retriedWithoutCa && caBlocked()) {
+      const withoutCa = stripCryptoAddresses(text);
+      if (withoutCa && withoutCa !== text) {
+        log.debug("[x] new-app crypto window still open — posting without the contract address");
+        body = withoutCa;
+      }
+    }
+    const res = await client.api.v2.tweet(body, Object.keys(opts).length ? opts : undefined);
     const id = res && res.data && res.data.id;
+    // A full card that went through means the window has closed.
+    if (body === text && caBlockedUntil) {
+      caBlockedUntil = 0;
+      log.info("[x] contract addresses are accepted again — full listing cards resumed");
+    }
     log.info(
       `[x] tweeted (${account}${client.used !== account ? ` via ${client.used}` : ""}) id=${id}` +
         `${quoteTweetId ? ` (quote of ${quoteTweetId})` : ""}`,
@@ -187,6 +218,7 @@ async function send(account, text, mediaBuffer, mimeType, quoteTweetId, _retried
     if (c.kind === "newapp-crypto" && !_retriedWithoutCa) {
       const withoutCa = stripCryptoAddresses(text);
       if (withoutCa && withoutCa !== text) {
+        caBlockedUntil = Date.now() + CA_BLOCK_TTL_MS; // don't pay for this rejection again
         log.warn(`[x] ${c.message}`);
         log.info("[x] retrying without the contract address…");
         return send(account, withoutCa, mediaBuffer, mimeType, quoteTweetId, true);
@@ -346,5 +378,5 @@ module.exports = {
   _text: { listingText, trendingText, pumpText, rankUpText, bannerText, gainersText },
   // Error classification is pure and is the thing most worth pinning: it decides
   // what an operator is told to go and fix.
-  _diag: { classify, stripCryptoAddresses },
+  _diag: { classify, stripCryptoAddresses, caBlocked: () => caBlocked(), _resetCaLatch: () => (caBlockedUntil = 0) },
 };

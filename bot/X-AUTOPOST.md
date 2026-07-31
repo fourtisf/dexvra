@@ -161,6 +161,21 @@ INFO [x] retrying without the contract address…
 INFO [x] tweeted (listing) id=…
 ```
 
+While the window is open the bot remembers it for up to an hour and posts the
+CA-less card directly, so a Pay-Per-Use account isn't billed for a rejection on
+every listing. The memory expires on purpose: the next post after it lapses
+tries the FULL card again, and the first one that succeeds prints
+
+```
+INFO [x] contract addresses are accepted again — full listing cards resumed
+```
+
+and the CA line is back for good. No restart, no config, nothing to watch.
+
+**Do not regenerate the access token during those 7 days** unless you have to —
+the clock counts from when the app was authorised, so a fresh authorisation is
+likely to restart it.
+
 ---
 
 ## 5. Editing the copy — no redeploy
