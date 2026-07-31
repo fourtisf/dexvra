@@ -11,7 +11,7 @@ const postids = require("./channels/postids");
 const market = require("./marketdata");
 const x = require("./twitter");
 const menu = require("./handlers/menu");
-const { SITE_URL, CHANNELS } = require("./config/constants");
+const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS, X_TRENDING_ENABLED } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
@@ -265,11 +265,14 @@ async function fulfillListing(ctx, order) {
   // is off or the tweet failed). The race keeps a hung X API from stalling
   // fulfillment; the tweet id is persisted whenever it eventually lands so a
   // later pump alert can still QUOTE the listing tweet.
-  const tweetP = x.postListing(coin, logoBuffer, "image/png").catch(() => null);
+  // The tweet carries the SAME artwork as the channel post (listMedia — the
+  // admin's GIF/MP4 clip or the composited banner), with the raw logo only as a
+  // fallback for the one shape X cannot use, a bare Telegram file_id.
+  const tweetP = x.postListing(coin, listMedia, logoBuffer).catch(() => null);
   tweetP
     .then((id) => (id ? postids.set(input.chain, input.address, { listingTweetId: id }) : null))
     .catch(() => {});
-  const tweetId = await Promise.race([tweetP, new Promise((r) => setTimeout(r, 20000, null))]);
+  const tweetId = await Promise.race([tweetP, new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null))]);
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];
@@ -327,12 +330,17 @@ async function fulfillTrending(ctx, order) {
   );
   const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
 
-  // Tweet first (timeboxed) so the channel post can link it — same pattern as
-  // the listing flow; the "Announce On X" line drops when there's no tweet.
-  const tweetId = await Promise.race([
-    x.postTrending(coin).catch(() => null),
-    new Promise((r) => setTimeout(r, 20000, null)),
-  ]);
+  // Trending is NOT announced on the X listing account by default: @dexvralisting
+  // is the listing feed, and Trending Token is its own product with its own
+  // channel (@dexvratrending). X_TRENDING_ENABLED=1 turns it back on. When it is
+  // off there is simply no tweet, and the channel card's "Announce On X" line
+  // drops itself — no empty label, no code path skipped.
+  const tweetId = X_TRENDING_ENABLED
+    ? await Promise.race([
+        x.postTrending(coin, trendMedia, logoBuffer).catch(() => null),
+        new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null)),
+      ])
+    : null;
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];
@@ -410,9 +418,11 @@ async function fulfillBanner(ctx, order) {
     // Tweet FIRST (timeboxed), so the channel post can carry the "Announce On X"
     // link — same ordering as a listing. The line drops itself when X is off or
     // the tweet failed.
+    // The advertiser's creative rides along as the tweet's image — a banner ad
+    // announced as a bare line of text is the one post type that is ALL image.
     bTweetId = await Promise.race([
-      x.postBanner(rec).catch(() => null),
-      new Promise((r) => setTimeout(r, 20000, null)),
+      x.postBanner(rec, adMedia, buffer || (await fetchLogoUrl(rec.imageUrl))).catch(() => null),
+      new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null)),
     ]);
     bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";
     const aMsg = await post.sendMedia(CHANNELS.announce, adMedia, fmt.bannerPost(rec, bXUrl));

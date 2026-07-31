@@ -146,6 +146,14 @@ async function startBot() {
   }
   bannerTpl.selfCheck();
 
+  // X auto-posting health at boot. Same reasoning as the banner check above: the
+  // whole X path fails SILENTLY by design (a dead X API must never fail a paid
+  // order), so without this line an operator who mistyped one of the four keys
+  // sees a perfectly normal-looking bot that simply never tweets. Names the
+  // missing variables, and verifies the keys really authenticate — a read-only
+  // access token passes every local check and then 403s on the first tweet.
+  xSelfCheck();
+
   process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
@@ -177,6 +185,60 @@ async function startBot() {
   log.info("[telegraf] polling started ✔");
 }
 
+/**
+ * Boot-time X / auto-posting diagnostic. Three outcomes, all one line:
+ *   • keys missing  → WARN naming exactly which of the four is blank
+ *   • keys present  → verify them against the API and log the handle we post as
+ *   • forced off    → INFO, so "X_ENABLED=0" never looks like a broken key
+ * Fire-and-forget: the network round trip must not delay polling, and a failed
+ * check must not stop the bot — X posting is best-effort everywhere else too.
+ */
+function xSelfCheck() {
+  const { X_ENABLED, X_LISTING_HANDLE, xMissingKeys, _env } = require("./config/constants");
+  const x = require("./twitter");
+  if (!X_ENABLED) {
+    const missing = xMissingKeys("listing");
+    if (missing.length) {
+      log.warn(
+        `[start] X auto-posting is OFF — no listing will be tweeted. Missing in .env: ${missing.join(", ")}. ` +
+          "All four come from console.x.com → your app → Keys and tokens (OAuth 1.0a), and the access token must be " +
+          'generated while the app is set to "Read and write". Verify with: npm run x:check',
+      );
+    } else if (!_env.bool(process.env.X_ENABLED, true)) {
+      log.info("[start] X auto-posting is OFF by config (X_ENABLED=0) — the keys are present.");
+    }
+    return;
+  }
+  x.verify("listing")
+    .then((res) => {
+      if (res.ok) {
+        log.info(`[start] X auto-posting ✔ posting as @${res.handle}`);
+        if (res.handle.toLowerCase() !== String(X_LISTING_HANDLE).toLowerCase()) {
+          log.warn(
+            `[start] X account MISMATCH: the keys post as @${res.handle}, but X_LISTING_HANDLE says @${X_LISTING_HANDLE}. ` +
+              "Every 'Listing Alerts on X' link in the posts points at X_LISTING_HANDLE — set it to the account the keys belong to.",
+          );
+        }
+        return;
+      }
+      // A blocked network is not a bad key. Saying "your keys were refused" when
+      // the request never left the server costs an operator an afternoon of
+      // regenerating credentials that were fine.
+      if (res.kind === "network") {
+        log.warn(
+          `[start] X keys are present but this server cannot reach api.x.com — ${res.message}. ` +
+            "Posts will keep failing until egress to api.x.com (and upload.twitter.com for media) is open. Details: npm run x:check",
+        );
+        return;
+      }
+      log.warn(
+        `[start] X keys are present but the API REFUSED them — nothing will be tweeted. ${res.message}. ` +
+          "Details: npm run x:check",
+      );
+    })
+    .catch(() => {});
+}
+
 module.exports = {
   startBot,
   applyMiddleware,
@@ -184,4 +246,5 @@ module.exports = {
   rateLimitConfig,
   setCommandsWithRetry,
   onHandlerError,
+  xSelfCheck,
 };

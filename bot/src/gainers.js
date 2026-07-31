@@ -468,16 +468,43 @@ function listMarkup(coins, { showPct = true, showMcap = false } = {}) {
   return lines.join("\n");
 }
 
-/** The send-ready caption payload ({text, entities}) for a gainers banner. */
-function captionPayload(coins, { tz = "Asia/Jakarta", showMcap = false } = {}) {
+/** The send-ready caption payload ({text, entities}) for a gainers banner.
+ *  `xUrl` is the board's own tweet when it has one; dropEmpty then removes the
+ *  "Announce On X" line (and its blank separator) on the runs that have none —
+ *  a dead label under a leaderboard is worse than no line. */
+function captionPayload(coins, { tz = "Asia/Jakarta", showMcap = false, xUrl = "" } = {}) {
   const tpl = require("./templates");
   const { channelLinks } = require("./channels/format");
-  return tpl.render("post_gainers", {
-    date: dateText(tz),
-    count: String(coins.length),
-    list: listMarkup(coins, { showMcap }),
-    ...channelLinks(),
-  });
+  return tpl.render(
+    "post_gainers",
+    {
+      date: dateText(tz),
+      count: String(coins.length),
+      list: listMarkup(coins, { showMcap }),
+      xUrl: xUrl || "",
+      ...channelLinks(),
+    },
+    { dropEmpty: true },
+  );
+}
+
+/** The same ranked board as PLAIN text, for the tweet. X has no markdown, no
+ *  custom emoji and no link labels, so the Telegram markup can't be reused: a
+ *  `[#SYM](url)` would publish its brackets verbatim. Rank is a plain number,
+ *  the project's @handle is a real mention (the whole reason a gainer wants to
+ *  be on the board), and no per-token url — 10 urls at 23 characters each would
+ *  blow the 280-char limit on their own. */
+function listText(coins, { showPct = true, showMcap = false, limit = MAX_SLOTS } = {}) {
+  return coins
+    .slice(0, Math.min(MAX_SLOTS, limit))
+    .map((c, i) => {
+      let line = `${i + 1}. $${c.symbol}`;
+      if (c.x) line += ` @${c.x}`;
+      if (showPct && c.pct != null) line += `  ${pctLabel(c.pct)}`;
+      if (showMcap && c.mcap) line += `  ${fmtCap(c.mcap)}`;
+      return line;
+    })
+    .join("\n");
 }
 
 /** One-line summary for the admin panel / logs: "5 gainers · board · +204% top". */
@@ -497,6 +524,7 @@ module.exports = {
   dateText,
   validTz,
   listMarkup,
+  listText,
   captionPayload,
   summary,
   // exposed for tests

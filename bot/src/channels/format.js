@@ -317,6 +317,10 @@ const FOOTER_LABELS = [
   ["Listings", "listing"],
   ["Trending", "trending"],
   ["Announcements", "announce"],
+  // Dexvra's own X account (@dexvralisting) — the last entry in the links row.
+  // Two words, not a bare "X", so this never collides with the token's "X"
+  // social label a few lines above it.
+  ["X Alerts", "xlisting"],
 ];
 // The one-tap trade CTA label, however it's phrased ("⚡ Buy / Sell on Dexvra
 // Trade Bot" today, older "Trade on Dexvra Trade Bot") — matched loosely so the

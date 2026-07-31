@@ -27,7 +27,9 @@ const ds = require("../dexscreener");
 const api = require("../api/dexvra");
 const post = require("../channels/post");
 const fmt = require("../channels/format");
-const { CHANNELS } = require("../config/constants");
+const postids = require("../channels/postids");
+const x = require("../twitter");
+const { CHANNELS, SITE_URL, X_AUTOLIST_ENABLED, X_POST_TIMEOUT_MS } = require("../config/constants");
 const { sanitizeTicker } = require("../helpers/ticker");
 const { chainOf } = require("../config/chains");
 const log = require("../helpers/logger");
@@ -372,6 +374,11 @@ function postMediaFor(kind, c, info, input) {
  *              must not wear a package's colours)
  *   xpress   → the Xpress card, same as a paid Xpress listing
  *   trending → the listing card AND the Trending card in @dexvratrending
+ *
+ * And a tweet, on the same terms as a paid listing (X_AUTOLIST_ENABLED=0 turns
+ * only this path off). EVERY listing goes to X — an auto listing that reached
+ * the channels but not the feed was the one hole in that rule, and it is the
+ * hole most listings fell through once auto-listing was switched on.
  */
 async function announce(tg, c, info, input, cfg = get()) {
   const p = pkgOf(cfg.pkg);
@@ -387,6 +394,7 @@ async function announce(tg, c, info, input, cfg = get()) {
     // package. free/trending post without a badge.
     tier: p.tier === "XPRESS" ? "XPRESS" : undefined,
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
+    siteUrl: `${SITE_URL}/token/${c.chain}/${c.address}`,
   };
   try {
     // Same as a paid listing: create the token's animated custom emoji BEFORE
@@ -396,10 +404,15 @@ async function announce(tg, c, info, input, cfg = get()) {
       .ensureFromUrl({ chain: c.chain, address: c.address, symbol: input.sym }, input.logoUrl)
       .catch(() => null);
     const media = await postMediaFor("listing", c, info, input).catch(() => null);
-    // Same rule as a paid listing: it pins itself in the listing channel.
+    // Tweet BEFORE the channel post, exactly like fulfillment.js, so the card
+    // can carry its "Announce On X" link. Timeboxed: a hung X API delays the
+    // channel post by at most X_POST_TIMEOUT_MS, and the tweet id is still
+    // recorded whenever it lands, so a later pump/rank-up alert can quote it.
+    await tweetListing(coin, c, input, media);
     const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin), { pin: true });
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
     await post.mirrorToGroup(CHANNELS.listing, msg, { label: "auto-listing" });
+    await postids.set(c.chain, c.address, { listingMsgId: msg && msg.message_id }).catch(() => {});
     if (p.trending) {
       const tMedia = await postMediaFor("trending", c, info, input).catch(() => null);
       const tMsg = await post.sendMedia(CHANNELS.trending, tMedia, fmt.trendingPost(coin));
@@ -407,6 +420,38 @@ async function announce(tg, c, info, input, cfg = get()) {
     }
   } catch (e) {
     log.warn(`[autolist] post ${input.sym}: ${e.message}`);
+  }
+}
+
+/** Tweet an auto listing and hang the resulting url on `coin.xUrl` (mutates, so
+ *  the caller's already-built coin object carries it into the channel card).
+ *  Never throws and never blocks longer than the timeout. */
+async function tweetListing(coin, c, input, media) {
+  if (!X_AUTOLIST_ENABLED || !x.enabled()) return null;
+  // Same artwork the channel card uses; the logo is only the fallback.
+  const logo = await fetchLogo(input.logoUrl);
+  const tweetP = x.postListing(coin, media, logo).catch(() => null);
+  tweetP
+    .then((id) => (id ? postids.set(c.chain, c.address, { listingTweetId: id }) : null))
+    .catch(() => {});
+  const id = await Promise.race([tweetP, new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null))]);
+  if (id) {
+    coin.xUrl = `https://x.com/i/status/${id}`;
+    log.info(`[autolist] tweeted ${input.sym} → ${coin.xUrl}`);
+  }
+  return id;
+}
+
+/** The token logo as a Buffer for the tweet's media, or null. Best-effort. */
+async function fetchLogo(logoUrl) {
+  if (!logoUrl) return null;
+  const url = String(logoUrl).startsWith("http") ? logoUrl : `${SITE_URL}${logoUrl}`;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return null;
+    return Buffer.from(await r.arrayBuffer());
+  } catch {
+    return null;
   }
 }
 
@@ -459,6 +504,8 @@ module.exports = {
   triggerMcap,
   rejectReason,
   listingInput,
+  announce,
+  tweetListing,
   PACKAGES,
   pkgOf,
   DEFAULTS,

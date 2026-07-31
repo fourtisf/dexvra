@@ -57,8 +57,14 @@ async function write(job) {
  * @param {string} o.channel   target channel (@name or -100…)
  * @param {string} o.template  template id, for the log line and the ack
  * @param {string[]} o.symbols tickers on the banner, for the ack
+ * @param {string} o.xList     the SAME board as plain text, for the tweet. Built
+ *   by the admin bot because only it has the coin objects; the X credentials and
+ *   client live in the main bot, so the copy has to travel with the job. Empty
+ *   string = don't tweet this one.
+ * @param {string} o.xDate     date line for the tweet ("" when the operator
+ *   turned the date off, so the tweet matches the banner).
  */
-async function request({ image, caption, channel, template, symbols = [], by = "admin", pin = false }) {
+async function request({ image, caption, channel, template, symbols = [], xList = "", xDate = "", by = "admin", pin = false }) {
   ensureDir();
   const id = newId();
   const img = imageOf(id);
@@ -72,6 +78,8 @@ async function request({ image, caption, channel, template, symbols = [], by = "
     channel,
     caption,
     symbols,
+    xList,
+    xDate,
     imagePath: img,
     pin: Boolean(pin),
     by,

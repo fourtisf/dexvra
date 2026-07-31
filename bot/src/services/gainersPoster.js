@@ -14,6 +14,8 @@ const store = require("../gainerspost/store");
 const gainers = require("../gainers");
 const gb = require("../gainersBanner");
 const post = require("../channels/post");
+const x = require("../twitter");
+const { X_GAINERS_ENABLED } = require("../config/constants");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
 
@@ -37,7 +39,12 @@ async function drainQueue() {
     try {
       const msg = await post.sendPhoto(job.channel, { source: job.imagePath }, job.caption, { pin: job.pin });
       const ok = Boolean(msg && msg.message_id);
-      const result = ok ? { channel: job.channel, messageId: msg.message_id, url: tmeLink(job.channel, msg.message_id) } : null;
+      // …and the same board on X, exactly like the daily auto-post. The tweet
+      // copy travelled with the job (the admin bot has the coins, this process
+      // has the X keys). Only after a successful channel post: a banner that
+      // never made it to Telegram must not exist on X either.
+      const xUrl = ok ? await tweetQueued(job) : null;
+      const result = ok ? { channel: job.channel, messageId: msg.message_id, url: tmeLink(job.channel, msg.message_id), xUrl } : null;
       await store.finish(job.id, { ok, result, error: ok ? null : "channel refused the post" });
       if (ok) log.info(`[gainers] ${job.template} posted → ${result.url} (${job.symbols.join(", ")}) by ${job.by}`);
       else log.warn(`[gainers] ${job.template} FAILED to post in ${job.channel}`);
@@ -74,13 +81,48 @@ async function postNow({ template = null, by = "schedule" } = {}) {
   if (!image) return { ok: false, reason: "banner render failed" };
 
   const channel = cfgStore.targetChannel(cfg);
-  const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap });
+  // Tweet the board FIRST, with the rendered banner as the tweet's media, so the
+  // Telegram caption can carry a live "Announce On X" link to it — the same
+  // ordering every other post type uses. The line drops itself when there is no
+  // tweet, so a slow or unconfigured X costs the link and nothing else.
+  const xUrl = await tweetGainers(res.coins, image, cfg);
+  const caption = gainers.captionPayload(res.coins, { tz: cfg.tz, showMcap: cfg.showMcap, xUrl });
   const msg = await post.sendPhoto(channel, { source: image }, caption, { pin: cfg.pin });
   if (!msg || !msg.message_id) return { ok: false, reason: `${channel} refused the post — is the bot an admin there?` };
   const symbols = res.coins.map((c) => c.symbol);
   log.info(`[gainers] daily ${id} → ${tmeLink(channel, msg.message_id)} (${symbols.join(", ")}) by ${by}`);
-  return { ok: true, url: tmeLink(channel, msg.message_id), template: id, symbols, source: res.source };
+  return { ok: true, url: tmeLink(channel, msg.message_id), template: id, symbols, source: res.source, xUrl };
 }
+
+/** Tweet a gainers board. `list` is the plain-text leaderboard, `image` a Buffer
+ *  or a path to the rendered PNG. Returns the tweet url, or null when X is off /
+ *  muted for gainers / there was nothing to say. Never throws. */
+async function tweetBoard(list, dateText, image) {
+  if (!X_GAINERS_ENABLED || !x.enabled()) return null;
+  if (!String(list || "").trim()) return null; // an empty board is not a tweet
+  try {
+    // A Buffer (daily render) or a PNG path (queued job) — resolveMedia takes
+    // either, and streams the path rather than loading it here.
+    const media = image || null;
+    const id = await x.postGainers(list, dateText, media);
+    if (!id) return null;
+    const url = `https://x.com/i/status/${id}`;
+    log.info(`[gainers] tweeted the board → ${url}`);
+    return url;
+  } catch (e) {
+    log.debug(`[gainers] tweet: ${e.message}`);
+    return null;
+  }
+}
+
+/** The daily auto-post's tweet — builds the plain-text board from the coins. */
+const tweetGainers = (coins, image, cfg) =>
+  tweetBoard(gainers.listText(coins, { showMcap: cfg.showMcap }), cfg.showDate ? gainers.dateText(cfg.tz) : "", image);
+
+/** An admin-queued banner's tweet. Its copy was built by the admin bot and
+ *  travelled on the job; a job queued before this existed has no xList and is
+ *  simply not tweeted rather than tweeted blank. */
+const tweetQueued = (job) => tweetBoard(job.xList, job.xDate || "", job.imagePath);
 
 /** One scheduler beat. `post` is injectable so the once-a-day guarantee can be
  *  tested without a Telegram connection — the guard is the whole point of this
@@ -141,4 +183,4 @@ function start() {
   };
 }
 
-module.exports = { start, postNow, _drainQueue: drainQueue, _dailyTick: dailyTick, STATE_FILE };
+module.exports = { start, postNow, tweetGainers, tweetBoard, tweetQueued, _drainQueue: drainQueue, _dailyTick: dailyTick, STATE_FILE };

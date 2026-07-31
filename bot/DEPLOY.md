@@ -84,7 +84,9 @@ TREASURY_TON=<ton address>
 ```
 Leave a `TREASURY_*` blank to skip the sweep for that chain (funds then stay in
 the per-order temp wallet under `.keys/`, recoverable — set them before real
-volume). Leave the `X_*` keys blank to keep X posting off.
+volume). Leave the four `X_*` keys blank to keep X posting off; fill them in
+and every listing is tweeted too — see [`X-AUTOPOST.md`](X-AUTOPOST.md), then
+verify on the server with `npm run x:check`.
 
 ## 5. Smoke-test end to end (free, no spend)
 
