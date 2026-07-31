@@ -101,11 +101,10 @@ async function tweetBoard(list, dateText, image) {
   if (!X_GAINERS_ENABLED || !x.enabled()) return null;
   if (!String(list || "").trim()) return null; // an empty board is not a tweet
   try {
-    let media = Buffer.isBuffer(image) ? image : null;
-    if (!media && typeof image === "string" && image) {
-      media = await require("node:fs/promises").readFile(image).catch(() => null);
-    }
-    const id = await x.postGainers(list, dateText, media, "image/png");
+    // A Buffer (daily render) or a PNG path (queued job) — resolveMedia takes
+    // either, and streams the path rather than loading it here.
+    const media = image || null;
+    const id = await x.postGainers(list, dateText, media);
     if (!id) return null;
     const url = `https://x.com/i/status/${id}`;
     log.info(`[gainers] tweeted the board → ${url}`);

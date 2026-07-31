@@ -122,14 +122,25 @@ or, when something is wrong:
 
 | Event | Tweet | Media | Quotes |
 |---|---|---|---|
-| Paid listing (Xpress) | `x_listing` | token logo | — |
-| Paid listing (tiered) | `x_listing_tiered` | token logo | — |
-| **Free auto-listing** | `x_listing` / `x_listing_tiered` | token logo | — |
-| Trending activation | `x_trending` | token logo | — |
-| Trending rank-up | `x_rankup` | — | the token's listing tweet |
-| Pump alert | `x_pump` | — | the token's listing tweet |
+| Paid listing (Xpress) | `x_listing` | the listing banner | — |
+| Paid listing (tiered) | `x_listing_tiered` | the listing banner | — |
+| **Free auto-listing** | `x_listing` / `x_listing_tiered` | the listing banner | — |
+| Trending activation | `x_trending` | the trending banner | — |
+| Trending rank-up | `x_rankup` | the rank-up banner | the token's listing tweet |
+| Pump alert | `x_pump` | the pump clip | the token's listing tweet |
 | Banner ad | `x_banner` | advertiser creative | — |
-| Daily Top Gainers | `x_gainers` | the rendered banner | — |
+| Daily Top Gainers | `x_gainers` | the rendered board | — |
+
+**The tweet shows the same artwork as the channel post.** Whatever
+@dexvraadminbot is configured to use — an uploaded **GIF or MP4 clip**, the
+composited template artwork, or the dynamic banner — is what X gets, including
+the token logo, ticker, price and market cap composited onto it. X accepts
+animated media natively (GIF ≤ 15 MB, MP4 ≤ 512 MB, still ≤ 5 MB); anything over
+its limit is skipped and the tweet goes out as text rather than failing.
+
+The one shape X cannot use is a bare Telegram `file_id`, which only Telegram can
+resolve — that happens when banner posting is turned off. The tweet then falls
+back to the raw token logo, exactly as before.
 
 **Ordering matters.** The tweet is published *before* the Telegram post, so the
 channel card can carry a live **"Announce On X"** link to it. The wait is

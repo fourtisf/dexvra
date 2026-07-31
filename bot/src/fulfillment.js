@@ -265,7 +265,10 @@ async function fulfillListing(ctx, order) {
   // is off or the tweet failed). The race keeps a hung X API from stalling
   // fulfillment; the tweet id is persisted whenever it eventually lands so a
   // later pump alert can still QUOTE the listing tweet.
-  const tweetP = x.postListing(coin, logoBuffer, "image/png").catch(() => null);
+  // The tweet carries the SAME artwork as the channel post (listMedia — the
+  // admin's GIF/MP4 clip or the composited banner), with the raw logo only as a
+  // fallback for the one shape X cannot use, a bare Telegram file_id.
+  const tweetP = x.postListing(coin, listMedia, logoBuffer).catch(() => null);
   tweetP
     .then((id) => (id ? postids.set(input.chain, input.address, { listingTweetId: id }) : null))
     .catch(() => {});
@@ -330,7 +333,7 @@ async function fulfillTrending(ctx, order) {
   // Tweet first (timeboxed) so the channel post can link it — same pattern as
   // the listing flow; the "Announce On X" line drops when there's no tweet.
   const tweetId = await Promise.race([
-    x.postTrending(coin, logoBuffer, "image/png").catch(() => null),
+    x.postTrending(coin, trendMedia, logoBuffer).catch(() => null),
     new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null)),
   ]);
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
@@ -413,7 +416,7 @@ async function fulfillBanner(ctx, order) {
     // The advertiser's creative rides along as the tweet's image — a banner ad
     // announced as a bare line of text is the one post type that is ALL image.
     bTweetId = await Promise.race([
-      x.postBanner(rec, buffer || (await fetchLogoUrl(rec.imageUrl)), "image/png").catch(() => null),
+      x.postBanner(rec, adMedia, buffer || (await fetchLogoUrl(rec.imageUrl))).catch(() => null),
       new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null)),
     ]);
     bXUrl = bTweetId ? `https://x.com/i/status/${bTweetId}` : "";

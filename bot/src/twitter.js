@@ -147,6 +147,89 @@ function stripCryptoAddresses(text) {
   return kept.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// ── Post media ───────────────────────────────────────────────────────────────
+// The channel post and the tweet must show the SAME artwork. fulfillment's
+// postMedia() picks it (admin GIF/MP4 clip → composited still → dynamic banner →
+// static asset → raw logo) and hands back one of several shapes, none of which
+// twitter-api-v2 understands directly. Everything funnels through resolveMedia.
+//
+// Before this, X was handed the raw token LOGO while Telegram got the branded
+// banner — the tweet looked like a stock avatar next to a designed channel card.
+const MIME_BY_EXT = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+};
+// X's per-category ceilings. Over them the upload is refused, and a refusal costs
+// a request and drops the tweet to text-only — so it is checked before sending.
+const MAX_BYTES = { image: 5 * 1024 * 1024, gif: 15 * 1024 * 1024, video: 512 * 1024 * 1024 };
+
+/** Mime from the first bytes. A composited banner arrives as a bare Buffer with
+ *  no name, and guessing PNG for an MP4 makes X reject the whole upload. */
+function sniffMime(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50) return "image/png";
+  if (buf[0] === 0xff && buf[1] === 0xd8) return "image/jpeg";
+  if (buf.slice(0, 3).toString("latin1") === "GIF") return "image/gif";
+  if (buf.slice(4, 8).toString("latin1") === "ftyp") return "video/mp4";
+  if (buf.slice(0, 4).toString("latin1") === "RIFF" && buf.slice(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return "video/webm";
+  return null;
+}
+
+const categoryOf = (mime) =>
+  mime === "image/gif" ? "gif" : String(mime || "").startsWith("video/") ? "video" : "image";
+
+/**
+ * Normalise ANY shape fulfillment.postMedia() returns into something
+ * v1.uploadMedia accepts: `{ file, mimeType }` where file is a Buffer or an
+ * absolute path (the library streams paths and chunk-uploads video for us).
+ *
+ * Returns null when the media cannot be used on X at all — most importantly a
+ * bare Telegram file_id, which only Telegram can resolve. The caller then falls
+ * back to the token logo rather than tweeting bare text.
+ */
+async function resolveMedia(media) {
+  if (!media) return null;
+  const src = Buffer.isBuffer(media) || typeof media === "string" ? media : media.source;
+  if (!src) return null;
+
+  if (Buffer.isBuffer(src)) {
+    const mimeType = sniffMime(src) || "image/png";
+    return { file: src, mimeType, bytes: src.length };
+  }
+  if (typeof src !== "string") return null;
+
+  if (/^https?:\/\//i.test(src)) {
+    try {
+      const r = await fetch(src, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      const mimeType = sniffMime(buf) || (r.headers.get("content-type") || "").split(";")[0] || "image/png";
+      return { file: buf, mimeType, bytes: buf.length };
+    } catch {
+      return null;
+    }
+  }
+  // A path on disk — the animated clips and static assets. Passed through as a
+  // PATH so the library streams it instead of us holding a video in memory.
+  const ext = require("node:path").extname(src).toLowerCase();
+  const mimeType = MIME_BY_EXT[ext];
+  if (!mimeType) return null; // a Telegram file_id has no extension — not usable here
+  try {
+    const st = require("node:fs").statSync(src);
+    if (!st.isFile()) return null;
+    return { file: src, mimeType, bytes: st.size };
+  } catch {
+    return null; // not a path we can read → almost certainly a file_id
+  }
+}
+
 // Remembers that X is currently refusing contract addresses, so the window is
 // not paid for twice per listing (Pay-Per-Use bills every request, and the
 // rejected attempt is a request). Deliberately IN-MEMORY and short-lived:
@@ -162,7 +245,13 @@ const CA_BLOCK_TTL_MS = 60 * 60 * 1000; // re-probe at most an hour later
 let caBlockedUntil = 0;
 const caBlocked = () => Date.now() < caBlockedUntil;
 
-async function send(account, text, mediaBuffer, mimeType, quoteTweetId, _retriedWithoutCa) {
+/**
+ * @param media    anything fulfillment.postMedia() returns — the SAME artwork the
+ *                 channel post uses (admin GIF/MP4 clip, composited banner, …).
+ * @param fallback a Buffer to use when `media` can't go to X (a bare Telegram
+ *                 file_id), normally the token logo.
+ */
+async function send(account, text, media, fallback, quoteTweetId, _retriedWithoutCa) {
   if (!X_ENABLED) {
     const missing = xMissingKeys("listing");
     log.debug(`[x] disabled — skipping tweet${missing.length ? ` (missing: ${missing.join(", ")})` : " (X_ENABLED=0)"}`);
@@ -175,12 +264,23 @@ async function send(account, text, mediaBuffer, mimeType, quoteTweetId, _retried
   }
   try {
     let mediaIds;
-    if (mediaBuffer) {
-      try {
-        const id = await client.api.v1.uploadMedia(mediaBuffer, { mimeType: mimeType || "image/png" });
-        mediaIds = [id];
-      } catch (e) {
-        log.debug(`[x] media upload failed (${e.message}) — text-only`);
+    const resolved = (await resolveMedia(media)) || (await resolveMedia(fallback));
+    if (resolved) {
+      const cat = categoryOf(resolved.mimeType);
+      if (resolved.bytes > MAX_BYTES[cat]) {
+        log.warn(
+          `[x] media is ${Math.round(resolved.bytes / 1048576)}MB — over X's ${Math.round(MAX_BYTES[cat] / 1048576)}MB ${cat} limit; tweeting text-only`,
+        );
+      } else {
+        try {
+          // A path is streamed and chunk-uploaded by the library; video is also
+          // polled until X finishes transcoding, so the id is safe to attach.
+          const id = await client.api.v1.uploadMedia(resolved.file, { mimeType: resolved.mimeType, target: "tweet" });
+          mediaIds = [id];
+          log.debug(`[x] media uploaded (${resolved.mimeType}, ${Math.round(resolved.bytes / 1024)}KB)`);
+        } catch (e) {
+          log.warn(`[x] media upload failed (${resolved.mimeType}): ${explain(e)} — tweeting text-only`);
+        }
       }
     }
     const opts = {};
@@ -221,7 +321,7 @@ async function send(account, text, mediaBuffer, mimeType, quoteTweetId, _retried
         caBlockedUntil = Date.now() + CA_BLOCK_TTL_MS; // don't pay for this rejection again
         log.warn(`[x] ${c.message}`);
         log.info("[x] retrying without the contract address…");
-        return send(account, withoutCa, mediaBuffer, mimeType, quoteTweetId, true);
+        return send(account, withoutCa, media, fallback, quoteTweetId, true);
       }
     }
     log.warn(`[x] tweet failed (${account}): ${c.message}`);
@@ -361,22 +461,26 @@ module.exports = {
    *   kind ∈ ok | nokeys | network | permission | auth | ratelimit | unknown
    */
   verify,
-  postListing: (coin, media, mime) => send("listing", listingText(coin), media, mime),
-  postTrending: (coin, media, mime) => send("listing", trendingText(coin), media, mime),
+  // `media` is whatever fulfillment.postMedia() produced for the SAME event —
+  // the admin's GIF/MP4 clip or the composited banner, so the tweet and the
+  // channel post carry identical artwork. `logo` is only a fallback for the one
+  // shape X cannot use, a bare Telegram file_id.
+  postListing: (coin, media, logo) => send("listing", listingText(coin), media, logo),
+  postTrending: (coin, media, logo) => send("listing", trendingText(coin), media, logo),
   // Quote the token's original listing tweet when we have its id (the listing
   // card renders below the pump text, like fourtis); standalone tweet otherwise.
-  postPump: (coin, percent, firstMc, lastMc, quoteTweetId, media, mime) =>
-    send("listing", pumpText(coin, percent, firstMc, lastMc), media, mime, quoteTweetId),
+  postPump: (coin, percent, firstMc, lastMc, quoteTweetId, media, logo) =>
+    send("listing", pumpText(coin, percent, firstMc, lastMc), media, logo, quoteTweetId),
   // Rank-ups quote the listing tweet the same way — the token's own card is the
   // context that makes "climbed to #2" mean something.
-  postRankUp: (coin, rank, change, quoteTweetId, media, mime) =>
-    send("listing", rankUpText(coin, rank, change), media, mime, quoteTweetId),
-  postGainers: (list, dateText, media, mime) => send("listing", gainersText(list, dateText), media, mime),
-  postBanner: (booking, media, mime) => send("official", bannerText(booking), media, mime),
+  postRankUp: (coin, rank, change, quoteTweetId, media, logo) =>
+    send("listing", rankUpText(coin, rank, change), media, logo, quoteTweetId),
+  postGainers: (list, dateText, media, logo) => send("listing", gainersText(list, dateText), media, logo),
+  postBanner: (booking, media, logo) => send("official", bannerText(booking), media, logo),
   // Exposed for tests + the preview in @dexvraadminbot — building the copy must
   // be checkable without credentials or a network.
   _text: { listingText, trendingText, pumpText, rankUpText, bannerText, gainersText },
   // Error classification is pure and is the thing most worth pinning: it decides
   // what an operator is told to go and fix.
-  _diag: { classify, stripCryptoAddresses, caBlocked: () => caBlocked(), _resetCaLatch: () => (caBlockedUntil = 0) },
+  _diag: { classify, stripCryptoAddresses, resolveMedia, sniffMime, categoryOf, MAX_BYTES, caBlocked: () => caBlocked(), _resetCaLatch: () => (caBlockedUntil = 0) },
 };

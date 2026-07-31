@@ -408,7 +408,7 @@ async function announce(tg, c, info, input, cfg = get()) {
     // can carry its "Announce On X" link. Timeboxed: a hung X API delays the
     // channel post by at most X_POST_TIMEOUT_MS, and the tweet id is still
     // recorded whenever it lands, so a later pump/rank-up alert can quote it.
-    await tweetListing(coin, c, input);
+    await tweetListing(coin, c, input, media);
     const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin), { pin: true });
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
     await post.mirrorToGroup(CHANNELS.listing, msg, { label: "auto-listing" });
@@ -426,10 +426,11 @@ async function announce(tg, c, info, input, cfg = get()) {
 /** Tweet an auto listing and hang the resulting url on `coin.xUrl` (mutates, so
  *  the caller's already-built coin object carries it into the channel card).
  *  Never throws and never blocks longer than the timeout. */
-async function tweetListing(coin, c, input) {
+async function tweetListing(coin, c, input, media) {
   if (!X_AUTOLIST_ENABLED || !x.enabled()) return null;
+  // Same artwork the channel card uses; the logo is only the fallback.
   const logo = await fetchLogo(input.logoUrl);
-  const tweetP = x.postListing(coin, logo, "image/png").catch(() => null);
+  const tweetP = x.postListing(coin, media, logo).catch(() => null);
   tweetP
     .then((id) => (id ? postids.set(c.chain, c.address, { listingTweetId: id }) : null))
     .catch(() => {});

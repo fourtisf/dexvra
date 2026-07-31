@@ -114,7 +114,7 @@ async function scanOnce(tg) {
       // X" link — the same ordering every other post type uses. Quotes the
       // token's listing tweet when we have one: "#2 on Dexvra Trending" only
       // means something with the token's own card underneath it.
-      await tweetRankUp(coin, a);
+      await tweetRankUp(coin, a, media);
       const payload = fmt.rankupPost(coin, a.rank, a.change);
       await post.sendMedia(CHANNELS.trending, media, payload);
       log.info(`[rankup] ${a.r.sym || a.r.address} climbed to #${a.rank} (+${a.change.toFixed(1)}% 24h)`);
@@ -126,10 +126,11 @@ async function scanOnce(tg) {
 
 /** Tweet one rank-up and hang the url on `coin.xUrl` (mutates, so the caller's
  *  coin carries it into the channel card). Never throws. */
-async function tweetRankUp(coin, a) {
+async function tweetRankUp(coin, a, media) {
   if (!X_RANKUP_ENABLED || !x.enabled()) return null;
   const quote = postids.get(a.r.chain, a.r.address).listingTweetId || null;
-  const tweetP = x.postRankUp(coin, a.rank, a.change, quote).catch(() => null);
+  // The rank-up banner (medallion + % gain) goes to X too, not just Telegram.
+  const tweetP = x.postRankUp(coin, a.rank, a.change, quote, media).catch(() => null);
   const id = await Promise.race([tweetP, new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null))]);
   if (id) coin.xUrl = `https://x.com/i/status/${id}`;
   return id;

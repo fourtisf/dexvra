@@ -171,9 +171,12 @@ const X_AUTOLIST_ENABLED = bool(env.X_AUTOLIST_ENABLED, true);
 const X_RANKUP_ENABLED = bool(env.X_RANKUP_ENABLED, true);
 const X_GAINERS_ENABLED = bool(env.X_GAINERS_ENABLED, true);
 // How long fulfilment waits for the X API before posting to Telegram without an
-// "Announce On X" link. The tweet still lands (and is still recorded) after the
-// timeout — this only bounds how long a buyer waits.
-const X_POST_TIMEOUT_MS = Math.max(5000, int(env.X_POST_TIMEOUT_MS, 20000));
+// "Announce On X" link. The tweet still lands (and its id is still recorded, so
+// a later pump/rank-up can quote it) after the timeout — this only bounds how
+// long a buyer waits. 30s rather than 20s because the tweet now carries the same
+// ANIMATED banner as the channel post: twitter-api-v2 chunk-uploads a video and
+// then waits for X to transcode it, which a still image never had to do.
+const X_POST_TIMEOUT_MS = Math.max(5000, int(env.X_POST_TIMEOUT_MS, 30000));
 
 // ── Rate limiting (telegraf-ratelimit) ───────────────────────────────────────
 const RATE_WINDOW = int(env.RATE_WINDOW, 3000);

@@ -152,7 +152,7 @@ function start(tg) {
       // Timeboxed and best-effort — the alert still goes out if X is slow/off.
       // Quotes the token's listing tweet when we know it; standalone otherwise.
       const pumpTweetId = await Promise.race([
-        x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId).catch(() => null),
+        x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
         new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
       ]);
       if (pumpTweetId) coin.xUrl = `https://x.com/i/status/${pumpTweetId}`;

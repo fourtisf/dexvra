@@ -461,3 +461,102 @@ test("the block window is probed again, so the CA returns without a restart", (t
   assert.match(src, /caBlockedUntil = 0;[\s\S]{0,80}accepted again/, "a full card that posts must clear the latch at once");
   assert.ok(!/caBlock\w*[^\n]*(saveJSON|persist|writeFile)/i.test(src), "the latch must stay in memory");
 });
+
+// ── post media ──────────────────────────────────────────────────────────────
+
+test("every shape postMedia() returns is resolvable for X — or refused cleanly", async () => {
+  // The tweet must show the SAME artwork as the channel post. postMedia() picks
+  // it and hands back one of six shapes; twitter-api-v2 understands none of them
+  // directly, so a gap here silently degrades the tweet to the raw token logo —
+  // exactly what shipped, and what nothing in the logs complained about.
+  const { resolveMedia } = require("../src/twitter")._diag;
+  const os = require("node:os");
+  const fsp = require("node:fs/promises");
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "xmedia-"));
+
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const gif = Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(64)]);
+  const mp4 = Buffer.concat([Buffer.alloc(4), Buffer.from("ftypisom"), Buffer.alloc(64)]);
+
+  const mp4Path = path.join(dir, "bt-out-1.mp4");
+  const gifPath = path.join(dir, "banner-media-listing.gif");
+  const pngPath = path.join(dir, "banner-artwork-listing.png");
+  await fsp.writeFile(mp4Path, mp4);
+  await fsp.writeFile(gifPath, gif);
+  await fsp.writeFile(pngPath, png);
+
+  // 1. composited still — a bare Buffer with no name; the mime is sniffed.
+  assert.deepStrictEqual(
+    await resolveMedia({ source: png }).then((r) => [r.mimeType, Buffer.isBuffer(r.file)]),
+    ["image/png", true],
+  );
+  // 2. a naked Buffer (some callers pass the logo straight through)
+  assert.strictEqual((await resolveMedia(png)).mimeType, "image/png");
+  // 3. composeOntoClip / toInlineClip → an .mp4 PATH. Passed as a PATH so the
+  //    library streams and chunk-uploads it instead of us holding it in memory.
+  const v = await resolveMedia({ type: "animation", source: mp4Path });
+  assert.strictEqual(v.mimeType, "video/mp4");
+  assert.strictEqual(v.file, mp4Path, "video must stay a path, not be read into memory");
+  // 4. a raw admin GIF override
+  assert.strictEqual((await resolveMedia({ type: "animation", source: gifPath })).mimeType, "image/gif");
+  // 5. a static asset path
+  assert.strictEqual((await resolveMedia({ source: pngPath })).mimeType, "image/png");
+  // 6. a bare Telegram file_id — ONLY Telegram can resolve it, so it must be
+  //    refused so the caller falls back to the logo instead of tweeting a
+  //    meaningless string or crashing.
+  assert.strictEqual(await resolveMedia("AgACAgUAAxkBAAIB_2abc123"), null);
+  assert.strictEqual(await resolveMedia({ source: "AgACAgUAAxkBAAIB_2abc123" }), null);
+  assert.strictEqual(await resolveMedia(null), null);
+  assert.strictEqual(await resolveMedia({}), null);
+  // a path that doesn't exist is refused rather than handed to the uploader
+  assert.strictEqual(await resolveMedia({ source: path.join(dir, "gone.mp4") }), null);
+
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test("media type is sniffed from bytes, not assumed to be PNG", () => {
+  // A composited banner arrives as an unnamed Buffer. Declaring an MP4 as
+  // image/png makes X reject the whole upload, and the tweet loses its artwork.
+  const { sniffMime } = require("../src/twitter")._diag;
+  assert.strictEqual(sniffMime(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0])), "image/png");
+  assert.strictEqual(sniffMime(Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(8)])), "image/gif");
+  assert.strictEqual(sniffMime(Buffer.concat([Buffer.alloc(4), Buffer.from("ftypmp42"), Buffer.alloc(4)])), "video/mp4");
+  assert.strictEqual(sniffMime(Buffer.from([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0])), "image/jpeg");
+  assert.strictEqual(sniffMime(Buffer.alloc(4)), null, "too short to judge → null, never a wrong guess");
+});
+
+test("X's per-category size ceilings are respected", () => {
+  const { categoryOf, MAX_BYTES } = require("../src/twitter")._diag;
+  assert.strictEqual(categoryOf("image/gif"), "gif");
+  assert.strictEqual(categoryOf("video/mp4"), "video");
+  assert.strictEqual(categoryOf("image/png"), "image");
+  // An animated GIF gets 15MB, not the 5MB image limit — a banner clip is
+  // routinely over 5MB and would otherwise be dropped for no reason.
+  assert.ok(MAX_BYTES.gif > MAX_BYTES.image);
+  assert.ok(MAX_BYTES.video > MAX_BYTES.gif);
+});
+
+test("the tweet is handed the same media object the channel post gets", () => {
+  // Guarded at the source: every caller must pass its post media, not the logo.
+  // The bug this replaces was invisible — the tweet published fine, just with
+  // the wrong picture.
+  const fs = require("node:fs");
+  const read = (f) => fs.readFileSync(require.resolve(f), "utf8");
+
+  const ful = read("../src/fulfillment.js");
+  assert.match(ful, /x\.postListing\(coin, listMedia, logoBuffer\)/, "listing tweet must use listMedia");
+  assert.match(ful, /x\.postTrending\(coin, trendMedia, logoBuffer\)/, "trending tweet must use trendMedia");
+  assert.match(ful, /x\.postBanner\(rec, adMedia,/, "banner tweet must use adMedia");
+
+  assert.match(read("../src/services/autoLister.js"), /x\.postListing\(coin, media, logo\)/);
+  assert.match(read("../src/services/rankUpChecker.js"), /x\.postRankUp\(coin, a\.rank, a\.change, quote, media\)/);
+  assert.match(read("../src/services/pumpChecker.js"), /x\.postPump\([^)]*ids\.listingTweetId, media\)/);
+
+  // …and no caller may go back to shipping the bare logo as the tweet's picture.
+  for (const f of ["../src/fulfillment.js", "../src/services/autoLister.js"]) {
+    assert.ok(
+      !/x\.post\w+\([^)]*logoBuffer,\s*"image\/png"/.test(read(f)),
+      `${f} still tweets the raw logo instead of the post artwork`,
+    );
+  }
+});
