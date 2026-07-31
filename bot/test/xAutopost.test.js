@@ -220,42 +220,38 @@ test("auto-listing tweets can be muted on their own (X_AUTOLIST_ENABLED=0)", asy
   assert.strictEqual(coinObj.xUrl, undefined);
 });
 
-test("a rank-up quotes the token's listing tweet when we know it", async (t) => {
+test("rank-up stays wired but silent — one switch, no code change", async (t) => {
+  // Off because of VOLUME, not because it was wrong: it fires per token on every
+  // climb into the top band with only a 6h cooldown, which on a busy board is a
+  // stream of near-identical posts. Kept whole behind the switch, including the
+  // quote lookup, so turning it on is one env var.
   const postids = require("../src/channels/postids");
   const twitter = require("../src/twitter");
   const orig = { postRankUp: twitter.postRankUp, enabled: twitter.enabled };
   t.after(() => Object.assign(twitter, orig));
 
   await postids.set("solana", "QuoteMe111", { listingTweetId: "1900000000000000001" });
-  let quoted;
+  let called = false;
   twitter.enabled = () => true;
-  twitter.postRankUp = async (c, rank, change, quoteId) => {
-    quoted = quoteId;
+  twitter.postRankUp = async () => {
+    called = true;
     return "1955000000000000002";
   };
 
   const { tweetRankUp } = require("../src/services/rankUpChecker");
   const coinObj = { name: "Q", symbol: "Q", chain: "solana", address: "QuoteMe111" };
   const id = await tweetRankUp(coinObj, { rank: 2, change: 41.7, r: { chain: "solana", address: "QuoteMe111" } });
-  assert.strictEqual(id, "1955000000000000002");
-  assert.strictEqual(quoted, "1900000000000000001", "the rank-up did not quote the listing tweet");
-  assert.strictEqual(coinObj.xUrl, "https://x.com/i/status/1955000000000000002");
-});
 
-test("a rank-up on a token with no known listing tweet still posts (standalone)", async (t) => {
-  const twitter = require("../src/twitter");
-  const orig = { postRankUp: twitter.postRankUp, enabled: twitter.enabled };
-  t.after(() => Object.assign(twitter, orig));
-  let quoted = "unset";
-  twitter.enabled = () => true;
-  twitter.postRankUp = async (c, r, ch, q) => {
-    quoted = q;
-    return "3";
-  };
-  const { tweetRankUp } = require("../src/services/rankUpChecker");
-  const id = await tweetRankUp({ symbol: "Z" }, { rank: 1, change: 20, r: { chain: "solana", address: "Unknown999" } });
-  assert.strictEqual(id, "3");
-  assert.strictEqual(quoted, null, "a missing listing tweet must be null, not undefined");
+  assert.strictEqual(id, null, "rank-up must not tweet by default");
+  assert.strictEqual(called, false, "X must not even be called");
+  assert.strictEqual(coinObj.xUrl, undefined, "and the channel card gets no X line");
+
+  // The plumbing behind the switch is intact: it still resolves the listing
+  // tweet to quote, and still hangs the url on the coin the card is built from.
+  const src = require("node:fs").readFileSync(require.resolve("../src/services/rankUpChecker.js"), "utf8");
+  assert.match(src, /postids\.get\(a\.r\.chain, a\.r\.address\)\.listingTweetId/, "quote lookup must survive");
+  assert.match(src, /x\.postRankUp\(coin, a\.rank, a\.change, quote, media\)/, "the call must survive");
+  assert.match(src, /if \(!X_RANKUP_ENABLED \|\| !x\.enabled\(\)\) return null/, "one switch gates it");
 });
 
 test("the optional second account falls back to the listing account", () => {
@@ -575,9 +571,11 @@ test("only LISTING-shaped events tweet: trending and gainers ship off", () => {
   const c = require("../src/config/constants");
   assert.strictEqual(c.X_TRENDING_ENABLED, false, "Trending Token must not tweet by default");
   assert.strictEqual(c.X_GAINERS_ENABLED, false, "the Top Gainers board must not tweet by default");
-  // …while everything that IS a listing (or quotes one) still does.
+  // Rank-up fires per token on every climb with only a 6h cooldown — volume is
+  // what gets a feed muted, so it is off too. Telegram still gets them.
+  assert.strictEqual(c.X_RANKUP_ENABLED, false, "rank-up alerts must not tweet by default");
+  // …while everything that IS a listing still does.
   assert.strictEqual(c.X_AUTOLIST_ENABLED, true);
-  assert.strictEqual(c.X_RANKUP_ENABLED, true);
 
   // The switch has to actually gate the call, not just exist.
   const src = require("node:fs").readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
@@ -585,4 +583,26 @@ test("only LISTING-shaped events tweet: trending and gainers ship off", () => {
     "fulfillTrending must gate the tweet on X_TRENDING_ENABLED");
   // Both templates stay registered — turning the switch on must need no deploy.
   assert.ok(tpl.keys().includes("x_trending") && tpl.keys().includes("x_gainers"));
+});
+
+test("a pump tweet is only ever a QUOTE of the token's listing tweet", () => {
+  // Standing alone on the listing feed, "+240% since listing" is
+  // indistinguishable from a shill post for a token the account never
+  // announced — the quoted listing card is what makes it a follow-up. This is
+  // the same rule pumpTargets has always enforced on Telegram (a pump alert is
+  // a REPLY to the listing post, never standalone), and X had been the one
+  // place it leaked: postPump falls back to a standalone tweet when no quote id
+  // is passed, so the guard has to live at the call site.
+  const src = require("node:fs").readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
+  const call = src.slice(src.indexOf("let pumpTweetId"), src.indexOf("const card = fmt.pumpPost"));
+  assert.match(call, /if \(ids\.listingTweetId\)/, "the tweet must be gated on knowing the listing tweet");
+  assert.match(call, /x\.postPump\([^)]*ids\.listingTweetId, media\)/, "…and must pass it as the quote id");
+  // The Telegram alert must NOT be gated with it — losing the tweet must never
+  // cost the buyer the channel alert they actually paid for.
+  const afterCard = src.slice(src.indexOf("const card = fmt.pumpPost"));
+  assert.match(afterCard, /for \(const t of targets\)/, "the Telegram alert still posts without a quote");
+  assert.ok(
+    !/listingTweetId/.test(afterCard.slice(0, afterCard.indexOf("await latch.add"))),
+    "the Telegram post must not depend on the listing tweet id",
+  );
 });

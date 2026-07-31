@@ -89,9 +89,9 @@ change; the templates and the full code path are still there.
 |---|---|---|
 | `X_ENABLED` | `1` | `0` = no X post at all, keys or not |
 | `X_AUTOLIST_ENABLED` | `1` | `0` = free auto-listings don't tweet (paid ones still do) |
-| `X_RANKUP_ENABLED` | `1` | `0` = no rank-up tweets |
 | `X_TRENDING_ENABLED` | **`0`** | `1` = also tweet Trending Token purchases |
 | `X_GAINERS_ENABLED` | **`0`** | `1` = also tweet the Top Gainers board |
+| `X_RANKUP_ENABLED` | **`0`** | `1` = also tweet rank-up alerts |
 | `X_POST_TIMEOUT_MS` | `30000` | not a switch — how long a post waits for X |
 
 ---
@@ -130,19 +130,35 @@ or, when something is wrong:
 | Paid listing (Xpress) | ✅ | `x_listing` | the listing banner | — |
 | Paid listing (tiered) | ✅ | `x_listing_tiered` | the listing banner | — |
 | **Free auto-listing** | ✅ | `x_listing` / `x_listing_tiered` | the listing banner | — |
-| Trending rank-up | ✅ | `x_rankup` | the rank-up banner | the token's listing tweet |
-| Pump alert | ✅ | `x_pump` | the pump clip | the token's listing tweet |
+| Pump alert | ✅ | `x_pump` | the pump clip | **quotes the listing tweet** |
 | Banner ad | ✅ | `x_banner` | advertiser creative | — |
 | **Trending Token** | ❌ off | `x_trending` | — | `X_TRENDING_ENABLED=1` to enable |
 | **Top Gainers board** | ❌ off | `x_gainers` | — | `X_GAINERS_ENABLED=1` to enable |
+| **Trending rank-up** | ❌ off | `x_rankup` | — | `X_RANKUP_ENABLED=1` to enable |
 | Mass DM | ❌ never | — | — | a private broadcast, not an announcement |
 
-Trending Token has its own product and its own channel (@dexvratrending), and
-the Top Gainers board is curated — the operator posts it by hand from
-@dexvraadminbot when they choose to. Neither belongs on an automated listing
-feed, so neither is tweeted. Rank-up alerts still are: they **quote the token's
-own listing tweet**, so on the listing feed they read as an update to something
-that account already announced.
+Only listings, and follow-ups to listings, go on the listing feed:
+
+- **Trending Token** is its own product with its own channel (@dexvratrending).
+- **Top Gainers** is curated — the operator posts it by hand when they choose to.
+- **Rank-up** fires per token on every climb into the top band, with only a 6h
+  cooldown. On a busy board that is a stream of near-identical posts, and volume
+  is what gets a feed muted. Telegram still gets them.
+
+### The pump alert always quotes the listing tweet
+
+A pump tweet is only published when the token's own listing tweet is known, and
+it is posted as a **quote** of it. Standing alone, "+240% since listing" is
+indistinguishable from a shill post for a token the account never announced — the
+quoted listing card is what makes it a follow-up.
+
+If the listing tweet id isn't known (the token was listed before X was
+configured, or its listing tweet failed) there is **no pump tweet** — the
+Telegram alert still goes out, and its "Announce On X" line drops itself. This
+mirrors the rule Telegram has always had: a pump alert is a reply to the listing
+post, never a standalone one.
+
+Pump alerts fire **once per token, ever**, so they cannot become a stream.
 
 **The tweet shows the same artwork as the channel post.** Whatever
 @dexvraadminbot is configured to use — an uploaded **GIF or MP4 clip**, the

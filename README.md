@@ -72,10 +72,10 @@ sells Listing / Xpress / Trending / Banner packages, verifies on-chain payment
 (temp wallet + poll + sweep), and auto-posts to the Dexvra channels **and X**.
 
 **X auto-posting** — every listing (paid *and* free auto-listing), plus banner
-ads, rank-up and pump alerts, is tweeted from
-[@dexvralisting](https://x.com/dexvralisting). Trending Token and the Top Gainers
-board are deliberately excluded: the first is its own product with its own
-channel, the second is curated by hand. It needs four OAuth
+ads and pump alerts, is tweeted from
+[@dexvralisting](https://x.com/dexvralisting). Trending Token, the Top Gainers
+board and rank-up alerts are deliberately excluded — only listings, and
+follow-ups to listings, belong on a listing feed. It needs four OAuth
 1.0a keys (`X_API_KEY`, `X_API_KEY_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`)
 in the bot's `.env`; leave them blank and X posting stays off with no other
 effect. Setup, verification (`npm run x:check`) and troubleshooting:

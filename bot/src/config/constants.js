@@ -181,9 +181,14 @@ const X_AUTOLIST_ENABLED = bool(env.X_AUTOLIST_ENABLED, true);
 // either back on with no deploy.
 const X_TRENDING_ENABLED = bool(env.X_TRENDING_ENABLED, false);
 const X_GAINERS_ENABLED = bool(env.X_GAINERS_ENABLED, false);
-// Rank-up alerts still tweet — they quote the token's own LISTING tweet, so on
-// the listing feed they read as an update to something that account announced.
-const X_RANKUP_ENABLED = bool(env.X_RANKUP_ENABLED, true);
+// Rank-up alerts are OFF too. They fire on every climb into the top band, per
+// token, with only a 6h cooldown — on a busy board that is a stream of near
+// identical posts, and volume is what gets a listing feed muted. The Telegram
+// trending channel still gets them; X does not.
+//
+// PUMP alerts are the exception that stays on: once per token, ever, and only
+// for a move big enough to be news.
+const X_RANKUP_ENABLED = bool(env.X_RANKUP_ENABLED, false);
 // How long fulfilment waits for the X API before posting to Telegram without an
 // "Announce On X" link. The tweet still lands (and its id is still recorded, so
 // a later pump/rank-up can quote it) after the timeout — this only bounds how

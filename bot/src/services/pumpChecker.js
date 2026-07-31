@@ -146,15 +146,25 @@ function start(tg) {
       }
       const coin = coinOf(r, m.priceUsd, m.mcap);
       const media = await pumpMedia(r, base, m, pct); // admin pump clip + overlay (null → text reply)
-      // Tweet BEFORE the channel card is BUILT, not after it is sent: the card
-      // carries an "Announce On X" line, and a tweet fired afterwards can never
-      // reach it (the line then strips itself and the alert loses its X link).
-      // Timeboxed and best-effort — the alert still goes out if X is slow/off.
-      // Quotes the token's listing tweet when we know it; standalone otherwise.
-      const pumpTweetId = await Promise.race([
-        x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
-        new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
-      ]);
+      // A pump tweet MUST quote the token's own listing tweet — the same rule
+      // pumpTargets enforces on Telegram, for the same reason: standing alone on
+      // the listing feed, "+240% since listing" is indistinguishable from a shill
+      // post for a token that account never announced. The quoted listing card is
+      // what makes it a follow-up. No known listing tweet → no tweet at all
+      // (the Telegram alert still goes out, and the card's X line drops itself).
+      //
+      // Fired BEFORE the card is BUILT, not after it is sent: the card carries an
+      // "Announce On X" line, and a tweet made afterwards can never reach it.
+      // Timeboxed and best-effort — the alert still posts if X is slow or off.
+      let pumpTweetId = null;
+      if (ids.listingTweetId) {
+        pumpTweetId = await Promise.race([
+          x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
+          new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
+        ]);
+      } else if (x.enabled()) {
+        log.debug(`[pump] ${r.sym || r.address}: no listing tweet to quote — Telegram only`);
+      }
       if (pumpTweetId) coin.xUrl = `https://x.com/i/status/${pumpTweetId}`;
       const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
       // "Did the alert post?" means ANY target took it, not specifically the
