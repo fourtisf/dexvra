@@ -209,22 +209,32 @@ function xSelfCheck() {
     }
     return;
   }
-  x.whoami("listing")
-    .then((handle) => {
-      if (handle) {
-        log.info(`[start] X auto-posting ✔ posting as @${handle}`);
-        if (handle.toLowerCase() !== String(X_LISTING_HANDLE).toLowerCase()) {
+  x.verify("listing")
+    .then((res) => {
+      if (res.ok) {
+        log.info(`[start] X auto-posting ✔ posting as @${res.handle}`);
+        if (res.handle.toLowerCase() !== String(X_LISTING_HANDLE).toLowerCase()) {
           log.warn(
-            `[start] X account MISMATCH: the keys post as @${handle}, but X_LISTING_HANDLE says @${X_LISTING_HANDLE}. ` +
+            `[start] X account MISMATCH: the keys post as @${res.handle}, but X_LISTING_HANDLE says @${X_LISTING_HANDLE}. ` +
               "Every 'Listing Alerts on X' link in the posts points at X_LISTING_HANDLE — set it to the account the keys belong to.",
           );
         }
-      } else {
-        log.warn(
-          "[start] X keys are present but the API REFUSED them — nothing will be tweeted. Regenerate the OAuth 1.0a " +
-            'access token with the app set to "Read and write", then restart. Details: npm run x:check',
-        );
+        return;
       }
+      // A blocked network is not a bad key. Saying "your keys were refused" when
+      // the request never left the server costs an operator an afternoon of
+      // regenerating credentials that were fine.
+      if (res.kind === "network") {
+        log.warn(
+          `[start] X keys are present but this server cannot reach api.x.com — ${res.message}. ` +
+            "Posts will keep failing until egress to api.x.com (and upload.twitter.com for media) is open. Details: npm run x:check",
+        );
+        return;
+      }
+      log.warn(
+        `[start] X keys are present but the API REFUSED them — nothing will be tweeted. ${res.message}. ` +
+          "Details: npm run x:check",
+      );
     })
     .catch(() => {});
 }

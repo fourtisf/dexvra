@@ -164,8 +164,20 @@ explicitly — add it anywhere from the editor and it just works.
 
 ## 6. Troubleshooting
 
+### Network egress
+
+The server needs outbound HTTPS to **`api.x.com`** (posting) and
+**`upload.twitter.com`** (media). Behind a firewall, a corporate proxy or a
+container egress allowlist, X answers nothing — and the blocked request comes
+back as a **403**, the same status X uses for a read-only token.
+
+`npm run x:check` tells the two apart and will say
+`could not reach api.x.com — the keys were NOT tested` rather than blaming your
+credentials. If you see that, fix the network first; the keys may be perfect.
+
 | Symptom | Cause | Fix |
 |---|---|---|
+| `could not reach api.x.com` | firewall / proxy / egress allowlist | allow `api.x.com` + `upload.twitter.com`; the keys were never tested |
 | `403` in `[x] tweet failed` | access token is read-only | set the app to *Read and write*, **regenerate** the token |
 | `401` | the four keys aren't from one app, or were regenerated | copy all four again from the same app |
 | `429` | X post cap for your tier/window | wait, or raise the tier — the bot retries on the next event |

@@ -49,18 +49,54 @@ function clientFor(account) {
 const symTag = (s) => String(s || "").replace(/^\$+/, "").toUpperCase();
 const coinUrl = (coin) => coin.siteUrl || `${SITE_URL}/token/${coin.chain}/${coin.address}`;
 
-/** X refuses a duplicate of a recent tweet (187) and truncates past 280 — both
- *  show up as a hard error, so say which one it was in the log. */
-function explain(e) {
-  const code = e && (e.code || (e.data && e.data.status));
-  const detail = (e && e.data && (e.data.detail || e.data.title)) || "";
-  if (code === 403) {
-    return `${e.message}${detail ? ` — ${detail}` : ""} (403 usually means the Access Token is READ-ONLY: set the app to "Read and write", then REGENERATE the access token)`;
+const safeJson = (v) => {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return "";
   }
-  if (code === 401) return `${e.message} (401 — the 4 keys don't match one app, or they were regenerated in the console)`;
-  if (code === 429) return `${e.message} (429 — X post cap reached for this window/tier)`;
-  return `${e.message}${detail ? ` — ${detail}` : ""}`;
+};
+
+/**
+ * Classify a failure. The distinction that matters most is NETWORK vs AUTH: a
+ * firewall, a corporate proxy or a sandbox egress allowlist answers with the
+ * same 403 status X uses for a read-only token, and telling an operator their
+ * keys were rejected when the request never left the building sends them off
+ * regenerating credentials that were fine all along.
+ *
+ * @returns {{kind: string, message: string}} kind ∈ network | permission |
+ *   auth | ratelimit | duplicate | unknown
+ */
+function classify(e) {
+  const code = e && (e.code || (e.data && e.data.status));
+  // e.data is an OBJECT for a real X error and a plain STRING for anything that
+  // answered on X's behalf — a proxy, a gateway, a captive portal. Reading only
+  // .detail/.title threw away the one line that said what actually happened
+  // ("Host not in allowlist: api.x.com"), which is exactly the case this
+  // function exists to catch. Flatten whatever shape arrived.
+  const body =
+    e && e.data ? (typeof e.data === "string" ? e.data : e.data.detail || e.data.title || safeJson(e.data)) : "";
+  const detail = typeof body === "string" ? body : "";
+  const raw = `${(e && e.message) || ""} ${detail} ${(e && e.error) || ""}`;
+  // Never reached X. Proxy/allowlist rejections and DNS/TCP failures both land
+  // here — the giveaway is that the body talks about the HOST, not about auth.
+  if (
+    /not in allowlist|egress|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|proxy|tunneling|self.signed|unable to verify/i.test(raw)
+  ) {
+    return { kind: "network", message: `cannot reach api.x.com — ${(e && e.message) || detail}` };
+  }
+  if (code === 403) {
+    return {
+      kind: "permission",
+      message: `${e.message}${detail ? ` — ${detail}` : ""} (403 — the Access Token is READ-ONLY: set the app to "Read and write", then REGENERATE the access token)`,
+    };
+  }
+  if (code === 401) return { kind: "auth", message: `${e.message} (401 — the 4 keys don't match one app, or they were regenerated in the console)` };
+  if (code === 429) return { kind: "ratelimit", message: `${e.message} (429 — X post cap reached for this window/tier)` };
+  if (/duplicate/i.test(raw)) return { kind: "duplicate", message: `${e.message} (X rejects a repeat of a recent tweet)` };
+  return { kind: "unknown", message: `${e.message}${detail ? ` — ${detail}` : ""}` };
 }
+const explain = (e) => classify(e).message;
 
 async function send(account, text, mediaBuffer, mimeType, quoteTweetId) {
   if (!X_ENABLED) {
@@ -176,6 +212,23 @@ function rankUpText(coin, rank, change) {
   });
 }
 
+async function verify(account = "listing") {
+  const client = clientFor(account);
+  if (!client) {
+    const missing = xMissingKeys(account);
+    return { ok: false, handle: null, kind: "nokeys", message: `missing: ${missing.join(", ") || "(none)"}` };
+  }
+  try {
+    const me = await client.api.v2.me();
+    const handle = (me && me.data && me.data.username) || null;
+    return { ok: Boolean(handle), handle, kind: handle ? "ok" : "unknown", message: handle ? `@${handle}` : "X returned no user" };
+  } catch (e) {
+    const c = classify(e);
+    log.debug(`[x] verify (${account}): ${c.message}`);
+    return { ok: false, handle: null, kind: c.kind, message: c.message };
+  }
+}
+
 function bannerText(booking) {
   return tpl.t("x_banner", {
     title: booking.title || "A project",
@@ -204,18 +257,16 @@ module.exports = {
    *  diagnostic and `npm run x:check`. */
   missingKeys: xMissingKeys,
   /** Verify the credentials actually authenticate, and return the handle they
-   *  post as. Null when X is off or the keys are refused. */
-  whoami: async (account = "listing") => {
-    const client = clientFor(account);
-    if (!client) return null;
-    try {
-      const me = await client.api.v2.me();
-      return (me && me.data && me.data.username) || null;
-    } catch (e) {
-      log.debug(`[x] whoami (${account}): ${explain(e)}`);
-      return null;
-    }
-  },
+   *  post as. Null when X is off or the call didn't succeed — use verify() when
+   *  you need to know WHY. */
+  whoami: async (account = "listing") => (await verify(account)).handle,
+  /**
+   * Credential check with a classified outcome, so a caller can tell "your keys
+   * are wrong" apart from "this box can't reach X".
+   * @returns {Promise<{ok: boolean, handle: string|null, kind: string, message: string}>}
+   *   kind ∈ ok | nokeys | network | permission | auth | ratelimit | unknown
+   */
+  verify,
   postListing: (coin, media, mime) => send("listing", listingText(coin), media, mime),
   postTrending: (coin, media, mime) => send("listing", trendingText(coin), media, mime),
   // Quote the token's original listing tweet when we have its id (the listing
@@ -231,4 +282,7 @@ module.exports = {
   // Exposed for tests + the preview in @dexvraadminbot — building the copy must
   // be checkable without credentials or a network.
   _text: { listingText, trendingText, pumpText, rankUpText, bannerText, gainersText },
+  // Error classification is pure and is the thing most worth pinning: it decides
+  // what an operator is told to go and fix.
+  _diag: { classify },
 };

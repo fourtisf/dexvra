@@ -30,6 +30,9 @@ const {
 } = require("../src/config/constants");
 
 const args = process.argv.slice(2);
+// Set when a check failed because the request never reached X, so the verdict
+// can say "unproven" instead of accusing the keys.
+let netBlocked = false;
 const has = (f) => args.includes(f);
 
 const GREEN = "\x1b[32m";
@@ -69,15 +72,28 @@ async function checkAccount(account, label) {
   // Present is not the same as valid. v2.me() is the cheapest call that proves
   // the credentials authenticate AND tells us which account they belong to.
   const x = require("../src/twitter");
-  const handle = await x.whoami(account);
-  if (!handle) {
-    bad("the X API REFUSED these keys — nothing will be tweeted");
-    dim("    401 → the 4 keys aren't from one app, or they were regenerated in the console");
-    dim("    403 → the access token is READ-ONLY: set the app to \"Read and write\", then REGENERATE it");
+  const res = await x.verify(account);
+  if (res.ok) {
+    ok(`authenticated as @${res.handle}`);
+    return res.handle;
+  }
+  // "Couldn't reach X" is NOT "X rejected you". A firewall, a corporate proxy
+  // or a sandbox egress allowlist answers with the same 403 X uses for a
+  // read-only token, and conflating them sends an operator off regenerating
+  // credentials that were never the problem.
+  if (res.kind === "network") {
+    netBlocked = true;
+    warn("could not reach api.x.com — the keys were NOT tested");
+    dim(`    ${res.message}`);
+    dim("    This box cannot talk to X: check the firewall / HTTPS_PROXY / egress allowlist,");
+    dim("    then run this again. Allow api.x.com and upload.twitter.com (media).");
     return null;
   }
-  ok(`authenticated as @${handle}`);
-  return handle;
+  bad("the X API REFUSED these keys — nothing will be tweeted");
+  dim(`    ${res.message}`);
+  if (res.kind === "permission") dim("    Fix: app → Read and write, then REGENERATE the access token pair.");
+  if (res.kind === "auth") dim("    Fix: re-copy all four values from the SAME app in the console.");
+  return null;
 }
 
 (async () => {
@@ -171,7 +187,11 @@ async function checkAccount(account, label) {
   }
   if (!xComplete("listing")) bad(`auto-posting is OFF — fill in: ${xMissingKeys("listing").join(", ")}`);
   else if (!X_ENABLED) bad("auto-posting is OFF — X_ENABLED is set to 0");
-  else bad("auto-posting is OFF — the keys were refused by X");
+  else if (netBlocked) {
+    warn("UNPROVEN — the keys look complete but this box cannot reach api.x.com");
+    dim("  Nothing is wrong with the keys as far as this check can tell. Run it again");
+    dim("  from the server that actually runs the bot, with egress to api.x.com open.");
+  } else bad("auto-posting is OFF — the keys were refused by X");
   process.exit(1);
 })().catch((e) => {
   bad(`x-check crashed: ${e && e.message}`);

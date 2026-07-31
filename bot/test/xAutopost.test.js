@@ -348,3 +348,39 @@ test("the gainers board carries its own Announce On X line, and drops it when un
   assert.match(quiet.text, /BULLCAT/, "the board itself survived the strip");
   assert.match(quiet.text, /X Alerts/, "the footer still links Dexvra's X account");
 });
+
+test("a blocked network is never reported as 'X refused your keys'", () => {
+  // A proxy, a firewall or a sandbox egress allowlist answers with the SAME 403
+  // X uses for a read-only access token — and its body is a bare string, not
+  // X's error object, so reading only .detail/.title threw away the one line
+  // that said what happened. Conflating the two sends an operator off
+  // regenerating credentials that were never the problem. (Hit for real: this
+  // container returned `403 Host not in allowlist: api.x.com` and the checker
+  // confidently blamed the keys.)
+  const { classify } = require("../src/twitter")._diag;
+
+  const proxied = classify(
+    Object.assign(new Error("Request failed with code 403"), {
+      code: 403,
+      data: "Host not in allowlist: api.x.com. Add this host to your network egress settings to allow access.",
+    }),
+  );
+  assert.strictEqual(proxied.kind, "network", `a proxy block must not read as an auth failure: ${proxied.message}`);
+  assert.match(proxied.message, /cannot reach api\.x\.com/);
+
+  // A REAL read-only-token 403 from X still has to be called what it is.
+  const readOnly = classify(
+    Object.assign(new Error("Request failed with code 403"), {
+      code: 403,
+      data: { status: 403, detail: "Your client app is not configured with the appropriate oauth1 app permissions." },
+    }),
+  );
+  assert.strictEqual(readOnly.kind, "permission", readOnly.message);
+  assert.match(readOnly.message, /Read and write/);
+
+  assert.strictEqual(classify(Object.assign(new Error("401"), { code: 401 })).kind, "auth");
+  assert.strictEqual(classify(Object.assign(new Error("429"), { code: 429 })).kind, "ratelimit");
+  for (const m of ["fetch failed", "ENOTFOUND api.x.com", "socket hang up", "ETIMEDOUT"]) {
+    assert.strictEqual(classify(new Error(m)).kind, "network", m);
+  }
+});
