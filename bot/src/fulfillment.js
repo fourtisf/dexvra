@@ -11,7 +11,7 @@ const postids = require("./channels/postids");
 const market = require("./marketdata");
 const x = require("./twitter");
 const menu = require("./handlers/menu");
-const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS } = require("./config/constants");
+const { SITE_URL, CHANNELS, X_POST_TIMEOUT_MS, X_TRENDING_ENABLED } = require("./config/constants");
 const { tierAnnounces, tierLabel } = require("./config/packages");
 const { fmtPrice, formatNumber } = require("./helpers/format");
 const { isValidTicker, sanitizeTicker } = require("./helpers/ticker");
@@ -330,12 +330,17 @@ async function fulfillTrending(ctx, order) {
   );
   const trendMedia = await postMedia("trending", bannerCoin, logoBuffer, null, row.logoUrl, `Trending ${p.hours}H`);
 
-  // Tweet first (timeboxed) so the channel post can link it — same pattern as
-  // the listing flow; the "Announce On X" line drops when there's no tweet.
-  const tweetId = await Promise.race([
-    x.postTrending(coin, trendMedia, logoBuffer).catch(() => null),
-    new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null)),
-  ]);
+  // Trending is NOT announced on the X listing account by default: @dexvralisting
+  // is the listing feed, and Trending Token is its own product with its own
+  // channel (@dexvratrending). X_TRENDING_ENABLED=1 turns it back on. When it is
+  // off there is simply no tweet, and the channel card's "Announce On X" line
+  // drops itself — no empty label, no code path skipped.
+  const tweetId = X_TRENDING_ENABLED
+    ? await Promise.race([
+        x.postTrending(coin, trendMedia, logoBuffer).catch(() => null),
+        new Promise((r) => setTimeout(r, X_POST_TIMEOUT_MS, null)),
+      ])
+    : null;
   if (tweetId) coin.xUrl = `https://x.com/i/status/${tweetId}`;
 
   const links = [];

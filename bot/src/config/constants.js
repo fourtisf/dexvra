@@ -167,9 +167,23 @@ const X_ENABLED = bool(env.X_ENABLED, true) && xComplete("listing");
 // an operator may want the X feed to stay purchase-only. Default ON — "every
 // listing gets posted to X" is the operator's rule.
 const X_AUTOLIST_ENABLED = bool(env.X_AUTOLIST_ENABLED, true);
-// Tweet the rank-up / pump / gainers alerts too (all default ON).
+// The X account is @dexvralisting — a LISTING feed. Operator's rule
+// (2026-07-31): only listings belong on it, so the two products that are not
+// listings default OFF:
+//
+//   • Trending Token — its own product with its own Telegram channel
+//     (@dexvratrending). Announcing it on the listing account mixes two feeds.
+//   • Top Gainers — an operator-curated board, posted by hand from
+//     @dexvraadminbot when they choose to. Auto-tweeting it would publish on X
+//     something the operator deliberately controls the timing of.
+//
+// Both keep their templates and their full code path; set the flag to 1 to turn
+// either back on with no deploy.
+const X_TRENDING_ENABLED = bool(env.X_TRENDING_ENABLED, false);
+const X_GAINERS_ENABLED = bool(env.X_GAINERS_ENABLED, false);
+// Rank-up alerts still tweet — they quote the token's own LISTING tweet, so on
+// the listing feed they read as an update to something that account announced.
 const X_RANKUP_ENABLED = bool(env.X_RANKUP_ENABLED, true);
-const X_GAINERS_ENABLED = bool(env.X_GAINERS_ENABLED, true);
 // How long fulfilment waits for the X API before posting to Telegram without an
 // "Announce On X" link. The tweet still lands (and its id is still recorded, so
 // a later pump/rank-up can quote it) after the timeout — this only bounds how
@@ -263,6 +277,7 @@ module.exports = {
   X_LISTING_URL,
   X_ENABLED,
   X_AUTOLIST_ENABLED,
+  X_TRENDING_ENABLED,
   X_RANKUP_ENABLED,
   X_GAINERS_ENABLED,
   X_POST_TIMEOUT_MS,

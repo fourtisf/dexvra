@@ -81,13 +81,18 @@ the normal one-account setup — banner ads then go out from `@dexvralisting` to
 
 ### Per-source switches (all default on)
 
-| Variable | Turns off |
-|---|---|
-| `X_ENABLED=0` | every X post, keys or not |
-| `X_AUTOLIST_ENABLED=0` | tweets for **free auto-listings** (paid ones still tweet) |
-| `X_RANKUP_ENABLED=0` | rank-up alert tweets |
-| `X_GAINERS_ENABLED=0` | the daily Top Gainers board tweet |
-| `X_POST_TIMEOUT_MS` | (not a switch) how long a post waits for X — default 20000 |
+@dexvralisting is the **listing** feed, so the two products that are not
+listings ship **off**. Set either to `1` to turn it on — no deploy, no code
+change; the templates and the full code path are still there.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `X_ENABLED` | `1` | `0` = no X post at all, keys or not |
+| `X_AUTOLIST_ENABLED` | `1` | `0` = free auto-listings don't tweet (paid ones still do) |
+| `X_RANKUP_ENABLED` | `1` | `0` = no rank-up tweets |
+| `X_TRENDING_ENABLED` | **`0`** | `1` = also tweet Trending Token purchases |
+| `X_GAINERS_ENABLED` | **`0`** | `1` = also tweet the Top Gainers board |
+| `X_POST_TIMEOUT_MS` | `30000` | not a switch — how long a post waits for X |
 
 ---
 
@@ -120,16 +125,24 @@ or, when something is wrong:
 
 ## 4. What gets posted, and when
 
-| Event | Tweet | Media | Quotes |
-|---|---|---|---|
-| Paid listing (Xpress) | `x_listing` | the listing banner | — |
-| Paid listing (tiered) | `x_listing_tiered` | the listing banner | — |
-| **Free auto-listing** | `x_listing` / `x_listing_tiered` | the listing banner | — |
-| Trending activation | `x_trending` | the trending banner | — |
-| Trending rank-up | `x_rankup` | the rank-up banner | the token's listing tweet |
-| Pump alert | `x_pump` | the pump clip | the token's listing tweet |
-| Banner ad | `x_banner` | advertiser creative | — |
-| Daily Top Gainers | `x_gainers` | the rendered board | — |
+| Event | Tweeted? | Template | Media | Quotes |
+|---|---|---|---|---|
+| Paid listing (Xpress) | ✅ | `x_listing` | the listing banner | — |
+| Paid listing (tiered) | ✅ | `x_listing_tiered` | the listing banner | — |
+| **Free auto-listing** | ✅ | `x_listing` / `x_listing_tiered` | the listing banner | — |
+| Trending rank-up | ✅ | `x_rankup` | the rank-up banner | the token's listing tweet |
+| Pump alert | ✅ | `x_pump` | the pump clip | the token's listing tweet |
+| Banner ad | ✅ | `x_banner` | advertiser creative | — |
+| **Trending Token** | ❌ off | `x_trending` | — | `X_TRENDING_ENABLED=1` to enable |
+| **Top Gainers board** | ❌ off | `x_gainers` | — | `X_GAINERS_ENABLED=1` to enable |
+| Mass DM | ❌ never | — | — | a private broadcast, not an announcement |
+
+Trending Token has its own product and its own channel (@dexvratrending), and
+the Top Gainers board is curated — the operator posts it by hand from
+@dexvraadminbot when they choose to. Neither belongs on an automated listing
+feed, so neither is tweeted. Rank-up alerts still are: they **quote the token's
+own listing tweet**, so on the listing feed they read as an update to something
+that account already announced.
 
 **The tweet shows the same artwork as the channel post.** Whatever
 @dexvraadminbot is configured to use — an uploaded **GIF or MP4 clip**, the

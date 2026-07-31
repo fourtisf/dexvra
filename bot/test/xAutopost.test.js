@@ -302,10 +302,12 @@ test("the gainers board has a plain-text form for X (no Telegram markup)", () =>
   assert.ok(!/@null|@undefined/.test(list), "a token with no X handle got a broken mention");
 });
 
-test("an admin-queued gainers banner tweets too, not just the daily one", async (t) => {
-  // The daily board was tweeted and the identical admin-tapped board was not —
-  // the copy has to travel on the job because the admin bot owns the coins and
-  // the main bot owns the X keys.
+test("the gainers board stays wired but silent — the switch is all that's needed", async (t) => {
+  // Gainers are curated: the operator posts the board by hand from
+  // @dexvraadminbot, so nothing about it may reach X on its own. The plumbing
+  // stays complete on purpose — the copy still travels on the job (the admin bot
+  // owns the coins, the main bot owns the keys) — so X_GAINERS_ENABLED=1 turns
+  // it on with no deploy and no code change.
   const gp = require("../src/services/gainersPoster");
   const twitter = require("../src/twitter");
   const orig = { postGainers: twitter.postGainers, enabled: twitter.enabled };
@@ -318,15 +320,19 @@ test("an admin-queued gainers banner tweets too, not just the daily one", async 
     return "1955000000000000009";
   };
 
-  const url = await gp.tweetQueued({ xList: "1. $BULLCAT  +41.7%", xDate: "Friday · July 31 · 2026", imagePath: "" });
-  assert.strictEqual(url, "https://x.com/i/status/1955000000000000009");
-  assert.match(sent.list, /BULLCAT/);
-  assert.strictEqual(sent.date, "Friday · July 31 · 2026");
+  const url = await gp.tweetQueued({ xList: "1. $BULLCAT  +41.7%", xDate: "Friday", imagePath: "" });
+  assert.strictEqual(url, null, "a curated board must not auto-tweet");
+  assert.strictEqual(sent, null, "X must not even be called");
 
-  // A job queued before xList existed must be skipped, never tweeted blank.
-  sent = null;
-  assert.strictEqual(await gp.tweetQueued({ imagePath: "" }), null);
-  assert.strictEqual(sent, null, "a job with no board copy must not produce an empty tweet");
+  // …but the wiring behind the switch is intact, so flipping it works.
+  const src = require("node:fs").readFileSync(require.resolve("../src/services/gainersPoster.js"), "utf8");
+  assert.match(src, /const xUrl = ok \? await tweetQueued\(job\) : null/, "the queued path must still call tweetQueued");
+  assert.match(src, /if \(!X_GAINERS_ENABLED \|\| !x\.enabled\(\)\) return null/, "one switch gates both gainers paths");
+  assert.match(
+    require("node:fs").readFileSync(require.resolve("../src/admin/gainersMenu.js"), "utf8"),
+    /xList: gainers\.listText\(coins/,
+    "the tweet copy must still travel on the job",
+  );
 });
 
 test("the gainers board carries its own Announce On X line, and drops it when unposted", () => {
@@ -559,4 +565,24 @@ test("the tweet is handed the same media object the channel post gets", () => {
       `${f} still tweets the raw logo instead of the post artwork`,
     );
   }
+});
+
+test("only LISTING-shaped events tweet: trending and gainers ship off", () => {
+  // @dexvralisting is the listing feed. Trending Token is its own product with
+  // its own channel, and the Top Gainers board is curated by hand — neither
+  // belongs on an automated listing account (operator's rule, 2026-07-31).
+  // Switches, not deletions: the templates and code paths stay usable.
+  const c = require("../src/config/constants");
+  assert.strictEqual(c.X_TRENDING_ENABLED, false, "Trending Token must not tweet by default");
+  assert.strictEqual(c.X_GAINERS_ENABLED, false, "the Top Gainers board must not tweet by default");
+  // …while everything that IS a listing (or quotes one) still does.
+  assert.strictEqual(c.X_AUTOLIST_ENABLED, true);
+  assert.strictEqual(c.X_RANKUP_ENABLED, true);
+
+  // The switch has to actually gate the call, not just exist.
+  const src = require("node:fs").readFileSync(require.resolve("../src/fulfillment.js"), "utf8");
+  assert.match(src, /X_TRENDING_ENABLED\s*\n?\s*\?\s*await Promise\.race\(\[\s*\n?\s*x\.postTrending/,
+    "fulfillTrending must gate the tweet on X_TRENDING_ENABLED");
+  // Both templates stay registered — turning the switch on must need no deploy.
+  assert.ok(tpl.keys().includes("x_trending") && tpl.keys().includes("x_gainers"));
 });

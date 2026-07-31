@@ -22,10 +22,10 @@ Telegram user ──▶ bot (Telegraf, long-polling)
                     │       writer of data/listings.json, no cross-process races)
                     │
                     ├─▶ @dexvralisting / @dexvraio / @dexvratrending   (Bot API posts)
-                    └─▶ X @dexvralisting    every listing, trending, banner,
-                                            rank-up, pump + the daily gainers
-                                            board                (4 keys — see
-                                            X-AUTOPOST.md; off until they're set)
+                    └─▶ X @dexvralisting    every listing (paid + free auto),
+                                            banner ads, rank-up + pump alerts
+                                            (4 keys — see X-AUTOPOST.md; off
+                                            until they're set)
 ```
 
 Payment model (matches fourtisbot): the bot generates a **fresh receiving
