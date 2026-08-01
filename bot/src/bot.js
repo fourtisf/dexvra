@@ -226,6 +226,12 @@ function xSourceReport() {
 function xSelfCheck() {
   const { X_ENABLED, X_LISTING_HANDLE, xMissingKeys, _env } = require("./config/constants");
   const x = require("./twitter");
+  // SYNCHRONOUS and unconditional. "What is this process allowed to post?" is a
+  // pure config question — it has nothing to do with whether the keys
+  // authenticate, and it must not be hidden behind a network round trip. It was,
+  // and the line simply didn't appear within the operator's `sleep 6`, which is
+  // the same class of failure the report exists to prevent.
+  xSourceReport();
   if (!X_ENABLED) {
     const missing = xMissingKeys("listing");
     if (missing.length) {
@@ -243,7 +249,6 @@ function xSelfCheck() {
     .then((res) => {
       if (res.ok) {
         log.info(`[start] X auto-posting ✔ posting as @${res.handle}`);
-        xSourceReport();
         if (res.handle.toLowerCase() !== String(X_LISTING_HANDLE).toLowerCase()) {
           log.warn(
             `[start] X account MISMATCH: the keys post as @${res.handle}, but X_LISTING_HANDLE says @${X_LISTING_HANDLE}. ` +

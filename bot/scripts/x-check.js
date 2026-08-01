@@ -23,6 +23,7 @@ const {
   X_LISTING_HANDLE,
   X_LISTING_URL,
   X_AUTOLIST_ENABLED,
+  X_TRENDING_ENABLED,
   X_RANKUP_ENABLED,
   X_GAINERS_ENABLED,
   xMissingKeys,
@@ -33,6 +34,8 @@ const args = process.argv.slice(2);
 // Set when a check failed because the request never reached X, so the verdict
 // can say "unproven" instead of accusing the keys.
 let netBlocked = false;
+// Set when .env enables an X source beyond listings / pump alerts / banner ads.
+let ruleViolated = false;
 const has = (f) => args.includes(f);
 
 const GREEN = "\x1b[32m";
@@ -102,9 +105,32 @@ async function checkAccount(account, label) {
   console.log(`  X_ENABLED          ${process.env.X_ENABLED == null ? `${DIM}(unset → on)${OFF}` : process.env.X_ENABLED}`);
   console.log(`  X_LISTING_HANDLE   @${X_LISTING_HANDLE}  ${DIM}${X_LISTING_URL}${OFF}`);
   console.log(`  X_HANDLE           @${X_HANDLE}  ${DIM}(named in banner-ad copy)${OFF}`);
+
+  // THE RULE, audited against what this .env actually resolves to. The defaults
+  // live in code, but an explicit line in .env beats them — which is exactly how
+  // rank-up tweets came back after being turned off, invisibly, and were found
+  // on the public timeline eleven hours later. Checking it needs to be something
+  // you can DO, not something you hope you remember.
+  head("What will be posted");
+  console.log(`  ${GREEN}always${OFF}   listings · pump alerts · banner ads`);
   console.log(
-    `  sources            auto-listings ${X_AUTOLIST_ENABLED ? "on" : "OFF"} · rank-ups ${X_RANKUP_ENABLED ? "on" : "OFF"} · gainers ${X_GAINERS_ENABLED ? "on" : "OFF"}`,
+    `  ${DIM}auto-listings (free)${OFF}  ${X_AUTOLIST_ENABLED ? `${GREEN}on${OFF}` : `${YEL}OFF${OFF} (paid listings still tweet)`}`,
   );
+  const extras = [
+    ["Trending Token", "X_TRENDING_ENABLED", X_TRENDING_ENABLED],
+    ["Top Gainers board", "X_GAINERS_ENABLED", X_GAINERS_ENABLED],
+    ["rank-up alerts", "X_RANKUP_ENABLED", X_RANKUP_ENABLED],
+  ];
+  const on = extras.filter(([, , v]) => v);
+  if (!on.length) {
+    ok("nothing beyond the rule is enabled");
+  } else {
+    for (const [what, envVar] of on) {
+      warn(`ALSO posting ${what} — ${envVar}=1 in .env overrides the default`);
+    }
+    dim(`  Fix: sed -i ${on.map(([, v]) => `-e 's|^${v}=.*|${v}=0|'`).join(" ")} .env`);
+    ruleViolated = true;
+  }
 
   const handle = await checkAccount("listing", "Listing (@" + X_LISTING_HANDLE + ")");
 
@@ -180,10 +206,17 @@ async function checkAccount(account, label) {
   }
 
   head("Verdict");
-  if (X_ENABLED && handle) {
-    ok("auto-posting is READY — every listing will be tweeted");
+  if (X_ENABLED && handle && !ruleViolated) {
+    ok("auto-posting is READY — listings, pump alerts and banner ads only");
     if (!has("--tweet")) dim("  Prove it end to end with: npm run x:check -- --tweet");
     process.exit(0);
+  }
+  if (X_ENABLED && handle && ruleViolated) {
+    // Working credentials are not the same as correct behaviour. Exiting
+    // non-zero is what lets this be wired into a deploy step.
+    bad("auto-posting works, but .env posts MORE than listings / pump alerts / banner ads");
+    dim("  See 'What will be posted' above for the exact fix.");
+    process.exit(1);
   }
   if (!xComplete("listing")) bad(`auto-posting is OFF — fill in: ${xMissingKeys("listing").join(", ")}`);
   else if (!X_ENABLED) bad("auto-posting is OFF — X_ENABLED is set to 0");

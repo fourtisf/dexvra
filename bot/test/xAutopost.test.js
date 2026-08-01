@@ -642,3 +642,38 @@ test("boot names every live X source and warns about anything beyond the rule", 
   }
   assert.match(src, /log\.warn\([\s\S]{0,120}X will ALSO tweet/, "an extra source must WARN, not just inform");
 });
+
+test("x:check FAILS when .env posts more than the rule allows", () => {
+  // Visibility alone wasn't enough: the boot warning is one line in a log nobody
+  // greps until something has already gone out. `npm run x:check` exits non-zero
+  // on a rule violation, so it can gate a deploy instead of relying on someone
+  // reading carefully.
+  const { execFileSync } = require("node:child_process");
+  const script = require.resolve("../scripts/x-check.js");
+  const run = (env) => {
+    try {
+      execFileSync(process.execPath, [script], { env: { ...process.env, ...env }, stdio: "pipe" });
+      return 0;
+    } catch (e) {
+      return e.status;
+    }
+  };
+  // No keys in CI, so both runs exit 1 — the point is the REASON, which has to
+  // name the rule rather than the credentials.
+  const out = (env) => {
+    try {
+      return execFileSync(process.execPath, [script], { env: { ...process.env, ...env }, stdio: "pipe" }).toString();
+    } catch (e) {
+      return (e.stdout || Buffer.from("")).toString();
+    }
+  };
+  const clean = out({ X_RANKUP_ENABLED: "0", X_GAINERS_ENABLED: "0", X_TRENDING_ENABLED: "0" });
+  assert.match(clean, /nothing beyond the rule is enabled/);
+  assert.match(clean, /listings · pump alerts · banner ads/, "the rule must be stated, not implied");
+
+  const stale = out({ X_RANKUP_ENABLED: "1" });
+  assert.match(stale, /ALSO posting rank-up alerts/);
+  assert.match(stale, /X_RANKUP_ENABLED=1 in \.env overrides the default/);
+  assert.match(stale, /sed -i .*X_RANKUP_ENABLED=0/, "it must hand over the exact fix, not a description of it");
+  assert.strictEqual(run({ X_RANKUP_ENABLED: "1" }), 1);
+});

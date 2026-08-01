@@ -79,11 +79,27 @@ simply never tweets. It says so once at boot, naming the missing variables.
 configure a **second** account used only for banner ads. Leave them blank for
 the normal one-account setup — banner ads then go out from `@dexvralisting` too.
 
-### Per-source switches (all default on)
+### Per-source switches
 
-@dexvralisting is the **listing** feed, so the two products that are not
-listings ship **off**. Set either to `1` to turn it on — no deploy, no code
-change; the templates and the full code path are still there.
+**THE RULE: only listings, pump alerts and banner ads are posted.** Everything
+else ships off.
+
+These defaults live in code — but an **explicit line in `.env` beats a code
+default**. That is not a bug, it is how env config works, and it is exactly how
+rank-up tweets came back after being switched off: a stale `X_RANKUP_ENABLED=1`
+from an earlier setup silently won, and the only place it showed was the public
+timeline eleven hours later.
+
+Two things make that unrepeatable:
+
+- **Boot prints the live set** — `[start] X will tweet: …` — and WARNS, naming
+  the variable, for anything beyond the three. It is printed synchronously, so
+  it appears even when the keys are wrong or the network is down.
+- **`npm run x:check` exits non-zero** on a violation and hands you the exact
+  `sed` to fix it. Wire it into your deploy step and a stale `.env` cannot ship.
+
+When editing `.env`, only write lines you actually mean to change. A line set to
+its default today becomes a silent override the day the default moves.
 
 | Variable | Default | Effect |
 |---|---|---|
