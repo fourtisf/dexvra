@@ -95,10 +95,29 @@ function parseAmt(input, native) {
   const m = s.match(/^\$?([0-9]*\.?[0-9]+)(\$|usd)?$/);
   if (!m) return null;
   const n = Number(m[1]); if (!(n > 0)) return null;
-  if (!(s.startsWith('$') || m[2])) return { amt: String(n) };
+  // String(1e-7) is "1e-7", and ethers.parseEther throws "invalid FixedNumber
+  // string value" on exponential notation. Anything below 1e-6 formats that way,
+  // so a user typing 0.0000001 handed the money path a string it cannot parse.
+  // Emit a PLAIN decimal always, and reject dust that would round to nothing —
+  // the amount is refused up here, in the UI, where the user can see why.
+  // String(n) is already the shortest EXACT round-trip form — expanding it
+  // unconditionally introduces float artefacts (0.05 → "0.050000000000000003"),
+  // which would silently change the amount being traded. Only reach for toFixed
+  // when String() actually produced an exponent.
+  const plain = (v) => {
+    const t = String(v);
+    if (!/e/i.test(t)) return t;
+    return v.toFixed(20).replace(/0+$/, '').replace(/\.$/, '');
+  };
+  if (!(s.startsWith('$') || m[2])) {
+    if (n < 1e-9) return { err: 'that amount is too small to trade' };
+    return { amt: plain(n) };
+  }
   const px = nativeUsd(native);
   if (!(px > 0)) return { err: `price feed unavailable — send a ${native} amount instead (e.g. 0.01)` };
-  return { amt: String(Number((n / px).toFixed(6))), usdVal: n };
+  const conv = Number((n / px).toFixed(6));
+  if (!(conv > 0)) return { err: `that is below the minimum tradeable amount in ${native}` };
+  return { amt: plain(conv), usdVal: n };
 }
 const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
@@ -955,7 +974,15 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // Now the buy, the progress message and the depth probe are all in
       // flight at once, and the probe's result is folded into the receipt if it
       // arrives in time. Nothing about the trade waits on either of them.
-      const buying = core.buy(chatId, ca, amt, chain, wid);
+      // .catch AT CREATION, not after the awaits below. core.buy() can reject on
+      // its very first microtask (a bad amount reaches ethers.parseEther), and
+      // everything between here and `await buying` yields — so a handler attached
+      // later arrives after the rejection is already orphaned. Node's default is
+      // --unhandled-rejections=throw, so that killed the whole process: one
+      // Telegram message from any user took every other user's bot down with it.
+      // Settling into a marker keeps the promise handled from birth; the error is
+      // re-thrown below, so the existing try/catch still reports it normally.
+      const buying = core.buy(chatId, ca, amt, chain, wid).then((v) => ({ v }), (e) => ({ e }));
       const impactP = impactNote(ca, chG, amt);
       // Entry snapshot, started WITH the trade. The buy is already in flight, so
       // the short wait below costs execution nothing — it only decides whether
@@ -968,7 +995,9 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const eMc = entry ? (entry.mcapUsd || (entry.mcapEth || 0) * eRate) : 0;
       const atMc = eMc > 0 ? ` at MC <b>$${fmt(eMc)}</b>` : '';
       const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}</b>${atMc}…`);
-      const r = await buying;
+      const bres = await buying;
+      if (bres.e) throw bres.e;   // same failure the caller always saw, just never orphaned
+      const r = bres.v;
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
       const spent = Number(r.spentEth) || 0, got = Number(r.gotTokens) || 0;
@@ -1087,12 +1116,17 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       // The sell is in flight before the progress message is awaited — an exit
       // is the one trade where a round-trip of delay is felt most.
       let progress = null;
+      // Handled from birth, for the same reason as the buy above: 'token balance
+      // is 0' rejects after a single RPC read, which routinely lands inside the
+      // window before `await selling`.
       const selling = sellWithRetry(chatId, ca, pct, chain, wid, (n) =>
         (progress && progress.ok && progress.result)
           ? edit(chatId, progress.result.message_id, `⚙️ <b>Retry ${n}/2</b> — raising gas &amp; slippage to complete the sell…`).catch(() => {})
-          : null);
+          : null).then((v) => ({ v }), (e) => ({ e }));
       progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% of ${sym0 ? '$' + esc(sym0) : 'your token'}…</b>`);
-      const r = await selling;
+      const sres = await selling;
+      if (sres.e) throw sres.e;
+      const r = sres.v;
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;
@@ -2297,5 +2331,6 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = {
+  start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

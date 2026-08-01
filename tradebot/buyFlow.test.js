@@ -40,7 +40,10 @@ test("that wait is not execution latency — the trade is already in flight", ()
   const iRace = SINGLE.indexOf("const entry = await Promise.race(");
   assert.ok(iBuy > -1 && iSnap > iBuy, "the snapshot starts after the buy is already going");
   assert.ok(iRace > iSnap, "and only then is anything awaited");
-  assert.ok(SINGLE.indexOf("const r = await buying;") > iRace, "the fill is awaited last");
+  // `buying` is settled into a {v}/{e} marker at creation so an early rejection
+  // can never be orphaned (that orphan could kill the process — dosFix.test.js);
+  // the ORDERING this test exists for is unchanged.
+  assert.ok(SINGLE.indexOf("const bres = await buying;") > iRace, "the fill is awaited last");
 });
 
 test("the receipt answers all three questions at once", () => {

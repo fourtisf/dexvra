@@ -53,7 +53,11 @@ test("the trade starts before ANYTHING is awaited", () => {
   assert.ok(iBuy < iProgress, "the buy must be in flight before the progress message is awaited");
   assert.ok(iBuy < iProbe, "…and before the depth probe");
   assert.ok(!/await core\.buy\(/.test(single), "core.buy is started, not awaited, on that line");
-  assert.match(single, /const r = await buying;/, "awaited only once there is nothing else to do");
+  // The fill is awaited last. `buying` settles into a {v}/{e} marker at creation
+  // (so a rejection is never orphaned — see dosFix.test.js), which is why this
+  // matches the await rather than the old bare `const r = await buying`.
+  assert.match(single, /const bres = await buying;/, "awaited only once there is nothing else to do");
+  assert.ok(single.indexOf("const bres = await buying;") > iProgress, "…after the progress message");
 });
 
 test("the multi-wallet buy and the sell start the same way", () => {
