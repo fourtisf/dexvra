@@ -137,8 +137,20 @@ function swapBody(quoteResponse, userPublicKey, { feeAccount, priorityLamports }
     dynamicSlippage: false,
   };
   if (feeAccount) body.feeAccount = feeAccount;                                   // ATA that receives the platform fee
-  if (priorityLamports > 0) body.prioritizationFeeLamports = Math.floor(priorityLamports);
-  else body.prioritizationFeeLamports = 'auto';
+  if (priorityLamports > 0) {
+    // An explicit CEILING with a "high" target, not a flat fee. Jupiter then bids
+    // whatever the current market needs up to that cap, so a quiet minute costs
+    // little and a busy one still lands — a flat number is either wasteful or
+    // too low, and which one it is changes minute to minute.
+    body.prioritizationFeeLamports = {
+      priorityLevelWithMaxLamports: { maxLamports: Math.floor(priorityLamports), priorityLevel: 'high', global: false },
+    };
+  } else {
+    // 'auto' is Jupiter's conservative default. It is not zero, but it is tuned
+    // for "will eventually land", not for winning a block — set
+    // SOL_PRIORITY_LAMPORTS to compete.
+    body.prioritizationFeeLamports = 'auto';
+  }
   return body;
 }
 // Pull the headline numbers out of a /quote response (defensive).
@@ -186,20 +198,75 @@ async function sendJupiterSwap(conn, keypair, swapTransactionB64) {
   const tx = VersionedTransaction.deserialize(Buffer.from(swapTransactionB64, 'base64'));
   tx.sign([keypair]);
   const raw = tx.serialize();
-  const sig = await conn.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
+  // skipPreflight: the RPC otherwise SIMULATES the swap before accepting it —
+  // a full extra round trip on the critical path, and under load the simulation
+  // rejects transactions that would have landed (it runs against a slightly
+  // stale slot). Every competitive bot skips it. The trade is still protected:
+  // Jupiter bakes minOut into the instruction, so a bad fill reverts on-chain.
+  //
+  // maxRetries: 0 — the node's own retry loop is opaque and slow. We re-broadcast
+  // the SAME signed bytes ourselves below, which is idempotent (identical
+  // signature ⇒ the cluster dedupes it) and lets us poll for the result at the
+  // same time instead of blocking on one long confirmTransaction.
+  const sig = await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
   // Past this point the tx is BROADCAST. A confirmation that reverts is atomic (Jupiter
   // swaps don't half-execute) → safe to treat as "didn't spend". But a confirmation that
   // THROWS (timeout / blockheight exceeded) is ambiguous — the tx may still land — so we
   // tag the error `.broadcast` + `.sig` and callers must NOT roll back budget/dedup.
   let conf;
   try {
-    const bh = await conn.getLatestBlockhash('confirmed');
-    conf = await conn.confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed');
+    conf = await _pollUntilLanded(conn, sig, raw);
   } catch (e) {
     throw Object.assign(new Error('swap broadcast but not confirmed yet: ' + sig), { broadcast: true, sig });
   }
   if (conf && conf.value && conf.value.err) throw new Error('swap reverted on-chain: ' + JSON.stringify(conf.value.err));
   return sig;
+}
+
+// ---------------------------------------------------------------- landing a tx
+
+// How long to keep chasing a broadcast swap, and how often to re-send it. A
+// Solana blockhash is valid for ~150 slots (~60s); past that the tx can never
+// land, so waiting longer only makes the user stare at a spinner.
+const CONFIRM_TIMEOUT_MS = Math.max(5000, Number(process.env.SOL_CONFIRM_TIMEOUT_MS) || 45000);
+const RESEND_MS = Math.max(200, Number(process.env.SOL_RESEND_MS) || 1000);
+const POLL_MS = Math.max(100, Number(process.env.SOL_POLL_MS) || 400);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Chase a broadcast transaction until it lands, re-sending it as we go.
+ *
+ * Replaces a single blocking `confirmTransaction`, which had two problems on a
+ * busy cluster: it waits on ONE websocket/poll subscription with no re-send, so
+ * a transaction dropped by the leader's queue is simply lost for the full
+ * timeout; and it needs a fresh `getLatestBlockhash` first — an extra round trip
+ * AFTER the tx is already in flight, for a value that is only used as a deadline.
+ *
+ * Re-sending identical signed bytes is safe: the signature is unchanged, so the
+ * cluster treats every copy as the same transaction and executes it at most once.
+ *
+ * @returns the signature status once it has a confirmation
+ * @throws  when it never landed inside the window — callers treat that as
+ *          ambiguous (`.broadcast`), never as "didn't spend"
+ */
+async function _pollUntilLanded(conn, sig, raw) {
+  const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
+  let lastResend = Date.now();
+  for (;;) {
+    const st = await conn.getSignatureStatuses([sig]).catch(() => null);
+    const v = st && st.value && st.value[0];
+    if (v && (v.confirmationStatus === 'confirmed' || v.confirmationStatus === 'finalized' || v.err)) {
+      return { value: { err: v.err || null } };
+    }
+    if (Date.now() >= deadline) throw new Error('not confirmed within ' + CONFIRM_TIMEOUT_MS + 'ms');
+    if (Date.now() - lastResend >= RESEND_MS) {
+      lastResend = Date.now();
+      // Best-effort: a failed re-send is meaningless on its own (the original may
+      // already be in a block), so it must never abort the chase.
+      conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
+    }
+    await sleep(POLL_MS);
+  }
 }
 
 // ---------------------------------------------------------------- Jupiter (live HTTP)

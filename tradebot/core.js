@@ -71,6 +71,10 @@ const CFG = {
   // Solana priority fee (lamports) added to every swap so buys/snipes land under load.
   // 0 = let Jupiter pick ('auto'). A few hundred-thousand lamports is competitive.
   solPriorityLamports: Math.max(0, Math.round(Number(process.env.SOL_PRIORITY_LAMPORTS || 0))),
+  // Fixed gas LIMIT for a DEX swap, so the hot path skips eth_estimateGas.
+  // A limit is a ceiling, not a price — unused gas is refunded — so this is
+  // latency saved, not gas spent. 0 = estimate per trade (the old behaviour).
+  evmSwapGasLimit: (() => { const n = Math.round(Number(process.env.EVM_SWAP_GAS_LIMIT ?? 900000)); return n > 0 ? BigInt(n) : 0n; })(),
 };
 
 const FACTORY_ABI = [
@@ -1023,11 +1027,15 @@ async function waitBuyReceipt(waiter) {
 async function rawSend(wallet, chainKey, to, data, gasLimit, value, gasMult) {
   const prov = providerFor(chainKey);
   const ch = chainOf(chainKey);
-  const gasO = await gasOverrides(chainKey, gasMult);
+  // Gas price and nonce do not depend on each other; running them back to back
+  // was one avoidable round trip on every single send.
+  const [gasO, nonce] = await Promise.all([
+    gasOverrides(chainKey, gasMult),
+    prov.getTransactionCount(wallet.address, 'pending'),
+  ]);
   let gasPrice = gasO.gasPrice;
   if (!gasPrice || gasPrice <= 0n) { try { const fd = await prov.getFeeData(); gasPrice = fd.gasPrice; } catch (_) {} }
   if (!gasPrice || gasPrice <= 0n) gasPrice = ethers.parseUnits('0.02', 'gwei');
-  const nonce = await prov.getTransactionCount(wallet.address, 'pending');
   const signed = await wallet.signTransaction({ to, data, value: value || 0n, gasLimit, gasPrice, nonce, chainId: ch.chainId, type: 0 });
   let j = null;
   try {
@@ -1159,6 +1167,12 @@ async function nativeTransferGas(chainKey, from, to, value) {
 // exactInputSingle during an L1 fee spike and block exits. Estimate + 25%;
 // generous fallback (> curve's 600k) covers L1 data + ~200k L2 compute.
 async function v3SwapGas(chainKey, from, to, data, value) {
+  // A fixed limit skips a full RPC round trip on the critical path. It costs
+  // nothing extra: on EVM the gas LIMIT is a ceiling, not a price — unused gas
+  // is refunded, so a generous limit only has to be covered by the balance
+  // (gasBufferWei already reserves for it). This is what fast bots do; set
+  // EVM_SWAP_GAS_LIMIT=0 to go back to estimating per trade.
+  if (CFG.evmSwapGasLimit > 0n) return CFG.evmSwapGasLimit;
   try {
     const g = await providerFor(chainKey).estimateGas({ from, to, data, value: value || 0n });
     return g + g / 4n;
@@ -1232,14 +1246,21 @@ async function _buySol(u, ca, amount, chainKey, walletId) {
     const conn = signer.connection, kp = signer.keypair;
     const gross = solana.solToLamports(amount);
     if (gross <= 0n) throw new Error('amount must be > 0');
-    const bal = await solana.solBalance(conn, signer.address);
+    // Three independent reads that used to run one after another — on a public
+    // RPC that is ~1s of pure latency spent before the swap is even quoted, and
+    // none of them feeds the next. The balance check still gates the trade; it
+    // just no longer makes the other two wait for it.
+    const [bal, beforeRes, meta] = await Promise.all([
+      solana.solBalance(conn, signer.address),
+      solana.splBalance(conn, signer.address, ca),
+      tokenMeta(ca, chainKey),
+    ]);
     const gasBuf = solana.solToLamports(CFG.solGasBuffer);
     if (bal < gross + gasBuf) throw new Error(`insufficient SOL — need ~${solana.lamportsToSol(gross + gasBuf).toFixed(4)} incl. fees, have ${solana.lamportsToSol(bal).toFixed(4)}`);
     const fee = solana.feeLamports(gross, CFG.feeBps);
     const spend = gross - fee;
     const slip = Number(slipBps(u));
-    const before = (await solana.splBalance(conn, signer.address, ca)).raw;
-    const meta = await tokenMeta(ca, chainKey);
+    const before = beforeRes.raw;
     let sig, quote;
     try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports })); }
     catch (e) { const err = new Error('buy failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
@@ -1276,14 +1297,19 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);
     const conn = signer.connection, kp = signer.keypair;
-    const bag = await solana.splBalance(conn, signer.address, ca);
+    // The bag size and the pre-trade SOL balance are independent reads; the sell
+    // needs both before it can start, so fetch them together rather than paying
+    // for two round trips back to back.
+    const [bag, solBefore] = await Promise.all([
+      solana.splBalance(conn, signer.address, ca),
+      solana.solBalance(conn, signer.address),
+    ]);
     const bal = bag.raw;
     const p = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
     const amount = (bal * BigInt(p)) / 100n;
     if (amount <= 0n) throw new Error('token balance is 0');
     const slip = Math.min(5000, Number(slipBps(u)) + slipAdd);
     const prio = (Number(CFG.solPriorityLamports) || 0) * gasMult + (gasMult > 1 ? 200000 : 0);   // bump priority fee on retry
-    const solBefore = await solana.solBalance(conn, signer.address);
     let sig, quote;
     try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: ca, outputMint: solana.WSOL_MINT, amountRaw: amount, slippageBps: slip, priorityLamports: prio })); }
     catch (e) { const err = new Error('sell failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
@@ -1349,7 +1375,25 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     const wallet = _signer(wal, chainKey);
     const gross = ethers.parseEther(String(ethAmount));
     if (gross <= 0n) throw new Error('amount must be > 0');
-    const bal = await ethBalance(wallet.address, chainKey);
+    const gasBoost = userGasBoost(u);   // user's chosen gas priority applies to every buy
+    const slip = slipBps(u);
+    // FOUR independent reads that used to run strictly one after another —
+    // balance, the bonding curve lookup, the token balance and the venue probe.
+    // None of them feeds another, so the whole block costs one round trip
+    // instead of four. On a public RPC that alone was most of the delay before
+    // the transaction was even built.
+    //
+    // The venue probe is included even though the curve path won't use it: it is
+    // cached for 10 minutes, so on the curve path this pre-warms the cache for
+    // the token's first DEX trade, and on the DEX path (the common one) it is
+    // already in hand. A failure must not sink the buy — the DEX branch below
+    // re-asks and gets the same cached answer or a fresh one.
+    const [bal, curve, before, venuePick] = await Promise.all([
+      ethBalance(wallet.address, chainKey),
+      resolveCurve(ca, chainKey),
+      tokenBalance(ca, wallet.address, chainKey),
+      bestDexVenue(ca, chainKey).catch(() => null),
+    ]);
     // L1 Ethereum gas dwarfs the L2 default — reserve more so a buy isn't left
     // unable to pay for its own swap.
     const gasBuf = gasBufferWei(chainKey);
@@ -1357,13 +1401,11 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
     const fee = (gross * BigInt(CFG.feeBps)) / 10000n;
     const spend = gross - fee;
 
-    const curve = await resolveCurve(ca, chainKey);
     const grad = curve ? await isGraduated(curve, chainKey) : true;
     const deadline = Math.floor(Date.now() / 1000) + 600;
-    const gasBoost = userGasBoost(u);   // user's chosen gas priority applies to every buy
-    const gas = await gasOverrides(chainKey, gasBoost);
-    const slip = slipBps(u);
-    const before = await tokenBalance(ca, wallet.address, chainKey);
+    // gasOverrides is NOT called here any more. rawSend() calls it itself, so on
+    // the curve and V3 paths this was a second, entirely unused round trip. Only
+    // the V2 branch consumes the overrides object, so it now fetches its own.
 
     let venue, hash, trc;
     if (curve && !grad) {
@@ -1380,7 +1422,9 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
       if (trc && trc.status === 0) throw new Error('the buy reverted on-chain — you may not be allowed to buy this token yet (private beta), or try a smaller amount. Tx: ' + hash);
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
-      const pick = await bestDexVenue(ca, chainKey);
+      // Already fetched in the parallel block above (and cached for 10 min);
+      // only re-ask if that probe failed, so the happy path costs nothing here.
+      const pick = venuePick || (await bestDexVenue(ca, chainKey));
       // NO price-impact ceiling. Operator's rule: the user must always be able
       // to buy. Their slippage is the only limit that applies, and the on-chain
       // minOut below enforces it — a trade that would fill worse than they
@@ -1412,6 +1456,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId) {
         catch (e) { throw new Error('could not quote this buy on ' + chain.name + ' (no pool? try again): ' + (e.shortMessage || e.message || e)); }
         const minTok = expTok > 0n ? expTok * (10000n - dexSlip) / 10000n : 0n;
         if (minTok <= 0n) throw new Error('no liquidity / zero quote for this token on ' + chain.name);
+        const gas = await gasOverrides(chainKey, gasBoost);   // only this branch uses it
         const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTok, [chain.weth, ca], wallet.address, deadline, { value: spend, ...gas });
         venue = 'dex'; hash = tx.hash; trc = await waitBuyReceipt(() => waitBounded(tx));
         if (trc && trc.status === 0) throw new Error('the buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
