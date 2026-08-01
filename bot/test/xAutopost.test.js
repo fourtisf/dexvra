@@ -606,3 +606,39 @@ test("a pump tweet is only ever a QUOTE of the token's listing tweet", () => {
     "the Telegram post must not depend on the listing tweet id",
   );
 });
+
+test("boot names every live X source and warns about anything beyond the rule", () => {
+  // THE RULE: only listings, pump alerts and banner ads reach @dexvralisting.
+  // The switches enforcing it default to off — but an explicit value in .env
+  // BEATS a code default, and a stale `X_RANKUP_ENABLED=1` from an earlier setup
+  // put rank-up tweets straight back. The only place that was visible was the
+  // public timeline, eleven hours later. So boot has to say it out loud.
+  const { xSourceReport } = require("../src/bot");
+  const log = require("../src/helpers/logger");
+  const orig = { info: log.info, warn: log.warn };
+  const lines = { info: [], warn: [] };
+  log.info = (m) => lines.info.push(String(m));
+  log.warn = (m) => lines.warn.push(String(m));
+  try {
+    xSourceReport();
+  } finally {
+    Object.assign(log, orig);
+  }
+
+  // The allowed set is always stated, so "what will this tweet?" is never a guess.
+  assert.strictEqual(lines.info.length, 1, lines.info.join("\n"));
+  assert.match(lines.info[0], /X will tweet:/);
+  assert.match(lines.info[0], /listings/);
+  assert.match(lines.info[0], /pump alerts/);
+  assert.match(lines.info[0], /banner ads/);
+  // With the shipped defaults nothing extra is on, so nothing is warned about.
+  assert.deepStrictEqual(lines.warn, [], "a default config must boot clean");
+
+  // Every switchable extra must be covered by the report, or a future one could
+  // be enabled with no boot-time trace — the exact hole this closes.
+  const src = require("node:fs").readFileSync(require.resolve("../src/bot.js"), "utf8");
+  for (const v of ["X_TRENDING_ENABLED", "X_GAINERS_ENABLED", "X_RANKUP_ENABLED"]) {
+    assert.ok(src.includes(v), `${v} is not named in the boot report`);
+  }
+  assert.match(src, /log\.warn\([\s\S]{0,120}X will ALSO tweet/, "an extra source must WARN, not just inform");
+});
