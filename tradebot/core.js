@@ -1144,7 +1144,15 @@ async function bestDexVenue(ca, chainKey) {
   const v = (v3 && v3.wethBal > v2.wethBal * 2n)
     ? { kind: 'v3', wethBal: v3.wethBal, feeTier: v3.feeTier, pool: v3.pool }
     : { kind: 'v2', wethBal: v2.wethBal, pair: v2.pair };
-  _venueCache.set(ck, { v, ts: Date.now() });
+  // NEVER cache "no pool". A token still on its bonding curve, or one whose pool
+  // is minutes from existing, answers 0 here — and that is precisely the answer
+  // that changes. Cached for 10 minutes it makes the token UNBUYABLE for the
+  // window right after it graduates: the DEX branch takes the stale empty venue
+  // and quotes against a pair that isn't there.
+  //
+  // A positive reading is safe to cache (liquidity moves, but the pool keeps
+  // existing); a zero is not information, it is an absence.
+  if (v.wethBal > 0n) _venueCache.set(ck, { v, ts: Date.now() });
   return v;
 }
 

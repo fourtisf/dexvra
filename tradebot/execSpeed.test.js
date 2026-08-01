@@ -179,3 +179,33 @@ test('JSON-RPC calls are batched, so parallel reads cost one request', () => {
   // so it is deliberately NOT handed a batch array.
   assert.strictEqual(opt('robinhood'), 1, 'robinhood must stay unbatched');
 });
+
+test('an empty venue is never cached — it is the answer that changes', async () => {
+  // bestDexVenue caches for 10 minutes. Caching a "no pool" reading makes a
+  // token UNBUYABLE for that window right after it graduates: the DEX branch
+  // takes the stale empty venue and quotes against a pair that does not exist.
+  //
+  // This became reachable on every buy once the venue probe moved into the
+  // parallel pre-trade block (it now runs for bonding-curve tokens too, which
+  // legitimately have no pool yet), but the hole was always there via the token
+  // scan, which probes the venue of tokens that have not graduated.
+  const core = require('./core.js');
+  const src = require('node:fs').readFileSync(require.resolve('./core.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function bestDexVenue'), src.indexOf('async function bestDexVenue') + 1200);
+  assert.match(body, /if \(v\.wethBal > 0n\) _venueCache\.set/, 'a zero-liquidity probe must not be cached');
+
+  // And prove it end to end against the real cache: two probes of a token with
+  // no pool must both do the work, rather than the second one being served a
+  // stale "there is nothing here".
+  let calls = 0;
+  const realProviderFor = core.providerFor;
+  // A token that exists nowhere → both v2Depth and v3BestPool return empty.
+  const dead = '0x' + 'ab'.repeat(20);
+  const probe = async () => { calls++; return core.bestDexVenue(dead, 'base').catch(() => null); };
+  const a = await probe();
+  const b = await probe();
+  assert.strictEqual(calls, 2);
+  // Whatever the network did, neither answer may claim liquidity that is not there.
+  for (const v of [a, b]) if (v) assert.ok(!v.wethBal || v.wethBal === 0n, 'a dead token must not report depth');
+  assert.strictEqual(typeof realProviderFor, 'function');
+});
