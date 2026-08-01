@@ -153,3 +153,29 @@ test('an unconfirmed trade is still tagged broadcast, never rolled back', () => 
   const body = bodyOf(coreSrc, 'buy');
   assert.match(body, /e\.broadcast = true/, 'EVM ambiguity must stay tagged');
 });
+
+// ── the provider itself ─────────────────────────────────────────────────────
+
+test('the provider does not wait 4 seconds to notice a confirmed trade', () => {
+  // ethers polls for a receipt every `pollingInterval` ms and defaults to 4000.
+  // On BSC (0.75s blocks) or Base (2s) a trade that confirmed in one second is
+  // not SEEN for four — which reads as a slow bot when the trade was fast. This
+  // is the single biggest source of felt latency on EVM and it is one line.
+  const { providerFor } = require('./chains.js');
+  const p = providerFor('base');
+  assert.ok(p.pollingInterval <= 1000, `pollingInterval is ${p.pollingInterval}ms — slower than a block`);
+  assert.ok(p.pollingInterval >= 100, 'but not so tight it hammers the RPC');
+});
+
+test('JSON-RPC calls are batched, so parallel reads cost one request', () => {
+  // Parallelising the pre-trade reads only pays off if they can share a request.
+  // batchMaxCount was pinned to 1, which meant four awaits fired together were
+  // still four separate HTTP round trips.
+  const { providerFor } = require('./chains.js');
+  const opt = (k) => providerFor(k)._getOption('batchMaxCount');
+  assert.ok(opt('base') > 1, 'standard chains must batch');
+  assert.ok(opt('ethereum') > 1, 'standard chains must batch');
+  // Robinhood's node already rejects ethers' standard envelope on the send path,
+  // so it is deliberately NOT handed a batch array.
+  assert.strictEqual(opt('robinhood'), 1, 'robinhood must stay unbatched');
+});

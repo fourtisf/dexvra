@@ -106,7 +106,23 @@ function providerFor(key) {
       _providers[key] = require('./solana').getConnection(ch.rpc);
     } else {
       const net = new ethers.Network(ch.name, ch.chainId);
-      _providers[key] = new ethers.JsonRpcProvider(ch.rpc, net, { batchMaxCount: 1, staticNetwork: net });
+      // batchMaxCount: how many JSON-RPC calls ethers may coalesce into ONE http
+      // request. It was pinned to 1 — no batching at all — so the reads a trade
+      // fires together each cost their own round trip. Batched, the four
+      // pre-trade reads are a single request.
+      //
+      // Robinhood stays unbatched: its node already rejects ethers' standard
+      // estimate/send envelope (see rawSend in core.js), so it is not a node to
+      // hand a batch array to on the path that moves money. Override per
+      // deployment with EVM_RPC_BATCH.
+      const batch = Math.max(1, Math.round(Number(process.env.EVM_RPC_BATCH) || (key === 'robinhood' ? 1 : 10)));
+      const p = new ethers.JsonRpcProvider(ch.rpc, net, { batchMaxCount: batch, staticNetwork: net });
+      // ethers polls for a receipt every `pollingInterval` ms — default 4000.
+      // On chains with 0.75s (BSC) or 2s (Base) blocks that means a trade which
+      // confirmed in one second is not NOTICED for four, which reads to the user
+      // as a slow bot when the trade itself was fast. Poll near block time.
+      p.pollingInterval = Math.max(100, Math.round(Number(process.env.EVM_POLL_MS) || 400));
+      _providers[key] = p;
     }
   }
   return _providers[key];
