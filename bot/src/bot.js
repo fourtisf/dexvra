@@ -193,6 +193,36 @@ async function startBot() {
  * Fire-and-forget: the network round trip must not delay polling, and a failed
  * check must not stop the bot — X posting is best-effort everywhere else too.
  */
+/**
+ * Name — at boot, in one line — exactly what this process will tweet.
+ *
+ * The rule is a product decision: only listings, pump alerts and banner ads go
+ * on @dexvralisting. The switches that enforce it default to off, but an
+ * EXPLICIT value in .env beats a code default, so a stale `X_RANKUP_ENABLED=1`
+ * left over from an earlier setup silently reinstated rank-up tweets — and the
+ * only place that was visible was the public timeline, eleven hours later.
+ *
+ * So the enabled set is printed every boot, and anything beyond the three
+ * allowed sources is a WARNING naming the variable to remove. A config value
+ * that overrides a product rule must not be able to do it quietly.
+ */
+function xSourceReport() {
+  const c = require("./config/constants");
+  const extras = [
+    ["Trending Token", "X_TRENDING_ENABLED", c.X_TRENDING_ENABLED],
+    ["Top Gainers board", "X_GAINERS_ENABLED", c.X_GAINERS_ENABLED],
+    ["rank-up alerts", "X_RANKUP_ENABLED", c.X_RANKUP_ENABLED],
+  ].filter(([, , on]) => on);
+  const listings = c.X_AUTOLIST_ENABLED ? "listings (paid + free auto)" : "listings (paid only — X_AUTOLIST_ENABLED=0)";
+  log.info(`[start] X will tweet: ${listings}, pump alerts, banner ads`);
+  for (const [what, envVar] of extras) {
+    log.warn(
+      `[start] X will ALSO tweet ${what} — ${envVar}=1 in your .env overrides the default. ` +
+        `Remove that line (or set it to 0) if only listings, pump alerts and banner ads should be posted.`,
+    );
+  }
+}
+
 function xSelfCheck() {
   const { X_ENABLED, X_LISTING_HANDLE, xMissingKeys, _env } = require("./config/constants");
   const x = require("./twitter");
@@ -213,6 +243,7 @@ function xSelfCheck() {
     .then((res) => {
       if (res.ok) {
         log.info(`[start] X auto-posting ✔ posting as @${res.handle}`);
+        xSourceReport();
         if (res.handle.toLowerCase() !== String(X_LISTING_HANDLE).toLowerCase()) {
           log.warn(
             `[start] X account MISMATCH: the keys post as @${res.handle}, but X_LISTING_HANDLE says @${X_LISTING_HANDLE}. ` +
@@ -247,4 +278,5 @@ module.exports = {
   setCommandsWithRetry,
   onHandlerError,
   xSelfCheck,
+  xSourceReport,
 };
