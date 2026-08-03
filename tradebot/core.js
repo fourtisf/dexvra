@@ -709,10 +709,26 @@ function setCopySell(chatId, targetId, on) {
  *  target held at that moment. That number is the baseline the exit watcher
  *  measures against: the position is only ours to mirror out of if it was ours
  *  to mirror into. */
-function copyHoldingAdd(t, token, targetBalRaw) {
+function copyHoldingAdd(t, token, targetBalRaw, walletId) {
   t.holding = t.holding || {};
-  t.holding[copyTokenKey(t.chain, token)] = { bal: String(targetBalRaw == null ? '' : targetBalRaw), at: Date.now() };
+  // `wid` pins the exit to the wallet that actually opened the position. Without
+  // it the sell goes to whatever wallet happens to be ACTIVE at exit time, and a
+  // user who switched wallets in between gets "token balance is 0" on a bag they
+  // are still holding.
+  t.holding[copyTokenKey(t.chain, token)] = { bal: String(targetBalRaw == null ? '' : targetBalRaw), at: Date.now(), wid: walletId || null, tries: 0 };
   saveStoreNow();   // written through: a crash here would lose the exit baseline
+}
+/** Put a position BACK on the ledger after an exit attempt failed, so the next
+ *  cycle retries it. An exit that vanishes because one sell reverted is the
+ *  worst outcome available: the user is left holding a bag the bot promised to
+ *  close, and told nothing. Returns the attempt count. */
+function copyHoldingRetry(t, token, rec) {
+  const k = copyTokenKey(t.chain, token);
+  t.holding = t.holding || {};
+  const tries = (Number(rec && rec.tries) || 0) + 1;
+  t.holding[k] = { ...(rec || {}), tries, lastTryAt: Date.now() };
+  saveStoreNow();
+  return tries;
 }
 function copyHoldingDrop(t, token) {
   if (!t.holding) return;
@@ -2138,7 +2154,7 @@ module.exports = {
   buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
   setConfirmBuy, setExpert, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
-  addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
+  addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
