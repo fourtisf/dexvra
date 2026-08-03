@@ -958,6 +958,25 @@ async function tokenAcrossWallets(chatId, ca, chainKey, decimals) {
 // as "—") when the API is briefly unreachable.
 const _usdCache = new Map();   // sym → { px, ts }
 const USD_CACHE_MS = Math.max(0, Number(process.env.USD_CACHE_MS || 30000));
+/** This token's balance on EVERY one of the user's wallets, read together.
+ *
+ *  Deliberately NOT tokenAcrossWallets: that one is for the card, so it also
+ *  pulls total supply and each wallet's native balance, and it reads through
+ *  tokenBalance() — which collapses a FAILED read to 0n. The live monitor closes
+ *  a position on a zero, so a flaky RPC reading as zero would unpin a card over a
+ *  bag the user still holds. Here `raw` is null when that wallet's read failed,
+ *  and only a real zero is a zero. */
+async function tokenBalancesAcross(chatId, ca, chainKey) {
+  const u = getUser(chatId); if (!u) return [];
+  chainKey = chainKey || userChain(u);
+  const list = walletList(u);
+  return Promise.all(list.map(async (w, i) => ({
+    id: w.id,
+    index: i + 1,
+    label: walletLabel(w, i + 1),
+    raw: await tokenBalanceOrNull(ca, walletAddress(w, chainKey), chainKey),
+  })));
+}
 async function ethUsd(chainKey) {
   // Price the chain's native in USD: BNB, SOL, or ETH (default). Coinbase has spot for all.
   const nat = (chainOf(chainKey) || {}).native;
@@ -2060,6 +2079,6 @@ module.exports = {
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
-  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
+  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
 };

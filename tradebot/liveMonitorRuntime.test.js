@@ -36,11 +36,20 @@ globalThis.fetch = async (url, init) => {
 };
 const calls = (m) => tgCalls.filter((c) => c.method === m);
 
-/** core's network reads. `null` from tokenBalanceOrNull means "could not read". */
+/** core's network reads. `null` means "could not read" — never "holds nothing".
+ *  The monitor reads EVERY wallet now (tokenBalancesAcross), so that is the edge
+ *  to stub; `balance` stays the single knob every test below turns, and applies
+ *  to each wallet. tokenBalanceOrNull is stubbed too because other screens still
+ *  call it, and a real one here would reach the network mid-test. */
 let snapshot = { sym: "TEST", priceEth: 2, mcapEth: 1000 };
 let balance = 10n ** 18n;
+const _bal = () => (typeof balance === "function" ? balance() : balance);
 core.tokenSnapshot = async () => (typeof snapshot === "function" ? snapshot() : snapshot);
-core.tokenBalanceOrNull = async () => (typeof balance === "function" ? balance() : balance);
+core.tokenBalanceOrNull = async () => _bal();
+core.tokenBalancesAcross = async (chatId) => {
+  const u = core.DB.users[chatId] || {};
+  return (u.wallets || []).map((w, i) => ({ id: w.id, index: i + 1, label: w.name || `Wallet ${i + 1}`, raw: _bal() }));
+};
 
 /** A user holding a position that cost 0.5 ETH, so PnL has something to say. */
 function seed(chatId) {

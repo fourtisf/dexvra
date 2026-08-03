@@ -1799,40 +1799,81 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const ch = core.chainOf(chainKey);
   const w = (wid && core.walletById(u, wid)) || core.activeWallet(u);
   const wi = walletIndex(chatId, w && w.id);
-  const pos = w && (w.positions || {})[core.posKey(chainKey, ca)];
+  const posKey = core.posKey(chainKey, ca);
+  const pos = w && (w.positions || {})[posKey];
   // PARALLEL. These two reads are independent and used to run in series, so a
   // slow chain paid both timeouts back to back — up to 11s per refresh, on a
   // card whose whole job is to feel live.
-  const [snap, rawBal] = await Promise.all([
+  //
+  // The balance read covers EVERY wallet, not just the one the monitor was
+  // opened on. A multi-wallet buy fills three or four wallets at once and the
+  // card only ever showed one of them, so the P/L on screen was a fraction of
+  // the position the user actually held, with no hint the rest existed.
+  const [snap, allBals] = await Promise.all([
     withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), SNAP_TMO_MS, null),
-    withTmo(core.tokenBalanceOrNull(ca, wAddr(w, chainKey), chainKey).catch(() => null), BAL_TMO_MS, null),
+    withTmo(core.tokenBalancesAcross(chatId, ca, chainKey).catch(() => []), BAL_TMO_MS, []),
   ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
+  const dec = (pos && pos.dec) || 18;
+
+  // One row per wallet that has any stake in this token — a live bag, or a cost
+  // basis on record (which is what a wallet whose read just failed still has).
+  //
+  // Built from the WALLET LIST and not from the balance read, because the read is
+  // the thing that fails. Deriving the rows from it meant a read that threw
+  // produced no rows, hence no cost basis, hence "no open position" — the exact
+  // failure the null-not-zero handling below exists to prevent, reintroduced one
+  // level up.
+  const balById = new Map(allBals.map((b) => [b.id, b.raw]));
+  const holders = [];
+  core.walletList(u).forEach((wal, i) => {
+    const p = (wal.positions || {})[posKey];
+    const cost = posCost(p);
+    const raw = balById.has(wal.id) ? balById.get(wal.id) : null;
+    let tokens = 0, known = false, stale = false;
+    if (raw != null) {
+      tokens = Number(ethers.formatUnits(raw, (p && p.dec) || dec));
+      known = true;
+    } else if (p && p.tokens != null) {
+      // Fall back to what the buy recorded, and SAY so — a failing RPC must not
+      // render identically to a live read.
+      try { tokens = Number(ethers.formatUnits(BigInt(p.tokens), p.dec || dec)); stale = tokens > 0; } catch (_) { tokens = 0; }
+    }
+    if (tokens > 0 || cost > 0) {
+      holders.push({ id: wal.id, index: i + 1, label: core.walletLabel(wal, i + 1), tokens, cost, known, stale });
+    }
+  });
+  // The wallet the card is bound to leads the list; its buttons are the ones that
+  // sell, so it must be the one being read about first.
+  holders.sort((a, b2) => (a.id === (w && w.id) ? -1 : b2.id === (w && w.id) ? 1 : b2.tokens - a.tokens));
+
+  const balNow = holders.reduce((t, h) => t + h.tokens, 0);
+  const cost = holders.reduce((t, h) => t + h.cost, 0);
+  // Known only if EVERY wallet with a stake answered: a partial read must not be
+  // allowed to close a position another wallet may still hold.
+  const balKnown = holders.length > 0 && holders.every((h) => h.known);
+  const balStale = holders.some((h) => h.stale);
+  const multi = holders.length > 1;
+
   let closed = false;
-  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}\n`];
-  // Read the LIVE on-chain balance (not pos.tokens) so tokens sent out via 📤
-  // Send don't leave the Monitor showing a phantom bag with fake PnL.
+  // The header names the BOUND wallet, always. The Sell buttons on this card act
+  // on that wallet (or the user's trade selection) — never on every wallet in the
+  // list — so a header reading "3 wallets" over a "Sell 100%" button is an
+  // invitation to sell a third of a position and believe it is all of it. The
+  // multi-wallet total lives in the body, where it cannot be mistaken for scope.
+  const more = multi ? ` <i>· +${holders.length - 1} more below</i>` : '';
+  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
+  // Reading the LIVE on-chain balance (not pos.tokens) is what stops tokens sent
+  // out via 📤 Send from leaving the Monitor showing a phantom bag with fake PnL.
   //
   // A FAILED read is not a zero balance. tokenBalance() collapsed both to 0n, so
   // one flaky RPC right after a buy rendered "No open position", and the next
   // tick then unpinned and killed the monitor for good — on a position that had
-  // filled. tokenBalanceOrNull() returns null on failure, and only a real,
-  // successful zero is allowed to close anything.
-  let balNow = 0;
-  let balKnown = false;
-  let balStale = false;
-  if (rawBal != null) {
-    balNow = Number(ethers.formatUnits(rawBal, (pos && pos.dec) || 18));
-    balKnown = true;
-  } else if (pos && pos.tokens != null) {
-    // Fall back to what the buy recorded. This branch existed before but was
-    // unreachable, because the failure it was written for arrived as 0n.
-    try { balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); balStale = balNow > 0; } catch (_) { balNow = 0; }
-  }
-  const cost = posCost(pos);
-  const noPosition = !pos || !(cost > 0);
+  // filled. tokenBalancesAcross() reports null per wallet on failure, and only a
+  // real, successful zero is allowed to close anything.
+  const noPosition = !(cost > 0);
   if (noPosition || (balKnown && !(balNow > 0))) {
     closed = true;
     L.push('<i>No open position right now — you have sold it, or have not bought yet.</i>');
@@ -1846,12 +1887,32 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // Say when the bag is the one the BUY recorded rather than one read from the
     // chain just now — otherwise a failing RPC renders identically to a live
     // read, and tokens sent out with 📤 would show as a bag the user still has.
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
       const unreal = val - cost; const pct = (unreal / cost) * 100;
       L.push(`${unreal >= 0 ? '🟢' : '🔴'} <b>Profit/Loss:</b> ${unreal >= 0 ? '+' : ''}${pct.toFixed(2)}% (${unreal >= 0 ? '+' : ''}${unreal.toFixed(5)} ${nat}${usdRate > 0 ? ', ' + (unreal >= 0 ? '+' : '') + '$' + (unreal * usdRate).toFixed(2) : ''})`);
+    }
+    // Per-wallet breakdown. The totals above answer "how am I doing"; this
+    // answers "on which wallet", which is the question a multi-wallet buy
+    // creates and the single-wallet card could not even acknowledge. Each row
+    // carries its OWN P/L — wallets bought at different times and different
+    // prices, so one shared percentage would be wrong for most of them.
+    if (multi) {
+      L.push('');
+      L.push('💳 <b>Per wallet</b>');
+      for (const h of holders.slice(0, MON_WALLET_ROWS)) {
+        const hv = h.tokens * px;
+        const hp = h.cost > 0 && px > 0 ? ((hv - h.cost) / h.cost) * 100 : null;
+        const pnl = hp == null ? '' : ` · ${hp >= 0 ? '🟢 +' : '🔴 '}${hp.toFixed(2)}%`;
+        const note = h.stale ? ' <i>(last known)</i>' : (!h.known && !(h.tokens > 0) ? ' <i>(unreadable)</i>' : '');
+        const bound = h.id === (w && w.id) ? ' ⬅️ <i>Sell acts here</i>' : '';
+        L.push(`• ${esc(h.label)}: ${fmt(h.tokens)} $${esc(sym)} · ${h.cost.toFixed(5)} ${nat} in${pnl}${note}${bound}`);
+      }
+      // Never silently truncate — a card that drops wallets reads as a card that
+      // says you do not own them.
+      if (holders.length > MON_WALLET_ROWS) L.push(`<i>…and ${holders.length - MON_WALLET_ROWS} more — see 📊 Portfolio</i>`);
     }
   }
   if (snap) {
@@ -1900,6 +1961,10 @@ function stopMonitor(chatId, mid) {
 // a slow tick delays the next one instead of stacking on top of it.
 const MON_EVERY_MS = Math.max(5000, Number(process.env.MONITOR_REFRESH_MS || 10000));
 const MON_WINDOW_MS = Math.max(60000, Number(process.env.MONITOR_WINDOW_MS || 60 * 60 * 1000));
+// How many per-wallet rows the live card prints before it says "…and N more".
+// The wallet cap is 99; a card that printed all of them would be unreadable and
+// would risk Telegram's message limit on every refresh.
+const MON_WALLET_ROWS = Math.max(1, Number(process.env.MONITOR_WALLET_ROWS || 8));
 const SNAP_TMO_MS = 6000;
 const BAL_TMO_MS = 5000;
 // A position must read as gone TWICE running before the monitor closes itself.
