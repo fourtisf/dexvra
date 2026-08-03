@@ -178,3 +178,41 @@ function fakeConn(o = {}) {
     },
   };
 }
+
+// ---------------------------------------------------------------- broadcast feedback
+test('the swap reports its signature the moment it is broadcast, not on confirmation', async () => {
+  // This is the difference between a bot that feels alive and one that looks
+  // hung: on a slow chain the user gets a live explorer link in ~0.5s instead of
+  // staring at "Buying…" for a whole block.
+  let sentAt = null, confirmDone = false;
+  const conn = fakeConn({
+    onConfirm: () => { confirmDone = true; },
+    confirmGate: new Promise((r) => setTimeout(() => r({ value: { err: null } }), 80)),
+  });
+  const p = solana.sendJupiterSwap(conn, fakeKeypair(), fakeSwapTxB64(), (sig) => {
+    sentAt = { sig, confirmedYet: confirmDone };
+  });
+  await p;
+  assert.ok(sentAt, 'onSent never fired');
+  assert.ok(sentAt.sig, 'onSent fired without a signature');
+  assert.equal(sentAt.confirmedYet, false, 'onSent waited for confirmation — that defeats the point');
+});
+
+test('a throwing onSent hook can never break a trade', async () => {
+  // The hook edits a Telegram message. Telegram failing is not a reason to fail
+  // a transaction that is already on-chain.
+  const conn = fakeConn();
+  const sig = await solana.sendJupiterSwap(conn, fakeKeypair(), fakeSwapTxB64(), () => { throw new Error('telegram down'); });
+  assert.ok(sig, 'a failing UI hook took the swap down with it');
+});
+
+test('the UI upgrades the progress message in place, and the receipt always wins', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const TG = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  assert.match(TG, /core\.buy\(chatId, ca, amt, chain, wid, \{ onSent \}\)/, 'buy does not ask for broadcast feedback');
+  assert.match(TG, /\{ \.\.\.SELL_ESCALATION\[i\], onSent \}/, 'sell does not ask for broadcast feedback');
+  // The late-edit guard: without it a fast chain can confirm while the "sent"
+  // edit is still in flight, and the completed receipt gets overwritten.
+  assert.match(TG, /if \(!progressId \|\| settled\) return;/, 'the sent/receipt edit race is unguarded');
+  assert.ok((TG.match(/settled = true;/g) || []).length >= 2, 'the guard is not set on both buy and sell');
+});

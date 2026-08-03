@@ -974,7 +974,17 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // Now the buy, the progress message and the depth probe are all in
       // flight at once, and the probe's result is folded into the receipt if it
       // arrives in time. Nothing about the trade waits on either of them.
-      const buying = core.buy(chatId, ca, amt, chain, wid);
+      // The progress message is upgraded to a live explorer link the moment the
+      // transaction is broadcast, instead of sitting on "Buying…" until the
+      // receipt lands. On Ethereum that wait is a full 12s block; the trade is
+      // already irreversible by then, so there is nothing to gain by hiding it.
+      let progressId = null, sentSeen = null, settled = false;
+      const onSent = (hash) => {
+        sentSeen = hash;
+        if (!progressId || settled) return;   // no message yet, or the receipt already won
+        edit(chatId, progressId, T(chatId, 'buy.sent', { amt: esc(amt), native: chG.native, link: txLink(chain || core.userChain(u), hash) })).catch(() => {});
+      };
+      const buying = core.buy(chatId, ca, amt, chain, wid, { onSent });
       const impactP = impactNote(ca, chG, amt);
       // Entry snapshot, started WITH the trade. The buy is already in flight, so
       // the short wait below costs execution nothing — it only decides whether
@@ -987,7 +997,16 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const eMc = entry ? (entry.mcapUsd || (entry.mcapEth || 0) * eRate) : 0;
       const atMc = eMc > 0 ? T(chatId, 'buy.at_mc', { mc: fmt(eMc) }) : '';
       const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress', { amt: esc(amt), native: chG.native, atMc }));
+      progressId = progress && progress.ok && progress.result && progress.result.message_id;
+      // The broadcast can beat the progress message out of the door; if it did,
+      // apply the upgrade now rather than losing it.
+      if (progressId && sentSeen) onSent(sentSeen);
       const r = await buying;
+      // On a 250ms-block chain the fill can land while the "sent" edit is still
+      // in flight to Telegram. Without this the late edit would overwrite the
+      // receipt and the user would watch a completed buy turn back into
+      // "waiting for confirmation".
+      settled = true;
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
       const spent = Number(r.spentEth) || 0, got = Number(r.gotTokens) || 0;
@@ -1076,10 +1095,10 @@ const _retriable = (m) => /max fee per gas|base fee|reverted|not confirmed|try a
 function friendlyError(chatId, raw, action) {
   return i18n.errorText(core.getLang(chatId), raw, action);
 }
-async function sellWithRetry(chatId, ca, pct, chain, wid, onStep) {
+async function sellWithRetry(chatId, ca, pct, chain, wid, onStep, onSent) {
   let lastErr;
   for (let i = 0; i < SELL_ESCALATION.length; i++) {
-    try { return await core.sell(chatId, ca, pct, chain, wid, SELL_ESCALATION[i]); }
+    try { return await core.sell(chatId, ca, pct, chain, wid, { ...SELL_ESCALATION[i], onSent }); }
     catch (e) {
       lastErr = e; const msg = (e && (e.message || e)) || 'failed';
       if (i === SELL_ESCALATION.length - 1 || !_retriable(msg)) throw e;
@@ -1097,13 +1116,21 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const sym0 = quickSym(chatId, ca, chain, wid);
       // The sell is in flight before the progress message is awaited — an exit
       // is the one trade where a round-trip of delay is felt most.
-      let progress = null;
+      let progress = null, progressId = null, sentSeen = null, settled = false;
+      const onSent = (hash) => {
+        sentSeen = hash;
+        if (!progressId || settled) return;   // see the buy path: the receipt must win
+        edit(chatId, progressId, T(chatId, 'sell.sent', { pct, link: txLink(chain || core.userChain(core.ensureUser(chatId)), hash) })).catch(() => {});
+      };
       const selling = sellWithRetry(chatId, ca, pct, chain, wid, (n) =>
         (progress && progress.ok && progress.result)
           ? edit(chatId, progress.result.message_id, T(chatId, 'sell.retry', { n })).catch(() => {})
-          : null);
+          : null, onSent);
       progress = expert ? null : await send(chatId, T(chatId, 'sell.progress', { pct, what: sym0 ? '$' + esc(sym0) : T(chatId, 'sell.your_token') }));
+      progressId = progress && progress.ok && progress.result && progress.result.message_id;
+      if (progressId && sentSeen) onSent(sentSeen);
       const r = await selling;
+      settled = true;
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
       const got2 = Number(r.proceedsEth) || 0;

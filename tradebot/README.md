@@ -101,6 +101,29 @@ place and documented in `.env.example` under **Execution speed**:
   no longer waits on a second confirmation the trader has no stake in.
 - **Immutable reads are cached** — token name/symbol/decimals, curve address,
   graduation (one-way), native-transfer gas limits, the USD spot price.
+- **Gas priority is real on every chain.** `gasOverrides()` used to return `{}`
+  for everything except Robinhood, which silently discarded both the user's
+  ⛽ Fast/Turbo setting *and* the sell retry escalation — a sell that failed
+  because the gas was too low retried twice more at exactly the same gas.
+- **EIP-1559 (type-2) on chains that support it.** Every write used to be signed
+  legacy `type: 0` at the node's current `gasPrice`, i.e. with no headroom: a base
+  fee that ticked up between signing and inclusion left the trade sitting in the
+  mempool. `maxFeePerGas` now carries 2x base-fee headroom (free — you still only
+  pay base + tip) while the boost scales `maxPriorityFeePerGas`, the part that
+  actually competes for inclusion. Robinhood keeps the type-0 its node accepts.
+- **The transaction is shown the moment it is broadcast.** Waiting for a receipt
+  before saying anything meant a 12s Ethereum block was 12s of a static
+  "Buying…" line. A live explorer link now appears in about half a second and is
+  replaced in place by the receipt:
+
+  | chain | user sees the tx | receipt | receipt *before* |
+  |---|---|---|---|
+  | Robinhood / Arbitrum | 0.5s | 0.9s | 9.9s |
+  | Base | 0.5s | 2.5s | 9.9s |
+  | BNB Chain | 0.5s | 3.5s | 9.9s |
+  | Ethereum | 0.5s | 12.7s | 26.2s |
+
+  Ethereum's remaining 12s is one block — that part is the chain, not the bot.
 
 ## Security notes (custodial = high responsibility)
 

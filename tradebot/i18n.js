@@ -86,6 +86,17 @@ const S = {
     id: '⏳ <b>Beli {amt} {native} di {n} wallet…</b>',
   },
   'buy.at_mc': { en: ' at MC <b>${mc}</b>', id: ' di MC <b>${mc}</b>' },
+  // Shown the instant the transaction is broadcast, well before it confirms. On a
+  // 12-second chain this is the whole difference between a bot that feels alive
+  // and one that looks hung.
+  'buy.sent': {
+    en: '🚀 <b>Buy sent</b> — {amt} {native}\nWaiting for the network to confirm it…\n{link}',
+    id: '🚀 <b>Buy terkirim</b> — {amt} {native}\nMenunggu konfirmasi jaringan…\n{link}',
+  },
+  'sell.sent': {
+    en: '🚀 <b>Sell sent</b> — {pct}%\nWaiting for the network to confirm it…\n{link}',
+    id: '🚀 <b>Sell terkirim</b> — {pct}%\nMenunggu konfirmasi jaringan…\n{link}',
+  },
   'buy.receipt.title': { en: '✅ <b>Bought ${sym}</b>', id: '✅ <b>Berhasil beli ${sym}</b>' },
   'buy.receipt.spent': { en: 'Spent: <b>{amt} {native}</b> ({usd})', id: 'Terpakai: <b>{amt} {native}</b> ({usd})' },
   'buy.receipt.got': { en: 'Got: <b>{amt} ${sym}</b> ({usd})', id: 'Dapat: <b>{amt} ${sym}</b> ({usd})' },

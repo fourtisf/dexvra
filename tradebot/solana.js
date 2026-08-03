@@ -193,7 +193,7 @@ const SKIP_PREFLIGHT = String(process.env.SOL_PREFLIGHT || '') !== '1';
 
 // Execute a Jupiter swap: deserialize the base64 tx, sign with the keypair, send,
 // confirm. Returns the base58 signature. Throws with a readable reason on failure.
-async function sendJupiterSwap(conn, keypair, swapTransactionB64) {
+async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
   const tx = VersionedTransaction.deserialize(Buffer.from(swapTransactionB64, 'base64'));
   tx.sign([keypair]);
   const raw = tx.serialize();
@@ -204,6 +204,10 @@ async function sendJupiterSwap(conn, keypair, swapTransactionB64) {
   const bhP = conn.getLatestBlockhash('confirmed');
   bhP.catch(() => {});   // if the send throws first, this must not surface as unhandled
   const sig = await conn.sendRawTransaction(raw, { skipPreflight: SKIP_PREFLIGHT, maxRetries: 3 });
+  // Past this point the tx is BROADCAST, and the caller is told so immediately —
+  // waiting for 'confirmed' is another round the user does not need to spend
+  // staring at a message with nothing in it.
+  try { if (onSent) onSent(sig); } catch (_) {}
   // Past this point the tx is BROADCAST. A confirmation that reverts is atomic (Jupiter
   // swaps don't half-execute) → safe to treat as "didn't spend". But a confirmation that
   // THROWS (timeout / blockheight exceeded) is ambiguous — the tx may still land — so we
@@ -243,10 +247,10 @@ async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports
   return j.swapTransaction;   // base64
 }
 // One-shot: quote → build → sign → send → confirm. Returns { sig, quote }.
-async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports }) {
+async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent }) {
   const quote = await getQuote({ inputMint, outputMint, amountRaw, slippageBps });
   const txB64 = await getSwapTx(quote.raw, keypair.publicKey.toBase58(), { priorityLamports });
-  const sig = await sendJupiterSwap(conn, keypair, txB64);
+  const sig = await sendJupiterSwap(conn, keypair, txB64, onSent);
   return { sig, quote };
 }
 
