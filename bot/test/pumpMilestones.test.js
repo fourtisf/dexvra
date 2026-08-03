@@ -135,64 +135,67 @@ test("the banner overlay carries the step too, not the raw gain", () => {
 });
 
 // ---------------------------------------------------------------- deploy safety
-test("tokens that already alerted under the old latch do not re-fire on deploy", () => {
-  // Before the ladder, a token latched under its BARE key. Switching to per-step
-  // keys makes every one of those look un-announced — so the first poll after
-  // deploy would dump an alert for every previously-pumped listing into a
-  // channel with twelve thousand subscribers. The migration must consume their
-  // history silently instead.
-  const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
-  const iLegacy = src.indexOf("if (latch.has(key))");
-  const iStep = src.indexOf("if (latch.has(`${key}@${milestone}`))");
-  assert.ok(iStep > -1, "the per-step latch check is missing");
-  assert.ok(iLegacy > -1, "the legacy bare-key check was removed — deploying this would spam the channel");
-  assert.ok(iStep < iLegacy, "the step check must run first; the legacy check is the fallback");
-  // It must consume and CONTINUE — never fall through into posting.
-  const block = src.slice(iLegacy, iLegacy + 500);
-  assert.match(block, /absorbLegacy\(latch, key, milestone/, "the migration must consume the steps below");
-  assert.match(block, /continue;/, "the migration must not post");
-});
-
-// ---------------------------------------------------------------- migration is ONE-TIME
-test("absorbing a pre-ladder token drops its legacy marker, so it can alert again", async () => {
-  // THE BUG THIS PINS, found in production data after the first deploy:
-  // absorbing consumed the steps below but left the bare legacy key in place.
-  // `latch.has(key)` therefore stayed true forever, so every later step took the
-  // same silent branch and the token could NEVER alert again. It looked exactly
-  // like success — nothing logged, nothing posted, latch file quietly filling up
-  // with consumed steps that never produced an alert. $SPYB reached +300% and
-  // the alert was swallowed.
+test("a pre-ladder token is retired on the very next poll, whatever step it sits on", async () => {
+  // THE SECOND BUG, and the reason this test drives behaviour instead of grepping
+  // source. The step latch used to be checked BEFORE the legacy marker. A token
+  // whose CURRENT step was already consumed therefore answered "skip" on every
+  // poll, so the marker survived — and it only came up again once the token
+  // reached a NEW step, which the retire branch then ate as well (retiring never
+  // posts). $SPYB sat at +300% with @300 already consumed and its marker intact,
+  // so nothing moved for six minutes and +400% would have been swallowed too.
   const { DedupSet } = require("../src/helpers/persist");
-  const { absorbLegacy } = require("../src/services/pumpChecker");
-  const latch = new DedupSet(`pumplatch-test-${process.pid}.json`);
-  const key = "bsc:0xdead";
+  const { decide, absorbLegacy } = require("../src/services/pumpChecker");
+  const latch = new DedupSet(`pumplatch-order-${process.pid}.json`);
+  const key = "bsc:0xspyb";
 
-  await latch.add(key); // a token that alerted under the OLD once-per-token latch
-  assert.ok(latch.has(key), "setup failed");
-
-  await absorbLegacy(latch, key, 200, MIN, MAX);
-
-  assert.ok(latch.has(`${key}@100`), "step 100 was not absorbed");
-  assert.ok(latch.has(`${key}@200`), "step 200 was not absorbed");
-  assert.ok(!latch.has(key), "the legacy marker survived — this token is now muted forever");
-  assert.ok(!latch.has(`${key}@300`), "absorbing must not consume steps above the one reached");
-});
-
-test("after absorbing, the next step takes the normal posting path", async () => {
-  // The consequence of the fix, stated as the behaviour that matters: the
-  // migration is a one-time retirement, not a permanent gag.
-  const { DedupSet } = require("../src/helpers/persist");
-  const { absorbLegacy } = require("../src/services/pumpChecker");
-  const latch = new DedupSet(`pumplatch-test2-${process.pid}.json`);
-  const key = "bsc:0xbeef";
+  // Exactly the production state: legacy marker + steps already consumed.
   await latch.add(key);
-  await absorbLegacy(latch, key, 200, MIN, MAX);
+  await latch.addAll([`${key}@100`, `${key}@200`, `${key}@300`]);
 
-  // This mirrors pumpChecker's own branch order at +300%.
-  const milestone = 300;
-  const alreadySent = latch.has(`${key}@${milestone}`);
-  const isPreLadder = latch.has(key);
-  assert.equal(alreadySent, false, "+300% was wrongly marked as already announced");
-  assert.equal(isPreLadder, false, "+300% would be absorbed again instead of posted");
-  // → neither guard fires, so the token posts. That is the whole point.
+  // Standing at +300%, whose step key it already holds.
+  assert.equal(decide(latch, key, 300), "retire", "the token would stall instead of retiring");
+
+  await absorbLegacy(latch, key, 300, MIN, MAX);
+  assert.ok(!latch.has(key), "the legacy marker survived retirement");
+
+  // From here on it behaves like any other token: the step it stands on is done,
+  // and the NEXT step posts rather than being absorbed.
+  assert.equal(decide(latch, key, 300), "skip");
+  assert.equal(decide(latch, key, 400), "post", "+400% would have been swallowed too");
+});
+
+test("the three outcomes are decided in the right order", async () => {
+  const { DedupSet } = require("../src/helpers/persist");
+  const { decide } = require("../src/services/pumpChecker");
+  const latch = new DedupSet(`pumplatch-decide-${process.pid}.json`);
+
+  assert.equal(decide(latch, "k:new", 100), "post", "a fresh token must announce");
+
+  await latch.add("k:done@200");
+  assert.equal(decide(latch, "k:done", 200), "skip", "an announced step must not repeat");
+  assert.equal(decide(latch, "k:done", 300), "post", "the next step must still announce");
+
+  // The legacy marker OUTRANKS the step latch — that is the whole ordering fix.
+  await latch.add("k:old");
+  await latch.add("k:old@200");
+  assert.equal(decide(latch, "k:old", 200), "retire", "the legacy marker must win over the step latch");
+});
+
+test("retiring never posts, and posting never retires", async () => {
+  // The two silent-failure modes, stated as one property: a token is retired at
+  // most once, and after that every decision is either skip or post.
+  const { DedupSet } = require("../src/helpers/persist");
+  const { decide, absorbLegacy } = require("../src/services/pumpChecker");
+  const latch = new DedupSet(`pumplatch-once-${process.pid}.json`);
+  const key = "bsc:0xonce";
+  await latch.add(key);
+
+  const seen = [];
+  for (const step of [200, 300, 400, 500]) {
+    const a = decide(latch, key, step);
+    seen.push(a);
+    if (a === "retire") await absorbLegacy(latch, key, step, MIN, MAX);
+  }
+  assert.deepEqual(seen, ["retire", "post", "post", "post"],
+    "a token must retire exactly once and announce every step after it");
 });

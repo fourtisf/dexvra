@@ -41,39 +41,26 @@ test("an announcement post without a listing post still can't post stand-alone",
 });
 
 test("the latch is spent only after the alert posts", () => {
-  // Guarding this at the source level: latching at DETECTION time meant a failed
-  // post burned the token's alert forever, and the bug is invisible in normal
-  // operation — it only shows up as an alert that never came. Now that alerts
-  // are a ladder the latch is per STEP, but the ordering rule is unchanged.
+  // Latching at DETECTION time meant a failed post burned the token's step
+  // forever, and the bug is invisible in normal operation — it only shows up as
+  // an alert that never came.
   const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
   const iPost = src.indexOf("post.sendMedia");
   const iFailGuard = src.indexOf("if (!posted)");
   assert.ok(iPost > -1 && iFailGuard > iPost, "a failed post must skip the latch");
 
-  // A step may be consumed in exactly TWO places, and they are different in kind,
-  // so the test pins each rather than just counting:
-  //   1. the MIGRATION off the old once-per-token latch, which deliberately
-  //      consumes WITHOUT posting and therefore sits before the post. It goes
-  //      through absorbLegacy(), which also DROPS the legacy marker — leaving
-  //      that marker in place muted every pre-ladder token forever.
-  //   2. the SUCCESS path, which must come after the post AND after the
-  //      !posted bail-out. Spending it any earlier is the original bug.
-  const migrations = [...src.matchAll(/absorbLegacy\(latch, key, milestone/g)].map((m) => m.index);
-  assert.equal(migrations.length, 1, `expected exactly one migration site, found ${migrations.length}`);
-  const successes = [...src.matchAll(/await latch\.addAll\(stepKeys\(key, milestone/g)].map((m) => m.index);
-  assert.equal(successes.length, 1, `expected exactly one post-success consume, found ${successes.length}`);
+  // Retiring a pre-ladder token consumes steps WITHOUT posting, so it sits before
+  // the post; the success path must sit after the !posted bail-out.
+  const retire = [...src.matchAll(/absorbLegacy\(latch, key, milestone/g)].map((m) => m.index);
+  const success = [...src.matchAll(/await latch\.addAll\(stepKeys\(key, milestone/g)].map((m) => m.index);
+  assert.equal(retire.length, 1, `expected exactly one retire site, found ${retire.length}`);
+  assert.equal(success.length, 1, `expected exactly one post-success consume, found ${success.length}`);
+  assert.ok(retire[0] < iPost, "retiring belongs before the post");
+  assert.ok(success[0] > iFailGuard, "the latch must be spent AFTER the post, not before it");
 
-  const [iMigration] = migrations;
-  const [iSuccess] = successes;
-  assert.ok(iMigration < iPost, "the migration consume belongs before the post");
-  const iGuard = src.lastIndexOf("if (latch.has(key))", iMigration);
-  assert.ok(iGuard > -1 && iGuard < iMigration, "the early consume must be guarded by the legacy-latch check");
-  assert.match(
-    src.slice(Math.max(0, iGuard - 700), iMigration),
-    /MIGRATION|pre-ladder|absorb/i,
-    "the early consume must be the documented migration, not a stray latch",
-  );
-  assert.ok(iSuccess > iFailGuard, "the latch must be spent AFTER the post, not before it");
+  // The branch is decided in one place, so the ordering is testable as behaviour
+  // (see pumpMilestones.test.js) rather than inferred from the shape of the file.
+  assert.match(src, /const action = decide\(latch, key, milestone\);/, "the poll must go through decide()");
 });
 
 test("an announce-only token latches after posting — it must not re-fire forever", () => {

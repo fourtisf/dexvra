@@ -82,6 +82,25 @@ async function absorbLegacy(latchSet, key, milestone, minPct, maxPct) {
   return true;
 }
 
+/** What this poll should do with a token standing at `milestone`:
+ *    'retire' — a pre-ladder token: consume its history, drop the legacy marker,
+ *               post nothing;
+ *    'skip'   — this step has already been announced;
+ *    'post'   — announce it.
+ *
+ *  ORDER MATTERS, and getting it wrong is subtle enough to have shipped twice.
+ *  The legacy marker is checked FIRST. Checking the step latch first looks
+ *  equivalent and is not: a token already carrying a consumed step key for where
+ *  it currently stands would 'skip' every poll, so the marker survived until the
+ *  token reached a NEW step — and the migration branch then ate that step too,
+ *  because retiring never posts. Retiring on the very next poll costs the token
+ *  nothing it had not already lost, and it alerts normally from then on. */
+function decide(latchSet, key, milestone) {
+  if (latchSet.has(key)) return "retire";
+  if (latchSet.has(`${key}@${milestone}`)) return "skip";
+  return "post";
+}
+
 function coinOf(r, price, mcap) {
   return {
     name: r.name,
@@ -193,15 +212,14 @@ function start(tg) {
       // Announce the STEP reached, not the raw gain this poll happened to catch.
       const milestone = milestoneFor(pct, minPct, maxPct);
       if (milestone == null) continue;
-      if (latch.has(`${key}@${milestone}`)) continue; // this step already went out
-
-      // MIGRATION off the old once-per-token latch. Before the ladder, a token
-      // latched under its BARE key. Every one of those is already sitting above
-      // steps it never announced, so switching keys would fire an alert for every
-      // previously-pumped listing the moment this deploys — a burst into a channel
-      // with twelve thousand subscribers. Absorb their history silently instead;
-      // they resume alerting at the next step ABOVE where they already stand.
-      if (latch.has(key)) {
+      // retire / skip / post — see decide(). MIGRATION off the old once-per-token
+      // latch happens first: before the ladder a token latched under its BARE key,
+      // and every one of those already stands above steps it never announced, so
+      // announcing them would dump an alert for every previously-pumped listing
+      // into a channel with twelve thousand subscribers the moment this deploys.
+      const action = decide(latch, key, milestone);
+      if (action === "skip") continue; // this step already went out
+      if (action === "retire") {
         await absorbLegacy(latch, key, milestone, minPct, maxPct);
         log.event(
           `📈 Pump: ${r.sym || r.address} pre-ladder — steps ≤ ${milestone}% absorbed, next alert at +${milestone + MILESTONE_STEP}%`,
@@ -279,4 +297,4 @@ function start(tg) {
   };
 }
 
-module.exports = { start, pumpTargets, milestoneFor, stepKeys, absorbLegacy, MILESTONE_STEP };
+module.exports = { start, pumpTargets, milestoneFor, stepKeys, absorbLegacy, decide, MILESTONE_STEP };
