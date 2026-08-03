@@ -11,7 +11,6 @@ const path = require("node:path");
 
 const test = require("node:test");
 const assert = require("node:assert");
-const i18n = require("./i18n");
 
 const TG = fs
   .readFileSync(path.join(__dirname, "telegram.js"), "utf8")
@@ -21,17 +20,8 @@ const BUY = TG.slice(TG.indexOf("async function doBuy("), TG.indexOf("const SELL
 const SINGLE = BUY.slice(BUY.indexOf("if (targets.length <= 1)"), BUY.indexOf("} else {"));
 
 test("the 'going out' message names the market cap", () => {
-  // The literals now live in i18n.js so the line can be Indonesian too; the
-  // assertion follows them. What matters is unchanged — the message still names
-  // the market cap being entered at, in whichever language is set.
-  assert.match(SINGLE, /const atMc = eMc > 0 \? T\(chatId, 'buy\.at_mc', \{ mc: fmt\(eMc\) \}\) : '';/);
-  assert.match(SINGLE, /T\(chatId, 'buy\.progress', \{ amt: esc\(amt\), native: chG\.native, atMc \}\)/);
-  for (const lang of i18n.LANGS) {
-    assert.match(i18n.t(lang, "buy.at_mc", { mc: "1.2K" }), /MC/, `${lang} lost the MC label`);
-    assert.match(i18n.t(lang, "buy.at_mc", { mc: "1.2K" }), /1\.2K/, `${lang} dropped the market cap`);
-    assert.match(i18n.t(lang, "buy.progress", { amt: "0.05", native: "ETH", atMc: "@MC" }), /0\.05/, `${lang} dropped the amount`);
-    assert.match(i18n.t(lang, "buy.progress", { amt: "0.05", native: "ETH", atMc: "@MC" }), /@MC/, `${lang} dropped the MC slot`);
-  }
+  assert.match(SINGLE, /const atMc = eMc > 0 \? ` at MC <b>\$\$\{fmt\(eMc\)\}<\/b>` : '';/);
+  assert.match(SINGLE, /⏳ <b>Buying \$\{esc\(amt\)\} \$\{chG\.native\}<\/b>\$\{atMc\}…/);
 });
 
 test("…and going without one is never a reason to wait", () => {
@@ -55,18 +45,9 @@ test("that wait is not execution latency — the trade is already in flight", ()
 
 test("the receipt answers all three questions at once", () => {
   // Spent how much · got how many · at what entry and market cap.
-  assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.spent', \{ amt: spent\.toFixed\(6\), native: r\.native, usd: usd2\(spent\) \}\)/);
-  assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.got', \{ amt: fmt\(got\), sym: esc\(r\.sym\), usd: holdUsd \}\)/);
-  assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.entry', \{ px: pxUsd\.toPrecision\(3\) \}\)/);
-  // …and in EVERY language. A translation that quietly drops one of the numbers
-  // is the same bug as a receipt that never printed it.
-  for (const lang of i18n.LANGS) {
-    const spent = i18n.t(lang, "buy.receipt.spent", { amt: "0.05", native: "ETH", usd: "$120" });
-    for (const part of ["0.05", "ETH", "\\$120"]) assert.match(spent, new RegExp(part), `${lang} spent line dropped ${part}`);
-    const got = i18n.t(lang, "buy.receipt.got", { amt: "1.2M", sym: "PEPE", usd: "$118" });
-    for (const part of ["1\\.2M", "PEPE", "\\$118"]) assert.match(got, new RegExp(part), `${lang} got line dropped ${part}`);
-    assert.match(i18n.t(lang, "buy.receipt.entry", { px: "0.00012" }), /0\.00012/, `${lang} entry line dropped the price`);
-  }
+  assert.match(SINGLE, /Spent: <b>\$\{spent\.toFixed\(6\)\} \$\{r\.native\}<\/b>/);
+  assert.match(SINGLE, /Got: <b>\$\{fmt\(got\)\} \$\$\{esc\(r\.sym\)\}<\/b>/);
+  assert.match(SINGLE, /Entry: <b>\$\$\{pxUsd\.toPrecision\(3\)\}<\/b>\$\{mcUsd > 0 \? ` · MC <b>\$\$\{fmt\(mcUsd\)\}<\/b>` : ''\}/);
 });
 
 test("one snapshot serves both, and it is the honest entry", () => {

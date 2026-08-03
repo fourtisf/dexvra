@@ -41,26 +41,15 @@ test("an announcement post without a listing post still can't post stand-alone",
 });
 
 test("the latch is spent only after the alert posts", () => {
-  // Latching at DETECTION time meant a failed post burned the token's step
-  // forever, and the bug is invisible in normal operation — it only shows up as
-  // an alert that never came.
+  // Guarding this at the source level: latching at DETECTION time meant a failed
+  // post burned the token's one alert forever, and the bug is invisible in
+  // normal operation — it only shows up as an alert that never came.
   const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
   const iPost = src.indexOf("post.sendMedia");
-  const iFailGuard = src.indexOf("if (!posted)");
-  assert.ok(iPost > -1 && iFailGuard > iPost, "a failed post must skip the latch");
-
-  // Retiring a pre-ladder token consumes steps WITHOUT posting, so it sits before
-  // the post; the success path must sit after the !posted bail-out.
-  const retire = [...src.matchAll(/absorbLegacy\(latch, key, milestone/g)].map((m) => m.index);
-  const success = [...src.matchAll(/await latch\.addAll\(stepKeys\(key, milestone/g)].map((m) => m.index);
-  assert.equal(retire.length, 1, `expected exactly one retire site, found ${retire.length}`);
-  assert.equal(success.length, 1, `expected exactly one post-success consume, found ${success.length}`);
-  assert.ok(retire[0] < iPost, "retiring belongs before the post");
-  assert.ok(success[0] > iFailGuard, "the latch must be spent AFTER the post, not before it");
-
-  // The branch is decided in one place, so the ordering is testable as behaviour
-  // (see pumpMilestones.test.js) rather than inferred from the shape of the file.
-  assert.match(src, /const action = decide\(latch, key, milestone\);/, "the poll must go through decide()");
+  const iLatch = src.indexOf("await latch.add(key)");
+  assert.ok(iPost > -1 && iLatch > -1, "both steps present");
+  assert.ok(iPost < iLatch, "latch.add must come AFTER the post, not before it");
+  assert.match(src, /if \(!posted\)/, "a failed post must skip the latch");
 });
 
 test("an announce-only token latches after posting — it must not re-fire forever", () => {

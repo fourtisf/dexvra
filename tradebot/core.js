@@ -826,64 +826,24 @@ function tradeWalletIds(chatId) {
 }
 
 // ---------------------------------------------------------------- chain reads
-// ---------------------------------------------------------------- read caches
-// A token's name/symbol/decimals never change, and a launchpad curve's address is
-// fixed the moment that token is created. Re-reading them on every buy, sell, card
-// render and watcher tick cost a live round trip each, ON the trade's critical
-// path. They are cached for the life of the process — but ONLY when the read
-// actually succeeded, because caching a fallback would stamp "TOKEN"/18-decimals
-// onto a user's position permanently after one RPC blip.
-const _metaCache = new Map();    // `${chain}:${ca}`    → { name, sym, decimals }
-const _curveCache = new Map();   // `${chain}:${ca}`    → { curve, ts }; '' = none (re-checked)
-const _gradCache = new Set();    // `${chain}:${curve}` — graduation is ONE-WAY, so only `true` is cached
-const NO_CURVE_TTL_MS = 60000;   // a token CAN gain a curve later, so a negative answer expires
-const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : String(x).toLowerCase());
-function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); }
-
 async function resolveCurve(ca, chainKey) {
   const chain = chainOf(chainKey); if (!chain || !chain.curve) return '';
-  const k = _ckey(chainKey, ca);
-  const hit = _curveCache.get(k);
-  if (hit && (hit.curve || Date.now() - hit.ts < NO_CURVE_TTL_MS)) return hit.curve;
-  try {
-    const c = await new ethers.Contract(chain.factory, FACTORY_ABI, providerFor(chainKey)).curveOf(ca);
-    const curve = (c && c !== ethers.ZeroAddress) ? c : '';
-    _curveCache.set(k, { curve, ts: Date.now() });
-    return curve;
-  } catch (_) { return hit ? hit.curve : ''; }   // an RPC blip must not read as "no curve"
+  try { const c = await new ethers.Contract(chain.factory, FACTORY_ABI, providerFor(chainKey)).curveOf(ca); return (c && c !== ethers.ZeroAddress) ? c : ''; }
+  catch (_) { return ''; }
 }
 async function isGraduated(curveAddr, chainKey) {
-  const k = _ckey(chainKey, curveAddr);
-  if (_gradCache.has(k)) return true;   // a graduated token never un-graduates
-  try {
-    const g = await new ethers.Contract(curveAddr, CURVE_ABI, providerFor(chainKey)).graduated();
-    if (g) _gradCache.add(k);
-    return g;
-  } catch (_) { return false; }
+  try { return await new ethers.Contract(curveAddr, CURVE_ABI, providerFor(chainKey)).graduated(); } catch (_) { return false; }
 }
 async function tokenDecimals(ca, chainKey) {
-  const hit = _metaCache.get(_ckey(chainKey, ca)); if (hit) return hit.decimals;
   try { return Number(await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).decimals()); } catch (_) { return 18; }
 }
 async function tokenMeta(ca, chainKey) {
-  const k = _ckey(chainKey, ca);
-  const hit = _metaCache.get(k); if (hit) return hit;
-  if (isSvm(chainKey)) {
-    const m = await solana.splMeta(providerFor(chainKey), ca);
-    const out = { name: m.name, sym: m.sym, decimals: m.decimals };
-    if (m.name && m.sym) _metaCache.set(k, out);
-    return out;
-  }
+  if (isSvm(chainKey)) { const m = await solana.splMeta(providerFor(chainKey), ca); return { name: m.name, sym: m.sym, decimals: m.decimals }; }
   const erc = new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey));
-  // ONE batched round trip, not two. decimals() used to be awaited AFTER
-  // name()/symbol() had resolved, so every uncached token cost two serial calls
-  // — and this runs on the buy path, after the fill, while the user waits.
-  const [n, s, d] = await Promise.all([
-    erc.name().catch(() => null), erc.symbol().catch(() => null), erc.decimals().catch(() => null),
-  ]);
-  const out = { name: String(n == null ? 'Token' : n).slice(0, 40), sym: String(s == null ? 'TOKEN' : s).slice(0, 20), decimals: d == null ? 18 : Number(d) };
-  if (n != null && s != null && d != null) _metaCache.set(k, out);   // complete reads only
-  return out;
+  let name = 'Token', sym = 'TOKEN', dec = 18;
+  try { const [n, s] = await Promise.all([erc.name(), erc.symbol()]); if (n) name = n; if (s) sym = s; } catch (_) {}
+  try { dec = Number(await erc.decimals()); } catch (_) {}
+  return { name: String(name).slice(0, 40), sym: String(sym).slice(0, 20), decimals: dec };
 }
 // Native balance in the chain's smallest unit (wei on EVM, lamports on Solana),
 // always a BigInt. Solana lamports are 1e9 — callers format with the chain's decimals.
@@ -951,25 +911,12 @@ async function tokenAcrossWallets(chatId, ca, chainKey, decimals) {
   for (const r of rows) { if (r.raw > max) { max = r.raw; holderId = r.id; } }
   return { rows, holderId, supply };
 }
-// Native price in USD, cached per symbol. This is an off-box HTTP call with a 6s
-// timeout that every trade report, every Solana snapshot and every card render
-// hit fresh — and a spot price does not move enough in 30s to be worth waiting
-// on Coinbase for. A stale-but-good value also beats returning 0 (which renders
-// as "—") when the API is briefly unreachable.
-const _usdCache = new Map();   // sym → { px, ts }
-const USD_CACHE_MS = Math.max(0, Number(process.env.USD_CACHE_MS || 30000));
 async function ethUsd(chainKey) {
   // Price the chain's native in USD: BNB, SOL, or ETH (default). Coinbase has spot for all.
   const nat = (chainOf(chainKey) || {}).native;
   const sym = nat === 'BNB' ? 'BNB' : nat === 'SOL' ? 'SOL' : 'ETH';
-  const hit = _usdCache.get(sym);
-  if (hit && Date.now() - hit.ts < USD_CACHE_MS) return hit.px;
-  try {
-    const r = await fetch(`https://api.coinbase.com/v2/prices/${sym}-USD/spot`, { signal: AbortSignal.timeout(6000) });
-    const j = await r.json(); const p = Number(j?.data?.amount);
-    if (p > 0) { _usdCache.set(sym, { px: p, ts: Date.now() }); return p; }
-    return hit ? hit.px : 0;
-  } catch (_) { return hit ? hit.px : 0; }
+  try { const r = await fetch(`https://api.coinbase.com/v2/prices/${sym}-USD/spot`, { signal: AbortSignal.timeout(6000) }); const j = await r.json(); const p = Number(j?.data?.amount); return p > 0 ? p : 0; }
+  catch (_) { return 0; }
 }
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.
 async function tokenSnapshot(ca, chainKey) {
@@ -1028,76 +975,25 @@ async function tokenSnapshot(ca, chainKey) {
 }
 
 // ---------------------------------------------------------------- gas
-// The chain's base fee, cached for a couple of seconds. gasOverrides() is called
-// up to THREE times inside one buy — the preflight, the swap's rawSend, and the
-// bot-fee transfer's rawSend — and each call was its own eth_getBlock: three
-// serial round trips to learn a number that cannot meaningfully have moved
-// between them. The 2x buffer below already absorbs far more drift than a 2.5s
-// window can produce.
-const _feeCache = new Map();   // chainKey → { base, tip, gasPrice, ts }
-const FEE_CACHE_MS = Math.max(0, Number(process.env.GAS_CACHE_MS || 2500));
-// Base fee AND the node's priority-fee suggestion, read together in one wave.
-async function _feeInfo(chainKey) {
-  const hit = _feeCache.get(chainKey);
-  if (hit && Date.now() - hit.ts < FEE_CACHE_MS) return hit;
-  const prov = providerFor(chainKey);
-  let base = 0n, tip = 0n, gasPrice = 0n;
-  const [blk, fd] = await Promise.all([
-    prov.getBlock('latest').catch(() => null),
-    prov.getFeeData().catch(() => null),
-  ]);
-  if (blk && blk.baseFeePerGas) base = blk.baseFeePerGas;
-  if (fd) { if (fd.maxPriorityFeePerGas) tip = fd.maxPriorityFeePerGas; if (fd.gasPrice) gasPrice = fd.gasPrice; }
-  const rec = { base, tip, gasPrice, ts: Date.now() };
-  _feeCache.set(chainKey, rec);
-  return rec;
-}
-// Floor for the priority fee, per chain. A node that reports a 0 tip (routine on
-// L2s) would otherwise produce a transaction with nothing in it for the builder,
-// which is exactly the transaction that sits in the mempool.
-const MIN_TIP_GWEI = { ethereum: '1', bsc: '1', base: '0.005', arbitrum: '0.01', robinhood: '0.001' };
-const _gwei = (s) => ethers.parseUnits(String(s), 'gwei');
-
-/** Fee overrides for a write on `chainKey`, scaled by `gasMult` (1 Normal,
- *  2 Fast, 3 Turbo; the sell retry escalation pushes it to 2 then 4).
- *
- *  THIS USED TO RETURN `{}` FOR EVERY CHAIN EXCEPT ROBINHOOD. Two things rode on
- *  that empty object and both silently did nothing off Robinhood:
- *    • the user's ⛽ Gas priority setting — Fast/Turbo were sold as "confirms
- *      quicker" and changed not one wei of what got signed;
- *    • the sell retry escalation — a sell that failed BECAUSE the gas was too
- *      low retried twice more at exactly the same gas, so the escalation only
- *      made a stuck exit take three times as long to give up.
- *
- *  Now every chain gets a real answer, and EIP-1559 chains get 1559 fees:
- *  `maxFeePerGas` carries 2x base-fee headroom so a base fee that ticks up
- *  between signing and inclusion cannot strand the transaction, while
- *  `maxPriorityFeePerGas` — the part that actually competes for a slot, and the
- *  only part the boost needs to touch — is what scales. You still only pay
- *  base + tip, so the headroom is free. */
 async function gasOverrides(chainKey, gasMult) {
-  const boost = BigInt(Math.max(1, Math.min(6, Math.round(Number(gasMult) || 1))));
-  const info = await _feeInfo(chainKey);
-  // Robinhood keeps its fixed/cheap legacy floor: its node is quirky enough that
-  // the proven type-0 path stays exactly as it was.
+  const prov = providerFor(chainKey);
+  // Only Robinhood (cheap L2) uses the fixed/cheap floor; busy L1s/L2s use auto so
+  // ethers sets a proper (base + tip) fee that actually confirms.
   const mode = chainKey === 'robinhood' ? CFG.gasMode : 'auto';
-  if (mode !== 'auto') {
-    const base = info.base > 0n ? info.base : info.gasPrice;
-    const buffered = base > 0n ? base * 2n : _gwei('0.02');
-    if (mode === 'cheap') return { gasPrice: buffered * boost };
-    const want = _gwei(CFG.gasGwei > 0 ? CFG.gasGwei : 0.01);
-    return { gasPrice: (want > buffered ? want : buffered) * boost };
-  }
-  if (info.base > 0n) {
-    const floor = _gwei(MIN_TIP_GWEI[chainKey] || '0.01');
-    let tip = info.tip > floor ? info.tip : floor;
-    tip = tip * boost;                       // boost the competitive part only
-    return { maxFeePerGas: info.base * 2n + tip, maxPriorityFeePerGas: tip };
-  }
-  // No base fee reported → pre-1559 chain (BNB has run at base 0). Legacy, but
-  // the boost is honoured rather than thrown away.
-  const gp = info.gasPrice > 0n ? info.gasPrice : _gwei('1');
-  return { gasPrice: gp * boost };
+  if (mode === 'auto') return {};
+  let base = 0n;
+  try { const blk = await prov.getBlock('latest'); if (blk && blk.baseFeePerGas) base = blk.baseFeePerGas; } catch (_) {}
+  if (base === 0n) { try { const fd = await prov.getFeeData(); base = fd.gasPrice || 0n; } catch (_) {} }
+  // Pay 2x the current base fee. A legacy (type-0) tx's gasPrice IS its
+  // maxFeePerGas, so setting it EXACTLY to the base fee we just read gets the tx
+  // rejected ("max fee per gas less than block base fee") the moment the base
+  // fee ticks up between our read and the node receiving it. On this cheap L2
+  // (~0.07 gwei base) 2x is still negligible and absorbs normal drift/spikes.
+  const buffered = base > 0n ? base * 2n : ethers.parseUnits('0.02', 'gwei');
+  const boost = BigInt(Math.max(1, Math.round(Number(gasMult) || 1)));   // retry escalation (1x, 2x, 4x…)
+  if (mode === 'cheap') return { gasPrice: buffered * boost };
+  const want = ethers.parseUnits(String(CFG.gasGwei > 0 ? CFG.gasGwei : 0.01), 'gwei');
+  return { gasPrice: (want > buffered ? want : buffered) * boost };   // operator's fixed price, but never below the buffered base fee
 }
 async function waitBounded(tx) { try { return await tx.wait(1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
 async function waitHash(hash, chainKey) { try { return await providerFor(chainKey).waitForTransaction(hash, 1, 180000); } catch (e) { if (e && e.code === 'TIMEOUT') return null; throw e; } }
@@ -1124,32 +1020,15 @@ async function waitBuyReceipt(waiter) {
 // custom-error/revert data on eth_estimateGas. We sign locally and POST
 // eth_sendRawTransaction ourselves, so the node's REAL reason reaches the user (e.g. a
 // beta-allowlist NotAllowed) instead of an ethers wrapper. Returns the tx hash.
-// `opts.fee` lets a caller that ALREADY computed the fee for this exact trade hand
-// it over instead of having it re-derived here. Beyond saving the read, it
-// guarantees the fee quoted during preflight is the fee actually signed.
-//
-// TRANSACTION TYPE follows the fee, and that matters most on Ethereum. This used
-// to force `type: 0` (legacy) everywhere with gasPrice = the node's current
-// suggestion — i.e. no headroom at all. A legacy transaction's gasPrice IS its
-// max fee, so the moment the base fee ticked up between signing and inclusion the
-// transaction became unmineable and sat in the mempool until the base fee came
-// back down. That is how a 12-second Ethereum trade turns into a two-minute one.
-// When gasOverrides returns 1559 fees we now sign type-2, which is precisely the
-// mechanism that avoids it. Robinhood still yields a gasPrice, so it still signs
-// the type-0 its node is known to accept.
-async function rawSend(wallet, chainKey, to, data, gasLimit, value, gasMult, opts) {
+async function rawSend(wallet, chainKey, to, data, gasLimit, value, gasMult) {
   const prov = providerFor(chainKey);
   const ch = chainOf(chainKey);
-  let fee = (opts && opts.fee) || await gasOverrides(chainKey, gasMult);
-  if (!fee || (!fee.gasPrice && !fee.maxFeePerGas)) {
-    try { const fd = await prov.getFeeData(); fee = fd.maxFeePerGas ? { maxFeePerGas: fd.maxFeePerGas, maxPriorityFeePerGas: fd.maxPriorityFeePerGas || 0n } : { gasPrice: fd.gasPrice }; } catch (_) {}
-  }
-  if (!fee || (!fee.gasPrice && !fee.maxFeePerGas)) fee = { gasPrice: ethers.parseUnits('0.02', 'gwei') };
+  const gasO = await gasOverrides(chainKey, gasMult);
+  let gasPrice = gasO.gasPrice;
+  if (!gasPrice || gasPrice <= 0n) { try { const fd = await prov.getFeeData(); gasPrice = fd.gasPrice; } catch (_) {} }
+  if (!gasPrice || gasPrice <= 0n) gasPrice = ethers.parseUnits('0.02', 'gwei');
   const nonce = await prov.getTransactionCount(wallet.address, 'pending');
-  const req = { to, data, value: value || 0n, gasLimit, nonce, chainId: ch.chainId };
-  if (fee.maxFeePerGas) { req.type = 2; req.maxFeePerGas = fee.maxFeePerGas; req.maxPriorityFeePerGas = fee.maxPriorityFeePerGas || 0n; }
-  else { req.type = 0; req.gasPrice = fee.gasPrice; }
-  const signed = await wallet.signTransaction(req);
+  const signed = await wallet.signTransaction({ to, data, value: value || 0n, gasLimit, gasPrice, nonce, chainId: ch.chainId, type: 0 });
   let j = null;
   try {
     const r = await fetch(ch.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_sendRawTransaction', params: [signed] }), signal: AbortSignal.timeout(25000) });
@@ -1268,23 +1147,10 @@ async function bestDexVenue(ca, chainKey) {
 // receive() needs gas). This silently killed fee collection there. Estimate and
 // bump; fall back generously. estimateGas on Orbit chains already folds in the
 // L1 component, so this returns a limit that actually lands.
-// Cached per (chain, destination). The gas a native transfer costs depends on the
-// chain and on whether the RECIPIENT is a contract — neither of which changes
-// between trades. Every single trade was re-estimating the transfer to the same
-// fee wallet, one round trip each. Keyed on the destination so a withdrawal to a
-// user-supplied address (which may be a contract with an expensive receive()) is
-// still estimated for that address, never served a fee-wallet number.
-const _nativeGasCache = new Map();   // `${chain}:${to}` → { limit, ts }
-const NATIVE_GAS_TTL_MS = 5 * 60 * 1000;
 async function nativeTransferGas(chainKey, from, to, value) {
-  const k = chainKey + ':' + String(to).toLowerCase();
-  const hit = _nativeGasCache.get(k);
-  if (hit && Date.now() - hit.ts < NATIVE_GAS_TTL_MS) return hit.limit;
   try {
     const g = await providerFor(chainKey).estimateGas({ from, to, value: value > 1n ? value : 1n });
-    const limit = g + g / 4n;   // +25% headroom
-    _nativeGasCache.set(k, { limit, ts: Date.now() });
-    return limit;
+    return g + g / 4n;   // +25% headroom
   } catch (_) { return 120000n; }   // covers Orbit L1 gas + a contract recipient's receive()
 }
 // Gas limit for a V3 swap / unwrap CONTRACT call. Same reason as
@@ -1307,39 +1173,20 @@ async function ensureApprove(wallet, ca, spender, amount, chainKey) {
 
 // ---------------------------------------------------------------- fee + referral
 function slipBps(u) { let s = Number(u && u.settings && u.settings.slippage); if (!(s > 0)) s = 5; if (s > 50) s = 50; return BigInt(Math.round(s * 100)); }
-// Charge the bot fee. BROADCAST-AND-DEFER: this returns as soon as the transfer is
-// in the mempool, and the receipt is awaited in the BACKGROUND.
-//
-// It used to await the receipt inline. That put a second, entirely separate
-// confirmation between the user's fill and the user's fill message: the swap
-// landed, and then the bot sat waiting for its OWN 1% transfer to confirm before
-// it would say "Bought". On a chain with 2s blocks that is another full block
-// plus poll on every single trade, spent on something the trader does not care
-// about and cannot act on.
-//
-// The money invariant is unchanged: the referral share is still credited ONLY
-// after the fee transfer actually confirms — that just now happens a second or
-// two later, off the trade path, instead of holding the receipt hostage. `onOk`
-// runs on confirmation; a revert or a failed broadcast simply never calls it.
-function _chargeFee(wallet, feeWei, chainKey, onOk) {
-  if (feeWei <= 0n || !CFG.feeWallet || !/^0x[0-9a-fA-F]{40}$/.test(CFG.feeWallet)) return Promise.resolve(null);
-  // rawSend, NOT wallet.sendTransaction: the Robinhood node rejects ethers'
-  // estimate/send path (see rawSend), which made every fee transfer there
-  // fail silently while the trade itself succeeded — zero revenue collected.
-  // Gas is estimated (not a hard 21000) — 21000 reverts on Robinhood (Orbit
-  // L1 gas) and to a contract treasury, which is why the treasury stayed 0.
-  return (async () => {
+async function _chargeFee(wallet, feeWei, chainKey) {
+  if (feeWei <= 0n || !CFG.feeWallet || !/^0x[0-9a-fA-F]{40}$/.test(CFG.feeWallet)) return null;
+  try {
+    // rawSend, NOT wallet.sendTransaction: the Robinhood node rejects ethers'
+    // estimate/send path (see rawSend), which made every fee transfer there
+    // fail silently while the trade itself succeeded — zero revenue collected.
+    // Gas is estimated (not a hard 21000) — 21000 reverts on Robinhood (Orbit
+    // L1 gas) and to a contract treasury, which is why the treasury stayed 0.
     const gasLimit = await nativeTransferGas(chainKey, wallet.address, CFG.feeWallet, feeWei);
     const hash = await rawSend(wallet, chainKey, CFG.feeWallet, '0x', gasLimit, feeWei);
-    // Confirm off the critical path. The nonce for any FOLLOWING tx from this
-    // wallet is read with 'pending', which already counts this one, so not
-    // awaiting it here cannot desync the nonce.
-    waitHash(hash, chainKey).then((rc) => {
-      if (!rc || rc.status === 0) { if (rc && rc.status === 0) console.error('fee tx reverted (status 0) — is FEE_WALLET reachable? gas?', hash); return; }
-      if (onOk) { try { onOk(hash); } catch (e) { console.error('fee post-confirm', e.message); } }
-    }).catch((e) => console.error('fee confirm', e && e.message));
+    const rc = await waitHash(hash, chainKey);
+    if (!rc || rc.status === 0) { if (rc && rc.status === 0) console.error('fee tx reverted (status 0) — is FEE_WALLET reachable? gas?', hash); return null; }   // null → don't credit referral
     return hash;
-  })().catch((e) => { console.error('fee charge failed', e.message); return null; });
+  } catch (e) { console.error('fee charge failed', e.message); return null; }
 }
 function _creditReferral(user, feeWei, chainKey) {
   if (!user.referredBy || feeWei <= 0n) return;
@@ -1367,59 +1214,39 @@ function _pushHistory(wal, entry) {
 
 // ---------------------------------------------------------------- Solana trade (Jupiter)
 // The bot fee on Solana is a SEPARATE SOL transfer to SOL_FEE_WALLET (mirrors the EVM
-// _chargeFee), so we don't need Jupiter's referral/ATA fee plumbing.
-//
-// Like its EVM twin this BROADCASTS AND DEFERS: it resolves with the signature as
-// soon as the transfer is sent, and confirms in the background. Awaiting a second
-// Solana confirmation inline added a full confirm round (~1-2s, more under load)
-// to every Solana fill, for a transfer the trader has no stake in. `onOk` fires
-// on confirmation, so the referral credit stays gated on the fee landing.
-function _chargeFeeSol(conn, keypair, feeLamports, onOk) {
-  if (feeLamports <= 0n || !CFG.solFeeWallet || !solana.isSolAddress(CFG.solFeeWallet)) return Promise.resolve(null);
-  return solana.sendSol(conn, keypair, CFG.solFeeWallet, feeLamports, { confirm: false })
-    .then(({ sig, confirmed }) => {
-      confirmed
-        .then(() => { if (onOk) { try { onOk(sig); } catch (e) { console.error('sol fee post-confirm', e.message); } } })
-        .catch((e) => console.error('sol fee confirm', e && e.message));
-      return sig;
-    })
-    .catch((e) => { console.error('sol fee charge failed', e.message); return null; });
+// _chargeFee), so we don't need Jupiter's referral/ATA fee plumbing. Returns the fee
+// sig, or null if waived (no fee wallet) or the transfer didn't confirm.
+async function _chargeFeeSol(conn, keypair, feeLamports) {
+  if (feeLamports <= 0n || !CFG.solFeeWallet || !solana.isSolAddress(CFG.solFeeWallet)) return null;
+  try { return await solana.sendSol(conn, keypair, CFG.solFeeWallet, feeLamports); }
+  catch (e) { console.error('sol fee charge failed', e.message); return null; }
 }
 // Buy `amount` SOL of the SPL mint `ca` via Jupiter. Positions/history reuse the EVM
 // ethIn/ethOut fields (SOL-denominated) so the portfolio/PnL code is chain-agnostic.
-async function _buySol(u, ca, amount, chainKey, walletId, opts) {
+async function _buySol(u, ca, amount, chainKey, walletId) {
   ca = String(ca || '').trim();
   if (!solana.isSolAddress(ca)) throw new Error('invalid Solana token mint');
-  const sent = (h) => { try { if (opts && opts.onSent && h) opts.onSent(h); } catch (_) {} };
   const wal = _resolveWallet(u, walletId);
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);   // { svm, address, keypair, connection }
     const conn = signer.connection, kp = signer.keypair;
     const gross = solana.solToLamports(amount);
     if (gross <= 0n) throw new Error('amount must be > 0');
-    // Three independent lookups — SOL balance, the current bag, and the mint's
-    // identity — that used to be awaited one at a time ahead of every Solana buy.
-    // tokenMeta alone is an RPC call plus a Jupiter registry fetch, so this was
-    // comfortably the slowest stretch of a snipe.
-    const [bal, beforeBag, meta] = await Promise.all([
-      solana.solBalance(conn, signer.address),
-      solana.splBalance(conn, signer.address, ca),
-      tokenMeta(ca, chainKey),
-    ]);
+    const bal = await solana.solBalance(conn, signer.address);
     const gasBuf = solana.solToLamports(CFG.solGasBuffer);
     if (bal < gross + gasBuf) throw new Error(`insufficient SOL — need ~${solana.lamportsToSol(gross + gasBuf).toFixed(4)} incl. fees, have ${solana.lamportsToSol(bal).toFixed(4)}`);
     const fee = solana.feeLamports(gross, CFG.feeBps);
     const spend = gross - fee;
     const slip = Number(slipBps(u));
-    const before = beforeBag.raw;
+    const before = (await solana.splBalance(conn, signer.address, ca)).raw;
+    const meta = await tokenMeta(ca, chainKey);
     let sig, quote;
-    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent })); }
+    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports })); }
     catch (e) { const err = new Error('buy failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
     const after = (await solana.splBalance(conn, signer.address, ca)).raw;
     const got = after > before ? after - before : (quote ? quote.outAmount : 0n);
-    // Broadcast-and-defer, same as EVM: the referral credit fires from the
-    // background confirmation, so the fill is not held behind the fee transfer.
-    const feeSig = await _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
+    const feeSig = await _chargeFeeSol(conn, kp, fee);
+    if (feeSig) _creditReferral(u, fee, chainKey);
 
     const key = posKey(chainKey, ca);
     const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
@@ -1446,32 +1273,26 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
   // Retry escalation from doSell: widen slippage and raise the Solana priority fee.
   const slipAdd = Math.max(0, Math.round((opts && opts.slipAddBps) || 0));
   const gasMult = Math.max(1, Math.round((opts && opts.gasMult) || 1));
-  const sent = (h) => { try { if (opts && opts.onSent && h) opts.onSent(h); } catch (_) {} };
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);
     const conn = signer.connection, kp = signer.keypair;
-    // The bag and the pre-trade SOL balance are read together — an exit should not
-    // spend two serial round trips working out what it is about to sell.
-    const [bag, solBefore] = await Promise.all([
-      solana.splBalance(conn, signer.address, ca),
-      solana.solBalance(conn, signer.address),
-    ]);
+    const bag = await solana.splBalance(conn, signer.address, ca);
     const bal = bag.raw;
     const p = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
     const amount = (bal * BigInt(p)) / 100n;
     if (amount <= 0n) throw new Error('token balance is 0');
     const slip = Math.min(5000, Number(slipBps(u)) + slipAdd);
     const prio = (Number(CFG.solPriorityLamports) || 0) * gasMult + (gasMult > 1 ? 200000 : 0);   // bump priority fee on retry
+    const solBefore = await solana.solBalance(conn, signer.address);
     let sig, quote;
-    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: ca, outputMint: solana.WSOL_MINT, amountRaw: amount, slippageBps: slip, priorityLamports: prio, onSent: sent })); }
+    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: ca, outputMint: solana.WSOL_MINT, amountRaw: amount, slippageBps: slip, priorityLamports: prio })); }
     catch (e) { const err = new Error('sell failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
     const solAfter = await solana.solBalance(conn, signer.address);
     // Net SOL received (swap tx fee already netted out, exactly like EVM ethAfter-ethBefore).
     const proceeds = solAfter > solBefore ? solAfter - solBefore : (quote ? quote.outAmount : 0n);
     const fee = solana.feeLamports(proceeds, CFG.feeBps);
-    // Broadcast-and-defer, same as EVM: the referral credit fires from the
-    // background confirmation, so the fill is not held behind the fee transfer.
-    const feeSig = await _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
+    const feeSig = await _chargeFeeSol(conn, kp, fee);
+    if (feeSig) _creditReferral(u, fee, chainKey);
 
     const key = posKey(chainKey, ca);
     const pos = wal.positions[key];
@@ -1517,16 +1338,10 @@ async function _withdrawSol(u, to, amount, chainKey, walletId) {
 
 // ---------------------------------------------------------------- trade
 // Buy `ethAmount` (human native) of `ca` on the user's active chain (or chainKey).
-// `opts.onSent(hash)` fires the MOMENT the transaction is broadcast, before any
-// waiting for it to confirm. On a 12-second chain that is the difference between
-// a user watching a static "Buying…" line for a whole block and a user holding a
-// live explorer link one second in. The trade itself is unaffected — the hook is
-// invoked fire-and-forget and can never delay or fail a fill.
-async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
+async function buy(chatId, ca, ethAmount, chainKey, walletId) {
   const u = getUser(chatId); if (!u) throw new Error('no wallet');
   chainKey = chainKey || userChain(u);
-  const sent = (h) => { try { if (opts && opts.onSent && h) opts.onSent(h); } catch (_) {} };
-  if (isSvm(chainKey)) return _buySol(u, ca, ethAmount, chainKey, walletId, opts);
+  if (isSvm(chainKey)) return _buySol(u, ca, ethAmount, chainKey, walletId);
   const wal = _resolveWallet(u, walletId);
   return withWalletLock(wal.address, async () => {
     chainKey = chainKey || userChain(u);
@@ -1534,34 +1349,21 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     const wallet = _signer(wal, chainKey);
     const gross = ethers.parseEther(String(ethAmount));
     if (gross <= 0n) throw new Error('amount must be > 0');
-    const deadline = Math.floor(Date.now() / 1000) + 600;
-    const gasBoost = userGasBoost(u);   // user's chosen gas priority applies to every buy
-    const slip = slipBps(u);
-
-    // PREFLIGHT — IN PARALLEL. These four reads do not depend on each other, and
-    // they used to run strictly in series: balance, then curve, then gas, then the
-    // pre-trade token balance. That is four full RPC round trips (~0.6-2s on a
-    // public node) spent before the bot even knew where it was routing, on every
-    // single buy. As one batch it is one round trip.
-    //
-    // Token metadata is kicked off here too and deliberately NOT awaited: it is
-    // only needed after the fill, so starting it now means it has already resolved
-    // (and cached) by the time the receipt lands, instead of adding round trips to
-    // the stretch where the user is watching a "Buying…" message.
-    const metaP = tokenMeta(ca, chainKey).catch(() => ({ name: 'Token', sym: 'TOKEN', decimals: 18 }));
-    const [bal, curve, gas, before] = await Promise.all([
-      ethBalance(wallet.address, chainKey),
-      resolveCurve(ca, chainKey),
-      gasOverrides(chainKey, gasBoost),
-      tokenBalance(ca, wallet.address, chainKey),
-    ]);
+    const bal = await ethBalance(wallet.address, chainKey);
     // L1 Ethereum gas dwarfs the L2 default — reserve more so a buy isn't left
     // unable to pay for its own swap.
     const gasBuf = gasBufferWei(chainKey);
     if (bal < gross + gasBuf) throw new Error(`insufficient ${chain.native} — need ~${ethers.formatEther(gross + gasBuf)} incl. gas, have ${Number(ethers.formatEther(bal)).toFixed(5)}`);
     const fee = (gross * BigInt(CFG.feeBps)) / 10000n;
     const spend = gross - fee;
+
+    const curve = await resolveCurve(ca, chainKey);
     const grad = curve ? await isGraduated(curve, chainKey) : true;
+    const deadline = Math.floor(Date.now() / 1000) + 600;
+    const gasBoost = userGasBoost(u);   // user's chosen gas priority applies to every buy
+    const gas = await gasOverrides(chainKey, gasBoost);
+    const slip = slipBps(u);
+    const before = await tokenBalance(ca, wallet.address, chainKey);
 
     let venue, hash, trc;
     if (curve && !grad) {
@@ -1573,8 +1375,8 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
       // envelope (same reason curve SELL, withdraw and _chargeFee use rawSend) —
       // a plain cc.buy could throw the opaque "could not coalesce error" there.
       const data = cc.interface.encodeFunctionData('buy', [minTok, deadline]);
-      hash = await rawSend(wallet, chainKey, curve, data, 600000n, spend, gasBoost, { fee: gas });
-      venue = 'curve'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
+      hash = await rawSend(wallet, chainKey, curve, data, 600000n, spend, gasBoost);
+      venue = 'curve'; trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
       if (trc && trc.status === 0) throw new Error('the buy reverted on-chain — you may not be allowed to buy this token yet (private beta), or try a smaller amount. Tx: ' + hash);
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
@@ -1600,8 +1402,8 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
         const ri = new ethers.Interface(V3_ROUTER_ABI);
         const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: chain.weth, tokenOut: ca, fee: pick.feeTier, recipient: wallet.address, amountIn: spend, amountOutMinimum: minTok, sqrtPriceLimitX96: 0n }]);
         const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, spend);
-        hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, spend, gasBoost, { fee: gas });
-        venue = 'dex·v3'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
+        hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, spend, gasBoost);
+        venue = 'dex·v3'; trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
         if (trc && trc.status === 0) throw new Error('the V3 buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
       } else {
         const router = new ethers.Contract(chain.router, ROUTER_ABI, wallet);
@@ -1611,13 +1413,12 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
         const minTok = expTok > 0n ? expTok * (10000n - dexSlip) / 10000n : 0n;
         if (minTok <= 0n) throw new Error('no liquidity / zero quote for this token on ' + chain.name);
         const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTok, [chain.weth, ca], wallet.address, deadline, { value: spend, ...gas });
-        venue = 'dex'; hash = tx.hash; sent(hash); trc = await waitBuyReceipt(() => waitBounded(tx));
+        venue = 'dex'; hash = tx.hash; trc = await waitBuyReceipt(() => waitBounded(tx));
         if (trc && trc.status === 0) throw new Error('the buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
       }
     }
-    // metaP was started with the preflight and is almost always already resolved;
-    // the balance read is the only thing genuinely outstanding here.
-    const [after, meta] = await Promise.all([tokenBalance(ca, wallet.address, chainKey), metaP]);
+    const after = await tokenBalance(ca, wallet.address, chainKey);
+    const meta = await tokenMeta(ca, chainKey);
     const got = after > before ? after - before : 0n;
     // Confirmed = receipt status 1 (waitBounded returns it; a revert would have
     // thrown) OR a positive balance change. Only "pending" if BOTH the receipt
@@ -1631,10 +1432,8 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
       e.broadcast = true; throw e;
     }
 
-    // Broadcast the fee and move on — the referral credit fires from the
-    // background confirmation (see _chargeFee), so it stays gated on the fee
-    // actually landing without the fill waiting for it.
-    const feeHash = await _chargeFee(wallet, fee, chainKey, () => _creditReferral(u, fee, chainKey));
+    const feeHash = await _chargeFee(wallet, fee, chainKey);
+    if (feeHash) _creditReferral(u, fee, chainKey);
 
     const key = posKey(chainKey, ca);
     const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
@@ -1674,26 +1473,20 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
   // already honours Fast/Turbo; retries escalate above it.
   const gasMult = Math.max(userGasBoost(u), (opts && opts.gasMult) || 1);
   const slipAdd = BigInt(Math.max(0, Math.round((opts && opts.slipAddBps) || 0)));
-  const sent = (h) => { try { if (opts && opts.onSent && h) opts.onSent(h); } catch (_) {} };
   return withWalletLock(wal.address, async () => {
     chainKey = chainKey || userChain(u);
     const chain = chainOf(chainKey);
     const wallet = _signer(wal, chainKey);
     const erc = new ethers.Contract(ca, ERC20_ABI, wallet);
-    const deadline = Math.floor(Date.now() / 1000) + 600;
-    // Same story as buy(): the bag size, the curve lookup and the gas price are
-    // three independent reads that were awaited one after another. An exit is the
-    // trade where latency is felt most, so they go out together.
-    const [bal, curve, gas] = await Promise.all([
-      erc.balanceOf(wallet.address),
-      resolveCurve(ca, chainKey),
-      gasOverrides(chainKey, gasMult),
-    ]);
+    const bal = await erc.balanceOf(wallet.address);
     const p = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
     const amount = (bal * BigInt(p)) / 100n;
     if (amount <= 0n) throw new Error('token balance is 0');
 
+    const curve = await resolveCurve(ca, chainKey);
     const grad = curve ? await isGraduated(curve, chainKey) : true;
+    const deadline = Math.floor(Date.now() / 1000) + 600;
+    const gas = await gasOverrides(chainKey, gasMult);
     const slip = (() => { let s = slipBps(u) + slipAdd; return s > 5000n ? 5000n : s; })();   // capped 50%
     const onCurve = !!(curve && !grad);
     // DEX sells route to whichever venue is deepest (V2 pair vs V3 pool) — the
@@ -1729,8 +1522,8 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       // sell is bounded work, so 600k is safe headroom; rawSend surfaces the node's real
       // reason if it rejects (e.g. a private-beta NotAllowed).
       const data = cc.interface.encodeFunctionData('sell', [sellAmt, minEth, deadline]);
-      hash = await rawSend(wallet, chainKey, curve, data, 600000n, 0n, gasMult, { fee: gas });
-      venue = 'curve'; sent(hash);
+      hash = await rawSend(wallet, chainKey, curve, data, 600000n, 0n, gasMult);
+      venue = 'curve';
       trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the sell reverted on-chain — you may not be allowed to sell this token yet (private beta), or try a slightly smaller amount. Tx: ' + hash);
     } else if (v3) {
@@ -1751,8 +1544,8 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       const ri = new ethers.Interface(V3_ROUTER_ABI);
       const dataV3 = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: ca, tokenOut: chain.weth, fee: pick.feeTier, recipient: wallet.address, amountIn: amount, amountOutMinimum: minW, sqrtPriceLimitX96: 0n }]);
       const gLim = await v3SwapGas(chainKey, wallet.address, v3.router, dataV3, 0n);   // audit B2: estimate, don't hardcode
-      hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, 0n, gasMult, { fee: gas });
-      venue = 'dex·v3'; sent(hash); trc = await waitHash(hash, chainKey);
+      hash = await rawSend(wallet, chainKey, v3.router, dataV3, gLim, 0n, gasMult);
+      venue = 'dex·v3'; trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the V3 sell reverted on-chain (price moved past your slippage, or gas) — try again or a slightly smaller amount. Tx: ' + hash);
       // Post-swap WETH received. Retry the read; if it can't be read at all after
       // a CONFIRMED swap, fall back to the expected output (expW) rather than
@@ -1781,7 +1574,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       const minEth = expEth > 0n ? expEth * (10000n - dexSlip) / 10000n : 0n;
       if (minEth <= 0n) throw new Error('no liquidity / zero quote for this sell on ' + chain.name);   // never send minOut=0 (sandwich drain)
       const tx = await router.swapExactTokensForETHSupportingFeeOnTransferTokens(amount, minEth, [ca, chain.weth], wallet.address, deadline, gas);
-      venue = 'dex'; hash = tx.hash; sent(hash); trc = await waitBounded(tx);
+      venue = 'dex'; hash = tx.hash; trc = await waitBounded(tx);
     }
     const tokAfter = await erc.balanceOf(wallet.address);
     // Confirmed = receipt status 1, OR tokens actually left the wallet. Only
@@ -1797,10 +1590,8 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // to the native delta rather than recording a total loss.
     const proceeds = (v3ProceedsWei != null && v3ProceedsWei > 0n) ? v3ProceedsWei : (ethAfter > ethBefore ? ethAfter - ethBefore : 0n);
     const fee = (proceeds * BigInt(CFG.feeBps)) / 10000n;
-    // Broadcast the fee and move on — the referral credit fires from the
-    // background confirmation (see _chargeFee), so it stays gated on the fee
-    // actually landing without the fill waiting for it.
-    const feeHash = await _chargeFee(wallet, fee, chainKey, () => _creditReferral(u, fee, chainKey));
+    const feeHash = await _chargeFee(wallet, fee, chainKey);
+    if (feeHash) _creditReferral(u, fee, chainKey);
 
     const key = posKey(chainKey, ca);
     const pos = wal.positions[key];

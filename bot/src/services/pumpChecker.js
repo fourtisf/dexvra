@@ -1,11 +1,8 @@
-// Pump alerts: polls each approved listing's live price and announces every ROUND
-// MILESTONE it passes — +100%, +200%, +300% … up to the ceiling — measured from
-// the baseline (the price first observed by the bot ≈ listing time). One alert per
-// step, each posted as a REPLY to the original listing post and tweeted as a quote
-// of the listing tweet; carries the admin's pump GIF/video clip when one is set.
-// The window (default 100%–2000%) is admin-configurable; see the milestone block
-// below for why the number announced is a step and not the raw gain. Baseline and
-// the per-step latch persist across restarts.
+// Pump alerts: polls each approved listing's live price and fires a one-time
+// alert when it's up 100–5000% (up to 50×) from the baseline (the price first
+// observed by the bot ≈ listing time). Posts as a REPLY to the original listing
+// post (like fourtis) and tweets; carries the admin's pump GIF/video clip when
+// one is set. Baseline + once-only latch persist across restarts.
 const { PUMP_CHECK_MS, CHANNELS, SITE_URL, X_POST_TIMEOUT_MS } = require("../config/constants");
 const api = require("../api/dexvra");
 const { fetchMarket } = require("../marketdata");
@@ -28,78 +25,6 @@ let baseline = loadJSONSync(BASE_FILE, {});
 const latch = new DedupSet("pumplatch.json");
 const keyOf = (r) => `${r.chain}:${String(r.address).toLowerCase()}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ---------------------------------------------------------------- milestones
-//
-// A pump alert announces a ROUND STEP — +100%, +200%, +300% … up to the ceiling —
-// and announces one EVERY time the token reaches a new step.
-//
-// It used to fire exactly once per token, at whatever the raw gain happened to be
-// on the poll that caught it. That is why a token up 282% announced "+282%": not a
-// threshold anybody chose, just the number the 30-second poll landed on. A token
-// that then went on to 10x said nothing more about it.
-//
-// Two rules keep the ladder from becoming noise:
-//   • a step is announced at most once, ever (latched per token AND per step);
-//   • a token that JUMPS several steps between polls — 90% straight to 450% —
-//     announces ONCE, at the highest step it reached, and the steps it skipped are
-//     marked consumed rather than posted. Four alerts in one second for one price
-//     move is spam, not information.
-const MILESTONE_STEP = Math.max(1, Math.round(Number(process.env.PUMP_MILESTONE_STEP) || 100));
-
-/** The step this gain has reached, or null if it has not reached one.
- *  Floored, so +282% is "+200%" — the milestone actually passed, never rounded up
- *  to one the token has not reached. */
-function milestoneFor(pct, minPct, maxPct) {
-  if (!(pct >= minPct)) return null;
-  const m = Math.floor(pct / MILESTONE_STEP) * MILESTONE_STEP;
-  return m >= minPct && m <= maxPct ? m : null;
-}
-/** Latch keys for every step from the floor up to and including `milestone`. */
-function stepKeys(key, milestone, minPct, maxPct) {
-  const out = [];
-  const first = Math.ceil(minPct / MILESTONE_STEP) * MILESTONE_STEP;
-  for (let m = first; m <= milestone && m <= maxPct; m += MILESTONE_STEP) out.push(`${key}@${m}`);
-  return out;
-}
-
-/** Retire a pre-ladder token onto the ladder, ONCE.
- *
- *  Before the ladder a token latched under its BARE key, so on the first poll
- *  after the upgrade it is already standing above steps it never announced.
- *  Those steps are consumed rather than posted, or deploying would have dumped an
- *  alert for every previously-pumped listing into the channel at once.
- *
- *  Dropping the legacy marker is the other half, and leaving it out is a bug that
- *  looks exactly like success: the marker made `latch.has(key)` true FOREVER, so
- *  every later step took this same silent branch and the token could never alert
- *  again. It went unnoticed because nothing is logged and nothing is posted —
- *  the only trace was consumed step keys in the latch file with no matching
- *  alert. Absorb once, drop the marker, and the very next step posts normally. */
-async function absorbLegacy(latchSet, key, milestone, minPct, maxPct) {
-  await latchSet.addAll(stepKeys(key, milestone, minPct, maxPct));
-  await latchSet.delete(key);
-  return true;
-}
-
-/** What this poll should do with a token standing at `milestone`:
- *    'retire' — a pre-ladder token: consume its history, drop the legacy marker,
- *               post nothing;
- *    'skip'   — this step has already been announced;
- *    'post'   — announce it.
- *
- *  ORDER MATTERS, and getting it wrong is subtle enough to have shipped twice.
- *  The legacy marker is checked FIRST. Checking the step latch first looks
- *  equivalent and is not: a token already carrying a consumed step key for where
- *  it currently stands would 'skip' every poll, so the marker survived until the
- *  token reached a NEW step — and the migration branch then ate that step too,
- *  because retiring never posts. Retiring on the very next poll costs the token
- *  nothing it had not already lost, and it alerts normally from then on. */
-function decide(latchSet, key, milestone) {
-  if (latchSet.has(key)) return "retire";
-  if (latchSet.has(`${key}@${milestone}`)) return "skip";
-  return "post";
-}
 
 function coinOf(r, price, mcap) {
   return {
@@ -208,24 +133,7 @@ function start(tg) {
       const pct = ((m.priceUsd - base.price) / base.price) * 100;
       const { minPct, maxPct } = pumpConfig.get(); // admin-set window (default 100%–2000%)
       if (pct < minPct || pct > maxPct) continue;
-
-      // Announce the STEP reached, not the raw gain this poll happened to catch.
-      const milestone = milestoneFor(pct, minPct, maxPct);
-      if (milestone == null) continue;
-      // retire / skip / post — see decide(). MIGRATION off the old once-per-token
-      // latch happens first: before the ladder a token latched under its BARE key,
-      // and every one of those already stands above steps it never announced, so
-      // announcing them would dump an alert for every previously-pumped listing
-      // into a channel with twelve thousand subscribers the moment this deploys.
-      const action = decide(latch, key, milestone);
-      if (action === "skip") continue; // this step already went out
-      if (action === "retire") {
-        await absorbLegacy(latch, key, milestone, minPct, maxPct);
-        log.event(
-          `📈 Pump: ${r.sym || r.address} pre-ladder — steps ≤ ${milestone}% absorbed, next alert at +${milestone + MILESTONE_STEP}%`,
-        );
-        continue;
-      }
+      if (latch.has(key)) continue;
 
       const ids = postids.get(r.chain, r.address);
       const targets = pumpTargets(ids);
@@ -237,7 +145,7 @@ function start(tg) {
         continue;
       }
       const coin = coinOf(r, m.priceUsd, m.mcap);
-      const media = await pumpMedia(r, base, m, milestone); // admin pump clip + overlay (null → text reply)
+      const media = await pumpMedia(r, base, m, pct); // admin pump clip + overlay (null → text reply)
       // A pump tweet MUST quote the token's own listing tweet — the same rule
       // pumpTargets enforces on Telegram, for the same reason: standing alone on
       // the listing feed, "+240% since listing" is indistinguishable from a shill
@@ -251,14 +159,14 @@ function start(tg) {
       let pumpTweetId = null;
       if (ids.listingTweetId) {
         pumpTweetId = await Promise.race([
-          x.postPump(coin, milestone, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
+          x.postPump(coin, pct, base.mcap || 0, m.mcap || 0, ids.listingTweetId, media).catch(() => null),
           new Promise((res) => setTimeout(res, X_POST_TIMEOUT_MS, null)),
         ]);
       } else if (x.enabled()) {
         log.debug(`[pump] ${r.sym || r.address}: no listing tweet to quote — Telegram only`);
       }
       if (pumpTweetId) coin.xUrl = `https://x.com/i/status/${pumpTweetId}`;
-      const card = fmt.pumpPost(coin, milestone, base.mcap || 0, m.mcap || 0);
+      const card = fmt.pumpPost(coin, pct, base.mcap || 0, m.mcap || 0);
       // "Did the alert post?" means ANY target took it, not specifically the
       // listing channel. Counting only CHANNELS.listing left a token that has an
       // @dexvraio announcement but no listing-channel post (the listing post
@@ -278,13 +186,11 @@ function start(tg) {
       // budget at DETECTION time meant a failed post burned it forever and the
       // token could never alert again.
       if (!posted) {
-        log.warn(`[pump] ${r.sym || r.address}: +${milestone}% alert did not post — not latching, will retry next cycle`);
+        log.warn(`[pump] ${r.sym || r.address}: alert did not post — not latching, will retry next cycle`);
         continue;
       }
-      // Consume the step just announced AND every step below it, so a jump that
-      // cleared several at once cannot backfill them as separate alerts later.
-      await latch.addAll(stepKeys(key, milestone, minPct, maxPct));
-      log.event(`📈 Pump: ${r.sym} +${milestone}% since listing (${r.chain}, actual +${Math.round(pct)}%)`);
+      await latch.add(key);
+      log.event(`📈 Pump: ${r.sym} +${Math.round(pct)}% since listing (${r.chain})`);
     }
   };
   const iv = setInterval(run, PUMP_CHECK_MS);
@@ -297,4 +203,4 @@ function start(tg) {
   };
 }
 
-module.exports = { start, pumpTargets, milestoneFor, stepKeys, absorbLegacy, decide, MILESTONE_STEP };
+module.exports = { start, pumpTargets };
