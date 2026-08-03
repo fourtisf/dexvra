@@ -329,3 +329,140 @@ test('Solana: dust and unreadable balances behave the same as on EVM', async () 
   seedSol({ baseline: 1000n });
   assert.deepEqual(await solCycle(null), [], 'an unreadable SPL balance was read as a sale');
 });
+
+// ---------------------------------------------------------------- second audit
+//
+// Four defects that the twenty-two tests above all passed over. Every one of
+// them ends the same way — the user is left holding a bag the bot said it would
+// close, and is told nothing — which is the one outcome this feature exists to
+// prevent. They are pinned here as behaviour, driven through the real cycle.
+
+test('a target that had ALREADY dumped when we copied it still gets exited', async () => {
+  // THE ZERO-BASELINE TRAP. Copy detects the buy, we fill, and by the time we
+  // read the target's balance for the baseline they are already out — seconds,
+  // on a fast rug. That recorded a baseline of 0, and a 0 baseline read as "no
+  // baseline yet, adopt this one" on EVERY cycle: copyHoldingBump refuses to
+  // lower a peak, so the baseline stayed 0 and the branch caught it again for
+  // ever. The fastest rug there is was the one case that never exited.
+  const { t } = seed({ baseline: 0n });
+  const sells = await cycle(0n);
+  assert.equal(sells.length, 1, 'the position was parked for ever on a zero baseline');
+  assert.equal(sells[0].pct, 100);
+  assert.equal(Object.keys(t.holding).length, 0);
+});
+
+test('a baseline that could never be read does not park the position either', async () => {
+  // Same trap through the other door: _targetBalance returned null at buy time,
+  // so copyHoldingAdd stored bal:'' — which parses to 0 and lands in the same
+  // branch. A followed wallet holding NONE of a token is an exit, and it needs
+  // no baseline to be one.
+  const { t } = seed({ baseline: null, wid: 'wBUY' });
+  t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: '', at: Date.now(), wid: 'wBUY', tries: 0 };
+  assert.equal((await cycle(0n)).length, 1, 'an unknown baseline parked the position');
+});
+
+test('a first positive read still becomes the baseline, and does not sell', async () => {
+  // The other half of that branch has to keep working: an unknown baseline plus
+  // a target that DOES hold the token is an adoption, never an exit.
+  const { t } = seed({ baseline: null, wid: 'wBUY' });
+  t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: '', at: Date.now(), wid: 'wBUY', tries: 0 };
+  assert.deepEqual(await cycle(5000n), [], 'adopting a baseline sold the position');
+  assert.equal(t.holding[core.copyTokenKey(CHAIN, TOKEN)].bal, '5000', 'the baseline was not adopted');
+});
+
+test('a read that could not see every wallet never retires the position', async () => {
+  // "We could not read your wallets" is not the same answer as "you hold none of
+  // it", and acting on it is fatal: the sell lands on a wallet the read failed
+  // to vouch for, throws "token balance is 0" — which is on the swallow list —
+  // and the position leaves the ledger for good while the bag is still there.
+  //
+  // _exitWalletId knew this and returned known:false. It also handed back the
+  // PINNED wallet id, and the caller only skipped when BOTH were empty — so on
+  // every position copy ever opened (all of which are pinned) the guard was
+  // dead code.
+  const { t } = seed({ baseline: 1000n, wid: 'wBUY' });
+  const sells = await cycle(600n, {
+    holders: { wBUY: 0n, wOTHER: null },        // the tokens were moved; that wallet is unreadable
+    sellImpl: () => { throw new Error('token balance is 0'); },
+  });
+  assert.deepEqual(sells, [], 'sold from a wallet the read said was empty');
+  assert.equal(Object.keys(t.holding).length, 1, 'the position was retired on an unknown read');
+});
+
+test('a read that failed everywhere leaves the position alone', async () => {
+  const { t } = seed({ baseline: 1000n, wid: 'wBUY' });
+  const sells = await cycle(600n, { holders: { wBUY: null, wOTHER: null } });
+  assert.deepEqual(sells, [], 'sold on a balance read that failed on every wallet');
+  assert.equal(Object.keys(t.holding).length, 1, 'the position was retired on a total read failure');
+});
+
+test('a read that CAN see every wallet and finds none still retires it', async () => {
+  // The counterweight: a complete, readable, empty answer is proof the user got
+  // out by hand, and the ledger must not keep the position for ever.
+  const { t } = seed({ baseline: 1000n, wid: 'wBUY' });
+  assert.deepEqual(await cycle(600n, { holders: { wBUY: 0n, wOTHER: 0n } }), []);
+  assert.equal(Object.keys(t.holding).length, 0, 'a hand-sold position stayed on the ledger');
+});
+
+test('the target balances are read together, not one round trip at a time', async () => {
+  // One serial RPC per held token, per cycle, across every user on the box: at
+  // ~400ms a read, twenty positions is the entire 8s loop, and the loop only
+  // sleeps after the cycle RETURNS. The exit that matters simply arrives later
+  // and later as the bot grows. They are independent reads.
+  core.DB.users = {};
+  const u = core.ensureUser(CHAT);
+  u.wallets = [{ id: 'wBUY', name: 'Buyer', address: '0x' + '11'.repeat(20), positions: {}, orders: [], history: [] }];
+  u.activeWalletId = 'wBUY';
+  const tokens = Array.from({ length: 12 }, (_, i) => '0x' + String(i).padStart(2, '0').repeat(20));
+  u.copy = { on: true, targets: [{ id: 'cp1', address: TARGET, chain: CHAIN, mode: 'trades',
+    buyEth: '0.01', maxEth: '1', spentEth: 0.01, bought: {}, holding: {}, copySell: true }] };
+  for (const tk of tokens) u.copy.targets[0].holding[core.copyTokenKey(CHAIN, tk)] = { bal: '1000', at: Date.now(), wid: 'wBUY', tries: 0 };
+
+  let inFlight = 0, peak = 0;
+  const realBal = core.tokenBalanceOrNull, realAcross = core.tokenBalancesAcross;
+  core.tokenBalanceOrNull = async () => {
+    peak = Math.max(peak, ++inFlight);
+    await new Promise((r) => setTimeout(r, 20));
+    inFlight--; return 1000n;                  // unchanged → no sells, we are timing the reads
+  };
+  core.tokenBalancesAcross = async () => [{ id: 'wBUY', index: 1, label: 'Buyer', raw: 1000n }];
+  try { await watchers.copyExitCycle(); }
+  finally { core.tokenBalanceOrNull = realBal; core.tokenBalancesAcross = realAcross; }
+  assert.ok(peak > 1, `the balance reads still run one at a time (peak concurrency ${peak})`);
+});
+
+test('a buy that was broadcast but never confirmed is still exit-mirrored', async () => {
+  // The budget is deliberately NOT refunded when core.buy throws err.broadcast —
+  // the tx may still land, and refunding it would let the next cycle spend the
+  // same allowance twice. The position was not tracked on those same terms, so a
+  // fill we had already paid for became the one bag copy would never watch leave.
+  //
+  // If the tx really never lands, nothing is stranded: the exit cycle reads a
+  // clean zero across every wallet and retires the entry by itself.
+  const { u, t } = seed({ baseline: null });
+  t.mode = 'launches'; t.holding = {}; t.bought = {};
+  const realBuy = core.buy, realBal = core.tokenBalanceOrNull;
+  core.buy = async () => { const e = new Error('trade sent but not confirmed'); e.broadcast = true; throw e; };
+  core.tokenBalanceOrNull = async () => 7000n;
+  try { await watchers._test._followerBuy(u, t, TOKEN, CHAIN); }
+  finally { core.buy = realBuy; core.tokenBalanceOrNull = realBal; }
+
+  const h = t.holding[core.copyTokenKey(CHAIN, TOKEN)];
+  assert.ok(h, 'an unconfirmed-but-broadcast buy left the position untracked');
+  assert.equal(h.bal, '7000', 'the exit baseline was not recorded');
+  assert.equal(h.wid, 'wOTHER', 'the exit was not pinned to the buying wallet');
+  assert.equal(t.spentEth, 0.02, 'the budget must stay committed — the tx may still land');
+});
+
+test('a buy that clearly did not spend leaves no position behind', async () => {
+  // The counterweight: a plain failure rolls the budget AND the dedup back, so
+  // there is nothing to mirror out of.
+  const { u, t } = seed({ baseline: null });
+  t.mode = 'launches'; t.holding = {}; t.bought = {};
+  const realBuy = core.buy;
+  core.buy = async () => { throw new Error('insufficient ETH'); };
+  try { await watchers._test._followerBuy(u, t, TOKEN, CHAIN); }
+  finally { core.buy = realBuy; }
+  assert.equal(Object.keys(t.holding).length, 0, 'a buy that never spent left a phantom position');
+  assert.equal(t.spentEth, 0.01, 'the budget was not refunded');
+});
