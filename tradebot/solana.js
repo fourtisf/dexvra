@@ -180,20 +180,37 @@ async function splBalance(conn, owner, mint) {
     return { raw, decimals };
   } catch (_) { return { raw: 0n, decimals: 9 }; }
 }
+// Preflight makes the RPC SIMULATE a transaction before it will accept it — an extra
+// round trip plus simulation time on every swap, paid on the hot path while the price
+// moves. Jupiter has ALREADY simulated the route when it built this transaction, so the
+// second simulation buys almost nothing and costs the race; skipping it is the standard
+// configuration for latency-sensitive Solana trading. A swap that would have been
+// rejected now lands on-chain and reverts instead, costing the signature fee
+// (~0.000005 SOL) — the slippage floor in the route still protects the funds. Set
+// SOL_PREFLIGHT=1 to restore it. Plain transfers (bot fee, withdraw) keep preflight:
+// they are not races, so there is nothing to buy by skipping it.
+const SKIP_PREFLIGHT = String(process.env.SOL_PREFLIGHT || '') !== '1';
+
 // Execute a Jupiter swap: deserialize the base64 tx, sign with the keypair, send,
 // confirm. Returns the base58 signature. Throws with a readable reason on failure.
 async function sendJupiterSwap(conn, keypair, swapTransactionB64) {
   const tx = VersionedTransaction.deserialize(Buffer.from(swapTransactionB64, 'base64'));
   tx.sign([keypair]);
   const raw = tx.serialize();
-  const sig = await conn.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
+  // The blockhash for the confirmation strategy is fetched CONCURRENTLY with the
+  // broadcast. It used to be fetched only after sendRawTransaction had resolved, so
+  // every swap sat through a full extra RPC round trip — with the transaction already
+  // in flight — before confirmation could even start.
+  const bhP = conn.getLatestBlockhash('confirmed');
+  bhP.catch(() => {});   // if the send throws first, this must not surface as unhandled
+  const sig = await conn.sendRawTransaction(raw, { skipPreflight: SKIP_PREFLIGHT, maxRetries: 3 });
   // Past this point the tx is BROADCAST. A confirmation that reverts is atomic (Jupiter
   // swaps don't half-execute) → safe to treat as "didn't spend". But a confirmation that
   // THROWS (timeout / blockheight exceeded) is ambiguous — the tx may still land — so we
   // tag the error `.broadcast` + `.sig` and callers must NOT roll back budget/dedup.
   let conf;
   try {
-    const bh = await conn.getLatestBlockhash('confirmed');
+    const bh = await bhP;
     conf = await conn.confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed');
   } catch (e) {
     throw Object.assign(new Error('swap broadcast but not confirmed yet: ' + sig), { broadcast: true, sig });
@@ -236,8 +253,16 @@ async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageB
 // ---------------------------------------------------------------- native SOL transfer
 
 // Send `lamports` SOL from `keypair` to `toBase58`. Used for the bot fee and for
-// withdrawals. Confirms and returns the base58 signature.
-async function sendSol(conn, keypair, toBase58, lamports) {
+// withdrawals.
+//
+// Default: confirms, then resolves with the base58 signature (what a withdrawal
+// wants — the user is told it is done only once it is done).
+//
+// `opts.confirm === false`: resolves as soon as the transfer is BROADCAST, with
+// `{ sig, confirmed }` where `confirmed` is a promise that settles when it lands.
+// The bot-fee path uses this so a trade's receipt is not held behind the bot
+// collecting its own cut (see _chargeFeeSol in core.js).
+async function sendSol(conn, keypair, toBase58, lamports, opts) {
   const tx = new Transaction().add(SystemProgram.transfer({
     fromPubkey: keypair.publicKey, toPubkey: new PublicKey(toBase58), lamports: BigInt(lamports),
   }));
@@ -245,9 +270,14 @@ async function sendSol(conn, keypair, toBase58, lamports) {
   tx.recentBlockhash = bh.blockhash; tx.feePayer = keypair.publicKey;
   tx.sign(keypair);
   const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-  const conf = await conn.confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed');
-  if (conf && conf.value && conf.value.err) throw new Error('SOL transfer failed: ' + JSON.stringify(conf.value.err));
-  return sig;
+  const confirmed = conn
+    .confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed')
+    .then((conf) => {
+      if (conf && conf.value && conf.value.err) throw new Error('SOL transfer failed: ' + JSON.stringify(conf.value.err));
+      return sig;
+    });
+  if (opts && opts.confirm === false) { confirmed.catch(() => {}); return { sig, confirmed }; }
+  return await confirmed;
 }
 
 // ---------------------------------------------------------------- SPL transfer (withdraw)
@@ -298,8 +328,10 @@ async function jupTokenMeta(mint) {
 // Combined SPL meta: decimals from the chain (authoritative), name/symbol from Jupiter
 // (best-effort). Always resolves to a usable object so a trade can be recorded.
 async function splMeta(conn, mint) {
-  const dec = await splDecimals(conn, mint);
-  const j = await jupTokenMeta(mint);
+  // One RPC call and one HTTP call that know nothing about each other — they used
+  // to be awaited in series, so identifying a mint took the sum of both timeouts
+  // instead of the slower one. On the buy path that was pure dead time.
+  const [dec, j] = await Promise.all([splDecimals(conn, mint), jupTokenMeta(mint)]);
   const shortMint = mint.slice(0, 4) + '…' + mint.slice(-4);
   return { name: (j && j.name) || shortMint, sym: (j && j.sym) || shortMint, decimals: (j && Number.isFinite(j.decimals)) ? j.decimals : dec };
 }

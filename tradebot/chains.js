@@ -95,6 +95,44 @@ const DEFAULT_CHAIN = ENABLED.includes('robinhood') ? 'robinhood' : (ENABLED[0] 
 const kindOf = (key) => (CHAINS[key] && CHAINS[key].kind) || 'evm';
 const isSvm = (key) => kindOf(key) === 'svm';
 
+// ---------------------------------------------------------------- provider tuning
+//
+// EXECUTION LATENCY LIVES HERE. Two ethers defaults dominated how long a trade
+// took, and neither has anything to do with the chain:
+//
+//  1. pollingInterval (ethers default 4000ms) is how often the provider looks for
+//     a new block, and therefore how late `tx.wait()` / `waitForTransaction()`
+//     notice the receipt. On a sub-second L2 the tx was confirmed for up to FOUR
+//     SECONDS before the bot found out — and a buy pays that twice (the swap, then
+//     the bot-fee transfer), so ~8s of a fill was the bot sleeping on a timer.
+//     Blocks here are 0.25-12s depending on the chain, so the interval is per
+//     chain: no point polling Ethereum at 250ms, no excuse for polling an Orbit
+//     L2 at 4000ms.
+//
+//  2. batchMaxCount:1 sends every single eth_call as its own HTTP request. Every
+//     Promise.all in this codebase (venue probing, balances across wallets, token
+//     metadata) therefore paid N round trips instead of one. Batching folds them
+//     back into one request.
+//
+// The Robinhood node is deliberately EXEMPT from batching: it already returns a
+// non-standard JSON-RPC error envelope on single calls (see rawSend in core.js),
+// and a node that gets single-call framing wrong is not one to hand an array to.
+// It keeps batchMaxCount:1 and gains only the faster polling.
+//
+// Both are overridable per chain (`<CHAIN>_RPC_POLL_MS`, `<CHAIN>_RPC_BATCH`) and
+// globally (`RPC_POLL_MS`, `RPC_BATCH`) so an operator on a rate-limited public
+// endpoint can dial them back without a code change.
+const DEFAULT_POLL_MS = { robinhood: 250, arbitrum: 250, base: 400, bsc: 400, ethereum: 1000 };
+const DEFAULT_BATCH = { robinhood: 1 };   // see above — everything else batches
+function pollMsFor(key) {
+  const v = Number(env(key.toUpperCase() + '_RPC_POLL_MS', env('RPC_POLL_MS', String(DEFAULT_POLL_MS[key] || 500))));
+  return Math.min(10000, Math.max(100, v || 500));
+}
+function batchFor(key) {
+  const v = Number(env(key.toUpperCase() + '_RPC_BATCH', env('RPC_BATCH', String(DEFAULT_BATCH[key] || 10))));
+  return Math.min(100, Math.max(1, v || 1));
+}
+
 const _providers = {};
 function providerFor(key) {
   const ch = CHAINS[key];
@@ -106,7 +144,16 @@ function providerFor(key) {
       _providers[key] = require('./solana').getConnection(ch.rpc);
     } else {
       const net = new ethers.Network(ch.name, ch.chainId);
-      _providers[key] = new ethers.JsonRpcProvider(ch.rpc, net, { batchMaxCount: 1, staticNetwork: net });
+      const p = new ethers.JsonRpcProvider(ch.rpc, net, {
+        batchMaxCount: batchFor(key),
+        staticNetwork: net,
+        pollingInterval: pollMsFor(key),
+      });
+      // Also set the property: the receipt poller reads provider.pollingInterval
+      // directly, and only the constructor option would leave it at the default
+      // if a future ethers changes how the option is threaded through.
+      p.pollingInterval = pollMsFor(key);
+      _providers[key] = p;
     }
   }
   return _providers[key];
@@ -115,4 +162,4 @@ function chainOf(key) { return CHAINS[key] || null; }
 function isEnabled(key) { return ENABLED.includes(key); }
 function enabledChains() { return ENABLED.map((k) => CHAINS[k]); }
 
-module.exports = { CHAINS, ENABLED, DEFAULT_CHAIN, providerFor, chainOf, isEnabled, enabledChains, kindOf, isSvm };
+module.exports = { CHAINS, ENABLED, DEFAULT_CHAIN, providerFor, chainOf, isEnabled, enabledChains, kindOf, isSvm, pollMsFor, batchFor };

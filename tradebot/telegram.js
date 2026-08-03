@@ -18,6 +18,7 @@ const report = require('./report');   // ops reporting to admin channel (never s
 const _replyCtx = new AsyncLocalStorage();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const goplus = require('./goplus');
+const i18n = require('./i18n');       // EN/ID copy — see i18n.js for why this exists
 const safety = require('./safety');   // chain-aware token safety (GoPlus on EVM, RugCheck on Solana)
 const tokeninfo = require('./tokeninfo');
 const solana = require('./solana');   // base58 address validation + SVM helpers
@@ -54,6 +55,11 @@ const QR_API = (process.env.QR_API === undefined ? 'https://api.qrserver.com/v1/
 const qrUrl = (data) => QR_API ? `${QR_API}/?size=320x320&margin=10&data=${encodeURIComponent(data)}` : '';
 const rows = (...r) => ({ inline_keyboard: r });
 const btn = (text, data) => ({ text, callback_data: data });
+// Localized copy for a chat. core.getLang() has existed (and been exported) since
+// the schema was written; until now nothing called it and every user got English
+// regardless of what their record said. Values passed in `vars` must already be
+// escaped/formatted by the caller — i18n adds no escaping (see i18n.js).
+const T = (chatId, key, vars) => i18n.t(core.getLang(chatId), key, vars);
 
 // ------------------------------------------------------------ helpers
 // Escape ALL five HTML-sensitive chars — including " and ' — so a creator-set
@@ -723,7 +729,20 @@ function settingsScreen(chatId) {
       [btn(s.autoBuy ? '🔴 Auto-buy OFF' : '🟢 Auto-buy ON', 'abtog'), btn('✏️ Auto-buy amount', 'abamt')],
       [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn(`${s.autoProtect ? '🔴 Rug guard OFF' : '🛡 Rug guard ON'}`, 'aptog')],
       [btn('🔐 Security', 'usec'), btn('🔔 Notifications', 'ntf')],
+      [btn(i18n.t(core.getLang(chatId), 'lang.button') + ` · ${i18n.LANG_LABEL[core.getLang(chatId)]}`, 'lang')],
       [btn('❔ Help', 'help'), btn('« Menu', 'menu')],
+    ),
+  };
+}
+// Language picker. The setting itself has always been in the store — this is the
+// screen that finally lets a user reach it.
+function langScreen(chatId) {
+  const cur = core.getLang(chatId);
+  return {
+    text: T(chatId, 'lang.screen', { current: i18n.LANG_LABEL[cur] || cur }),
+    kb: rows(
+      ...i18n.LANGS.map((l) => [btn((l === cur ? '✅ ' : '') + i18n.LANG_LABEL[l], 'setlang:' + l)]),
+      [btn(T(chatId, 'lang.back'), 'set')],
     ),
   };
 }
@@ -936,7 +955,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
   const u = core.ensureUser(chatId);
   const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
   const key = chatId + ':' + (chain || core.userChain(u)) + ':' + String(ca).toLowerCase();
-  if (_inflightBuy.has(key)) return send(chatId, '⏳ Already buying that token — wait for the result before buying again.');
+  if (_inflightBuy.has(key)) return send(chatId, T(chatId, 'buy.inflight'));
   _inflightBuy.add(key);
   const expert = u.settings.expert;
   const targets = tradeTargets(chatId, walletId);
@@ -966,8 +985,8 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const entry = await Promise.race([entryP, new Promise((res) => setTimeout(res, ENTRY_MC_WAIT_MS, null))]);
       const eRate = nativeUsd(chG.native);
       const eMc = entry ? (entry.mcapUsd || (entry.mcapEth || 0) * eRate) : 0;
-      const atMc = eMc > 0 ? ` at MC <b>$${fmt(eMc)}</b>` : '';
-      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native}</b>${atMc}…`);
+      const atMc = eMc > 0 ? T(chatId, 'buy.at_mc', { mc: fmt(eMc) }) : '';
+      const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress', { amt: esc(amt), native: chG.native, atMc }));
       const r = await buying;
       const wi = walletIndex(chatId, wid);
       const usdRate = nativeUsd(r.native);
@@ -986,18 +1005,18 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
           if (usdRate > 0 && got > 0) holdUsd = `$${(got * snap.priceEth * usdRate).toFixed(2)}`;
           const pxUsd = snap.priceEth * usdRate;
           const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
-          if (pxUsd > 0) statLine = `\nEntry: <b>$${pxUsd.toPrecision(3)}</b>${mcUsd > 0 ? ` · MC <b>$${fmt(mcUsd)}</b>` : ''}`;
+          if (pxUsd > 0) statLine = '\n' + T(chatId, 'buy.receipt.entry', { px: pxUsd.toPrecision(3) }) + (mcUsd > 0 ? ` · MC <b>$${fmt(mcUsd)}</b>` : '');
         }
       } catch (_) {}
       const exp2 = core.chainOf(r.chain);
       const venue = r.venue === 'curve' ? 'Launchpad' : (r.venue === 'dex·v3' ? 'DEX (V3)' : 'DEX');
       const autoLine = await _placeAutoExit(chatId, r, wid);
       const receipt =
-        `✅ <b>Bought $${esc(r.sym)}</b>\n` +
-        `Spent: <b>${spent.toFixed(6)} ${r.native}</b> (${usd2(spent)})\n` +
-        `Got: <b>${fmt(got)} $${esc(r.sym)}</b> (${holdUsd})` +
-        statLine +
-        `\nWallet: ${esc(wl)} · ${venue}` + autoLine;
+        T(chatId, 'buy.receipt.title', { sym: esc(r.sym) }) + '\n' +
+        T(chatId, 'buy.receipt.spent', { amt: spent.toFixed(6), native: r.native, usd: usd2(spent) }) + '\n' +
+        T(chatId, 'buy.receipt.got', { amt: fmt(got), sym: esc(r.sym), usd: holdUsd }) +
+        statLine + '\n' +
+        T(chatId, 'buy.receipt.wallet', { wallet: esc(wl), venue }) + autoLine;
       const kb = { inline_keyboard: [
         [{ text: '🔍 Tx', url: `${exp2.explorer}/tx/${r.hash}` }, btn('📍 Monitor', `monn:${r.chain}:${wi}:${ca}`)],
         [btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')],
@@ -1015,7 +1034,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // Same order as the single-wallet path: every buy is in flight before the
       // progress message is awaited.
       const buys = Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
-      const progress = expert ? null : await send(chatId, `⏳ <b>Buying ${esc(amt)} ${chG.native} on ${targets.length} wallets…</b>`);
+      const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress.multi', { amt: esc(amt), native: chG.native, n: targets.length }));
       const results = await buys;
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       results.forEach((res, i) => {
@@ -1025,7 +1044,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       });
       const wi = walletIndex(chatId, targets[0].id);
       const mUsd = nativeUsd(nat || 'ETH');
-      const head = `✅ <b>Bought $${esc(sym || '')}</b> · ${okN}/${targets.length} wallets\nTotal: <b>${fmt(totTok)} $${esc(sym || '')}</b> · spent <b>${totSpent.toFixed(5)} ${esc(nat || 'ETH')}</b>${mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : ''}`;
+      const head = T(chatId, 'buy.receipt.multi', { sym: esc(sym || ''), ok: okN, n: targets.length, tokens: fmt(totTok), spent: totSpent.toFixed(5), native: esc(nat || 'ETH'), usd: mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : '' });
       const kb = rows([btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       const txt = head + '\n' + lines.join('\n');
@@ -1037,7 +1056,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const filled = results.findIndex((res) => res.status === 'fulfilled');
       if (okN > 0) startMonitor(chatId, ca, chainKey, targets[filled >= 0 ? filled : 0].id).catch(() => {});
     }
-  } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `❌ <b>Buy didn't go through</b>\n\n${esc(friendlyError(e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
+  } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'buy.failed')}\n\n${esc(friendlyError(chatId, e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
   finally { _inflightBuy.delete(key); }
 }
 // Escalating sell: if a sell fails for a RETRIABLE reason (gas rejected by a
@@ -1050,20 +1069,12 @@ const SELL_ESCALATION = [
   { gasMult: 4, slipAddBps: 1500 },     // 3rd: 4× gas, +15% slippage
 ];
 const _retriable = (m) => /max fee per gas|base fee|reverted|not confirmed|try again|could not (read|price)|coalesce|timeout|replacement|underpriced|nonce/i.test(String(m || ''));
-// Turn a raw on-chain / RPC error into one clear, professional sentence a
-// non-technical user understands. Falls back to a generic line. The original
+// Turn a raw on-chain / RPC error into one clear sentence a non-technical user
+// understands, IN THEIR LANGUAGE. The classification lives in i18n.errorKey so
+// the regexes are shared by every locale and testable on their own; the original
 // message is still logged server-side for the operator.
-function friendlyError(raw, action) {
-  const m = String(raw && (raw.message || raw) || '').toLowerCase();
-  const act = action || 'transaction';
-  if (/token balance is 0|no bag/.test(m)) return `You don't hold any of this token to sell.`;
-  if (/insufficient|need ~|exceeds balance/.test(m)) return `Not enough balance to cover this ${act} plus network gas. Top up and try again.`;
-  if (/max fee per gas|base fee|underpriced|replacement|nonce/.test(m)) return `The network gas price just moved. Please tap ${act === 'buy' ? 'Buy' : 'Sell'} again — it usually goes through on the next try.`;
-  if (/thin pool|price impact|slippage|reverted|IIA|too little received/.test(m)) return `The price moved faster than your slippage allows, so the ${act} didn't go through. Try again, or raise your slippage in ⚙️ Settings.`;
-  if (/not confirmed|timeout|pending/.test(m)) return `The network is slow right now — your ${act} may still complete. Check your wallet before trying again.`;
-  if (/could not (read|price)|pool read|quote|no pool|no liquidity/.test(m)) return `Couldn't read live pricing for this token right now. Please try again in a moment.`;
-  if (/private beta|not allowed|notallowed/.test(m)) return `This token can't be traded yet (it may be restricted). Try a different token.`;
-  return `The ${act} didn't go through. Please try again in a moment.`;
+function friendlyError(chatId, raw, action) {
+  return i18n.errorText(core.getLang(chatId), raw, action);
 }
 async function sellWithRetry(chatId, ca, pct, chain, wid, onStep) {
   let lastErr;
@@ -1089,9 +1100,9 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       let progress = null;
       const selling = sellWithRetry(chatId, ca, pct, chain, wid, (n) =>
         (progress && progress.ok && progress.result)
-          ? edit(chatId, progress.result.message_id, `⚙️ <b>Retry ${n}/2</b> — raising gas &amp; slippage to complete the sell…`).catch(() => {})
+          ? edit(chatId, progress.result.message_id, T(chatId, 'sell.retry', { n })).catch(() => {})
           : null);
-      progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% of ${sym0 ? '$' + esc(sym0) : 'your token'}…</b>`);
+      progress = expert ? null : await send(chatId, T(chatId, 'sell.progress', { pct, what: sym0 ? '$' + esc(sym0) : T(chatId, 'sell.your_token') }));
       const r = await selling;
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
@@ -1103,13 +1114,16 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const pnl = Number(r.realizedEth);   // profit/loss on this sell in native
       const pnlUsd = sUsd > 0 ? pnl * sUsd : null;
       const pnlLine = Number.isFinite(pnl) && pnl !== 0
-        ? `\nP/L: <b>${pnl >= 0 ? '🟢 +' : '🔴 '}${pnl.toFixed(6)} ${r.native}</b>${pnlUsd != null ? ` (${pnl >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)})` : ''}`
+        ? '\n' + T(chatId, 'sell.receipt.pnl', {
+            pnl: `${pnl >= 0 ? '🟢 +' : '🔴 '}${pnl.toFixed(6)} ${r.native}`,
+            usd: pnlUsd != null ? ` (${pnl >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)})` : '',
+          })
         : '';
       const receipt =
-        `✅ <b>Sold ${r.soldPct}% of $${esc((r.sym) || sym0 || '')}</b>\n` +
-        `Received: <b>${got2.toFixed(6)} ${r.native}</b>${sUsd > 0 ? ` ($${(got2 * sUsd).toFixed(2)})` : ''}` +
-        pnlLine +
-        `\nWallet: ${esc(wl2)} · ${svenue}`;
+        T(chatId, 'sell.receipt.title', { pct: r.soldPct, sym: esc((r.sym) || sym0 || '') }) + '\n' +
+        T(chatId, 'sell.receipt.received', { amt: got2.toFixed(6), native: r.native, usd: sUsd > 0 ? ` ($${(got2 * sUsd).toFixed(2)})` : '' }) +
+        pnlLine + '\n' +
+        T(chatId, 'buy.receipt.wallet', { wallet: esc(wl2), venue: svenue });
       const kb = { inline_keyboard: [
         [{ text: '🔍 Tx', url: `${sexp.explorer}/tx/${r.hash}` }, btn('🔄 Card', `tok:${r.chain}:${wi}:${ca}`)],
         [btn('📊 Portfolio', 'pos')],
@@ -1117,23 +1131,23 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       if (pid) await edit(chatId, pid, receipt, kb); else await send(chatId, receipt, kb);
     } else {
-      const progress = expert ? null : await send(chatId, `⏳ <b>Selling ${pct}% on ${targets.length} wallets…</b>`);
+      const progress = expert ? null : await send(chatId, T(chatId, 'sell.progress.multi', { pct, n: targets.length }));
       const results = await Promise.allSettled(targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id)));
       let okN = 0, skip = 0, totProceeds = 0, totFee = 0, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
         if (res.status === 'fulfilled') { const r = res.value; okN++; totProceeds += Number(r.proceedsEth) || 0; totFee += Number(r.feeEth) || 0; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(`• ${esc(t.label)}: ${r.proceedsEth} ${r.native}`); }
-        else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• ${esc(t.label)}: — no bag`); } else lines.push(`• ${esc(t.label)}: ❌ ${esc(msg.slice(0, 60))}`); }
+        else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• ${esc(t.label)}: ${T(chatId, 'sell.no_bag')}`); } else lines.push(`• ${esc(t.label)}: ❌ ${esc(friendlyError(chatId, e, 'sell'))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
       const msUsd = nativeUsd(nat || 'ETH');
-      const head = `✅ <b>Sold ${pct}%</b> · ${okN}/${targets.length} wallets${skip ? ` (${skip} had no bag)` : ''}\nTotal received: <b>${totProceeds.toFixed(5)} ${esc(nat || 'ETH')}</b>${msUsd > 0 ? ` ($${(totProceeds * msUsd).toFixed(2)})` : ''}`;
+      const head = T(chatId, 'sell.receipt.multi', { pct, ok: okN, n: targets.length, skip: skip ? T(chatId, 'sell.receipt.multi.skip', { n: skip }) : '', amt: totProceeds.toFixed(5), native: esc(nat || 'ETH'), usd: msUsd > 0 ? ` ($${(totProceeds * msUsd).toFixed(2)})` : '' });
       const kb = rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       const txt = head + '\n' + lines.join('\n');
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
     }
-  } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `❌ <b>Sell didn't go through</b>\n\n${esc(friendlyError(e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
+  } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'sell.failed')}\n\n${esc(friendlyError(chatId, e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
 }
 
 // The group notice exists for ONE reader: someone who typed a command at the bot
@@ -1213,7 +1227,7 @@ async function onMessageImpl(m) {
   if (p && Date.now() - (p.ts || 0) > PENDING_TTL) { pending.delete(chatId); p = null; }   // expire stale prompts
   if (p && !text.startsWith('/')) { pending.delete(chatId); return await resolvePending(chatId, p, text, m); }
   if (text.startsWith('/')) pending.delete(chatId);   // a command aborts any pending flow
-  if (text === '/cancel') return send(chatId, 'Cancelled.', mainMenu());
+  if (text === '/cancel') return send(chatId, T(chatId, 'common.cancelled'), mainMenu());
 
   if (text.startsWith('/start')) {
     const payload = text.split(/\s+/)[1] || null;
@@ -1243,7 +1257,7 @@ async function onMessageImpl(m) {
     core.noteUser(chatId, m.from);                 // capture @username now that the user exists
     report.onStart(core.getUser(chatId), isNew, ref, core.allUsers().length);   // → admin channel (fire-and-forget)
     if (deepCa) {
-      if (isNew) await send(chatId, `👋 <b>Welcome to Dexvra Trade Bot</b>\n\nA wallet was just created for you. To start trading, tap 💼 Wallets → 📥 to get your deposit address and add some funds. Here's the token you tapped 👇`, mainMenu());
+      if (isNew) await send(chatId, T(chatId, 'start.deeplink.new'), mainMenu());
       try {
         let chain = deepChain;   // chain carried by the link → no detection needed
         if (!chain) {
@@ -1272,9 +1286,7 @@ async function onMessageImpl(m) {
         // tap-to-copy — so the user pastes it and retries (same card path, which
         // succeeds on a retry). Silence here read as "the button does nothing".
         console.error('deep-link card', e && (e.message || e));
-        return send(chatId,
-          `⚠️ <b>Couldn't open that token just now.</b>\n\nTap to copy its contract and paste it here to try again 👇\n<code>${esc(deepCa)}</code>`,
-          mainMenu());
+        return send(chatId, `${T(chatId, 'start.deeplink.fail')}\n<code>${esc(deepCa)}</code>`, mainMenu());
       }
     }
     const activeW = core.activeWallet(core.ensureUser(chatId));
@@ -1283,15 +1295,16 @@ async function onMessageImpl(m) {
     const welcomeKb = (isNew && activeW)
       ? { inline_keyboard: [[btn('📥 Get my deposit address', 'qrw:' + activeW.id)], [btn('❔ How it works', 'help'), btn('« Menu', 'menu')]] }
       : mainMenu();
+    const startNative = core.chainOf(core.userChain(core.ensureUser(chatId))).native;
     await send(chatId,
-      `👋 <b>Welcome to Dexvra Trade Bot</b>\n\n` +
-      `Buy and sell tokens right here in Telegram — no website, no wallet app, no extension.\n\n` +
-      `<b>Get started in 3 steps</b>\n` +
-      `1️⃣ <b>Add funds.</b> Tap <b>📥 Get my deposit address</b> below and send some ${core.chainOf(core.userChain(core.ensureUser(chatId))).native} to it.\n` +
-      `2️⃣ <b>Pick a token.</b> Paste its contract address here — you'll get a live card with price, safety and your holdings.\n` +
-      `3️⃣ <b>Trade.</b> Tap Buy or Sell. That's it.\n\n` +
-      `<i>Your wallet is created and secured for you — only you can withdraw. Never share your private key with anyone.</i>\n\n` +
-      (isNew ? `👇 A wallet was just created for you. Add funds to begin.` : `👇 Here's your wallet.`),
+      T(chatId, 'start.title') + '\n\n' +
+      T(chatId, 'start.pitch') + '\n\n' +
+      T(chatId, 'start.steps.head') + '\n' +
+      T(chatId, 'start.steps.1', { native: startNative }) + '\n' +
+      T(chatId, 'start.steps.2') + '\n' +
+      T(chatId, 'start.steps.3') + '\n\n' +
+      T(chatId, 'start.custody') + '\n\n' +
+      T(chatId, isNew ? 'start.new' : 'start.returning'),
       welcomeKb);
     const w = await walletScreen(chatId); return send(chatId, w.text, w.kb);
   }
@@ -1306,11 +1319,12 @@ async function onMessageImpl(m) {
   if (text === '/dca') { const s = dcaScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/referral' || text === '/refer') { const s = referralScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/settings') { const s = settingsScreen(chatId); return send(chatId, s.text, s.kb); }
+  if (text === '/language' || text === '/lang' || text === '/bahasa') { const s = langScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/withdraw') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 <b>Withdraw</b>\n\nPaste the wallet address you want to send your funds to.'); }
   if (text.startsWith('/send')) {
     const [, ca, to, amt] = text.split(/\s+/);
     if (!isCa(ca) || !to || !amt) return send(chatId, 'Usage: <code>/send &lt;token&gt; &lt;destination&gt; &lt;amount|max&gt;</code> — sends a held token out. Or open the token card and tap 📤 Send.');
-    try { await send(chatId, '⏳ Sending…'); const r = await core.withdrawToken(chatId, ca, to, amt); return send(chatId, `✅ <b>Sent</b> ${fmt(r.amount)} $${esc(r.sym)}\nto <code>${esc(to)}</code>\n${txLink(r.chain, r.hash)}`); }
+    try { await send(chatId, T(chatId, 'common.sending')); const r = await core.withdrawToken(chatId, ca, to, amt); return send(chatId, `✅ <b>Sent</b> ${fmt(r.amount)} $${esc(r.sym)}\nto <code>${esc(to)}</code>\n${txLink(r.chain, r.hash)}`); }
     catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
   }
   if (text === '/export') return askExport(chatId);
@@ -1368,7 +1382,7 @@ async function onMessageImpl(m) {
     }
     const c = await tokenCard(chatId, text, det.chain); return send(chatId, c.text, c.kb);
   }
-  return send(chatId, `🤔 I didn't recognise that.\n\nTo trade a token, paste its <b>contract address</b> here. Or tap a button below.`, mainMenu());
+  return send(chatId, T(chatId, 'common.unknown_input'), mainMenu());
 }
 
 async function onCallback(q) {
@@ -1395,7 +1409,7 @@ async function onCallback(q) {
   if (data === 'wdok') {
     const pp = pending.get(chatId); pending.delete(chatId);
     if (!pp || pp.action !== 'wd_confirm' || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, 'Confirmation expired. Start again with /withdraw.');
-    try { await send(chatId, '⏳ Sending…'); const r = await core.withdraw(chatId, pp.to, pp.amt, pp.chain); return send(chatId, `✅ Sent <b>${r.sentEth} ${r.native}</b>\n${txLink(pp.chain, r.hash)}`); }
+    try { await send(chatId, T(chatId, 'common.sending')); const r = await core.withdraw(chatId, pp.to, pp.amt, pp.chain); return send(chatId, `✅ Sent <b>${r.sentEth} ${r.native}</b>\n${txLink(pp.chain, r.hash)}`); }
     catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
   }
   if (data === 'menu') return edit(chatId, mid, menuGreeting(chatId), mainMenu());
@@ -1411,6 +1425,13 @@ async function onCallback(q) {
   if (k === 'dcac') { watchers.cancelDca(chatId, ca); const s = dcaScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'ref') { const s = referralScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'set') { const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'lang') { const s = langScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'setlang') {
+    try { core.setLang(chatId, ca); } catch (_) {}
+    // Confirm IN the language just chosen — the whole point of the setting.
+    await answer(q.id, i18n.t(core.getLang(chatId), 'lang.set', { lang: i18n.LANG_LABEL[core.getLang(chatId)] }).replace(/<[^>]+>/g, ''));
+    const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
+  }
   if (data === 'setslip') { setPending(chatId, { action: 'slip_val' }); return send(chatId, 'Send your <b>slippage %</b> (e.g. <code>5</code>). <code>0</code> = default (5%). Max 50.'); }
   if (data === 'setgas') { const s = gasScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'gasset') { const n = Number((data.split(':')[1]) || 1); try { core.setGasBoost(chatId, n); } catch (_) {} const s = gasScreen(chatId); await answer(q.id, `Gas priority: ${gasLabel(core.userGasBoost(core.ensureUser(chatId)))}`); return edit(chatId, mid, s.text, s.kb); }
@@ -1536,7 +1557,7 @@ async function onCallback(q) {
     const pp = pending.get(chatId);
     if (!pp || pp.action !== 'wtok_confirm' || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, 'That confirmation expired — start again from the token card.');
     pending.delete(chatId);
-    try { await send(chatId, '⏳ Sending…'); const r = await core.withdrawToken(chatId, pp.ca, pp.to, pp.amt, pp.chain, pp.walletId); return send(chatId, `✅ <b>Sent</b> ${fmt(r.amount)} $${esc(r.sym)}\nto <code>${esc(pp.to)}</code>\n${txLink(pp.chain, r.hash)}`); }
+    try { await send(chatId, T(chatId, 'common.sending')); const r = await core.withdrawToken(chatId, pp.ca, pp.to, pp.amt, pp.chain, pp.walletId); return send(chatId, `✅ <b>Sent</b> ${fmt(r.amount)} $${esc(r.sym)}\nto <code>${esc(pp.to)}</code>\n${txLink(pp.chain, r.hash)}`); }
     catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
   }
   if (k === 'wtokcancel') { const pp = pending.get(chatId); if (pp && (pp.action || '').startsWith('wtok')) pending.delete(chatId); return edit(chatId, mid, 'Send cancelled.', mainMenu()); }
@@ -2297,5 +2318,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
