@@ -527,28 +527,108 @@ async function walletPickScreen(chatId, ca, chainKey) {
     kb: { inline_keyboard: kbRows },
   };
 }
+/** The 📍 Monitor picker. /monitor used to be nothing at all — not a registered
+ *  command and not a handler — so typing it fell through to "I didn't recognise
+ *  that". The live tracker existed but was reachable only from a button on a
+ *  token card, which is exactly where someone who already bought is NOT looking.
+ *  This lists what you actually hold and opens a tracker on any of it. */
+async function monitorListScreen(chatId) {
+  const pf = await core.portfolioAll(chatId);
+  const nat = pf.native || 'ETH';
+  const open = pf.rows.filter((r) => r.open);
+  const wi = walletIndex(chatId);
+  if (!open.length) {
+    return { text: `📍 <b>Live monitor</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nYou hold nothing on this chain right now, so there is nothing to track. Buy a token and the monitor opens itself.`,
+      kb: rows([btn('📊 Portfolio', 'pos'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
+  }
+  const rate = nativeUsd(nat);
+  const L = [`📍 <b>Live monitor</b> · ${pf.chain.emoji} ${esc(pf.chain.name)}\n`,
+    'Pick a position to track. The card pins itself and refreshes on its own, across every wallet holding it.\n'];
+  const kb = [];
+  for (const r of open.slice(0, MON_LIST_ROWS)) {
+    const usdStr = rate > 0 ? ` ($${(r.valueEth * rate).toFixed(2)})` : '';
+    const n = (r.holders || []).length;
+    L.push(`<b>$${esc(r.sym)}</b> · ${r.valueEth.toFixed(4)} ${nat}${usdStr}${n > 1 ? ` · ${n} wallets` : ''}`);
+    kb.push([btn(`📍 ${r.sym}`, `monn:${pf.chain.key}:${wi}:${r.ca}`)]);
+  }
+  if (open.length > MON_LIST_ROWS) L.push(`<i>…and ${open.length - MON_LIST_ROWS} more — see 📊 Portfolio</i>`);
+  kb.push([btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]);
+  return { text: L.join('\n'), kb: { inline_keyboard: kb } };
+}
+
 async function portfolioScreen(chatId) {
   const pf = await core.portfolioAll(chatId);   // aggregated across ALL wallets (Maestro style)
   const nat = pf.native || 'ETH';
-  if (!pf.rows.length) return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nNo holdings on this chain across your wallets. Paste a token contract to buy, or switch chain.`, kb: rows([btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
-  let body = '', totalUnreal = 0, totalIn = 0, totalOut = 0;
-  for (const r of pf.rows) {
-    totalUnreal += r.unrealizedEth; totalIn += r.ethIn; totalOut += r.ethOut;
-    // x-multiple on invested = (what it's worth now + what you've already taken out) / put in.
-    const mult = r.ethIn > 0 ? (r.valueEth + r.ethOut) / r.ethIn : 0;
-    const multStr = mult > 0 ? mult.toFixed(2) + '×' : '—';
-    const pnlPct = r.ethIn > 0 ? (mult - 1) * 100 : 0;
-    const who = (r.holders && r.holders.length) ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(', ') : '—';
-    body += `<b>$${esc(r.sym)}</b> · ${usd(r.valueEth, nat)} · <b>${multStr}</b> ${r.ethIn > 0 ? `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(0)}%)` : ''}\n   ${fmt(r.tokens)} · in ${r.ethIn.toFixed(4)} → now ${r.valueEth.toFixed(4)} ${nat} · PnL <b>${r.unrealizedEth >= 0 ? '+' : ''}${r.unrealizedEth.toFixed(4)}</b>\n   held: ${who}\n   <code>${r.ca}</code>\n\n`;
+  const rate = nativeUsd(nat);
+  // Every native figure gets its USD twin. "PnL -0.0001" is not a number anyone
+  // can act on; "-0.0001 ETH (-$0.19)" is.
+  const both = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(4)} ${nat}${rate > 0 ? ` (${v >= 0 ? '+' : '−'}$${Math.abs(v * rate).toFixed(2)})` : ''}`;
+  const money = (v) => `${v.toFixed(4)} ${nat}${rate > 0 ? ` ($${(v * rate).toFixed(2)})` : ''}`;
+  // Same minus sign as both() — toFixed() emits an ASCII hyphen, so mixing the
+  // two put "−0.0005 ETH" and "-13.5%" on one line.
+  const pctStr = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+  const dot = (v) => (v >= 0 ? '🟢' : '🔴');
+  if (!pf.rows.length) {
+    return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nNo holdings on this chain across your wallets. Paste a token contract to buy, or switch chain.`,
+      kb: rows([btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
   }
-  const pMult = totalIn > 0 ? (pf.totalValueEth + totalOut) / totalIn : 0;
-  const pPct = totalIn > 0 ? (pMult - 1) * 100 : 0;
-  const text = `📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n\n` +
-    `Value <b>${usd(pf.totalValueEth, nat)}</b> · ${pf.totalValueEth.toFixed(4)} ${nat}${totalIn > 0 ? ` · <b>${pMult.toFixed(2)}×</b> (${pPct >= 0 ? '+' : ''}${pPct.toFixed(0)}%)` : ''}\n\n${body}\n` +
-    `Invested <b>${totalIn.toFixed(4)}</b> · out <b>${totalOut.toFixed(4)}</b> ${nat}\n` +
-    `Unrealized PnL: <b>${totalUnreal >= 0 ? '+' : ''}${totalUnreal.toFixed(4)} ${nat}</b> (${usd(Math.abs(totalUnreal), nat)})`;
-  return { text, kb: rows([btn('🔄 Refresh', 'pos'), btn('🧾 History', 'hist'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
+
+  const open = pf.rows.filter((r) => r.open);
+  const closed = pf.rows.filter((r) => !r.open);
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  // Three SEPARATE lines, because they are three different questions and the old
+  // card answered them on one. It printed
+  //   Value $6.17 · 0.0033 ETH · 2.13× (+113%)
+  // where the value was what you hold NOW and the multiple was every trade you
+  // have EVER made, closed ones included. A portfolio whose live positions were
+  // −2% and −67% read as "up 113%".
+  const L = [`📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n`];
+  L.push(`💰 <b>Holding now:</b> ${money(pf.totalValueEth)}`);
+  if (pf.totalCostEth > 0) {
+    const pct = (pf.totalUnrealEth / pf.totalCostEth) * 100;
+    L.push(`${dot(pf.totalUnrealEth)} <b>Unrealized:</b> ${both(pf.totalUnrealEth)} · ${pctStr(pct)} <i>on what you still hold</i>`);
+  }
+  if (Math.abs(pf.totalRealizedEth) > 1e-9) {
+    L.push(`${dot(pf.totalRealizedEth)} <b>Realized:</b> ${both(pf.totalRealizedEth)} <i>banked from closed trades</i>`);
+  }
+
+  // ── Open positions ────────────────────────────────────────────────────────
+  if (open.length) {
+    L.push(`\n<b>── Open ──</b>`);
+    for (const r of open) {
+      const pct = r.costEth > 0 ? (r.unrealizedEth / r.costEth) * 100 : null;
+      const who = (r.holders && r.holders.length)
+        ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(' · ')
+        : '—';
+      L.push(`\n<b>$${esc(r.sym)}</b> · ${money(r.valueEth)}`);
+      L.push(`   ${fmt(r.tokens)} tokens · cost ${money(r.costEth)}`);
+      if (pct != null) L.push(`   ${dot(r.unrealizedEth)} ${both(r.unrealizedEth)} · ${pctStr(pct)}`);
+      L.push(`   held: ${who}`);
+      L.push(`   <code>${r.ca}</code>`);
+    }
+  }
+
+  // ── Closed ────────────────────────────────────────────────────────────────
+  // Their own section, showing ONLY what is true of them: what was banked. The
+  // old card gave a closed token a live-looking row — "$0.0000 · 3.99× (+299%)"
+  // above "now 0.0000 ETH · PnL +0.0000" — three numbers that each mean
+  // something different and contradict each other at a glance.
+  if (closed.length) {
+    L.push(`\n<b>── Closed</b> <i>(sold out)</i> <b>──</b>`);
+    for (const r of closed.slice(0, PF_CLOSED_ROWS)) {
+      const mult = r.ethIn > 0 ? r.ethOut / r.ethIn : 0;
+      L.push(`<b>$${esc(r.sym)}</b> · ${dot(r.realizedEth)} ${both(r.realizedEth)}${mult > 0 ? ` · <b>${mult.toFixed(2)}×</b> on ${r.ethIn.toFixed(4)} ${nat}` : ''}`);
+    }
+    if (closed.length > PF_CLOSED_ROWS) L.push(`<i>…and ${closed.length - PF_CLOSED_ROWS} more — see 🧾 History</i>`);
+  }
+
+  return {
+    text: L.join('\n'),
+    kb: rows([btn('🔄 Refresh', 'pos'), btn('📍 Monitor', 'monlist')], [btn('🧾 History', 'hist'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]),
+  };
 }
+
 function historyScreen(chatId) {
   const u = core.ensureUser(chatId);
   const wal = core.activeWallet(u);
@@ -1338,6 +1418,7 @@ async function onMessageImpl(m) {
   if (text === '/wallet') { const w = await walletScreen(chatId); return send(chatId, w.text, w.kb); }
   if (text === '/chain') { const s = chainScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/portfolio' || text === '/positions') { const s = await portfolioScreen(chatId); return send(chatId, s.text, s.kb); }
+  if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/snipe') { const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/orders') { const s = ordersScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -1445,6 +1526,7 @@ async function onCallback(q) {
   if (data === 'chain') { const s = chainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'setch') { try { core.setChain(chatId, ca); } catch (_) {} const w = await walletScreen(chatId); return edit(chatId, mid, w.text, w.kb); }
   if (data === 'pos') { const s = await portfolioScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'monlist') { const s = await monitorListScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'hist') { const s = historyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snipe') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'orders') { const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -1799,40 +1881,81 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const ch = core.chainOf(chainKey);
   const w = (wid && core.walletById(u, wid)) || core.activeWallet(u);
   const wi = walletIndex(chatId, w && w.id);
-  const pos = w && (w.positions || {})[core.posKey(chainKey, ca)];
+  const posKey = core.posKey(chainKey, ca);
+  const pos = w && (w.positions || {})[posKey];
   // PARALLEL. These two reads are independent and used to run in series, so a
   // slow chain paid both timeouts back to back — up to 11s per refresh, on a
   // card whose whole job is to feel live.
-  const [snap, rawBal] = await Promise.all([
+  //
+  // The balance read covers EVERY wallet, not just the one the monitor was
+  // opened on. A multi-wallet buy fills three or four wallets at once and the
+  // card only ever showed one of them, so the P/L on screen was a fraction of
+  // the position the user actually held, with no hint the rest existed.
+  const [snap, allBals] = await Promise.all([
     withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), SNAP_TMO_MS, null),
-    withTmo(core.tokenBalanceOrNull(ca, wAddr(w, chainKey), chainKey).catch(() => null), BAL_TMO_MS, null),
+    withTmo(core.tokenBalancesAcross(chatId, ca, chainKey).catch(() => []), BAL_TMO_MS, []),
   ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
+  const dec = (pos && pos.dec) || 18;
+
+  // One row per wallet that has any stake in this token — a live bag, or a cost
+  // basis on record (which is what a wallet whose read just failed still has).
+  //
+  // Built from the WALLET LIST and not from the balance read, because the read is
+  // the thing that fails. Deriving the rows from it meant a read that threw
+  // produced no rows, hence no cost basis, hence "no open position" — the exact
+  // failure the null-not-zero handling below exists to prevent, reintroduced one
+  // level up.
+  const balById = new Map(allBals.map((b) => [b.id, b.raw]));
+  const holders = [];
+  core.walletList(u).forEach((wal, i) => {
+    const p = (wal.positions || {})[posKey];
+    const cost = posCost(p);
+    const raw = balById.has(wal.id) ? balById.get(wal.id) : null;
+    let tokens = 0, known = false, stale = false;
+    if (raw != null) {
+      tokens = Number(ethers.formatUnits(raw, (p && p.dec) || dec));
+      known = true;
+    } else if (p && p.tokens != null) {
+      // Fall back to what the buy recorded, and SAY so — a failing RPC must not
+      // render identically to a live read.
+      try { tokens = Number(ethers.formatUnits(BigInt(p.tokens), p.dec || dec)); stale = tokens > 0; } catch (_) { tokens = 0; }
+    }
+    if (tokens > 0 || cost > 0) {
+      holders.push({ id: wal.id, index: i + 1, label: core.walletLabel(wal, i + 1), tokens, cost, known, stale });
+    }
+  });
+  // The wallet the card is bound to leads the list; its buttons are the ones that
+  // sell, so it must be the one being read about first.
+  holders.sort((a, b2) => (a.id === (w && w.id) ? -1 : b2.id === (w && w.id) ? 1 : b2.tokens - a.tokens));
+
+  const balNow = holders.reduce((t, h) => t + h.tokens, 0);
+  const cost = holders.reduce((t, h) => t + h.cost, 0);
+  // Known only if EVERY wallet with a stake answered: a partial read must not be
+  // allowed to close a position another wallet may still hold.
+  const balKnown = holders.length > 0 && holders.every((h) => h.known);
+  const balStale = holders.some((h) => h.stale);
+  const multi = holders.length > 1;
+
   let closed = false;
-  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}\n`];
-  // Read the LIVE on-chain balance (not pos.tokens) so tokens sent out via 📤
-  // Send don't leave the Monitor showing a phantom bag with fake PnL.
+  // The header names the BOUND wallet, always. The Sell buttons on this card act
+  // on that wallet (or the user's trade selection) — never on every wallet in the
+  // list — so a header reading "3 wallets" over a "Sell 100%" button is an
+  // invitation to sell a third of a position and believe it is all of it. The
+  // multi-wallet total lives in the body, where it cannot be mistaken for scope.
+  const more = multi ? ` <i>· +${holders.length - 1} more below</i>` : '';
+  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
+  // Reading the LIVE on-chain balance (not pos.tokens) is what stops tokens sent
+  // out via 📤 Send from leaving the Monitor showing a phantom bag with fake PnL.
   //
   // A FAILED read is not a zero balance. tokenBalance() collapsed both to 0n, so
   // one flaky RPC right after a buy rendered "No open position", and the next
   // tick then unpinned and killed the monitor for good — on a position that had
-  // filled. tokenBalanceOrNull() returns null on failure, and only a real,
-  // successful zero is allowed to close anything.
-  let balNow = 0;
-  let balKnown = false;
-  let balStale = false;
-  if (rawBal != null) {
-    balNow = Number(ethers.formatUnits(rawBal, (pos && pos.dec) || 18));
-    balKnown = true;
-  } else if (pos && pos.tokens != null) {
-    // Fall back to what the buy recorded. This branch existed before but was
-    // unreachable, because the failure it was written for arrived as 0n.
-    try { balNow = Number(ethers.formatUnits(BigInt(pos.tokens), pos.dec || 18)); balStale = balNow > 0; } catch (_) { balNow = 0; }
-  }
-  const cost = posCost(pos);
-  const noPosition = !pos || !(cost > 0);
+  // filled. tokenBalancesAcross() reports null per wallet on failure, and only a
+  // real, successful zero is allowed to close anything.
+  const noPosition = !(cost > 0);
   if (noPosition || (balKnown && !(balNow > 0))) {
     closed = true;
     L.push('<i>No open position right now — you have sold it, or have not bought yet.</i>');
@@ -1846,12 +1969,32 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // Say when the bag is the one the BUY recorded rather than one read from the
     // chain just now — otherwise a failing RPC renders identically to a live
     // read, and tokens sent out with 📤 would show as a bag the user still has.
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
       const unreal = val - cost; const pct = (unreal / cost) * 100;
       L.push(`${unreal >= 0 ? '🟢' : '🔴'} <b>Profit/Loss:</b> ${unreal >= 0 ? '+' : ''}${pct.toFixed(2)}% (${unreal >= 0 ? '+' : ''}${unreal.toFixed(5)} ${nat}${usdRate > 0 ? ', ' + (unreal >= 0 ? '+' : '') + '$' + (unreal * usdRate).toFixed(2) : ''})`);
+    }
+    // Per-wallet breakdown. The totals above answer "how am I doing"; this
+    // answers "on which wallet", which is the question a multi-wallet buy
+    // creates and the single-wallet card could not even acknowledge. Each row
+    // carries its OWN P/L — wallets bought at different times and different
+    // prices, so one shared percentage would be wrong for most of them.
+    if (multi) {
+      L.push('');
+      L.push('💳 <b>Per wallet</b>');
+      for (const h of holders.slice(0, MON_WALLET_ROWS)) {
+        const hv = h.tokens * px;
+        const hp = h.cost > 0 && px > 0 ? ((hv - h.cost) / h.cost) * 100 : null;
+        const pnl = hp == null ? '' : ` · ${hp >= 0 ? '🟢 +' : '🔴 '}${hp.toFixed(2)}%`;
+        const note = h.stale ? ' <i>(last known)</i>' : (!h.known && !(h.tokens > 0) ? ' <i>(unreadable)</i>' : '');
+        const bound = h.id === (w && w.id) ? ' ⬅️ <i>Sell acts here</i>' : '';
+        L.push(`• ${esc(h.label)}: ${fmt(h.tokens)} $${esc(sym)} · ${h.cost.toFixed(5)} ${nat} in${pnl}${note}${bound}`);
+      }
+      // Never silently truncate — a card that drops wallets reads as a card that
+      // says you do not own them.
+      if (holders.length > MON_WALLET_ROWS) L.push(`<i>…and ${holders.length - MON_WALLET_ROWS} more — see 📊 Portfolio</i>`);
     }
   }
   if (snap) {
@@ -1900,6 +2043,12 @@ function stopMonitor(chatId, mid) {
 // a slow tick delays the next one instead of stacking on top of it.
 const MON_EVERY_MS = Math.max(5000, Number(process.env.MONITOR_REFRESH_MS || 10000));
 const MON_WINDOW_MS = Math.max(60000, Number(process.env.MONITOR_WINDOW_MS || 60 * 60 * 1000));
+// How many per-wallet rows the live card prints before it says "…and N more".
+// The wallet cap is 99; a card that printed all of them would be unreadable and
+// would risk Telegram's message limit on every refresh.
+const MON_LIST_ROWS = Math.max(1, Number(process.env.MONITOR_LIST_ROWS || 10));
+const PF_CLOSED_ROWS = Math.max(1, Number(process.env.PORTFOLIO_CLOSED_ROWS || 8));
+const MON_WALLET_ROWS = Math.max(1, Number(process.env.MONITOR_WALLET_ROWS || 8));
 const SNAP_TMO_MS = 6000;
 const BAL_TMO_MS = 5000;
 // A position must read as gone TWICE running before the monitor closes itself.
@@ -2243,6 +2392,7 @@ async function registerCommands() {
     { command: 'start',     description: 'Open the bot — wallet & main menu' },
     { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
     { command: 'portfolio', description: 'Your holdings & profit/loss' },
+    { command: 'monitor',   description: 'Live position tracker — pins & refreshes itself' },
     { command: 'history',   description: 'Your past trades' },
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
     { command: 'buy',       description: 'Buy a token: /buy <address> <amount or $usd>' },
@@ -2345,5 +2495,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

@@ -40,7 +40,7 @@ const START = TG.slice(TG.indexOf("async function _startMonitor("), TG.indexOf("
 const LOOP = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));
 assert.ok(LOOP.includes("const tick = async () =>"), "the loop slice is wrong — fix the markers before trusting anything below");
 const PAYLOAD = TG.slice(TG.indexOf("async function monitorPayload("), TG.indexOf("const _monitorByToken"));
-assert.ok(START.includes("const existing = _monitorByToken.get(tkey);") && PAYLOAD.includes("const [snap, rawBal]"),
+assert.ok(START.includes("const existing = _monitorByToken.get(tkey);") && PAYLOAD.includes("const [snap, allBals]"),
   "a slice marker is stale — fix it before trusting anything below");
 
 // ── not automatic ───────────────────────────────────────────────────────────
@@ -91,14 +91,20 @@ test("a multi-wallet buy opens a monitor and its receipt offers one", () => {
 
 test("a failed balance read is distinguishable from a real zero", () => {
   // tokenBalance() collapses both to 0n. Fine for a display; wrong wherever the
-  // number decides something.
+  // number decides something. The monitor reads every wallet now, and
+  // tokenBalancesAcross carries the same distinction per wallet: raw is null on
+  // failure, never 0.
   assert.match(CORE, /async function tokenBalanceOrNull\(ca, addr, chainKey\)/);
   assert.match(CORE, /\} catch \(_\) \{ return null; \}/);
-  assert.match(PAYLOAD, /core\.tokenBalanceOrNull\(ca, wAddr\(w, chainKey\), chainKey\)/);
+  assert.match(CORE, /async function tokenBalancesAcross\(chatId, ca, chainKey\)/);
+  assert.match(CORE, /raw: await tokenBalanceOrNull\(/, "the cross-wallet read must keep null-not-zero");
+  assert.match(PAYLOAD, /core\.tokenBalancesAcross\(chatId, ca, chainKey\)/);
 });
 
 test("only a CONFIRMED zero may close the position", () => {
-  assert.match(PAYLOAD, /let balKnown = false;/);
+  // "Confirmed" now means EVERY wallet with a stake answered — a partial read
+  // must not close a position another wallet may still be holding.
+  assert.match(PAYLOAD, /const balKnown = holders\.length > 0 && holders\.every\(\(h\) => h\.known\);/);
   assert.match(PAYLOAD, /if \(noPosition \|\| \(balKnown && !\(balNow > 0\)\)\) \{/,
     "an unread balance must not read as closed");
   assert.match(PAYLOAD, /Balance unavailable right now — retrying/, "…and it says so rather than lying");
@@ -106,9 +112,14 @@ test("only a CONFIRMED zero may close the position", () => {
 
 test("the recorded position is a real fallback now, not dead code", () => {
   // The branch existed before but could never run: the failure it was written
-  // for arrived as 0n, which took the other path.
-  assert.match(PAYLOAD, /\} else if \(pos && pos\.tokens != null\) \{/);
-  assert.match(PAYLOAD, /BigInt\(pos\.tokens\)/);
+  // for arrived as 0n, which took the other path. It is now per wallet.
+  assert.match(PAYLOAD, /\} else if \(p && p\.tokens != null\) \{/);
+  assert.match(PAYLOAD, /BigInt\(p\.tokens\)/);
+  // And the rows themselves come from the WALLET LIST, not from the read — a
+  // read that throws returns [] , and deriving rows from it wiped the cost basis
+  // and closed the position, which is the very failure this file exists for.
+  assert.match(PAYLOAD, /core\.walletList\(u\)\.forEach\(\(wal, i\) => \{/,
+    "rows must not be derived from the thing that fails");
 });
 
 test("it takes TWO closed readings to stop — one RPC is not evidence", () => {
@@ -150,7 +161,7 @@ test("stopMonitor cannot reach into another chat", () => {
 test("the two network reads run in PARALLEL", () => {
   // They are independent, and in series a slow chain paid both timeouts back to
   // back — up to 11s on a card whose whole job is to feel live.
-  assert.match(PAYLOAD, /const \[snap, rawBal\] = await Promise\.all\(\[/);
+  assert.match(PAYLOAD, /const \[snap, allBals\] = await Promise\.all\(\[/);
   assert.ok(!/await withTmo\(core\.tokenSnapshot[\s\S]{0,400}await withTmo\(core\.tokenBalance/.test(PAYLOAD),
     "no serial pair may return");
 });
@@ -227,4 +238,32 @@ test("a fallback bag is labelled, and a missing USD feed does not blank a known 
     "a recorded bag rendered identically to a live read");
   assert.match(PAYLOAD, /snap\.mcapEth > 0 \? fmt\(snap\.mcapEth\) \+ ' ' \+ nat : '—'/,
     "the card knows the market cap in native units — printing — is it looking broken over a problem it does not have");
+});
+
+// ── every wallet, not just one ───────────────────────────────────────────────
+
+test("the card reads EVERY wallet, because a multi-wallet buy fills several", () => {
+  // A 4-wallet buy filled three of them and the card showed one, so the P/L on
+  // screen was a third of the position actually held, with no hint the rest
+  // existed.
+  assert.match(PAYLOAD, /core\.tokenBalancesAcross\(chatId, ca, chainKey\)/, "the card still reads one wallet");
+  assert.match(PAYLOAD, /const balNow = holders\.reduce\(/, "the held total must span wallets");
+  assert.match(PAYLOAD, /const cost = holders\.reduce\(/, "the invested total must span wallets");
+  assert.match(PAYLOAD, /💳 <b>Per wallet<\/b>/, "there is no per-wallet breakdown");
+});
+
+test("the header names the wallet the SELL buttons act on, never the count", () => {
+  // tradeTargets() sends a sell to the card's wallet (or the user's trade
+  // selection) — never to every wallet listed. A header reading "3 wallets" over
+  // a "Sell 100%" button invites selling a third of a position believing it is
+  // all of it.
+  assert.match(PAYLOAD, /💳 \$\{esc\(core\.walletLabel\(w, wi\)\)\}/, "the header must name the bound wallet");
+  assert.ok(!/💳 \$\{esc\(who\)\}/.test(PAYLOAD), "the header must not be the wallet COUNT");
+  assert.match(PAYLOAD, /Sell acts here/, "the breakdown must mark which row the buttons touch");
+});
+
+test("a long wallet list is truncated out loud, never silently", () => {
+  // Dropping wallets from the card reads as not owning them.
+  assert.match(PAYLOAD, /holders\.slice\(0, MON_WALLET_ROWS\)/);
+  assert.match(PAYLOAD, /and \$\{holders\.length - MON_WALLET_ROWS\} more/);
 });
