@@ -42,14 +42,32 @@ test("an announcement post without a listing post still can't post stand-alone",
 
 test("the latch is spent only after the alert posts", () => {
   // Guarding this at the source level: latching at DETECTION time meant a failed
-  // post burned the token's one alert forever, and the bug is invisible in
-  // normal operation — it only shows up as an alert that never came.
+  // post burned the token's alert forever, and the bug is invisible in normal
+  // operation — it only shows up as an alert that never came. Now that alerts
+  // are a ladder the latch is per STEP, but the ordering rule is unchanged.
   const src = fss.readFileSync(require.resolve("../src/services/pumpChecker.js"), "utf8");
   const iPost = src.indexOf("post.sendMedia");
-  const iLatch = src.indexOf("await latch.add(key)");
-  assert.ok(iPost > -1 && iLatch > -1, "both steps present");
-  assert.ok(iPost < iLatch, "latch.add must come AFTER the post, not before it");
-  assert.match(src, /if \(!posted\)/, "a failed post must skip the latch");
+  const iFailGuard = src.indexOf("if (!posted)");
+  assert.ok(iPost > -1 && iFailGuard > iPost, "a failed post must skip the latch");
+
+  // There are exactly TWO places a step may be consumed, and they are different
+  // in kind, so the test pins each one rather than just counting them:
+  //   1. the MIGRATION off the old once-per-token latch, which deliberately
+  //      consumes WITHOUT posting (and so sits before the post);
+  //   2. the SUCCESS path, which must come after the post AND after the
+  //      !posted bail-out — spending it any earlier is the original bug.
+  const consumes = [...src.matchAll(/await latch\.addAll\(stepKeys\(key, milestone/g)].map((m) => m.index);
+  assert.equal(consumes.length, 2, `expected exactly two consume sites, found ${consumes.length}`);
+  const [iMigration, iSuccess] = consumes;
+  assert.ok(iMigration < iPost, "the migration consume belongs before the post");
+  const iGuard = src.lastIndexOf("if (latch.has(key))", iMigration);
+  assert.ok(iGuard > -1 && iGuard < iMigration, "the early consume must be guarded by the legacy-latch check");
+  assert.match(
+    src.slice(Math.max(0, iGuard - 700), iMigration),
+    /MIGRATION|pre-ladder|absorb/i,
+    "the early consume must be the documented migration, not a stray latch",
+  );
+  assert.ok(iSuccess > iFailGuard, "the latch must be spent AFTER the post, not before it");
 });
 
 test("an announce-only token latches after posting — it must not re-fire forever", () => {

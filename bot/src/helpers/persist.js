@@ -124,6 +124,15 @@ class DedupSet {
     await saveJSON(this.name, [...this.set]).catch(() => {});
     return true;
   }
+  /** Add several keys in ONE write. add() rewrites the whole file per key, which
+   *  is fine one at a time but not when a caller marks a run of keys at once —
+   *  the pump ladder consumes every milestone below the one it just announced. */
+  async addAll(keys) {
+    let changed = false;
+    for (const k of keys) if (!this.set.has(k)) { this.set.add(k); changed = true; }
+    if (changed) await saveJSON(this.name, [...this.set]).catch(() => {});
+    return changed;
+  }
   async delete(k) {
     if (!this.set.delete(k)) return;
     await saveJSON(this.name, [...this.set]).catch(() => {});
