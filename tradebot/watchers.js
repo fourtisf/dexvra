@@ -302,12 +302,12 @@ const ORDER_READ_TIMEOUT_MS = Math.max(1000, Number(process.env.ORDER_READ_TIMEO
 // Promise), caps total distinct reads per cycle, and hard-times-out each read — so a
 // hostile/unpriceable token can neither stall a cycle nor drain the RPC. Returns the
 // full snapshot (price + mcap) so orders can target either metric.
-function snapReader() {
-  const cache = new Map(); let reads = 0;
-  return (chain, ca) => {
+function snapReader(label) {
+  const cache = new Map(); let reads = 0, capped = 0;
+  const fn = (chain, ca) => {
     const k = chain + ':' + (core.chains.isSvm(chain) ? String(ca) : String(ca).toLowerCase());
     if (cache.has(k)) return cache.get(k);
-    if (reads++ >= ORDER_MAX_READS) { const p = Promise.resolve(null); cache.set(k, p); return p; }
+    if (reads++ >= ORDER_MAX_READS) { capped++; const p = Promise.resolve(null); cache.set(k, p); return p; }
     const p = Promise.race([
       core.tokenSnapshot(ca, chain).catch(() => null),
       new Promise((r) => setTimeout(() => r(null), ORDER_READ_TIMEOUT_MS)),
@@ -315,6 +315,29 @@ function snapReader() {
     cache.set(k, p);
     return p;
   };
+  // A cap that bites SILENTLY reads as "everything was checked and nothing
+  // triggered". Say it out loud instead.
+  fn.report = () => {
+    if (capped) console.warn(`${label || 'snapReader'}: read budget spent — ${capped} token(s) went unpriced this cycle (ORDER_MAX_READS=${ORDER_MAX_READS})`);
+    return capped;
+  };
+  return fn;
+}
+
+// Rotate the start of a work list each cycle.
+//
+// The read budget above exists to protect the RPC, and that is fair. What is not
+// fair is WHICH items pay for it: users are iterated in insertion order and the
+// order never changes, so once there are more tokens than budget it is the same
+// tail that goes unpriced every single cycle, for ever. A stop-loss that is never
+// evaluated is not a saved round trip — it is a stop-loss that does not exist,
+// and the user has no way of knowing. Rotating the start means the cap costs
+// everyone a little latency instead of costing a few people the feature.
+let _rotSeq = 0;
+function rotated(items) {
+  if (!Array.isArray(items) || items.length < 2) return items;
+  const off = (_rotSeq++ * ORDER_MAX_READS) % items.length;
+  return off ? items.slice(off).concat(items.slice(0, off)) : items;
 }
 
 function addOrder(chatId, order, walletId) {
@@ -355,10 +378,10 @@ async function ordersCycle() {
     }
   }
   if (!items.length) return;
-  const snapOf = snapReader();   // bounded, de-duped, timeout-guarded snapshot reads
+  const snapOf = snapReader('orders');   // bounded, de-duped, timeout-guarded snapshot reads
   let trailDirty = false;
   // Process concurrently (bounded) so one slow trade/user can't starve the rest.
-  await mapLimit(items, ORDER_CONCURRENCY, async ({ u, w, o }) => {
+  await mapLimit(rotated(items), ORDER_CONCURRENCY, async ({ u, w, o }) => {
     if (!Array.isArray(w.orders) || !w.orders.some((x) => x.id === o.id)) return;   // already filled/cancelled
     const chain = o.chain || SNIPE_CHAIN;
     let snap;
@@ -398,6 +421,7 @@ async function ordersCycle() {
       _notify(u.chatId, `⚠️ Order on $${esc(o.sym || '')} triggered but failed: ${esc(err.message || String(err))}\nIt was removed — re-create it if you still want it.`);
     }
   });
+  snapOf.report();
   if (trailDirty) core.saveStore();   // persist ratcheted trailing peaks (debounced)
 }
 
@@ -426,8 +450,8 @@ async function alertsCycle() {
   const items = [];
   for (const u of core.allUsers()) for (const a of (u.alerts || [])) items.push({ u, a });
   if (!items.length) return;
-  const snapOf = snapReader();
-  await mapLimit(items, ORDER_CONCURRENCY, async ({ u, a }) => {
+  const snapOf = snapReader('alerts');
+  await mapLimit(rotated(items), ORDER_CONCURRENCY, async ({ u, a }) => {
     if (!Array.isArray(u.alerts) || !u.alerts.some((x) => x.id === a.id)) return;   // cancelled since
     const chain = a.chain || SNIPE_CHAIN;
     let snap; try { snap = await snapOf(chain, a.ca); } catch (_) { return; }
@@ -443,6 +467,7 @@ async function alertsCycle() {
     const kb = { inline_keyboard: [[{ text: '📈 Trade', callback_data: `tok:${chain}:${wi}:${a.ca}` }]] };
     _notify(u.chatId, `🔔 <b>Price alert</b> — $${esc(a.sym || '')} is now <b>${a.dir === 'above' ? 'above' : 'below'}</b> your target${a.targetUsd ? ' of $' + a.targetUsd : ''} on ${c.emoji ? c.emoji + ' ' : ''}${esc(c.name || chain)}.`, kb);   // user-created one-shot signal → always deliver (never gated)
   });
+  snapOf.report();
 }
 
 // ------------------------------------------------------------------ held-position alerts
@@ -479,9 +504,9 @@ async function positionsCycle() {
     }
   }
   if (!items.length) return;
-  const snapOf = snapReader();
+  const snapOf = snapReader('positions');
   let dirty = false;
-  await mapLimit(items, ORDER_CONCURRENCY, async ({ u, w, p, heldRaw, wantProtect }) => {
+  await mapLimit(rotated(items), ORDER_CONCURRENCY, async ({ u, w, p, heldRaw, wantProtect }) => {
     let snap; try { snap = await snapOf(p.chain, p.ca); } catch (_) { return; }
     if (!snap || !(snap.priceEth > 0)) return;
     const c = core.chainOf(p.chain) || { native: 'ETH', emoji: '' };
@@ -538,6 +563,7 @@ async function positionsCycle() {
       _notify(u.chatId, `⚠️ <b>Possible rug / dump: $${esc(p.sym || '')}</b>\nValue fell to ≈ <b>${valueEth.toFixed(4)} ${c.native}</b> from a peak of ≈ ${p.peakValueEth.toFixed(4)}. Check the chart / your safety.`, kb, 'alerts');
     }
   });
+  snapOf.report();
   if (dirty) core.saveStore();
 }
 
@@ -1009,14 +1035,25 @@ async function dcaCycle() {
     // Advance the schedule + decrement the round + persist BEFORE the buy (crash-safe:
     // a restart can't replay this round). Remove the plan when it's exhausted.
     p.roundsLeft = Math.max(0, (p.roundsLeft || 0) - 1);
-    p.nextAt = now + p.intervalMin * 60000;
-    const willFinish = p.roundsLeft <= 0 || (p.budget > 0 && (Number(p.spent) + Number(p.amount)) >= p.budget - 1e-12);
+    p.nextAt = Date.now() + p.intervalMin * 60000;
+    // The budget is a CEILING, so the last round buys what is left of it, not a
+    // full-size clip. This used to only decide whether the plan was finished
+    // AFTER this buy — the round still went out at full size, so a 0.1 budget
+    // with 0.03 clips spent 0.12. Over budget is not a rounding error on
+    // somebody's money.
+    let amount = Number(p.amount);
+    if (p.budget > 0) {
+      const left = p.budget - Number(p.spent || 0);
+      if (left <= 1e-12) { u.dca = u.dca.filter((x) => x.id !== p.id); core.saveStoreNow(); return; }
+      if (left < amount) amount = left;
+    }
+    const willFinish = p.roundsLeft <= 0 || (p.budget > 0 && (Number(p.spent) + amount) >= p.budget - 1e-12);
     if (willFinish) u.dca = u.dca.filter((x) => x.id !== p.id);
     core.saveStoreNow();
     try {
-      const r = await core.buy(u.chatId, p.ca, p.amount, p.chain, p.walletId);
-      p.spent = Number(p.spent) + Number(r.spentEth || p.amount);
-      core.saveStore();
+      const r = await core.buy(u.chatId, p.ca, amount, p.chain, p.walletId);
+      p.spent = Number(p.spent) + Number(r.spentEth || amount);
+      core.saveStoreNow();   // the money already moved — don't leave the tally in a debounce window
       const left = willFinish ? 'plan complete' : `${p.roundsLeft} round${p.roundsLeft === 1 ? '' : 's'} left`;
       _notify(u.chatId, `🔁 <b>DCA buy</b> $${esc(r.sym || p.sym || '')}\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native} · ${left}\n${txLink(p.chain, r.hash)}`, undefined, 'copy');
     } catch (err) {
