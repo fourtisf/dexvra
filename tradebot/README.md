@@ -124,6 +124,24 @@ place and documented in `.env.example` under **Execution speed**:
   | Ethereum | 0.5s | 12.7s | 26.2s |
 
   Ethereum's remaining 12s is one block — that part is the chain, not the bot.
+- **Solana confirmation no longer rides a websocket.** `web3.js`'s
+  `confirmTransaction` races a WebSocket `signatureSubscribe` against a ~60s
+  blockheight-expiry timer, and makes exactly **one** HTTP status check — issued
+  the instant the subscription is set up, before the transaction can possibly have
+  landed, so it always finds nothing and is never repeated. The default RPC here
+  (`api.mainnet-beta.solana.com`) throttles that socket. When it drops, a swap that
+  confirmed on-chain in half a second is not noticed until the blockhash expires,
+  and is then reported as *"broadcast but not confirmed"* — a minute late, with the
+  user's tokens already bought. `solana.confirmSignature()` polls
+  `getSignatureStatuses` over HTTP instead:
+
+  | Solana buy | websocket healthy | websocket throttled |
+  |---|---|---|
+  | before | 2.6s | **61.3s, then reported as failed** |
+  | after | 2.0s | **2.1s, confirmed correctly** |
+
+  An on-chain revert is still a clean failure (callers may roll back budget); a
+  timeout is still only *unconfirmed* (they must not).
 
 ## Security notes (custodial = high responsibility)
 

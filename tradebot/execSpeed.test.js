@@ -53,11 +53,11 @@ test('swap skips preflight by default — Jupiter already simulated the route', 
   assert.equal(sawOpts.skipPreflight, true);
 });
 
-test('swap fetches its confirmation blockhash CONCURRENTLY with the broadcast', async () => {
-  // It used to be fetched only after sendRawTransaction resolved: a full extra
-  // round trip with the transaction already in flight, before confirmation
-  // could even start. Concurrent means the blockhash call is issued before the
-  // send has come back.
+test('the swap path needs no blockhash round trip to confirm at all', async () => {
+  // It used to fetch one AFTER sendRawTransaction returned, purely to build
+  // web3.js's confirmation strategy — a full extra round trip with the tx
+  // already in flight. Polling getSignatureStatuses needs no blockhash, so that
+  // call is gone rather than merely moved.
   const order = [];
   const conn = fakeConn({
     onBlockhash: () => order.push('blockhash-requested'),
@@ -65,13 +65,69 @@ test('swap fetches its confirmation blockhash CONCURRENTLY with the broadcast', 
     sendDelayMs: 20,
   });
   await solana.sendJupiterSwap(conn, fakeKeypair(), fakeSwapTxB64());
-  assert.deepEqual(order, ['blockhash-requested', 'send-returned']);
+  assert.deepEqual(order, ['send-returned'], 'the swap still fetches a blockhash it does not need');
+});
+
+test('confirmation NEVER depends on the websocket', async () => {
+  // The bug this replaces: web3.js confirmTransaction races a websocket
+  // signatureSubscribe against a ~60s blockheight-expiry timer, and makes exactly
+  // ONE http status check — issued before the tx can possibly have landed, so it
+  // always finds nothing and is never repeated. On the public RPC this bot
+  // defaults to, whose websocket is throttled, a swap that confirmed on-chain in
+  // half a second went unnoticed for a minute and was then reported to the user
+  // as "broadcast but not confirmed" — with their tokens already bought.
+  //
+  // fakeConn's confirmTransaction throws, so any reliance on it fails here.
+  const conn = fakeConn();
+  const sig = await solana.sendJupiterSwap(conn, fakeKeypair(), fakeSwapTxB64());
+  assert.ok(sig, 'the swap did not confirm over http');
+});
+
+test('confirmation keeps polling through a flaky RPC instead of giving up', async () => {
+  // One failed status read is a hiccup, not an answer. web3.js gave up after its
+  // single check; this must not.
+  let calls = 0;
+  const conn = {
+    sendRawTransaction: async () => 'SIGflaky',
+    getSignatureStatuses: async () => {
+      calls++;
+      if (calls === 1) throw new Error('429 rate limited');
+      if (calls === 2) return { value: [null] };            // not landed yet
+      return { value: [{ err: null, confirmationStatus: 'confirmed' }] };
+    },
+  };
+  const sig = await solana.confirmSignature(conn, 'SIGflaky', { pollMs: 5 });
+  assert.equal(sig, 'SIGflaky');
+  assert.equal(calls, 3, 'it stopped polling too early');
+});
+
+test('an on-chain failure is a clean failure, a timeout is only "unconfirmed"', async () => {
+  // These must not be conflated: a reverted swap spent nothing and callers may
+  // roll back budget; an unobserved one may well have landed and they must not.
+  const reverted = {
+    sendRawTransaction: async () => 'SIGrevert',
+    getSignatureStatuses: async () => ({ value: [{ err: { InstructionError: [0, 'x'] } }] }),
+  };
+  await assert.rejects(
+    () => solana.sendJupiterSwap(reverted, fakeKeypair(), fakeSwapTxB64()),
+    (e) => /reverted on-chain/.test(e.message) && !e.broadcast,
+  );
+
+  const silent = {
+    sendRawTransaction: async () => 'SIGsilent',
+    getSignatureStatuses: async () => ({ value: [null] }),   // never lands, never errors
+  };
+  await assert.rejects(
+    () => solana.confirmSignature(silent, 'SIGsilent', { pollMs: 5, timeoutMs: 30 }),
+    (e) => e.timedOut === true,
+  );
 });
 
 test('a swap that broadcasts but cannot confirm is tagged, not reported as failed', async () => {
   // Unchanged safety property: the tx may still land, so callers must not roll
   // back committed budget. Guarded here because the confirm path was rewritten.
-  const conn = fakeConn({ confirmThrows: true });
+  // statusThrows makes every status read fail, so confirmSignature times out.
+  const conn = fakeConn({ statusThrows: true, sig: 'unconf' });
   await assert.rejects(
     () => solana.sendJupiterSwap(conn, fakeKeypair(), fakeSwapTxB64()),
     (e) => e.broadcast === true && typeof e.sig === 'string',
@@ -170,12 +226,16 @@ function fakeConn(o = {}) {
       if (o.onSend) o.onSend(raw, opts);
       return 'SIG_' + (o.sig || 'test');
     },
-    confirmTransaction: async () => {
+    // Confirmation is polled over http now (see confirmSignature in solana.js), so
+    // the fake node answers getSignatureStatuses rather than confirmTransaction.
+    getSignatureStatuses: async () => {
       if (o.onConfirm) o.onConfirm();
-      if (o.confirmThrows) throw new Error('blockheight exceeded');
-      if (o.confirmGate) return await o.confirmGate;
-      return { value: { err: o.confirmErr || null } };
+      if (o.statusThrows) throw new Error('rpc unavailable');
+      if (o.confirmGate) await o.confirmGate;
+      return { value: [{ err: o.confirmErr || null, confirmationStatus: o.confirmErr ? null : 'confirmed' }] };
     },
+    // Present but deliberately unusable: nothing may depend on the websocket path.
+    confirmTransaction: async () => { throw new Error('confirmTransaction must not be used — it depends on a websocket'); },
   };
 }
 

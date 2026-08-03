@@ -191,6 +191,58 @@ async function splBalance(conn, owner, mint) {
 // they are not races, so there is nothing to buy by skipping it.
 const SKIP_PREFLIGHT = String(process.env.SOL_PREFLIGHT || '') !== '1';
 
+// How we learn a Solana transaction landed. See confirmSignature below for why this
+// is ours and not web3.js's.
+// 200ms: Solana reaches 'confirmed' in roughly 400-800ms, so this is the granularity
+// at which we notice — the average lag it adds is half of it. Tighter costs requests
+// for little gain, looser starts giving back the very latency this exists to remove.
+// A confirmation window of about a second means ~5 status reads per trade.
+const CONFIRM_POLL_MS = Math.max(50, Number(process.env.SOL_CONFIRM_POLL_MS || 200));
+const CONFIRM_TIMEOUT_MS = Math.max(5000, Number(process.env.SOL_CONFIRM_TIMEOUT_MS || 60000));
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Wait for `sig` to reach `confirmed`, by POLLING getSignatureStatuses over HTTP.
+ *
+ *  web3.js's own connection.confirmTransaction() cannot be used here. With the
+ *  blockhash strategy it races a WEBSOCKET `signatureSubscribe` against a
+ *  blockheight-expiry timer, and it makes exactly ONE http getSignatureStatus check
+ *  — issued the instant the subscription is set up, i.e. before the transaction can
+ *  possibly have landed. That check finds nothing and is never repeated. From then
+ *  on the websocket is the only thing that can report success.
+ *
+ *  The default RPC for this bot is api.mainnet-beta.solana.com, whose websocket is
+ *  aggressively throttled. When that subscription is dropped or never establishes, a
+ *  swap that actually confirmed on-chain in half a second is simply not noticed: the
+ *  call sits until the blockhash expires roughly a minute later and then throws
+ *  TransactionExpiredBlockheightExceededError — so a SUCCESSFUL buy is reported to
+ *  the user as "broadcast but not confirmed", a minute late, with their tokens
+ *  already bought. Polling http is marginally chattier and completely immune to it.
+ *
+ *  Resolves with the signature. Throws on an on-chain error, or `{ timedOut: true }`
+ *  if the deadline passes — callers treat that as broadcast-but-unconfirmed, never
+ *  as a clean failure. */
+async function confirmSignature(conn, sig, opts = {}) {
+  const pollMs = opts.pollMs || CONFIRM_POLL_MS;
+  const timeoutMs = opts.timeoutMs || CONFIRM_TIMEOUT_MS;
+  const started = Date.now();
+  for (;;) {
+    try {
+      const r = await conn.getSignatureStatuses([sig]);
+      const st = r && r.value && r.value[0];
+      if (st) {
+        if (st.err) throw Object.assign(new Error('transaction failed on-chain: ' + JSON.stringify(st.err)), { onChainError: st.err });
+        const cs = st.confirmationStatus;
+        if (cs === 'confirmed' || cs === 'finalized') return sig;
+      }
+    } catch (e) {
+      if (e && e.onChainError) throw e;   // a real revert is an answer, not a hiccup
+      /* transient RPC failure → keep polling */
+    }
+    if (Date.now() - started >= timeoutMs) throw Object.assign(new Error('not confirmed within ' + timeoutMs + 'ms: ' + sig), { timedOut: true });
+    await _sleep(pollMs);
+  }
+}
+
 // Execute a Jupiter swap: deserialize the base64 tx, sign with the keypair, send,
 // confirm. Returns the base58 signature. Throws with a readable reason on failure.
 async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
@@ -201,26 +253,21 @@ async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
   // broadcast. It used to be fetched only after sendRawTransaction had resolved, so
   // every swap sat through a full extra RPC round trip — with the transaction already
   // in flight — before confirmation could even start.
-  const bhP = conn.getLatestBlockhash('confirmed');
-  bhP.catch(() => {});   // if the send throws first, this must not surface as unhandled
   const sig = await conn.sendRawTransaction(raw, { skipPreflight: SKIP_PREFLIGHT, maxRetries: 3 });
   // Past this point the tx is BROADCAST, and the caller is told so immediately —
   // waiting for 'confirmed' is another round the user does not need to spend
   // staring at a message with nothing in it.
   try { if (onSent) onSent(sig); } catch (_) {}
-  // Past this point the tx is BROADCAST. A confirmation that reverts is atomic (Jupiter
-  // swaps don't half-execute) → safe to treat as "didn't spend". But a confirmation that
-  // THROWS (timeout / blockheight exceeded) is ambiguous — the tx may still land — so we
-  // tag the error `.broadcast` + `.sig` and callers must NOT roll back budget/dedup.
-  let conf;
+  // A swap that REVERTS is atomic (Jupiter swaps don't half-execute) → safe to treat
+  // as "didn't spend", so that error propagates as a clean failure. A confirmation
+  // we merely couldn't OBSERVE (timeout) is ambiguous — the tx may well have landed —
+  // so it is tagged `.broadcast` + `.sig` and callers must NOT roll back budget/dedup.
   try {
-    const bh = await bhP;
-    conf = await conn.confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed');
+    return await confirmSignature(conn, sig);
   } catch (e) {
+    if (e && e.onChainError) throw new Error('swap reverted on-chain: ' + JSON.stringify(e.onChainError));
     throw Object.assign(new Error('swap broadcast but not confirmed yet: ' + sig), { broadcast: true, sig });
   }
-  if (conf && conf.value && conf.value.err) throw new Error('swap reverted on-chain: ' + JSON.stringify(conf.value.err));
-  return sig;
 }
 
 // ---------------------------------------------------------------- Jupiter (live HTTP)
@@ -274,12 +321,11 @@ async function sendSol(conn, keypair, toBase58, lamports, opts) {
   tx.recentBlockhash = bh.blockhash; tx.feePayer = keypair.publicKey;
   tx.sign(keypair);
   const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-  const confirmed = conn
-    .confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed')
-    .then((conf) => {
-      if (conf && conf.value && conf.value.err) throw new Error('SOL transfer failed: ' + JSON.stringify(conf.value.err));
-      return sig;
-    });
+  // Polled over http, not watched over a websocket — see confirmSignature.
+  const confirmed = confirmSignature(conn, sig).catch((e) => {
+    if (e && e.onChainError) throw new Error('SOL transfer failed: ' + JSON.stringify(e.onChainError));
+    throw e;
+  });
   if (opts && opts.confirm === false) { confirmed.catch(() => {}); return { sig, confirmed }; }
   return await confirmed;
 }
@@ -306,9 +352,11 @@ async function sendSplToken(conn, keypair, mint, toBase58, rawAmount, decimals) 
   tx.recentBlockhash = bh.blockhash; tx.feePayer = owner;
   tx.sign(keypair);
   const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-  const conf = await conn.confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight }, 'confirmed');
-  if (conf && conf.value && conf.value.err) throw new Error('SPL transfer failed: ' + JSON.stringify(conf.value.err));
-  return sig;
+  try { return await confirmSignature(conn, sig); }
+  catch (e) {
+    if (e && e.onChainError) throw new Error('SPL transfer failed: ' + JSON.stringify(e.onChainError));
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------- SPL metadata
@@ -404,6 +452,6 @@ module.exports = {
   deriveKeypair, secretToBase58, keypairFromStored, newWallet,
   solToLamports, lamportsToSol, fmtUnits, toRaw,
   quoteUrl, swapBody, parseQuote, feeLamports,
-  getConnection, solBalance, splBalance, sendJupiterSwap, sendSplToken,
+  getConnection, solBalance, splBalance, sendJupiterSwap, sendSplToken, confirmSignature,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
 };
