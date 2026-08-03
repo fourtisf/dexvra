@@ -138,7 +138,14 @@ test("the selection actually drives the trade, on both sides", () => {
   assert.match(sell, /const targets = tradeTargets\(chatId, walletId\);/, "Sell reads the same selection");
   // Both report per wallet, so a partial failure is visible rather than averaged
   // into a single number.
-  assert.match(tg, /\$\{okN\}\/\$\{targets\.length\} wallets/);
+  // The per-wallet tally moved into the i18n template with the rest of the
+  // receipt copy; both languages must still carry it.
+  assert.match(tg, /'buy\.receipt\.multi', \{ sym: esc\(sym \|\| ''\), ok: okN, n: targets\.length/);
+  const i18n = require("./i18n");
+  for (const lang of i18n.LANGS) {
+    const head = i18n.t(lang, "buy.receipt.multi", { sym: "PEPE", ok: 2, n: 3, tokens: "1.2M", spent: "0.05", native: "ETH", usd: "" });
+    assert.match(head, /2\/3/, `${lang} multi-buy head lost the per-wallet tally`);
+  }
 });
 
 test("one tap answers exactly once", () => {
