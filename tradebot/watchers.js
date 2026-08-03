@@ -559,6 +559,79 @@ async function pairOf(chainKey, token) {
   _copyPair.set(k, { pair, at: Date.now() });
   return pair;
 }
+// ---------------------------------------------------------------- copy: exits
+//
+// Following a wallet IN and never OUT is half a strategy: you take all of the
+// downside with none of its exit signal. This mirrors the exit.
+//
+// It works off the target's BALANCE, not off swap logs, and that is deliberate.
+// The copy-BUY detector matches a Transfer whose sender is the V2 pair
+// (`pairOf` → `getPair(token, weth)`), so it is blind to a sell through a
+// Uniswap V3 pool, an aggregator, or a plain transfer to another wallet. Missing
+// an entry costs an opportunity; missing an EXIT costs the position. A balance
+// that fell is a balance that fell, whatever route it took.
+//
+// Cost is one balance read per copy-held token per cycle, and that set is
+// bounded by the target's own budget.
+const COPY_EXIT_DROP_PCT = Math.min(100, Math.max(1, Number(process.env.COPY_EXIT_DROP_PCT || 10)));
+
+/** The target's live balance of `token`, raw. null when it could not be read —
+ *  never 0, because a failed read must not look like a wallet that just sold. */
+async function _targetBalance(chainKey, target, token) {
+  try {
+    if (core.chains.isSvm(chainKey)) {
+      const { raw } = await solana.splBalance(core.providerFor(chainKey), target, token);
+      return raw;
+    }
+    return await core.tokenBalanceOrNull(token, target, chainKey);
+  } catch (_) { return null; }
+}
+
+async function copyExitCycle() {
+  const users = core.allUsers().filter((u) => u.copy && u.copy.on && Array.isArray(u.copy.targets) && u.copy.targets.length);
+  for (const u of users) {
+    for (const t of u.copy.targets) {
+      if (!t.copySell || !t.holding) continue;
+      const ch = core.chainOf(t.chain); if (!ch) continue;
+      for (const token of Object.keys(t.holding)) {
+        const h = t.holding[token];
+        let base = 0n; try { base = BigInt((h && h.bal) || '0'); } catch (_) { base = 0n; }
+        const now = await _targetBalance(t.chain, t.address, token);
+        if (now == null) continue;                       // unreadable ≠ sold
+        if (base <= 0n) { core.copyHoldingBump(t, token, now); continue; }   // no baseline yet — adopt this one
+        if (now > base) { core.copyHoldingBump(t, token, now); continue; }   // they bought more: raise the peak
+        // "Started selling" = the peak fell by more than the trigger. A dust
+        // change is not an exit, and neither is a rounding artefact.
+        const dropped = base - now;
+        if (dropped * 100n < base * BigInt(COPY_EXIT_DROP_PCT)) continue;
+
+        // Drop the token from the ledger BEFORE selling. A crash mid-sell must
+        // not leave it eligible to be sold a second time on the next cycle.
+        core.copyHoldingDrop(t, token);
+        try {
+          const r = await core.sell(u.chatId, token, 100, t.chain);
+          const pctOut = Number((dropped * 100n) / (base > 0n ? base : 1n));
+          _notify(u.chatId,
+            `👥 <b>Copy-sell</b> $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\n` +
+            `<code>${short(t.address)}</code> cut its bag by ~${pctOut}% — you exited <b>100%</b>\n` +
+            `Received ${r.proceedsEth} ${r.native}\n<code>${token}</code>\n${txLink(t.chain, r.hash)}`,
+            undefined, 'copy');
+        } catch (err) {
+          const msg = String((err && err.message) || err);
+          // "nothing to sell" is the normal case when the user already exited by
+          // hand — not a failure worth a message.
+          if (/token balance is 0|no wallet/i.test(msg)) continue;
+          const now2 = Date.now(), key = u.chatId + ':copysell:' + token;
+          if (now2 - (_snipeFailAt.get(key) || 0) > 300000) {
+            _snipeFailAt.set(key, now2);
+            _notify(u.chatId, `⚠️ Copy-sell of ${short(token)} failed: ${esc(msg)} — sell it yourself if you want out (muted 5 min)`, undefined, 'copy');
+          }
+        }
+      }
+    }
+  }
+}
+
 async function copyCycle() {
   const users = core.allUsers().filter((u) => u.copy && u.copy.on && Array.isArray(u.copy.targets) && u.copy.targets.length);
   if (!users.length) return;
@@ -601,7 +674,11 @@ async function copyCycle() {
         mirrors++;
         try {
           const r = await core.buy(u.chatId, token, t.buyEth, t.chain);
-          _notify(u.chatId, `👥 <b>Copy-buy</b> $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nFollowed <code>${short(t.address)}</code> · ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'copy');
+          // Record what the TARGET holds now — the baseline the exit watcher
+          // measures against. Only tokens entered through copy are ever exited
+          // through copy; a bag the user bought themselves is not copy's to sell.
+          core.copyHoldingAdd(t, token, await _targetBalance(t.chain, t.address, token));
+          _notify(u.chatId, `👥 <b>Copy-buy</b> $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nFollowed <code>${short(t.address)}</code> · ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}\n<code>${token}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'copy');
         } catch (err) {
           // Only give the budget/dedup back when the buy CLEARLY didn't spend. If the tx
           // was broadcast but couldn't be confirmed (err.broadcast), it may still land —
@@ -700,7 +777,8 @@ async function _copySolTarget(u, t) {
     mirrors++;
     try {
       const r = await core.buy(u.chatId, mint, t.buyEth, t.chain);
-      _notify(u.chatId, `👥 <b>Copy-buy</b> $${esc(r.sym)} on 🟣 Solana\nFollowed <code>${short(t.address)}</code> · ${r.spentEth} ${r.native}\n<code>${mint}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'copy');
+      core.copyHoldingAdd(t, mint, await _targetBalance(t.chain, t.address, mint));
+      _notify(u.chatId, `👥 <b>Copy-buy</b> $${esc(r.sym)} on 🟣 Solana\nFollowed <code>${short(t.address)}</code> · ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}\n<code>${mint}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'copy');
     } catch (err) {
       if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[mint]; core.saveStoreNow(); }
       const now = Date.now(), key = u.chatId + ':copysol:' + mint;
@@ -902,6 +980,9 @@ function start() {
   runLoop('alerts', alertsCycle, alertMs);
   runLoop('positions', positionsCycle, Math.max(20000, Number(process.env.POS_POLL_MS || 60000)));
   runLoop('copy', copyCycle, Math.max(6000, Number(process.env.COPY_POLL_MS || 10000)));
+  // Exits get their own loop: an exit that arrives late is worth more than an
+  // entry that arrives late, so it must not queue behind the log scan.
+  runLoop('copyExit', copyExitCycle, Math.max(5000, Number(process.env.COPY_EXIT_POLL_MS || 8000)));
   runLoop('dca', dcaCycle, Math.max(15000, Number(process.env.DCA_POLL_MS || 30000)));
   if (core.feePayoutEnabled()) {
     console.log('referral auto-payout ENABLED (fee wallet key present)');
@@ -915,4 +996,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, _test: { solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };
+module.exports = { copyExitCycle, setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, _test: { solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };

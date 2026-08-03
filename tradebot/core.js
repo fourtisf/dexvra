@@ -428,6 +428,15 @@ function ensureUser(chatId, referredBy) {
     if (!Array.isArray(u.alerts)) { u.alerts = []; ch = true; }                            // price alerts (notify-only)
     if (!u.copy || typeof u.copy !== 'object') { u.copy = { on: false, targets: [] }; ch = true; }   // copy-trading
     if (!Array.isArray(u.copy.targets)) { u.copy.targets = []; ch = true; }
+    for (const t of u.copy.targets) {
+      // Mirror the target's EXITS as well as its entries. Default on — following a
+      // wallet in and never out is half a strategy — but `holding` starts EMPTY on
+      // migration, so this only ever governs positions copy-bought from here on.
+      // Retro-applying it would auto-sell bags the user acquired under a
+      // buy-only regime and never agreed to hand over.
+      if (typeof t.copySell !== 'boolean') { t.copySell = true; ch = true; }
+      if (!t.holding || typeof t.holding !== 'object') { t.holding = {}; ch = true; }
+    }
     if (!Array.isArray(u.dca)) { u.dca = []; ch = true; }                                  // scheduled buys (DCA)
     if (u.lang !== 'id' && u.lang !== 'en') { u.lang = 'en'; ch = true; }                  // UI language
     if (!u.security || typeof u.security !== 'object') { u.security = { withdrawLock: false, whitelist: [], wdTimes: [] }; ch = true; }
@@ -675,7 +684,7 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
   const be = Number(buyEth), me = Number(maxEth);
   if (!(be > 0)) throw new Error('per-buy amount must be > 0');
   if (!(me >= be)) throw new Error('total budget must be ≥ the per-buy amount');
-  const t = { id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode, buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, cursor: 0, cursorSig: '', createdAt: Date.now() };
+  const t = { id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode, buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, holding: {}, copySell: true, cursor: 0, cursorSig: '', createdAt: Date.now() };
   u.copy.targets.push(t);
   saveStore();
   return t;
@@ -687,6 +696,42 @@ function removeCopyTarget(chatId, id) {
   if (u.copy.targets.length !== before) { saveStore(); return true; }
   return false;
 }
+/** Turn exit-mirroring on or off for ONE followed wallet. Off leaves anything
+ *  already copy-bought exactly where it is — the user sells it themselves. */
+function setCopySell(chatId, targetId, on) {
+  const u = ensureUser(chatId);
+  const t = (u.copy && u.copy.targets || []).find((x) => x.id === targetId);
+  if (!t) throw new Error('not following that wallet');
+  t.copySell = !!on; saveStore();
+  return t.copySell;
+}
+/** Remember that WE copy-bought `token` from this target, and how much of it the
+ *  target held at that moment. That number is the baseline the exit watcher
+ *  measures against: the position is only ours to mirror out of if it was ours
+ *  to mirror into. */
+function copyHoldingAdd(t, token, targetBalRaw) {
+  t.holding = t.holding || {};
+  t.holding[copyTokenKey(t.chain, token)] = { bal: String(targetBalRaw == null ? '' : targetBalRaw), at: Date.now() };
+  saveStoreNow();   // written through: a crash here would lose the exit baseline
+}
+function copyHoldingDrop(t, token) {
+  if (!t.holding) return;
+  delete t.holding[copyTokenKey(t.chain, token)];
+  saveStoreNow();
+}
+/** Raise the baseline when the target adds to its position, so a later partial
+ *  sale is measured from its PEAK and not from where we happened to join. */
+function copyHoldingBump(t, token, targetBalRaw) {
+  const k = copyTokenKey(t.chain, token);
+  const h = t.holding && t.holding[k]; if (!h) return false;
+  let prev = 0n; try { prev = BigInt(h.bal || '0'); } catch (_) { prev = 0n; }
+  const now = (() => { try { return BigInt(targetBalRaw); } catch (_) { return 0n; } })();
+  if (now > prev) { h.bal = String(now); saveStore(); return true; }
+  return false;
+}
+// Solana mints are case-SENSITIVE base58; EVM addresses are not. Same rule as posKey.
+function copyTokenKey(chainKey, token) { return isSvm(chainKey) ? String(token) : String(token).toLowerCase(); }
+
 function setCopyOn(chatId, on) {
   const u = ensureUser(chatId);
   u.copy = u.copy || { on: false, targets: [] };
@@ -2093,7 +2138,7 @@ module.exports = {
   buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
   setConfirmBuy, setExpert, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
-  addCopyTarget, removeCopyTarget, setCopyOn, MAX_COPY_TARGETS, canDevSnipe,
+  addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
