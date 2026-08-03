@@ -2020,9 +2020,13 @@ async function portfolioAll(chatId) {
       const p = wal.positions[key];
       if (p.chain !== chainKey) continue;
       const k = p.ca.toLowerCase();
-      const agg = cas.get(k) || { ca: p.ca, name: p.name, sym: p.sym, dec: p.dec || 18, ethIn: 0, ethOut: 0, costEth: 0 };
+      const agg = cas.get(k) || { ca: p.ca, name: p.name, sym: p.sym, dec: p.dec || 18, ethIn: 0, ethOut: 0, costEth: 0, realizedEth: 0 };
       agg.ethIn += p.ethIn || 0; agg.ethOut += p.ethOut || 0;
       agg.costEth += (p.costEth != null) ? p.costEth : Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));
+      // Profit BOOKED on sells, tracked per position by sell(). ethOut - ethIn is
+      // not the same thing and is wrong on a partial exit: proceeds are cash out,
+      // not profit, so a token sold halfway looks like a loss until it is closed.
+      agg.realizedEth += Number(p.realizedEth) || 0;
       cas.set(k, agg);
     }
   }
@@ -2037,14 +2041,26 @@ async function portfolioAll(chatId) {
       if (bal > 1e-9) { totalTokens += bal; holders.push({ index: list.indexOf(wal) + 1, label: walletLabel(wal, list.indexOf(wal) + 1), tokens: bal }); }
     }
     if (totalTokens <= 1e-9 && !(agg.ethIn > 0)) continue;
-    const snap = await tokenSnapshot(agg.ca, chainKey).catch(() => null);
+    // A closed row holds nothing, so there is no live price to fetch and nothing a
+    // snapshot could tell us — skip the network call entirely. On a wallet with a
+    // long history that is most of the list.
+    const open = totalTokens > 1e-9;
+    const snap = open ? await tokenSnapshot(agg.ca, chainKey).catch(() => null) : null;
     const priceEth = snap ? snap.priceEth : 0;
     const valueEth = totalTokens * priceEth;
     totalValueEth += valueEth;
-    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, tokens: totalTokens, valueEth, ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth, unrealizedEth: valueEth - agg.costEth, holders });
+    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, open, tokens: totalTokens, valueEth,
+      ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth, realizedEth: agg.realizedEth,
+      // Unrealized is only meaningful while something is still held. On a closed
+      // row it is zero by construction, and printing it beside a realized figure
+      // is what made "3.99x (+299%)" sit next to "PnL +0.0000".
+      unrealizedEth: open ? valueEth - agg.costEth : 0, holders });
   }
-  rows.sort((a, b) => b.valueEth - a.valueEth);
-  return { rows, totalValueEth, chain, native: chain.native };
+  rows.sort((a, b) => (Number(b.open) - Number(a.open)) || (b.valueEth - a.valueEth) || (b.realizedEth - a.realizedEth));
+  const totalRealizedEth = rows.reduce((t, r) => t + (Number(r.realizedEth) || 0), 0);
+  const totalCostEth = rows.reduce((t, r) => t + (r.open ? Number(r.costEth) || 0 : 0), 0);
+  const totalUnrealEth = rows.reduce((t, r) => t + (Number(r.unrealizedEth) || 0), 0);
+  return { rows, totalValueEth, totalCostEth, totalUnrealEth, totalRealizedEth, chain, native: chain.native };
 }
 
 // Trade history (newest first) + realized PnL for a wallet.

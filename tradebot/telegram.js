@@ -527,28 +527,108 @@ async function walletPickScreen(chatId, ca, chainKey) {
     kb: { inline_keyboard: kbRows },
   };
 }
+/** The 📍 Monitor picker. /monitor used to be nothing at all — not a registered
+ *  command and not a handler — so typing it fell through to "I didn't recognise
+ *  that". The live tracker existed but was reachable only from a button on a
+ *  token card, which is exactly where someone who already bought is NOT looking.
+ *  This lists what you actually hold and opens a tracker on any of it. */
+async function monitorListScreen(chatId) {
+  const pf = await core.portfolioAll(chatId);
+  const nat = pf.native || 'ETH';
+  const open = pf.rows.filter((r) => r.open);
+  const wi = walletIndex(chatId);
+  if (!open.length) {
+    return { text: `📍 <b>Live monitor</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nYou hold nothing on this chain right now, so there is nothing to track. Buy a token and the monitor opens itself.`,
+      kb: rows([btn('📊 Portfolio', 'pos'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
+  }
+  const rate = nativeUsd(nat);
+  const L = [`📍 <b>Live monitor</b> · ${pf.chain.emoji} ${esc(pf.chain.name)}\n`,
+    'Pick a position to track. The card pins itself and refreshes on its own, across every wallet holding it.\n'];
+  const kb = [];
+  for (const r of open.slice(0, MON_LIST_ROWS)) {
+    const usdStr = rate > 0 ? ` ($${(r.valueEth * rate).toFixed(2)})` : '';
+    const n = (r.holders || []).length;
+    L.push(`<b>$${esc(r.sym)}</b> · ${r.valueEth.toFixed(4)} ${nat}${usdStr}${n > 1 ? ` · ${n} wallets` : ''}`);
+    kb.push([btn(`📍 ${r.sym}`, `monn:${pf.chain.key}:${wi}:${r.ca}`)]);
+  }
+  if (open.length > MON_LIST_ROWS) L.push(`<i>…and ${open.length - MON_LIST_ROWS} more — see 📊 Portfolio</i>`);
+  kb.push([btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]);
+  return { text: L.join('\n'), kb: { inline_keyboard: kb } };
+}
+
 async function portfolioScreen(chatId) {
   const pf = await core.portfolioAll(chatId);   // aggregated across ALL wallets (Maestro style)
   const nat = pf.native || 'ETH';
-  if (!pf.rows.length) return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nNo holdings on this chain across your wallets. Paste a token contract to buy, or switch chain.`, kb: rows([btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
-  let body = '', totalUnreal = 0, totalIn = 0, totalOut = 0;
-  for (const r of pf.rows) {
-    totalUnreal += r.unrealizedEth; totalIn += r.ethIn; totalOut += r.ethOut;
-    // x-multiple on invested = (what it's worth now + what you've already taken out) / put in.
-    const mult = r.ethIn > 0 ? (r.valueEth + r.ethOut) / r.ethIn : 0;
-    const multStr = mult > 0 ? mult.toFixed(2) + '×' : '—';
-    const pnlPct = r.ethIn > 0 ? (mult - 1) * 100 : 0;
-    const who = (r.holders && r.holders.length) ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(', ') : '—';
-    body += `<b>$${esc(r.sym)}</b> · ${usd(r.valueEth, nat)} · <b>${multStr}</b> ${r.ethIn > 0 ? `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(0)}%)` : ''}\n   ${fmt(r.tokens)} · in ${r.ethIn.toFixed(4)} → now ${r.valueEth.toFixed(4)} ${nat} · PnL <b>${r.unrealizedEth >= 0 ? '+' : ''}${r.unrealizedEth.toFixed(4)}</b>\n   held: ${who}\n   <code>${r.ca}</code>\n\n`;
+  const rate = nativeUsd(nat);
+  // Every native figure gets its USD twin. "PnL -0.0001" is not a number anyone
+  // can act on; "-0.0001 ETH (-$0.19)" is.
+  const both = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(4)} ${nat}${rate > 0 ? ` (${v >= 0 ? '+' : '−'}$${Math.abs(v * rate).toFixed(2)})` : ''}`;
+  const money = (v) => `${v.toFixed(4)} ${nat}${rate > 0 ? ` ($${(v * rate).toFixed(2)})` : ''}`;
+  // Same minus sign as both() — toFixed() emits an ASCII hyphen, so mixing the
+  // two put "−0.0005 ETH" and "-13.5%" on one line.
+  const pctStr = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+  const dot = (v) => (v >= 0 ? '🟢' : '🔴');
+  if (!pf.rows.length) {
+    return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nNo holdings on this chain across your wallets. Paste a token contract to buy, or switch chain.`,
+      kb: rows([btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
   }
-  const pMult = totalIn > 0 ? (pf.totalValueEth + totalOut) / totalIn : 0;
-  const pPct = totalIn > 0 ? (pMult - 1) * 100 : 0;
-  const text = `📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n\n` +
-    `Value <b>${usd(pf.totalValueEth, nat)}</b> · ${pf.totalValueEth.toFixed(4)} ${nat}${totalIn > 0 ? ` · <b>${pMult.toFixed(2)}×</b> (${pPct >= 0 ? '+' : ''}${pPct.toFixed(0)}%)` : ''}\n\n${body}\n` +
-    `Invested <b>${totalIn.toFixed(4)}</b> · out <b>${totalOut.toFixed(4)}</b> ${nat}\n` +
-    `Unrealized PnL: <b>${totalUnreal >= 0 ? '+' : ''}${totalUnreal.toFixed(4)} ${nat}</b> (${usd(Math.abs(totalUnreal), nat)})`;
-  return { text, kb: rows([btn('🔄 Refresh', 'pos'), btn('🧾 History', 'hist'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
+
+  const open = pf.rows.filter((r) => r.open);
+  const closed = pf.rows.filter((r) => !r.open);
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  // Three SEPARATE lines, because they are three different questions and the old
+  // card answered them on one. It printed
+  //   Value $6.17 · 0.0033 ETH · 2.13× (+113%)
+  // where the value was what you hold NOW and the multiple was every trade you
+  // have EVER made, closed ones included. A portfolio whose live positions were
+  // −2% and −67% read as "up 113%".
+  const L = [`📊 <b>Portfolio</b> · ${pf.chain.emoji} ${esc(pf.chain.name)} · all wallets\n`];
+  L.push(`💰 <b>Holding now:</b> ${money(pf.totalValueEth)}`);
+  if (pf.totalCostEth > 0) {
+    const pct = (pf.totalUnrealEth / pf.totalCostEth) * 100;
+    L.push(`${dot(pf.totalUnrealEth)} <b>Unrealized:</b> ${both(pf.totalUnrealEth)} · ${pctStr(pct)} <i>on what you still hold</i>`);
+  }
+  if (Math.abs(pf.totalRealizedEth) > 1e-9) {
+    L.push(`${dot(pf.totalRealizedEth)} <b>Realized:</b> ${both(pf.totalRealizedEth)} <i>banked from closed trades</i>`);
+  }
+
+  // ── Open positions ────────────────────────────────────────────────────────
+  if (open.length) {
+    L.push(`\n<b>── Open ──</b>`);
+    for (const r of open) {
+      const pct = r.costEth > 0 ? (r.unrealizedEth / r.costEth) * 100 : null;
+      const who = (r.holders && r.holders.length)
+        ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(' · ')
+        : '—';
+      L.push(`\n<b>$${esc(r.sym)}</b> · ${money(r.valueEth)}`);
+      L.push(`   ${fmt(r.tokens)} tokens · cost ${money(r.costEth)}`);
+      if (pct != null) L.push(`   ${dot(r.unrealizedEth)} ${both(r.unrealizedEth)} · ${pctStr(pct)}`);
+      L.push(`   held: ${who}`);
+      L.push(`   <code>${r.ca}</code>`);
+    }
+  }
+
+  // ── Closed ────────────────────────────────────────────────────────────────
+  // Their own section, showing ONLY what is true of them: what was banked. The
+  // old card gave a closed token a live-looking row — "$0.0000 · 3.99× (+299%)"
+  // above "now 0.0000 ETH · PnL +0.0000" — three numbers that each mean
+  // something different and contradict each other at a glance.
+  if (closed.length) {
+    L.push(`\n<b>── Closed</b> <i>(sold out)</i> <b>──</b>`);
+    for (const r of closed.slice(0, PF_CLOSED_ROWS)) {
+      const mult = r.ethIn > 0 ? r.ethOut / r.ethIn : 0;
+      L.push(`<b>$${esc(r.sym)}</b> · ${dot(r.realizedEth)} ${both(r.realizedEth)}${mult > 0 ? ` · <b>${mult.toFixed(2)}×</b> on ${r.ethIn.toFixed(4)} ${nat}` : ''}`);
+    }
+    if (closed.length > PF_CLOSED_ROWS) L.push(`<i>…and ${closed.length - PF_CLOSED_ROWS} more — see 🧾 History</i>`);
+  }
+
+  return {
+    text: L.join('\n'),
+    kb: rows([btn('🔄 Refresh', 'pos'), btn('📍 Monitor', 'monlist')], [btn('🧾 History', 'hist'), btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]),
+  };
 }
+
 function historyScreen(chatId) {
   const u = core.ensureUser(chatId);
   const wal = core.activeWallet(u);
@@ -1338,6 +1418,7 @@ async function onMessageImpl(m) {
   if (text === '/wallet') { const w = await walletScreen(chatId); return send(chatId, w.text, w.kb); }
   if (text === '/chain') { const s = chainScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/portfolio' || text === '/positions') { const s = await portfolioScreen(chatId); return send(chatId, s.text, s.kb); }
+  if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/snipe') { const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/orders') { const s = ordersScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -1445,6 +1526,7 @@ async function onCallback(q) {
   if (data === 'chain') { const s = chainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'setch') { try { core.setChain(chatId, ca); } catch (_) {} const w = await walletScreen(chatId); return edit(chatId, mid, w.text, w.kb); }
   if (data === 'pos') { const s = await portfolioScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'monlist') { const s = await monitorListScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'hist') { const s = historyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snipe') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'orders') { const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -1964,6 +2046,8 @@ const MON_WINDOW_MS = Math.max(60000, Number(process.env.MONITOR_WINDOW_MS || 60
 // How many per-wallet rows the live card prints before it says "…and N more".
 // The wallet cap is 99; a card that printed all of them would be unreadable and
 // would risk Telegram's message limit on every refresh.
+const MON_LIST_ROWS = Math.max(1, Number(process.env.MONITOR_LIST_ROWS || 10));
+const PF_CLOSED_ROWS = Math.max(1, Number(process.env.PORTFOLIO_CLOSED_ROWS || 8));
 const MON_WALLET_ROWS = Math.max(1, Number(process.env.MONITOR_WALLET_ROWS || 8));
 const SNAP_TMO_MS = 6000;
 const BAL_TMO_MS = 5000;
@@ -2308,6 +2392,7 @@ async function registerCommands() {
     { command: 'start',     description: 'Open the bot — wallet & main menu' },
     { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
     { command: 'portfolio', description: 'Your holdings & profit/loss' },
+    { command: 'monitor',   description: 'Live position tracker — pins & refreshes itself' },
     { command: 'history',   description: 'Your past trades' },
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
     { command: 'buy',       description: 'Buy a token: /buy <address> <amount or $usd>' },
@@ -2410,5 +2495,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
