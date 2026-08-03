@@ -50,15 +50,21 @@ test("the latch is spent only after the alert posts", () => {
   const iFailGuard = src.indexOf("if (!posted)");
   assert.ok(iPost > -1 && iFailGuard > iPost, "a failed post must skip the latch");
 
-  // There are exactly TWO places a step may be consumed, and they are different
-  // in kind, so the test pins each one rather than just counting them:
+  // A step may be consumed in exactly TWO places, and they are different in kind,
+  // so the test pins each rather than just counting:
   //   1. the MIGRATION off the old once-per-token latch, which deliberately
-  //      consumes WITHOUT posting (and so sits before the post);
+  //      consumes WITHOUT posting and therefore sits before the post. It goes
+  //      through absorbLegacy(), which also DROPS the legacy marker — leaving
+  //      that marker in place muted every pre-ladder token forever.
   //   2. the SUCCESS path, which must come after the post AND after the
-  //      !posted bail-out — spending it any earlier is the original bug.
-  const consumes = [...src.matchAll(/await latch\.addAll\(stepKeys\(key, milestone/g)].map((m) => m.index);
-  assert.equal(consumes.length, 2, `expected exactly two consume sites, found ${consumes.length}`);
-  const [iMigration, iSuccess] = consumes;
+  //      !posted bail-out. Spending it any earlier is the original bug.
+  const migrations = [...src.matchAll(/absorbLegacy\(latch, key, milestone/g)].map((m) => m.index);
+  assert.equal(migrations.length, 1, `expected exactly one migration site, found ${migrations.length}`);
+  const successes = [...src.matchAll(/await latch\.addAll\(stepKeys\(key, milestone/g)].map((m) => m.index);
+  assert.equal(successes.length, 1, `expected exactly one post-success consume, found ${successes.length}`);
+
+  const [iMigration] = migrations;
+  const [iSuccess] = successes;
   assert.ok(iMigration < iPost, "the migration consume belongs before the post");
   const iGuard = src.lastIndexOf("if (latch.has(key))", iMigration);
   assert.ok(iGuard > -1 && iGuard < iMigration, "the early consume must be guarded by the legacy-latch check");

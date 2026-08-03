@@ -63,6 +63,25 @@ function stepKeys(key, milestone, minPct, maxPct) {
   return out;
 }
 
+/** Retire a pre-ladder token onto the ladder, ONCE.
+ *
+ *  Before the ladder a token latched under its BARE key, so on the first poll
+ *  after the upgrade it is already standing above steps it never announced.
+ *  Those steps are consumed rather than posted, or deploying would have dumped an
+ *  alert for every previously-pumped listing into the channel at once.
+ *
+ *  Dropping the legacy marker is the other half, and leaving it out is a bug that
+ *  looks exactly like success: the marker made `latch.has(key)` true FOREVER, so
+ *  every later step took this same silent branch and the token could never alert
+ *  again. It went unnoticed because nothing is logged and nothing is posted —
+ *  the only trace was consumed step keys in the latch file with no matching
+ *  alert. Absorb once, drop the marker, and the very next step posts normally. */
+async function absorbLegacy(latchSet, key, milestone, minPct, maxPct) {
+  await latchSet.addAll(stepKeys(key, milestone, minPct, maxPct));
+  await latchSet.delete(key);
+  return true;
+}
+
 function coinOf(r, price, mcap) {
   return {
     name: r.name,
@@ -183,9 +202,9 @@ function start(tg) {
       // with twelve thousand subscribers. Absorb their history silently instead;
       // they resume alerting at the next step ABOVE where they already stand.
       if (latch.has(key)) {
-        await latch.addAll(stepKeys(key, milestone, minPct, maxPct));
-        log.debug(
-          `[pump] ${r.sym || r.address}: pre-ladder token — steps ≤ ${milestone}% absorbed, next alert at ${milestone + MILESTONE_STEP}%`,
+        await absorbLegacy(latch, key, milestone, minPct, maxPct);
+        log.event(
+          `📈 Pump: ${r.sym || r.address} pre-ladder — steps ≤ ${milestone}% absorbed, next alert at +${milestone + MILESTONE_STEP}%`,
         );
         continue;
       }
@@ -260,4 +279,4 @@ function start(tg) {
   };
 }
 
-module.exports = { start, pumpTargets, milestoneFor, stepKeys, MILESTONE_STEP };
+module.exports = { start, pumpTargets, milestoneFor, stepKeys, absorbLegacy, MILESTONE_STEP };

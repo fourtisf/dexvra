@@ -149,6 +149,50 @@ test("tokens that already alerted under the old latch do not re-fire on deploy",
   assert.ok(iStep < iLegacy, "the step check must run first; the legacy check is the fallback");
   // It must consume and CONTINUE — never fall through into posting.
   const block = src.slice(iLegacy, iLegacy + 500);
-  assert.match(block, /latch\.addAll\(stepKeys\(/, "the migration must consume the steps below");
+  assert.match(block, /absorbLegacy\(latch, key, milestone/, "the migration must consume the steps below");
   assert.match(block, /continue;/, "the migration must not post");
+});
+
+// ---------------------------------------------------------------- migration is ONE-TIME
+test("absorbing a pre-ladder token drops its legacy marker, so it can alert again", async () => {
+  // THE BUG THIS PINS, found in production data after the first deploy:
+  // absorbing consumed the steps below but left the bare legacy key in place.
+  // `latch.has(key)` therefore stayed true forever, so every later step took the
+  // same silent branch and the token could NEVER alert again. It looked exactly
+  // like success — nothing logged, nothing posted, latch file quietly filling up
+  // with consumed steps that never produced an alert. $SPYB reached +300% and
+  // the alert was swallowed.
+  const { DedupSet } = require("../src/helpers/persist");
+  const { absorbLegacy } = require("../src/services/pumpChecker");
+  const latch = new DedupSet(`pumplatch-test-${process.pid}.json`);
+  const key = "bsc:0xdead";
+
+  await latch.add(key); // a token that alerted under the OLD once-per-token latch
+  assert.ok(latch.has(key), "setup failed");
+
+  await absorbLegacy(latch, key, 200, MIN, MAX);
+
+  assert.ok(latch.has(`${key}@100`), "step 100 was not absorbed");
+  assert.ok(latch.has(`${key}@200`), "step 200 was not absorbed");
+  assert.ok(!latch.has(key), "the legacy marker survived — this token is now muted forever");
+  assert.ok(!latch.has(`${key}@300`), "absorbing must not consume steps above the one reached");
+});
+
+test("after absorbing, the next step takes the normal posting path", async () => {
+  // The consequence of the fix, stated as the behaviour that matters: the
+  // migration is a one-time retirement, not a permanent gag.
+  const { DedupSet } = require("../src/helpers/persist");
+  const { absorbLegacy } = require("../src/services/pumpChecker");
+  const latch = new DedupSet(`pumplatch-test2-${process.pid}.json`);
+  const key = "bsc:0xbeef";
+  await latch.add(key);
+  await absorbLegacy(latch, key, 200, MIN, MAX);
+
+  // This mirrors pumpChecker's own branch order at +300%.
+  const milestone = 300;
+  const alreadySent = latch.has(`${key}@${milestone}`);
+  const isPreLadder = latch.has(key);
+  assert.equal(alreadySent, false, "+300% was wrongly marked as already announced");
+  assert.equal(isPreLadder, false, "+300% would be absorbed again instead of posted");
+  // → neither guard fires, so the token posts. That is the whole point.
 });
