@@ -234,10 +234,12 @@ test("package: xpress hands out the real XPRESS tier", async () => {
   assert.strictEqual(input.trendingRank, undefined, "xpress is a listing, not a trending slot");
 });
 
-test("package: trending adds a time-boxed slot but NOT a paid tier", async () => {
+test("package: trending adds a time-boxed slot AND a drawn paid tier", async () => {
   await al.set({ pkg: "trending", trendHours: 12 });
   const input = al.listingInput("solana", "So1ana1", healthy(), al.get(), now);
-  assert.strictEqual(input.tier, "FREE", "paid tiers must still sort above it on the board");
+  // Reversed on the operator's call (2026-08-04): this package used to be FREE
+  // so paid tiers always sorted above it. It now carries a real one.
+  assert.ok(al.TREND_TIERS.includes(input.tier), `expected one of ${al.TREND_TIERS}, got ${input.tier}`);
   assert.strictEqual(input.trendingRank, 1);
   assert.strictEqual(input.trendStart, now);
   assert.strictEqual(input.trendExp, now + 12 * HOUR, "the slot expires on its own");
@@ -245,7 +247,7 @@ test("package: trending adds a time-boxed slot but NOT a paid tier", async () =>
 
 test("package: free is the default and stays plain", async () => {
   await al.reset();
-  assert.strictEqual(al.get().pkg, "free");
+  assert.deepStrictEqual(al.get().pkgs, ["free"]);
   const input = al.listingInput("solana", "So1ana1", healthy(), al.get(), now);
   assert.strictEqual(input.tier, "FREE");
   assert.strictEqual(input.trendExp, undefined);
@@ -253,7 +255,7 @@ test("package: free is the default and stays plain", async () => {
 
 test("package: an unknown value falls back to free, never to a paid tier", async () => {
   await al.set({ pkg: "diamond_please" });
-  assert.strictEqual(al.get().pkg, "free");
+  assert.deepStrictEqual(al.get().pkgs, ["free"]);
   assert.strictEqual(al.pkgOf("nonsense").tier, "FREE");
   // …and the trending window is railed, so a fat-finger can't hand out 30 days.
   await al.set({ pkg: "trending", trendHours: 9999 });
