@@ -31,6 +31,11 @@ const secretPath = (): string => {
 
 const notFound = () => new NextResponse("Not Found", { status: 404 });
 
+/** The hostname alone — "www.dexvra.io:3000" → "www.dexvra.io". The port is a
+ *  separate field on NextURL, so mixing it into a hostname comparison is how a
+ *  local ":3000" request gets redirected to a port that is not listening. */
+const hostnameOf = (hostHeader: string): string => hostHeader.split(":")[0].toLowerCase();
+
 async function authed(req: NextRequest): Promise<boolean> {
   return (await verifySession(req.cookies.get(SESSION_COOKIE)?.value)) != null;
 }
@@ -61,6 +66,23 @@ export async function middleware(req: NextRequest) {
       pathname.startsWith("/api/admin")
     ) {
       return notFound();
+    }
+    // www → apex, permanently. The domain has a `www` CNAME, so both spellings
+    // resolve and serve the same pages — two addresses for one site, which
+    // splits every ranking signal between them and is the classic way a brand
+    // ends up ranking for neither. The canonical tags already name the apex;
+    // this makes it a redirect rather than a hint, and keeps anyone who typed
+    // the www out of a URL that will never be the one indexed.
+    //
+    // Deliberately AFTER the admin-host check: www.dexvra.fun is an admin host
+    // and must not be redirected onto the public site.
+    const name = hostnameOf(host);
+    if (name.startsWith("www.")) {
+      const url = req.nextUrl.clone();
+      // hostname, not host: the port is its own field and must survive, or a
+      // local www test redirects to a port nothing is listening on.
+      url.hostname = name.slice(4);
+      return NextResponse.redirect(url, 308);
     }
     return NextResponse.next();
   }

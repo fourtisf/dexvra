@@ -181,6 +181,22 @@ test("the sitemap lists real routes and survives an unreachable store", () => {
   assert.match(src, /catch\s*\{/, "the token lookup is not guarded");
 });
 
+test("www redirects to the apex — permanently, and never on an admin host", () => {
+  const src = read("src/middleware.ts");
+  // The domain has a `www` CNAME, so both spellings serve the same pages. Two
+  // addresses for one site splits every ranking signal between them, which is
+  // how a brand ends up ranking for neither.
+  assert.match(src, /NextResponse\.redirect\(url, 308\)/, "no permanent www → apex redirect");
+  // hostname, not host: `host` carries the port, and rewriting it drops :3000.
+  assert.match(src, /url\.hostname = name\.slice\(4\)/, "the redirect rewrites the wrong URL field");
+
+  // It has to sit INSIDE the public-host branch. www.dexvra.fun is an admin
+  // host, and redirecting it would push the panel onto the public site.
+  const publicBranch = src.match(/if \(!onAdminHost\) \{[\s\S]*?\n {2}\}/);
+  assert.ok(publicBranch, "the public-host branch moved — this guard cannot check itself");
+  assert.ok(publicBranch[0].includes("308"), "the www redirect escaped the public-host branch");
+});
+
 test("the admin host tells crawlers to stay out", () => {
   // A second domain carrying the brand name is exactly what a brand query does
   // not need. Every public path there 404s, but a 404 on /robots.txt reads as
