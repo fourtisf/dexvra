@@ -40,7 +40,7 @@ const CHAT = 4242;
 
 /** A user following TARGET, already copy-holding TOKEN, with the target's
  *  balance at that moment recorded as the baseline. */
-function seed({ copySell = true, baseline = 1000n, wid = 'wBUY' } = {}) {
+function seed({ copySell = true, baseline = 1000n, wid = 'wBUY', own = '500' } = {}) {
   core.DB.users = {};
   const u = core.ensureUser(CHAT);
   u.wallets = [
@@ -54,7 +54,7 @@ function seed({ copySell = true, baseline = 1000n, wid = 'wBUY' } = {}) {
     bought: { [TOKEN]: true }, holding: {}, copySell,
   }] };
   const t = u.copy.targets[0];
-  if (baseline != null) t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: String(baseline), at: Date.now(), wid, tries: 0 };
+  if (baseline != null) t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: String(baseline), own, at: Date.now(), wid, tries: 0 };
   return { u, t };
 }
 
@@ -68,8 +68,8 @@ async function cycle(targetBal, { holders = { wBUY: 500n, wOTHER: 0n }, sellImpl
   core.tokenBalanceOrNull = async () => targetBal;
   core.tokenBalancesAcross = async (chatId) => (core.DB.users[String(chatId)].wallets || [])
     .map((w, i) => ({ id: w.id, index: i + 1, label: w.name, raw: holders[w.id] === undefined ? 0n : holders[w.id] }));
-  core.sell = async (chatId, ca, pct, chain, walletId) => {
-    sells.push({ chatId, ca, pct, chain, walletId });
+  core.sell = async (chatId, ca, pct, chain, walletId, opts) => {
+    sells.push({ chatId, ca, pct, chain, walletId, opts });
     if (sellImpl) return sellImpl();
     return { sym: 'DEAD', proceedsEth: 0.02, native: 'ETH', hash: '0x' + '1'.repeat(64), chain };
   };
@@ -159,13 +159,40 @@ test('the exit sells from the wallet that BOUGHT, not from whatever is active', 
   assert.equal(sells[0].walletId, 'wBUY', 'the sell went to the wrong wallet');
 });
 
-test('if the pinned wallet no longer holds it, the exit finds the one that does', async () => {
-  // The user moved the tokens, or removed that wallet. The position is still
-  // theirs and still needs closing.
-  seed({ baseline: 1000n, wid: 'wBUY' });
-  const sells = await cycle(0n, { holders: { wBUY: 0n, wOTHER: 900n } });
-  assert.equal(sells.length, 1);
-  assert.equal(sells[0].walletId, 'wOTHER');
+test('if the pinned wallet no longer holds it, the exit sells NOTHING', async () => {
+  // THIS TEST USED TO ASSERT THE OPPOSITE, and an adversarial audit showed why
+  // that was wrong. The exit fell back to whichever wallet held the MOST of the
+  // token, for the convenience of a user who had moved their bag. That fallback
+  // is how a 0.01 ETH mirror reaches a 20 ETH position the user opened
+  // themselves a year earlier — different wallet, same token — and market-sells
+  // it. Convenience on one hand, somebody else's money on the other.
+  //
+  // An empty pinned wallet means the copy slice is already gone. There is
+  // nothing for copy to close.
+  const { t } = seed({ baseline: 1000n, wid: 'wBUY' });
+  const sells = await cycle(600n, { holders: { wBUY: 0n, wOTHER: 9_000_000n } });
+  assert.deepEqual(sells, [], 'the exit reached into a wallet this mirror never traded on');
+  assert.equal(Object.keys(t.holding).length, 0, 'the finished position must still leave the ledger');
+});
+
+test('the exit sells only what the mirror BOUGHT, not the whole bag', async () => {
+  // The user holds 9,000,000 of the token on the buying wallet; copy filled 500
+  // of them. Selling 100% closed all of it.
+  const { t } = seed({ baseline: 1000n, wid: 'wBUY', own: '500' });
+  const sells = await cycle(600n, { holders: { wBUY: 9_000_000n, wOTHER: 0n } });
+  assert.equal(sells.length, 1, 'the exit did not fire');
+  assert.equal(sells[0].opts && sells[0].opts.exactTokens, '500',
+    `copy sold ${sells[0].opts ? sells[0].opts.exactTokens : 'the whole bag'} of a 9,000,000 position`);
+  assert.equal(sells[0].walletId, 'wBUY');
+});
+
+test('a mirror whose fill was never recorded is not guessed at', async () => {
+  // A buy that was broadcast but never confirmed leaves no fill to read. We do
+  // not know which part of that bag is ours, so we do not sell any of it — and
+  // we say so rather than going quiet.
+  const { t } = seed({ baseline: 1000n, wid: 'wBUY', own: '' });
+  const sells = await cycle(600n, { holders: { wBUY: 9_000_000n, wOTHER: 0n } });
+  assert.deepEqual(sells, [], 'an unknown fill was sold as if it were the whole bag');
 });
 
 test('nobody holding it means nothing to sell, and no error', async () => {
@@ -277,7 +304,7 @@ function seedSol({ baseline = 1000n } = {}) {
     buyEth: '0.5', maxEth: '5', spentEth: 0.5, bought: { [MINT]: true }, holding: {}, copySell: true,
   }] };
   const t = u.copy.targets[0];
-  t.holding[core.copyTokenKey('solana', MINT)] = { bal: String(baseline), at: Date.now(), wid: 'wSOL', tries: 0 };
+  t.holding[core.copyTokenKey('solana', MINT)] = { own: '500', bal: String(baseline), at: Date.now(), wid: 'wSOL', tries: 0 };
   return { u, t };
 }
 
@@ -357,7 +384,7 @@ test('a baseline that could never be read does not park the position either', as
   // branch. A followed wallet holding NONE of a token is an exit, and it needs
   // no baseline to be one.
   const { t } = seed({ baseline: null, wid: 'wBUY' });
-  t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: '', at: Date.now(), wid: 'wBUY', tries: 0 };
+  t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: '', own: '500', at: Date.now(), wid: 'wBUY', tries: 0 };
   assert.equal((await cycle(0n)).length, 1, 'an unknown baseline parked the position');
 });
 
@@ -365,7 +392,7 @@ test('a first positive read still becomes the baseline, and does not sell', asyn
   // The other half of that branch has to keep working: an unknown baseline plus
   // a target that DOES hold the token is an adoption, never an exit.
   const { t } = seed({ baseline: null, wid: 'wBUY' });
-  t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: '', at: Date.now(), wid: 'wBUY', tries: 0 };
+  t.holding[core.copyTokenKey(CHAIN, TOKEN)] = { bal: '', own: '500', at: Date.now(), wid: 'wBUY', tries: 0 };
   assert.deepEqual(await cycle(5000n), [], 'adopting a baseline sold the position');
   assert.equal(t.holding[core.copyTokenKey(CHAIN, TOKEN)].bal, '5000', 'the baseline was not adopted');
 });
@@ -386,7 +413,14 @@ test('a read that could not see every wallet never retires the position', async 
     sellImpl: () => { throw new Error('token balance is 0'); },
   });
   assert.deepEqual(sells, [], 'sold from a wallet the read said was empty');
-  assert.equal(Object.keys(t.holding).length, 1, 'the position was retired on an unknown read');
+  // The position IS retired here, and that is now correct rather than dangerous.
+  // This test used to demand it stay, because dropping it led to a sell on
+  // whichever wallet held the most — which an audit showed could be a position
+  // the user opened themselves. The exit only ever touches the wallet the mirror
+  // traded on; that wallet answered "empty", so the copy slice is gone and there
+  // is nothing left to retry. The half that mattered — that nothing is SOLD —
+  // is asserted above.
+  assert.equal(Object.keys(t.holding).length, 0, 'a finished position must not linger for ever');
 });
 
 test('a read that failed everywhere leaves the position alone', async () => {

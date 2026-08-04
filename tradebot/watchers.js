@@ -198,11 +198,11 @@ async function _followerBuy(u, t, token, chainKey) {
     // followed wallet can make. Leaving launches off the ledger meant the one
     // mode built entirely around trusting a wallet was the one mode that never
     // watched it leave.
-    core.copyHoldingAdd(t, token, await _targetBalance(chainKey, t.address, token), wid);
+    core.copyHoldingAdd(t, token, await _targetBalance(chainKey, t.address, token), wid, r.gotRaw);
     _notify(u.chatId, `🎯 <b>Dev snipe</b> — $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nDev <code>${short(t.address)}</code> just launched it · bought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, undefined, 'copy');
   } catch (err) {
     if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[key]; core.saveStoreNow(); held = false; }
-    else core.copyHoldingAdd(t, token, await _targetBalance(chainKey, t.address, token), wid);   // budget held → track the position too
+    else core.copyHoldingAdd(t, token, await _targetBalance(chainKey, t.address, token), wid);   // budget held → track it, but the FILL is unknown
     const now = Date.now(), fk = u.chatId + ':devsnipe:' + key;
     if (now - (_snipeFailAt.get(fk) || 0) > 300000) { _snipeFailAt.set(fk, now); _notify(u.chatId, `⚠️ Dev-snipe of ${short(token)} failed: ${esc(err.message || String(err))} (muted 5 min)`, undefined, 'copy'); }
   }
@@ -714,15 +714,24 @@ async function _exitWalletId(chatId, token, chainKey, preferredId) {
   try { rows = await core.tokenBalancesAcross(chatId, token, chainKey); }
   catch (_) { return { id: null, known: false }; }
   const readable = rows.filter((r) => r.raw != null);
-  if (!readable.length) return { id: null, known: false };   // read failed everywhere
-  const pinned = readable.find((r) => r.id === preferredId && r.raw > 0n);
-  if (pinned) return { id: pinned.id, known: true };
-  let best = null;
-  for (const r of readable) if (r.raw > 0n && (!best || r.raw > best.raw)) best = r;
-  // A partial read that found nothing is still not proof: the holder may be one
-  // of the wallets we could not reach.
-  if (!best && readable.length < rows.length) return { id: null, known: false };
-  return { id: best ? best.id : null, known: true };
+  if (!readable.length) return { id: null, known: false };   // read failed everywhere → retry
+  // ONLY the wallet this position was opened on. There used to be a fallback to
+  // whichever wallet held the MOST of the token, for the case where the user had
+  // moved their bag — and that fallback is how a 0.01 ETH mirror could reach a
+  // 20 ETH position the user opened themselves a year earlier, on a different
+  // wallet, and market-sell it. Convenience on one hand, somebody else's money
+  // on the other.
+  if (preferredId) {
+    const pin = rows.find((r) => r.id === preferredId);
+    if (!pin) return { id: null, known: true };              // that wallet is gone
+    if (pin.raw == null) return { id: null, known: false };    // unreadable → retry
+    return { id: pin.raw > 0n ? pin.id : null, known: true };  // empty → the slice was closed by hand
+  }
+  // No pin at all. We cannot know which wallet this mirror traded on, and
+  // guessing is precisely what the largest-holder fallback did — so there is
+  // nothing to act on. A partial read is still not proof of an empty position.
+  if (readable.length < rows.length) return { id: null, known: false };
+  return { id: null, known: true };
 }
 
 // How many target-balance reads may be in flight at once. The reads used to run
@@ -733,6 +742,7 @@ async function _exitWalletId(chatId, token, chainKey, preferredId) {
 // independent reads; they go out together.
 const COPY_EXIT_CONCURRENCY = Math.max(1, Number(process.env.COPY_EXIT_CONCURRENCY || 8));
 
+const sym0 = (ca) => short(String(ca));
 async function copyExitCycle() {
   const users = core.allUsers().filter((u) => u.copy && u.copy.on && Array.isArray(u.copy.targets) && u.copy.targets.length);
   // Gather everything due a check first, read all the balances together, and only
@@ -796,8 +806,24 @@ async function copyExitCycle() {
     if (!wal.id) continue;                            // nobody holds it — already exited by hand
     const wid = wal.id;
 
+    // ONLY WHAT COPY BOUGHT. `own` is the raw amount this mirror actually filled;
+    // selling 100% closed whatever the wallet happened to hold, which on a token
+    // the user also owns is their money, not copy's. The operator's rule has
+    // always been "only tokens bought via copy" — that guarded WHICH token was
+    // sold and never how much.
+    let own = 0n; try { own = BigInt(h.own || '0'); } catch (_) { own = 0n; }
+    if (own <= 0n) {
+      // The fill was never recorded — a mirror whose buy was broadcast but never
+      // confirmed, or a position from before this was tracked. We do not know
+      // which part of that bag is ours, so we do not guess with it.
+      _notify(u.chatId,
+        `👥 <b>Copy-sell skipped</b> — <code>${short(t.address)}</code> is selling $${esc(sym0(token))}, but I never recorded how much of your bag this mirror filled.\n` +
+        `<b>Nothing was sold.</b> Close it yourself if you want out: /monitor`,
+        undefined, 'copy');
+      continue;
+    }
     try {
-      const r = await core.sell(u.chatId, token, 100, t.chain, wid);
+      const r = await core.sell(u.chatId, token, 100, t.chain, wid, { exactTokens: own.toString() });
       const why = base > 0n
         ? `cut its bag by ~${Number((dropped * 100n) / base)}%`
         : 'holds none of it';
@@ -810,7 +836,7 @@ async function copyExitCycle() {
       const msg = String((err && err.message) || err);
       // Already empty is not a failure — the user got out by hand.
       if (/token balance is 0|no wallet/i.test(msg)) continue;
-      const tries = core.copyHoldingRetry(t, token, { ...h, bal: String(base), wid });
+      const tries = core.copyHoldingRetry(t, token, { ...h, bal: String(base), own: own.toString(), wid });
       if (tries >= COPY_EXIT_MAX_TRIES) {
         core.copyHoldingDrop(t, token);
         _notify(u.chatId,
@@ -915,7 +941,7 @@ async function copyCycle() {
           // Record what the TARGET holds now — the baseline the exit watcher
           // measures against. Only tokens entered through copy are ever exited
           // through copy; a bag the user bought themselves is not copy's to sell.
-          core.copyHoldingAdd(t, token, await _targetBalance(t.chain, t.address, token), wid);
+          core.copyHoldingAdd(t, token, await _targetBalance(t.chain, t.address, token), wid, r.gotRaw);
           _notify(u.chatId, `👥 <b>Copy-buy</b> $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nFollowed <code>${short(t.address)}</code> · ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}\n<code>${token}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'copy');
         } catch (err) {
           // Only give the budget/dedup back when the buy CLEARLY didn't spend. If the tx
@@ -931,7 +957,8 @@ async function copyCycle() {
             // terms. Leaving it off the ledger made a fill we had already paid
             // for the one bag copy would never watch leave. If the tx never
             // lands, the exit cycle reads a clean zero across every wallet and
-            // retires the entry by itself.
+            // retires the entry by itself. The FILL is unknown here — the buy
+            // threw, so there is no result to read it from.
             core.copyHoldingAdd(t, token, await _targetBalance(t.chain, t.address, token), wid);
           }
           const now = Date.now(), key = u.chatId + ':copy:' + token;
@@ -1082,11 +1109,11 @@ async function _copySolTarget(u, t) {
     const swid = (core.activeWallet(u) || {}).id || undefined;
     try {
       const r = await core.buy(u.chatId, mint, t.buyEth, t.chain, swid);
-      core.copyHoldingAdd(t, mint, await _targetBalance(t.chain, t.address, mint), swid);
+      core.copyHoldingAdd(t, mint, await _targetBalance(t.chain, t.address, mint), swid, r.gotRaw);
       _notify(u.chatId, `👥 <b>Copy-buy</b> $${esc(r.sym)} on 🟣 Solana\nFollowed <code>${short(t.address)}</code> · ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}\n<code>${mint}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'copy');
     } catch (err) {
       if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[mint]; core.saveStoreNow(); }
-      else core.copyHoldingAdd(t, mint, await _targetBalance(t.chain, t.address, mint), swid);   // budget held → track the position too
+      else core.copyHoldingAdd(t, mint, await _targetBalance(t.chain, t.address, mint), swid);   // budget held → track it, but the FILL is unknown
       const now = Date.now(), key = u.chatId + ':copysol:' + mint;
       if (now - (_snipeFailAt.get(key) || 0) > 300000) { _snipeFailAt.set(key, now); _notify(u.chatId, `⚠️ Copy-buy of ${short(mint)} failed: ${esc(err.message || String(err))} (muted 5 min)`, undefined, 'copy'); }
     }

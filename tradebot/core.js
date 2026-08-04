@@ -709,13 +709,21 @@ function setCopySell(chatId, targetId, on) {
  *  target held at that moment. That number is the baseline the exit watcher
  *  measures against: the position is only ours to mirror out of if it was ours
  *  to mirror into. */
-function copyHoldingAdd(t, token, targetBalRaw, walletId) {
+function copyHoldingAdd(t, token, targetBalRaw, walletId, boughtRaw) {
   t.holding = t.holding || {};
   // `wid` pins the exit to the wallet that actually opened the position. Without
   // it the sell goes to whatever wallet happens to be ACTIVE at exit time, and a
   // user who switched wallets in between gets "token balance is 0" on a bag they
   // are still holding.
-  t.holding[copyTokenKey(t.chain, token)] = { bal: String(targetBalRaw == null ? '' : targetBalRaw), at: Date.now(), wid: walletId || null, tries: 0 };
+  // `own` is the RAW amount this mirror actually filled — the only part of the
+  // user's bag copy is entitled to sell. Without it the exit closed 100% of
+  // whatever the wallet held, so a 0.01 ETH mirror could market-sell a 20 ETH
+  // position the user had opened themselves a year earlier. The operator's rule
+  // has always been "only tokens bought via copy"; that guarded WHICH token was
+  // sold and never how much.
+  let own = '';
+  try { if (boughtRaw != null) { const v = BigInt(boughtRaw); if (v > 0n) own = v.toString(); } } catch (_) { own = ''; }
+  t.holding[copyTokenKey(t.chain, token)] = { bal: String(targetBalRaw == null ? '' : targetBalRaw), own, at: Date.now(), wid: walletId || null, tries: 0 };
   saveStoreNow();   // written through: a crash here would lose the exit baseline
 }
 /** Put a position BACK on the ledger after an exit attempt failed, so the next
@@ -1513,7 +1521,7 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     wal.positions[key] = p;
     _pushHistory(wal, { side: 'buy', chain: chainKey, ca, sym: meta.sym, ethAmount: solana.lamportsToSol(spend), tokens: solana.fmtUnits(got, meta.decimals), hash: sig });
     saveStore();
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), sym: meta.sym };
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), dec: meta.decimals, sym: meta.sym };
     _afterTrade(u, 'buy', res).catch(() => {});
     return res;
   });
@@ -1537,8 +1545,21 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
       solana.solBalance(conn, signer.address),
     ]);
     const bal = bag.raw;
-    const p = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
-    const amount = (bal * BigInt(p)) / 100n;
+    // AN EXACT AMOUNT, when the caller knows precisely what part of this bag is
+    // theirs to sell. Copy-sell does: it may only ever close the slice IT
+    // bought, and a percentage cannot express that. A 0.01 ETH slice of a 20 ETH
+    // position is 0.05%, which rounds to 0, which the clamp below turns into 1%
+    // — twenty times too much of somebody else's money.
+    let amount;
+    if (opts && opts.exactTokens != null) {
+      let want = 0n; try { want = BigInt(opts.exactTokens); } catch (_) { want = 0n; }
+      amount = want > bal ? bal : want;   // never more than is actually there
+    } else {
+      const p0 = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
+      amount = (bal * BigInt(p0)) / 100n;
+    }
+    // What fraction of the bag this actually is, for the receipt.
+    const p = bal > 0n ? Number((amount * 100n) / bal) : 0;
     if (amount <= 0n) throw new Error('token balance is 0');
     const slip = Math.min(5000, Number(slipBps(u)) + slipAdd);
     const prio = (Number(CFG.solPriorityLamports) || 0) * gasMult + (gasMult > 1 ? 200000 : 0);   // bump priority fee on retry
@@ -1742,7 +1763,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     _pushHistory(wal, { side: 'buy', chain: chainKey, ca, sym: meta.sym, ethAmount: Number(ethers.formatEther(spend)), tokens: Number(ethers.formatUnits(got, meta.decimals)), hash });
     saveStore();
 
-    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, spentEth: Number(ethers.formatEther(spend)), feeEth: Number(ethers.formatEther(fee)), gotTokens: Number(ethers.formatUnits(got, meta.decimals)), sym: meta.sym };
+    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, spentEth: Number(ethers.formatEther(spend)), feeEth: Number(ethers.formatEther(fee)), gotTokens: Number(ethers.formatUnits(got, meta.decimals)), gotRaw: got.toString(), dec: meta.decimals, sym: meta.sym };
     _afterTrade(u, 'buy', res).catch(() => {});   // account + report (fire-and-forget)
     return res;
   });
@@ -1774,8 +1795,21 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       resolveCurve(ca, chainKey),
       gasOverrides(chainKey, gasMult),
     ]);
-    const p = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
-    const amount = (bal * BigInt(p)) / 100n;
+    // AN EXACT AMOUNT, when the caller knows precisely what part of this bag is
+    // theirs to sell. Copy-sell does: it may only ever close the slice IT
+    // bought, and a percentage cannot express that. A 0.01 ETH slice of a 20 ETH
+    // position is 0.05%, which rounds to 0, which the clamp below turns into 1%
+    // — twenty times too much of somebody else's money.
+    let amount;
+    if (opts && opts.exactTokens != null) {
+      let want = 0n; try { want = BigInt(opts.exactTokens); } catch (_) { want = 0n; }
+      amount = want > bal ? bal : want;   // never more than is actually there
+    } else {
+      const p0 = Math.max(1, Math.min(100, Math.round(Number(pct) || 0)));
+      amount = (bal * BigInt(p0)) / 100n;
+    }
+    // What fraction of the bag this actually is, for the receipt.
+    const p = bal > 0n ? Number((amount * 100n) / bal) : 0;
     if (amount <= 0n) throw new Error('token balance is 0');
 
     const grad = curve ? await isGraduated(curve, chainKey) : true;
