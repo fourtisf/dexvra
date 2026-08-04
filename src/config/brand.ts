@@ -22,4 +22,4 @@ export {
   X_URL,
   X_LISTING_URL,
   X_LISTING_HANDLE,
-} from "./socials";
+} from "./socials.ts";
