@@ -263,13 +263,19 @@ test('the stop-loss prompt says how hard it will try to land', async () => {
 
 const { orderPrompt, usdShort } = tg._test;
 const PROMPT_CA = '0x' + 'ab'.repeat(20);
-async function prompt(kind, snap = { sym: 'PONS', priceEth: 0.00001455, mcapUsd: 27_440_000 }) {
+async function promptRaw(kind, snap = { sym: 'PONS', priceEth: 0.00001455, mcapUsd: 27_440_000 }) {
   const real = core.tokenSnapshot;
   core.tokenSnapshot = async () => snap;
   tg._test.PRICES.ETH = 1870;
-  try { return (await orderPrompt(PROMPT_CA, 'robinhood', kind)).replace(/<[^>]+>/g, ''); }
+  try { return await orderPrompt(PROMPT_CA, 'robinhood', kind); }
   finally { core.tokenSnapshot = real; }
 }
+const prompt = async (...a) => (await promptRaw(...a)).replace(/<[^>]+>/g, '');
+/** Every value the prompt presents as typeable — i.e. every <code> span. Keyed
+ *  on the markup rather than on the layout, so restructuring the copy cannot
+ *  quietly narrow what this checks. */
+const typeables = (raw) => [...raw.matchAll(/<code>([^<]+)<\/code>/g)].map((m) => m[1].trim())
+  .filter((v) => !/^mc$/i.test(v));   // the bare word, shown inline in "put mc in front"
 
 test('the prompt asks the question in words', async () => {
   for (const k of ['tp', 'sl']) {
@@ -284,17 +290,32 @@ test('it shows where the token is NOW, so a target has something to be relative 
   assert.match(t, /market cap \$27\.44M/, 'the current market cap is missing');
 });
 
-test('EVERY example is copyable straight back into the box', async () => {
-  // The one thing that must not be wrong here: an example the parser rejects.
-  // The user would type exactly what they were shown and be told it is invalid.
+test('EVERY value the prompt presents as typeable actually parses', async () => {
+  // The one thing that must not be wrong here: showing someone a number and
+  // then rejecting it when they type it back.
   for (const kind of ['tp', 'sl']) {
-    const t = await prompt(kind);
-    const examples = t.split('\n').filter((l) => /^• /.test(l)).map((l) => l.replace(/^• /, '').split(' — ')[0].trim());
-    assert.ok(examples.length >= 2, `the ${kind} prompt offers no examples`);
-    for (const ex of examples) {
+    const vals = typeables(await promptRaw(kind));
+    assert.ok(vals.length >= 4, `the ${kind} prompt offers ${vals.length} typeable values`);
+    for (const ex of vals) {
       const v = parseUsd(ex.replace(/^mc\s*/i, ''));
       assert.ok(v > 0, `the prompt shows "${ex}" but its own parser rejects it`);
     }
+  }
+});
+
+test('the two ways to answer are stated before any example', async () => {
+  // "Reply with one of these:" over a list of four numbers reads as a menu —
+  // pick one — rather than as two ways of answering with any number you like.
+  // The question people were left with was not "which of these four" but "what
+  // am I supposed to type".
+  for (const kind of ['tp', 'sl']) {
+    const t = await prompt(kind);
+    assert.match(t, /Reply with EITHER/i, `the ${kind} prompt never states the two formats`);
+    assert.match(t, /A price — just the number/, 'the price format is not spelled out');
+    assert.match(t, /A market cap — put mc in front/, 'the mc prefix is not spelled out');
+    assert.match(t, /Any number you want/, 'the examples still read as the only allowed answers');
+    // …and the formats come BEFORE the reference multiples.
+    assert.ok(t.indexOf('Reply with EITHER') < t.indexOf('For reference'), 'examples precede the instruction');
   }
 });
 
@@ -302,27 +323,29 @@ test('the examples point the way the order actually watches', async () => {
   // A limit sell that suggested a target BELOW the current price would fire the
   // instant it was set; a stop-loss suggesting one above would do the same.
   const up = await prompt('tp');
-  assert.match(up, /2× from now/);
-  assert.ok(!/−\d+% from now/.test(up), 'a limit sell suggested a target below the price');
+  assert.match(up, /2× →/);
+  assert.ok(!/−\d+% →/.test(up), 'a limit sell suggested a target below the price');
 
   const down = await prompt('sl');
-  assert.match(down, /−30% from now/);
-  assert.ok(!/\d× from now/.test(down), 'a stop-loss suggested a target above the price');
+  assert.match(down, /−30% →/);
+  assert.ok(!/\d× →/.test(down), 'a stop-loss suggested a target above the price');
 });
 
 test('the suggested numbers are arithmetically what they claim', async () => {
   const t = await prompt('tp');
-  const price2x = Number((t.match(/• ([\d.]+) — a price \(2×/) || [])[1]);
+  const line = t.split('\n').find((l) => /2× →/.test(l)) || '';
+  const price2x = Number((line.match(/→ ([\d.]+)/) || [])[1]);
   assert.ok(Math.abs(price2x - 0.0272 * 2) / (0.0272 * 2) < 0.02, `"2×" was ${price2x}, not ~0.0544`);
-  const mc2x = (t.match(/• mc ([\d.]+[kmb]?) — a market cap \(2×/) || [])[1];
+  const mc2x = (line.match(/mc ([\d.]+[kmb]?)/) || [])[1];
   assert.ok(Math.abs(parseUsd(mc2x) - 27_440_000 * 2) / (27_440_000 * 2) < 0.02, `"2×" mcap was ${mc2x}`);
 });
 
 test('an unreadable price says so instead of inventing examples for it', async () => {
   const t = await prompt('tp', null);
-  assert.match(t, /Could not read this token's price/, 'a failed read rendered as confident advice');
-  assert.ok(!/from now/.test(t), 'a multiple was offered with no price to multiply');
+  assert.match(t, /could not read this token's price/i, 'a failed read rendered as confident advice');
+  assert.ok(!/2× →/.test(t), 'a multiple was offered with no price to multiply');
   assert.match(t, /0\.0025/, 'the generic fallback examples are gone too');
+  assert.match(t, /Reply with EITHER/i, 'the instruction must survive a failed price read');
 });
 
 test('usdShort is the inverse of parseUsd', async () => {

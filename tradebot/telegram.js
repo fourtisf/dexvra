@@ -172,25 +172,31 @@ async function orderPrompt(ca, chainKey, kind) {
   if (px > 0) L.push(`📈 <b>Now:</b> $${Number(px.toPrecision(3))}${mc > 0 ? ` · market cap $${fmt(mc)}` : ''}`, '');
   L.push('❓ <b>What price or market cap do you want to sell at?</b>', '');
 
+  // FORMAT FIRST, examples second. "Reply with one of these:" over a list of
+  // four numbers reads as a menu — pick one — rather than as two ways of
+  // answering with any number you like. The question people were left with was
+  // not "which of these four" but "what am I supposed to type".
+  const pxEg = px > 0 ? Number((px * (up ? 2 : 0.7)).toPrecision(3)) : 0.0025;
+  const mcEg = mc > 0 ? usdShort(mc * (up ? 2 : 0.7)) : (up ? '101k' : '250k');
+  L.push('📝 <b>Reply with EITHER of these two:</b>');
+  L.push(`  <b>1. A price</b> — just the number  →  <code>${pxEg}</code>`);
+  L.push(`  <b>2. A market cap</b> — put <code>mc</code> in front  →  <code>mc ${mcEg}</code>`);
+  L.push('');
+
   // Two multiples in the direction this order watches. Round numbers a holder
   // actually thinks in — double and 5× on the way up, a third and a half off on
   // the way down.
-  const ms = up ? [[2, '2× from now'], [5, '5× from now']] : [[0.7, '−30% from now'], [0.5, '−50% from now']];
+  const ms = up ? [[2, '2×'], [5, '5×']] : [[0.7, '−30%'], [0.5, '−50%']];
   if (px > 0) {
-    L.push('Reply with <b>one</b> of these:');
+    L.push('💡 <b>Any number you want.</b> For reference, from where it is now:');
     for (const [k, why] of ms) {
-      L.push(`• <code>${Number((px * k).toPrecision(3))}</code> — a price <i>(${why})</i>`);
-    }
-    if (mc > 0) for (const [k, why] of ms) {
-      L.push(`• <code>mc ${usdShort(mc * k)}</code> — a market cap <i>(${why})</i>`);
+      const priceCol = `<code>${Number((px * k).toPrecision(3))}</code>`;
+      L.push(mc > 0 ? `  <b>${why}</b> → ${priceCol}  or  <code>mc ${usdShort(mc * k)}</code>` : `  <b>${why}</b> → ${priceCol}`);
     }
   } else {
-    // No price read. Say so rather than printing invented examples next to a
+    // No price read. Say so rather than printing invented multiples next to a
     // token whose value we could not fetch.
-    L.push('<i>Could not read this token\'s price just now, so the examples below are generic.</i>', '');
-    L.push('Reply with <b>one</b> of these:');
-    L.push('• <code>0.0025</code> — a price');
-    L.push(`• <code>mc ${up ? '101k' : '250k'}</code> — a market cap`);
+    L.push('<i>💡 Any number you want. I could not read this token\'s price just now, so the two above are generic examples rather than multiples of it.</i>');
   }
   L.push('', '<i>k = thousand · m = million · b = billion · $ and commas are fine.</i>');
   if (!up) L.push('<i>Fires at 🚀 Turbo gas so it lands during a dump — change it under 📋 Orders.</i>');
