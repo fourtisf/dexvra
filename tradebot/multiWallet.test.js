@@ -44,7 +44,11 @@ test("the toggles render on the card, not on a screen that replaces it", () => {
   assert.match(tg, /walletRow\.push\(\[btn\('🟢 All ON'/);
   assert.match(tg, /btn\('🔴 All OFF'/);
   // …and the card keeps rendering it, rather than a handler sending a new message.
-  assert.match(tg, /const ikb = \[\n\s*\.\.\.walletRow,/);
+  // Position-independent: the grid must be spread into the card's OWN keyboard,
+  // which is the property. Pinning it to the first line of the array made the
+  // Buy/Sell side switch — a row that legitimately sits above it — read as a
+  // regression.
+  assert.match(tg, /const ikb = \[[\s\S]{0,600}\.\.\.walletRow,/);
 });
 
 test("the panel is a toggle — open it, close it, same message", () => {

@@ -118,6 +118,32 @@ function parseAmt(input, native) {
 // pages are live. The map predates that, so robinhood was the ONE enabled chain
 // falling through to `search?q=<address>`, which lands on the trending list
 // rather than the token: a 📈 Chart button that shows somebody else's coins.
+/** Which side of the card someone is on, remembered per token.
+ *
+ *  Defaults to what they are most likely here for — SELL when they already hold
+ *  a bag, BUY when they do not — so the common case costs no taps at all. An
+ *  explicit choice sticks, because someone who taps Buy while holding means it.
+ *
+ *  Deliberately in memory: it is a view preference, and losing it on a restart
+ *  just returns everyone to the sensible default. */
+const _cardSide = new Map();
+const CARD_SIDE_MAX = 5000;
+function cardSide(chatId, ca, want, holding) {
+  const k = chatId + ':' + String(ca).toLowerCase();
+  if (want === 'buy' || want === 'sell') {
+    if (_cardSide.size >= CARD_SIDE_MAX) _cardSide.delete(_cardSide.keys().next().value);
+    _cardSide.set(k, want);
+    return want;
+  }
+  const seen = _cardSide.get(k);
+  // A remembered SELL is dropped once the bag is gone. The choice was made about
+  // a position that no longer exists, and a Sell side with nothing to sell is a
+  // screen of buttons that can only fail. A remembered BUY always stands —
+  // wanting to buy more of something you hold is ordinary.
+  if (seen === 'sell' && !holding) return 'buy';
+  return seen || (holding ? 'sell' : 'buy');
+}
+
 /** A dollar figure as a person would type it: 2k, 101K, 1.5m, $250,000, 0.0025.
  *
  *  A market-cap target is six or seven digits and was being typed out in full —
@@ -564,7 +590,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // NOTE: the buy callback below `b:${chainKey}:${wi}:${ca}:${amt}` must stay ≤64 bytes
   // (Telegram limit). Worst case ≈ 64 with chain "robinhood", wi≤99, 42-char ca, and a
   // 6-char preset (capped in setBuyPresets). Keep those caps if you touch this.
-  const lastRow = [btn('🔁 DCA', `dca:${chainKey}:${wi}:${ca}`), btn('🔔 Alert', `alt:${chainKey}:${wi}:${ca}`), btn('🔄 Refresh', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')];
+  const lastRow = [btn('🔔 Alert', `alt:${chainKey}:${wi}:${ca}`), btn('🔄 Refresh', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')];   // 🔁 DCA moved onto the Buy side
   if (safety.supported(chainKey)) lastRow.unshift(btn('🛡 Safety', `sec:${chainKey}:${ca}`));   // GoPlus (EVM) / RugCheck (Solana)
   // Multi-wallet: one row when closed, the toggle grid below it when open.
   // NOTE the 64-byte callback limit again — worst case here is
@@ -587,18 +613,39 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
       walletRow.push([btn('🟢 All ON', `wtcA:${chainKey}:${wi}:${ca}`), btn('🔴 All OFF', `wtcN:${chainKey}:${wi}:${ca}`)]);
     }
   }
+  // ONE SIDE AT A TIME.
+  //
+  // This card carried twenty-two buttons across eight rows: three Buy rows and
+  // four Sell rows interleaved, plus wallets, plus links. Someone arriving to do
+  // one thing had to find it in a wall — and a Buy sitting one row above a Sell
+  // 100% is not only confusing, it is a misfire waiting to happen.
+  //
+  // The side is chosen explicitly and remembered per token, defaulting to what
+  // the user is most likely here for: SELL when they already hold a bag, BUY
+  // when they do not.
+  const side = cardSide(chatId, ca, opts && opts.side, bal > 1e-9);
+  const buying = side === 'buy';
   const ikb = [
+    [
+      btn(buying ? '🟢 ▸ BUYING' : '🟢 Buy', `tok:${chainKey}:${wi}:${ca}:b`),
+      btn(buying ? '🔴 Sell' : '🔴 ▸ SELLING', `tok:${chainKey}:${wi}:${ca}:s`),
+    ],
     ...walletRow,
-    [btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)],
-    [btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)],
-    [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('⏳ Limit buy', `lb:${chainKey}:${wi}:${ca}`)],
-    // "TP" and "SL" are what a trading desk calls these. Someone looking for the
-    // feature they read about as a stop-loss does not scan a cramped row of five
-    // and recognise "🛑 SL" as it.
-    [btn('🎯 Limit sell', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 Stop-loss', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trailing', `trl:${chainKey}:${wi}:${ca}`)],
   ];
-  // Offer "send this token out" only when the bound wallet actually holds a bag.
-  if (bal > 1e-9) ikb.push([btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`)]);
+  if (buying) {
+    ikb.push([btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)]);
+    ikb.push([btn('⏳ Limit buy', `lb:${chainKey}:${wi}:${ca}`), btn('🔁 DCA', `dca:${chainKey}:${wi}:${ca}`)]);
+  } else {
+    ikb.push([btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)]);
+    // "TP" and "SL" are what a trading desk calls these. Someone looking for the
+    // feature they read about as a stop-loss does not scan a cramped row and
+    // recognise "🛑 SL" as it.
+    ikb.push([btn('🎯 Limit sell', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 Stop-loss', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trailing', `trl:${chainKey}:${wi}:${ca}`)]);
+    const other = [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`)];
+    // Offer "send this token out" only when the bound wallet actually holds a bag.
+    if (bal > 1e-9) other.push(btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`));
+    ikb.push(other);
+  }
   ikb.push([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), { text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }]);
   ikb.push(lastRow);
   return { text, kb: { inline_keyboard: ikb } };
@@ -1828,7 +1875,7 @@ async function onCallback(q) {
       const started = await startMonitor(chatId, tca, ch, wid, { surface: true }).catch(() => false);
       return answer(q.id, started ? '📍 Monitor opened below' : '⚠️ Could not open the monitor — try again');
     }
-    if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
+    if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid, { side: a === 'b' ? 'buy' : a === 's' ? 'sell' : undefined }); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
     if (k === 's') return doSell(chatId, tca, Number(a), ch, wid);
     if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `💵 <b>How much do you want to spend?</b>\n\nType an amount in <b>${cn ? cn.native : 'native'}</b> (for example <code>0.05</code>) or in dollars (for example <code>$10</code>).`); }
@@ -2937,5 +2984,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

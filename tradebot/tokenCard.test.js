@@ -162,3 +162,125 @@ test("gas is read from the chain, and the swap cost is labelled an estimate", ()
   // Best-effort like every other leg: a slow RPC must not hold up the card.
   assert.match(src, /tasks\.push\(gasSnapshot\(chainKey\)\.then\(\(g\) => \{ info\.gas = g; \}\)\);/);
 });
+
+// ---------------------------------------------------------------------------
+// The card's KEYBOARD, driven for real. Everything above slices the text block;
+// what follows renders the whole card, because which buttons exist beside which
+// is the thing being changed.
+const os = require("node:os");
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "tokcard-"));
+process.env.WALLET_SECRET = "w".repeat(48);
+process.env.TRADEBOT_TOKEN = "x:y";
+process.env.ENABLED_CHAINS = "robinhood";
+const core = require("./core");
+const tg = require("./telegram");
+const tokeninfo = require("./tokeninfo");
+const CA = "0x39dBED3a2bd333467115dE45665cC57F813C4571";
+const CHAIN = "robinhood";
+const CHAT = 7;
+
+// ---------------------------------------------------------------- buy vs sell
+//
+// The token card carried twenty-two buttons across eight rows: three Buy rows
+// and four Sell rows interleaved, plus wallets, plus links. Someone arriving to
+// do one thing had to find it in a wall — and a Buy sitting one row above a
+// Sell 100% is not only confusing, it is a misfire waiting to happen.
+
+async function tcard({ side, holding = true, chat = CHAT } = {}) {
+  core.DB.users = {};
+  const u = core.ensureUser(chat);
+  u.wallets = [2, 3, 4].map((i) => ({ id: 'w' + i, name: 'Wallet ' + i, address: '0x' + String(i).repeat(40), positions: {}, orders: [], history: [] }));
+  u.activeWalletId = 'w4';
+  core.setTradeAll(chat, true);
+  const bag = holding ? 56270000000000000000n : 0n;
+  const realEnrich = tokeninfo.enrich, realMeta = core.tokenMeta, realAcross = core.tokenAcrossWallets;
+  tokeninfo.enrich = async () => ({ sym: 'PONS', name: 'Pons', priceEth: 0.0000145, priceUsd: 0.0272, mcapUsd: 27e6, chainKey: CHAIN, native: 'ETH' });
+  core.tokenMeta = async () => ({ sym: 'PONS', name: 'Pons', decimals: 18 });
+  core.tokenAcrossWallets = async () => ({ rows: u.wallets.map((w, i) => ({ id: w.id, index: i + 1, label: w.name, address: w.address, active: w.id === 'w4', raw: bag, tokens: holding ? 56.27 : 0, pctSupply: 0, eth: 0.3 })), holderId: 'w4', supply: 0n });
+  tg._test.PRICES.ETH = 1870;
+  try { return await tg._test.tokenCard(chat, CA, CHAIN, 'w4', { side }); }
+  finally { tokeninfo.enrich = realEnrich; core.tokenMeta = realMeta; core.tokenAcrossWallets = realAcross; }
+}
+const cbs = (p) => p.kb.inline_keyboard.flat().map((b) => b.callback_data || '').filter(Boolean);
+
+test('a Buy button and a Sell button are never on the same card', async () => {
+  // The misfire this prevents: Sell 100% one row below Buy 0.1.
+  const buy = cbs(await tcard({ side: 'buy' }));
+  assert.ok(buy.some((d) => d.startsWith('b:')), 'the buy side has no Buy');
+  for (const d of buy) assert.ok(!/^s:/.test(d), `a Sell survived on the buy side: ${d}`);
+
+  const sell = cbs(await tcard({ side: 'sell' }));
+  assert.ok(sell.some((d) => d.startsWith('s:')), 'the sell side has no Sell');
+  for (const d of sell) assert.ok(!/^b:/.test(d), `a Buy survived on the sell side: ${d}`);
+});
+
+test('the side you are on is the one you are most likely here for', async () => {
+  // Holding a bag → Sell. Holding none → Buy. The common case costs no taps.
+  assert.equal(tg._test.cardSide(1, CA, undefined, true), 'sell');
+  assert.equal(tg._test.cardSide(2, CA, undefined, false), 'buy');
+  // Rendered on a chat with no remembered choice for this token, so what is
+  // being measured is the DEFAULT and not a leftover from the test above.
+  const held = cbs(await tcard({ holding: true, chat: 8001 }));
+  assert.ok(held.some((d) => d.startsWith('s:')), 'a holder landed on the Buy side');
+  const empty = cbs(await tcard({ holding: false, chat: 8002 }));
+  assert.ok(empty.some((d) => d.startsWith('b:')), 'someone holding nothing landed on the Sell side');
+});
+
+test('a remembered SELL is dropped once the bag is gone', async () => {
+  // The choice was made about a position that no longer exists, and a Sell side
+  // with nothing to sell is a screen of buttons that can only fail.
+  const chat = 5150;
+  assert.equal(tg._test.cardSide(chat, CA, 'sell', true), 'sell');
+  assert.equal(tg._test.cardSide(chat, CA, undefined, false), 'buy', 'a sold-out position still opened on Sell');
+  // …a remembered BUY always stands: wanting more of something you hold is ordinary.
+  assert.equal(tg._test.cardSide(chat, CA, 'buy', false), 'buy');
+  assert.equal(tg._test.cardSide(chat, CA, undefined, true), 'buy');
+});
+
+test('an explicit choice sticks — tapping Buy while holding means it', async () => {
+  const chat = 4242;
+  assert.equal(tg._test.cardSide(chat, CA, 'buy', true), 'buy');
+  assert.equal(tg._test.cardSide(chat, CA, undefined, true), 'buy', 'the choice was forgotten on the next render');
+  assert.equal(tg._test.cardSide(chat, CA, 'sell', true), 'sell');
+  assert.equal(tg._test.cardSide(chat, '0x' + 'ff'.repeat(20), undefined, false), 'buy', 'the choice leaked to another token');
+});
+
+test('the switch is the FIRST row, and says which side you are on', async () => {
+  for (const side of ['buy', 'sell']) {
+    const first = (await tcard({ side })).kb.inline_keyboard[0];
+    assert.equal(first.length, 2, 'the switch must be a clean pair');
+    assert.ok(first.every((b) => /^tok:/.test(b.callback_data)), 'the first row is not the side switch');
+    const current = first.find((b) => /▸/.test(b.text));
+    assert.ok(current, 'neither side is marked as the current one');
+    assert.match(current.text, side === 'buy' ? /BUYING/ : /SELLING/);
+  }
+});
+
+test('splitting the card lost nothing — every action is still reachable', async () => {
+  // The failure mode of a redesign: a feature that quietly stops existing.
+  const all = new Set([...cbs(await tcard({ side: 'buy' })), ...cbs(await tcard({ side: 'sell' }))]);
+  const prefix = (p) => [...all].some((d) => d.startsWith(p));
+  for (const p of ['b:', 'bx:', 's:', 'sx:', 'lb:', 'tp:', 'sl:', 'trl:', 'wt:', 'monn:', 'alt:', 'dca:', 'tok:']) {
+    assert.ok(prefix(p), `"${p}" is not reachable from either side any more`);
+  }
+  assert.ok(all.has('menu'), 'the way back to the menu is gone');
+});
+
+test('neither side is a wall of buttons any more', async () => {
+  for (const side of ['buy', 'sell']) {
+    const rows = (await tcard({ side })).kb.inline_keyboard;
+    assert.ok(rows.length <= 8, `the ${side} side is ${rows.length} rows`);
+    assert.ok(rows.flat().length <= 20, `the ${side} side carries ${rows.flat().length} buttons`);
+    for (const r of rows) assert.ok(r.length <= 4, `a row carries ${r.length} buttons`);
+  }
+});
+
+test('every token-card callback fits Telegram\'s 64-byte limit', async () => {
+  // The side switch appends a field to `tok:`, which was already 61 bytes on the
+  // longest chain key.
+  for (const side of ['buy', 'sell']) {
+    for (const d of cbs(await tcard({ side }))) {
+      assert.ok(d.length <= 64, `${d} is ${d.length} bytes — Telegram rejects >64`);
+    }
+  }
+});
