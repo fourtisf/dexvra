@@ -118,6 +118,39 @@ function parseAmt(input, native) {
 // pages are live. The map predates that, so robinhood was the ONE enabled chain
 // falling through to `search?q=<address>`, which lands on the trending list
 // rather than the token: a 📈 Chart button that shows somebody else's coins.
+/** "What did it fill at, and what is this thing worth?" — the two questions a
+ *  receipt leaves behind. Read once, AFTER the trade, so it never sits on the
+ *  critical path; an empty string when the read fails, because a receipt is not
+ *  the place to explain an indexer being down. */
+async function marketLine(ca, chainKey) {
+  const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 4000, null);
+  if (!snap) return '';
+  const rate = nativeUsd((core.chainOf(chainKey) || {}).native);
+  const pxUsd = (snap.priceEth || 0) * rate;
+  const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * rate);
+  const bits = [];
+  if (pxUsd > 0) bits.push(`<b>$${Number(pxUsd.toPrecision(3))}</b>`);
+  else if (snap.priceEth > 0) bits.push(`<b>${Number(snap.priceEth.toPrecision(3))} ${esc((core.chainOf(chainKey) || {}).native || '')}</b>`);
+  if (mcUsd > 0) bits.push(`market cap <b>$${fmt(mcUsd)}</b>`);
+  return bits.length ? `📈 Price: ${bits.join(' · ')}` : '';
+}
+
+/** One wallet's line on a multi-wallet receipt.
+ *
+ *  It used to print the raw float — "0.000801724630395044 ETH" — with no dollar
+ *  figure and no transaction. Eighteen decimals of noise where five carry the
+ *  information, no way to tell what it was worth, and no proof it happened. The
+ *  hash was in hand the whole time; it just was not being shown.
+ */
+function walletLine(label, chainKey, r, rate, extra) {
+  const nat = r.native || '';
+  const amt = Number(extra && extra.amount != null ? extra.amount : 0);
+  const usd = rate > 0 ? ` <i>($${(amt * rate).toFixed(2)})</i>` : '';
+  const what = extra && extra.tokens ? `${extra.tokens} · ` : '';
+  const link = txLink(chainKey || r.chain, r.hash);
+  return `• <b>${esc(label)}</b> · ${what}${amt.toFixed(5)} ${esc(nat)}${usd}${link ? ' · ' + link : ''}`;
+}
+
 /** Which side of the card someone is on, remembered per token.
  *
  *  Defaults to what they are most likely here for — SELL when they already hold
@@ -1320,15 +1353,18 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
-        if (res.status === 'fulfilled') { const r = res.value; okN++; totTok += Number(r.gotTokens) || 0; totSpent += Number(r.spentEth) || 0; totFee += Number(r.feeEth) || 0; sym = r.sym || sym; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(`• ${esc(t.label)}: ${fmt(r.gotTokens)} $${esc(r.sym)} · ${r.spentEth} ${r.native}`); _placeAutoExit(chatId, r, t.id).catch(() => {}); }
-        else { const e = res.reason; lines.push(`• ${esc(t.label)}: ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`); }
+        if (res.status === 'fulfilled') { const r = res.value; okN++; totTok += Number(r.gotTokens) || 0; totSpent += Number(r.spentEth) || 0; totFee += Number(r.feeEth) || 0; sym = r.sym || sym; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: r.spentEth, tokens: `${fmt(r.gotTokens)} $${esc(r.sym)}` })); _placeAutoExit(chatId, r, t.id).catch(() => {}); }
+        else { const e = res.reason; lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
       const mUsd = nativeUsd(nat || 'ETH');
       const head = T(chatId, 'buy.receipt.multi', { sym: esc(sym || ''), ok: okN, n: targets.length, tokens: fmt(totTok), spent: totSpent.toFixed(5), native: esc(nat || 'ETH'), usd: mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : '' });
       const kb = rows([btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
-      const txt = head + '\n' + lines.join('\n');
+      // The two questions a receipt leaves behind — what did it fill at, and
+      // what is this worth now. Read after the trade, never before it.
+      const mkt = await marketLine(ca, chainKey);
+      const txt = head + (mkt ? '\n' + mkt : '') + '\n\n' + lines.join('\n');
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
       // The multi-wallet branch never opened a monitor and its receipt had no 📍
       // button either, so anyone trading more than one wallet got a fill and
@@ -1425,14 +1461,17 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       let okN = 0, skip = 0, totProceeds = 0, totFee = 0, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
-        if (res.status === 'fulfilled') { const r = res.value; okN++; totProceeds += Number(r.proceedsEth) || 0; totFee += Number(r.feeEth) || 0; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(`• ${esc(t.label)}: ${r.proceedsEth} ${r.native}`); }
-        else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• ${esc(t.label)}: ${T(chatId, 'sell.no_bag')}`); } else lines.push(`• ${esc(t.label)}: ❌ ${esc(friendlyError(chatId, e, 'sell'))}`); }
+        if (res.status === 'fulfilled') { const r = res.value; okN++; totProceeds += Number(r.proceedsEth) || 0; totFee += Number(r.feeEth) || 0; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: r.proceedsEth })); }
+        else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• <b>${esc(t.label)}</b> · ${T(chatId, 'sell.no_bag')}`); } else lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(friendlyError(chatId, e, 'sell'))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
       const msUsd = nativeUsd(nat || 'ETH');
       const head = T(chatId, 'sell.receipt.multi', { pct, ok: okN, n: targets.length, skip: skip ? T(chatId, 'sell.receipt.multi.skip', { n: skip }) : '', amt: totProceeds.toFixed(5), native: esc(nat || 'ETH'), usd: msUsd > 0 ? ` ($${(totProceeds * msUsd).toFixed(2)})` : '' });
       const kb = rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
-      const txt = head + '\n' + lines.join('\n');
+      // The two questions a receipt leaves behind — what did it fill at, and
+      // what is this worth now. Read after the trade, never before it.
+      const mkt = await marketLine(ca, chainKey);
+      const txt = head + (mkt ? '\n' + mkt : '') + '\n\n' + lines.join('\n');
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
     }
@@ -2985,5 +3024,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
