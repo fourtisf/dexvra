@@ -956,6 +956,10 @@ const COPY_SOL_SIG_LIMIT = Math.max(5, Number(process.env.COPY_SOL_SIG_LIMIT || 
 // do NOT mirror. 0.005 SOL cleanly clears rent+priority-fees while still catching any
 // meaningful buy. Override via COPY_SOL_MIN_SPEND_LAMPORTS.
 const COPY_SOL_MIN_SPEND = BigInt(process.env.COPY_SOL_MIN_SPEND_LAMPORTS || 5000000);
+// Minimum QUOTE-asset spend (USDC/USDT are 6-decimal, WSOL 9) for a token-funded
+// buy to count. Without a floor, one raw unit ticking down anywhere was proof of
+// payment — which is how an LP withdrawal read as a purchase.
+const SOL_QUOTE_MIN_SPEND = BigInt(process.env.COPY_SOL_MIN_QUOTE || 1000000);
 const _solStable = new Set([
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',   // USDC
   'Es9vMFrzaCERmJfrF4H2FYD4KConky11Mc6mzwtQKPa',    // USDT
@@ -966,44 +970,83 @@ const _solStable = new Set([
 async function _solBuyMintFromTx(conn, sig, targetAddr) {
   const tx = await conn.getParsedTransaction(sig, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
   if (!tx || !tx.meta) return null;
+
+  // DID THE TARGET SIGN THIS?
+  //
+  // getSignaturesForAddress returns every transaction that so much as MENTIONS
+  // the address — including one a stranger built, which is enough to hand an
+  // attacker the bot's wallet: airdrop a scam mint to a followed wallet, arrange
+  // for something of theirs to tick down, and every follower buys it. The EVM
+  // side has refused anything where tx.from is not the target since the rewrite;
+  // Solana had no equivalent check at all.
+  const keys = tx.transaction.message.accountKeys || [];
+  const keyOf = (k) => (k && (k.pubkey ? k.pubkey.toString() : String(k))) || '';
+  let idx = -1, signed = false;
+  for (let i = 0; i < keys.length; i++) {
+    if (keyOf(keys[i]) !== targetAddr) continue;
+    idx = i;
+    // A parsed account key carries `signer`. When the RPC omits it, index 0 is
+    // the fee payer by construction — fail closed on anything else.
+    signed = keys[i] && typeof keys[i].signer === 'boolean' ? keys[i].signer : i === 0;
+    break;
+  }
+  if (!signed) return null;
+
   const pre = tx.meta.preTokenBalances || [], post = tx.meta.postTokenBalances || [];
-  // pre balances for the target owner, keyed by mint (raw amount + decimals).
-  const preMap = new Map();
-  for (const b of pre) { if (b && b.owner === targetAddr && b.uiTokenAmount) { try { preMap.set(b.mint, BigInt(b.uiTokenAmount.amount)); } catch (_) {} } }
-  // Largest INCREASE, compared in DECIMALS-NORMALIZED units so a high-decimal dust token
-  // can't outrank the real acquisition (mints have different decimals).
-  let boughtMint = null, bestNorm = 0;
+  // Pre balances for the target owner, keyed by TOKEN ACCOUNT rather than mint:
+  // a wallet can hold one mint in two accounts, and keying by mint let the last
+  // entry overwrite the first while the post lookup found the other one — which
+  // reads a flat balance as a spend.
+  const acctKey = (b) => `${b.accountIndex != null ? b.accountIndex : keyOf(keys[b.accountIndex])}|${b.mint}`;
+  const preAcct = new Map(), preByMint = new Map();
+  for (const b of pre) {
+    if (!b || b.owner !== targetAddr || !b.uiTokenAmount) continue;
+    let v = 0n; try { v = BigInt(b.uiTokenAmount.amount); } catch (_) { continue; }
+    preAcct.set(acctKey(b), v);
+    preByMint.set(b.mint, (preByMint.get(b.mint) || 0n) + v);
+  }
+  const postByMint = new Map();
   for (const b of post) {
     if (!b || b.owner !== targetAddr || !b.uiTokenAmount) continue;
-    let after; try { after = BigInt(b.uiTokenAmount.amount); } catch (_) { continue; }
-    const deltaRaw = after - (preMap.get(b.mint) || 0n);
-    if (deltaRaw <= 0n) continue;
-    const dec = Number(b.uiTokenAmount.decimals) || 0;
-    const norm = Number(deltaRaw) / Math.pow(10, dec);
-    if (norm > bestNorm) { bestNorm = norm; boughtMint = b.mint; }
+    let v = 0n; try { v = BigInt(b.uiTokenAmount.amount); } catch (_) { continue; }
+    postByMint.set(b.mint, (postByMint.get(b.mint) || 0n) + v);
   }
-  if (!boughtMint) return null;
-  // Confirm the target actually PAID SOL for it (a real buy), not received tokens for
-  // free / via a token→token swap where it only paid fees + ATA rent. FAIL CLOSED: if we
-  // can't locate the target's SOL balance in the tx, do NOT mirror (safer than assuming).
-  const keys = tx.transaction.message.accountKeys || [];
-  let idx = -1;
-  for (let i = 0; i < keys.length; i++) { const k = keys[i]; const pk = (k && (k.pubkey ? k.pubkey.toString() : String(k))) || ''; if (pk === targetAddr) { idx = i; break; } }
+
+  // Which mints GREW, net across every account the target holds them in.
+  const decOf = new Map();
+  for (const b of post.concat(pre)) { if (b && b.uiTokenAmount && !decOf.has(b.mint)) decOf.set(b.mint, Number(b.uiTokenAmount.decimals) || 0); }
+  const gained = [];
+  for (const [mint, now] of postByMint) {
+    const delta = now - (preByMint.get(mint) || 0n);
+    if (delta > 0n && !_solStable.has(mint)) gained.push({ mint, delta, dec: decOf.get(mint) || 0 });
+  }
+  if (!gained.length) return null;
+  // MORE THAN ONE non-money mint arrived: the marketing and scam pattern where
+  // buying X also drops Y on the buyer. Picking the largest was ranking by unit
+  // COUNT, which is supply and not value — a scam mint issuing ten million units
+  // outranks a real 1,200-unit acquisition every time. The EVM path refuses this
+  // ambiguity outright; so does this one now.
+  if (gained.length > 1) return null;
+  const boughtMint = gained[0].mint;
+
+  // Did they PAY? Two ways, and both have to be a real spend rather than any
+  // balance ticking down.
   if (idx >= 0 && Array.isArray(tx.meta.preBalances) && Array.isArray(tx.meta.postBalances)) {
     let solDelta = 0n;
     try { solDelta = BigInt(tx.meta.postBalances[idx]) - BigInt(tx.meta.preBalances[idx]); } catch (_) { solDelta = 0n; }
     if (solDelta < -COPY_SOL_MIN_SPEND) return boughtMint;   // SOL-funded buy
   }
-  // Not SOL-funded. A target who swapped USDC (or any other token they already
-  // held) for this mint paid for it just as surely — requiring the SOL leg meant
-  // every stablecoin-funded buy on Solana was invisible. Look for a token
-  // balance of THEIRS that fell in the same transaction.
-  for (const [mint, before] of preMap) {
-    if (mint === boughtMint) continue;
-    const after = post.find((b) => b && b.owner === targetAddr && b.mint === mint);
-    let now = 0n;
-    if (after && after.uiTokenAmount) { try { now = BigInt(after.uiTokenAmount.amount); } catch (_) { now = 0n; } }
-    if (now < before) return boughtMint;   // they gave something up for it
+  // Token-funded — but ONLY in a quote asset. "Any token of theirs fell" turned
+  // every position-REDUCING transaction into a buy: withdrawing an LP position
+  // burns the receipt token and credits two mints, unstaking returns the staked
+  // asset, and closing an ATA makes the mint vanish from postTokenBalances
+  // entirely, which read as a decrease to zero. In each of those the target
+  // acquired nothing — they exited — and the bot bought.
+  for (const mint of _solStable) {
+    const before = preByMint.get(mint) || 0n;
+    if (before <= 0n) continue;
+    const now = postByMint.get(mint) || 0n;
+    if (before - now >= SOL_QUOTE_MIN_SPEND) return boughtMint;   // they paid, in money
   }
   // Nothing left them. FAIL CLOSED: tokens that merely arrived are an airdrop,
   // and mirroring one spends real money on something nobody bought.

@@ -223,47 +223,121 @@ test('probes are bounded, not only buys', async () => {
 });
 
 // ---------------------------------------------------------------- Solana
-/** One parsed Solana transaction: the target ends up with `mint`, having given
- *  up either SOL or a token. */
-function solTx({ solSpent = 20_000_000n, gave = null } = {}) {
-  const pre = [], post = [];
-  if (gave) {
-    pre.push({ owner: TARGET_SOL, mint: gave.mint, uiTokenAmount: { amount: String(gave.before), decimals: 6 } });
-    post.push({ owner: TARGET_SOL, mint: gave.mint, uiTokenAmount: { amount: String(gave.after), decimals: 6 } });
-  }
-  post.push({ owner: TARGET_SOL, mint: MINT, uiTokenAmount: { amount: '1000000000', decimals: 6 } });
-  return {
-    meta: { preTokenBalances: pre, postTokenBalances: post, preBalances: [1_000_000_000], postBalances: [1_000_000_000n - solSpent].map(Number) },
-    transaction: { message: { accountKeys: [{ pubkey: { toString: () => TARGET_SOL } }] } },
-  };
-}
 const TARGET_SOL = 'TargetWa11etAddressBase58xxxxxxxxxxxxxxxxxxxx';
 const MINT = 'M1ntAddressBase58xxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+const USDC_SOL = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const LP_RECEIPT = 'LPrece1ptTokenBase58xxxxxxxxxxxxxxxxxxxxxxxx';
 
-async function solBought(tx) {
-  const conn = { getParsedTransaction: async () => tx };
-  return watchers._test._solBuyMintFromTx(conn, 'sig1', TARGET_SOL);
+/** One parsed Solana transaction. `holds` is what the target had BEFORE (mint →
+ *  raw), `gets` what they had AFTER. `signer` says whether the followed wallet
+ *  actually signed it. */
+function solTx({ holds = {}, gets = {}, solSpent = 0n, signer = true } = {}) {
+  const entry = (mint, amount, i) => ({ owner: TARGET_SOL, mint, accountIndex: i + 5,
+    uiTokenAmount: { amount: String(amount), decimals: mint === USDC_SOL ? 6 : 6 } });
+  return {
+    meta: {
+      preTokenBalances: Object.entries(holds).map(([m, v], i) => entry(m, v, i)),
+      postTokenBalances: Object.entries(gets).map(([m, v], i) => entry(m, v, i)),
+      preBalances: [1_000_000_000],
+      postBalances: [Number(1_000_000_000n - solSpent)],
+    },
+    transaction: { message: { accountKeys: [{ pubkey: { toString: () => TARGET_SOL }, signer }] } },
+  };
 }
+const solBought = (tx) => watchers._test._solBuyMintFromTx({ getParsedTransaction: async () => tx }, 'sig1', TARGET_SOL);
 
 test('Solana: a SOL-funded buy is seen — the route that always worked', async () => {
-  assert.equal(await solBought(solTx({ solSpent: 20_000_000n })), MINT);
+  assert.equal(await solBought(solTx({ gets: { [MINT]: 1000 }, solSpent: 20_000_000n })), MINT);
 });
 
 test('Solana: a buy funded with USDC is seen', async () => {
   // The gate was "SOL balance fell by > 0.005", so every stablecoin-funded buy
   // on the chain was invisible.
-  const tx = solTx({ solSpent: 5000n, gave: { mint: 'USDCxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', before: 50_000_000, after: 10_000_000 } });
+  const tx = solTx({ holds: { [USDC_SOL]: 50_000_000 }, gets: { [USDC_SOL]: 10_000_000, [MINT]: 1200 }, solSpent: 5000n });
   assert.equal(await solBought(tx), MINT, 'a USDC-funded Solana buy is still invisible');
 });
 
 test('Solana: an airdrop is NOT seen — nothing left the target', async () => {
-  // Only fees moved, and no token of theirs fell.
-  assert.equal(await solBought(solTx({ solSpent: 5000n })), null, 'a Solana airdrop was mirrored as a buy');
+  assert.equal(await solBought(solTx({ gets: { [MINT]: 1000 }, solSpent: 5000n })), null,
+    'a Solana airdrop was mirrored as a buy');
 });
 
-test('Solana: a token that only GREW is not treated as payment', async () => {
-  // Receiving two tokens at once must not make one of them look like the price
-  // of the other.
-  const tx = solTx({ solSpent: 5000n, gave: { mint: 'OtherMintxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', before: 10, after: 99 } });
-  assert.equal(await solBought(tx), null, 'a rising balance was read as payment');
+// ------------------------------------------------- what the audit found
+test('Solana: a transaction the target did NOT sign is refused', async () => {
+  // getSignaturesForAddress returns every transaction that so much as MENTIONS
+  // the address. Without a signer check that hands an attacker the bot's wallet:
+  // airdrop a scam mint to a followed wallet, arrange for something of theirs to
+  // tick down, and every follower buys it. The EVM side has refused
+  // tx.from !== target since the rewrite; Solana had no equivalent at all.
+  const tx = solTx({ holds: { [USDC_SOL]: 50_000_000 }, gets: { [USDC_SOL]: 10_000_000, [MINT]: 1200 }, signer: false });
+  assert.equal(await solBought(tx), null, 'a stranger\'s transaction was accepted as the target\'s buy');
+});
+
+test('Solana: withdrawing an LP position is NOT a buy', async () => {
+  // Removing liquidity burns the receipt token and credits the underlying mints,
+  // and reclaiming rent means SOL goes UP. "Any token of theirs fell" read the
+  // burnt receipt as payment — so the target EXITING a position made the bot BUY.
+  const tx = solTx({ holds: { [LP_RECEIPT]: 5_000_000 }, gets: { [MINT]: 120_000_000 }, solSpent: -2_000_000n });
+  assert.equal(await solBought(tx), null, 'an LP withdrawal was mirrored as a buy');
+});
+
+test('Solana: a closed token account is not read as a payment', async () => {
+  // A closed ATA vanishes from postTokenBalances entirely, which the old loop
+  // read as a decrease to zero.
+  const tx = solTx({ holds: { [LP_RECEIPT]: 5_000_000 }, gets: { [MINT]: 900 }, solSpent: 5000n });
+  assert.equal(await solBought(tx), null, 'a closed account counted as payment');
+});
+
+test('Solana: dust leaving is not payment — a quote spend has a floor', async () => {
+  // One raw unit ticking down was proof of purchase. The SOL leg has had a
+  // 0.005 floor all along; the token leg had none.
+  const tx = solTx({ holds: { [USDC_SOL]: 50_000_000 }, gets: { [USDC_SOL]: 49_999_999, [MINT]: 1200 }, solSpent: 5000n });
+  assert.equal(await solBought(tx), null, 'one raw unit of USDC bought a token');
+});
+
+test('Solana: several tokens arriving is refused, not guessed at', async () => {
+  // The pick was "largest decimals-normalized increase" — a ranking by unit
+  // COUNT, which is supply and not value. A scam mint issuing ten million units
+  // outranks a real 1,200-unit acquisition every time. The EVM path refuses this
+  // ambiguity; so must this one.
+  const SCAM = 'ScamAirdropM1ntBase58xxxxxxxxxxxxxxxxxxxxxxxx';
+  const tx = solTx({ holds: { [USDC_SOL]: 500_000_000 },
+    gets: { [USDC_SOL]: 0, [MINT]: 1200, [SCAM]: 10_000_000_000 }, solSpent: 2_044_280n });
+  assert.equal(await solBought(tx), null, 'the bundled scam airdrop was bought instead of the real trade');
+});
+
+test('Solana: one mint spread over two accounts nets out instead of faking a spend', async () => {
+  // preMap was keyed by MINT, so the last entry overwrote the first, while the
+  // post lookup found the other account — a flat balance read as a spend.
+  const tx = {
+    meta: {
+      preTokenBalances: [
+        { owner: TARGET_SOL, mint: USDC_SOL, accountIndex: 5, uiTokenAmount: { amount: '10000000', decimals: 6 } },
+        { owner: TARGET_SOL, mint: USDC_SOL, accountIndex: 6, uiTokenAmount: { amount: '0', decimals: 6 } },
+      ],
+      postTokenBalances: [
+        { owner: TARGET_SOL, mint: USDC_SOL, accountIndex: 5, uiTokenAmount: { amount: '0', decimals: 6 } },
+        { owner: TARGET_SOL, mint: USDC_SOL, accountIndex: 6, uiTokenAmount: { amount: '10000000', decimals: 6 } },
+        { owner: TARGET_SOL, mint: MINT, accountIndex: 7, uiTokenAmount: { amount: '900', decimals: 6 } },
+      ],
+      preBalances: [1_000_000_000], postBalances: [999_995_000],
+    },
+    transaction: { message: { accountKeys: [{ pubkey: { toString: () => TARGET_SOL }, signer: true }] } },
+  };
+  assert.equal(await solBought(tx), null, 'moving USDC between your own accounts counted as buying');
+});
+
+test('Solana: another owner\'s balances are never read as the target\'s', async () => {
+  const tx = {
+    meta: {
+      preTokenBalances: [{ owner: 'SomebodyE1seXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', mint: USDC_SOL, accountIndex: 5, uiTokenAmount: { amount: '50000000', decimals: 6 } }],
+      postTokenBalances: [
+        { owner: 'SomebodyE1seXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', mint: USDC_SOL, accountIndex: 5, uiTokenAmount: { amount: '0', decimals: 6 } },
+        { owner: TARGET_SOL, mint: MINT, accountIndex: 7, uiTokenAmount: { amount: '900', decimals: 6 } },
+      ],
+      preBalances: [1_000_000_000], postBalances: [999_995_000],
+    },
+    transaction: { message: { accountKeys: [{ pubkey: { toString: () => TARGET_SOL }, signer: true }] } },
+  };
+  assert.equal(await solBought(tx), null, 'somebody else paying counted as the target paying');
 });
