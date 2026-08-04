@@ -1951,6 +1951,16 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
 
   const balNow = holders.reduce((t, h) => t + h.tokens, 0);
   const cost = holders.reduce((t, h) => t + h.cost, 0);
+  // Tokens the bot has no entry price for — airdropped, sent in from elsewhere,
+  // or bought outside the bot. They belong in what you HOLD and in what it is
+  // WORTH; they must never reach the profit line.
+  //
+  // Dividing the value of THREE wallets by the cost of TWO is how a position
+  // that is down 0.64% printed "🟢 +49.04%". Same arithmetic, same lie, as the
+  // portfolio card's old "2.13× (+113%)" over two losing positions: a ratio
+  // whose numerator and denominator are counting different things.
+  const pricedTokens = holders.reduce((t, h) => t + (h.cost > 0 ? h.tokens : 0), 0);
+  const unpricedTokens = balNow - pricedTokens;
   // Known only if EVERY wallet with a stake answered: a partial read must not be
   // allowed to close a position another wallet may still hold.
   const balKnown = holders.length > 0 && holders.every((h) => h.known);
@@ -1995,10 +2005,18 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
       // two. Built from toFixed() on a negative this printed "$-0.05" beside
       // "-0.76%" — a hyphen, a dollar sign and a minus all disagreeing on one
       // line about which part of the number is negative.
-      const unreal = val - cost; const pct = (unreal / cost) * 100;
+      //
+      // Measured against the tokens that HAVE an entry price, never against the
+      // whole bag — see pricedTokens.
+      const unreal = (pricedTokens * px) - cost; const pct = (unreal / cost) * 100;
       const sg = unreal >= 0 ? '+' : '−';
       const usdPart = usdRate > 0 ? `, ${sg}$${Math.abs(unreal * usdRate).toFixed(2)}` : '';
       L.push(`${unreal >= 0 ? '🟢' : '🔴'} <b>Profit/Loss:</b> ${sg}${Math.abs(pct).toFixed(2)}% (${sg}${Math.abs(unreal).toFixed(5)} ${nat}${usdPart})`);
+    }
+    // Never silently. A number left out of a total has to be named, or the total
+    // reads as covering everything.
+    if (unpricedTokens > 1e-12) {
+      L.push(`ℹ️ <i>${fmt(unpricedTokens)} $${esc(sym)} has no entry price on record (sent in, or bought outside the bot) — counted in what you hold, left out of P/L.</i>`);
     }
     // Per-wallet breakdown. The totals above answer "how am I doing"; this
     // answers "on which wallet", which is the question a multi-wallet buy
@@ -2008,15 +2026,38 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     if (multi) {
       L.push('');
       L.push('💳 <b>Per wallet</b>');
+      // Dollars first, native beside it. A row that gave a token count, a cost
+      // and a percentage never answered the question the section exists for —
+      // "what is THIS wallet worth right now" — and left the reader to multiply
+      // a token count by a price printed further up the card.
+      //
+      // When the USD feed is down the native amount stands alone. Printing
+      // "$0.00" would be a number, and a wrong one, on a bag that is worth
+      // something.
+      const usdFirst = (v, withNat) => (usdRate > 0
+        ? `$${(v * usdRate).toFixed(2)}${withNat ? ` <i>(${v.toFixed(5)} ${nat})</i>` : ''}`
+        : `${v.toFixed(5)} ${nat}`);
       for (const h of holders.slice(0, MON_WALLET_ROWS)) {
         const hv = h.tokens * px;
         const hp = h.cost > 0 && px > 0 ? ((hv - h.cost) / h.cost) * 100 : null;
-        // Same minus sign as the header line above — toFixed() emits an ASCII
-        // hyphen, so the two disagreed within one card.
-        const pnl = hp == null ? '' : ` · ${hp >= 0 ? '🟢 +' : '🔴 −'}${Math.abs(hp).toFixed(2)}%`;
         const note = h.stale ? ' <i>(last known)</i>' : (!h.known && !(h.tokens > 0) ? ' <i>(unreadable)</i>' : '');
-        const bound = h.id === (w && w.id) ? ' ⬅️ <i>Sell acts here</i>' : '';
-        L.push(`• ${esc(h.label)}: ${fmt(h.tokens)} $${esc(sym)} · ${h.cost.toFixed(5)} ${nat} in${pnl}${note}${bound}`);
+        const bound = h.id === (w && w.id) ? '  ⬅️ <i>Sell acts here</i>' : '';
+        L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} $${esc(sym)}${note}${bound}`);
+        const parts = [`worth ${px > 0 ? usdFirst(hv, true) : '—'}`];
+        if (h.cost > 0) parts.push(`in ${usdFirst(h.cost, false)}`);
+        if (hp != null) {
+          // Same minus sign as the header line above — toFixed() emits an ASCII
+          // hyphen, so the two disagreed within one card.
+          const d = hv - h.cost;
+          const sg = d >= 0 ? '+' : '−';
+          parts.push(`${d >= 0 ? '🟢' : '🔴'} ${sg}${Math.abs(hp).toFixed(2)}%${usdRate > 0 ? ` (${sg}$${Math.abs(d * usdRate).toFixed(2)})` : ''}`);
+        } else if (!(h.cost > 0)) {
+          // Tokens on a wallet the bot never bought them for — airdropped, sent
+          // in, or bought elsewhere. There is no entry price to be up or down on,
+          // and inventing one by showing "in 0.00000 ETH" would read as a 100% win.
+          parts.push('<i>no cost basis on record</i>');
+        }
+        L.push(`   ${parts.join(' · ')}`);
       }
       // Never silently truncate — a card that drops wallets reads as a card that
       // says you do not own them.

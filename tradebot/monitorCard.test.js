@@ -160,3 +160,111 @@ test('the socials lookup is cached — the monitor re-renders on a timer', async
   } finally { global.fetch = realFetch; }
   assert.equal(calls, 1, `the lookup went out ${calls} times for three renders of one token`);
 });
+
+// ---------------------------------------------------------------- per wallet
+/** Render with a per-wallet cost basis. `costs[i]` of 0 means that wallet holds
+ *  the token with NO recorded entry — airdropped, sent in, or bought elsewhere. */
+async function multi({ costs = [0.00107, 0.00107, 0.00107], rate = 1870, priceEth = 0.00001417 } = {}) {
+  core.DB.users = {};
+  const u = core.ensureUser(CHAT);
+  u.wallets = [2, 3, 4].map((i) => ({ id: 'w' + i, name: 'Wallet ' + i, address: '0x' + String(i).repeat(40), positions: {}, orders: [], history: [] }));
+  u.activeWalletId = 'w4';
+  u.wallets.forEach((w, i) => {
+    if (costs[i] > 0) w.positions[core.posKey(CHAIN, CA)] = { chain: CHAIN, ca: CA, sym: 'PONS', dec: 18, ethIn: costs[i], ethOut: 0, costEth: costs[i], tokens: '75030000000000000000' };
+  });
+  const realAcross = core.tokenBalancesAcross, realSnap = core.tokenSnapshot, realSoc = tokeninfo.socials;
+  core.tokenBalancesAcross = async () => u.wallets.map((w, i) => ({ id: w.id, index: i + 1, label: w.name, raw: 75030000000000000000n }));
+  core.tokenSnapshot = async () => ({ sym: 'PONS', priceEth, mcapUsd: 26470000 });
+  tokeninfo.socials = async () => null;
+  tg._test.PRICES.ETH = rate;
+  try { return plain(await tg._test.monitorPayload(CHAT, CA, CHAIN, 'w4')); }
+  finally { core.tokenBalancesAcross = realAcross; core.tokenSnapshot = realSnap; tokeninfo.socials = realSoc; }
+}
+// A helper that finds nothing must FAIL, not hand back an empty list for a
+// caller to loop over zero times and call it a pass. Every assertion below that
+// iterates these rows was green on the version of the card that had no such rows
+// at all — the same vacuous-pass that let two pump bugs ship.
+const rows = (t) => {
+  const r = t.split('\n').filter((l) => /^\s{2,}worth |^\s{2,}—/.test(l));
+  assert.equal(r.length, 3, `expected one detail line per wallet, found ${r.length}:\n${t}`);
+  return r;
+};
+
+test('every wallet row says what that wallet is worth in dollars', async () => {
+  // The row gave a token count, a cost and a percentage, and never answered the
+  // question the section exists for: what is THIS wallet worth right now. The
+  // reader was left to multiply a token count by a price printed further up.
+  const t = await multi();
+  const r = rows(t);
+  assert.equal(r.length, 3, 'expected one detail line per wallet');
+  for (const line of r) assert.match(line, /worth \$\d/, `no dollar value on: ${line}`);
+});
+
+test('the native amount rides along with the dollar figure', async () => {
+  const r = rows(await multi());
+  for (const line of r) assert.match(line, /worth \$[\d.]+ \([\d.]+ ETH\)/, `native amount missing from: ${line}`);
+});
+
+test('no USD feed means native alone — never a confident $0.00', async () => {
+  // PRICES.ETH is 0 until the first Coinbase call lands, and stays 0 while it
+  // keeps failing. "$0.00" is a number, and a wrong one, on a bag worth money.
+  const t = await multi({ rate: 0 });
+  for (const line of rows(t)) {
+    assert.ok(!/\$0\.00/.test(line), `a zero dollar value was printed on: ${line}`);
+    assert.match(line, /worth [\d.]+ ETH/, `no native fallback on: ${line}`);
+  }
+});
+
+test('an unreadable price says so instead of pricing the bag at nothing', async () => {
+  const t = await multi({ priceEth: 0 });
+  for (const line of rows(t)) {
+    assert.match(line, /worth —/, `a bag with no price read as: ${line}`);
+    assert.ok(!/\$0\.00/.test(line));
+  }
+});
+
+// ------------------------------------------------- mixed cost bases
+test('tokens with no entry price never invent a profit', async () => {
+  // THE BUG THIS SURFACED. A wallet holding the token with no recorded entry
+  // (airdrop, sent in, bought elsewhere) contributed its full VALUE to the top
+  // line and nothing to the COST — so the card divided the value of three
+  // wallets by the cost of two and printed "🟢 +49.04%" over a position that
+  // was down 0.64%. Same arithmetic as the portfolio card's old "2.13× (+113%)".
+  const t = await multi({ costs: [0, 0.00107, 0.00107] });
+  const pl = t.split('\n').find((l) => l.includes('Profit/Loss'));
+  assert.ok(pl, 'setup');
+  assert.ok(/🔴/.test(pl) && /−/.test(pl), `a losing position reported a gain: ${pl}`);
+  assert.ok(!/\+4\d\./.test(pl), `the blended-basis gain is back: ${pl}`);
+});
+
+test('the tokens left out of P/L are named, not silently dropped', async () => {
+  // A number left out of a total has to be named, or the total reads as
+  // covering everything.
+  const t = await multi({ costs: [0, 0.00107, 0.00107] });
+  assert.match(t, /no entry price on record/, 'the excluded tokens were never mentioned');
+  assert.match(t, /left out of P\/L/);
+});
+
+test('what you HOLD and what it is WORTH still count every token', async () => {
+  // The uncosted tokens are excluded from profit only. They are still yours and
+  // still worth something — dropping them from the totals would be the opposite
+  // error.
+  const t = await multi({ costs: [0, 0.00107, 0.00107] });
+  assert.match(t, /You hold:\s*225\.09/, 'the held total stopped counting an uncosted wallet');
+  assert.match(t, /Now worth:.*\$5\.96/, 'the value total stopped counting an uncosted wallet');
+});
+
+test('a wallet with no entry price says so rather than showing a 100% win', async () => {
+  // cost 0 with any value is an infinite return. Printing "in 0.00000 ETH"
+  // beside it would read as a total win on tokens that were simply given away.
+  const t = await multi({ costs: [0, 0.00107, 0.00107] });
+  const line = t.split('\n')[t.split('\n').findIndex((l) => /Wallet 2 —/.test(l)) + 1];
+  assert.match(line, /no cost basis on record/, `Wallet 2's row read: ${line}`);
+  assert.ok(!/%/.test(line), `a percentage was invented from a zero cost: ${line}`);
+});
+
+test('a clean book is unaffected — no note, and every row keeps its percentage', async () => {
+  const t = await multi();
+  assert.ok(!/no entry price on record/.test(t), 'the exclusion note fired with nothing excluded');
+  for (const line of rows(t)) assert.match(line, /−0\.6\d%/, `a row lost its P/L: ${line}`);
+});
