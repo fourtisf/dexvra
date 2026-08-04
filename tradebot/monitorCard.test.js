@@ -623,3 +623,47 @@ test('every monitor callback fits Telegram\'s 64-byte limit', async () => {
     assert.ok(d.length <= 64, `${d} is ${d.length} bytes — Telegram rejects >64`);
   }
 });
+
+// ---------------------------------------------------------------- finding them
+test('a limit sell and a stop-loss are ON the live card, not behind a percentage box', async () => {
+  // They were reachable only through "🔻 Sell other %", whose label promises a
+  // percentage box — so from the screen where someone is watching a position
+  // fall, the two orders that exist to catch that fall were two taps deep
+  // behind a name that hid them. Asked twice where they were.
+  const kb = buttons(await card());
+  const limit = kb.find((b) => (b.callback_data || '').startsWith('tp:'));
+  const stop = kb.find((b) => (b.callback_data || '').startsWith('sl:'));
+  assert.ok(limit, 'no limit sell on the live card');
+  assert.ok(stop, 'no stop-loss on the live card');
+  assert.match(limit.text, /limit/i, `"${limit.text}" does not name the feature`);
+  assert.match(stop.text, /stop/i, `"${stop.text}" does not name the feature`);
+});
+
+test('the labels say what the feature IS, not what a desk calls it', async () => {
+  // "TP" and "SL". Someone looking for the thing they read about as a stop-loss
+  // does not scan a cramped row of five buttons and recognise "🛑 SL" as it.
+  const TG = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  assert.ok(!/btn\('🎯 TP'/.test(TG), 'the TP abbreviation is back');
+  assert.ok(!/btn\('🛑 SL'/.test(TG), 'the SL abbreviation is back');
+  assert.match(TG, /btn\('🎯 Limit sell'/);
+  assert.match(TG, /btn\('🛑 Stop-loss'/);
+});
+
+test('surfacing them did not make the card taller', async () => {
+  // The keyboard was already at eight rows. "Sell other %" gave up its row-mate
+  // and ✖ Stop moved in with 🔀 Other token.
+  const rows = (await card()).kb.inline_keyboard;
+  assert.ok(rows.length <= 8, `the card grew to ${rows.length} rows`);
+  assert.ok(rows.some((r) => r.some((b) => b.callback_data === 'monx')), 'Stop was lost in the shuffle');
+  assert.ok(rows.some((r) => r.some((b) => (b.callback_data || '').startsWith('sxt:'))), 'the custom % box was lost');
+});
+
+test('no row is wide enough to crush its labels', async () => {
+  // Five buttons carrying words do not fit a phone. The token card had
+  // "Sell other % / TP / SL / Trail / Limit buy" in one row.
+  for (const p of [await card(), await scoped({ all: true })]) {
+    for (const r of p.kb.inline_keyboard) {
+      assert.ok(r.length <= 4, `a row carries ${r.length} buttons: ${r.map((b) => b.text).join(' ')}`);
+    }
+  }
+});

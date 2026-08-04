@@ -506,7 +506,11 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     ...walletRow,
     [btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)],
     [btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)],
-    [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('🎯 TP', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 SL', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trail', `trl:${chainKey}:${wi}:${ca}`), btn('⏳ Limit buy', `lb:${chainKey}:${wi}:${ca}`)],
+    [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('⏳ Limit buy', `lb:${chainKey}:${wi}:${ca}`)],
+    // "TP" and "SL" are what a trading desk calls these. Someone looking for the
+    // feature they read about as a stop-loss does not scan a cramped row of five
+    // and recognise "🛑 SL" as it.
+    [btn('🎯 Limit sell', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 Stop-loss', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trailing', `trl:${chainKey}:${wi}:${ca}`)],
   ];
   // Offer "send this token out" only when the bound wallet actually holds a bag.
   if (bal > 1e-9) ikb.push([btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`)]);
@@ -2346,8 +2350,13 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const other = btn('🔀 Other token', 'monlist');
   if (!closed) {
     kbRows.push([btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)]);
-    kbRows.push([btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('✖ Stop', 'monx')]);
-    kbRows.push([other]);
+    // A limit sell and a stop-loss were reachable only through "🔻 Sell other %",
+    // whose label promises a percentage box — so from the screen where someone
+    // is actually watching a position fall, the two orders that exist to catch
+    // that fall were two taps deep behind a name that hid them. Same number of
+    // rows: ✖ Stop moves in with 🔀 Other token.
+    kbRows.push([btn('🔻 Custom %', `sxt:${chainKey}:${wi}:${ca}`), btn('🎯 Limit sell', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 Stop-loss', `sl:${chainKey}:${wi}:${ca}`)]);
+    kbRows.push([other, btn('✖ Stop', 'monx')]);
   } else {
     kbRows.push([other, btn('✖ Stop', 'monx')]);
   }
