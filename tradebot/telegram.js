@@ -114,7 +114,11 @@ function parseAmt(input, native) {
   if (!(px > 0)) return { err: `price feed unavailable — send a ${native} amount instead (e.g. 0.01)` };
   return { amt: String(Number((n / px).toFixed(6))), usdVal: n };
 }
-const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+// DexScreener indexes Robinhood Chain — the chain filter and /robinhood/<addr>
+// pages are live. The map predates that, so robinhood was the ONE enabled chain
+// falling through to `search?q=<address>`, which lands on the trending list
+// rather than the token: a 📈 Chart button that shows somebody else's coins.
+const DS_SLUG = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
 const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
 
@@ -2248,11 +2252,15 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const linkRow = [{ text: '📈 DexScreener', url: chartUrl(chainKey, ca) }];
   if (expUrl) linkRow.push({ text: '🔎 Explorer', url: expUrl });
   kbRows.push(linkRow);
+  // Switching to a different position meant leaving the card and typing
+  // /monitor again — on a screen whose whole job is to be the one you keep open.
+  const other = btn('🔀 Other token', 'monlist');
   if (!closed) {
     kbRows.push([btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)]);
     kbRows.push([btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('✖ Stop', 'monx')]);
+    kbRows.push([other]);
   } else {
-    kbRows.push([btn('✖ Stop', 'monx')]);
+    kbRows.push([other, btn('✖ Stop', 'monx')]);
   }
   const kb = { inline_keyboard: kbRows };
   return { text: L.join('\n'), kb, closed };

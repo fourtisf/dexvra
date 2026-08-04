@@ -431,3 +431,62 @@ test('a clean book still says nothing it does not need to', async () => {
   assert.ok(!/could not be read/.test(t), 'the read warning fired with every wallet readable');
   assert.ok(!/not bought here/.test(t), 'a fully-costed row claimed uncosted tokens');
 });
+
+// ---------------------------------------------------------------- chart links
+test('every enabled chain gets a real DexScreener page, not a search box', async () => {
+  // robinhood was the ONE enabled chain missing from DS_SLUG, so its 📈 button
+  // built `search?q=<address>` — which lands on the trending list showing other
+  // people's coins, not the token you are holding. DexScreener indexes the chain;
+  // the map predated that.
+  const TG = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const m = TG.match(/const DS_SLUG = \{([^}]*)\}/);
+  assert.ok(m, 'DS_SLUG is gone');
+  const slugs = new Set(m[1].split(',').map((s) => s.split(':')[0].trim()).filter(Boolean));
+  for (const ch of core.chains.enabledChains()) {
+    assert.ok(slugs.has(ch.key), `${ch.key} falls through to search?q= — the chart button opens the wrong page`);
+  }
+});
+
+test('the chart link carries the contract on its chain path', async () => {
+  const p = await card();
+  const chart = buttons(p).find((b) => /DexScreener/i.test(b.text || ''));
+  assert.ok(chart && chart.url, 'no chart button');
+  assert.match(chart.url, new RegExp(`dexscreener\\.com/${CHAIN}/${CA}$`),
+    `the chart link is not a token page: ${chart.url}`);
+  assert.ok(!/search\?q=/.test(chart.url), 'the search fallback is back');
+});
+
+// ---------------------------------------------------------------- other token
+test('you can switch to another position without leaving the card', async () => {
+  // Changing which token the tracker follows meant typing /monitor again — on
+  // the one screen a holder keeps pinned.
+  const open = buttons(await card());
+  const b = open.find((x) => x.callback_data === 'monlist');
+  assert.ok(b, 'no way to reach another position from the live card');
+  assert.match(b.text, /token/i);
+});
+
+test('a closed position offers the switch too — that is when you need it most', async () => {
+  const p = await book({ wallets: [{ live: 0n, recorded: 0, cost: 0 }] });
+  assert.ok(buttons(p).some((x) => x.callback_data === 'monlist'),
+    'a sold-out card is a dead end');
+  assert.ok(buttons(p).some((x) => x.callback_data === 'monx'), 'Stop must survive');
+});
+
+test('a curve-chain token that never used the launchpad still gets its links', async () => {
+  // The launchpad lookup was an if/else: a Robinhood token deployed outside it
+  // had no socials source at all. DexScreener indexes the chain.
+  let hitDs = false;
+  const realFetch = global.fetch;
+  global.fetch = async (u) => {
+    if (/robinfun|\/api\/v1\/tokens/.test(String(u))) return { ok: false, json: async () => ({}) };
+    hitDs = true;
+    return { ok: true, json: async () => ({ pairs: [{ chainId: 'robinhood', info: { websites: [{ url: 'https://loxi.example' }], socials: [{ type: 'telegram', url: 'https://t.me/loxi' }] } }] }) };
+  };
+  try {
+    const v = await tokeninfo.socials('0x' + 'f1'.repeat(20), 'robinhood');
+    assert.ok(hitDs, 'the DexScreener fallback was never reached for a curve chain');
+    assert.equal(v.website, 'https://loxi.example');
+    assert.equal(v.telegram, 'https://t.me/loxi');
+  } finally { global.fetch = realFetch; }
+});

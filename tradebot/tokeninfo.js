@@ -126,7 +126,7 @@ async function launchpadApi(ca) {
 // every open card. Links do not change; a hit is held far longer than a miss,
 // because a brand-new token usually has no socials indexed for the first few
 // minutes and is worth asking about again.
-const DS_SOCIAL_CHAIN = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+const DS_SOCIAL_CHAIN = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const _socialCache = new Map();   // 'chain:ca' → { v, at }
 const SOCIAL_TTL_HIT = 30 * 60 * 1000;
 const SOCIAL_TTL_MISS = 5 * 60 * 1000;
@@ -169,7 +169,11 @@ async function socials(ca, chainKey) {
       const l = (a && a.links) || {};
       const w = _safeUrl(l.website), t = _safeUrl(l.twitter), g = _safeUrl(l.telegram);
       if (w || t || g) v = { website: w, twitter: t, telegram: g };
-    } else if (DS_SOCIAL_CHAIN[chainKey]) {
+    }
+    // Not an `else`: a curve-chain token that was NOT launched through the
+    // launchpad has no record there, and DexScreener indexes the chain. Falling
+    // through means such a token gets its links instead of nothing.
+    if (!v && DS_SOCIAL_CHAIN[chainKey]) {
       const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
       if (r.ok) {
         const j = await r.json();
