@@ -54,6 +54,14 @@ const DEFAULTS = {
   pkg: "free", // which package an auto listing gets — see PACKAGES
   trendHours: 12, // only used by the "trending" package
   postChannel: false, // list on the site only, until the operator says otherwise
+  // …and, on the "trending" package only, the @dexvraio announcement too.
+  // Defaults ON rather than OFF like the switches above, because it cannot fire
+  // on its own: it needs postChannel already ON *and* the operator to have
+  // picked "Listing & Trending". Both of those are deliberate acts, so a third
+  // switch defaulting to off would only be a way to silently not do what the
+  // package says it does. Operator's rule: an auto listing that also buys a
+  // board slot is the one worth announcing. See announce().
+  announceChannel: true,
 };
 
 // What an auto-listed token receives. The operator picks one; "free" is the
@@ -63,8 +71,9 @@ const DEFAULTS = {
 //   free     — listed on the site with a "Free" badge. No tier, no trending.
 //   xpress   — treated as an Xpress Listing: tier XPRESS, the Xpress post card.
 //   trending — listed AND featured on the Trending board for `trendHours`,
-//              with the Trending card as well. Tier stays FREE, so every paid
-//              tier still sorts above it on the board.
+//              with the Trending card as well, AND announced in @dexvraio.
+//              Tier stays FREE, so every paid tier still sorts above it on the
+//              board — the announcement is the package, not a tier upgrade.
 const PACKAGES = {
   free: { label: "Free listing", tier: "FREE", trending: false },
   xpress: { label: "Xpress Listing", tier: "XPRESS", trending: false },
@@ -95,7 +104,7 @@ function clampInt(v, [lo, hi], fb) {
 function get() {
   const c = loadJSONSync(FILE, {}) || {};
   const g = { ...DEFAULTS };
-  for (const k of ["enabled", "postChannel"]) if (typeof c[k] === "boolean") g[k] = c[k];
+  for (const k of ["enabled", "postChannel", "announceChannel"]) if (typeof c[k] === "boolean") g[k] = c[k];
   g.minMcap = clampInt(c.minMcap, HARD.mcap, DEFAULTS.minMcap);
   g.maxMcap = clampInt(c.maxMcap, HARD.mcap, DEFAULTS.maxMcap);
   if (g.maxMcap < g.minMcap) g.maxMcap = g.minMcap; // keep the band valid
@@ -373,7 +382,8 @@ function postMediaFor(kind, c, info, input) {
  *   free     → the listing card with NO tier badge (it wasn't bought, so it
  *              must not wear a package's colours)
  *   xpress   → the Xpress card, same as a paid Xpress listing
- *   trending → the listing card AND the Trending card in @dexvratrending
+ *   trending → the listing card, the Trending card in @dexvratrending, AND the
+ *              listing card again in @dexvraio (the announcement channel)
  *
  * And a tweet, on the same terms as a paid listing (X_AUTOLIST_ENABLED=0 turns
  * only this path off). EVERY listing goes to X — an auto listing that reached
@@ -412,7 +422,29 @@ async function announce(tg, c, info, input, cfg = get()) {
     const msg = await post.sendMedia(CHANNELS.listing, media, fmt.listingPost(coin), { pin: true });
     if (msg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.listing}/${msg.message_id}`);
     await post.mirrorToGroup(CHANNELS.listing, msg, { label: "auto-listing" });
-    await postids.set(c.chain, c.address, { listingMsgId: msg && msg.message_id }).catch(() => {});
+    // @dexvraio — the announcement channel. A PAID listing only reaches it on
+    // tier #1–#3 (packages.js `announce: true` → fulfillment.js); an AUTO
+    // listing reaches it on the "Listing & Trending" package and nothing else.
+    // That is the operator's rule (2026-08-04): the free package that also puts
+    // the token on the board is the one worth announcing, so `free` and
+    // `xpress` auto listings stay out of @dexvraio entirely.
+    //
+    // Same card, same pin as a tier #1–#3 paid listing — @dexvraio is a
+    // megaphone for what just went live, and a second shape for the same event
+    // would only make the channel harder to read. The FREE badge on the card is
+    // what tells the two apart; there is no tier badge to fake.
+    const annMsg =
+      p.trending && cfg.announceChannel
+        ? await post.sendMedia(CHANNELS.announce, media, fmt.listingPost(coin), { pin: true })
+        : null;
+    if (annMsg) log.info(`[autolist] announced ${input.sym} → ${CHANNELS.announce}/${annMsg.message_id}`);
+    await postids.set(c.chain, c.address, {
+      listingMsgId: msg && msg.message_id,
+      // Pump alerts reply UNDER the announcement (pumpChecker reads annMsgId).
+      // Without recording it, an auto-announced token's pump alert would land
+      // only in the listing channel — one channel short of where its card is.
+      annMsgId: annMsg && annMsg.message_id,
+    }).catch(() => {});
     if (p.trending) {
       const tMedia = await postMediaFor("trending", c, info, input).catch(() => null);
       const tMsg = await post.sendMedia(CHANNELS.trending, tMedia, fmt.trendingPost(coin));
