@@ -601,37 +601,68 @@ async function positionsCycle() {
 // capped at maxEth, so worst-case loss is bounded even if it mirrors a bad token.
 // Sells are the user's job (TP/SL/manual) — we never auto-sell someone else's exit.
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
-const GET_PAIR_ABI = ['function getPair(address,address) view returns (address)'];
 const COPY_MAX_MIRRORS_PER_CYCLE = Math.max(1, Number(process.env.COPY_MAX_MIRRORS || 5));
-const _copyPair = new Map();   // 'chain:token' -> { pair: string|null, at: ms }, BOUNDED
-const COPY_PAIR_MAX = 5000;
-const COPY_PAIR_NULL_TTL = 600000;   // a V2 pair address is permanent once it exists; re-check "no pair yet" every 10 min
-async function pairOf(chainKey, token) {
-  const k = chainKey + ':' + String(token).toLowerCase();
-  const hit = _copyPair.get(k);
-  if (hit && (hit.pair || (Date.now() - hit.at) < COPY_PAIR_NULL_TTL)) return hit.pair;
-  const factory = await dexFactoryOf(chainKey);
-  if (!factory) return null;   // transient factory miss → don't cache (retry next time)
-  let pair = null;
-  try {
-    const p = await new ethers.Contract(factory, GET_PAIR_ABI, core.providerFor(chainKey)).getPair(token, core.chainOf(chainKey).weth);
-    pair = (p && p !== ethers.ZeroAddress) ? p.toLowerCase() : null;
-  } catch (_) { return null; }   // transient RPC error → don't cache a false "no pair"
-  if (_copyPair.size >= COPY_PAIR_MAX) { const first = _copyPair.keys().next().value; _copyPair.delete(first); }   // bound memory (drop oldest)
-  _copyPair.set(k, { pair, at: Date.now() });
-  return pair;
+// Stablecoins a buy can be funded with, per chain. A target who swaps USDC for a
+// token spent money on it just as surely as one who spent ETH.
+const STABLES = {
+  ethereum: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', '0xdac17f958d2ee523a2206206994597c13d831ec7', '0x6b175474e89094c44da98b954eedeac495271d0f'],
+  base: ['0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca'],
+  bsc: ['0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d', '0x55d398326f99059ff775485246999027b3197955'],
+  arbitrum: ['0xaf88d065e77c8cc2239327c5edb3a432268e5831', '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9'],
+  robinhood: [],
+};
+
+/** Did `target` PAY for the tokens they received in `txHash`?
+ *
+ *  This replaces matching the Transfer's sender against getPair(token, WETH).
+ *  That test only ever recognised a Uniswap V2 pool, so a target buying through
+ *  V3, V4, Aerodrome, 1inch, 0x, CoW, or another Telegram bot's router was
+ *  invisible — which on Ethereum and Base in 2026 is most of the volume. The
+ *  bot could already ROUTE through V3; it just could not SEE anyone else do it.
+ *
+ *  Keyed on the money instead of on the venue: the target signed a transaction,
+ *  tokens arrived, and value left. That is a buy however it was routed.
+ *
+ *    • native-funded — tx.from is the target and tx.value > 0
+ *    • token-funded  — the receipt carries a Transfer of WETH or a stablecoin
+ *                      FROM the target
+ *
+ *  Cheap on the common path: one getTransaction, and the receipt only when the
+ *  value is zero. Returns false when it cannot tell — mirroring an airdrop
+ *  spends real money on a token nobody bought. */
+async function _targetPaid(chainKey, target, txHash) {
+  const prov = core.providerFor(chainKey);
+  const tgt = String(target).toLowerCase();
+  let tx = null;
+  try { tx = await prov.getTransaction(txHash); } catch (_) { return false; }
+  if (!tx) return false;
+  if (String(tx.from || '').toLowerCase() !== tgt) return false;   // somebody else's transaction — not their buy
+  try { if (BigInt(tx.value || 0) > 0n) return true; } catch (_) {}
+  // Zero value: they paid in WETH or a stablecoin, so look for it leaving them.
+  const ch = core.chainOf(chainKey) || {};
+  const pay = new Set([String(ch.weth || '').toLowerCase(), ...(STABLES[chainKey] || [])].filter(Boolean));
+  if (!pay.size) return false;
+  let rc = null;
+  try { rc = await prov.getTransactionReceipt(txHash); } catch (_) { return false; }
+  if (!rc || !Array.isArray(rc.logs)) return false;
+  for (const l of rc.logs) {
+    if (!l.topics || l.topics[0] !== TRANSFER_TOPIC || l.topics.length < 3) continue;
+    if (!pay.has(String(l.address || '').toLowerCase())) continue;
+    if (('0x' + l.topics[1].slice(26)).toLowerCase() === tgt) return true;   // they sent the money
+  }
+  return false;
 }
+
 // ---------------------------------------------------------------- copy: exits
 //
 // Following a wallet IN and never OUT is half a strategy: you take all of the
 // downside with none of its exit signal. This mirrors the exit.
 //
 // It works off the target's BALANCE, not off swap logs, and that is deliberate.
-// The copy-BUY detector matches a Transfer whose sender is the V2 pair
-// (`pairOf` → `getPair(token, weth)`), so it is blind to a sell through a
-// Uniswap V3 pool, an aggregator, or a plain transfer to another wallet. Missing
-// an entry costs an opportunity; missing an EXIT costs the position. A balance
-// that fell is a balance that fell, whatever route it took.
+// The copy-BUY detector watches Transfers INTO the target, so it cannot see a
+// sale at all — the tokens leave, and a log filtered on "to = target" never
+// fires. Missing an entry costs an opportunity; missing an EXIT costs the
+// position. A balance that fell is a balance that fell, whatever route it took.
 //
 // Cost is one balance read per copy-held token per cycle, and that set is
 // bounded by the target's own budget.
@@ -819,8 +850,10 @@ async function copyCycle() {
         if (t.bought && t.bought[token]) continue;                         // already mirrored this token
         if (token === ch.weth.toLowerCase()) continue;                     // ignore WETH itself
         if (Number(t.spentEth) + Number(t.buyEth) > Number(t.maxEth) + 1e-12) continue;   // budget cap
-        const pair = await pairOf(t.chain, token);
-        if (!pair || pair !== fromAddr) continue;                          // not a swap-buy → skip (airdrop/transfer)
+        // Was this a BUY, or did the tokens simply arrive? Keyed on the target
+        // having PAID — not on which pool the sender happens to be.
+        if (!log.transactionHash) continue;
+        if (!(await _targetPaid(t.chain, t.address, log.transactionHash))) continue;
         // Skip anything GoPlus flags as DANGER (honeypot/pausable/owner-rug/high-tax…);
         // when GoPlus has no data we still mirror — worst-case loss stays bounded by maxEth.
         if (safety.supported(t.chain)) { const s = await safety.tokenSecurity(t.chain, token).catch(() => null); if (s && safety.verdict(t.chain, s).level === 'danger') continue; }
@@ -915,10 +948,25 @@ async function _solBuyMintFromTx(conn, sig, targetAddr) {
   const keys = tx.transaction.message.accountKeys || [];
   let idx = -1;
   for (let i = 0; i < keys.length; i++) { const k = keys[i]; const pk = (k && (k.pubkey ? k.pubkey.toString() : String(k))) || ''; if (pk === targetAddr) { idx = i; break; } }
-  if (idx < 0 || !Array.isArray(tx.meta.preBalances) || !Array.isArray(tx.meta.postBalances)) return null;
-  let solDelta; try { solDelta = BigInt(tx.meta.postBalances[idx]) - BigInt(tx.meta.preBalances[idx]); } catch (_) { return null; }
-  if (solDelta >= -COPY_SOL_MIN_SPEND) return null;   // didn't spend > ~0.005 SOL → not a SOL-funded buy
-  return boughtMint;
+  if (idx >= 0 && Array.isArray(tx.meta.preBalances) && Array.isArray(tx.meta.postBalances)) {
+    let solDelta = 0n;
+    try { solDelta = BigInt(tx.meta.postBalances[idx]) - BigInt(tx.meta.preBalances[idx]); } catch (_) { solDelta = 0n; }
+    if (solDelta < -COPY_SOL_MIN_SPEND) return boughtMint;   // SOL-funded buy
+  }
+  // Not SOL-funded. A target who swapped USDC (or any other token they already
+  // held) for this mint paid for it just as surely — requiring the SOL leg meant
+  // every stablecoin-funded buy on Solana was invisible. Look for a token
+  // balance of THEIRS that fell in the same transaction.
+  for (const [mint, before] of preMap) {
+    if (mint === boughtMint) continue;
+    const after = post.find((b) => b && b.owner === targetAddr && b.mint === mint);
+    let now = 0n;
+    if (after && after.uiTokenAmount) { try { now = BigInt(after.uiTokenAmount.amount); } catch (_) { now = 0n; } }
+    if (now < before) return boughtMint;   // they gave something up for it
+  }
+  // Nothing left them. FAIL CLOSED: tokens that merely arrived are an airdrop,
+  // and mirroring one spends real money on something nobody bought.
+  return null;
 }
 async function _copySolTarget(u, t) {
   const conn = core.providerFor(t.chain);
@@ -1181,4 +1229,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };
