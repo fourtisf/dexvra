@@ -6,7 +6,7 @@ const { Telegraf, Markup, session } = require("telegraf");
 const { promises: fs } = require("node:fs");
 const fss = require("node:fs");
 const path = require("node:path");
-const { isAdminUser, ADMIN_BOT_TOKEN } = require("../config/constants");
+const { isAdminUser, ADMIN_BOT_TOKEN, CHANNELS } = require("../config/constants");
 const { getMediaFileId } = require("../helpers/message");
 const { escapeHtml, fmtPrice } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
@@ -732,14 +732,24 @@ function alText() {
     `📦 Package: <b>${autoLister.pkgOf(c.pkg).label}</b>` +
     (c.pkg === "trending" ? ` <i>(${c.trendHours}h on the board)</i>` : "") +
     `\n` +
-    `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n\n` +
+    `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n` +
+    // Only the "Listing & Trending" package can reach @dexvraio, so the line is
+    // only shown for it — on the other two it would state a setting that has
+    // nothing to act on.
+    (c.pkg === "trending"
+      ? `🔔 Announce in ${CHANNELS.announce}: <b>${c.announceChannel ? "🟢 ON" : "🔴 OFF"}</b>` +
+        (c.announceChannel && !c.postChannel ? ` <i>(waiting on channel post)</i>` : ``) +
+        `\n`
+      : "") +
+    `\n` +
     `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
     (recent ? `${recent}\n\n` : "\n") +
     `🔒 <b>Never re-listed:</b> ${s.everListed} contracts — everything that has ever ` +
     `been on the site, so a token that was listed before (including a paid one that ` +
     `was later deleted) can never come back as a free auto listing.\n\n` +
     `Auto listings carry a <b>Free</b> badge — never a paid tier, so they can't be ` +
-    `mistaken for a Bronze customer.`
+    `mistaken for a Bronze customer. Only the <b>Listing &amp; Trending</b> package ` +
+    `reaches ${CHANNELS.announce}; a paid listing gets there on tier #1–#3.`
   );
 }
 function alKb() {
@@ -761,6 +771,12 @@ function alKb() {
       ? [[cb(`🔥 Slot ${c.trendHours}h`, "alnop"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
       : []),
     [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
+    // Below its gate, not above it: @dexvraio only fires when channel posting is
+    // already on, and a switch that reads as independent of the one under it is
+    // how an operator ends up expecting a post that cannot happen.
+    ...(c.pkg === "trending"
+      ? [[cb(`🔔 ${CHANNELS.announce}: ${c.announceChannel ? "ON" : "OFF"}`, "alann")]]
+      : []),
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
 }
@@ -1977,6 +1993,19 @@ function build() {
     const c = await autoLister.set({ postChannel: !autoLister.get().postChannel });
     log.info(`[adminbot] auto-listing channel post ${c.postChannel ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
     ctx.answerCbQuery(c.postChannel ? "📣 Posts to the listing channel" : "🤫 Site only").catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  bot.action("alann", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ announceChannel: !autoLister.get().announceChannel });
+    log.info(`[adminbot] auto-listing ${CHANNELS.announce} announcement ${c.announceChannel ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx
+      .answerCbQuery(
+        c.announceChannel
+          ? `🔔 Listing & Trending is announced in ${CHANNELS.announce}`
+          : `🤫 No ${CHANNELS.announce} post`,
+      )
+      .catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   const alStep = (key, label) => async (ctx) => {
