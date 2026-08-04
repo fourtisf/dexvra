@@ -1927,7 +1927,14 @@ async function sellMenu(chatId, ca, chainKey, wid) {
   try { const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 5000, null); if (snap) { if (snap.priceEth > 0) px = snap.priceEth; if (snap.sym) sym = snap.sym; } } catch (_) {}
   const val = balNow * px;
   const worth = (pct) => (px > 0 ? ` → ~${usd((val * pct) / 100, nat)}` : '');
-  const L = [`🔻 <b>Sell $${esc(sym)}</b>`, `${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}`, ''];
+  // Same lie as the monitor card had: this header names ONE wallet, and the
+  // buttons below route through tradeTargets() — the multi-wallet selection.
+  const selIds = new Set(core.tradeWalletIds(chatId));
+  const scopeN = selIds.size || 1;
+  const scope = scopeN > 1
+    ? `💳 <b>${scopeN} wallets</b> <i>(your trade selection)</i>`
+    : `💳 ${esc(core.walletLabel(w, wi))}`;
+  const L = [`🔻 <b>Sell $${esc(sym)}</b>`, `${ch.emoji} ${esc(ch.name)} · ${scope}`, ''];
   if (balNow > 1e-9) {
     L.push(`🎒 You hold: <b>${fmt(balNow)} $${esc(sym)}</b>${px > 0 ? ` · ${usd(val, nat)}` : ''}`);
     L.push('');
@@ -1941,6 +1948,12 @@ async function sellMenu(chatId, ca, chainKey, wid) {
     // whatever the market pays the moment it is tapped; the limit and stop
     // options below wait for a price instead. A screen that offers only one of
     // the two and never names it leaves the user to assume the wrong one.
+    if (scopeN > 1) {
+      // The amounts above are this wallet's bag. The buttons sell that
+      // percentage of EACH selected wallet's bag, which is a different number.
+      L.push(`⚠️ <i>Multi-wallet is on: a preset sells that % on <b>each of your ${scopeN} selected wallets</b>, not only this one. The amounts above are this wallet's bag.</i>`);
+      L.push('');
+    }
     L.push('⚡ <b>Market</b> — the presets below sell <b>now</b>, at whatever price the pool gives.');
     L.push('🎯 <b>Limit</b> — sell automatically when the price REACHES a target you set.');
     L.push('🛑 <b>Stop-loss</b> — sell automatically if the price FALLS to a level you set.');
@@ -2099,6 +2112,22 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // list — so a header reading "3 wallets" over a "Sell 100%" button is an
   // invitation to sell a third of a position and believe it is all of it. The
   // multi-wallet total lives in the body, where it cannot be mistaken for scope.
+  // WHICH WALLETS THE SELL BUTTONS ACTUALLY TOUCH.
+  //
+  // doSell routes through tradeTargets(), which uses the user's multi-wallet
+  // trade SELECTION and only falls back to this card's wallet when there is
+  // none. The card marked the BOUND wallet "⬅️ Sell acts here" regardless — so
+  // with a selection active it named one wallet while Sell 100% emptied four.
+  //
+  // That is the wrong direction to be wrong in. The marker was added because a
+  // header reading "3 wallets" over a Sell button looked like an invitation to
+  // sell a third of a position believing it was all of it; naming one wallet
+  // over a button that empties four is the same mistake with the loss reversed.
+  const selIds = new Set(core.tradeWalletIds(chatId));
+  const selN = selIds.size;
+  const inScope = (id) => (selN ? selIds.has(id) : id === (w && w.id));
+  const scopeN = selN || 1;
+  const scopeHolding = holders.filter((h) => inScope(h.id)).length;
   const more = multi ? ` <i>· +${holders.length - 1} more below</i>` : '';
   const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
   // Reading the LIVE on-chain balance (not pos.tokens) is what stops tokens sent
@@ -2165,6 +2194,9 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     if (multi) {
       L.push('');
       L.push('💳 <b>Per wallet</b>');
+      if (scopeN > 1) {
+        L.push(`🔻 <i>The Sell buttons act on <b>${scopeN} wallets</b>${scopeHolding < scopeN ? ` — ${scopeHolding} of them hold $${esc(sym)}` : ''}. Tap 🔎 Card to change which.</i>`);
+      }
       // Dollars first, native beside it. A row that gave a token count, a cost
       // and a percentage never answered the question the section exists for —
       // "what is THIS wallet worth right now" — and left the reader to multiply
@@ -2184,7 +2216,8 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
         // had not moved since its own entry.
         const hp = h.cost > 0 && px > 0 ? (((h.costed * px) - h.cost) / h.cost) * 100 : null;
         const note = h.stale ? ' <i>(last known)</i>' : '';
-        const bound = h.id === (w && w.id) ? '  ⬅️ <i>Sell acts here</i>' : '';
+        const bound = !inScope(h.id) ? ''
+          : (scopeN > 1 ? '  ✅ <i>Sell includes this</i>' : '  ⬅️ <i>Sell acts here</i>');
         L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} $${esc(sym)}${note}${bound}`);
         const parts = [`worth ${px > 0 ? usdFirst(hv, true) : '—'}`];
         if (h.cost > 0) parts.push(`in ${usdFirst(h.cost, false)}`);

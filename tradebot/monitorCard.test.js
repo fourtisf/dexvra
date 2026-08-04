@@ -490,3 +490,84 @@ test('a curve-chain token that never used the launchpad still gets its links', a
     assert.equal(v.telegram, 'https://t.me/loxi');
   } finally { global.fetch = realFetch; }
 });
+
+// ---------------------------------------------------------------- sell scope
+//
+// The card marked the BOUND wallet "⬅️ Sell acts here". doSell routes through
+// tradeTargets(), which uses the multi-wallet trade SELECTION and only falls
+// back to the card's wallet when there is none — so with a selection active the
+// card named one wallet while Sell 100% emptied four. The screenshot that caught
+// it: "Wallet 4 · +2 more below … ⬅️ Sell acts here", then
+// "⏳ Selling 25% on 4 wallets…".
+//
+// The marker was added because a header reading "3 wallets" over a Sell button
+// looked like an invitation to sell a third of a position believing it was all
+// of it. Naming one wallet over a button that empties four is the same mistake
+// with the loss reversed, which is the worse direction.
+
+async function scoped({ all = true, holders = [0n, null, null, null] } = {}) {
+  core.DB.users = {};
+  const u = core.ensureUser(CHAT);
+  u.wallets = [1, 2, 3, 4].map((i) => ({ id: 'w' + i, name: 'Wallet ' + i, address: '0x' + String(i).repeat(40), positions: {}, orders: [], history: [] }));
+  u.activeWalletId = 'w4';
+  for (const w of u.wallets.slice(1)) {
+    w.positions[core.posKey(CHAIN, CA)] = { chain: CHAIN, ca: CA, sym: 'PONS', dec: 18, ethIn: 0.00107, ethOut: 0, costEth: 0.00107, tokens: String(E(75)) };
+  }
+  core.setTradeAll(CHAT, all);
+  const realAcross = core.tokenBalancesAcross, realSnap = core.tokenSnapshot, realSoc = tokeninfo.socials;
+  core.tokenBalancesAcross = async () => u.wallets.map((w, i) => ({ id: w.id, index: i + 1, label: w.name, raw: i === 0 ? 0n : E(75) }));
+  core.tokenSnapshot = async () => ({ sym: 'PONS', priceEth: 0.0000147, mcapUsd: 27e6, decimals: 18 });
+  tokeninfo.socials = async () => null;
+  tg._test.PRICES.ETH = 1870;
+  try { return await tg._test.monitorPayload(CHAT, CA, CHAIN, 'w4'); }
+  finally { core.tokenBalancesAcross = realAcross; core.tokenSnapshot = realSnap; tokeninfo.socials = realSoc; }
+}
+
+test('with multi-wallet on, the card states how many wallets Sell will empty', async () => {
+  const t = plain(await scoped({ all: true }));
+  assert.match(t, /Sell buttons act on 4 wallets/, `the sell scope is not stated:\n${t}`);
+  assert.ok(!/⬅️ Sell acts here/.test(t), 'a single wallet is still named as the whole scope');
+});
+
+test('every wallet the sell touches is marked, not only the bound one', async () => {
+  const t = plain(await scoped({ all: true }));
+  const marked = t.split('\n').filter((l) => /^•/.test(l) && /Sell includes this/.test(l));
+  assert.equal(marked.length, 3, `only ${marked.length} of the 3 holding wallets were marked in scope`);
+});
+
+test('the number on the card equals the number doSell will actually target', async () => {
+  // The one assertion that cannot drift: the card's claim and the router's
+  // behaviour read the same source.
+  const t = plain(await scoped({ all: true }));
+  const claimed = Number((t.match(/act on (\d+) wallets/) || [])[1]);
+  const targets = tg._test.tradeTargets(CHAT, 'w4').length;
+  assert.equal(claimed, targets, `the card promises ${claimed} wallets, the sell hits ${targets}`);
+});
+
+test('the card also says how many of those wallets actually hold the token', async () => {
+  // 4 selected, 3 holding — the fourth sell throws "token balance is 0". Saying
+  // "4 wallets" alone would make that receipt look like a failure.
+  const t = plain(await scoped({ all: true }));
+  assert.match(t, /3 of them hold \$PONS/, 'the card does not say which of the scope is holding');
+});
+
+test('with no selection it falls back to the card wallet, and says so', async () => {
+  const t = plain(await scoped({ all: false }));
+  assert.match(t, /⬅️ Sell acts here/, 'single-wallet mode lost its marker');
+  assert.ok(!/Sell buttons act on/.test(t), 'a scope notice fired with a scope of one');
+  const rows = t.split('\n').filter((l) => /^•/.test(l));
+  assert.equal(rows.filter((l) => /Sell acts here/.test(l)).length, 1, 'exactly one wallet is in scope');
+});
+
+test('the Sell screen names the same scope the buttons obey', async () => {
+  await scoped({ all: true });
+  const realMeta = core.tokenMeta, realBal = core.tokenBalance, realSnap = core.tokenSnapshot;
+  core.tokenMeta = async () => ({ sym: 'PONS', decimals: 18, name: 'Pons' });
+  core.tokenBalance = async () => E(75);
+  core.tokenSnapshot = async () => ({ sym: 'PONS', priceEth: 0.0000147 });
+  try {
+    const t = (await tg._test.sellMenu(CHAT, CA, CHAIN, 'w4')).text.replace(/<[^>]+>/g, '');
+    assert.match(t, /4 wallets/, `the sell screen names one wallet while selling on four:\n${t}`);
+    assert.match(t, /each of your 4 selected wallets/, 'the presets never say they apply per wallet');
+  } finally { core.tokenMeta = realMeta; core.tokenBalance = realBal; core.tokenSnapshot = realSnap; }
+});
