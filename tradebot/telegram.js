@@ -72,6 +72,10 @@ const T = (chatId, key, vars) => i18n.t(core.getLang(chatId), key, vars);
 // quote in text, so this is safe everywhere esc() is used.
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
+// True when a quantity still shows as non-zero after fmt() rounds it. Guards
+// every "we left something out" notice: a threshold below the display's own
+// resolution announces amounts the reader sees as 0.0000.
+const fmtNZ = (n) => Number(fmt(n).replace(/[KM]$/, '')) > 0;
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 // A "contract" the user can paste: a 0x EVM address OR a base58 Solana mint. Both
 // map to a token card (scoped to the active chain), and a withdraw destination.
@@ -1984,7 +1988,26 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
   const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
-  const dec = (pos && pos.dec) || 18;
+  // DECIMALS ARE A PROPERTY OF THE TOKEN, not of one wallet's position record.
+  // This read `(pos && pos.dec) || 18`, where `pos` is only the BOUND wallet's
+  // record — so a wallet holding the token with no record of its own (exactly
+  // the wallet the uncosted-token handling exists to describe) was decoded with
+  // a hardcoded 18. Every Solana SPL is 6 or 9: a real bag of 675 tokens
+  // rendered as "0.0000 $PONS · worth $0.00", on the very wallet the Sell
+  // buttons act on.
+  //
+  // The SNAPSHOT already carries them — it is in the batch above and costs
+  // nothing extra. Adding a tokenMeta call here would have been a fourth network
+  // dependency on a card that re-renders on a timer, for a number the first
+  // read already knew.
+  const anyRecordedDec = (() => {
+    for (const wal of core.walletList(u)) { const p = (wal.positions || {})[posKey]; if (p && Number.isFinite(p.dec)) return p.dec; }
+    return null;
+  })();
+  const dec = (snap && Number.isFinite(snap.decimals) ? snap.decimals : null)
+    ?? (pos && Number.isFinite(pos.dec) ? pos.dec : null)
+    ?? anyRecordedDec
+    ?? (core.chains.isSvm(chainKey) ? 9 : 18);
 
   // One row per wallet that has any stake in this token — a live bag, or a cost
   // basis on record (which is what a wallet whose read just failed still has).
@@ -1996,21 +2019,46 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // level up.
   const balById = new Map(allBals.map((b) => [b.id, b.raw]));
   const holders = [];
+  let blind = 0;   // wallets with a stake we could not read AND have no recorded size for
   core.walletList(u).forEach((wal, i) => {
     const p = (wal.positions || {})[posKey];
-    const cost = posCost(p);
+    const recordedCost = posCost(p);
+    let recorded = 0;   // how many tokens this wallet held at its LAST trade through the bot
+    if (p && p.tokens != null) { try { recorded = Number(ethers.formatUnits(BigInt(p.tokens), dec)); } catch (_) { recorded = 0; } }
     const raw = balById.has(wal.id) ? balById.get(wal.id) : null;
     let tokens = 0, known = false, stale = false;
     if (raw != null) {
-      tokens = Number(ethers.formatUnits(raw, (p && p.dec) || dec));
+      tokens = Number(ethers.formatUnits(raw, dec));
       known = true;
-    } else if (p && p.tokens != null) {
+    } else if (recorded > 0) {
       // Fall back to what the buy recorded, and SAY so — a failing RPC must not
       // render identically to a live read.
-      try { tokens = Number(ethers.formatUnits(BigInt(p.tokens), p.dec || dec)); stale = tokens > 0; } catch (_) { tokens = 0; }
+      tokens = recorded; stale = true;
     }
+    // RECONCILE the live bag against the recorded one. They are two different
+    // measurements and were being divided by each other:
+    //
+    //   • A balance ABOVE what the last trade recorded arrived from somewhere
+    //     the bot never priced — an airdrop, a transfer in, a buy made
+    //     elsewhere. Charging it against this wallet's entry price valued 675
+    //     donated tokens at the cost of the 75 that were bought, and printed
+    //     🟢 +297% on a position that was down 0.64%.
+    //   • A balance BELOW it means some of the bag left out of band. Keeping the
+    //     whole basis against what remains printed 🔴 −100% on a winner, purely
+    //     for moving tokens between the user's own wallets.
+    //
+    // costed/cost stay in step, so any ratio built from them measures one thing.
+    const costed = Math.min(tokens, recorded);
+    const cost = recorded > 0 ? recordedCost * (costed / recorded) : 0;
+    const uncosted = Math.max(0, tokens - recorded);
+    // No live read and nothing on record is NO INFORMATION. Such a wallet used
+    // to keep its full cost in the denominator while contributing zero tokens to
+    // the numerator, which printed a large confident loss over an RPC blip — and
+    // its row asserted "worth $0.00 · 🔴 −100.00%" directly under the word
+    // "(unreadable)".
+    if (!known && !stale && recordedCost > 0) { blind++; return; }
     if (tokens > 0 || cost > 0) {
-      holders.push({ id: wal.id, index: i + 1, label: core.walletLabel(wal, i + 1), tokens, cost, known, stale });
+      holders.push({ id: wal.id, index: i + 1, label: core.walletLabel(wal, i + 1), tokens, cost, costed, uncosted, known, stale });
     }
   });
   // The wallet the card is bound to leads the list; its buttons are the ones that
@@ -2027,8 +2075,14 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // that is down 0.64% printed "🟢 +49.04%". Same arithmetic, same lie, as the
   // portfolio card's old "2.13× (+113%)" over two losing positions: a ratio
   // whose numerator and denominator are counting different things.
-  const pricedTokens = holders.reduce((t, h) => t + (h.cost > 0 ? h.tokens : 0), 0);
-  const unpricedTokens = balNow - pricedTokens;
+  //
+  // Per WALLET was not fine enough. `h.cost > 0 ? h.tokens : 0` priced a costed
+  // wallet's ENTIRE live balance, so the split only worked when the uncosted
+  // tokens happened to land on a wallet with no position at all. The same 675
+  // tokens read +297% or −0.64% depending only on which of the user's own
+  // wallets received them. It is per TOKEN now.
+  const pricedTokens = holders.reduce((t, h) => t + h.costed, 0);
+  const unpricedTokens = holders.reduce((t, h) => t + h.uncosted, 0);
   // Known only if EVERY wallet with a stake answered: a partial read must not be
   // allowed to close a position another wallet may still hold.
   const balKnown = holders.length > 0 && holders.every((h) => h.known);
@@ -2051,7 +2105,11 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // tick then unpinned and killed the monitor for good — on a position that had
   // filled. tokenBalancesAcross() reports null per wallet on failure, and only a
   // real, successful zero is allowed to close anything.
-  const noPosition = !(cost > 0);
+  // Holding the token IS the position. Keyed on cost alone, a bag with no
+  // recorded entry — airdropped, sent in, bought elsewhere — rendered "No open
+  // position", hid the Sell buttons and let the monitor retire itself, on
+  // tokens the user was holding and could have sold from that very card.
+  const noPosition = !(cost > 0) && !(balNow > 0);
   if (noPosition || (balKnown && !(balNow > 0))) {
     closed = true;
     L.push('<i>No open position right now — you have sold it, or have not bought yet.</i>');
@@ -2083,8 +2141,17 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     }
     // Never silently. A number left out of a total has to be named, or the total
     // reads as covering everything.
-    if (unpricedTokens > 1e-12) {
+    // Gated on what the reader can SEE. At 1e-12 the note fired on dust and
+    // announced "ℹ️ 0.0000 $PONS has no entry price on record", which reads as a
+    // bug rather than as information.
+    if (fmtNZ(unpricedTokens)) {
       L.push(`ℹ️ <i>${fmt(unpricedTokens)} $${esc(sym)} has no entry price on record (sent in, or bought outside the bot) — counted in what you hold, left out of P/L.</i>`);
+    }
+    // Named OUTSIDE the per-wallet list, because the list is capped and these
+    // rows sort last: with more than MON_WALLET_ROWS wallets the truncation
+    // dropped precisely the ones the user needed to be told about.
+    if (blind > 0) {
+      L.push(`⚠️ <i>${blind} wallet${blind === 1 ? '' : 's'} could not be read — anything held there is missing from every figure above. Retrying.</i>`);
     }
     // Per-wallet breakdown. The totals above answer "how am I doing"; this
     // answers "on which wallet", which is the question a multi-wallet buy
@@ -2107,19 +2174,29 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
         : `${v.toFixed(5)} ${nat}`);
       for (const h of holders.slice(0, MON_WALLET_ROWS)) {
         const hv = h.tokens * px;
-        const hp = h.cost > 0 && px > 0 ? ((hv - h.cost) / h.cost) * 100 : null;
-        const note = h.stale ? ' <i>(last known)</i>' : (!h.known && !(h.tokens > 0) ? ' <i>(unreadable)</i>' : '');
+        // The P/L compares the COSTED part of the bag against the basis for
+        // exactly that part. Comparing the whole live balance against a
+        // buy-time basis is what printed +893% on a wallet whose token price
+        // had not moved since its own entry.
+        const hp = h.cost > 0 && px > 0 ? (((h.costed * px) - h.cost) / h.cost) * 100 : null;
+        const note = h.stale ? ' <i>(last known)</i>' : '';
         const bound = h.id === (w && w.id) ? '  ⬅️ <i>Sell acts here</i>' : '';
         L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} $${esc(sym)}${note}${bound}`);
         const parts = [`worth ${px > 0 ? usdFirst(hv, true) : '—'}`];
         if (h.cost > 0) parts.push(`in ${usdFirst(h.cost, false)}`);
+        if (h.uncosted > 0 && fmtNZ(h.uncosted)) parts.push(`<i>${fmt(h.uncosted)} not bought here</i>`);
         if (hp != null) {
           // Same minus sign as the header line above — toFixed() emits an ASCII
           // hyphen, so the two disagreed within one card.
-          const d = hv - h.cost;
+          // The MONEY delta has to come from the same tokens as the percentage.
+          // Built from the whole live value (hv) it disagreed with its own
+          // number: a wallet holding 675 donated tokens beside 75 bought ones
+          // printed "🟢 +0.68% (+$17.87)" — the sign and the dollars from the
+          // full bag, the percentage from the costed part.
+          const d = (h.costed * px) - h.cost;
           const sg = d >= 0 ? '+' : '−';
           parts.push(`${d >= 0 ? '🟢' : '🔴'} ${sg}${Math.abs(hp).toFixed(2)}%${usdRate > 0 ? ` (${sg}$${Math.abs(d * usdRate).toFixed(2)})` : ''}`);
-        } else if (!(h.cost > 0)) {
+        } else if (!(h.costed > 0)) {
           // Tokens on a wallet the bot never bought them for — airdropped, sent
           // in, or bought elsewhere. There is no entry price to be up or down on,
           // and inventing one by showing "in 0.00000 ETH" would read as a 100% win.

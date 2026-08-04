@@ -268,3 +268,166 @@ test('a clean book is unaffected — no note, and every row keeps its percentage
   assert.ok(!/no entry price on record/.test(t), 'the exclusion note fired with nothing excluded');
   for (const line of rows(t)) assert.match(line, /−0\.6\d%/, `a row lost its P/L: ${line}`);
 });
+
+// ---------------------------------------------------------------- audit round two
+//
+// Thirteen findings from an adversarial review of the card above, every one of
+// them reproduced against the real render before being written down. They share
+// three roots: a LIVE balance divided by a BUY-TIME basis, one wallet's decimals
+// used for the whole token, and a failed read priced as a fact.
+
+const E = (n) => BigInt(Math.round(n)) * 10n ** 18n;
+
+/** Full control of every wallet: live balance, recorded size, recorded cost. */
+async function book({ dec = 18, wallets, price = 0.00001417, rate = 1870, bound = 'w2' } = {}) {
+  core.DB.users = {};
+  const u = core.ensureUser(CHAT);
+  u.wallets = wallets.map((_, i) => ({ id: 'w' + (i + 2), name: 'Wallet ' + (i + 2), address: '0x' + String(i + 2).repeat(40), positions: {}, orders: [], history: [] }));
+  u.activeWalletId = bound;
+  u.wallets.forEach((w, i) => {
+    const spec = wallets[i];
+    if (spec.cost > 0) w.positions[core.posKey(CHAIN, CA)] = { chain: CHAIN, ca: CA, sym: 'PONS', dec, ethIn: spec.cost, ethOut: 0, costEth: spec.cost, tokens: String(spec.recorded) };
+  });
+  const realAcross = core.tokenBalancesAcross, realSnap = core.tokenSnapshot, realSoc = tokeninfo.socials, realMeta = core.tokenMeta;
+  core.tokenBalancesAcross = async () => u.wallets.map((w, i) => ({ id: w.id, index: i + 1, label: w.name, raw: wallets[i].live }));
+  core.tokenSnapshot = async () => ({ sym: 'PONS', priceEth: price, mcapUsd: 26e6 });
+  core.tokenMeta = async () => ({ sym: 'PONS', name: 'Pons', decimals: dec });
+  tokeninfo.socials = async () => null;
+  tg._test.PRICES.ETH = rate;
+  try { return await tg._test.monitorPayload(CHAT, CA, CHAIN, bound); }
+  finally { core.tokenBalancesAcross = realAcross; core.tokenSnapshot = realSnap; tokeninfo.socials = realSoc; core.tokenMeta = realMeta; }
+}
+const pl = (t) => t.split('\n').find((l) => l.includes('Profit/Loss')) || '';
+
+test('tokens sent INTO a wallet that also bought are not priced at that wallet\'s entry', async () => {
+  // 675 tokens arrive in Wallet 2, which had bought 75 for 0.00107. The split
+  // was per WALLET — any wallet with a basis had its ENTIRE live balance priced
+  // — so the donated tokens were charged against the bought ones' cost and the
+  // card printed 🟢 +297.33% on a position that was down 0.68%. Move the same
+  // 675 to a wallet with no position and it printed −0.64%. Same tokens, same
+  // money, two answers.
+  const p = await book({ wallets: [
+    { live: E(750), recorded: E(75), cost: 0.00107 },
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+  ] });
+  const t = plain(p);
+  assert.ok(/🔴/.test(pl(t)), `a flat book reported a gain: ${pl(t)}`);
+  assert.ok(!/\+29\d\./.test(t), 'the +297% is back');
+  assert.match(t, /675\.00 \$PONS has no entry price/, 'the donated tokens were never named');
+});
+
+test('moving your own bag out of a wallet does not print −100% on it', async () => {
+  // Tokens leave Wallet 2 out of band. The whole basis stayed charged against
+  // what remained, so a winning position read as a total loss. The basis is
+  // scaled to what is still there.
+  const p = await book({ wallets: [
+    { live: 0n, recorded: E(75), cost: 0.00107 },
+    { live: E(150), recorded: E(75), cost: 0.00107 },
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+  ] });
+  const t = plain(p);
+  assert.ok(!/−100\.00%/.test(t), `a moved bag read as a wipeout:\n${t}`);
+  assert.ok(/−0\.6\d%/.test(pl(t)), `the book is flat and should read flat: ${pl(t)}`);
+});
+
+test('a row\'s percentage and its dollar amount describe the same tokens', async () => {
+  // The percentage came from the costed part and the money from the whole live
+  // bag, so one row printed "🟢 +0.68% (+$17.87)" — a green plus on a losing
+  // number.
+  const t = plain(await book({ wallets: [
+    { live: E(750), recorded: E(75), cost: 0.00107 },
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+  ] }));
+  for (const line of t.split('\n')) {
+    if (!/worth /.test(line) || !/%/.test(line)) continue;
+    const green = /🟢/.test(line), plus = /\(\+\$/.test(line), minus = /\(−\$/.test(line);
+    if (green) assert.ok(!minus, `a green row carries a negative amount: ${line}`);
+    else assert.ok(!plus, `a red row carries a positive amount: ${line}`);
+  }
+});
+
+// ---------------------------------------------------------------- decimals
+test('a 6-decimal token is decoded as 6 decimals on EVERY wallet', async () => {
+  // decimals were read off the BOUND wallet's position record and fell back to a
+  // hardcoded 18. Every Solana SPL is 6 or 9: a real 675-token bag on the active
+  // wallet — the one the Sell buttons act on — rendered "0.0000 $PONS · $0.00".
+  const p = await book({ dec: 6, wallets: [
+    { live: 675000000n, recorded: 0, cost: 0 },        // active wallet, no position record
+    { live: 75030000n, recorded: 75030000n, cost: 0.00107 },
+  ] });
+  const t = plain(p);
+  assert.match(t, /675\.00 \$PONS/, `a 6-decimal bag was decoded as 18:\n${t}`);
+  assert.ok(!/Wallet 2 — 0\.0000/.test(t), 'the bound wallet\'s bag rendered as zero');
+  assert.ok(p.kb.inline_keyboard.flat().some((b) => (b.callback_data || '').startsWith('s:')),
+    'the Sell buttons vanished from a wallet that is holding');
+});
+
+// ---------------------------------------------------------------- failed reads
+test('a wallet that could not be read is excluded from the numbers, and named', async () => {
+  // It kept its full cost in the denominator while contributing no tokens to the
+  // numerator — a confident −33.76% over one failed RPC call, with no caveat
+  // anywhere on the totals.
+  const p = await book({ wallets: [
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+    { live: null, recorded: 0, cost: 0.00107 },        // read failed, nothing on record
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+  ] });
+  const t = plain(p);
+  assert.ok(/−0\.6\d%/.test(pl(t)), `an RPC blip was reported as a loss: ${pl(t)}`);
+  assert.match(t, /could not be read/, 'the missing wallet was never mentioned');
+});
+
+test('an unreadable wallet never gets a row asserting $0.00 and −100%', async () => {
+  // "(unreadable)" sat on line one and two fabricated facts sat on line two.
+  const t = plain(await book({ wallets: [
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+    { live: null, recorded: 0, cost: 0.00107 },
+  ] }));
+  assert.ok(!/worth \$0\.00/.test(t), `a wallet with no information was priced at zero:\n${t}`);
+  assert.ok(!/−100\.00%/.test(t), 'a wallet with no information was reported as a total loss');
+});
+
+test('the "could not be read" warning survives the wallet-row cap', async () => {
+  // Unreadable rows carry 0 tokens, the list sorts by tokens descending, and it
+  // is capped — so truncation dropped precisely the rows the user needed. The
+  // warning lives outside the list.
+  const many = Array.from({ length: 12 }, (_, i) => ({ live: E(75), recorded: E(75), cost: 0.00107 }));
+  many[11] = { live: null, recorded: 0, cost: 0.00107 };
+  const t = plain(await book({ wallets: many }));
+  assert.match(t, /1 wallet could not be read/, 'the warning was truncated away with its row');
+});
+
+// ---------------------------------------------------------------- holding is a position
+test('holding tokens with no recorded entry is still an open position', async () => {
+  // Keyed on cost alone, a bag that was airdropped or bought elsewhere rendered
+  // "No open position", hid the Sell buttons, and let the monitor retire itself
+  // — on tokens the user was holding and could have sold from that card.
+  const p = await book({ wallets: [{ live: E(500), recorded: 0, cost: 0 }] });
+  const t = plain(p);
+  assert.ok(!/No open position/.test(t), `a held bag was declared closed:\n${t}`);
+  assert.match(t, /500\.00 \$PONS/);
+  assert.ok(p.kb.inline_keyboard.flat().some((b) => (b.callback_data || '').startsWith('s:')),
+    'no way to sell a bag the card admits you are holding');
+  assert.equal(p.closed, false, 'the monitor would have stopped itself');
+});
+
+// ---------------------------------------------------------------- dust
+test('the exclusion note does not fire on an amount that displays as zero', async () => {
+  // The gate was 1e-12, far below fmt()'s resolution, so dust announced
+  // "ℹ️ 0.0000 $PONS has no entry price on record" — which reads as a bug.
+  const t = plain(await book({ wallets: [
+    { live: E(75) + 1000n, recorded: E(75), cost: 0.00107 },   // 1e-15 of a token extra
+  ] }));
+  assert.ok(!/0\.0000 \$PONS has no entry price/.test(t), `dust triggered the notice:\n${t}`);
+});
+
+test('a clean book still says nothing it does not need to', async () => {
+  const t = plain(await book({ wallets: [
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+    { live: E(75), recorded: E(75), cost: 0.00107 },
+  ] }));
+  assert.ok(!/no entry price on record/.test(t), 'the exclusion note fired with nothing excluded');
+  assert.ok(!/could not be read/.test(t), 'the read warning fired with every wallet readable');
+  assert.ok(!/not bought here/.test(t), 'a fully-costed row claimed uncosted tokens');
+});

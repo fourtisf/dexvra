@@ -116,7 +116,11 @@ test("only a CONFIRMED zero may close the position", () => {
 test("the recorded position is a real fallback now, not dead code", () => {
   // The branch existed before but could never run: the failure it was written
   // for arrived as 0n, which took the other path. It is now per wallet.
-  assert.match(PAYLOAD, /\} else if \(p && p\.tokens != null\) \{/);
+  // The recorded size is now decoded ONCE per wallet, up front, because the
+  // reconciliation against the live balance needs it too — so the fallback
+  // branch tests the decoded number rather than re-parsing the raw field.
+  assert.match(PAYLOAD, /\} else if \(recorded > 0\) \{/);
+  assert.match(PAYLOAD, /tokens = recorded; stale = true;/);
   assert.match(PAYLOAD, /BigInt\(p\.tokens\)/);
   // And the rows themselves come from the WALLET LIST, not from the read — a
   // read that throws returns [] , and deriving rows from it wiped the cost basis
