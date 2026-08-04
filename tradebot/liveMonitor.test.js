@@ -40,7 +40,7 @@ const START = TG.slice(TG.indexOf("async function _startMonitor("), TG.indexOf("
 const LOOP = TG.slice(TG.indexOf("function runMonitorLoop("), TG.indexOf("function askExport("));
 assert.ok(LOOP.includes("const tick = async () =>"), "the loop slice is wrong — fix the markers before trusting anything below");
 const PAYLOAD = TG.slice(TG.indexOf("async function monitorPayload("), TG.indexOf("const _monitorByToken"));
-assert.ok(START.includes("const existing = _monitorByToken.get(tkey);") && PAYLOAD.includes("const [snap, allBals]"),
+assert.ok(START.includes("const existing = _monitorByToken.get(tkey);") && PAYLOAD.includes("const [snap, allBals"),
   "a slice marker is stale — fix it before trusting anything below");
 
 // ── not automatic ───────────────────────────────────────────────────────────
@@ -158,10 +158,13 @@ test("stopMonitor cannot reach into another chat", () => {
 
 // ── slow ────────────────────────────────────────────────────────────────────
 
-test("the two network reads run in PARALLEL", () => {
-  // They are independent, and in series a slow chain paid both timeouts back to
-  // back — up to 11s on a card whose whole job is to feel live.
-  assert.match(PAYLOAD, /const \[snap, allBals\] = await Promise\.all\(\[/);
+test("every network read the card needs runs in PARALLEL", () => {
+  // They are independent, and in series a slow chain paid every timeout back to
+  // back — up to 11s on a card whose whole job is to feel live. The socials
+  // lookup joined them later and must not be awaited on its own either.
+  assert.match(PAYLOAD, /const \[snap, allBals[^\]]*\] = await Promise\.all\(\[/);
+  assert.ok(!/\]\);[\s\S]{0,600}await withTmo\(tokeninfo\.socials/.test(PAYLOAD),
+    "the socials lookup was moved out of the parallel batch");
   assert.ok(!/await withTmo\(core\.tokenSnapshot[\s\S]{0,400}await withTmo\(core\.tokenBalance/.test(PAYLOAD),
     "no serial pair may return");
 });

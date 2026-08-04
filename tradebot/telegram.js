@@ -1904,9 +1904,14 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // opened on. A multi-wallet buy fills three or four wallets at once and the
   // card only ever showed one of them, so the P/L on screen was a fraction of
   // the position the user actually held, with no hint the rest existed.
-  const [snap, allBals] = await Promise.all([
+  //
+  // The socials lookup joins them rather than being awaited after: it is cached
+  // for half an hour inside tokeninfo, so on a refresh it costs nothing, and on
+  // the first render it must not add its own timeout to the card's.
+  const [snap, allBals, links] = await Promise.all([
     withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), SNAP_TMO_MS, null),
     withTmo(core.tokenBalancesAcross(chatId, ca, chainKey).catch(() => []), BAL_TMO_MS, []),
+    withTmo(tokeninfo.socials(ca, chainKey).catch(() => null), SNAP_TMO_MS, null),
   ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
@@ -1986,8 +1991,14 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
+      // The sign goes in FRONT of the currency, and there is one minus sign, not
+      // two. Built from toFixed() on a negative this printed "$-0.05" beside
+      // "-0.76%" — a hyphen, a dollar sign and a minus all disagreeing on one
+      // line about which part of the number is negative.
       const unreal = val - cost; const pct = (unreal / cost) * 100;
-      L.push(`${unreal >= 0 ? '🟢' : '🔴'} <b>Profit/Loss:</b> ${unreal >= 0 ? '+' : ''}${pct.toFixed(2)}% (${unreal >= 0 ? '+' : ''}${unreal.toFixed(5)} ${nat}${usdRate > 0 ? ', ' + (unreal >= 0 ? '+' : '') + '$' + (unreal * usdRate).toFixed(2) : ''})`);
+      const sg = unreal >= 0 ? '+' : '−';
+      const usdPart = usdRate > 0 ? `, ${sg}$${Math.abs(unreal * usdRate).toFixed(2)}` : '';
+      L.push(`${unreal >= 0 ? '🟢' : '🔴'} <b>Profit/Loss:</b> ${sg}${Math.abs(pct).toFixed(2)}% (${sg}${Math.abs(unreal).toFixed(5)} ${nat}${usdPart})`);
     }
     // Per-wallet breakdown. The totals above answer "how am I doing"; this
     // answers "on which wallet", which is the question a multi-wallet buy
@@ -2000,7 +2011,9 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
       for (const h of holders.slice(0, MON_WALLET_ROWS)) {
         const hv = h.tokens * px;
         const hp = h.cost > 0 && px > 0 ? ((hv - h.cost) / h.cost) * 100 : null;
-        const pnl = hp == null ? '' : ` · ${hp >= 0 ? '🟢 +' : '🔴 '}${hp.toFixed(2)}%`;
+        // Same minus sign as the header line above — toFixed() emits an ASCII
+        // hyphen, so the two disagreed within one card.
+        const pnl = hp == null ? '' : ` · ${hp >= 0 ? '🟢 +' : '🔴 −'}${Math.abs(hp).toFixed(2)}%`;
         const note = h.stale ? ' <i>(last known)</i>' : (!h.known && !(h.tokens > 0) ? ' <i>(unreadable)</i>' : '');
         const bound = h.id === (w && w.id) ? ' ⬅️ <i>Sell acts here</i>' : '';
         L.push(`• ${esc(h.label)}: ${fmt(h.tokens)} $${esc(sym)} · ${h.cost.toFixed(5)} ${nat} in${pnl}${note}${bound}`);
@@ -2023,10 +2036,32 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
       : (snap.mcapEth > 0 ? fmt(snap.mcapEth) + ' ' + nat : '—');
     L.push(`\n📈 <b>Price:</b> ${pxStr}  ·  <b>Market cap:</b> ${mcStr}`);
   }
-  L.push(`<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
+  // The token's own identity. The card named a position and never once said WHICH
+  // token — no contract, no links — so the only way to check what you were
+  // holding, or to send it to anyone, was to leave the card and hunt for it.
+  //
+  // The CA sits on its own line in a <code> block because that is what makes
+  // Telegram copy it on a single tap. Truncating it would defeat the point.
+  if (links && (links.website || links.twitter || links.telegram)) {
+    const lk = [];
+    if (links.website) lk.push(`<a href="${esc(links.website)}">🌐 Website</a>`);
+    if (links.twitter) lk.push(`<a href="${esc(links.twitter)}">𝕏 Twitter</a>`);
+    if (links.telegram) lk.push(`<a href="${esc(links.telegram)}">💬 Telegram</a>`);
+    L.push(`\n🔗 <b>Links:</b> ${lk.join('  ·  ')}`);
+  }
+  L.push(`${links ? '' : '\n'}📄 <b>Contract</b> <i>(tap to copy)</i>`);
+  L.push(`<code>${esc(ca)}</code>`);
+  L.push(`\n<i>🔄 Updates automatically · last updated ${new Date().toISOString().slice(11, 19)} UTC</i>`);
   // Quick-sell straight from the live tracker: 25 / 50 / 75 / 100, plus "other %"
   // for anything in between. Sell buttons only appear while a bag is open.
   const kbRows = [[btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)]];
+  // Chart and explorer, same as the token card has had all along. A live position
+  // is exactly where someone wants to open the chart, and this was the one screen
+  // that made them go back to find it.
+  const expUrl = expTokenUrl(chainKey, ca);
+  const linkRow = [{ text: '📈 DexScreener', url: chartUrl(chainKey, ca) }];
+  if (expUrl) linkRow.push({ text: '🔎 Explorer', url: expUrl });
+  kbRows.push(linkRow);
   if (!closed) {
     kbRows.push([btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)]);
     kbRows.push([btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('✖ Stop', 'monx')]);

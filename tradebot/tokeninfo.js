@@ -117,6 +117,72 @@ async function launchpadApi(ca) {
   } catch (_) { return null; }
 }
 
+// ---------------------------------------------------------------- socials
+// A token's own links — website, X, Telegram — from whichever source knows the
+// token: the launchpad record on curve chains, DexScreener everywhere else.
+//
+// CACHED, and that is the point. The live monitor re-renders on a timer, so an
+// uncached 6-second HTTP call here would be paid on every single refresh of
+// every open card. Links do not change; a hit is held far longer than a miss,
+// because a brand-new token usually has no socials indexed for the first few
+// minutes and is worth asking about again.
+const DS_SOCIAL_CHAIN = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+const _socialCache = new Map();   // 'chain:ca' → { v, at }
+const SOCIAL_TTL_HIT = 30 * 60 * 1000;
+const SOCIAL_TTL_MISS = 5 * 60 * 1000;
+const SOCIAL_CACHE_MAX = 2000;
+
+// http(s) only. These strings are set by whoever deployed the token, and they
+// end up inside an href on a card the user is invited to tap. A javascript: or
+// data: URL has no business there, and a malformed one makes Telegram reject the
+// whole message — which would take the live monitor down over a field a stranger
+// controls. Anything that is not a plain web link is dropped, quietly.
+function _safeUrl(u) {
+  const s = String(u || '').trim();
+  if (s.length > 300) return '';
+  try { const p = new URL(s); return (p.protocol === 'http:' || p.protocol === 'https:') ? s : ''; }
+  catch (_) { return ''; }
+}
+
+function _pickSocials(o) {
+  if (!o) return null;
+  const out = {};
+  for (const w of (o.websites || [])) { const u = _safeUrl(w && w.url); if (u && !out.website) out.website = u; }
+  for (const s of (o.socials || [])) {
+    const t = String((s && s.type) || '').toLowerCase();
+    const u = _safeUrl(s && s.url); if (!u) continue;
+    if ((t === 'twitter' || t === 'x') && !out.twitter) out.twitter = u;
+    else if (t === 'telegram' && !out.telegram) out.telegram = u;
+  }
+  return (out.website || out.twitter || out.telegram) ? out : null;
+}
+
+async function socials(ca, chainKey) {
+  const key = chainKey + ':' + (core.chains.isSvm(chainKey) ? String(ca) : String(ca).toLowerCase());
+  const hit = _socialCache.get(key);
+  if (hit && Date.now() - hit.at < (hit.v ? SOCIAL_TTL_HIT : SOCIAL_TTL_MISS)) return hit.v;
+  let v = null;
+  try {
+    const chain = core.chainOf(chainKey);
+    if (chain && chain.curve) {
+      const a = await launchpadApi(ca);
+      const l = (a && a.links) || {};
+      const w = _safeUrl(l.website), t = _safeUrl(l.twitter), g = _safeUrl(l.telegram);
+      if (w || t || g) v = { website: w, twitter: t, telegram: g };
+    } else if (DS_SOCIAL_CHAIN[chainKey]) {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+      if (r.ok) {
+        const j = await r.json();
+        const pairs = (j.pairs || []).filter((p) => p.chainId === DS_SOCIAL_CHAIN[chainKey]);
+        for (const p of pairs) { v = _pickSocials(p.info); if (v) break; }
+      }
+    }
+  } catch (_) { v = null; }   // a lookup that failed is a miss, not an error the card should show
+  if (_socialCache.size >= SOCIAL_CACHE_MAX) _socialCache.delete(_socialCache.keys().next().value);
+  _socialCache.set(key, { v, at: Date.now() });
+  return v;
+}
+
 // Aggregate a rich scan. Returns null only if the token can't be priced at all.
 async function enrich(ca, chainKey) {
   const chain = core.chainOf(chainKey); if (!chain) return null;
@@ -152,4 +218,4 @@ async function enrich(ca, chainKey) {
   return info;
 }
 
-module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi, marketStats, gasSnapshot };
+module.exports = { enrich, dexLiquidityNative, curveRaised, launchpadApi, marketStats, gasSnapshot, socials, _test: { _pickSocials, _safeUrl } };
