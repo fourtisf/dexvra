@@ -118,6 +118,26 @@ function parseAmt(input, native) {
 // pages are live. The map predates that, so robinhood was the ONE enabled chain
 // falling through to `search?q=<address>`, which lands on the trending list
 // rather than the token: a 📈 Chart button that shows somebody else's coins.
+/** A dollar figure as a person would type it: 2k, 101K, 1.5m, $250,000, 0.0025.
+ *
+ *  A market-cap target is six or seven digits and was being typed out in full —
+ *  "mc 1000000" — where one wrong zero sets the order ten times away from what
+ *  was meant, on a screen whose whole job is to fire without asking again.
+ *
+ *  Returns null on anything it cannot read, never a guess: this number decides
+ *  when a position is sold. */
+function parseUsd(input) {
+  let s = String(input == null ? '' : input).trim().toLowerCase();
+  s = s.replace(/^\$/, '').replace(/(\$|usd)$/, '').replace(/,/g, '').trim();
+  const m = s.match(/^([0-9]*\.?[0-9]+)\s*([kmb])?$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || !(n > 0)) return null;
+  const mult = m[2] === 'k' ? 1e3 : m[2] === 'm' ? 1e6 : m[2] === 'b' ? 1e9 : 1;
+  const v = n * mult;
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
 const DS_SLUG = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
 const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
@@ -1749,11 +1769,11 @@ async function onCallback(q) {
     if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `💵 <b>How much do you want to spend?</b>\n\nType an amount in <b>${cn ? cn.native : 'native'}</b> (for example <code>0.05</code>) or in dollars (for example <code>$10</code>).`); }
     if (k === 'sx') { const sp = await sellMenu(chatId, tca, ch, wid); return send(chatId, sp.text, sp.kb); }
     if (k === 'sxt') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `✏️ <b>Custom sell amount</b>\n\nType a percentage of your holdings from <b>1</b> to <b>100</b>.\nExamples: <code>33</code> = sell a third · <code>80</code> = sell most · <code>100</code> = sell everything.`); }
-    if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 <b>Take-profit — sell automatically when the price goes UP</b>\n\nTell me the target and the bot sells 100% of this token when it's reached:\n• A <b>price in dollars</b> — for example <code>0.0025</code>\n• Or a <b>market cap</b> — type <code>mc</code> first, for example <code>mc 1000000</code>`); }
-    if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 <b>Stop-loss — sell automatically when the price goes DOWN</b>\n\nTell me the target and the bot sells 100% of this token to limit your loss when it's reached:\n• A <b>price in dollars</b> — for example <code>0.0008</code>\n• Or a <b>market cap</b> — type <code>mc</code> first, for example <code>mc 250000</code>`); }
+    if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 <b>Limit sell — sell automatically when the price goes UP</b>\n\nTell me the target and the bot sells 100% of this token when it's reached.\n\n• <b>By price:</b>  <code>0.0025</code>  ·  <code>$0.0025</code>\n• <b>By market cap:</b>  <code>mc 2k</code>  ·  <code>mc 101k</code>  ·  <code>mc 1.5m</code>\n\n<i>k = thousand, m = million, b = billion. Commas and $ are fine.</i>`); }
+    if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 <b>Stop-loss — sell automatically when the price goes DOWN</b>\n\nTell me the target and the bot sells 100% of this token to limit your loss.\n\n• <b>By price:</b>  <code>0.0008</code>  ·  <code>$0.0008</code>\n• <b>By market cap:</b>  <code>mc 250k</code>  ·  <code>mc 1.5m</code>\n\n<i>k = thousand, m = million, b = billion. Commas and $ are fine.</i>\n<i>Fires at 🚀 Turbo gas so it lands during a dump — change it under 📋 Orders.</i>`); }
     if (k === 'trl') { setPending(chatId, { action: 'trail_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📉 <b>Trailing stop</b> — send the trail <b>percent</b> (1–99), e.g. <code>20</code>.\n\n<i>The bot tracks the peak price from now and sells 100% if it falls that % below the peak. A rising price only ratchets the peak up.</i>`); }
-    if (k === 'lb') { setPending(chatId, { action: 'lb_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `Limit buy: send <b>&lt;usd_price&gt; &lt;amount&gt;</b> (e.g. <code>0.002 0.05</code>) — buy when price drops to that:`); }
-    if (k === 'alt') { setPending(chatId, { action: 'alert_price', ca: tca, chain: ch }); return send(chatId, `🔔 Alert: send the target <b>USD price</b> — I'll ping you when <code>${short(tca)}</code> crosses it:`); }
+    if (k === 'lb') { setPending(chatId, { action: 'lb_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `⏳ <b>Limit buy — buy automatically when the price drops</b>\n\nSend the <b>target price</b> and the <b>amount to spend</b>, separated by a space:\n• <code>0.002 0.05</code> — buy 0.05 when the price reaches $0.002\n• <code>$1.5k 0.1</code> — shorthand works here too\n\n<i>k = thousand, m = million, b = billion.</i>`); }
+    if (k === 'alt') { setPending(chatId, { action: 'alert_price', ca: tca, chain: ch }); return send(chatId, `🔔 <b>Price alert</b> — send the target <b>USD price</b> and I'll ping you when <code>${short(tca)}</code> crosses it.\n\n<code>0.0025</code>  ·  <code>$2k</code>  ·  <code>101k</code>`); }
     if (k === 'wt') { setPending(chatId, { action: 'wtok_addr', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch) || {}; return send(chatId, `📤 <b>Send token</b> <code>${short(tca)}</code> out of the bot\n\nPaste the <b>destination ${core.chains.isSvm(ch) ? 'Solana (base58)' : (cn.native || '') + ' (0x)'} address</b> to send to:`); }
     if (k === 'dca') { setPending(chatId, { action: 'dca_new', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch) || {}; return send(chatId, `🔁 <b>DCA (scheduled buys)</b> for <code>${short(tca)}</code>\n\nSend <b>&lt;amount&gt; &lt;every_minutes&gt; &lt;rounds&gt;</b> in ${cn.native || ''}, e.g.\n<code>0.05 60 10</code> → buy 0.05 every 60 min, 10 times.\n\n<i>Runs on this wallet; each round is a normal buy (fee applies). Cancel anytime in 🔁 DCA.</i>`); }
   }
@@ -1838,7 +1858,7 @@ async function resolvePending(chatId, p, text, m) {
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const raw = String(t).trim();
       const isMcap = /^mc\b/i.test(raw);
-      const usdVal = Number(raw.replace(/^mc\s*/i, ''));
+      const usdVal = parseUsd(raw.replace(/^mc\s*/i, ''));
       if (!(usdVal > 0)) return send(chatId, `Send a positive ${isMcap ? 'market cap' : 'USD price'} (or prefix with <code>mc</code> for a market-cap target).`);
       const meta = await core.tokenMeta(p.ca, ch.key);
       const type = p.action === 'tp_price' ? 'tp' : 'sl';
@@ -1849,7 +1869,7 @@ async function resolvePending(chatId, p, text, m) {
       return send(chatId, `✅ ${type === 'tp' ? 'Take-profit' : 'Stop-loss'} set for $${esc(meta.sym)} at ${isMcap ? 'market cap $' + fmt(usdVal) : '$' + usdVal} on ${ch.emoji} ${esc(ch.name)}.\n${speedNote(order)}`, rows([btn('📋 Orders', 'orders')]));
     }
     if (p.action === 'lb_price') {
-      const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = Number(pxStr), amount = Number(amtStr);
+      const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = parseUsd(pxStr), amount = Number(amtStr);
       if (!(usdPrice > 0) || !(amount > 0)) return send(chatId, 'Format: <code>&lt;usd_price&gt; &lt;amount&gt;</code>');
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
@@ -1904,7 +1924,7 @@ async function resolvePending(chatId, p, text, m) {
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
     }
     if (p.action === 'alert_price') {
-      const usdPrice = Number(t); if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price.');
+      const usdPrice = parseUsd(t); if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price — <code>0.0025</code>, <code>$2k</code>, <code>101k</code>.');
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
       const snap = await core.tokenSnapshot(p.ca, ch.key).catch(() => null);   // infer direction from current price
@@ -2852,5 +2872,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

@@ -180,3 +180,70 @@ test('"Limit" on the token card says which side it is', async () => {
   const TG = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
   assert.match(TG, /btn\('⏳ Limit buy', `lb:/);
 });
+
+// ---------------------------------------------------------------- typing a target
+//
+// A market-cap target is six or seven digits, and it had to be typed out in
+// full: "mc 1000000". One wrong zero sets the order ten times away from what was
+// meant, on a screen whose whole job is to fire without asking again.
+
+const { parseUsd } = tg._test;
+
+test('a market cap can be typed the way people say it', () => {
+  assert.equal(parseUsd('2k'), 2_000);
+  assert.equal(parseUsd('10K'), 10_000);
+  assert.equal(parseUsd('101k'), 101_000);
+  assert.equal(parseUsd('1.5m'), 1_500_000);
+  assert.equal(parseUsd('2B'), 2_000_000_000);
+});
+
+test('the dollar sign, commas and spacing are all forgiven', () => {
+  assert.equal(parseUsd('$2k'), 2_000);
+  assert.equal(parseUsd('2k$'), 2_000);
+  assert.equal(parseUsd('250,000'), 250_000);
+  assert.equal(parseUsd('  50k  '), 50_000);
+  assert.equal(parseUsd('2 k'), 2_000, 'a space before the suffix is still a suffix');
+  assert.equal(parseUsd('10usd'), 10);
+});
+
+test('a plain token price still parses as itself', () => {
+  // The same box takes a price. Suffix handling must not disturb it.
+  assert.equal(parseUsd('0.0025'), 0.0025);
+  assert.equal(parseUsd('$0.0008'), 0.0008);
+  assert.equal(parseUsd('1'), 1);
+});
+
+test('anything it cannot read returns null, never a guess', () => {
+  // This number decides when a position is sold. A wrong reading is worse than
+  // a refusal, which costs one retyped message.
+  for (const bad of ['', '  ', 'abc', 'k', '-5', '0', '2kk', 'k2', '1e9', null, undefined, {}, 'mc 2k']) {
+    assert.equal(parseUsd(bad), null, `${JSON.stringify(bad)} was accepted as a target`);
+  }
+});
+
+test('the order handlers use the parser, not Number()', () => {
+  // Number('2k') is NaN, so the shorthand would be rejected with "send a
+  // positive USD price" — the exact wall this removes.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  assert.match(SRC, /const usdVal = parseUsd\(raw\.replace\(\/\^mc\\s\*\/i, ''\)\)/, 'TP/SL still parse with Number()');
+  assert.match(SRC, /const usdPrice = parseUsd\(pxStr\)/, 'limit buy still parses with Number()');
+  assert.match(SRC, /const usdPrice = parseUsd\(t\);/, 'price alerts still parse with Number()');
+  assert.ok(!/const usdVal = Number\(raw\.replace/.test(SRC), 'the old numeric parse is back');
+});
+
+test('the prompts teach the shorthand — an input nobody knows about is not an input', () => {
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  for (const example of ['mc 2k', 'mc 101k', 'mc 1.5m', 'mc 250k']) {
+    assert.ok(SRC.includes(example), `no prompt shows ${example}`);
+  }
+  assert.match(SRC, /k = thousand, m = million, b = billion/, 'the suffixes are never explained');
+  assert.ok(!/for example <code>mc 1000000<\/code>/.test(SRC), 'the seven-digit example is back');
+});
+
+test('the stop-loss prompt says how hard it will try to land', () => {
+  // It defaults to Turbo. Someone setting a stop is choosing what happens in a
+  // crash; the cost of that is worth one line at the moment they choose it.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const sl = SRC.slice(SRC.indexOf('Stop-loss — sell automatically when the price goes DOWN'));
+  assert.match(sl.slice(0, 700), /Turbo/, 'the stop-loss prompt never mentions its execution speed');
+});
