@@ -742,6 +742,7 @@ function copyScreen(chatId) {
     `Follow any wallet and act on it automatically. Two modes:\n` +
     `• <b>Copy trades</b> — when it <b>buys</b> a token, you buy it too.\n` +
     `• <b>Dev snipe</b> 🎯 — when it <b>launches a new token</b> on the launchpad, you buy the launch instantly (like a pump.fun dev sniper).\n\n` +
+    `Each followed wallet also has an <b>exit mirror</b> 🔻: the moment that wallet starts selling a token you copy-bought from it, you sell <b>100%</b> of yours. Tokens you bought yourself are never touched.\n\n` +
     `Master switch: <b>${c.on ? '🟢 ON' : '⚪ OFF'}</b>\n\n`;
   const kbRows = [[btn(c.on ? '🔴 Turn OFF' : '🟢 Turn ON', 'cptog')]];
   if (!list.length) body += '<i>No wallets followed yet — add one below.</i>\n';
@@ -751,8 +752,13 @@ function copyScreen(chatId) {
       const ch = core.chainOf(t.chain) || { emoji: '' };
       const badge = (t.mode === 'launches') ? '🎯 dev snipe' : '👥 copy trades';
       const spent = Number(t.spentEth).toFixed(3), max = esc(t.maxEth);
-      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy · used ${spent}/${max} ${ch.native || ''}\n`;
-      kbRows.push([btn(`✖ Remove ${t.mode === 'launches' ? '🎯' : '👥'} ${short(t.address)}`, `cprm:${t.id}`)]);
+      const held = Object.keys(t.holding || {}).length;
+      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy · used ${spent}/${max} ${ch.native || ''}\n` +
+        `    🔻 Exit mirror: <b>${t.copySell ? '🟢 ON' : '⚪ OFF'}</b>${held ? ` · watching <b>${held}</b> position${held > 1 ? 's' : ''}` : ''}\n`;
+      kbRows.push([
+        btn(t.copySell ? '🔻 Exit mirror OFF' : '🔻 Exit mirror ON', `cpsell:${t.id}`),
+        btn(`✖ Remove ${short(t.address)}`, `cprm:${t.id}`),
+      ]);
     }
   }
   if (list.length < core.MAX_COPY_TARGETS) {
@@ -761,7 +767,8 @@ function copyScreen(chatId) {
     if (core.canDevSnipe(ach.key)) kbRows.push([btn('🎯 Snipe a dev wallet', 'cpaddd')]);
   }
   kbRows.push([btn('« Menu', 'menu')]);
-  body += `\n<i>Both modes skip honeypots and are capped by your budget. You manage sells. Turn the master switch ON to start. ⚠️ High risk — DYOR.</i>`;
+  body += `\n<i>Both modes skip honeypots and are capped by your budget. Turn the master switch ON to start. ⚠️ High risk — DYOR.</i>`;
+  body += `\n<i>The exit mirror only ever sells what copy bought from that wallet, and only positions opened after you enabled it — it will not reach back into bags you already held.</i>`;
   if (!core.canDevSnipe(ach.key)) body += `\n<i>🎯 Dev snipe is available on Robinhood Chain &amp; Solana — switch chain (🌐) to add one.</i>`;
   return { text: body, kb: { inline_keyboard: kbRows } };
 }
@@ -1673,6 +1680,12 @@ async function onCallback(q) {
   if (data === 'alerts') { const s = alertsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'al') { const okc = watchers.cancelAlert(chatId, ca); await answer(q.id, okc ? 'Cancelled' : 'Not found'); const s = alertsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'copy') { const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'cpsell') {
+    let on = false;
+    try { on = core.setCopySell(chatId, ca, !(core.ensureUser(chatId).copy.targets.find((t) => t.id === ca) || {}).copySell); } catch (_) {}
+    await answer(q.id, on ? '🔻 Exit mirror ON — you sell 100% when they start selling' : '⚪ Exit mirror OFF — you manage the sell');
+    const s2 = copyScreen(chatId); return edit(chatId, mid, s2.text, s2.kb);
+  }
   if (data === 'cptog') { const u = core.ensureUser(chatId); try { core.setCopyOn(chatId, !(u.copy && u.copy.on)); } catch (_) {} const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'cpadd') { setPending(chatId, { action: 'copy_add', mode: 'trades' }); const ch = activeChain(chatId); const ex = core.chains.isSvm(ch.key) ? '4Nd1m… 0.05 0.5' : '0xAbc… 0.02 0.2'; return send(chatId, `👥 <b>Copy a wallet's trades</b> on ${ch.emoji} ${esc(ch.name)} (your active chain)\n\nSend: <code>&lt;wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\nEvery <b>buy</b> the wallet makes is mirrored with <b>perBuy</b> ${ch.native} from your wallet, until <b>totalBudget</b> is used up.`); }
   if (data === 'cpaddd') {
