@@ -57,7 +57,10 @@ test("a Telegram rejection is read from the RESULT, never waited for as a throw"
 test("an uneditable card falls through to posting a new one", () => {
   // It used to `return` here, leaving the receipt with nothing under it.
   const i = START.indexOf("if (ok) {");
-  const j = START.indexOf("stopMonitor(chatId, existing);");
+  // Search FROM the ok-branch: an explicit 📍 tap now retires the old card
+  // before this point too, so the first stopMonitor in the file is no longer
+  // the one this test is about.
+  const j = START.indexOf("stopMonitor(chatId, existing);", i);
   assert.ok(i > -1 && j > i, "the failure path must continue past the reuse branch");
   assert.match(START.slice(j), /const r = await send\(chatId, p\.text, p\.kb\);/, "…and post a fresh monitor");
 });
@@ -68,8 +71,8 @@ test("startMonitor reports whether a monitor is actually live", () => {
   const exits = START.match(/return (true|false);/g) || [];
   assert.ok(exits.includes("return false;"), `no failure exit: ${exits.join(" ")}`);
   assert.ok(exits.includes("return true;"));
-  assert.match(TG, /const started = await startMonitor\(chatId, tca, ch, wid\)\.catch\(\(\) => false\);/);
-  assert.match(TG, /started \? '📍 Monitor started' : '⚠️ Could not open the monitor/);
+  assert.match(TG, /const started = await startMonitor\(chatId, tca, ch, wid, \{ surface: true \}\)\.catch\(\(\) => false\);/);
+  assert.match(TG, /started \? '📍 Monitor opened below' : '⚠️ Could not open the monitor/);
 });
 
 test("a failed send is logged, not swallowed", () => {
@@ -223,7 +226,7 @@ test("two starts on one token cannot post two pinned cards", () => {
   // _monitorByToken is written AFTER an await, so concurrent callers both saw an
   // empty map. A buy finishing while the user taps 📍 is exactly that race.
   assert.match(TG, /const _monitorStarting = new Map\(\);/);
-  assert.match(TG, /running\s*\?\s*running\.catch\(\(\) => \{\}\)\.then\(\(\) => _startMonitor\(chatId, ca, chainKey, wid\)\)/,
+  assert.match(TG, /running\s*\?\s*running\.catch\(\(\) => \{\}\)\.then\(\(\) => _startMonitor\(chatId, ca, chainKey, wid, opts\)\)/,
     "the second caller queues behind the first and then takes the reuse path");
   assert.match(TG, /_monitorStarting\.delete\(tkey\)/, "…and the guard is always released");
 });

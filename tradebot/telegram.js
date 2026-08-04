@@ -47,6 +47,10 @@ async function tg(method, body) {
 function send(chatId, text, kb) { const rt = _replyCtx.getStore(); return tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}), ...(rt ? { reply_to_message_id: rt, allow_sending_without_reply: true } : {}) }); }
 function edit(chatId, mid, text, kb) { return tg('editMessageText', { chat_id: chatId, message_id: mid, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}) }); }
 function answer(id, text) { return tg('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) }); }
+// Callback keys whose handler answers the query with its OWN text. These must
+// NOT be pre-acked — see the comment at the top of onCallback. Keep in sync with
+// every `answer(q.id, <text>)` call site; callbackAck.test.js enforces it.
+const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell']);
 function del(chatId, mid) { return tg('deleteMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); }
 function sendPhoto(chatId, photo, caption, kb) { return tg('sendPhoto', { chat_id: chatId, photo, ...(caption ? { caption, parse_mode: 'HTML' } : {}), ...(kb ? { reply_markup: kb } : {}) }); }
 // Deposit QR image (Telegram fetches the URL server-side; the address is public, so no
@@ -1506,9 +1510,19 @@ async function onCallback(q) {
   const data = q.data || '';
   const [k, ca, arg] = data.split(':');
   // Fire-and-forget the ack (clears the button's spinner) so the handler proceeds without
-  // waiting on a Telegram round-trip — noticeably snappier taps. 'oc'/'al'/'wtc' answer
-  // with text instead, and a query can only be answered once.
-  if (k !== 'oc' && k !== 'al' && k !== 'wtc') answer(q.id).catch(() => {});
+  // waiting on a Telegram round-trip — noticeably snappier taps.
+  //
+  // A callback query can be answered EXACTLY ONCE. Pre-acking a handler that
+  // ends in answer(q.id, 'some text') therefore throws that text away: Telegram
+  // rejects the second call and the user gets silence. Three keys were listed
+  // here; five more had been added since and were all silently mute — including
+  // the exit-mirror toggle, which arms an automatic 100% sell, and the language
+  // switch, whose entire job is to confirm it took.
+  //
+  // ANSWERS_ITSELF is checked against the source by callbackAck.test.js, so a
+  // new text answer that forgets to register here fails the suite instead of
+  // shipping as a dead button.
+  if (!ANSWERS_ITSELF.has(k)) answer(q.id).catch(() => {});
 
   if (k === 'bccancel') { const pp = pending.get(chatId); if (pp && pp.action === 'confirm_buy' && pp.confirmId === ca) pending.delete(chatId); return edit(chatId, mid, 'Buy cancelled.', mainMenu()); }
   if (k === 'bcok') {
@@ -1652,8 +1666,8 @@ async function onCallback(q) {
       // Await it and report what happened. It used to fire-and-forget and then
       // claim "Monitor started" unconditionally — so every failure above this
       // line showed the user a success toast and no monitor.
-      const started = await startMonitor(chatId, tca, ch, wid).catch(() => false);
-      return answer(q.id, started ? '📍 Monitor started' : '⚠️ Could not open the monitor — try again');
+      const started = await startMonitor(chatId, tca, ch, wid, { surface: true }).catch(() => false);
+      return answer(q.id, started ? '📍 Monitor opened below' : '⚠️ Could not open the monitor — try again');
     }
     if (k === 'tok') { const c = await tokenCard(chatId, tca, ch, wid); return edit(chatId, mid, c.text, c.kb); }
     if (k === 'b') return requestBuy(chatId, tca, a, ch, wid);
@@ -2156,25 +2170,42 @@ const MON_FATAL_TG = /message to edit not found|message can't be edited|MESSAGE_
 // 📍) both saw an empty map, both posted a card, and the chat ended up with two
 // pinned monitors for one position — each with its own loop editing its own copy.
 const _monitorStarting = new Map();
-function startMonitor(chatId, ca, chainKey, wid) {
+function startMonitor(chatId, ca, chainKey, wid, opts) {
   const tkey = monKey(chatId, ca);
   const running = _monitorStarting.get(tkey);
   // Chain onto the in-flight start rather than racing it: the second caller then
   // takes the reuse path and refreshes the card the first one posted.
   const p = running
-    ? running.catch(() => {}).then(() => _startMonitor(chatId, ca, chainKey, wid))
-    : _startMonitor(chatId, ca, chainKey, wid);
+    ? running.catch(() => {}).then(() => _startMonitor(chatId, ca, chainKey, wid, opts))
+    : _startMonitor(chatId, ca, chainKey, wid, opts);
   const tracked = p.finally(() => { if (_monitorStarting.get(tkey) === tracked) _monitorStarting.delete(tkey); });
   _monitorStarting.set(tkey, tracked);
   return tracked;
 }
-async function _startMonitor(chatId, ca, chainKey, wid) {
+async function _startMonitor(chatId, ca, chainKey, wid, opts) {
   const tkey = monKey(chatId, ca);
+  // The user tapped 📍 to SEE this position. Quietly refreshing a card that is
+  // hundreds of messages up the scrollback is indistinguishable from the bot
+  // ignoring the tap — which is exactly what it looked like from /monitor, on
+  // the one token that already had a tracker running. Retire the old card and
+  // post a fresh one where they are actually looking.
+  //
+  // Only on an explicit request. A monitor re-opened by a repeat BUY still
+  // reuses its card in place; churning the pinned message on every fill would
+  // be worse than leaving it.
+  const surface = !!(opts && opts.surface);
   try {
     // ONE live monitor per token — a repeat buy (or the 📍 button) reuses the
     // existing pinned card instead of posting a duplicate.
     const existing = _monitorByToken.get(tkey);
-    if (existing) {
+    if (existing && surface) {
+      stopMonitor(chatId, existing);
+      tg('unpinChatMessage', { chat_id: chatId, message_id: existing }).catch(() => {});
+      // Best-effort: Telegram refuses to delete a bot message older than 48h, in
+      // which case the stale card simply stays in the history, unpinned and no
+      // longer updating, and the fresh one below takes over.
+      tg('deleteMessage', { chat_id: chatId, message_id: existing }).catch(() => {});
+    } else if (existing) {
       let ok = false;
       try {
         const np = await monitorPayload(chatId, ca, chainKey, wid);

@@ -151,8 +151,16 @@ test("the selection actually drives the trade, on both sides", () => {
 test("one tap answers exactly once", () => {
   // Telegram accepts a single answerCallbackQuery per tap. The blanket ack at
   // the top of onCallback plus a toast in the handler = the toast never shows.
+  //
+  // This test used to pin the literal condition `k !== 'oc' && k !== 'al' &&
+  // k !== 'wtc'`, which made it a LOCK on the bug rather than a guard against
+  // it: five more handlers grew text answers, every one of them was mute, and
+  // this assertion held the broken condition in place while they did. The
+  // exempt list is now data, and callbackAck.test.js checks it against every
+  // call site in the file.
   const tg = code("telegram.js");
-  assert.match(tg, /if \(k !== 'oc' && k !== 'al' && k !== 'wtc'\) answer\(q\.id\)\.catch/);
+  assert.match(tg, /if \(!ANSWERS_ITSELF\.has\(k\)\) answer\(q\.id\)\.catch/);
+  assert.match(tg, /const ANSWERS_ITSELF = new Set\(\[[^\]]*'wtc'/, "wtc must stay exempt");
   const h = tg.slice(tg.indexOf("else if (k === 'wtc')"));
   const body = h.slice(0, h.indexOf("\n    }"));
   assert.match(body, /answer\(q\.id, 'Already the wallet that trades/, "the one case with something to say");
