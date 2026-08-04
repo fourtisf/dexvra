@@ -50,7 +50,7 @@ function answer(id, text) { return tg('answerCallbackQuery', { callback_query_id
 // Callback keys whose handler answers the query with its OWN text. These must
 // NOT be pre-acked — see the comment at the top of onCallback. Keep in sync with
 // every `answer(q.id, <text>)` call site; callbackAck.test.js enforces it.
-const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell', 'ospd']);
+const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell', 'ospd', 'mw', 'mwa', 'mwn']);
 function del(chatId, mid) { return tg('deleteMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); }
 function sendPhoto(chatId, photo, caption, kb) { return tg('sendPhoto', { chat_id: chatId, photo, ...(caption ? { caption, parse_mode: 'HTML' } : {}), ...(kb ? { reply_markup: kb } : {}) }); }
 // Deposit QR image (Telegram fetches the URL server-side; the address is public, so no
@@ -1618,6 +1618,42 @@ async function onCallback(q) {
   // ── Inline multi-wallet panel on the token card (🟢 Multi) ──────────────────
   // wex1/wex0 open and close it; wtc/wtcA/wtcN mutate the selection and redraw
   // the SAME card with the panel still open, so a run of taps is one message.
+  // The same selection, mutated from the LIVE MONITOR and re-rendering it. The
+  // wtc family below always redraws the token card, which would have replaced
+  // the pinned monitor with a token card on every toggle.
+  if (k === 'mw' || k === 'mwa' || k === 'mwn') {
+    const p = data.split(':');
+    const chainK = p[1], mca = p[3];
+    const list = core.walletList(core.ensureUser(chatId));
+    const card = list[Number(p[2]) - 1];
+    const wid = card ? card.id : undefined;
+    if (k === 'mwa') { try { core.setTradeAll(chatId, true); } catch (_) {} answer(q.id, '🟢 Sell now acts on every wallet').catch(() => {}); }
+    else if (k === 'mwn') { try { core.setTradeAll(chatId, false); } catch (_) {} answer(q.id, '🔴 Sell now acts on this card\'s wallet only').catch(() => {}); }
+    // Named rather than a bare `else`: all three keys answer with their own text,
+    // and each one has to be attributable to the branch that answers it.
+    else if (k === 'mw') {
+      // Same seed rule as wtc: single mode holds no list, yet the card's own
+      // wallet is drawn lit because it IS the one that trades. Without seeding
+      // it first, "tap a second wallet" would REPLACE the first rather than add
+      // to it — and on a Sell screen that silently halves the exit.
+      const target = list[Number(p[4]) - 1];
+      const sel = core.tradeSelection(chatId);
+      const seed = !sel.all && sel.ids.length === 0;
+      if (target && seed && target.id === wid) {
+        answer(q.id, 'Already the wallet that sells — tap another to add it.').catch(() => {});
+      } else {
+        answer(q.id).catch(() => {});
+        if (target) {
+          try {
+            if (seed && wid) core.toggleTradeWallet(chatId, wid);
+            core.toggleTradeWallet(chatId, target.id);
+          } catch (_) {}
+        }
+      }
+    }
+    const np = await monitorPayload(chatId, mca, chainK, wid);
+    return edit(chatId, mid, np.text, np.kb);
+  }
   if (k === 'wex1' || k === 'wex0' || k === 'wtc' || k === 'wtcA' || k === 'wtcN') {
     const p = data.split(':');
     const chainK = p[1], mca = p[3];
@@ -2278,6 +2314,26 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   // Quick-sell straight from the live tracker: 25 / 50 / 75 / 100, plus "other %"
   // for anything in between. Sell buttons only appear while a bag is open.
   const kbRows = [[btn('🔄 Refresh', `mon:${chainKey}:${wi}:${ca}`), btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`)]];
+  // WHICH WALLETS SELL — decided here, not two screens away.
+  //
+  // The toggles lived on the token card behind an expand button. Changing the
+  // sell scope from the live card meant 🔎 Card → 👛 → toggle → back, on the one
+  // screen someone watching a position keeps open. They are ALWAYS shown (no
+  // expand state to keep) because the auto-refresh rebuilds this keyboard every
+  // ten seconds and would collapse a panel mid-tap.
+  //
+  // Above the Sell rows deliberately: this is the scope those buttons obey, and
+  // it should be read before them, not discovered after.
+  const wl = core.walletList(u);
+  if (wl.length > 1) {
+    for (let i = 0; i < wl.length; i += 2) {
+      kbRows.push(wl.slice(i, i + 2).map((wobj, j) => {
+        const n = i + j + 1;
+        return btn(`${inScope(wobj.id) ? '🟢' : '🔴'} ${core.walletLabel(wobj, n)}`, `mw:${chainKey}:${wi}:${ca}:${n}`);
+      }));
+    }
+    kbRows.push([btn('🟢 All wallets', `mwa:${chainKey}:${wi}:${ca}`), btn('🔴 This one only', `mwn:${chainKey}:${wi}:${ca}`)]);
+  }
   // Chart and explorer, same as the token card has had all along. A live position
   // is exactly where someone wants to open the chart, and this was the one screen
   // that made them go back to find it.

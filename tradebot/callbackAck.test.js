@@ -39,14 +39,23 @@ const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
 function textAnswerSites() {
   const lines = SRC.split('\n');
   const out = [];
-  let key = null;
+  let keys = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     // Track the most recent callback-key guard. Handlers are a flat `if` chain,
     // so the nearest one above a call site is the one that owns it.
-    const g = l.match(/if \((?:k|data) === '([a-zA-Z]+)'/);
-    if (g) key = g[1];
-    if (/\banswer\(q\.id,\s*\S/.test(l)) out.push({ line: i + 1, key, text: l.trim().slice(0, 80) });
+    //
+    // A guard can name SEVERAL keys — `if (k === 'mw' || k === 'mwa' || ...)`.
+    // Reading only the first one made this test report the others as exempt
+    // keys that answer nothing, which is the opposite of the truth: every key
+    // in the condition can reach the answer inside it. That imprecision is not
+    // cosmetic, it would have pushed someone to "fix" it by dropping a key from
+    // the exempt list and muting a live button.
+    if (/if \((?:k|data) === '/.test(l)) {
+      const found = [...l.matchAll(/(?:k|data) === '([a-zA-Z]+)'/g)].map((m) => m[1]);
+      if (found.length) keys = found;
+    }
+    if (/\banswer\(q\.id,\s*\S/.test(l)) for (const key of keys) out.push({ line: i + 1, key, text: l.trim().slice(0, 80) });
   }
   return out;
 }

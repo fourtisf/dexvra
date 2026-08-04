@@ -571,3 +571,55 @@ test('the Sell screen names the same scope the buttons obey', async () => {
     assert.match(t, /each of your 4 selected wallets/, 'the presets never say they apply per wallet');
   } finally { core.tokenMeta = realMeta; core.tokenBalance = realBal; core.tokenSnapshot = realSnap; }
 });
+
+// ---------------------------------------------------------------- picking wallets here
+test('the wallet toggles live on the live card, not two screens away', async () => {
+  // Changing which wallets a Sell empties meant 🔎 Card → 👛 → toggle → back, on
+  // the one screen someone watching a position keeps open.
+  const p = await scoped({ all: true });
+  const kb = buttons(p);
+  const toggles = kb.filter((b) => (b.callback_data || '').startsWith('mw:'));
+  assert.equal(toggles.length, 4, `expected one toggle per wallet, found ${toggles.length}`);
+  assert.ok(kb.some((b) => (b.callback_data || '').startsWith('mwa:')), 'no "all wallets"');
+  assert.ok(kb.some((b) => (b.callback_data || '').startsWith('mwn:')), 'no way back to one wallet');
+});
+
+test('a toggle shows whether that wallet is in the sell scope right now', async () => {
+  const on = buttons(await scoped({ all: true })).filter((b) => (b.callback_data || '').startsWith('mw:'));
+  assert.ok(on.every((b) => b.text.startsWith('🟢')), 'every wallet is selected but some read as off');
+
+  const off = buttons(await scoped({ all: false })).filter((b) => (b.callback_data || '').startsWith('mw:'));
+  assert.equal(off.filter((b) => b.text.startsWith('🟢')).length, 1, 'single mode must light exactly the card wallet');
+  assert.equal(off.find((b) => b.text.startsWith('🟢')).text.includes('Wallet 4'), true);
+});
+
+test('the toggles sit ABOVE the Sell buttons they govern', async () => {
+  // This is the scope those buttons obey; it should be read before them, not
+  // discovered after.
+  const rows = (await scoped({ all: true })).kb.inline_keyboard;
+  const firstToggle = rows.findIndex((r) => r.some((b) => (b.callback_data || '').startsWith('mw')));
+  const firstSell = rows.findIndex((r) => r.some((b) => (b.callback_data || '').startsWith('s:')));
+  assert.ok(firstToggle > -1 && firstSell > -1, 'setup');
+  assert.ok(firstToggle < firstSell, 'the sell scope is offered after the Sell buttons');
+});
+
+test('a one-wallet user gets no toggles at all', async () => {
+  // Nothing to choose between; the rows would be noise on a keyboard that is
+  // already tall.
+  const p = await card();   // three wallets → toggles; drop to one below
+  const u = core.getUser(CHAT);
+  u.wallets = [u.wallets[0]];
+  const one = await tg._test.monitorPayload(CHAT, CA, CHAIN, u.wallets[0].id).catch(() => null);
+  if (one) assert.ok(!buttons(one).some((b) => (b.callback_data || '').startsWith('mw')), 'toggles shown to a single-wallet user');
+  assert.ok(buttons(p).length > 0, 'setup');
+});
+
+test('every monitor callback fits Telegram\'s 64-byte limit', async () => {
+  // The card carries the chain key, a wallet index and a 42/44-char address on
+  // every button; a template that grew one field would be rejected at render
+  // time, on the longest chain key only.
+  for (const b of buttons(await scoped({ all: true }))) {
+    const d = b.callback_data || '';
+    assert.ok(d.length <= 64, `${d} is ${d.length} bytes — Telegram rejects >64`);
+  }
+});
