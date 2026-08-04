@@ -905,8 +905,30 @@ async function copyCycle() {
         set.add(token);
       }
 
+      // WHEN THE CAPS BITE, DROP THE OLDEST — never the newest.
+      //
+      // t.cursor is already at head by this point, so anything the caps stop us
+      // reaching is gone rather than deferred. Walking oldest-first therefore
+      // spent the whole budget on the stalest candidates and discarded the
+      // freshest: on a busy wallet the bot would mirror what it did four minutes
+      // ago and silently miss what it did four seconds ago, which is the exact
+      // inversion of what copy-trading is for.
+      //
+      // Deferring instead (rewinding the cursor) livelocks: an address spammed
+      // with dust airdrops regenerates more candidates than the cap every cycle
+      // and would pin the scan to the same stale window for ever.
+      const entries = [...byTx.entries()];
+      const room = COPY_MAX_PROBES_PER_CYCLE;
+      if (entries.length > room) {
+        // Never silently. A cap that drops work reads as "nothing happened".
+        console.warn(`copy: ${entries.length - room} older candidate tx skipped for ${short(t.address)} on ${t.chain} (COPY_MAX_PROBES=${room})`);
+      }
+      // Newest FIRST, not merely newest-selected. Taking the last `room` entries
+      // and then walking them in chronological order let the mirror cap (which
+      // stops after 5 BUYS) consume the oldest of the survivors and drop the
+      // rest — so the freshest trade was still the one lost.
       let mirrors = 0, probes = 0;
-      for (const [hash, tokens] of byTx) {
+      for (const [hash, tokens] of entries.slice(-room).reverse()) {
         if (mirrors >= COPY_MAX_MIRRORS_PER_CYCLE) break;
         // Bound the RPC too, not only the buys. A wallet that collects dust
         // airdrops produces candidate transactions without limit, and every one
@@ -1086,10 +1108,16 @@ async function _copySolTarget(u, t) {
   try { sigs = await conn.getSignaturesForAddress(new PublicKey(t.address), { limit: COPY_SOL_SIG_LIMIT }); } catch (_) { return; }
   if (!Array.isArray(sigs) || !sigs.length) return;
   if (!t.cursorSig) { t.cursorSig = sigs[0].signature; core.saveStore(); return; }   // pin near head first pass
-  const fresh = [];
+  let fresh = [];
   for (const s of sigs) { if (s.signature === t.cursorSig) break; if (!s.err) fresh.push(s.signature); }
   t.cursorSig = sigs[0].signature; core.saveStore();   // advance to head regardless
   if (!fresh.length) return;
+  // Same rule as the EVM side: cursorSig is already at head, so whatever the
+  // mirror cap stops us reaching is gone. Keep the NEWEST, drop the oldest.
+  if (fresh.length > COPY_MAX_MIRRORS_PER_CYCLE) {
+    console.warn(`copysol: ${fresh.length - COPY_MAX_MIRRORS_PER_CYCLE} older signatures skipped for ${short(t.address)} (COPY_MAX_MIRRORS=${COPY_MAX_MIRRORS_PER_CYCLE})`);
+    fresh = fresh.slice(0, COPY_MAX_MIRRORS_PER_CYCLE);   // fresh is newest-first here
+  }
   fresh.reverse();   // oldest-first → mirror in the target's order
   let mirrors = 0;
   for (const sig of fresh) {

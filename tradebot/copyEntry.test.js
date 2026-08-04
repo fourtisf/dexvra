@@ -341,3 +341,54 @@ test('Solana: another owner\'s balances are never read as the target\'s', async 
   };
   assert.equal(await solBought(tx), null, 'somebody else paying counted as the target paying');
 });
+
+// ---------------------------------------------------------------- which ones survive a cap
+test('when the cap bites it is the OLDEST candidates that are dropped', async () => {
+  // t.cursor is already at head by the time the caps stop the loop, so anything
+  // unreached is gone rather than deferred. Walking oldest-first therefore spent
+  // the whole budget on the stalest candidates and discarded the freshest: the
+  // bot would mirror what the wallet did four minutes ago and silently miss what
+  // it did four seconds ago — the exact inversion of what copy-trading is for.
+  const probed = [];
+  const logs = Array.from({ length: 60 }, (_, i) => ({
+    address: '0x' + String(10 + i).repeat(20),
+    topics: [TRANSFER, pad(V3_POOL), pad(TARGET)],
+    transactionHash: '0x' + String(10 + i).repeat(32),
+    blockNumber: 100 + i,
+  }));
+  await evmRaw(logs, { onProbe: (h) => probed.push(h) });
+  assert.ok(probed.length > 0 && probed.length <= 25, `probed ${probed.length}`);
+  // The newest candidate must be among them; the oldest must not.
+  const newest = logs[logs.length - 1].transactionHash;
+  const oldest = logs[0].transactionHash;
+  assert.ok(probed.includes(newest), 'the newest transaction was dropped by the cap');
+  assert.ok(!probed.includes(oldest), 'the oldest transaction survived while newer ones were dropped');
+});
+
+test('a dropped batch is announced, not swallowed', async () => {
+  // A cap that discards work reads as "nothing happened" unless it says so.
+  const warn = [];
+  const real = console.warn;
+  console.warn = (...a) => warn.push(a.join(' '));
+  try {
+    const logs = Array.from({ length: 60 }, (_, i) => ({
+      address: '0x' + String(10 + i).repeat(20), topics: [TRANSFER, pad(V3_POOL), pad(TARGET)],
+      transactionHash: '0x' + String(10 + i).repeat(32), blockNumber: 100 + i,
+    }));
+    await evmRaw(logs, { value: 0n });
+  } finally { console.warn = real; }
+  assert.ok(warn.some((l) => /older candidate tx skipped/.test(l)), `the cap dropped work silently: ${JSON.stringify(warn)}`);
+});
+
+test('under the cap, nothing is dropped and order is preserved', async () => {
+  const probed = [];
+  const logs = Array.from({ length: 4 }, (_, i) => ({
+    address: '0x' + String(10 + i).repeat(20), topics: [TRANSFER, pad(V3_POOL), pad(TARGET)],
+    transactionHash: '0x' + String(10 + i).repeat(32), blockNumber: 100 + i,
+  }));
+  await evmRaw(logs, { onProbe: (h) => probed.push(h), value: 0n });
+  assert.equal(probed.length, 4, 'a batch under the cap lost candidates');
+  // Newest first, which is the same rule the cap follows — one ordering, not two.
+  assert.deepEqual(probed, logs.map((l) => l.transactionHash).reverse(),
+    'the freshest candidate is not examined first');
+});
