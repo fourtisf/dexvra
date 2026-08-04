@@ -82,6 +82,26 @@ async function evmCycle({ sender, txFrom = TARGET, value = 10n ** 17n, paysWith 
   return buys;
 }
 
+/** Same cycle, but the caller supplies the raw log list — for shapes the
+ *  friendly helper above cannot express (NFT topics, several tokens in one
+ *  transaction, hundreds of dust transfers). */
+async function evmRaw(logs, { onProbe = () => {}, value = 10n ** 17n } = {}) {
+  seed('ethereum');
+  const buys = [];
+  const realProv = core.providerFor, realBuy = core.buy, realBal = core.tokenBalanceOrNull;
+  core.providerFor = () => ({
+    getBlockNumber: async () => 200,
+    getLogs: async () => logs,
+    getTransaction: async (h) => { onProbe(h); return { from: TARGET, value, hash: h }; },
+    getTransactionReceipt: async () => ({ logs: [] }),
+  });
+  core.buy = async (chatId, ca, amt, chain) => { buys.push({ ca, amt, chain }); return { sym: 'X', gotTokens: 1, spentEth: Number(amt), native: 'ETH', hash: '0x' + '1'.repeat(64), chain }; };
+  core.tokenBalanceOrNull = async () => 1000n;
+  try { await watchers._test.copyCycle(); }
+  finally { core.providerFor = realProv; core.buy = realBuy; core.tokenBalanceOrNull = realBal; }
+  return buys;
+}
+
 // ---------------------------------------------------------------- EVM routes
 test('a Uniswap V2 buy is mirrored — the one route that always worked', async () => {
   assert.equal((await evmCycle({ sender: V2_PAIR })).length, 1, 'the V2 route stopped working');
@@ -144,7 +164,62 @@ test('the V2-only pair lookup is gone, not merely bypassed', async () => {
   const SRC = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
   assert.ok(!/pairOf/.test(SRC), 'pairOf survives — dead code that invites the old gate back');
   assert.ok(!/GET_PAIR_ABI/.test(SRC), 'the getPair ABI is still here');
-  assert.match(SRC, /_targetPaid\(t\.chain, t\.address, log\.transactionHash\)/, 'the payment check is not wired in');
+  assert.match(SRC, /_targetPaid\(t\.chain, t\.address, hash\)/, 'the payment check is not wired in');
+});
+
+// ---------------------------------------------------------------- not a token
+test('an NFT mint is NOT mirrored, even though the target paid ETH for it', async () => {
+  // ERC-721 shares the ERC-20 Transfer signature hash and differs only in
+  // indexing the token id as a FOURTH topic. A mint is a Transfer to the target
+  // in a transaction they signed and sent value with — indistinguishable from a
+  // token buy unless the topic count is checked. Mirroring one calls swap on an
+  // NFT contract with real money.
+  //
+  // The old V2-pair test excluded these by accident: getPair on an NFT contract
+  // returns the zero address. Nothing excluded them once that test went.
+  const NFT = '0x' + '77'.repeat(20);
+  const buys = await evmRaw([{ address: NFT, topics: [TRANSFER, pad(ethers.ZeroAddress), pad(TARGET), ethers.zeroPadValue('0x2a', 32)], transactionHash: '0x' + 'fe'.repeat(32) }]);
+  assert.deepEqual(buys, [], 'an NFT mint was mirrored as a token buy');
+});
+
+test('a transaction delivering SEVERAL tokens is not guessed at', async () => {
+  // Buying X also airdrops Y to the buyer — a marketing and scam pattern.
+  // Mirrored blind, the bot buys Y as well, on the strength of somebody else's
+  // token contract. We cannot tell which was bought, so we buy neither.
+  const OTHER = '0x' + '88'.repeat(20);
+  const hash = '0x' + 'fe'.repeat(32);
+  const buys = await evmRaw([
+    { address: TOKEN, topics: [TRANSFER, pad(V3_POOL), pad(TARGET)], transactionHash: hash },
+    { address: OTHER, topics: [TRANSFER, pad(AGGREGATOR), pad(TARGET)], transactionHash: hash },
+  ]);
+  assert.deepEqual(buys, [], 'a bundled airdrop was mirrored alongside the real buy');
+});
+
+test('several Transfers of the SAME token are one buy, and one probe', async () => {
+  // A reflection token emits a handful of Transfers per swap. Probing per LOG
+  // rather than per TRANSACTION spent an RPC call on each of them.
+  const hash = '0x' + 'fe'.repeat(32);
+  let probes = 0;
+  const buys = await evmRaw([
+    { address: TOKEN, topics: [TRANSFER, pad(V3_POOL), pad(TARGET)], transactionHash: hash },
+    { address: TOKEN, topics: [TRANSFER, pad(V3_POOL), pad(TARGET)], transactionHash: hash },
+    { address: TOKEN, topics: [TRANSFER, pad(V3_POOL), pad(TARGET)], transactionHash: hash },
+  ], { onProbe: () => probes++ });
+  assert.equal(buys.length, 1, 'a reflection token was mirrored more than once');
+  assert.equal(probes, 1, `one transaction cost ${probes} getTransaction calls`);
+});
+
+test('probes are bounded, not only buys', async () => {
+  // A wallet that collects dust airdrops produces candidate transactions
+  // without limit, and every one used to cost a getTransaction whether or not
+  // it could become a trade.
+  let probes = 0;
+  const logs = Array.from({ length: 200 }, (_, i) => ({
+    address: '0x' + String(i % 90 + 10).repeat(20), topics: [TRANSFER, pad(AGGREGATOR), pad(TARGET)],
+    transactionHash: '0x' + String(i % 90 + 10).repeat(32),
+  }));
+  await evmRaw(logs, { onProbe: () => probes++, value: 0n });
+  assert.ok(probes <= 25, `${probes} transactions were probed in one cycle`);
 });
 
 // ---------------------------------------------------------------- Solana

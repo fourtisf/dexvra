@@ -602,6 +602,11 @@ async function positionsCycle() {
 // Sells are the user's job (TP/SL/manual) — we never auto-sell someone else's exit.
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const COPY_MAX_MIRRORS_PER_CYCLE = Math.max(1, Number(process.env.COPY_MAX_MIRRORS || 5));
+// How many candidate TRANSACTIONS may be probed per target per cycle. Separate
+// from the mirror cap because a probe costs an RPC call whether or not it turns
+// into a trade, and an address that collects dust airdrops generates them
+// without limit.
+const COPY_MAX_PROBES_PER_CYCLE = Math.max(1, Number(process.env.COPY_MAX_PROBES || 25));
 // Stablecoins a buy can be funded with, per chain. A target who swaps USDC for a
 // token spent money on it just as surely as one who spent ETH.
 const STABLES = {
@@ -841,19 +846,55 @@ async function copyCycle() {
       try { logs = await prov.getLogs({ fromBlock: from, toBlock: head, topics: [TRANSFER_TOPIC, null, ethers.zeroPadValue(t.address.toLowerCase(), 32)] }); }
       catch (e) { if (_isRangeError(e)) { t.cursor = head; core.saveStore(); }  continue; }   // range too wide → skip forward (don't livelock); else keep cursor, retry
       t.cursor = head;
-      let mirrors = 0;
+
+      // GROUP BY TRANSACTION, and reduce each to the token that was BOUGHT.
+      //
+      // Three things go wrong reading the log list straight:
+      //
+      //  1. ERC-721 shares the ERC-20 Transfer signature hash and differs only
+      //     in indexing the token id as a FOURTH topic. An NFT mint paid for in
+      //     ETH is therefore a Transfer to the target in a transaction they
+      //     signed and sent value with — indistinguishable from a token buy, and
+      //     it would spend real money calling swap on an NFT contract. The old
+      //     V2-pair test excluded these by accident (getPair on an NFT returns
+      //     the zero address); nothing excluded them once that test went.
+      //
+      //  2. One transaction can deliver SEVERAL different tokens — the marketing
+      //     or scam pattern where buying X also airdrops Y to the buyer. Mirrored
+      //     blind, the bot buys Y too, on the strength of somebody else's token
+      //     contract. When more than one non-money token arrives we cannot tell
+      //     which was bought, so we buy neither.
+      //
+      //  3. Probing per LOG rather than per TRANSACTION meant a reflection token
+      //     (several Transfers per swap) cost several getTransaction calls for
+      //     one trade.
+      const money = new Set([String(ch.weth || '').toLowerCase(), ...(STABLES[t.chain] || [])].filter(Boolean));
+      const byTx = new Map();
       for (const log of logs) {
-        if (mirrors >= COPY_MAX_MIRRORS_PER_CYCLE) break;
+        if (!log.topics || log.topics.length !== 3 || log.topics[0] !== TRANSFER_TOPIC) continue;   // ERC-20 only
         const token = String(log.address || '').toLowerCase();
-        const fromAddr = (log.topics && log.topics[1]) ? ('0x' + log.topics[1].slice(26)).toLowerCase() : '';
-        if (!token || !fromAddr) continue;
+        const hash = log.transactionHash;
+        if (!token || !hash || money.has(token)) continue;
+        let set = byTx.get(hash); if (!set) { set = new Set(); byTx.set(hash, set); }
+        set.add(token);
+      }
+
+      let mirrors = 0, probes = 0;
+      for (const [hash, tokens] of byTx) {
+        if (mirrors >= COPY_MAX_MIRRORS_PER_CYCLE) break;
+        // Bound the RPC too, not only the buys. A wallet that collects dust
+        // airdrops produces candidate transactions without limit, and every one
+        // of them used to cost a getTransaction whether or not it could ever
+        // become a trade.
+        if (probes >= COPY_MAX_PROBES_PER_CYCLE) break;
+        if (tokens.size !== 1) continue;                                   // ambiguous — see (2)
+        const token = tokens.values().next().value;
         if (t.bought && t.bought[token]) continue;                         // already mirrored this token
-        if (token === ch.weth.toLowerCase()) continue;                     // ignore WETH itself
         if (Number(t.spentEth) + Number(t.buyEth) > Number(t.maxEth) + 1e-12) continue;   // budget cap
         // Was this a BUY, or did the tokens simply arrive? Keyed on the target
         // having PAID — not on which pool the sender happens to be.
-        if (!log.transactionHash) continue;
-        if (!(await _targetPaid(t.chain, t.address, log.transactionHash))) continue;
+        probes++;
+        if (!(await _targetPaid(t.chain, t.address, hash))) continue;
         // Skip anything GoPlus flags as DANGER (honeypot/pausable/owner-rug/high-tax…);
         // when GoPlus has no data we still mirror — worst-case loss stays bounded by maxEth.
         if (safety.supported(t.chain)) { const s = await safety.tokenSecurity(t.chain, token).catch(() => null); if (s && safety.verdict(t.chain, s).level === 'danger') continue; }
