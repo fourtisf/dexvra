@@ -625,11 +625,12 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // when they do not.
   const side = cardSide(chatId, ca, opts && opts.side, bal > 1e-9);
   const buying = side === 'buy';
+  // ONE button, and it names where you are GOING — not two tabs naming where you
+  // are. Which side you are on is already obvious from the buttons underneath;
+  // a lit tab spends a slot restating it, and two buttons where one will do is
+  // how a card gets to twenty-two.
   const ikb = [
-    [
-      btn(buying ? '🟢 ▸ BUYING' : '🟢 Buy', `tok:${chainKey}:${wi}:${ca}:b`),
-      btn(buying ? '🔴 Sell' : '🔴 ▸ SELLING', `tok:${chainKey}:${wi}:${ca}:s`),
-    ],
+    [btn(buying ? '↔️ Go to Sell' : '↔️ Go to Buy', `tok:${chainKey}:${wi}:${ca}:${buying ? 's' : 'b'}`)],
     ...walletRow,
   ];
   if (buying) {

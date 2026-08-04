@@ -245,14 +245,17 @@ test('an explicit choice sticks — tapping Buy while holding means it', async (
   assert.equal(tg._test.cardSide(chat, '0x' + 'ff'.repeat(20), undefined, false), 'buy', 'the choice leaked to another token');
 });
 
-test('the switch is the FIRST row, and says which side you are on', async () => {
-  for (const side of ['buy', 'sell']) {
+test('the switch is ONE button, and it names where you are going', async () => {
+  // Not two tabs naming where you are. Which side you are on is already obvious
+  // from the buttons underneath; a lit tab spends a slot restating it, and two
+  // buttons where one will do is how a card gets to twenty-two.
+  for (const [side, goes] of [['buy', /Go to Sell/i], ['sell', /Go to Buy/i]]) {
     const first = (await tcard({ side })).kb.inline_keyboard[0];
-    assert.equal(first.length, 2, 'the switch must be a clean pair');
-    assert.ok(first.every((b) => /^tok:/.test(b.callback_data)), 'the first row is not the side switch');
-    const current = first.find((b) => /▸/.test(b.text));
-    assert.ok(current, 'neither side is marked as the current one');
-    assert.match(current.text, side === 'buy' ? /BUYING/ : /SELLING/);
+    assert.equal(first.length, 1, `the switch is ${first.length} buttons`);
+    assert.match(first[0].callback_data, /^tok:/, 'the first row is not the side switch');
+    assert.match(first[0].text, goes, `on the ${side} side the switch reads "${first[0].text}"`);
+    // …and it must actually take you to the OTHER side.
+    assert.match(first[0].callback_data, side === 'buy' ? /:s$/ : /:b$/, 'the switch points back at the side you are on');
   }
 });
 
