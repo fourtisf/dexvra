@@ -729,14 +729,20 @@ function alText() {
     `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
     `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +
     `🔢 Max <b>${c.maxPerDay}</b>/day, <b>${c.maxPerRun}</b>/scan · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
-    `📦 Package: <b>${autoLister.pkgOf(c.pkg).label}</b>` +
-    (c.pkg === "trending" ? ` <i>(${c.trendHours}h on the board)</i>` : "") +
+    `📦 Packages: <b>${c.pkgs.map((k) => autoLister.pkgOf(k).label).join(" → ")}</b>` +
+    // With more than one enabled the useful fact is not "which package" but
+    // "which one is next" — that is the whole point of a rotation, and it is the
+    // question an operator watching the feed actually has.
+    (c.pkgs.length > 1
+      ? ` <i>(taking turns — next: ${autoLister.pkgOf(autoLister.nextPkg().key).label})</i>`
+      : "") +
     `\n` +
+    (alTrendOn(c) ? `🔥 Board slot: <b>${c.trendHours}h</b> · tier drawn per token: <b>${autoLister.TREND_TIERS.join(" / ")}</b>\n` : "") +
     `📣 Channel post: <b>${c.postChannel ? "🟢 ON" : "🔴 OFF"}</b> <i>(off = listed on the site only)</i>\n` +
     // Only the "Listing & Trending" package can reach @dexvraio, so the line is
-    // only shown for it — on the other two it would state a setting that has
-    // nothing to act on.
-    (c.pkg === "trending"
+    // only shown when it is one of the enabled ones — otherwise it would state a
+    // setting that has nothing to act on.
+    (alTrendOn(c)
       ? `🔔 Announce in ${CHANNELS.announce}: <b>${c.announceChannel ? "🟢 ON" : "🔴 OFF"}</b>` +
         (c.announceChannel && !c.postChannel ? ` <i>(waiting on channel post)</i>` : ``) +
         `\n`
@@ -747,11 +753,17 @@ function alText() {
     `🔒 <b>Never re-listed:</b> ${s.everListed} contracts — everything that has ever ` +
     `been on the site, so a token that was listed before (including a paid one that ` +
     `was later deleted) can never come back as a free auto listing.\n\n` +
-    `Auto listings carry a <b>Free</b> badge — never a paid tier, so they can't be ` +
-    `mistaken for a Bronze customer. Only the <b>Listing &amp; Trending</b> package ` +
-    `reaches ${CHANNELS.announce}; a paid listing gets there on tier #1–#3.`
+    `<b>Free listing</b> carries a Free badge and no tier. <b>Xpress</b> carries the ` +
+    `Xpress tier. <b>Listing &amp; Trending</b> draws a real paid tier per token ` +
+    `(${autoLister.TREND_TIERS.join(" / ")}) — it sorts with paid slots on the board, ` +
+    `and Diamond/Gold also carry the verified badge on the site.\n\n` +
+    `Only <b>Listing &amp; Trending</b> reaches ${CHANNELS.announce}; a paid listing ` +
+    `gets there on tier #1–#3.`
   );
 }
+/** Is "Listing & Trending" one of the enabled packages? Drives the rows that
+ *  only make sense when a board slot is on the table. */
+const alTrendOn = (c) => c.pkgs.includes("trending");
 function alKb() {
   const cb = Markup.button.callback;
   const c = autoLister.get();
@@ -762,19 +774,22 @@ function alKb() {
     [cb(`💧 Liq ${usd(c.minLiq)}`, "alnop"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
     [cb(`📊 Vol ${usd(c.minVol24)}`, "alnop"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
     [cb(`🔢 ${c.maxPerDay}/day`, "alnop"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
+    // MULTI-select, not a radio: any combination can be on, and two or more
+    // means they take turns rather than one winning. Tapping the only enabled
+    // one is refused by togglePkg — an empty list is not a setting.
     [
-      cb(`${c.pkg === "free" ? "🟢" : "▫️"} Free`, "alpkg:free"),
-      cb(`${c.pkg === "xpress" ? "🟢" : "▫️"} Xpress`, "alpkg:xpress"),
-      cb(`${c.pkg === "trending" ? "🟢" : "▫️"} + Trending`, "alpkg:trending"),
+      cb(`${c.pkgs.includes("free") ? "🟢" : "▫️"} Free`, "alpkg:free"),
+      cb(`${c.pkgs.includes("xpress") ? "🟢" : "▫️"} Xpress`, "alpkg:xpress"),
+      cb(`${c.pkgs.includes("trending") ? "🟢" : "▫️"} + Trending`, "alpkg:trending"),
     ],
-    ...(c.pkg === "trending"
+    ...(alTrendOn(c)
       ? [[cb(`🔥 Slot ${c.trendHours}h`, "alnop"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
       : []),
     [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
     // Below its gate, not above it: @dexvraio only fires when channel posting is
     // already on, and a switch that reads as independent of the one under it is
     // how an operator ends up expecting a post that cannot happen.
-    ...(c.pkg === "trending"
+    ...(alTrendOn(c)
       ? [[cb(`🔔 ${CHANNELS.announce}: ${c.announceChannel ? "ON" : "OFF"}`, "alann")]]
       : []),
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
@@ -2026,9 +2041,21 @@ function build() {
   });
   bot.action(/^alpkg:(free|xpress|trending)$/, async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ pkg: ctx.match[1] });
-    log.info(`[adminbot] auto-listing package → ${c.pkg} by @${ctx.from.username || ctx.from.id}`);
-    ctx.answerCbQuery(`📦 ${autoLister.pkgOf(c.pkg).label}`).catch(() => {});
+    const key = ctx.match[1];
+    const before = autoLister.get().pkgs;
+    const c = await autoLister.togglePkg(key);
+    log.info(`[adminbot] auto-listing packages → ${c.pkgs.join(", ")} by @${ctx.from.username || ctx.from.id}`);
+    // Refused: this was the last one on. Say so, or the tap looks like a bug.
+    const refused = before.length === 1 && before[0] === key && c.pkgs.length === 1;
+    ctx
+      .answerCbQuery(
+        refused
+          ? `⚠️ ${autoLister.pkgOf(key).label} is the only one left — enable another first`
+          : c.pkgs.length > 1
+            ? `📦 ${c.pkgs.map((k) => autoLister.pkgOf(k).label).join(" → ")} (taking turns)`
+            : `📦 ${autoLister.pkgOf(c.pkgs[0]).label}`,
+      )
+      .catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   bot.action(/^alth:(-?\d+)$/, async (ctx) => {

@@ -17,10 +17,21 @@
 // ITS number, and the number never moves.
 //
 // WHAT AN AUTO-LISTED TOKEN GETS is the operator's choice — see PACKAGES below:
-// a plain free listing (default), an Xpress Listing, or Listing & Trending with
-// a time-boxed slot on the board. Only the Xpress option hands out a real tier;
-// the others use "FREE", which is not a package anyone can buy, so an auto
-// listing can never be mistaken for (or dilute) a paid placement.
+// a plain free listing, an Xpress Listing, or Listing & Trending with a
+// time-boxed slot on the board. More than one can be enabled at a time, and
+// then they TAKE TURNS: one listing gets Xpress, the next Listing & Trending,
+// and so on. Operator's rule (2026-08-04) — "jalan barengan, jadi bergilir".
+//
+// Listing & Trending hands out a REAL paid tier — Diamond, Gold or Silver,
+// drawn from the address the same way the trigger cap is. That is a deliberate
+// reversal of the older rule (every auto listing wore "FREE" so it could never
+// be mistaken for a paid placement), made on the operator's explicit call, and
+// it has two consequences worth knowing when reading this file:
+//   • the board sorts by tier first (trendingPoster.tierPrio), so an auto
+//     Diamond now sits alongside a paying Diamond instead of under it;
+//   • the site derives the VERIFIED badge from the tier (lib/listings.ts
+//     verifiedTier), and Diamond/Gold carry it — Silver does not.
+// Change TREND_TIERS below to change the draw.
 const crypto = require("node:crypto");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const ds = require("../dexscreener");
@@ -32,6 +43,7 @@ const x = require("../twitter");
 const { CHANNELS, SITE_URL, X_AUTOLIST_ENABLED, X_POST_TIMEOUT_MS } = require("../config/constants");
 const { sanitizeTicker } = require("../helpers/ticker");
 const { chainOf } = require("../config/chains");
+const { tierLabel } = require("../config/packages");
 const log = require("../helpers/logger");
 
 const FILE = "autoLister.json";
@@ -51,7 +63,9 @@ const DEFAULTS = {
   maxLookupsPerRun: 40, // politeness toward the DexScreener API
   minGapMin: 25, // random wait between scans (never a fixed heartbeat)
   maxGapMin: 90,
-  pkg: "free", // which package an auto listing gets — see PACKAGES
+  // Which packages an auto listing can get. More than one → they take turns,
+  // one per listing, in this order. Never empty (get() falls back to ["free"]).
+  pkgs: ["free"],
   trendHours: 12, // only used by the "trending" package
   postChannel: false, // list on the site only, until the operator says otherwise
   // …and, on the "trending" package only, the @dexvraio announcement too.
@@ -70,16 +84,24 @@ const DEFAULTS = {
 //
 //   free     — listed on the site with a "Free" badge. No tier, no trending.
 //   xpress   — treated as an Xpress Listing: tier XPRESS, the Xpress post card.
-//   trending — listed AND featured on the Trending board for `trendHours`,
-//              with the Trending card as well, AND announced in @dexvraio.
-//              Tier stays FREE, so every paid tier still sorts above it on the
-//              board — the announcement is the package, not a tier upgrade.
+//   trending — listed AND featured on the Trending board for `trendHours`, with
+//              the Trending card as well, AND announced in @dexvraio. Carries a
+//              real paid tier drawn from TREND_TIERS (see trendTier()).
+//
+// `tier: null` means "not fixed — ask trendTier() for this token's own".
 const PACKAGES = {
   free: { label: "Free listing", tier: "FREE", trending: false },
   xpress: { label: "Xpress Listing", tier: "XPRESS", trending: false },
-  trending: { label: "Listing & Trending", tier: "FREE", trending: true },
+  trending: { label: "Listing & Trending", tier: null, trending: true },
 };
+const PKG_KEYS = Object.keys(PACKAGES);
 const pkgOf = (key) => PACKAGES[key] || PACKAGES.free;
+
+// The tiers Listing & Trending draws from. Platinum and Bronze are deliberately
+// absent: the operator named these three (2026-08-04). Order is part of the
+// stored behaviour — a token's tier is an index into this array, so reordering
+// it re-labels tokens that are already listed. Append, don't shuffle.
+const TREND_TIERS = ["DIAMOND", "GOLD", "SILVER"];
 
 // Rails: a fat-finger in the admin editor must not be able to list the whole
 // market or spam the channel.
@@ -119,7 +141,17 @@ function get() {
   g.minGapMin = clampInt(c.minGapMin, HARD.gapMin, DEFAULTS.minGapMin);
   g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, DEFAULTS.maxGapMin);
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
-  g.pkg = PACKAGES[c.pkg] ? c.pkg : DEFAULTS.pkg;
+  // `pkgs` is the current shape; `pkg` (a single key) is what every install
+  // before the rotation existed has on disk. Read the old one when the new one
+  // is absent, so nobody's saved choice silently reverts to "free" on deploy.
+  const saved = Array.isArray(c.pkgs) ? c.pkgs : c.pkg != null ? [c.pkg] : [];
+  const picked = [...new Set(saved.map(String).filter((k) => PACKAGES[k]))];
+  // Never empty: an empty list would make nextPkg() return undefined and every
+  // listing fall back to "free" anyway — better to say so in the config.
+  g.pkgs = picked.length ? picked : [...DEFAULTS.pkgs];
+  // Deliberately NO `pkg` alias on the way out. "The first enabled package" and
+  // "the package the next listing gets" are different answers once a rotation
+  // exists, and one name for both is how they end up used interchangeably.
   g.trendHours = clampInt(c.trendHours, HARD.trendHours, DEFAULTS.trendHours);
   return g;
 }
@@ -128,8 +160,25 @@ function get() {
 async function set(patch = {}) {
   const next = { ...get() };
   for (const [k, v] of Object.entries(patch)) if (k in DEFAULTS && v != null) next[k] = v;
+  // A single `pkg` still means "only this one, nothing else" — that is what it
+  // meant before the rotation existed, and an older caller saying it must not
+  // quietly ADD to whatever is already enabled.
+  if (patch.pkg != null && patch.pkgs == null) next.pkgs = [patch.pkg];
   await saveJSON(FILE, next);
   return get();
+}
+
+/** Turn one package on/off. Refuses to empty the list — with nothing enabled
+ *  the service would keep scanning and list everything as a plain free listing,
+ *  which is a setting nobody chose. Returns the resulting config. */
+async function togglePkg(key) {
+  if (!PACKAGES[key]) return get();
+  const on = get().pkgs;
+  const next = on.includes(key) ? on.filter((k) => k !== key) : [...on, key];
+  if (!next.length) return get();
+  // Keep PKG_KEYS order rather than tap order, so the rotation reads the same
+  // way as the buttons that set it: Free → Xpress → Listing & Trending.
+  return set({ pkgs: PKG_KEYS.filter((k) => next.includes(k)) });
 }
 
 async function reset() {
@@ -142,7 +191,7 @@ async function reset() {
  *  ("🧹 Clear history"), used after wiping the site's listings so it can
  *  repopulate. Nothing else may clear the ledger. */
 async function resetState() {
-  await saveJSON(STATE_FILE, { listed: {}, day: null, everListed: {} });
+  await saveJSON(STATE_FILE, { listed: {}, day: null, everListed: {}, pkgTurn: 0 });
 }
 
 // ── State: what we already listed, and today's count ────────────────────────
@@ -157,8 +206,33 @@ async function resetState() {
 const loadState = () => {
   const s = loadJSONSync(STATE_FILE, {}) || {};
   const obj = (v) => (v && typeof v === "object" ? v : {});
-  return { listed: obj(s.listed), day: s.day || null, everListed: obj(s.everListed) };
+  return {
+    listed: obj(s.listed),
+    day: s.day || null,
+    everListed: obj(s.everListed),
+    // Where the package rotation is up to. Persisted rather than in-memory so a
+    // restart doesn't put the turn back to the first package every time — on a
+    // service that lists a dozen tokens a day and gets redeployed, an in-memory
+    // cursor would hand out Xpress almost every time.
+    pkgTurn: Number(s.pkgTurn) || 0,
+  };
 };
+
+/**
+ * The package for the NEXT listing, and the cursor to store once it lands.
+ *
+ * With one package enabled this is just that package. With several they take
+ * turns — Xpress, then Listing & Trending, then Xpress again — which is what
+ * the operator asked for: both running, alternating, rather than one chosen.
+ *
+ * The cursor is only advanced by the caller AFTER the listing is really
+ * created, so a token rejected mid-scan doesn't burn a turn and skew the mix.
+ */
+function nextPkg(cfg = get(), state = loadState()) {
+  const list = cfg.pkgs.length ? cfg.pkgs : [...DEFAULTS.pkgs];
+  const turn = ((state.pkgTurn % list.length) + list.length) % list.length; // negatives too
+  return { key: list[turn], turn };
+}
 
 /** Remember contracts as listed, forever. Called with everything currently on
  *  the site at the top of each scan, and by the paid-listing path the moment a
@@ -214,6 +288,28 @@ function triggerMcap(address, cfg = get()) {
 }
 
 /**
+ * This token's tier on the Listing & Trending package — Diamond, Gold or
+ * Silver, drawn from TREND_TIERS.
+ *
+ * Derived from the ADDRESS for the same reason triggerMcap is: the draw has to
+ * be stable. A fresh Math.random() per call would let listingInput() and the
+ * channel card disagree about what the token is, and re-listing after a history
+ * clear would silently re-label a token the site already showed as Diamond.
+ * Different bytes of the same digest, so the tier does not correlate with the
+ * trigger cap (every Diamond landing at the top of the band would be a pattern).
+ */
+function trendTier(address) {
+  const h = crypto.createHash("sha1").update(String(address).toLowerCase()).digest();
+  return TREND_TIERS[h.readUInt32BE(4) % TREND_TIERS.length];
+}
+
+/** The tier an auto listing carries under `pkgKey`. */
+function tierFor(pkgKey, address) {
+  const p = pkgOf(pkgKey);
+  return p.tier === null ? trendTier(address) : p.tier;
+}
+
+/**
  * Why this token is NOT getting listed, or null when it qualifies. A single
  * function so every rejection is one readable reason in the log — "nothing was
  * listed today" is otherwise impossible to explain.
@@ -234,27 +330,32 @@ function rejectReason(info, cfg, trigger, now = Date.now()) {
   return null;
 }
 
-/** The listing payload the site expects for an auto-listed token, shaped by the
- *  package the operator chose. */
-function listingInput(chain, address, info, cfg = get(), now = Date.now()) {
-  const p = pkgOf(cfg.pkg);
+/** The listing payload the site expects for an auto-listed token, shaped by
+ *  `pkgKey` — the package whose turn it is (see nextPkg). Defaults to the first
+ *  enabled one so a caller that only wants to see the shape need not care. */
+function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKey = cfg.pkgs[0]) {
+  const p = pkgOf(pkgKey);
   const input = {
     chain,
     address,
     sym: sanitizeTicker(info.symbol),
     name: String(info.name).slice(0, 60),
     emoji: "🪙",
-    // "FREE" is not a purchasable package (see lib/packages.ts) — only the
-    // xpress package hands out a real tier, and only because the operator asked
-    // for auto listings to BE Xpress listings.
-    tier: p.tier,
+    // free → "FREE", which nobody can buy (see lib/packages.ts). xpress → the
+    // real XPRESS tier. trending → a real PAID tier, drawn per token: the
+    // operator's call, and the one thing here that puts an auto listing on the
+    // same footing as a purchase. See the file header for what that changes.
+    tier: tierFor(pkgKey, address),
     logoUrl: info.logoUrl && /^https:\/\//.test(info.logoUrl) ? info.logoUrl : undefined,
     website: info.website || undefined,
     twitter: info.twitter || undefined,
     telegram: info.telegram || undefined,
   };
   if (p.trending) {
-    input.trendingRank = 1; // sub-order only; tier FREE keeps it under paid slots
+    // Sub-order only — it marks the row as featured. WHERE it lands on the board
+    // is decided by trendingPoster, which sorts by tier first, and this package
+    // now carries a real one.
+    input.trendingRank = 1;
     input.trendStart = now;
     input.trendExp = now + cfg.trendHours * 3_600_000;
   }
@@ -329,7 +430,10 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
       continue;
     }
 
-    const input = listingInput(c.chain, c.address, info, cfg, now);
+    // Whose turn it is. Read fresh from `state` each time so several listings in
+    // ONE scan still alternate instead of all taking the same package.
+    const { key: pkgKey } = nextPkg(cfg, state);
+    const input = listingInput(c.chain, c.address, info, cfg, now, pkgKey);
     let listing;
     try {
       listing = await api.createListing(input);
@@ -339,15 +443,20 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     }
     if (!listing) continue;
 
-    state.listed[key] = { at: now, sym: input.sym, mcap: Math.round(info.mcap), trigger };
+    state.listed[key] = { at: now, sym: input.sym, mcap: Math.round(info.mcap), trigger, pkg: pkgKey, tier: input.tier };
     state.everListed[key] = state.everListed[key] || now;
+    // Advanced HERE, not at the top of the loop: a token rejected by its trigger
+    // or refused by the site must not consume a turn, or the mix drifts toward
+    // whichever package happens to follow the rejections.
+    state.pkgTurn += 1;
     today += 1;
     listedNow += 1;
     state.day = { key: dayKey(now), n: today };
     await saveJSON(STATE_FILE, state).catch(() => {});
     log.info(
       `[autolist] listed ${input.sym} on ${c.chain} at $${Math.round(info.mcap).toLocaleString("en-US")} ` +
-        `(its trigger was $${trigger.toLocaleString("en-US")}) as "${pkgOf(cfg.pkg).label}" — ` +
+        `(its trigger was $${trigger.toLocaleString("en-US")}) as "${pkgOf(pkgKey).label}"` +
+        `${input.tier && input.tier !== "FREE" ? ` [${input.tier}]` : ""} — ` +
         `${today}/${cfg.maxPerDay} today`,
     );
 
@@ -373,17 +482,33 @@ function postMediaFor(kind, c, info, input) {
     null,
     null,
     input.logoUrl || "",
-    null,
+    badgeFor(input.tier),
   );
 }
 
+/** The artwork's tier badge, worded exactly as fulfillment.js words it for a
+ *  purchase — a Gold auto listing and a Gold purchase must not be two different
+ *  looking things. "FREE" gets no badge: there is no such package to wear. */
+function badgeFor(tier) {
+  if (tier === "XPRESS") return "Xpress Listing";
+  if (!tier || tier === "FREE") return null;
+  return `${tierLabel(tier)} Tier`;
+}
+
 /**
- * Channel post(s) for an auto listing, following the chosen package:
+ * Channel post(s) for an auto listing, following the package it was LISTED
+ * under:
  *   free     → the listing card with NO tier badge (it wasn't bought, so it
  *              must not wear a package's colours)
  *   xpress   → the Xpress card, same as a paid Xpress listing
- *   trending → the listing card, the Trending card in @dexvratrending, AND the
- *              listing card again in @dexvraio (the announcement channel)
+ *   trending → the listing card carrying its drawn tier, the Trending card in
+ *              @dexvratrending, AND the listing card again in @dexvraio
+ *
+ * Which package that was is read off `input`, not off the config: a rotation
+ * means the config's first package is frequently NOT the one this token got,
+ * and a post that describes a different package than the listing is worse than
+ * no post. `input.tier` and `input.trendExp` are what the site was actually
+ * told, so they are what the card follows.
  *
  * And a tweet, on the same terms as a paid listing (X_AUTOLIST_ENABLED=0 turns
  * only this path off). EVERY listing goes to X — an auto listing that reached
@@ -391,7 +516,7 @@ function postMediaFor(kind, c, info, input) {
  * hole most listings fell through once auto-listing was switched on.
  */
 async function announce(tg, c, info, input, cfg = get()) {
-  const p = pkgOf(cfg.pkg);
+  const isTrending = input.trendExp != null;
   const coin = {
     name: input.name,
     symbol: input.sym,
@@ -400,9 +525,10 @@ async function announce(tg, c, info, input, cfg = get()) {
     price: info.priceUsd,
     mcap: info.mcap,
     liq: info.liq,
-    // Only the xpress package carries a tier into the post — that IS the
-    // package. free/trending post without a badge.
-    tier: p.tier === "XPRESS" ? "XPRESS" : undefined,
+    // Whatever tier the listing really carries — XPRESS, or the Diamond/Gold/
+    // Silver the trending package drew. "FREE" is not a badge anyone can buy,
+    // so it stays off the card.
+    tier: input.tier && input.tier !== "FREE" ? input.tier : undefined,
     links: { website: input.website, twitter: input.twitter, telegram: input.telegram },
     siteUrl: `${SITE_URL}/token/${c.chain}/${c.address}`,
   };
@@ -431,10 +557,12 @@ async function announce(tg, c, info, input, cfg = get()) {
     //
     // Same card, same pin as a tier #1–#3 paid listing — @dexvraio is a
     // megaphone for what just went live, and a second shape for the same event
-    // would only make the channel harder to read. The FREE badge on the card is
-    // what tells the two apart; there is no tier badge to fake.
+    // would only make the channel harder to read. Since this package draws a
+    // real tier, the card is now indistinguishable from a purchase of that
+    // tier: deliberate, and the operator's call. Nothing downstream tells them
+    // apart either, so `state.listed` is the only record of which is which.
     const annMsg =
-      p.trending && cfg.announceChannel
+      isTrending && cfg.announceChannel
         ? await post.sendMedia(CHANNELS.announce, media, fmt.listingPost(coin), { pin: true })
         : null;
     if (annMsg) log.info(`[autolist] announced ${input.sym} → ${CHANNELS.announce}/${annMsg.message_id}`);
@@ -445,7 +573,7 @@ async function announce(tg, c, info, input, cfg = get()) {
       // only in the listing channel — one channel short of where its card is.
       annMsgId: annMsg && annMsg.message_id,
     }).catch(() => {});
-    if (p.trending) {
+    if (isTrending) {
       const tMedia = await postMediaFor("trending", c, info, input).catch(() => null);
       const tMsg = await post.sendMedia(CHANNELS.trending, tMedia, fmt.trendingPost(coin));
       if (tMsg) log.info(`[autolist] posted ${input.sym} → ${CHANNELS.trending}/${tMsg.message_id}`);
@@ -526,6 +654,13 @@ function start(tg, { rng = Math.random } = {}) {
 module.exports = {
   get,
   set,
+  togglePkg,
+  nextPkg,
+  trendTier,
+  tierFor,
+  badgeFor,
+  PKG_KEYS,
+  TREND_TIERS,
   reset,
   resetState,
   rememberListed,

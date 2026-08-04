@@ -44,7 +44,11 @@ function stub(t) {
   post.mirrorToGroup = async () => null;
   tokenEmoji.ensureFromUrl = async () => null;
   twitter.enabled = () => false; // no network, and tweetListing returns early
-  fulfillment.postMedia = async () => ({ type: "photo", source: Buffer.from("x") });
+  sent.badges = [];
+  fulfillment.postMedia = async (kind, coin, buf, fileId, url, badge) => {
+    sent.badges.push({ kind, badge });
+    return { type: "photo", source: Buffer.from("x") };
+  };
   t.after(() => {
     post.sendMedia = orig.sendMedia;
     post.mirrorToGroup = orig.mirrorToGroup;
@@ -85,6 +89,37 @@ test("Listing & Trending: the free auto listing is announced in @dexvraio", asyn
     ids.listingMsgId,
     sent.find((s) => s.channel === CHANNELS.listing).id,
     "listingMsgId must survive the same write",
+  );
+});
+
+test("the announced card wears the tier the listing was actually given", async (t) => {
+  const sent = stub(t);
+  await al.set({ pkg: "trending", postChannel: true, announceChannel: true });
+  const cfg = al.get();
+  const input = al.listingInput("solana", "So1AnnBadge1", info, cfg, now);
+  await al.announce({}, { chain: "solana", address: "So1AnnBadge1" }, info, input, cfg);
+
+  // A card with no badge on a listing the site shows as Gold is the two halves
+  // of one product disagreeing in public.
+  assert.ok(al.TREND_TIERS.includes(input.tier), `expected a drawn tier, got ${input.tier}`);
+  const expected = al.badgeFor(input.tier);
+  assert.ok(
+    sent.badges.some((b) => b.kind === "listing" && b.badge === expected),
+    `listing card badge should be "${expected}", got ${JSON.stringify(sent.badges)}`,
+  );
+});
+
+test("a plain free listing wears no badge — there is no such package to sell", async (t) => {
+  const sent = stub(t);
+  await al.set({ pkg: "free", postChannel: true });
+  const cfg = al.get();
+  const input = al.listingInput("solana", "So1AnnNoBadge1", info, cfg, now);
+  await al.announce({}, { chain: "solana", address: "So1AnnNoBadge1" }, info, input, cfg);
+
+  assert.strictEqual(input.tier, "FREE");
+  assert.ok(
+    sent.badges.every((b) => b.badge === null),
+    `a FREE listing put a badge on its card: ${JSON.stringify(sent.badges)}`,
   );
 });
 
