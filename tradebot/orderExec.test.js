@@ -231,19 +231,106 @@ test('the order handlers use the parser, not Number()', () => {
   assert.ok(!/const usdVal = Number\(raw\.replace/.test(SRC), 'the old numeric parse is back');
 });
 
-test('the prompts teach the shorthand — an input nobody knows about is not an input', () => {
-  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
-  for (const example of ['mc 2k', 'mc 101k', 'mc 1.5m', 'mc 250k']) {
-    assert.ok(SRC.includes(example), `no prompt shows ${example}`);
+test('the prompts teach the shorthand — an input nobody knows about is not an input', async () => {
+  // Checked on the RENDERED prompt, not on source. These assertions used to grep
+  // for literal example strings, which broke the moment the examples started
+  // being computed from the live price — a test watching the wrong layer.
+  for (const kind of ['tp', 'sl']) {
+    const t = await prompt(kind);
+    assert.match(t, /mc [\d.]+[kmb]/, `the ${kind} prompt shows no market-cap shorthand`);
+    assert.match(t, /k = thousand · m = million · b = billion/, 'the suffixes are never explained');
   }
-  assert.match(SRC, /k = thousand, m = million, b = billion/, 'the suffixes are never explained');
-  assert.ok(!/for example <code>mc 1000000<\/code>/.test(SRC), 'the seven-digit example is back');
+  // Comments stripped: the phrase survives in the doc block that explains why it
+  // was removed, and a test that cannot tell code from prose would force that
+  // explanation to be deleted along with the bug.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/mc 1000000/.test(SRC), 'the seven-digit example is back');
 });
 
-test('the stop-loss prompt says how hard it will try to land', () => {
+test('the stop-loss prompt says how hard it will try to land', async () => {
   // It defaults to Turbo. Someone setting a stop is choosing what happens in a
   // crash; the cost of that is worth one line at the moment they choose it.
-  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
-  const sl = SRC.slice(SRC.indexOf('Stop-loss — sell automatically when the price goes DOWN'));
-  assert.match(sl.slice(0, 700), /Turbo/, 'the stop-loss prompt never mentions its execution speed');
+  assert.match(await prompt('sl'), /Turbo/, 'the stop-loss prompt never mentions its execution speed');
+  assert.ok(!/Turbo/.test(await prompt('tp')), 'a limit sell claims a speed it does not use');
+});
+
+// ---------------------------------------------------------------- the prompt
+//
+// The examples were constants — "0.0025", "mc 2k". Someone holding $PONS at
+// $0.0272 with a $27M cap reads those and still has to work out what to type for
+// their OWN position, which is the entire question they opened the box with.
+
+const { orderPrompt, usdShort } = tg._test;
+const PROMPT_CA = '0x' + 'ab'.repeat(20);
+async function prompt(kind, snap = { sym: 'PONS', priceEth: 0.00001455, mcapUsd: 27_440_000 }) {
+  const real = core.tokenSnapshot;
+  core.tokenSnapshot = async () => snap;
+  tg._test.PRICES.ETH = 1870;
+  try { return (await orderPrompt(PROMPT_CA, 'robinhood', kind)).replace(/<[^>]+>/g, ''); }
+  finally { core.tokenSnapshot = real; }
+}
+
+test('the prompt asks the question in words', async () => {
+  for (const k of ['tp', 'sl']) {
+    assert.match(await prompt(k), /What price or market cap do you want to sell at\?/,
+      `the ${k} prompt never actually asks`);
+  }
+});
+
+test('it shows where the token is NOW, so a target has something to be relative to', async () => {
+  const t = await prompt('tp');
+  assert.match(t, /Now: \$0\.0272/, `the current price is missing:\n${t}`);
+  assert.match(t, /market cap \$27\.44M/, 'the current market cap is missing');
+});
+
+test('EVERY example is copyable straight back into the box', async () => {
+  // The one thing that must not be wrong here: an example the parser rejects.
+  // The user would type exactly what they were shown and be told it is invalid.
+  for (const kind of ['tp', 'sl']) {
+    const t = await prompt(kind);
+    const examples = t.split('\n').filter((l) => /^• /.test(l)).map((l) => l.replace(/^• /, '').split(' — ')[0].trim());
+    assert.ok(examples.length >= 2, `the ${kind} prompt offers no examples`);
+    for (const ex of examples) {
+      const v = parseUsd(ex.replace(/^mc\s*/i, ''));
+      assert.ok(v > 0, `the prompt shows "${ex}" but its own parser rejects it`);
+    }
+  }
+});
+
+test('the examples point the way the order actually watches', async () => {
+  // A limit sell that suggested a target BELOW the current price would fire the
+  // instant it was set; a stop-loss suggesting one above would do the same.
+  const up = await prompt('tp');
+  assert.match(up, /2× from now/);
+  assert.ok(!/−\d+% from now/.test(up), 'a limit sell suggested a target below the price');
+
+  const down = await prompt('sl');
+  assert.match(down, /−30% from now/);
+  assert.ok(!/\d× from now/.test(down), 'a stop-loss suggested a target above the price');
+});
+
+test('the suggested numbers are arithmetically what they claim', async () => {
+  const t = await prompt('tp');
+  const price2x = Number((t.match(/• ([\d.]+) — a price \(2×/) || [])[1]);
+  assert.ok(Math.abs(price2x - 0.0272 * 2) / (0.0272 * 2) < 0.02, `"2×" was ${price2x}, not ~0.0544`);
+  const mc2x = (t.match(/• mc ([\d.]+[kmb]?) — a market cap \(2×/) || [])[1];
+  assert.ok(Math.abs(parseUsd(mc2x) - 27_440_000 * 2) / (27_440_000 * 2) < 0.02, `"2×" mcap was ${mc2x}`);
+});
+
+test('an unreadable price says so instead of inventing examples for it', async () => {
+  const t = await prompt('tp', null);
+  assert.match(t, /Could not read this token's price/, 'a failed read rendered as confident advice');
+  assert.ok(!/from now/.test(t), 'a multiple was offered with no price to multiply');
+  assert.match(t, /0\.0025/, 'the generic fallback examples are gone too');
+});
+
+test('usdShort is the inverse of parseUsd', async () => {
+  // The prompt writes with one and the box reads with the other; a mismatch
+  // would show an example that cannot be typed.
+  for (const v of [2_000, 101_000, 1_500_000, 27_440_000, 2e9, 999, 0.0025]) {
+    const round = parseUsd(usdShort(v));
+    assert.ok(round > 0, `usdShort(${v}) = "${usdShort(v)}" does not parse back`);
+    assert.ok(Math.abs(round - v) / v < 0.05, `usdShort(${v}) round-tripped to ${round}`);
+  }
 });

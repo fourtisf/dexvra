@@ -138,6 +138,65 @@ function parseUsd(input) {
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
+/** The inverse of parseUsd: a dollar figure written the way we ask people to
+ *  type it, so an example can be copied straight back into the box. */
+const usdShort = (v) => {
+  if (!(v > 0)) return '0';
+  const cut = (n, suf) => String(Number(n.toFixed(n >= 100 ? 0 : 1))) + suf;
+  if (v >= 1e9) return cut(v / 1e9, 'b');
+  if (v >= 1e6) return cut(v / 1e6, 'm');
+  if (v >= 1e3) return cut(v / 1e3, 'k');
+  return String(Number(v.toPrecision(3)));
+};
+
+/** The "what target do you want" prompt, with examples computed from where the
+ *  token ACTUALLY is.
+ *
+ *  The examples used to be constants — "0.0025", "mc 2k". Someone holding $PONS
+ *  at $0.0272 with a $27M cap reads those and still has to work out what to type
+ *  for their own position, which is the entire question they came here with. A
+ *  target is a multiple of the price in front of them, so the prompt does that
+ *  arithmetic. */
+async function orderPrompt(ca, chainKey, kind) {
+  const ch = core.chainOf(chainKey) || {};
+  const snap = await withTmo(core.tokenSnapshot(ca, chainKey).catch(() => null), 4000, null);
+  const rate = nativeUsd(ch.native);
+  const px = snap && snap.priceEth > 0 && rate > 0 ? snap.priceEth * rate : 0;
+  const mc = snap ? (snap.mcapUsd || ((snap.mcapEth || 0) * rate)) : 0;
+  const sym = (snap && snap.sym) || '';
+  const up = kind === 'tp';
+  const head = up
+    ? `🎯 <b>Limit sell${sym ? ' $' + esc(sym) : ''}</b> — sells 100% automatically when the price goes <b>UP</b>`
+    : `🛑 <b>Stop-loss${sym ? ' $' + esc(sym) : ''}</b> — sells 100% automatically when the price goes <b>DOWN</b>`;
+  const L = [head, ''];
+  if (px > 0) L.push(`📈 <b>Now:</b> $${Number(px.toPrecision(3))}${mc > 0 ? ` · market cap $${fmt(mc)}` : ''}`, '');
+  L.push('❓ <b>What price or market cap do you want to sell at?</b>', '');
+
+  // Two multiples in the direction this order watches. Round numbers a holder
+  // actually thinks in — double and 5× on the way up, a third and a half off on
+  // the way down.
+  const ms = up ? [[2, '2× from now'], [5, '5× from now']] : [[0.7, '−30% from now'], [0.5, '−50% from now']];
+  if (px > 0) {
+    L.push('Reply with <b>one</b> of these:');
+    for (const [k, why] of ms) {
+      L.push(`• <code>${Number((px * k).toPrecision(3))}</code> — a price <i>(${why})</i>`);
+    }
+    if (mc > 0) for (const [k, why] of ms) {
+      L.push(`• <code>mc ${usdShort(mc * k)}</code> — a market cap <i>(${why})</i>`);
+    }
+  } else {
+    // No price read. Say so rather than printing invented examples next to a
+    // token whose value we could not fetch.
+    L.push('<i>Could not read this token\'s price just now, so the examples below are generic.</i>', '');
+    L.push('Reply with <b>one</b> of these:');
+    L.push('• <code>0.0025</code> — a price');
+    L.push(`• <code>mc ${up ? '101k' : '250k'}</code> — a market cap`);
+  }
+  L.push('', '<i>k = thousand · m = million · b = billion · $ and commas are fine.</i>');
+  if (!up) L.push('<i>Fires at 🚀 Turbo gas so it lands during a dump — change it under 📋 Orders.</i>');
+  return L.join('\n');
+}
+
 const DS_SLUG = { robinhood: 'robinhood', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
 const chartUrl = (chainKey, ca) => DS_SLUG[chainKey] ? `https://dexscreener.com/${DS_SLUG[chainKey]}/${ca}` : `https://dexscreener.com/search?q=${ca}`;
 const expTokenUrl = (chainKey, ca) => { const c = core.chainOf(chainKey); return c ? `${c.explorer}/token/${ca}` : ''; };
@@ -1769,8 +1828,8 @@ async function onCallback(q) {
     if (k === 'bx') { setPending(chatId, { action: 'buy_amt', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch); return send(chatId, `💵 <b>How much do you want to spend?</b>\n\nType an amount in <b>${cn ? cn.native : 'native'}</b> (for example <code>0.05</code>) or in dollars (for example <code>$10</code>).`); }
     if (k === 'sx') { const sp = await sellMenu(chatId, tca, ch, wid); return send(chatId, sp.text, sp.kb); }
     if (k === 'sxt') { setPending(chatId, { action: 'sell_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `✏️ <b>Custom sell amount</b>\n\nType a percentage of your holdings from <b>1</b> to <b>100</b>.\nExamples: <code>33</code> = sell a third · <code>80</code> = sell most · <code>100</code> = sell everything.`); }
-    if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🎯 <b>Limit sell — sell automatically when the price goes UP</b>\n\nTell me the target and the bot sells 100% of this token when it's reached.\n\n• <b>By price:</b>  <code>0.0025</code>  ·  <code>$0.0025</code>\n• <b>By market cap:</b>  <code>mc 2k</code>  ·  <code>mc 101k</code>  ·  <code>mc 1.5m</code>\n\n<i>k = thousand, m = million, b = billion. Commas and $ are fine.</i>`); }
-    if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `🛑 <b>Stop-loss — sell automatically when the price goes DOWN</b>\n\nTell me the target and the bot sells 100% of this token to limit your loss.\n\n• <b>By price:</b>  <code>0.0008</code>  ·  <code>$0.0008</code>\n• <b>By market cap:</b>  <code>mc 250k</code>  ·  <code>mc 1.5m</code>\n\n<i>k = thousand, m = million, b = billion. Commas and $ are fine.</i>\n<i>Fires at 🚀 Turbo gas so it lands during a dump — change it under 📋 Orders.</i>`); }
+    if (k === 'tp') { setPending(chatId, { action: 'tp_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, await orderPrompt(tca, ch, 'tp')); }
+    if (k === 'sl') { setPending(chatId, { action: 'sl_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, await orderPrompt(tca, ch, 'sl')); }
     if (k === 'trl') { setPending(chatId, { action: 'trail_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📉 <b>Trailing stop</b> — send the trail <b>percent</b> (1–99), e.g. <code>20</code>.\n\n<i>The bot tracks the peak price from now and sells 100% if it falls that % below the peak. A rising price only ratchets the peak up.</i>`); }
     if (k === 'lb') { setPending(chatId, { action: 'lb_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `⏳ <b>Limit buy — buy automatically when the price drops</b>\n\nSend the <b>target price</b> and the <b>amount to spend</b>, separated by a space:\n• <code>0.002 0.05</code> — buy 0.05 when the price reaches $0.002\n• <code>$1.5k 0.1</code> — shorthand works here too\n\n<i>k = thousand, m = million, b = billion.</i>`); }
     if (k === 'alt') { setPending(chatId, { action: 'alert_price', ca: tca, chain: ch }); return send(chatId, `🔔 <b>Price alert</b> — send the target <b>USD price</b> and I'll ping you when <code>${short(tca)}</code> crosses it.\n\n<code>0.0025</code>  ·  <code>$2k</code>  ·  <code>101k</code>`); }
@@ -2872,5 +2931,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();
