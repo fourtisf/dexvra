@@ -2,11 +2,15 @@ import type { Metadata } from "next";
 import { PageHead } from "@/components/PageHead";
 import { BRAND_DOMAIN, BRAND_NAME } from "@/config/brand";
 import { SOCIALS, type SocialKind } from "@/config/socials";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: `${BRAND_NAME} — Community`,
+// Through the shared helper so this page gets the canonical and the social card
+// every other page now gets — it had a title and description and nothing else.
+export const metadata: Metadata = pageMetadata({
+  title: "Community",
   description: `Every official ${BRAND_NAME} account: listing and trending alerts, announcements, the community group, the listing bot, the trading bot, and X.`,
-};
+  path: "/community",
+});
 
 // Inline so the page has no runtime dependency and renders as static HTML.
 // A group and a bot get their own marks: they are different things to join, and

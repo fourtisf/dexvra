@@ -57,13 +57,21 @@ test("every channel-link filler offers the same placeholders", () => {
   // the wording is the operator's to change from the editor.
   const tpl = fs.readFileSync(path.join(process.cwd(), "bot/src/templates.js"), "utf8");
   assert.match(tpl, /\[[^\]]*\]\(\{xlisting\}\)/, "no template links the X account at all");
-  // The CHANNEL-POST footer row is deliberately Telegram-only (operator's rule):
-  // the token's own social row already prints an X link, and this row is also
-  // rendered header-less on rank-up / pump posts, so a second one reads as a
-  // duplicate of the token's. {xlisting} stays available to add from the editor.
+  // The CHANNEL-POST footer row carries the full Dexvra destination set: the
+  // three Telegram channels, the site, AND the X account the listing feed is
+  // tweeted from. This assertion used to demand the opposite — that the row stay
+  // Telegram-only, because the token's own social row already prints an X link.
+  // templates.js reversed that and says why: the two are never the same account
+  // (one is the PROJECT's X, this one is DEXVRA's), and the row is rendered
+  // header-less on rank-up / pump posts, which carry no social row at all — so
+  // there it was the only X link a reader could have followed. The test was left
+  // behind by that change and had been failing ever since.
   const row = tpl.match(/const LINKS_ROW =[\s\S]*?;\n/);
   assert.ok(row, "LINKS_ROW not found — did templates.js move?");
-  assert.ok(!row[0].includes("{xlisting}"), "the Dexvra links row must stay Telegram destinations only");
+  assert.ok(row[0].includes("{xlisting}"), "the Dexvra links row must reach the X account too");
+  for (const key of ["site", "listing", "trending", "announce"]) {
+    assert.ok(row[0].includes(`{${key}}`), `the Dexvra links row dropped {${key}}`);
+  }
 });
 
 test("the bot tweets from the same account the site links to", () => {
