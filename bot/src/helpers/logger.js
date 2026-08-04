@@ -78,6 +78,19 @@ const log = {
     out("WARN", a);
     forward(`⚠️ ${a.map(String).join(" ")}`, errorChannel);
   },
+  // A warning the operator cannot act on: the bot met a condition, handled it
+  // correctly by itself, and is only saying so for the record. Broken pool data
+  // it already rejected; an X rule that expires on its own; a board that is
+  // short because the market is short.
+  //
+  // These went to the channel as ⚠️ alongside failed sweeps and missing keys,
+  // which is the real cost — not the volume, but that a reader stops
+  // distinguishing the two. pm2 logs keep every line; set OPS_VERBOSE=1 to put
+  // them back in the channel while chasing something.
+  noise: (...a) => {
+    out("WARN", a);
+    if (process.env.OPS_VERBOSE === "1") forward(`⚠️ ${a.map(String).join(" ")}`, errorChannel);
+  },
   error: (...a) => {
     out("ERROR", a);
     forward(`🚨 ${a.map(String).join(" ")}`, errorChannel);

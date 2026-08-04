@@ -319,7 +319,10 @@ async function send(account, text, media, fallback, quoteTweetId, _retriedWithou
       const withoutCa = stripCryptoAddresses(text);
       if (withoutCa && withoutCa !== text) {
         caBlockedUntil = Date.now() + CA_BLOCK_TTL_MS; // don't pay for this rejection again
-        log.warn(`[x] ${c.message}`);
+        // Nothing for the operator to do: the tweet goes out again without the
+        // contract line, and the rule expires by itself once the app is seven
+        // days past authentication. Console only.
+        log.noise(`[x] ${c.message}`);
         log.info("[x] retrying without the contract address…");
         return send(account, withoutCa, media, fallback, quoteTweetId, true);
       }

@@ -493,7 +493,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
     log.debug(line);
     if (ops.due(SHORT_WARN_KEY, SHORT_WARN_MS)) {
       await ops.mark(SHORT_WARN_KEY).catch(() => {});
-      log.warn(line);
+      log.noise(line);
     }
   }
   return promoted;

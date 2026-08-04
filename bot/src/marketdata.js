@@ -110,7 +110,7 @@ async function fetchGT(chain, address) {
       // indefinitely. The rejection itself is silent and permanent; the
       // operator only needs to be told the token exists.
       if (noteBrokenPool(chain, address)) {
-        log.warn(`[market] GT ${chain}/${address}: ignoring absurd 24h change ${rawChange}% (pool data is broken)`);
+        log.noise(`[market] GT ${chain}/${address}: ignoring absurd 24h change ${rawChange}% (pool data is broken)`);
       }
       change24h = null;
     }

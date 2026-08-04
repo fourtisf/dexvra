@@ -124,13 +124,13 @@ test("a chain that CANNOT be filled says so — silence looks identical to 'not 
   api.getListings = async () => [{ status: "approved", chain: "robinhood", address: "r1", trendingRank: null }];
   api.bookTrending = async () => ({});
   const warns = [];
-  const realWarn = log.warn;
-  log.warn = (...a) => warns.push(a.join(" "));
+  const realWarn = log.noise;
+  log.noise = (...a) => warns.push(a.join(" "));
   await autoTrend._test.resetShortWarn();
   try {
     await autoTrend.runOnce({ rng: () => 0.5 });
   } finally {
-    log.warn = realWarn;
+    log.noise = realWarn;
   }
   const line = warns.join("\n");
   assert.match(line, /board below target/, line);
@@ -139,6 +139,11 @@ test("a chain that CANNOT be filled says so — silence looks identical to 'not 
   assert.match(line, /list more tokens on those chains, or lower the per-chain target/, "it must say what to DO");
 });
 
+// These three spy on log.noise rather than log.warn. The line is still emitted,
+// still throttled, and still survives a restart — what changed is that it no
+// longer pages the operator's Telegram channel, because a board that is short
+// because the market is short is not something anyone can go and fix. It is in
+// pm2 logs, and OPS_VERBOSE=1 puts it back in the channel. See opsNoise.test.js.
 test("the shortfall warning does not repeat every cycle", async () => {
   // It is a standing condition on a loop that runs every few minutes. Saying it
   // each time is how a real warning becomes wallpaper.
@@ -146,13 +151,13 @@ test("the shortfall warning does not repeat every cycle", async () => {
   api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
   api.bookTrending = async () => ({});
   const warns = [];
-  const realWarn = log.warn;
-  log.warn = (...a) => warns.push(a.join(" "));
+  const realWarn = log.noise;
+  log.noise = (...a) => warns.push(a.join(" "));
   await autoTrend._test.resetShortWarn();
   try {
     for (let i = 0; i < 5; i++) await autoTrend.runOnce({ rng: () => 0.5 });
   } finally {
-    log.warn = realWarn;
+    log.noise = realWarn;
   }
   assert.strictEqual(warns.filter((w) => w.includes("board below target")).length, 1, warns.join("\n"));
 });
@@ -695,8 +700,8 @@ test("the shortfall warning survives a restart — it is the reason it spammed",
   api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
   api.bookTrending = async () => ({});
   const warns = [];
-  const realWarn = log.warn;
-  log.warn = (...a) => warns.push(a.join(" "));
+  const realWarn = log.noise;
+  log.noise = (...a) => warns.push(a.join(" "));
   await autoTrend._test.resetShortWarn();
   try {
     await autoTrend.runOnce({ rng: () => 0.5 });
@@ -708,7 +713,7 @@ test("the shortfall warning survives a restart — it is the reason it spammed",
     fresh._test.setAnnouncer(() => {});
     await fresh.runOnce({ rng: () => 0.5 });
   } finally {
-    log.warn = realWarn;
+    log.noise = realWarn;
   }
   assert.strictEqual(
     warns.filter((w) => w.includes("board below target")).length,
