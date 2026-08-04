@@ -302,6 +302,32 @@ const ORDER_READ_TIMEOUT_MS = Math.max(1000, Number(process.env.ORDER_READ_TIMEO
 // Promise), caps total distinct reads per cycle, and hard-times-out each read — so a
 // hostile/unpriceable token can neither stall a cycle nor drain the RPC. Returns the
 // full snapshot (price + mcap) so orders can target either metric.
+// ---------------------------------------------------------------- order execution
+//
+// What a triggered order is allowed to spend to actually LAND.
+//
+// A stop-loss fires at precisely the moment the price is falling and every other
+// holder is trying to leave: the worst conditions for the default gas price and
+// the default slippage there are. Auto-protect has escalated since it was
+// written (gasMult 2, slipAddBps 1500) — but the stop-loss the user set BY HAND,
+// the one they are relying on, went out with no escalation at all. A stop-loss
+// that does not fill is not a stop-loss, it is a notification that you lost the
+// money anyway.
+//
+// The user's own gas priority is the floor in core.buy/core.sell, so these only
+// ever raise it.
+const ORDER_SPEED = {
+  normal: { gasMult: 1, slipAddBps: 0 },
+  fast: { gasMult: 2, slipAddBps: 500 },
+  turbo: { gasMult: 3, slipAddBps: 1500 },
+};
+// Defaults by INTENT, not one setting for all four. Getting out of a falling
+// position is urgent; taking profit into a rise is not; a limit buy that misses
+// its price simply waits for the next one.
+const ORDER_SPEED_DEFAULT = { sl: 'turbo', trail: 'turbo', tp: 'fast', limitbuy: 'fast' };
+function orderSpeed(o) { return (o && ORDER_SPEED[o.speed]) ? o.speed : (ORDER_SPEED_DEFAULT[o && o.type] || 'fast'); }
+function orderExec(o) { return { ...ORDER_SPEED[orderSpeed(o)] }; }
+
 function snapReader(label) {
   const cache = new Map(); let reads = 0, capped = 0;
   const fn = (chain, ca) => {
@@ -409,11 +435,12 @@ async function ordersCycle() {
     try {
       // Execute on the wallet the order LIVES ON (`w` is authoritative — the order
       // was pulled from w.orders), never on whatever wallet is merely active now.
+      const exec = orderExec(o);
       if (o.type === 'limitbuy') {
-        const r = await core.buy(u.chatId, o.ca, o.ethAmount, chain, w.id);
+        const r = await core.buy(u.chatId, o.ca, o.ethAmount, chain, w.id, exec);
         _notify(u.chatId, `✅ <b>Limit buy filled</b> $${esc(r.sym)}\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n${txLink(chain, r.hash)}`);
       } else {
-        const r = await core.sell(u.chatId, o.ca, o.sellPct || 100, chain, w.id);
+        const r = await core.sell(u.chatId, o.ca, o.sellPct || 100, chain, w.id, exec);
         const label = o.type === 'tp' ? 'Take-profit' : o.type === 'trail' ? 'Trailing stop' : 'Stop-loss';
         _notify(u.chatId, `✅ <b>${label} filled</b> $${esc(o.sym || '')}\nSold ${r.soldPct}% for ${r.proceedsEth} ${r.native}\n${txLink(chain, r.hash)}`);
       }
@@ -1154,4 +1181,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, _test: { solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };
+module.exports = { copyExitCycle, setNotifier, start, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };

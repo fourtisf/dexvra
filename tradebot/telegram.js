@@ -50,7 +50,7 @@ function answer(id, text) { return tg('answerCallbackQuery', { callback_query_id
 // Callback keys whose handler answers the query with its OWN text. These must
 // NOT be pre-acked — see the comment at the top of onCallback. Keep in sync with
 // every `answer(q.id, <text>)` call site; callbackAck.test.js enforces it.
-const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell']);
+const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell', 'ospd']);
 function del(chatId, mid) { return tg('deleteMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); }
 function sendPhoto(chatId, photo, caption, kb) { return tg('sendPhoto', { chat_id: chatId, photo, ...(caption ? { caption, parse_mode: 'HTML' } : {}), ...(kb ? { reply_markup: kb } : {}) }); }
 // Deposit QR image (Telegram fetches the URL server-side; the address is public, so no
@@ -498,7 +498,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     ...walletRow,
     [btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)],
     [btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)],
-    [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('🎯 TP', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 SL', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trail', `trl:${chainKey}:${wi}:${ca}`), btn('⏳ Limit', `lb:${chainKey}:${wi}:${ca}`)],
+    [btn('🔻 Sell other %', `sx:${chainKey}:${wi}:${ca}`), btn('🎯 TP', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 SL', `sl:${chainKey}:${wi}:${ca}`), btn('📉 Trail', `trl:${chainKey}:${wi}:${ca}`), btn('⏳ Limit buy', `lb:${chainKey}:${wi}:${ca}`)],
   ];
   // Offer "send this token out" only when the bound wallet actually holds a bag.
   if (bal > 1e-9) ikb.push([btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`)]);
@@ -686,6 +686,23 @@ function snipeScreen(chatId) {
   kbRows.push([btn('« Back', 'menu')]);
   return { text, kb: { inline_keyboard: kbRows } };
 }
+// Execution speed, in the user's terms. "gasMult 3, slipAddBps 1500" is the
+// implementation; what a trader needs to know is what it buys them and what it
+// costs.
+const SPEED_NAME = { normal: 'Normal', fast: 'Fast', turbo: 'Turbo' };
+const SPEED_ICON = { normal: '🐢', fast: '⚡', turbo: '🚀' };
+const SPEED_LABEL = {
+  normal: '🐢 Normal — ordinary gas and slippage. Cheapest; may miss a fast move.',
+  fast: '⚡ Fast — 2× gas, +5% slippage. Lands through normal traffic.',
+  turbo: '🚀 Turbo — 3× gas, +15% slippage. Built to land during a dump; costs the most.',
+};
+const SPEED_ORDER = ['normal', 'fast', 'turbo'];
+/** One line telling the user how hard this order will try to land, and where to
+ *  change it. A stop-loss defaults to Turbo precisely because it fires when the
+ *  pool is busiest — but a default nobody is told about is a default nobody can
+ *  disagree with. */
+const speedNote = (o) => `${SPEED_LABEL[watchers.orderSpeed(o)]}\n<i>Tap 📋 Orders to change this.</i>`;
+
 function ordersScreen(chatId) {
   const u = core.ensureUser(chatId);
   const wl = core.walletList(u);
@@ -703,8 +720,17 @@ function ordersScreen(chatId) {
     else if (o.metric === 'mcap') tgt = nativeUsd(c.native) > 0 ? ('MC $' + fmt(o.targetPriceEth * nativeUsd(c.native))) : ('MC ' + o.targetPriceEth.toPrecision(3) + ' ' + c.native);
     else tgt = nativeUsd(c.native) > 0 ? ('$' + (o.targetPriceEth * nativeUsd(c.native)).toPrecision(3)) : (o.targetPriceEth.toExponential(2) + ' ' + c.native);
     const tail = o.type === 'limitbuy' ? ' · ' + o.ethAmount + ' ' + c.native : ' · sell ' + (o.sellPct || 100) + '%';
+    // How hard this order will try to LAND, spelled out. A stop-loss fires while
+    // the price is falling and everyone else is leaving; at ordinary gas and
+    // ordinary slippage it is a stop-loss that misses. The number was decided
+    // for the user and never shown to them.
+    const sp = watchers.orderSpeed(o);
     body += `${c.emoji} <b>${label}</b> $${esc(o.sym || '')} @ ${tgt}${tail}${wtag}\n`;
-    kbRows.push([btn(`✖ Cancel ${label} $${o.sym || ''}${multi ? ' (W' + wi + ')' : ''}`, `oc:${o.id}`)]);
+    body += `    <i>${SPEED_LABEL[sp]}</i>\n`;
+    kbRows.push([
+      btn(`${SPEED_ICON[sp]} ${SPEED_NAME[sp]}`, `ospd:${o.id}`),
+      btn(`✖ Cancel ${label} $${o.sym || ''}${multi ? ' (W' + wi + ')' : ''}`, `oc:${o.id}`),
+    ]);
   }
   kbRows.push([btn('« Menu', 'menu')]);
   return { text: `📋 <b>Active orders</b>\n\n${body}`, kb: { inline_keyboard: kbRows } };
@@ -1710,6 +1736,21 @@ async function onCallback(q) {
     return send(chatId, `🎯 <b>Snipe a dev wallet</b> on ${ch.emoji} ${esc(ch.name)}\n\nFollow a developer/creator wallet. The moment it <b>launches a new token</b> on the launchpad, the bot auto-buys the launch with your per-buy amount — until the budget is used up.\n\nSend: <code>&lt;dev_wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\n<i>Only that wallet's OWN new launches are bought (matched by on-chain creator), never its ordinary trades. Honeypots are skipped; budget caps your risk.</i>`);
   }
   if (k === 'cprm') { core.removeCopyTarget(chatId, ca); const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'ospd') {
+    // Cycle Normal → Fast → Turbo. A picker screen for a three-way choice costs
+    // more taps than the choice is worth, and the label always states where it
+    // now stands.
+    const u = core.ensureUser(chatId);
+    let found = null;
+    for (const w of core.walletList(u)) for (const o of (w.orders || [])) if (o.id === ca) found = o;
+    if (!found) { await answer(q.id, 'That order is gone — it filled or was cancelled.'); const s0 = ordersScreen(chatId); return edit(chatId, mid, s0.text, s0.kb); }
+    const cur = watchers.orderSpeed(found);
+    found.speed = SPEED_ORDER[(SPEED_ORDER.indexOf(cur) + 1) % SPEED_ORDER.length];
+    core.saveStoreNow();   // execution terms are money — do not leave them in a debounce window
+    await answer(q.id, SPEED_LABEL[found.speed]);
+    const s1 = ordersScreen(chatId);
+    return edit(chatId, mid, s1.text, s1.kb);
+  }
   if (k === 'oc') { const ok = watchers.cancelOrder(chatId, ca); await answer(q.id, ok ? 'Cancelled' : 'Not found'); const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
 }
 
@@ -1757,7 +1798,7 @@ async function resolvePending(chatId, p, text, m) {
       const order = { type, ca: p.ca, sym: meta.sym, chain: ch.key, targetPriceEth: usdVal / nativeUsd(ch.native), sellPct: 100 };
       if (isMcap) order.metric = 'mcap';
       watchers.addOrder(chatId, order, p.walletId);
-      return send(chatId, `✅ ${type === 'tp' ? 'Take-profit' : 'Stop-loss'} set for $${esc(meta.sym)} at ${isMcap ? 'market cap $' + fmt(usdVal) : '$' + usdVal} on ${ch.emoji} ${esc(ch.name)}.`, rows([btn('📋 Orders', 'orders')]));
+      return send(chatId, `✅ ${type === 'tp' ? 'Take-profit' : 'Stop-loss'} set for $${esc(meta.sym)} at ${isMcap ? 'market cap $' + fmt(usdVal) : '$' + usdVal} on ${ch.emoji} ${esc(ch.name)}.\n${speedNote(order)}`, rows([btn('📋 Orders', 'orders')]));
     }
     if (p.action === 'lb_price') {
       const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = Number(pxStr), amount = Number(amtStr);
@@ -1765,7 +1806,7 @@ async function resolvePending(chatId, p, text, m) {
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
       watchers.addOrder(chatId, { type: 'limitbuy', ca: p.ca, sym: meta.sym, chain: ch.key, targetPriceEth: usdPrice / nativeUsd(ch.native), ethAmount: String(amount) }, p.walletId);
-      return send(chatId, `✅ Limit buy set: ${amount} ${ch.native} of $${esc(meta.sym)} when price ≤ $${usdPrice}.`, rows([btn('📋 Orders', 'orders')]));
+      return send(chatId, `✅ Limit buy set: ${amount} ${ch.native} of $${esc(meta.sym)} when price ≤ $${usdPrice}.\n${speedNote({ type: 'limitbuy' })}`, rows([btn('📋 Orders', 'orders')]));
     }
     if (p.action === 'ae_val') {
       const parts = String(t).trim().split(/\s+/);
@@ -1793,7 +1834,7 @@ async function resolvePending(chatId, p, text, m) {
       try {
         const meta = await core.tokenMeta(p.ca, ch.key);
         watchers.addOrder(chatId, { type: 'trail', ca: p.ca, sym: meta.sym, chain: ch.key, trailPct: pct, sellPct: 100 }, p.walletId);
-        return send(chatId, `✅ <b>Trailing stop set</b> · −${pct}% from the peak on $${esc(meta.sym)}.\n<i>Sells 100% when the price falls ${pct}% below its highest point after now.</i>`, rows([btn('📋 Orders', 'orders')]));
+        return send(chatId, `✅ <b>Trailing stop set</b> · −${pct}% from the peak on $${esc(meta.sym)}.\n${speedNote({ type: 'trail' })}\n<i>Sells 100% when the price falls ${pct}% below its highest point after now.</i>`, rows([btn('📋 Orders', 'orders')]));
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
     }
     if (p.action === 'wl_add') {
@@ -1888,7 +1929,15 @@ async function sellMenu(chatId, ca, chainKey, wid) {
     L.push(`• 75% = ${fmt(balNow * 0.75)} $${esc(sym)}${worth(75)}`);
     L.push(`• 100% = everything${worth(100)}`);
     L.push('');
-    L.push('<i>Tap a preset below, or ✏️ Custom % to type any amount from 1 to 100.</i>');
+    // Say which kind of order the buttons are. Every preset here fills at
+    // whatever the market pays the moment it is tapped; the limit and stop
+    // options below wait for a price instead. A screen that offers only one of
+    // the two and never names it leaves the user to assume the wrong one.
+    L.push('⚡ <b>Market</b> — the presets below sell <b>now</b>, at whatever price the pool gives.');
+    L.push('🎯 <b>Limit</b> — sell automatically when the price REACHES a target you set.');
+    L.push('🛑 <b>Stop-loss</b> — sell automatically if the price FALLS to a level you set.');
+    L.push('');
+    L.push('<i>Tap a preset to sell now, or set a limit / stop below.</i>');
   } else {
     L.push(`<i>This wallet holds no $${esc(sym)} to sell right now.</i>`);
   }
@@ -1897,6 +1946,11 @@ async function sellMenu(chatId, ca, chainKey, wid) {
     [btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 90%', `s:${chainKey}:${wi}:${ca}:90`)],
     [btn('💯 Sell 100% (all)', `s:${chainKey}:${wi}:${ca}:100`)],
     [btn('✏️ Custom %', `sxt:${chainKey}:${wi}:${ca}`)],
+    // The limit sell existed only as "🎯 TP" on the token card. Someone who
+    // has decided to sell is in THIS screen, and it offered them nothing but
+    // market orders.
+    [btn('🎯 Limit sell', `tp:${chainKey}:${wi}:${ca}`), btn('🛑 Stop-loss', `sl:${chainKey}:${wi}:${ca}`)],
+    [btn('📉 Trailing stop', `trl:${chainKey}:${wi}:${ca}`)],
     [btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')],
   ] : [
     [btn('🔎 Card', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')],

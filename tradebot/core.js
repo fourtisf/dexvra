@@ -1615,8 +1615,13 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     const gross = ethers.parseEther(String(ethAmount));
     if (gross <= 0n) throw new Error('amount must be > 0');
     const deadline = Math.floor(Date.now() / 1000) + 600;
-    const gasBoost = userGasBoost(u);   // user's chosen gas priority applies to every buy
-    const slip = slipBps(u);
+    // The user's own gas priority is the FLOOR; a caller may escalate above it.
+    // sell() has taken opts.gasMult/opts.slipAddBps since the retry work — buy()
+    // did not, so a triggered limit buy went out at ordinary priority however
+    // urgent the fill was. The two sides are symmetric now.
+    const gasBoost = Math.max(userGasBoost(u), (opts && opts.gasMult) || 1);
+    const slipAdd = BigInt(Math.max(0, Math.round((opts && opts.slipAddBps) || 0)));
+    const slip = (() => { const s = slipBps(u) + slipAdd; return s > 5000n ? 5000n : s; })();   // capped 50%
 
     // PREFLIGHT — IN PARALLEL. These four reads do not depend on each other, and
     // they used to run strictly in series: balance, then curve, then gas, then the
