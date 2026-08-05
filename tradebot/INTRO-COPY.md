@@ -9,22 +9,48 @@ Bot `@Dexvratradebot` · X `@Dexvraio`
 
 ---
 
-## 1. Taglines
+## 0. Voice — read this before you write a word
 
-Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy.
+The register is **professional degen**: written by someone who actually trades,
+for people who actually trade. Two halves, both required.
+
+**Degen** — talk like the chat, not like a bank.
+- Short sentences. Cut every "seamlessly", "empower", "revolutionize",
+  "cutting-edge", "unlock".
+- Use the vocabulary correctly: CA, mint, bag, fill, ape, rug, honeypot, LP,
+  mcap, dust, exit. Wrong usage is worse than no slang — the audience clocks it
+  instantly.
+- Say the awkward part out loud. Custodial, beta, real risk. Traders trust the
+  project that names its own downside before a competitor does.
+
+**Professional** — earn the swagger with numbers.
+- Every claim carries a figure or a mechanism: *0.5s to a tx link*, *61s → 2s on
+  Solana*, *1% flat*, *hard-capped copy spend*. Confidence without a number is
+  noise.
+- No emoji spam. Structure, not decoration.
+- Never promise gains. Sell the execution, the data and the guardrails — the
+  trade is the reader's call, always.
+
+The test for any line: **would a trader with a real bag screenshot this, or mute
+the channel?**
+
+---
+
+## 1. Taglines
 
 | # | Line | Best for |
 |---|------|----------|
-| 1 | **Instant multichain Telegram trading bot.** | the slide (current) |
-| 2 | **Paste a contract. Trade it. Still in Telegram.** | bot bio / X banner |
-| 3 | **Six chains, one chat, zero extensions.** | ad banner |
-| 4 | **Your wallets, your snipes, your PnL — inside Telegram.** | landing hero |
-| 5 | **From contract address to filled trade in one tap.** | feature page |
-| 6 | **The terminal is a chat window now.** | brand-led / teaser |
+| 1 | **Paste the CA. Read the card. Send it.** | hero / bot bio |
+| 2 | **Six chains. One chat. No extension.** | ad banner |
+| 3 | **Ape with the numbers in front of you.** | safety-led creative |
+| 4 | **The terminal is a chat window now.** | brand / teaser |
+| 5 | **Instant multichain Telegram trading bot.** | the current slide, plain-spoken |
+| 6 | **Fast where it counts. Honest about the rest.** | trust-led / long-form |
 
 **Telegram bot bio (120 char limit):**
 
-> Multichain trading inside Telegram — Robinhood Chain, ETH, Base, BNB, Arbitrum, Solana. Paste a CA, tap buy.
+> Paste a CA, read the card, send it. Robinhood, ETH, Base, BNB, Arbitrum,
+> Solana. Snipes, copy, TP/SL. 1% flat.
 
 ---
 
@@ -32,155 +58,171 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 
 ### One paragraph — website section, directory listing, slide notes
 
-> **Dexvra Trade Bot** is a multichain trading terminal that lives inside
-> Telegram. Paste any contract address and you get a live token card — price,
-> market cap, liquidity, holders, safety flags — with one-tap buy and sell
-> underneath it. It trades Robinhood Chain, Ethereum, Base, BNB Chain, Arbitrum
-> and Solana from wallets the bot creates and manages for you, so there is no
-> extension to install, no seed phrase to paste into a website, and no tab to
-> switch to. Snipes, copy-trading, limit orders and TP/SL run in the background
-> while you're offline.
+> You found the CA in a chat. Everything after that is friction: open the app,
+> switch the network, find the right pair, approve, hope. **Dexvra Trade Bot**
+> deletes that step. Paste the CA into Telegram and a live card comes back —
+> price, mcap, liquidity, 24h volume, holders, LP status, tax and honeypot check
+> — with buy and sell sitting right underneath it. Six chains: Robinhood Chain,
+> Ethereum, Base, BNB, Arbitrum and Solana. Wallets are generated and managed by
+> the bot, so there's no extension to install and no seed phrase going into a
+> website you've never seen before. Snipes, copy-trades and TP/SL keep running
+> after you close the app.
 
 ### Two sentences — press blurb, partner listing
 
 > Dexvra Trade Bot turns a Telegram chat into a six-chain trading desk: paste a
-> contract address, read the live card, buy it in the same message. Wallets,
-> safety scans, snipes and TP/SL orders are all built in — nothing to install.
+> contract address, read the live card, send the trade in the same message.
+> Wallets, safety scans, snipes and TP/SL are built in — nothing to install,
+> nothing to approve twice.
 
 ### Three lines — X bio, app-store style
 
-> Multichain trading, inside Telegram.
-> Paste a CA → live token card → one-tap buy.
-> Robinhood Chain · Ethereum · Base · BNB · Arbitrum · Solana.
+> Trading desk, Telegram-shaped.
+> Paste a CA → live card → one tap.
+> Robinhood · ETH · Base · BNB · Arbitrum · Solana.
 
 ### One line — push notification, banner
 
-> Trading a new token now takes one paste and one tap. → @Dexvratradebot
+> The CA is in your clipboard. The buy button is one message away.
+> → @Dexvratradebot
 
 ---
 
 ## 3. Telegram announcement post
 
-> 🤖 **Introducing Dexvra Trade Bot**
-> _Instant multichain Telegram trading bot._
+> 🤖 **Dexvra Trade Bot is live.**
 >
-> Paste a contract address. Get a live card — price, market cap, liquidity, 24h
-> volume, holders, LP status, safety. Buy or sell it with one tap. Never leave
-> the chat.
+> Paste a contract address. Get the card — price, mcap, liquidity, 24h volume,
+> holders, LP, safety. Buy or sell in the same message. You never leave the chat.
 >
-> ⛓ **Six chains, one bot**
-> Robinhood Chain · Ethereum · Base · BNB Chain · Arbitrum · Solana
-> One EVM address across every EVM chain, plus a fixed Solana address. Switch
-> with /chain.
+> **Six chains, one bot**
+> Robinhood Chain · Ethereum · Base · BNB · Arbitrum · Solana
+> One EVM address works on every EVM chain, plus a fixed Solana address. `/chain`
+> to switch.
 >
-> 👛 **Wallets that are actually yours to use**
+> **Wallets, not a waiting list**
 > Up to 10 per user. Generate fresh ones or import your own key or seed phrase —
-> the message holding your secret is deleted immediately. Deposit, withdraw and
-> export any time. Keys are encrypted at rest with AES-256-GCM.
+> the message holding your secret is deleted the second it's read. Deposit,
+> withdraw and export whenever you want. Keys sit encrypted at rest with
+> AES-256-GCM and are only decrypted to sign the trade you asked for.
 >
-> 🛡 **Safety before you spend**
-> Every scan runs GoPlus on EVM (buy/sell tax, honeypot, owner footguns) and
-> RugCheck on Solana (mint/freeze authority, LP locked or burned, holder
-> concentration). High risk gets a banner, not fine print.
+> **The scan runs before the money moves**
+> EVM goes through GoPlus: buy/sell tax, honeypot, owner footguns. Solana goes
+> through RugCheck: mint and freeze authority, LP locked or burned, holder
+> concentration, rugged flag. High risk is a banner across the card, not a
+> footnote you'll scroll past.
 >
-> ⚡ **Runs while you sleep**
-> • Snipe new launches per chain — Robinhood Chain, new Uniswap/Pancake pairs,
->   and pump.fun on Solana
-> • Copy-trade a wallet's buys, with a hard cap on total spend
-> • Limit / TP / SL orders and price alerts on every chain
-> • Portfolio, trade history and realized PnL per wallet
+> **Still working when you're not**
+> • Snipe new launches per chain — Robinhood Chain, fresh Uniswap/Pancake pairs,
+>   pump.fun on Solana. Danger-flagged tokens get skipped.
+> • Copy a wallet's buys, with a hard cap on total spend so the downside is a
+>   number you picked.
+> • Limit, TP, SL and price alerts on every chain.
+> • Portfolio, trade history and realized PnL, per wallet.
 >
-> 💸 **1% flat fee.** That's it. Refer a friend and you keep 30% of the fee from
-> every trade they make.
+> **Speed, with receipts**
+> You see the tx link about half a second after broadcast, then it's replaced in
+> place by the fill. On Solana, confirmation polls over HTTP instead of a
+> websocket that throttles — the case that used to hang 61 seconds and report a
+> *successful* buy as failed now lands in ~2s.
 >
-> ▶️ Start now: @Dexvratradebot
+> **1% flat.** No tiers, no subscription, no "pro" wall. Refer someone and 30% of
+> that fee comes back to you on every trade they make.
 >
-> ⚠️ Beta software holding real funds. Start with a small balance.
+> ▶️ @Dexvratradebot
+>
+> ⚠️ Beta software, custodial, holding real funds. Start with a balance you'd
+> shrug at.
 >
 > 🌐 dexvra.io · 💬 @Dexvralisting · 𝕏 @Dexvraio
 
-### Short version — for reposts and partner channels
+### Short version — reposts and partner channels
 
 > 🤖 **Dexvra Trade Bot is live.**
 >
-> Paste a contract address in Telegram → live token card with safety checks →
-> one-tap buy. Across Robinhood Chain, Ethereum, Base, BNB, Arbitrum and Solana.
+> Paste a CA in Telegram → live card with tax, honeypot and LP checks → one-tap
+> buy. Robinhood Chain, ETH, Base, BNB, Arbitrum, Solana.
 >
-> Snipe new launches, copy a wallet's buys, set TP/SL — all running in the
-> background. Flat 1% fee, 30% back on every referral.
+> Snipe new launches, mirror a wallet's buys, set TP/SL — all running after you
+> close the app. 1% flat, 30% back on referrals.
 >
 > ▶️ @Dexvratradebot · 🌐 dexvra.io
 >
-> ⚠️ Beta software holding real funds. Start small.
+> ⚠️ Beta, custodial, real funds. Start small.
 
 ---
 
 ## 4. X / Twitter thread
 
 **1/7**
-> Introducing Dexvra Trade Bot 🤖
+> Dexvra Trade Bot is live 🤖
 >
-> A multichain trading terminal that lives inside Telegram.
+> Paste a contract address into Telegram. Live card comes back. Buy it in the
+> same message.
 >
-> Paste a contract address → live token card → one-tap buy.
->
-> Robinhood Chain · Ethereum · Base · BNB · Arbitrum · Solana
+> Robinhood Chain · ETH · Base · BNB · Arbitrum · Solana
 >
 > 👉 t.me/Dexvratradebot
 
 **2/7**
-> No extension. No website. No seed phrase pasted into a form you don't trust.
+> No extension. No new tab. No pasting a seed phrase into a site you found in a
+> reply.
 >
-> The bot generates and manages wallets for you — up to 10 — or imports the one
-> you already have. Keys are encrypted at rest with AES-256-GCM and only
-> decrypted to sign the trade you asked for.
+> The bot generates and manages your wallets — up to 10 — or imports the one you
+> already have. Keys are encrypted at rest with AES-256-GCM and only decrypted to
+> sign the trade you asked for.
+>
+> Custodial. Said out loud, on purpose.
 
 **3/7**
-> Every token gets scanned before you spend.
+> The scan runs before the money moves.
 >
 > EVM → GoPlus: buy/sell tax, honeypot, owner footguns.
 > Solana → RugCheck: mint & freeze authority, LP locked/burned, holder
 > concentration, rugged flag.
 >
-> High risk shows up as a banner. You decide with the numbers in front of you.
+> High risk is a banner across the card. Ape if you want — but ape informed.
 
 **4/7**
-> Set it and walk away:
+> Set it, close the app:
 >
-> ⚡ Snipe new launches per chain — including pump.fun on Solana
-> 🔁 Copy-trade a wallet's buys, hard-capped so losses stay bounded
-> 🎯 Limit / TP / SL orders + price alerts
-> 📊 Portfolio, history, realized PnL per wallet
+> ⚡ Snipe new launches per chain, pump.fun included. Danger-flagged tokens
+> skipped.
+> 🔁 Copy a wallet's buys, hard-capped so the loss stays a number you chose.
+> 🎯 Limit / TP / SL + price alerts.
+> 📊 Portfolio, history, realized PnL per wallet.
 
 **5/7**
-> Speed is a feature, not a promise.
+> Speed claims are cheap, so here are the numbers.
 >
-> You see the transaction link ~0.5s after broadcast, then it's replaced in place
-> by the receipt. On Solana we poll signature status over HTTP instead of a
-> websocket that throttles — a confirm that used to take 61s and get reported as
-> failed now lands in ~2s.
+> Tx link in ~0.5s from broadcast, then replaced in place by the fill.
+>
+> Solana confirmation polls HTTP instead of a websocket that throttles: the bad
+> case went 61s-and-reported-failed → ~2s-and-correct. On a buy that had already
+> landed.
 
 **6/7**
-> 💸 Flat 1% fee per trade. No subscription, no tiers, no premium wall.
+> 💸 1% flat per trade. No tiers, no subscription, no feature held behind a "pro"
+> plan.
 >
-> Referrals pay 30% of that fee back to you, per trade, for as long as they
-> trade.
+> Referrals send 30% of that fee back to you, per trade, for as long as they keep
+> trading.
 
 **7/7**
-> Dexvra Trade Bot is live now.
+> Live now.
 >
 > ▶️ t.me/Dexvratradebot
 > 🌐 dexvra.io
 > 💬 @Dexvralisting
 >
-> Beta software holding real funds — start small.
+> Beta software, custodial, real funds. Size accordingly.
 
-**Single-tweet version (under 280):**
+**Single tweet (under 280):**
 > Dexvra Trade Bot is live 🤖
 >
-> Paste a CA in Telegram → live token card → one-tap buy.
-> Robinhood Chain, ETH, Base, BNB, Arbitrum & Solana.
-> Snipe, copy-trade, TP/SL, 1% flat fee.
+> Paste a CA in Telegram → live card, tax + honeypot checked → one-tap buy.
+> Robinhood, ETH, Base, BNB, Arbitrum, Solana.
+> Snipes, copy-trading, TP/SL. 1% flat.
 >
 > t.me/Dexvratradebot
 
@@ -188,17 +230,16 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 
 ## 5. Feature bullets — slides, website grid, ad creatives
 
-Six tiles, headline + one line each. Keep the pairing — the headline sells, the
-line proves.
+Headline sells, line proves. Never ship one without the other.
 
 | Icon | Headline | Line |
 |---|---|---|
-| ⛓ | **Six chains, one bot** | Robinhood Chain, Ethereum, Base, BNB, Arbitrum and Solana — switch with a single command. |
-| 👛 | **Up to 10 wallets** | Generate or import, each with its own balance, positions and orders. Encrypted at rest. |
-| 🔍 | **Scan before you buy** | Price, mcap, liquidity, volume, holders, LP and safety — on one card, before your money moves. |
-| ⚡ | **Snipe new launches** | Auto-buy new pairs per chain, pump.fun included. Danger-flagged tokens skipped. |
-| 🎯 | **Orders that watch for you** | Limit, take-profit, stop-loss and price alerts running in the background on every chain. |
-| 💸 | **1% flat, 30% back** | One fee per trade, no tiers. Refer a friend and keep 30% of it. |
+| ⛓ | **Six chains, one bot** | Robinhood Chain, Ethereum, Base, BNB, Arbitrum, Solana. One command to switch. |
+| 👛 | **Ten wallets, one chat** | Generate or import. Separate balance, positions and orders on each. Encrypted at rest. |
+| 🔍 | **Scan before you send** | Price, mcap, liquidity, volume, holders, LP, tax and honeypot — one card, before the money moves. |
+| ⚡ | **First in, not last** | Auto-buy new launches per chain, pump.fun included. Danger-flagged tokens skipped. |
+| 🎯 | **Exits that don't need you** | Limit, TP, SL and price alerts running on every chain after you close the app. |
+| 💸 | **1% flat, 30% back** | One fee per trade, no tiers. Refer someone and keep 30% of it. |
 
 ---
 
@@ -207,30 +248,31 @@ line proves.
 | Context | Copy |
 |---|---|
 | Button | **Start trading** |
-| Slide end | Open @Dexvratradebot and paste your first contract address. |
+| Slide end | Open @Dexvratradebot. Paste a CA. That's the onboarding. |
 | Ad | Your next trade is one message away. |
 | Channel pin | Trading lives here now → @Dexvratradebot |
-| Reply / DM | Paste a CA into @Dexvratradebot — it'll price it, scan it, and let you buy it in the same message. |
+| Reply / DM | Drop that CA into @Dexvratradebot — it'll price it, scan it and let you buy it in the same message. |
 | Retargeting | You've seen the chart. The buy button is in Telegram. |
+| Post-rug moment | The honeypot check is free. Losing the bag isn't. → @Dexvratradebot |
 
 ---
 
 ## 7. Slide copy — matches the Introduction deck
 
-**Title:** Introduction
-**Subtitle:** Dexvra Trading Bot
+**Title:** Introduction · **Subtitle:** Dexvra Trading Bot
 **Tagline:** Instant multichain Telegram trading bot.
 
-**Body — 40 words, fits under the tagline:**
+**Body — 40 words:**
 
-> Paste a contract address, get a live token card with safety checks, and buy or
-> sell it with one tap — across Robinhood Chain, Ethereum, Base, BNB, Arbitrum
-> and Solana. Snipes, copy-trades and TP/SL keep running while you're away.
+> Paste a contract address, get a live card with tax, honeypot and LP checks, and
+> send the trade in one tap — across Robinhood Chain, Ethereum, Base, BNB,
+> Arbitrum and Solana. Snipes, copy-trades and TP/SL keep running after you close
+> the app.
 
-**Body — 20 words, if the slide is tight:**
+**Body — 20 words, for a tight layout:**
 
-> Paste a contract address, read the live card, buy it in one tap. Six chains,
-> one Telegram chat.
+> Paste the CA. Read the card. Send it. Six chains, one Telegram chat, no
+> extension to install.
 
 **Footer:** Website dexvra.io · Telegram @Dexvralisting · Telegram Bot
 @Dexvratradebot · X @Dexvraio
@@ -239,15 +281,21 @@ line proves.
 
 ## 8. Rules for anyone editing this copy
 
-- **Never call it non-custodial.** The bot holds the keys — that is the product's
-  trade-off, and hiding it is how trust dies. "Bot-managed wallets" or
-  "custodial" both work.
+- **Never call it non-custodial.** The bot holds the keys. That's the trade-off,
+  and naming it first is why the rest of the copy gets believed. "Custodial" or
+  "bot-managed wallets" both work.
 - **Keep the beta warning** on any post that invites a first deposit.
-- **Don't promise profit, APY or returns.** Sell the speed and the tooling.
+- **No profit, APY or return claims** — not in a headline, not in a reply, not as
+  a joke. Sell execution, data and guardrails.
+- **Degen ≠ sloppy.** Slang has to be used the way a trader uses it, and every
+  boast needs its number attached.
 - **Fee numbers are defaults** (1% trade fee, 30% referral share) — check
   `BOT_FEE_BPS` and `REF_SHARE_BPS` before quoting them as fixed.
 - **Solana is opt-in per deployment** (`ENABLED_CHAINS`). If it's off in the
   running bot, cut it from the chain list rather than shipping copy that lies.
-- **The bot itself speaks English and Bahasa Indonesia** (`/language`). This copy
-  is English-only by choice; if you localize it, localize from these lines rather
-  than writing fresh ones, so the claims stay identical across languages.
+- **The speed figures come from `README.md`'s measured tables** (0.5s to tx link,
+  61s → 2s Solana confirm). Re-measure before repeating them after a change to
+  the execution path.
+- **The bot speaks English and Bahasa Indonesia** (`/language`). This copy is
+  English-only by choice; localize from these lines rather than writing fresh
+  ones, so the claims stay identical across languages.
