@@ -217,14 +217,74 @@ the channel?**
 >
 > Beta software, custodial, real funds. Size accordingly.
 
-**Single tweet (under 280):**
-> Dexvra Trade Bot is live 🤖
+---
+
+## 4b. X — single posts
+
+One post, one job. Counts assume X bills every link at 23 characters no matter
+how short it looks, so `t.me/dexvratradebot` costs 23, not 19. **One link per
+post** — a second one splits the tap.
+
+### A. The introduction, cut to X length (~258)
+
+This is the Telegram intro paragraph compressed to a quarter of its length. Same
+claims, none of the connective tissue.
+
+> **Introduction: Dexvra Trade Bot** 🤖
 >
-> Paste a CA in Telegram → live card, tax + honeypot checked → one-tap buy.
-> Robinhood, ETH, Base, BNB, Arbitrum, Solana.
-> Snipes, copy-trading, TP/SL. 1% flat.
+> A multichain trading terminal that lives inside Telegram.
 >
-> t.me/Dexvratradebot
+> Paste a CA → live token card → one-tap buy.
+>
+> Robinhood · ETH · Base · BNB · Arbitrum · Solana
+>
+> Snipes, copy-trading and TP/SL run while you're offline.
+>
+> 👉 t.me/dexvratradebot
+
+### B. Shortest — pin, quote-tweet, reply (~118)
+
+> Paste a CA in Telegram. Read the card. Send the trade.
+>
+> Six chains. No extension. No tab switching.
+>
+> @dexvratradebot
+
+### C. Safety-led (~197)
+
+> Every CA you paste gets scanned before the money moves — tax, honeypot, LP,
+> holder concentration.
+>
+> The buy button sits one line under the result.
+>
+> Six chains, inside Telegram.
+>
+> 👉 t.me/dexvratradebot
+
+### D. Speed-led (~213)
+
+> Tx link ~0.5s after broadcast, replaced in place by the fill.
+>
+> Solana confirms over HTTP, not a websocket that throttles: 61s-and-reported-
+> failed → ~2s-and-correct.
+>
+> Trading bot, Telegram-shaped.
+>
+> 👉 t.me/dexvratradebot
+
+### E. One-liner — banner, reply, retargeting (~96)
+
+> The CA is already in your clipboard. The buy button is one message away.
+>
+> @dexvratradebot
+
+### Profile fields
+
+- **X bio (160):** Multichain trading terminal inside Telegram. Paste a CA →
+  live card → one-tap buy. Robinhood, ETH, Base, BNB, Arbitrum, Solana. Beta,
+  custodial.
+- **Pinned-post opener:** Everything you need to trade a new token is now in one
+  Telegram message. Here's what that looks like 👇
 
 ---
 
