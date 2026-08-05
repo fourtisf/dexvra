@@ -17,19 +17,20 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 |---|------|----------|
 | 1 | **Instant multichain Telegram trading bot.** | the slide (current) |
 | 2 | **Paste a contract. Trade it. Still in Telegram.** | bot bio / X banner |
-| 3 | **Five chains, one chat, zero extensions.** | ad banner |
-| 4 | **Your wallet, your snipes, your PnL — inside Telegram.** | landing hero |
+| 3 | **Six chains, one chat, zero extensions.** | ad banner |
+| 4 | **Your wallets, your snipes, your PnL — inside Telegram.** | landing hero |
 | 5 | **From contract address to filled trade in one tap.** | feature page |
+| 6 | **The terminal is a chat window now.** | brand-led / teaser |
 
 **Telegram bot bio (120 char limit):**
 
-> Multichain trading inside Telegram — Robinhood Chain, ETH, Base, BNB, Arbitrum, Solana. Paste a CA, tap buy. 🇬🇧🇮🇩
+> Multichain trading inside Telegram — Robinhood Chain, ETH, Base, BNB, Arbitrum, Solana. Paste a CA, tap buy.
 
 ---
 
-## 2. Short intro — English
+## 2. Short intros
 
-### One paragraph (slide notes, website section, directory listing)
+### One paragraph — website section, directory listing, slide notes
 
 > **Dexvra Trade Bot** is a multichain trading terminal that lives inside
 > Telegram. Paste any contract address and you get a live token card — price,
@@ -40,44 +41,25 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 > switch to. Snipes, copy-trading, limit orders and TP/SL run in the background
 > while you're offline.
 
-### Three lines (X bio, app store style)
+### Two sentences — press blurb, partner listing
+
+> Dexvra Trade Bot turns a Telegram chat into a six-chain trading desk: paste a
+> contract address, read the live card, buy it in the same message. Wallets,
+> safety scans, snipes and TP/SL orders are all built in — nothing to install.
+
+### Three lines — X bio, app-store style
 
 > Multichain trading, inside Telegram.
 > Paste a CA → live token card → one-tap buy.
 > Robinhood Chain · Ethereum · Base · BNB · Arbitrum · Solana.
 
-### One line (push notification, banner)
+### One line — push notification, banner
 
 > Trading a new token now takes one paste and one tap. → @Dexvratradebot
 
 ---
 
-## 3. Short intro — Bahasa Indonesia
-
-### Satu paragraf
-
-> **Dexvra Trade Bot** adalah terminal trading multichain yang hidup di dalam
-> Telegram. Tempel contract address apa pun, dan kamu langsung dapat kartu token
-> live — harga, market cap, likuiditas, holder, dan status keamanan — lengkap
-> dengan tombol beli/jual satu ketuk di bawahnya. Bot ini menjalankan Robinhood
-> Chain, Ethereum, Base, BNB Chain, Arbitrum, dan Solana lewat wallet yang dibuat
-> dan dikelola bot untukmu: tanpa install extension, tanpa menempel seed phrase
-> ke website, tanpa pindah tab. Snipe, copy-trading, limit order, dan TP/SL tetap
-> berjalan di latar belakang meski kamu sedang offline.
-
-### Tiga baris
-
-> Trading multichain, langsung dari Telegram.
-> Tempel CA → kartu token live → beli satu ketuk.
-> Robinhood Chain · Ethereum · Base · BNB · Arbitrum · Solana.
-
-### Satu baris
-
-> Beli token baru sekarang cukup satu tempel dan satu ketuk. → @Dexvratradebot
-
----
-
-## 4. Telegram announcement post — English
+## 3. Telegram announcement post
 
 > 🤖 **Introducing Dexvra Trade Bot**
 > _Instant multichain Telegram trading bot._
@@ -111,61 +93,29 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 > 💸 **1% flat fee.** That's it. Refer a friend and you keep 30% of the fee from
 > every trade they make.
 >
-> 🌍 **English & Bahasa Indonesia** — switch any time with /language.
->
 > ▶️ Start now: @Dexvratradebot
 >
 > ⚠️ Beta software holding real funds. Start with a small balance.
 >
 > 🌐 dexvra.io · 💬 @Dexvralisting · 𝕏 @Dexvraio
 
----
+### Short version — for reposts and partner channels
 
-## 5. Telegram announcement post — Bahasa Indonesia
-
-> 🤖 **Memperkenalkan Dexvra Trade Bot**
-> _Bot trading multichain instan di Telegram._
+> 🤖 **Dexvra Trade Bot is live.**
 >
-> Tempel contract address. Muncul kartu live — harga, market cap, likuiditas,
-> volume 24 jam, holder, status LP, dan keamanan. Beli atau jual satu ketuk.
-> Tanpa keluar dari chat.
+> Paste a contract address in Telegram → live token card with safety checks →
+> one-tap buy. Across Robinhood Chain, Ethereum, Base, BNB, Arbitrum and Solana.
 >
-> ⛓ **Enam chain, satu bot**
-> Robinhood Chain · Ethereum · Base · BNB Chain · Arbitrum · Solana
-> Satu address EVM berlaku di semua chain EVM, plus satu address Solana tetap.
-> Ganti lewat /chain.
+> Snipe new launches, copy a wallet's buys, set TP/SL — all running in the
+> background. Flat 1% fee, 30% back on every referral.
 >
-> 👛 **Wallet yang benar-benar bisa kamu pakai**
-> Sampai 10 per user. Buat baru atau import punyamu sendiri (private key atau
-> seed phrase) — pesan yang memuat rahasiamu langsung dihapus. Deposit, withdraw,
-> dan export kapan saja. Semua key dienkripsi AES-256-GCM.
+> ▶️ @Dexvratradebot · 🌐 dexvra.io
 >
-> 🛡 **Cek keamanan sebelum uang keluar**
-> Setiap scan menjalankan GoPlus di EVM (pajak beli/jual, honeypot, kewenangan
-> owner) dan RugCheck di Solana (mint/freeze authority, LP terkunci atau dibakar,
-> konsentrasi holder). Risiko tinggi tampil sebagai banner, bukan tulisan kecil.
->
-> ⚡ **Jalan terus walau kamu tidur**
-> • Snipe launch baru per chain — Robinhood Chain, pair Uniswap/Pancake baru,
->   dan pump.fun di Solana
-> • Copy-trading: ikuti pembelian sebuah wallet, dengan batas total belanja
-> • Limit / TP / SL dan price alert di semua chain
-> • Portfolio, riwayat trade, dan PnL terealisasi per wallet
->
-> 💸 **Fee flat 1%.** Cuma itu. Ajak teman, kamu dapat 30% dari fee setiap trade
-> mereka.
->
-> 🌍 **English & Bahasa Indonesia** — ganti kapan saja dengan /language.
->
-> ▶️ Mulai sekarang: @Dexvratradebot
->
-> ⚠️ Software beta yang memegang dana asli. Mulai dengan saldo kecil.
->
-> 🌐 dexvra.io · 💬 @Dexvralisting · 𝕏 @Dexvraio
+> ⚠️ Beta software holding real funds. Start small.
 
 ---
 
-## 6. X / Twitter thread
+## 4. X / Twitter thread
 
 **1/7**
 > Introducing Dexvra Trade Bot 🤖
@@ -215,8 +165,6 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 >
 > Referrals pay 30% of that fee back to you, per trade, for as long as they
 > trade.
->
-> 🌍 Full English and Bahasa Indonesia support — /language.
 
 **7/7**
 > Dexvra Trade Bot is live now.
@@ -238,7 +186,7 @@ Pick one and use it everywhere — slide subtitle, bot bio, link-in-bio, ad copy
 
 ---
 
-## 7. Feature bullets (slides, website grid, ad creatives)
+## 5. Feature bullets — slides, website grid, ad creatives
 
 Six tiles, headline + one line each. Keep the pairing — the headline sells, the
 line proves.
@@ -254,19 +202,20 @@ line proves.
 
 ---
 
-## 8. Call-to-action variants
+## 6. Call-to-action variants
 
-| Context | English | Bahasa Indonesia |
-|---|---|---|
-| Button | **Start trading** | **Mulai trading** |
-| Slide end | Open @Dexvratradebot and paste your first contract address. | Buka @Dexvratradebot dan tempel contract address pertamamu. |
-| Ad | Your next trade is one message away. | Trade berikutnya cuma sejauh satu pesan. |
-| Channel pin | Trading lives here now → @Dexvratradebot | Trading-nya pindah ke sini → @Dexvratradebot |
-| Reply / DM | Paste a CA into @Dexvratradebot — it'll price it, scan it, and let you buy it in the same message. | Tempel CA ke @Dexvratradebot — langsung muncul harga, hasil scan, dan tombol belinya. |
+| Context | Copy |
+|---|---|
+| Button | **Start trading** |
+| Slide end | Open @Dexvratradebot and paste your first contract address. |
+| Ad | Your next trade is one message away. |
+| Channel pin | Trading lives here now → @Dexvratradebot |
+| Reply / DM | Paste a CA into @Dexvratradebot — it'll price it, scan it, and let you buy it in the same message. |
+| Retargeting | You've seen the chart. The buy button is in Telegram. |
 
 ---
 
-## 9. Slide copy (matches the Introduction deck)
+## 7. Slide copy — matches the Introduction deck
 
 **Title:** Introduction
 **Subtitle:** Dexvra Trading Bot
@@ -278,12 +227,17 @@ line proves.
 > sell it with one tap — across Robinhood Chain, Ethereum, Base, BNB, Arbitrum
 > and Solana. Snipes, copy-trades and TP/SL keep running while you're away.
 
+**Body — 20 words, if the slide is tight:**
+
+> Paste a contract address, read the live card, buy it in one tap. Six chains,
+> one Telegram chat.
+
 **Footer:** Website dexvra.io · Telegram @Dexvralisting · Telegram Bot
 @Dexvratradebot · X @Dexvraio
 
 ---
 
-## 10. Rules for anyone editing this copy
+## 8. Rules for anyone editing this copy
 
 - **Never call it non-custodial.** The bot holds the keys — that is the product's
   trade-off, and hiding it is how trust dies. "Bot-managed wallets" or
@@ -294,3 +248,6 @@ line proves.
   `BOT_FEE_BPS` and `REF_SHARE_BPS` before quoting them as fixed.
 - **Solana is opt-in per deployment** (`ENABLED_CHAINS`). If it's off in the
   running bot, cut it from the chain list rather than shipping copy that lies.
+- **The bot itself speaks English and Bahasa Indonesia** (`/language`). This copy
+  is English-only by choice; if you localize it, localize from these lines rather
+  than writing fresh ones, so the claims stay identical across languages.
