@@ -750,6 +750,10 @@ function alText() {
     `\n` +
     `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
     (recent ? `${recent}\n\n` : "\n") +
+    // "Listed so far" alone cannot distinguish a quiet market from a service
+    // that has been broken for days — the counter simply stops moving either
+    // way. This is the line that tells them apart.
+    alScanLine(autoLister.lastScan(), c) +
     `🔒 <b>Never re-listed:</b> ${s.everListed} contracts — everything that has ever ` +
     `been on the site, so a token that was listed before (including a paid one that ` +
     `was later deleted) can never come back as a free auto listing.\n\n` +
@@ -764,6 +768,56 @@ function alText() {
 /** Is "Listing & Trending" one of the enabled packages? Drives the rows that
  *  only make sense when a board slot is on the table. */
 const alTrendOn = (c) => c.pkgs.includes("trending");
+
+// One test scan at a time — see the alscan handler.
+let alScanBusy = false;
+
+const ago = (ms) => {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+};
+
+/** The last scan, in the operator's words. A blocked scan says so loudly: that
+ *  is the state where the service looks ON and lists nothing.
+ *
+ *  Everything derived from an ERROR is escaped. A blocker carries whatever the
+ *  site or DexScreener said — an HTML error page, a URL with a query string —
+ *  and the panel is sent with parse_mode HTML. Unescaped, a single "<" makes
+ *  Telegram reject the edit AND the reply fallback, so the panel silently stops
+ *  updating: the exact failure this line exists to report. */
+function alScanLine(scan, cfg) {
+  // "🟢 ON" above is a CONFIG flag. It says what the operator chose, and it said
+  // it for two days while the scanner was not running at all — the service had
+  // failed to start behind a swallowed require error, and nothing in this panel
+  // could tell the difference. A scan report is the only proof the loop is
+  // alive, so its absence or its age is what gets reported here.
+  const stale = 2 * cfg.maxGapMin * 60_000 + 600_000; // two full gaps, plus slack
+  if (!scan) {
+    return (
+      `⚠️ <b>The scanner has never reported</b> — if the bot has been up more than ` +
+      `~${cfg.maxGapMin} min, it is NOT running.\n` +
+      `<i>Check the [monitoring] lines in pm2 logs for a service that failed to start.</i>\n\n`
+    );
+  }
+  const age = Date.now() - scan.at;
+  const when = ago(age);
+  if (age > stale) {
+    return (
+      `⚠️ <b>The scanner has gone quiet</b> — last report ${when}, and it should run every ` +
+      `${cfg.minGapMin}–${cfg.maxGapMin} min.\n` +
+      `<i>The loop has stopped. Check the [monitoring] lines in pm2 logs.</i>\n\n`
+    );
+  }
+  if (scan.blocker) {
+    return (
+      `⛔ <b>Last scan (${when}) could not run</b>\n<code>${escapeHtml(String(scan.blocker).slice(0, 200))}</code>\n` +
+      `<i>Nothing will be listed until this clears.</i>\n\n`
+    );
+  }
+  return `🔍 <b>Last scan</b> (${when}): ${escapeHtml(autoLister.scanLine(scan))}\n\n`;
+}
 function alKb() {
   const cb = Markup.button.callback;
   const c = autoLister.get();
@@ -792,6 +846,10 @@ function alKb() {
     ...(alTrendOn(c)
       ? [[cb(`🔔 ${CHANNELS.announce}: ${c.announceChannel ? "ON" : "OFF"}`, "alann")]]
       : []),
+    // Read-only, and the answer to "why has nothing been listed?" — without it
+    // the only way to find out is to wait out a 25–90 min gap and still have
+    // nothing to read.
+    [cb("🔎 Test scan", "alscan"), cb("🔄 Refresh", "al")],
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
 }
@@ -2063,6 +2121,45 @@ function build() {
     const c = await autoLister.set({ trendHours: autoLister.get().trendHours + Number(ctx.match[1]) });
     ctx.answerCbQuery(`🔥 Slot: ${c.trendHours}h`).catch(() => {});
     await edit(ctx, alText(), alKb());
+  });
+  // A DRY RUN: prices this scan's candidates and reports the verdicts without
+  // listing, writing or posting anything. Safe while the service is off, and
+  // safe here — @dexvraadminbot is not the process that posts to the channels.
+  bot.action("alscan", async (ctx) => {
+    if (!guard(ctx)) return;
+    // One at a time. A test scan takes seconds of network I/O, and a panel that
+    // looks idle invites a second tap — which would double the load on
+    // DexScreener and race two edits onto the same message.
+    if (alScanBusy) {
+      ctx.answerCbQuery("🔎 A test scan is already running — hold on").catch(() => {});
+      return;
+    }
+    alScanBusy = true;
+    ctx.answerCbQuery("🔎 Scanning — this takes a moment…").catch(() => {});
+    let r;
+    try {
+      r = await autoLister.dryRun();
+    } catch (e) {
+      alScanBusy = false;
+      await edit(ctx, `${alText()}\n\n🔎 <b>Test scan failed</b>\n<code>${escapeHtml(String(e.message).slice(0, 300))}</code>`, alKb());
+      return;
+    }
+    alScanBusy = false;
+    const found = (r.qualified || [])
+      .map((q) => `• <b>${q.sym}</b> on ${q.chain} — ${usd(q.mcap)} (trigger ${usd(q.trigger)})`)
+      .join("\n");
+    const sampled = r.sampled ? ` <i>(sample of the first ${r.priced} — a tap must not run for minutes)</i>` : "";
+    const verdict = r.blocker
+      ? `⛔ <b>${escapeHtml(r.blocker)}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
+      : `🔎 <b>Test scan</b> — ${escapeHtml(autoLister.scanLine(r))}${sampled}\n\n` +
+        (r.listed
+          ? `<b>${r.listed}</b> would be listed right now:\n${found}\n\n<i>Nothing was listed — this was a dry run.</i>`
+          : `<i>Nothing qualifies in this sample. No token is past its trigger with enough liquidity and volume — the service itself is working.</i>`);
+    // Telegram rejects an edit over 4096 chars, and the panel text is already
+    // long — a rejected edit would lose the verdict entirely, which is the one
+    // thing the operator tapped for. Keep the verdict, trim the panel.
+    const body = `${alText()}\n${verdict}`;
+    await edit(ctx, body.length > 4000 ? `${body.slice(0, 4000 - verdict.length - 2)}\n${verdict}` : body, alKb());
   });
   bot.action("alrst", async (ctx) => {
     if (!guard(ctx)) return;

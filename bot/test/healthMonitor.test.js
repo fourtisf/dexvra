@@ -213,7 +213,16 @@ test("a broken check can never take down the bot it watches", async () => {
 
 test("the monitor is actually wired into boot — an unstarted service watches nothing", () => {
   const src = fss.readFileSync(require.resolve("../src/services/attach.js"), "utf8");
-  assert.match(src, /services\.push\(require\("\.\/healthMonitor"\)\.start\(tg\)\)/);
+  // Wired through add(), which guards each service on its own. Pushed directly
+  // into the chain instead, a failure ABOVE it would stop it from ever
+  // starting — and a monitor that never started is the one thing that cannot
+  // report its own absence.
+  assert.match(src, /add\("healthMonitor", \(\) => require\("\.\/healthMonitor"\)\.start\(tg\)\)/);
+  // Comments stripped: the file's header quotes the OLD wiring on purpose, to
+  // tell the next reader what it cost, so a check on what the CODE does has to
+  // read past the explanation.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/services\.push\(require\(/.test(code), "a service bypasses the per-service guard");
   // It must return a stop handle like every other service, or SIGTERM hangs.
   const mon = fss.readFileSync(require.resolve("../src/services/healthMonitor.js"), "utf8");
   assert.match(mon, /return \{\n\s*stop\(\) \{/);

@@ -6,20 +6,30 @@ const log = require("./helpers/logger");
 
 const BASE = "https://api.dexscreener.com/latest/dex/tokens/";
 
-// our chain id -> DexScreener chainId. DexScreener now indexes Robinhood chain
-// (dexscreener.com/robinhood/…) and Plasma, so their socials/website autofill
-// works too. A wrong slug just yields no chain-matching pair → null (safe).
-const DS_CHAIN = {
-  solana: "solana",
-  bsc: "bsc",
-  ethereum: "ethereum",
-  base: "base",
-  tron: "tron",
-  ton: "ton",
-  sui: "sui",
-  robinhood: "robinhood",
-  plasma: "plasma",
+// our chain id -> DexScreener chainId.
+//
+// DERIVED FROM THE SUPPORTED CHAINS, not hand-listed. It used to be a literal of
+// nine entries while config/chains.js supported twenty-two, so thirteen chains —
+// Polygon, Arbitrum, Optimism, Avalanche, Blast, Sei and the rest — were
+// invisible to discovery: OUR_CHAIN below could not map their feed entries back,
+// so the auto-lister dropped every token on them before it ever priced one. The
+// panel meanwhile said it watches "every supported chain". Adding a chain to
+// chains.js now makes it discoverable, which is the only way the two stay in
+// step.
+//
+// Identity by default; OVERRIDES carries the ones DexScreener spells
+// differently. Getting a slug wrong is SAFE in both directions — fetchTokenInfo
+// finds no chain-matching pair and returns null, and discovery simply skips a
+// feed entry it cannot map — so an unverified slug costs nothing and a correct
+// one gains a chain.
+const { CHAINS } = require("./config/chains");
+
+const OVERRIDES = {
+  // (none known) — add "ourId: 'theirSlug'" here when DexScreener's chainId
+  // differs from ours rather than editing the generated map.
 };
+
+const DS_CHAIN = Object.fromEntries(Object.keys(CHAINS).map((c) => [c, OVERRIDES[c] || c]));
 
 const first = (arr) => (Array.isArray(arr) && arr.length ? arr[0] : null);
 
@@ -105,22 +115,41 @@ async function fetchFeed(url) {
 
 /**
  * Candidate tokens from every discovery feed, de-duplicated, on supported
- * chains only. Order is preserved (profiles first, then boosts) because the
- * caller prices only the first N per scan.
+ * chains only.
+ *
+ * INTERLEAVED, not concatenated. The caller prices only the first N per scan
+ * (autoLister.maxLookupsPerRun, 40 by default) and there are three feeds, so
+ * concatenating meant the budget was spent head-first on ONE of them:
+ * token-profiles/latest is the newest profiles — minutes-old microcaps that
+ * cannot clear a $1M trigger, a $25k liquidity floor and a 6h age gate — and
+ * whenever it alone ran to 40 entries the boosted feeds, which is where
+ * established $1M+ projects actually appear, were never priced at all. The
+ * service then lists nothing, scan after scan, with every feed perfectly
+ * healthy.
+ *
+ * Round-robin gives each feed an even share of whatever budget the caller has.
+ * Order within a feed is still preserved.
  * @returns {Promise<Array<{chain: string, address: string}>>}
  */
 async function fetchDiscovery(feeds = DISCOVERY_FEEDS) {
-  const seen = new Set();
-  const out = [];
-  for (const items of await Promise.all(feeds.map(fetchFeed))) {
-    for (const it of items) {
+  const lists = (await Promise.all(feeds.map(fetchFeed))).map((items) =>
+    (Array.isArray(items) ? items : []).flatMap((it) => {
       const chain = OUR_CHAIN[String(it && it.chainId)];
       const address = String((it && it.tokenAddress) || "").trim();
-      if (!chain || !address) continue;
-      const key = `${chain}:${address.toLowerCase()}`;
+      return chain && address ? [{ chain, address }] : [];
+    }),
+  );
+  const seen = new Set();
+  const out = [];
+  const depth = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < depth; i++) {
+    for (const list of lists) {
+      const c = list[i];
+      if (!c) continue;
+      const key = `${c.chain}:${c.address.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ chain, address });
+      out.push(c);
     }
   }
   return out;
