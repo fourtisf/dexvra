@@ -753,7 +753,7 @@ function alText() {
     // "Listed so far" alone cannot distinguish a quiet market from a service
     // that has been broken for days — the counter simply stops moving either
     // way. This is the line that tells them apart.
-    alScanLine(autoLister.lastScan()) +
+    alScanLine(autoLister.lastScan(), c) +
     `🔒 <b>Never re-listed:</b> ${s.everListed} contracts — everything that has ever ` +
     `been on the site, so a token that was listed before (including a paid one that ` +
     `was later deleted) can never come back as a free auto listing.\n\n` +
@@ -787,9 +787,29 @@ const ago = (ms) => {
  *  and the panel is sent with parse_mode HTML. Unescaped, a single "<" makes
  *  Telegram reject the edit AND the reply fallback, so the panel silently stops
  *  updating: the exact failure this line exists to report. */
-function alScanLine(scan) {
-  if (!scan) return `🔍 <b>No scan has run yet</b> — the first one lands within ~2 min of a restart.\n\n`;
-  const when = ago(Date.now() - scan.at);
+function alScanLine(scan, cfg) {
+  // "🟢 ON" above is a CONFIG flag. It says what the operator chose, and it said
+  // it for two days while the scanner was not running at all — the service had
+  // failed to start behind a swallowed require error, and nothing in this panel
+  // could tell the difference. A scan report is the only proof the loop is
+  // alive, so its absence or its age is what gets reported here.
+  const stale = 2 * cfg.maxGapMin * 60_000 + 600_000; // two full gaps, plus slack
+  if (!scan) {
+    return (
+      `⚠️ <b>The scanner has never reported</b> — if the bot has been up more than ` +
+      `~${cfg.maxGapMin} min, it is NOT running.\n` +
+      `<i>Check the [monitoring] lines in pm2 logs for a service that failed to start.</i>\n\n`
+    );
+  }
+  const age = Date.now() - scan.at;
+  const when = ago(age);
+  if (age > stale) {
+    return (
+      `⚠️ <b>The scanner has gone quiet</b> — last report ${when}, and it should run every ` +
+      `${cfg.minGapMin}–${cfg.maxGapMin} min.\n` +
+      `<i>The loop has stopped. Check the [monitoring] lines in pm2 logs.</i>\n\n`
+    );
+  }
   if (scan.blocker) {
     return (
       `⛔ <b>Last scan (${when}) could not run</b>\n<code>${escapeHtml(String(scan.blocker).slice(0, 200))}</code>\n` +
