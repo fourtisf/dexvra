@@ -769,6 +769,9 @@ function alText() {
  *  only make sense when a board slot is on the table. */
 const alTrendOn = (c) => c.pkgs.includes("trending");
 
+// One test scan at a time — see the alscan handler.
+let alScanBusy = false;
+
 const ago = (ms) => {
   const m = Math.max(0, Math.round(ms / 60000));
   if (m < 60) return `${m} min ago`;
@@ -777,17 +780,23 @@ const ago = (ms) => {
 };
 
 /** The last scan, in the operator's words. A blocked scan says so loudly: that
- *  is the state where the service looks ON and lists nothing. */
+ *  is the state where the service looks ON and lists nothing.
+ *
+ *  Everything derived from an ERROR is escaped. A blocker carries whatever the
+ *  site or DexScreener said — an HTML error page, a URL with a query string —
+ *  and the panel is sent with parse_mode HTML. Unescaped, a single "<" makes
+ *  Telegram reject the edit AND the reply fallback, so the panel silently stops
+ *  updating: the exact failure this line exists to report. */
 function alScanLine(scan) {
   if (!scan) return `🔍 <b>No scan has run yet</b> — the first one lands within ~2 min of a restart.\n\n`;
   const when = ago(Date.now() - scan.at);
   if (scan.blocker) {
     return (
-      `⛔ <b>Last scan (${when}) could not run</b>\n<code>${String(scan.blocker).slice(0, 200)}</code>\n` +
+      `⛔ <b>Last scan (${when}) could not run</b>\n<code>${escapeHtml(String(scan.blocker).slice(0, 200))}</code>\n` +
       `<i>Nothing will be listed until this clears.</i>\n\n`
     );
   }
-  return `🔍 <b>Last scan</b> (${when}): ${autoLister.scanLine(scan)}\n\n`;
+  return `🔍 <b>Last scan</b> (${when}): ${escapeHtml(autoLister.scanLine(scan))}\n\n`;
 }
 function alKb() {
   const cb = Markup.button.callback;
@@ -2098,23 +2107,34 @@ function build() {
   // safe here — @dexvraadminbot is not the process that posts to the channels.
   bot.action("alscan", async (ctx) => {
     if (!guard(ctx)) return;
+    // One at a time. A test scan takes seconds of network I/O, and a panel that
+    // looks idle invites a second tap — which would double the load on
+    // DexScreener and race two edits onto the same message.
+    if (alScanBusy) {
+      ctx.answerCbQuery("🔎 A test scan is already running — hold on").catch(() => {});
+      return;
+    }
+    alScanBusy = true;
     ctx.answerCbQuery("🔎 Scanning — this takes a moment…").catch(() => {});
     let r;
     try {
       r = await autoLister.dryRun();
     } catch (e) {
-      await edit(ctx, `${alText()}\n\n🔎 <b>Test scan failed</b>\n<code>${String(e.message).slice(0, 300)}</code>`, alKb());
+      alScanBusy = false;
+      await edit(ctx, `${alText()}\n\n🔎 <b>Test scan failed</b>\n<code>${escapeHtml(String(e.message).slice(0, 300))}</code>`, alKb());
       return;
     }
+    alScanBusy = false;
     const found = (r.qualified || [])
       .map((q) => `• <b>${q.sym}</b> on ${q.chain} — ${usd(q.mcap)} (trigger ${usd(q.trigger)})`)
       .join("\n");
+    const sampled = r.sampled ? ` <i>(sample of the first ${r.priced} — a tap must not run for minutes)</i>` : "";
     const verdict = r.blocker
-      ? `⛔ <b>${r.blocker}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
-      : `🔎 <b>Test scan</b> — ${autoLister.scanLine(r)}\n\n` +
+      ? `⛔ <b>${escapeHtml(r.blocker)}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
+      : `🔎 <b>Test scan</b> — ${escapeHtml(autoLister.scanLine(r))}${sampled}\n\n` +
         (r.listed
           ? `<b>${r.listed}</b> would be listed right now:\n${found}\n\n<i>Nothing was listed — this was a dry run.</i>`
-          : `<i>Nothing qualifies right now. The market simply has no token past its trigger with enough liquidity and volume — the service is working.</i>`);
+          : `<i>Nothing qualifies in this sample. No token is past its trigger with enough liquidity and volume — the service itself is working.</i>`);
     // Telegram rejects an edit over 4096 chars, and the panel text is already
     // long — a rejected edit would lose the verdict entirely, which is the one
     // thing the operator tapped for. Keep the verdict, trim the panel.

@@ -401,3 +401,66 @@ test("the scan line reads as a sentence, blocked or not", () => {
   );
   assert.match(al.scanLine({ ...al.lastScan?.(), blocker: "site API unreachable: 401" }), /⛔ site API unreachable: 401/);
 });
+
+// ── Discovery must cover the chains the bot says it covers ──────────────────
+
+test("every supported chain is discoverable — the panel says 'every supported chain'", () => {
+  const { CHAINS } = require("../src/config/chains");
+  const { DS_CHAIN } = require("../src/dexscreener");
+  const missing = Object.keys(CHAINS).filter((c) => !DS_CHAIN[c]);
+  // It was 13 of 22: Polygon, Arbitrum, Optimism, Avalanche, Blast, Sei and the
+  // rest could never be auto-listed, because OUR_CHAIN could not map their feed
+  // entries back and discovery dropped them before pricing.
+  assert.deepStrictEqual(missing, [], `chains the auto-lister can never surface: ${missing.join(", ")}`);
+});
+
+test("the map is derived, so adding a chain cannot silently skip discovery", () => {
+  const src = fss.readFileSync(path.join(__dirname, "../src/dexscreener.js"), "utf8");
+  assert.match(src, /Object\.keys\(CHAINS\)/, "DS_CHAIN is hand-listed again — it will drift from chains.js");
+});
+
+test("the chain map round-trips: every slug maps back to the chain it came from", () => {
+  const { CHAINS } = require("../src/config/chains");
+  const { DS_CHAIN } = require("../src/dexscreener");
+  // OUR_CHAIN is the inverse of DS_CHAIN. Two of our chains sharing one slug
+  // would make discovery attribute a token to the wrong network.
+  const slugs = Object.values(DS_CHAIN);
+  assert.strictEqual(new Set(slugs).size, slugs.length, `duplicate DexScreener slugs: ${slugs.join(", ")}`);
+  assert.strictEqual(slugs.length, Object.keys(CHAINS).length);
+});
+
+// ── The test scan is a button tap, not a background job ─────────────────────
+
+test("the dry run is bounded and says when it sampled", async (t) => {
+  await reset();
+  stubApi(t);
+  let priced = 0;
+  const r = await al.dryRun({
+    now,
+    deps: {
+      fetchDiscovery: async () =>
+        Array.from({ length: 60 }, (_, i) => ({ chain: "solana", address: `So1many${i}` })),
+      fetchTokenInfo: async () => {
+        priced++;
+        return healthy({ mcap: 10_000 });
+      },
+    },
+  });
+  // 40 serial quotes at an 8s timeout is up to five minutes of a frozen panel.
+  assert.ok(priced <= 15, `dry run priced ${priced} tokens inside a button tap`);
+  assert.strictEqual(r.sampled, true, "a partial scan must not read as a full one");
+  assert.strictEqual(r.candidates, 60, "…while still reporting how many there were");
+});
+
+test("a dry run that reaches the end of the candidates is NOT flagged as sampled", async (t) => {
+  await reset();
+  stubApi(t);
+  const r = await al.dryRun({
+    now,
+    deps: {
+      fetchDiscovery: async () => [{ chain: "solana", address: "So1one" }],
+      fetchTokenInfo: async () => healthy({ mcap: 10_000 }),
+    },
+  });
+  assert.ok(!r.sampled, "claiming a sample when nothing was skipped understates the answer");
+});

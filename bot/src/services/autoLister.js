@@ -657,7 +657,16 @@ function scanLine(report) {
  * having nothing to read. Deliberately read-only — it makes no listings, writes
  * no state and posts nothing, so it is safe to tap while the service is off, and
  * it runs in @dexvraadminbot, which is not the process that posts to channels.
+ *
+ * Bounded to DRY_LOOKUPS rather than the service's own maxLookupsPerRun: this
+ * runs inside a button tap, and 40 serial quotes at an 8s timeout each is up to
+ * five minutes of a panel that looks frozen. A sample is enough to tell "the
+ * market has nothing" from "the service is broken", which is the entire
+ * question. `sampled` on the report says so, so the panel never implies the
+ * sample was the whole scan.
  */
+const DRY_LOOKUPS = 15;
+
 async function dryRun({ now = Date.now(), deps = {} } = {}) {
   const cfg = get();
   const discover = deps.fetchDiscovery || ds.fetchDiscovery;
@@ -687,8 +696,12 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
   }
 
   report.qualified = [];
+  const budget = Math.min(DRY_LOOKUPS, cfg.maxLookupsPerRun);
   for (const c of candidates) {
-    if (report.priced >= cfg.maxLookupsPerRun) break;
+    if (report.priced >= budget) {
+      report.sampled = true; // more candidates remain — say so rather than imply a full scan
+      break;
+    }
     const key = keyOf(c.chain, c.address);
     if (state.listed[key] || known.has(key) || state.everListed[key]) {
       report.known++;

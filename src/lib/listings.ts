@@ -1,5 +1,6 @@
 import type { BoardToken, ListingTier, PeriodKey } from "./types";
 import { dexvraScore } from "./score";
+import { tierMeta } from "./packages";
 import { syntheticTrend, visualFor } from "./visual";
 
 // Dexvra is PAID-LISTING ONLY — tokens exist here because a project paid to
@@ -90,8 +91,21 @@ function perPeriod(base: number): Record<PeriodKey, number> {
   };
 }
 
-export const verifiedTier = (tier: ListingRow["tier"]): boolean =>
-  tier === "DIAMOND" || tier === "GOLD" || tier === "PLATINUM" || tier === "XPRESS";
+/**
+ * Does this tier carry the verified badge?
+ *
+ * Read from the tier's own `verified` flag — the same field /verified and
+ * /advertise render their perk lists from. It used to be a hardcoded list here,
+ * and that list said XPRESS carries the badge while packages.ts, both pricing
+ * pages and verified.test.ts all say it does not. That divergence is exactly
+ * what the flag was introduced to end (see the comment on ListingTierMeta), and
+ * it reached real tokens: the bot's auto-lister hands out the XPRESS tier for
+ * free, so every free auto-listing was flagged verified — the one badge Diamond,
+ * Gold and Platinum buyers are actually paying for.
+ *
+ * FREE has verified:false, so an auto listing never claims it either.
+ */
+export const verifiedTier = (tier: ListingRow["tier"]): boolean => tierMeta(tier)?.verified ?? false;
 
 // DexScreener's public token-image CDN — deterministic by chain+address, loaded
 // browser-side. Best-effort: tokens it doesn't know 404 and the Coin component

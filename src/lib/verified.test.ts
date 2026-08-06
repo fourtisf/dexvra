@@ -183,3 +183,38 @@ test("the perk lines name the channel, not just the action", async () => {
   }
   assert.ok(!/@dexvra(io|listing|trending)/.test(src), "no handle is hardcoded on the page");
 });
+
+// ── The board's badge and the pricing pages' badge must be one decision ──────
+//
+// verifiedTier() in lib/listings.ts was a hardcoded list that included XPRESS,
+// while packages.ts, /verified, /advertise and the tests above all say Xpress
+// does NOT include the badge. That is the same class of defect this file was
+// written for — a perk promised in one place and priced in another — and it had
+// teeth: the bot's auto-lister hands out the XPRESS tier for FREE, so every free
+// auto-listing was being flagged verified.
+// listings.ts cannot be imported here — it pulls in "./score" extensionless,
+// which Next resolves and node's strip-types loader does not. So the behaviour
+// is pinned in two halves: this test fixes the ANSWER for every tier that can
+// reach a real token, and the next one fixes that verifiedTier reads exactly
+// this source rather than keeping its own copy.
+test("every tier that can reach a token has a settled badge answer", async () => {
+  const { LISTING_TIERS, FREE_TIER, tierMeta } = await import("./packages.ts");
+  for (const t of LISTING_TIERS) {
+    assert.strictEqual(tierMeta(t.key)?.verified, t.verified, `${t.key} is not its own source of truth`);
+  }
+  // The two the bot's auto-lister hands out for free — nobody paid for either,
+  // so neither may carry the badge Diamond/Gold/Platinum are sold on.
+  assert.strictEqual(tierMeta("XPRESS")?.verified, false, "Xpress does not include the badge — its own card says so");
+  assert.strictEqual(tierMeta(FREE_TIER.key)?.verified, false, "a free auto-listing must never claim the badge");
+  // An unknown tier must not fall through to "verified".
+  assert.strictEqual(tierMeta("NOPE")?.verified ?? false, false);
+});
+
+test("verifiedTier is not a second hardcoded list", () => {
+  // The whole point: one source. A literal here is how the two drift again.
+  const src = read("src/lib/listings.ts");
+  const fn = /export const verifiedTier[\s\S]*?;/.exec(src);
+  assert.ok(fn, "verifiedTier moved — this guard must follow it");
+  assert.ok(!/"DIAMOND"|"GOLD"|"PLATINUM"|"XPRESS"/.test(fn[0]), "verifiedTier hardcodes tier keys again");
+  assert.match(fn[0], /tierMeta\(/, "it must read the tier's own flag");
+});
