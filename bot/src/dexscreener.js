@@ -105,22 +105,41 @@ async function fetchFeed(url) {
 
 /**
  * Candidate tokens from every discovery feed, de-duplicated, on supported
- * chains only. Order is preserved (profiles first, then boosts) because the
- * caller prices only the first N per scan.
+ * chains only.
+ *
+ * INTERLEAVED, not concatenated. The caller prices only the first N per scan
+ * (autoLister.maxLookupsPerRun, 40 by default) and there are three feeds, so
+ * concatenating meant the budget was spent head-first on ONE of them:
+ * token-profiles/latest is the newest profiles — minutes-old microcaps that
+ * cannot clear a $1M trigger, a $25k liquidity floor and a 6h age gate — and
+ * whenever it alone ran to 40 entries the boosted feeds, which is where
+ * established $1M+ projects actually appear, were never priced at all. The
+ * service then lists nothing, scan after scan, with every feed perfectly
+ * healthy.
+ *
+ * Round-robin gives each feed an even share of whatever budget the caller has.
+ * Order within a feed is still preserved.
  * @returns {Promise<Array<{chain: string, address: string}>>}
  */
 async function fetchDiscovery(feeds = DISCOVERY_FEEDS) {
-  const seen = new Set();
-  const out = [];
-  for (const items of await Promise.all(feeds.map(fetchFeed))) {
-    for (const it of items) {
+  const lists = (await Promise.all(feeds.map(fetchFeed))).map((items) =>
+    (Array.isArray(items) ? items : []).flatMap((it) => {
       const chain = OUR_CHAIN[String(it && it.chainId)];
       const address = String((it && it.tokenAddress) || "").trim();
-      if (!chain || !address) continue;
-      const key = `${chain}:${address.toLowerCase()}`;
+      return chain && address ? [{ chain, address }] : [];
+    }),
+  );
+  const seen = new Set();
+  const out = [];
+  const depth = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < depth; i++) {
+    for (const list of lists) {
+      const c = list[i];
+      if (!c) continue;
+      const key = `${c.chain}:${c.address.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ chain, address });
+      out.push(c);
     }
   }
   return out;

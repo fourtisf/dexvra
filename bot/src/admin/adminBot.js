@@ -750,6 +750,10 @@ function alText() {
     `\n` +
     `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
     (recent ? `${recent}\n\n` : "\n") +
+    // "Listed so far" alone cannot distinguish a quiet market from a service
+    // that has been broken for days — the counter simply stops moving either
+    // way. This is the line that tells them apart.
+    alScanLine(autoLister.lastScan()) +
     `🔒 <b>Never re-listed:</b> ${s.everListed} contracts — everything that has ever ` +
     `been on the site, so a token that was listed before (including a paid one that ` +
     `was later deleted) can never come back as a free auto listing.\n\n` +
@@ -764,6 +768,27 @@ function alText() {
 /** Is "Listing & Trending" one of the enabled packages? Drives the rows that
  *  only make sense when a board slot is on the table. */
 const alTrendOn = (c) => c.pkgs.includes("trending");
+
+const ago = (ms) => {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+};
+
+/** The last scan, in the operator's words. A blocked scan says so loudly: that
+ *  is the state where the service looks ON and lists nothing. */
+function alScanLine(scan) {
+  if (!scan) return `🔍 <b>No scan has run yet</b> — the first one lands within ~2 min of a restart.\n\n`;
+  const when = ago(Date.now() - scan.at);
+  if (scan.blocker) {
+    return (
+      `⛔ <b>Last scan (${when}) could not run</b>\n<code>${String(scan.blocker).slice(0, 200)}</code>\n` +
+      `<i>Nothing will be listed until this clears.</i>\n\n`
+    );
+  }
+  return `🔍 <b>Last scan</b> (${when}): ${autoLister.scanLine(scan)}\n\n`;
+}
 function alKb() {
   const cb = Markup.button.callback;
   const c = autoLister.get();
@@ -792,6 +817,10 @@ function alKb() {
     ...(alTrendOn(c)
       ? [[cb(`🔔 ${CHANNELS.announce}: ${c.announceChannel ? "ON" : "OFF"}`, "alann")]]
       : []),
+    // Read-only, and the answer to "why has nothing been listed?" — without it
+    // the only way to find out is to wait out a 25–90 min gap and still have
+    // nothing to read.
+    [cb("🔎 Test scan", "alscan"), cb("🔄 Refresh", "al")],
     [cb("↩️ Reset", "alrst"), cb("🧹 Clear history", "alclr"), cb("⬅ Back", "home")],
   ]);
 }
@@ -2063,6 +2092,34 @@ function build() {
     const c = await autoLister.set({ trendHours: autoLister.get().trendHours + Number(ctx.match[1]) });
     ctx.answerCbQuery(`🔥 Slot: ${c.trendHours}h`).catch(() => {});
     await edit(ctx, alText(), alKb());
+  });
+  // A DRY RUN: prices this scan's candidates and reports the verdicts without
+  // listing, writing or posting anything. Safe while the service is off, and
+  // safe here — @dexvraadminbot is not the process that posts to the channels.
+  bot.action("alscan", async (ctx) => {
+    if (!guard(ctx)) return;
+    ctx.answerCbQuery("🔎 Scanning — this takes a moment…").catch(() => {});
+    let r;
+    try {
+      r = await autoLister.dryRun();
+    } catch (e) {
+      await edit(ctx, `${alText()}\n\n🔎 <b>Test scan failed</b>\n<code>${String(e.message).slice(0, 300)}</code>`, alKb());
+      return;
+    }
+    const found = (r.qualified || [])
+      .map((q) => `• <b>${q.sym}</b> on ${q.chain} — ${usd(q.mcap)} (trigger ${usd(q.trigger)})`)
+      .join("\n");
+    const verdict = r.blocker
+      ? `⛔ <b>${r.blocker}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
+      : `🔎 <b>Test scan</b> — ${autoLister.scanLine(r)}\n\n` +
+        (r.listed
+          ? `<b>${r.listed}</b> would be listed right now:\n${found}\n\n<i>Nothing was listed — this was a dry run.</i>`
+          : `<i>Nothing qualifies right now. The market simply has no token past its trigger with enough liquidity and volume — the service is working.</i>`);
+    // Telegram rejects an edit over 4096 chars, and the panel text is already
+    // long — a rejected edit would lose the verdict entirely, which is the one
+    // thing the operator tapped for. Keep the verdict, trim the panel.
+    const body = `${alText()}\n${verdict}`;
+    await edit(ctx, body.length > 4000 ? `${body.slice(0, 4000 - verdict.length - 2)}\n${verdict}` : body, alKb());
   });
   bot.action("alrst", async (ctx) => {
     if (!guard(ctx)) return;

@@ -150,9 +150,15 @@ test("a scan that cannot read the site lists nothing at all", async () => {
 
 test("the skip is checked before any of the work, and names all three reasons", () => {
   const src = code("services/autoLister.js");
-  assert.match(src, /if \(state\.listed\[key\] \|\| known\.has\(key\) \|\| state\.everListed\[key\]\) continue;/);
-  const i = src.indexOf("state.everListed[key]) continue;");
-  assert.ok(i < src.indexOf("lookups++"), "before the market-data lookup it would otherwise pay for");
+  // All three reasons in ONE condition: dropping any of them re-opens a hole
+  // (state.listed forgets nothing this service did; known covers the live site;
+  // everListed is the only one that survives a row being deleted).
+  assert.match(src, /if \(state\.listed\[key\] \|\| known\.has\(key\) \|\| state\.everListed\[key\]\) \{/);
+  const i = src.indexOf("state.everListed[key])");
+  assert.ok(i > 0 && i < src.indexOf("lookups++"), "before the market-data lookup it would otherwise pay for");
+  // …and before the rejection memo, which is a cost optimisation and must never
+  // be what decides whether a paid contract can be handed out for free.
+  assert.ok(i < src.indexOf("state.cool[key] > now"), "the never-relist rule must outrank the cool-off");
 });
 
 test("the panel tells the operator the rule is on", () => {

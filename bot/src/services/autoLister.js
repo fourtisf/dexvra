@@ -49,6 +49,20 @@ const log = require("../helpers/logger");
 const FILE = "autoLister.json";
 const STATE_FILE = "autoListerState.json";
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+
+// How many consecutive BLOCKED scans before the operator is paged. A scan is
+// blocked when it could not do its job at all — discovery returned nothing, or
+// the site's internal API refused to answer — as opposed to running fine and
+// finding nothing worth listing. Scans are 25–90 min apart, so three is roughly
+// 1.5–4.5 hours of silence: past a blip, and nowhere near the two days it used
+// to take for anyone to notice.
+const BLOCKED_ALERTS_AT = 3;
+
+// Upper bound on the rejection memo (see coolUntil). Well past a full scan's
+// candidate list; only here so a long-running process cannot grow the file
+// without limit.
+const MAX_COOL = 4_000;
 
 const DEFAULTS = {
   enabled: false, // OFF until the operator turns it on — it publishes in public
@@ -191,7 +205,7 @@ async function reset() {
  *  ("🧹 Clear history"), used after wiping the site's listings so it can
  *  repopulate. Nothing else may clear the ledger. */
 async function resetState() {
-  await saveJSON(STATE_FILE, { listed: {}, day: null, everListed: {}, pkgTurn: 0 });
+  await saveJSON(STATE_FILE, { listed: {}, day: null, everListed: {}, pkgTurn: 0, cool: {}, scan: null, blocked: 0 });
 }
 
 // ── State: what we already listed, and today's count ────────────────────────
@@ -215,8 +229,120 @@ const loadState = () => {
     // service that lists a dozen tokens a day and gets redeployed, an in-memory
     // cursor would hand out Xpress almost every time.
     pkgTurn: Number(s.pkgTurn) || 0,
+    // contract key → epoch ms until which it is not worth pricing again. See
+    // coolUntil(): a token 40× below its trigger does not need re-pricing every
+    // 25 minutes, and re-pricing it is what stopped the scan ever reaching the
+    // candidates behind it.
+    cool: obj(s.cool),
+    // The last scan's report, and how many scans in a row have been BLOCKED.
+    // Both exist so "nothing was listed" is answerable — see scanReport().
+    scan: s.scan && typeof s.scan === "object" ? s.scan : null,
+    blocked: Number(s.blocked) || 0,
   };
 };
+
+// ── Why nothing happened ────────────────────────────────────────────────────
+//
+// Every reason this service does nothing used to go to log.debug, which only
+// prints when DEBUG is set, and production does not set it. "Discovery returned
+// no candidates" was not logged at all. So a healthy-but-idle scan and a service
+// that had been broken for two days produced byte-for-byte identical output:
+// nothing, anywhere. The panel showed a "Listed so far" counter that simply
+// stopped moving, which is not a diagnosis.
+//
+// Every scan now files a report — what it saw, what it priced, and either what
+// it listed or the tally of why it listed nothing — and the panel shows it. A
+// scan that could not run AT ALL records a `blocker`, and enough of those in a
+// row pages the ops channel instead of waiting for someone to notice.
+const blank = (now) => ({
+  at: now,
+  candidates: 0,
+  priced: 0,
+  listed: 0,
+  known: 0, // already on the site / already listed / in the never-relist ledger
+  cooled: 0, // skipped by the rejection memo
+  reasons: {}, // rejection text (numbers stripped) → count
+  capped: null, // "9/9" when the operator's own daily cap ended the scan
+  blocker: null,
+});
+
+/** The last scan's report, or null before the first one. */
+const lastScan = () => loadState().scan;
+
+/** Rejection reasons carry live figures ("thin liquidity ($1,204)"), which would
+ *  make every rejection its own bucket. Strip them for the tally. */
+const reasonBucket = (why) => String(why).replace(/\s*\([^)]*\)/g, "").trim();
+
+/**
+ * Persist a scan report, and page the operator when scans stay BLOCKED.
+ *
+ * "Blocked" is deliberately narrower than "listed nothing": a scan that priced
+ * forty tokens and liked none of them is the service working correctly in a
+ * quiet market, and paging for that is how a monitor gets muted. Only a scan
+ * that could not do its job — no candidates at all, or a site API that would not
+ * answer — counts, and only after BLOCKED_ALERTS_AT of them in a row.
+ */
+async function fileReport(report, state = loadState()) {
+  const wasBlocked = state.blocked;
+  state.scan = report;
+  state.blocked = report.blocker ? wasBlocked + 1 : 0;
+  await saveJSON(STATE_FILE, state).catch(() => {});
+
+  if (report.blocker) {
+    if (state.blocked === BLOCKED_ALERTS_AT) {
+      log.alert(
+        `🚨 <b>Auto-Listing has stopped working</b>\n\n` +
+          `${BLOCKED_ALERTS_AT} scans in a row could not run:\n<code>${String(report.blocker).slice(0, 300)}</code>\n\n` +
+          `<i>Nothing is being listed. Check DEXVRA_API_BASE + INTERNAL_API_TOKEN reach the site, ` +
+          `then use 🔎 Test scan in the Auto Listing panel.</i>`,
+      );
+    }
+    return report;
+  }
+  if (wasBlocked >= BLOCKED_ALERTS_AT) {
+    log.alert(`✅ <b>Auto-Listing is scanning again</b> — ${report.candidates} candidates, ${report.priced} priced.`);
+  }
+  return report;
+}
+
+/**
+ * How long to leave a rejected token alone, scaled by how far it is from
+ * qualifying.
+ *
+ * Without this the scan re-prices the same head of the candidate list every
+ * cycle — discovery order barely moves between scans — and burns its whole
+ * lookup budget on tokens it has already turned down, so the ones behind them
+ * are never looked at. A token sitting at $30k against a $1.4M trigger does not
+ * need another quote for hours; one at $1.35M needs one on the very next scan,
+ * because it is about to cross.
+ *
+ * "too new" is exact rather than scaled: the token becomes eligible at a known
+ * moment, so wait precisely that long.
+ */
+function coolUntil(why, info, cfg, trigger, now) {
+  if (/^too new/.test(why) && info && info.pairCreatedAt) {
+    return info.pairCreatedAt + cfg.minAgeHours * HOUR_MS;
+  }
+  // No data / no ticker / no name / no market cap: properties of the token, not
+  // of the market. They do not change on a 25-minute timescale.
+  if (!info || !/^below its trigger/.test(why)) {
+    // …except liquidity and volume, which move as fast as the price does.
+    return now + (/^(thin liquidity|low 24h volume)/.test(why) ? HOUR_MS : 12 * HOUR_MS);
+  }
+  const ratio = (Number(info.mcap) || 0) / (trigger || 1);
+  if (ratio >= 0.75) return 0; // within striking distance — re-price next scan
+  if (ratio >= 0.4) return now + 2 * HOUR_MS;
+  return now + 12 * HOUR_MS;
+}
+
+/** Drop expired entries, and cap the memo so it cannot grow without limit. */
+function pruneCool(cool, now) {
+  const live = Object.entries(cool).filter(([, until]) => Number(until) > now);
+  if (live.length <= MAX_COOL) return Object.fromEntries(live);
+  // Keep the ones with the longest to run: they are the tokens furthest from
+  // qualifying, so they are the ones worth NOT re-pricing.
+  return Object.fromEntries(live.sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, MAX_COOL));
+}
 
 /**
  * The package for the NEXT listing, and the cursor to store once it lands.
@@ -369,14 +495,18 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
  */
 async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
   const cfg = get();
-  if (!cfg.enabled) return 0;
+  if (!cfg.enabled) return 0; // not a fault, and not worth a report
   const discover = deps.fetchDiscovery || ds.fetchDiscovery;
   const price = deps.fetchTokenInfo || ds.fetchTokenInfo;
+  const report = blank(now);
 
   let state = loadState();
   let today = todayCount(state, now);
   if (today >= cfg.maxPerDay) {
-    log.debug(`[autolist] daily cap reached (${today}/${cfg.maxPerDay})`);
+    // A cap the operator set, doing exactly what they set it to do. Reported so
+    // the panel can say so, but never a blocker — this is not a fault.
+    report.capped = `${today}/${cfg.maxPerDay}`;
+    await fileReport(report, state);
     return 0;
   }
 
@@ -384,10 +514,20 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
   try {
     candidates = await discover();
   } catch (e) {
-    log.debug(`[autolist] discovery: ${e.message}`);
+    report.blocker = `discovery failed: ${e.message}`;
+    log.warn(`[autolist] ${report.blocker}`);
+    await fileReport(report, state);
     return 0;
   }
-  if (!candidates.length) return 0;
+  report.candidates = candidates.length;
+  if (!candidates.length) {
+    // Every feed empty at once is a DexScreener outage or a reshaped response,
+    // not a quiet market. It used to return silently — the single most likely
+    // way for this service to look enabled and do nothing indefinitely.
+    report.blocker = "discovery returned no candidates (all DexScreener feeds empty)";
+    await fileReport(report, state);
+    return 0;
+  }
 
   // Anything already on the site is off the table, however it got there.
   let known = new Set();
@@ -404,11 +544,17 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     }
   } catch (e) {
     // Without this list we could double-list a paying customer's token — that is
-    // worse than skipping a cycle, so bail instead of guessing.
-    log.debug(`[autolist] listings unavailable, skipping this scan: ${e.message}`);
+    // worse than skipping a cycle, so bail instead of guessing. This is the
+    // other silent killer: a wrong INTERNAL_API_TOKEN, a moved DEXVRA_API_BASE
+    // or a site that is down stops every scan here, and used to do it at debug
+    // level where nobody would ever see it.
+    report.blocker = `site API unreachable: ${e.message}`;
+    log.warn(`[autolist] ${report.blocker}`);
+    await fileReport(report, state);
     return 0;
   }
 
+  state.cool = pruneCool(state.cool, now);
   let listedNow = 0;
   let lookups = 0;
   for (const c of candidates) {
@@ -418,17 +564,32 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     // Three separate reasons to leave it alone: this service already picked it,
     // it is on the site right now, or it EVER was. The third is the one that
     // stops a deleted (or previously paid-for) listing being handed back free.
-    if (state.listed[key] || known.has(key) || state.everListed[key]) continue;
+    if (state.listed[key] || known.has(key) || state.everListed[key]) {
+      report.known++;
+      continue;
+    }
     if (!chainOf(c.chain)) continue;
+    // Turned down recently and nowhere near qualifying. Costs no lookup, which
+    // is the entire point: the budget goes to tokens we have not just judged.
+    if (state.cool[key] > now) {
+      report.cooled++;
+      continue;
+    }
 
     lookups++;
+    report.priced++;
     const info = await price(c.chain, c.address).catch(() => null);
     const trigger = triggerMcap(c.address, cfg);
     const why = rejectReason(info, cfg, trigger, now);
     if (why) {
+      const bucket = reasonBucket(why);
+      report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      const until = coolUntil(why, info, cfg, trigger, now);
+      if (until > now) state.cool[key] = until;
       log.debug(`[autolist] skip ${c.chain}/${c.address}: ${why}`);
       continue;
     }
+    delete state.cool[key];
 
     // Whose turn it is. Read fresh from `state` each time so several listings in
     // ONE scan still alternate instead of all taking the same package.
@@ -462,7 +623,96 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
 
     if (cfg.postChannel && tg) await announce(tg, c, info, input, cfg).catch(() => {});
   }
+  report.listed = listedNow;
+  await fileReport(report, state);
+  // One line per scan at INFO, so pm2 logs alone answer "is it running and what
+  // is it finding" without DEBUG. Previously the only INFO line was a successful
+  // listing, so a service finding nothing logged nothing at all.
+  log.info(`[autolist] scan: ${scanLine(report)}`);
   return listedNow;
+}
+
+/** A scan report as one line — used by the log, the panel and the test scan, so
+ *  all three describe a scan the same way. */
+function scanLine(report) {
+  if (report.blocker) return `⛔ ${report.blocker}`;
+  if (report.capped) return `daily cap reached (${report.capped}) — nothing more today, by your setting`;
+  const head =
+    `${report.candidates} candidates · ${report.priced} priced · ${report.listed} listed` +
+    (report.known ? ` · ${report.known} already known` : "") +
+    (report.cooled ? ` · ${report.cooled} on cool-off` : "");
+  const why = Object.entries(report.reasons)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([r, n]) => `${r} ×${n}`)
+    .join(" · ");
+  return why ? `${head} — ${why}` : head;
+}
+
+/**
+ * Price this scan's candidates and report the verdicts WITHOUT listing anything.
+ *
+ * The panel's "🔎 Test scan": an operator asking "why has nothing been listed?"
+ * gets the answer in seconds instead of waiting out a 25–90 minute gap and still
+ * having nothing to read. Deliberately read-only — it makes no listings, writes
+ * no state and posts nothing, so it is safe to tap while the service is off, and
+ * it runs in @dexvraadminbot, which is not the process that posts to channels.
+ */
+async function dryRun({ now = Date.now(), deps = {} } = {}) {
+  const cfg = get();
+  const discover = deps.fetchDiscovery || ds.fetchDiscovery;
+  const price = deps.fetchTokenInfo || ds.fetchTokenInfo;
+  const report = blank(now);
+  const state = loadState();
+
+  let candidates;
+  try {
+    candidates = await discover();
+  } catch (e) {
+    report.blocker = `discovery failed: ${e.message}`;
+    return report;
+  }
+  report.candidates = candidates.length;
+  if (!candidates.length) {
+    report.blocker = "discovery returned no candidates (all DexScreener feeds empty)";
+    return report;
+  }
+
+  let known = new Set();
+  try {
+    known = new Set((await api.getListings()).map((r) => keyOf(r.chain, r.address)));
+  } catch (e) {
+    report.blocker = `site API unreachable: ${e.message}`;
+    return report;
+  }
+
+  report.qualified = [];
+  for (const c of candidates) {
+    if (report.priced >= cfg.maxLookupsPerRun) break;
+    const key = keyOf(c.chain, c.address);
+    if (state.listed[key] || known.has(key) || state.everListed[key]) {
+      report.known++;
+      continue;
+    }
+    if (!chainOf(c.chain)) continue;
+    // The cool-off is NOT honoured here. A test scan is the operator asking what
+    // the market looks like right now; answering from a memo would show them the
+    // service's bookkeeping instead.
+    report.priced++;
+    const info = await price(c.chain, c.address).catch(() => null);
+    const trigger = triggerMcap(c.address, cfg);
+    const why = rejectReason(info, cfg, trigger, now);
+    if (why) {
+      const bucket = reasonBucket(why);
+      report.reasons[bucket] = (report.reasons[bucket] || 0) + 1;
+      continue;
+    }
+    report.listed++; // what a real scan WOULD have listed
+    if (report.qualified.length < 5) {
+      report.qualified.push({ chain: c.chain, sym: sanitizeTicker(info.symbol), mcap: Math.round(info.mcap), trigger });
+    }
+  }
+  return report;
 }
 
 /** The banner/artwork for one of the two cards — same pipeline a paid listing
@@ -666,6 +916,10 @@ module.exports = {
   rememberListed,
   start,
   runOnce,
+  dryRun,
+  lastScan,
+  scanLine,
+  coolUntil,
   stats,
   history,
   triggerMcap,
