@@ -56,6 +56,47 @@ swap; leave empty to waive). Referrers get `REF_SHARE_BPS` (default 30%) of that
 accrued per chain in the store for you to settle. EVM referral debt can be auto-paid
 when `FEE_WALLET_KEY` is set; Solana referral debt is always settled manually.
 
+## ⚠️ Launchpad support — run the preflight before trusting snipe
+
+**The snipe and bonding-curve paths are hard-wired to one launchpad, and it is not
+pools.trade.**
+
+Launch discovery has exactly one source: `watchers.js` filters the factory at
+`chains.js` `robinhood.factory` for the 12-field `TokenCreated` event defined in
+`core.js` `FACTORY_ABI`. Both were inherited from **robinfun.io**, the launchpad this
+bot was originally built against. pools.trade is built on Uniswap's launchpad
+contracts (`uniswap-cca` / `uniswap-bonding-curve`), which do not emit that event.
+
+Why this matters more than an ordinary bug: **`eth_getLogs` returns an empty array —
+not an error — for a topic nothing emits.** So a snipe pointed at the wrong launchpad
+scans every 6 seconds forever, completes cleanly, reports 🟢 on `/health`, shows
+"Active" on the user's Snipe screen, and never fires. The same address backs
+`resolveCurve()`, so curve buys silently fall through to DEX routing and the token
+card says *"no pool/curve found here"*.
+
+```bash
+npm run preflight:robinhood                                  # addresses, interface, launch feed
+npm run preflight:robinhood -- --token 0x<a pools.trade token>   # probe curveOf()
+npm run preflight:robinhood -- --tx 0x<a real launch tx>         # THE decisive check
+```
+
+Read-only — it spends nothing and signs nothing. `--tx` is the one that settles it: it
+prints the `topic0` of every log a real launch emitted next to the one the bot filters
+for, and tells you which of two cases you are in:
+
+| Preflight says | Meaning | Fix |
+|---|---|---|
+| topic0 matches, address differs | right event, wrong address | **config only** — set `FACTORY_ADDR` and restart |
+| topic0 does not match | different launchpad interface | **code change** — `FACTORY_ABI`/`CURVE_ABI` must learn the new event; no env var helps |
+
+Until the preflight passes, treat Robinhood snipe as **unverified**. Everything else
+(Ethereum / Base / BNB / Arbitrum / Solana) is unaffected — those chains never used
+the launchpad path.
+
+`/health` now reports `launches seen` and warns once it has scanned thousands of
+blocks without seeing one; `core.launchpadDiag()` records a failing `curveOf` instead
+of letting it read as "this token has no curve".
+
 ## Run
 
 ```bash
@@ -167,7 +208,8 @@ place and documented in `.env.example` under **Execution speed**:
 | `solana.js` | Solana adapter — keypairs, Jupiter swaps, SOL/SPL, DexScreener, pump.fun |
 | `watchers.js` | snipe + copy + limit/TP-SL/alert background loops (EVM + Solana) |
 | `tokeninfo.js` | rich token scan (price/liquidity/volume/safety aggregation) |
-| `poolstrade.js` | pools.trade launchpad record — Robinhood Chain socials/volume/curve state. **Display metadata only**: trades are priced and routed from chain state in `core.js`, never from here |
+| `poolstrade.js` | pools.trade launchpad record — Robinhood Chain socials/volume/curve state. **Display metadata only**: trades are priced and routed from chain state in `core.js`, never from here. It does **not** make snipe work — see the launchpad preflight section |
+| `scripts/robinhood-preflight.js` | read-only check of every launchpad/DEX address and interface on chain 4663 |
 | `goplus.js` / `rugcheck.js` | token safety — GoPlus (EVM) / RugCheck (Solana) |
 | `safety.js` | chain-aware safety dispatcher |
 | `telegram.js` | Telegram UI (commands, inline buttons, flows) |

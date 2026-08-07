@@ -909,6 +909,17 @@ const NO_CURVE_TTL_MS = 60000;   // a token CAN gain a curve later, so a negativ
 const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : String(x).toLowerCase());
 function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); }
 
+// Why the launchpad last failed to answer, per chain. resolveCurve deliberately
+// collapses a factory error into '' — the same value that means "this token genuinely
+// has no curve" — because an RPC blip must not read as a graduation. The cost of that
+// (correct) choice is that a factory which is simply WRONG for this chain, and reverts
+// on every single call, is indistinguishable from a market full of graduated tokens:
+// every buy quietly routes to the DEX and the card says "no pool/curve found here".
+// Nothing recorded that, anywhere. This does.
+const _launchpadFail = new Map();   // chainKey -> { err, at, count, factory }
+const LAUNCHPAD_LOG_EVERY_MS = 60000;
+function launchpadDiag(chainKey) { return chainKey ? (_launchpadFail.get(chainKey) || null) : Object.fromEntries(_launchpadFail); }
+
 async function resolveCurve(ca, chainKey) {
   const chain = chainOf(chainKey); if (!chain || !chain.curve) return '';
   const k = _ckey(chainKey, ca);
@@ -918,8 +929,22 @@ async function resolveCurve(ca, chainKey) {
     const c = await new ethers.Contract(chain.factory, FACTORY_ABI, providerFor(chainKey)).curveOf(ca);
     const curve = (c && c !== ethers.ZeroAddress) ? c : '';
     _curveCache.set(k, { curve, ts: Date.now() });
+    _launchpadFail.delete(chainKey);   // it answered — whatever was wrong is over
     return curve;
-  } catch (_) { return hit ? hit.curve : ''; }   // an RPC blip must not read as "no curve"
+  } catch (e) {
+    // Routing is UNCHANGED (still '' → DEX): a transient failure must keep behaving
+    // like an RPC blip. All that is added is a record and a rate-limited log, so a
+    // permanently wrong factory stops being silent.
+    const prev = _launchpadFail.get(chainKey);
+    const rec = { err: (e && (e.shortMessage || e.message)) || String(e), at: Date.now(), count: (prev ? prev.count : 0) + 1, factory: chain.factory };
+    _launchpadFail.set(chainKey, rec);
+    if (!prev || Date.now() - (prev.loggedAt || 0) > LAUNCHPAD_LOG_EVERY_MS) {
+      rec.loggedAt = Date.now();
+      console.error(`[launchpad] ${chainKey}: curveOf() failed on factory ${chain.factory} (${rec.count} time(s)) — ${rec.err}`);
+      console.error(`[launchpad] every ${chainKey} token now routes to the DEX as if graduated. If this persists, the factory address is wrong for this chain: node scripts/robinhood-preflight.js`);
+    } else { rec.loggedAt = prev.loggedAt; }
+    return hit ? hit.curve : '';   // an RPC blip must not read as "no curve"
+  }
 }
 async function isGraduated(curveAddr, chainKey) {
   const k = _ckey(chainKey, curveAddr);
@@ -2195,6 +2220,6 @@ module.exports = {
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
-  resolveCurve, isGraduated, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
+  resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
 };

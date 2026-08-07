@@ -61,10 +61,22 @@ function _snipeMark(chainKey, token) {
   if (set.size > SNIPE_SEEN_CAP) { const it = set.values().next().value; set.delete(it); }
   return true;
 }
+// What the launch feed has actually SEEN. Kept because the single most diagnostic
+// number in this service was being thrown away: a loop that scanned tens of thousands
+// of blocks and found zero launches is indistinguishable, from inside the process,
+// from a quiet market — and eth_getLogs returns an EMPTY ARRAY (not an error) for a
+// topic nothing emits. So a snipe pointed at the wrong launchpad ran forever, reported
+// 🟢 on /health, and never fired. These counters are what make that state visible.
+const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt: null, lastScanAt: null };
+function snipeStats() { return { ..._snipeStats }; }
+
 async function snipeCycle() {
   const prov = core.providerFor(SNIPE_CHAIN);
   let head;
-  try { head = await prov.getBlockNumber(); } catch (_) { return; }
+  // Rethrow rather than swallow: runLoop marks the loop failed and /health turns 🔴.
+  // Returning normally here made a dead RPC look like a healthy, quiet scan.
+  try { head = await prov.getBlockNumber(); }
+  catch (e) { console.error('[snipe] getBlockNumber:', e.message); throw e; }
   if (!_lastSnipeBlock || head < _lastSnipeBlock) _lastSnipeBlock = head;   // pin cursor near head always
   const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.robinhood && Number(u.snipe.ethAmount) > 0);
   const devFollowers = launchFollowers('robinhood');   // users sniping specific dev wallets on Robinhood
@@ -73,9 +85,19 @@ async function snipeCycle() {
   const from = Math.max(_lastSnipeBlock + 1, head - SNIPE_MAX_SPAN);
   if (from > head) { _lastSnipeBlock = head; return; }
   let evs = [];
+  // Same reasoning as above — a getLogs failure is a real fault, not a quiet scan.
+  // The cursor deliberately stays put so the range is re-scanned next cycle.
   try { evs = await factory.queryFilter(factory.filters.TokenCreated(), from, head); }
-  catch (_) { return; }
+  catch (e) { console.error('[snipe] queryFilter:', e.message); throw e; }
   _lastSnipeBlock = head;
+  _snipeStats.scans++;
+  _snipeStats.blocksScanned += Math.max(0, head - from + 1);
+  _snipeStats.lastScanAt = Date.now();
+  if (evs.length) { _snipeStats.launchesSeen += evs.length; _snipeStats.lastLaunchAt = Date.now(); }
+  // One line per scan, only while somebody is armed (the early return above means an
+  // idle bot logs nothing). Without it, "is the snipe working?" had no answer short of
+  // waiting for a fill that may never come.
+  console.log(`[snipe] ${SNIPE_CHAIN} blocks ${from}-${head} · launches ${evs.length} · armed ${armed.length} · devFollowers ${devFollowers.length} · seen-total ${_snipeStats.launchesSeen}`);
   for (const e of evs) {
     const ca = e.args && e.args.token;
     const sym = (e.args && e.args.symbol) || '?';
@@ -1337,6 +1359,14 @@ function health() {
   for (const [name, h] of Object.entries(_health)) {
     out[name] = { ageMs: h.at ? now - h.at : null, okAgeMs: h.okAt ? now - h.okAt : null, err: h.err || null, intervalMs: h.intervalMs, stale: h.at ? (now - h.at) > (h.intervalMs * 3 + 5000) : true };
   }
+  // "Ran recently" is not the same as "working". The snipe loop can run every 6s
+  // forever against a launchpad that emits nothing it recognises, so the loop's own
+  // liveness says nothing about whether the feed is real. These two numbers do.
+  if (out.snipe) {
+    out.snipe.launchesSeen = _snipeStats.launchesSeen;
+    out.snipe.sinceLastLaunchMs = _snipeStats.lastLaunchAt ? now - _snipeStats.lastLaunchAt : null;
+    out.snipe.blocksScanned = _snipeStats.blocksScanned;
+  }
   return out;
 }
 function start() {
@@ -1368,4 +1398,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, _targetPaid, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats } };

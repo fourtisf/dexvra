@@ -457,7 +457,22 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // Rich scan: on-chain price/mcap + liquidity + launchpad API (vol/socials) + GoPlus
   // (tax/honeypot/holders/LP) — all best-effort, never throws (tokeninfo swallows).
   const info = await tokeninfo.enrich(ca, chainKey).catch(() => null);
-  if (!info) return { text: `❌ Couldn't price <code>${short(ca)}</code> on ${ch.emoji} ${esc(ch.name)} — no pool/curve found here. Switch chain if it trades elsewhere.`, kb: rows([btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]) };
+  if (!info) {
+    // "Switch chain" was the ONLY thing this card ever said, and on a curve chain it is
+    // usually the wrong advice: the token is right here, but the launchpad factory could
+    // not be consulted, so the bot fell through to DEX routing and found no pool. Naming
+    // the leg that actually failed turns an unexplained dead end into something the
+    // operator can act on — and stops sending users to a chain picker for no reason.
+    const diag = core.launchpadDiag ? core.launchpadDiag(chainKey) : null;
+    const stale = diag && Date.now() - diag.at < 120000;
+    const why = stale
+      ? `\n\n⚠️ The <b>launchpad factory</b> (<code>${short(diag.factory)}</code>) isn't answering on this chain — so this token can't be recognised as a bonding-curve launch and was looked up on the DEX instead, where it has no pool yet.\n\n<i>Operator: run <code>node scripts/robinhood-preflight.js --token ${esc(ca)}</code> — the factory address is likely wrong for this launchpad.</i>`
+      : `\n\nThis usually means it hasn't got a pool yet (still on a launchpad bonding curve) or it trades on another chain.`;
+    return {
+      text: `❌ Couldn't price <code>${short(ca)}</code> on ${ch.emoji} ${esc(ch.name)}.${why}`,
+      kb: rows([btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]),
+    };
+  }
   const meta = await core.tokenMeta(ca, chainKey);
   // Maestro-style: this token's balance across EVERY wallet (live on-chain). Bind the
   // card to the wallet that actually HOLDS the token so Buy/Sell act on the right one —
@@ -1666,7 +1681,21 @@ async function onMessageImpl(m) {
     const names = Object.keys(h);
     if (!names.length) return send(chatId, '🩺 <b>Watcher health</b>\n\nNo loops have run yet.');
     const age = (ms) => ms == null ? 'never' : (ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'm') + ' ago';
-    const lines = names.map((n) => { const x = h[n]; return `${x.stale ? '🔴' : '🟢'} <b>${n}</b> — ran ${age(x.ageMs)}${x.err ? ` · ⚠️ ${esc(x.err.slice(0, 80))}` : ''}`; });
+    const lines = names.map((n) => {
+      const x = h[n];
+      let extra = '';
+      // A loop that RAN is not a loop that WORKS. The snipe cycle polls a launchpad
+      // factory for one specific event; point it at the wrong launchpad and getLogs
+      // returns an empty array every time — healthy, on time, and completely blind.
+      // "0 launches seen in 41h" is the only line that shows that.
+      if (n === 'snipe' && x.launchesSeen != null) {
+        const seen = x.launchesSeen;
+        const since = x.sinceLastLaunchMs == null ? 'never' : age(x.sinceLastLaunchMs);
+        extra = `\n     └ launches seen: <b>${seen}</b> (last ${since}) · ${x.blocksScanned || 0} blocks scanned`;
+        if (!seen && (x.blocksScanned || 0) > 2000) extra += `\n     └ ⚠️ <b>scanned ${x.blocksScanned} blocks and saw no launch</b> — the launchpad factory is probably wrong for this chain. Run <code>node scripts/robinhood-preflight.js</code>`;
+      }
+      return `${x.stale ? '🔴' : '🟢'} <b>${n}</b> — ran ${age(x.ageMs)}${x.err ? ` · ⚠️ ${esc(x.err.slice(0, 80))}` : ''}${extra}`;
+    });
     return send(chatId, `🩺 <b>Watcher health</b>\n\n${lines.join('\n')}\n\n<i>🔴 = a loop hasn't run in > 3× its interval (likely stuck). Errors show the last failure.</i>`);
   }
   if (text.startsWith('/userkey')) return adminUserKey(chatId, text.split(/\s+/)[1]);
