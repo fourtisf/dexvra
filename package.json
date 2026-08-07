@@ -2,6 +2,10 @@
   "name": "discovery-listing",
   "version": "0.1.0",
   "private": true,
+  "comment_engines": "Next 14 requires >=18.17. The upload routes used to need >=20 for the File global; they no longer do (src/lib/upload.ts), so 18.17 is the real floor. Production runs 18.19.",
+  "engines": {
+    "node": ">=18.17"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

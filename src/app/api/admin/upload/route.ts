@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
+import { isUploadFile } from "@/lib/upload";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { isAdmin, unauthorized } from "@/lib/adminGuard";
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid upload" }, { status: 400 });
   }
   const file = form.get("file");
-  if (!(file instanceof File)) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  if (!isUploadFile(file)) return NextResponse.json({ error: "No file provided" }, { status: 400 });
   if (file.size === 0) return NextResponse.json({ error: "Empty file" }, { status: 400 });
   if (file.size > MAX) return NextResponse.json({ error: "File too large (max 3 MB)" }, { status: 413 });
 

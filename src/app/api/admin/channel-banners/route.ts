@@ -3,6 +3,7 @@
 // the bot picks changes up on its next post. Auth: same cookie guard as the
 // rest of the panel (plus the middleware gate on /api/admin/*).
 import { NextRequest, NextResponse } from "next/server";
+import { isUploadFile } from "@/lib/upload";
 import { isAdmin, unauthorized } from "@/lib/adminGuard";
 import {
   CHANNEL_KINDS,
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
   if (type === "artwork" && !ARTWORK_KINDS.has(kind)) {
     return NextResponse.json({ error: `${kind} has no still-artwork slot (clip only)` }, { status: 400 });
   }
-  if (!(file instanceof File)) return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+  if (!isUploadFile(file)) return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
   if (file.size === 0) return NextResponse.json({ error: "The uploaded file is empty" }, { status: 400 });
   if (file.size > MAX_BYTES) return NextResponse.json({ error: `File too large (max ${MAX_BYTES / 1048576} MB)` }, { status: 400 });
 
