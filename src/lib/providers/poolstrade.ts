@@ -149,6 +149,13 @@ export function normalizeLaunch(raw: unknown): PoolsLaunch | null {
   );
   if (!address || !ADDRESS.test(address)) return null;
 
+  // Believe the record over our assumption: the request asks for one chain, but the API
+  // is not obliged to honour that filter and POOLS_TRADE_BODY can replace the request
+  // wholesale. A foreign token stamped with POOLS_TRADE_CHAIN would render on the public
+  // board with the wrong chain badge, explorer link and buy deeplink.
+  const declared = num(pick(raw, ["chainId", "chain_id", "chainID", "chain.id", "network.chainId", "token.chainId"]));
+  if (declared != null && declared !== CHAIN_ID) return null;
+
   let progressPct = num(
     pick(raw, ["progressPct", "graduationProgress", "bondingCurveProgress", "curve.progressPct", "progress"]),
   );

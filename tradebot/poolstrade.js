@@ -112,6 +112,14 @@ function normalize(raw) {
   ]));
   if (!address || !ADDRESS.test(address)) return null;
 
+  // A record that names a chain other than the one we asked for is not ours. The trade
+  // bot only ever looks this up for OUR_CHAIN, so a mislabelled foreign token would put
+  // another chain's name, socials and market cap on a Robinhood token's trade card —
+  // right above live Buy buttons. Drop it rather than display it. (See the same guard in
+  // bot/src/poolstrade.js for why the request's own filter is not enough.)
+  const declared = num(pick(raw, ['chainId', 'chain_id', 'chainID', 'chain.id', 'network.chainId', 'token.chainId']));
+  if (declared != null && declared !== CHAIN_ID) return null;
+
   const website = safeUrl(pick(raw, ['links.website', 'website', 'metadata.website', 'socials.website', 'url']));
   const twitter = socialUrl(pick(raw, ['links.twitter', 'twitter', 'links.x', 'metadata.twitter', 'socials.twitter', 'twitterHandle']), 'https://x.com');
   const telegram = socialUrl(pick(raw, ['links.telegram', 'telegram', 'metadata.telegram', 'socials.telegram', 'telegramHandle']), 'https://t.me');

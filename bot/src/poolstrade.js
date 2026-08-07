@@ -156,6 +156,16 @@ function normalizeLaunch(raw) {
   );
   if (!address || !ADDRESS.test(address)) return null;
 
+  // BELIEVE THE RECORD OVER OUR ASSUMPTION. Every launch is stamped `chain: OUR_CHAIN`
+  // because the request asks for exactly one chain (CHAIN_ID) — but nothing guarantees
+  // the API honours that filter, and POOLS_TRADE_BODY lets an operator replace the whole
+  // request body, silently widening it. A token from another chain labelled `robinhood`
+  // is not a cosmetic error: the auto-lister would publish it with Robinhood's explorer
+  // and buy links, and the trade bot would look for it on a chain it does not exist on.
+  // When the record says which chain it is on and that contradicts us, drop it.
+  const declared = num(pick(raw, ["chainId", "chain_id", "chainID", "chain.id", "network.chainId", "token.chainId"]));
+  if (declared != null && declared !== CHAIN_ID) return null;
+
   const priceUsd = num(pick(raw, ["priceUsd", "price_usd", "price.usd", "token.priceUsd", "usdPrice"]));
   const mcap = num(
     pick(raw, [

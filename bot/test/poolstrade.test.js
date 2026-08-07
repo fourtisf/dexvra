@@ -177,3 +177,21 @@ test("fetchTokenInfo: never answers for a chain pools.trade does not cover", asy
   assert.equal(await ps.fetchTokenInfo("ethereum", ADDR), null);
   assert.equal(await ps.fetchTokenInfo("solana", "So11111111111111111111111111111111111111112"), null);
 });
+
+test("normalize: a record from another chain is dropped, not relabelled", () => {
+  // Every launch is stamped chain:"robinhood" because the request asks for chainId 4663.
+  // But POOLS_TRADE_BODY lets an operator replace the whole request body, and no API is
+  // obliged to honour a filter. A foreign token labelled robinhood would be auto-listed
+  // with Robinhood's explorer and buy links, and the trade bot would hunt for it on a
+  // chain it does not exist on.
+  assert.equal(normalizeLaunch({ address: ADDR, chainId: 1 }), null, "an Ethereum record must not become a robinhood listing");
+  assert.equal(normalizeLaunch({ address: ADDR, chain_id: "8453" }), null, "string chain ids compare too");
+  assert.equal(normalizeLaunch({ token: { address: ADDR, chainId: 56 } }), null, "nested chain ids are checked");
+});
+
+test("normalize: the record is kept when the chain matches or is absent", () => {
+  // Absent is the common case — we asked for one chain, so an unstamped record is ours.
+  assert.ok(normalizeLaunch({ address: ADDR }), "no chain id stated → trust the request filter");
+  assert.ok(normalizeLaunch({ address: ADDR, chainId: 4663 }), "the configured chain is kept");
+  assert.ok(normalizeLaunch({ address: ADDR, chainId: "4663" }), "as a string too");
+});

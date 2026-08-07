@@ -140,3 +140,12 @@ test('the launchpad graduation flag is display-only', () => {
   assert.ok(/graduated\(\)/.test(core), 'core.js must still read graduation from the contract');
   assert.equal(/api\.graduated/.test(core), false, 'core.js must not read the launchpad flag');
 });
+
+test('normalize: a foreign-chain record is dropped rather than shown on a Robinhood card', () => {
+  // The card this feeds sits directly above live Buy buttons. Another chain's name,
+  // socials and market cap on a Robinhood token is a trade the user did not intend.
+  assert.equal(normalize({ address: ADDR, chainId: 1 }), null);
+  assert.equal(normalize({ address: ADDR, chain_id: '8453' }), null);
+  assert.ok(normalize({ address: ADDR, chainId: 4663 }), 'the configured chain is kept');
+  assert.ok(normalize({ address: ADDR }), 'an unstamped record is ours by request filter');
+});

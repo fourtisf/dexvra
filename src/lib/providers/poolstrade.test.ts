@@ -117,3 +117,11 @@ test("launchToMarket derives age from the launch time", () => {
   assert.ok(m?.ageMinutes != null && Math.abs(m.ageMinutes - 90) <= 1);
   assert.equal(launchToMarket(launch({ createdAt: null }))?.ageMinutes, null);
 });
+
+test("normalizeLaunch drops a record that names another chain", () => {
+  // It would render on the public board with the wrong chain badge and buy deeplink.
+  assert.equal(normalizeLaunch({ address: ADDR, chainId: 1 }), null);
+  assert.equal(normalizeLaunch({ address: ADDR, chain_id: "8453" }), null);
+  assert.ok(normalizeLaunch({ address: ADDR, chainId: 4663 }));
+  assert.ok(normalizeLaunch({ address: ADDR }), "absent chain id → trust the request filter");
+});
