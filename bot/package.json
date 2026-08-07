@@ -8,6 +8,7 @@
     "start": "node main.js",
     "check": "node scripts/smoke.js",
     "x:check": "node scripts/x-check.js",
+    "poolstrade:check": "node scripts/poolstrade-check.js",
     "mongo:check": "node scripts/mongo-check.js",
     "treasury": "node scripts/treasury.js",
     "test": "node scripts/run-tests.js"

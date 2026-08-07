@@ -167,6 +167,7 @@ place and documented in `.env.example` under **Execution speed**:
 | `solana.js` | Solana adapter — keypairs, Jupiter swaps, SOL/SPL, DexScreener, pump.fun |
 | `watchers.js` | snipe + copy + limit/TP-SL/alert background loops (EVM + Solana) |
 | `tokeninfo.js` | rich token scan (price/liquidity/volume/safety aggregation) |
+| `poolstrade.js` | pools.trade launchpad record — Robinhood Chain socials/volume/curve state. **Display metadata only**: trades are priced and routed from chain state in `core.js`, never from here |
 | `goplus.js` / `rugcheck.js` | token safety — GoPlus (EVM) / RugCheck (Solana) |
 | `safety.js` | chain-aware safety dispatcher |
 | `telegram.js` | Telegram UI (commands, inline buttons, flows) |

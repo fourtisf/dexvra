@@ -21,6 +21,7 @@ import type {
 import { fmtCap } from "@/lib/format";
 import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
 import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
+import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 
 const PRICE_TTL = 30_000;
 const FNG_TTL = 10 * 60_000;
@@ -51,6 +52,36 @@ function expireTrending(rows: ListingRow[]): ListingRow[] {
   );
 }
 
+/** Live market data for one chain's listings, from every provider that covers
+ *  that chain.
+ *
+ *  GeckoTerminal is the primary everywhere and wins wherever it answers — it
+ *  carries the per-period stats and the pool address the chart embed needs. On
+ *  the pools.trade chain it is not the whole story: a launch still on its
+ *  bonding curve has no liquidity pool, so GT knows nothing about it and the
+ *  listing rendered with the figures captured when it was listed. The launchpad
+ *  does know it, so it fills those gaps and only those.
+ *
+ *  Throws only when NO provider for the chain answered, which keeps the
+ *  caller's "everything is down → seed data" fallback intact. */
+async function fetchChainMarket(chain: string, addrs: string[]): Promise<Map<string, LiveMarket>> {
+  if (chain !== POOLS_TRADE_CHAIN) return fetchListedMarket(chain, addrs);
+
+  const [gt, launch] = await Promise.allSettled([
+    fetchListedMarket(chain, addrs),
+    fetchLaunchMarket(chain, addrs),
+  ]);
+  const primary = gt.status === "fulfilled" ? gt.value : null;
+  const secondary = launch.status === "fulfilled" ? launch.value : null;
+  // Both providers down for this chain is the one case the caller must see as a
+  // failure — reporting an empty map would read as "listed, but no activity".
+  if (!primary && !secondary) throw gt.status === "rejected" ? gt.reason : new Error(`no market data (${chain})`);
+
+  const out = new Map(secondary ?? []);
+  for (const [addr, m] of primary ?? []) out.set(addr, m); // GT wins on overlap
+  return out;
+}
+
 /** Merge live market data onto the paid listings. Any listing without live
  *  data keeps its fallback figures, so the board always renders. */
 async function loadListedTokens(): Promise<BoardToken[]> {
@@ -61,7 +92,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   const marketResults = await Promise.allSettled(
     Object.entries(byChain).map(async ([chain, addrs]) => ({
       chain,
-      map: await fetchListedMarket(chain, addrs),
+      map: await fetchChainMarket(chain, addrs),
     })),
   );
   const anyLive = marketResults.some((r) => r.status === "fulfilled" && r.value.map.size > 0);

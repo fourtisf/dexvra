@@ -1,7 +1,9 @@
 // Auto-Listing — free, automatic listings for projects that climb past the
-// operator's market-cap threshold (~$1M), discovered on DexScreener across every
-// supported chain. Off by default; everything is tunable from @dexvraadminbot
-// and the loop re-reads config each cycle, so changes apply without a restart.
+// operator's market-cap threshold (~$1M), discovered across every supported
+// chain — on DexScreener, and on pools.trade for the Robinhood Chain launches
+// DexScreener does not index (see discovery.js). Off by default; everything is
+// tunable from @dexvraadminbot and the loop re-reads config each cycle, so
+// changes apply without a restart.
 //
 // WHY THE TRIGGER IS PER-TOKEN AND RANDOM
 // Listing everything the instant it prints $1,000,000 makes the feed read as
@@ -34,7 +36,10 @@
 // Change TREND_TIERS below to change the draw.
 const crypto = require("node:crypto");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
-const ds = require("../dexscreener");
+// Every discovery source behind one seam (DexScreener + pools.trade). Named
+// `ds` still because the two functions it exposes are the two this service has
+// always called, with the same shapes; see discovery.js for what merged.
+const ds = require("../discovery");
 const api = require("../api/dexvra");
 const post = require("../channels/post");
 const fmt = require("../channels/format");
@@ -524,7 +529,7 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     // Every feed empty at once is a DexScreener outage or a reshaped response,
     // not a quiet market. It used to return silently — the single most likely
     // way for this service to look enabled and do nothing indefinitely.
-    report.blocker = "discovery returned no candidates (all DexScreener feeds empty)";
+    report.blocker = "discovery returned no candidates (every source empty — DexScreener feeds and pools.trade)";
     await fileReport(report, state);
     return 0;
   }
@@ -683,7 +688,7 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
   }
   report.candidates = candidates.length;
   if (!candidates.length) {
-    report.blocker = "discovery returned no candidates (all DexScreener feeds empty)";
+    report.blocker = "discovery returned no candidates (every source empty — DexScreener feeds and pools.trade)";
     return report;
   }
 

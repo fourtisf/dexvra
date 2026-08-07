@@ -5,7 +5,10 @@ const { answer, toast, sendCard, sendPhotoCard, getMediaFileId } = require("../h
 const { chainOf, isValidAddress, payChainOf, payNativeOf } = require("../config/chains");
 const { RANKED_TIERS, tierPrice, tierLabel, tierEmoji, tierTrendingHours } = require("../config/packages");
 const { fetchMarket, fetchTokenDescription } = require("../marketdata");
-const { fetchTokenInfo } = require("../dexscreener");
+// Autofill asks every source that indexes the chain, not just DexScreener —
+// on Robinhood Chain, which DexScreener does not index, pools.trade is the only
+// one that knows the token at all. See discovery.js.
+const { fetchTokenInfo } = require("../discovery");
 const { escapeHtml } = require("../helpers/format");
 const { normalizeTicker, isValidTicker, sanitizeTicker } = require("../helpers/ticker");
 const { startPayment } = require("./pay");
@@ -104,9 +107,10 @@ async function handleText(ctx) {
       // filled in for a listing that can never be sold.
       if (await listed.blockIfListed(ctx, input, f.chain)) return;
       f.address = input;
-      // Autofill from DexScreener (name/symbol/logo + socials: X/Telegram/Website)
-      // and GeckoTerminal (name/symbol/logo + project overview). DexScreener
-      // wins for socials.
+      // Autofill from the token's own indexer — pools.trade on Robinhood Chain,
+      // DexScreener everywhere else (name/symbol/logo + socials: X/Telegram/
+      // Website) — and GeckoTerminal (name/symbol/logo + project overview).
+      // The indexer wins for socials.
       const [ds, gt, desc] = await Promise.all([
         fetchTokenInfo(f.chain, input).catch(() => null),
         fetchMarket(f.chain, input).catch(() => null),

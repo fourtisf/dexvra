@@ -68,6 +68,9 @@ pm2 save
 | `src/bot.js` | middleware chain, session, rate-limit, launch |
 | `src/config/` | `chains.js` (registry), `constants.js` (env), `packages.js` (pricing mirror) |
 | `src/api/dexvra.js` | internal-API client |
+| `src/discovery.js` | every discovery source behind one seam — DexScreener + pools.trade |
+| `src/dexscreener.js` | DexScreener feeds + token info (every chain but Robinhood) |
+| `src/poolstrade.js` | pools.trade launchpad — Robinhood Chain, which DexScreener does not index |
 | `src/handlers/` | `start`, `listing`, `trending`, `banner`, `text`, `menu`, `registry` |
 | `src/payments/` | temp-wallet gen, balance poll, sweep, confirm handler (per-chain adapters) |
 | `src/channels/` | Bot-API channel posting + post formatters |

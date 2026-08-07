@@ -15,6 +15,7 @@ const { ethers } = require('ethers');
 const core = require('./core');
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware token safety (GoPlus / RugCheck)
+const poolstrade = require('./poolstrade');   // pools.trade launchpad (Robinhood Chain)
 
 const SITE = (process.env.SITE || 'https://robinfun.io').replace(/\/+$/, '');
 const ROUTER_FACTORY_ABI = ['function factory() view returns (address)'];
@@ -107,8 +108,19 @@ async function gasSnapshot(chainKey) {
   } catch (_) { return null; }
 }
 
-// Launchpad public API token record (Robinhood-chain launches only).
-async function launchpadApi(ca) {
+// Launchpad public API token record (curve-chain launches only).
+//
+// TWO LAUNCHPADS, IN ORDER. pools.trade is where Robinhood Chain tokens launch,
+// so it is asked first for its own chain. The legacy SITE launchpad
+// (robinfun.io by default, the one this bot was built against) stays as the
+// fallback: a token that predates pools.trade, or one from a deployment whose
+// SITE points somewhere else, still resolves. Either source returning nothing
+// is a normal outcome — the caller treats a null as "no extra metadata".
+//
+// Nothing read here is allowed to influence a trade; see poolstrade.js's header.
+async function launchpadApi(ca, chainKey) {
+  const rec = await poolstrade.tokenRecord(ca, chainKey).catch(() => null);
+  if (rec) return rec;
   try {
     const r = await fetch(`${SITE}/api/v1/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
     if (!r.ok) return null;
@@ -165,7 +177,7 @@ async function socials(ca, chainKey) {
   try {
     const chain = core.chainOf(chainKey);
     if (chain && chain.curve) {
-      const a = await launchpadApi(ca);
+      const a = await launchpadApi(ca, chainKey);
       const l = (a && a.links) || {};
       const w = _safeUrl(l.website), t = _safeUrl(l.twitter), g = _safeUrl(l.telegram);
       if (w || t || g) v = { website: w, twitter: t, telegram: g };
@@ -212,7 +224,7 @@ async function enrich(ca, chainKey) {
     info.dexVenue = p && p.kind;
     info.liquidityNative = p && p.wethBal != null ? Number(ethers.formatEther(p.wethBal)) * 2 : null;
   }).catch(() => { info.liquidityNative = null; }));
-  if (chain.curve) tasks.push(launchpadApi(ca).then((a) => { info.api = a; }));
+  if (chain.curve) tasks.push(launchpadApi(ca, chainKey).then((a) => { info.api = a; }));
   tasks.push(marketStats(ca, chainKey).then((m) => { if (m) info.market = m; }));
   tasks.push(gasSnapshot(chainKey).then((g) => { info.gas = g; }));
   if (goplus.supported(chainKey)) tasks.push(goplus.tokenSecurity(chainKey, ca).then((s) => { info.security = s; }).catch(() => {}));
