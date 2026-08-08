@@ -72,7 +72,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <token>" \
 
 ```bash
 cd /path/to/dexvra/bot
-cp .env.example .env      # then edit .env (see below)
+cp -n .env.example .env   # -n = never clobber: on a box that is already live,
+                          # .env holds the only copy of your tokens and it is
+                          # gitignored, so a plain `cp` destroys them silently
 npm ci
 npm run check             # boot-wiring smoke (no network)
 npm run rpc:check         # do the chain RPC endpoints answer from THIS server?

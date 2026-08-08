@@ -43,7 +43,7 @@ Base, Robinhood, Tron, TON.
 
 ```bash
 cd bot
-cp .env.example .env      # fill in BOT_TOKEN + INTERNAL_API_TOKEN (+ treasuries)
+cp -n .env.example .env   # -n so a live box's existing .env is never clobbered
 npm install
 npm run check             # boot-wiring smoke test (no network)
 npm run rpc:check         # do the chain RPC endpoints answer from this server?
