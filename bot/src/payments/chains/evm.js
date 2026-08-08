@@ -1,20 +1,20 @@
 // EVM adapter (ethers v6) — covers ethereum / bsc / base / robinhood. One keypair
 // is valid on all of them; the chain only selects the RPC + gas market.
 const { ethers } = require("ethers");
-const { RPC } = require("../../config/constants");
+const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 const PLAIN_TRANSFER_GAS = 21000n; // intrinsic cost of an EOA → EOA send
 const ATTEMPTS = 3; // public RPCs rate-limit; a quote can also go stale
 const CONFIRM_TIMEOUT_MS = 120000; // never block a sweep pass on a stuck mempool
 
-function provider(chain) {
-  const url = RPC[chain];
+function provider(chain, url) {
   // No silent fallback to the Ethereum RPC: reading (or sweeping) the wrong
   // chain reports an empty wallet while the funds sit untouched on the real
   // one — a silent loss. A missing RPC is a config error and must say so.
-  if (!url) throw new Error(`no RPC configured for EVM chain "${chain}"`);
-  return new ethers.JsonRpcProvider(url);
+  const endpoint = url || rpcUrls(chain)[0];
+  if (!endpoint) throw new Error(`no RPC configured for EVM chain "${chain}"`);
+  return new ethers.JsonRpcProvider(endpoint);
 }
 
 async function generate() {
@@ -22,9 +22,41 @@ async function generate() {
   return { address: w.address, privateKey: w.privateKey };
 }
 
-/** Native balance in wei (BigInt). */
+// Every provider built during one call, so they can all be torn down when it
+// ends. A JsonRpcProvider pointed at an unreachable node retries network
+// detection once a second FOREVER and holds the event loop open doing it — so
+// one left behind per failed sweep attempt is a permanent background request
+// loop, and a CLI pass (treasury --live, a sweep run) never exits.
+function tracked(chain, url, made) {
+  const p = provider(chain, url);
+  made.set(url, p);
+  return p;
+}
+function dropAll(made) {
+  for (const p of made.values()) {
+    try {
+      p.destroy?.();
+    } catch {
+      /* best effort */
+    }
+  }
+  made.clear();
+}
+
+/** Native balance in wei (BigInt).
+ *
+ *  This is the read that decides whether a customer has paid, so it walks every
+ *  endpoint the chain has. A node that is down must surface as an ERROR — an
+ *  unreadable balance is unknown, never zero. Returning 0 here reports a paid
+ *  order as unpaid and the buyer is told their payment timed out. */
 async function getBalance(chain, address) {
-  return provider(chain).getBalance(address);
+  const made = new Map();
+  try {
+    const { value } = await rpcRead(chain, (url) => tracked(chain, url, made).getBalance(address));
+    return value;
+  } finally {
+    dropAll(made);
+  }
 }
 
 /** The fee cap to sign with on an EIP-1559 chain.
@@ -80,10 +112,21 @@ async function sweep(chain, wallet, treasury) {
   let last = "unknown";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     let sent = null;
+    const made = new Map();
     try {
-      const p = provider(chain);
+      // The opening read PICKS THE ENDPOINT, and everything after it — the fee
+      // quote, the gas estimate, the broadcast — stays on that same node.
+      // Reading from a healthy backup and then broadcasting to the dead primary
+      // only moves where it fails; and a send must never be retried on a second
+      // node, because a broadcast that failed at the transport layer may still
+      // have reached the network. Nothing is signed until a node has answered,
+      // so choosing here cannot double-spend.
+      const { value: opened } = await rpcRead(chain, async (url) => {
+        const p = tracked(chain, url, made);
+        return { p, bal: BigInt(await p.getBalance(wallet.address)) };
+      });
+      const { p, bal } = opened;
       const signer = new ethers.Wallet(wallet.privateKey, p);
-      const bal = BigInt(await p.getBalance(wallet.address));
       if (bal <= 0n) return { ok: false, error: "empty" };
 
       const fee = await p.getFeeData();
@@ -129,6 +172,10 @@ async function sweep(chain, wallet, treasury) {
         return { ok: false, txid: sent.hash, error: `unconfirmed: ${e.message}` };
       }
       log.debug(`[evm] sweep ${chain} attempt ${attempt}/${ATTEMPTS}: ${e.message}`);
+    } finally {
+      // Runs after every await above has settled — including `sent.wait()` — so
+      // this can never tear down a provider a broadcast is still using.
+      dropAll(made);
     }
   }
   return { ok: false, error: last };

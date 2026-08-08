@@ -7,7 +7,7 @@ const {
   Transaction,
   sendAndConfirmTransaction,
 } = require("@solana/web3.js");
-const { RPC } = require("../../config/constants");
+const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 // A sweep must leave the temp wallet at EXACTLY zero lamports.
@@ -28,8 +28,10 @@ const log = require("../../helpers/logger");
 const FALLBACK_FEE = 5000n; // one signature, if getFeeForMessage is unavailable
 const ATTEMPTS = 3; // fee/blockhash can move between quote and send
 
-function conn() {
-  return new Connection(RPC.solana, "confirmed");
+function conn(url) {
+  const endpoint = url || rpcUrls("solana")[0];
+  if (!endpoint) throw new Error("no RPC configured for solana");
+  return new Connection(endpoint, "confirmed");
 }
 
 async function generate() {
@@ -40,9 +42,13 @@ async function generate() {
   };
 }
 
+/** Lamports (BigInt). Walks every configured endpoint — this read is what
+ *  decides whether a customer has paid, and a node that is down must surface as
+ *  an ERROR, never as a zero balance. */
 async function getBalance(_chain, address) {
-  const lamports = await conn().getBalance(new PublicKey(address));
-  return BigInt(lamports);
+  const key = new PublicKey(address);
+  const { value } = await rpcRead("solana", (url) => conn(url).getBalance(key));
+  return BigInt(value);
 }
 
 /** The fee the cluster will actually charge for this exact message. */
@@ -60,10 +66,16 @@ async function sweep(_chain, wallet, treasury) {
   let last = "unknown";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
-      const c = conn();
       const kp = Keypair.fromSecretKey(Uint8Array.from(Buffer.from(wallet.privateKey, "hex")));
       const to = new PublicKey(treasury);
-      const bal = BigInt(await c.getBalance(kp.publicKey, "confirmed"));
+      // The opening read picks the endpoint and the send stays on it. See the
+      // send rule in config/rpc.js: a transfer is never re-broadcast to a
+      // second node, so read and send must share one.
+      const { value: opened } = await rpcRead("solana", async (url) => {
+        const c = conn(url);
+        return { c, bal: BigInt(await c.getBalance(kp.publicKey, "confirmed")) };
+      });
+      const { c, bal } = opened;
       if (bal === 0n) return { ok: false, error: "empty" };
 
       const { blockhash } = await c.getLatestBlockhash("confirmed");

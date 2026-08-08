@@ -71,15 +71,14 @@ const PAYMENT_TIMEOUT_MS = Math.max(30000, int(env.PAYMENT_TIMEOUT_MS, 300000));
 const PAYMENT_TOLERANCE_PCT = Math.max(0, int(env.PAYMENT_TOLERANCE_PCT, 0));
 
 // Public RPCs (override for reliability / rate limits in production).
-const RPC = {
-  ethereum: env.RPC_ETHEREUM || "https://ethereum-rpc.publicnode.com",
-  bsc: env.RPC_BSC || "https://bsc-rpc.publicnode.com",
-  base: env.RPC_BASE || "https://base-rpc.publicnode.com",
-  robinhood: env.RPC_ROBINHOOD || "https://rpc.mainnet.chain.robinhood.com",
-  solana: env.RPC_SOLANA || "https://api.mainnet-beta.solana.com",
-  tron: env.RPC_TRON || "https://api.trongrid.io",
-  ton: env.RPC_TON || "https://toncenter.com/api/v2/jsonRPC",
-};
+//
+// The endpoints themselves live in ./rpc.js, which holds a LIST per chain: a
+// read walks it until one node answers, a send never does. This map is the
+// PRIMARY of each list — `RPC_<CHAIN>` when set, the first public default
+// otherwise — kept because the sweep adapters want exactly one deterministic
+// endpoint and because it is the shape the rest of the bot already reads.
+const rpcRegistry = require("./rpc");
+const RPC = Object.fromEntries(rpcRegistry.RPC_CHAINS.map((c) => [c, rpcRegistry.rpcUrl(c)]));
 const TON_API_KEY = env.TON_API_KEY || ""; // toncenter key (optional but recommended)
 
 // Sweep destinations. One EVM address covers ethereum/bsc/base/robinhood. If a

@@ -13,10 +13,23 @@
 //
 // Chains without a reader here simply return null: whale detection is skipped
 // and ordinary buy alerts are unaffected.
-const { RPC } = require("../config/constants");
+//
+// Every lookup goes through config/rpc.js, which walks that chain's endpoints
+// until one answers. This is a pure READ, so falling back is free — and on the
+// public nodes these chains default to, the alternative is that a busy hour on
+// one shared endpoint turns every holder into a minnow with nothing in the log
+// to say why.
+const { rpcRead } = require("../config/rpc");
 const log = require("../helpers/logger");
 
-const TIMEOUT_MS = 6000;
+// A buy alert is waiting on this, and up to MAX_PER_POLL of them are handled in
+// one pass — so the BUDGET is what matters, not the per-endpoint timeout. It is
+// deliberately set to the 6s this lookup already had when it was pinned to one
+// endpoint: adding a second opinion must not make a whale badge cost the group
+// a slower alert. Better a missed badge than a card that lands a minute after
+// the trade it describes.
+const TIMEOUT_MS = 4000; // per endpoint
+const BUDGET_MS = 6000; // across all of them — unchanged from the single-endpoint days
 // A wallet's holding barely moves between two buys seconds apart, and a busy
 // pool would otherwise spend one RPC call per alert per wallet.
 const CACHE_MS = 2 * 60 * 1000;
@@ -30,9 +43,6 @@ const decimalsCache = new Map();
 const holdCache = new Map(); // `${chain}:${token}:${wallet}` → { at, amount }
 
 const EVM_FAMILY = new Set(["ethereum", "bsc", "base", "robinhood", "polygon", "arbitrum", "optimism", "avalanche", "berachain", "sonic", "hyperevm", "abstract", "apechain", "blast", "sei", "unichain", "plasma"]);
-
-const withTimeout = (p, ms = TIMEOUT_MS) =>
-  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms).unref?.())]);
 
 // ── EVM ──────────────────────────────────────────────────────────────────────
 
@@ -53,30 +63,56 @@ function ethersLib() {
   return ethersMod || null;
 }
 
-// ONE provider per chain, reused. Constructing one per lookup opens a fresh
+// ONE provider per ENDPOINT, reused. Constructing one per lookup opens a fresh
 // socket for every buy, and an unreachable RPC then leaves a pile of them
 // waiting — enough to keep the process's event loop alive on its own.
+//
+// Keyed by url rather than by chain because the endpoint a read lands on now
+// varies: key it by chain and a fallback would hand back the provider pointed
+// at the node that just failed.
 const providers = new Map();
-function evmProvider(ethers, chain, url) {
-  if (!providers.has(chain)) providers.set(chain, new ethers.JsonRpcProvider(url));
-  return providers.get(chain);
+function evmProvider(ethers, url) {
+  if (!providers.has(url)) providers.set(url, new ethers.JsonRpcProvider(url));
+  return providers.get(url);
+}
+
+// A provider pointed at an unreachable node does NOT go quiet: ethers retries
+// network detection once a second, forever, and keeps the event loop open doing
+// it. Cached and never torn down, one bad endpoint is a permanent background
+// request loop — and a CLI script that touches this module never exits.
+function dropProvider(url) {
+  const p = providers.get(url);
+  providers.delete(url);
+  try {
+    p?.destroy?.();
+  } catch {
+    /* best effort — the point is to stop the retry loop, not to succeed at it */
+  }
 }
 
 async function evmHolding(chain, token, wallet) {
   const ethers = ethersLib();
-  const url = RPC[chain];
-  if (!ethers || !url) return null;
-  const provider = evmProvider(ethers, chain, url);
-  const c = new ethers.Contract(token, ERC20, provider);
+  if (!ethers) return null;
   const dKey = `${chain}:${token}`;
-  let decimals = decimalsCache.get(dKey);
-  if (decimals == null) {
-    decimals = Number(await withTimeout(c.decimals()));
-    if (!Number.isFinite(decimals)) return null;
-    decimalsCache.set(dKey, decimals);
-  }
-  const raw = await withTimeout(c.balanceOf(wallet));
-  return Number(raw) / 10 ** decimals;
+  const { value } = await rpcRead(
+    chain,
+    async (url) => {
+      const c = new ethers.Contract(token, ERC20, evmProvider(ethers, url));
+      let decimals = decimalsCache.get(dKey);
+      if (decimals == null) {
+        decimals = Number(await c.decimals());
+        if (!Number.isFinite(decimals)) return null;
+        // Cached only once a node has actually answered — a decimals() that
+        // came back NaN from a half-broken endpoint would otherwise be
+        // remembered for the life of the process.
+        decimalsCache.set(dKey, decimals);
+      }
+      const raw = await c.balanceOf(wallet);
+      return Number(raw) / 10 ** decimals;
+    },
+    { timeoutMs: TIMEOUT_MS, budgetMs: BUDGET_MS, onFail: dropProvider },
+  );
+  return value;
 }
 
 // ── Solana ───────────────────────────────────────────────────────────────────
@@ -93,20 +129,33 @@ function solLib() {
   return solMod || null;
 }
 
-async function solanaHolding(_chain, mint, wallet) {
+// Same reasoning as the EVM providers: one Connection per endpoint, reused.
+const connections = new Map();
+function solConnection(web3, url) {
+  if (!connections.has(url)) connections.set(url, new web3.Connection(url, "confirmed"));
+  return connections.get(url);
+}
+
+async function solanaHolding(chain, mint, wallet) {
   const web3 = solLib();
-  if (!web3 || !RPC.solana) return null;
-  const conn = new web3.Connection(RPC.solana, "confirmed");
-  const res = await withTimeout(
-    conn.getParsedTokenAccountsByOwner(new web3.PublicKey(wallet), { mint: new web3.PublicKey(mint) }),
+  if (!web3) return null;
+  const owner = new web3.PublicKey(wallet);
+  const mintKey = new web3.PublicKey(mint);
+  const { value } = await rpcRead(
+    chain,
+    async (url) => {
+      const res = await solConnection(web3, url).getParsedTokenAccountsByOwner(owner, { mint: mintKey });
+      // A wallet can hold the same mint across several token accounts.
+      let total = 0;
+      for (const { account } of (res && res.value) || []) {
+        const amt = account?.data?.parsed?.info?.tokenAmount?.uiAmount;
+        if (Number.isFinite(amt)) total += amt;
+      }
+      return total;
+    },
+    { timeoutMs: TIMEOUT_MS, budgetMs: BUDGET_MS },
   );
-  // A wallet can hold the same mint across several token accounts.
-  let total = 0;
-  for (const { account } of (res && res.value) || []) {
-    const amt = account?.data?.parsed?.info?.tokenAmount?.uiAmount;
-    if (Number.isFinite(amt)) total += amt;
-  }
-  return total;
+  return value;
 }
 
 // ── Public ───────────────────────────────────────────────────────────────────
@@ -167,6 +216,8 @@ function _reset2() {
     }
   }
   providers.clear();
+  connections.clear();
+  require("../config/rpc")._reset();
 }
 
 module.exports = { holdingOf, supports, _reset, _resetProviders: _reset2, CACHE_MS, FAIL_CACHE_MS, EVM_FAMILY };

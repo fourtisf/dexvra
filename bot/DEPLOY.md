@@ -64,6 +64,7 @@ cd /path/to/dexvra/bot
 cp .env.example .env      # then edit .env (see below)
 npm ci
 npm run check             # boot-wiring smoke (no network)
+npm run rpc:check         # do the chain RPC endpoints answer from THIS server?
 npm test                  # unit tests
 pm2 start ecosystem.config.js && pm2 save
 pm2 logs dexvra-bot       # watch it come up
@@ -87,6 +88,12 @@ the per-order temp wallet under `.keys/`, recoverable — set them before real
 volume). Leave the four `X_*` keys blank to keep X posting off; fill them in
 and every listing is tweeted too — see [`X-AUTOPOST.md`](X-AUTOPOST.md), then
 verify on the server with `npm run x:check`.
+
+RPC endpoints are optional — every chain has keyless public defaults and a read
+walks them until one answers. But a **sweep only ever sends to the primary**, so
+run `npm run rpc:check` on the server and put a working (ideally paid) endpoint
+in `RPC_<CHAIN>` for any chain whose primary is red. Full credential audit:
+[`KEYS.md`](KEYS.md).
 
 ## 5. Smoke-test end to end (free, no spend)
 

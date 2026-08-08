@@ -46,12 +46,19 @@ cd bot
 cp .env.example .env      # fill in BOT_TOKEN + INTERNAL_API_TOKEN (+ treasuries)
 npm install
 npm run check             # boot-wiring smoke test (no network)
+npm run rpc:check         # do the chain RPC endpoints answer from this server?
 npm run x:check           # is X auto-posting configured + do the keys work?
 npm start                 # node main.js (long-polling)
 ```
 
 `INTERNAL_API_TOKEN` must equal the web app's value (see the root `README.md`).
 The bot must be an **admin** in all three channels.
+
+**[`KEYS.md`](KEYS.md)** is the full audit of every credential: what is
+required, what each optional key unlocks, and — the part that costs time — what
+degrades *silently* without it. Short version: only `BOT_TOKEN` and
+`INTERNAL_API_TOKEN` are needed, and **no paid market-data API key is used
+anywhere** (GeckoTerminal, DexScreener and CoinGecko are all called keyless).
 
 ### Production (PM2, same VPS as the web app)
 
@@ -251,7 +258,13 @@ late is worse than no post.
    **Read and write before** the access token is generated. Verify with
    `npm run x:check`. Full walkthrough + troubleshooting:
    [`X-AUTOPOST.md`](X-AUTOPOST.md). Leave the four blank to keep X off.
-7. `npm run check` → `npm test` → `npm start`.
+6b. **RPC**: `npm run rpc:check`. Every chain ships with a list of keyless
+   public endpoints and a read walks the list until one answers — but a **sweep
+   only ever sends to the primary**, so a dead primary strands funds. The
+   defaults are shared with the whole internet and rate-limit by IP; put a paid
+   endpoint in `RPC_<CHAIN>` (or a full list in `RPC_<CHAIN>_URLS`) before you
+   take real volume. Details in [`KEYS.md`](KEYS.md).
+7. `npm run check` → `npm run rpc:check` → `npm test` → `npm start`.
 8. **Security**: rotate the bot token in @BotFather if it was ever shared, then
    update `.env`.
 
@@ -449,7 +462,8 @@ All raid and buy-alert copy is admin-editable in `@dexvraadminbot`
 ## Tests
 
 ```bash
-npm run check   # boot-wiring smoke (no network)
-npm test        # unit tests (pricing, units, chains, formatting, cards)
+npm run check     # boot-wiring smoke (no network)
+npm test          # unit tests (pricing, units, chains, formatting, cards)
+npm run rpc:check # which chain RPC endpoints answer from this server
 ```
 
