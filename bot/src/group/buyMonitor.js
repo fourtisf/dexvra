@@ -270,6 +270,10 @@ function renderEstimateAlert(g, est, pool) {
  * look like deduplication while deduplicating nothing.
  */
 async function deliver(tg, chatId, payload, dedupeId) {
+  // Checked FIRST, and independently of dedupeId, because the estimated path
+  // has no transaction to latch — without this a group that removed the bot is
+  // retried on every poll forever whenever the feed happens to be down.
+  if (latch.isChatMuted(chatId)) return false;
   if (dedupeId && !latch.claim(chatId, dedupeId)) return false;
   // Accepts a thunk so the caller can defer rendering until the claim is won.
   // With a `>=` block cursor a quiet pool re-reads its newest block on every
@@ -289,17 +293,34 @@ async function deliver(tg, chatId, payload, dedupeId) {
     return true;
   } catch (e) {
     if (isFatalChatError(e)) {
-      // The bot is not in this chat, or may not speak in it. Latch anyway:
-      // retrying every poll can never succeed and burns Telegram calls plus the
-      // GeckoTerminal budget shared with every healthy group.
+      // The bot is not in this chat, or may not speak in it. Mute the whole
+      // chat: retrying can never succeed and burns Telegram calls plus the
+      // GeckoTerminal budget shared with every healthy group. Muting the CHAT
+      // rather than the transaction is what makes this work on the estimated
+      // path too, where there is no transaction.
       if (dedupeId) await latch.commit(chatId, dedupeId);
+      await latch.muteChat(chatId);
       log.warn(
-        `[buybot] ${chatId} is unreachable (${describeChatError(e)}) — alert dropped. ` +
-          `Re-add the bot to that group, or run /buybot off there.`,
+        `[buybot] ${chatId} is unreachable (${describeChatError(e)}) — alerts paused for that group. ` +
+          `Re-add the bot there, or run /buybot off.`,
       );
       return false;
     }
-    if (dedupeId) await latch.release(chatId, dedupeId);
+    if (dedupeId) {
+      const attempts = await latch.release(chatId, dedupeId);
+      if (attempts >= latch.MAX_ATTEMPTS) {
+        // Permanent for the MESSAGE but not for the chat — an empty saved
+        // template, or one whose HTML will not parse. Retrying is doomed, and
+        // an undelivered buy holds the pool cursor back, so persisting here
+        // would silence the group entirely.
+        await latch.commit(chatId, dedupeId);
+        log.warn(
+          `[buybot] giving up on one alert for ${chatId} after ${attempts} attempts: ${e.message}. ` +
+            `If this repeats, check the group_buy_alert template in @dexvraadminbot.`,
+        );
+        return false;
+      }
+    }
     log.debug(`[buybot] post to ${chatId} failed (${e.message}) — claim released, will retry`);
     return false;
   }

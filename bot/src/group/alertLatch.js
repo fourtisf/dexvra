@@ -55,6 +55,25 @@ const MAX_ENTRIES = 20000;
 
 const CLAIMED = "i";
 const DONE = "d";
+const FAILED = "f";
+
+// "Transient" cannot mean "retry forever". Some failures are permanent for the
+// MESSAGE while saying nothing about the chat — an admin saving an empty
+// template, or one whose HTML will not parse — so fatalChatError rightly calls
+// them transient and the retry never succeeds. Left unbounded that is a doomed
+// send every poll, and (because an undelivered buy holds the pool cursor back)
+// the group stops receiving anything at all.
+const MAX_ATTEMPTS = 5;
+// How long a failure record survives so the attempts can be counted across
+// polls. Comfortably longer than a few poll intervals, far shorter than the
+// latch.
+const FAIL_KEEP_MS = 30 * 60 * 1000;
+// A chat that answered with a fatal error is skipped wholesale for this long.
+// Long enough to stop burning the shared rate budget on a group that removed
+// the bot; short enough that re-adding it resumes alerts the same session.
+const CHAT_MUTE_MS = 6 * 60 * 60 * 1000;
+
+const chatKey = (chatId) => `chat:${chatId}`;
 
 let marks = loadJSONSync(FILE, {}) || {};
 let dirty = false;
@@ -109,8 +128,19 @@ function claim(chatId, txHash, at = now()) {
   if (!chatId || !txHash) return false;
   const k = keyOf(chatId, txHash);
   const cur = marks[k];
-  if (cur && Number(cur.u) > at) return false; // held or latched
-  marks[k] = { s: CLAIMED, u: at + CLAIM_MS };
+  // Delivered, or another poll is mid-send.
+  if (cur && (cur.s === DONE || cur.s === CLAIMED) && Number(cur.u) > at) return false;
+  const attempts = (cur && Number(cur.a)) || 0;
+  if (attempts >= MAX_ATTEMPTS) {
+    // Give up rather than retry a doomed send forever. Latching also frees the
+    // pool cursor, which an undelivered buy would otherwise pin — taking the
+    // whole group's alerts down with it.
+    marks[k] = { s: DONE, u: at + LATCH_MS, a: attempts };
+    dirty = true;
+    flush();
+    return false;
+  }
+  marks[k] = { s: CLAIMED, u: at + CLAIM_MS, a: attempts };
   dirty = true;
   sweep(at);
   flush();
@@ -119,19 +149,47 @@ function claim(chatId, txHash, at = now()) {
 
 /** The alert posted. Latch it for good (well — for LATCH_MS). */
 async function commit(chatId, txHash, at = now()) {
-  marks[keyOf(chatId, txHash)] = { s: DONE, u: at + LATCH_MS };
+  const cur = marks[keyOf(chatId, txHash)];
+  marks[keyOf(chatId, txHash)] = { s: DONE, u: at + LATCH_MS, a: (cur && cur.a) || 0 };
   dirty = true;
   await flush();
 }
 
-/** The send failed in a way that should be retried. Hand the claim back. */
-async function release(chatId, txHash) {
+/**
+ * The send failed in a way that should be retried. Hand the claim back and
+ * count the attempt. Returns how many times this alert has now failed, so the
+ * caller can say something once it stops trying.
+ */
+async function release(chatId, txHash, at = now()) {
   const k = keyOf(chatId, txHash);
-  if (marks[k] === undefined) return;
-  delete marks[k];
+  const attempts = ((marks[k] && Number(marks[k].a)) || 0) + 1;
+  // u is a RETENTION deadline here, not a lock: claim() only blocks on DONE and
+  // CLAIMED, so the next poll can take this immediately — it just arrives
+  // knowing how many times we have already tried.
+  marks[k] = { s: FAILED, u: at + FAIL_KEEP_MS, a: attempts };
+  dirty = true;
+  await flush();
+  return attempts;
+}
+
+/**
+ * Stop trying this chat for a while.
+ *
+ * The per-transaction latch cannot cover the ESTIMATED path — an estimate has
+ * no transaction, so every latch call there was a no-op and a group that had
+ * removed the bot was retried on every poll, forever, spending the Telegram and
+ * GeckoTerminal budget shared with every healthy group.
+ */
+async function muteChat(chatId, at = now()) {
+  marks[chatKey(chatId)] = { s: DONE, u: at + CHAT_MUTE_MS };
   dirty = true;
   await flush();
 }
+
+const isChatMuted = (chatId, at = now()) => {
+  const v = marks[chatKey(chatId)];
+  return !!(v && Number(v.u) > at);
+};
 
 /** Has this transaction already been delivered here? (Diagnostics/tests.) */
 function isDelivered(chatId, txHash, at = now()) {
@@ -149,6 +207,8 @@ module.exports = {
   claim,
   commit,
   release,
+  muteChat,
+  isChatMuted,
   isDelivered,
   sweep,
   flush,
@@ -156,4 +216,6 @@ module.exports = {
   FILE,
   CLAIM_MS,
   LATCH_MS,
+  MAX_ATTEMPTS,
+  CHAT_MUTE_MS,
 };

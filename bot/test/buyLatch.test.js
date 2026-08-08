@@ -193,6 +193,52 @@ test("a transiently-failed alert IS re-rendered and re-sent next poll", async ()
   assert.strictEqual(renders, 2);
 });
 
+test("a doomed send is retried a bounded number of times, then given up on", async () => {
+  // Permanent for the MESSAGE but not for the chat — an admin saving an empty
+  // template, or one whose HTML will not parse. fatalChatError rightly calls it
+  // transient, so without a cap it is a doomed send every poll forever; and
+  // because an undelivered buy holds the pool cursor back, the group would stop
+  // receiving anything at all.
+  let attempts = 0;
+  const broken = {
+    sendMessage: async () => {
+      attempts++;
+      throw new Error("400: Bad Request: can't parse entities");
+    },
+  };
+  for (let i = 0; i < latch.MAX_ATTEMPTS + 3; i++) await mon.deliver(broken, CHAT, payload, TX);
+  assert.strictEqual(attempts, latch.MAX_ATTEMPTS);
+  assert.strictEqual(latch.isDelivered(CHAT, TX), true, "latched so the cursor is freed");
+});
+
+test("a removed bot mutes the whole chat, so the ESTIMATED path stops too", async () => {
+  // deliver(..., null) skips every per-transaction latch call by design, so
+  // without a chat-level mute a kicked group was retried on every poll forever
+  // whenever the feed happened to be down.
+  let sends = 0;
+  const dead = {
+    sendMessage: async () => {
+      sends++;
+      throw new Error("Forbidden: bot was kicked from the supergroup chat");
+    },
+  };
+  assert.strictEqual(await mon.deliver(dead, CHAT, payload, null), false);
+  assert.strictEqual(latch.isChatMuted(CHAT), true);
+  for (let i = 0; i < 5; i++) await mon.deliver(dead, CHAT, payload, null);
+  assert.strictEqual(sends, 1, "no further attempts on the estimated path either");
+  // And the real path is suppressed for that chat as well.
+  assert.strictEqual(await mon.deliver(dead, CHAT, payload, "0xanother"), false);
+  assert.strictEqual(sends, 1);
+});
+
+test("muting one chat never silences another", async () => {
+  const calls = [];
+  await latch.muteChat("-100DEAD");
+  assert.strictEqual(await mon.deliver(tgOk(calls), "-100DEAD", payload, null), false);
+  assert.strictEqual(await mon.deliver(tgOk(calls), "-100LIVE", payload, null), true);
+  assert.strictEqual(calls.length, 1);
+});
+
 test("the estimated path claims nothing — a made-up key would fake deduplication", async () => {
   const calls = [];
   assert.strictEqual(await mon.deliver(tgOk(calls), CHAT, payload, null), true);
