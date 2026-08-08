@@ -45,12 +45,19 @@ function noteChatter(chatId) {
   chatterSinceBump.set(k, (chatterSinceBump.get(k) || 0) + 1);
 }
 
-/** "likes:replies:reposts:crew" — what the numbers were when the card last
- *  moved. Persisted, so a restart mid-raid can't fabricate a bump out of the
- *  first poll after boot. */
+/**
+ * What the numbers were when the card last moved. Persisted, so a restart
+ * mid-raid can't fabricate a bump out of the first poll after boot.
+ *
+ * Covers only the metrics the card DRAWS, for the same reason signature() does:
+ * an untracked metric climbing would otherwise make "the numbers moved" true
+ * and delete-and-repost a card whose visible content had not changed — up to a
+ * dozen times an hour, each one leaving a pin notice behind.
+ */
 const countsMark = (raid) => {
   const c = raid.current || {};
-  return [c.likes || 0, c.replies || 0, c.reposts || 0, (raid.crew || []).length].join(":");
+  const active = card.activeMetrics(raid).map((m) => `${m.key}:${c[m.key] || 0}`).join("|");
+  return `${active}|crew:${(raid.crew || []).length}`;
 };
 
 // ── Starting ─────────────────────────────────────────────────────────────────
@@ -118,9 +125,18 @@ async function launch(telegram, g, s, startedBy) {
       };
       postText = m.text || "";
       if (s.reposts > 0 && !seesReposts) {
+        // Do NOT bury this goal. The source that answered cannot see reposts,
+        // but a stronger one may answer the very next poll — the paid key is
+        // often just behind a 120s cooldown that another group armed. Parking
+        // the delta in pendingX (and flagging the raid degraded) is what lets
+        // tryRearmX pick it up; without it the goal is dead for the whole hour
+        // and the admin is told they need a paid key they may already have.
+        pendingX = { ...pendingX, reposts: s.reposts };
+        xUnavailable = true;
         warning =
-          "⚠️ Repost tracking needs a paid X API key — that goal was dropped. Every other goal is running.";
-        log.warn(`[raid] ${g.chatId} dropped the repost goal — the answering source can't see reposts`);
+          "⚠️ Reposts can't be counted by the source that answered, so that goal is on hold. " +
+          "It joins in automatically if a source that can see reposts answers during the raid.";
+        log.warn(`[raid] ${g.chatId} parked the repost goal — the answering source can't see reposts`);
       }
       const measurable =
         target.likes > baseline.likes || target.replies > baseline.replies || target.reposts > baseline.reposts;
@@ -435,20 +451,32 @@ async function tryRearmX(g) {
     }
     return false;
   }
-  const seesReposts = m.retweets != null;
-  raid.baseline = { likes: m.likes, replies: m.replies, reposts: seesReposts ? m.retweets : 0 };
-  raid.target = {
-    likes: p.likes > 0 ? raid.baseline.likes + p.likes : raid.baseline.likes,
-    replies: p.replies > 0 ? raid.baseline.replies + p.replies : raid.baseline.replies,
-    reposts: p.reposts > 0 && seesReposts ? raid.baseline.reposts + p.reposts : raid.baseline.reposts,
-  };
-  raid.current = { ...raid.baseline };
+  // Resolve ONLY the metrics that are still pending. A raid can be partly
+  // tracked — likes counting fine while reposts wait for a source that can see
+  // them — and re-baselining everything would reset the likes goal to the
+  // current count, silently erasing the progress the group has already made.
+  const reading = { likes: m.likes, replies: m.replies, reposts: m.retweets };
+  const pending = { ...p };
+  let armed = 0;
+  for (const key of ["likes", "replies", "reposts"]) {
+    if (!(pending[key] > 0)) continue;
+    // null means this source cannot SEE the metric — leave it pending.
+    if (reading[key] == null) continue;
+    raid.baseline[key] = reading[key];
+    raid.target[key] = reading[key] + pending[key];
+    raid.current[key] = reading[key];
+    pending[key] = 0;
+    armed++;
+  }
+  if (!armed) return false;
+
+  raid.pendingX = pending;
   raid.postText = m.text || raid.postText;
-  raid.pendingX = { likes: 0, replies: 0, reposts: 0 };
-  raid.xUnavailable = false;
-  raid.crewOnly = false;
+  // Still degraded while anything is waiting for a stronger source.
+  raid.xUnavailable = pending.likes > 0 || pending.replies > 0 || pending.reposts > 0;
+  if (card.activeMetrics({ ...raid, crewOnly: false }).length) raid.crewOnly = false;
   await store.save();
-  log.info(`[raid] X came back for ${g.chatId} — X goals re-armed from the current counts`);
+  log.info(`[raid] X came back for ${g.chatId} — ${armed} goal(s) re-armed from the current counts`);
   return true;
 }
 
@@ -464,7 +492,10 @@ async function tickOne(telegram, g) {
 
   const before = card.signature(raid, "running");
 
-  if (raid.crewOnly && raid.xUnavailable) await tryRearmX(g);
+  // Gated on xUnavailable ALONE. It used to also require crewOnly, which meant
+  // a PARTLY degraded raid — likes counting, reposts parked — never re-armed at
+  // all, because crewOnly is false the moment any one metric is measurable.
+  if (raid.xUnavailable) await tryRearmX(g);
 
   if (!raid.crewOnly && raid.postId) {
     const m = await xMetrics.fetchTweetMetrics(raid.postId);
@@ -488,6 +519,14 @@ async function tickOne(telegram, g) {
   }
   raid.lastPolledAt = Date.now();
 
+  // The X read above can await for seconds, and an admin can tap 🛑 Stop in
+  // that window (or a crew join can complete the raid). finishRaid is
+  // idempotent, but everything BELOW here is not: it would write counts, repaint
+  // the card as live — countdown, "Count me in" button and all — and then never
+  // repaint it again, because a finished raid is no longer in store.running().
+  // The chat would already be unlocked, showing a raid that never ends.
+  if (g.raid !== raid || raid.status !== "running") return;
+
   if (card.isComplete(raid)) {
     await store.save();
     return finishRaid(telegram, g, "completed");
@@ -509,9 +548,14 @@ async function tickOne(telegram, g) {
   const movedSinceBump = countsMark(raid) !== raid.lastBumpMark;
 
   if (bumpDue && (chattered || movedSinceBump)) {
-    // A bump REPLACES this poll's edit rather than adding a second call.
-    await bumpCard(telegram, g);
-    return;
+    // A bump REPLACES this poll's edit rather than adding a second call —
+    // unless it fails, in which case the card must still be updated in place.
+    // Returning here regardless left the card frozen for the rest of the raid
+    // AND retried the failing send on every poll, because lastBumpAt was never
+    // moved: a flood-wait was met with more sends, not fewer.
+    if (await bumpCard(telegram, g)) return;
+    raid.lastBumpAt = Date.now();
+    await store.save();
   }
   if (after !== before) await editCard(telegram, g, "running");
 }

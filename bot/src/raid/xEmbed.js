@@ -93,11 +93,17 @@ async function fetchEmbedMetrics(tweetId, { timeoutMs = TIMEOUT_MS } = {}) {
   } catch {
     body = null;
   }
-  // HTTP 200 with an empty body, or an HTML bot-check interstitial served as
-  // 200. Reading either as `favorite_count → 0` would paint a live raid at zero
-  // with nothing anywhere saying why, so every unreadable-but-200 payload is a
-  // FAILURE, not a reading.
-  if (!body || typeof body !== "object") {
+  // HTTP 200 with an empty body, an HTML bot-check interstitial served as 200,
+  // or a JSON OBJECT that carries no counts — X's TweetTombstone shape, or a
+  // bare {}. All three are unreadable, and reading the last one as
+  // `favorite_count → 0` is the exact "partial object paints a live raid at
+  // zero" collapse this module exists to prevent: a raid would launch from a
+  // baseline of 0, then complete on its next poll the moment the endpoint
+  // answered properly, having generated no engagement at all.
+  //
+  // The presence of the FIELD is the test, not its truthiness — a genuinely
+  // unliked post reports favorite_count: 0, which is a real reading.
+  if (!body || typeof body !== "object" || !Number.isFinite(Number(body.favorite_count))) {
     armCooldown("X's public post data is unreadable");
     return { ok: false, error: cooldownReason, cooldown: true };
   }

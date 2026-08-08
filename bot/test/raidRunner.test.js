@@ -108,15 +108,87 @@ test("X unreadable with NO crew goal is refused, and the message says how to pro
   assert.match(res.error, /Crew goal/);
 });
 
-test("a repost goal is DROPPED when the answering source cannot see reposts", async () => {
+test("a repost goal the answering source can't see is PARKED, not buried", async () => {
   // null, not 0 — 0 would read as "nobody has reposted yet" and leave the goal
-  // sitting at 0/5 for the whole raid.
+  // sitting at 0/5 for the whole raid. And the goal must stay recoverable: the
+  // paid key is often just behind a cooldown another group armed.
   xMetrics.fetchTweetMetrics = metricsOk({ retweets: null });
   const g = group({ reposts: 5 });
   const res = await runner.startRaid(fakeTg(), g);
   assert.strictEqual(res.ok, true);
-  assert.strictEqual(g.raid.target.reposts, g.raid.baseline.reposts, "the goal is off, not pending forever");
-  assert.match(res.warning, /paid X API key/i);
+  assert.strictEqual(g.raid.target.reposts, g.raid.baseline.reposts, "not drawn on the card yet");
+  assert.strictEqual(g.raid.pendingX.reposts, 5, "but held for a source that can see it");
+  assert.strictEqual(g.raid.xUnavailable, true, "which is what makes tickOne try to re-arm it");
+  assert.match(res.warning, /on hold/i);
+});
+
+test("a PARTLY degraded raid re-arms without resetting the goals already running", async () => {
+  // The re-arm gate used to require crewOnly, so a raid with likes counting and
+  // reposts parked never re-armed at all. And re-baselining everything would
+  // reset the likes goal to the current count, erasing the group's progress.
+  xMetrics.fetchTweetMetrics = metricsOk({ retweets: null });
+  const g = group({ likes: 15, replies: 0, reposts: 5, crew: 0 });
+  await runner.startRaid(fakeTg(), g);
+  assert.strictEqual(g.raid.target.likes, 215);
+  assert.strictEqual(g.raid.crewOnly, false);
+
+  // Likes climb, then a source that CAN see reposts answers.
+  xMetrics.fetchTweetMetrics = metricsOk({ likes: 208, retweets: 40 });
+  await runner.tickOne(fakeTg(), g);
+  assert.strictEqual(g.raid.target.likes, 215, "the likes goal is untouched — progress survives");
+  assert.strictEqual(g.raid.baseline.reposts, 40);
+  assert.strictEqual(g.raid.target.reposts, 45, "the parked goal resolves from TODAY's count");
+  assert.strictEqual(g.raid.xUnavailable, false);
+  assert.strictEqual(g.raid.pendingX.reposts, 0);
+});
+
+test("an untracked metric moving does NOT repaint or re-post the card", async () => {
+  // The card draws only metrics with a goal, so hashing all three raw counts
+  // bought an edit — and eventually a delete-and-repost — that rendered a
+  // byte-identical card, out of the group's rate limit.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ likes: 15, replies: 0, reposts: 0, crew: 0 });
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  const beforeEdits = tg.calls.edited.length;
+  const beforeSends = tg.calls.sent.length;
+  g.raid.lastBumpAt = 0; // a bump is due
+  // Replies and reposts climb; likes (the only goal) do not.
+  xMetrics.fetchTweetMetrics = metricsOk({ replies: 999, retweets: 999 });
+  await runner.tickOne(tg, g);
+  assert.strictEqual(tg.calls.edited.length, beforeEdits, "no edit");
+  assert.strictEqual(tg.calls.sent.length, beforeSends, "and no re-post");
+});
+
+test("a failing bump still updates the card, and still respects its rate limit", async () => {
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ crew: 0 });
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  g.raid.lastBumpAt = 0;
+  tg.sendMessage = async () => { throw new Error("429: Too Many Requests: retry after 60"); };
+  xMetrics.fetchTweetMetrics = metricsOk({ likes: 205 });
+  await runner.tickOne(tg, g);
+  assert.ok(tg.calls.edited.length > 0, "the card is edited in place instead of being left frozen");
+  assert.ok(g.raid.lastBumpAt > 0, "and the bump clock moved, so a flood-wait isn't met with more sends");
+});
+
+test("a raid stopped mid-poll is not repainted as live", async () => {
+  // The X read can await for seconds, and an admin can tap Stop in that window.
+  // finishRaid is idempotent; the tail of tickOne is not.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ lockChat: true });
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  const editsAfterStart = tg.calls.edited.length;
+  xMetrics.fetchTweetMetrics = async () => {
+    await runner.finishRaid(tg, g, "cancelled"); // the admin taps Stop mid-read
+    return { ok: true, likes: 201, replies: 11, retweets: 5, text: "gm" };
+  };
+  await runner.tickOne(tg, g);
+  assert.strictEqual(g.raid.status, "cancelled");
+  // finishRaid paints the cancelled card; nothing may paint over it afterwards.
+  assert.strictEqual(tg.calls.edited.length, editsAfterStart + 1);
 });
 
 test("reposts as the ONLY goal, with no way to count them, is refused", async () => {

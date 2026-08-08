@@ -177,14 +177,16 @@ const utcClock = (ms) => new Date(ms).toISOString().slice(11, 19);
  */
 function signature(raid, status) {
   const c = raid.current || {};
-  return [
-    status || raid.status,
-    c.likes || 0,
-    c.replies || 0,
-    c.reposts || 0,
-    (raid.crew || []).length,
-    raid.lastError ? "err" : "ok",
-  ].join(":");
+  // Only the metrics the card actually DRAWS. Hashing all three raw counts
+  // meant an untracked metric moving — replies climbing on a likes-only raid —
+  // changed the signature and bought an editMessageText that rendered a
+  // byte-identical card, every poll, out of the group's edit rate limit.
+  //
+  // Listing the active KEYS as well as their values is what makes the
+  // crew-only → X-armed transition visible: tryRearmX can add goal rows without
+  // moving any number, and the card has to repaint for that.
+  const active = activeMetrics(raid).map((m) => `${m.key}=${c[m.key] || 0}`).join(",");
+  return [status || raid.status, active, (raid.crew || []).length, raid.lastError ? "err" : "ok"].join(":");
 }
 
 /**

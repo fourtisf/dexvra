@@ -167,12 +167,18 @@ async function fetchGuestMetrics(tweetId, { retried = false } = {}) {
     // rotated its operation hash. Reporting `gone` would cancel every live raid
     // on healthy posts the first time that happens, so this is a plain source
     // failure and the embed endpoint — which CAN tell those apart — decides.
-    armCooldown("X's anonymous read endpoint moved (queryId may be stale)");
+    //
+    // It does NOT arm the process-wide cooldown, for the same reason the paid
+    // path's 404 does not: one deleted post must not blind every other group's
+    // live raid. And it is worse here, because this source never reports `gone`
+    // — so the raid on the dead post keeps polling for its full hour, re-arming
+    // the backoff every time it lapsed and freezing every other group's counts
+    // for the duration.
     log.warn(
       `[raid] guest read 404 for post ${tweetId} with queryId ${DEFAULT_QUERY_ID} — ` +
         "if EVERY post 404s, X rotated the hash: set a current X_GUEST_QUERY_ID in .env and restart.",
     );
-    return { ok: false, error: cooldownReason, cooldown: true };
+    return { ok: false, error: "X's anonymous read endpoint returned nothing for this post" };
   }
 
   if (res.status !== 200) {

@@ -193,7 +193,11 @@ test("the embed source reports retweets as null, never 0", async () => {
 
 test("an HTTP 200 with an empty body is a FAILURE, not a reading of zero", async () => {
   process.env.RAID_FREE_METRICS = "1";
-  for (const body of ["", "<!DOCTYPE html><html>bot check</html>", null]) {
+  // The last two are JSON OBJECTS with no counts — X's tombstone shape, and a
+  // bare {}. A typeof check alone lets those through as "0 likes", which would
+  // launch a raid from a baseline of zero and then complete it on the next poll
+  // the moment the endpoint answered properly, with no engagement generated.
+  for (const body of ["", "<!DOCTYPE html><html>bot check</html>", null, { __typename: "TweetTombstone" }, {}]) {
     xEmbed._reset();
     x._reset();
     global.fetch = async () => ({ ok: true, status: 200, json: async () => body });
@@ -217,6 +221,27 @@ test("the guest source is tried BEFORE the embed one — it answers about repost
   assert.strictEqual(res.source, "guest");
   assert.strictEqual(res.retweets, 3);
   assert.ok(!hosts.some((p) => p.includes("tweet-result")), "the embed source was never needed");
+});
+
+test("a genuinely unliked post still reads as a real zero", () => {
+  // The guard is the PRESENCE of the field, not its truthiness.
+  process.env.RAID_FREE_METRICS = "1";
+  global.fetch = async () => jsonRes({ favorite_count: 0, conversation_count: 0, text: "new post" });
+  return x.fetchTweetMetrics(ID).then((res) => {
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(res.likes, 0);
+  });
+});
+
+test("a guest 404 does not blind every other group", async () => {
+  // One deleted post must not arm a process-wide backoff — and it is worse
+  // here than on the paid path, because this source never reports `gone`, so
+  // the raid on the dead post keeps polling for its full hour.
+  process.env.RAID_GUEST_METRICS = "1";
+  global.fetch = async (url) =>
+    String(url).includes("guest/activate") ? jsonRes({ guest_token: "G1" }) : jsonRes({}, 404);
+  await xGuest.fetchGuestMetrics(ID);
+  assert.strictEqual(xGuest.isOnCooldown(), false);
 });
 
 test("a guest 404 is AMBIGUOUS, so it never claims the post is gone", async () => {
