@@ -47,6 +47,58 @@ test("a cursor seeded on an empty feed judges by time, so no backlog replays lat
   assert.deepStrictEqual(fresh.map((f) => f.blockNumber), [2]);
 });
 
+test("a backlog after downtime is NOT replayed as if it just happened", () => {
+  // The cursor only advances on a SUCCESSFUL poll, so it sits still through an
+  // outage or a restart. On the first poll that works, the feed still returns
+  // its full 24h — and without an age bound all of it posts back-to-back.
+  const now = Date.now();
+  const many = Array.from({ length: 250 }, (_, i) => ({
+    txHash: `0x${i}`,
+    usd: 100,
+    blockNumber: 1001 + i,
+    blockTimeMs: now - (360 - i) * 60000, // 6h of history
+  }));
+  const fresh = mon.selectFresh({ b: 1000, t: 0 }, many, now);
+  assert.ok(fresh.length <= 8, `capped, got ${fresh.length}`);
+  for (const b of fresh) {
+    assert.ok(now - b.blockTimeMs <= 30 * 60000, "nothing older than the age bound is announced");
+  }
+});
+
+test("a genuine burst is PACED, not dropped — the cursor stops at the last one sent", () => {
+  const now = Date.now();
+  const burst = Array.from({ length: 20 }, (_, i) => ({
+    txHash: `0x${i}`,
+    usd: 100,
+    blockNumber: 500 + i,
+    blockTimeMs: now - 30_000, // all recent
+  }));
+  const fresh = mon.selectFresh({ b: 500, t: 0 }, burst, now);
+  assert.strictEqual(fresh.length, 8);
+  assert.strictEqual(fresh[0].blockNumber, 500, "oldest first, so they arrive in order");
+  assert.strictEqual(fresh.at(-1).blockNumber, 507);
+});
+
+test("buys the ESTIMATOR already announced are not re-told as verified alerts", () => {
+  // An estimate has no tx hash, so the latch cannot dedupe it. The watermark is
+  // what stops the group hearing about the same money twice across an outage.
+  const now = Date.now();
+  const buys = [
+    { txHash: "0xa", usd: 100, blockNumber: 5001, blockTimeMs: now - 8 * 60000 }, // during the outage
+    { txHash: "0xb", usd: 100, blockNumber: 5002, blockTimeMs: now - 60_000 }, // after it
+  ];
+  const fresh = mon.selectFresh({ b: 5000, t: 0, e: now - 5 * 60000 }, buys, now);
+  assert.deepStrictEqual(fresh.map((b) => b.txHash), ["0xb"]);
+});
+
+test("the dedupe latch outlives the feed's own 24h window", () => {
+  // The cursor compares >=, so a quiet pool re-reads its newest buy on every
+  // poll. A latch shorter than the feed's retention expires while that buy is
+  // still being served, and the identical alert posts again — hourly, for a day.
+  const latch = require("../src/group/alertLatch");
+  assert.ok(latch.LATCH_MS > 24 * 60 * 60 * 1000, "must clear GeckoTerminal's 24h trade window");
+});
+
 // ── Pool fan-in ──────────────────────────────────────────────────────────────
 
 test("groups watching the same token share ONE pool read", () => {

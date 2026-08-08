@@ -194,11 +194,18 @@ async function fetchPoolBuys(net, pool, tokenAddress, { minUsd = 0, tokenIsBase 
     if (t) buys.push(t);
     else if (tradeIsBuyOfToken(row && row.attributes, tokenAddress, opts) === null) unrelated++;
   }
-  // A pool where NOTHING involves our token is a resolver bug (wrong pool,
-  // wrong chain) — and it would otherwise be indistinguishable from a quiet
-  // pool, which is a failure that stays silent for as long as nobody asks.
+  // A busy pool where NOTHING involves our token is a resolver problem — the
+  // wrong pool, the wrong chain, or an address form we failed to match (TON and
+  // Sui compare exactly, since only hex is case-normalised). That is US BEING
+  // BLIND, not the pool being quiet, so it must resolve `null`: returning `[]`
+  // would assert authoritative silence, suppress the estimator, and leave the
+  // group with no alerts at all and nothing above debug to say why.
   if (rows.length && unrelated === rows.length) {
-    log.debug(`[buybot] ${net}/${pool}: ${rows.length} trades, none involve ${tokenAddress} — pool may be misresolved`);
+    log.warn(
+      `[buybot] ${net}/${pool}: ${rows.length} trades and none involve ${tokenAddress} — ` +
+        "the pool is probably wrong for this token. Re-run /settoken (or /setchain) in the group.",
+    );
+    return null;
   }
   return mergeByTx(buys).sort((a, b) => a.blockNumber - b.blockNumber || a.blockTimeMs - b.blockTimeMs);
 }

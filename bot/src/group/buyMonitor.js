@@ -85,6 +85,19 @@ const lastPoll = new Map(); // poolKey → ts of the last trades read
 const FIRST_SIGHT_MS = 120 * 1000;
 const FIRST_SIGHT_MAX = 5;
 
+// The same protection, for every poll AFTER the first — because the cursor is
+// only advanced by a SUCCESSFUL poll, so it sits still through a GT outage, a
+// metadata hold, or the process being down. On the first poll that works again
+// the feed still hands back its full 24h, and without these two bounds all of
+// it posts back-to-back: hours-old buys announced as if they had just happened,
+// which then trips Telegram's flood limit and turns into a retry storm.
+//
+// A buy older than this is not news, so it is dropped rather than queued.
+const MAX_ALERT_AGE_MS = 30 * 60 * 1000;
+// A genuine burst is paced instead of dropped: the cursor stops at the last one
+// posted, so the rest arrive on the next poll.
+const MAX_PER_POLL = 8;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => Date.now();
 const poolKeyOf = (chain, pool) => `${chain}:${String(pool).toLowerCase()}`;
@@ -127,11 +140,21 @@ function selectFresh(cursor, buys, at = now()) {
     const cutoff = at - FIRST_SIGHT_MS;
     return buys.filter((b) => b.blockTimeMs && b.blockTimeMs >= cutoff).slice(-FIRST_SIGHT_MAX);
   }
-  if (cursor.b > 0) return buys.filter((b) => b.blockNumber >= cursor.b);
-  // Seeded on an empty feed: there is no block to compare against, so judge by
-  // time. Without this, a pool that was idle when we first saw it would look
-  // like first sight forever and replay its whole backlog the moment it trades.
-  return buys.filter((b) => b.blockTimeMs && b.blockTimeMs >= (cursor.t || 0));
+  const after = cursor.b > 0
+    ? buys.filter((b) => b.blockNumber >= cursor.b)
+    // Seeded on an empty feed: there is no block to compare against, so judge
+    // by time. Without this, a pool that was idle when we first saw it would
+    // look like first sight forever and replay its backlog the moment it trades.
+    : buys.filter((b) => b.blockTimeMs && b.blockTimeMs >= (cursor.t || 0));
+
+  return after
+    // Anything the ESTIMATOR already announced during an outage. Without this
+    // the group hears about the same money twice — once as "≈ $3,000 over 4
+    // buys" while the feed was down, then again as four verified alerts when it
+    // came back. The per-tx latch cannot help: an estimate has no tx to latch.
+    .filter((b) => !cursor.e || !b.blockTimeMs || b.blockTimeMs > cursor.e)
+    .filter((b) => !b.blockTimeMs || b.blockTimeMs >= at - MAX_ALERT_AGE_MS)
+    .slice(0, MAX_PER_POLL); // oldest first, so a burst is paced in order
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -377,8 +400,16 @@ async function pollTrades(tg, entry) {
       }
     }
   }
-  state.cursors[entry.key] = { b: hold === null ? newest : hold, t: now() };
+  // Where the cursor lands, in order of precedence:
+  //   hold      — an undelivered buy still needs retrying (see above)
+  //   lastSent  — the batch was capped, so the rest come next poll
+  //   newest    — everything in the feed is accounted for
+  const lastSent = fresh[fresh.length - 1].blockNumber || 0;
+  const capped = fresh.length === MAX_PER_POLL && lastSent < newest;
+  const cursorBlock = hold !== null ? hold : capped ? lastSent : newest;
+  state.cursors[entry.key] = { b: cursorBlock, t: now(), e: cursor ? cursor.e : 0 };
   await saveState();
+  if (capped) log.info(`[buybot] ${entry.key}: paced — more buys queued for the next poll`);
   if (posted) {
     log.info(
       `[buybot] verified ${entry.chain} buys: feed=${buys.length} fresh=${fresh.length} posted=${posted} pool=${entry.pool}`,
@@ -404,8 +435,14 @@ async function pollEstimate(tg, entry, pool) {
   if (!est) return;
   for (const g of entry.groups) {
     if (g.minBuyUsd && est.usd < g.minBuyUsd) continue;
-    await deliver(tg, g.chatId, renderEstimateAlert(g, est, pool), null);
+    await deliver(tg, g.chatId, () => renderEstimateAlert(g, est, pool), null);
   }
+  // Mark everything up to now as already announced, so the real path does not
+  // re-tell the group about the same money when the feed comes back. An
+  // estimate carries no tx hash, so the latch cannot do this for us.
+  const cur = state.cursors[entry.key] || { b: 0, t: now() };
+  state.cursors[entry.key] = { ...cur, e: now() };
+  await saveState();
   log.debug(`[buybot] volume-diff buy estimate for ${entry.key}: $${Math.round(est.usd)} over ${est.count}`);
 }
 

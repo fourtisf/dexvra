@@ -36,11 +36,19 @@ const FILE = "buyLatch.json";
 // transaction. Deliberately NOT the 1h latch: a crash must cost one duplicate
 // at worst, never a permanent hole.
 const CLAIM_MS = 120 * 1000;
-// How long a delivered transaction stays un-repeatable. The trades feed returns
-// a 24h window, but the block cursor already stops us re-reading old trades —
-// this is the backstop for a cursor that rewinds (a restored file, a pool that
-// re-resolves). One hour covers that without growing the file unbounded.
-const LATCH_MS = 60 * 60 * 1000;
+// How long a delivered transaction stays un-repeatable.
+//
+// THIS MUST OUTLIVE THE FEED'S OWN WINDOW, and that is the entire reason for
+// the number. GeckoTerminal serves the last 24 HOURS of trades, and the block
+// cursor compares `>=` (trades share blocks), so a quiet pool re-reads its
+// newest buy on every single poll. At one hour this latch expired while that
+// buy was still being handed to us, `claim()` succeeded again, and the group
+// got the SAME alert re-posted — roughly once an hour, up to twenty-odd times,
+// until the trade finally aged out of the feed.
+//
+// The comment here used to say the cursor bounded this and the cursor's comment
+// said the latch did. Neither did. 26h clears 24h with room for clock skew.
+const LATCH_MS = 26 * 60 * 60 * 1000;
 // Bound the file. Entries expire on their own, but a sweep only runs on write,
 // so a burst of groups going quiet at once should not leave megabytes behind.
 const MAX_ENTRIES = 20000;

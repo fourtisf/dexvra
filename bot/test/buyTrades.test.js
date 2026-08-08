@@ -136,6 +136,19 @@ test("a pool of only sells resolves [] — answered, and none of them were buys"
   );
 });
 
+test("a pool where NOTHING involves our token is null, not authoritative silence", async () => {
+  // Wrong pool, wrong chain, or an address form we failed to match. That is US
+  // BEING BLIND — returning [] would assert the pool is quiet, suppress the
+  // estimator, and leave the group with no alerts and nothing to explain why.
+  const OTHER = "0xcccccccccccccccccccccccccccccccccccccccc";
+  await withFetch(
+    async () => jsonRes({ data: [row({ from_token_address: OTHER, to_token_address: WETH })] }),
+    async () => {
+      assert.strictEqual(await trades.fetchPoolBuys("eth", "0xpool", CA), null);
+    },
+  );
+});
+
 test("buys come back oldest-first, so alerts post in the order they happened", async () => {
   await withFetch(
     async () =>
