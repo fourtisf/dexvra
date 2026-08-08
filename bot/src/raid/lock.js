@@ -151,12 +151,24 @@ async function unlock(telegram, chatId, prevPermissions) {
     log.info(`[raid] unlocked group ${chatId} (${restore === FALLBACK_UNLOCKED ? "safe defaults" : "restored snapshot"})`);
     return { ok: true, error: null };
   } catch (e) {
-    if (isFatalChatError(e)) {
-      log.warn(`[raid] unlock skipped for ${chatId} — chat unreachable (${e && e.message})`);
-      return { ok: true, error: null, unreachable: true };
-    }
-    log.error(`[raid] UNLOCK FAILED for ${chatId}: ${e && e.message} — will retry on the next boot sweep`);
-    return { ok: false, error: (e && e.message) || "unlock failed" };
+    // A fatal chat error is NOT success here, and the reasoning that works for
+    // a message send does not transfer. setChatPermissions mutates the group's
+    // DEFAULT permissions, and those outlive the bot being kicked, blocked or
+    // demoted — so "there is no group left to unlock" is false: the group is
+    // still there, still muted, and now we cannot reach it.
+    //
+    // Reporting success would clear `locked` and discard prevPermissions, which
+    // is the only record of what the chat's rules were. Instead this stays a
+    // failure, the snapshot is kept, and the boot sweep retries — one API call
+    // per boot, which costs nothing and restores the group the moment the bot
+    // is re-added.
+    const unreachable = isFatalChatError(e);
+    log.error(
+      `[raid] UNLOCK FAILED for ${chatId}: ${e && e.message}` +
+        (unreachable ? " — the bot cannot reach that chat; it stays muted until the bot is re-added" : "") +
+        " — will retry on the next boot sweep",
+    );
+    return { ok: false, error: (e && e.message) || "unlock failed", unreachable };
   }
 }
 

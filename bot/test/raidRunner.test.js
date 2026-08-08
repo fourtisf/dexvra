@@ -176,7 +176,12 @@ test("a FAILED unlock leaves locked:true so the next boot sweep retries", async 
   assert.ok(g.raid.prevPermissions, "the snapshot survives for the retry");
 });
 
-test("a chat we were kicked from clears the lock — there is no group left to unlock", async () => {
+test("a chat we were kicked from KEEPS the lock flag and the snapshot", async () => {
+  // The reasoning that works for a failed message send does not transfer:
+  // setChatPermissions mutates the group's DEFAULT permissions, and those
+  // outlive the bot being kicked. The group is still there and still muted, so
+  // treating this as success would clear the flag and discard the only record
+  // of what its rules were.
   xMetrics.fetchTweetMetrics = metricsOk();
   const g = group({ lockChat: true });
   let calls = 0;
@@ -188,7 +193,70 @@ test("a chat we were kicked from clears the lock — there is no group left to u
   });
   await runner.startRaid(tg, g);
   await runner.finishRaid(tg, g, "expired");
+  assert.strictEqual(g.raid.locked, true);
+  assert.ok(g.raid.prevPermissions, "the snapshot survives, so a re-added bot can still restore the chat");
+});
+
+test("the boot sweep RETRIES a raid whose unlock failed, even though it has ended", async () => {
+  // finishRaid writes the end status before any sweep sees the record, so
+  // running() can never contain it. Without a second pass over stillLocked(),
+  // "the next boot sweep retries" was simply untrue, and one transient 502
+  // muted a customer's group permanently.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ lockChat: true });
+  let calls = 0;
+  const tg = fakeTg({
+    setChatPermissions: async (chatId, perms, extra) => {
+      calls++;
+      if (calls === 2) throw new Error("Bad Gateway"); // the unlock at finish
+      tg.calls.perms.push({ chatId, perms, extra });
+    },
+  });
+  await runner.startRaid(tg, g);
+  await runner.finishRaid(tg, g, "expired");
+  assert.strictEqual(g.raid.locked, true);
+  assert.strictEqual(store.running().length, 0, "it is no longer a running raid");
+  assert.strictEqual(store.stillLocked().length, 1, "but it IS still locked");
+
+  const res = await runner.recoverOnBoot(tg);
+  assert.strictEqual(res.retried, 1);
   assert.strictEqual(g.raid.locked, false);
+  assert.strictEqual(tg.calls.perms.at(-1).perms.can_send_messages, true);
+});
+
+test("a double-tapped Launch cannot snapshot the chat it just locked", async () => {
+  // The status guard alone is not enough: g.raid is not assigned until several
+  // awaits later, and Telegraf handles a batch of updates concurrently. The
+  // second caller would snapshot the LOCKED chat and the eventual restore would
+  // hand back "everything muted" while logging success.
+  xMetrics.fetchTweetMetrics = async () => {
+    await new Promise((r) => setTimeout(r, 15));
+    return { ok: true, likes: 200, replies: 10, retweets: 5, text: "gm", source: "api" };
+  };
+  const g = group({ lockChat: true });
+  const tg = fakeTg();
+  const [a, b] = await Promise.all([runner.startRaid(tg, g), runner.startRaid(tg, g)]);
+  const okCount = [a, b].filter((r) => r.ok).length;
+  assert.strictEqual(okCount, 1, "exactly one launch wins");
+  assert.strictEqual(g.raid.prevPermissions.can_send_messages, true, "the snapshot is the UNLOCKED chat");
+});
+
+test("a raid record that could not be persisted runs WITHOUT the lock", async () => {
+  // Locking with nothing on disk is the "locked group with no record" state
+  // that no sweep can find — the exact thing RECORD BEFORE ACT exists to stop.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ lockChat: true });
+  const tg = fakeTg();
+  const realSave = store.save;
+  store.save = async () => false; // a full or read-only DATA_DIR
+  try {
+    const res = await runner.startRaid(tg, g);
+    assert.strictEqual(res.ok, true, "the raid is the product; the lock is a mode");
+    assert.strictEqual(g.raid.locked, false);
+    assert.strictEqual(tg.calls.perms.length, 0, "the chat was never touched");
+  } finally {
+    store.save = realSave;
+  }
 });
 
 test("a lock that cannot be applied runs the raid WITHOUT it, rather than failing", async () => {
@@ -210,6 +278,26 @@ test("a card that cannot be posted rolls the lock back and leaves no raid behind
   // A locked group with no card is a silenced chat with no visible reason.
   assert.strictEqual(tg.calls.perms.length, 2, "locked, then unlocked again");
   assert.strictEqual(tg.calls.perms.at(-1).perms.can_send_messages, true);
+});
+
+test("if that rollback's unlock ALSO fails, the record is kept for the sweep", async () => {
+  // Wiping it here would produce the one state this whole ordering exists to
+  // avoid: a locked group with no record, which no sweep can ever find.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ lockChat: true });
+  let perms = 0;
+  const tg = fakeTg({
+    sendMessage: async () => { throw new Error("Forbidden: bot is not a member of the supergroup chat"); },
+    setChatPermissions: async () => {
+      perms++;
+      if (perms > 1) throw new Error("Forbidden: bot is not a member of the supergroup chat");
+    },
+  });
+  const res = await runner.startRaid(tg, g);
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(g.raid.status, "cancelled");
+  assert.strictEqual(g.raid.locked, true);
+  assert.strictEqual(store.stillLocked().length, 1, "the sweep can find it");
 });
 
 // ── Polling ──────────────────────────────────────────────────────────────────

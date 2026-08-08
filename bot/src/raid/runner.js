@@ -26,6 +26,7 @@ const activeGroups = new Set();
 const chatterSinceBump = new Map(); // chatId → messages since the card last moved
 const pinnedByUs = new Set(); // `${chatId}:${messageId}` — see handlePinned
 const cantDelete = new Set(); // chatIds we've already warned about once
+const starting = new Set(); // chatIds mid-launch — see the note in startRaid
 
 const isRaidActive = (chatId) => activeGroups.has(String(chatId));
 
@@ -66,6 +67,27 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
     // restored to how it was before the FIRST lock.
     return { ok: false, error: "A raid is already running in this group." };
   }
+  // ...and the status check alone is not enough. `g.raid` is not assigned until
+  // several awaits later (the X read, then the permission snapshot), and
+  // Telegraf handles a batch of updates CONCURRENTLY — so a double-tap on
+  // Launch gets two callers through the check above. The second one then
+  // snapshots a chat the first has already LOCKED, records "everything muted"
+  // as prevPermissions, and the eventual restore hands that back: the group is
+  // silenced permanently while every log line says the unlock succeeded.
+  //
+  // This claim is synchronous, before any await, which is what closes the
+  // window. Released in the finally at the end.
+  const gid = String(g.chatId);
+  if (starting.has(gid)) return { ok: false, error: "That raid is already being launched." };
+  starting.add(gid);
+  try {
+    return await launch(telegram, g, s, startedBy);
+  } finally {
+    starting.delete(gid);
+  }
+}
+
+async function launch(telegram, g, s, startedBy) {
   const postId = xMetrics.parseTweetId(s.postUrl);
   if (!postId) return { ok: false, error: "That post link doesn't look right. Paste the full URL of an X post." };
 
@@ -176,9 +198,18 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
   }
   g.raid = raid;
   g.stats.started = (g.stats.started || 0) + 1;
-  await store.save();
+  const recorded = await store.save();
+  if (raid.locked && !recorded) {
+    // The record did NOT reach disk (full or read-only DATA_DIR). Locking now
+    // would silence the group with nothing on disk for any sweep to find — the
+    // exact state RECORD BEFORE ACT exists to prevent — so run without the lock
+    // instead. The raid is the product; the lock is a mode.
+    g.raid.locked = false;
+    g.raid.prevPermissions = null;
+    log.error(`[raid] running ${g.chatId} WITHOUT the chat lock — the raid record could not be persisted`);
+  }
 
-  if (raid.locked) {
+  if (g.raid.locked) {
     const res = await lock.applyLock(telegram, g.chatId);
     if (!res.ok) {
       // The raid is the product; the lock is a mode. Run without it — and clear
@@ -199,8 +230,22 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
   } catch (e) {
     // A locked group with no card is a silenced chat with no visible reason.
     log.error(`[raid] couldn't post the card in ${g.chatId}: ${e && e.message}`);
-    if (g.raid.locked) await lock.unlock(telegram, g.chatId, g.raid.prevPermissions);
-    g.raid = { status: "idle" };
+    let unlocked = true;
+    if (g.raid.locked) {
+      const res = await lock.unlock(telegram, g.chatId, g.raid.prevPermissions);
+      unlocked = res.ok;
+    }
+    if (unlocked) {
+      g.raid = { status: "idle" };
+    } else {
+      // Do NOT wipe the record: that is the "locked group with no record, which
+      // no sweep can ever find" state this function's own ordering exists to
+      // avoid. Keep it, cancelled but still flagged locked, so stillLocked()
+      // finds it and the boot sweep retries the unlock.
+      g.raid.status = "cancelled";
+      g.raid.finishedAt = Date.now();
+      reportStranded(g.chatId, "the card could not be posted and the rollback unlock failed");
+    }
     await store.save();
     return { ok: false, error: `Couldn't post the raid card — ${e && e.message}` };
   }
@@ -297,6 +342,20 @@ async function bumpCard(telegram, g) {
 
 // ── Finishing ────────────────────────────────────────────────────────────────
 
+/**
+ * A group we believe is still muted by us. This is the ONE failure in the
+ * feature that a customer feels and nobody else notices — the chat just goes
+ * quiet — so it goes to the ops channel, not only to pm2.
+ */
+function reportStranded(chatId, why) {
+  log.alert(
+    `🔇 <b>Raid: a group may still be locked</b>\n\n` +
+      `Chat <code>${chatId}</code> — ${why}.\n\n` +
+      `<i>The boot sweep retries automatically. If it stays muted, restore the group's permissions by hand ` +
+      `(Telegram → group → Permissions) and check the bot is still an admin there.</i>`,
+  );
+}
+
 /** The ONLY exit door. status ∈ completed | expired | cancelled. */
 async function finishRaid(telegram, g, status) {
   const raid = g.raid;
@@ -310,8 +369,12 @@ async function finishRaid(telegram, g, status) {
     if (res.ok) {
       raid.locked = false;
       raid.prevPermissions = null;
+    } else {
+      // `locked` and the snapshot deliberately survive. The status write below
+      // moves this record out of running(), so the sweep finds it through
+      // stillLocked() instead — which is the whole reason that selector exists.
+      reportStranded(g.chatId, `the unlock failed (${res.error})`);
     }
-    // On failure `locked` deliberately stays true so the boot sweep retries.
   }
 
   markActive(g.chatId, false);
@@ -475,8 +538,31 @@ async function recoverOnBoot(telegram) {
       log.info(`[raid] boot recovery: resuming raid in ${g.chatId}, ${Math.round((deadline - Date.now()) / 60000)}min left`);
     }
   }
-  if (released || resumed) log.info(`[raid] boot sweep: ${released} released, ${resumed} resumed`);
-  return { released, resumed };
+
+  // SECOND PASS — groups whose raid has already ENDED but whose unlock failed.
+  // finishRaid writes the end status before this sweep ever sees the record, so
+  // running() cannot contain them; without this pass, "the next boot sweep
+  // retries" was simply untrue and one transient 502 muted a customer's group
+  // permanently. Cheap: one API call per still-locked group per boot, and it
+  // restores the chat the moment the bot can reach it again.
+  let retried = 0;
+  for (const g of store.stillLocked()) {
+    if (g.raid.status === "running") continue; // handled above
+    const res = await lock.unlock(telegram, g.chatId, g.raid.prevPermissions);
+    if (res.ok) {
+      g.raid.locked = false;
+      g.raid.prevPermissions = null;
+      retried++;
+      log.info(`[raid] boot recovery: unlocked ${g.chatId} on retry`);
+    } else {
+      reportStranded(g.chatId, `still locked after a retry (${res.error})`);
+    }
+  }
+  if (released || resumed || retried) {
+    await store.save();
+    log.info(`[raid] boot sweep: ${released} released, ${resumed} resumed, ${retried} unlocked on retry`);
+  }
+  return { released, resumed, retried };
 }
 
 function start(bot) {

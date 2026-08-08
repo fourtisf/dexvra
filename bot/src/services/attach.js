@@ -69,6 +69,19 @@ function attachServices(bot, services) {
   // by name, which is what makes that visible.
   if (require("../config/constants").RAID_ENABLED) {
     add("raidRunner", () => require("../raid/runner").start(bot));
+  } else {
+    // The sweep runs EVEN WITH THE FEATURE OFF, and that is the point. The
+    // obvious response to a raid misbehaving in a customer's group is
+    // RAID_ENABLED=0 plus a restart — which, without this, would also remove
+    // the boot sweep and the /raid panel's Stop button, leaving every currently
+    // locked group muted with no remaining path to an unlock. Turning a feature
+    // off must not strand the chats it was holding.
+    add("raidUnlockSweep", () => {
+      require("../raid/runner")
+        .recoverOnBoot(bot.telegram)
+        .catch((e) => log.warn(`[raid] disabled-mode unlock sweep failed: ${e && e.message}`));
+      return { stop: () => {} };
+    });
   }
 
   // Is any of the above actually working? Nothing answered that until now: a

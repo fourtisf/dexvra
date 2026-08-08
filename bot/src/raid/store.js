@@ -91,9 +91,32 @@ const all = () => Object.values(groups);
 /** Every group with a live raid — the runner's per-tick query. */
 const running = () => all().filter((g) => g && g.raid && g.raid.status === "running");
 
-/** Persist. Never throws: a failed write must not take down the poll loop. */
+/**
+ * Every group we still believe is LOCKED BY US, whatever the raid's status.
+ *
+ * Separate from running() on purpose. A raid whose unlock failed keeps
+ * `locked: true` but its status has already moved to expired/cancelled, so
+ * running() can never see it again — which made "the next boot sweep retries"
+ * false for the one case it was written for. This is what the sweep reads.
+ */
+const stillLocked = () => all().filter((g) => g && g.raid && g.raid.locked);
+
+/**
+ * Persist. Never throws — a failed write must not take down the poll loop —
+ * but it DOES report, and it returns whether the write landed.
+ *
+ * The silent version was worse than it looked: the whole recovery design rests
+ * on the raid record reaching disk before the chat is touched, and a full or
+ * read-only DATA_DIR made that a no-op with no log line anywhere.
+ */
 async function save() {
-  await saveJSON(FILE, groups).catch(() => {});
+  try {
+    await saveJSON(FILE, groups);
+    return true;
+  } catch (e) {
+    require("../helpers/logger").error(`[raid] could not persist ${FILE}: ${e && e.message}`);
+    return false;
+  }
 }
 
 async function setSettings(chatId, patch) {
@@ -151,6 +174,7 @@ module.exports = {
   getOrCreate,
   all,
   running,
+  stillLocked,
   save,
   setSettings,
   setRaid,
