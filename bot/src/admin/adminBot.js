@@ -230,7 +230,7 @@ function bannerExists() {
 }
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
-const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up" };
+const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up", buy: "🟢 Buy Bot" };
 // Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
@@ -253,7 +253,8 @@ function btHomeText() {
     `(atau <b>gambar client</b> untuk Banner Ads) ke dalam kotak di gambar itu, ` +
     `plus tulisan <b>$TICKER + nama</b> kalau diaktifkan.\n\n` +
     `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
-    `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n\n` +
+    `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n` +
+    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video" : "— teks biasa"}\n\n` +
     `Pilih layanan yang mau diatur:`
   );
 }
@@ -263,7 +264,7 @@ function btHomeKb() {
     [Markup.button.callback(on ? "🟢 Kirim banner: AKTIF — tekan untuk matikan" : "🔴 Kirim banner: MATI — tekan untuk nyalakan", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
-    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup")],
+    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup"), Markup.button.callback(BT_KINDS.buy, "btk:buy")],
     [Markup.button.callback("⬅ Kembali", "home")],
   ]);
 }
@@ -276,7 +277,10 @@ function btKindText(kind) {
     const note =
       kind === "rankup"
         ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
-        : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
+        : kind === "buy"
+          ? `\nGIF/video ini dipakai <b>SEMUA grup</b> yang pakai buy bot — diputar di atas setiap alert pembelian, dengan detail transaksi jadi captionnya.\n\n` +
+            `Kalau kosong, alert dikirim sebagai <b>teks biasa</b> (tetap jalan normal).`
+          : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
     return `🎨 <b>${BT_KINDS[kind]}</b>\n\n` + clipLine + note;
   }
   const s = bannerTpl.getSettings(kind);
@@ -1872,7 +1876,7 @@ function build() {
 
   // ── Channel banner artwork (template compositor, per service) ──
   const K = "(listing|trending|banner)";
-  const KM = "(listing|trending|banner|pump|rankup)"; // media-capable kinds (incl. pump + rank-up)
+  const KM = "(listing|trending|banner|pump|rankup|buy)"; // media-capable kinds (incl. pump, rank-up + group buy alerts)
   bot.action("bt", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;

@@ -66,11 +66,64 @@ const relAddress = (rel) => {
  * the counterparty's ticker (WETH, SOL) instead of the customer's.
  */
 function symbolFromGtPool(pool, tokenAddress) {
+  return sidesOfGtPool(pool, tokenAddress).symbol;
+}
+
+/**
+ * Both halves of a GT pool, from OUR token's point of view.
+ *
+ *   symbol / address        the tracked token
+ *   counterSymbol/-Address  what it trades against
+ *
+ * The counterparty matters because a buy alert wants to say "$48.97 (0.6646
+ * SOL)" — and the only honest source for that native figure is the amount the
+ * trader actually SPENT, which is only a native amount when the other side of
+ * the pool IS the native coin.
+ */
+function sidesOfGtPool(pool, tokenAddress) {
   const a = (pool && pool.attributes) || {};
+  const rel = (pool && pool.relationships) || {};
   const parts = String(a.name || "").split("/").map((s) => s.trim());
-  if (parts.length < 2) return "";
-  const tokenIsQuote = sameToken(relAddress(pool.relationships && pool.relationships.quote_token), tokenAddress);
-  return (tokenIsQuote ? parts[1] : parts[0]) || "";
+  const quoteAddr = relAddress(rel.quote_token);
+  const baseAddr = relAddress(rel.base_token);
+  if (parts.length < 2) return { symbol: "", counterSymbol: "", address: "", counterAddress: "" };
+  const tokenIsQuote = sameToken(quoteAddr, tokenAddress);
+  return {
+    symbol: (tokenIsQuote ? parts[1] : parts[0]) || "",
+    counterSymbol: (tokenIsQuote ? parts[0] : parts[1]) || "",
+    address: tokenIsQuote ? quoteAddr : baseAddr,
+    counterAddress: tokenIsQuote ? baseAddr : quoteAddr,
+  };
+}
+
+/**
+ * The token's NAME ("The Nietzschean Dog"), which the pool listing does not
+ * carry — its `name` is the PAIR ("HOPPY / WETH"). Called once at /settoken and
+ * on self-heal, never per poll.
+ */
+async function fetchTokenInfo(chain, address) {
+  const net = networkOf(chain);
+  if (net) {
+    const res = await gtGet(`/networks/${net}/tokens/${address}`);
+    const a = res && res.ok && res.body && res.body.data && res.body.data.attributes;
+    if (a && (a.name || a.symbol)) return { name: String(a.name || ""), symbol: String(a.symbol || "") };
+  }
+  if (!isGtPrimary(chain)) {
+    try {
+      const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const p = (j.pairs || []).find((x) => x && (sameToken(x.baseToken?.address, address) || sameToken(x.quoteToken?.address, address)));
+        const t = p && (sameToken(p.baseToken?.address, address) ? p.baseToken : p.quoteToken);
+        if (t) return { name: String(t.name || ""), symbol: String(t.symbol || "") };
+      }
+    } catch {
+      /* best effort — the alert falls back to the ticker */
+    }
+  }
+  return null;
 }
 
 // ── Shared rate-limit cooldown ───────────────────────────────────────────────
@@ -170,9 +223,12 @@ async function fetchGtPool(net, address) {
   pools.sort((a, b) => (num(b.attributes?.reserve_in_usd) || 0) - (num(a.attributes?.reserve_in_usd) || 0));
   const a = pools[0].attributes || {};
   const tx = (a.transactions && a.transactions.h24) || {};
+  const sides = sidesOfGtPool(pools[0], address);
   return {
     poolAddress: a.address || null,
-    symbol: symbolFromGtPool(pools[0], address),
+    symbol: sides.symbol,
+    counterSymbol: sides.counterSymbol,
+    counterAddress: sides.counterAddress,
     priceUsd: num(a.base_token_price_usd) ?? num(a.token_price_usd),
     mcap: num(a.market_cap_usd) ?? num(a.fdv_usd),
     volume24h: (a.volume_usd && num(a.volume_usd.h24)) || 0,
@@ -198,9 +254,14 @@ async function fetchDsPool(chain, address) {
   const p = pairs[0];
   const tx = (p.txns && p.txns.h24) || {};
   const quoteSide = sameToken(p.quoteToken && p.quoteToken.address, address);
+  const ours = (quoteSide ? p.quoteToken : p.baseToken) || {};
+  const other = (quoteSide ? p.baseToken : p.quoteToken) || {};
   return {
     poolAddress: p.pairAddress || null,
-    symbol: ((quoteSide ? p.quoteToken : p.baseToken) || {}).symbol || "",
+    symbol: ours.symbol || "",
+    name: ours.name || "",
+    counterSymbol: other.symbol || "",
+    counterAddress: other.address || "",
     priceUsd: num(p.priceUsd),
     mcap: num(p.marketCap) ?? num(p.fdv),
     volume24h: (p.volume && num(p.volume.h24)) || 0,
@@ -225,6 +286,8 @@ module.exports = {
   gtGet,
   sameToken,
   symbolFromGtPool,
+  sidesOfGtPool,
+  fetchTokenInfo,
   networkOf,
   inCooldown,
   armCooldown,

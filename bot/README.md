@@ -291,6 +291,38 @@ Four rules that look like details and are not:
   exactly one file (`src/group/fatalChatError.js`) so no two pipelines can drift
   into retrying a chat the other already gave up on.
 
+The alert itself:
+
+```
+🟢 The Nietzschean Dog
+
+🟢🟢🟢
+
+💲 $48.97 (0.6646 SOL)
+🪙 926,311.94 $RUSS
+👤 AFqu1M…jcBb | Txn
+📊 $0.00004823 | $46.5K
+
+🔥 Dexvra Trending | 📈 Chart
+```
+
+Two figures there are easy to get subtly wrong, so they are worth stating:
+the **native amount** is the token the buyer actually spent, read from the
+trade — not `usd ÷ nativePrice`, which is invented precision that disagrees
+with the transaction linked directly beneath it, and it is omitted entirely
+when the counterparty was not the native coin or a routed swap paid in
+several. **Price and market cap both come from the pool**, so the card
+cannot contradict itself the way an effective trade price beside a pool
+market cap does.
+
+**A GIF or video above every buy alert** — upload it in @dexvraadminbot →
+🎨 Gambar Banner Channel → 🟢 Buy Bot. One clip, used by every group, with
+the transaction details as its caption. It is resolved per send, so swapping
+it applies to the next alert with no restart; leave it empty and alerts are
+plain text. A clip Telegram refuses costs the artwork, never the alert. It
+is stored like every other banner clip (`banner-media-buy.*`), which is what
+gets it into the Mongo media mirror and through a container replace alive.
+
 ```bash
 npm run buybot:check                              # a known-good pool
 npm run buybot:check -- solana <token-address>    # your token

@@ -53,13 +53,17 @@ async function settoken(ctx) {
       .reply("Couldn't find a live pool for that address. Double-check it, or set the chain first with <code>/setchain &lt;chain&gt;</code> then <code>/settoken</code>.", HTML)
       .catch(() => {});
   }
+  // One extra lookup, once, for the token's NAME — the pool listing only knows
+  // the PAIR ("HOPPY / WETH"), and the name is what headlines every alert.
+  const info = await gt.fetchTokenInfo(res.chain, address).catch(() => null);
   await cfg.upsert(ctx.chat.id, {
     chain: res.chain,
     address,
     pairAddress: res.pool.poolAddress,
-    // Without this every alert reads "$TOKEN" — the placeholder the renderer
+    // Without these every alert reads "$TOKEN" — the placeholder the renderer
     // falls back to. Nothing else in the bot ever learns a group's ticker.
-    sym: res.pool.symbol || "",
+    sym: (info && info.symbol) || res.pool.symbol || "",
+    name: (info && info.name) || res.pool.name || "",
     on: true,
   });
   const label = chainOf(res.chain).label;

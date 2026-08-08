@@ -99,6 +99,10 @@ function toTrade(row, tokenAddress, opts) {
     usd,
     tokenAmount,
     spentAmount: num(a.from_token_amount),
+    // What the buyer actually PAID WITH. Only meaningful when it is the pool's
+    // other side; kept so the alert can print a real "(0.6646 SOL)" instead of
+    // deriving one from USD, which is invented precision.
+    spentToken: String(a.from_token_address || "").trim(),
     priceUsd: num(a.price_to_in_usd),
     blockNumber: num(a.block_number),
     blockTimeMs: Number.isFinite(ts) ? ts : 0,
@@ -128,7 +132,15 @@ function mergeByTx(trades) {
     }
     prev.usd += t.usd;
     prev.tokenAmount += t.tokenAmount;
-    prev.spentAmount += t.spentAmount;
+    // A routed swap can pay with a DIFFERENT token on each leg, and summing
+    // those into one figure would print a number in no currency at all. When
+    // the legs disagree, the spend is reported as unknown rather than wrong.
+    if (prev.spentToken !== t.spentToken) {
+      prev.spentToken = "";
+      prev.spentAmount = 0;
+    } else {
+      prev.spentAmount += t.spentAmount;
+    }
     prev.legs += 1;
     if (t.blockNumber && (!prev.blockNumber || t.blockNumber < prev.blockNumber)) prev.blockNumber = t.blockNumber;
     if (t.blockTimeMs && (!prev.blockTimeMs || t.blockTimeMs < prev.blockTimeMs)) prev.blockTimeMs = t.blockTimeMs;

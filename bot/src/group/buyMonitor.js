@@ -44,7 +44,7 @@ const latch = require("./alertLatch");
 const { isFatalChatError, describeChatError } = require("./fatalChatError");
 const tpl = require("../templates");
 const { payloadArgs } = require("../helpers/message");
-const { fmtPrice, formatNumber, fmtPct } = require("../helpers/format");
+const { fmtPrice, formatNumber, fmtPct, trimAmount } = require("../helpers/format");
 const { chainOf, txUrl, accountUrl, shortAddress } = require("../config/chains");
 const premium = require("../premium");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
@@ -179,8 +179,25 @@ function usdAmount(v) {
   if (!Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
   if (abs >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
-  if (abs >= 1) return "$" + Math.round(n).toLocaleString("en-US");
+  // Cents matter at the sizes most buys actually are — "$49" for a $48.97 buy
+  // reads as a rounded guess sitting directly above a link to the transaction
+  // that says otherwise. Whole dollars only once the cents stop mattering.
+  if (abs >= 1000) return "$" + Math.round(n).toLocaleString("en-US");
   return "$" + n.toFixed(2);
+}
+
+/**
+ * A token amount in full, with separators — "926,311.94".
+ *
+ * NOT the compact form used for market cap: "926.3K $RUSS" hides how many
+ * tokens someone actually received, and this line sits beside a transaction
+ * link that shows the exact figure.
+ */
+function tokenAmount(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n >= 1e12) return formatNumber(n); // beyond readable — compact it
+  return n.toLocaleString("en-US", { maximumFractionDigits: n >= 1 ? 2 : 8 });
 }
 
 /** The three tier labels, admin-editable, with FIELD-BY-FIELD fallback so a
@@ -206,6 +223,22 @@ const tradeDeepLink = (chain, address) =>
  * know — a missing link must never cost the alert, and a bare hash rendered as
  * a relative URL is worse than no link at all.
  */
+/**
+ * What the buyer actually SPENT, in the coin they spent it in — "(0.6646 SOL)".
+ *
+ * Taken from the trade's own from-token amount, NOT derived as usd/nativePrice.
+ * A derived figure is invented precision: it disagrees with the explorer the
+ * line right below it links to, and it silently absorbs any error in whichever
+ * price feed answered. Rendered only when the pool's other side really is what
+ * was paid with, and dropped entirely for a routed swap whose legs paid in
+ * different tokens.
+ */
+function spentNative(buy, pool) {
+  if (!pool || !buy || !(buy.spentAmount > 0) || !buy.spentToken) return "";
+  if (!pool.counterSymbol || !gt.sameToken(buy.spentToken, pool.counterAddress)) return "";
+  return ` (${trimAmount(Number(buy.spentAmount.toFixed(6)))} ${pool.counterSymbol})`;
+}
+
 function verifyRow(chain, buy) {
   const tx = txUrl(chain, buy.txHash);
   const who = buy.buyer ? accountUrl(chain, buy.buyer) : null;
@@ -215,21 +248,37 @@ function verifyRow(chain, buy) {
   // and let the rest inject arbitrary markup into the group's alert. Neither
   // field should ever contain one; that is exactly why it is worth spending a
   // function call on being sure.
-  if (tx) bits.push(`🔗 [Txn](${premium.sanitizeUrl(tx)})`);
-  if (who) bits.push(`👤 [${premium.sanitizeVar(shortAddress(buy.buyer))}](${premium.sanitizeUrl(who)})`);
-  return bits.join(" · ");
+  // Buyer first, then the transaction: who, then the proof.
+  //
+  // The 👤 lives HERE rather than in the template so the whole line can vanish
+  // on a chain we have no explorer for and no buyer address — a lone "👤" with
+  // nothing after it is not a row, it is a rendering bug.
+  if (who) bits.push(`[${premium.sanitizeVar(shortAddress(buy.buyer))}](${premium.sanitizeUrl(who)})`);
+  else if (buy.buyer) bits.push(premium.sanitizeVar(shortAddress(buy.buyer)));
+  if (tx) bits.push(`[Txn](${premium.sanitizeUrl(tx)})`);
+  return bits.length ? `👤 ${bits.join(" | ")}` : "";
 }
 
 function renderRealAlert(g, buy, pool) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
-  const price = buy.tokenAmount > 0 ? buy.usd / buy.tokenAmount : pool && pool.priceUsd;
+  const price = (pool && pool.priceUsd) || (buy.tokenAmount > 0 ? buy.usd / buy.tokenAmount : null);
   const impact = pool && pool.liquidity > 0 ? (buy.usd / pool.liquidity) * 100 : null;
   return tpl.render("group_buy_alert", {
     emoji: buyEmojiRow(buy.usd),
-    tier: tierFor(buy.usd),
+    // The token's own name headlines the card. It is admin-supplied via
+    // GeckoTerminal, so it goes through the same sanitiser as every other
+    // untrusted value — a token literally named "[click](url)" is not far-fetched.
+    name: premium.sanitizeVar(g.name || `$${sym}`),
+    // Empty for an ordinary buy, so the card looks exactly like the reference
+    // layout; only a big one earns a label.
+    tier: buy.usd >= BUYBOT_WHALE_USD ? ` · ${tierFor(buy.usd)}` : "",
+    native: spentNative(buy, pool),
     symbol: premium.sanitizeVar(`$${sym}`),
     usd: usdAmount(buy.usd),
-    tokenAmt: formatNumber(buy.tokenAmount),
+    tokenAmt: tokenAmount(buy.tokenAmount),
+    // The POOL's price, not the trade's effective one. They differ by fees and
+    // slippage, and this figure sits next to the market cap — the two have to
+    // come from the same place or the card contradicts itself.
     price: price ? fmtPrice(price) : "—",
     mcap: pool && pool.mcap ? "$" + formatNumber(pool.mcap) : "—",
     liq: pool && pool.liquidity ? "$" + formatNumber(pool.liquidity) : "—",
@@ -269,6 +318,45 @@ function renderEstimateAlert(g, est, pool) {
  * null and this claims nothing. That is not an oversight: a made-up key would
  * look like deduplication while deduplicating nothing.
  */
+/**
+ * The GIF/video an admin uploaded in @dexvraadminbot → 🎨 Gambar Banner Channel
+ * → 🟢 Buy Bot. One clip for every group, played above every buy alert with the
+ * transaction details as its caption.
+ *
+ * Resolved per send rather than cached, because `mediaOverride` is a stat() of
+ * one path and an admin swapping the clip has to take effect immediately — the
+ * whole point of editing it at runtime. Nothing here can fail the alert: no
+ * clip, or a clip Telegram rejects, falls back to the plain text card.
+ */
+function buyClip() {
+  try {
+    return require("../bannerTemplate").mediaOverride("buy");
+  } catch {
+    return null;
+  }
+}
+
+async function sendAlert(tg, chatId, text, extra) {
+  const clip = buyClip();
+  if (clip) {
+    // caption_entities, not entities — a caption carries its formatting under a
+    // different key, and sending the wrong one drops every link silently.
+    const caption = { caption: text, ...extra };
+    if (extra.entities) {
+      caption.caption_entities = extra.entities;
+      delete caption.entities;
+    }
+    try {
+      const send = clip.type === "video" ? tg.sendVideo : tg.sendAnimation;
+      return await send.call(tg, chatId, { source: clip.source }, caption);
+    } catch (e) {
+      // A rejected clip must cost the ARTWORK, never the alert.
+      log.warn(`[buybot] buy clip failed for ${chatId} (${e.message}) — sending the alert as text`);
+    }
+  }
+  return tg.sendMessage(chatId, text, extra);
+}
+
 async function deliver(tg, chatId, payload, dedupeId) {
   // Checked FIRST, and independently of dedupeId, because the estimated path
   // has no transaction to latch — without this a group that removed the bot is
@@ -281,7 +369,7 @@ async function deliver(tg, chatId, payload, dedupeId) {
   // group, every 25 seconds, forever.
   const { text, extra } = payloadArgs(typeof payload === "function" ? payload() : payload, false);
   try {
-    const sent = await tg.sendMessage(chatId, text, extra);
+    const sent = await sendAlert(tg, chatId, text, extra);
     if (!sent || !sent.message_id) {
       // Telegram answered without a message. Not delivered — so do NOT latch,
       // or this buy can never alert again in a group that never saw it.
@@ -483,16 +571,23 @@ async function pollPool(tg, entry) {
   // Self-heal ONLY a MISSING pool address. A transient GT/DS timeout looks
   // identical to a 404, so never repoint a pool an admin resolved just because
   // one poll produced a different (or no) result.
-  if (!entry.pool || entry.groups.some((g) => !g.sym)) {
+  const needsLabel = entry.groups.some((g) => !g.sym || !g.name);
+  if (!entry.pool || needsLabel) {
     const resolved = await gt.fetchPoolCached(entry.chain, entry.address);
     if (resolved && resolved.poolAddress) {
       if (!entry.pool) entry.pool = resolved.poolAddress;
+      // The NAME needs its own lookup, so it is only made when something is
+      // actually missing — never on the hot path.
+      const info = needsLabel ? await gt.fetchTokenInfo(entry.chain, entry.address).catch(() => null) : null;
       for (const g of entry.groups) {
         const patch = {};
         if (!g.pairAddress) patch.pairAddress = resolved.poolAddress;
-        // Backfills groups configured before the ticker was captured, which
-        // would otherwise be stuck reading "$TOKEN" forever.
-        if (!g.sym && resolved.symbol) patch.sym = resolved.symbol;
+        // Backfills groups configured before these were captured, which would
+        // otherwise be stuck reading "$TOKEN" forever.
+        const sym = (info && info.symbol) || resolved.symbol;
+        const name = (info && info.name) || resolved.name;
+        if (!g.sym && sym) patch.sym = sym;
+        if (!g.name && name) patch.name = name;
         if (Object.keys(patch).length) {
           Object.assign(g, patch);
           await cfg.upsert(g.chatId, patch);
@@ -552,6 +647,9 @@ module.exports = {
   tierFor,
   groupByPool,
   verifyRow,
+  spentNative,
+  buyClip,
+  sendAlert,
   deliver,
   renderRealAlert,
   renderEstimateAlert,

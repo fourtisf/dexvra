@@ -348,15 +348,13 @@ const DEFAULTS = {
   // the estimated path cannot fill; the two are separate templates precisely so
   // neither has to pretend.
   group_buy_alert:
-    "{emoji}\n" +
-    `${em("🟢", E.green)} **{symbol} · {tier}**\n\n` +
-    `${em("💲", E.dollar)} **Spent:** {usd}\n` +
-    `🪙 **Got:** {tokenAmt} {symbol}\n` +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("📈", E.chartUp)} **MCap:** {mcap}\n` +
-    "🌊 **Liquidity:** {liq} · 🎯 **Impact:** {impact}\n" +
-    "🕒 **24h:** {change} · ⛓ **Network:** {chain}\n\n" +
-    "{verify}\n\n" +
-    "[⚡ Buy {symbol} on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl})",
+    `${em("🟢", E.green)} **{name}**{tier}\n\n` +
+    "{emoji}\n\n" +
+    `${em("💲", E.dollar)} **{usd}**{native}\n` +
+    `🪙 {tokenAmt} {symbol}\n` +
+    "{verify}\n" +
+    `${em("📊", E.chart)} {price} | {mcap}\n\n` +
+    "🔥 [Dexvra Trending]({trending}) | 📈 [Chart]({coinUrl})",
   // THE DEGRADED ALERT — only sent when the per-transaction feed is unreadable.
   // It says "≈" and says why, because a number that cannot be checked must not
   // be dressed up as one that can.
@@ -679,7 +677,7 @@ const META = {
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Group tools: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["emoji", "tier", "symbol", "usd", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl"] },
   group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },

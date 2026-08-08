@@ -191,12 +191,26 @@ test("tier labels fall back field by field, so a half-typed override still rende
   }
 });
 
-test("the verify row is omitted entirely on a chain we have no explorer for", () => {
-  // A bare hash rendered as a relative URL is worse than no link at all.
-  assert.strictEqual(mon.verifyRow("nosuchchain", { txHash: "0xabc", buyer: "0xdef" }), "");
-  const row = mon.verifyRow("bsc", { txHash: "0xabc", buyer: "0xdef" });
-  assert.match(row, /bscscan\.com\/tx\/0xabc/);
-  assert.match(row, /bscscan\.com\/address\/0xdef/);
+test("no links are invented on a chain we have no explorer for", () => {
+  // A bare hash rendered as a relative URL is worse than no link at all — but
+  // the buyer's address is still worth showing as plain text.
+  const row = mon.verifyRow("nosuchchain", { txHash: "0xabc", buyer: "0xdefdefdefdefdefdef" });
+  assert.ok(!row.includes("]("), "no link markup");
+  assert.match(row, /👤 0xdefd/);
+  const linked = mon.verifyRow("bsc", { txHash: "0xabc", buyer: "0xdef" });
+  assert.match(linked, /bscscan\.com\/tx\/0xabc/);
+  assert.match(linked, /bscscan\.com\/address\/0xdef/);
+});
+
+test("the whole row vanishes when there is nothing to show", () => {
+  // The 👤 lives inside the row, so an empty one leaves no orphan icon behind.
+  assert.strictEqual(mon.verifyRow("nosuchchain", { txHash: "", buyer: "" }), "");
+  const out = mon.renderRealAlert(
+    { chatId: "-1", chain: "nosuchchain", address: "a", sym: "X", minBuyUsd: 0 },
+    { txHash: "", buyer: "", usd: 10, tokenAmount: 5 },
+    { priceUsd: 2, mcap: 100 },
+  ).text;
+  assert.ok(!out.includes("👤"));
 });
 
 test("a buy with no buyer address still links the transaction", () => {
@@ -220,6 +234,44 @@ test("the pool resolver reports the TRACKED token's ticker, whichever side it is
   const quote = { attributes: { name: "WETH / HOPPY" }, relationships: { quote_token: { data: { id: `eth_${HOPPY.toLowerCase()}` } } } };
   assert.strictEqual(gt.symbolFromGtPool(quote, HOPPY), "HOPPY");
   assert.strictEqual(gt.symbolFromGtPool({ attributes: { name: "SOLO" } }, HOPPY), "", "a name with no pair is no answer");
+});
+
+test("the alert renders the reference layout", () => {
+  const g = { chatId: "-1", chain: "solana", address: "So1", sym: "RUSS", name: "The Nietzschean Dog", minBuyUsd: 0 };
+  const pool = { priceUsd: 0.00004823, mcap: 46550, counterSymbol: "SOL", counterAddress: "SoNATIVE" };
+  const buy = {
+    txHash: "5xTx", buyer: "AFqu1MaaaaaaaaaaaaaaaaaaaaaaaaaaajcBb",
+    usd: 48.97, tokenAmount: 926311.94, spentAmount: 0.6646, spentToken: "SoNATIVE",
+  };
+  const out = mon.renderRealAlert(g, buy, pool).text;
+  assert.match(out, /The Nietzschean Dog/);
+  // Cents survive: "$49" above a link to the transaction that says $48.97 reads
+  // as a rounded guess.
+  assert.match(out, /\$48\.97 \(0\.6646 SOL\)/);
+  // The full token amount, not a compacted "926.3K".
+  assert.match(out, /926,311\.94 \$RUSS/);
+  assert.match(out, /AFqu1M…jcBb \| Txn/);
+  assert.ok(!out.includes("Whale"), "an ordinary buy carries no tier label");
+});
+
+test("the native amount comes from the trade, never derived from USD", () => {
+  const g = { chatId: "-1", chain: "solana", address: "So1", sym: "RUSS", minBuyUsd: 0 };
+  const pool = { priceUsd: 1, mcap: 1, counterSymbol: "SOL", counterAddress: "SoNATIVE" };
+  const base = { txHash: "t", buyer: "b", usd: 48.97, tokenAmount: 100 };
+  // Paid in the pool's other side → shown.
+  assert.strictEqual(mon.spentNative({ ...base, spentAmount: 0.6646, spentToken: "SoNATIVE" }, pool), " (0.6646 SOL)");
+  // Paid in something else (a USDC pair, or a routed swap whose legs disagree)
+  // → omitted rather than mislabelled as the native coin.
+  assert.strictEqual(mon.spentNative({ ...base, spentAmount: 50, spentToken: "SoUSDC" }, pool), "");
+  assert.strictEqual(mon.spentNative({ ...base, spentAmount: 0, spentToken: "" }, pool), "");
+});
+
+test("price and market cap both come from the pool, so they cannot contradict", () => {
+  const g = { chatId: "-1", chain: "solana", address: "So1", sym: "RUSS", minBuyUsd: 0 };
+  // An effective trade price differs from the pool price by fees and slippage;
+  // showing it beside the pool's market cap makes the card disagree with itself.
+  const out = mon.renderRealAlert(g, { txHash: "t", buyer: "b", usd: 100, tokenAmount: 1e6 }, { priceUsd: 0.00004823, mcap: 46550 }).text;
+  assert.match(out, /\$0\.0000482/);
 });
 
 test("the real alert carries the verified links; the estimated one says it cannot", () => {
