@@ -117,6 +117,7 @@ test("the whale card labels the figure HOLDS, not 'wallet balance'", () => {
   // total would be a wrong number presented as a right one.
   const out = mon.renderWhaleAlert(g(), buy, pool, { held: 1_980_000, holdsUsd: 95_523, position: "+3.82%" }).text;
   assert.match(out, /WHALE WALLET/);
+  assert.match(out, /🐋🐋/, "the row carries the whale icon, not the plain buy one");
   assert.match(out, /Holds: 1,980,000 \$RUSS · \$95,523/);
   assert.match(out, /Position: \+3\.82%/);
   assert.ok(!/wallet balance/i.test(out));
@@ -166,14 +167,18 @@ test("a group that never granted 'Pin messages' still gets its alerts", async ()
   assert.strictEqual(tg.calls.sent.length, 1);
 });
 
-test("the whale clip falls back to the buy clip, so one upload covers both", () => {
+test("the whale clip is its OWN — it never borrows the ordinary buy one", () => {
+  // The two slots exist so a whale LOOKS different scrolling past. Falling back
+  // would give both alerts identical artwork with only the wording changed.
   const bt = require("../src/bannerTemplate");
   const real = bt.mediaOverride;
   try {
     bt.mediaOverride = (k) => (k === "buy" ? { type: "animation", source: "/tmp/buy.gif" } : null);
-    assert.strictEqual(mon.buyClip("whale").source, "/tmp/buy.gif");
+    assert.strictEqual(mon.buyClip("whale"), null, "no whale clip uploaded → no clip, not the buy one");
+    assert.strictEqual(mon.buyClip("buy").source, "/tmp/buy.gif");
     bt.mediaOverride = (k) => ({ type: "animation", source: `/tmp/${k}.gif` });
-    assert.strictEqual(mon.buyClip("whale").source, "/tmp/whale.gif", "its own wins when set");
+    assert.strictEqual(mon.buyClip("whale").source, "/tmp/whale.gif");
+    assert.strictEqual(mon.buyClip("buy").source, "/tmp/buy.gif");
   } finally {
     bt.mediaOverride = real;
   }

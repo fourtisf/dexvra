@@ -295,7 +295,8 @@ The alert itself:
 
 ```
 🟢 NEW BUY — The Nietzschean Dog
-▰▱▱▱▱▱▱▱▱▱
+
+🟢🟢🟢
 
 💲 Spent: $48.97 (0.6646 SOL)
 🪙 Got: 926,311.94 $RUSS
@@ -313,12 +314,15 @@ here is the one the listing post already uses: **Label:** value, joined by
 knows the other.
 
 The header word is the size tier (`NEW BUY` / `WHALE BUY` / `MEGA BUY`,
-thresholds in `.env`, wording in `group_buy_tiers`), and the meter fills
-toward `BUYBOT_MEGA_USD` so size reads at a glance without a wall of
-repeated icons. It shares its characters with the raid card, which is what
-makes the two group features look like siblings. Prefer the classic look?
-Set `group_buy_style` to `🟢|⚫`, or swap `{bar}` for `{emoji}` in the
-template — the repeated-icon row is still there.
+thresholds in `.env`, wording in `group_buy_tiers`), and the row below it
+grows with the buy — one icon per `BUYBOT_EMOJI_STEP_USD`, floored at 3 and
+capped at 16 so it never wraps.
+
+It is a ROW and not a fill-meter on purpose. A meter renders the part that
+is *missing*, so a real buy comes out as `▰▱▱▱▱▱▱▱▱▱` and reads like
+something failed rather than like something good happened — a buy alert
+must never look like that. Change the icons with `group_buy_style`
+(`buy|whale`, default `🟢|🐋`).
 
 Two figures there are easy to get subtly wrong, so they are worth stating:
 the **native amount** is the token the buyer actually spent, read from the
@@ -335,7 +339,8 @@ A second alert class, keyed on **who bought**, not on how much they spent:
 
 ```
 🐋 WHALE WALLET — The Nietzschean Dog
-▰▰▱▱▱▱▱▱▱▱
+
+🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋
 
 💲 Spent: $804.72 (10.7568 SOL)
 🪙 Got: 51,874.15 $RUSS
@@ -368,10 +373,16 @@ minutes, with misses cached briefly so a dead RPC cannot cost a timeout per
 buy.
 
 **A GIF or video above every buy alert** — upload it in @dexvraadminbot →
-🎨 Gambar Banner Channel → 🟢 Buy Bot (and 🐋 Whale Alert
-for its own clip; whales fall back to the buy one, so a single upload covers
-both). One clip, used by every group, with the transaction details as its
-caption. It is resolved per send, so swapping
+🎨 Gambar Banner Channel → 🟢 Buy Bot, and a
+**separate** one under 🐋 Whale Alert. One clip each, used by every group,
+with the transaction details as the caption.
+
+The two slots **never borrow from each other**: a whale alert plays the
+whale clip and nothing else, an ordinary buy plays the buy clip and nothing
+else. That is the point of having two — a whale should *look* different
+scrolling past, and falling back would give both alerts identical artwork
+with only the wording changed. A whale with no clip uploaded is sent as
+text, and the admin menu says so rather than quietly borrowing. It is resolved per send, so swapping
 it applies to the next alert with no restart; leave it empty and alerts are
 plain text. A clip Telegram refuses costs the artwork, never the alert. It
 is stored like every other banner clip (`banner-media-buy.*`), which is what

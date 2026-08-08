@@ -254,7 +254,8 @@ function btHomeText() {
     `plus tulisan <b>$TICKER + nama</b> kalau diaktifkan.\n\n` +
     `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
     `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n` +
-    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video" : "— teks biasa"}\n\n` +
+    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video" : "— teks biasa"}\n` +
+    `🐋 Whale Alert: ${bannerTpl.mediaOverride("whale") ? "✅ ada GIF/video sendiri" : "— teks biasa (GIF terpisah dari Buy Bot)"}\n\n` +
     `Pilih layanan yang mau diatur:`
   );
 }
@@ -279,8 +280,9 @@ function btKindText(kind) {
       kind === "rankup"
         ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
         : kind === "whale"
-          ? `\nGIF/video khusus alert 🐋 <b>WHALE WALLET</b> — pembelian dari dompet yang sudah pegang banyak token itu, dan alertnya <b>di-pin</b> di grup.\n\n` +
-            `Kalau kosong, dipakai GIF <b>🟢 Buy Bot</b> biasa.`
+          ? `\nGIF/video KHUSUS alert 🐋 <b>WHALE WALLET</b> — pembelian dari dompet yang sudah pegang banyak token itu, dan alertnya <b>di-pin</b> di grup.\n\n` +
+            `⚠️ Ini <b>terpisah</b> dari GIF 🟢 Buy Bot dan <b>tidak saling pinjam</b>: whale cuma pakai GIF ini, beli biasa cuma pakai GIF itu. ` +
+            `Kalau di sini kosong, alert whale dikirim <b>tanpa GIF</b> — bukan pakai GIF Buy Bot.`
           : kind === "buy"
           ? `\nGIF/video ini dipakai <b>SEMUA grup</b> yang pakai buy bot — diputar di atas setiap alert pembelian, dengan detail transaksi jadi captionnya.\n\n` +
             `Kalau kosong, alert dikirim sebagai <b>teks biasa</b> (tetap jalan normal).`

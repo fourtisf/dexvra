@@ -298,27 +298,28 @@ test("the real alert carries the verified links; the estimated one says it canno
   assert.ok(!/[_*]{1,2}Live transaction/.test(est), "no raw markup leaks — the parser only knows **bold**, [links] and `code`");
 });
 
-test("the size meter fills toward the mega threshold, and a real buy is never empty", () => {
-  const bar = mon.buySizeBar;
-  assert.strictEqual(bar(0).replace(/▱/g, ""), "", "nothing bought, nothing filled");
-  assert.strictEqual(bar(1).startsWith("▰"), true, "a real buy always shows at least one cell");
-  assert.strictEqual(bar(5000), "▰".repeat(10), "a mega buy fills it");
-  assert.strictEqual(bar(1e9), "▰".repeat(10), "and it cannot overflow");
-  assert.strictEqual(bar(2500).length, 10, "always ten cells wide");
+test("the size row only ever GROWS — it is never rendered mostly empty", () => {
+  // A fill-meter shows what is MISSING, so a real buy comes out as
+  // "▰▱▱▱▱▱▱▱▱▱" and reads like something failed rather than like something
+  // good happened. A buy alert must never look like that.
+  const glyphs = (s) => Array.from(s).length;
+  assert.strictEqual(glyphs(mon.buyEmojiRow(500)), 10); // one per $50
+  assert.strictEqual(glyphs(mon.buyEmojiRow(0)), 3, "floored, never empty");
+  assert.strictEqual(glyphs(mon.buyEmojiRow(1e9)), 16, "capped, never a wall");
+  assert.ok(!mon.buyEmojiRow(50).includes("▱"), "no empty cells anywhere");
 });
 
-test("the meter's characters are admin-editable, falling back per position", () => {
+test("the row icons are admin-editable, falling back per position", () => {
   const tpl = require("../src/templates");
   const real = tpl.t;
   try {
-    // Setting them to circles gets the classic buy-bot look back out of the
-    // same mechanism, with no code change.
-    tpl.t = (k) => (k === "group_buy_style" ? "🟢|⚫" : real(k));
-    assert.strictEqual(mon.buySizeBar(5000), "🟢".repeat(10));
-    tpl.t = () => "🟩|"; // half typed
-    assert.strictEqual(mon.buySizeBar(0), "▱".repeat(10), "the missing half keeps its default");
+    tpl.t = (k) => (k === "group_buy_style" ? "🔥|🐳" : real(k));
+    assert.strictEqual(mon.buyEmojiRow(50), "🔥🔥🔥");
+    assert.strictEqual(mon.buyBarStyle()[1], "🐳", "whales get their own icon");
+    tpl.t = () => "🚀|"; // half typed
+    assert.deepStrictEqual(mon.buyBarStyle(), ["🚀", "🐋"], "the missing half keeps its default");
     tpl.t = () => { throw new Error("template layer down"); };
-    assert.strictEqual(mon.buySizeBar(5000), "▰".repeat(10));
+    assert.deepStrictEqual(mon.buyBarStyle(), ["🟢", "🐋"]);
   } finally {
     tpl.t = real;
   }

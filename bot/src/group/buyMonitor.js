@@ -165,19 +165,25 @@ function selectFresh(cursor, buys, at = now()) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-/** A row of emoji scaled to buy size — the classic buy-bot "hype meter".
- *  Still available as {emoji} for anyone who prefers it to the meter below. */
-function buyEmojiRow(usd, glyph = "🟢") {
+/**
+ * The size row: one icon per BUYBOT_EMOJI_STEP_USD, floored and capped.
+ *
+ * It only ever GROWS — that is the whole reason it is a row and not a
+ * fill-meter. A meter renders what is missing, so a real buy comes out mostly
+ * empty and reads as something failing rather than something good happening.
+ */
+function buyEmojiRow(usd, glyph) {
+  const icon = glyph || buyBarStyle()[0];
   const step = BUYBOT_EMOJI_STEP_USD;
   const n = Math.max(BUYBOT_EMOJI_MIN, Math.min(BUYBOT_EMOJI_MAX, Math.round(usd / step)));
-  return glyph.repeat(n);
+  return icon.repeat(n);
 }
 
 const BAR_WIDTH = 10;
-const BAR_DEFAULT = ["▰", "▱"];
+const BAR_DEFAULT = ["🟢", "🐋"];
 
-/** The meter's two characters, falling back per position so a half-written
- *  override still renders a bar rather than nothing. */
+/** The row's two icons — normal buy | whale — falling back per position so a
+ *  half-written override still renders a row rather than nothing. */
 function buyBarStyle() {
   let raw = "";
   try {
@@ -190,19 +196,17 @@ function buyBarStyle() {
 }
 
 /**
- * A size METER rather than a wall of repeated icons.
- *
- * It fills toward BUYBOT_MEGA_USD, so a reader sees how big a buy is against
- * the group's own idea of big without counting glyphs — and it shares its
- * characters with the raid card, so Dexvra's two group features read as
- * siblings instead of as a copy of every other buy bot.
+ * A fill-meter, kept as the optional {bar} placeholder. NOT the default, and
+ * that is deliberate: a meter renders the part that is MISSING, so a real buy
+ * shows up mostly empty and reads as something failing rather than something
+ * good happening. The row above only ever grows. Use this only if you actually
+ * want progress-toward-mega semantics.
  */
 function buySizeBar(usd) {
-  const [on, off] = buyBarStyle();
+  const [on] = buyBarStyle();
   const frac = Math.max(0, Math.min(1, Number(usd) / BUYBOT_MEGA_USD));
-  // A real buy always shows at least one cell — an empty bar reads as an error.
   const filled = Math.max(usd > 0 ? 1 : 0, Math.round(frac * BAR_WIDTH));
-  return on.repeat(filled) + off.repeat(BAR_WIDTH - filled);
+  return on.repeat(filled) + "▱".repeat(BAR_WIDTH - filled);
 }
 
 /**
@@ -367,6 +371,8 @@ function renderWhaleAlert(g, buy, pool, whale) {
   const base = alertVars(g, buy, pool);
   return tpl.render("group_whale_alert", {
     ...base,
+    // Its own icon, so a whale reads as a whale at a glance in a scrolling chat.
+    emoji: buyEmojiRow(buy.usd, buyBarStyle()[1]),
     holds: tokenAmount(whale.held),
     holdsUsd: usdAmount(whale.holdsUsd),
     position: whale.position,
@@ -417,10 +423,15 @@ function renderEstimateAlert(g, est, pool) {
  */
 function buyClip(kind = "buy") {
   try {
-    const b = require("../bannerTemplate");
-    // A whale alert falls back to the ordinary buy clip, so uploading one is
-    // enough to get artwork on both — and uploading two gives whales their own.
-    return b.mediaOverride(kind) || (kind === "whale" ? b.mediaOverride("buy") : null);
+    // NO CROSS-KIND FALLBACK, deliberately. A whale alert plays the whale clip
+    // and nothing else; an ordinary buy plays the buy clip and nothing else.
+    //
+    // Falling back would defeat the point of the separate slot: the operator
+    // uploads two clips precisely so a whale LOOKS different scrolling past,
+    // and reusing the ordinary one would make the two alerts identical artwork
+    // with only the wording changed. A whale with no clip uploaded is sent as
+    // text — the admin menu says so rather than quietly borrowing.
+    return require("../bannerTemplate").mediaOverride(kind);
   } catch {
     return null;
   }
