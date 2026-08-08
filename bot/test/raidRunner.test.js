@@ -303,6 +303,41 @@ test("finishRaid is idempotent — a boot sweep racing a live tick is a no-op", 
 
 // ── Boot recovery ────────────────────────────────────────────────────────────
 
+test("reload() picks up a raids file that appeared after this module loaded", async () => {
+  // The store reads its file at MODULE LOAD, which happens through
+  // handlers/registry when src/bot.js is required — BEFORE startBot() awaits
+  // persist.hydrate(). On a fresh container, where the Mongo mirror is the only
+  // copy, the store would otherwise come up empty and a raid that was live when
+  // the container was replaced would be invisible to the boot sweep, leaving
+  // its group locked.
+  const fsp = require("node:fs/promises");
+  const file = path.join(process.env.BOT_DATA_DIR, "raids.json");
+  await fsp.writeFile(
+    file,
+    JSON.stringify({
+      "-5005": {
+        chatId: "-5005",
+        settings: {},
+        stats: { started: 1 },
+        raid: { status: "running", locked: true, expiresAt: Date.now() - 1000, crew: [] },
+      },
+    }),
+  );
+  store._reset();
+  assert.strictEqual(store.running().length, 0, "empty before the reload, as on a fresh container");
+  const n = store.reload();
+  assert.strictEqual(n, 1);
+  assert.strictEqual(store.running().length, 1);
+
+  // And the sweep can now actually free that group.
+  const tg = fakeTg();
+  const res = await runner.recoverOnBoot(tg);
+  assert.strictEqual(res.released, 1);
+  assert.strictEqual(tg.calls.perms.at(-1).perms.can_send_messages, true);
+  store._reset();
+  await fsp.rm(file, { force: true });
+});
+
 test("the boot sweep releases a raid whose process died, and resumes a live one", async () => {
   xMetrics.fetchTweetMetrics = metricsOk();
   const stale = group({ lockChat: true });

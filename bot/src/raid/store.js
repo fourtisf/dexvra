@@ -22,6 +22,28 @@ const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const FILE = "raids.json";
 const groups = loadJSONSync(FILE, {});
 
+/**
+ * Re-read the file into the live object.
+ *
+ * MUST be called after persist.hydrate(). This module is required through
+ * handlers/registry.js at `require("./src/bot")` time — before startBot() awaits
+ * hydrate() — so on a fresh container, where the Mongo mirror is the only copy
+ * of raids.json, the read above sees no file and this store comes up EMPTY.
+ * A raid that was running when the container was replaced would then be
+ * invisible to recoverOnBoot, and its group would stay locked with nothing
+ * anywhere to notice: exactly the failure the durable expiresAt exists to
+ * prevent, reached from the other end.
+ *
+ * Mutates the existing object rather than rebinding it, because callers hold
+ * references into it (getOrCreate returns the live record).
+ */
+function reload() {
+  const fresh = loadJSONSync(FILE, {});
+  for (const k of Object.keys(groups)) delete groups[k];
+  Object.assign(groups, fresh);
+  return Object.keys(groups).length;
+}
+
 const key = (chatId) => String(chatId);
 
 // Panel defaults. These are DELTAS ("+15 likes"), never absolute counts, and
@@ -135,6 +157,7 @@ module.exports = {
   patchRaid,
   joinCrew,
   remove,
+  reload,
   _reset,
   DEFAULT_SETTINGS,
   FILE,
