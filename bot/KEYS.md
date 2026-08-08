@@ -79,9 +79,14 @@ as a fourth choice.
 broadcast that failed at the transport layer may still have reached the network,
 so re-sending the same signed transfer to a second node risks paying twice.
 Instead each sweep takes the endpoint that answered its *opening balance read*
-and stays on it — reading from a healthy backup while broadcasting to a dead
-primary only moves where it fails. Nothing is signed until a node has already
-answered, so choosing at that point cannot double-spend.
+and stays on it for every attempt — reading from a healthy backup while
+broadcasting to a dead primary only moves where it fails. Nothing is signed
+until a node has already answered, so choosing at that point cannot
+double-spend.
+
+The consequence for `RPC_<CHAIN>_URLS`: **every url you list is a node a sweep
+may broadcast from**, not merely read from. It is not a "backup for reads only"
+list. List nodes you trust to send.
 
 Why a list at all: a dead RPC does not report an error, it reports the **wrong
 answer**. An unreadable balance during payment polling is indistinguishable from

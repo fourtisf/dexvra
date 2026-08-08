@@ -60,7 +60,8 @@ function reportConfig() {
   }
 
   console.log("\n── RPC endpoints ─────────────────────────────────────────────");
-  console.log(dim("  (the first is the PRIMARY — the only one a sweep ever sends to)"));
+  console.log(dim("  (the first is tried first; ONE sweep uses ONE node — whichever answers its"));
+  console.log(dim("   opening balance read — so every endpoint listed must be trusted to send)"));
   const rpc = require("../src/config/rpc");
   for (const chain of rpc.RPC_CHAINS) {
     const urls = rpc.rpcUrls(chain);

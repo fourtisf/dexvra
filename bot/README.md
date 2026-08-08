@@ -259,11 +259,13 @@ late is worse than no post.
    `npm run x:check`. Full walkthrough + troubleshooting:
    [`X-AUTOPOST.md`](X-AUTOPOST.md). Leave the four blank to keep X off.
 6b. **RPC**: `npm run rpc:check`. Every chain ships with a list of keyless
-   public endpoints and a read walks the list until one answers — but a **sweep
-   only ever sends to the primary**, so a dead primary strands funds. The
-   defaults are shared with the whole internet and rate-limit by IP; put a paid
-   endpoint in `RPC_<CHAIN>` (or a full list in `RPC_<CHAIN>_URLS`) before you
-   take real volume. Details in [`KEYS.md`](KEYS.md).
+   public endpoints and a read walks the list until one answers. **One sweep
+   uses one node** — whichever answered its opening balance read — and never
+   re-broadcasts to a second, so every url you list must be a node you trust to
+   *send*, not only to read. The defaults are shared with the whole internet and
+   rate-limit by IP; put a paid endpoint in `RPC_<CHAIN>` (or a full list in
+   `RPC_<CHAIN>_URLS`) before you take real volume. Details in
+   [`KEYS.md`](KEYS.md).
 7. `npm run check` → `npm run rpc:check` → `npm test` → `npm start`.
 8. **Security**: rotate the bot token in @BotFather if it was ever shared, then
    update `.env`.

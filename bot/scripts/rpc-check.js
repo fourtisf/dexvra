@@ -17,8 +17,10 @@
 //
 // Reading the output:
 //   ✅            the endpoint answered inside the timeout.
-//   ❌ on line 1  the PRIMARY is down — this is the one a sweep sends to, and
-//                 it does not fall back. Fix it or set RPC_<CHAIN>.
+//   ❌ on line 1  the primary is down. Reads fall through to the next endpoint,
+//                 so nothing breaks — but a sweep then broadcasts from that
+//                 next one, which is why every url you list has to be a node
+//                 you trust to SEND, not just to read.
 //   ❌ everywhere the bot cannot read that chain at all: payment detection and
 //                 whale lookups on it are blind until one comes back.
 //   ⚠️  no fallback  a single endpoint means no second opinion. Add one with
@@ -36,7 +38,11 @@ const TIMEOUT_MS = 8000;
 
 // The cheapest "are you alive" call each family answers. All read-only.
 function probeFor(chain) {
-  if (chain === "solana") return { method: "getHealth", params: [], read: (r) => r.result || r.error?.message };
+  // getHealth answers with a JSON-RPC ERROR when the node is unhealthy
+  // ("Behind by 4239 slots") — so reading `r.error.message` as the success
+  // detail reports a lagging node as green, which is the one thing this probe
+  // exists to catch. A healthy node returns exactly "ok".
+  if (chain === "solana") return { method: "getHealth", params: [], read: (r) => (r.result === "ok" ? "ok" : null) };
   if (chain === "ton") return { url: (u) => u, method: "getMasterchainInfo", params: {}, read: (r) => (r.ok ? "ok" : null) };
   if (chain === "tron") return { rest: "/wallet/getnowblock", read: (r) => r?.block_header?.raw_data?.number };
   return { method: "eth_chainId", params: [], read: (r) => (r.result ? `chainId ${parseInt(r.result, 16)}` : null) };
@@ -89,7 +95,7 @@ async function main() {
     let alive = 0;
     for (let i = 0; i < urls.length; i++) {
       const r = await probe(chain, urls[i]);
-      const tag = i === 0 ? dim(" [primary — sweeps send here]") : "";
+      const tag = i === 0 ? dim(" [primary — tried first]") : "";
       if (r.ok) {
         alive++;
         console.log(`  ${ok("✓")} ${urls[i]} ${dim(`${r.ms}ms · ${r.detail}`)}${tag}`);
@@ -107,7 +113,11 @@ async function main() {
 
   console.log("── Summary ───────────────────────────────────────────────────");
   if (blindChains) console.log(bad(`  ${blindChains} chain(s) unreadable — payment detection and whale lookups are blind there`));
-  if (deadPrimaries) console.log(warn(`  ${deadPrimaries} dead primary — a SWEEP does not fall back; set RPC_<CHAIN> to a working one`));
+  if (deadPrimaries)
+    console.log(
+      warn(`  ${deadPrimaries} dead primary — reads fall through, but every listed endpoint`) +
+        warn("\n    is then a node a SWEEP may broadcast from. Only list nodes you trust to send."),
+    );
   if (!blindChains && !deadPrimaries) console.log(ok("  every primary answered"));
   console.log(dim("  set RPC_<CHAIN>=url (leads, defaults stay as backup)"));
   console.log(dim("  or  RPC_<CHAIN>_URLS=a,b,c (replaces the list entirely)"));

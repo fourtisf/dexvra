@@ -90,10 +90,11 @@ and every listing is tweeted too — see [`X-AUTOPOST.md`](X-AUTOPOST.md), then
 verify on the server with `npm run x:check`.
 
 RPC endpoints are optional — every chain has keyless public defaults and a read
-walks them until one answers. But a **sweep only ever sends to the primary**, so
-run `npm run rpc:check` on the server and put a working (ideally paid) endpoint
-in `RPC_<CHAIN>` for any chain whose primary is red. Full credential audit:
-[`KEYS.md`](KEYS.md).
+walks them until one answers. One **sweep** uses one node (whichever answered
+its opening balance read) and never re-broadcasts to a second, so every url you
+list must be a node you trust to *send*. Run `npm run rpc:check` on the server
+and put a working (ideally paid) endpoint in `RPC_<CHAIN>`. Full credential
+audit: [`KEYS.md`](KEYS.md).
 
 ## 5. Smoke-test end to end (free, no spend)
 

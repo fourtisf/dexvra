@@ -109,23 +109,42 @@ async function gasFor(p, from, to) {
 /** Sweep the native balance to `treasury`, keeping back only what the node
  *  actually reserves for gas. */
 async function sweep(chain, wallet, treasury) {
+  // ONE endpoint for the whole sweep, chosen ONCE — OUTSIDE the retry loop.
+  //
+  // The opening read PICKS THE ENDPOINT, and everything after it — the fee
+  // quote, the gas estimate, the broadcast, and every later attempt — stays on
+  // that same node. Reading from a healthy backup and then broadcasting to the
+  // dead primary only moves where it fails; and re-resolving PER ATTEMPT is
+  // worse still, because attempt 2 can then broadcast from a node that never
+  // saw attempt 1's transaction. Here the nonce collapses the duplicates (every
+  // attempt signs nonce n, only one can be mined) so the cost is wasted
+  // broadcasts — on Solana, which has no nonce, the same shape is a real
+  // double-spend. Nothing is signed until a node has answered, so choosing the
+  // endpoint at this point cannot double-spend.
+  const made = new Map();
+  let p;
+  let bal;
+  try {
+    const { value: opened } = await rpcRead(chain, async (url) => {
+      const prov = tracked(chain, url, made);
+      return { prov, bal: BigInt(await prov.getBalance(wallet.address)) };
+    });
+    p = opened.prov;
+    bal = opened.bal;
+  } catch (e) {
+    dropAll(made);
+    // Unreadable is UNKNOWN, not empty. sweepRetry comes back for it.
+    return { ok: false, error: e.message };
+  }
+
   let last = "unknown";
+  try {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     let sent = null;
-    const made = new Map();
     try {
-      // The opening read PICKS THE ENDPOINT, and everything after it — the fee
-      // quote, the gas estimate, the broadcast — stays on that same node.
-      // Reading from a healthy backup and then broadcasting to the dead primary
-      // only moves where it fails; and a send must never be retried on a second
-      // node, because a broadcast that failed at the transport layer may still
-      // have reached the network. Nothing is signed until a node has answered,
-      // so choosing here cannot double-spend.
-      const { value: opened } = await rpcRead(chain, async (url) => {
-        const p = tracked(chain, url, made);
-        return { p, bal: BigInt(await p.getBalance(wallet.address)) };
-      });
-      const { p, bal } = opened;
+      // Re-read on the SAME node: if a previous attempt's transfer landed, that
+      // node is the one that knows.
+      if (attempt > 1) bal = BigInt(await p.getBalance(wallet.address));
       const signer = new ethers.Wallet(wallet.privateKey, p);
       if (bal <= 0n) return { ok: false, error: "empty" };
 
@@ -172,13 +191,16 @@ async function sweep(chain, wallet, treasury) {
         return { ok: false, txid: sent.hash, error: `unconfirmed: ${e.message}` };
       }
       log.debug(`[evm] sweep ${chain} attempt ${attempt}/${ATTEMPTS}: ${e.message}`);
-    } finally {
-      // Runs after every await above has settled — including `sent.wait()` — so
-      // this can never tear down a provider a broadcast is still using.
-      dropAll(made);
     }
   }
   return { ok: false, error: last };
+  } finally {
+    // Wraps the WHOLE loop, not one attempt: the provider is shared across
+    // attempts now, so tearing it down after attempt 1 would destroy the node
+    // attempt 2 is about to use. Runs after every await above has settled —
+    // including `sent.wait()` — so it can never cut off a live broadcast.
+    dropAll(made);
+  }
 }
 
 module.exports = { family: "evm", generate, getBalance, sweep, gasFor };

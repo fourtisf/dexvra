@@ -172,28 +172,38 @@ test("429 and 5xx are transport failures; a revert is not", () => {
 
 // ── The send rule ────────────────────────────────────────────────────────────
 
-test("a sweep picks its endpoint ONCE and broadcasts on that same node", () => {
+const ADAPTERS = [
+  "../src/payments/chains/evm.js",
+  "../src/payments/chains/solana.js",
+  "../src/payments/chains/tron.js",
+  "../src/payments/chains/ton.js",
+];
+
+test("a sweep resolves its endpoint ONCE — OUTSIDE the retry loop", () => {
   // A transfer that failed at the transport layer may still have reached the
-  // network, so it is never re-sent to a second node. That makes read and send
-  // sharing one node load-bearing: read from a healthy backup, broadcast to the
-  // dead primary, and all you have done is move where it fails.
-  //
-  // Pinned at the source because the alternative is a test that signs a real
-  // transaction. Each adapter's sweep may resolve an endpoint exactly once, and
-  // must not reach for the endpoint LIST again anywhere around the broadcast.
-  for (const [file, sendCall] of [
-    ["../src/payments/chains/evm.js", "sendTransaction"],
-    ["../src/payments/chains/solana.js", "sendAndConfirmTransaction"],
-  ]) {
+  // network, so it is never re-sent to a second node. Resolving the endpoint
+  // per ATTEMPT breaks exactly that: attempt 1 broadcasts on node A and throws
+  // at confirmation; attempt 2's balance read gets a 429 from A, falls through
+  // to node B, which has not caught up and reports the pre-transfer balance; a
+  // second transfer is signed and broadcast. On Solana, which has no nonce to
+  // collapse duplicates, both can land. solanaSweep.test.js reproduces that end
+  // to end; this is the cheap structural half, across every adapter.
+  for (const file of ADAPTERS) {
     const src = fss.readFileSync(path.join(__dirname, file), "utf8");
-    const body = src.slice(src.indexOf("async function sweep"));
-    assert.ok(body.includes(sendCall), `${file}: sweep no longer broadcasts?`);
+    const body = src.slice(src.indexOf("async function sweep("));
+    const loopAt = body.indexOf("for (let attempt");
+    const resolveAt = body.indexOf("rpcRead(");
+    assert.ok(loopAt > 0, `${file}: sweep has no attempts loop?`);
+    assert.ok(resolveAt > 0, `${file}: sweep must resolve its endpoint through rpcRead`);
+    assert.ok(
+      resolveAt < loopAt,
+      `${file}: endpoint resolved INSIDE the retry loop — a retry can broadcast from a node that never saw the first attempt`,
+    );
     assert.strictEqual(
       (body.match(/rpcRead\(/g) || []).length,
       1,
       `${file}: sweep must resolve its endpoint exactly once`,
     );
-    assert.ok(!/rpcUrls\(/.test(body), `${file}: sweep must not re-open the endpoint list around the send`);
   }
 });
 
@@ -225,9 +235,15 @@ test("a dead endpoint leaves nothing spinning behind it", () => {
 });
 
 test("the balance read that decides 'has the customer paid' walks every endpoint", () => {
-  for (const file of ["../src/payments/chains/evm.js", "../src/payments/chains/solana.js"]) {
+  // Every adapter, not only the two that were obvious. A chain whose getBalance
+  // is pinned to one node reports "not paid yet" for the whole five-minute poll
+  // when that node is down — while treasury/rpc:check cheerfully list its
+  // fallbacks, so the operator has no reason to look. TRON and TON were exactly
+  // that: advertised a second endpoint they never consulted.
+  for (const file of ADAPTERS) {
     const src = fss.readFileSync(path.join(__dirname, file), "utf8");
-    const fn = src.slice(src.indexOf("function getBalance"), src.indexOf("function getBalance") + 600);
-    assert.match(fn, /rpcRead\(/, `${file}: getBalance must not be pinned to one node`);
+    const at = src.indexOf("function getBalance");
+    assert.ok(at > 0, `${file}: no getBalance?`);
+    assert.match(src.slice(at, at + 600), /rpcRead\(/, `${file}: getBalance must not be pinned to one node`);
   }
 });

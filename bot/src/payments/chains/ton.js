@@ -2,7 +2,8 @@
 // lazy-loaded so their weight/ESM-ish surface never affects boot. This is the
 // least battle-tested chain (per the build plan); detection (getBalance) is
 // solid, sweep is best-effort (a fresh wallet deploys on its first send).
-const { RPC, TON_API_KEY } = require("../../config/constants");
+const { TON_API_KEY } = require("../../config/constants");
+const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 let _libs = null;
@@ -15,8 +16,10 @@ function libs() {
   return _libs;
 }
 
-function makeClient(ton) {
-  return new ton.TonClient({ endpoint: RPC.ton, apiKey: TON_API_KEY || undefined });
+function makeClient(ton, url) {
+  const endpoint = url || rpcUrls("ton")[0];
+  if (!endpoint) throw new Error("no RPC configured for ton");
+  return new ton.TonClient({ endpoint, apiKey: TON_API_KEY || undefined });
 }
 
 async function generate() {
@@ -29,17 +32,21 @@ async function generate() {
   return { address, privateKey: mnemonic.join(" ") }; // store the mnemonic to re-derive
 }
 
+/** Balance in nanoton. Walks every configured endpoint — this read decides
+ *  whether a customer has paid, and a dead node must surface as an ERROR, never
+ *  as a zero balance. */
 async function getBalance(_chain, address) {
   const { ton, core } = libs();
-  const bal = await makeClient(ton).getBalance(core.Address.parse(address));
-  return BigInt(bal);
+  const parsed = core.Address.parse(address);
+  const { value } = await rpcRead("ton", (url) => makeClient(ton, url).getBalance(parsed));
+  return BigInt(value);
 }
 
 const ATTEMPTS = 2; // toncenter's public endpoint rate-limits aggressively
 
-async function sweepOnce(wallet, treasury) {
+async function sweepOnce(wallet, treasury, url) {
   const { ton, core, crypto } = libs();
-  const client = makeClient(ton);
+  const client = makeClient(ton, url);
   const mnemonic = String(wallet.privateKey).trim().split(/\s+/);
   const key = await crypto.mnemonicToPrivateKey(mnemonic);
   const w = ton.WalletContractV4.create({ workchain: 0, publicKey: key.publicKey });
@@ -68,10 +75,27 @@ async function sweepOnce(wallet, treasury) {
 }
 
 async function sweep(_chain, wallet, treasury) {
+  // ONE node for the whole sweep, chosen ONCE by a read that has to answer
+  // before anything is signed. See the send rule in config/rpc.js — and note
+  // that TON has no confirmation here at all (`sendTransfer` only broadcasts),
+  // so a retry from a node that never saw the first transfer would have nothing
+  // to check it against.
+  let url;
+  try {
+    const opened = await rpcRead("ton", async (u) => {
+      const { ton, core } = libs();
+      await makeClient(ton, u).getBalance(core.Address.parse(wallet.address));
+      return u;
+    });
+    url = opened.url;
+  } catch (e) {
+    return { ok: false, error: e.message }; // unreadable is UNKNOWN, not empty
+  }
+
   let last = "unknown";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
-      return await sweepOnce(wallet, treasury);
+      return await sweepOnce(wallet, treasury, url);
     } catch (e) {
       last = e.message;
       log.debug(`[ton] sweep attempt ${attempt}/${ATTEMPTS}: ${e.message}`);
