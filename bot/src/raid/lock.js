@@ -92,9 +92,39 @@ async function snapshot(telegram, chatId) {
   }
 }
 
+// The granular per-media permissions (Bot API 6.5+). Their presence in a
+// snapshot is what tells us the restore can be made exact.
+const GRANULAR_KEYS = [
+  "can_send_audios",
+  "can_send_documents",
+  "can_send_photos",
+  "can_send_videos",
+  "can_send_video_notes",
+  "can_send_voice_notes",
+];
+
+/**
+ * Without `use_independent_chat_permissions`, Telegram applies IMPLICATIONS:
+ * `can_send_other_messages` and `can_add_web_page_previews` each imply
+ * `can_send_messages` AND all six media permissions, and `can_send_polls`
+ * implies `can_send_messages`.
+ *
+ * That silently WIDENS a restore. A text-only group — stickers allowed, photos
+ * not — hands back a snapshot saying `can_send_photos: false`, and restoring it
+ * without this flag turns photos back on. The snapshot exists precisely so a
+ * raid gives back exactly what it took, so the flag is not optional.
+ *
+ * It is only set when the snapshot actually carries the granular keys. An older
+ * payload that does not would otherwise have every absent key read as `false`,
+ * narrowing the group instead — and a group left partly muted is the failure
+ * this whole file is written to avoid.
+ */
+const independentOpts = (perms) =>
+  perms && GRANULAR_KEYS.some((k) => k in perms) ? { use_independent_chat_permissions: true } : {};
+
 async function applyLock(telegram, chatId) {
   try {
-    await telegram.setChatPermissions(chatId, LOCKED);
+    await telegram.setChatPermissions(chatId, LOCKED, independentOpts(LOCKED));
     log.info(`[raid] locked group ${chatId}`);
     return { ok: true, error: null };
   } catch (e) {
@@ -117,7 +147,7 @@ async function unlock(telegram, chatId, prevPermissions) {
     ? prevPermissions
     : FALLBACK_UNLOCKED;
   try {
-    await telegram.setChatPermissions(chatId, restore);
+    await telegram.setChatPermissions(chatId, restore, independentOpts(restore));
     log.info(`[raid] unlocked group ${chatId} (${restore === FALLBACK_UNLOCKED ? "safe defaults" : "restored snapshot"})`);
     return { ok: true, error: null };
   } catch (e) {
@@ -130,4 +160,4 @@ async function unlock(telegram, chatId, prevPermissions) {
   }
 }
 
-module.exports = { canLock, snapshot, applyLock, unlock, LOCKED, FALLBACK_UNLOCKED };
+module.exports = { canLock, snapshot, applyLock, unlock, independentOpts, LOCKED, FALLBACK_UNLOCKED, GRANULAR_KEYS };

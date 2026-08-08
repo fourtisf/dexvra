@@ -30,7 +30,7 @@ function fakeTg(over = {}) {
     pinChatMessage: async (chatId, mid) => calls.pinned.push({ chatId, mid }),
     unpinChatMessage: async (chatId, mid) => calls.unpinned.push({ chatId, mid }),
     deleteMessage: async (chatId, mid) => calls.deleted.push({ chatId, mid }),
-    setChatPermissions: async (chatId, perms) => calls.perms.push({ chatId, perms }),
+    setChatPermissions: async (chatId, perms, extra) => calls.perms.push({ chatId, perms, extra }),
     getChat: async () => ({ permissions: { can_send_messages: true, can_send_polls: false, can_manage_topics: true } }),
     getMe: async () => ({ id: 7 }),
     getChatMember: async () => ({ status: "administrator", can_restrict_members: true }),
@@ -375,6 +375,29 @@ test("only cards WE pinned get their service notice tidied", async () => {
   assert.strictEqual(await runner.handlePinned(ctx), false);
   runner._pinnedByUs.add(`${CHAT}:999`);
   assert.strictEqual(await runner.handlePinned(ctx), true);
+});
+
+test("a granular restore is applied INDEPENDENTLY, so it cannot widen", async () => {
+  // Without the flag, can_send_other_messages implies can_send_messages and all
+  // six media permissions — so restoring a text-only group's snapshot would
+  // turn photos back on. The snapshot exists to give back exactly what we took.
+  const tg = fakeTg({
+    getChat: async () => ({
+      permissions: { can_send_messages: true, can_send_photos: false, can_send_other_messages: true },
+    }),
+  });
+  const snap = await lock.snapshot(tg, CHAT);
+  await lock.unlock(tg, CHAT, snap);
+  const [, perms, extra] = [null, tg.calls.perms.at(-1).perms, tg.calls.perms.at(-1).extra];
+  assert.strictEqual(perms.can_send_photos, false);
+  assert.strictEqual(extra.use_independent_chat_permissions, true);
+});
+
+test("a snapshot with no granular keys restores under LEGACY semantics", async () => {
+  // Absent keys would otherwise read as false and leave the group partly muted,
+  // which is the worse direction to fail in.
+  assert.deepStrictEqual(lock.independentOpts({ can_send_messages: true }), {});
+  assert.deepStrictEqual(lock.independentOpts(null), {});
 });
 
 test("canLock refuses a basic group, where the toggle would be a silent no-op", async () => {
