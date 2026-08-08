@@ -384,7 +384,12 @@ async function pollTrades(tg, entry) {
   const fresh = selectFresh(cursor, buys);
   const newest = buys[buys.length - 1].blockNumber || 0;
   if (!fresh.length) {
-    state.cursors[entry.key] = { b: newest, t: now() };
+    // Carry `e` forward. Dropping it here was a one-buy leak in the estimator
+    // watermark: the poll that filters everything out advanced the cursor with
+    // no watermark, so the NEXT poll re-selected the newest block unfiltered —
+    // and an estimate claims no latch, so that buy posted as a verified alert
+    // after the group had already been told about it.
+    state.cursors[entry.key] = { b: newest, t: now(), e: (cursor && cursor.e) || 0 };
     await saveState();
     return true;
   }
@@ -428,7 +433,7 @@ async function pollTrades(tg, entry) {
   const lastSent = fresh[fresh.length - 1].blockNumber || 0;
   const capped = fresh.length === MAX_PER_POLL && lastSent < newest;
   const cursorBlock = hold !== null ? hold : capped ? lastSent : newest;
-  state.cursors[entry.key] = { b: cursorBlock, t: now(), e: cursor ? cursor.e : 0 };
+  state.cursors[entry.key] = { b: cursorBlock, t: now(), e: (cursor && cursor.e) || 0 };
   await saveState();
   if (capped) log.info(`[buybot] ${entry.key}: paced — more buys queued for the next poll`);
   if (posted) {

@@ -77,8 +77,11 @@ function attachServices(bot, services) {
     // locked group muted with no remaining path to an unlock. Turning a feature
     // off must not strand the chats it was holding.
     add("raidUnlockSweep", () => {
+      // forceExpire: with no poll loop running, a raid still inside its
+      // deadline would be "resumed" and then never finish, so its group would
+      // stay locked until a restart after the deadline had passed.
       require("../raid/runner")
-        .recoverOnBoot(bot.telegram)
+        .recoverOnBoot(bot.telegram, { forceExpire: true })
         .catch((e) => log.warn(`[raid] disabled-mode unlock sweep failed: ${e && e.message}`));
       return { stop: () => {} };
     });

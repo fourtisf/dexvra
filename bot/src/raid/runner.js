@@ -567,12 +567,16 @@ async function tickOne(telegram, g) {
  * interval, is what frees a group whose process was killed mid-raid. A raid
  * with NO deadline at all is also released, because nothing else ever will.
  */
-async function recoverOnBoot(telegram) {
+async function recoverOnBoot(telegram, { forceExpire = false } = {}) {
   let released = 0;
   let resumed = 0;
   for (const g of store.running()) {
     const deadline = g.raid.expiresAt || 0;
-    if (!deadline || Date.now() >= deadline) {
+    // forceExpire is for the FEATURE-OFF sweep. Resuming a raid there marks it
+    // active for a poll loop that will never be armed, so it can never reach
+    // its own deadline — the group stays locked until somebody restarts the bot
+    // again after the deadline has passed. If raids are off, every raid ends.
+    if (forceExpire || !deadline || Date.now() >= deadline) {
       log.info(`[raid] boot recovery: releasing stale raid in ${g.chatId}`);
       await finishRaid(telegram, g, "expired").catch((e) => log.warn(`[raid] boot release failed for ${g.chatId}: ${e && e.message}`));
       released++;

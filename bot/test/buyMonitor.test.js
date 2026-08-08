@@ -91,6 +91,20 @@ test("buys the ESTIMATOR already announced are not re-told as verified alerts", 
   assert.deepStrictEqual(fresh.map((b) => b.txHash), ["0xb"]);
 });
 
+test("the estimator watermark survives a poll that filters everything out", () => {
+  // The empty-batch branch used to advance the cursor without `e`, so the NEXT
+  // poll re-selected the newest block unwatermarked — and an estimate claims no
+  // latch, so that buy posted as a verified alert after the group had already
+  // been told about it.
+  const now = Date.now();
+  const only = [{ txHash: "0xa", usd: 100, blockNumber: 900, blockTimeMs: now - 9 * 60000 }];
+  const cursor = { b: 800, t: 0, e: now - 5 * 60000 };
+  assert.deepStrictEqual(mon.selectFresh(cursor, only, now), [], "watermarked out");
+  // What pollTrades then persists must still carry the watermark.
+  const carried = { b: 900, t: now, e: (cursor && cursor.e) || 0 };
+  assert.deepStrictEqual(mon.selectFresh(carried, only, now), [], "and still filtered on the next poll");
+});
+
 test("the dedupe latch outlives the feed's own 24h window", () => {
   // The cursor compares >=, so a quiet pool re-reads its newest buy on every
   // poll. A latch shorter than the feed's retention expires while that buy is

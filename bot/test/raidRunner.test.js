@@ -523,6 +523,21 @@ test("a raid with NO deadline is released too — nothing else ever would", asyn
   assert.strictEqual(g.raid.status, "expired");
 });
 
+test("with the feature OFF, even a live raid is ended so its group is freed", async () => {
+  // Resuming it there marks it active for a poll loop that will never be armed,
+  // so it can never reach its own deadline: the group stays locked until
+  // somebody restarts the bot again after the deadline has passed.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ lockChat: true });
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  assert.ok(g.raid.expiresAt > Date.now(), "still well inside its deadline");
+  const res = await runner.recoverOnBoot(tg, { forceExpire: true });
+  assert.strictEqual(res.released, 1);
+  assert.strictEqual(res.resumed, 0);
+  assert.strictEqual(tg.calls.perms.at(-1).perms.can_send_messages, true);
+});
+
 test("a still-live raid is resumed, and starts enrolling again", async () => {
   xMetrics.fetchTweetMetrics = metricsOk();
   const g = group();
