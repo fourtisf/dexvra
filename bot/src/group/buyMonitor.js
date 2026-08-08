@@ -34,12 +34,17 @@ const {
   BUYBOT_EMOJI_MAX,
   BUYBOT_WHALE_USD,
   BUYBOT_MEGA_USD,
+  BUYBOT_WHALE_WALLET_ENABLED,
+  BUYBOT_WHALE_WALLET_USD,
+  BUYBOT_WHALE_CHECK_MIN_USD,
+  BUYBOT_PIN_WHALES,
   TRADEBOT_USERNAME,
   SITE_URL,
 } = require("../config/constants");
 const cfg = require("./config");
 const gt = require("./gtPairs");
 const trades = require("./gtTrades");
+const holdings = require("./walletHoldings");
 const latch = require("./alertLatch");
 const { isFatalChatError, describeChatError } = require("./fatalChatError");
 const tpl = require("../templates");
@@ -60,13 +65,14 @@ const STATE_VERSION = 2;
 // against the risk of misreading a chat id as a pool address.
 function loadState() {
   const raw = loadJSONSync(STATE_FILE, null);
-  if (!raw || raw.v !== STATE_VERSION) return { v: STATE_VERSION, pools: {}, cursors: {} };
-  return { v: STATE_VERSION, pools: raw.pools || {}, cursors: raw.cursors || {} };
+  if (!raw || raw.v !== STATE_VERSION) return { v: STATE_VERSION, pools: {}, cursors: {}, pins: {} };
+  return { v: STATE_VERSION, pools: raw.pools || {}, cursors: raw.cursors || {}, pins: raw.pins || {} };
 }
 const state = loadState();
 const saveState = () => saveJSON(STATE_FILE, state).catch(() => {});
 
 const deadLog = {}; // poolKey → last dead-pool log ts (throttle to 1/hour)
+const pinWarned = new Set(); // chatIds already told they haven't granted "Pin messages"
 const lastPoll = new Map(); // poolKey → ts of the last trades read
 
 // NOTE: there is deliberately no second, pool-level "already seen" set here.
@@ -292,11 +298,13 @@ function verifyRow(chain, buy) {
   return bits.length ? `👤 **Buyer:** ${bits.join(" · ")}` : "";
 }
 
-function renderRealAlert(g, buy, pool) {
+/** Every value both buy cards share. Split out so the whale card cannot drift
+ *  away from the ordinary one — the two are the same event, told differently. */
+function alertVars(g, buy, pool) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
   const price = (pool && pool.priceUsd) || (buy.tokenAmount > 0 ? buy.usd / buy.tokenAmount : null);
   const impact = pool && pool.liquidity > 0 ? (buy.usd / pool.liquidity) * 100 : null;
-  return tpl.render("group_buy_alert", {
+  return {
     bar: buySizeBar(buy.usd),
     emoji: buyEmojiRow(buy.usd),
     // The token's own name headlines the card. It is admin-supplied via
@@ -323,6 +331,45 @@ function renderRealAlert(g, buy, pool) {
     verify: verifyRow(g.chain, buy),
     tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
     coinUrl: premium.sanitizeUrl(`${SITE_URL}/token/${g.chain}/${g.address}`),
+  };
+}
+
+const renderRealAlert = (g, buy, pool) => tpl.render("group_buy_alert", alertVars(g, buy, pool));
+
+/**
+ * Is this buyer a whale — by what they HOLD, not by what they just spent?
+ *
+ * Returns the enrichment the whale card needs, or null when they are not one /
+ * we could not tell. Failing to read a holding is never a reason to withhold
+ * the buy: the caller falls back to the ordinary alert.
+ */
+async function whaleCheck(g, buy, pool) {
+  if (!BUYBOT_WHALE_WALLET_ENABLED || g.whales === false) return null;
+  if (!buy.buyer || !pool || !(pool.priceUsd > 0)) return null;
+  if (buy.usd < BUYBOT_WHALE_CHECK_MIN_USD) return null; // dust does not order an RPC call
+  if (!holdings.supports(g.chain)) return null;
+
+  const held = await holdings.holdingOf(g.chain, g.address, buy.buyer);
+  if (held == null || !(held > 0)) return null;
+  const holdsUsd = held * pool.priceUsd;
+  const threshold = Number(g.whaleWalletUsd) > 0 ? Number(g.whaleWalletUsd) : BUYBOT_WHALE_WALLET_USD;
+  if (holdsUsd < threshold) return null;
+
+  // How much this buy GREW the bag. `held` is the balance after the trade, so
+  // the position before it is held - bought; a first-ever buy has no "before",
+  // and calling that +∞ or +100% would both be inventions.
+  const before = held - (buy.tokenAmount || 0);
+  const position = before > 0 ? `+${((buy.tokenAmount / before) * 100).toFixed(2)}%` : "new position";
+  return { held, holdsUsd, position };
+}
+
+function renderWhaleAlert(g, buy, pool, whale) {
+  const base = alertVars(g, buy, pool);
+  return tpl.render("group_whale_alert", {
+    ...base,
+    holds: tokenAmount(whale.held),
+    holdsUsd: usdAmount(whale.holdsUsd),
+    position: whale.position,
   });
 }
 
@@ -368,16 +415,19 @@ function renderEstimateAlert(g, est, pool) {
  * whole point of editing it at runtime. Nothing here can fail the alert: no
  * clip, or a clip Telegram rejects, falls back to the plain text card.
  */
-function buyClip() {
+function buyClip(kind = "buy") {
   try {
-    return require("../bannerTemplate").mediaOverride("buy");
+    const b = require("../bannerTemplate");
+    // A whale alert falls back to the ordinary buy clip, so uploading one is
+    // enough to get artwork on both — and uploading two gives whales their own.
+    return b.mediaOverride(kind) || (kind === "whale" ? b.mediaOverride("buy") : null);
   } catch {
     return null;
   }
 }
 
-async function sendAlert(tg, chatId, text, extra) {
-  const clip = buyClip();
+async function sendAlert(tg, chatId, text, extra, kind = "buy") {
+  const clip = buyClip(kind);
   if (clip) {
     // caption_entities, not entities — a caption carries its formatting under a
     // different key, and sending the wrong one drops every link silently.
@@ -397,7 +447,35 @@ async function sendAlert(tg, chatId, text, extra) {
   return tg.sendMessage(chatId, text, extra);
 }
 
-async function deliver(tg, chatId, payload, dedupeId) {
+/**
+ * Pin a whale alert, replacing the previous one.
+ *
+ * Unpinning the last one first is what keeps this a HIGHLIGHT: without it every
+ * whale of the day accumulates in the group's pinned list, and a pin that is
+ * one of thirty is not a pin. Needs "Pin messages"; a group that has not given
+ * it is told once, not once per whale.
+ */
+async function pinAlert(tg, chatId, messageId) {
+  const prev = state.pins[String(chatId)];
+  try {
+    await tg.pinChatMessage(chatId, messageId, { disable_notification: false });
+  } catch (e) {
+    if (!pinWarned.has(String(chatId))) {
+      pinWarned.add(String(chatId));
+      log.warn(
+        `[buybot] can't pin the whale alert in ${chatId} (${e.message}) — ` +
+          `give the bot "Pin messages" there, or turn it off with /buybot pin off`,
+      );
+    }
+    return false;
+  }
+  if (prev && prev !== messageId) await tg.unpinChatMessage(chatId, prev).catch(() => {});
+  state.pins[String(chatId)] = messageId;
+  await saveState();
+  return true;
+}
+
+async function deliver(tg, chatId, payload, dedupeId, opts = {}) {
   // Checked FIRST, and independently of dedupeId, because the estimated path
   // has no transaction to latch — without this a group that removed the bot is
   // retried on every poll forever whenever the feed happens to be down.
@@ -409,7 +487,7 @@ async function deliver(tg, chatId, payload, dedupeId) {
   // group, every 25 seconds, forever.
   const { text, extra } = payloadArgs(typeof payload === "function" ? payload() : payload, false);
   try {
-    const sent = await sendAlert(tg, chatId, text, extra);
+    const sent = await sendAlert(tg, chatId, text, extra, opts.kind);
     if (!sent || !sent.message_id) {
       // Telegram answered without a message. Not delivered — so do NOT latch,
       // or this buy can never alert again in a group that never saw it.
@@ -418,6 +496,9 @@ async function deliver(tg, chatId, payload, dedupeId) {
       return false;
     }
     if (dedupeId) await latch.commit(chatId, dedupeId);
+    // AFTER the latch, never before: a pin that throws must not undo a delivery
+    // that succeeded, and the alert is the product — the pin is a nicety.
+    if (opts.pin) await pinAlert(tg, chatId, sent.message_id).catch(() => {});
     return true;
   } catch (e) {
     if (isFatalChatError(e)) {
@@ -541,9 +622,15 @@ async function pollTrades(tg, entry) {
   // blocks costs nothing, because the latch skips them.
   let hold = null;
   for (const buy of fresh) {
+    // Resolved ONCE per buy, not per group: the holding is a property of the
+    // wallet and the token, and several groups can track the same token.
+    const whale = await whaleCheck(entry.groups[0], buy, pool).catch(() => null);
     for (const g of entry.groups) {
       if (buy.usd < (Number(g.minBuyUsd) || 0)) continue; // each group's own threshold
-      if (await deliver(tg, g.chatId, () => renderRealAlert(g, buy, pool), buy.txHash)) {
+      const isWhale = !!whale && g.whales !== false;
+      const render = () => (isWhale ? renderWhaleAlert(g, buy, pool, whale) : renderRealAlert(g, buy, pool));
+      const opts = { kind: isWhale ? "whale" : "buy", pin: isWhale && g.pin !== false && BUYBOT_PIN_WHALES };
+      if (await deliver(tg, g.chatId, render, buy.txHash, opts)) {
         posted++;
         continue;
       }
@@ -690,6 +777,10 @@ module.exports = {
   groupByPool,
   verifyRow,
   spentNative,
+  pinAlert,
+  alertVars,
+  whaleCheck,
+  renderWhaleAlert,
   buyClip,
   sendAlert,
   deliver,

@@ -324,6 +324,8 @@ const DEFAULTS = {
     "2. Send `/settoken <your contract address>`\n" +
     "3. Done — buys start posting\n\n" +
     "`/buybot` status · `/setminbuy 50` only alert buys ≥ $50 · `/buybot off` pause\n\n" +
+    "**🐋 Whale wallets** — a buy from someone already holding a lot of your token gets its own **pinned** alert.\n" +
+    "`/setwhale 50000` set the bar · `/setwhale off` · `/buybot pin off` don't pin\n\n" +
     "**🚀 Raid** — rally the chat behind one X post. Set targets, launch, and I keep a live scoreboard pinned until you hit them.\n" +
     "Send `/raid` to set it up. No X API key needed — the 🤝 Crew goal counts whoever shows up in the chat.\n\n" +
     "Want to list, trend or advertise your token? DM me → {bot}\n" +
@@ -337,6 +339,7 @@ const DEFAULTS = {
     "2. Make the bot an **admin** (so it can post)\n" +
     "3. In the group send `/settoken <your contract address>`\n" +
     "4. Tune with `/setminbuy <usd>`, pause with `/buybot off`\n\n" +
+    "**🐋 Whale wallets** — a buy from a wallet already holding a lot of your token gets its own alert, **pinned** in the group so nobody misses it. Set the bar with `/setwhale 50000`.\n\n" +
     "**🚀 Raid**\n" +
     "Point your community at one X post and watch the numbers climb on a live card. Set the targets (**+15 likes**, **+5 replies**, **+10 crew**), paste the link, launch. Optionally lock the chat until the targets are hit.\n" +
     "In the group, send `/raid`.\n\n" +
@@ -357,6 +360,22 @@ const DEFAULTS = {
     "{bar}\n\n" +
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
     "🪙 **Got:** {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    "{verify}\n\n" +
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+  // WHALE WALLET — a buy from someone already holding a lot of the token,
+  // whatever they just spent. Pinned in the group, so it is deliberately its own
+  // card rather than the normal one with a louder word on it.
+  //
+  // {holds} is the buyer's balance OF THIS TOKEN valued at the pool price — not
+  // a portfolio total, which this bot cannot see. The label says so.
+  group_whale_alert:
+    `${em("🐋", E.diamond)} **WHALE WALLET** — [{name}]({coinUrl})\n` +
+    "{bar}\n\n" +
+    `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
+    "🪙 **Got:** {tokenAmt} {symbol}\n" +
+    "💰 **Holds:** {holds} {symbol} · **{holdsUsd}**\n" +
+    "📈 **Position:** {position}\n" +
     `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
     "{verify}\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
@@ -691,6 +710,7 @@ const META = {
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size meter (filled|empty)", ph: [] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "price", "mcap", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
   group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },

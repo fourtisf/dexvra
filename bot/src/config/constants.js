@@ -247,6 +247,20 @@ const BUYBOT_EMOJI_MAX = Math.max(BUYBOT_EMOJI_MIN, int(env.BUYBOT_EMOJI_MAX, 16
 // trades in thousands do not agree on what "whale" means.
 const BUYBOT_WHALE_USD = Math.max(0, Number(env.BUYBOT_WHALE_USD) || 1000);
 const BUYBOT_MEGA_USD = Math.max(BUYBOT_WHALE_USD, Number(env.BUYBOT_MEGA_USD) || 5000);
+// ── Whale WALLET alerts ──────────────────────────────────────────────────────
+// A different question from the two thresholds above, which grade the SIZE OF
+// THE BUY. This one grades the BUYER: a wallet already holding this much of the
+// token gets its own alert, whatever it just spent — a $200 top-up from someone
+// sitting on $80k is news in a way a $200 buy from a fresh wallet is not.
+const BUYBOT_WHALE_WALLET_ENABLED = bool(env.BUYBOT_WHALE_WALLET_ENABLED, true);
+const BUYBOT_WHALE_WALLET_USD = Math.max(0, Number(env.BUYBOT_WHALE_WALLET_USD) || 50000);
+// Reading a holding costs one RPC call, so dust does not get to order one.
+// Cached per wallet for two minutes on top of this.
+const BUYBOT_WHALE_CHECK_MIN_USD = Math.max(0, Number(env.BUYBOT_WHALE_CHECK_MIN_USD) || 100);
+// Whale alerts are PINNED in the group by default — that is the point of
+// separating them. Ordinary buys never are: a pin per buy is not a highlight,
+// it is a scrollbar.
+const BUYBOT_PIN_WHALES = bool(env.BUYBOT_PIN_WHALES, true);
 
 // ── Dexvra Raid (group engagement raids on an X post) ────────────────────────
 const RAID_ENABLED = bool(env.RAID_ENABLED, true);
@@ -347,6 +361,10 @@ module.exports = {
   BUYBOT_EMOJI_MAX,
   BUYBOT_WHALE_USD,
   BUYBOT_MEGA_USD,
+  BUYBOT_WHALE_WALLET_ENABLED,
+  BUYBOT_WHALE_WALLET_USD,
+  BUYBOT_WHALE_CHECK_MIN_USD,
+  BUYBOT_PIN_WHALES,
   RAID_ENABLED,
   RAID_POLL_SEC,
   RAID_MAX_MINUTES,

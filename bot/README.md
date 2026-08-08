@@ -329,9 +329,49 @@ several. **Price and market cap both come from the pool**, so the card
 cannot contradict itself the way an effective trade price beside a pool
 market cap does.
 
+### 🐋 Whale wallets
+
+A second alert class, keyed on **who bought**, not on how much they spent:
+
+```
+🐋 WHALE WALLET — The Nietzschean Dog
+▰▰▱▱▱▱▱▱▱▱
+
+💲 Spent: $804.72 (10.7568 SOL)
+🪙 Got: 51,874.15 $RUSS
+💰 Holds: 1,980,000 $RUSS · $95,523
+📈 Position: +3.82%
+📊 Price: $0.00004823 · 🏦 MCap: $15.5M
+👤 Buyer: AFqu1M…jcBb · View txn
+```
+
+A $200 top-up from someone sitting on $80k is news in a way a $200 buy from
+a fresh wallet is not — so the bar is the buyer's **holding**
+(`BUYBOT_WHALE_WALLET_USD`, default $50,000; per group `/setwhale 50000`).
+These are **pinned**, each replacing the last, which is the point of
+separating them; ordinary buys never are, because a pin per buy is not a
+highlight, it is a scrollbar. `/buybot pin off` opts out.
+
+**"Holds" is deliberately not "Wallet Balance".** It is the buyer's balance
+of *this token* at the pool price, read on chain. This bot has no portfolio
+API, so a label promising a total would be a wrong number presented as a
+right one — and the signal a group actually wants (is this a big holder of
+*our* token?) is exactly what the figure measures. `Position` is how much
+the buy grew that bag; a first-ever buy says `new position` rather than
+inventing `+100%`.
+
+Holdings are readable on Solana and every EVM chain in the registry. On
+others, whale detection is skipped and buys alert normally — `/setwhale`
+says so rather than silently doing nothing. Lookups cost one RPC call,
+gated behind `BUYBOT_WHALE_CHECK_MIN_USD` and cached per wallet for two
+minutes, with misses cached briefly so a dead RPC cannot cost a timeout per
+buy.
+
 **A GIF or video above every buy alert** — upload it in @dexvraadminbot →
-🎨 Gambar Banner Channel → 🟢 Buy Bot. One clip, used by every group, with
-the transaction details as its caption. It is resolved per send, so swapping
+🎨 Gambar Banner Channel → 🟢 Buy Bot (and 🐋 Whale Alert
+for its own clip; whales fall back to the buy one, so a single upload covers
+both). One clip, used by every group, with the transaction details as its
+caption. It is resolved per send, so swapping
 it applies to the next alert with no restart; leave it empty and alerts are
 plain text. A clip Telegram refuses costs the artwork, never the alert. It
 is stored like every other banner clip (`banner-media-buy.*`), which is what

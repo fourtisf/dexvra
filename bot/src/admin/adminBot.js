@@ -230,7 +230,7 @@ function bannerExists() {
 }
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
-const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up", buy: "🟢 Buy Bot" };
+const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up", buy: "🟢 Buy Bot", whale: "🐋 Whale Alert" };
 // Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
@@ -265,6 +265,7 @@ function btHomeKb() {
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
     [Markup.button.callback(BT_KINDS.rankup, "btk:rankup"), Markup.button.callback(BT_KINDS.buy, "btk:buy")],
+    [Markup.button.callback(BT_KINDS.whale, "btk:whale")],
     [Markup.button.callback("⬅ Kembali", "home")],
   ]);
 }
@@ -277,7 +278,10 @@ function btKindText(kind) {
     const note =
       kind === "rankup"
         ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
-        : kind === "buy"
+        : kind === "whale"
+          ? `\nGIF/video khusus alert 🐋 <b>WHALE WALLET</b> — pembelian dari dompet yang sudah pegang banyak token itu, dan alertnya <b>di-pin</b> di grup.\n\n` +
+            `Kalau kosong, dipakai GIF <b>🟢 Buy Bot</b> biasa.`
+          : kind === "buy"
           ? `\nGIF/video ini dipakai <b>SEMUA grup</b> yang pakai buy bot — diputar di atas setiap alert pembelian, dengan detail transaksi jadi captionnya.\n\n` +
             `Kalau kosong, alert dikirim sebagai <b>teks biasa</b> (tetap jalan normal).`
           : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
@@ -1876,7 +1880,7 @@ function build() {
 
   // ── Channel banner artwork (template compositor, per service) ──
   const K = "(listing|trending|banner)";
-  const KM = "(listing|trending|banner|pump|rankup|buy)"; // media-capable kinds (incl. pump, rank-up + group buy alerts)
+  const KM = "(listing|trending|banner|pump|rankup|buy|whale)"; // media-capable kinds (incl. pump, rank-up + group buy alerts)
   bot.action("bt", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;

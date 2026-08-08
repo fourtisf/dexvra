@@ -34,6 +34,7 @@ function registerHandlers(bot) {
   bot.command("settoken", groupSetup.settoken);
   bot.command("setchain", groupSetup.setchain);
   bot.command("setminbuy", groupSetup.setminbuy);
+  bot.command("setwhale", groupSetup.setwhale);
   bot.command("buybot", groupSetup.buybot);
 
   // ── Main menu ─────────────────────────────────────────────────────────────

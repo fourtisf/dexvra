@@ -141,7 +141,12 @@ test("the cursor holds at the OLDEST undelivered buy, not at the newest seen", a
   const latch = require("../src/group/alertLatch");
   const gt = require("../src/group/gtPairs");
   const trades = require("../src/group/gtTrades");
+  const holdings = require("../src/group/walletHoldings");
   latch._reset();
+  // Stubbed, or the whale check inside the emit loop reaches a real RPC — which
+  // in a sandbox hangs the whole suite on an open socket.
+  const realHolding = holdings.holdingOf;
+  holdings.holdingOf = async () => null;
 
   const CA = "0x" + "a".repeat(40);
   // Distinguished by AMOUNT, because the alert renders the dollar figure into
@@ -173,6 +178,7 @@ test("the cursor holds at the OLDEST undelivered buy, not at the newest seen", a
   } finally {
     trades.fetchPoolBuys = realFetch;
     gt.fetchPoolCached = realPool;
+    holdings.holdingOf = realHolding;
   }
 });
 
