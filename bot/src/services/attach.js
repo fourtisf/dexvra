@@ -63,6 +63,13 @@ function attachServices(bot, services) {
   if (require("../config/constants").GROUP_BUYBOT_ENABLED) {
     add("groupBuyMonitor", () => require("../group/buyMonitor").start(tg)); // group buy alerts
   }
+  // The raid runner's boot sweep is the ONLY thing that unlocks a group whose
+  // raid died with the process, so this service failing to start is not
+  // cosmetic — it can leave a customer's chat silenced. startOne() reports it
+  // by name, which is what makes that visible.
+  if (require("../config/constants").RAID_ENABLED) {
+    add("raidRunner", () => require("../raid/runner").start(bot));
+  }
 
   // Is any of the above actually working? Nothing answered that until now: a
   // wedged poller, a vanished Mongo, or an order that took money and stalled

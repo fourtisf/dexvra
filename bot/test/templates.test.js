@@ -29,7 +29,10 @@ test("every default template key has editor metadata + a group", () => {
   for (const k of tpl.keys()) {
     const m = tpl.meta(k);
     assert.ok(m.label, `missing label for ${k}`);
-    assert.ok(["Bot Messages", "Channel Posts", "Mass DM", "Group Buy Bot", "X Posts", "Other"].includes(m.group), `bad group for ${k}`);
+    assert.ok(
+      ["Bot Messages", "Channel Posts", "Mass DM", "Group Buy Bot", "Dexvra Raid", "X Posts", "Other"].includes(m.group),
+      `bad group for ${k}`,
+    );
   }
   const g = tpl.groups();
   assert.ok(g["Bot Messages"].length > 0);
@@ -44,7 +47,7 @@ test("every template group is menu-reachable via a unique slug (admin editor)", 
   const slug = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "grp";
   const groups = Object.keys(tpl.groups());
   // the families the bot now ships MUST each be their own editable group
-  for (const g of ["Bot Messages", "Channel Posts", "Mass DM", "Group Buy Bot"]) {
+  for (const g of ["Bot Messages", "Channel Posts", "Mass DM", "Group Buy Bot", "Dexvra Raid"]) {
     assert.ok(groups.includes(g), `admin editor is missing the '${g}' group`);
   }
   // slugs are unique (callback-data collisions would hide a group)

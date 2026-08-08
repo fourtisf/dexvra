@@ -40,10 +40,16 @@ test("estimateBuys: a 24h-window rollover (counters drop) returns null", () => {
   assert.strictEqual(mon.estimateBuys(prev, cur), null);
 });
 
-test("buyEmojiRow scales with size and is capped", () => {
-  assert.strictEqual(mon.buyEmojiRow(25).length / 2, 1); // 🟢 is a surrogate pair (length 2)
-  assert.ok(mon.buyEmojiRow(1000000).length / 2 <= 60); // capped
-  assert.ok(mon.buyEmojiRow(0).length >= 2); // at least one
+// 🟢 is a surrogate pair, so string length is 2 per glyph.
+const glyphs = (s) => s.length / 2;
+
+test("buyEmojiRow scales with size, and is floored AND capped", () => {
+  assert.strictEqual(glyphs(mon.buyEmojiRow(500)), 10); // one per $50
+  assert.strictEqual(glyphs(mon.buyEmojiRow(1_000_000)), 16); // capped, never a wall
+  assert.strictEqual(glyphs(mon.buyEmojiRow(0)), 3); // floored, never empty
+  // The cap is the point: an uncapped row wraps to several lines on a phone and
+  // pushes the numbers off the first screen.
+  assert.ok(glyphs(mon.buyEmojiRow(9e9)) <= 16);
 });
 
 test("candidateChains guesses by address shape", () => {

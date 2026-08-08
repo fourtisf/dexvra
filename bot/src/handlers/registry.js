@@ -9,9 +9,18 @@ const massdm = require("./massdm");
 const groupSetup = require("../group/setup");
 const text = require("./text");
 const payment = require("../payments/payment");
+const { registerRaidHandlers } = require("../raid");
+const { RAID_ENABLED } = require("../config/constants");
 const log = require("../helpers/logger");
 
 function registerHandlers(bot) {
+  // ── Dexvra Raid (FIRST) ───────────────────────────────────────────────────
+  // Must be registered before the terminal `bot.on("text")` / media routers at
+  // the bottom of this function, which would otherwise eat the raid panel's
+  // answers and starve auto-enrolment. Every raid handler calls next() unless
+  // it actually consumed the update.
+  if (RAID_ENABLED) registerRaidHandlers(bot);
+
   // ── Commands ──────────────────────────────────────────────────────────────
   bot.start(start.startHandler);
   bot.command("home", start.homeHandler);

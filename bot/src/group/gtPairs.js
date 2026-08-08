@@ -1,16 +1,24 @@
-// GeckoTerminal pool resolver for the group buy-bot. Resolves a token's top
-// pool and returns a normalized snapshot (price, mcap, 24h volume, liquidity,
-// buy/sell tx split) used to estimate buys between polls. GT is queried for
-// every chain here (it exposes per-pool 24h volume + tx split, which the buy
-// estimate needs); DexScreener is the fallback for chains GT hasn't indexed.
+// GeckoTerminal client for the group buy bot: one HTTP layer, one rate-limit
+// cooldown, one pool cache — shared by the pool resolver below and by the
+// per-transaction trades feed in gtTrades.js.
+//
+// SHARING IS THE POINT. GT's free tier is roughly 30 requests/minute for the
+// whole process, and it is counted per IP, not per caller. Two modules with
+// their own fetch and their own backoff means one of them keeps hammering
+// through a 429 that the other has already noticed — so the cooldown lives
+// here, above both, and a 429 from either one silences both. Give gtTrades.js
+// its own client and this guarantee is gone.
 //
 // NEVER match a pool by address across chains — we always query the token on
-// its OWN geckoNetwork, so a same-address deploy elsewhere can't leak in.
+// its OWN geckoNetwork, so a same-address deploy elsewhere cannot leak in.
+// (fourtis published a "+100% pump" for a token that was down 62%, because a
+// same-address token on another chain supplied the price.)
 const { chainOf } = require("../config/chains");
 const log = require("../helpers/logger");
 
 const GT = "https://api.geckoterminal.com/api/v2";
 const HEADERS = { accept: "application/json;version=20230302" };
+const TIMEOUT_MS = 8000;
 
 // Chains DexScreener does NOT index — must go through GT (mirror marketdata's
 // DS_CHAIN gaps). Kept as a set so the buy-bot never falls back to a source
@@ -23,13 +31,61 @@ const num = (x) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// ── Shared rate-limit cooldown ───────────────────────────────────────────────
+// Armed by a 429 (or a 5xx run) and honoured by EVERY caller. While it is armed
+// gtGet returns `{ ok: false }` without making a request — which the trades feed
+// reads as "unavailable" and degrades on, rather than as "no buys".
+const COOLDOWN_MS = 120 * 1000;
+let cooldownUntil = 0;
+
+const inCooldown = (at = Date.now()) => at < cooldownUntil;
+
+function armCooldown(why, at = Date.now()) {
+  if (inCooldown(at)) return;
+  cooldownUntil = at + COOLDOWN_MS;
+  log.warn(`[buybot] GeckoTerminal backing off for ${COOLDOWN_MS / 1000}s — ${why}`);
+}
+
+/**
+ * One GET against GT. Never throws.
+ * Returns { ok:true, status, body } or { ok:false, status, reason }.
+ *
+ * `ok:false` deliberately covers everything from a dead socket to a 404: the
+ * only thing a caller can do with any of them is stop trusting the answer, and
+ * collapsing them here keeps that decision in one place.
+ */
+async function gtGet(path, params) {
+  if (inCooldown()) return { ok: false, status: 0, reason: "cooldown" };
+  const qs = new URLSearchParams(params || {}).toString();
+  const url = `${GT}${path}${qs ? `?${qs}` : ""}`;
+  try {
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (res.status === 429) {
+      armCooldown("HTTP 429 (rate limited)");
+      return { ok: false, status: 429, reason: "rate limited" };
+    }
+    if (res.status >= 500) {
+      armCooldown(`HTTP ${res.status}`);
+      return { ok: false, status: res.status, reason: "server error" };
+    }
+    if (!res.ok) return { ok: false, status: res.status, reason: `HTTP ${res.status}` };
+    return { ok: true, status: res.status, body: await res.json() };
+  } catch (e) {
+    // A timeout is not a rate limit — do NOT arm the shared cooldown for it, or
+    // one slow pool takes every group's buy bot offline for two minutes.
+    return { ok: false, status: 0, reason: (e && e.message) || "request failed" };
+  }
+}
+
+const networkOf = (chain) => (chainOf(chain) && chainOf(chain).geckoNetwork) || null;
+
 /**
  * Resolve the token's deepest pool on its chain into a snapshot:
  *   { poolAddress, priceUsd, mcap, volume24h, liquidity, buys24h, sells24h }
  * Returns null when neither GT nor DexScreener has the token.
  */
 async function fetchPool(chain, address) {
-  const net = chainOf(chain) && chainOf(chain).geckoNetwork;
+  const net = networkOf(chain);
   if (net) {
     const gt = await fetchGtPool(net, address).catch(() => null);
     if (gt) return gt;
@@ -41,14 +97,29 @@ async function fetchPool(chain, address) {
   return null;
 }
 
+// ── Pool metadata cache ──────────────────────────────────────────────────────
+// Price / mcap / liquidity only decorate an alert; they are not what detects
+// one. With the trades feed as the detector, an idle pool must cost exactly ONE
+// request per poll (the trades call) — so metadata is fetched only when a buy
+// actually needs rendering, and then reused for a minute.
+const META_TTL_MS = 60 * 1000;
+const metaCache = new Map(); // `${chain}/${address}` → { at, pool }
+
+async function fetchPoolCached(chain, address, at = Date.now()) {
+  const k = `${chain}/${address}`;
+  const hit = metaCache.get(k);
+  if (hit && at - hit.at < META_TTL_MS) return hit.pool;
+  const pool = await fetchPool(chain, address).catch(() => null);
+  // Only a SUCCESSFUL lookup is cached. Caching a miss would hold a whole
+  // minute of alerts at "price —" because one request happened to time out.
+  if (pool) metaCache.set(k, { at, pool });
+  return pool || (hit ? hit.pool : null);
+}
+
 async function fetchGtPool(net, address) {
-  const res = await fetch(`${GT}/networks/${net}/tokens/${address}/pools?page=1`, {
-    headers: HEADERS,
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await gtGet(`/networks/${net}/tokens/${address}/pools`, { page: 1 });
   if (!res.ok) return null;
-  const j = await res.json();
-  const pools = j.data || [];
+  const pools = (res.body && res.body.data) || [];
   if (!pools.length) return null;
   // deepest-liquidity pool wins
   pools.sort((a, b) => (num(b.attributes?.reserve_in_usd) || 0) - (num(a.attributes?.reserve_in_usd) || 0));
@@ -62,6 +133,7 @@ async function fetchGtPool(net, address) {
     liquidity: num(a.reserve_in_usd) || 0,
     buys24h: num(tx.buys) || 0,
     sells24h: num(tx.sells) || 0,
+    change24h: num(a.price_change_percentage && a.price_change_percentage.h24),
     source: "gt",
   };
 }
@@ -71,7 +143,7 @@ const DS_CHAIN = { solana: "solana", bsc: "bsc", ethereum: "ethereum", base: "ba
 async function fetchDsPool(chain, address) {
   const dsChain = DS_CHAIN[chain];
   if (!dsChain) return null;
-  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) return null;
   const j = await res.json();
   const pairs = (j.pairs || []).filter((p) => p && p.chainId === dsChain);
@@ -87,8 +159,27 @@ async function fetchDsPool(chain, address) {
     liquidity: num(p.liquidity?.usd) || 0,
     buys24h: num(tx.buys) || 0,
     sells24h: num(tx.sells) || 0,
+    change24h: num(p.priceChange && p.priceChange.h24),
     source: "ds",
   };
 }
 
-module.exports = { fetchPool, isGtPrimary };
+/** Test seam — clear the shared cooldown and the metadata cache. */
+function _reset() {
+  cooldownUntil = 0;
+  metaCache.clear();
+}
+
+module.exports = {
+  fetchPool,
+  fetchPoolCached,
+  isGtPrimary,
+  gtGet,
+  networkOf,
+  inCooldown,
+  armCooldown,
+  _reset,
+  GT,
+  COOLDOWN_MS,
+  META_TTL_MS,
+};

@@ -72,6 +72,8 @@ pm2 save
 | `src/dexscreener.js` | DexScreener feeds + token info (every chain but Robinhood) |
 | `src/poolstrade.js` | pools.trade launchpad — Robinhood Chain, which DexScreener does not index |
 | `src/handlers/` | `start`, `listing`, `trending`, `banner`, `text`, `menu`, `registry` |
+| `src/group/` | group buy bot — pool resolver, per-transaction trades feed, delivery latch |
+| `src/raid/` | Dexvra Raid — X metrics resolver, card, chat lock, runner, `/raid` panel |
 | `src/payments/` | temp-wallet gen, balance poll, sweep, confirm handler (per-chain adapters) |
 | `src/channels/` | Bot-API channel posting + post formatters |
 | `src/twitter.js` | X posting — every post type (disabled unless keys present) |
@@ -252,6 +254,100 @@ late is worse than no post.
 7. `npm run check` → `npm test` → `npm start`.
 8. **Security**: rotate the bot token in @BotFather if it was ever shared, then
    update `.env`.
+
+## Group tools — Buy Bot & Raid
+
+Both are free, both run inside a project's own Telegram group, and both are
+reachable from the main menu (**🤖 Buy Bot & Raid for your group**).
+
+### Buy Bot — real transactions, not estimates
+
+`/settoken <CA>` in the group and every on-chain buy posts an alert carrying the
+**actual transaction hash and buyer address**, read from GeckoTerminal's
+per-pool trades feed (`src/group/gtTrades.js`).
+
+The volume-diff estimator it replaced is still in the tree, but it now runs
+**only when the trades feed cannot be read**, and it labels itself when it does.
+That distinction is the whole design, and it lives in one place:
+`fetchPoolBuys()` resolves `null` when the feed is *unavailable* and `[]` when
+the feed *answered and the pool is quiet*. Conflating them fails in one of two
+directions — read an outage as silence and the group hears nothing for hours;
+read silence as an outage and every buy posts twice, once real and once
+estimated.
+
+Four rules that look like details and are not:
+
+- **Direction comes from the token addresses, never GeckoTerminal's `kind`.**
+  `kind` is relative to the pool's *base* token, so on a pool where the tracked
+  token is the quote side, `kind:"buy"` means our token was **sold** — a green
+  buy alert on every dump.
+- **Multi-hop swaps are merged by transaction hash before alerting.** Un-merged,
+  a $120 routed buy posts as "$40" and the other legs vanish into the dedupe.
+- **The dedupe budget is spent only after Telegram returns a `message_id`**
+  (`src/group/alertLatch.js`). A short claim stops two overlapping polls
+  double-sending; the hour-long latch is written on success. One 429 must never
+  mean the alert never posted *and* can never post again.
+- **A dead group latches; a bad moment does not.** Fatal-vs-transient lives in
+  exactly one file (`src/group/fatalChatError.js`) so no two pipelines can drift
+  into retrying a chat the other already gave up on.
+
+```bash
+npm run buybot:check                              # a known-good pool
+npm run buybot:check -- solana <token-address>    # your token
+```
+
+Grep pm2 logs for `verified <chain> buys` (real) vs `volume-diff buy estimate`
+(degraded), and `is unreachable` for a group that removed the bot.
+
+### Raid — rally the chat behind one X post
+
+`/raid` opens an admin panel: set goals (**+15 likes**, **+5 replies**,
+**+10 crew**), paste the post, launch. One card is posted and kept updated, and
+optionally the chat is locked until the targets are met.
+
+**The X API is optional.** The 🤝 **Crew** goal counts everyone who shows up in
+the chat while the raid is live — no key, no plan, no quota — so:
+
+- crew goal only → X is never called at all;
+- X goals but X refuses → the raid launches crew-only, and *re-arms itself* if
+  X starts answering mid-raid;
+- X goals and no crew goal → the launch is refused, with the way out in the
+  message.
+
+Worth being precise about the cost, because it is the thing people get wrong: an
+X API bill is a toll on **reading X's database**, not rent on your own account —
+the post's author is not involved. Since X moved to pay-per-use, reads are
+$0.005 each, **deduplicated per post per 24h UTC window**, so a 60-minute raid
+polling every 30s bills as roughly **one read (≈ $0.005)**. The binding
+constraint is the app-level rate limit, not money; if you hit it, raise
+`RAID_POLL_SEC`.
+
+Two keyless sources exist and both ship **off**: `RAID_FREE_METRICS` (X's embed
+endpoint — likes and replies, cannot see reposts, and its reply figure is the
+whole conversation so it disagrees with the number X prints on the post) and
+`RAID_GUEST_METRICS` (X's internal GraphQL with an anonymous guest token — the
+only free route to a repost count). **They are not independent fallbacks**: both
+are gated by X's IP reputation, so a datacenter block takes them out together.
+The genuinely independent paths are the paid token and the Crew goal.
+
+The one part that can hurt a customer is the chat lock, so it is built around
+that: the chat's current permissions are snapshotted and **written to disk
+before anything is touched**, the deadline (`expiresAt`) is durable so a boot
+sweep frees a group whose process was killed mid-raid, `finishRaid()` is the
+only exit door because it is the function that unlocks, and a failed unlock
+deliberately leaves `locked: true` so the next sweep retries.
+
+```bash
+npm run raid:check                       # which X source answers from this server
+npm run raid:check -- <post-url>
+```
+
+Grep pm2 logs for `[raid]` — `started`, `completed`, `expired`, `locked group`,
+`unlocked group`, `UNLOCK FAILED`, `boot recovery`, `X came back`.
+
+All raid and buy-alert copy is admin-editable in `@dexvraadminbot`
+(**🤖 Group Buy Bot** and **🚀 Dexvra Raid**), including the bar characters via
+`raid_style`.
 
 ## Tests
 

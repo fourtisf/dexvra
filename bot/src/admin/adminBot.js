@@ -32,6 +32,7 @@ const GROUP_ICON = {
   "Channel Posts": "📢",
   "Mass DM": "📣",
   "Group Buy Bot": "🤖",
+  "Dexvra Raid": "🚀",
 };
 const slugOf = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "grp";
 const groupNames = () => Object.keys(tpl.groups());
@@ -96,6 +97,18 @@ const SAMPLE_VARS = {
   trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
   emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "@dexvrabot",
+  // Group buy alerts (verified path)
+  tier: "Whale Buy", impact: "0.42%", change: "+18.4%",
+  verify: "🔗 Txn · 👤 0x1f4b…9ac2",
+  tradeUrl: "https://t.me/dexvratradebot?start=ca_solana_G9j8",
+  // Dexvra Raid. {progress} is GENERATED at render time, so the preview shows a
+  // representative block rather than a placeholder — an admin editing the card
+  // needs to see how much room those rows take up.
+  seq: "#7", percent: "62", left: "38m", crew: "14",
+  roster: "@ana, @bo, @cy +11 more",
+  progress: "❤️ Likes   ▰▰▰▰▰▰▱▱▱▱  209/215\n💬 Replies ▰▰▰▰▰▰▰▰▱▱  14/15\n🤝 Crew    ▰▰▰▰▰▰▰▱▱▱  14/20",
+  url: "https://x.com/i/status/1", post: "gm — like + reply and we're there 🚀",
+  updated: "12:33:57", note: "",
 };
 
 async function sendTemplateAudit(ctx, arg = "") {

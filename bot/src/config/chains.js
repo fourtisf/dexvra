@@ -202,12 +202,99 @@ function isValidAddress(chain, address) {
   return c.addressPattern.test(address.trim());
 }
 
+// ── Transaction / account explorer links ─────────────────────────────────────
+// The per-chain `explorer` above points at a TOKEN page, which is the only
+// thing the listing posts ever needed. The group buy bot posts REAL
+// transactions, so it needs the two links a reader actually wants to click:
+// the transaction itself, and the wallet that made it.
+//
+// Kept as one table rather than two more closures per chain entry: most chains
+// are Blockscout/Etherscan clones where both URLs derive from one host, and the
+// handful that are not (Solana, Tron, TON, Move chains) are the exceptions
+// worth spelling out. An unknown chain returns null and the alert simply omits
+// the link — a buy alert must never be blocked by a missing explorer.
+const EVM_EXPLORER_BASE = {
+  ethereum: "https://etherscan.io",
+  bsc: "https://bscscan.com",
+  base: "https://basescan.org",
+  // Matches the web app's src/config/chains.ts, so a link is the same wherever
+  // it is published. (The token `explorer` above still points at DexScreener;
+  // that is a separate, older choice and changing it would move the links in
+  // every existing channel post.)
+  robinhood: "https://robinhoodchain.blockscout.com",
+  polygon: "https://polygonscan.com",
+  arbitrum: "https://arbiscan.io",
+  optimism: "https://optimistic.etherscan.io",
+  avalanche: "https://snowtrace.io",
+  berachain: "https://berascan.com",
+  sonic: "https://sonicscan.org",
+  hyperevm: "https://hyperevmscan.io",
+  abstract: "https://abscan.org",
+  apechain: "https://apescan.io",
+  blast: "https://blastscan.io",
+  sei: "https://seitrace.com",
+  unichain: "https://uniscan.xyz",
+  plasma: "https://plasmascan.to",
+};
+
+const SPECIAL_EXPLORER = {
+  solana: {
+    tx: (h) => `https://solscan.io/tx/${h}`,
+    account: (a) => `https://solscan.io/account/${a}`,
+  },
+  tron: {
+    tx: (h) => `https://tronscan.org/#/transaction/${h}`,
+    account: (a) => `https://tronscan.org/#/address/${a}`,
+  },
+  ton: {
+    tx: (h) => `https://tonviewer.com/transaction/${h}`,
+    account: (a) => `https://tonviewer.com/${a}`,
+  },
+  sui: {
+    tx: (h) => `https://suivision.xyz/txblock/${h}`,
+    account: (a) => `https://suivision.xyz/account/${a}`,
+  },
+  aptos: {
+    tx: (h) => `https://explorer.aptoslabs.com/txn/${h}?network=mainnet`,
+    account: (a) => `https://explorer.aptoslabs.com/account/${a}?network=mainnet`,
+  },
+};
+
+/** Explorer URL for a transaction hash, or null when the chain has none. */
+function txUrl(chain, hash) {
+  if (!hash) return null;
+  const special = SPECIAL_EXPLORER[chain];
+  if (special) return special.tx(hash);
+  const base = EVM_EXPLORER_BASE[chain];
+  return base ? `${base}/tx/${hash}` : null;
+}
+
+/** Explorer URL for a wallet/account, or null when the chain has none. */
+function accountUrl(chain, address) {
+  if (!address) return null;
+  const special = SPECIAL_EXPLORER[chain];
+  if (special) return special.account(address);
+  const base = EVM_EXPLORER_BASE[chain];
+  return base ? `${base}/address/${address}` : null;
+}
+
+/** `0x1234…cdef` — a hash/address short enough to read in a chat line. */
+function shortAddress(a, head = 6, tail = 4) {
+  const s = String(a || "");
+  if (s.length <= head + tail + 1) return s;
+  return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
 module.exports = {
   CHAINS,
   CHAIN_ORDER,
   CHAIN_IDS,
   PAYABLE_CHAIN_IDS,
   chainOf,
+  txUrl,
+  accountUrl,
+  shortAddress,
+  EVM_EXPLORER_BASE,
   nativeOf,
   decimalsOf,
   familyOf,

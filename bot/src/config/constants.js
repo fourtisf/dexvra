@@ -225,6 +225,44 @@ const POST_BANNERS = bool(env.POST_BANNERS, true);
 // ── Group buy bot (posts buy alerts in project group chats) ──────────────────
 const GROUP_BUYBOT_ENABLED = bool(env.GROUP_BUYBOT_ENABLED, true);
 const GROUP_BUYBOT_CHECK_MS = Math.max(10000, int(env.GROUP_BUYBOT_CHECK_MS, 20 * 1000));
+// One GeckoTerminal trades read per POOL per window, however fast the loop above
+// runs and however many groups watch the same token. GT's free tier is roughly
+// 30 requests/minute for the whole process — shared with the listing, trending
+// and pump pipelines — so this, not the scan interval, is the real budget knob.
+// Raise it if you track many pools; lowering it below ~15s buys nothing,
+// because a block takes longer than that on every chain here.
+const BUYBOT_POOL_MIN_MS = Math.max(5000, int(env.BUYBOT_POOL_MIN_MS, 25 * 1000));
+// The "hype meter" row: one emoji per this many dollars, clamped. The glyph
+// itself comes from the group_buy_alert template, so an admin can change it in
+// @dexvraadminbot without touching any of this.
+// The ceiling matters more than the step: at one emoji per $25 with no real cap
+// a $1,200 buy rendered FORTY-NINE green circles, which wraps to four lines on
+// a phone and pushes the actual numbers off the first screen. A row is a size
+// cue, not a bar chart — 3 to 16 glyphs reads instantly and never wraps.
+const BUYBOT_EMOJI_STEP_USD = Math.max(1, int(env.BUYBOT_EMOJI_STEP_USD, 50));
+const BUYBOT_EMOJI_MIN = Math.max(1, int(env.BUYBOT_EMOJI_MIN, 3));
+const BUYBOT_EMOJI_MAX = Math.max(BUYBOT_EMOJI_MIN, int(env.BUYBOT_EMOJI_MAX, 16));
+// Buy-size tiers. The LABELS are template-editable (group_buy_tiers); only the
+// thresholds live here, because a group that trades in cents and one that
+// trades in thousands do not agree on what "whale" means.
+const BUYBOT_WHALE_USD = Math.max(0, Number(env.BUYBOT_WHALE_USD) || 1000);
+const BUYBOT_MEGA_USD = Math.max(BUYBOT_WHALE_USD, Number(env.BUYBOT_MEGA_USD) || 5000);
+
+// ── Dexvra Raid (group engagement raids on an X post) ────────────────────────
+const RAID_ENABLED = bool(env.RAID_ENABLED, true);
+// How often a live raid re-reads its post. The binding constraint is X's
+// APP-LEVEL rate limit, not money: reads are billed per post per 24h, so
+// polling faster costs nothing extra, but ~3,500 reads/15min across the app
+// caps how many DISTINCT posts can be raided at once (~116 at 30s). If you run
+// more raids than that, raise this — you cannot buy past a rate limit.
+const RAID_POLL_SEC = Math.max(10, int(env.RAID_POLL_SEC, 30));
+// Hard deadline. Also the value written into raid.expiresAt, which is what the
+// boot sweep reads to free a group whose raid died with the process.
+const RAID_MAX_MINUTES = Math.max(5, int(env.RAID_MAX_MINUTES, 60));
+// How often the card may be deleted and re-posted at the bottom of the chat.
+// Floored at 2: without a floor, a popular post would delete and re-post its
+// card on every poll — the group spammed by its own raid.
+const RAID_BUMP_MINUTES = Math.max(2, int(env.RAID_BUMP_MINUTES, 5));
 
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
@@ -303,6 +341,16 @@ module.exports = {
   POST_BANNERS,
   GROUP_BUYBOT_ENABLED,
   GROUP_BUYBOT_CHECK_MS,
+  BUYBOT_POOL_MIN_MS,
+  BUYBOT_EMOJI_STEP_USD,
+  BUYBOT_EMOJI_MIN,
+  BUYBOT_EMOJI_MAX,
+  BUYBOT_WHALE_USD,
+  BUYBOT_MEGA_USD,
+  RAID_ENABLED,
+  RAID_POLL_SEC,
+  RAID_MAX_MINUTES,
+  RAID_BUMP_MINUTES,
   MASS_DM_ENABLED,
   MASS_DM_PRICE,
   MASS_DM_REVIEW_CHAT_ID,
