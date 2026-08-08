@@ -200,3 +200,17 @@ test("a 404 does NOT arm the cooldown — one dead pool must not blind every gro
     assert.strictEqual(gt.inCooldown(), false);
   });
 });
+
+test("a 5xx or a timeout does NOT arm the cooldown either — only 429 does", async () => {
+  // Both are per-request. Arming a process-wide backoff for them would stop
+  // every group's buy bot AND swap its real alerts for estimates, on one bad
+  // moment for one pool.
+  await withFetch(async () => jsonRes({}, 503), async () => {
+    assert.strictEqual(await trades.fetchPoolBuys("eth", "0xpool", CA), null);
+    assert.strictEqual(gt.inCooldown(), false);
+  });
+  await withFetch(async () => { throw new Error("timeout"); }, async () => {
+    assert.strictEqual(await trades.fetchPoolBuys("eth", "0xpool", CA), null);
+    assert.strictEqual(gt.inCooldown(), false);
+  });
+});

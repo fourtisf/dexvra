@@ -64,10 +64,13 @@ async function gtGet(path, params) {
       armCooldown("HTTP 429 (rate limited)");
       return { ok: false, status: 429, reason: "rate limited" };
     }
-    if (res.status >= 500) {
-      armCooldown(`HTTP ${res.status}`);
-      return { ok: false, status: res.status, reason: "server error" };
-    }
+    // A 5xx does NOT arm the cooldown. It is a per-request failure and says
+    // nothing about our quota, whereas the cooldown is process-wide: arming it
+    // here would let one bad moment on one pool stop every group's buy bot for
+    // two minutes — and, because an unreadable feed degrades to the volume
+    // estimator, replace real alerts with estimates while it did. 429 is the
+    // only status that genuinely means "all of you, stop".
+    if (res.status >= 500) return { ok: false, status: res.status, reason: "server error" };
     if (!res.ok) return { ok: false, status: res.status, reason: `HTTP ${res.status}` };
     return { ok: true, status: res.status, body: await res.json() };
   } catch (e) {
