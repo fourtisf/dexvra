@@ -186,6 +186,20 @@ test("a crew member's display name can NEVER inject a link either", () => {
   assert.deepStrictEqual(links, []);
 });
 
+test("a BARE url in a display name is neutralised too — Telegram auto-links those", () => {
+  // sanitizeVar only stops markup delimiters. A member setting their name to
+  // "🎁 t.me/DexvraDrop" and saying one word in the chat would otherwise get a
+  // tappable link into a paying project's PINNED card, re-posted on every bump.
+  const c = card.renderCard(raidOf({ crew: [{ name: "🎁 t.me/DexvraDrop" }] }), { now: NOW });
+  assert.ok(!c.text.includes("t.me/"));
+  assert.match(c.text, /🔗/);
+});
+
+test("a bare url in the raided post's text is neutralised as well", () => {
+  const c = card.renderCard(raidOf({ postText: "claim now at https://evil.test/x" }), { now: NOW });
+  assert.ok(!c.text.includes("evil.test"), "the card only renders links it built itself");
+});
+
 test("ordinary punctuation in a post still reads normally", () => {
   // The sanitiser must neutralise delimiters without mangling real text.
   const c = card.renderCard(raidOf({ postText: "gm! we're at 90% — let's go (finally)" }), { now: NOW });

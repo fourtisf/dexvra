@@ -57,6 +57,9 @@ async function settoken(ctx) {
     chain: res.chain,
     address,
     pairAddress: res.pool.poolAddress,
+    // Without this every alert reads "$TOKEN" — the placeholder the renderer
+    // falls back to. Nothing else in the bot ever learns a group's ticker.
+    sym: res.pool.symbol || "",
     on: true,
   });
   const label = chainOf(res.chain).label;

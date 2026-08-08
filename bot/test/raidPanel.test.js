@@ -16,6 +16,9 @@ const POST = "https://x.com/dexvraio/status/2084979178378498146";
 test.beforeEach(() => {
   store._reset();
   runner._activeGroups.clear();
+  // The armed step is module-level state now, so it leaks between cases.
+  panel.clearUrlStep(CHAT, 5);
+  panel.clearUrlStep(CHAT, 99);
 });
 
 function ctxOf(over = {}) {
@@ -126,34 +129,60 @@ test("joining a finished raid says so instead of failing silently", async () => 
 // ── The post-URL step ────────────────────────────────────────────────────────
 
 test("the URL step is scoped to the admin, the chat AND a deadline", async () => {
-  const armed = () => ({ raidStep: "url", raidStepAt: Date.now(), raidChatId: CHAT });
+  panel.armUrlStep(CHAT, 5);
 
   // Right admin, right chat, in time → consumed.
-  const ok = ctxOf({ session: armed(), message: { text: POST } });
+  const ok = ctxOf({ message: { text: POST } });
   assert.strictEqual(await panel.handleText(ok), true);
   assert.strictEqual(store.getOrCreate(CHAT).settings.postUrl, "https://x.com/i/status/2084979178378498146");
 
-  // Same admin, DIFFERENT chat → not consumed. This rides a global text
-  // handler; anything looser eats an unrelated member's message.
-  const elsewhere = ctxOf({ session: { ...armed(), raidChatId: "-999" }, message: { text: POST } });
+  // A DIFFERENT member in the same chat → not consumed. This rides a global
+  // text handler; anything looser eats an unrelated member's message.
+  panel.armUrlStep(CHAT, 5);
+  const someoneElse = ctxOf({ from: { id: 99, username: "member" }, message: { text: POST } });
+  assert.strictEqual(await panel.handleText(someoneElse), false);
+
+  // Same admin, DIFFERENT chat → not consumed.
+  const elsewhere = ctxOf({ chat: { id: "-999", type: "supergroup" }, message: { text: POST } });
   assert.strictEqual(await panel.handleText(elsewhere), false);
 
   // Armed too long ago → not consumed.
-  const stale = ctxOf({
-    session: { ...armed(), raidStepAt: Date.now() - panel.STEP_TTL_MS - 1 },
-    message: { text: POST },
-  });
-  assert.strictEqual(await panel.handleText(stale), false);
+  panel.armUrlStep(CHAT, 5, Date.now() - panel.STEP_TTL_MS - 1);
+  assert.strictEqual(await panel.handleText(ctxOf({ message: { text: POST } })), false);
+});
+
+test("an armed step NEVER swallows another command", async () => {
+  // This handler is registered before every other command in the bot, so
+  // consuming here stops next() and the command simply never runs — for the
+  // full ten minutes, on /settoken, /start, /help and /buybot alike.
+  panel.armUrlStep(CHAT, 5);
+  const ctx = ctxOf({ message: { text: "/buybot off" } });
+  assert.strictEqual(await panel.handleText(ctx), false);
+  assert.strictEqual(ctx.replies.length, 0, "and it does not answer either");
+  assert.strictEqual(panel.urlStepArmed(CHAT, 5), true, "the admin can still paste a link");
+});
+
+test("closing the panel ends the wait", async () => {
+  panel.armUrlStep(CHAT, 5);
+  await panel.handleCallback(ctxOf({ callbackQuery: { data: "dr_close" } }));
+  assert.strictEqual(panel.urlStepArmed(CHAT, 5), false);
+});
+
+test("the step never touches ctx.session", async () => {
+  // Reading session marks the context dirty, and Telegraf's memory store never
+  // evicts — so one read here would mint a permanent entry for every member who
+  // ever speaks in any group the bot is in.
+  const ctx = ctxOf({ session: undefined, message: { text: "gm" } });
+  assert.strictEqual(await panel.handleText(ctx), false);
+  assert.strictEqual(ctx.session, undefined);
 });
 
 test("a message that isn't a post link keeps the step armed and says why", async () => {
-  const ctx = ctxOf({
-    session: { raidStep: "url", raidStepAt: Date.now(), raidChatId: CHAT },
-    message: { text: "https://dexvra.io" },
-  });
+  panel.armUrlStep(CHAT, 5);
+  const ctx = ctxOf({ message: { text: "https://dexvra.io" } });
   assert.strictEqual(await panel.handleText(ctx), true);
   assert.match(ctx.replies[0].t, /\/status\//);
-  assert.strictEqual(ctx.session.raidStep, "url", "the admin is still in this step");
+  assert.strictEqual(panel.urlStepArmed(CHAT, 5), true, "the admin is still in this step");
 });
 
 test("an ordinary message is never consumed", async () => {

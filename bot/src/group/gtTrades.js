@@ -23,7 +23,7 @@
 //
 // The estimator is still in buyMonitor.js and still runs — but only when THIS
 // module says the feed is unavailable. See the null-vs-[] rule on fetchPoolBuys.
-const { gtGet } = require("./gtPairs");
+const { gtGet, sameToken } = require("./gtPairs");
 const log = require("../helpers/logger");
 
 // GT returns at most 300 trades (newest first, last 24h) and pages are not
@@ -43,26 +43,6 @@ const num = (x) => {
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
 };
-
-const isHexAddress = (s) => /^0x[0-9a-fA-F]+$/.test(s);
-
-/**
- * Do two token addresses refer to the same token?
- *
- * EVM addresses are hex and case-insensitive (GT mixes checksummed and
- * lowercased forms in the same payload, which is why a bare === misses).
- * Solana mints, Tron and TON addresses are base58/base64 and CASE-SENSITIVE —
- * lowercasing those to compare would be a correctness bug, so it only happens
- * when both sides are hex.
- */
-function sameToken(a, b) {
-  const x = String(a || "").trim();
-  const y = String(b || "").trim();
-  if (!x || !y) return false;
-  if (x === y) return true;
-  if (isHexAddress(x) && isHexAddress(y)) return x.toLowerCase() === y.toLowerCase();
-  return false;
-}
 
 /**
  * Was the tracked token BOUGHT in this trade?

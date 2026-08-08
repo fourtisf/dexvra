@@ -31,6 +31,48 @@ const num = (x) => {
   return Number.isFinite(n) ? n : null;
 };
 
+const isHexAddress = (s) => /^0x[0-9a-fA-F]+$/.test(s);
+
+/**
+ * Do two token addresses refer to the same token?
+ *
+ * Lives here because gtTrades.js imports from this module (not the other way
+ * round), and both need it. EVM addresses are hex and case-insensitive — GT
+ * mixes checksummed and lowercased forms in one payload, so a bare === misses.
+ * Solana mints, Tron and TON addresses are case-SENSITIVE base58/base64, so
+ * lowercasing those to compare would be a correctness bug.
+ */
+function sameToken(a, b) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (isHexAddress(x) && isHexAddress(y)) return x.toLowerCase() === y.toLowerCase();
+  return false;
+}
+
+// GT relationship ids are "{network}_{address}".
+const relAddress = (rel) => {
+  const id = String((rel && rel.data && rel.data.id) || "");
+  const i = id.indexOf("_");
+  return i === -1 ? "" : id.slice(i + 1);
+};
+
+/**
+ * The TRACKED token's ticker, from a GT pool.
+ *
+ * `attributes.name` is "BASE / QUOTE", so which half applies depends on which
+ * side our token sits — and getting that backwards labels every buy alert with
+ * the counterparty's ticker (WETH, SOL) instead of the customer's.
+ */
+function symbolFromGtPool(pool, tokenAddress) {
+  const a = (pool && pool.attributes) || {};
+  const parts = String(a.name || "").split("/").map((s) => s.trim());
+  if (parts.length < 2) return "";
+  const tokenIsQuote = sameToken(relAddress(pool.relationships && pool.relationships.quote_token), tokenAddress);
+  return (tokenIsQuote ? parts[1] : parts[0]) || "";
+}
+
 // ── Shared rate-limit cooldown ───────────────────────────────────────────────
 // Armed by a 429 (or a 5xx run) and honoured by EVERY caller. While it is armed
 // gtGet returns `{ ok: false }` without making a request — which the trades feed
@@ -130,6 +172,7 @@ async function fetchGtPool(net, address) {
   const tx = (a.transactions && a.transactions.h24) || {};
   return {
     poolAddress: a.address || null,
+    symbol: symbolFromGtPool(pools[0], address),
     priceUsd: num(a.base_token_price_usd) ?? num(a.token_price_usd),
     mcap: num(a.market_cap_usd) ?? num(a.fdv_usd),
     volume24h: (a.volume_usd && num(a.volume_usd.h24)) || 0,
@@ -154,8 +197,10 @@ async function fetchDsPool(chain, address) {
   pairs.sort((a, b) => (num(b.liquidity?.usd) || 0) - (num(a.liquidity?.usd) || 0));
   const p = pairs[0];
   const tx = (p.txns && p.txns.h24) || {};
+  const quoteSide = sameToken(p.quoteToken && p.quoteToken.address, address);
   return {
     poolAddress: p.pairAddress || null,
+    symbol: ((quoteSide ? p.quoteToken : p.baseToken) || {}).symbol || "",
     priceUsd: num(p.priceUsd),
     mcap: num(p.marketCap) ?? num(p.fdv),
     volume24h: (p.volume && num(p.volume.h24)) || 0,
@@ -178,6 +223,8 @@ module.exports = {
   fetchPoolCached,
   isGtPrimary,
   gtGet,
+  sameToken,
+  symbolFromGtPool,
   networkOf,
   inCooldown,
   armCooldown,

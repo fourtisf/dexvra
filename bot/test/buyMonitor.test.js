@@ -191,6 +191,23 @@ test("a buy with no buyer address still links the transaction", () => {
   assert.ok(!row.includes("account"));
 });
 
+test("the pool resolver reports the TRACKED token's ticker, whichever side it is on", () => {
+  // Nothing else in the bot ever learns a group's ticker, so without this every
+  // alert reads "$TOKEN" — the renderer's placeholder. And reading the wrong
+  // half of GT's "BASE / QUOTE" name labels every buy with the counterparty's
+  // ticker (WETH, SOL) instead of the customer's.
+  const gt = require("../src/group/gtPairs");
+  const HOPPY = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const WETH = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const base = { attributes: { name: "HOPPY / WETH" }, relationships: { quote_token: { data: { id: `eth_${WETH}` } } } };
+  assert.strictEqual(gt.symbolFromGtPool(base, HOPPY), "HOPPY");
+  // GT mixes checksummed and lowercased forms in one payload, so the side test
+  // has to match hex case-insensitively or it silently picks the wrong half.
+  const quote = { attributes: { name: "WETH / HOPPY" }, relationships: { quote_token: { data: { id: `eth_${HOPPY.toLowerCase()}` } } } };
+  assert.strictEqual(gt.symbolFromGtPool(quote, HOPPY), "HOPPY");
+  assert.strictEqual(gt.symbolFromGtPool({ attributes: { name: "SOLO" } }, HOPPY), "", "a name with no pair is no answer");
+});
+
 test("the real alert carries the verified links; the estimated one says it cannot", () => {
   const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", minBuyUsd: 0 };
   const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 42.3 };

@@ -478,14 +478,22 @@ async function pollPool(tg, entry) {
   // Self-heal ONLY a MISSING pool address. A transient GT/DS timeout looks
   // identical to a 404, so never repoint a pool an admin resolved just because
   // one poll produced a different (or no) result.
-  if (!entry.pool) {
+  if (!entry.pool || entry.groups.some((g) => !g.sym)) {
     const resolved = await gt.fetchPoolCached(entry.chain, entry.address);
     if (resolved && resolved.poolAddress) {
-      entry.pool = resolved.poolAddress;
+      if (!entry.pool) entry.pool = resolved.poolAddress;
       for (const g of entry.groups) {
-        if (!g.pairAddress) await cfg.upsert(g.chatId, { pairAddress: resolved.poolAddress });
+        const patch = {};
+        if (!g.pairAddress) patch.pairAddress = resolved.poolAddress;
+        // Backfills groups configured before the ticker was captured, which
+        // would otherwise be stuck reading "$TOKEN" forever.
+        if (!g.sym && resolved.symbol) patch.sym = resolved.symbol;
+        if (Object.keys(patch).length) {
+          Object.assign(g, patch);
+          await cfg.upsert(g.chatId, patch);
+        }
       }
-      log.info(`[buybot] self-healed pool for ${entry.chain}/${entry.address} → ${resolved.poolAddress}`);
+      log.info(`[buybot] self-healed ${entry.chain}/${entry.address} → pool ${resolved.poolAddress} ${resolved.symbol || ""}`);
     }
   }
 

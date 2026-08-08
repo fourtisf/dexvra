@@ -27,6 +27,28 @@ const nextInCycle = (steps, cur) => steps[(steps.indexOf(cur) + 1) % steps.lengt
 // handler, so an unbounded wait would eventually eat an unrelated message.
 const STEP_TTL_MS = 10 * 60 * 1000;
 
+// Deliberately NOT ctx.session.
+//
+// handleText runs for EVERY text message in every group the bot is in, and
+// Telegraf's session middleware marks a context dirty on any READ, then writes
+// it back to a MemorySessionStore whose ttl is Infinity. Touching session here
+// would mint a permanent `${userId}:${chatId}` → {} entry for every member who
+// ever says anything in any group — none of whom have a flow open. Nothing else
+// in the bot reads session for group traffic. A small keyed map with an explicit
+// expiry costs nothing and stays bounded.
+const awaitingUrl = new Map(); // `${chatId}:${userId}` → armed-at ms
+const stepKey = (chatId, userId) => `${chatId}:${userId}`;
+
+function armUrlStep(chatId, userId, at = Date.now()) {
+  for (const [k, t] of awaitingUrl) if (at - t > STEP_TTL_MS) awaitingUrl.delete(k);
+  awaitingUrl.set(stepKey(chatId, userId), at);
+}
+const urlStepArmed = (chatId, userId, at = Date.now()) => {
+  const t = awaitingUrl.get(stepKey(chatId, userId));
+  return !!t && at - t <= STEP_TTL_MS;
+};
+const clearUrlStep = (chatId, userId) => awaitingUrl.delete(stepKey(chatId, userId));
+
 const isGroup = (ctx) => ctx.chat && (ctx.chat.type === "group" || ctx.chat.type === "supergroup");
 
 async function isGroupAdmin(ctx) {
@@ -165,6 +187,7 @@ async function handleCallback(ctx) {
     const s = g.settings;
 
     if (data === "dr_close") {
+      clearUrlStep(ctx.chat.id, ctx.from && ctx.from.id); // closing the panel ends the wait
       await ctx.answerCbQuery().catch(() => {});
       return ctx.deleteMessage().catch(() => {});
     }
@@ -181,12 +204,9 @@ async function handleCallback(ctx) {
       }
       s.lockChat = !s.lockChat;
     } else if (data === "dr_seturl") {
-      if (!ctx.session) ctx.session = {};
-      // Stamped with who, where and when: this rides a global text handler, and
-      // anything looser would consume an unrelated member's message.
-      ctx.session.raidStep = "url";
-      ctx.session.raidStepAt = Date.now();
-      ctx.session.raidChatId = String(ctx.chat.id);
+      // Scoped to who and where, and it expires: this rides a global text
+      // handler, and anything looser would consume an unrelated member's message.
+      armUrlStep(ctx.chat.id, ctx.from && ctx.from.id);
       await ctx.answerCbQuery().catch(() => {});
       return ctx
         .reply("🔗 Paste the X post link you want raided.\n\nLike: <code>https://x.com/dexvraio/status/1234567890</code>", HTML)
@@ -250,23 +270,25 @@ function maybeAutoEnroll(ctx) {
 /** Consume the "paste the post URL" answer. Returns true when it did. */
 async function handleText(ctx) {
   maybeAutoEnroll(ctx);
-  const sess = ctx.session;
-  if (!sess || sess.raidStep !== "url") return false;
-  if (!isGroup(ctx)) return false;
-  if (sess.raidChatId !== String(ctx.chat.id)) return false;
-  if (Date.now() - (sess.raidStepAt || 0) > STEP_TTL_MS) {
-    sess.raidStep = null;
-    return false;
-  }
-  if (!(await isGroupAdmin(ctx))) return false;
+  if (!isGroup(ctx) || !ctx.from) return false;
+  if (!urlStepArmed(ctx.chat.id, ctx.from.id)) return false;
 
   const raw = (ctx.message && ctx.message.text) || "";
+  // A COMMAND IS NEVER CONSUMED. This handler is registered before every other
+  // command in the bot, so returning true here stops next() and the command
+  // never runs: an admin who armed the step and then sent /buybot off got told
+  // "that isn't an X post link", and /settoken, /start and /help kept being
+  // eaten for the full ten minutes.
+  if (raw.startsWith("/")) return false;
+
+  if (!(await isGroupAdmin(ctx))) return false;
+
   const id = xMetrics.parseTweetId(raw);
   if (!id) {
     await ctx.reply("That isn't an X post link. Paste the full URL of the post — it should contain /status/.").catch(() => {});
     return true; // consumed: the admin is still in this step
   }
-  sess.raidStep = null;
+  clearUrlStep(ctx.chat.id, ctx.from.id);
   const g = store.getOrCreate(ctx.chat.id, ctx.chat.title || "");
   g.settings.postUrl = xMetrics.tweetUrl(id);
   await store.save();
@@ -287,6 +309,9 @@ module.exports = {
   displayName,
   nextInCycle,
   fmtTarget,
+  armUrlStep,
+  urlStepArmed,
+  clearUrlStep,
   LIKE_STEPS,
   REPLY_STEPS,
   REPOST_STEPS,
