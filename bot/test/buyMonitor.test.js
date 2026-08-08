@@ -183,9 +183,9 @@ test("tier labels fall back field by field, so a half-typed override still rende
   const real = tpl.t;
   try {
     tpl.t = (k) => (k === "group_buy_tiers" ? "Nibble||" : real(k));
-    assert.deepStrictEqual(mon.buyTiers(), ["Nibble", "Whale Buy", "Mega Buy"]);
+    assert.deepStrictEqual(mon.buyTiers(), ["Nibble", "WHALE BUY", "MEGA BUY"]);
     tpl.t = () => "";
-    assert.deepStrictEqual(mon.buyTiers(), ["New Buy", "Whale Buy", "Mega Buy"]);
+    assert.deepStrictEqual(mon.buyTiers(), ["NEW BUY", "WHALE BUY", "MEGA BUY"]);
   } finally {
     tpl.t = real;
   }
@@ -196,7 +196,7 @@ test("no links are invented on a chain we have no explorer for", () => {
   // the buyer's address is still worth showing as plain text.
   const row = mon.verifyRow("nosuchchain", { txHash: "0xabc", buyer: "0xdefdefdefdefdefdef" });
   assert.ok(!row.includes("]("), "no link markup");
-  assert.match(row, /👤 0xdefd/);
+  assert.match(row, /Buyer:\*\* 0xdefd/);
   const linked = mon.verifyRow("bsc", { txHash: "0xabc", buyer: "0xdef" });
   assert.match(linked, /bscscan\.com\/tx\/0xabc/);
   assert.match(linked, /bscscan\.com\/address\/0xdef/);
@@ -250,8 +250,12 @@ test("the alert renders the reference layout", () => {
   assert.match(out, /\$48\.97 \(0\.6646 SOL\)/);
   // The full token amount, not a compacted "926.3K".
   assert.match(out, /926,311\.94 \$RUSS/);
-  assert.match(out, /AFqu1M…jcBb \| Txn/);
-  assert.ok(!out.includes("Whale"), "an ordinary buy carries no tier label");
+  assert.match(out, /Buyer: AFqu1M…jcBb · View txn/);
+  // Dexvra's own grammar — labelled rows joined by ·, matching the listing
+  // card — NOT the icon-only, pipe-separated layout every buy bot clone shares.
+  assert.match(out, /NEW BUY/);
+  assert.ok(!out.includes(" | "), "no pipe-separated rows");
+  assert.match(out, /Spent: \$48\.97/);
 });
 
 test("the native amount comes from the trade, never derived from USD", () => {
@@ -278,12 +282,38 @@ test("the real alert carries the verified links; the estimated one says it canno
   const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", minBuyUsd: 0 };
   const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 42.3 };
   const real = mon.renderRealAlert(g, { txHash: "0xt", buyer: "0xb", usd: 1234.5, tokenAmount: 98765 }, pool).text;
-  assert.match(real, /Whale Buy/);
+  assert.match(real, /WHALE BUY/);
   assert.match(real, /\$1,235/, "a buy amount is exact to the dollar, not '$1.2K'");
-  assert.match(real, /Txn/);
+  assert.match(real, /View txn/);
 
   const est = mon.renderEstimateAlert(g, { usd: 640, count: 3 }, pool).text;
   assert.match(est, /≈/);
   assert.ok(!est.includes("Txn"), "the estimated path has no transaction to link");
   assert.ok(!/[_*]{1,2}Live transaction/.test(est), "no raw markup leaks — the parser only knows **bold**, [links] and `code`");
+});
+
+test("the size meter fills toward the mega threshold, and a real buy is never empty", () => {
+  const bar = mon.buySizeBar;
+  assert.strictEqual(bar(0).replace(/▱/g, ""), "", "nothing bought, nothing filled");
+  assert.strictEqual(bar(1).startsWith("▰"), true, "a real buy always shows at least one cell");
+  assert.strictEqual(bar(5000), "▰".repeat(10), "a mega buy fills it");
+  assert.strictEqual(bar(1e9), "▰".repeat(10), "and it cannot overflow");
+  assert.strictEqual(bar(2500).length, 10, "always ten cells wide");
+});
+
+test("the meter's characters are admin-editable, falling back per position", () => {
+  const tpl = require("../src/templates");
+  const real = tpl.t;
+  try {
+    // Setting them to circles gets the classic buy-bot look back out of the
+    // same mechanism, with no code change.
+    tpl.t = (k) => (k === "group_buy_style" ? "🟢|⚫" : real(k));
+    assert.strictEqual(mon.buySizeBar(5000), "🟢".repeat(10));
+    tpl.t = () => "🟩|"; // half typed
+    assert.strictEqual(mon.buySizeBar(0), "▱".repeat(10), "the missing half keeps its default");
+    tpl.t = () => { throw new Error("template layer down"); };
+    assert.strictEqual(mon.buySizeBar(5000), "▰".repeat(10));
+  } finally {
+    tpl.t = real;
+  }
 });

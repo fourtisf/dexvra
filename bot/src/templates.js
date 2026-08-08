@@ -347,34 +347,46 @@ const DEFAULTS = {
   // open {verify} and check it. Do NOT add a placeholder to this template that
   // the estimated path cannot fill; the two are separate templates precisely so
   // neither has to pretend.
+  // Dexvra's OWN grammar, not the icon-only / pipe-separated layout the
+  // copy-trading bots all share: **Label:** value, joined by ·, with a bracketed
+  // CTA row — the same shape as the listing card above, so a reader who knows
+  // one knows the other. {bar} is a size meter (see group_buy_style); {emoji} is
+  // the classic repeated-icon row, still available if you prefer it.
   group_buy_alert:
-    `${em("🟢", E.green)} **{name}**{tier}\n\n` +
-    "{emoji}\n\n" +
-    `${em("💲", E.dollar)} **{usd}**{native}\n` +
-    `🪙 {tokenAmt} {symbol}\n` +
-    "{verify}\n" +
-    `${em("📊", E.chart)} {price} | {mcap}\n\n` +
-    "🔥 [Dexvra Trending]({trending}) | 📈 [Chart]({coinUrl})",
+    `${em("🟢", E.green)} **{tier}** — [{name}]({coinUrl})\n` +
+    "{bar}\n\n" +
+    `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
+    "🪙 **Got:** {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    "{verify}\n\n" +
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+  // The two characters of the buy-size meter, pipe separated: filled|empty.
+  // It fills as the buy approaches BUYBOT_MEGA_USD, so size reads at a glance
+  // without a wall of repeated icons.
+  // Want the classic look instead? Set this to `🟢|⚫`, or swap {bar} for
+  // {emoji} in the alert above.
+  // PLAIN UNICODE ONLY — the meter is inserted into the template as plain text,
+  // so it cannot carry premium-emoji entities. Same rule as raid_style.
+  group_buy_style: "▰|▱",
   // THE DEGRADED ALERT — only sent when the per-transaction feed is unreadable.
   // It says "≈" and says why, because a number that cannot be checked must not
   // be dressed up as one that can.
   group_buy_alert_est:
-    "{emoji}\n" +
-    `${em("🟢", E.green)} **{symbol} · Buy detected**\n\n` +
-    `${em("💲", E.dollar)} **≈ {usd}** across {count} {buysWord}\n` +
-    "🪙 **≈** {tokenAmt} {symbol}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("📈", E.chartUp)} **MCap:** {mcap}\n` +
-    "⛓ **Network:** {chain}\n\n" +
+    `${em("🟢", E.green)} **BUYS DETECTED** — {symbol}\n` +
+    "{bar}\n\n" +
+    `${em("💲", E.dollar)} **Spent:** ≈ {usd} across {count} {buysWord}\n` +
+    "🪙 **Got:** ≈ {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n\n` +
     // Plain text, NOT `_italics_` — the premium-markup parser understands
     // **bold**, [links](url) and `code` and nothing else, so the underscores in
     // the previous version of this template reached the group as literal
     // underscores. Check src/premium.js `parse()` before adding markup here.
     "⚠️ Estimated from pool volume — the live transaction feed is down, so there's no txn link on this one.\n\n" +
-    "[⚡ Buy {symbol} on Dexvra]({tradeUrl})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
-  group_buy_tiers: "New Buy|Whale Buy|Mega Buy",
+  group_buy_tiers: "NEW BUY|WHALE BUY|MEGA BUY",
   // ── Dexvra Raid ─────────────────────────────────────────────────────────
   // The live card and its three end states. {progress} is GENERATED (the goal
   // rows and their bars) because which rows exist depends on which goals are
@@ -677,7 +689,8 @@ const META = {
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Group tools: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
+  group_buy_style: { group: "Group Buy Bot", label: "Buy size meter (filled|empty)", ph: [] },
   group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },

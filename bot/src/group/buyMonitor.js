@@ -159,11 +159,44 @@ function selectFresh(cursor, buys, at = now()) {
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-/** A row of emoji scaled to buy size — the classic buy-bot "hype meter". */
+/** A row of emoji scaled to buy size — the classic buy-bot "hype meter".
+ *  Still available as {emoji} for anyone who prefers it to the meter below. */
 function buyEmojiRow(usd, glyph = "🟢") {
   const step = BUYBOT_EMOJI_STEP_USD;
   const n = Math.max(BUYBOT_EMOJI_MIN, Math.min(BUYBOT_EMOJI_MAX, Math.round(usd / step)));
   return glyph.repeat(n);
+}
+
+const BAR_WIDTH = 10;
+const BAR_DEFAULT = ["▰", "▱"];
+
+/** The meter's two characters, falling back per position so a half-written
+ *  override still renders a bar rather than nothing. */
+function buyBarStyle() {
+  let raw = "";
+  try {
+    raw = String(tpl.t("group_buy_style") || "");
+  } catch {
+    return BAR_DEFAULT.slice();
+  }
+  const parts = raw.split("|").map((s) => s.trim());
+  return BAR_DEFAULT.map((d, i) => parts[i] || d);
+}
+
+/**
+ * A size METER rather than a wall of repeated icons.
+ *
+ * It fills toward BUYBOT_MEGA_USD, so a reader sees how big a buy is against
+ * the group's own idea of big without counting glyphs — and it shares its
+ * characters with the raid card, so Dexvra's two group features read as
+ * siblings instead of as a copy of every other buy bot.
+ */
+function buySizeBar(usd) {
+  const [on, off] = buyBarStyle();
+  const frac = Math.max(0, Math.min(1, Number(usd) / BUYBOT_MEGA_USD));
+  // A real buy always shows at least one cell — an empty bar reads as an error.
+  const filled = Math.max(usd > 0 ? 1 : 0, Math.round(frac * BAR_WIDTH));
+  return on.repeat(filled) + off.repeat(BAR_WIDTH - filled);
 }
 
 /**
@@ -204,7 +237,7 @@ function tokenAmount(v) {
  *  half-filled override still renders a card instead of a blank label. */
 function buyTiers() {
   const parts = String(tpl.t("group_buy_tiers") || "").split("|");
-  const d = ["New Buy", "Whale Buy", "Mega Buy"];
+  const d = ["NEW BUY", "WHALE BUY", "MEGA BUY"];
   return d.map((def, i) => (parts[i] || "").trim() || def);
 }
 
@@ -255,8 +288,8 @@ function verifyRow(chain, buy) {
   // nothing after it is not a row, it is a rendering bug.
   if (who) bits.push(`[${premium.sanitizeVar(shortAddress(buy.buyer))}](${premium.sanitizeUrl(who)})`);
   else if (buy.buyer) bits.push(premium.sanitizeVar(shortAddress(buy.buyer)));
-  if (tx) bits.push(`[Txn](${premium.sanitizeUrl(tx)})`);
-  return bits.length ? `👤 ${bits.join(" | ")}` : "";
+  if (tx) bits.push(`[View txn](${premium.sanitizeUrl(tx)})`);
+  return bits.length ? `👤 **Buyer:** ${bits.join(" · ")}` : "";
 }
 
 function renderRealAlert(g, buy, pool) {
@@ -264,14 +297,16 @@ function renderRealAlert(g, buy, pool) {
   const price = (pool && pool.priceUsd) || (buy.tokenAmount > 0 ? buy.usd / buy.tokenAmount : null);
   const impact = pool && pool.liquidity > 0 ? (buy.usd / pool.liquidity) * 100 : null;
   return tpl.render("group_buy_alert", {
+    bar: buySizeBar(buy.usd),
     emoji: buyEmojiRow(buy.usd),
     // The token's own name headlines the card. It is admin-supplied via
     // GeckoTerminal, so it goes through the same sanitiser as every other
     // untrusted value — a token literally named "[click](url)" is not far-fetched.
     name: premium.sanitizeVar(g.name || `$${sym}`),
-    // Empty for an ordinary buy, so the card looks exactly like the reference
-    // layout; only a big one earns a label.
-    tier: buy.usd >= BUYBOT_WHALE_USD ? ` · ${tierFor(buy.usd)}` : "",
+    // The tier IS the header label — "NEW BUY" / "WHALE BUY" / "MEGA BUY" —
+    // rather than a suffix bolted onto a fixed one, which read as two headings
+    // fighting for the same line.
+    tier: tierFor(buy.usd),
     native: spentNative(buy, pool),
     symbol: premium.sanitizeVar(`$${sym}`),
     usd: usdAmount(buy.usd),
@@ -295,16 +330,21 @@ function renderEstimateAlert(g, est, pool) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
   const tokenAmt = pool && pool.priceUsd ? est.usd / pool.priceUsd : null;
   return tpl.render("group_buy_alert_est", {
+    bar: buySizeBar(est.usd),
     emoji: buyEmojiRow(est.usd),
     symbol: premium.sanitizeVar(`$${sym}`),
     usd: usdAmount(est.usd),
     count: est.count,
     buysWord: est.count === 1 ? "buy" : "buys",
+    // COMPACT here, unlike the verified card. "≈ 13,269,749.12" is false
+    // precision: the whole figure is derived from a volume delta, and printing
+    // it to the cent claims an accuracy this path does not have.
     tokenAmt: tokenAmt ? formatNumber(tokenAmt) : "—",
     price: pool && pool.priceUsd ? fmtPrice(pool.priceUsd) : "—",
     mcap: pool && pool.mcap ? "$" + formatNumber(pool.mcap) : "—",
     chain: chainOf(g.chain)?.label || g.chain,
     tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
+    coinUrl: premium.sanitizeUrl(`${SITE_URL}/token/${g.chain}/${g.address}`),
   });
 }
 
@@ -643,6 +683,8 @@ module.exports = {
   estimateBuys,
   selectFresh,
   buyEmojiRow,
+  buySizeBar,
+  buyBarStyle,
   buyTiers,
   tierFor,
   groupByPool,

@@ -294,17 +294,31 @@ Four rules that look like details and are not:
 The alert itself:
 
 ```
-🟢 The Nietzschean Dog
+🟢 NEW BUY — The Nietzschean Dog
+▰▱▱▱▱▱▱▱▱▱
 
-🟢🟢🟢
+💲 Spent: $48.97 (0.6646 SOL)
+🪙 Got: 926,311.94 $RUSS
+📊 Price: $0.00004823 · 🏦 MCap: $46.5K
+👤 Buyer: AFqu1M…jcBb · View txn
 
-💲 $48.97 (0.6646 SOL)
-🪙 926,311.94 $RUSS
-👤 AFqu1M…jcBb | Txn
-📊 $0.00004823 | $46.5K
-
-🔥 Dexvra Trending | 📈 Chart
+⚡ Trade on Dexvra · 📈 Chart · 🔥 Trending
 ```
+
+This is **deliberately not** the layout every copy-trading bot shares. Those
+are icon-only rows joined by `|`, with a `<Brand>Trending | Chart` footer —
+adopt it and Dexvra reads as one more clone of the same card. The grammar
+here is the one the listing post already uses: **Label:** value, joined by
+`·`, with a bracketed CTA row, so a reader who knows one Dexvra surface
+knows the other.
+
+The header word is the size tier (`NEW BUY` / `WHALE BUY` / `MEGA BUY`,
+thresholds in `.env`, wording in `group_buy_tiers`), and the meter fills
+toward `BUYBOT_MEGA_USD` so size reads at a glance without a wall of
+repeated icons. It shares its characters with the raid card, which is what
+makes the two group features look like siblings. Prefer the classic look?
+Set `group_buy_style` to `🟢|⚫`, or swap `{bar}` for `{emoji}` in the
+template — the repeated-icon row is still there.
 
 Two figures there are easy to get subtly wrong, so they are worth stating:
 the **native amount** is the token the buyer actually spent, read from the
