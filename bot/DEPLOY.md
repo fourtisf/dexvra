@@ -7,7 +7,9 @@ app (so it can reach the internal API on `127.0.0.1`). Two things ship together:
    (already on the branch). Needs `INTERNAL_API_TOKEN` + a rebuild/restart.
 2. **Bot** — the new `bot/` process. Needs its `.env` + `npm install` + PM2.
 
-Everything is on branch **`claude/hello-v3wb0n`**.
+Everything is on `main` once the working branch is merged. To deploy a feature
+branch directly, check out that branch by name — `git branch -r` lists what
+actually exists on the remote.
 
 ---
 
@@ -34,10 +36,10 @@ cd /path/to/dexvra
 git fetch origin && git checkout main && git pull
 ```
 
-**Or deploy the branch directly:**
+**Or deploy a branch directly** (check `git branch -r` for the name):
 ```bash
 cd /path/to/dexvra
-git fetch origin && git checkout claude/hello-v3wb0n && git pull
+git fetch origin && git checkout <branch> && git pull
 ```
 
 ## 3. Web app — enable the internal API
@@ -49,6 +51,15 @@ cd /path/to/dexvra
 npm ci
 npm run build
 pm2 restart dexvra --update-env       # --update-env picks up the new token
+```
+
+**First time on this box** there is no `dexvra` process to restart yet, and
+`next start` binds **3000** while the bot polls **3005** (`DEXVRA_API_BASE`).
+Nothing in Next reads a port from a config file, so set it on the process:
+
+```bash
+PORT=3005 pm2 start npm --name dexvra -- run start
+pm2 save && pm2 startup      # pm2 startup makes it survive a reboot
 ```
 Verify (should be 401 without the token, 200 with it):
 ```bash
@@ -73,16 +84,28 @@ pm2 logs dexvra-bot       # watch it come up
 Minimum `.env` values:
 ```
 BOT_TOKEN=<@BotFather token>
-INTERNAL_API_TOKEN=<same value as the web app>
+INTERNAL_API_TOKEN=<same value as the web app>   # >= 24 chars or the API 401s
+BOT_USERNAME=<your bot's @handle, no @>          # NOT derived from BOT_TOKEN
 DEXVRA_API_BASE=http://127.0.0.1:3005
 SITE_URL=https://dexvra.io
 ADMIN_IDS=<your numeric Telegram id>          # admins pay 0 → free end-to-end test
+LOG_CHANNEL=<a private channel id>            # without it every failure below is invisible
+ANNOUNCE_CHANNEL=@yourchannel                 # the defaults are the ORIGINAL operator's
+TRENDING_CHANNEL=@yourtrending                #   channels — your bot is not admin there,
+LISTING_CHANNEL=@yourlisting                  #   so posts fail with one WARN and no post
+GROUP_CHAT=                                   # EMPTY turns the mirror off (omitting the
+                                              #   line entirely gets @dexvragroup)
 WALLET_ENC_KEY=<openssl rand -hex 32>          # encrypt stored temp-wallet keys
 TREASURY_EVM=<0x… for eth/bsc/base/robinhood>
 TREASURY_SOL=<solana address>
 TREASURY_TRON=<tron address>
 TREASURY_TON=<ton address>
 ```
+
+> `BOT_USERNAME` is the one people miss. Nothing calls `getMe`, so the value is
+> used verbatim to build the "➕ Add to your group" link and the `{bot}` mention
+> in every template and channel post. Leave it at the default with a differently
+> named bot and you are advertising somebody else's.
 Leave a `TREASURY_*` blank to skip the sweep for that chain (funds then stay in
 the per-order temp wallet under `.keys/`, recoverable — set them before real
 volume). Leave the four `X_*` keys blank to keep X posting off; fill them in

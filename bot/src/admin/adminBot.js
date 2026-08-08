@@ -3112,7 +3112,7 @@ function build() {
 async function startAdminBot() {
   if (!ADMIN_BOT_TOKEN) {
     log.warn("[adminbot] ADMIN_BOT_TOKEN not set — admin bot disabled");
-    return;
+    return false; // the caller has to keep the process alive; see adminbot.js
   }
   // Restore/seed templates + banner config from the Mongo durable mirror before
   // serving the editor (fail-open without MONGO_URI).
@@ -3148,6 +3148,7 @@ async function startAdminBot() {
       throw e;
     });
   log.info("[adminbot] polling started ✔");
+  return true;
 }
 
 module.exports = {

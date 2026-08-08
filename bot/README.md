@@ -63,9 +63,14 @@ anywhere** (GeckoTerminal, DexScreener and CoinGecko are all called keyless).
 ### Production (PM2, same VPS as the web app)
 
 ```bash
-pm2 start main.js --name dexvra-bot --cwd /path/to/dexvra/bot
-pm2 save
+cd /path/to/dexvra/bot
+pm2 start ecosystem.config.js && pm2 save
+pm2 startup      # survive a reboot
 ```
+
+`ecosystem.config.js` starts **both** processes — `dexvra-bot` and
+`dexvra-adminbot`. Starting `main.js` by hand runs only the first, so the
+template/banner editor is silently absent.
 
 ## Layout
 
