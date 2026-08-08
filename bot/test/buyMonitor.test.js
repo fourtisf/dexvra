@@ -66,6 +66,50 @@ test("a group with no resolved pool keys on its contract, so it can self-heal", 
   assert.strictEqual(entry.key, "bsc:0xca");
 });
 
+// ── The cursor must not outrun a failed delivery ─────────────────────────────
+
+test("the cursor holds at the OLDEST undelivered buy, not at the newest seen", async () => {
+  // A 429 on an older buy while a newer one succeeds must not advance the
+  // cursor past the failure — the retry alertLatch.release() allows would then
+  // never be selected again, and the alert is lost silently in a healthy group.
+  const latch = require("../src/group/alertLatch");
+  const gt = require("../src/group/gtPairs");
+  const trades = require("../src/group/gtTrades");
+  latch._reset();
+
+  const CA = "0x" + "a".repeat(40);
+  // Distinguished by AMOUNT, because the alert renders the dollar figure into
+  // the text while the tx hash only ever appears inside a link entity.
+  const feed = [
+    { txHash: "0xOLD", buyer: "0xb", usd: 111, tokenAmount: 10, blockNumber: 100, blockTimeMs: Date.now() },
+    { txHash: "0xNEW", buyer: "0xb", usd: 222, tokenAmount: 10, blockNumber: 105, blockTimeMs: Date.now() },
+  ];
+  const realFetch = trades.fetchPoolBuys;
+  const realPool = gt.fetchPoolCached;
+  trades.fetchPoolBuys = async () => feed;
+  gt.fetchPoolCached = async () => ({ priceUsd: 1, mcap: 1e6, liquidity: 1e5, change24h: 0, poolAddress: "0xpool" });
+
+  const tg = {
+    sendMessage: async (_chat, text) => {
+      if (String(text).includes("$111")) throw new Error("429: Too Many Requests"); // the OLDER buy
+      return { message_id: 1 };
+    },
+  };
+
+  try {
+    const entry = { key: "bsc:0xpool", chain: "bsc", address: CA, pool: "0xpool", groups: [{ chatId: "-1", chain: "bsc", address: CA, sym: "DEX", minBuyUsd: 0 }] };
+    // Seed a cursor so we are past first-sight.
+    mon._state.cursors[entry.key] = { b: 90, t: Date.now() };
+    await mon._pollTrades(tg, entry);
+    assert.strictEqual(mon._state.cursors[entry.key].b, 100, "held at the failed buy's block, not 105");
+    assert.strictEqual(latch.isDelivered("-1", "0xNEW"), true);
+    assert.strictEqual(latch.isDelivered("-1", "0xOLD"), false);
+  } finally {
+    trades.fetchPoolBuys = realFetch;
+    gt.fetchPoolCached = realPool;
+  }
+});
+
 // ── Tiers and rendering ──────────────────────────────────────────────────────
 
 test("tier labels fall back field by field, so a half-typed override still renders", () => {

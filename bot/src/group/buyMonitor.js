@@ -356,13 +356,28 @@ async function pollTrades(tg, entry) {
   }
 
   let posted = 0;
+  // The lowest block still holding an undelivered buy. The cursor must not move
+  // past it: a 429 on an OLDER buy while a NEWER one succeeds would otherwise
+  // advance the cursor beyond the failure, and the retry that
+  // alertLatch.release() exists to allow could never be selected again — the
+  // alert is lost, silently, in a healthy group. Re-reading a few delivered
+  // blocks costs nothing, because the latch skips them.
+  let hold = null;
   for (const buy of fresh) {
     for (const g of entry.groups) {
       if (buy.usd < (Number(g.minBuyUsd) || 0)) continue; // each group's own threshold
-      if (await deliver(tg, g.chatId, () => renderRealAlert(g, buy, pool), buy.txHash)) posted++;
+      if (await deliver(tg, g.chatId, () => renderRealAlert(g, buy, pool), buy.txHash)) {
+        posted++;
+        continue;
+      }
+      // Not delivered AND not latched → still wanted. (A fatal chat error
+      // latches, so a group that removed the bot never holds the cursor back.)
+      if (!latch.isDelivered(g.chatId, buy.txHash) && buy.blockNumber) {
+        hold = hold === null ? buy.blockNumber : Math.min(hold, buy.blockNumber);
+      }
     }
   }
-  state.cursors[entry.key] = { b: newest, t: now() };
+  state.cursors[entry.key] = { b: hold === null ? newest : hold, t: now() };
   await saveState();
   if (posted) {
     log.info(
@@ -469,6 +484,7 @@ module.exports = {
   deliver,
   renderRealAlert,
   renderEstimateAlert,
+  _pollTrades: pollTrades,
   FIRST_SIGHT_MS,
   FIRST_SIGHT_MAX,
   _state: state,
