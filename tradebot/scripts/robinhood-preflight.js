@@ -235,11 +235,36 @@ async function main() {
       const rows = [...tally.entries()].map(([k, n]) => { const [addr, t0] = k.split('|'); return { addr, t0, n }; })
         .sort((a, b) => b.n - a.n).slice(0, 10);
       const cfg = String(chain.factory || '').toLowerCase();
+
+      // A topic0 is a keccak hash: unreadable, and not reversible. But a
+      // VERIFIED contract publishes its ABI, so the explorer can name the event
+      // for us. Without this the operator is handed ten rows of hex and asked
+      // to recognise a launchpad in it — which is the manual step this mode
+      // exists to remove. Best-effort throughout: an unverified contract, a
+      // rate limit or an explorer that speaks a different API just leaves the
+      // hash unnamed.
+      const names = new Map();   // topic0 → "EventName"
+      for (const addr of [...new Set(rows.map((r) => r.addr))]) {
+        try {
+          const base = String(chain.explorer || '').replace(/\/+$/, '');
+          if (!base) break;
+          const res = await fetch(`${base}/api?module=contract&action=getabi&address=${addr}`,
+            { signal: AbortSignal.timeout(8000) });
+          const j = await res.json();
+          if (!j || j.status !== '1' || typeof j.result !== 'string') continue;
+          const abi = JSON.parse(j.result);
+          const iface = new ethers.Interface(abi);
+          iface.forEachEvent((ev) => names.set(ev.topicHash.toLowerCase(), ev.name));
+        } catch (_) { /* unverified / unreachable / different API — leave it unnamed */ }
+      }
+
       console.log('');
       for (const r of rows) {
         const mine = r.addr === cfg ? '  ← the factory the bot watches' : '';
-        console.log(`     ${String(r.n).padStart(5)}×  ${r.addr}  ${r.t0.slice(0, 18)}…${mine}`);
+        const nm = names.get(r.t0.toLowerCase());
+        console.log(`     ${String(r.n).padStart(5)}×  ${r.addr}  ${nm ? nm.padEnd(20) : r.t0.slice(0, 18) + '…'}${mine}`);
       }
+      if (!names.size) note('(no event names — none of these contracts are verified on the explorer, or its API differs)');
       console.log('');
       if (!rows.some((r) => r.addr === cfg)) {
         note(`FACTORY_ADDR (${chain.factory}) emitted nothing in this window.`);
