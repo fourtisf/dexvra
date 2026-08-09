@@ -49,3 +49,13 @@ test('core.js honours SKIP_DOTENV, and only that', () => {
   // `pm2 restart --update-env` and a systemd Environment= line work at all.
   assert.match(src, /if \(key && process\.env\[key\] === undefined\) process\.env\[key\] = val;/);
 });
+
+test('a test that needs a newer Node skips, it does not fail', () => {
+  // Nineteen tests died on the server with
+  //   The "timers" argument must be an instance of Array. Received an instance of Object
+  // because mock.timers takes an options object only from Node 20.4. A suite
+  // that cannot run on the box it is meant to gate is not a gate.
+  const src = fs.readFileSync(path.join(__dirname, 'liveMonitorRuntime.test.js'), 'utf8');
+  assert.match(src, /MOCK_TIMERS_OK/, 'the version guard is gone');
+  assert.match(src, /skip: SKIP/, '…and the tests no longer route through it');
+});

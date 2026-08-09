@@ -116,6 +116,19 @@ cd tradebot && pm2 start index.js --name dexvra-tradebot --update-env && pm2 sav
 # updates: git pull && (cd tradebot && npm install) && pm2 restart dexvra-tradebot --update-env
 ```
 
+## Node version
+
+The bot itself runs on **Node 18+**. The TEST SUITE needs **20.4+**: nineteen
+tests drive the live-monitor loop through `mock.timers`, whose `{ apis }` options
+object and `Date` support landed in 20.4. On an older Node those tests SKIP with
+that reason rather than failing, so `npm test` stays a usable deploy gate — but
+they are not verifying anything there.
+
+Worth knowing separately: **Node 18 left security support in April 2025**. This
+bot is custodial — it holds users' private keys — so an unpatched runtime is a
+real exposure, independent of anything in this repo. Node 20 or 22 LTS fixes
+both that and the skipped tests.
+
 ## Language
 
 The bot answers in **English or Indonesian**, per user. Switch with `/language`
