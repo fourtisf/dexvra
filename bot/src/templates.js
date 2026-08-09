@@ -48,7 +48,21 @@ const E = {
   diamond: "5427168083074628963", // 💎
   cross: "5454335838575936647", // ❌
 };
-const em = (emoji) => emoji;
+// `em(char, id)` → the premium-emoji markup this file's header documents:
+// "[😀](emoji/1234567890)". It took the id and THREW IT AWAY — the signature
+// said (emoji) — so every one of the 34 call sites below rendered the bare
+// unicode char and the whole E map above was dead code. Nothing errored, and
+// the loss is invisible for a char like 💎 or 🚨 whose unicode art is already
+// colourful; it is obvious for 📢, whose premium art is a different picture
+// entirely. That is the difference an operator spotted in the channel footer.
+//
+// Emitting the markup is safe on both transports, and neither needed changing:
+// GramJS sends the custom_emoji entities and retries without them on
+// PREMIUM_ACCOUNT_REQUIRED / EMOJI_INVALID (gramjs.js isPremiumEmojiError),
+// while the Bot API path filters type "custom_emoji" out and shows the fallback
+// char (trendingPoster.js). The legacy-HTML render branch cannot swallow it
+// either: it is guarded on !hasPremiumMarkup.
+const em = (emoji, id) => (id ? `[${emoji}](emoji/${id})` : emoji);
 
 // ── Channel-post building blocks (code-level only, NOT separate templates) ──
 // Inlined into every channel-post DEFAULT below so each stored template is the
