@@ -744,7 +744,25 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   L.push(`<b>${esc(name)}</b> · <b>$${esc(sym)}</b>`);
   L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}${created ? `  ·  ${fmtAge(created)} old` : ''}`);
   L.push(`<code>${ca}</code>`);
-  if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`); }
+  // SILENCE IS NOT A CLEAN BILL OF HEALTH.
+  //
+  // This printed a line only for `danger` and `warn`, so a token that PASSED the
+  // check and a token whose check FAILED — a GoPlus/RugCheck timeout, an
+  // unindexed mint, a rate limit; `tokeninfo.js` catches all of them to null —
+  // rendered identically: nothing at all. A user who has learned that this bot
+  // warns about honeypots reads that absence as "checked, fine" and taps Buy.
+  // The one place the difference matters most is the one screen that never
+  // stated it. All four states now say which one they are, in one line.
+  if (sec) {
+    const v = safety.verdict(chainKey, sec);
+    if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`);
+    else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`);
+    else L.push(T(chatId, 'sec.clean'));
+  } else if (safety.supported(chainKey)) {
+    L.push(T(chatId, 'sec.unchecked'));
+  } else {
+    L.push(T(chatId, 'sec.unsupported', { chain: esc(ch.name) }));
+  }
   // ── Market ─────────────────────────────────────────────────────────────────
   // Every value is labelled and every line leads with what it is. The old card
   // printed bare fragments — "LP burned" alone on a line, "Liq 0.02 ETH" with

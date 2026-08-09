@@ -143,6 +143,19 @@ const S = {
     id: '<i>Tap token untuk buka kartunya. Yang terdaftar di sini adalah yang kamu beli lewat bot — token kiriman dari wallet lain tidak ikut tercatat.</i>',
   },
 
+  // ---------------------------------------------------------------- safety
+  // Four states, four different sentences. "No line" used to mean both "passed"
+  // and "we never managed to check", on the screen where the user taps Buy.
+  'sec.clean': { en: '✅ <b>Safety check passed</b> — no red flags', id: '✅ <b>Cek keamanan lolos</b> — tidak ada tanda bahaya' },
+  'sec.unchecked': {
+    en: "❔ <b>Not checked</b> — the safety service didn't answer. This token has NOT been screened.",
+    id: '❔ <b>Belum dicek</b> — layanan keamanannya tidak menjawab. Token ini <b>belum</b> discreening.',
+  },
+  'sec.unsupported': {
+    en: '❔ <b>Not checked</b> — automated screening is unavailable on {chain}.',
+    id: '❔ <b>Belum dicek</b> — screening otomatis tidak tersedia di {chain}.',
+  },
+
   // ---------------------------------------------------------------- portfolio
   'pf.unpriced': {
     en: '<i>{n} position(s) left out — we could not read a price for them, and counting them as $0 would show a loss that did not happen.</i>',

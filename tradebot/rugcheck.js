@@ -96,6 +96,11 @@ async function _fetchReport(mint) {
 // Turn the normalized fields into a verdict: 'danger' | 'warn' | 'ok' plus the specific
 // flags that drove it (deduped, capped). Same shape goplus.verdict returns.
 function verdict(s) {
+  // tokenSecurity returns null when the check could not be made, and every
+  // caller that forgets to guard that used to crash a screen on `s.rugged`.
+  // 'unknown' is not 'ok': callers testing for 'danger' fall through
+  // harmlessly, and the ones that care can tell the two apart.
+  if (!s || typeof s !== 'object') return { level: 'unknown', red: [], warn: [] };
   const red = [], warn = [];
   const addRed = (m) => { if (m && !red.includes(m)) red.push(m); };
   const addWarn = (m) => { if (m && !warn.includes(m)) warn.push(m); };

@@ -79,8 +79,13 @@ function renderCard(f) {
   const usd = (a) => "$" + fmt(Number(a) * f.rate);
   const taxStr = (v) => (v == null ? "?" : `${Number(v).toFixed(0)}%`);
   const fmtAge = (ms) => Math.floor((Date.now() - ms) / 86400000) + "d";
-  const safety = { verdict: () => ({ level: "ok" }) };
+  const safety = { verdict: () => ({ level: f.secLevel || "ok", red: [], warn: [] }),
+    supported: () => f.secSupported !== false };
   const chainKey = ch.key;
+  const chatId = 1;
+  const i18n = require("./i18n");
+  const T = (_id, key, vars) => i18n.t("en", key, vars);
+  void chatId; void T;
   void gap; void chainKey; void safety; void esc; void fmt; void nativeUsd; void usd; void taxStr; void fmtAge;
   void info; void ch; void api; void sec; void name; void sym; void nat; void px; void priceUsd; void ca;
   eval(block);
