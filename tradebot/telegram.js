@@ -320,7 +320,7 @@ function mainMenu() {
 // it stays fast. Returns a per-wallet USD array aligned to `list`.
 async function walletTokenUsd(list, enabledKeys) {
   const distinct = new Map();               // 'chain:caLower' -> { chain, ca }
-  const bags = list.map(() => []);          // per wallet: [{ ck, tokens, native }]
+  const bags = list.map(() => []);          // per wallet: [{ ck, tokens, native, chain, ca, sym }]
   list.forEach((w, wi) => {
     for (const key of Object.keys(w.positions || {})) {
       const p = w.positions[key];
@@ -331,21 +331,32 @@ async function walletTokenUsd(list, enabledKeys) {
       if (!(tokens > 0)) continue;
       const ck = p.chain + ':' + String(p.ca).toLowerCase();
       distinct.set(ck, { chain: p.chain, ca: p.ca });
-      bags[wi].push({ ck, tokens, native: (core.chainOf(p.chain) || {}).native || 'ETH' });
+      bags[wi].push({ ck, tokens, native: (core.chainOf(p.chain) || {}).native || 'ETH', chain: p.chain, ca: p.ca, sym: p.sym || '' });
     }
   });
-  if (!distinct.size) return list.map(() => 0);
+  // Same shape as the fully-priced return below — an empty BAG list per wallet,
+  // never a 0. This used to return numbers while the main path returned arrays,
+  // which is exactly the sort of split that only shows up on the one code path
+  // nobody renders in a test: a user with no positions at all.
+  if (!distinct.size) return list.map(() => []);
   const now = Date.now();
   const stale = [...distinct.entries()].filter(([ck]) => { const h = _priceCache.get(ck); return !(h && now - h.at < 30000); });
   await Promise.all(stale.map(([ck, { chain, ca }]) =>
     withTmo(core.tokenSnapshot(ca, chain).catch(() => null), 4000, null)
       .then((snap) => { _priceCache.set(ck, { priceEth: (snap && snap.priceEth > 0) ? snap.priceEth : 0, at: Date.now() }); })));
   if (_priceCache.size > 5000) { const first = _priceCache.keys().next().value; _priceCache.delete(first); }
-  return bags.map((wb) => wb.reduce((sum, b) => {
+  // Priced bags per wallet. The USD TOTAL on the wallet screen and the per-token
+  // BREAKDOWN on the tokens screen are both derived from this one array, so the
+  // two can never disagree — a screen that says "$24.87 in tokens" next to a
+  // list that adds up to something else is the kind of contradiction that makes
+  // a user distrust every other number on the page.
+  return bags.map((wb) => wb.map((b) => {
     const h = _priceCache.get(b.ck); const priceEth = h ? h.priceEth : 0;
-    return sum + b.tokens * priceEth * nativeUsd(b.native);
-  }, 0));
+    return { chain: b.chain, ca: b.ca, sym: b.sym, tokens: b.tokens, usd: b.tokens * priceEth * nativeUsd(b.native), priced: priceEth > 0 };
+  }));
 }
+/** Per-wallet USD totals — the shape walletScreen wants. */
+const bagsToUsd = (bags) => bags.map((wb) => wb.reduce((s, b) => s + b.usd, 0));
 async function walletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const ch = core.chainOf(core.userChain(u));
@@ -387,7 +398,8 @@ async function walletScreen(chatId) {
   const nativeUsdArr = matrix.map(usdOfRow);
   // Include TOKEN holdings so each wallet's total is the full portfolio value, not just
   // native coin (why "Wallet 4" reads $292 native but ~$1.3k with its bags).
-  const tokenUsdArr = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  const tokenBags = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  const tokenUsdArr = bagsToUsd(tokenBags);
   const walletUsd = nativeUsdArr.map((v, i) => v + (tokenUsdArr[i] || 0));
   const grandUsd = walletUsd.reduce((a, b) => a + b, 0);
   const grandNative = nativeUsdArr.reduce((a, b) => a + b, 0);
@@ -468,6 +480,10 @@ async function walletScreen(chatId) {
   });
   if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
+  // "…in tokens" is a number with no answer to "which ones?" unless this button
+  // exists: /portfolio is scoped to the ACTIVE chain, so a bag on any other
+  // chain had no screen at all. Only offered when there is something to show.
+  if (grandToken > 0.05) kbRows.push([btn('🪙 My tokens', 'toks'), btn('📊 Portfolio', 'pos')]);
   kbRows.push([btn('🌐 Chain', 'chain'), btn('🔄 Refresh', 'wal'), btn('« Menu', 'menu')]);
 
   const activeLabel = esc(core.walletLabel(list[awIdx], awIdx + 1));
@@ -488,6 +504,100 @@ async function walletScreen(chatId) {
     ? `\n${T(chatId, 'wal.first_steps', { native: esc(ch.native) })}\n\n${T(chatId, 'wal.keys_note')}`
     : `\n${T(chatId, 'wal.hint')}`;
   return { text: head + guide, kb: { inline_keyboard: kbRows } };
+}
+/**
+ * Every token you hold, on every chain, grouped by chain.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM /portfolio
+ * `core.portfolioAll` skips any position whose `p.chain !== chainKey`, so the
+ * portfolio only ever shows the ACTIVE chain — and it has to, because it reports
+ * PnL denominated in that chain's native coin, and ETH-denominated profit cannot
+ * be added to BNB-denominated profit. Meanwhile the wallet screen's "in tokens"
+ * figure counts EVERY enabled chain. So the bot could tell you that you held
+ * $24.87 of tokens and then offer no screen that showed you what they were: the
+ * ones on a chain you were not currently switched to were invisible.
+ *
+ * USD is what makes a cross-chain list possible at all, so that is the unit
+ * here. Per-token PnL stays on /portfolio where the native denomination is
+ * meaningful — this screen answers "what do I hold, and where", nothing else.
+ *
+ * HONEST LIMIT: positions are what the bot BOUGHT. A token sent in from an
+ * outside wallet was never recorded, so it is not here and is not in the wallet
+ * screen's total either — the two agree, and the note says so rather than
+ * letting a user conclude their balance vanished.
+ */
+async function tokensScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const list = core.walletList(u);
+  const allChains = core.chains.enabledChains();
+  const bags = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+
+  // chainKey -> caLower -> { sym, ca, chain, tokens, usd, holders:[label], unpriced }
+  const byChain = new Map();
+  let grand = 0;
+  bags.forEach((wb, wi) => {
+    const label = core.walletLabel(list[wi], wi + 1);
+    for (const b of wb) {
+      const per = byChain.get(b.chain) || new Map();
+      const k = String(b.ca).toLowerCase();
+      const row = per.get(k) || { sym: b.sym, ca: b.ca, chain: b.chain, tokens: 0, usd: 0, holders: [], unpriced: false };
+      row.tokens += b.tokens; row.usd += b.usd;
+      if (!b.priced) row.unpriced = true;
+      if (!row.holders.includes(label)) row.holders.push(label);
+      per.set(k, row); byChain.set(b.chain, per);
+      grand += b.usd;
+    }
+  });
+
+  if (!byChain.size) {
+    return { text: `${T(chatId, 'tok.title')}\n\n${T(chatId, 'tok.empty')}`,
+      kb: rows([btn('💼 Wallets', 'wal'), btn('« Menu', 'menu')]) };
+  }
+
+  const L = [`${T(chatId, 'tok.title')}`, `${T(chatId, 'tok.total', { usd: `<b>${usdX(grand)}</b>` })}`];
+  const kbRows = [];
+  let anyUnpriced = false;
+  // Chains in the order the picker shows them, so this screen and /chain agree.
+  for (const c of allChains) {
+    const per = byChain.get(c.key);
+    if (!per) continue;
+    const items = [...per.values()].sort((a, b) => b.usd - a.usd);
+    const chainUsd = items.reduce((s, r) => s + r.usd, 0);
+    // A price we could not read is NOT zero. A chain whose only bag is unpriced
+    // must not head its section with "$0.00" — that reads as "you hold nothing
+    // here" about a wallet holding 900K of something. Where some bags priced and
+    // others did not, the subtotal is real but incomplete, and says so.
+    const blind = items.filter((r) => r.unpriced && !(r.usd > 0)).length;
+    anyUnpriced = anyUnpriced || blind > 0;
+    const chainVal = blind === items.length ? T(chatId, 'tok.no_price')
+      : blind ? `${usdX(chainUsd)} ${T(chatId, 'tok.plus_unknown')}` : usdX(chainUsd);
+    L.push(`\n${c.emoji} <b>${esc(c.name)}</b> · ${chainVal}`);
+    for (const r of items) {
+      const val = r.unpriced && !(r.usd > 0) ? T(chatId, 'tok.no_price') : usdX(r.usd);
+      const where = list.length > 1 ? ` · <i>${esc(r.holders.join(', '))}</i>` : '';
+      L.push(`${fmt(r.tokens)} <b>$${esc(r.sym || '?')}</b> · ${val}${where}`);
+      // Reuses the existing token-card callback (tok:<chain>:<walletIdx>:<ca>)
+      // rather than a new one — an empty wallet index means "the active wallet",
+      // which is what the card already falls back to. Bounded at 12 buttons:
+      // Telegram's callback_data is 64 bytes and a wall of them is unreadable;
+      // the text list above is complete either way.
+      // tok:<chain>:<walletIdx>:<ca> — the card callback that already exists. An
+      // empty wallet index is the documented "fall back to the active wallet"
+      // path at the parser. Bounded at 12: a wall of buttons is unreadable and
+      // the text list above is complete either way.
+      if (kbRows.length < 12) {
+        // "$PEPE · $0.00" on a button is the same lie the row above refuses to
+        // tell, so an unpriced bag shows its amount instead of a price.
+        const tag = r.unpriced && !(r.usd > 0) ? fmt(r.tokens) : usdX(r.usd);
+        kbRows.push([btn(`${(r.sym ? '$' + r.sym : 'token').slice(0, 14)} · ${tag}`.slice(0, 30), `tok:${r.chain}::${r.ca}`)]);
+      }
+    }
+  }
+  if (anyUnpriced) L.push(`\n${T(chatId, 'tok.unpriced_note')}`);
+  L.push(`\n${T(chatId, 'tok.note')}`);
+  kbRows.push([btn('🔄 Refresh', 'toks'), btn('📊 Portfolio', 'pos')]);
+  kbRows.push([btn('💼 Wallets', 'wal'), btn('« Menu', 'menu')]);
+  return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
 }
 // Maestro-style deposit: a QR of the address + the address text. Works for any wallet
 // (not just the active one). Degrades to a plain text address if QR is disabled/fails.
@@ -1723,6 +1833,7 @@ async function onMessageImpl(m) {
   if (text === '/wallet') { const w = await walletScreen(chatId); return send(chatId, w.text, w.kb); }
   if (text === '/chain') { const s = chainScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/portfolio' || text === '/positions') { const s = await portfolioScreen(chatId); return send(chatId, s.text, s.kb); }
+  if (text === '/tokens' || text === '/bags') { const s = await tokensScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/snipe') { const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -1855,6 +1966,7 @@ async function onCallback(q) {
   if (data === 'chain') { const s = chainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'setch') { try { core.setChain(chatId, ca); } catch (_) {} const w = await walletScreen(chatId); return edit(chatId, mid, w.text, w.kb); }
   if (data === 'pos') { const s = await portfolioScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'toks') { const s = await tokensScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'monlist') { const s = await monitorListScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'hist') { const s = historyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snipe') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -3019,6 +3131,7 @@ async function registerCommands() {
     { command: 'start',     description: 'Open the bot — wallet & main menu' },
     { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
     { command: 'portfolio', description: 'Your holdings & profit/loss' },
+    { command: 'tokens', description: 'Every token you hold, and on which chain' },
     { command: 'monitor',   description: 'Live position tracker — pins & refreshes itself' },
     { command: 'history',   description: 'Your past trades' },
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
@@ -3122,5 +3235,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

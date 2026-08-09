@@ -136,3 +136,56 @@ test('the wallet copy is translated, not hardcoded English', () => {
 test('the jargon is gone', () => {
   assert.ok(!/Tokens \(bags\)/.test(SRC), '"Tokens (bags)" is back — it is our word, not the reader\'s');
 });
+
+// ── The tokens screen ────────────────────────────────────────────────────────
+// "You hold $24.87 in tokens" with no way to find out WHICH tokens, on WHICH
+// chain. /portfolio could not answer it: core.portfolioAll skips every position
+// whose chain is not the active one, so a bag on any other chain had no screen.
+
+const tokensFn = SRC.slice(SRC.indexOf('async function tokensScreen('), SRC.indexOf('// Maestro-style deposit'));
+
+test('the tokens screen covers every enabled chain, not just the active one', () => {
+  assert.match(tokensFn, /core\.chains\.enabledChains\(\)/);
+  assert.match(tokensFn, /new Set\(allChains\.map\(\(c\) => c\.key\)\)/,
+    'the token list is being scoped to one chain — that is the gap this screen exists to close');
+});
+
+test('the total here and the total on the wallet screen come from one computation', () => {
+  // Two screens deriving "how much in tokens" separately is how they end up
+  // disagreeing, and a user who sees two numbers trusts neither.
+  assert.match(tokensFn, /await walletTokenUsd\(list,/);
+  assert.match(walletFn, /await walletTokenUsd\(list,/);
+  assert.match(walletFn, /bagsToUsd\(tokenBags\)/);
+});
+
+test('an unreadable price is never rendered as $0.00', () => {
+  // It is not zero, and printing zero both understates the total and tells the
+  // holder of 900K tokens that they have nothing.
+  assert.match(tokensFn, /r\.unpriced && !\(r\.usd > 0\) \? T\(chatId, 'tok\.no_price'\)/);
+  assert.match(tokensFn, /blind === items\.length \? T\(chatId, 'tok\.no_price'\)/,
+    'a chain whose every bag is unpriced still heads its section with a dollar figure');
+  assert.match(tokensFn, /const tag = r\.unpriced && !\(r\.usd > 0\) \? fmt\(r\.tokens\)/,
+    'the button label still claims a price for an unpriced bag');
+});
+
+test('a token row says which chain and which wallet', () => {
+  // The whole question being answered: what do I hold, and where.
+  assert.match(tokensFn, /c\.emoji.*esc\(c\.name\)/);
+  assert.match(tokensFn, /r\.holders\.join/);
+});
+
+test('tapping a token opens the card callback that already exists', () => {
+  // A second parser for the same action is a second thing to keep in sync.
+  assert.match(tokensFn, /`tok:\$\{r\.chain\}::\$\{r\.ca\}`/);
+  assert.ok(/if \(data === 'toks'\)/.test(SRC), 'the refresh callback is not registered');
+  assert.ok(/text === '\/tokens'/.test(SRC), 'the /tokens command is not registered');
+});
+
+test('the screen admits what it cannot see', () => {
+  // Positions are what the bot BOUGHT. A token transferred in from another
+  // wallet was never recorded, and silently omitting it invites the conclusion
+  // that the bot lost it.
+  const i18n = require('./i18n');
+  assert.match(i18n._strings['tok.note'].en, /sent in from another wallet is not tracked/);
+  assert.match(i18n._strings['tok.note'].id, /kiriman dari wallet lain/);
+});

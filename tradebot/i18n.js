@@ -121,6 +121,28 @@ const S = {
     id: '<i>Satu key per wallet. Semua chain EVM pakai alamat 0x yang sama; Solana punya alamatnya sendiri.</i>',
   },
 
+  // ---------------------------------------------------------------- tokens
+  // The cross-chain "what do I actually hold" list. /portfolio answers the same
+  // question for ONE chain, because it reports PnL in that chain's native coin
+  // and ETH profit cannot be added to BNB profit. USD is what makes this list
+  // possible across chains, so it is the only unit here.
+  'tok.title': { en: '🪙 <b>Your tokens</b> · every chain', id: '🪙 <b>Token kamu</b> · semua chain' },
+  'tok.total': { en: '{usd} in tokens', id: '{usd} dalam bentuk token' },
+  'tok.empty': {
+    en: 'No tokens yet — only your coins.\n\nPaste a token contract address and tap Buy; whatever you buy shows up here, grouped by the chain it lives on.',
+    id: 'Belum ada token — baru coin saja.\n\nPaste alamat kontrak token lalu tap Buy; semua yang kamu beli muncul di sini, dikelompokkan per chain.',
+  },
+  'tok.no_price': { en: '<i>price unavailable</i>', id: '<i>harga tidak terbaca</i>' },
+  'tok.plus_unknown': { en: '<i>+ more we could not price</i>', id: '<i>+ ada yang harganya tidak terbaca</i>' },
+  'tok.unpriced_note': {
+    en: "<i>A price we can't read is left out of the totals rather than counted as zero — usually a pool with no liquidity right now.</i>",
+    id: '<i>Harga yang tidak terbaca tidak dihitung sebagai nol, tapi dikeluarkan dari total — biasanya karena pool-nya lagi tidak ada likuiditas.</i>',
+  },
+  'tok.note': {
+    en: '<i>Tap a token to open its card. This lists what you bought with the bot — a token sent in from another wallet is not tracked.</i>',
+    id: '<i>Tap token untuk buka kartunya. Yang terdaftar di sini adalah yang kamu beli lewat bot — token kiriman dari wallet lain tidak ikut tercatat.</i>',
+  },
+
   // ---------------------------------------------------------------- buy
   'buy.inflight': {
     en: '⏳ Already buying that token — wait for the result before buying again.',
