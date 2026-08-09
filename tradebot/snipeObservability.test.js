@@ -136,6 +136,16 @@ test('a failing curveOf is recorded instead of silently reading as "no curve"', 
   // a graduation, and that routing choice is correct. What was missing is any record
   // that it happened, which is what let a permanently wrong factory look like a market
   // of ordinary graduated tokens.
+  // resolveCurve returns a cached NEGATIVE answer before it ever reaches the
+  // provider, so without this the test asserts against whatever a previous test
+  // left behind — it passed on one machine and failed on the server for that
+  // reason alone, with an assertion message that named none of it.
+  core._clearReadCaches();
+  core._launchpadFailClear();
+  const chain = core.chainOf('robinhood');
+  assert.ok(chain && chain.curve && chain.factory,
+    `robinhood has no launchpad factory configured, so resolveCurve returns early and records nothing: ${JSON.stringify(chain && { curve: chain.curve, factory: chain.factory })}`);
+
   const real = core.providerFor;
   core.providerFor = () => ({
     call: async () => { throw new Error('execution reverted'); },
@@ -147,7 +157,7 @@ test('a failing curveOf is recorded instead of silently reading as "no curve"', 
     const curve = await core.resolveCurve('0x1234567890abcdef1234567890abcdef12345678', 'robinhood');
     assert.equal(curve, '', 'routing is unchanged: a factory error still reads as no curve');
     const diag = core.launchpadDiag('robinhood');
-    assert.ok(diag, 'the failure must be recorded');
+    assert.ok(diag, `the failure must be recorded — launchpadDiag returned ${JSON.stringify(diag)}; all chains: ${JSON.stringify(core.launchpadDiag())}`);
     assert.ok(diag.count >= 1);
     assert.ok(diag.factory, 'the diagnostic names the factory that failed');
   } finally { core.providerFor = real; }

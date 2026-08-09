@@ -915,6 +915,11 @@ const _curveCache = new Map();   // `${chain}:${ca}`    → { curve, ts }; '' = 
 const _gradCache = new Set();    // `${chain}:${curve}` — graduation is ONE-WAY, so only `true` is cached
 const NO_CURVE_TTL_MS = 60000;   // a token CAN gain a curve later, so a negative answer expires
 const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : String(x).toLowerCase());
+// Exported for tests: resolveCurve short-circuits on a NEGATIVE cache entry
+// BEFORE its try block, so a test that expects the provider to be called has to
+// start from a clean cache or it silently asserts against a previous test's
+// answer — which is order- and timing-dependent, i.e. green here and red on the
+// server.
 function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); }
 
 // Why the launchpad last failed to answer, per chain. resolveCurve deliberately
@@ -2255,4 +2260,6 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
+  // Test-only cache resets — see the note on _clearReadCaches.
+  _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),
 };
