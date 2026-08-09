@@ -206,3 +206,53 @@ test('the same token in two wallets is one row naming both', async () => {
   assert.match(txt, /Wallet 1, Wallet 2/);
   assert.match(txt, /140\.00K \$HOPPY/, 'the merged amount is wrong');
 });
+
+// ── /portfolio: an unreadable price is not a loss ─────────────────────────────
+// The same defect the tokens screen was built to avoid, in the older screen and
+// worse: `snap ? snap.priceEth : 0` made a failed lookup set value to 0, so
+// unrealized became minus the entire cost basis. The row read −100% and it was
+// summed into the header, so one API blip wiped out the user's whole book.
+
+// portfolioAll's own arithmetic is pinned at the source in portfolio.test.js —
+// its internal calls are closure-bound, so monkeypatching the module's exports
+// cannot reach them. What IS worth driving here is the renderer, because the
+// "-100%" was printed there, and the fake core above can hand it any shape.
+
+const PF = (over) => ({ chain: CH[0], native: 'ETH', rows: [], totalValueEth: 0,
+  totalCostEth: 0, totalUnrealEth: 0, totalRealizedEth: 0, unpriced: 0, ...over });
+
+test('an unpriced position prints "price unavailable", never a loss', async () => {
+  core.portfolioAll = async () => PF({
+    unpriced: 1,
+    rows: [{ ca: '0xA', sym: 'HOPPY', open: true, tokens: 100000, valueEth: 0, priced: false,
+      ethIn: 1, ethOut: 0, costEth: 1, realizedEth: 0, unrealizedEth: null, holders: [] }],
+  });
+  const txt = plain((await t.portfolioScreen(1)).text);
+  assert.match(txt, /\$HOPPY · price unavailable/);
+  assert.ok(!/−100\.0%|-100\.0%/.test(txt), `a fabricated total loss is on screen:\n${txt}`);
+  assert.match(txt, /1 position\(s\) left out/, 'the header claims a complete total');
+  delete core.portfolioAll;
+});
+
+test('a priced position still shows its PnL', async () => {
+  core.portfolioAll = async () => PF({
+    totalValueEth: 2, totalCostEth: 1, totalUnrealEth: 1,
+    rows: [{ ca: '0xA', sym: 'HOPPY', open: true, tokens: 100000, valueEth: 2, priced: true,
+      ethIn: 1, ethOut: 0, costEth: 1, realizedEth: 0, unrealizedEth: 1, holders: [] }],
+  });
+  const txt = plain((await t.portfolioScreen(1)).text);
+  assert.match(txt, /\+100\.0%/);
+  assert.ok(!/left out/.test(txt), 'a complete total is being hedged');
+  delete core.portfolioAll;
+});
+
+test('"nothing on this chain" does not read as "you hold nothing"', async () => {
+  // portfolioAll skips every position on any other chain, so the flat sentence
+  // was false for anyone with a bag elsewhere. /tokens is the screen that can
+  // answer it.
+  core.portfolioAll = async () => PF({});
+  const r = await t.portfolioScreen(1);
+  assert.match(plain(r.text), /one chain at a time/);
+  assert.ok(JSON.stringify(r.kb).includes('toks'), 'no route to the screen that covers every chain');
+  delete core.portfolioAll;
+});

@@ -945,8 +945,13 @@ async function portfolioScreen(chatId) {
   const pctStr = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
   const dot = (v) => (v >= 0 ? '🟢' : '🔴');
   if (!pf.rows.length) {
-    return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nNo holdings on this chain across your wallets. Paste a token contract to buy, or switch chain.`,
-      kb: rows([btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
+    // "No holdings" is true only of THIS chain — portfolioAll skips every
+    // position on any other one. Said flatly it reads as "you hold nothing",
+    // which for a user with a bag on another chain is simply false. /tokens is
+    // the screen that can answer it, so point at it instead of leaving them to
+    // switch chains one at a time to find out.
+    return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\n${T(chatId, 'pf.empty_chain')}`,
+      kb: rows([btn('🪙 My tokens', 'toks'), btn('🌐 Chain', 'chain')], [btn('« Menu', 'menu')]) };
   }
 
   const open = pf.rows.filter((r) => r.open);
@@ -968,16 +973,24 @@ async function portfolioScreen(chatId) {
   if (Math.abs(pf.totalRealizedEth) > 1e-9) {
     L.push(`${dot(pf.totalRealizedEth)} <b>Realized:</b> ${both(pf.totalRealizedEth)} <i>banked from closed trades</i>`);
   }
+  // A total that quietly omits rows is a total presented as complete when it is
+  // not. Naming the count is the difference between a figure a user can act on
+  // and one they later discover was wrong.
+  if (pf.unpriced > 0) L.push(T(chatId, 'pf.unpriced', { n: String(pf.unpriced) }));
 
   // ── Open positions ────────────────────────────────────────────────────────
   if (open.length) {
     L.push(`\n<b>── Open ──</b>`);
     for (const r of open) {
-      const pct = r.costEth > 0 ? (r.unrealizedEth / r.costEth) * 100 : null;
+      // unrealizedEth === null means the price could not be read. Printing a
+      // PnL there would be inventing one, and the shape it invents is always
+      // "-100%", because value 0 minus cost is the whole cost.
+      const known = r.unrealizedEth != null;
+      const pct = known && r.costEth > 0 ? (r.unrealizedEth / r.costEth) * 100 : null;
       const who = (r.holders && r.holders.length)
         ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(' · ')
         : '—';
-      L.push(`\n<b>$${esc(r.sym)}</b> · ${money(r.valueEth)}`);
+      L.push(`\n<b>$${esc(r.sym)}</b> · ${known ? money(r.valueEth) : T(chatId, 'tok.no_price')}`);
       L.push(`   ${fmt(r.tokens)} tokens · cost ${money(r.costEth)}`);
       if (pct != null) L.push(`   ${dot(r.unrealizedEth)} ${both(r.unrealizedEth)} · ${pctStr(pct)}`);
       L.push(`   held: ${who}`);

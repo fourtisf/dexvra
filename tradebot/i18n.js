@@ -143,6 +143,16 @@ const S = {
     id: '<i>Tap token untuk buka kartunya. Yang terdaftar di sini adalah yang kamu beli lewat bot — token kiriman dari wallet lain tidak ikut tercatat.</i>',
   },
 
+  // ---------------------------------------------------------------- portfolio
+  'pf.unpriced': {
+    en: '<i>{n} position(s) left out — we could not read a price for them, and counting them as $0 would show a loss that did not happen.</i>',
+    id: '<i>{n} posisi tidak dihitung — harganya tidak terbaca, dan menghitungnya sebagai $0 akan memunculkan rugi yang sebenarnya tidak terjadi.</i>',
+  },
+  'pf.empty_chain': {
+    en: 'Nothing held on this chain.\n\nThis screen covers one chain at a time, because profit in ETH cannot be added to profit in BNB. Tap <b>🪙 My tokens</b> to see everything you hold on every chain at once.',
+    id: 'Tidak ada yang dipegang di chain ini.\n\nLayar ini hanya menampilkan satu chain, karena profit dalam ETH tidak bisa dijumlahkan dengan profit dalam BNB. Tap <b>🪙 My tokens</b> untuk melihat semua yang kamu pegang di semua chain sekaligus.',
+  },
+
   // ---------------------------------------------------------------- buy
   'buy.inflight': {
     en: '⏳ Already buying that token — wait for the result before buying again.',

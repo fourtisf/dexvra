@@ -2121,11 +2121,15 @@ async function portfolio(chatId, walletId) {
     const bal = Number(ethers.formatUnits(balRaw, p.dec || 18));
     if (bal <= 1e-9 && !(p.ethIn > 0)) continue;
     const snap = await tokenSnapshot(p.ca, chainKey).catch(() => null);
-    const priceEth = snap ? snap.priceEth : 0;
+    // A price we could not read is UNKNOWN, not zero — see the note on
+    // portfolioAll below. `unrealizedEth: null` means "we don't know", and the
+    // renderer must print that rather than a loss.
+    const priceEth = (snap && snap.priceEth > 0) ? snap.priceEth : 0;
+    const priced = priceEth > 0 || bal <= 1e-9;
     const valueEth = bal * priceEth;
     totalValueEth += valueEth;
     const costBasis = (p.costEth != null) ? p.costEth : Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));
-    rows.push({ ca: p.ca, name: p.name, sym: p.sym, tokens: bal, valueEth, ethIn: p.ethIn, ethOut: p.ethOut, costEth: costBasis, unrealizedEth: valueEth - costBasis, realizedEth: p.realizedEth || 0 });
+    rows.push({ ca: p.ca, name: p.name, sym: p.sym, tokens: bal, valueEth, priced, ethIn: p.ethIn, ethOut: p.ethOut, costEth: costBasis, unrealizedEth: priced ? valueEth - costBasis : null, realizedEth: p.realizedEth || 0 });
   }
   rows.sort((a, b) => b.valueEth - a.valueEth);
   return { rows, totalValueEth, address: walletAddress(wal, chainKey), chain, native: chain.native };
@@ -2171,21 +2175,42 @@ async function portfolioAll(chatId) {
     // long history that is most of the list.
     const open = totalTokens > 1e-9;
     const snap = open ? await tokenSnapshot(agg.ca, chainKey).catch(() => null) : null;
-    const priceEth = snap ? snap.priceEth : 0;
+    // A PRICE WE COULD NOT READ IS NOT A PRICE OF ZERO.
+    //
+    // This used to be `snap ? snap.priceEth : 0`, so a failed lookup — a network
+    // blip, a rate limit, a pool with no liquidity right now — set valueEth to 0
+    // and therefore unrealized to MINUS THE ENTIRE COST BASIS. The row read as a
+    // 100% loss, and it was summed into the header's "Unrealized", so a user who
+    // opened /portfolio during an API hiccup watched their whole book get wiped
+    // out. The number was invented by us, not by the market.
+    //
+    // We cannot tell "the source failed" from "the source says zero": the
+    // snapshot fallback object itself carries priceEth 0. So anything that is
+    // not a positive price is treated as UNKNOWN. The asymmetry decides it —
+    // reporting a real zero as unknown costs a line of copy, reporting an
+    // unknown as zero costs the user their trust in the whole screen. Same rule
+    // as the tokens screen, deliberately, so the two agree.
+    const priceEth = (snap && snap.priceEth > 0) ? snap.priceEth : 0;
+    const priced = !open || priceEth > 0;
     const valueEth = totalTokens * priceEth;
     totalValueEth += valueEth;
-    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, open, tokens: totalTokens, valueEth,
+    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, open, tokens: totalTokens, valueEth, priced,
       ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth, realizedEth: agg.realizedEth,
       // Unrealized is only meaningful while something is still held. On a closed
       // row it is zero by construction, and printing it beside a realized figure
-      // is what made "3.99x (+299%)" sit next to "PnL +0.0000".
-      unrealizedEth: open ? valueEth - agg.costEth : 0, holders });
+      // is what made "3.99x (+299%)" sit next to "PnL +0.0000". null = unknown.
+      unrealizedEth: !open ? 0 : (priced ? valueEth - agg.costEth : null), holders });
   }
   rows.sort((a, b) => (Number(b.open) - Number(a.open)) || (b.valueEth - a.valueEth) || (b.realizedEth - a.realizedEth));
   const totalRealizedEth = rows.reduce((t, r) => t + (Number(r.realizedEth) || 0), 0);
-  const totalCostEth = rows.reduce((t, r) => t + (r.open ? Number(r.costEth) || 0 : 0), 0);
-  const totalUnrealEth = rows.reduce((t, r) => t + (Number(r.unrealizedEth) || 0), 0);
-  return { rows, totalValueEth, totalCostEth, totalUnrealEth, totalRealizedEth, chain, native: chain.native };
+  // Cost and unrealized are summed over the SAME rows — the priced ones. Leaving
+  // an unpriced row's cost in the denominator while its gain is missing from the
+  // numerator prints a percentage against money the numerator never saw.
+  const priced = rows.filter((r) => r.priced);
+  const totalCostEth = priced.reduce((t, r) => t + (r.open ? Number(r.costEth) || 0 : 0), 0);
+  const totalUnrealEth = priced.reduce((t, r) => t + (Number(r.unrealizedEth) || 0), 0);
+  const unpriced = rows.filter((r) => !r.priced).length;
+  return { rows, totalValueEth, totalCostEth, totalUnrealEth, totalRealizedEth, unpriced, chain, native: chain.native };
 }
 
 // Trade history (newest first) + realized PnL for a wallet.
