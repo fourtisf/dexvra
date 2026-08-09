@@ -633,7 +633,11 @@ async function tokensScreen(chatId) {
     for (const r of items) {
       const val = r.unpriced && !(r.usd > 0) ? T(chatId, 'tok.no_price') : usdX(r.usd);
       const where = list.length > 1 ? ` · <i>${esc(r.holders.join(', '))}</i>` : '';
-      L.push(`${fmt(r.tokens)} <b>$${esc(r.sym || '?')}</b> · ${val}${where}`);
+      // Name it by its CONTRACT when it has no symbol on record — the same
+      // rule the live-position card follows. "$?" tells a holder the bot cannot
+      // even name what they own.
+      const label = r.sym ? `<b>$${esc(r.sym)}</b>` : `<code>${esc(short(r.ca))}</code>`;
+      L.push(`${fmt(r.tokens)} ${label} · ${val}${where}`);
       // Reuses the existing token-card callback (tok:<chain>:<walletIdx>:<ca>)
       // rather than a new one — an empty wallet index means "the active wallet",
       // which is what the card already falls back to. Bounded at 12 buttons:
@@ -2520,7 +2524,32 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
-  const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
+  // A SYMBOL IS A PROPERTY OF THE TOKEN, not of one wallet's position record —
+  // exactly the defect the decimals note below describes, one line further on.
+  // `pos` is only the BOUND wallet, so a card opened on Wallet 1 while Wallets
+  // 2-4 hold the token found no record; and tokenSnapshot carries `sym` only on
+  // the Solana/DEX branch (core.js:1101) — the EVM curve snapshot has no such
+  // field — so there was nothing to fall back to and the card printed "$?" in
+  // its own title, four times over, on a position worth real money.
+  //
+  // Cheapest source first. The wallet scan is in-memory and resolves the case
+  // above without a single request; tokenMeta is a network call and therefore
+  // last, reached only when no wallet has ever recorded this token.
+  let sym = (pos && pos.sym) || (snap && snap.sym) || '';
+  if (!sym) {
+    for (const wal of core.walletList(u)) {
+      const q = (wal.positions || {})[posKey];
+      if (q && q.sym) { sym = q.sym; break; }
+    }
+  }
+  if (!sym) {
+    const meta = await withTmo(core.tokenMeta(ca, chainKey).catch(() => null), SNAP_TMO_MS, null);
+    sym = (meta && meta.sym) || '';
+  }
+  // Still nothing: name the token by its CONTRACT rather than by a punctuation
+  // mark. "$?" tells the reader their money is in something the bot cannot even
+  // name; the short address at least identifies it and can be searched.
+  const symTxt = sym ? `$${esc(sym)}` : `<code>${esc(short(ca))}</code>`;
   // DECIMALS ARE A PROPERTY OF THE TOKEN, not of one wallet's position record.
   // This read `(pos && pos.dec) || 18`, where `pos` is only the BOUND wallet's
   // record — so a wallet holding the token with no record of its own (exactly
@@ -2645,7 +2674,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const scopeN = selN || 1;
   const scopeHolding = holders.filter((h) => inScope(h.id)).length;
   const more = multi ? ` <i>· +${holders.length - 1} more below</i>` : '';
-  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
+  const L = [`📍 <b>Live position — ${symTxt}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
   // Reading the LIVE on-chain balance (not pos.tokens) is what stops tokens sent
   // out via 📤 Send from leaving the Monitor showing a phantom bag with fake PnL.
   //
@@ -2672,7 +2701,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // Say when the bag is the one the BUY recorded rather than one read from the
     // chain just now — otherwise a failing RPC renders identically to a live
     // read, and tokens sent out with 📤 would show as a bag the user still has.
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} ${symTxt}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
@@ -2694,7 +2723,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // announced "ℹ️ 0.0000 $PONS has no entry price on record", which reads as a
     // bug rather than as information.
     if (fmtNZ(unpricedTokens)) {
-      L.push(`ℹ️ <i>${fmt(unpricedTokens)} $${esc(sym)} has no entry price on record (sent in, or bought outside the bot) — counted in what you hold, left out of P/L.</i>`);
+      L.push(`ℹ️ <i>${fmt(unpricedTokens)} ${symTxt} has no entry price on record (sent in, or bought outside the bot) — counted in what you hold, left out of P/L.</i>`);
     }
     // Named OUTSIDE the per-wallet list, because the list is capped and these
     // rows sort last: with more than MON_WALLET_ROWS wallets the truncation
@@ -2711,7 +2740,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
       L.push('');
       L.push('💳 <b>Per wallet</b>');
       if (scopeN > 1) {
-        L.push(`🔻 <i>The Sell buttons act on <b>${scopeN} wallets</b>${scopeHolding < scopeN ? ` — ${scopeHolding} of them hold $${esc(sym)}` : ''}. Tap 🔎 Card to change which.</i>`);
+        L.push(`🔻 <i>The Sell buttons act on <b>${scopeN} wallets</b>${scopeHolding < scopeN ? ` — ${scopeHolding} of them hold ${symTxt}` : ''}. Tap 🔎 Card to change which.</i>`);
       }
       // Dollars first, native beside it. A row that gave a token count, a cost
       // and a percentage never answered the question the section exists for —
@@ -2734,7 +2763,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
         const note = h.stale ? ' <i>(last known)</i>' : '';
         const bound = !inScope(h.id) ? ''
           : (scopeN > 1 ? '  ✅ <i>Sell includes this</i>' : '  ⬅️ <i>Sell acts here</i>');
-        L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} $${esc(sym)}${note}${bound}`);
+        L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} ${symTxt}${note}${bound}`);
         const parts = [`worth ${px > 0 ? usdFirst(hv, true) : '—'}`];
         if (h.cost > 0) parts.push(`in ${usdFirst(h.cost, false)}`);
         if (h.uncosted > 0 && fmtNZ(h.uncosted)) parts.push(`<i>${fmt(h.uncosted)} not bought here</i>`);
