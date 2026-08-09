@@ -75,6 +75,52 @@ const S = {
     id: '🤔 Saya belum mengerti pesan itu.\n\nUntuk trading token, paste <b>alamat kontraknya</b> di sini. Atau tap salah satu tombol di bawah.',
   },
 
+  // ---------------------------------------------------------------- wallets
+  // The /wallet screen. Written so the ACTIVE wallet is the subject and every
+  // other wallet is one line — the old version printed the active wallet twice
+  // (once as a summary, once in the list) and both 42- and 44-character
+  // addresses for every wallet, which on a phone buried the balances.
+  'wal.title': { en: '💼 <b>Your wallets</b>', id: '💼 <b>Wallet kamu</b>' },
+  'wal.total': {
+    en: '{usd} across {n} of {cap} wallets',
+    id: '{usd} di {n} dari {cap} wallet',
+  },
+  'wal.split': { en: '{coins} in coins · {tokens} in tokens', id: '{coins} berupa coin · {tokens} berupa token' },
+  'wal.active_head': { en: '<b>Active wallet</b>', id: '<b>Wallet aktif</b>' },
+  'wal.others_head': { en: '<b>Your other wallets</b>', id: '<b>Wallet kamu yang lain</b>' },
+  'wal.tokens_row': { en: '🪙 Tokens', id: '🪙 Token' },
+  'wal.empty_on': { en: '<i>Nothing yet on {chains}</i>', id: '<i>Belum ada isinya di {chains}</i>' },
+  'wal.unread_on': {
+    en: "<i>Couldn't reach {chains} — those are not counted above</i>",
+    id: '<i>{chains} tidak bisa dihubungi — belum dihitung di atas</i>',
+  },
+  'wal.addr_evm': { en: 'Deposit on {chains}', id: 'Deposit di {chains}' },
+  'wal.addr_sol': { en: 'Deposit on {chain}', id: 'Deposit di {chain}' },
+  // The one genuinely actionable thing a zero balance tells you.
+  'wal.no_gas': {
+    en: "⚠️ <b>0 {native} on {chain}</b> — you can't buy or pay gas here until you deposit.",
+    id: '⚠️ <b>0 {native} di {chain}</b> — belum bisa beli atau bayar gas di sini sampai kamu deposit.',
+  },
+  'wal.orders': { en: '{n} open', id: '{n} order jalan' },
+  // Named, never silent: a screen that quietly drops wallets reads as a screen
+  // that lost them. Every rolled-up wallet still has its own button below.
+  'wal.more': {
+    en: '…and {n} more, holding {usd}. Their buttons are below.',
+    id: '…dan {n} wallet lagi, isinya {usd}. Tombolnya ada di bawah.',
+  },
+  'wal.hint': {
+    en: '<i>Tap a wallet to make it active · ✏️ rename · 📥 its address &amp; QR · 🗑 remove.</i>',
+    id: '<i>Tap wallet untuk jadikan aktif · ✏️ ganti nama · 📥 alamat &amp; QR-nya · 🗑 hapus.</i>',
+  },
+  'wal.first_steps': {
+    en: '<b>Three steps to your first trade 👇</b>\n1️⃣ Tap <b>📥</b> on a wallet and send it some {native}.\n2️⃣ Tap <b>🔄 Refresh</b> — you will see it land.\n3️⃣ Paste any token contract address to get a live card with a one-tap Buy.',
+    id: '<b>Tiga langkah menuju trade pertama 👇</b>\n1️⃣ Tap <b>📥</b> di salah satu wallet, lalu kirim {native} ke situ.\n2️⃣ Tap <b>🔄 Refresh</b> — saldonya akan langsung kelihatan.\n3️⃣ Paste alamat kontrak token apa pun untuk dapat kartu live dengan tombol Buy sekali tap.',
+  },
+  'wal.keys_note': {
+    en: '<i>One key per wallet. Every EVM chain shares the same 0x address; Solana has its own.</i>',
+    id: '<i>Satu key per wallet. Semua chain EVM pakai alamat 0x yang sama; Solana punya alamatnya sendiri.</i>',
+  },
+
   // ---------------------------------------------------------------- buy
   'buy.inflight': {
     en: '⏳ Already buying that token — wait for the result before buying again.',

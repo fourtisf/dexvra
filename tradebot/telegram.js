@@ -77,6 +77,18 @@ const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
 // resolution announces amounts the reader sees as 0.0000.
 const fmtNZ = (n) => Number(fmt(n).replace(/[KM]$/, '')) > 0;
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
+// Money, for screens where the exact figure is the point.
+//
+// fmt() switches to K at $1,000, which is right for a market cap and wrong for
+// a balance: the wallet screen showed one wallet as "≈ $1.01K" on one line and
+// broke the SAME number down as "native $999.62 · tokens $8.18" two lines
+// below. Both were correct and the pair reads as a bug. Thousands separators
+// stay legible to about a million, and above that K/M is genuinely easier.
+const usdX = (n) => {
+  n = Number(n) || 0;
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 // A "contract" the user can paste: a 0x EVM address OR a base58 Solana mint. Both
 // map to a token card (scoped to the active chain), and a withdraw destination.
 const isEvmCa = (s) => /^0x[0-9a-fA-F]{40}$/.test(String(s || '').trim());
@@ -381,31 +393,75 @@ async function walletScreen(chatId) {
   const grandNative = nativeUsdArr.reduce((a, b) => a + b, 0);
   const grandToken = tokenUsdArr.reduce((a, b) => a + b, 0);
   const anyFunds = grandToken > 0.05 || matrix.some((row) => row.some((b, i) => b != null && Number(fmtNat(b, allChains[i].key)) > 0));
-  // Active wallet's per-chain breakdown block.
+  // Active wallet's per-chain breakdown.
+  //
+  // Only chains that HOLD something get a row. The old version printed every
+  // enabled chain, so a normal wallet spent three of its seven lines saying
+  // "Base: 0 ETH · Arbitrum: 0 ETH · Solana: 0 SOL" — on a phone that pushed
+  // the balances that do exist off the first screen. The zeros are summarised
+  // in one line instead, and the ONE case where a zero is worth a sentence —
+  // no gas on the chain you are actually trading on — becomes a warning.
+  //
+  // A null (RPC did not answer) is NOT folded in with the zeros: "empty" and
+  // "we could not look" are different facts, and the second one means the total
+  // above is understated. That distinction is why readNative is strict.
   let chainBlock = '';
+  const emptyChains = [];
+  const unreadChains = [];
+  let activeChainNative = null;
   allChains.forEach((c, i) => {
     const b = (matrix[awIdx] || [])[i];
-    if (b == null) { chainBlock += `${c.emoji} ${esc(c.name)}: —\n`; return; }
+    if (b == null) { unreadChains.push(c.name); return; }
     const amt = Number(fmtNat(b, c.key));
+    if (c.key === ch.key) activeChainNative = amt;
+    if (!(amt > 0)) { emptyChains.push(c.name); return; }
     const usdV = nativeUsd(c.native) * amt;
-    chainBlock += `${c.emoji} ${esc(c.name)}: <b>${amt > 0 ? amt.toFixed(4) : '0'} ${c.native}</b>${usdV > 0.005 ? ` ($${fmt(usdV)})` : ''}\n`;
+    chainBlock += `${c.emoji} ${esc(c.name)} — <b>${amt.toFixed(4)} ${c.native}</b>${usdV > 0.005 ? ` · ${usdX(usdV)}` : ''}\n`;
   });
+  if ((tokenUsdArr[awIdx] || 0) > 0.05) chainBlock += `${T(chatId, 'wal.tokens_row')} — <b>${usdX(tokenUsdArr[awIdx])}</b>\n`;
+  if (emptyChains.length) chainBlock += T(chatId, 'wal.empty_on', { chains: esc(emptyChains.join(' · ')) }) + '\n';
+  if (unreadChains.length) chainBlock += T(chatId, 'wal.unread_on', { chains: esc(unreadChains.join(' · ')) }) + '\n';
   // One EVM key = one 0x address shared by every EVM chain; Solana has its own key.
   // Show BOTH addresses per wallet so it's obvious where to deposit each.
   const evmChain = allChains.find((c) => !core.chains.isSvm(c.key)) || allChains[0];
   const solChain = allChains.find((c) => core.chains.isSvm(c.key));
   const evmNames = allChains.filter((c) => !core.chains.isSvm(c.key)).map((c) => c.name).join(' · ');
-  let body = '';
+  // ONE block per wallet. The old layout rendered the active wallet twice — a
+  // detail block above and a row in the list below — under two different
+  // glyphs (🌐 then ✅) and two different roundings of the same number
+  // ($1.01K vs "native $999.62 · tokens $8.18"). Read from the top it looks
+  // like the bot listed a wallet it had already listed, and got it wrong.
+  //
+  // Addresses: full and copyable for the ACTIVE wallet only. Printing both a
+  // 42-char EVM and a 44-char Solana address for all ten wallets was ~2,500
+  // characters of the message, and every one of them wraps on a phone. 📥 on
+  // any row still gives that wallet's address and QR, which is also the only
+  // safe way to hand over an address — a shortened one must never be tappable
+  // to copy, because a copied 0x2d14…6B8 is a withdrawal into nowhere.
+  // Character budget for the "other wallets" list, sized so the whole screen
+  // stays under Telegram's 4096 with room for the header, the active wallet's
+  // chain rows, both of its addresses, the roll-up line and the hint.
+  const OTHERS_MAX_CHARS = 2600;
+  let others = '';
+  let rolledUp = 0;
+  let rolledUpUsd = 0;
   const kbRows = [];
   list.forEach((w, i) => {
     const active = i === awIdx;
     const label = core.walletLabel(w, i + 1);
     const nOrders = (w.orders && w.orders.length) || 0;
-    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> total${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n`;
-    if ((tokenUsdArr[i] || 0) > 0.05) body += `    <i>native $${fmt(nativeUsdArr[i])} · tokens $${fmt(tokenUsdArr[i])}</i>\n`;
-    body += `🔗 <b>EVM address</b> <i>(${esc(evmNames)})</i>\n<code>${wAddr(w, evmChain.key)}</code>\n`;
-    if (solChain) body += `🟣 <b>Solana address</b>\n<code>${wAddr(w, solChain.key)}</code>\n`;
-    body += `\n`;
+    const orders = nOrders ? ` · ${T(chatId, 'wal.orders', { n: nOrders })}` : '';
+    if (!active) {
+      // sendMessage caps at 4096 characters and tg() never inspects the
+      // response, so an oversized screen is not an error the user can see —
+      // /wallet simply does nothing. core.js lets MAX_WALLETS_PER_USER go to
+      // 99, which no layout of one line each can fit. The overflow is rolled
+      // into a line that SAYS how many and what they hold: this codebase's rule
+      // is that a card dropping wallets reads as a card that lost them. Every
+      // rolled-up wallet still has its own button below.
+      if (others.length < OTHERS_MAX_CHARS) others += `▫️ <b>${esc(label)}</b> · ${usdX(walletUsd[i])}${orders}\n`;
+      else { rolledUp++; rolledUpUsd += walletUsd[i]; }
+    }
     const row = [btn(`${active ? '✓ ' : '⚪ '}${label}`.slice(0, 26), active ? 'wal' : 'sw:' + w.id), btn('✏️', 'rnw:' + w.id), btn('📥', 'qrw:' + w.id)];
     if (list.length > 1) row.push(btn('🗑', 'rmw:' + w.id));
     kbRows.push(row);
@@ -413,12 +469,25 @@ async function walletScreen(chatId) {
   if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
   kbRows.push([btn('🌐 Chain', 'chain'), btn('🔄 Refresh', 'wal'), btn('« Menu', 'menu')]);
-  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>≈ $${fmt(grandUsd)}</b>${grandToken > 0.05 ? ` <i>(native $${fmt(grandNative)} · tokens $${fmt(grandToken)})</i>` : ''}\n\n`
-    + `🌐 <b>${esc(core.walletLabel(list[awIdx], awIdx + 1))}</b>${walletUsd[awIdx] > 0.005 ? ` · ≈ $${fmt(walletUsd[awIdx])}` : ''}\n${chainBlock}${(tokenUsdArr[awIdx] || 0) > 0.05 ? `🪙 Tokens (bags): <b>$${fmt(tokenUsdArr[awIdx])}</b>\n` : ''}\n`;
+
+  const activeLabel = esc(core.walletLabel(list[awIdx], awIdx + 1));
+  const orders = ((list[awIdx] && list[awIdx].orders) || []).length;
+  const head = `${T(chatId, 'wal.title')} · ${ch.emoji} ${esc(ch.name)}\n`
+    + `${T(chatId, 'wal.total', { usd: `<b>${usdX(grandUsd)}</b>`, n: list.length, cap: core.WALLET_CAP })}\n`
+    + (grandToken > 0.05 ? `<i>${T(chatId, 'wal.split', { coins: usdX(grandNative), tokens: usdX(grandToken) })}</i>\n` : '')
+    + `\n${T(chatId, 'wal.active_head')}\n`
+    + `✅ <b>${activeLabel}</b> · <b>${usdX(walletUsd[awIdx])}</b>${orders ? ` · ${T(chatId, 'wal.orders', { n: orders })}` : ''}\n`
+    + chainBlock
+    // The only zero worth a sentence: no gas on the chain they are trading on.
+    + (activeChainNative === 0 ? T(chatId, 'wal.no_gas', { native: esc(ch.native), chain: esc(ch.name) }) + '\n' : '')
+    + `<i>${T(chatId, 'wal.addr_evm', { chains: esc(evmNames) })}</i>\n<code>${wAddr(list[awIdx], evmChain.key)}</code>\n`
+    + (solChain ? `<i>${T(chatId, 'wal.addr_sol', { chain: esc(solChain.name) })}</i>\n<code>${wAddr(list[awIdx], solChain.key)}</code>\n` : '')
+    + (others ? `\n${T(chatId, 'wal.others_head')}\n${others}` : '')
+    + (rolledUp ? `<i>${T(chatId, 'wal.more', { n: rolledUp, usd: usdX(rolledUpUsd) })}</i>\n` : '');
   const guide = !anyFunds
-    ? `<b>Start in 3 steps 👇</b>\n1️⃣ Deposit ${ch.native} to a wallet — tap <b>📥</b> on it for the address/QR.\n2️⃣ Tap <b>🔄 Refresh</b> to see it land.\n3️⃣ Paste any token contract → live card → one-tap buy.\n\n<i>Tap a name to switch · ✏️ rename · 📥 deposit · 🗑 remove. One key per wallet on every chain — EVM shares one 0x address, Solana has its own (switch with 🌐).</i>`
-    : `<i>Tap a wallet to switch · ✏️ rename · 📥 deposit · 🗑 remove. Paste any token address to trade.</i>`;
-  return { text: head + body + guide, kb: { inline_keyboard: kbRows } };
+    ? `\n${T(chatId, 'wal.first_steps', { native: esc(ch.native) })}\n\n${T(chatId, 'wal.keys_note')}`
+    : `\n${T(chatId, 'wal.hint')}`;
+  return { text: head + guide, kb: { inline_keyboard: kbRows } };
 }
 // Maestro-style deposit: a QR of the address + the address text. Works for any wallet
 // (not just the active one). Degrades to a plain text address if QR is disabled/fails.

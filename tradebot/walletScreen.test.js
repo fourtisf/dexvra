@@ -1,0 +1,138 @@
+'use strict';
+/*
+ * walletScreen.test.js — the /wallet screen's layout invariants.
+ *
+ * The screen the user complained about rendered the ACTIVE wallet twice: once
+ * as a detail block at the top under 🌐, once again in the list below under ✅,
+ * with the same total rounded two different ways ("≈ $1.01K" vs "native
+ * $999.62 · tokens $8.18"). Read top to bottom it looks like the bot listed a
+ * wallet it had already listed and disagreed with itself about the number.
+ *
+ * These tests pin the layout rules rather than the wording, so the copy can be
+ * edited (it lives in i18n.js) without the structure quietly regressing.
+ */
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+const walletFn = SRC.slice(SRC.indexOf('async function walletScreen('), SRC.indexOf('async function depositScreen('));
+
+// ── Structure ────────────────────────────────────────────────────────────────
+
+test('a wallet is rendered once — the active one is not also listed below', () => {
+  // The list loop must SKIP the active wallet, because the detail block above
+  // already is that wallet. Anything else double-prints it.
+  const activeAt = walletFn.indexOf('if (!active) {');
+  const othersAt = walletFn.indexOf('others +=');
+  assert.ok(activeAt > -1, 'the list loop no longer skips the active wallet');
+  assert.ok(othersAt > activeAt, 'the "other wallets" line is written outside the !active branch');
+  assert.ok(!/body \+=/.test(walletFn), 'the old per-wallet body block is back');
+});
+
+test('one glyph per meaning: ✅ is the active wallet, ▫️ is every other', () => {
+  // The old screen used 🌐 for the active wallet in the detail block and ✅ for
+  // the same wallet in the list — two icons, one thing.
+  assert.ok(!/🌐 <b>\$\{esc\(core\.walletLabel/.test(walletFn), 'the 🌐 wallet heading is back');
+  assert.match(walletFn, /✅ <b>\$\{activeLabel\}/);
+  assert.match(walletFn, /▫️ <b>\$\{esc\(label\)\}/);
+});
+
+test('money on this screen uses ONE formatter', () => {
+  // fmt() switches to "K" at $1,000; usdX() does not. Mixing them is what
+  // produced "≈ $1.01K" directly above "native $999.62 · tokens $8.18".
+  const money = walletFn.match(/\$\$\{fmt\(/g) || [];
+  assert.deepStrictEqual(money, [], 'fmt() is being used for a dollar figure on the wallet screen — use usdX()');
+});
+
+// ── Address safety ───────────────────────────────────────────────────────────
+
+test('a shortened address is never tappable-to-copy', () => {
+  // <code> makes Telegram copy the text on tap. A truncated address copied into
+  // a withdraw field is funds sent nowhere, so short() must never appear inside
+  // a <code> span. Full addresses are shown for the active wallet; every other
+  // wallet's address comes from its 📥 button, which sends the real thing.
+  assert.ok(!/<code>\$\{short\(/.test(walletFn), 'a shortened address is inside <code>');
+  assert.match(walletFn, /<code>\$\{wAddr\(list\[awIdx\]/, 'the active wallet lost its full copyable address');
+});
+
+test('every wallet still has a way to get its own address', () => {
+  assert.match(walletFn, /btn\('📥', 'qrw:' \+ w\.id\)/, 'the per-wallet deposit button is gone');
+});
+
+// ── Zero balances ────────────────────────────────────────────────────────────
+
+test('chains holding nothing are summarised, not listed one per line', () => {
+  assert.match(walletFn, /emptyChains\.push\(c\.name\)/);
+  assert.match(walletFn, /wal\.empty_on/);
+});
+
+test("'empty' and 'we could not read it' stay different facts", () => {
+  // A null is an RPC that did not answer, which means the total above is
+  // understated. Folding it in with the genuine zeros hides that.
+  assert.match(walletFn, /if \(b == null\) \{ unreadChains\.push\(c\.name\); return; \}/);
+  assert.match(walletFn, /wal\.unread_on/);
+});
+
+test('a zero balance on the ACTIVE chain becomes a warning', () => {
+  // The one zero worth a sentence: you cannot buy or pay gas on the chain you
+  // are trading on. It was previously just another "Base: 0 ETH" row.
+  assert.match(walletFn, /activeChainNative === 0/);
+  assert.match(walletFn, /wal\.no_gas/);
+});
+
+// ── Length ───────────────────────────────────────────────────────────────────
+
+test('the screen cannot outgrow a Telegram message', () => {
+  // sendMessage caps at 4096 and tg() does not check the response, so an
+  // oversized wallet screen fails with no error anywhere — the user taps
+  // /wallet and nothing happens. The old layout spent ~340 chars per wallet
+  // (two full addresses each) and fitted 10 with ~150 chars to spare, so
+  // raising MAX_WALLETS_PER_USER — which core.js allows up to 99 — broke it.
+  //
+  // Only the ACTIVE wallet is detailed now, so growth is one short line per
+  // extra wallet. This reproduces that arithmetic against the real cap.
+  const NAME = 24; // core.renameWallet caps a custom name at 24 chars
+  const fixed = 900; // head + chain rows + both addresses + roll-up + hint, generously
+  const budget = Number(/OTHERS_MAX_CHARS = (\d+)/.exec(walletFn)[1]);
+  const perExtraWallet = `▫️ <b>${'W'.repeat(NAME)}</b> · $1,234,567.89 · 99 open\n`.length;
+  for (const cap of [10, 25, 50, 99]) {
+    // The list stops at the budget; the rest becomes one roll-up line.
+    const listed = Math.min(cap - 1, Math.ceil(budget / perExtraWallet));
+    const total = fixed + perExtraWallet * listed;
+    assert.ok(total < 4096, `at MAX_WALLETS_PER_USER=${cap} the screen renders ~${total} chars (limit 4096)`);
+  }
+});
+
+test('wallets dropped from the list are announced, not hidden', () => {
+  assert.match(walletFn, /rolledUp\+\+/);
+  assert.match(walletFn, /wal\.more/);
+  // …and they keep their button, which is the ONLY reason dropping a row from
+  // the text is acceptable. So the button must be built unconditionally —
+  // outside the `if (!active)` branch that the roll-up lives in.
+  const loop = walletFn.slice(walletFn.indexOf('list.forEach'), walletFn.indexOf('if (list.length < core.WALLET_CAP)'));
+  const activeAt = loop.indexOf('if (!active) {');
+  const branchEnd = loop.indexOf('\n    }', activeAt);
+  const rowAt = loop.indexOf('const row = [btn(');
+  assert.ok(activeAt > -1 && branchEnd > -1, 'the !active branch moved — re-check this test');
+  assert.ok(rowAt > branchEnd, 'the per-wallet button is inside the !active branch — rolled-up wallets would lose it');
+  assert.match(loop, /kbRows\.push\(row\)/);
+});
+
+// ── Copy ─────────────────────────────────────────────────────────────────────
+
+test('the wallet copy is translated, not hardcoded English', () => {
+  // A large share of this bot's users trade in Indonesian (see i18n.js). The
+  // wallet screen was one of the biggest remaining blocks of English literals.
+  const i18n = require('./i18n');
+  for (const key of ['wal.title', 'wal.total', 'wal.split', 'wal.active_head', 'wal.others_head',
+    'wal.empty_on', 'wal.unread_on', 'wal.no_gas', 'wal.hint', 'wal.first_steps']) {
+    assert.ok(i18n._strings[key], `${key} missing`);
+    assert.notStrictEqual(i18n._strings[key].en, i18n._strings[key].id, `${key} was not actually translated`);
+  }
+});
+
+test('the jargon is gone', () => {
+  assert.ok(!/Tokens \(bags\)/.test(SRC), '"Tokens (bags)" is back — it is our word, not the reader\'s');
+});
