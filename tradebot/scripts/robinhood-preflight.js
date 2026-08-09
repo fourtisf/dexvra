@@ -46,6 +46,7 @@ const TOKEN = argOf('--token').trim();
 const TX = argOf('--tx').trim();
 const SPAN = Math.max(100, Number(argOf('--blocks') || 5000));
 const DISCOVER = argv.includes('--discover');
+const EXPLORER = argOf('--explorer').trim().replace(/\/+$/, '');
 
 let failures = 0;
 let warnings = 0;
@@ -220,7 +221,15 @@ async function main() {
         try {
           for (const lg of await prov.getLogs({ fromBlock: from, toBlock: to })) {
             const k = `${(lg.address || '').toLowerCase()}|${(lg.topics && lg.topics[0]) || ''}`;
-            tally.set(k, (tally.get(k) || 0) + 1);
+            const cur = tally.get(k);
+            // Keep the FIRST hash seen for a pair. The scan walks from the head
+            // downwards, so first-seen is the most RECENT — which is the one
+            // worth handing to --tx: a launch from an hour ago decodes the same
+            // as one from last week and is likelier to still be reachable on a
+            // pruning node. One 66-char string per distinct (address, event)
+            // pair, which is tens of entries, not thousands.
+            if (cur) cur.n++;
+            else tally.set(k, { n: 1, tx: lg.transactionHash || '' });
           }
           scanned += to - from + 1;
         } catch (_) { refused++; }   // rate limit / range cap — keep going, report at the end
@@ -232,7 +241,7 @@ async function main() {
       bad('no logs at all in that window', `${scanned} block(s) scanned`);
       note('Either the chain is idle, or this RPC will not serve unfiltered getLogs.');
     } else {
-      const rows = [...tally.entries()].map(([k, n]) => { const [addr, t0] = k.split('|'); return { addr, t0, n }; })
+      const rows = [...tally.entries()].map(([k, v]) => { const [addr, t0] = k.split('|'); return { addr, t0, n: v.n, tx: v.tx }; })
         .sort((a, b) => b.n - a.n).slice(0, 10);
       const cfg = String(chain.factory || '').toLowerCase();
 
@@ -243,19 +252,49 @@ async function main() {
       // exists to remove. Best-effort throughout: an unverified contract, a
       // rate limit or an explorer that speaks a different API just leaves the
       // hash unnamed.
+      // Explorers do not agree on how to serve an ABI. Blockscout's newer REST
+      // API answers /api/v2/smart-contracts/{addr} with { abi: [...] }; the
+      // older Etherscan-compatible one answers /api?module=contract&action=
+      // getabi with the ABI as a JSON *string* in `result`. Try both, and keep
+      // WHY each attempt failed — the first cut swallowed everything and
+      // printed one line that blamed the contracts for not being verified,
+      // which is only one of three possible causes and not the likeliest. This
+      // repo has TWO different explorer hosts configured for this same chain
+      // (tradebot/chains.js vs bot/src/config/chains.js), so "wrong host" was
+      // always on the table and the output could not say it.
       const names = new Map();   // topic0 → "EventName"
+      const why = [];            // one line per address we could not name
+      const base = String(EXPLORER || chain.explorer || '').replace(/\/+$/, '');
+      const abiOf = async (addr) => {
+        const tries = [
+          { url: `${base}/api/v2/smart-contracts/${addr}`, pick: (j) => (Array.isArray(j && j.abi) ? j.abi : null),
+            unverified: (j) => j && j.is_verified === false },
+          { url: `${base}/api?module=contract&action=getabi&address=${addr}`,
+            pick: (j) => (j && j.status === '1' && typeof j.result === 'string' ? JSON.parse(j.result) : null),
+            unverified: (j) => j && j.status === '0' && /not verified/i.test(String(j.result || '')) },
+        ];
+        let last = 'no explorer configured';
+        if (!base) return { abi: null, why: last };
+        for (const t of tries) {
+          try {
+            const res = await fetch(t.url, { signal: AbortSignal.timeout(8000) });
+            if (!res.ok) { last = `HTTP ${res.status}`; continue; }
+            const body = await res.text();
+            let j = null;
+            try { j = JSON.parse(body); } catch (_) { last = `not JSON (${body.slice(0, 40).replace(/\s+/g, ' ')}…)`; continue; }
+            if (t.unverified(j)) return { abi: null, why: 'not verified on this explorer' };
+            const abi = t.pick(j);
+            if (abi) return { abi, why: '' };
+            last = 'answered, but no ABI in the response';
+          } catch (e) { last = (e && e.name === 'TimeoutError') ? 'timed out' : ((e && e.message) || String(e)).slice(0, 60); }
+        }
+        return { abi: null, why: last };
+      };
       for (const addr of [...new Set(rows.map((r) => r.addr))]) {
-        try {
-          const base = String(chain.explorer || '').replace(/\/+$/, '');
-          if (!base) break;
-          const res = await fetch(`${base}/api?module=contract&action=getabi&address=${addr}`,
-            { signal: AbortSignal.timeout(8000) });
-          const j = await res.json();
-          if (!j || j.status !== '1' || typeof j.result !== 'string') continue;
-          const abi = JSON.parse(j.result);
-          const iface = new ethers.Interface(abi);
-          iface.forEachEvent((ev) => names.set(ev.topicHash.toLowerCase(), ev.name));
-        } catch (_) { /* unverified / unreachable / different API — leave it unnamed */ }
+        const { abi, why: w } = await abiOf(addr);
+        if (!abi) { why.push(`${addr.slice(0, 10)}… ${w}`); continue; }
+        try { new ethers.Interface(abi).forEachEvent((ev) => names.set(ev.topicHash.toLowerCase(), ev.name)); }
+        catch (e) { why.push(`${addr.slice(0, 10)}… ABI did not parse`); }
       }
 
       console.log('');
@@ -263,8 +302,19 @@ async function main() {
         const mine = r.addr === cfg ? '  ← the factory the bot watches' : '';
         const nm = names.get(r.t0.toLowerCase());
         console.log(`     ${String(r.n).padStart(5)}×  ${r.addr}  ${nm ? nm.padEnd(20) : r.t0.slice(0, 18) + '…'}${mine}`);
+        // The whole point of printing this: --tx needs a transaction and the
+        // instruction used to be "go to pools.trade and find one". Every log
+        // already carries the hash of the transaction that emitted it, so the
+        // next command is right here, ready to paste.
+        if (r.tx) console.log(`            --tx ${r.tx}`);
       }
-      if (!names.size) note('(no event names — none of these contracts are verified on the explorer, or its API differs)');
+      if (!names.size && why.length) {
+        note(`no event names from ${base || '(no explorer set)'} —`);
+        for (const w of why.slice(0, 4)) note(`  ${w}`);
+        note('If that reads like a wrong host rather than unverified contracts, try');
+        note('  --explorer https://robinhoodchain.blockscout.com   (the other host this repo configures)');
+        note('Either way the --tx lines below settle it without any explorer.');
+      }
       console.log('');
       if (!rows.some((r) => r.addr === cfg)) {
         note(`FACTORY_ADDR (${chain.factory}) emitted nothing in this window.`);
