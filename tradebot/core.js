@@ -25,6 +25,14 @@ const path = require('path');
 // pm2 --update-env / systemd env still override. Keeps secrets out of git.
 (function loadDotEnv() {
   try {
+    // SKIP_DOTENV=1 loads nothing. `npm test` sets it, because otherwise every
+    // test runs against the OPERATOR'S configuration: a knob like
+    // MONITOR_REFRESH_MS in this file lands in process.env before telegram.js
+    // reads it, and a test asserting the advertised refresh period fails on the
+    // live server while passing everywhere else. A test that changes its answer
+    // depending on which machine it runs on cannot gate a deploy, and this one
+    // did — twenty of them at once. Never set it in production.
+    if (/^(1|true|yes)$/i.test(String(process.env.SKIP_DOTENV || ''))) return;
     const file = path.join(__dirname, '.env');
     if (!fs.existsSync(file)) return;
     for (let line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {

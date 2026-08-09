@@ -17,7 +17,7 @@ M.prototype.require = function (p) {
   if (p === './core') return { CFG: { tgToken: 't' }, chains: { enabledChains: () => [], isSvm: () => false }, getLang: () => 'en' };
   return orig.apply(this, arguments);
 };
-const t = require('/home/user/dexvra/tradebot/telegram.js')._test;
+const t = require('./telegram.js')._test;
 M.prototype.require = orig;
 
 test('a comma decimal is read as a decimal, not as grouping', () => {
