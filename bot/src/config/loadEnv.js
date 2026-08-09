@@ -18,8 +18,18 @@ const BOT_DIR = path.join(__dirname, "..", ".."); // <repo>/bot
 const REPO_DIR = path.join(BOT_DIR, ".."); // <repo>
 
 /** Load .env from repo root, bot/, and cwd — general first, so the most
- *  specific file wins. Returns the absolute paths that existed. */
+ *  specific file wins. Returns the absolute paths that existed.
+ *
+ *  SKIP_DOTENV=1 loads nothing. That is for a TEST that spawns one of the
+ *  scripts as a child process to check how it behaves under a given
+ *  configuration: `override:true` above means the box's own .env beats the env
+ *  the test passes to the child, so such a test silently stops testing its
+ *  fixture and starts testing whatever the operator happens to have configured.
+ *  It then passes on a machine with no .env and fails on the live server — which
+ *  is exactly how it was found, blocking a deploy over a setting that was
+ *  correct. Never set this in production; nothing reads config any other way. */
 function loadEnv() {
+  if (/^(1|true|yes)$/i.test(String(process.env.SKIP_DOTENV || ""))) return [];
   const dotenv = require("dotenv");
   const seen = new Set();
   const loaded = [];

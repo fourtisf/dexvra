@@ -652,7 +652,7 @@ test("x:check FAILS when .env posts more than the rule allows", () => {
   const script = require.resolve("../scripts/x-check.js");
   const run = (env) => {
     try {
-      execFileSync(process.execPath, [script], { env: { ...process.env, ...env }, stdio: "pipe" });
+      execFileSync(process.execPath, [script], { env: { ...process.env, SKIP_DOTENV: "1", ...env }, stdio: "pipe" });
       return 0;
     } catch (e) {
       return e.status;
@@ -660,9 +660,14 @@ test("x:check FAILS when .env posts more than the rule allows", () => {
   };
   // No keys in CI, so both runs exit 1 — the point is the REASON, which has to
   // name the rule rather than the credentials.
+  // SKIP_DOTENV: loadEnv applies the box's .env with override:true, so without
+  // this the file beats the env we pass here and the child reports the
+  // OPERATOR's configuration instead of the fixture's. That made this test pass
+  // on a machine with no .env and fail on the live server, blocking a deploy
+  // over a setting that was correct.
   const out = (env) => {
     try {
-      return execFileSync(process.execPath, [script], { env: { ...process.env, ...env }, stdio: "pipe" }).toString();
+      return execFileSync(process.execPath, [script], { env: { ...process.env, SKIP_DOTENV: "1", ...env }, stdio: "pipe" }).toString();
     } catch (e) {
       return (e.stdout || Buffer.from("")).toString();
     }
