@@ -100,7 +100,10 @@ of letting it read as "this token has no curve".
 ## Run
 
 ```bash
-cp .env.example .env      # fill in TRADEBOT_TOKEN + WALLET_SECRET (treasury wallets are pre-set)
+cp -n .env.example .env   # -n = never clobber. On a live box .env holds the only
+                          # copy of WALLET_SECRET, and every user's stored wallet
+                          # key is encrypted under it — overwrite it and none of
+                          # them can be decrypted again.
 npm install
 npm start                 # long-polls Telegram; no inbound ports needed
 ```
