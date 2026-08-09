@@ -116,8 +116,15 @@ const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(()
 // chains by slug; anything else (e.g. Robinhood Chain) falls back to search.
 // Buy amounts accept native units ('0.05') or USD ('$10', '10$', '10usd') —
 // USD converts to native at the live price-feed rate at parse time.
-function parseAmt(input, native) {
-  const s = String(input == null ? '' : input).trim().toLowerCase();
+function parseAmt(input, native, info) {
+  const raw = String(input == null ? '' : input).trim().toLowerCase();
+  // Same comma rules as parseUsd — this is the field that decides how much is
+  // SPENT, so it must not read "0,05" differently from the price fields. It
+  // previously rejected any comma outright, which was safe but meant a user
+  // typing their own decimal separator was told their amount was invalid.
+  const norm = normalizeDecimal(raw);
+  if (!norm.ok) { if (info && norm.ambiguous) info.ambiguous = true; return null; }
+  const s = norm.text;
   const m = s.match(/^\$?([0-9]*\.?[0-9]+)(\$|usd)?$/);
   if (!m) return null;
   const n = Number(m[1]); if (!(n > 0)) return null;
@@ -197,9 +204,60 @@ function cardSide(chatId, ca, want, holding) {
  *
  *  Returns null on anything it cannot read, never a guess: this number decides
  *  when a position is sold. */
-function parseUsd(input) {
+/**
+ * A comma in a number means different things to different people, and getting
+ * it wrong here costs money.
+ *
+ * parseUsd used to strip every comma as a thousands separator, so "1,5" — how
+ * most of this bot's users write one-and-a-half, see the note at the top of
+ * i18n.js — parsed as FIFTEEN. That figure becomes an order trigger. A user
+ * setting a stop-loss at "0,5" on a token trading at $2 got a target of $5, and
+ * the watcher fires a stop when price <= target: 2 <= 5, so the bot sold their
+ * entire bag the moment the order was created. Ten times off in the other
+ * direction is a take-profit that simply never fires.
+ *
+ * Rules, in order:
+ *   both separators   → the LAST one is the decimal ("1.234,56" and "1,234.56"
+ *                       both mean 1234.56). Unambiguous, accepted.
+ *   grouped thousands → "250,000", "1,234,567". Groups are exactly 3 digits and
+ *                       the leading group cannot start with 0, which is what
+ *                       separates "250,000" (grouping) from "0,001" (a decimal
+ *                       — nobody writes a thousands group as "0").
+ *   comma otherwise   → decimal ("1,5" → 1.5, "0,0025" → 0.0025).
+ *
+ * "1,500" therefore reads as 1500. It is the one form both conventions can
+ * produce, and grouping wins because somebody meaning one-and-a-half types
+ * "1,5" — the two trailing zeros are the tell. Anything that fits neither shape
+ * ("1,23,4") is refused rather than guessed at, and the caller says why.
+ */
+function normalizeDecimal(raw) {
+  const s = String(raw == null ? '' : raw);
+  const commas = (s.match(/,/g) || []).length;
+  if (!commas) return { ok: true, text: s };
+  const dots = (s.match(/\./g) || []).length;
+  if (dots) {
+    // Whichever appears last is the decimal point; the other is grouping.
+    const dec = s.lastIndexOf(',') > s.lastIndexOf('.') ? ',' : '.';
+    const other = dec === ',' ? /\./g : /,/g;
+    return { ok: true, text: s.replace(other, '').replace(dec, '.') };
+  }
+  // Grouped thousands: 3-digit groups, leading group 1-999 and never starting
+  // with 0. "0,001" fails that on purpose — a thousands group is never "0".
+  if (/^[1-9]\d{0,2}(,\d{3})+$/.test(s)) return { ok: true, text: s.replace(/,/g, '') };
+  if (commas >= 2) return { ok: false }; // several commas that are not grouping
+  return { ok: true, text: s.replace(',', '.') };
+}
+
+const AMBIGUOUS_COMMA = '\n\n<i>A comma can mean a decimal point or a thousands separator, and here the two differ by 1000×. Write it with a period (<code>1.5</code>) or with no separator at all (<code>1500</code>).</i>';
+
+/** `info` is optional; when passed, `info.ambiguous` tells the caller the input
+ *  was refused for the comma reason above rather than for being nonsense. */
+function parseUsd(input, info) {
   let s = String(input == null ? '' : input).trim().toLowerCase();
-  s = s.replace(/^\$/, '').replace(/(\$|usd)$/, '').replace(/,/g, '').trim();
+  s = s.replace(/^\$/, '').replace(/(\$|usd)$/, '').trim();
+  const norm = normalizeDecimal(s);
+  if (!norm.ok) { if (info && norm.ambiguous) info.ambiguous = true; return null; }
+  s = norm.text.trim();
   const m = s.match(/^([0-9]*\.?[0-9]+)\s*([kmb])?$/);
   if (!m) return null;
   const n = Number(m[1]);
@@ -2233,8 +2291,9 @@ async function resolvePending(chatId, p, text, m) {
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const raw = String(t).trim();
       const isMcap = /^mc\b/i.test(raw);
-      const usdVal = parseUsd(raw.replace(/^mc\s*/i, ''));
-      if (!(usdVal > 0)) return send(chatId, `Send a positive ${isMcap ? 'market cap' : 'USD price'} (or prefix with <code>mc</code> for a market-cap target).`);
+      const info = {};
+      const usdVal = parseUsd(raw.replace(/^mc\s*/i, ''), info);
+      if (!(usdVal > 0)) return send(chatId, `Send a positive ${isMcap ? 'market cap' : 'USD price'} (or prefix with <code>mc</code> for a market-cap target).` + (info.ambiguous ? AMBIGUOUS_COMMA : ''));
       const meta = await core.tokenMeta(p.ca, ch.key);
       const type = p.action === 'tp_price' ? 'tp' : 'sl';
       // Store the target in native units of the chosen metric (price or mcap).
@@ -2244,7 +2303,9 @@ async function resolvePending(chatId, p, text, m) {
       return send(chatId, `✅ ${type === 'tp' ? 'Take-profit' : 'Stop-loss'} set for $${esc(meta.sym)} at ${isMcap ? 'market cap $' + fmt(usdVal) : '$' + usdVal} on ${ch.emoji} ${esc(ch.name)}.\n${speedNote(order)}`, rows([btn('📋 Orders', 'orders')]));
     }
     if (p.action === 'lb_price') {
-      const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = parseUsd(pxStr), amount = Number(amtStr);
+      const info = {};
+      const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = parseUsd(pxStr, info), amount = Number(amtStr);
+      if (info.ambiguous) return send(chatId, 'Could not read that price.' + AMBIGUOUS_COMMA);
       if (!(usdPrice > 0) || !(amount > 0)) return send(chatId, 'Format: <code>&lt;usd_price&gt; &lt;amount&gt;</code>');
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
@@ -2299,7 +2360,9 @@ async function resolvePending(chatId, p, text, m) {
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
     }
     if (p.action === 'alert_price') {
-      const usdPrice = parseUsd(t); if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price — <code>0.0025</code>, <code>$2k</code>, <code>101k</code>.');
+      const info = {};
+      const usdPrice = parseUsd(t, info);
+      if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price — <code>0.0025</code>, <code>$2k</code>, <code>101k</code>.' + (info.ambiguous ? AMBIGUOUS_COMMA : ''));
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
       const snap = await core.tokenSnapshot(p.ca, ch.key).catch(() => null);   // infer direction from current price
