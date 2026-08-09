@@ -49,7 +49,17 @@ const path = require('path');
 })();
 
 const chains = require('./chains');
-const { providerFor, chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
+const { chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
+// TEST SEAM. `providerFor` used to be destructured here, so every internal call
+// captured the original function and a test doing `core.providerFor = stub` was
+// SILENTLY INERT — the stub never ran. snipeObservability's curveOf test looked
+// green for years for the wrong reason: on a machine with no outbound network
+// the REAL rpc threw, which recorded the diagnostic by accident. On a server
+// whose RPC works, nothing throws, nothing is recorded, and the test fails
+// while reporting the assertion rather than the cause. Internal callers must go
+// through this object.
+const _deps = { providerFor: chains.providerFor };
+const providerFor = (k) => _deps.providerFor(k);
 const solana = require('./solana');   // non-EVM (Solana) adapter — used only on kind:'svm' chains
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
@@ -2260,6 +2270,7 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
-  // Test-only cache resets — see the note on _clearReadCaches.
+  // Test-only seams — see the notes at each definition.
+  _deps,
   _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),
 };
