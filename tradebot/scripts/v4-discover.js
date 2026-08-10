@@ -42,15 +42,12 @@ if (!ethers.isAddress(token)) {
 const chain = chains.chainOf(chainKey);
 if (!chain) { console.error(`unknown chain "${chainKey}" — one of: ${chains.ENABLED.join(', ')}`); process.exit(1); }
 
-// Uniswap v4 PoolManager:
-//   event Initialize(PoolId indexed id, Currency indexed currency0,
-//                    Currency indexed currency1, uint24 fee, int24 tickSpacing,
-//                    IHooks hooks, uint160 sqrtPriceX96, int24 tick)
-// The signature is hashed at runtime rather than pasted as a constant, so a
-// typo in a 32-byte literal can't send this hunting for an event that does not
-// exist and report "no v4 pool" about a chain that has one.
-const INIT_SIG = 'Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)';
-const INIT_TOPIC = ethers.id(INIT_SIG);
+// Both the filter and the parser come from v4.js — ONE definition. They were
+// two here, and the parser's copy was missing the `indexed` keywords: topic0
+// still hashed correctly so the filter matched, then every matched log failed to
+// parse and was swallowed by a `continue`. The script announced a hit and then
+// printed nothing whatsoever.
+const INIT_TOPIC = v4.INITIALIZE_TOPIC;
 const asTopic = (addr) => ethers.zeroPadValue(ethers.getAddress(addr), 32);
 
 (async function main() {
@@ -80,16 +77,37 @@ const asTopic = (addr) => ethers.zeroPadValue(ethers.getAddress(addr), 32);
     process.exit(2);
   }
 
-  const iface = new ethers.Interface([`event ${INIT_SIG}`]);
+  console.log(`\n📄 ${found.length} Initialize log${found.length === 1 ? '' : 's'} matched.`);
+  const iface = new ethers.Interface([v4.INITIALIZE_EVENT]);
   const seen = new Map();   // poolManager → [pool keys]
+  const unparsed = [];
   for (const l of found) {
-    let d; try { d = iface.parseLog(l); } catch (_) { continue; }
+    let d;
+    try { d = iface.parseLog(l); } catch (e) { unparsed.push({ l, why: (e && (e.shortMessage || e.message)) || String(e) }); continue; }
+    if (!d) { unparsed.push({ l, why: 'parseLog returned null' }); continue; }
     const pm = ethers.getAddress(l.address);
     if (!seen.has(pm)) seen.set(pm, []);
     seen.get(pm).push({
       id: d.args[0], currency0: d.args[1], currency1: d.args[2],
       fee: Number(d.args[3]), tickSpacing: Number(d.args[4]), hooks: d.args[5], block: l.blockNumber,
     });
+  }
+  // A log that matched the filter but could not be decoded is a REPORT, never a
+  // silent skip. The first version swallowed these with a bare `continue`, and a
+  // run that found the pool printed "hit" and then nothing at all — the worst
+  // possible output, because it looks like the script finished.
+  if (unparsed.length) {
+    console.log(`\n⚠️ ${unparsed.length} matched log(s) could not be decoded with the Initialize ABI:`);
+    for (const u of unparsed.slice(0, 3)) {
+      console.log(`   emitter ${u.l.address} · block ${u.l.blockNumber} · ${u.l.topics.length} topics`);
+      console.log(`   ${u.why}`);
+    }
+    console.log('   → this deployment\'s Initialize event differs from Uniswap\'s. The raw topics above');
+    console.log('     are the evidence; topic[1] is the poolId, topic[2]/[3] the two currencies.');
+  }
+  if (!seen.size) {
+    console.log('\n❌ Nothing decodable. Not enough to configure the bot — do not guess an address from the above.');
+    process.exit(3);
   }
 
   let best = null;
@@ -112,8 +130,12 @@ const asTopic = (addr) => ethers.zeroPadValue(ethers.getAddress(addr), 32);
     if (!best && keys.length) best = { pm, k: keys[0] };
   }
 
+  if (!best) {
+    console.log('\n❌ Decoded logs, but none usable as a pool key. Nothing to configure.');
+    process.exit(4);
+  }
   // Verify end to end: set the env the bot reads, then ask the bot's own reader.
-  if (best) {
+  {
     const P = chainKey.toUpperCase();
     process.env[`${P}_V4_POOLMANAGER`] = best.pm;
     const dec = await new ethers.Contract(token, ['function decimals() view returns (uint8)'], prov).decimals().catch(() => 18);

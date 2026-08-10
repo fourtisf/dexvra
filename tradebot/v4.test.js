@@ -9,6 +9,8 @@
 // The price math is the part that must not be wrong: a price out by 10^n is far
 // worse than no price at all, so every conversion is checked against a hand
 // worked value here.
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert");
 const { ethers } = require("ethers");
@@ -196,4 +198,58 @@ test("selling refuses outright when Permit2 is not configured", async () => {
   await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR, ROBINHOOD_V4_PERMIT2: undefined }, async () => {
     assert.strictEqual(await v4.permit2Calls({}, "robinhood", TOKEN, "0x" + "11".repeat(20), 1n), null);
   });
+});
+
+// ── The Initialize event ────────────────────────────────────────────────────
+
+test("the Initialize ABI declares its three indexed params", async () => {
+  // The bug this exists for: a copy of the event WITHOUT `indexed` hashes to the
+  // same topic0 (indexed does not affect the signature), so getLogs matches and
+  // every matched log then fails to parse. v4-discover announced "hit in blocks
+  // …" and printed nothing else — right filter, unreadable result.
+  const iface = new ethers.Interface([v4.INITIALIZE_EVENT]);
+  const frag = iface.getEvent("Initialize");
+  assert.strictEqual(frag.inputs.filter((i) => i.indexed).length, 3, "id, currency0, currency1 are topics");
+  assert.strictEqual(frag.topicHash, v4.INITIALIZE_TOPIC, "and the filter topic matches the parser");
+});
+
+test("a real-shaped Initialize log decodes to the whole PoolKey", () => {
+  // Built the way a node emits one — three topics plus packed data — so this
+  // fails if the ABI and the on-wire layout ever drift apart again.
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  const id = v4.poolId(v4.NATIVE, TOKEN, 3000, 60);
+  const log = {
+    address: PM,
+    topics: [
+      v4.INITIALIZE_TOPIC,
+      id,
+      ethers.zeroPadValue(v4.NATIVE, 32),
+      ethers.zeroPadValue(TOKEN, 32),
+    ],
+    data: coder.encode(["uint24", "int24", "address", "uint160", "int24"], [3000, 60, v4.NATIVE, Q96, 0]),
+  };
+  const d = new ethers.Interface([v4.INITIALIZE_EVENT]).parseLog(log);
+  assert.ok(d, "it parses at all — this is what silently returned nothing before");
+  assert.strictEqual(d.args[0], id);
+  assert.strictEqual(String(d.args[1]).toLowerCase(), v4.NATIVE);
+  assert.strictEqual(String(d.args[2]).toLowerCase(), TOKEN);
+  assert.strictEqual(Number(d.args[3]), 3000);
+  assert.strictEqual(Number(d.args[4]), 60);
+  // And the id in the log is reproducible from the key we just read out of it —
+  // the check v4-discover prints, which is what proves the encoding matches.
+  assert.strictEqual(
+    v4.poolId(String(d.args[1]).toLowerCase(), String(d.args[2]).toLowerCase(), Number(d.args[3]), Number(d.args[4]), d.args[5]),
+    id,
+  );
+});
+
+test("v4-discover uses the shared event, not a second copy of it", () => {
+  // Two definitions is how the first one drifted. There must be exactly one.
+  const src = fs.readFileSync(path.join(__dirname, "scripts", "v4-discover.js"), "utf8");
+  assert.match(src, /v4\.INITIALIZE_EVENT/, "the parser comes from v4.js");
+  assert.match(src, /v4\.INITIALIZE_TOPIC/, "and so does the filter");
+  assert.ok(!/event Initialize\(/.test(src), "no local re-declaration of the event");
+  // And it must never end without saying something.
+  assert.match(src, /could not be decoded/, "undecodable logs are reported, not skipped");
+  assert.match(src, /process\.exit\(3\)/, "and a run that decodes nothing exits non-zero");
 });

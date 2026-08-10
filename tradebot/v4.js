@@ -50,6 +50,18 @@ const STATEVIEW_ABI = [
   'function getLiquidity(bytes32 poolId) view returns (uint128 liquidity)',
 ];
 
+// PoolManager's pool-creation event, and the ONE definition of it.
+//
+// The first three parameters are INDEXED — they are topics, not data. A copy of
+// this without the `indexed` keywords still hashes to the right topic0 (indexed
+// does not affect the signature), so getLogs finds the logs and every one of
+// them then fails to parse: right filter, unreadable result. That is exactly
+// what v4-discover did on its first run — it reported a hit and then printed
+// nothing at all.
+const INITIALIZE_EVENT =
+  'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)';
+const INITIALIZE_TOPIC = ethers.id('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
+
 const NATIVE = '0x0000000000000000000000000000000000000000';
 const coder = ethers.AbiCoder.defaultAbiCoder();
 
@@ -321,5 +333,5 @@ async function permit2Calls(provider, chainKey, token, owner, amount) {
 module.exports = {
   cfg, enabled, poolId, orderCurrencies, poolState, bestPool, price, priceNativeFromSqrt,
   routerCfg, canSwap, swapCalldata, simulate, permit2Calls,
-  NATIVE, DEFAULT_TIERS, DEFAULT_POOLS_SLOT, CMD_V4_SWAP,
+  NATIVE, DEFAULT_TIERS, DEFAULT_POOLS_SLOT, CMD_V4_SWAP, INITIALIZE_EVENT, INITIALIZE_TOPIC,
 };
