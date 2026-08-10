@@ -86,6 +86,44 @@ async function homeHandler(ctx) {
   await showHome(ctx);
 }
 
+/**
+ * The buttons under the group welcome — the whole point being that nobody has
+ * to type a command to start.
+ *
+ * The card used to list `/settoken <CA>`, `/setminbuy 50`, `/setwhale 50000`
+ * and `/raid` as text. Every one of those still works, and none of them is
+ * discoverable: a group admin who has just added a bot is not reading syntax,
+ * they are looking for something to press. Two features were sitting behind
+ * commands nobody ran.
+ *
+ * Labels are pipe-separated and admin-editable (`group_start_buttons`), with
+ * FIELD-BY-FIELD fallback so a half-typed override still renders a keyboard
+ * rather than a row of blanks — same rule as `group_buy_tiers`.
+ */
+const START_BUTTON_DEFAULTS = ["🤖 Buy Bot", "🚀 Raid", "⚙️ Settings", "🔥 Listing / Trending", "📢 Channel"];
+function groupStartKeyboard() {
+  const parts = String(tpl.t("group_start_buttons") || "").split("|");
+  const [buybot, raid, settings, listing, channel] = START_BUTTON_DEFAULTS.map(
+    (def, i) => (parts[i] || "").trim() || def,
+  );
+  const { SITE_URL, CHANNELS } = require("../config/constants");
+  const rows = [
+    [{ text: buybot, callback_data: "bs_buybot" }],
+    [
+      { text: raid, callback_data: "gs_raid" },
+      { text: settings, callback_data: "bs_home" },
+    ],
+  ];
+  // URL buttons only when there is a real URL to point at. Telegram rejects the
+  // whole message for a malformed one, which would take the welcome card down
+  // over a link — the same failure mode {bot} caused below.
+  const site = String(SITE_URL || "").trim();
+  if (/^https?:\/\//i.test(site)) rows.push([{ text: listing, url: site.replace(/\/+$/, "") }]);
+  const ch = String((CHANNELS && CHANNELS.announce) || "").trim();
+  if (/^@[A-Za-z0-9_]{4,}$/.test(ch)) rows.push([{ text: channel, url: `https://t.me/${ch.slice(1)}` }]);
+  return { inline_keyboard: rows };
+}
+
 // /start or /help inside a group → buy-bot setup steps for this group.
 async function sendGroupTemplate(ctx, key) {
   try {
@@ -96,7 +134,11 @@ async function sendGroupTemplate(ctx, key) {
     // "400: Wrong HTTP URL", and the whole message failed to send. Use
     // {botName} when the @handle is wanted as text.
     const { text, extra } = payloadArgs(tpl.render(key), false);
-    await ctx.reply(text, { ...extra, disable_web_page_preview: true });
+    await ctx.reply(text, {
+      ...extra,
+      disable_web_page_preview: true,
+      reply_markup: groupStartKeyboard(),
+    });
   } catch (e) {
     // LOUD. This used to swallow silently, and a swallowed failure here is
     // /start doing nothing at all, forever, with nothing in the logs to say
@@ -176,4 +218,5 @@ async function buyBotHelp(ctx) {
   await sendCard(ctx, tpl.render("buybot_help"), kb);
 }
 
-module.exports = { startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart, botAddedToGroup, justGreeted, _greeted: greeted };
+module.exports = {
+  groupStartKeyboard, startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart, botAddedToGroup, justGreeted, _greeted: greeted };

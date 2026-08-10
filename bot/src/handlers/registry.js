@@ -47,6 +47,10 @@ function registerHandlers(bot) {
   bot.action(/^mb_(\d+)$/, groupSetup.minBuyPick); // /setminbuy preset picker
   bot.action(/^wb_(\d+|off)$/, groupSetup.whalePick); // /setwhale preset picker
   bot.action(/^bs_([a-z]+)$/, groupSetup.settingsTap); // /buybot settings hub
+  // 🚀 Raid, from the group welcome card. Wired here rather than inside
+  // groupSetup so the buy-bot setup module keeps no dependency on the raid one.
+  // showPanel does its own group + admin check, so this adds no gate of its own.
+  bot.action("gs_raid", (ctx) => require("../raid/panel").showPanel(ctx));
 
   // ── Main menu ─────────────────────────────────────────────────────────────
   bot.action("home", start.homeHandler);

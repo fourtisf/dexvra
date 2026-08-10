@@ -456,6 +456,19 @@ async function settingsTap(ctx) {
     const p = statusPanel(ctx.chat.id);
     return void ctx.reply(p.text, p.extra).catch(() => {});
   }
+  // ONE TAP from the group welcome. Which screen is right depends on whether
+  // this group is already set up, and making the admin work that out is exactly
+  // the friction the button exists to remove: no token yet → ask for the CA,
+  // already live → show what it is doing.
+  if (what === "buybot") {
+    await ctx.answerCbQuery().catch(() => {});
+    if (!g.address) {
+      const msg = ctx.callbackQuery && ctx.callbackQuery.message;
+      return promptForToken(ctx, msg && msg.message_id);
+    }
+    const p = statusPanel(ctx.chat.id);
+    return void ctx.reply(p.text, p.extra).catch(() => {});
+  }
   if (what === "token") {
     await ctx.answerCbQuery().catch(() => {});
     const msg = ctx.callbackQuery && ctx.callbackQuery.message;

@@ -46,7 +46,13 @@ test("being added asks for the three permissions the bot actually uses", async (
   for (const perm of ["Delete messages", "Ban users", "Pin messages"]) {
     assert.ok(t.includes(perm), `it names ${perm}`);
   }
-  assert.match(t, /\/start/, "and says what to send next");
+  // It used to end on "then hit /start". The card now carries the keyboard, so
+  // the next step is a button — asserting the command back would only pass by
+  // reintroducing the syntax the buttons replaced.
+  assert.match(t, /Buy Bot/i, "and points at the button that starts the setup");
+  const kb = ctx.sent[0].extra && ctx.sent[0].extra.reply_markup;
+  assert.ok(kb && kb.inline_keyboard.flat().some((b) => b.callback_data === "bs_buybot"),
+    "which is actually on the message");
 });
 
 test("the greeting is Dexvra's own copy, not the card every other group bot posts", () => {
@@ -132,7 +138,10 @@ test("a /start somebody TYPED always answers, even seconds after the bot joined"
   assert.strictEqual(ctx.sent.length, 1, "the greeting");
   await start.groupStart(ctx);
   assert.strictEqual(ctx.sent.length, 2, "and /start is answered on the spot");
-  assert.match(ctx.sent[1].text, /settoken/, "with the setup guide");
+  assert.match(ctx.sent[1].text, /Buy Bot/i, "with the setup guide");
+  const kb = ctx.sent[1].extra && ctx.sent[1].extra.reply_markup;
+  assert.ok(kb && kb.inline_keyboard.flat().some((b) => b.callback_data === "gs_raid"),
+    "and its buttons, so a typed /start is not a worse answer than the greeting");
 });
 
 test("/help in a group answers too — it carries no payload either", async () => {

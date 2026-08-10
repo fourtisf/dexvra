@@ -352,20 +352,33 @@ const DEFAULTS = {
     "📌 **Pin messages** — whale buys and the live raid board\n" +
     "🗑 **Delete messages** — clears the raid panel when it ends\n" +
     "🚫 **Ban users** — only if you switch on the raid chat lock\n\n" +
-    "**Group Settings → Administrators**, then hit /start.\n",
+    "**Group Settings → Administrators**, then tap 🤖 Buy Bot below.\n",
   // The setup guide, sent on /start in a group — the message straight after
   // group_added. Same voice as that one: section headers, one line of what it
   // does, then the commands. It used to be written in the first person ("make
   // me an admin", "DM me", "I keep a scoreboard"), which reads as a different
   // product to the card above it.
+  // THE BUTTONS ARE THE INSTRUCTIONS. This card used to end each section with
+  // its command — "/settoken <CA> to arm it · /setminbuy 50 · /buybot off" —
+  // which is syntax aimed at somebody who has just added a bot and is looking
+  // for something to press, not something to read. Every command still works;
+  // none of them is what a new group should have to find. See
+  // handlers/start.js groupStartKeyboard() for the keyboard sent with this.
+  //
+  // So keep this text about WHAT EACH THING DOES. Adding a command back here
+  // does not make the card more helpful, it makes the buttons look optional.
   group_start:
     "🟢 **Dexvra — free tools for your group**\n\n" +
-    "**🤖 Buy Bot** — every on-chain buy called in here the second it lands: size, price, mcap, the wallet, and the txn to prove it.\n" +
-    "/settoken <CA> to arm it · /setminbuy 50 · /buybot off\n\n" +
-    "**🐋 Whale wallets** — when a wallet already deep in your bags adds more, that one gets **pinned**.\n" +
-    "/setwhale 50000 sets the bar · /setwhale off · /buybot pin off\n\n" +
-    "**🚀 Raid** — point the chat at one post and keep the board pinned until the numbers hit.\n" +
-    "/raid to set it up. No X key needed — 🤝 Crew counts whoever shows up.",
+    "**🤖 Buy Bot** — every on-chain buy called in here the second it lands: size, price, mcap, the wallet, and the txn to prove it. Tap below and paste your contract; that is the whole setup.\n\n" +
+    "**🐋 Whale wallets** — when a wallet already deep in your bags adds more, that one gets **pinned**. On by default, tune it in ⚙️ Settings.\n\n" +
+    "**🚀 Raid** — point the chat at one post and keep the board pinned until the numbers hit. No X key needed — 🤝 Crew counts whoever shows up.",
+  // Button labels for the card above, pipe separated:
+  //   buy bot | raid | settings | listing/trending | channel
+  // Field-by-field fallback, so a half-typed override still renders a keyboard
+  // instead of a row of blanks. The last two are LINK buttons and are dropped
+  // when SITE_URL / the announce channel are not set to something Telegram will
+  // accept — it rejects the whole message over one malformed URL.
+  group_start_buttons: "🤖 Buy Bot|🚀 Raid|⚙️ Settings|🔥 Listing / Trending|📢 Channel",
   buybot_help:
     `${em("🟢", E.green)} **Group tools — free for your project**\n\n` +
     "Add @dexvrabot to your Telegram group and you get both of these, no charge:\n\n" +
@@ -925,6 +938,7 @@ const META = {
   group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_start_buttons: { group: "Group Buy Bot", label: "Group welcome buttons (buybot|raid|settings|listing|channel)", ph: [] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },

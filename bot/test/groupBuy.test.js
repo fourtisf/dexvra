@@ -96,6 +96,14 @@ test("landing in a group still explains itself, which is what the skipped card s
   // this test failed the moment the admin ask moved to where it belongs.
   const tpl = require("../src/templates");
   const flow = tpl.t("group_added") + "\n" + tpl.t("group_start", { bot: "@dexvrabot" });
-  assert.match(flow, /settoken/, "it names the command that starts the buy bot");
-  assert.match(flow, /admin/i, "and says the bot needs admin rights");
+  assert.match(flow, /admin/i, "it says the bot needs admin rights");
+  assert.match(flow, /buy bot/i, "and names the thing it is here to do");
+  // It used to assert the text named /settoken. That is a BUTTON now, so the
+  // half of the flow that starts the buy bot lives on the keyboard — asserting
+  // it against the copy would only pass again by putting the syntax back.
+  const kb = require("../src/handlers/start").groupStartKeyboard();
+  assert.ok(
+    kb.inline_keyboard.flat().some((b) => b.callback_data === "bs_buybot"),
+    "and the card carries the one tap that starts it",
+  );
 });
