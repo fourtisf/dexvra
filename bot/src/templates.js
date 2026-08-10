@@ -404,8 +404,16 @@ const DEFAULTS = {
   //
   // {emoji} is the size row (see group_buy_style); {bar} is a fill-meter, still
   // available as a placeholder if you ever want one.
+  // NO MARK AND NO PIPE IN FRONT OF THE NAME. The header used to open
+  // "💎 | {name} BUY!" — the Dexvra diamond, then a separator whose only job was
+  // to hold the diamond apart from the name. The token's own name is what a
+  // reader is scanning for, and putting our badge in front of it every time
+  // spends the most valuable character position on the card telling them
+  // something they already know. Dropping the emoji drops the pipe with it: a
+  // separator with nothing on its left is punctuation for a word that is not
+  // there.
   group_buy_alert:
-    `${em("💎", E.diamond)} | [{name}]({coinUrl}) **{tier}!**\n\n` +
+    "[{name}]({coinUrl}) **{tier}!**\n\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
@@ -438,7 +446,7 @@ const DEFAULTS = {
   // Available for anyone who does want it, and never a hardcoded "$50,000",
   // because the group's /setwhale or the admin bot can move it at any time.
   group_whale_alert:
-    `${em("🐋", E.diamond)} | [{name}]({coinUrl}) **WHALE WALLET!**\n\n` +
+    "[{name}]({coinUrl}) **WHALE WALLET!**\n\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +

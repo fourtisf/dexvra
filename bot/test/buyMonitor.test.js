@@ -320,7 +320,7 @@ test("the alert renders the reference layout", () => {
   assert.match(out, /👤 AFqu1M…jcBb · Txn/);
   // The icon column: one emoji per row at the left edge, value straight after.
   // The header names the token and then says what happened to it.
-  assert.match(out, /^💎 \| The Nietzschean Dog BUY!$/m, "header: mark, token, event");
+  assert.match(out, /^The Nietzschean Dog BUY!$/m, "header opens on the token's own name");
   assert.match(out, /^📃 The Nietzschean Dog \$RUSS$/m);
   assert.match(out, /^💲 \$48\.97 \(0\.6646 SOL\)$/m);
   assert.match(out, /^🪙 926,311\.94 \$RUSS$/m);
@@ -402,7 +402,10 @@ test("both buy cards speak ONE grammar", () => {
   };
   for (const [which, text] of Object.entries(cards)) {
     const lines = text.split("\n").filter(Boolean);
-    assert.match(lines[0], /^(💎|🐋) \| Dexvra Token .+!$/, `${which}: mark, token, event`);
+    // The token's name FIRST — no Dexvra mark and no separator in front of it.
+    // That position is the most valuable one on the card and it belongs to the
+    // project, not to us.
+    assert.match(lines[0], /^Dexvra Token .+!$/, `${which}: token, then event, nothing before`);
     assert.match(text, /^📃 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);
     // Every row carrying a NUMBER leads with an icon. The bold labels these
     // replaced ("**Spent:**", "**MCap:**") must not survive on any card —
