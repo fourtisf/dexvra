@@ -116,7 +116,7 @@ the reason for the third column.
 | `X_API_KEY` / `X_API_KEY_SECRET` / `X_ACCESS_TOKEN` / `X_ACCESS_SECRET` | Auto-posting listings, trending, pumps, rank-ups to X | `X_ENABLED` computes to false and nothing is tweeted. All four or none — `npm run x:check`. |
 | `X_O_*` (4 more) | A second X account, used only by banner-ad fulfilment | That one surface does not post. |
 | `X_BEARER_TOKEN` | Live like/reply/repost counts on raid cards | Raids still run — in **squad-only** mode, counting `⚡ I'm in` taps. The card says why the X numbers are missing. Reads are ~$0.005 each, deduplicated per post per 24h UTC, so a 60-minute raid costs about half a cent. |
-| `MONGO_URI` | Durable mirror of the JSON stores across container resets | Fail-open: everything works, but state lives only on local disk. `npm run mongo:check`. |
+| `MONGO_URI` | Durable mirror of the JSON stores across container resets | Fail-open: everything works, but state lives only on local disk. `npm run mongo:check` (can I connect?) / `npm run backup:check` (did my state get there?). |
 | `TON_API_KEY` | Higher toncenter rate limits | TON calls are throttled harder. |
 | `LOG_CHANNEL` / `ERROR_CHANNEL` / `PK_CHANNEL` | Event feed, crash feed, temp-key backup | No feed. Nothing else changes. |
 
@@ -140,7 +140,8 @@ npm run treasury      # payout addresses + key storage
 npm run x:check       # X credentials and exactly what will post
 npm run buybot:check  # is the buy feed real, or degraded to estimates?
 npm run raid:check    # can raid metrics be read at all?
-npm run mongo:check   # durable mirror reachable?
+npm run mongo:check    # durable mirror reachable?
+npm run backup:check   # …and is every store actually in it?
 npm test              # 893 tests
 ```
 

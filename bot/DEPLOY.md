@@ -256,7 +256,7 @@ current (default 5 min, `0` disables).
 ### Check it is really backed up
 
 ```bash
-cd /opt/dexvra/bot && npm run mongo:check
+cd /opt/dexvra/bot && npm run backup:check
 ```
 
 It prints every store as **in sync** / **STALE IN MONGO** / **NOT MIRRORED**,
@@ -265,7 +265,7 @@ is non-zero when something is not backed up, so it works in a cron. To push
 anything stale immediately instead of waiting for the sweep:
 
 ```bash
-npm run mongo:check -- --fix
+npm run backup:check -- --fix
 ```
 
 Worth running once after any session where an admin edited templates.
