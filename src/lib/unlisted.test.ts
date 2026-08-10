@@ -8,6 +8,10 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { CHAINS } from "../config/chains.ts";
+
+const SAMPLE_EVM = "0x0510101Ec6c49D24ED911F0011E22A0D697Ee776";
+const SAMPLE_SOL = "A13oRB9FFaiUjfi6LdCg6p9ka1u8SfGkUFs4SKvPpump";
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
@@ -102,13 +106,57 @@ test("one address shape spans eight EVM chains, so they are probed in parallel",
   assert.match(ROUTE, /hits\.sort\(\(a, b\) => \(b\.token\.mcap \?\? 0\) - \(a\.token\.mcap \?\? 0\)\)/, "ties break on market cap, not on a race");
 });
 
-test("sui is shape-tested before the plain EVM address", () => {
-  const shapes = ROUTE.slice(ROUTE.indexOf("const SHAPES"), ROUTE.indexOf("const candidateChains"));
-  assert.ok(shapes.indexOf('["sui"]') < shapes.indexOf('"ethereum"'), "both start 0x");
+test("a pasted EVM address probes EVERY EVM chain the app supports", () => {
+  // The first cut hand-listed eight of fifteen, so a token on Berachain, Sonic,
+  // HyperEVM, Abstract, ApeChain, Blast, Sei, Unichain or Robinhood answered
+  // "not on any network we index" — about a network we index. Derived from each
+  // chain's own addressPattern now, so adding a chain joins the probe by itself.
+  const EVM_SHAPE = "^0x[a-fA-F0-9]{40}$";
+  const evm = Object.values(CHAINS).filter((c) => c.geckoNetwork && c.addressPattern.source === EVM_SHAPE);
+  assert.ok(evm.length >= 15, `expected the full EVM set, counted ${evm.length}`);
+  const probed = Object.values(CHAINS).filter((c) => c.geckoNetwork && c.addressPattern.test(SAMPLE_EVM));
+  for (const c of evm) assert.ok(probed.some((p) => p.id === c.id), `${c.id} is probed`);
+  assert.match(ROUTE, /c\.geckoNetwork && c\.addressPattern\.test\(address\)/, "and nothing lists chains by hand");
+});
+
+test("a non-EVM address never probes an EVM chain, and vice versa", () => {
+  const probe = (a: string) => Object.values(CHAINS).filter((c) => c.geckoNetwork && c.addressPattern.test(a)).map((c) => c.id);
+  assert.deepStrictEqual(probe(SAMPLE_SOL), ["solana"], "a Solana mint is base58 and matches nothing else");
+  assert.ok(!probe(SAMPLE_EVM).includes("solana"), "0x is not base58 — it contains a 0");
+  assert.ok(probe(SAMPLE_EVM).includes("ethereum") && probe(SAMPLE_EVM).includes("berachain"));
 });
 
 test("a chain with no GeckoTerminal network is never probed", () => {
-  assert.match(ROUTE, /\.filter\(\(c\) => CHAINS\[c\]\?\.geckoNetwork\)/);
+  assert.match(ROUTE, /c\.geckoNetwork && c\.addressPattern\.test\(address\)/);
+});
+
+test("EVM addresses are lowercased for the upstream, base58 ones are not", () => {
+  // GeckoTerminal stores EVM lowercased and a pasted address is usually EIP-55
+  // checksummed. Solana / Tron / TON are base58 or base64 — case is MEANINGFUL
+  // there, and folding one turns a valid address into a 404.
+  assert.match(ROUTE, /const forQuery = \(address: string\): string =>\s*\/\^0x\[a-fA-F0-9\]\{40\}\$\/\.test\(address\) \? address\.toLowerCase\(\) : address;/);
+});
+
+test("the chain lookup is ONE request across every network, not one per chain", () => {
+  // Fifteen requests per search against a 30-a-minute budget shared with the
+  // listing and trending pipelines: one person typing would starve the site.
+  assert.match(ROUTE, /search\/pools\?query=/);
+  const fn = ROUTE.slice(ROUTE.indexOf("async function findAnyChain"));
+  assert.ok(fn.indexOf("searchNetwork(address)") < fn.indexOf("Promise.all"), "search first, fan-out only as fallback");
+});
+
+test("the search result is matched on the BASE token before the quote token", () => {
+  // A search for a token also returns pools where it is the QUOTE side. Naming
+  // those after the other token would show a completely different coin.
+  const fn = ROUTE.slice(ROUTE.indexOf("async function searchNetwork"), ROUTE.indexOf("async function findAnyChain"));
+  assert.match(fn, /\[pool\.relationships\?\.base_token, pool\.relationships\?\.quote_token\]/);
+  assert.match(fn, /token\.toLowerCase\(\) !== want/, "and only when the address actually matches");
+});
+
+test("the not-listed mark is a warning, not a broken-image tile", () => {
+  assert.match(COMPONENT, /unlisted-mark/);
+  assert.ok(!/\?"\)\.slice\(0, 2\)/.test(COMPONENT), "the '?' placeholder is gone");
+  assert.match(CSS, /\.unlisted-mark\{[^}]*#F5B841/, "same amber as the search badge");
 });
 
 test("the not-yet-listed badge reads as an invitation, not a failure", () => {

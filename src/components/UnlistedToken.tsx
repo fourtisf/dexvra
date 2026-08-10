@@ -76,7 +76,16 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
           // cannot add to next.config's remote allow-list one memecoin at a time.
           <Image className="unlisted-logo" src={tok.logoUrl} alt="" width={72} height={72} unoptimized />
         ) : (
-          <div className="unlisted-logo unlisted-logo-ph">{(tok?.symbol ?? "?").slice(0, 2).toUpperCase()}</div>
+          // An amber mark, not a "?" tile. A question mark reads as "we could
+          // not load this", which is the wrong story: the token is fine, the
+          // listing is what is missing — and amber says missing, not broken.
+          <div className="unlisted-mark" aria-hidden>
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+              <path d="M12 9v4" />
+              <path d="M12 17h.01" />
+            </svg>
+          </div>
         )}
 
         <h1 className="unlisted-h">Token Not Yet Listed</h1>

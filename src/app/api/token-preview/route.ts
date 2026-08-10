@@ -65,40 +65,105 @@ async function fetchPreview(network: string, address: string): Promise<Preview |
 }
 
 /**
- * Which chains a raw address could possibly be on, by SHAPE.
+ * Which chains a raw address could possibly be on.
  *
- * Ordered most-likely-first within each family. Sui is tested before the plain
- * 40-hex EVM pattern because its ids also start 0x — the EVM regex is
- * exact-length so it would not match anyway, but relying on that is a trap for
- * whoever edits the pattern next.
+ * Every chain already declares its own `addressPattern`, so that is what
+ * decides — nothing here lists chains by hand. The first cut did, naming eight
+ * EVM chains out of fifteen, so a token on Berachain, Sonic, HyperEVM,
+ * Abstract, ApeChain, Blast, Sei, Unichain or Robinhood came back as "not on
+ * any network we index" — about a network we index. A hand-kept subset is a
+ * silent wrong answer that nobody notices until a customer pastes the address.
+ *
+ * Sui and Aptos share the 0x prefix with EVM but their patterns allow the
+ * ::module suffix and a shorter body, so a 40-hex address correctly matches
+ * both families and both get probed. That is the safe direction to be wrong in.
  */
-const SHAPES: [RegExp, string[]][] = [
-  [/^0x[a-fA-F0-9]+::/, ["sui"]],
-  [/^0x[a-fA-F0-9]{40}$/, ["ethereum", "bsc", "base", "arbitrum", "polygon", "avalanche", "optimism", "plasma"]],
-  [/^T[1-9A-HJ-NP-Za-km-z]{33}$/, ["tron"]],
-  [/^(EQ|UQ|0:)/, ["ton"]],
-  [/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, ["solana"]],
-];
-
 const candidateChains = (address: string): string[] =>
-  SHAPES.find(([re]) => re.test(address))?.[1].filter((c) => CHAINS[c]?.geckoNetwork) ?? [];
+  Object.values(CHAINS)
+    .filter((c) => c.geckoNetwork && c.addressPattern.test(address))
+    .map((c) => c.id);
+
+/** geckoNetwork → our chain id. */
+const CHAIN_OF_NETWORK = new Map(
+  Object.values(CHAINS)
+    .filter((c) => c.geckoNetwork)
+    .map((c) => [c.geckoNetwork as string, c.id]),
+);
+
+/**
+ * GeckoTerminal stores EVM addresses lowercased, and a pasted address is
+ * usually EIP-55 checksummed — mixed case. Only the hex families are folded:
+ * a Solana mint, a Tron address and a TON address are base58/base64 and case
+ * is MEANINGFUL there, so lowercasing one turns a valid address into a 404.
+ */
+const forQuery = (address: string): string =>
+  /^0x[a-fA-F0-9]{40}$/.test(address) ? address.toLowerCase() : address;
+
+/**
+ * Ask GeckoTerminal which network a contract is on — ONE request, every network
+ * it indexes, including the ones we would not have thought to probe.
+ *
+ * Fanning out per chain instead means fifteen requests per search against a
+ * 30-a-minute budget shared with the listing and trending pipelines: one person
+ * typing would starve the rest of the site. Returns null on anything unexpected
+ * so the caller falls back to the per-chain probe.
+ */
+async function searchNetwork(address: string): Promise<{ chain: string; token: string } | null> {
+  const res = await fetch(`${"https://api.geckoterminal.com/api/v2"}/search/pools?query=${encodeURIComponent(forQuery(address))}&page=1`, {
+    headers: { accept: "application/json;version=20230302" },
+    signal: AbortSignal.timeout(8000),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as {
+    data?: { relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } } }[];
+  };
+  const want = forQuery(address).toLowerCase();
+  for (const pool of json.data ?? []) {
+    // Token ids are "<network>_<address>". The BASE token is checked first: a
+    // search for a token also returns pools where it is the QUOTE side, and
+    // naming those after the other token would show the wrong coin entirely.
+    for (const side of [pool.relationships?.base_token, pool.relationships?.quote_token]) {
+      const id = side?.data?.id;
+      if (!id) continue;
+      const cut = id.indexOf("_");
+      if (cut < 0) continue;
+      const network = id.slice(0, cut);
+      const token = id.slice(cut + 1);
+      if (token.toLowerCase() !== want) continue;
+      const chain = CHAIN_OF_NETWORK.get(network);
+      if (chain) return { chain, token };
+    }
+  }
+  return null;
+}
 
 /**
  * Find a contract on whichever chain actually has it.
  *
- * One address shape covers eight EVM chains, so they are probed IN PARALLEL —
- * sequentially this is eight round trips before the search box can say
- * anything, and the person typing has already given up. Ties break on market
- * cap: the same address is deployed on several chains often enough (a bridged
- * token, a copycat) that "first to answer" would be a race deciding which one
- * a user sees.
+ * Search first, because it is one request and covers every network. The
+ * per-chain probe is the fallback for the case search misses — a token so new
+ * it is not in the search index yet, which is exactly the kind of token that
+ * lands here. Ties there break on market cap: the same address is deployed on
+ * several chains often enough (a bridged token, a copycat) that "first to
+ * answer" would be a race deciding which one a user sees.
  */
 async function findAnyChain(address: string): Promise<{ chain: string; token: Preview } | null> {
+  try {
+    const hit = await searchNetwork(address);
+    if (hit) {
+      const network = CHAINS[hit.chain].geckoNetwork as string;
+      const token = await cached(`preview:${network}:${hit.token}`, TTL, () => fetchPreview(network, hit.token));
+      if (token) return { chain: hit.chain, token };
+    }
+  } catch {
+    /* fall through to the probe */
+  }
   const found = await Promise.all(
     candidateChains(address).map(async (chain) => {
       try {
         const network = CHAINS[chain].geckoNetwork as string;
-        const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, address));
+        const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, forQuery(address)));
         return token ? { chain, token } : null;
       } catch {
         return null;
@@ -127,7 +192,7 @@ export async function GET(req: NextRequest) {
     }
     const network = CHAINS[chain]?.geckoNetwork;
     if (!network) return NextResponse.json({ token: null, chain: null }, { status: 200 });
-    const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, address));
+    const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, forQuery(address)));
     return NextResponse.json({ token, chain: token ? chain : null });
   } catch {
     // A feed outage must not turn the page into an error screen — it still has

@@ -1169,7 +1169,10 @@ body{
    uses, so it reads as the same product rather than an error screen. */
 .unlisted{display:flex;flex-direction:column;align-items:center;gap:14px;padding:34px 20px 30px;text-align:center}
 .unlisted-logo{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1.5px solid var(--line2)}
-.unlisted-logo-ph{display:flex;align-items:center;justify-content:center;font-family:var(--fm);font-weight:800;font-size:22px;color:var(--faint);background:rgba(255,255,255,.04)}
+/* Amber, and a warning triangle rather than a "?" tile: a question mark reads
+   as "we could not load this", when the token is fine and only the listing is
+   missing. Same amber as the search badge, so the two states match. */
+.unlisted-mark{width:78px;height:78px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#F5B841;border:2px solid rgba(245,184,65,.45);background:rgba(245,184,65,.08)}
 .unlisted-h{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:2px 0 0}
 .unlisted-p{color:var(--muted);font-size:13.5px;line-height:1.6;max-width:46ch;margin:0}
 .unlisted-p strong{color:var(--text)}
