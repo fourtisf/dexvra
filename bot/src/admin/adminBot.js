@@ -1277,8 +1277,6 @@ function bxPos(s, elem) {
 }
 // 0 is a real coordinate; only null/"" mean "nothing stored".
 const unsetPos = (v) => v == null || v === "";
-const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
-const BX_MOVE_FINE = 10;
 
 function bxMenuText(kind) {
   const s = bannerTpl.getSettings(kind);
@@ -1332,7 +1330,26 @@ async function bxOpen(ctx, kind) {
 // One SIMPLE screen per element: Smaller/Bigger + a single row of arrows, plus
 // Preview. Center X and "type exact" stay for precision but out of the way.
 // `slot` (banner ads) resizes W & H.
-const BX_STEP = 24; // px per arrow tap (single step — kept simple, no coarse/fine rows)
+// How far one arrow tap moves an element, in px on the 2560×1280 canvas.
+//
+// Same three steps as the size rows, and for the same reason: one fixed 24px
+// tap was too coarse to seat something against an edge and too fine to carry it
+// across the banner. Rendered as three rows of four — a row per step, all four
+// directions — rather than a sticky "step size" selector, because a selector is
+// a mode: the operator has to look somewhere else to find out what the next tap
+// will do. Here the button says what it does.
+const BX_MOVE_STEPS = [5, 10, 20];
+
+/** The arrow rows for an element: one row per step, ⬅ ⬆ ⬇ ➡ across. */
+function bxArrowRows(kind, elem) {
+  const cb = Markup.button.callback;
+  return BX_MOVE_STEPS.map((n) => [
+    cb(`⬅ ${n}px`, `bxmd:${kind}:${elem}:${-n}:0`),
+    cb(`⬆ ${n}px`, `bxmd:${kind}:${elem}:0:${-n}`),
+    cb(`⬇ ${n}px`, `bxmd:${kind}:${elem}:0:${n}`),
+    cb(`➡ ${n}px`, `bxmd:${kind}:${elem}:${n}:0`),
+  ]);
+}
 function bxElemText(kind, elem) {
   const s = bannerTpl.getSettings(kind);
   if (elem === "slot") {
@@ -1386,7 +1403,6 @@ function bxElemText(kind, elem) {
 }
 function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
-  const M = BX_STEP;
   if (elem === "slot") {
     // Centring and exact-size entry were both already implemented (bxc / bxsn
     // handle elem "slot"), but neither button was ever rendered here — so the
@@ -1404,7 +1420,7 @@ function bxElemKb(kind, elem) {
       [cb("➕ Perbesar", `bxscale:${kind}:up`), cb("➖ Perkecil", `bxscale:${kind}:down`)],
       [cb("Lebar ➕", `bxsd:${kind}:slotw:20`), cb("Lebar ➖", `bxsd:${kind}:slotw:-20`)],
       [cb("Tinggi ➕", `bxsd:${kind}:sloth:20`), cb("Tinggi ➖", `bxsd:${kind}:sloth:-20`)],
-      [cb("⬅", `bxmd:${kind}:slot:${-M}:0`), cb("⬆", `bxmd:${kind}:slot:0:${-M}`), cb("⬇", `bxmd:${kind}:slot:0:${M}`), cb("➡", `bxmd:${kind}:slot:${M}:0`)],
+      ...bxArrowRows(kind, "slot"),
       [cb("⬌ Ke tengah", `bxc:${kind}:slot`), cb("⬍ Ke tengah", `bxcy:${kind}:slot`)],
       [cb(bannerTpl.getSettings(kind).slotFit === "cover" ? "🖼 Isi penuh (terpotong)" : "🖼 Muat semua (utuh)", `bxfit:${kind}`)],
       [cb("⌨ Atur ukuran", `bxsn:${kind}:slot`), cb("⌨ Atur posisi", `bxmn:${kind}:slot`)],
@@ -1420,7 +1436,7 @@ function bxElemKb(kind, elem) {
   ];
   rows.push([cb("⌨ Atur ukuran", `bxsn:${kind}:${elem}`)]);
   if (!c.nomove) {
-    rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-M}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-M}`), cb("⬇", `bxmd:${kind}:${elem}:0:${M}`), cb("➡", `bxmd:${kind}:${elem}:${M}:0`)]);
+    rows.push(...bxArrowRows(kind, elem));
     rows.push([cb("⬌ Ke tengah", `bxc:${kind}:${elem}`), cb("⬍ Ke tengah", `bxcy:${kind}:${elem}`)]);
     rows.push([cb("⌨ Atur posisi", `bxmn:${kind}:${elem}`)]);
     // The way BACK. Moving the name pins it, and without this the only undo was

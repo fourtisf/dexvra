@@ -160,6 +160,31 @@ test("every element offers the same three size steps", () => {
   assert.match(admin, /bxsd:\$\{KL\}:\(logo\|ticker\|name\|meta\|badge\|pct\|price\|slotw\|sloth\):\(-\?\\\\d\+\)/, "and any delta reaches the handler");
 });
 
+test("the arrows offer the same three steps, in all four directions", () => {
+  assert.match(admin, /const BX_MOVE_STEPS = \[5, 10, 20\]/, "5 / 10 / 20 px");
+  const fn = admin.slice(admin.indexOf("function bxArrowRows"), admin.indexOf("function bxElemText"));
+  for (const [arrow, delta] of [
+    ["⬅", "\\$\\{-n\\}:0"],
+    ["⬆", "0:\\$\\{-n\\}"],
+    ["⬇", "0:\\$\\{n\\}"],
+    ["➡", "\\$\\{n\\}:0"],
+  ]) {
+    assert.match(fn, new RegExp(`cb\\(\`${arrow} \\$\\{n\\}px\`, \`bxmd:\\$\\{kind\\}:\\$\\{elem\\}:${delta}\``), `${arrow} carries the step`);
+  }
+  // Both screens use it — the ad slot was the one place still on a lone row.
+  assert.match(admin, /\.\.\.bxArrowRows\(kind, "slot"\)/, "the ad slot too");
+  assert.match(admin, /rows\.push\(\.\.\.bxArrowRows\(kind, elem\)\)/, "and every other element");
+});
+
+test("no dead step constants are left lying around", () => {
+  // BX_MOVE_COARSE/BX_MOVE_FINE were declared and never read — they looked like
+  // the live tuning knobs while the arrows actually used a third constant. Same
+  // trap as the BX `sf` field, which sat unread through 34 call sites.
+  for (const name of ["BX_STEP", "BX_MOVE_COARSE", "BX_MOVE_FINE"]) {
+    assert.ok(!new RegExp(`\\b${name}\\b`).test(admin), `${name} is gone, not just unused`);
+  }
+});
+
 test("the name element can be moved, centred and typed — not just resized", () => {
   const bx = admin.slice(admin.indexOf("const BX = {"), admin.indexOf("function bxPos"));
   const line = bx.split("\n").find((l) => l.trim().startsWith("name:"));
