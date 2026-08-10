@@ -1357,17 +1357,26 @@ async function tokenSnapshot(ca, chainKey) {
     // pair contract for a factory to return, so reading its storage is the ONLY
     // way such a token is ever priced. This is what Maestro does, and it is why
     // Maestro showed $TLNCH on Robinhood Chain while this bot said it could not
-    // price it. Read-only: routable stays false until v4 routing is wired.
-    const p4 = v4.enabled(chainKey) ? await v4.price(ca, chainKey, dec, { chainOf, providerFor }).catch(() => null) : null;
+    // price it.
+    //
+    // NOT gated on v4.enabled() any more — that only asked whether an operator
+    // had already pasted a PoolManager into .env, and answering "no market" on
+    // that basis is what this whole path exists to stop doing. v4.js discovers
+    // the deployment from the chain's own logs and caches it, so an unconfigured
+    // chain costs one sweep and every token after it is free.
+    const p4 = await v4.price(ca, chainKey, dec, { chainOf, providerFor }).catch(() => null);
     if (p4) {
       let ts = 0n; try { ts = await new ethers.Contract(ca, ERC20_ABI, prov).totalSupply(); } catch (_) {}
       return {
         ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
         priceEth: p4.priceEth, mcapEth: ts > 0n ? p4.priceEth * Number(ethers.formatUnits(ts, dec)) : 0,
-        // Routable exactly when the Universal Router is configured too. Reading a
-        // v4 price and being able to FILL a v4 swap are different capabilities,
-        // and the card must not offer a Buy button for the first alone.
-        dexVenue: 'v4', extVenue: 'Uniswap v4', routable: v4.canSwap(chainKey), v4: p4,
+        // Routable exactly when a router can be reached — configured OR observed
+        // filling swaps on this PoolManager. Reading a v4 price and being able
+        // to FILL a v4 swap are still different capabilities, and the card must
+        // not offer a Buy button for the first alone; the difference now is that
+        // the second question is answered by the chain instead of by .env.
+        dexVenue: 'v4', extVenue: 'Uniswap v4', v4: p4,
+        routable: await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false),
       };
     }
     // Still nothing on-chain. The indexers see venues we have no reader for at
@@ -1603,6 +1612,19 @@ async function v2Depth(ca, chainKey) {
     return { pair, wethBal: balW };
   } catch (_) { return { pair: null, wethBal: 0n }; }
 }
+
+/**
+ * Is this V2 pick something a trade could actually fill?
+ *
+ * A pair CONTRACT existing is not a market. A token can have an empty or
+ * abandoned V2 pair — someone deployed one and never funded it, or the
+ * liquidity was pulled and moved to v4 — and the pair address alone was enough
+ * to send every buy down the V2 leg, where getAmountsOut returns nothing and the
+ * trade dies on "no liquidity / zero quote" while a funded v4 pool sat right
+ * there. An unfundable pair is the same situation as no pair at all, so it takes
+ * the same branch.
+ */
+const _v2Fillable = (pick) => !!(pick && pick.pair && pick.wethBal > 0n);
 
 // Venue pick with a short cache (watchers snapshot frequently — don't re-probe
 // 10 contracts per tick). V3 wins only when it is CLEARLY deeper (>2× the V2
@@ -1887,6 +1909,39 @@ async function _withdrawSol(u, to, amount, chainKey, walletId) {
   });
 }
 
+// ---------------------------------------------------------------- v4 approvals
+/**
+ * The Permit2 approvals a v4 swap needs before it can pull an ERC20 — the token
+ * on a sell, wrapped native on a WETH-quoted buy.
+ *
+ * Returns the router the allowance was granted to. That matters because of an
+ * ordering problem with no way around it: the router cannot be ELECTED by
+ * simulation until it has an allowance, and the allowance cannot be granted
+ * until a router has been picked. So the top-ranked candidate is approved, and
+ * if the simulation then proves it wrong the caller demotes it — the retry
+ * approves somebody else instead of failing identically forever.
+ *
+ * A v4 pool's counterparty is the router, not a pair contract, so this replaces
+ * ensureApprove on this path rather than adding to it.
+ */
+async function _v4Approve(wallet, chainKey, pool, token, amount, gasMult, gas) {
+  const deps = { chainOf, providerFor };
+  const discToken = String(pool.tokenIsZero ? pool.currency0 : pool.currency1);
+  const c = await v4.cfgLive(chainKey, discToken, deps).catch(() => null);
+  const cands = c ? await v4.routerCandidates(chainKey, c, deps).catch(() => []) : [];
+  const router = cands[0] || null;
+  const pre = await v4.permit2Calls(providerFor(chainKey), chainKey, token, wallet.address, amount, router);
+  // null is a REFUSAL, not "nothing to do": no Permit2 on this chain means the
+  // router can never be funded, and sending the swap anyway buys a revert.
+  if (!pre) throw new Error(`a Uniswap v4 swap on ${chainOf(chainKey).name} needs Permit2, and there is no contract at its address there — set ${chainKey.toUpperCase()}_V4_PERMIT2 to this chain's deployment`);
+  for (const c2 of pre) {
+    const h = await rawSend(wallet, chainKey, c2.to, c2.data, 150000n, 0n, gasMult, { fee: gas });
+    const r = await waitHash(h, chainKey);
+    if (r && r.status === 0) throw new Error(`could not ${c2.what} — the approval reverted. Tx: ${h}`);
+  }
+  return router;
+}
+
 // ---------------------------------------------------------------- trade
 // Buy `ethAmount` (human native) of `ca` on the user's active chain (or chainKey).
 // `opts.onSent(hash)` fires the MOMENT the transaction is broadcast, before any
@@ -1961,26 +2016,56 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
       // pool inside one PoolManager). Say which venue, instead of the old
       // "no pool? try again", which sends the user to retry a buy that can never
       // fill no matter how many times they press it.
-      if (pick.kind === 'v2' && !pick.pair) {
-        const p4 = v4.canSwap(chainKey) ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null) : null;
+      if (pick.kind === 'v2' && !_v2Fillable(pick)) {
+        // NOT gated on v4.canSwap() any more. That asked "has an operator pasted
+        // a Universal Router into .env?", and the answer being no is why a token
+        // with a live pool and real liquidity was told Dexvra could not route to
+        // it. v4.js finds the PoolManager and the router from the chain's own
+        // logs when the env is unset, so the question to ask is whether a pool
+        // EXISTS — and then to prove the route by simulating it.
+        const p4 = await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null);
         if (p4) {
           const dec4 = await tokenDecimals(ca, chainKey);
-          const px = v4.priceNativeFromSqrt(p4.sqrtPriceX96, dec4, p4.tokenIsZero);
-          if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
-          // minOut off the pool's SPOT, floored by the user's own slippage only.
-          // Spot cannot see concentrated-liquidity depth, so this floor is what
-          // makes a buy that would fill worse than they asked for revert instead
-          // of filling at a loss — the same reasoning as the V3 path above.
-          const expTok = (spend * 10n ** BigInt(dec4)) / BigInt(Math.max(1, Math.round(px * 1e18)));
+          // The currency this pool actually TAKES. A v4 pool pairs against ETH
+          // directly (address(0)) or against WETH, and the old code paid every
+          // pool in native — which on a WETH-quoted pool made zeroForOne come
+          // out backwards and built a SELL while the user was buying.
+          const payWith = String(p4.quote).toLowerCase();
+          const wrapping = payWith !== v4.NATIVE;
+          // Quoted off the pool's OWN depth and fee, not its spot price. Spot
+          // charges no fee and has no depth term, so on the thin pools this
+          // feature exists for it overstated the fill and quietly spent the
+          // user's slippage before their slippage had protected anything.
+          let expTok = v4.quoteExactIn(p4, spend, payWith);
+          if (expTok <= 0n) {
+            // No in-range liquidity to walk (an empty tick) — fall back to spot
+            // so a quotable pool still trades, with slippage as the only floor.
+            const px = v4.priceNativeFromSqrt(p4.sqrtPriceX96, dec4, p4.tokenIsZero);
+            if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
+            expTok = (spend * 10n ** BigInt(dec4)) / BigInt(Math.max(1, Math.round(px * 1e18)));
+          }
           const minTok = expTok * (10000n - slip) / 10000n;
           if (minTok <= 0n) throw new Error('zero quote from the v4 pool for this token');
-          const call = v4.swapCalldata(chainKey, p4, { tokenIn: v4.NATIVE, amountIn: spend, minOut: minTok, deadline });
-          // SIMULATED BEFORE SIGNED. The action encoding is the part most likely
-          // to differ on a fork, and a wrong encoding has to cost a refused trade
-          // rather than a sent one.
-          const sim = await v4.simulate(providerFor(chainKey), wallet.address, call);
-          if (!sim.ok) throw new Error(`the v4 swap would revert (${sim.err}) — nothing was sent. Check the Universal Router config for ${chain.name}.`);
-          hash = await rawSend(wallet, chainKey, call.to, call.data, 700000n, call.value, gasBoost, { fee: gas });
+          // A WETH-quoted pool is paid in WETH, so the native has to be wrapped
+          // and handed to Permit2 before the router can pull it.
+          let approved = null;
+          if (wrapping) {
+            const wi = new ethers.Interface(WETH9_ABI);
+            const wh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('deposit', []), 150000n, spend, gasBoost, { fee: gas });
+            const wr = await waitHash(wh, chainKey);
+            if (wr && wr.status === 0) throw new Error(`could not wrap ${chain.native} for this v4 pool — nothing else was sent. Tx: ${wh}`);
+            approved = await _v4Approve(wallet, chainKey, p4, chain.weth, spend, gasBoost, gas);
+          }
+          const prep = await v4.prepareSwap(providerFor(chainKey), chainKey, p4, wallet.address,
+            { tokenIn: payWith, amountIn: spend, minOut: minTok, deadline }, { chainOf, providerFor });
+          // SIMULATED BEFORE SIGNED, and that is also how the router is chosen —
+          // a candidate that cannot fill this exact calldata for free never gets
+          // to fill it for money.
+          if (prep.err) {
+            if (approved) v4.demoteRouter(chainKey, approved);
+            throw new Error(`the v4 swap would revert (${prep.err}) — nothing was sent.${wrapping ? ` Your ${chain.native} is safe as W${chain.native} in the wallet.` : ''}`);
+          }
+          hash = await rawSend(wallet, chainKey, prep.call.to, prep.call.data, 700000n, prep.call.value, gasBoost, { fee: gas });
           venue = 'dex·v4'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
           if (trc && trc.status === 0) throw new Error('the v4 buy reverted on-chain (price moved past your slippage, or gas) — try again. Tx: ' + hash);
         } else {
@@ -2128,7 +2213,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // through Permit2 rather than a plain allowance — so it is resolved here,
     // alongside the venue pick, and skips ensureApprove entirely. Buying into a
     // venue that cannot be sold out of would be a trap, so this is not optional.
-    const p4Sell = (!onCurve && pick.kind === 'v2' && !pick.pair && v4.canSwap(chainKey))
+    const p4Sell = (!onCurve && pick.kind === 'v2' && !_v2Fillable(pick))
       ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null)
       : null;
     if (!p4Sell) {
@@ -2137,30 +2222,68 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     }
     const ethBefore = await ethBalance(wallet.address, chainKey);
 
-    let venue, hash, trc, v3ProceedsWei = null;   // v3: the WETH the swap produced (accounting source of truth)
+    // v3ProceedsWei: the WETH the swap produced — the accounting source of truth
+    // for any venue that pays out in WETH rather than native (V3 always, v4 when
+    // the pool is WETH-quoted). v4QuoteToken names that token, or is null when
+    // the pool paid native and the balance delta is the source.
+    let venue, hash, trc, v3ProceedsWei = null, v4QuoteToken = null;
     let realizedThisSell = 0;   // profit/loss realized on this specific sell (for the receipt)
     if (p4Sell) {
       const dec4 = await tokenDecimals(ca, chainKey);
-      const px = v4.priceNativeFromSqrt(p4Sell.sqrtPriceX96, dec4, p4Sell.tokenIsZero);
-      if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
-      const expEth = (amount * BigInt(Math.max(1, Math.round(px * 1e18)))) / 10n ** BigInt(dec4);
+      // Same depth-aware quote as the buy: the pool's own fee and liquidity,
+      // falling back to spot only when there is no in-range liquidity to walk.
+      let expEth = v4.quoteExactIn(p4Sell, amount, ca);
+      if (expEth <= 0n) {
+        const px = v4.priceNativeFromSqrt(p4Sell.sqrtPriceX96, dec4, p4Sell.tokenIsZero);
+        if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
+        expEth = (amount * BigInt(Math.max(1, Math.round(px * 1e18)))) / 10n ** BigInt(dec4);
+      }
       const minEth4 = expEth * (10000n - slip) / 10000n;
       if (minEth4 <= 0n) throw new Error('zero quote from the v4 pool for this sell');
-      // Permit2 first: the router pulls the token through it, so the two
-      // approvals have to land before the swap is even simulated.
-      const pre = await v4.permit2Calls(providerFor(chainKey), chainKey, ca, wallet.address, amount);
-      if (!pre) throw new Error(`selling a v4 bag needs Permit2 configured on ${chain.name} — set ${chainKey.toUpperCase()}_V4_PERMIT2`);
-      for (const c of pre) {
-        const h = await rawSend(wallet, chainKey, c.to, c.data, 120000n, 0n, gasMult, { fee: gas });
-        const r = await waitHash(h, chainKey);
-        if (r && r.status === 0) throw new Error(`could not ${c.what} — the approval reverted. Tx: ${h}`);
+      // Permit2 first: the router pulls the token through it, so the approvals
+      // have to land before the swap can even be simulated.
+      const approved = await _v4Approve(wallet, chainKey, p4Sell, ca, amount, gasMult, gas);
+      const prep = await v4.prepareSwap(providerFor(chainKey), chainKey, p4Sell, wallet.address,
+        { tokenIn: ca, amountIn: amount, minOut: minEth4, deadline }, { chainOf, providerFor });
+      if (prep.err) {
+        // The approved candidate could not fill it, so it is not the router.
+        // Demote it or the retry approves the same wrong address and fails the
+        // same way — see _v4Approve.
+        if (approved && (prep.tried || []).length) v4.demoteRouter(chainKey, approved);
+        throw new Error(`the v4 sell would revert (${prep.err}) — nothing was sent. Your tokens are untouched; try again.`);
       }
-      const call = v4.swapCalldata(chainKey, p4Sell, { tokenIn: ca, amountIn: amount, minOut: minEth4, deadline });
-      const sim = await v4.simulate(providerFor(chainKey), wallet.address, call);
-      if (!sim.ok) throw new Error(`the v4 sell would revert (${sim.err}) — nothing was sent.`);
-      hash = await rawSend(wallet, chainKey, call.to, call.data, 700000n, 0n, gasMult, { fee: gas });
+      // A WETH-quoted pool pays out WETH, and native-balance accounting would
+      // book that confirmed sell as ZERO proceeds — no fee, and a profitable
+      // exit recorded as a total loss — while the WETH sat in the wallet with
+      // nothing ever unwrapping it. Track the real payout currency instead.
+      v4QuoteToken = String(p4Sell.quote).toLowerCase() === v4.NATIVE ? null : chain.weth;
+      let wBefore = null;
+      if (v4QuoteToken) {
+        const wc = new ethers.Contract(v4QuoteToken, ERC20_ABI, providerFor(chainKey));
+        for (let i = 0; i < 3 && wBefore == null; i++) { try { wBefore = await wc.balanceOf(wallet.address); } catch (_) { wBefore = null; } }
+        if (wBefore == null) throw new Error(`could not read wallet W${chain.native} balance on ${chain.name} — try again in a moment`);
+      }
+      hash = await rawSend(wallet, chainKey, prep.call.to, prep.call.data, 700000n, 0n, gasMult, { fee: gas });
       venue = 'dex·v4'; sent(hash); trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the v4 sell reverted on-chain (price moved past your slippage, or gas) — try again. Tx: ' + hash);
+      if (v4QuoteToken) {
+        const wc = new ethers.Contract(v4QuoteToken, ERC20_ABI, providerFor(chainKey));
+        let wAfter = null;
+        for (let i = 0; i < 3 && wAfter == null; i++) { try { wAfter = await wc.balanceOf(wallet.address); } catch (_) { wAfter = null; } }
+        let gained = (wAfter != null && wAfter > wBefore) ? wAfter - wBefore : 0n;
+        if (gained <= 0n) gained = expEth;   // confirmed swap, unreadable balance → the quote, never 0
+        v3ProceedsWei = gained;
+        const wi = new ethers.Interface(WETH9_ABI);
+        let unwrapped = false;
+        for (let i = 0; i < 3 && !unwrapped; i++) {
+          try {
+            const uh = await rawSend(wallet, chainKey, v4QuoteToken, wi.encodeFunctionData('withdraw', [gained]), await v3SwapGas(chainKey, wallet.address, v4QuoteToken, wi.encodeFunctionData('withdraw', [gained]), 0n), 0n, gasMult + i);
+            const urc = await waitHash(uh, chainKey);
+            if (!urc || urc.status !== 0) unwrapped = true;
+          } catch (e) { console.error('WETH unwrap after v4 sell failed:', e.message); }
+        }
+        if (!unwrapped) console.error('WETH unwrap failed after a v4 sell — proceeds are safe as WETH in the wallet.');
+      }
     } else if (onCurve) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
       // Quote with a SHAVE-TO-FIT guard. A holder of ~all circulating supply can sit
@@ -2243,9 +2366,10 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // "pending" if the receipt timed out AND the balance read shows no change.
     if (!trc && tokAfter >= bal) throw new Error('sell sent but not confirmed yet — check your wallet before retrying. Tx: ' + hash);
     const ethAfter = await ethBalance(wallet.address, chainKey);
-    // Proceeds: for a V3 sell use the WETH the swap produced (v3ProceedsWei) —
-    // it's exact and independent of gas and of whether the unwrap confirmed, so
-    // the fee/PnL are right even if unwrapping timed out. Curve/V2 pay native
+    // Proceeds: for a V3 sell — and a v4 sell out of a WETH-quoted pool — use
+    // the WETH the swap produced (v3ProceedsWei). It's exact and independent of
+    // gas and of whether the unwrap confirmed, so the fee/PnL are right even if
+    // unwrapping timed out. Curve/V2 and a native-quoted v4 pool pay native
     // directly, so the native balance delta is the source there.
     // Guard the V3 source with > 0n (audit B3): a 0n here means the read chain
     // failed — never silently book a confirmed sell as zero proceeds; fall back

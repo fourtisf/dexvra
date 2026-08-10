@@ -105,14 +105,45 @@ test("the card is reached before the buy controls are built", () => {
 test("the buy path routes v4 first, and names the venue when it cannot", () => {
   // The old message ("no pool? try again") told the user to retry a buy that
   // could never fill, however many times they pressed it.
-  const i = CORE.indexOf("if (pick.kind === 'v2' && !pick.pair) {");
-  assert.ok(i > -1, "the no-pair branch is still in the buy path");
-  const body = CORE.slice(i, i + 2200);
-  assert.match(body, /v4\.canSwap\(chainKey\)/, "a v4 pool is tried before giving up");
-  assert.match(body, /v4\.simulate\(/, "and simulated before anything is signed");
+  const i = CORE.indexOf("if (pick.kind === 'v2' && !_v2Fillable(pick)) {");
+  assert.ok(i > -1, "the no-fillable-pair branch is still in the buy path");
+  const body = CORE.slice(i, CORE.indexOf("if (!hash) {", i));
+  assert.match(body, /v4\.bestPool\(/, "a v4 pool is tried before giving up");
+  assert.match(body, /v4\.prepareSwap\(/, "and simulated before anything is signed");
   assert.match(body, /dsVenueLabel\(m\)/, "the venue is named when there is nothing to route");
   // The order matters: naming the venue is the FALLBACK, not the first answer.
-  assert.ok(body.indexOf("v4.canSwap") < body.indexOf("dsVenueLabel"), "v4 is tried first");
+  assert.ok(body.indexOf("v4.bestPool") < body.indexOf("dsVenueLabel"), "v4 is tried first");
+  // And the pool lookup must NOT be gated on the router being configured. It
+  // was, and an operator who had not pasted a Universal Router into .env was
+  // indistinguishable — to the person pressing Buy — from a token that does not
+  // trade anywhere. Discovery is the whole point; a canSwap() gate defeats it.
+  // Matching the CALL, not the name: the comment above the branch says why the
+  // gate was removed, and a test that trips over its own explanation is a test
+  // nobody trusts the next time it goes red.
+  assert.doesNotMatch(body, /v4\.canSwap\([^)]*\)\s*(\?|&&)/, "the pool lookup is not gated on env config");
+});
+
+test("a v4 buy pays the currency the POOL takes, not always native", () => {
+  // v4 pairs against ETH directly (address(0)) OR against WETH. Paying every
+  // pool in native made zeroForOne come out backwards on a WETH-quoted one,
+  // which builds a SELL while the user is buying.
+  const i = CORE.indexOf("if (pick.kind === 'v2' && !_v2Fillable(pick)) {");
+  const body = CORE.slice(i, CORE.indexOf("if (!hash) {", i));
+  assert.match(body, /payWith = String\(p4\.quote\)/, "the pool's own quote currency decides");
+  assert.match(body, /tokenIn: payWith/, "and that is what the swap is built with");
+  assert.match(body, /encodeFunctionData\('deposit'/, "a WETH-quoted pool gets its native wrapped first");
+});
+
+test("a v4 sell out of a WETH-quoted pool books the WETH, not a zero", () => {
+  // Native-balance accounting on a pool that pays WETH books a confirmed,
+  // profitable exit as zero proceeds — no fee, a total loss in the PnL — and
+  // leaves the WETH sitting in the wallet with nothing to unwrap it.
+  const i = CORE.indexOf("if (p4Sell) {");
+  assert.ok(i > -1, "the v4 sell branch is still there");
+  const body = CORE.slice(i, CORE.indexOf("} else if (onCurve) {", i));
+  assert.match(body, /v4QuoteToken/, "the payout currency is tracked");
+  assert.match(body, /v3ProceedsWei = gained/, "and the WETH delta is what the accounting reads");
+  assert.match(body, /encodeFunctionData\('withdraw'/, "the proceeds are unwrapped back to native");
 });
 
 test("routable is set on BOTH snapshot returns, not just the new one", () => {
@@ -218,4 +249,17 @@ test("a throttled answer is never cached", async () => {
     await core.dsMarket(CA, "ethereum");
     assert.strictEqual(calls, 2, "it asked again rather than replaying the failure");
   } finally { global.fetch = realFetch; }
+});
+
+test("an empty V2 pair is not a market, and does not block the v4 route", () => {
+  // A pair CONTRACT existing is not liquidity. A token whose V2 pair was
+  // deployed and never funded — or drained when the liquidity moved to v4 —
+  // sent every buy down the V2 leg, where getAmountsOut returns nothing and the
+  // trade died on "no liquidity / zero quote" with a funded v4 pool right there.
+  const i = CORE.indexOf("const _v2Fillable =");
+  assert.ok(i > -1, "the fillability check exists");
+  assert.match(CORE.slice(i, i + 200), /pick\.pair && pick\.wethBal > 0n/, "a pair with no reserve is not fillable");
+  // And both money paths gate on it, not on the address alone.
+  assert.ok(!/pick\.kind === 'v2' && !pick\.pair/.test(CORE), "no caller still gates on the bare address");
+  assert.strictEqual((CORE.match(/!_v2Fillable\(pick\)/g) || []).length, 2, "buy and sell both");
 });

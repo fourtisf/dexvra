@@ -71,10 +71,16 @@ it is finished when the value is set. Say so explicitly, with the exact variable
 name, and expect the behaviour to be unchanged until then. `data/`, `.env` and
 `.keys/` live only on the server, so nothing here can set them.
 
-Current examples: `tradebot/.env` needs `<CHAIN>_V4_POOLMANAGER` before Uniswap
-v4 pools can be priced at all, and `<CHAIN>_V4_UNIVERSAL_ROUTER` +
-`<CHAIN>_V4_PERMIT2` before they can be traded. Until those are set, a v4 token
-falls back to the public indexes, which rate-limit.
+Uniswap v4 used to be the standing example of this and no longer is. It needed
+`<CHAIN>_V4_POOLMANAGER` to price and `<CHAIN>_V4_UNIVERSAL_ROUTER` +
+`<CHAIN>_V4_PERMIT2` to trade, and until an operator pasted all three a live
+pool read as "Dexvra can't route through that yet". `tradebot/v4.js` now
+observes all of it from the chain's own logs — the PoolManager from the pool's
+Initialize log, the router from the senders of that manager's Swap logs, Permit2
+from its deterministic address (verified by `getCode`) — and caches it per
+chain. The env vars still exist and still win when set; they are an override and
+a discovery skip, not a prerequisite. `<CHAIN>_V4_AUTODISCOVER=0` pins a chain
+to env alone.
 
 ## Two bot processes, one config
 
