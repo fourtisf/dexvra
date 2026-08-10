@@ -43,10 +43,13 @@ test("it shows the live price and market cap it can get for an UNLISTED token", 
   assert.match(COMPONENT, /fmtCap\(tok\.mcap\)/);
 });
 
-test("the chart does not depend on a listing either", () => {
-  assert.match(COMPONENT, /geckoterminal\.com\/\$\{c\.geckoNetwork\}\/pools\/\$\{tok\.poolAddress\}/);
-  assert.match(COMPONENT, /const chartSrc = !tok\?\.poolAddress\s*\?\s*null/, "no pool, no frame");
-  assert.match(COMPONENT, /\{chartSrc && \(/, "and never an empty one");
+test("the page embeds no third-party chart", () => {
+  // It sat on "Loading chart settings…" for seconds and then planted a
+  // competitor's logo and wordmark across the bottom of a Dexvra page. The
+  // visitor arrived from a buy alert with the number they wanted already.
+  assert.ok(!/<iframe/.test(COMPONENT), "no iframe at all");
+  assert.ok(!/geckoterminal\.com|dexscreener\.com/.test(COMPONENT), "and no embed URL left behind");
+  assert.ok(!/unlisted-chart/.test(CSS), "its styles went with it");
 });
 
 test("a contract the feed has never seen still renders the page", () => {
@@ -199,11 +202,9 @@ test("every chain declares a DexScreener id, or explicitly declares it has none"
   assert.strictEqual(CHAINS.sei.dexscreener, "seiv2", "its id differs from ours");
 });
 
-test("the chart is embedded from whoever actually found the pool", () => {
-  // A GT embed for a pool GT has never indexed is an empty frame — and that is
-  // precisely the case DexScreener is here to cover.
-  assert.match(COMPONENT, /tok\.source === "dexscreener" && c\?\.dexscreener/);
-  assert.match(COMPONENT, /dexscreener\.com\/\$\{c\.dexscreener\}\/\$\{tok\.poolAddress\}/);
+test("the API still reports WHICH source answered", () => {
+  // The page no longer draws a chart, but provenance is what makes a wrong
+  // price diagnosable — and ?debug=1 prints it.
   assert.match(ROUTE, /source: "dexscreener"/);
   assert.match(ROUTE, /source: "geckoterminal"/);
 });
