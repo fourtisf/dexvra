@@ -916,9 +916,9 @@ const META = {
   group_added: { group: "Group Setup", label: "Group: posted the moment the bot is added", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.

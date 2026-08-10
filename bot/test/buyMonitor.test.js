@@ -417,3 +417,16 @@ test("both buy cards speak ONE grammar", () => {
   const noName = mon.renderRealAlert({ ...g, name: "" }, buy, pool, null).text;
   assert.match(noName, /^📃 \$DEX$/m, "no name → just the ticker, not '$DEX $DEX'");
 });
+
+test("every placeholder a default template uses is offered in the editor", () => {
+  // The adminbot shows admins this list when they edit a template. A
+  // placeholder the DEFAULT already uses but the list omits is invisible: an
+  // admin who rewrites the card cannot discover it, and drops the row.
+  const tpl = require("../src/templates");
+  for (const key of ["group_buy_alert", "group_whale_alert"]) {
+    const used = new Set([...tpl.DEFAULTS[key].matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+    const offered = new Set(tpl.meta(key).ph);
+    const missing = [...used].filter((p) => !offered.has(p));
+    assert.deepStrictEqual(missing, [], `${key}: ${missing.join(", ")} used but not offered`);
+  }
+});
