@@ -1,6 +1,7 @@
 // Group buy-bot setup commands (run inside a project's group chat, by a group
 // admin): /settoken, /setchain, /setminbuy, /buybot on|off, /buybot (status).
 // A project adds @dexvrabot to their group and points it at their token.
+const { Markup } = require("telegraf");
 const cfg = require("./config");
 const gt = require("./gtPairs");
 const holdings = require("./walletHoldings");
@@ -109,13 +110,71 @@ async function setchain(ctx) {
   await say(ctx, pool ? "setchain_ok" : "setchain_ok_nopool", { chain: chainOf(chain).label });
 }
 
+// Preset floors for the /setminbuy picker. Round numbers a project actually
+// chooses — the point is that this setting costs one tap, not a decision about
+// which number to type into a command.
+const MIN_BUY_PRESETS = [0, 10, 25, 50, 100, 250, 500, 1000];
+
+/** The picker's keyboard, with a ✓ on whatever the group is currently set to. */
+function minBuyKeyboard(current) {
+  const btn = (n) =>
+    Markup.button.callback((n === 0 ? "All buys" : usd$(n)) + (Number(current) === n ? " ✓" : ""), `mb_${n}`);
+  const rows = [];
+  for (let i = 0; i < MIN_BUY_PRESETS.length; i += 3) rows.push(MIN_BUY_PRESETS.slice(i, i + 3).map(btn));
+  return Markup.inlineKeyboard(rows);
+}
+
+/** Picker text + keyboard for THIS group's current floor. Built in one place so
+ *  the first send and every in-place refresh after a tap cannot drift apart. */
+function minBuyPanel(chatId) {
+  const current = Number((cfg.get(chatId) || {}).minBuyUsd || 0);
+  const { text, extra } = payloadArgs(
+    tpl.render("setminbuy_panel", { usd: current > 0 ? usd$(current) : "no minimum — every buy" }),
+    false,
+  );
+  return { text, extra: { ...extra, disable_web_page_preview: true, ...minBuyKeyboard(current) } };
+}
+
 async function setminbuy(ctx) {
-  if (!isGroup(ctx)) return;
-  if (!(await isGroupAdmin(ctx))) return;
-  const usd = Number(arg(ctx));
+  if (!isGroup(ctx)) return say(ctx, "setup_group_only");
+  if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
+  const raw = arg(ctx).replace(/[$,_]/g, "");
+  // A bare /setminbuy opens the picker. It used to fall straight through to
+  // Number("") — which is 0, and finite, and >= 0 — so tapping the command in
+  // Telegram's menu silently set the floor to $0 and answered "Floor set". A
+  // command with no argument is a question, not an instruction.
+  if (!raw) {
+    const p = minBuyPanel(ctx.chat.id);
+    return ctx.reply(p.text, p.extra).catch(() => {});
+  }
+  const usd = Number(raw);
   if (!Number.isFinite(usd) || usd < 0) return say(ctx, "setminbuy_usage");
   await cfg.upsert(ctx.chat.id, { minBuyUsd: usd });
-  await say(ctx, "setminbuy_ok", { usd: usd$(usd) });
+  await say(ctx, usd > 0 ? "setminbuy_ok" : "setminbuy_ok_all", { usd: usd$(usd) });
+}
+
+/**
+ * A preset tapped on the /setminbuy picker.
+ *
+ * Refreshes the panel in place rather than replying, so a second adjustment is
+ * another single tap on the same message instead of a new card each time.
+ */
+async function minBuyPick(ctx) {
+  const usd = Number((ctx.match && ctx.match[1]) || 0);
+  if (!isGroup(ctx)) return ctx.answerCbQuery().catch(() => {});
+  // The picker sits in a group where anyone can tap it, so the admin check has
+  // to happen HERE too — the one on /setminbuy only covers who opened it.
+  if (!(await isGroupAdmin(ctx)))
+    return ctx.answerCbQuery(tpl.t("setup_admin_only"), { show_alert: true }).catch(() => {});
+  await cfg.upsert(ctx.chat.id, { minBuyUsd: usd });
+  await ctx
+    .answerCbQuery(usd > 0 ? tpl.t("setminbuy_toast", { usd: usd$(usd) }) : tpl.t("setminbuy_toast_all"))
+    .catch(() => {});
+  const p = minBuyPanel(ctx.chat.id);
+  // Re-tapping the active preset edits a message to its own contents, which
+  // Telegram answers with "message is not modified". Nothing to do about it and
+  // nothing to say about it — the toast above already confirmed the value.
+  await ctx.editMessageText(p.text, p.extra).catch(() => {});
 }
 
 /** `/setwhale 50000` — the holding that makes a buyer a whale here, or `off`. */
@@ -178,4 +237,15 @@ async function buybot(ctx) {
   });
 }
 
-module.exports = { settoken, setchain, setminbuy, setwhale, buybot, setPin, resolveToken, candidateChains };
+module.exports = {
+  settoken,
+  setchain,
+  setminbuy,
+  minBuyPick,
+  setwhale,
+  buybot,
+  setPin,
+  resolveToken,
+  candidateChains,
+  MIN_BUY_PRESETS,
+};

@@ -100,7 +100,7 @@ const GROUP_COMMANDS = [
   { command: "start", description: "Set up Dexvra in this group" },
   { command: "settoken", description: "Point the buy bot at your token — /settoken <CA>" },
   { command: "setchain", description: "Force the network — /setchain bsc" },
-  { command: "setminbuy", description: "Only alert buys over this — /setminbuy 50" },
+  { command: "setminbuy", description: "Minimum buy worth an alert — tap to pick" },
   { command: "setwhale", description: "Whale wallet bar — /setwhale 50000 · off" },
   { command: "buybot", description: "Status · on · off · pin on · pin off" },
   { command: "raid", description: "Rally the chat behind one X post" },

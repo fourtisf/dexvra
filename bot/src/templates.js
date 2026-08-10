@@ -483,7 +483,11 @@ const DEFAULTS = {
   // **bold**, `code`, [text](url). NOT HTML tags.
   setup_admin_only: "🔒 Group admins only.",
   setup_group_only: "👥 This one runs in your group. Add the bot there first.",
-  settoken_usage: "📄 **Point it at your token**\n\n/settoken <CA>",
+  settoken_usage:
+    "📄 **Point the bot at your token**\n\n" +
+    "Send the contract address with the command:\n" +
+    "/settoken <contract address>\n\n" +
+    "The network is detected from the address — no need to name it.",
   settoken_resolving: "🔎 Finding the pool…",
   settoken_not_found:
     "❌ **No live pool on that CA**\n\n" +
@@ -497,8 +501,22 @@ const DEFAULTS = {
   setchain_need_token: "📄 Set the token first: /settoken <CA>",
   setchain_ok: "✅ Chain set to **{chain}** — pool found.",
   setchain_ok_nopool: "⚠️ Chain set to **{chain}** — no pool yet. It keeps looking every cycle.",
-  setminbuy_usage: "💲 **Floor for alerts**\n\n/setminbuy 50 — anything under that stays quiet.",
-  setminbuy_ok: "✅ Floor set — only buys **{usd}** and up get called.",
+  // Sent when /setminbuy arrives with no amount — a question, so it answers with
+  // a picker (the preset buttons come from setup.js) instead of a syntax note.
+  setminbuy_panel:
+    "💲 **Minimum buy**\n\n" +
+    "Buys smaller than this stay out of the chat, so the feed only carries what's worth reacting to.\n\n" +
+    "**Now:** {usd}\n\n" +
+    "Tap an amount below, or name your own: /setminbuy 250",
+  setminbuy_usage:
+    "💲 **Minimum buy**\n\n" +
+    "That isn't an amount. Send /setminbuy 50 — or just /setminbuy to pick from a list.",
+  setminbuy_ok: "✅ **Minimum buy — {usd}**\n\nAnything smaller stays out of the chat.",
+  setminbuy_ok_all: "✅ **No minimum — every buy gets called.**\n\nSet a floor any time with /setminbuy",
+  // Button toasts. Plain text by design: Telegram shows a callback answer as a
+  // bare toast, so bold and links in here would reach the tapper as literals.
+  setminbuy_toast: "Minimum buy: {usd}",
+  setminbuy_toast_all: "No minimum — every buy gets called",
   setwhale_usage:
     "🐋 **Whale bar**\n\n" +
     "/setwhale 50000 — anyone **already sitting on** that much of your token gets a pinned 🐋 **WHALE WALLET** call, however small the buy.\n\n" +
@@ -515,7 +533,8 @@ const DEFAULTS = {
   pin_off: "📌 Whale calls **won't be pinned** here.",
   buybot_on: "🟢 **Buy bot on** — calls resume.",
   buybot_off: "🔴 **Buy bot off** — calls paused. /buybot on brings it back.",
-  buybot_need_token: "📄 Nothing set up here yet. Run /settoken <CA>",
+  buybot_need_token:
+    "📄 **No token set here yet**\n\nSend /settoken <contract address> and the buy bot goes live.",
   buybot_status:
     "📊 **Buy bot status**\n\n" +
     "🪙 **CA:** `{address}`\n" +
@@ -885,8 +904,12 @@ const META = {
   setchain_need_token: { group: "Group Setup", label: "/setchain — set the token first", ph: [] },
   setchain_ok: { group: "Group Setup", label: "/setchain — done", ph: ["chain"] },
   setchain_ok_nopool: { group: "Group Setup", label: "/setchain — done, no pool yet", ph: ["chain"] },
-  setminbuy_usage: { group: "Group Setup", label: "/setminbuy — usage", ph: [] },
+  setminbuy_panel: { group: "Group Setup", label: "/setminbuy — picker", ph: ["usd"] },
+  setminbuy_usage: { group: "Group Setup", label: "/setminbuy — not an amount", ph: [] },
   setminbuy_ok: { group: "Group Setup", label: "/setminbuy — done", ph: ["usd"] },
+  setminbuy_ok_all: { group: "Group Setup", label: "/setminbuy — no floor", ph: [] },
+  setminbuy_toast: { group: "Group Setup", label: "/setminbuy — button toast", ph: ["usd"] },
+  setminbuy_toast_all: { group: "Group Setup", label: "/setminbuy — button toast, no floor", ph: [] },
   setwhale_usage: { group: "Group Setup", label: "/setwhale — usage", ph: [] },
   setwhale_ok: { group: "Group Setup", label: "/setwhale — done", ph: ["usd", "chain", "unsupported"] },
   setwhale_unsupported: { group: "Group Setup", label: "/setwhale — chain can't be read", ph: ["chain"] },

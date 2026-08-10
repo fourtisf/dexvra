@@ -44,6 +44,7 @@ function registerHandlers(bot) {
   bot.command("setminbuy", groupSetup.setminbuy);
   bot.command("setwhale", groupSetup.setwhale);
   bot.command("buybot", groupSetup.buybot);
+  bot.action(/^mb_(\d+)$/, groupSetup.minBuyPick); // /setminbuy preset picker
 
   // ── Main menu ─────────────────────────────────────────────────────────────
   bot.action("home", start.homeHandler);
