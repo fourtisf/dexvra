@@ -114,22 +114,53 @@ test("a private chat never gets the group greeting", async () => {
 
 test("the ➕ deep link does not produce two welcomes stacked on each other", async () => {
   // Adding through the main-menu button fires BOTH: my_chat_member, and the
-  // /start Telegram delivers into the group right behind it.
-  const ctx = addCtx();
+  // /start Telegram INJECTS into the group right behind it. The injected one
+  // carries the deep link's payload — ?startgroup=true sends "/start true".
+  const ctx = addCtx({ startPayload: "true" });
   await start.botAddedToGroup(ctx);
   assert.strictEqual(ctx.sent.length, 1, "the greeting");
   await start.groupStart(ctx);
-  assert.strictEqual(ctx.sent.length, 1, "and /start seconds later stays quiet");
+  assert.strictEqual(ctx.sent.length, 1, "and the injected /start behind it stays quiet");
 });
 
-test("a /start typed later is a real request and always answers", async () => {
+test("a /start somebody TYPED always answers, even seconds after the bot joined", async () => {
+  // The first cut gated on a 20-second window, and this is what it broke: for
+  // twenty seconds after joining — exactly when somebody is setting the bot up
+  // and pressing things — /start did nothing, and logged nothing either.
+  const ctx = addCtx(); // no startPayload: nobody types one
+  await start.botAddedToGroup(ctx);
+  assert.strictEqual(ctx.sent.length, 1, "the greeting");
+  await start.groupStart(ctx);
+  assert.strictEqual(ctx.sent.length, 2, "and /start is answered on the spot");
+  assert.match(ctx.sent[1].text, /settoken/, "with the setup guide");
+});
+
+test("/help in a group answers too — it carries no payload either", async () => {
   const ctx = addCtx();
   await start.botAddedToGroup(ctx);
-  // Age the greeting past the quiet window.
+  await start.groupStart(ctx); // bot.help() routes here with no startPayload
+  assert.strictEqual(ctx.sent.length, 2);
+});
+
+test("an injected /start long after the greeting still answers", async () => {
+  // The payload check narrows WHICH /start can be suppressed; the window still
+  // decides WHEN. A deep link followed hours later is a fresh request.
+  const ctx = addCtx({ startPayload: "true" });
+  await start.botAddedToGroup(ctx);
   start._greeted.set(String(ctx.chat.id), Date.now() - 60_000);
   await start.groupStart(ctx);
   assert.strictEqual(ctx.sent.length, 2);
-  assert.match(ctx.sent[1].text, /settoken/, "and it is the setup guide, not the greeting again");
+});
+
+test("a group template that fails to render is LOGGED, not swallowed", () => {
+  // A swallowed failure here is /start doing nothing at all, forever, with
+  // nothing in the logs to say why: a saved template whose markup will not
+  // parse looks exactly like a bot that has stopped working.
+  const s = src("handlers/start.js");
+  const fn = s.slice(s.indexOf("async function sendGroupTemplate"), s.indexOf("async function groupStart"));
+  assert.match(fn, /catch \(e\)/, "the error is captured");
+  assert.match(fn, /log\.warn\(/, "and reported");
+  assert.ok(!/catch \{\s*\/\* ignore \*\/\s*\}/.test(fn), "no silent catch left");
 });
 
 test("the greeting is wired to the update it rides on", () => {

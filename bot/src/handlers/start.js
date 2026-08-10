@@ -93,19 +93,32 @@ async function sendGroupTemplate(ctx, key) {
     const { payloadArgs } = require("../helpers/message");
     const { text, extra } = payloadArgs(tpl.render(key, { bot: `@${BOT_USERNAME}` }), false);
     await ctx.reply(text, { ...extra, disable_web_page_preview: true });
-  } catch {
-    /* ignore */
+  } catch (e) {
+    // LOUD. This used to swallow silently, and a swallowed failure here is
+    // /start doing nothing at all, forever, with nothing in the logs to say
+    // why — a saved template whose markup will not parse looks exactly like a
+    // bot that has stopped working.
+    log.warn(`[group] ${key} failed in ${ctx.chat && ctx.chat.id}: ${e && e.message}`);
   }
 }
 
 async function groupStart(ctx) {
-  // Skip the setup guide when the "thanks for adding me" greeting has only just
-  // gone out. Adding the bot through the ➕ button on the main menu fires BOTH:
-  // Telegram delivers /start into the group the moment the deep link completes,
-  // right behind the my_chat_member update the greeting rides on. Without this
-  // the group's first two messages are two different welcomes stacked on top of
-  // each other. A /start typed later is a real request and always answers.
-  if (justGreeted(ctx.chat && ctx.chat.id)) return;
+  // Adding the bot through the ➕ deep link fires BOTH: the greeting, on the
+  // my_chat_member update, and a /start Telegram injects into the group right
+  // behind it — two different welcomes stacked on each other.
+  //
+  // The injected one is told apart by its PAYLOAD: ?startgroup=true makes
+  // Telegram send "/start true", and a person typing sends /start or
+  // /start@bot with nothing after it. So only the injected one can ever be
+  // suppressed.
+  //
+  // The first cut of this gated on a 20-SECOND WINDOW instead, and that was
+  // wrong in the way that matters: a human typing /start is an explicit
+  // request, and for twenty seconds after the bot joined — exactly when
+  // somebody is setting it up and pressing things — it answered nothing at all
+  // and logged nothing either. /start must always answer.
+  const injected = !!(ctx.startPayload && String(ctx.startPayload).trim());
+  if (injected && justGreeted(ctx.chat && ctx.chat.id)) return;
   return sendGroupTemplate(ctx, "group_start");
 }
 
