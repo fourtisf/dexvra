@@ -233,10 +233,10 @@ test("groups sharing a pool each get their OWN verdict on one shared lookup", as
     await mon._pollTrades(tg, entry);
 
     assert.strictEqual(lookups, 1, "one RPC call served all three groups");
-    assert.match(sent["-1"], /NEW BUY/, "the $25k group sees an ordinary buy");
-    assert.match(sent["-1"], /^Position: 10,000 \$DEX · \$10,000/m, "…still carrying the position row");
+    assert.match(sent["-1"], /\$DEX BUY!/, "the $25k group sees an ordinary buy");
+    assert.match(sent["-1"], /^✅ Position: 10,000 \$DEX · \$10,000/m, "…still carrying the position row");
     assert.match(sent["-2"], /WHALE WALLET/, "the $5k group sees a whale");
-    assert.ok(!/^Position:/m.test(sent["-3"]), "the opted-out group gets neither card nor row");
+    assert.ok(!/Position:/.test(sent["-3"]), "the opted-out group gets neither card nor row");
   } finally {
     trades.fetchPoolBuys = realFetch;
     gt.fetchPoolCached = realPool;
@@ -264,7 +264,7 @@ test("no links are invented on a chain we have no explorer for", () => {
   // the buyer's address is still worth showing as plain text.
   const row = mon.verifyRow("nosuchchain", { txHash: "0xabc", buyer: "0xdefdefdefdefdefdef" });
   assert.ok(!row.includes("]("), "no link markup");
-  assert.match(row, /Buyer:\*\* 0xdefd/);
+  assert.match(row, /👤 0xdefd/);
   const linked = mon.verifyRow("bsc", { txHash: "0xabc", buyer: "0xdef" });
   assert.match(linked, /bscscan\.com\/tx\/0xabc/);
   assert.match(linked, /bscscan\.com\/address\/0xdef/);
@@ -318,12 +318,16 @@ test("the alert renders the reference layout", () => {
   assert.match(out, /\$48\.97 \(0\.6646 SOL\)/);
   // The full token amount, not a compacted "926.3K".
   assert.match(out, /926,311\.94 \$RUSS/);
-  assert.match(out, /Buyer: AFqu1M…jcBb · View txn/);
-  // Dexvra's own grammar — labelled rows joined by ·, matching the listing
-  // card — NOT the icon-only, pipe-separated layout every buy bot clone shares.
-  assert.match(out, /NEW BUY/);
-  assert.ok(!out.includes(" | "), "no pipe-separated rows");
-  assert.match(out, /Spent: \$48\.97/);
+  assert.match(out, /👤 AFqu1M…jcBb · Txn/);
+  // The icon column: one emoji per row at the left edge, value straight after.
+  // The header names the token and then says what happened to it.
+  assert.match(out, /^💎 \| The Nietzschean Dog BUY!$/m, "header: mark, token, event");
+  assert.match(out, /^📃 The Nietzschean Dog \$RUSS$/m);
+  assert.match(out, /^💲 \$48\.97 \(0\.6646 SOL\)$/m);
+  assert.match(out, /^🪙 926,311\.94 \$RUSS$/m);
+  assert.match(out, /^📊 .+ · MC .+$/m);
+  // The labels the icons replaced must be gone, or the card carries both.
+  assert.ok(!/\bSpent:/.test(out) && !/\bToken:/.test(out), "no bold labels left over");
 });
 
 test("the native amount comes from the trade, never derived from USD", () => {
@@ -352,11 +356,14 @@ test("the real alert carries the verified links; the estimated one says it canno
   const real = mon.renderRealAlert(g, { txHash: "0xt", buyer: "0xb", usd: 1234.5, tokenAmount: 98765 }, pool).text;
   assert.match(real, /WHALE BUY/);
   assert.match(real, /\$1,235/, "a buy amount is exact to the dollar, not '$1.2K'");
-  assert.match(real, /View txn/);
+  // .text is the PARSED text — markup has become entities by now, so the link
+  // shows as its label. buyCta.test.js is where the URLs themselves are checked.
+  assert.match(real, /👤 0xb · Txn/);
 
   const est = mon.renderEstimateAlert(g, { usd: 640, count: 3 }, pool).text;
   assert.match(est, /≈/);
   assert.ok(!est.includes("Txn"), "the estimated path has no transaction to link");
+  assert.ok(!est.includes("👤"), "and no buyer to name — it is a volume delta, not a trade");
   assert.ok(!/[_*]{1,2}Live transaction/.test(est), "no raw markup leaks — the parser only knows **bold**, [links] and `code`");
 });
 
@@ -385,4 +392,35 @@ test("the row icons are admin-editable, falling back per position", () => {
   } finally {
     tpl.t = real;
   }
+});
+
+test("all three buy cards speak ONE grammar", () => {
+  // A feed that mixes two layouts reads as a bug in the bot rather than as a
+  // choice, and these three land in the same chat minutes apart. So: every card
+  // opens "<mark> | <token> <EVENT>!", and every data row starts with its icon.
+  const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", name: "Dexvra Token", minBuyUsd: 0 };
+  const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 42.3 };
+  const buy = { txHash: "0xt", buyer: "0xb", usd: 1234.5, tokenAmount: 98765 };
+  const pos = { held: 5e6, holdsUsd: 62500, position: "+3.1%" };
+  const cards = {
+    buy: mon.renderRealAlert(g, { ...buy, usd: 40 }, pool, pos).text,
+    whale: mon.renderWhaleAlert(g, buy, pool, { ...pos, threshold: 5e4 }).text,
+    est: mon.renderEstimateAlert(g, { usd: 640, count: 3 }, pool).text,
+  };
+  for (const [which, text] of Object.entries(cards)) {
+    const lines = text.split("\n").filter(Boolean);
+    assert.match(lines[0], /^(💎|🐋) \| Dexvra Token .+!$/, `${which}: mark, token, event`);
+    assert.match(text, /^📃 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);
+    // Every row carrying a NUMBER leads with an icon. The bold labels these
+    // replaced ("**Spent:**", "**MCap:**") must not survive on any card —
+    // half-converted is worse than either layout on its own.
+    assert.ok(!/^\*\*\w+:\*\*/m.test(text), `${which}: no bold-label rows left`);
+    for (const l of lines.slice(2)) {
+      if (/^[⚡⚠️🟢🐋]/u.test(l) || l.startsWith("Trade")) continue;
+      assert.match(l, /^\p{Extended_Pictographic}/u, `${which}: "${l}" should lead with its icon`);
+    }
+  }
+  // And the ticker-only fallback does not print the same word twice.
+  const noName = mon.renderRealAlert({ ...g, name: "" }, buy, pool, null).text;
+  assert.match(noName, /^📃 \$DEX$/m, "no name → just the ticker, not '$DEX $DEX'");
 });

@@ -291,18 +291,19 @@ function verifyRow(chain, buy) {
   // function call on being sure.
   // Buyer first, then the transaction: who, then the proof.
   //
-  // The label lives HERE rather than in the template so the whole line can
-  // vanish on a chain we have no explorer for and no buyer address — a lone
-  // "Buyer:" with nothing after it is not a row, it is a rendering bug.
+  // The 👤 lives HERE rather than in the template so the whole line can vanish
+  // on a chain we have no explorer for and no buyer address — a lone icon with
+  // nothing after it is not a row, it is a rendering bug. Same reason the label
+  // used to live here; only the label changed.
   if (who) bits.push(`[${premium.sanitizeVar(shortAddress(buy.buyer))}](${premium.sanitizeUrl(who)})`);
   else if (buy.buyer) bits.push(premium.sanitizeVar(shortAddress(buy.buyer)));
-  if (tx) bits.push(`[View txn](${premium.sanitizeUrl(tx)})`);
-  return bits.length ? `**Buyer:** ${bits.join(" · ")}` : "";
+  if (tx) bits.push(`[Txn](${premium.sanitizeUrl(tx)})`);
+  return bits.length ? `👤 ${bits.join(" · ")}` : "";
 }
 
 /**
  * The buyer's own position in the token, directly under the buyer's address —
- * "💼 **Position:** 1,980,000 $RUSS · $95,523 (+3.82%)".
+ * "✅ Position: 1,980,000 $RUSS · $95,523 (+3.82%)".
  *
  * Three facts in one row: how much of the token that wallet holds AFTER this
  * trade, what it is worth at the pool price, and how much this buy grew it. A
@@ -317,7 +318,7 @@ function verifyRow(chain, buy) {
 function positionRow(g, pos) {
   if (!pos || !(pos.held > 0)) return "";
   const sym = premium.sanitizeVar(`$${String(g.sym || "").replace(/^\$/, "") || "TOKEN"}`);
-  return `**Position:** ${tokenAmount(pos.held)} ${sym} · ${usdAmount(pos.holdsUsd)} (${pos.position})`;
+  return `✅ Position: ${tokenAmount(pos.held)} ${sym} · ${usdAmount(pos.holdsUsd)} (${pos.position})`;
 }
 
 /** Every value both buy cards share. Split out so the whale card cannot drift
@@ -336,6 +337,14 @@ function alertVars(g, buy, pool, pos) {
     // GeckoTerminal, so it goes through the same sanitiser as every other
     // untrusted value — a token literally named "[click](url)" is not far-fetched.
     name: premium.sanitizeVar(g.name || `$${sym}`),
+    // The 📃 row, prebuilt, because most tokens have a name and some do not —
+    // and a group whose token never resolved a name would otherwise read
+    // "📃 $DEX $DEX", the same word printed twice for no reason. Whole row, like
+    // {verify} and {wallet}, so it collapses to just the ticker instead of
+    // leaving a gap. {name} and {symbol} stay available to lay out yourself.
+    nameRow: g.name && g.name !== `$${sym}`
+      ? `📃 **${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
+      : `📃 **${premium.sanitizeVar(`$${sym}`)}**`,
     // The tier IS the header label — "NEW BUY" / "WHALE BUY" / "MEGA BUY" —
     // rather than a suffix bolted onto a fixed one, which read as two headings
     // fighting for the same line.
@@ -471,6 +480,14 @@ function renderEstimateAlert(g, est, pool) {
   return tpl.render("group_buy_alert_est", {
     bar: buySizeBar(est.usd),
     emoji: buyEmojiRow(est.usd),
+    // The token's name headlines this card too. It was the ONE alert that still
+    // led with the bare ticker, which read as a different bot posting into the
+    // same feed — and the name is admin-supplied, so it takes the same
+    // sanitiser as everywhere else.
+    name: premium.sanitizeVar(g.name || `$${sym}`),
+    nameRow: g.name && g.name !== `$${sym}`
+      ? `📃 **${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
+      : `📃 **${premium.sanitizeVar(`$${sym}`)}**`,
     symbol: premium.sanitizeVar(`$${sym}`),
     usd: usdAmount(est.usd),
     count: est.count,

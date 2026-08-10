@@ -386,26 +386,34 @@ const DEFAULTS = {
   // open {verify} and check it. Do NOT add a placeholder to this template that
   // the estimated path cannot fill; the two are separate templates precisely so
   // neither has to pretend.
-  // Dexvra's OWN grammar, not the icon-only / pipe-separated layout the
-  // copy-trading bots all share: **Label:** value, joined by ·, with a bracketed
-  // CTA row — the same shape as the listing card above, so a reader who knows
-  // one knows the other. {emoji} is the size row (see group_buy_style); {bar} is
-  // a fill-meter, still available as a placeholder if you ever want one.
+  // THE ICON COLUMN. One emoji per row, at the left edge, and the value
+  // straight after it — the grammar every trader already reads on the buy bots
+  // they follow, and what the operator asked for by name.
+  //
+  // This REPLACED a bold-label layout ("**Spent:** …") chosen deliberately to
+  // look unlike those bots. The reasoning then was that stacked emoji are
+  // decoration the eye has to skip past to reach the labels. In a group feed
+  // that turned out to be backwards: the icon IS the label, it is scannable at
+  // a glance while scrolling, and it costs no line width — which matters on a
+  // phone, where a bold label pushes the number that people actually came for
+  // onto a second line. Standing out was never worth being harder to read.
+  //
+  // If you are reverting this, revert group_whale_alert and group_buy_alert_est
+  // with it: the three are one grammar, and a feed that mixes two reads as a
+  // bug in the bot rather than a choice.
+  //
+  // {emoji} is the size row (see group_buy_style); {bar} is a fill-meter, still
+  // available as a placeholder if you ever want one.
   group_buy_alert:
-    `${em("🟢", E.green)} **{tier}** · [{name}]({coinUrl})\n\n` +
+    `${em("💎", E.diamond)} | [{name}]({coinUrl}) **{tier}!**\n\n` +
     "{emoji}\n\n" +
-    // NO leading icon on the data rows. Six emoji stacked down the left edge is
-    // a column of decoration the eye has to skip past to reach the labels, and
-    // it fights the size row above — which is the ONE place on this card an
-    // emoji carries information. Bold labels do the scanning work.
-    "**Spent:** {usd}{native}\n" +
-    "**Token:** {tokenAmt} {symbol}\n" +
-    "**Price:** {price} · **24h:** {change}\n" +
-    // Market cap and liquidity, side by side: the two numbers that say whether
-    // this buy is a rounding error or a dent. Both were already computed and
-    // both were being thrown away — {liq} and {change} had been placeholders no
-    // default template ever printed.
-    "**MCap:** {mcap} · **Liq:** {liq}\n" +
+    "{nameRow}\n" +
+    "💲 {usd}{native}\n" +
+    "🪙 {tokenAmt} {symbol}\n" +
+    // Price and market cap on one row, liquidity and the 24h move on the next:
+    // the numbers that say whether this buy is a rounding error or a dent.
+    "📊 {price} · MC {mcap}\n" +
+    "💧 {liq} · 24h {change}\n" +
     "{verify}\n" +
     // The buyer's own position, directly under WHO bought — how much of the
     // token that wallet now holds, what it is worth, and how much this buy grew
@@ -430,17 +438,18 @@ const DEFAULTS = {
   // Available for anyone who does want it, and never a hardcoded "$50,000",
   // because the group's /setwhale or the admin bot can move it at any time.
   group_whale_alert:
-    `${em("🐋", E.diamond)} **WHALE WALLET** · [{name}]({coinUrl})\n\n` +
+    `${em("🐋", E.diamond)} | [{name}]({coinUrl}) **WHALE WALLET!**\n\n` +
     "{emoji}\n\n" +
-    "**Spent:** {usd}{native}\n" +
-    "**Token:** {tokenAmt} {symbol}\n" +
+    "{nameRow}\n" +
+    "💲 {usd}{native}\n" +
+    "🪙 {tokenAmt} {symbol}\n" +
     // The one row the ordinary card cannot carry: what this wallet is sitting
     // on, and how much this buy grew it. That IS the news — everything else on
     // this card is the same market context the buy card shows, deliberately, so
     // the louder alert is not also the thinner one.
-    "**Position:** {holds} {symbol} · **{holdsUsd}** ({position})\n" +
-    "**Price:** {price} · **24h:** {change}\n" +
-    "**MCap:** {mcap} · **Liq:** {liq}\n" +
+    "✅ Position: {holds} {symbol} · **{holdsUsd}** ({position})\n" +
+    "📊 {price} · MC {mcap}\n" +
+    "💧 {liq} · 24h {change}\n" +
     "{verify}\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
@@ -458,11 +467,12 @@ const DEFAULTS = {
   // It says "≈" and says why, because a number that cannot be checked must not
   // be dressed up as one that can.
   group_buy_alert_est:
-    `${em("🟢", E.green)} **BUY PRESSURE** · {symbol}\n\n` +
+    `${em("💎", E.diamond)} | [{name}]({coinUrl}) **BUY PRESSURE!**\n\n` +
     "{emoji}\n\n" +
-    "**Spent:** ≈ {usd} across {count} {buysWord}\n" +
-    "**Token:** ≈ {tokenAmt} {symbol}\n" +
-    "**Price:** {price} · **MCap:** {mcap}\n\n" +
+    "{nameRow}\n" +
+    "💲 ≈ {usd} across {count} {buysWord}\n" +
+    "🪙 ≈ {tokenAmt} {symbol}\n" +
+    "📊 {price} · MC {mcap}\n\n" +
     // Plain text, NOT `_italics_` — the premium-markup parser understands
     // **bold**, [links](url) and `code` and nothing else, so the underscores in
     // the previous version of this template reached the group as literal
@@ -472,7 +482,11 @@ const DEFAULTS = {
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
-  group_buy_tiers: "NEW BUY|WHALE BUY|MEGA BUY",
+  //
+  // The header reads "{name} {tier}!", so these are the words that finish that
+  // sentence — "BUY!", not "NEW BUY!". The old set was written for a header
+  // that led with the tier and named the token after it.
+  group_buy_tiers: "BUY|WHALE BUY|MEGA BUY",
 
   // ── Setup replies, /settoken → /buybot ──────────────────────────────────
   // Every one of these is a message a PAYING PROJECT sees inside their own
