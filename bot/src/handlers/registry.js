@@ -45,6 +45,8 @@ function registerHandlers(bot) {
   bot.command("setwhale", groupSetup.setwhale);
   bot.command("buybot", groupSetup.buybot);
   bot.action(/^mb_(\d+)$/, groupSetup.minBuyPick); // /setminbuy preset picker
+  bot.action(/^wb_(\d+|off)$/, groupSetup.whalePick); // /setwhale preset picker
+  bot.action(/^bs_([a-z]+)$/, groupSetup.settingsTap); // /buybot settings hub
 
   // ── Main menu ─────────────────────────────────────────────────────────────
   bot.action("home", start.homeHandler);
@@ -80,6 +82,10 @@ function registerHandlers(bot) {
   bot.action("confirm_pay", payment.confirmPayHandler);
 
   // ── Free-text + media routers (LAST) ──────────────────────────────────────
+  // The group one first, and it calls next() for anything that is not a reply
+  // to its own force_reply prompt — textRouter ignores groups entirely, so a
+  // pasted contract address in a group had nowhere to land.
+  bot.on("text", groupSetup.groupTokenReply);
   bot.on("text", text.textRouter);
   bot.on(["photo", "document", "video", "animation"], text.mediaRouter);
 

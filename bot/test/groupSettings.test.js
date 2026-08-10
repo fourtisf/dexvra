@@ -1,0 +1,144 @@
+// The group settings hub: /buybot's buttons, the 🐋 picker, and the paste-the-CA
+// prompt behind /settoken.
+//
+// Setting the buy bot up used to mean knowing five command names and the shape
+// of each one's argument, read off a welcome message. Everything here exists so
+// the only thing a project ever types is the contract address itself.
+const path = require("node:path");
+const os = require("node:os");
+const fss = require("node:fs");
+process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-set-"));
+
+const test = require("node:test");
+const assert = require("node:assert");
+const setup = require("../src/group/setup");
+const cfg = require("../src/group/config");
+const gt = require("../src/group/gtPairs");
+
+// The pool lookup is the one thing here that would touch the network. Replaced
+// on the module object, which is the same object setup.js holds.
+gt.fetchPool = async () => ({ poolAddress: "POOL", symbol: "RUSS", name: "Russ" });
+gt.fetchTokenInfo = async () => ({ symbol: "RUSS", name: "Russ" });
+
+const CA = "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump";
+
+function ctxFor({ text = "", data = null, chatId = -2001, userId = 7, admin = true, replyTo = null } = {}) {
+  const c = {
+    chat: { id: chatId, type: "supergroup" },
+    from: { id: userId },
+    message: { text, message_id: 5, reply_to_message: replyTo ? { message_id: replyTo } : undefined },
+    match: data ? /^(?:mb|wb|bs)_([a-z0-9]+)$/.exec(data) : null,
+    callbackQuery: data ? { message: { message_id: 42 } } : undefined,
+    telegram: { getChatMember: async () => ({ status: admin ? "administrator" : "member" }) },
+    replies: [],
+    edits: [],
+    toasts: [],
+    nexted: 0,
+  };
+  c.reply = async (t, extra) => (c.replies.push({ text: t, extra }), { message_id: 99 });
+  c.editMessageText = async (t, extra) => (c.edits.push({ text: t, extra }), true);
+  c.answerCbQuery = async (t) => (c.toasts.push(t || ""), true);
+  c.next = async () => c.nexted++;
+  return c;
+}
+
+const labels = (extra) => (extra.reply_markup.inline_keyboard || []).flat().map((b) => b.text);
+
+test("a bare /settoken asks for the address with a forced reply", async () => {
+  const ctx = ctxFor({ text: "/settoken@dexvrabot", chatId: -2001 });
+  await setup.settoken(ctx);
+  const rm = ctx.replies[0].extra.reply_markup;
+  assert.strictEqual(rm.force_reply, true);
+  // Without selective, every member of the group gets an input box shoved in
+  // front of them by a setting that is not theirs to change.
+  assert.strictEqual(rm.selective, true);
+  assert.strictEqual(ctx.replies[0].extra.reply_to_message_id, 5, "aimed at the admin who ran it");
+});
+
+test("replying to the prompt sets the token; nothing else is touched", async () => {
+  const open = ctxFor({ text: "/settoken", chatId: -2002 });
+  await setup.settoken(open); // prompt is message_id 99
+
+  const chatter = ctxFor({ text: "gm", chatId: -2002 });
+  await setup.groupTokenReply(chatter, chatter.next);
+  assert.strictEqual(chatter.nexted, 1, "ordinary group talk falls through to the private router");
+
+  const stranger = ctxFor({ text: CA, chatId: -2002, userId: 999, replyTo: 99 });
+  await setup.groupTokenReply(stranger, stranger.next);
+  assert.strictEqual(stranger.nexted, 1, "a member who did not open the prompt is not answered");
+  assert.strictEqual(cfg.get(-2002), null);
+
+  const admin = ctxFor({ text: CA, chatId: -2002, replyTo: 99 });
+  await setup.groupTokenReply(admin, admin.next);
+  assert.strictEqual(admin.nexted, 0, "the prompt's own reply is consumed");
+  assert.strictEqual(cfg.get(-2002).address, CA);
+  assert.strictEqual(cfg.get(-2002).on, true, "setting a token arms the bot");
+
+  // The prompt is spent. A later reply to the same message is just chat again.
+  const late = ctxFor({ text: "0xdeadbeef", chatId: -2002, replyTo: 99 });
+  await setup.groupTokenReply(late, late.next);
+  assert.strictEqual(late.nexted, 1);
+  assert.strictEqual(cfg.get(-2002).address, CA, "and it did not overwrite the token");
+});
+
+test("/buybot on a group with no token offers the one button that means anything", async () => {
+  const ctx = ctxFor({ text: "/buybot", chatId: -2003 });
+  await setup.buybot(ctx);
+  assert.deepStrictEqual(labels(ctx.replies[0].extra), ["📄 Set token"]);
+});
+
+test("the settings hub toggles pin and power in place", async () => {
+  await cfg.upsert(-2004, { chain: "solana", address: CA, pairAddress: "P", on: true });
+  const pin = ctxFor({ data: "bs_pin", chatId: -2004 });
+  await setup.settingsTap(pin);
+  assert.strictEqual(cfg.get(-2004).pin, false);
+  assert.ok(labels(pin.edits[0].extra).includes("📌 Pin: off"), "the button shows the new state");
+
+  const power = ctxFor({ data: "bs_power", chatId: -2004 });
+  await setup.settingsTap(power);
+  assert.strictEqual(cfg.get(-2004).on, false);
+  assert.ok(labels(power.edits[0].extra).includes("🟢 Turn the buy bot on"));
+});
+
+test("the hub will not switch on a group that has no token", async () => {
+  // It would report success and then call nothing at all, forever.
+  await cfg.upsert(-2005, {});
+  const ctx = ctxFor({ data: "bs_power", chatId: -2005 });
+  await setup.settingsTap(ctx);
+  assert.ok(!cfg.get(-2005).on);
+  assert.strictEqual(ctx.edits.length, 0);
+  assert.ok(ctx.toasts[0], "and it says why");
+});
+
+test("a non-admin taps nothing on the hub", async () => {
+  await cfg.upsert(-2006, { chain: "solana", address: CA, pairAddress: "P", on: true });
+  const ctx = ctxFor({ data: "bs_power", chatId: -2006, admin: false });
+  await setup.settingsTap(ctx);
+  assert.strictEqual(cfg.get(-2006).on, true);
+  assert.strictEqual(ctx.edits.length, 0);
+});
+
+test("the whale picker sets a bar and turns it off", async () => {
+  await cfg.upsert(-2007, { chain: "solana", address: CA, pairAddress: "P", on: true });
+  const set = ctxFor({ data: "wb_25000", chatId: -2007 });
+  await setup.whalePick(set);
+  assert.strictEqual(cfg.get(-2007).whales, true);
+  assert.strictEqual(cfg.get(-2007).whaleWalletUsd, 25000);
+  assert.ok(labels(set.edits[0].extra).includes("$25,000 ✓"));
+
+  const off = ctxFor({ data: "wb_off", chatId: -2007 });
+  await setup.whalePick(off);
+  assert.strictEqual(cfg.get(-2007).whales, false);
+  assert.ok(
+    !labels(off.edits[0].extra).some((l) => l.includes("$") && l.includes("✓")),
+    "no bar is ticked while whale calls are off",
+  );
+});
+
+test("a bare /setwhale opens the picker instead of printing syntax", async () => {
+  await cfg.upsert(-2008, { chain: "solana", address: CA, pairAddress: "P", on: true });
+  const ctx = ctxFor({ text: "/setwhale@dexvrabot", chatId: -2008 });
+  await setup.setwhale(ctx);
+  assert.ok(setup.WHALE_PRESETS.length >= 3);
+  assert.ok(labels(ctx.replies[0].extra).some((l) => l.startsWith("$")), "bars to tap");
+});

@@ -62,11 +62,66 @@ async function resolveToken(address) {
 
 const usd$ = (n) => "$" + Number(n).toLocaleString("en-US");
 
+// chatId → the outstanding "paste your contract address" prompt: the message it
+// is waiting on a reply to, and who asked for it. In memory only — a prompt
+// nobody answered before a restart is re-opened by running /settoken again,
+// which is one tap, and persisting it would mean a stale prompt swallowing an
+// unrelated reply days later.
+const pendingToken = new Map();
+
+/**
+ * Ask for the contract address with force_reply, so the group member's keyboard
+ * opens already pointed at this prompt.
+ *
+ * selective + a reply to their own command aims the forced reply at the admin
+ * who ran it. Without that, every member of the group gets an input box shoved
+ * in front of them by a setting that is not theirs to change.
+ */
+async function promptForToken(ctx, replyTo) {
+  const { text, extra } = payloadArgs(tpl.render("settoken_prompt"), false);
+  const sent = await ctx
+    .reply(text, {
+      ...extra,
+      disable_web_page_preview: true,
+      reply_to_message_id: replyTo,
+      reply_markup: { force_reply: true, selective: true, input_field_placeholder: "Contract address" },
+    })
+    .catch(() => null);
+  if (sent) pendingToken.set(String(ctx.chat.id), { messageId: sent.message_id, userId: ctx.from.id });
+}
+
+/**
+ * A reply to the force_reply prompt above IS the contract address.
+ *
+ * Middleware, so anything that is not that reply falls through untouched: this
+ * sits in front of the private-chat text router and sees every message in every
+ * group the bot is in.
+ */
+async function groupTokenReply(ctx, next) {
+  if (!isGroup(ctx)) return next();
+  const replyTo = ctx.message && ctx.message.reply_to_message;
+  const pending = pendingToken.get(String(ctx.chat.id));
+  if (!replyTo || !pending || replyTo.message_id !== pending.messageId) return next();
+  // Whoever opened the prompt answers it. A different member replying to the
+  // same message is just chat, and was never admin-checked.
+  if (!ctx.from || ctx.from.id !== pending.userId) return next();
+  pendingToken.delete(String(ctx.chat.id));
+  const address = String((ctx.message.text || "").trim().split(/\s+/)[0] || "");
+  if (!address) return say(ctx, "settoken_not_found");
+  return applyToken(ctx, address);
+}
+
 async function settoken(ctx) {
   if (!isGroup(ctx)) return say(ctx, "setup_group_only");
   if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
   const address = arg(ctx);
-  if (!address) return say(ctx, "settoken_usage");
+  // A bare /settoken — the version Telegram's command menu sends — asks for the
+  // address instead of printing syntax. One tap, then paste.
+  if (!address) return promptForToken(ctx, ctx.message && ctx.message.message_id);
+  return applyToken(ctx, address);
+}
+
+async function applyToken(ctx, address) {
   await say(ctx, "settoken_resolving");
   const res = await resolveToken(address);
   if (!res) return say(ctx, "settoken_not_found");
@@ -157,25 +212,88 @@ async function setminbuy(ctx) {
 }
 
 /**
+ * Every button in this file guards the same way.
+ *
+ * The panels live in a GROUP chat, where any member can reach the buttons long
+ * after an admin opened them. The check on the command only covers who opened
+ * it, so it has to be repeated on each tap.
+ */
+async function tapAllowed(ctx) {
+  if (!isGroup(ctx)) {
+    await ctx.answerCbQuery().catch(() => {});
+    return false;
+  }
+  if (!(await isGroupAdmin(ctx))) {
+    await ctx.answerCbQuery(tpl.t("setup_admin_only"), { show_alert: true }).catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+/** Re-render a panel over the message that was tapped. Re-tapping the active
+ *  preset edits a message to its own contents, which Telegram answers with
+ *  "message is not modified" — nothing to do, and the toast already confirmed
+ *  the value, so the failure is swallowed on purpose. */
+const repaint = (ctx, panel) => ctx.editMessageText(panel.text, panel.extra).catch(() => {});
+
+/**
  * A preset tapped on the /setminbuy picker.
  *
  * Refreshes the panel in place rather than replying, so a second adjustment is
  * another single tap on the same message instead of a new card each time.
  */
 async function minBuyPick(ctx) {
+  if (!(await tapAllowed(ctx))) return;
   const usd = Math.max(Number((ctx.match && ctx.match[1]) || 0), cfg.MIN_BUY_FLOOR_USD);
-  if (!isGroup(ctx)) return ctx.answerCbQuery().catch(() => {});
-  // The picker sits in a group where anyone can tap it, so the admin check has
-  // to happen HERE too — the one on /setminbuy only covers who opened it.
-  if (!(await isGroupAdmin(ctx)))
-    return ctx.answerCbQuery(tpl.t("setup_admin_only"), { show_alert: true }).catch(() => {});
   await cfg.upsert(ctx.chat.id, { minBuyUsd: usd });
   await ctx.answerCbQuery(tpl.t("setminbuy_toast", { usd: usd$(usd) })).catch(() => {});
-  const p = minBuyPanel(ctx.chat.id);
-  // Re-tapping the active preset edits a message to its own contents, which
-  // Telegram answers with "message is not modified". Nothing to do about it and
-  // nothing to say about it — the toast above already confirmed the value.
-  await ctx.editMessageText(p.text, p.extra).catch(() => {});
+  await repaint(ctx, minBuyPanel(ctx.chat.id));
+}
+
+// Whale bars, for the picker behind 🐋 Whale bar. Coarser than the buy floor
+// because it measures a BAG, not a trade: the gap between a $10k holder and a
+// $50k holder is a different kind of holder, not a rounder number.
+const WHALE_PRESETS = [10000, 25000, 50000, 100000, 250000];
+
+function whaleKeyboard(g) {
+  const on = g.whales !== false;
+  const current = on ? Number(g.whaleWalletUsd || whaleCfg.get().walletUsd) : null;
+  const btn = (n) => Markup.button.callback(usd$(n) + (current === n ? " ✓" : ""), `wb_${n}`);
+  const rows = [];
+  for (let i = 0; i < WHALE_PRESETS.length; i += 3) rows.push(WHALE_PRESETS.slice(i, i + 3).map(btn));
+  rows.push([Markup.button.callback(on ? "🚫 Turn off" : "🚫 Off ✓", "wb_off")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function whalePanel(chatId) {
+  const g = cfg.get(chatId) || {};
+  const on = g.whales !== false;
+  const label = chainOf(g.chain)?.label || "this network";
+  const { text, extra } = payloadArgs(
+    tpl.render("setwhale_panel", {
+      usd: on ? usd$(g.whaleWalletUsd || whaleCfg.get().walletUsd) : tpl.t("setwhale_state_off"),
+      chain: label,
+      // Same caveat the /setwhale confirmation carries, spliced in as raw markup
+      // so the **bold** chain name survives. A group on a chain whose balances
+      // cannot be read must not be shown a bar that will never fire.
+      unsupported: holdings.supports(g.chain) ? "" : tpl.markup("setwhale_unsupported", { chain: label }),
+    }),
+    false,
+  );
+  return { text, extra: { ...extra, disable_web_page_preview: true, ...whaleKeyboard(g) } };
+}
+
+async function whalePick(ctx) {
+  if (!(await tapAllowed(ctx))) return;
+  const raw = (ctx.match && ctx.match[1]) || "off";
+  if (raw === "off") {
+    await cfg.upsert(ctx.chat.id, { whales: false });
+    await ctx.answerCbQuery(tpl.t("setwhale_off")).catch(() => {});
+  } else {
+    await cfg.upsert(ctx.chat.id, { whales: true, whaleWalletUsd: Number(raw) });
+    await ctx.answerCbQuery(tpl.t("setwhale_toast", { usd: usd$(Number(raw)) })).catch(() => {});
+  }
+  await repaint(ctx, whalePanel(ctx.chat.id));
 }
 
 /** `/setwhale 50000` — the holding that makes a buyer a whale here, or `off`. */
@@ -183,6 +301,13 @@ async function setwhale(ctx) {
   if (!isGroup(ctx)) return;
   if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
   const raw = arg(ctx).toLowerCase();
+  // Bare /setwhale opens the picker, same as /setminbuy — the command menu
+  // sends it with no argument, and a syntax note is a worse answer than a row
+  // of bars to tap.
+  if (!raw) {
+    const p = whalePanel(ctx.chat.id);
+    return ctx.reply(p.text, p.extra).catch(() => {});
+  }
   if (raw === "off") {
     await cfg.upsert(ctx.chat.id, { whales: false });
     return say(ctx, "setwhale_off");
@@ -220,33 +345,115 @@ async function buybot(ctx) {
     return say(ctx, a === "on" ? "buybot_on" : "buybot_off");
   }
   // status
-  if (!g || !g.address) return say(ctx, "buybot_need_token");
-  await say(ctx, "buybot_status", {
-    address: g.address,
-    chain: chainOf(g.chain)?.label || g.chain,
-    pool: g.pairAddress ? "resolved ✓" : "—",
-    minBuy: usd$(g.minBuyUsd || 0),
-    // The GLOBAL bar is read live, so a group that never ran /setwhale sees
-    // whatever the operator currently has set — not the value baked into .env
-    // at boot, which is what this line used to print.
-    whale:
-      g.whales === false
-        ? "off"
-        : usd$(g.whaleWalletUsd || whaleCfg.get().walletUsd) + (holdings.supports(g.chain) ? "" : " (not readable on this network)"),
-    pin: g.pin === false ? "off" : "on",
-    state: g.on ? "🟢 ON" : "🔴 OFF",
-  });
+  const p = statusPanel(ctx.chat.id);
+  await ctx.reply(p.text, p.extra).catch(() => {});
+}
+
+/**
+ * /buybot with no argument: the settings hub.
+ *
+ * It was a read-only status card, which meant a project could SEE every setting
+ * and change none of them — each one was a separate command they had to know
+ * the name and the argument shape of. Same card, now with a button per row of
+ * it, so setting the bot up never requires typing anything but the contract
+ * address.
+ */
+function settingsKeyboard(g) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("📄 Token", "bs_token"), Markup.button.callback("💲 Min buy", "bs_minbuy")],
+    [
+      Markup.button.callback("🐋 Whale bar", "bs_whale"),
+      Markup.button.callback(g.pin === false ? "📌 Pin: off" : "📌 Pin: on", "bs_pin"),
+    ],
+    [Markup.button.callback(g.on ? "🔴 Turn the buy bot off" : "🟢 Turn the buy bot on", "bs_power")],
+  ]);
+}
+
+function statusPanel(chatId) {
+  const g = cfg.get(chatId);
+  // Nothing set up yet — the only button that means anything is the one that
+  // starts it. Offering "min buy" on a group with no token is a dead end.
+  if (!g || !g.address) {
+    const { text, extra } = payloadArgs(tpl.render("buybot_need_token"), false);
+    const kb = Markup.inlineKeyboard([[Markup.button.callback("📄 Set token", "bs_token")]]);
+    return { text, extra: { ...extra, disable_web_page_preview: true, ...kb } };
+  }
+  const { text, extra } = payloadArgs(
+    tpl.render("buybot_status", {
+      address: g.address,
+      chain: chainOf(g.chain)?.label || g.chain,
+      pool: g.pairAddress ? "resolved ✓" : "—",
+      minBuy: usd$(cfg.minBuyOf(g)),
+      // The GLOBAL bar is read live, so a group that never ran /setwhale sees
+      // whatever the operator currently has set — not the value baked into .env
+      // at boot, which is what this line used to print.
+      whale:
+        g.whales === false
+          ? tpl.t("setwhale_state_off")
+          : usd$(g.whaleWalletUsd || whaleCfg.get().walletUsd) +
+            (holdings.supports(g.chain) ? "" : " (not readable on this network)"),
+      pin: g.pin === false ? "off" : "on",
+      state: g.on ? "🟢 ON" : "🔴 OFF",
+    }),
+    false,
+  );
+  return { text, extra: { ...extra, disable_web_page_preview: true, ...settingsKeyboard(g) } };
+}
+
+/** A button on the settings hub. The two toggles repaint the hub in place; the
+ *  two pickers open their own panel underneath it, so the hub stays put as the
+ *  thing you come back to. */
+async function settingsTap(ctx) {
+  if (!(await tapAllowed(ctx))) return;
+  const what = (ctx.match && ctx.match[1]) || "";
+  const g = cfg.get(ctx.chat.id) || {};
+  if (what === "token") {
+    await ctx.answerCbQuery().catch(() => {});
+    const msg = ctx.callbackQuery && ctx.callbackQuery.message;
+    return promptForToken(ctx, msg && msg.message_id);
+  }
+  if (what === "minbuy") {
+    await ctx.answerCbQuery().catch(() => {});
+    const p = minBuyPanel(ctx.chat.id);
+    return void ctx.reply(p.text, p.extra).catch(() => {});
+  }
+  if (what === "whale") {
+    await ctx.answerCbQuery().catch(() => {});
+    const p = whalePanel(ctx.chat.id);
+    return void ctx.reply(p.text, p.extra).catch(() => {});
+  }
+  if (what === "pin") {
+    const on = g.pin === false;
+    await cfg.upsert(ctx.chat.id, { pin: on });
+    await ctx.answerCbQuery(tpl.t(on ? "pin_on" : "pin_off")).catch(() => {});
+  }
+  if (what === "power") {
+    // Turning the bot ON without a token would report success and then call
+    // nothing at all, forever.
+    if (!g.address) {
+      await ctx.answerCbQuery(tpl.t("buybot_need_token"), { show_alert: true }).catch(() => {});
+      return;
+    }
+    const on = !g.on;
+    await cfg.upsert(ctx.chat.id, { on });
+    await ctx.answerCbQuery(tpl.t(on ? "buybot_on" : "buybot_off")).catch(() => {});
+  }
+  await repaint(ctx, statusPanel(ctx.chat.id));
 }
 
 module.exports = {
   settoken,
+  groupTokenReply,
   setchain,
   setminbuy,
   minBuyPick,
   setwhale,
+  whalePick,
   buybot,
+  settingsTap,
   setPin,
   resolveToken,
   candidateChains,
   MIN_BUY_PRESETS,
+  WHALE_PRESETS,
 };

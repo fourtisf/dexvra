@@ -98,11 +98,11 @@ const COMMANDS = [
 // it does nothing at all.
 const GROUP_COMMANDS = [
   { command: "start", description: "Set up Dexvra in this group" },
-  { command: "settoken", description: "Point the buy bot at your token — /settoken <CA>" },
+  { command: "settoken", description: "Point the buy bot at your token — paste the CA" },
   { command: "setchain", description: "Force the network — /setchain bsc" },
   { command: "setminbuy", description: "Minimum buy worth an alert — tap to pick" },
-  { command: "setwhale", description: "Whale wallet bar — /setwhale 50000 · off" },
-  { command: "buybot", description: "Status · on · off · pin on · pin off" },
+  { command: "setwhale", description: "Whale wallet bar — tap to pick" },
+  { command: "buybot", description: "Settings — token, min buy, whale, on/off" },
   { command: "raid", description: "Rally the chat behind one X post" },
 ];
 

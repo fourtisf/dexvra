@@ -483,11 +483,11 @@ const DEFAULTS = {
   // **bold**, `code`, [text](url). NOT HTML tags.
   setup_admin_only: "🔒 Group admins only.",
   setup_group_only: "👥 This one runs in your group. Add the bot there first.",
-  settoken_usage:
-    "📄 **Point the bot at your token**\n\n" +
-    "Send the contract address with the command:\n" +
-    "/settoken <contract address>\n\n" +
-    "The network is detected from the address — no need to name it.",
+  // Sent with force_reply, so the member's keyboard opens already replying to
+  // it. Keep it short: it sits directly above their input box.
+  settoken_prompt:
+    "📄 **Paste your contract address**\n\n" +
+    "Reply to this message with it. The network is detected from the address — no need to name it.",
   settoken_resolving: "🔎 Finding the pool…",
   settoken_not_found:
     "❌ **No live pool on that CA**\n\n" +
@@ -519,6 +519,18 @@ const DEFAULTS = {
   // Button toast. Plain text by design: Telegram shows a callback answer as a
   // bare toast, so bold and links in here would reach the tapper as literals.
   setminbuy_toast: "Minimum buy: {usd}",
+  // The 🐋 picker, opened by a bare /setwhale or the settings hub. {unsupported}
+  // is the same caveat the confirmation carries — a bar on a chain whose
+  // balances cannot be read never fires, and the panel must say so.
+  setwhale_panel:
+    "🐋 **Whale bar**\n\n" +
+    "A buy from a wallet **already holding** this much of your token gets its own alert, pinned in the group — however small the buy itself is.\n\n" +
+    "**Now:** {usd}\n\n" +
+    "Tap a bar below, or name your own: /setwhale 75000{unsupported}",
+  setwhale_toast: "Whale bar: {usd}",
+  // One word, used wherever a setting has to be shown as off. Its own template
+  // so the picker, the toast and the status card cannot drift apart.
+  setwhale_state_off: "off",
   setwhale_usage:
     "🐋 **Whale bar**\n\n" +
     "/setwhale 50000 — anyone **already sitting on** that much of your token gets a pinned 🐋 **WHALE WALLET** call, however small the buy.\n\n" +
@@ -898,7 +910,7 @@ const META = {
   // alert cards, which are what an operator actually opens this editor for.
   setup_admin_only: { group: "Group Setup", label: "Error: group admins only", ph: [] },
   setup_group_only: { group: "Group Setup", label: "Error: run it in a group", ph: [] },
-  settoken_usage: { group: "Group Setup", label: "/settoken — usage", ph: [] },
+  settoken_prompt: { group: "Group Setup", label: "/settoken — paste prompt", ph: [] },
   settoken_resolving: { group: "Group Setup", label: "/settoken — looking it up", ph: [] },
   settoken_not_found: { group: "Group Setup", label: "/settoken — no pool found", ph: [] },
   settoken_ok: { group: "Group Setup", label: "/settoken — armed ✅", ph: ["chain", "name", "symbol", "address"] },
@@ -911,7 +923,10 @@ const META = {
   setminbuy_ok: { group: "Group Setup", label: "/setminbuy — done", ph: ["usd"] },
   setminbuy_min: { group: "Group Setup", label: "/setminbuy — below the floor", ph: ["usd"] },
   setminbuy_toast: { group: "Group Setup", label: "/setminbuy — button toast", ph: ["usd"] },
-  setwhale_usage: { group: "Group Setup", label: "/setwhale — usage", ph: [] },
+  setwhale_panel: { group: "Group Setup", label: "/setwhale — picker", ph: ["usd", "chain", "unsupported"] },
+  setwhale_toast: { group: "Group Setup", label: "/setwhale — button toast", ph: ["usd"] },
+  setwhale_state_off: { group: "Group Setup", label: "Whale bar — the word for off", ph: [] },
+  setwhale_usage: { group: "Group Setup", label: "/setwhale — not an amount", ph: [] },
   setwhale_ok: { group: "Group Setup", label: "/setwhale — done", ph: ["usd", "chain", "unsupported"] },
   setwhale_unsupported: { group: "Group Setup", label: "/setwhale — chain can't be read", ph: ["chain"] },
   setwhale_off: { group: "Group Setup", label: "/setwhale off", ph: [] },
