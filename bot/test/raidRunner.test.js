@@ -81,11 +81,15 @@ test("a second raid is refused — it would overwrite the first one's lock snaps
 });
 
 test("a link that isn't an X post, and a raid with no goals, are both refused", async () => {
+  // Compared against the templates themselves — these refusals are
+  // admin-editable copy now, so matching a phrase would tie the test to wording
+  // the operator is invited to change. Which refusal fired is the behaviour.
+  const tpl = require("../src/templates");
   const bad = await runner.startRaid(fakeTg(), group({ postUrl: "https://dexvra.io" }));
-  assert.match(bad.error, /post link/i);
+  assert.strictEqual(bad.error, tpl.t("raid_bad_post"));
   store._reset();
   const none = await runner.startRaid(fakeTg(), group({ likes: 0, replies: 0, reposts: 0, crew: 0 }));
-  assert.match(none.error, /at least one goal/i);
+  assert.strictEqual(none.error, tpl.t("raid_no_goals"));
 });
 
 test("X unreadable + a crew goal DEGRADES rather than refusing", async () => {
@@ -195,7 +199,7 @@ test("reposts as the ONLY goal, with no way to count them, is refused", async ()
   xMetrics.fetchTweetMetrics = metricsOk({ retweets: null });
   const res = await runner.startRaid(fakeTg(), group({ likes: 0, replies: 0, reposts: 5, crew: 0 }));
   assert.strictEqual(res.ok, false);
-  assert.match(res.error, /can't be counted/i);
+  assert.strictEqual(res.error, require("../src/templates").t("raid_reposts_only"));
 });
 
 // ── The chat lock ────────────────────────────────────────────────────────────

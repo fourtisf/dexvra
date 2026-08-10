@@ -62,9 +62,13 @@ test("0 renders as 'off', not as '+0'", () => {
 test("the panel says up front what this install can actually measure", () => {
   const g = store.getOrCreate(CHAT);
   const text = panel.renderPanel(g).text;
-  // Nobody should set a likes goal and discover at launch that nothing can read it.
-  assert.match(text, /No X API key/i);
-  assert.match(text, /Crew goal works anyway/i);
+  // Nobody should set a likes goal and discover at launch that nothing can read
+  // it. Asserted as "the no-sources template is what got rendered", not against
+  // its prose: that copy is admin-editable now, so matching a phrase would tie
+  // this test to wording the operator is invited to change.
+  const tpl = require("../src/templates");
+  assert.ok(text.includes(tpl.t("raid_sources_none")), "the no-X-key line is on the panel");
+  assert.ok(!text.includes(tpl.t("raid_sources_partial")), "and not the paid-key one");
 });
 
 test("a live raid replaces the whole keyboard with Stop", () => {

@@ -347,27 +347,27 @@ const DEFAULTS = {
   // named here is a right the code genuinely exercises — ask for more than you
   // use and refusing all of it is the correct response.
   group_added:
-    "🟢 **Dexvra is in — one step left**\n\n" +
-    "Buy alerts and raids need three admin permissions:\n\n" +
-    "📌 **Pin messages** — whale alerts and the live raid card\n" +
-    "🗑 **Delete messages** — clears the raid panel once it closes\n" +
-    "🚫 **Ban users** — only for the optional raid chat lock\n\n" +
-    "Grant them under **Group Settings → Administrators**, then send **/start**.",
+    "🟢 **Dexvra is in**\n\n" +
+    "Make it admin and it starts calling every buy in here.\n\n" +
+    "📌 **Pin messages** — whale buys and the live raid board\n" +
+    "🗑 **Delete messages** — clears the raid panel when it ends\n" +
+    "🚫 **Ban users** — only if you switch on the raid chat lock\n\n" +
+    "**Group Settings → Administrators**, then hit **/start**.\n",
   // The setup guide, sent on /start in a group — the message straight after
   // group_added. Same voice as that one: section headers, one line of what it
   // does, then the commands. It used to be written in the first person ("make
   // me an admin", "DM me", "I keep a scoreboard"), which reads as a different
   // product to the card above it.
   group_start:
-    "🟢 **Dexvra — free tools for this group**\n\n" +
-    "**🤖 Buy Bot** — a live alert on every on-chain buy of your token: amount, price, market cap, the buyer's wallet, and a link to the transaction itself.\n" +
-    "Start with `/settoken <contract address>` · tune with `/setminbuy 50` · pause with `/buybot off`\n\n" +
-    "**🐋 Whale wallets** — a buy from a wallet already holding a lot of your token gets its own **pinned** alert.\n" +
+    "🟢 **Dexvra — free tools for your group**\n\n" +
+    "**🤖 Buy Bot** — every on-chain buy called in here the second it lands: size, price, mcap, the wallet, and the txn to prove it.\n" +
+    "`/settoken <CA>` to arm it · `/setminbuy 50` · `/buybot off`\n\n" +
+    "**🐋 Whale wallets** — when a wallet already deep in your bags adds more, that one gets **pinned**.\n" +
     "`/setwhale 50000` sets the bar · `/setwhale off` · `/buybot pin off`\n\n" +
-    "**🚀 Raid** — point the chat at one X post and keep a live scoreboard pinned until the targets are hit.\n" +
-    "`/raid` to set it up. No X API key needed — the 🤝 Crew goal counts whoever turns up.\n\n" +
-    "Works on Solana, BSC, Ethereum, Base, Tron, TON, Sui, Plasma and Robinhood.\n\n" +
-    "[List, trend or advertise your token]({bot})  ·  [Listing alerts on X]({xlisting})",
+    "**🚀 Raid** — point the chat at one post and keep the board pinned until the numbers hit.\n" +
+    "`/raid` to set it up. No X key needed — 🤝 Crew counts whoever shows up.\n\n" +
+    "Solana · BSC · Ethereum · Base · Tron · TON · Sui · Plasma · Robinhood\n\n" +
+    "[List, trend or advertise]({bot})  ·  [Listing alerts on X]({xlisting})",
   buybot_help:
     `${em("🟢", E.green)} **Group tools — free for your project**\n\n` +
     "Add @dexvrabot to your Telegram group and you get both of these, no charge:\n\n" +
@@ -399,13 +399,13 @@ const DEFAULTS = {
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
     // "Received", not "Got" — the card sits above a link to the transaction and
     // reads alongside an exchange fill, so it uses the vocabulary of one.
-    "🪙 **Received:** {tokenAmt} {symbol}\n" +
+    "🪙 **Bagged:** {tokenAmt} {symbol}\n" +
     `${em("📊", E.chart)} **Price:** {price} · 📈 **24h:** {change}\n` +
     // Market cap and liquidity, side by side: the two numbers that say whether
     // this buy is a rounding error or a dent. Both were already computed and
     // both were being thrown away — {liq} and {change} had been placeholders no
     // default template ever printed.
-    `${em("🏦", E.dollar)} **Market cap:** {mcap} · 💧 **Liquidity:** {liq}\n` +
+    `${em("🏦", E.dollar)} **MCap:** {mcap} · 💧 **Liq:** {liq}\n` +
     "{verify}\n" +
     // The buyer's own position, directly under WHO bought — how much of the
     // token that wallet now holds, what it is worth, and how much this buy grew
@@ -433,14 +433,14 @@ const DEFAULTS = {
     `${em("🐋", E.diamond)} **WHALE WALLET** · [{name}]({coinUrl})\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
-    "🪙 **Received:** {tokenAmt} {symbol}\n" +
-    "💰 **Holds:** {holds} {symbol} · **{holdsUsd}**\n" +
-    "📈 **Position:** {position} · 🎯 **Whale bar:** {whaleBar}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **Market cap:** {mcap}\n` +
+    "🪙 **Bagged:** {tokenAmt} {symbol}\n" +
+    "💰 **Bag:** {holds} {symbol} · **{holdsUsd}**\n" +
+    "📈 **Added:** {position} · 🎯 **Whale bar:** {whaleBar}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
     "{verify}\n\n" +
     // Says, in one line, WHY this alert is louder than the last one — a reader
     // who does not already know the rule cannot infer it from the numbers.
-    "🐋 A wallet this size adding to its position is conviction, not noise.\n\n" +
+    "🐋 Big bag getting bigger. That is not noise.\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
@@ -460,13 +460,13 @@ const DEFAULTS = {
     `${em("🟢", E.green)} **BUY PRESSURE** · {symbol}\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** ≈ {usd} across {count} {buysWord}\n` +
-    "🪙 **Received:** ≈ {tokenAmt} {symbol}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **Market cap:** {mcap}\n\n` +
+    "🪙 **Bagged:** ≈ {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n\n` +
     // Plain text, NOT `_italics_` — the premium-markup parser understands
     // **bold**, [links](url) and `code` and nothing else, so the underscores in
     // the previous version of this template reached the group as literal
     // underscores. Check src/premium.js `parse()` before adding markup here.
-    "⚠️ Estimated from pool volume — the live transaction feed is down, so there's no txn link on this one.\n\n" +
+    "⚠️ Estimated from pool volume — the live txn feed is down, so no txn link on this one.\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
@@ -480,49 +480,49 @@ const DEFAULTS = {
   //
   // These render through the same premium-markup parser as everything else:
   // **bold**, `code`, [text](url). NOT HTML tags.
-  setup_admin_only: "🔒 Only a **group admin** can change this.",
-  setup_group_only: "👥 This command runs inside your project's group — add the bot there first.",
-  settoken_usage: "📄 **Set your token**\n\nUsage: `/settoken <contract address>`",
-  settoken_resolving: "🔎 Resolving your token…",
+  setup_admin_only: "🔒 Group admins only.",
+  setup_group_only: "👥 This one runs in your group. Add the bot there first.",
+  settoken_usage: "📄 **Point it at your token**\n\n`/settoken <CA>`",
+  settoken_resolving: "🔎 Finding the pool…",
   settoken_not_found:
-    "❌ **No live pool for that address**\n\n" +
-    "Double-check the contract, or name the network first with `/setchain <chain>` and run `/settoken` again.",
+    "❌ **No live pool on that CA**\n\n" +
+    "Check the address, or name the chain first with `/setchain <chain>` and run `/settoken` again.",
   settoken_ok:
-    "✅ **Buy bot is live** on **{chain}**\n\n" +
+    "✅ **Armed on {chain}**\n\n" +
     "🪙 **{name}** ({symbol})\n\n" +
-    "Every on-chain buy of your token now posts here.\n" +
-    "`/setminbuy 50` only alert buys ≥ $50 · `/setwhale 50000` whale bar · `/buybot off` pause",
-  setchain_unknown: "❌ Unknown network.\n\nOne of: `{chains}`",
-  setchain_need_token: "📄 Set the token first: `/settoken <contract address>`",
-  setchain_ok: "✅ Network set to **{chain}** — pool re-resolved.",
-  setchain_ok_nopool: "⚠️ Network set to **{chain}** — no pool found yet. It will keep retrying each cycle.",
-  setminbuy_usage: "💲 **Minimum buy to alert**\n\nUsage: `/setminbuy 50`",
-  setminbuy_ok: "✅ Minimum buy to alert: **{usd}**.",
+    "Every buy gets called in here from now on.\n" +
+    "`/setminbuy 50` floor · `/setwhale 50000` whale bar · `/buybot off` pause",
+  setchain_unknown: "❌ Not a chain we run on.\n\nOne of: `{chains}`",
+  setchain_need_token: "📄 Set the token first: `/settoken <CA>`",
+  setchain_ok: "✅ Chain set to **{chain}** — pool found.",
+  setchain_ok_nopool: "⚠️ Chain set to **{chain}** — no pool yet. It keeps looking every cycle.",
+  setminbuy_usage: "💲 **Floor for alerts**\n\n`/setminbuy 50` — anything under that stays quiet.",
+  setminbuy_ok: "✅ Floor set — only buys **{usd}** and up get called.",
   setwhale_usage:
-    "🐋 **Whale wallet bar**\n\n" +
-    "Usage: `/setwhale 50000` — a buyer **already holding** at least this much of your token gets its own pinned 🐋 **WHALE WALLET** alert, whatever they just spent.\n\n" +
-    "`/setwhale off` turns it off.",
+    "🐋 **Whale bar**\n\n" +
+    "`/setwhale 50000` — anyone **already sitting on** that much of your token gets a pinned 🐋 **WHALE WALLET** call, however small the buy.\n\n" +
+    "`/setwhale off` to kill it.",
   setwhale_ok:
-    "🐋 **Whale wallet: {usd}**\n\n" +
-    "A buy from a wallet holding that much gets its own **pinned** alert.{unsupported}",
+    "🐋 **Whale bar: {usd}**\n\n" +
+    "A buy from a bag that size gets **pinned** in here.{unsupported}",
   // Appended to setwhale_ok as {unsupported}. Its own template because it is a
   // caveat an operator may want to word differently — or drop.
   setwhale_unsupported:
-    "\n\n⚠️ Holdings can't be read on **{chain}** yet, so whale alerts stay quiet until that changes.",
-  setwhale_off: "🐋 Whale wallet alerts are **off** here.",
-  pin_on: "📌 Whale alerts will be **pinned** here — each new one replaces the last. The bot needs the **Pin messages** permission.",
-  pin_off: "📌 Whale alerts **won't be pinned** here.",
-  buybot_on: "🟢 **Buy bot on** — alerts resume here.",
-  buybot_off: "🔴 **Buy bot off** — alerts paused. `/buybot on` brings them back.",
-  buybot_need_token: "📄 Buy bot isn't set up here yet. Run `/settoken <contract address>`.",
+    "\n\n⚠️ Bags aren't readable on **{chain}** yet, so whale calls stay off until they are.",
+  setwhale_off: "🐋 Whale calls **off** here.",
+  pin_on: "📌 Whale calls get **pinned** — each new one replaces the last. Needs the **Pin messages** permission.",
+  pin_off: "📌 Whale calls **won't be pinned** here.",
+  buybot_on: "🟢 **Buy bot on** — calls resume.",
+  buybot_off: "🔴 **Buy bot off** — calls paused. `/buybot on` brings it back.",
+  buybot_need_token: "📄 Nothing set up here yet. Run `/settoken <CA>`.",
   buybot_status:
     "📊 **Buy bot status**\n\n" +
-    "🪙 **Token:** `{address}`\n" +
-    "🔗 **Network:** {chain}\n" +
+    "🪙 **CA:** `{address}`\n" +
+    "🔗 **Chain:** {chain}\n" +
     "💧 **Pool:** {pool}\n" +
-    "💲 **Min buy:** {minBuy}\n" +
-    "🐋 **Whale wallet:** {whale}\n" +
-    "📌 **Pin whale alerts:** {pin}\n" +
+    "💲 **Floor:** {minBuy}\n" +
+    "🐋 **Whale bar:** {whale}\n" +
+    "📌 **Pin whales:** {pin}\n" +
     "⚡ **State:** {state}",
   // ── Dexvra Raid ─────────────────────────────────────────────────────────
   // The live card and its three end states. {progress} is GENERATED (the goal
@@ -572,34 +572,34 @@ const DEFAULTS = {
   raid_panel:
     "🚀 **DEXVRA RAID**\n\n" +
     "🔗 **Post:** {post}\n\n" +
-    "🎯 **Goals**\n" +
+    "🎯 **Targets**\n" +
     "{goals}\n\n" +
     "🔒 **Chat lock:** {lock}\n" +
     "{record}\n\n" +
-    "Goals count **up** from the post's numbers at launch. A raid ends after {maxMinutes} minutes.\n" +
+    "Targets count **up** from where the post is at launch. A raid runs {maxMinutes} min max.\n" +
     "{sources}",
-  raid_panel_record: "📈 **Group record:** {started} run · {completed} cleared",
-  raid_sources_none: "⚡ No X API key on this bot — the 🤝 **Crew** goal works anyway, and needs nothing.",
-  raid_sources_partial: "⚡ Reposts need a paid X key — **Likes**, **Replies** and **Crew** work.",
-  raid_group_only: "👥 Raids run inside a group.\n\nAdd me to your project's group, make me an admin, then send `/raid` there.",
-  raid_admin_only: "🔒 Only a **group admin** can set up a raid.",
+  raid_panel_record: "📈 **Record:** {started} run · {completed} cleared",
+  raid_sources_none: "⚡ No X key on this bot — 🤝 **Crew** still works, and needs nothing.",
+  raid_sources_partial: "⚡ Reposts need a paid X key — **Likes**, **Replies** and **Crew** are live.",
+  raid_group_only: "👥 Raids run in a group.\n\nAdd the bot to yours, make it admin, then hit `/raid` there.",
+  raid_admin_only: "🔒 Group admins only.",
   // The example is deliberately NOT a Dexvra link. It used to be, and it told
   // the reader to paste a post from an account that is not theirs — the raid is
   // meant to point at the PROJECT's own post.
   raid_seturl_prompt: "🔗 **Paste the X post link you want raided.**\n\nLike: `https://x.com/yourproject/status/1234567890`",
   raid_bad_url: "❌ That isn't an X post link.\n\nPaste the full URL of the post — it has to contain `/status/`.",
-  raid_none_running: "🚀 No raid is running here.\n\nSend `/raid` to set one up.",
+  raid_none_running: "🚀 Nothing running here.\n\nHit `/raid` to set one up.",
   // Launch refusals. Only the ones that are pure prose live here — the two that
   // splice in a diagnostic from the X layer ("…— 429 from the guest API") stay
   // in runner.js, because an operator cannot improve a machine-generated reason
   // and a botched edit would hide the one line that says what actually broke.
-  raid_already_running: "🚀 A raid is already running in this group.",
+  raid_already_running: "🚀 One is already running here.",
   raid_already_launching: "⏳ That raid is already being launched.",
   raid_bad_post: "❌ That post link doesn't look right.\n\nPaste the full URL of an X post.",
-  raid_no_goals: "🎯 Set at least one goal first.",
+  raid_no_goals: "🎯 Set at least one target first.",
   raid_reposts_only:
-    "🔁 Reposts are the only goal set, and they can't be counted without a **paid** X API key.\n\n" +
-    "Set a ❤️ **Likes**, 💬 **Replies** or 🤝 **Crew** goal and launch again.",
+    "🔁 Reposts are the only target set, and nothing can count them without a **paid** X key.\n\n" +
+    "Add ❤️ **Likes**, 💬 **Replies** or 🤝 **Crew** and launch again.",
   // The icons and bar characters inside {progress}. Six fields, pipe-separated:
   //   likes | replies | reposts | crew | bar-filled | bar-empty
   // PLAIN UNICODE ONLY. This string is split apart and rebuilt inside a
