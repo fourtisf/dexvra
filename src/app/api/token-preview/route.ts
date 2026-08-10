@@ -267,6 +267,9 @@ export async function GET(req: NextRequest) {
   // between those cost two deploys.
   if (req.nextUrl.searchParams.get("debug") === "1") {
     const tried: Record<string, unknown> = {};
+    // Which BUILD answered. The absence of this field is itself the answer:
+    // an older bundle has no debug branch at all and replies { token, chain }.
+    tried.build = process.env.NEXT_PUBLIC_BUILD ?? "unknown";
     tried.candidates = candidateChains(address);
     tried.dexscreener = await fromDexScreener(address, chain || undefined).catch((e) => `error: ${String(e)}`);
     tried.gtSearch = await searchNetwork(address).catch((e) => `error: ${String(e)}`);

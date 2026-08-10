@@ -216,3 +216,13 @@ test("a failed lookup can be diagnosed instead of guessed at", () => {
   assert.match(dbg.slice(0, 700), /tried\.dexscreener/);
   assert.match(dbg.slice(0, 700), /tried\.gtSearch/);
 });
+
+test("the debug view names the build that answered it", () => {
+  // A debug endpoint that replies in an OLD response shape means the server was
+  // never rebuilt, and working that out cost a round trip. The build stamp makes
+  // "is it deployed?" answerable from the response itself.
+  assert.match(ROUTE, /tried\.build = process\.env\.NEXT_PUBLIC_BUILD/);
+  const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+  assert.match(pkg.scripts.build, /NEXT_PUBLIC_BUILD=\$\(git rev-parse --short HEAD/);
+  assert.match(pkg.scripts.build, /\|\| echo unknown/, "a checkout with no .git still builds");
+});
