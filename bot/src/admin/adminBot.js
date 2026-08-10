@@ -101,7 +101,7 @@ const SAMPLE_VARS = {
   site: "https://dexvra.io", listing: "https://t.me/dexvralisting",
   trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
-  emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "@dexvrabot",
+  emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "https://t.me/dexvrabot", botName: "@dexvrabot",
   // Group buy alerts (verified path)
   tier: "Whale Buy", impact: "0.42%", change: "+18.4%",
   verify: "🔗 Txn · 👤 0x1f4b…9ac2",

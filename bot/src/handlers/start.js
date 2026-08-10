@@ -89,9 +89,13 @@ async function homeHandler(ctx) {
 // /start or /help inside a group → buy-bot setup steps for this group.
 async function sendGroupTemplate(ctx, key) {
   try {
-    const { BOT_USERNAME } = require("../config/constants");
     const { payloadArgs } = require("../helpers/message");
-    const { text, extra } = payloadArgs(tpl.render(key, { bot: `@${BOT_USERNAME}` }), false);
+    // NO { bot } override. baseVars() already supplies it as a t.me URL, and
+    // passing "@dexvrabot" here beat it — so a template using {bot} as a LINK
+    // TARGET produced entity URL '@dexvrabot', which Telegram rejects outright:
+    // "400: Wrong HTTP URL", and the whole message failed to send. Use
+    // {botName} when the @handle is wanted as text.
+    const { text, extra } = payloadArgs(tpl.render(key), false);
     await ctx.reply(text, { ...extra, disable_web_page_preview: true });
   } catch (e) {
     // LOUD. This used to swallow silently, and a swallowed failure here is
