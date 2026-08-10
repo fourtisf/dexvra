@@ -11,7 +11,16 @@ import { useApp } from "./AppState";
 import { BOT_URL } from "@/config/brand";
 import { shortAddr } from "@/lib/walletConnect";
 import { NAV_GROUPS } from "./Sidebar";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+
+/** What /api/token-preview hands back for a contract nobody has listed. */
+interface UnlistedHit {
+  name: string | null;
+  symbol: string | null;
+  priceUsd: number | null;
+  mcap: number | null;
+  logoUrl: string | null;
+}
 
 export function Topbar() {
   const { data, wallet, openWalletModal, disconnectWallet, toast, openDetail, homeQuery, setHomeQuery } = useApp();
@@ -20,6 +29,7 @@ export function Topbar() {
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState(false); // mobile ⋮ feature menu
   const pathname = usePathname();
+  const router = useRouter();
 
   // "/" focuses the topbar search from anywhere (prototype behavior)
   useEffect(() => {
@@ -46,6 +56,52 @@ export function Topbar() {
     setHomeQuery("");
     setOpen(false);
     openDetail(t);
+  };
+
+  // ── Pasting a CA that nobody has listed ────────────────────────────────────
+  // The buy bot is free and runs on any contract, so a pasted address is far
+  // more often an UNLISTED token than a listed one — and the box answered "No
+  // token matches", which is both wrong (the token exists) and a dead end.
+  const isCa = /^(0x[a-fA-F0-9]{40}|0x[a-fA-F0-9]+::.+|T[1-9A-HJ-NP-Za-km-z]{33}|(EQ|UQ|0:).{10,}|[1-9A-HJ-NP-Za-km-z]{32,44})$/.test(
+    homeQuery.trim(),
+  );
+  const [probe, setProbe] = useState<{ chain: string; token: UnlistedHit } | null>(null);
+  const [probing, setProbing] = useState(false);
+
+  useEffect(() => {
+    const address = homeQuery.trim();
+    // Only when the local list has nothing AND the text is a whole address:
+    // this reaches the network, so it must not fire on every keystroke of a
+    // ticker search that is about to match locally anyway.
+    if (!isCa || matches.length > 0) {
+      setProbe(null);
+      setProbing(false);
+      return;
+    }
+    let live = true;
+    setProbing(true);
+    const timer = setTimeout(() => {
+      fetch(`/api/token-preview?address=${encodeURIComponent(address)}`)
+        .then((r) => r.json())
+        .then((j) => {
+          if (!live) return;
+          setProbe(j?.token && j?.chain ? { chain: j.chain, token: j.token } : null);
+        })
+        .catch(() => live && setProbe(null))
+        .finally(() => live && setProbing(false));
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [homeQuery, isCa, matches.length]);
+
+  const goUnlisted = () => {
+    if (!probe) return;
+    const to = `/token/${probe.chain}/${encodeURIComponent(homeQuery.trim())}`;
+    setHomeQuery("");
+    setOpen(false);
+    router.push(to);
   };
 
   return (
@@ -122,7 +178,34 @@ export function Topbar() {
         {open && q && (
           <div className="search-dd">
             {matches.length === 0 ? (
-              <div className="sdd-empty">No token matches “{homeQuery.trim()}”.</div>
+              probing ? (
+                <div className="sdd-empty">Checking that contract…</div>
+              ) : probe ? (
+                <button className="sdd-item" onMouseDown={(e) => { e.preventDefault(); goUnlisted(); }}>
+                  {probe.token.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="sdd-logo" src={probe.token.logoUrl} alt="" width={30} height={30} />
+                  ) : (
+                    <div className="sdd-logo sdd-logo-ph">{(probe.token.symbol ?? "?").slice(0, 2).toUpperCase()}</div>
+                  )}
+                  <div className="sdd-id">
+                    <div className="sdd-sym">{probe.token.symbol ?? "Unknown"}</div>
+                    <div className="sdd-nm">
+                      {probe.token.name ?? shortAddr(homeQuery.trim())} · {CHAINS[probe.chain]?.label ?? probe.chain}
+                    </div>
+                  </div>
+                  <div className="sdd-px">
+                    {probe.token.priceUsd != null && <div>{fmtPrice(probe.token.priceUsd)}</div>}
+                    {probe.token.mcap != null && <div className="sdd-mc">MC {fmtCap(probe.token.mcap)}</div>}
+                  </div>
+                  <span className="sdd-unlisted">Not Yet Listed</span>
+                </button>
+              ) : (
+                <div className="sdd-empty">
+                  No token matches “{homeQuery.trim()}”.
+                  {isCa && " That contract isn't on any network we index."}
+                </div>
+              )
             ) : (
               matches.map((t) => {
                 const up = t.chg["24h"] >= 0;

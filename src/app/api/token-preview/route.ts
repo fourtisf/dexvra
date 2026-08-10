@@ -64,21 +64,74 @@ async function fetchPreview(network: string, address: string): Promise<Preview |
   };
 }
 
+/**
+ * Which chains a raw address could possibly be on, by SHAPE.
+ *
+ * Ordered most-likely-first within each family. Sui is tested before the plain
+ * 40-hex EVM pattern because its ids also start 0x — the EVM regex is
+ * exact-length so it would not match anyway, but relying on that is a trap for
+ * whoever edits the pattern next.
+ */
+const SHAPES: [RegExp, string[]][] = [
+  [/^0x[a-fA-F0-9]+::/, ["sui"]],
+  [/^0x[a-fA-F0-9]{40}$/, ["ethereum", "bsc", "base", "arbitrum", "polygon", "avalanche", "optimism", "plasma"]],
+  [/^T[1-9A-HJ-NP-Za-km-z]{33}$/, ["tron"]],
+  [/^(EQ|UQ|0:)/, ["ton"]],
+  [/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, ["solana"]],
+];
+
+const candidateChains = (address: string): string[] =>
+  SHAPES.find(([re]) => re.test(address))?.[1].filter((c) => CHAINS[c]?.geckoNetwork) ?? [];
+
+/**
+ * Find a contract on whichever chain actually has it.
+ *
+ * One address shape covers eight EVM chains, so they are probed IN PARALLEL —
+ * sequentially this is eight round trips before the search box can say
+ * anything, and the person typing has already given up. Ties break on market
+ * cap: the same address is deployed on several chains often enough (a bridged
+ * token, a copycat) that "first to answer" would be a race deciding which one
+ * a user sees.
+ */
+async function findAnyChain(address: string): Promise<{ chain: string; token: Preview } | null> {
+  const found = await Promise.all(
+    candidateChains(address).map(async (chain) => {
+      try {
+        const network = CHAINS[chain].geckoNetwork as string;
+        const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, address));
+        return token ? { chain, token } : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const hits = found.filter((x): x is { chain: string; token: Preview } => !!x);
+  hits.sort((a, b) => (b.token.mcap ?? 0) - (a.token.mcap ?? 0));
+  return hits[0] ?? null;
+}
+
 export async function GET(req: NextRequest) {
   const chain = (req.nextUrl.searchParams.get("chain") ?? "").trim();
   const address = (req.nextUrl.searchParams.get("address") ?? "").trim();
-  const network = CHAINS[chain]?.geckoNetwork;
   // The address goes into an upstream URL path, so it is bounded and character
   // -restricted here rather than trusted — the same guard /api/pool uses.
-  if (!network || !address || address.length > 90 || /[^A-Za-z0-9:_-]/.test(address)) {
-    return NextResponse.json({ token: null }, { status: 200 });
+  if (!address || address.length > 90 || /[^A-Za-z0-9:_-]/.test(address)) {
+    return NextResponse.json({ token: null, chain: null }, { status: 200 });
   }
   try {
+    // No chain given — the search box has a pasted CA and nothing else. Work
+    // out which chain it is on rather than making the person pick.
+    if (!chain) {
+      const hit = await findAnyChain(address);
+      return NextResponse.json({ token: hit?.token ?? null, chain: hit?.chain ?? null });
+    }
+    const network = CHAINS[chain]?.geckoNetwork;
+    if (!network) return NextResponse.json({ token: null, chain: null }, { status: 200 });
     const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, address));
-    return NextResponse.json({ token });
+    return NextResponse.json({ token, chain: token ? chain : null });
   } catch {
     // A feed outage must not turn the page into an error screen — it still has
     // the network, the contract and the way to list it.
-    return NextResponse.json({ token: null });
+    return NextResponse.json({ token: null, chain: null });
   }
 }
