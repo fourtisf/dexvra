@@ -1326,7 +1326,10 @@ async function tokenSnapshot(ca, chainKey) {
       return {
         ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
         priceEth: p4.priceEth, mcapEth: ts > 0n ? p4.priceEth * Number(ethers.formatUnits(ts, dec)) : 0,
-        dexVenue: 'v4', extVenue: 'Uniswap v4', routable: false, v4: p4,
+        // Routable exactly when the Universal Router is configured too. Reading a
+        // v4 price and being able to FILL a v4 swap are different capabilities,
+        // and the card must not offer a Buy button for the first alone.
+        dexVenue: 'v4', extVenue: 'Uniswap v4', routable: v4.canSwap(chainKey), v4: p4,
       };
     }
     // Still nothing on-chain. The indexers see venues we have no reader for at
@@ -1921,9 +1924,33 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
       // "no pool? try again", which sends the user to retry a buy that can never
       // fill no matter how many times they press it.
       if (pick.kind === 'v2' && !pick.pair) {
-        const m = await marketOf(ca, chainKey).catch(() => null);
-        if (m) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
+        const p4 = v4.canSwap(chainKey) ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null) : null;
+        if (p4) {
+          const dec4 = await tokenDecimals(ca, chainKey);
+          const px = v4.priceNativeFromSqrt(p4.sqrtPriceX96, dec4, p4.tokenIsZero);
+          if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
+          // minOut off the pool's SPOT, floored by the user's own slippage only.
+          // Spot cannot see concentrated-liquidity depth, so this floor is what
+          // makes a buy that would fill worse than they asked for revert instead
+          // of filling at a loss — the same reasoning as the V3 path above.
+          const expTok = (spend * 10n ** BigInt(dec4)) / BigInt(Math.max(1, Math.round(px * 1e18)));
+          const minTok = expTok * (10000n - slip) / 10000n;
+          if (minTok <= 0n) throw new Error('zero quote from the v4 pool for this token');
+          const call = v4.swapCalldata(chainKey, p4, { tokenIn: v4.NATIVE, amountIn: spend, minOut: minTok, deadline });
+          // SIMULATED BEFORE SIGNED. The action encoding is the part most likely
+          // to differ on a fork, and a wrong encoding has to cost a refused trade
+          // rather than a sent one.
+          const sim = await v4.simulate(providerFor(chainKey), wallet.address, call);
+          if (!sim.ok) throw new Error(`the v4 swap would revert (${sim.err}) — nothing was sent. Check the Universal Router config for ${chain.name}.`);
+          hash = await rawSend(wallet, chainKey, call.to, call.data, 700000n, call.value, gasBoost, { fee: gas });
+          venue = 'dex·v4'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
+          if (trc && trc.status === 0) throw new Error('the v4 buy reverted on-chain (price moved past your slippage, or gas) — try again. Tx: ' + hash);
+        } else {
+          const m = await marketOf(ca, chainKey).catch(() => null);
+          if (m) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
+        }
       }
+      if (!hash) {
       // NO price-impact ceiling. Operator's rule: the user must always be able
       // to buy. Their slippage is the only limit that applies, and the on-chain
       // minOut below enforces it — a trade that would fill worse than they
@@ -1958,6 +1985,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
         const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTok, [chain.weth, ca], wallet.address, deadline, { value: spend, ...gas });
         venue = 'dex'; hash = tx.hash; sent(hash); trc = await waitBuyReceipt(() => waitBounded(tx));
         if (trc && trc.status === 0) throw new Error('the buy reverted on-chain (price moved past your slippage, or gas) — try again or a smaller amount. Tx: ' + hash);
+      }
       }
     }
     // metaP was started with the preflight and is almost always already resolved;
@@ -2058,13 +2086,44 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // approval must target that venue's router, so pick it before approving.
     const pick = onCurve ? null : await bestDexVenue(ca, chainKey);
     const v3 = pick && pick.kind === 'v3' ? v3Cfg(chainKey) : null;
-    const spender = onCurve ? curve : (v3 ? v3.router : chain.router);
-    await ensureApprove(wallet, ca, spender, amount, chainKey);   // before ethBefore snapshot
+    // A v4 bag has no V2 pair and no V3 pool to approve, and its exit runs
+    // through Permit2 rather than a plain allowance — so it is resolved here,
+    // alongside the venue pick, and skips ensureApprove entirely. Buying into a
+    // venue that cannot be sold out of would be a trap, so this is not optional.
+    const p4Sell = (!onCurve && pick.kind === 'v2' && !pick.pair && v4.canSwap(chainKey))
+      ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null)
+      : null;
+    if (!p4Sell) {
+      const spender = onCurve ? curve : (v3 ? v3.router : chain.router);
+      await ensureApprove(wallet, ca, spender, amount, chainKey);   // before ethBefore snapshot
+    }
     const ethBefore = await ethBalance(wallet.address, chainKey);
 
     let venue, hash, trc, v3ProceedsWei = null;   // v3: the WETH the swap produced (accounting source of truth)
     let realizedThisSell = 0;   // profit/loss realized on this specific sell (for the receipt)
-    if (onCurve) {
+    if (p4Sell) {
+      const dec4 = await tokenDecimals(ca, chainKey);
+      const px = v4.priceNativeFromSqrt(p4Sell.sqrtPriceX96, dec4, p4Sell.tokenIsZero);
+      if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
+      const expEth = (amount * BigInt(Math.max(1, Math.round(px * 1e18)))) / 10n ** BigInt(dec4);
+      const minEth4 = expEth * (10000n - slip) / 10000n;
+      if (minEth4 <= 0n) throw new Error('zero quote from the v4 pool for this sell');
+      // Permit2 first: the router pulls the token through it, so the two
+      // approvals have to land before the swap is even simulated.
+      const pre = await v4.permit2Calls(providerFor(chainKey), chainKey, ca, wallet.address, amount);
+      if (!pre) throw new Error(`selling a v4 bag needs Permit2 configured on ${chain.name} — set ${chainKey.toUpperCase()}_V4_PERMIT2`);
+      for (const c of pre) {
+        const h = await rawSend(wallet, chainKey, c.to, c.data, 120000n, 0n, gasMult, { fee: gas });
+        const r = await waitHash(h, chainKey);
+        if (r && r.status === 0) throw new Error(`could not ${c.what} — the approval reverted. Tx: ${h}`);
+      }
+      const call = v4.swapCalldata(chainKey, p4Sell, { tokenIn: ca, amountIn: amount, minOut: minEth4, deadline });
+      const sim = await v4.simulate(providerFor(chainKey), wallet.address, call);
+      if (!sim.ok) throw new Error(`the v4 sell would revert (${sim.err}) — nothing was sent.`);
+      hash = await rawSend(wallet, chainKey, call.to, call.data, 700000n, 0n, gasMult, { fee: gas });
+      venue = 'dex·v4'; sent(hash); trc = await waitHash(hash, chainKey);
+      if (trc && trc.status === 0) throw new Error('the v4 sell reverted on-chain (price moved past your slippage, or gas) — try again. Tx: ' + hash);
+    } else if (onCurve) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
       // Quote with a SHAVE-TO-FIT guard. A holder of ~all circulating supply can sit
       // exactly on the curve's reserveEth boundary where selling the full bag makes the

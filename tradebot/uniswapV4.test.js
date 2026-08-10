@@ -102,12 +102,17 @@ test("the card is reached before the buy controls are built", () => {
   assert.ok(guard > -1 && meta > guard, "the guard sits ahead of the tradeable card");
 });
 
-test("the buy path names the venue instead of saying 'no pool? try again'", () => {
-  // That message told the user to retry a buy that can never fill, however many
-  // times they press it.
+test("the buy path routes v4 first, and names the venue when it cannot", () => {
+  // The old message ("no pool? try again") told the user to retry a buy that
+  // could never fill, however many times they pressed it.
   const i = CORE.indexOf("if (pick.kind === 'v2' && !pick.pair) {");
-  assert.ok(i > -1, "the unroutable-venue check is still in the buy path");
-  assert.match(CORE.slice(i, i + 400), /dsVenueLabel\(m\)/);
+  assert.ok(i > -1, "the no-pair branch is still in the buy path");
+  const body = CORE.slice(i, i + 2200);
+  assert.match(body, /v4\.canSwap\(chainKey\)/, "a v4 pool is tried before giving up");
+  assert.match(body, /v4\.simulate\(/, "and simulated before anything is signed");
+  assert.match(body, /dsVenueLabel\(m\)/, "the venue is named when there is nothing to route");
+  // The order matters: naming the venue is the FALLBACK, not the first answer.
+  assert.ok(body.indexOf("v4.canSwap") < body.indexOf("dsVenueLabel"), "v4 is tried first");
 });
 
 test("routable is set on BOTH snapshot returns, not just the new one", () => {

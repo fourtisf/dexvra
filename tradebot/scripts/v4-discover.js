@@ -130,6 +130,13 @@ const asTopic = (addr) => ethers.zeroPadValue(ethers.getAddress(addr), 32);
     }
     console.log('\n──────── paste into tradebot/.env ────────');
     console.log(`${P}_V4_POOLMANAGER=${best.pm}`);
+    // Pricing is half the job. Without the router the card shows the market and
+    // says it cannot fill a swap — which is honest, but not what you want.
+    console.log(`# Buy/Sell also needs the Universal Router (and Permit2 to sell):`);
+    console.log(`# ${P}_V4_UNIVERSAL_ROUTER=0x…`);
+    console.log(`# ${P}_V4_PERMIT2=0x…`);
+    console.log(`# Every swap is simulated before it is signed, so a wrong address here`);
+    console.log(`# refuses the trade rather than sending one.`);
     if (best.k.fee && !v4.DEFAULT_TIERS.some(([f, t]) => f === best.k.fee && t === best.k.tickSpacing)) {
       console.log(`${P}_V4_FEE_TIERS=${v4.DEFAULT_TIERS.map(([f, t]) => `${f}:${t}`).join(',')},${best.k.fee}:${best.k.tickSpacing}`);
       console.log(`# ↑ this pool's fee/tickSpacing is not one of the four the sweep tries by default`);

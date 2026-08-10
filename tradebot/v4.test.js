@@ -128,3 +128,72 @@ test("the deepest pool wins when several tiers exist", async () => {
     assert.strictEqual(best.fee, 10000);
   });
 });
+
+// ── Swapping ────────────────────────────────────────────────────────────────
+
+const PM = "0x" + "ab".repeat(20);
+const UR = "0x" + "cd".repeat(20);
+const P2 = "0x" + "ef".repeat(20);
+const POOL = { currency0: v4.NATIVE, currency1: TOKEN, fee: 3000, tickSpacing: 60, hooks: v4.NATIVE };
+
+test("reading and swapping are configured separately", () => {
+  // A chain can price v4 without being able to fill a v4 swap. Conflating them
+  // would put a Buy button on a card that cannot sign anything.
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: undefined }, () => {
+    assert.strictEqual(v4.enabled("robinhood"), true, "prices");
+    assert.strictEqual(v4.canSwap("robinhood"), false, "but cannot swap");
+    assert.strictEqual(v4.swapCalldata("robinhood", POOL, { tokenIn: v4.NATIVE, amountIn: 1n, minOut: 1n, deadline: 1 }), null);
+  });
+});
+
+test("a buy goes to the Universal Router, carrying the native amount as value", () => {
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR }, () => {
+    const c = v4.swapCalldata("robinhood", POOL, { tokenIn: v4.NATIVE, amountIn: 10n ** 16n, minOut: 123n, deadline: 1770000000 });
+    assert.strictEqual(c.to, UR);
+    assert.strictEqual(c.value, 10n ** 16n, "native in is paid as msg.value");
+    assert.strictEqual(c.zeroForOne, true, "native is currency0, so the swap is 0→1");
+    // execute(bytes,bytes[],uint256) — the Universal Router's only entry point.
+    assert.strictEqual(c.data.slice(0, 10), "0x3593564c");
+  });
+});
+
+test("a sell sends no value — the token is pulled through Permit2", () => {
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR }, () => {
+    const c = v4.swapCalldata("robinhood", POOL, { tokenIn: TOKEN, amountIn: 5n, minOut: 1n, deadline: 1 });
+    assert.strictEqual(c.value, 0n, "an ERC20 in must not carry msg.value");
+    assert.strictEqual(c.zeroForOne, false);
+    assert.strictEqual(c.currencyOut, v4.NATIVE, "and it takes native out");
+  });
+});
+
+test("the command and the action bytes are overridable per chain", () => {
+  // Uniswap's published values, but this bot has already been burned by a
+  // canonical address that did not match a fork. An action byte a deployment
+  // numbers differently would build a transaction that does something other
+  // than what it says.
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR }, () => {
+    assert.strictEqual(v4.routerCfg("robinhood").command, v4.CMD_V4_SWAP);
+    assert.strictEqual(v4.routerCfg("robinhood").swap, "06");
+  });
+  withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR, ROBINHOOD_V4_COMMAND: "0x11", ROBINHOOD_V4_ACTIONS: "07,0d,10" }, () => {
+    const rc = v4.routerCfg("robinhood");
+    assert.deepStrictEqual([rc.command, rc.swap, rc.settle, rc.take], ["0x11", "07", "0d", "10"]);
+  });
+});
+
+test("simulate() turns a bad encoding into a refusal, not a sent transaction", async () => {
+  const reverting = { call: async () => { throw new Error("execution reverted"); } };
+  const r = await v4.simulate(reverting, "0x" + "11".repeat(20), { to: UR, data: "0x", value: 0n });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.err, /revert/);
+  const fine = { call: async () => "0x" };
+  assert.strictEqual((await v4.simulate(fine, "0x" + "11".repeat(20), { to: UR, data: "0x", value: 0n })).ok, true);
+});
+
+test("selling refuses outright when Permit2 is not configured", async () => {
+  // Returning "no approvals needed" here would send a swap the router cannot
+  // fund, which reverts after paying gas.
+  await withEnv({ ROBINHOOD_V4_POOLMANAGER: PM, ROBINHOOD_V4_UNIVERSAL_ROUTER: UR, ROBINHOOD_V4_PERMIT2: undefined }, async () => {
+    assert.strictEqual(await v4.permit2Calls({}, "robinhood", TOKEN, "0x" + "11".repeat(20), 1n), null);
+  });
+});

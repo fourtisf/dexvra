@@ -87,8 +87,26 @@ const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(
 const usdX = (n) => {
   n = Number(n) || 0;
   if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+  // A memecoin price is routinely 0.0000026, and two decimal places rendered
+  // that as "$0.00" — the one number on the card the reader is there for, shown
+  // as zero. Below a cent, switch to the subscript form every chart uses:
+  // $0.0₅26 means five zeros then 26.
+  if (n > 0 && n < 0.01) return '$' + subZeros(n);
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
+const SUB = ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉'];
+const subDigits = (k) => String(k).split('').map((d) => SUB[Number(d)]).join('');
+/** 0.0000026 → "0.0₅26". Four significant digits, which is what a price needs to
+ *  be compared against the last one you looked at. */
+function subZeros(n) {
+  const exp = Math.floor(Math.log10(n));           // -6 for 2.6e-6
+  const zeros = -exp - 1;                          // leading zeros after "0."
+  const digits = Number(n.toPrecision(4)) / Math.pow(10, exp);
+  const sig = digits.toFixed(3).replace('.', '').replace(/0+$/, '') || '0';
+  // Two or fewer zeros reads fine written out; the subscript is for the rest.
+  if (zeros <= 2) return Number(n.toPrecision(4)).toFixed(zeros + 4).replace(/0+$/, '');
+  return `0.0${subDigits(zeros)}${sig}`;
+}
 // A "contract" the user can paste: a 0x EVM address OR a base58 Solana mint. Both
 // map to a token card (scoped to the active chain), and a withdraw destination.
 const isEvmCa = (s) => /^0x[0-9a-fA-F]{40}$/.test(String(s || '').trim());
