@@ -89,3 +89,79 @@ test("jobMirror.restoreAll restores job files missing on disk", async () => {
   assert.strictEqual(bc.cursor, 7);
   assert.strictEqual(md.status, "pending_review");
 });
+
+// ── Staying converged, not just converging once ──────────────────────────────
+//
+// The mirror write on every save is fire-and-forget so it can never delay a
+// payment or a message send — which also means a failed one leaves no trace.
+// These pin what notices.
+
+test("a store already in Mongo but STALE is re-seeded at boot", async () => {
+  // Only stores Mongo had NEVER seen used to be seeded. So one rejected kvSet
+  // (Mongo down for a moment) left that store stale in the mirror for good, and
+  // a restore handed back an old templates.json with the admin's newer premium
+  // emoji missing from it. Nothing anywhere would have said so.
+  const { kv } = fakeMongo({ "templates.json": { group_buy_alert: "OLD COPY" } });
+  fss.writeFileSync(
+    path.join(DATA, "templates.json"),
+    JSON.stringify({ group_buy_alert: "NEW COPY with [💎](emoji/5427168083074628963)" }, null, 2),
+  );
+  await persist.hydrate();
+  assert.match(kv.get("templates.json").group_buy_alert, /NEW COPY/, "the mirror caught up with the disk");
+});
+
+test("hydrate still refuses to clobber a present local file with the mirror's copy", async () => {
+  // The re-seed above must not have turned into a two-way sync. Disk wins.
+  fakeMongo({ "x.json": { from: "mongo" } });
+  fss.writeFileSync(path.join(DATA, "x.json"), JSON.stringify({ from: "disk" }, null, 2));
+  await persist.hydrate();
+  assert.deepStrictEqual(JSON.parse(fss.readFileSync(path.join(DATA, "x.json"), "utf8")), { from: "disk" });
+});
+
+test("a save whose mirror write FAILED is retried by the sweep", async () => {
+  // The whole point: the failure is silent and asynchronous, so the only thing
+  // that can fix it is something that re-checks later.
+  const { kv } = fakeMongo({});
+  let allow = false;
+  mongo.kvSet = async (n, d) => {
+    if (!allow) throw new Error("connection reset");
+    kv.set(n, d);
+  };
+  await persist.saveJSON("templates.json", { emoji: "[💎](emoji/5427168083074628963)" });
+  await new Promise((r) => setImmediate(r)); // let the fire-and-forget rejection land
+  assert.strictEqual(kv.has("templates.json"), false, "the mirror write really did fail");
+  allow = true;
+  const res = await persist.sweepMirror();
+  assert.strictEqual(res.mirrored, 1);
+  assert.deepStrictEqual(kv.get("templates.json"), { emoji: "[💎](emoji/5427168083074628963)" });
+});
+
+test("the sweep is free when nothing changed", async () => {
+  // It runs every few minutes forever, so a steady state must cost no Mongo
+  // writes at all — otherwise it is a background job rewriting every store.
+  const { kv } = fakeMongo({});
+  let writes = 0;
+  const realSet = mongo.kvSet;
+  mongo.kvSet = async (n, d) => {
+    writes++;
+    return realSet(n, d);
+  };
+  await persist.saveJSON("quiet.json", { a: 1 });
+  await new Promise((r) => setImmediate(r));
+  const before = writes;
+  await persist.sweepMirror();
+  await persist.sweepMirror();
+  assert.strictEqual(writes, before, "two sweeps, zero writes");
+  assert.deepStrictEqual(kv.get("quiet.json"), { a: 1 });
+});
+
+test("a corrupt local file never overwrites a good copy in the mirror", async () => {
+  // The mirror is precisely what survives the local file being wrong. A sweep
+  // that pushed truncated JSON up would destroy the thing it exists to protect.
+  const { kv } = fakeMongo({ "torn.json": { good: true } });
+  fss.writeFileSync(path.join(DATA, "torn.json"), '{"good": tr');
+  await persist.sweepMirror();
+  assert.deepStrictEqual(kv.get("torn.json"), { good: true }, "mirror untouched");
+  await persist.hydrate();
+  assert.deepStrictEqual(kv.get("torn.json"), { good: true }, "and hydrate leaves it alone too");
+});

@@ -221,5 +221,76 @@ pm2 stop dexvra-bot dexvra-adminbot   # bots only — the site keeps running
 - `.env`, `.keys/`, `data/` are gitignored — they live only on the server and
   survive `git pull`. Back up `.keys/` (temp-wallet keys) if any order hasn't
   swept yet.
-- MongoDB/Redis are **not** required — the bot uses the web app's JSON store via
-  the internal API and local JSON files for dedup/orders.
+- Redis is **not** required. MongoDB is optional but strongly recommended — see
+  below. Without it the bot runs exactly as it always has, on local JSON files.
+
+## Backup and recovery — `data/` is the only copy
+
+`data/` is gitignored, lives only on the server, and holds things that took real
+human effort to create and that nobody remembers well enough to redo:
+
+| File | What is in it |
+| --- | --- |
+| `templates.json` | every message an admin reworded in @dexvraadminbot — **including the premium emoji they pasted**, stored as text + entities |
+| `tokenemoji.json` | the `custom_emoji_id` of the animated pack minted for each paid listing |
+| `groups.json`, `orders.json`, … | group buy-bot config, paid orders, dedup latches |
+
+The emoji **packs** live on Telegram's side and survive this VPS. What does not
+survive is the mapping — which id belongs to which token, and which emoji sat in
+which position in which template. That mapping is these two files.
+
+### Turn the mirror on
+
+Set `MONGO_URI` in `bot/.env` (MongoDB Atlas free tier is enough — the whole
+store is well under a megabyte), then restart:
+
+```bash
+cd /opt/dexvra/bot && pm2 restart ecosystem.config.js --update-env
+```
+
+Turning it on late costs nothing: boot seeds the mirror from whatever is already
+on disk. Optional: `MONGO_DB` if the URI has no default database,
+`MIRROR_SWEEP_MS` to change how often the bot re-checks that the mirror is
+current (default 5 min, `0` disables).
+
+### Check it is really backed up
+
+```bash
+cd /opt/dexvra/bot && npm run mongo:check
+```
+
+It prints every store as **in sync** / **STALE IN MONGO** / **NOT MIRRORED**,
+and counts the premium emoji it can see on disk versus in the mirror. Exit code
+is non-zero when something is not backed up, so it works in a cron. To push
+anything stale immediately instead of waiting for the sweep:
+
+```bash
+npm run mongo:check -- --fix
+```
+
+Worth running once after any session where an admin edited templates.
+
+### Recover onto a new server
+
+Deploy normally, put the **same** `MONGO_URI` in `bot/.env`, and start the bots.
+`persist.hydrate()` runs before any handler reads state and writes back every
+store that is missing locally — templates, premium emoji, group config, the lot.
+`mediaMirror.hydrate()` does the same for the banner clips and the premium
+userbot session, so the GramJS login is recovered without a manual re-login.
+
+```bash
+cd /opt/dexvra/bot && pm2 restart ecosystem.config.js --update-env
+pm2 logs dexvra-bot --lines 50 --nostream | grep '\[persist\] mongo hydrate'
+```
+
+The log line says how many stores were found, restored and seeded. `restored 0`
+on a fresh box means nothing came back — check `MONGO_URI` before letting an
+admin start re-typing templates.
+
+**Hydrate never clobbers a file that is already there.** Disk wins for anything
+present, so restoring onto a box that still has its `data/` is a no-op rather
+than a rollback. To force a restore of one store, delete the local file and
+restart.
+
+`.keys/` (temp-wallet keys) is **not** mirrored — it is key material and stays
+off the network. Back it up separately if any order has not swept yet.

@@ -12,7 +12,8 @@
 const fss = require("node:fs");
 const { promises: fs } = require("node:fs");
 const path = require("node:path");
-const { DATA_DIR } = require("../config/constants");
+const crypto = require("node:crypto");
+const { DATA_DIR, MIRROR_SWEEP_MS } = require("../config/constants");
 const mongo = require("../db/mongo");
 const log = require("./logger");
 
@@ -40,15 +41,90 @@ async function writeFileAtomic(file, data) {
   await fs.rename(tmp, file);
 }
 
+// WHAT WE HAVE PROVED IS IN MONGO: store name → hash of the exact bytes whose
+// kvSet resolved. A fire-and-forget mirror write that rejected — Mongo down, a
+// network blip, a failover — leaves no trace anywhere, and boot-time seeding
+// only ever looked at stores Mongo had NEVER seen. So a store already in the
+// mirror that failed one write stayed stale in it for good, and the operator
+// had no way to know: `templates.json` is written the moment an admin saves a
+// template with their premium emoji in it, which is exactly the edit nobody
+// wants to redo. This map is what lets the sweep below notice and retry.
+const mirroredHash = new Map();
+const hashOf = (text) => crypto.createHash("sha1").update(text).digest("hex");
+// The same serialization writeFileAtomic uses, so a hash taken from the data
+// and a hash taken from the file on disk are comparable.
+const serialize = (data) => JSON.stringify(data, null, 2);
+
 async function saveJSON(name, data) {
   const file = path.join(DATA_DIR, name);
   await writeFileAtomic(file, data); // local file stays the primary (sync source of truth)
   // Durable mirror — best-effort, never blocks or fails the local write. A slow
-  // or down Mongo must never delay a payment/broadcast; boot-time seeding will
-  // catch anything a fire-and-forget write missed.
+  // or down Mongo must never delay a payment/broadcast; the sweep and boot-time
+  // convergence catch anything a fire-and-forget write missed.
   if (mongo.enabled()) {
-    mongo.kvSet(name, data).catch((e) => log.warn(`[persist] mongo mirror failed for ${name}: ${e && e.message}`));
+    const h = hashOf(serialize(data));
+    mongo
+      .kvSet(name, data)
+      .then(() => mirroredHash.set(name, h))
+      .catch((e) => {
+        // Drop any hash we were holding: this store is now UNPROVEN, and the
+        // sweep must treat it as needing a retry rather than as up to date.
+        mirroredHash.delete(name);
+        log.warn(`[persist] mongo mirror failed for ${name} — will retry on the next sweep: ${e && e.message}`);
+      });
   }
+}
+
+/**
+ * Re-mirror every local store whose bytes we have not PROVED are in Mongo.
+ *
+ * Cheap on purpose: it hashes local files and compares against what a kvSet
+ * actually confirmed, so a steady state costs one stat + read per store and no
+ * Mongo traffic at all. Mongo is only written to when something is genuinely
+ * out of sync.
+ */
+async function sweepMirror() {
+  if (!mongo.enabled()) return { swept: 0, mirrored: 0 };
+  let mirrored = 0;
+  const names = localKvFiles();
+  for (const name of names) {
+    let text;
+    try {
+      text = fss.readFileSync(path.join(DATA_DIR, name), "utf8");
+    } catch {
+      continue; // vanished between readdir and read — nothing to mirror
+    }
+    const h = hashOf(text);
+    if (mirroredHash.get(name) === h) continue;
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // A half-written or corrupt local file must NEVER overwrite a good mirror
+      // copy. The mirror is the thing that survives this file being wrong.
+      log.warn(`[persist] ${name} is not valid JSON — leaving the Mongo copy alone`);
+      continue;
+    }
+    try {
+      await mongo.kvSet(name, data);
+      mirroredHash.set(name, h);
+      mirrored++;
+    } catch (e) {
+      log.warn(`[persist] sweep could not mirror ${name}: ${e && e.message}`);
+    }
+  }
+  if (mirrored) log.info(`[persist] mongo sweep: re-mirrored ${mirrored} of ${names.length} store(s)`);
+  return { swept: names.length, mirrored };
+}
+
+/** Run sweepMirror on a timer. Returns a stop function. No-op without Mongo. */
+function startMirrorSweep(everyMs = MIRROR_SWEEP_MS) {
+  if (!mongo.configured() || everyMs <= 0) return () => {};
+  const iv = setInterval(() => {
+    sweepMirror().catch((e) => log.warn(`[persist] sweep error: ${e && e.message}`));
+  }, everyMs);
+  if (iv.unref) iv.unref();
+  return () => clearInterval(iv);
 }
 
 // Only top-level *.json files are KV stores (job dirs like broadcasts/ manage
@@ -85,20 +161,34 @@ async function hydrate() {
       if (!fss.existsSync(file) && d.data !== undefined) {
         try {
           await writeFileAtomic(file, d.data);
+          mirroredHash.set(d._id, hashOf(serialize(d.data)));
           restored++;
         } catch (e) {
           log.warn(`[persist] restore of ${d._id} failed: ${e && e.message}`);
         }
       }
     }
+    // Seed anything Mongo has never seen, AND re-seed anything whose mirrored
+    // copy no longer matches the disk. Only the first half used to happen, so a
+    // store that was mirrored once and then diverged — because a fire-and-forget
+    // kvSet rejected while Mongo was unreachable — stayed stale in the mirror
+    // permanently, and a restore would hand back an old templates.json with the
+    // admin's newer premium emoji missing from it.
+    const remote = new Map(docs.map((d) => [d._id, d.data]));
     for (const name of localKvFiles()) {
-      if (!inMongo.has(name)) {
-        try {
-          await mongo.kvSet(name, loadJSONSync(name, null));
-          seeded++;
-        } catch (e) {
-          log.warn(`[persist] seed of ${name} failed: ${e && e.message}`);
-        }
+      const local = loadJSONSync(name, null);
+      if (local === null) continue; // unreadable/corrupt — never overwrite a good mirror copy
+      const localText = serialize(local);
+      if (inMongo.has(name) && serialize(remote.get(name)) === localText) {
+        mirroredHash.set(name, hashOf(localText)); // already proven — skip it in the sweep
+        continue;
+      }
+      try {
+        await mongo.kvSet(name, local);
+        mirroredHash.set(name, hashOf(localText));
+        seeded++;
+      } catch (e) {
+        log.warn(`[persist] seed of ${name} failed: ${e && e.message}`);
       }
     }
     log.info(`[persist] mongo hydrate: ${docs.length} store(s) in db, restored ${restored}, seeded ${seeded}`);
@@ -139,4 +229,6 @@ class DedupSet {
   }
 }
 
-module.exports = { loadJSONSync, saveJSON, ensureDir, hydrate, DedupSet, DATA_DIR };
+module.exports = {
+  sweepMirror,
+  startMirrorSweep, loadJSONSync, saveJSON, ensureDir, hydrate, DedupSet, DATA_DIR };

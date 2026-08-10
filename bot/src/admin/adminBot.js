@@ -3412,6 +3412,11 @@ async function startAdminBot() {
   // serving the editor (fail-open without MONGO_URI).
   try {
     await require("../helpers/persist").hydrate();
+    // Keep it converged, not just converged once. Each save mirrors
+    // fire-and-forget, so a Mongo blip leaves that store unmirrored with nothing
+    // to notice — and the store most likely to be edited and least likely to be
+    // re-saved soon is templates.json, where an admin's premium emoji live.
+    require("../helpers/persist").startMirrorSweep();
     await require("../db/jobMirror").restoreAll(); // so /reviewbroadcasts sees pending jobs after a VPS reset
     await require("../db/mediaMirror").hydrate(); // restore banner clips/artwork so the editor previews them
   } catch (e) {

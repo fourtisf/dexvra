@@ -150,6 +150,11 @@ async function startBot() {
   // MONGO_URI). Must run before applyMiddleware → registerHandlers.
   try {
     await require("./helpers/persist").hydrate();
+    // Keep it converged, not just converged once. Each save mirrors
+    // fire-and-forget, so a Mongo blip leaves that store unmirrored with nothing
+    // to notice — and the store most likely to be edited and least likely to be
+    // re-saved soon is templates.json, where an admin's premium emoji live.
+    require("./helpers/persist").startMirrorSweep();
     await require("./db/jobMirror").restoreAll(); // resume in-flight broadcasts / paid Mass DMs after a VPS reset
     await require("./db/mediaMirror").hydrate(); // restore/seed binary media (banner clips + artwork)
   } catch (e) {

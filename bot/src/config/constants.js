@@ -108,6 +108,10 @@ const DATA_DIR = env.BOT_DATA_DIR || path.join(BOT_ROOT, "data");
 // bot processes share one DATA_DIR); at boot any store missing from disk is
 // restored from Mongo. Unset or unreachable → pure local-file mode (fail-open).
 const MONGO_URI = env.MONGO_URI || "";
+// How often persist.js re-checks that every local store is really in the mirror.
+// The mirror write on each save is fire-and-forget, so a Mongo blip leaves a
+// store unmirrored with nothing to notice it — this is what notices. 0 disables.
+const MIRROR_SWEEP_MS = Math.max(0, int(env.MIRROR_SWEEP_MS, 5 * 60 * 1000));
 const MONGO_DB = env.MONGO_DB || ""; // optional; default DB comes from the URI
 
 // ── Twitter / X (built, disabled unless keys present) ────────────────────────
@@ -323,6 +327,7 @@ module.exports = {
   WALLET_ENC_KEY,
   DATA_DIR,
   MONGO_URI,
+  MIRROR_SWEEP_MS,
   MONGO_DB,
   X,
   X_KEY_NAMES,
