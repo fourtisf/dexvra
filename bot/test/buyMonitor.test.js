@@ -234,9 +234,9 @@ test("groups sharing a pool each get their OWN verdict on one shared lookup", as
 
     assert.strictEqual(lookups, 1, "one RPC call served all three groups");
     assert.match(sent["-1"], /NEW BUY/, "the $25k group sees an ordinary buy");
-    assert.match(sent["-1"], /💼 Position: 10,000 \$DEX · \$10,000/, "…still carrying the position row");
+    assert.match(sent["-1"], /^Position: 10,000 \$DEX · \$10,000/m, "…still carrying the position row");
     assert.match(sent["-2"], /WHALE WALLET/, "the $5k group sees a whale");
-    assert.ok(!/💼/.test(sent["-3"]), "the opted-out group gets neither card nor row");
+    assert.ok(!/^Position:/m.test(sent["-3"]), "the opted-out group gets neither card nor row");
   } finally {
     trades.fetchPoolBuys = realFetch;
     gt.fetchPoolCached = realPool;
@@ -271,14 +271,14 @@ test("no links are invented on a chain we have no explorer for", () => {
 });
 
 test("the whole row vanishes when there is nothing to show", () => {
-  // The 👤 lives inside the row, so an empty one leaves no orphan icon behind.
+  // The label lives inside the row, so an empty one leaves nothing behind.
   assert.strictEqual(mon.verifyRow("nosuchchain", { txHash: "", buyer: "" }), "");
   const out = mon.renderRealAlert(
     { chatId: "-1", chain: "nosuchchain", address: "a", sym: "X", minBuyUsd: 0 },
     { txHash: "", buyer: "", usd: 10, tokenAmount: 5 },
     { priceUsd: 2, mcap: 100 },
   ).text;
-  assert.ok(!out.includes("👤"));
+  assert.ok(!/Buyer:/.test(out));
 });
 
 test("a buy with no buyer address still links the transaction", () => {

@@ -3,6 +3,50 @@
 // `family` selects the payment adapter; `native`/`decimals` drive on-chain
 // amount math; `geckoNetwork` drives live market data for posts.
 
+// DexScreener's own chain slug, for the 📈 Chart link on a group buy alert.
+//
+// Almost every id already matches; the map exists for the ones that do not, and
+// for the ONE chain DexScreener does not index at all. Robinhood Chain is
+// absent on purpose — GeckoTerminal carries it and DexScreener does not, so a
+// dexscreener.com/robinhood/… link would be a 404 on every alert. A missing
+// entry means "no chart there", and the caller falls back.
+const DEXSCREENER_SLUG = {
+  solana: "solana",
+  bsc: "bsc",
+  ethereum: "ethereum",
+  base: "base",
+  tron: "tron",
+  ton: "ton",
+  sui: "sui",
+  plasma: "plasma",
+  polygon: "polygon",
+  arbitrum: "arbitrum",
+  optimism: "optimism",
+  avalanche: "avalanche",
+  berachain: "berachain",
+  sonic: "sonic",
+  hyperevm: "hyperevm",
+  abstract: "abstract",
+  apechain: "apechain",
+  blast: "blast",
+  sei: "seiv2",
+  aptos: "aptos",
+  unichain: "unichain",
+};
+
+/**
+ * The DexScreener chart for a pool, or null when that chain isn't on it.
+ *
+ * Prefers the POOL address — that opens the exact pair the alert is reporting.
+ * A token address also resolves (DexScreener picks its top pair), so it is the
+ * fallback for a group whose pool hasn't been resolved yet.
+ */
+function chartUrl(chain, poolOrToken) {
+  const slug = DEXSCREENER_SLUG[String(chain || "").toLowerCase()];
+  if (!slug || !poolOrToken) return null;
+  return `https://dexscreener.com/${slug}/${poolOrToken}`;
+}
+
 const CHAINS = {
   solana: {
     id: "solana", label: "Solana", native: "SOL", family: "solana", decimals: 9,
@@ -286,6 +330,8 @@ function shortAddress(a, head = 6, tail = 4) {
 }
 
 module.exports = {
+  chartUrl,
+  DEXSCREENER_SLUG,
   CHAINS,
   CHAIN_ORDER,
   CHAIN_IDS,

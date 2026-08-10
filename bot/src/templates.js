@@ -396,16 +396,18 @@ const DEFAULTS = {
   group_buy_alert:
     `${em("🟢", E.green)} **{tier}** · [{name}]({coinUrl})\n\n` +
     "{emoji}\n\n" +
-    `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
-    // "Received", not "Got" — the card sits above a link to the transaction and
-    // reads alongside an exchange fill, so it uses the vocabulary of one.
-    "🪙 **Token:** {tokenAmt} {symbol}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · 📈 **24h:** {change}\n` +
+    // NO leading icon on the data rows. Six emoji stacked down the left edge is
+    // a column of decoration the eye has to skip past to reach the labels, and
+    // it fights the size row above — which is the ONE place on this card an
+    // emoji carries information. Bold labels do the scanning work.
+    "**Spent:** {usd}{native}\n" +
+    "**Token:** {tokenAmt} {symbol}\n" +
+    "**Price:** {price} · **24h:** {change}\n" +
     // Market cap and liquidity, side by side: the two numbers that say whether
     // this buy is a rounding error or a dent. Both were already computed and
     // both were being thrown away — {liq} and {change} had been placeholders no
     // default template ever printed.
-    `${em("🏦", E.dollar)} **MCap:** {mcap} · 💧 **Liq:** {liq}\n` +
+    "**MCap:** {mcap} · **Liq:** {liq}\n" +
     "{verify}\n" +
     // The buyer's own position, directly under WHO bought — how much of the
     // token that wallet now holds, what it is worth, and how much this buy grew
@@ -416,7 +418,8 @@ const DEFAULTS = {
     // {holds}, {holdsUsd} and {position} are the same three facts on their own
     // if you would rather lay them out yourself.
     "{wallet}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}){dexvraCta}\n" +
+    "{notListed}",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
   // whatever they just spent. Pinned in the group, so it is deliberately its own
   // card rather than the normal one with a louder word on it.
@@ -432,17 +435,18 @@ const DEFAULTS = {
   group_whale_alert:
     `${em("🐋", E.diamond)} **WHALE WALLET** · [{name}]({coinUrl})\n\n` +
     "{emoji}\n\n" +
-    `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
-    "🪙 **Token:** {tokenAmt} {symbol}\n" +
+    "**Spent:** {usd}{native}\n" +
+    "**Token:** {tokenAmt} {symbol}\n" +
     // The one row the ordinary card cannot carry: what this wallet is sitting
     // on, and how much this buy grew it. That IS the news — everything else on
     // this card is the same market context the buy card shows, deliberately, so
     // the louder alert is not also the thinner one.
-    "💰 **Position:** {holds} {symbol} · **{holdsUsd}** ({position})\n" +
-    `${em("📊", E.chart)} **Price:** {price} · 📈 **24h:** {change}\n` +
-    `${em("🏦", E.dollar)} **MCap:** {mcap} · 💧 **Liq:** {liq}\n` +
+    "**Position:** {holds} {symbol} · **{holdsUsd}** ({position})\n" +
+    "**Price:** {price} · **24h:** {change}\n" +
+    "**MCap:** {mcap} · **Liq:** {liq}\n" +
     "{verify}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}){dexvraCta}\n" +
+    "{notListed}",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
   // ever GROWS with the buy.
@@ -460,15 +464,22 @@ const DEFAULTS = {
   group_buy_alert_est:
     `${em("🟢", E.green)} **BUY PRESSURE** · {symbol}\n\n` +
     "{emoji}\n\n" +
-    `${em("💲", E.dollar)} **Spent:** ≈ {usd} across {count} {buysWord}\n` +
-    "🪙 **Token:** ≈ {tokenAmt} {symbol}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n\n` +
+    "**Spent:** ≈ {usd} across {count} {buysWord}\n" +
+    "**Token:** ≈ {tokenAmt} {symbol}\n" +
+    "**Price:** {price} · **MCap:** {mcap}\n\n" +
     // Plain text, NOT `_italics_` — the premium-markup parser understands
     // **bold**, [links](url) and `code` and nothing else, so the underscores in
     // the previous version of this template reached the group as literal
     // underscores. Check src/premium.js `parse()` before adding markup here.
     "⚠️ Estimated from pool volume — the live txn feed is down, so no txn link on this one.\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}){dexvraCta}\n" +
+    "{notListed}",
+  // Shown on a buy alert when the token is NOT on dexvra.io — which is most
+  // groups, because the buy bot is free and runs on any contract. It is the one
+  // place the product can be sold to a room that is already watching its own
+  // token trade, so it says what is missing and where to fix it, once, in a
+  // line that disappears the moment they list.
+  not_listed_note: "⚠️ {symbol} isn't listed on Dexvra yet — [list it in minutes]({bot})",
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
@@ -868,11 +879,12 @@ const META = {
   group_added: { group: "Group Setup", label: "Group: posted the moment the bot is added", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "trending"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl", "dexvraCta", "notListed"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
-  group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl", "dexvraCta", "notListed"] },
+  group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl", "coinUrl", "chartUrl", "dexvraCta", "notListed"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
+  not_listed_note: { group: "Group Buy Bot", label: "Buy alert: token not listed on Dexvra yet", ph: ["symbol", "bot", "site"] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.
   setup_admin_only: { group: "Group Setup", label: "Error: group admins only", ph: [] },
@@ -1126,6 +1138,31 @@ function dropEmptyLines(val, vars) {
   return { ...val, text: cut(text), entities };
 }
 
+/**
+ * A template's RAW MARKUP with its placeholders filled — for splicing one
+ * template into another as a placeholder value.
+ *
+ * NOT t(), which strips the markup: a spliced-in fragment carrying a [link] or
+ * **bold** would reach the reader as plain text, because the outer template is
+ * parsed AFTER substitution and there is nothing left to parse. NOT render()
+ * either — that returns a parsed payload whose entities the outer parse cannot
+ * re-absorb.
+ *
+ * Base vars are applied here too, since the value is substituted into the outer
+ * template as opaque text and the outer pass never re-scans it: a {bot} left
+ * inside the fragment would reach the group as the literal characters "{bot}".
+ *
+ * Limitation, and it is why this is only used for short fragments: a template an
+ * admin saved WITH premium-emoji entities contributes its text only — the custom
+ * emoji are dropped, because their offsets cannot be remapped into the host.
+ */
+function markup(key, vars) {
+  const all = loadAll();
+  const val = all[key] != null ? all[key] : DEFAULTS[key] || "";
+  const text = val && typeof val === "object" && val.text != null ? val.text : String(val);
+  return substitute(text, { ...baseVars(), ...(vars || {}) });
+}
+
 /** Plain-text resolve (markup stripped to clean text) — for previews/tests. */
 function t(key, vars) {
   const r = render(key, vars);
@@ -1290,6 +1327,7 @@ const groups = () => {
 
 module.exports = {
   t,
+  markup,
   render,
   renderValue,
   SOCIALS_BLOCK,

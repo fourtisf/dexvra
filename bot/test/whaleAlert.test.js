@@ -236,31 +236,31 @@ test("no alert template hardcodes a threshold", async () => {
   assert.ok(!/\$\s?50,?000/.test(card), "the default template hardcodes no threshold");
 });
 
-// ── 💼 Position on the ORDINARY buy card ─────────────────────────────────────
+// ── Position on the ORDINARY buy card ────────────────────────────────────────
 
 test("an ordinary buy carries the buyer's position, under the buyer", async () => {
   holdings.holdingOf = async () => 1_980_000; // × $0.05 = $99,000 — under the $50k? no, over
   const pos = await mon.buyerPosition(g(), { ...buy, tokenAmount: 51_874.15 }, pool);
   const out = mon.renderRealAlert(g(), buy, pool, pos).text;
   const lines = out.split("\n").filter(Boolean);
-  const buyerAt = lines.findIndex((l) => l.startsWith("👤 Buyer:"));
+  const buyerAt = lines.findIndex((l) => l.startsWith("Buyer:"));
   assert.ok(buyerAt >= 0, "the buyer row is still there");
-  assert.strictEqual(lines[buyerAt + 1], "💼 Position: 1,980,000 $RUSS · $99,000 (+2.69%)", "and the position sits right under it");
+  assert.strictEqual(lines[buyerAt + 1], "Position: 1,980,000 $RUSS · $99,000 (+2.69%)", "and the position sits right under it");
 });
 
 test("a first-ever buyer says so on the ordinary card too", async () => {
   holdings.holdingOf = async () => 51_874.15; // exactly what they just bought
   const pos = await mon.buyerPosition(g(), { ...buy, tokenAmount: 51_874.15 }, pool);
-  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Position: 51,874\.15 \$RUSS · \$2,594 \(new position\)/);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /^Position: 51,874\.15 \$RUSS · \$2,594 \(new position\)$/m);
 });
 
 test("an unreadable holding removes the WHOLE row, not just its value", async () => {
-  // A dangling "💼 Position:" with nothing after it is not a row, it is a
+  // A dangling "Position:" with nothing after it is not a row, it is a
   // rendering bug — and the buy is worth alerting either way.
   const out = mon.renderRealAlert(g(), buy, pool, null).text;
   assert.ok(!/Position/.test(out), "no label left behind");
-  assert.ok(!/💼/.test(out), "and no orphan emoji");
-  assert.match(out, /👤 Buyer:[^\n]*\n\n⚡ Trade/, "the buyer row runs straight into the CTA");
+  assert.ok(!/^Position:/m.test(out), "and no empty row left in its place");
+  assert.match(out, /^Buyer:[^\n]*\n\n⚡ Trade/m, "the buyer row runs straight into the CTA");
   assert.strictEqual(mon.positionRow(g(), null), "");
 });
 
@@ -288,8 +288,8 @@ test("the position row is read ONCE and serves both cards", async () => {
   };
   const pos = await mon.buyerPosition(g(), buy, pool);
   assert.strictEqual(calls, 1);
-  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Position: 2,000,000 \$RUSS · \$100,000/);
-  assert.match(mon.renderWhaleAlert(g(), buy, pool, { ...pos, threshold: 50000 }).text, /💰 Position: 2,000,000 \$RUSS · \$100,000/);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /^Position: 2,000,000 \$RUSS · \$100,000/m);
+  assert.match(mon.renderWhaleAlert(g(), buy, pool, { ...pos, threshold: 50000 }).text, /^Position: 2,000,000 \$RUSS · \$100,000/m);
   assert.strictEqual(calls, 1, "and the whale card did not order a second lookup");
 });
 

@@ -132,9 +132,10 @@ async function setwhale(ctx) {
   await cfg.upsert(ctx.chat.id, { whales: true, whaleWalletUsd: usd });
   const chain = (cfg.get(ctx.chat.id) || {}).chain;
   const label = chainOf(chain)?.label || "this network";
-  // The caveat is its OWN template, rendered to plain text and spliced in, so an
-  // operator can reword or delete it without touching the confirmation around it.
-  const unsupported = holdings.supports(chain) ? "" : tpl.t("setwhale_unsupported", { chain: label });
+  // Its OWN template, spliced in as raw MARKUP (not t(), which strips it — the
+  // **bold** chain name reached the group as plain text), so an operator can
+  // reword or delete the caveat without touching the confirmation around it.
+  const unsupported = holdings.supports(chain) ? "" : tpl.markup("setwhale_unsupported", { chain: label });
   await say(ctx, "setwhale_ok", { usd: usd$(usd), chain: label, unsupported });
 }
 

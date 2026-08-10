@@ -109,9 +109,9 @@ function renderPanel(g) {
     post: s.postUrl ? premium.sanitizeVar(s.postUrl) : "not set yet",
     goals,
     lock: s.lockChat ? "on" : "off",
-    record: g.stats.started > 0 ? tpl.t("raid_panel_record", { started: g.stats.started, completed: g.stats.completed || 0 }) : "",
+    record: g.stats.started > 0 ? tpl.markup("raid_panel_record", { started: g.stats.started, completed: g.stats.completed || 0 }) : "",
     maxMinutes: RAID_MAX_MINUTES,
-    sources: sourceKey ? tpl.t(sourceKey) : "",
+    sources: sourceKey ? tpl.markup(sourceKey) : "",
   });
   const { text, extra } = payloadArgs(payload, false);
 
