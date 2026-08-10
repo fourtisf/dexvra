@@ -128,12 +128,71 @@ chain → send a real contract address → Confirm. As an admin the amount is 0,
 it activates immediately: the listing should appear on the site and a post
 should land in `@dexvralisting`.
 
-## Update later
+## Update later — the standing release flow
+
+**The server runs `main`, and only `main`.** Work happens on a branch; the
+branch is merged to `main` before anything is deployed. A server left sitting
+on a feature branch is the failure this rule exists to prevent — the next
+change is cut from `main`, the two diverge, and nobody notices until a deploy
+quietly reverts a fix.
+
+The repo lives at **`/opt/dexvra`** on the production box. Run one step at a
+time and read the output; do not paste the whole block.
+
+**1 · Merge first (on your machine, not the server)**
 
 ```bash
-cd /path/to/dexvra && git pull
-npm ci && npm run build && pm2 restart dexvra --update-env
-cd bot && npm ci && pm2 restart ecosystem.config.js --update-env
+git checkout <branch> && cd bot && npm test    # green BEFORE the merge
+cd .. && git checkout main && git pull
+git merge <branch> && git push origin main
+```
+
+**2 · Pull on the server**
+
+```bash
+cd /opt/dexvra && git status          # must be clean — stop here if it is not
+cd /opt/dexvra && git checkout main && git pull
+```
+
+**3 · Verify before restarting anything**
+
+```bash
+cd /opt/dexvra/bot && npm test        # ~930 tests, all must pass
+cd /opt/dexvra/bot && npm run check   # boot-wiring smoke, no network
+```
+
+`npm ci` is only needed when `package.json` changed. It is not free — it wipes
+and rebuilds `node_modules`, including the native canvas binding.
+
+**4 · Restart**
+
+Bot-only change (nothing outside `bot/` in the diff):
+
+```bash
+cd /opt/dexvra/bot && pm2 restart ecosystem.config.js --update-env && pm2 ls
+```
+
+Web app touched as well:
+
+```bash
+cd /opt/dexvra && npm ci && npm run build && pm2 restart dexvra --update-env
+cd /opt/dexvra/bot && pm2 restart ecosystem.config.js --update-env && pm2 ls
+```
+
+Check which you need before you rebuild — a Next build on a live box costs
+minutes for nothing when the change never left `bot/`:
+
+```bash
+cd /opt/dexvra && git diff --name-only HEAD@{1}..HEAD | grep -v '^bot/'
+```
+
+Empty output means bot-only.
+
+**5 · Confirm**
+
+```bash
+pm2 ls                                # dexvra-bot AND dexvra-adminbot: online
+pm2 logs dexvra-adminbot --lines 40   # Ctrl+C to exit
 ```
 
 > Restart via **`ecosystem.config.js`**, not `pm2 restart dexvra-bot`. This
@@ -143,6 +202,12 @@ cd bot && npm ci && pm2 restart ecosystem.config.js --update-env
 > shows a new feature working while @dexvraadminbot has no editor entry for it,
 > which reads as "the template is missing" rather than "that process is stale".
 > Confirm both came back with `pm2 ls` before you call the deploy done.
+
+> **Shipping new default copy?** A template an admin has edited in
+> @dexvraadminbot is stored in `data/templates.json` and **wins over the code
+> default**, so the new wording will not appear on this box until someone opens
+> that template and taps **♻️ Reset default**. Per template — the
+> "♻️ Reset ALL templates" button throws away every other edit too.
 
 ## Rollback
 
