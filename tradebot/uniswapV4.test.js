@@ -141,9 +141,13 @@ test("GeckoTerminal answers when DexScreener does not", async () => {
     const m = await core.marketOf(CA, "ethereum");
     assert.ok(m, "the second opinion found it");
     assert.strictEqual(core.dsVenueLabel(m), "Uniswap v4", "and names the venue whole");
-    const probe = await core.marketProbe(CA);
-    assert.ok(probe.chains.includes("ethereum"));
+    // The probe asks the chain the user is ON first, and stops there — one
+    // request per paste instead of one per enabled chain, which is what got the
+    // free index answering 429.
+    const probe = await core.marketProbe(CA, "ethereum");
+    assert.deepStrictEqual(probe.chains, ["ethereum"]);
     assert.strictEqual(probe.source, "geckoterminal");
+    assert.strictEqual(probe.degraded, false);
   } finally { global.fetch = realFetch; }
 });
 
@@ -156,6 +160,7 @@ test("the probe reports what it checked when nothing is found", async () => {
     assert.deepStrictEqual(probe.chains, []);
     assert.ok(probe.checked.length > 1, "it names every chain it looked on");
     assert.strictEqual(probe.source, "none");
+    assert.strictEqual(probe.degraded, false, "the indexes answered — they just had nothing");
   } finally { global.fetch = realFetch; }
 });
 
@@ -178,10 +183,39 @@ test("an EVM address is lowercased for the indexers, a Solana mint is not", asyn
 });
 
 test("the dead-end card points at the chain that has the market", () => {
-  const i = TG.indexOf("const probe = await core.marketProbe(ca)");
+  const i = TG.indexOf("const probe = await core.marketProbe(ca,");
   assert.ok(i > -1, "the failure path still probes for a market");
-  const body = TG.slice(i, i + 1600);
+  const body = TG.slice(i, i + 2400);
   assert.match(body, /Open on \$\{c\.name\}/, "it offers to open the card on the right chain");
   assert.match(body, /tok:\$\{c\.key\}::\$\{ca\}/, "wired to the real card callback");
   assert.match(body, /DexScreener, GeckoTerminal/, "and names what it consulted when it finds nothing");
+  assert.match(body, /probe\.degraded/, "a throttled index is not reported as 'no market'");
+});
+
+test("a throttled index is reported as 'nobody answered', not 'no market'", async () => {
+  // A 429 and an empty result used to arrive identically, and the card then
+  // stated as fact that the token trades nowhere — about a token it had priced
+  // twenty minutes earlier. That is the difference between a fact and a guess.
+  const realFetch = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 429, json: async () => ({}) });
+  try {
+    core._clearReadCaches();
+    const probe = await core.marketProbe(CA, "robinhood");
+    assert.deepStrictEqual(probe.chains, []);
+    assert.strictEqual(probe.degraded, true);
+  } finally { global.fetch = realFetch; }
+});
+
+test("a throttled answer is never cached", async () => {
+  // Caching one rate-limited second for 30s spreads it across every paste in
+  // the next half minute.
+  const realFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => { calls++; return { ok: false, status: 429, json: async () => ({}) }; };
+  try {
+    core._clearReadCaches();
+    await core.dsMarket(CA, "ethereum");
+    await core.dsMarket(CA, "ethereum");
+    assert.strictEqual(calls, 2, "it asked again rather than replaying the failure");
+  } finally { global.fetch = realFetch; }
 });

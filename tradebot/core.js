@@ -1129,22 +1129,31 @@ const DS_CACHE_MAX = 500;
 
 /** Every DexScreener pair for a token, across all chains. [] on any failure —
  *  this is an enrichment, and a dead indexer must never break a trade screen. */
-async function dsPairs(ca) {
+async function dsPairsX(ca) {
   const key = String(ca).toLowerCase();
   const hit = _dsCache.get(key);
-  if (hit && Date.now() - hit.at < DS_TTL_MS) return hit.pairs;
-  let pairs = [];
+  if (hit && Date.now() - hit.at < DS_TTL_MS) return hit;
+  let pairs = [], ok = false;
   try {
     // LOWERCASED. An EVM address is case-insensitive but its EIP-55 checksum
     // form is not the string these indexes are keyed on, and a paste from a
     // block explorer is always the checksummed one.
     const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${_idQ(ca)}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+    // `ok` is whether the INDEX ANSWERED, kept apart from whether it had
+    // anything. A 429 and "this token has no market" both used to arrive as an
+    // empty array, and the card then told the user, flatly, that the token
+    // trades nowhere — about a token it had priced twenty minutes earlier.
+    ok = r.ok;
     if (r.ok) { const j = await r.json(); pairs = Array.isArray(j && j.pairs) ? j.pairs : []; }
-  } catch (_) { pairs = []; }
+  } catch (_) { ok = false; }
+  const rec = { at: Date.now(), pairs, ok };
   if (_dsCache.size >= DS_CACHE_MAX) _dsCache.delete(_dsCache.keys().next().value);
-  _dsCache.set(key, { at: Date.now(), pairs });
-  return pairs;
+  // Only a real answer is cached. Caching a throttled miss for 30s would spread
+  // one rate-limited second across every paste in the next half minute.
+  if (ok) _dsCache.set(key, rec);
+  return rec;
 }
+const dsPairs = async (ca) => (await dsPairsX(ca)).pairs;
 
 // Solana mints are base58 and CASE-SIGNIFICANT — lowercasing one destroys it.
 const _idQ = (ca) => (/^0x[a-fA-F0-9]{40}$/.test(String(ca)) ? String(ca).toLowerCase() : String(ca));
@@ -1158,15 +1167,16 @@ const _idQ = (ca) => (/^0x[a-fA-F0-9]{40}$/.test(String(ca)) ? String(ca).toLowe
 const GT_NET = { ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
 const _gtCache = new Map();   // `${chainKey}:${caLower}` → { at, m }
 
-async function gtMarket(ca, chainKey) {
+async function gtMarketX(ca, chainKey) {
   const net = GT_NET[chainKey];
-  if (!net) return null;
+  if (!net) return { m: null, ok: true };   // a chain GT does not cover — an answered 'no', not a failure
   const key = chainKey + ':' + String(ca).toLowerCase();
   const hit = _gtCache.get(key);
-  if (hit && Date.now() - hit.at < DS_TTL_MS) return hit.m;
-  let m = null;
+  if (hit && Date.now() - hit.at < DS_TTL_MS) return hit;
+  let m = null, ok = false;
   try {
     const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${_idQ(ca)}/pools?page=1`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+    ok = r.ok;
     if (r.ok) {
       const j = await r.json();
       const pools = Array.isArray(j && j.data) ? j.data : [];
@@ -1185,11 +1195,13 @@ async function gtMarket(ca, chainKey) {
         };
       }
     }
-  } catch (_) { m = null; }
+  } catch (_) { ok = false; }
+  const rec = { at: Date.now(), m, ok };
   if (_gtCache.size >= DS_CACHE_MAX) _gtCache.delete(_gtCache.keys().next().value);
-  _gtCache.set(key, { at: Date.now(), m });
-  return m;
+  if (ok) _gtCache.set(key, rec);
+  return rec;
 }
+const gtMarket = async (ca, chainKey) => (await gtMarketX(ca, chainKey)).m;
 
 const _dsLiq = (p) => Number((p && p.liquidity && p.liquidity.usd) || 0);
 
@@ -1252,14 +1264,40 @@ async function marketOf(ca, chainKey) {
  * a chain whose RPC was throttled looked identical to one that does not exist.
  * The failure card prints this, so a screenshot IS the diagnosis.
  */
-async function marketProbe(ca) {
+async function marketProbe(ca, preferChain) {
   const enabled = chains.enabledChains().map((c) => c.key);
-  const ds = await dsChainsOf(ca).catch(() => []);
-  if (ds.length) return { chains: ds, checked: enabled, source: 'dexscreener' };
-  // DexScreener came back empty — which is also what a throttled request looks
-  // like. Ask GeckoTerminal per chain before concluding the token has no market.
-  const gt = (await Promise.all(enabled.map(async (k) => ((await gtMarket(ca, k).catch(() => null)) ? k : null)))).filter(Boolean);
-  return { chains: gt, checked: enabled, source: gt.length ? 'geckoterminal' : 'none' };
+  const ds = await dsPairsX(ca).catch(() => ({ pairs: [], ok: false }));
+  const dsHits = _chainsFromPairs(ds.pairs, new Set(enabled));
+  if (dsHits.length) return { chains: dsHits, checked: enabled, source: 'dexscreener', degraded: false };
+  // DexScreener had nothing — which is ALSO what a throttled request looks like.
+  // Ask GeckoTerminal, but SEQUENTIALLY and starting with the chain the user is
+  // on. The first cut fired one request per enabled chain in parallel on every
+  // paste; six bursts a minute is how a free index starts answering 429, and a
+  // 429 read as "no market" is what made a token that priced fine at 19:50 read
+  // as nonexistent at 21:12.
+  const order = preferChain && enabled.includes(preferChain)
+    ? [preferChain, ...enabled.filter((k) => k !== preferChain)]
+    : enabled;
+  let gtOk = false;
+  for (const k of order) {
+    const r = await gtMarketX(ca, k).catch(() => ({ m: null, ok: false }));
+    gtOk = gtOk || r.ok;
+    if (r.m) return { chains: [k], checked: enabled, source: 'geckoterminal', degraded: false };
+  }
+  // Nothing found. Whether that means "no market" or "nobody answered" is the
+  // difference between a fact and a guess, and the card says which.
+  return { chains: [], checked: enabled, source: 'none', degraded: !ds.ok && !gtOk };
+}
+
+/** Enabled chains present in a DexScreener pair list, deepest market first. */
+function _chainsFromPairs(pairs, enabled) {
+  const byChain = new Map();
+  for (const p of pairs || []) {
+    const key = DS_TO_CHAIN[p && p.chainId];
+    if (!key || !enabled.has(key) || !(Number(p.priceUsd) > 0)) continue;
+    byChain.set(key, Math.max(byChain.get(key) || 0, _dsLiq(p)));
+  }
+  return [...byChain.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
 }
 
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.

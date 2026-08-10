@@ -772,7 +772,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     // true, with a chain picker attached and no hint of which entry to pick. Ask
     // the indexers where the market actually is — and if it is on a chain we
     // support, take the user straight there instead of describing the problem.
-    const probe = await core.marketProbe(ca).catch(() => ({ chains: [], checked: [], source: 'none' }));
+    const probe = await core.marketProbe(ca, chainKey).catch(() => ({ chains: [], checked: [], source: 'none', degraded: true }));
     const elsewhere = probe.chains.filter((k) => k !== chainKey);
     if (elsewhere.length) {
       const list = elsewhere.map((k) => core.chainOf(k)).filter(Boolean);
@@ -786,7 +786,12 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
       // Name what was consulted. A token on a chain whose RPC is being throttled
       // used to look exactly like one that does not exist, and neither the user
       // nor the operator could tell the two apart from this message.
-      : `\n\nNo pool on ${esc(ch.name)}, and no market on ${probe.checked.length ? probe.checked.map((k) => esc((core.chainOf(k) || {}).name || k)).join(', ') : 'any chain'} at either index (DexScreener, GeckoTerminal).\n\nUsually that means it is brand new, still on a launchpad bonding curve, or trading somewhere neither index covers.`
+      // A rate-limited index and a token with no market used to produce the same
+      // sentence. They are a guess and a fact, and this card must not state the
+      // guess as the fact — the same token priced fine twenty minutes earlier.
+      : probe.degraded
+        ? `\n\nNo pool on ${esc(ch.name)}, and <b>the price indexes didn't answer</b> just now (rate-limited or down), so whether it trades elsewhere is unknown. Try again in a minute.`
+        : `\n\nNo pool on ${esc(ch.name)}, and no market on ${probe.checked.length ? probe.checked.map((k) => esc((core.chainOf(k) || {}).name || k)).join(', ') : 'any chain'} at either index (DexScreener, GeckoTerminal).\n\nUsually that means it is brand new, still on a launchpad bonding curve, or trading somewhere neither index covers.`
         // A v4 pool is invisible to V2/V3 AND to both indexes on a chain they
         // don't cover — which is every way of looking this bot has, unless the
         // PoolManager is configured. Name the one thing that would fix it.
