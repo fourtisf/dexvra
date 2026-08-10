@@ -104,6 +104,7 @@ const SAMPLE_VARS = {
   // 🐋 WHALE WALLET card. {whaleBar} is the bar the wallet cleared — the group's
   // own /setwhale, else the global one in ⚙ Batas whale.
   holds: "1,980,000", holdsUsd: "$95,523", position: "+3.82%", whaleBar: "$50,000",
+  wallet: "💼 Position: 1,980,000 $BULLCAT · $95,523 (+3.82%)",
   tradeUrl: "https://t.me/dexvratradebot?start=ca_solana_G9j8",
   // Dexvra Raid. {progress} is GENERATED at render time, so the preview shows a
   // representative block rather than a placeholder — an admin editing the card
@@ -425,6 +426,8 @@ function wthText() {
     `• 💰 <b>Batas saldo dompet:</b> ${usdLabel(w.walletUsd)}\n` +
     `• 🔎 <b>Beli minimal dicek:</b> ${usdLabel(w.minBuyUsd)} — di bawah ini saldonya tidak dicek sama sekali (hemat panggilan RPC)\n` +
     `• 🐋 <b>Status:</b> ${w.enabled ? "🟢 aktif" : "🔴 mati"}\n\n` +
+    `⚠️ Status di atas mengatur <b>pembacaan saldo dompet</b> — jadi kalau dimatikan, baris ` +
+    `💼 <b>Position</b> di alert pembelian biasa <b>ikut hilang</b>. Satu pembacaan on-chain memberi dua-duanya, jadi satu saklar.\n\n` +
     `ℹ️ Ini nilai <b>global</b>. Grup yang menjalankan <code>/setwhale 50000</code> sendiri tetap pakai angkanya sendiri.\n\n` +
     `Berlaku di alert berikutnya — tanpa restart. Bawaan: ${usdLabel(d.walletUsd)}.`
   );
@@ -1527,6 +1530,7 @@ const PH_HELP = {
   holdsUsd: "that holding valued in USD at the pool price",
   position: "how much this buy grew their bag (or “new position”)",
   whaleBar: "the whale bar this wallet cleared (group’s /setwhale, else the global one)",
+  wallet: "the whole 💼 Position row — holding · value · growth (vanishes if unreadable)",
   impact: "this buy as a % of the pool’s liquidity",
   tokenAmt: "tokens the buyer received",
   usd: "USD the buyer spent",

@@ -323,9 +323,26 @@ The alert itself:
 📊 Price: $0.00004823 · 📈 24h: +18.4%
 🏦 Market cap: $46.5K · 💧 Liquidity: $183.5K
 👤 Buyer: AFqu1M…jcBb · View txn
+💼 Position: 1,980,000 $RUSS · $95,523 (+3.82%)
 
 ⚡ Trade on Dexvra · 📈 Chart · 🔥 Trending
 ```
+
+**`💼 Position` is who bought, not just how much.** Under the buyer's address:
+how much of the token that wallet holds *after* this trade, what it is worth
+at the pool price, and how much this buy grew it — `(new position)` on a
+first-ever buy rather than an invented `+100%`. It answers the question the
+address alone cannot: is this someone building, or someone passing through.
+
+It is the **same on-chain read the whale check already does**, so it costs no
+extra RPC call — the holding is a property of the wallet, looked up once per
+buy and shared by every group watching that pool. The row therefore appears
+under exactly the conditions that lookup happens: a supported chain, a buy
+over `BUYBOT_WHALE_CHECK_MIN_USD`, and whale detection left on. Miss any of
+those and `{wallet}` is empty and **the whole row vanishes** — emoji and label
+with it, because a dangling `💼 Position:` is not a row, it is a rendering
+bug. `/setwhale off` therefore drops this row too: reading the holding is the
+cost of both features, so it is one lever, not two.
 
 This is **deliberately not** the layout every copy-trading bot shares. Those
 are icon-only rows joined by `|`, with a `<Brand>Trending | Chart` footer —
@@ -384,6 +401,11 @@ resolves in three layers, most specific first:
 | `/setwhale 50000` | in the project's own group | that group |
 | ⚙ **Batas whale** | @dexvraadminbot → 🎨 Gambar Banner Channel → 🐋 Whale Alert | every group with no preference |
 | `BUYBOT_WHALE_WALLET_USD` | `.env`, default **$50,000** | the shipped fallback |
+
+Each group judges the shared holding against **its own** bar. Two groups on
+one pool with different bars used to get one verdict computed for whichever
+was listed first; the same buy is now a whale to the group that set $5,000 and
+an ordinary buy — with the 💼 Position row — to the one that set $25,000.
 
 The admin-bot layer is read **fresh on every check** — deliberately, because
 the admin bot runs as its own process, so a cache in the main bot would

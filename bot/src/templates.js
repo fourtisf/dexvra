@@ -382,7 +382,16 @@ const DEFAULTS = {
     // both were being thrown away — {liq} and {change} had been placeholders no
     // default template ever printed.
     `${em("🏦", E.dollar)} **Market cap:** {mcap} · 💧 **Liquidity:** {liq}\n` +
-    "{verify}\n\n" +
+    "{verify}\n" +
+    // The buyer's own position, directly under WHO bought — how much of the
+    // token that wallet now holds, what it is worth, and how much this buy grew
+    // it. {wallet} is the WHOLE row (emoji and label included) so it VANISHES
+    // rather than leaving a dangling label whenever the holding could not be
+    // read: an unsupported chain, an RPC that did not answer, a buy under the
+    // dust floor, or a group that turned holdings off with /setwhale off.
+    // {holds}, {holdsUsd} and {position} are the same three facts on their own
+    // if you would rather lay them out yourself.
+    "{wallet}\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
   // whatever they just spent. Pinned in the group, so it is deliberately its own
@@ -741,7 +750,7 @@ const META = {
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
   group_start: { group: "Group Buy Bot", label: "Group tools: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "trending"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
   group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },

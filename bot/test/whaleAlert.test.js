@@ -214,6 +214,76 @@ test("the card states the bar this wallet CLEARED, never a hardcoded $50,000", a
   assert.ok(!/\$50,?000/.test(card), "the default template hardcodes no threshold");
 });
 
+// ── 💼 Position on the ORDINARY buy card ─────────────────────────────────────
+
+test("an ordinary buy carries the buyer's position, under the buyer", async () => {
+  holdings.holdingOf = async () => 1_980_000; // × $0.05 = $99,000 — under the $50k? no, over
+  const pos = await mon.buyerPosition(g(), { ...buy, tokenAmount: 51_874.15 }, pool);
+  const out = mon.renderRealAlert(g(), buy, pool, pos).text;
+  const lines = out.split("\n").filter(Boolean);
+  const buyerAt = lines.findIndex((l) => l.startsWith("👤 Buyer:"));
+  assert.ok(buyerAt >= 0, "the buyer row is still there");
+  assert.strictEqual(lines[buyerAt + 1], "💼 Position: 1,980,000 $RUSS · $99,000 (+2.69%)", "and the position sits right under it");
+});
+
+test("a first-ever buyer says so on the ordinary card too", async () => {
+  holdings.holdingOf = async () => 51_874.15; // exactly what they just bought
+  const pos = await mon.buyerPosition(g(), { ...buy, tokenAmount: 51_874.15 }, pool);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Position: 51,874\.15 \$RUSS · \$2,594 \(new position\)/);
+});
+
+test("an unreadable holding removes the WHOLE row, not just its value", async () => {
+  // A dangling "💼 Position:" with nothing after it is not a row, it is a
+  // rendering bug — and the buy is worth alerting either way.
+  const out = mon.renderRealAlert(g(), buy, pool, null).text;
+  assert.ok(!/Position/.test(out), "no label left behind");
+  assert.ok(!/💼/.test(out), "and no orphan emoji");
+  assert.match(out, /👤 Buyer:[^\n]*\n\n⚡ Trade/, "the buyer row runs straight into the CTA");
+  assert.strictEqual(mon.positionRow(g(), null), "");
+});
+
+test("every reason a holding is unreadable ends in no row, never a broken one", async () => {
+  const cases = {
+    "unsupported chain": [{ ...g(), chain: "ton" }, buy, pool],
+    "buy under the dust floor": [g(), { ...buy, usd: 5 }, pool],
+    "no buyer address": [g(), { ...buy, buyer: null }, pool],
+    "no price to value it at": [g(), buy, { ...pool, priceUsd: 0 }],
+    "group turned holdings off": [{ ...g(), whales: false }, buy, pool],
+  };
+  holdings.holdingOf = async () => 2_000_000;
+  for (const [why, args] of Object.entries(cases)) {
+    assert.strictEqual(await mon.buyerPosition(...args), null, why);
+    assert.ok(!/Position/.test(mon.renderRealAlert(args[0], args[1], args[2], null).text), `${why}: no dangling row`);
+  }
+});
+
+test("the position row is read ONCE and serves both cards", async () => {
+  // The holding is a property of the wallet; only the verdict on it differs.
+  let calls = 0;
+  holdings.holdingOf = async () => {
+    calls++;
+    return 2_000_000; // $100,000
+  };
+  const pos = await mon.buyerPosition(g(), buy, pool);
+  assert.strictEqual(calls, 1);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Position: 2,000,000 \$RUSS · \$100,000/);
+  assert.match(mon.renderWhaleAlert(g(), buy, pool, { ...pos, threshold: 50000 }).text, /💰 Holds: 2,000,000 \$RUSS · \$100,000/);
+  assert.strictEqual(calls, 1, "and the whale card did not order a second lookup");
+});
+
+// ── Two groups, one pool ─────────────────────────────────────────────────────
+
+test("each group judges the SAME holding against its OWN bar", async () => {
+  // A shared pool used to hand group two whatever verdict group one got.
+  const pos = { held: 200_000, holdsUsd: 10_000, position: "+1.00%" };
+  assert.strictEqual(mon.whaleBarFor({ whaleWalletUsd: 25000 }), 25000);
+  assert.strictEqual(mon.whaleBarFor({ whaleWalletUsd: 5000 }), 5000);
+  assert.strictEqual(mon.whaleBarFor({}), whaleCfg.get().walletUsd, "no preference → the global bar");
+  // $10,000 held: a whale to the $5k group, an ordinary buy to the $25k one.
+  assert.ok(pos.holdsUsd >= mon.whaleBarFor({ whaleWalletUsd: 5000 }));
+  assert.ok(pos.holdsUsd < mon.whaleBarFor({ whaleWalletUsd: 25000 }));
+});
+
 // ── Pinning ──────────────────────────────────────────────────────────────────
 
 function tgSpy(over = {}) {

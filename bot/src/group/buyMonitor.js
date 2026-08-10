@@ -300,9 +300,30 @@ function verifyRow(chain, buy) {
   return bits.length ? `👤 **Buyer:** ${bits.join(" · ")}` : "";
 }
 
+/**
+ * The buyer's own position in the token, directly under the buyer's address —
+ * "💼 **Position:** 1,980,000 $RUSS · $95,523 (+3.82%)".
+ *
+ * Three facts in one row: how much of the token that wallet holds AFTER this
+ * trade, what it is worth at the pool price, and how much this buy grew it. A
+ * first-ever buy reads "(new position)" rather than an invented +100%.
+ *
+ * Returns "" — the whole row, emoji and label included — whenever the holding
+ * could not be read: an unsupported chain, an RPC that did not answer, a buy
+ * under the dust floor, or a group that turned holdings off. Same rule as
+ * verifyRow above: a label with a dash after it is not a row, it is a rendering
+ * bug, and the buy is worth alerting either way.
+ */
+function positionRow(g, pos) {
+  if (!pos || !(pos.held > 0)) return "";
+  const sym = premium.sanitizeVar(`$${String(g.sym || "").replace(/^\$/, "") || "TOKEN"}`);
+  return `💼 **Position:** ${tokenAmount(pos.held)} ${sym} · ${usdAmount(pos.holdsUsd)} (${pos.position})`;
+}
+
 /** Every value both buy cards share. Split out so the whale card cannot drift
- *  away from the ordinary one — the two are the same event, told differently. */
-function alertVars(g, buy, pool) {
+ *  away from the ordinary one — the two are the same event, told differently.
+ *  `pos` is the buyer's holding when it could be read, null otherwise. */
+function alertVars(g, buy, pool, pos) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
   const price = (pool && pool.priceUsd) || (buy.tokenAmount > 0 ? buy.usd / buy.tokenAmount : null);
   const impact = pool && pool.liquidity > 0 ? (buy.usd / pool.liquidity) * 100 : null;
@@ -331,12 +352,62 @@ function alertVars(g, buy, pool) {
     change: (pool && fmtPct(pool.change24h)) || "—",
     chain: chainOf(g.chain)?.label || g.chain,
     verify: verifyRow(g.chain, buy),
+    // The prebuilt row, and its three parts on their own so an admin can lay
+    // them out differently. All EMPTY rather than "—" when the holding could not
+    // be read: a custom row built from them then collapses to nothing, which is
+    // what the reader should see, instead of three dashes that look like a
+    // wallet holding nothing.
+    wallet: positionRow(g, pos),
+    holds: pos ? tokenAmount(pos.held) : "",
+    holdsUsd: pos ? usdAmount(pos.holdsUsd) : "",
+    position: pos ? pos.position : "",
     tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
     coinUrl: premium.sanitizeUrl(`${SITE_URL}/token/${g.chain}/${g.address}`),
   };
 }
 
-const renderRealAlert = (g, buy, pool) => tpl.render("group_buy_alert", alertVars(g, buy, pool));
+const renderRealAlert = (g, buy, pool, pos) => tpl.render("group_buy_alert", alertVars(g, buy, pool, pos));
+
+/**
+ * The bar a group judges a holding against: its own `/setwhale`, else the
+ * global one an operator set in @dexvraadminbot, else what .env ships.
+ *
+ * Read fresh, per group. Two groups can watch the SAME pool with different
+ * bars, so this is deliberately not resolved once per buy alongside the holding.
+ */
+function whaleBarFor(g) {
+  const own = Number(g && g.whaleWalletUsd);
+  return own > 0 ? own : whaleCfg.get().walletUsd;
+}
+
+/**
+ * What this buyer ALREADY HOLDS of the token — the enrichment BOTH cards use:
+ * the whale verdict below, and the 💼 Position row on every ordinary buy.
+ *
+ * Returns null when we could not tell, which is never a reason to withhold the
+ * buy — the caller renders the card without the row. One RPC call, gated behind
+ * the dust floor and cached per wallet upstream.
+ *
+ * `whales: false` / the global off switch gate this because reading the holding
+ * IS the cost of both features: one lever, not two. A group that opted out of
+ * whale alerts is not billed an RPC call to decorate its ordinary ones.
+ */
+async function buyerPosition(g, buy, pool) {
+  const wc = whaleCfg.get();
+  if (!wc.enabled || g.whales === false) return null;
+  if (!buy.buyer || !pool || !(pool.priceUsd > 0)) return null;
+  if (buy.usd < wc.minBuyUsd) return null; // dust does not order an RPC call
+  if (!holdings.supports(g.chain)) return null;
+
+  const held = await holdings.holdingOf(g.chain, g.address, buy.buyer);
+  if (held == null || !(held > 0)) return null;
+  // How much this buy GREW the bag. `held` is the balance after the trade, so
+  // the position before it is held - bought; a first-ever buy has no "before",
+  // and calling that +∞ or +100% would both be inventions.
+  const before = held - (buy.tokenAmount || 0);
+  const position = before > 0 ? `+${((buy.tokenAmount / before) * 100).toFixed(2)}%` : "new position";
+  return { held, holdsUsd: held * pool.priceUsd, position };
+}
 
 /**
  * Is this buyer a whale — by what they HOLD, not by what they just spent?
@@ -346,33 +417,17 @@ const renderRealAlert = (g, buy, pool) => tpl.render("group_buy_alert", alertVar
  * the buy: the caller falls back to the ordinary alert.
  */
 async function whaleCheck(g, buy, pool) {
-  // The GLOBAL bar, read fresh so an operator's change in @dexvraadminbot lands
-  // on the very next buy. A group's own /setwhale still wins over it below.
-  const wc = whaleCfg.get();
-  if (!wc.enabled || g.whales === false) return null;
-  if (!buy.buyer || !pool || !(pool.priceUsd > 0)) return null;
-  if (buy.usd < wc.minBuyUsd) return null; // dust does not order an RPC call
-  if (!holdings.supports(g.chain)) return null;
-
-  const held = await holdings.holdingOf(g.chain, g.address, buy.buyer);
-  if (held == null || !(held > 0)) return null;
-  const holdsUsd = held * pool.priceUsd;
-  const threshold = Number(g.whaleWalletUsd) > 0 ? Number(g.whaleWalletUsd) : wc.walletUsd;
-  if (holdsUsd < threshold) return null;
-
-  // How much this buy GREW the bag. `held` is the balance after the trade, so
-  // the position before it is held - bought; a first-ever buy has no "before",
-  // and calling that +∞ or +100% would both be inventions.
-  const before = held - (buy.tokenAmount || 0);
-  const position = before > 0 ? `+${((buy.tokenAmount / before) * 100).toFixed(2)}%` : "new position";
+  const pos = await buyerPosition(g, buy, pool);
+  if (!pos) return null;
   // The bar this wallet actually cleared, carried through to the card. Without
   // it the template can only hardcode a number, which goes stale the moment an
   // operator retunes the threshold or a group sets its own.
-  return { held, holdsUsd, position, threshold };
+  const threshold = whaleBarFor(g);
+  return pos.holdsUsd >= threshold ? { ...pos, threshold } : null;
 }
 
 function renderWhaleAlert(g, buy, pool, whale) {
-  const base = alertVars(g, buy, pool);
+  const base = alertVars(g, buy, pool, whale);
   return tpl.render("group_whale_alert", {
     ...base,
     // Its own icon, so a whale reads as a whale at a glance in a scrolling chat.
@@ -653,12 +708,23 @@ async function pollTrades(tg, entry) {
   let hold = null;
   for (const buy of fresh) {
     // Resolved ONCE per buy, not per group: the holding is a property of the
-    // wallet and the token, and several groups can track the same token.
-    const whale = await whaleCheck(entry.groups[0], buy, pool).catch(() => null);
+    // WALLET and the token, and several groups can track the same token — but
+    // it is looked up on behalf of a group that actually wants it, so one group
+    // running /setwhale off cannot suppress the lookup for the others sharing
+    // this pool.
+    const wants = entry.groups.find((x) => x.whales !== false) || entry.groups[0];
+    const pos = await buyerPosition(wants, buy, pool).catch(() => null);
     for (const g of entry.groups) {
       if (buy.usd < (Number(g.minBuyUsd) || 0)) continue; // each group's own threshold
-      const isWhale = !!whale && g.whales !== false;
-      const render = () => (isWhale ? renderWhaleAlert(g, buy, pool, whale) : renderRealAlert(g, buy, pool));
+      // A group that turned holdings off gets neither the whale card nor the
+      // 💼 Position row, even though a neighbour paid for the lookup.
+      const gPos = g.whales === false ? null : pos;
+      // The BAR is per group. Resolving the verdict once for everyone was
+      // wrong the moment two groups on the same pool set different bars: the
+      // second group got the first group's answer.
+      const whale = gPos && gPos.holdsUsd >= whaleBarFor(g) ? { ...gPos, threshold: whaleBarFor(g) } : null;
+      const isWhale = !!whale;
+      const render = () => (isWhale ? renderWhaleAlert(g, buy, pool, whale) : renderRealAlert(g, buy, pool, gPos));
       const opts = { kind: isWhale ? "whale" : "buy", pin: isWhale && g.pin !== false && BUYBOT_PIN_WHALES };
       if (await deliver(tg, g.chatId, render, buy.txHash, opts)) {
         posted++;
@@ -809,6 +875,9 @@ module.exports = {
   spentNative,
   pinAlert,
   alertVars,
+  positionRow,
+  buyerPosition,
+  whaleBarFor,
   whaleCheck,
   renderWhaleAlert,
   buyClip,

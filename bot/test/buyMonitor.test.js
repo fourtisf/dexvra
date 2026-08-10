@@ -182,6 +182,69 @@ test("the cursor holds at the OLDEST undelivered buy, not at the newest seen", a
   }
 });
 
+// ── Two groups, one pool, different whale bars ───────────────────────────────
+
+test("groups sharing a pool each get their OWN verdict on one shared lookup", async () => {
+  // The holding is a property of the WALLET, so it is read once. The bar is a
+  // property of the GROUP, so the verdict is not: resolving it once for
+  // everyone handed the second group the first group's answer.
+  const latch = require("../src/group/alertLatch");
+  const gt = require("../src/group/gtPairs");
+  const trades = require("../src/group/gtTrades");
+  const holdings = require("../src/group/walletHoldings");
+  latch._reset();
+
+  const CA = "0x" + "c".repeat(40);
+  const realFetch = trades.fetchPoolBuys;
+  const realPool = gt.fetchPoolCached;
+  const realHolding = holdings.holdingOf;
+  let lookups = 0;
+  holdings.holdingOf = async () => {
+    lookups++;
+    return 10_000; // × $1 = $10,000 held
+  };
+  trades.fetchPoolBuys = async () => [{ txHash: "0xSHARED", buyer: "0xb", usd: 500, tokenAmount: 100, blockNumber: 200, blockTimeMs: Date.now() }];
+  gt.fetchPoolCached = async () => ({ priceUsd: 1, mcap: 1e6, liquidity: 1e5, change24h: 0, poolAddress: "0xpool" });
+
+  const sent = {};
+  const tg = {
+    sendMessage: async (chat, text) => {
+      sent[chat] = text;
+      return { message_id: 1 };
+    },
+    pinChatMessage: async () => {},
+    unpinChatMessage: async () => {},
+  };
+
+  try {
+    const base = { chain: "bsc", address: CA, sym: "DEX", minBuyUsd: 0 };
+    const entry = {
+      key: "bsc:0xpool",
+      chain: "bsc",
+      address: CA,
+      pool: "0xpool",
+      groups: [
+        { ...base, chatId: "-1", whaleWalletUsd: 25000 }, // $10k held is NOT a whale here
+        { ...base, chatId: "-2", whaleWalletUsd: 5000 }, //  $10k held IS a whale here
+        { ...base, chatId: "-3", whales: false }, //          opted out entirely
+      ],
+    };
+    mon._state.cursors[entry.key] = { b: 190, t: Date.now() };
+    await mon._pollTrades(tg, entry);
+
+    assert.strictEqual(lookups, 1, "one RPC call served all three groups");
+    assert.match(sent["-1"], /NEW BUY/, "the $25k group sees an ordinary buy");
+    assert.match(sent["-1"], /💼 Position: 10,000 \$DEX · \$10,000/, "…still carrying the position row");
+    assert.match(sent["-2"], /WHALE WALLET/, "the $5k group sees a whale");
+    assert.match(sent["-2"], /Whale bar: \$5,000/, "…against ITS bar, not its neighbour's");
+    assert.ok(!/Position|💼/.test(sent["-3"]), "the opted-out group gets neither card nor row");
+  } finally {
+    trades.fetchPoolBuys = realFetch;
+    gt.fetchPoolCached = realPool;
+    holdings.holdingOf = realHolding;
+  }
+});
+
 // ── Tiers and rendering ──────────────────────────────────────────────────────
 
 test("tier labels fall back field by field, so a half-typed override still renders", () => {
