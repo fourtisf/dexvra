@@ -768,7 +768,11 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
       // Name what was consulted. A token on a chain whose RPC is being throttled
       // used to look exactly like one that does not exist, and neither the user
       // nor the operator could tell the two apart from this message.
-      : `\n\nNo pool on ${esc(ch.name)}, and no market on ${probe.checked.length ? probe.checked.map((k) => esc((core.chainOf(k) || {}).name || k)).join(', ') : 'any chain'} at either index (DexScreener, GeckoTerminal).\n\nUsually that means it is brand new, still on a launchpad bonding curve, or trading somewhere neither index covers.`;
+      : `\n\nNo pool on ${esc(ch.name)}, and no market on ${probe.checked.length ? probe.checked.map((k) => esc((core.chainOf(k) || {}).name || k)).join(', ') : 'any chain'} at either index (DexScreener, GeckoTerminal).\n\nUsually that means it is brand new, still on a launchpad bonding curve, or trading somewhere neither index covers.`
+        // A v4 pool is invisible to V2/V3 AND to both indexes on a chain they
+        // don't cover — which is every way of looking this bot has, unless the
+        // PoolManager is configured. Name the one thing that would fix it.
+        + (core.v4.enabled(chainKey) ? '' : `\n\n<i>Operator: Uniswap v4 is not configured on ${esc(ch.name)}. A v4 pool has no pair contract, so nothing here can see one. Run <code>node scripts/v4-discover.js ${esc(ca)} ${esc(chainKey)}</code>.</i>`);
     return {
       text: `❌ Couldn't price <code>${short(ca)}</code> on ${ch.emoji} ${esc(ch.name)}.${why}`,
       kb: rows([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }], [btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]),

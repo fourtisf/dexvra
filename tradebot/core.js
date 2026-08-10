@@ -60,6 +60,7 @@ const { chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
 // through this object.
 const _deps = { providerFor: chains.providerFor };
 const providerFor = (k) => _deps.providerFor(k);
+const v4 = require('./v4');            // Uniswap V4 reader — priced from the PoolManager, never routed
 const solana = require('./solana');   // non-EVM (Solana) adapter — used only on kind:'svm' chains
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
@@ -1314,10 +1315,22 @@ async function tokenSnapshot(ca, chainKey) {
     mcapEth = priceEth * Number(ethers.formatUnits(ts, dec));
   } catch (_) {}
   if (!(priceEth > 0)) {
-    // Nothing the ROUTER can see. Before giving up, ask the indexer: a Uniswap
-    // v4 pool has no pair contract to find, so this is the only way such a token
-    // ever gets a price. Marked routable:false — the card shows the market and
-    // says plainly that a swap can't be filled here yet.
+    // Nothing V2 or V3 can see. Try the PoolManager directly — a v4 pool has no
+    // pair contract for a factory to return, so reading its storage is the ONLY
+    // way such a token is ever priced. This is what Maestro does, and it is why
+    // Maestro showed $TLNCH on Robinhood Chain while this bot said it could not
+    // price it. Read-only: routable stays false until v4 routing is wired.
+    const p4 = v4.enabled(chainKey) ? await v4.price(ca, chainKey, dec, { chainOf, providerFor }).catch(() => null) : null;
+    if (p4) {
+      let ts = 0n; try { ts = await new ethers.Contract(ca, ERC20_ABI, prov).totalSupply(); } catch (_) {}
+      return {
+        ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
+        priceEth: p4.priceEth, mcapEth: ts > 0n ? p4.priceEth * Number(ethers.formatUnits(ts, dec)) : 0,
+        dexVenue: 'v4', extVenue: 'Uniswap v4', routable: false, v4: p4,
+      };
+    }
+    // Still nothing on-chain. The indexers see venues we have no reader for at
+    // all, so they are the last word before giving up.
     const m = await marketOf(ca, chainKey);
     if (!m) return null;   // genuinely no market either indexer can see
     const usd = await ethUsd(chainKey).catch(() => 0);
@@ -2447,7 +2460,7 @@ module.exports = {
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
-  dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel,
+  dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
   // Test-only seams — see the notes at each definition.
   _deps,
