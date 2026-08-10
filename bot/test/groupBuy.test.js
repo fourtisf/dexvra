@@ -1,5 +1,5 @@
-// Group buy bot — the volume-diff estimate (incl. the source-switch guard),
-// address→chain candidate probing, emoji scaling, and config store.
+// Group buy bot — address→chain candidate probing, emoji scaling, and the
+// config store.
 const path = require("node:path");
 const os = require("node:os");
 const fss = require("node:fs");
@@ -11,33 +11,17 @@ const mon = require("../src/group/buyMonitor");
 const setup = require("../src/group/setup");
 const cfg = require("../src/group/config");
 
-test("estimateBuys: first observation and no-new-buys return null", () => {
-  assert.strictEqual(mon.estimateBuys(null, { buys24h: 10, volume24h: 1000 }), null);
-  const prev = { buys24h: 10, sells24h: 5, volume24h: 1000, source: "gt" };
-  assert.strictEqual(mon.estimateBuys(prev, { buys24h: 10, sells24h: 5, volume24h: 1000, source: "gt" }), null);
-});
-
-test("estimateBuys: apportions the volume delta by buy share", () => {
-  const prev = { buys24h: 10, sells24h: 10, volume24h: 1000, source: "gt" };
-  // +3 buys, +1 sell, +$800 volume → buyShare 3/4 → $600 over 3 buys
-  const est = mon.estimateBuys(prev, { buys24h: 13, sells24h: 11, volume24h: 1800, source: "gt" });
-  assert.ok(est);
-  assert.strictEqual(est.count, 3);
-  assert.strictEqual(est.usd, 600);
-  assert.strictEqual(est.avgUsd, 200);
-});
-
-test("estimateBuys: a GT↔DexScreener source switch never fabricates a buy", () => {
-  const prev = { buys24h: 10, sells24h: 5, volume24h: 1000, source: "ds" };
-  // counts/volume look higher only because GT reports a different 24h window
-  const cur = { buys24h: 40, sells24h: 20, volume24h: 9000, source: "gt" };
-  assert.strictEqual(mon.estimateBuys(prev, cur), null);
-});
-
-test("estimateBuys: a 24h-window rollover (counters drop) returns null", () => {
-  const prev = { buys24h: 100, sells24h: 50, volume24h: 50000, source: "gt" };
-  const cur = { buys24h: 98, sells24h: 49, volume24h: 48000, source: "gt" };
-  assert.strictEqual(mon.estimateBuys(prev, cur), null);
+test("there is no volume estimator to fall back to", () => {
+  // It diffed the rolling 24h volume and posted "≈ $340 across 11 buys" with no
+  // transaction to link — and suppressed the real alerts for those same buys,
+  // because an estimate has no hash for the latch to dedupe on. A GT rate-limit
+  // cooldown was enough to replace a group's verifiable alerts with one summary
+  // it could not check. Deleted, and this is what keeps it deleted.
+  assert.strictEqual(typeof mon.estimateBuys, "undefined");
+  assert.strictEqual(typeof mon.renderEstimateAlert, "undefined");
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "buyMonitor.js"), "utf8");
+  assert.ok(!/async function pollEstimate/.test(src), "and no poller for it");
+  assert.ok(!require("../src/templates").getRawValue("group_buy_alert_est"), "and no template to render");
 });
 
 // 🟢 is a surrogate pair, so string length is 2 per glyph.

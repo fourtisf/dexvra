@@ -88,12 +88,23 @@ test("the token name headlines through the same page, always", () => {
   assert.match(l["The Nietzschean Dog"], /dexvra\.io\/token\/solana\/So1Token$/);
 });
 
-test("the whale and estimate cards carry the same three links", () => {
+test("the whale card carries the same three links as the ordinary one", () => {
   const whale = links(mon.renderWhaleAlert(g(), buy, pool, { held: 1e6, holdsUsd: 5e4, position: "+1%" }));
-  const est = links(mon.renderEstimateAlert(g(), { usd: 3120, count: 4 }, pool));
-  for (const l of [whale, est]) {
-    assert.match(l["⚡ Trade on Dexvra"], /\?start=ca_solana_So1Token$/);
-    assert.strictEqual(l["📈 Chart"], "https://dexscreener.com/solana/PooLAddr");
-    assert.match(l["💎 Dexvra"], /dexvra\.io\/token\/solana\/So1Token$/);
+  assert.match(whale["⚡ Trade on Dexvra"], /\?start=ca_solana_So1Token$/);
+  assert.strictEqual(whale["📈 Chart"], "https://dexscreener.com/solana/PooLAddr");
+  assert.match(whale["💎 Dexvra"], /dexvra\.io\/token\/solana\/So1Token$/);
+});
+
+test("every alert links the transaction it is reporting", () => {
+  // The claim a buy alert makes is "this happened, here is the proof". There is
+  // no longer any path that posts one without the proof — the volume estimator
+  // that used to is gone, and this is the assertion that keeps it gone.
+  for (const [which, card] of Object.entries({
+    buy: mon.renderRealAlert(g(), buy, pool, null),
+    whale: mon.renderWhaleAlert(g(), buy, pool, { held: 1e6, holdsUsd: 5e4, position: "+1%" }),
+  })) {
+    assert.ok(links(card).Txn, `${which}: the transaction is linked`);
   }
+  assert.strictEqual(typeof mon.renderEstimateAlert, "undefined", "no estimated-alert renderer exists");
+  assert.strictEqual(typeof mon.estimateBuys, "undefined", "and nothing to feed one");
 });

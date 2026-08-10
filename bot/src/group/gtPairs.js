@@ -16,8 +16,21 @@
 const { chainOf } = require("../config/chains");
 const log = require("../helpers/logger");
 
-const GT = "https://api.geckoterminal.com/api/v2";
-const HEADERS = { accept: "application/json;version=20230302" };
+// GeckoTerminal's free endpoint, and the Pro one an API key unlocks. The free
+// tier is ~30 requests/minute for the WHOLE process, shared with the listing,
+// trending and pump pipelines — and a 429 arms a process-wide cooldown during
+// which the buy bot cannot read any pool's trades, so every group it serves
+// goes quiet at once. That ceiling is the single thing most likely to make a
+// busy deployment look broken, and a key is the only real way past it.
+//
+// Set GECKOTERMINAL_API_KEY to use the Pro base and send the key header.
+// Unset — the default — nothing changes.
+const GT_KEY = String(process.env.GECKOTERMINAL_API_KEY || "").trim();
+const GT = String(process.env.GECKOTERMINAL_API_BASE || "").trim().replace(/\/+$/, "")
+  || (GT_KEY ? "https://pro-api.coingecko.com/api/v3/onchain" : "https://api.geckoterminal.com/api/v2");
+const HEADERS = GT_KEY
+  ? { accept: "application/json;version=20230302", "x-cg-pro-api-key": GT_KEY }
+  : { accept: "application/json;version=20230302" };
 const TIMEOUT_MS = 8000;
 
 // Chains DexScreener does NOT index — must go through GT (mirror marketdata's
@@ -138,7 +151,16 @@ const inCooldown = (at = Date.now()) => at < cooldownUntil;
 function armCooldown(why, at = Date.now()) {
   if (inCooldown(at)) return;
   cooldownUntil = at + COOLDOWN_MS;
-  log.warn(`[buybot] GeckoTerminal backing off for ${COOLDOWN_MS / 1000}s — ${why}`);
+  // Louder than it used to need to be. When the volume estimator still existed
+  // this cost a group some accuracy; now that a buy is only alerted with its
+  // transaction, it costs them the alert entirely until the feed is back — so
+  // the log has to say what to do about it, not just that it happened.
+  log.warn(
+    `[buybot] GeckoTerminal backing off for ${COOLDOWN_MS / 1000}s — ${why}. ` +
+      (GT_KEY
+        ? "Buy alerts are paused process-wide until it lifts."
+        : "Buy alerts are paused process-wide until it lifts; set GECKOTERMINAL_API_KEY to raise the limit."),
+  );
 }
 
 /**
@@ -280,6 +302,9 @@ function _reset() {
 }
 
 module.exports = {
+  GT_BASE: GT,
+  hasApiKey: () => !!GT_KEY,
+  inCooldown,
   fetchPool,
   fetchPoolCached,
   isGtPrimary,

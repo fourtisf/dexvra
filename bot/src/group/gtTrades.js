@@ -23,7 +23,7 @@
 //
 // The estimator is still in buyMonitor.js and still runs — but only when THIS
 // module says the feed is unavailable. See the null-vs-[] rule on fetchPoolBuys.
-const { gtGet, sameToken } = require("./gtPairs");
+const { gtGet, sameToken, inCooldown } = require("./gtPairs");
 const log = require("../helpers/logger");
 
 // GT returns at most 300 trades (newest first, last 24h) and pages are not
@@ -43,6 +43,23 @@ const num = (x) => {
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
 };
+
+// poolKey → last time we said this pool's feed was unreadable.
+const unavailLog = new Map();
+const UNAVAIL_LOG_MS = 10 * 60 * 1000;
+function noteUnavailable(key, reason) {
+  const last = unavailLog.get(key) || 0;
+  if (Date.now() - last < UNAVAIL_LOG_MS) return;
+  unavailLog.set(key, Date.now());
+  const why = reason === "cooldown"
+    ? "the shared GeckoTerminal cooldown is armed (rate limited)"
+    : reason;
+  log.warn(
+    `[buybot] ${key}: trades feed unreadable — ${why}. No alert is posted without its ` +
+      "transaction, so this pool stays quiet until the feed answers; buys inside the last " +
+      "30 minutes still post, with their hashes, on the first poll that works.",
+  );
+}
 
 /**
  * Was the tracked token BOUGHT in this trade?
@@ -173,7 +190,15 @@ async function fetchPoolBuys(net, pool, tokenAddress, { minUsd = 0, tokenIsBase 
   const res = await gtGet(`/networks/${net}/pools/${String(pool).toLowerCase()}/trades`, {
     trade_volume_in_usd_greater_than: floor > 0 ? floor.toFixed(6) : 0,
   });
-  if (!res || !res.ok) return null; // unavailable — NOT "no buys"
+  if (!res || !res.ok) {
+    // Unavailable — NOT "no buys". Nothing will be posted for this pool until it
+    // reads again, so the reason has to reach the log: silence with no
+    // explanation is the one failure an operator cannot act on. Throttled per
+    // pool, because a process-wide cooldown hits every pool at once and would
+    // otherwise print the same line for each of them every poll.
+    noteUnavailable(`${net}/${pool}`, (res && res.reason) || "request failed");
+    return null;
+  }
 
   const rows = (res.body && res.body.data) || [];
   if (!Array.isArray(rows)) return null; // unexpected payload — do not read it as silence

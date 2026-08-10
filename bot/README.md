@@ -280,20 +280,32 @@ late is worse than no post.
 Both are free, both run inside a project's own Telegram group, and both are
 reachable from the main menu (**🤖 Buy Bot & Raid for your group**).
 
-### Buy Bot — real transactions, not estimates
+### Buy Bot — a transaction, or nothing
 
 `/settoken <CA>` in the group and every on-chain buy posts an alert carrying the
 **actual transaction hash and buyer address**, read from GeckoTerminal's
 per-pool trades feed (`src/group/gtTrades.js`).
 
-The volume-diff estimator it replaced is still in the tree, but it now runs
-**only when the trades feed cannot be read**, and it labels itself when it does.
-That distinction is the whole design, and it lives in one place:
+There is **no estimated fallback**. When the feed cannot be read the bot posts
+nothing and logs why. A volume-diff estimator used to cover that gap — "≈ $340
+across 11 buys", with a line apologising for having no transaction to link — and
+it was removed because it was not covering anything: the cursor only advances on
+a poll that worked, so those buys still post individually, each with its hash,
+on the first poll that succeeds within `MAX_ALERT_AGE_MS` (30 min). The estimate
+was pre-empting good alerts with a worse version of the same news and then
+*suppressing* them, since an estimate has no hash for the dedupe latch to work
+with. A two-minute rate-limit cooldown was enough to cost a group its verifiable
+alerts for good.
+
+What survives from that design is the one distinction that still matters:
 `fetchPoolBuys()` resolves `null` when the feed is *unavailable* and `[]` when
-the feed *answered and the pool is quiet*. Conflating them fails in one of two
-directions — read an outage as silence and the group hears nothing for hours;
-read silence as an outage and every buy posts twice, once real and once
-estimated.
+the feed *answered and the pool is quiet*. The first means stay silent and try
+again; the second means stay silent and advance the cursor.
+
+GeckoTerminal's free tier is ~30 requests/minute for the whole process and a 429
+arms a two-minute process-wide cooldown, so a busy deployment can go quiet for
+reasons that have nothing to do with the pools. Set `GECKOTERMINAL_API_KEY` to
+raise that ceiling; the client switches to the Pro base URL on its own.
 
 Four rules that look like details and are not:
 
@@ -473,8 +485,11 @@ npm run buybot:check                              # a known-good pool
 npm run buybot:check -- solana <token-address>    # your token
 ```
 
-Grep pm2 logs for `verified <chain> buys` (real) vs `volume-diff buy estimate`
-(degraded), and `is unreachable` for a group that removed the bot.
+Grep pm2 logs for `trades feed unreadable` (why a pool is quiet, throttled to
+one line per pool per 10 min), `GeckoTerminal backing off` (the process-wide
+rate-limit cooldown — the usual reason several groups go quiet at once),
+`no buy alerts this hour` (a configured group that has been getting nothing),
+and `is unreachable` for a group that removed the bot.
 
 ### Raid — rally the chat behind one X post
 

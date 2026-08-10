@@ -398,9 +398,9 @@ const DEFAULTS = {
   // phone, where a bold label pushes the number that people actually came for
   // onto a second line. Standing out was never worth being harder to read.
   //
-  // If you are reverting this, revert group_whale_alert and group_buy_alert_est
-  // with it: the three are one grammar, and a feed that mixes two reads as a
-  // bug in the bot rather than a choice.
+  // If you are reverting this, revert group_whale_alert with it: the two are
+  // one grammar, and a feed that mixes two reads as a bug in the bot rather
+  // than a choice.
   //
   // {emoji} is the size row (see group_buy_style); {bar} is a fill-meter, still
   // available as a placeholder if you ever want one.
@@ -463,22 +463,20 @@ const DEFAULTS = {
   // PLAIN UNICODE ONLY — this string is split apart and repeated as plain text,
   // so it cannot carry premium-emoji entities. Same rule as raid_style.
   group_buy_style: "🟢|🐋",
-  // THE DEGRADED ALERT — only sent when the per-transaction feed is unreadable.
-  // It says "≈" and says why, because a number that cannot be checked must not
-  // be dressed up as one that can.
-  group_buy_alert_est:
-    `${em("💎", E.diamond)} | [{name}]({coinUrl}) **BUY PRESSURE!**\n\n` +
-    "{emoji}\n\n" +
-    "{nameRow}\n" +
-    "💲 ≈ {usd} across {count} {buysWord}\n" +
-    "🪙 ≈ {tokenAmt} {symbol}\n" +
-    "📊 {price} · MC {mcap}\n\n" +
-    // Plain text, NOT `_italics_` — the premium-markup parser understands
-    // **bold**, [links](url) and `code` and nothing else, so the underscores in
-    // the previous version of this template reached the group as literal
-    // underscores. Check src/premium.js `parse()` before adding markup here.
-    "⚠️ Estimated from pool volume — the live txn feed is down, so no txn link on this one.\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
+  // THERE IS NO "ESTIMATED BUY" TEMPLATE ANY MORE, and this note is here so
+  // nobody adds one back. It existed for when the per-transaction feed was
+  // unreadable: it diffed the pool's rolling 24h volume, said "≈ $340 across 11
+  // buys", and carried a line apologising for having no transaction to link.
+  //
+  // A buy alert's whole claim is "this happened, here is the proof". Without
+  // the proof it is a number a project's own chat cannot check, posted under
+  // their ticker — and it was actively costing them the real alerts, because
+  // the estimate suppressed every verifiable buy it had already summarised.
+  // Silence plus an hourly operator warning is the better failure: the feed
+  // coming back replays those buys individually, each with its hash.
+  //
+  // A group that saved an override for the old `group_buy_alert_est` key keeps
+  // a harmless orphan entry in data/templates.json; nothing reads it.
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
@@ -921,7 +919,6 @@ const META = {
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
-  group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.

@@ -1,29 +1,40 @@
 // Group buy-bot monitor.
 //
-// TWO PATHS, AND WHICH ONE RUNS IS THE WHOLE DESIGN
+// ONE PATH: A BUY IS ALERTED WHEN, AND ONLY WHEN, WE HAVE ITS TRANSACTION.
 //
-//   REAL (gtTrades.js)  GeckoTerminal's per-pool trades feed gives every buy a
-//                       transaction hash, a buyer address and GT's own USD
-//                       figure. The alert is verifiable: the reader can open
-//                       the transaction and see the same number.
+// GeckoTerminal's per-pool trades feed gives every buy a transaction hash, a
+// buyer address and GT's own USD figure, so the alert is verifiable: the reader
+// opens the transaction and sees the same number. That link is not decoration
+// on a buy alert, it is the entire claim being made.
 //
-//   ESTIMATE (below)    Kept ONLY for when the feed is unavailable. It diffs
-//                       the rolling 24h volume between polls and apportions
-//                       the delta by the buy/sell tx split, which is honest to
-//                       within "≈" and no further — see estimateBuys().
+// THERE USED TO BE A SECOND PATH and it is worth knowing why it is gone. When
+// the feed was unreadable, the bot diffed the rolling 24h volume between polls,
+// apportioned the delta by the buy/sell split, and posted "≈ $340 across 11
+// buys" with a line explaining that there was no transaction to link. The
+// reasoning was that "we cannot see" is not "nothing happened", and silence
+// would lose the buys.
 //
-// The switch between them is `fetchPoolBuys()` returning null (unavailable →
-// estimate) versus [] (answered, quiet pool → stay silent). Treating those two
-// as the same thing is the bug this file is shaped around: read an outage as
-// silence and the group hears nothing for hours; read silence as an outage and
-// every buy posts twice, once real and once estimated.
+// It did not lose them. The cursor only advances on a poll that WORKED, GT
+// serves 24h of trades, and MAX_ALERT_AGE_MS lets a buy post up to half an hour
+// late — so any outage shorter than that replays in full, as individual alerts,
+// each with its hash, the moment the feed returns. The estimate was not
+// covering a gap. It was pre-empting good alerts with a worse version of the
+// same news, and then SUPPRESSING them: selectFresh() dropped every real buy an
+// estimate had already covered, because an estimate has no hash for the latch
+// to dedupe on. A 120-second GT rate-limit cooldown was enough to permanently
+// replace a group's verifiable alerts with one unverifiable summary.
+//
+// So an unreadable feed is now silence plus an hourly operator warning, and the
+// buys arrive late and real instead of promptly and unprovable. What remains of
+// the old design is the ONE distinction that still matters: fetchPoolBuys()
+// returning null (unavailable — stay silent, try again) versus [] (answered,
+// pool is quiet — stay silent, advance the cursor).
 //
 // Lessons carried from fourtis (don't regress):
 //  - Direction comes from the TOKEN ADDRESSES, never GT's base-relative `kind`.
 //  - Always resolve the pool on the token's OWN chain (gtPairs), never match a
 //    pool by address across chains.
 //  - Self-heal a MISSING pairAddress; never repoint one an admin resolved.
-//  - Never diff a volume baseline across a GT↔DexScreener source switch.
 //  - Never spend the dedupe budget before the message exists (alertLatch.js).
 //  - Dead pools log once/hour instead of failing silently.
 const {
@@ -56,15 +67,21 @@ const log = require("../helpers/logger");
 const STATE_FILE = "buybot.json";
 const STATE_VERSION = 2;
 
-// v1 keyed volume snapshots by CHAT id; v2 keys them by POOL, because several
-// groups can track the same token and the baseline belongs to the pool, not to
-// whoever happens to be watching it. A v1 file is discarded rather than
-// migrated — its worst case is one skipped estimate per pool on first poll,
-// against the risk of misreading a chat id as a pool address.
+// v1 keyed its per-pool bookkeeping by CHAT id; v2 keys it by POOL, because
+// several groups can track the same token and a cursor belongs to the pool, not
+// to whoever happens to be watching it. A v1 file is discarded rather than
+// migrated — worst case is one first-sight window per pool, bounded to five
+// buys from the last two minutes, against the risk of misreading a chat id as a
+// pool address.
+//
+// v2 files written before the volume estimator was retired also carry a `pools`
+// map of 24h volume baselines. It is simply not read: dropping the field
+// without bumping the version keeps every CURSOR, and a cursor is what stops a
+// restart replaying a pool's backlog. The stale key disappears on the next save.
 function loadState() {
   const raw = loadJSONSync(STATE_FILE, null);
-  if (!raw || raw.v !== STATE_VERSION) return { v: STATE_VERSION, pools: {}, cursors: {}, pins: {} };
-  return { v: STATE_VERSION, pools: raw.pools || {}, cursors: raw.cursors || {}, pins: raw.pins || {} };
+  if (!raw || raw.v !== STATE_VERSION) return { v: STATE_VERSION, cursors: {}, pins: {} };
+  return { v: STATE_VERSION, cursors: raw.cursors || {}, pins: raw.pins || {} };
 }
 const state = loadState();
 const saveState = () => saveJSON(STATE_FILE, state).catch(() => {});
@@ -107,31 +124,6 @@ const now = () => Date.now();
 const poolKeyOf = (chain, pool) => `${chain}:${String(pool).toLowerCase()}`;
 
 /**
- * Estimate the buys that happened between two pool snapshots — THE DEGRADED
- * PATH. Only reached when the real trades feed could not be read.
- *
- * newBuys = buys24h delta; buy USD ≈ the positive volume delta apportioned by
- * the buy share of new transactions. Returns null when there's no new buy or
- * we can't estimate (first observation / counters rolled / SOURCE CHANGED).
- *
- * Source guard (fourtis lesson): never diff a volume baseline across a
- * GT↔DexScreener source switch — the two report different 24h windows, so a
- * switch would fabricate a phantom multi-thousand-dollar buy.
- */
-function estimateBuys(prev, cur) {
-  if (!prev) return null;
-  if (prev.source && cur.source && prev.source !== cur.source) return null;
-  const dBuys = (cur.buys24h || 0) - (prev.buys24h || 0);
-  const dSells = (cur.sells24h || 0) - (prev.sells24h || 0);
-  const dVol = (cur.volume24h || 0) - (prev.volume24h || 0);
-  if (dBuys <= 0 || dVol <= 0) return null; // no new buys, or 24h window rolled
-  const buyShare = dBuys + dSells > 0 ? dBuys / (dBuys + dSells) : 1;
-  const buyUsd = dVol * buyShare;
-  if (!(buyUsd > 0)) return null;
-  return { count: dBuys, usd: buyUsd, avgUsd: buyUsd / dBuys };
-}
-
-/**
  * Which of these buys are new, given the stored cursor?
  *
  * The block comparison is `>=`, NOT `>`: several trades share a block, so a
@@ -151,12 +143,14 @@ function selectFresh(cursor, buys, at = now()) {
     // look like first sight forever and replay its backlog the moment it trades.
     : buys.filter((b) => b.blockTimeMs && b.blockTimeMs >= (cursor.t || 0));
 
+  // NO estimate watermark any more. There used to be a `.filter(b =>
+  // b.blockTimeMs > cursor.e)` here, dropping every real buy the volume
+  // estimator had already summarised during an outage — which is how a
+  // two-minute GT cooldown permanently cost a group its verifiable alerts and
+  // left it with one "≈ $340 across 11 buys" instead. Nothing summarises buys
+  // ahead of this path now, so nothing needs suppressing: the per-tx latch is
+  // the only dedupe, and it has a hash to work with.
   return after
-    // Anything the ESTIMATOR already announced during an outage. Without this
-    // the group hears about the same money twice — once as "≈ $3,000 over 4
-    // buys" while the feed was down, then again as four verified alerts when it
-    // came back. The per-tx latch cannot help: an estimate has no tx to latch.
-    .filter((b) => !cursor.e || !b.blockTimeMs || b.blockTimeMs > cursor.e)
     .filter((b) => !b.blockTimeMs || b.blockTimeMs >= at - MAX_ALERT_AGE_MS)
     .slice(0, MAX_PER_POLL); // oldest first, so a burst is paced in order
 }
@@ -472,48 +466,16 @@ function renderWhaleAlert(g, buy, pool, whale) {
   });
 }
 
-function renderEstimateAlert(g, est, pool) {
-  const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
-  const estPage = `${SITE_URL}/token/${g.chain}/${g.address}`;
-  const estChart = chartUrl(g.chain, g.pairAddress || g.address) || estPage;
-  const tokenAmt = pool && pool.priceUsd ? est.usd / pool.priceUsd : null;
-  return tpl.render("group_buy_alert_est", {
-    bar: buySizeBar(est.usd),
-    emoji: buyEmojiRow(est.usd),
-    // The token's name headlines this card too. It was the ONE alert that still
-    // led with the bare ticker, which read as a different bot posting into the
-    // same feed — and the name is admin-supplied, so it takes the same
-    // sanitiser as everywhere else.
-    name: premium.sanitizeVar(g.name || `$${sym}`),
-    nameRow: g.name && g.name !== `$${sym}`
-      ? `📃 **${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
-      : `📃 **${premium.sanitizeVar(`$${sym}`)}**`,
-    symbol: premium.sanitizeVar(`$${sym}`),
-    usd: usdAmount(est.usd),
-    count: est.count,
-    buysWord: est.count === 1 ? "buy" : "buys",
-    // COMPACT here, unlike the verified card. "≈ 13,269,749.12" is false
-    // precision: the whole figure is derived from a volume delta, and printing
-    // it to the cent claims an accuracy this path does not have.
-    tokenAmt: tokenAmt ? formatNumber(tokenAmt) : "—",
-    price: pool && pool.priceUsd ? fmtPrice(pool.priceUsd) : "—",
-    mcap: pool && pool.mcap ? "$" + formatNumber(pool.mcap) : "—",
-    chain: chainOf(g.chain)?.label || g.chain,
-    tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
-    coinUrl: premium.sanitizeUrl(estPage),
-    chartUrl: premium.sanitizeUrl(estChart),
-  });
-}
-
 // ── Delivery ─────────────────────────────────────────────────────────────────
 
 /**
  * Send one alert, spending the dedupe budget ONLY if it actually lands.
  *
- * `dedupeId` is a transaction hash on the real path. On the estimated path
- * there is no hash — and no honest dedupe key either — so the caller passes
- * null and this claims nothing. That is not an oversight: a made-up key would
- * look like deduplication while deduplicating nothing.
+ * `dedupeId` is the transaction hash. It is always present now that a buy is
+ * only ever alerted when we have its transaction — but the null-tolerant branch
+ * below stays, because a caller that cannot name what it is deduplicating must
+ * be able to say so rather than invent a key that looks like deduplication and
+ * deduplicates nothing.
  */
 /**
  * The GIF/video an admin uploaded in @dexvraadminbot → 🎨 Gambar Banner Channel.
@@ -601,9 +563,9 @@ async function pinAlert(tg, chatId, messageId) {
 }
 
 async function deliver(tg, chatId, payload, dedupeId, opts = {}) {
-  // Checked FIRST, and independently of dedupeId, because the estimated path
-  // has no transaction to latch — without this a group that removed the bot is
-  // retried on every poll forever whenever the feed happens to be down.
+  // Checked FIRST, and independently of dedupeId: a group that removed the bot
+  // must stop costing us Telegram calls even on a path that cannot latch, and
+  // the per-transaction claim below only guards repeats of the SAME buy.
   if (latch.isChatMuted(chatId)) return false;
   if (dedupeId && !latch.claim(chatId, dedupeId)) return false;
   // Accepts a thunk so the caller can defer rendering until the claim is won.
@@ -630,8 +592,8 @@ async function deliver(tg, chatId, payload, dedupeId, opts = {}) {
       // The bot is not in this chat, or may not speak in it. Mute the whole
       // chat: retrying can never succeed and burns Telegram calls plus the
       // GeckoTerminal budget shared with every healthy group. Muting the CHAT
-      // rather than the transaction is what makes this work on the estimated
-      // path too, where there is no transaction.
+      // rather than the transaction is what makes one unreachable group cost one
+      // mute instead of one failed retry per buy, forever.
       if (dedupeId) await latch.commit(chatId, dedupeId);
       await latch.muteChat(chatId);
       log.warn(
@@ -679,13 +641,20 @@ function noteDeadPool(entry) {
   const last = deadLog[entry.key] || 0;
   if (now() - last <= 3_600_000) return;
   deadLog[entry.key] = now();
-  log.warn(`[buybot] no pool data for ${entry.chain}/${entry.address} (${entry.groups.length} group(s))`);
+  // gtTrades already logged the specific reason (rate limit / HTTP status /
+  // timeout), throttled per pool. This is the once-an-hour reminder that a
+  // configured, paying group has been getting nothing for a while, which is a
+  // different fact and the one an operator scanning logs needs to see.
+  log.warn(
+    `[buybot] ${entry.chain}/${entry.address}: no buy alerts this hour — the trades feed has not ` +
+      `been readable (${entry.groups.length} group(s) affected)`,
+  );
 }
 
 /**
- * The REAL path. Returns true when it handled this pool (whether or not it
- * posted anything), false when the feed was unreadable and the caller should
- * fall back to the estimator.
+ * Returns true when this pool was handled (whether or not anything posted),
+ * false when the feed was unreadable — in which case nothing is posted and the
+ * cursor stays put, so the buys are still selectable on the next working poll.
  */
 async function pollTrades(tg, entry) {
   const net = gt.networkOf(entry.chain);
@@ -694,15 +663,6 @@ async function pollTrades(tg, entry) {
   const minUsd = Math.min(...entry.groups.map((g) => cfg.minBuyOf(g)));
   const buys = await trades.fetchPoolBuys(net, entry.pool, entry.address, { minUsd }).catch(() => null);
   if (buys === null) return false; // unavailable — degrade
-
-  // The feed works, so the volume baseline for this pool is going stale. Drop
-  // it: if the feed later breaks and we fall back, a baseline from hours ago
-  // would diff into one enormous phantom "buy". With no baseline the estimator
-  // simply re-seeds and stays quiet for a poll.
-  if (state.pools[entry.key]) {
-    delete state.pools[entry.key];
-    saveState();
-  }
 
   const cursor = state.cursors[entry.key] || null;
   if (!buys.length) {
@@ -718,12 +678,9 @@ async function pollTrades(tg, entry) {
   const fresh = selectFresh(cursor, buys);
   const newest = buys[buys.length - 1].blockNumber || 0;
   if (!fresh.length) {
-    // Carry `e` forward. Dropping it here was a one-buy leak in the estimator
-    // watermark: the poll that filters everything out advanced the cursor with
-    // no watermark, so the NEXT poll re-selected the newest block unfiltered —
-    // and an estimate claims no latch, so that buy posted as a verified alert
-    // after the group had already been told about it.
-    state.cursors[entry.key] = { b: newest, t: now(), e: (cursor && cursor.e) || 0 };
+    // Everything filtered out (too old, or already past). The cursor still
+    // advances to the newest block seen, so the next poll does not re-read it.
+    state.cursors[entry.key] = { b: newest, t: now() };
     await saveState();
     return true;
   }
@@ -786,7 +743,7 @@ async function pollTrades(tg, entry) {
   const lastSent = fresh[fresh.length - 1].blockNumber || 0;
   const capped = fresh.length === MAX_PER_POLL && lastSent < newest;
   const cursorBlock = hold !== null ? hold : capped ? lastSent : newest;
-  state.cursors[entry.key] = { b: cursorBlock, t: now(), e: (cursor && cursor.e) || 0 };
+  state.cursors[entry.key] = { b: cursorBlock, t: now() };
   await saveState();
   if (capped) log.info(`[buybot] ${entry.key}: paced — more buys queued for the next poll`);
   if (posted) {
@@ -795,34 +752,6 @@ async function pollTrades(tg, entry) {
     );
   }
   return true;
-}
-
-/** The DEGRADED path — volume-diff estimates, only when the feed is unreadable. */
-async function pollEstimate(tg, entry, pool) {
-  if (!pool) return;
-  const prev = state.pools[entry.key];
-  state.pools[entry.key] = {
-    volume24h: pool.volume24h,
-    buys24h: pool.buys24h,
-    sells24h: pool.sells24h,
-    source: pool.source,
-    at: now(),
-  };
-  await saveState();
-
-  const est = estimateBuys(prev, pool);
-  if (!est) return;
-  for (const g of entry.groups) {
-    if (est.usd < cfg.minBuyOf(g)) continue;
-    await deliver(tg, g.chatId, () => renderEstimateAlert(g, est, pool), null);
-  }
-  // Mark everything up to now as already announced, so the real path does not
-  // re-tell the group about the same money when the feed comes back. An
-  // estimate carries no tx hash, so the latch cannot do this for us.
-  const cur = state.cursors[entry.key] || { b: 0, t: now() };
-  state.cursors[entry.key] = { ...cur, e: now() };
-  await saveState();
-  log.debug(`[buybot] volume-diff buy estimate for ${entry.key}: $${Math.round(est.usd)} over ${est.count}`);
 }
 
 async function pollPool(tg, entry) {
@@ -862,11 +791,11 @@ async function pollPool(tg, entry) {
     }
   }
 
-  if (await pollTrades(tg, entry)) return;
-
-  const pool = await gt.fetchPoolCached(entry.chain, entry.address).catch(() => null);
-  if (!pool) return noteDeadPool(entry);
-  await pollEstimate(tg, entry, pool);
+  // The feed could not be read. NOTHING IS POSTED — see the file header. The
+  // cursor has not moved, so these buys post for real, with their hashes, on
+  // the first poll that works, as long as that lands within MAX_ALERT_AGE_MS.
+  // What must not happen is the group being handed a summary it cannot check.
+  if (!(await pollTrades(tg, entry))) noteDeadPool(entry);
 }
 
 async function scanOnce(tg) {
@@ -905,7 +834,6 @@ function start(tg) {
 module.exports = {
   start,
   scanOnce,
-  estimateBuys,
   selectFresh,
   buyEmojiRow,
   buySizeBar,
@@ -927,7 +855,6 @@ module.exports = {
   sendAlert,
   deliver,
   renderRealAlert,
-  renderEstimateAlert,
   _pollTrades: pollTrades,
   FIRST_SIGHT_MS,
   FIRST_SIGHT_MAX,

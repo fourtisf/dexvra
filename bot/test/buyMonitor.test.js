@@ -79,30 +79,29 @@ test("a genuine burst is PACED, not dropped — the cursor stops at the last one
   assert.strictEqual(fresh.at(-1).blockNumber, 507);
 });
 
-test("buys the ESTIMATOR already announced are not re-told as verified alerts", () => {
-  // An estimate has no tx hash, so the latch cannot dedupe it. The watermark is
-  // what stops the group hearing about the same money twice across an outage.
+test("an outage does not cost the group its alerts — they arrive late and real", () => {
+  // This is the whole reason the volume estimator could be deleted. The cursor
+  // only advances on a poll that WORKED, so buys that happened while the feed
+  // was unreadable are still selected when it comes back — individually, each
+  // with its hash, rather than summarised into one unverifiable "≈ $340".
   const now = Date.now();
-  const buys = [
-    { txHash: "0xa", usd: 100, blockNumber: 5001, blockTimeMs: now - 8 * 60000 }, // during the outage
-    { txHash: "0xb", usd: 100, blockNumber: 5002, blockTimeMs: now - 60_000 }, // after it
+  const duringOutage = [
+    { txHash: "0xa", usd: 100, blockNumber: 5001, blockTimeMs: now - 8 * 60000 },
+    { txHash: "0xb", usd: 100, blockNumber: 5002, blockTimeMs: now - 60_000 },
   ];
-  const fresh = mon.selectFresh({ b: 5000, t: 0, e: now - 5 * 60000 }, buys, now);
-  assert.deepStrictEqual(fresh.map((b) => b.txHash), ["0xb"]);
+  const fresh = mon.selectFresh({ b: 5000, t: 0 }, duringOutage, now);
+  assert.deepStrictEqual(fresh.map((b) => b.txHash), ["0xa", "0xb"], "both, not just the one after");
 });
 
-test("the estimator watermark survives a poll that filters everything out", () => {
-  // The empty-batch branch used to advance the cursor without `e`, so the NEXT
-  // poll re-selected the newest block unwatermarked — and an estimate claims no
-  // latch, so that buy posted as a verified alert after the group had already
-  // been told about it.
+test("half an hour is the honest limit on how late a buy may arrive", () => {
+  // Past it a buy is not news and is dropped rather than announced as if it had
+  // just happened. That bound is what makes silence-during-an-outage a bounded
+  // promise instead of an open one, so it is stated here as a fact.
   const now = Date.now();
-  const only = [{ txHash: "0xa", usd: 100, blockNumber: 900, blockTimeMs: now - 9 * 60000 }];
-  const cursor = { b: 800, t: 0, e: now - 5 * 60000 };
-  assert.deepStrictEqual(mon.selectFresh(cursor, only, now), [], "watermarked out");
-  // What pollTrades then persists must still carry the watermark.
-  const carried = { b: 900, t: now, e: (cursor && cursor.e) || 0 };
-  assert.deepStrictEqual(mon.selectFresh(carried, only, now), [], "and still filtered on the next poll");
+  const old = [{ txHash: "0xold", usd: 100, blockNumber: 6000, blockTimeMs: now - 31 * 60000 }];
+  assert.deepStrictEqual(mon.selectFresh({ b: 5000, t: 0 }, old, now), [], "too old to post");
+  const recent = [{ txHash: "0xok", usd: 100, blockNumber: 6000, blockTimeMs: now - 29 * 60000 }];
+  assert.strictEqual(mon.selectFresh({ b: 5000, t: 0 }, recent, now).length, 1, "still inside the window");
 });
 
 test("the dedupe latch outlives the feed's own 24h window", () => {
@@ -350,7 +349,7 @@ test("price and market cap both come from the pool, so they cannot contradict", 
   assert.match(out, /\$0\.0000482/);
 });
 
-test("the real alert carries the verified links; the estimated one says it cannot", () => {
+test("the real alert carries the links that prove it", () => {
   const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", minBuyUsd: 0 };
   const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 42.3 };
   const real = mon.renderRealAlert(g, { txHash: "0xt", buyer: "0xb", usd: 1234.5, tokenAmount: 98765 }, pool).text;
@@ -359,12 +358,7 @@ test("the real alert carries the verified links; the estimated one says it canno
   // .text is the PARSED text — markup has become entities by now, so the link
   // shows as its label. buyCta.test.js is where the URLs themselves are checked.
   assert.match(real, /👤 0xb · Txn/);
-
-  const est = mon.renderEstimateAlert(g, { usd: 640, count: 3 }, pool).text;
-  assert.match(est, /≈/);
-  assert.ok(!est.includes("Txn"), "the estimated path has no transaction to link");
-  assert.ok(!est.includes("👤"), "and no buyer to name — it is a volume delta, not a trade");
-  assert.ok(!/[_*]{1,2}Live transaction/.test(est), "no raw markup leaks — the parser only knows **bold**, [links] and `code`");
+  assert.ok(!/[_*]{1,2}Live transaction/.test(real), "no raw markup leaks — the parser only knows **bold**, [links] and `code`");
 });
 
 test("the size row only ever GROWS — it is never rendered mostly empty", () => {
@@ -394,10 +388,10 @@ test("the row icons are admin-editable, falling back per position", () => {
   }
 });
 
-test("all three buy cards speak ONE grammar", () => {
+test("both buy cards speak ONE grammar", () => {
   // A feed that mixes two layouts reads as a bug in the bot rather than as a
-  // choice, and these three land in the same chat minutes apart. So: every card
-  // opens "<mark> | <token> <EVENT>!", and every data row starts with its icon.
+  // choice, and these land in the same chat minutes apart. So: every card opens
+  // "<mark> | <token> <EVENT>!", and every data row starts with its icon.
   const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", name: "Dexvra Token", minBuyUsd: 0 };
   const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 42.3 };
   const buy = { txHash: "0xt", buyer: "0xb", usd: 1234.5, tokenAmount: 98765 };
@@ -405,7 +399,6 @@ test("all three buy cards speak ONE grammar", () => {
   const cards = {
     buy: mon.renderRealAlert(g, { ...buy, usd: 40 }, pool, pos).text,
     whale: mon.renderWhaleAlert(g, buy, pool, { ...pos, threshold: 5e4 }).text,
-    est: mon.renderEstimateAlert(g, { usd: 640, count: 3 }, pool).text,
   };
   for (const [which, text] of Object.entries(cards)) {
     const lines = text.split("\n").filter(Boolean);
