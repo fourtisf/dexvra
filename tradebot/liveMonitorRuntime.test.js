@@ -13,7 +13,22 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "dexvra-monrt-"));
 process.env.TRADEBOT_TOKEN = process.env.TRADEBOT_TOKEN || "test:token";
 process.env.WALLET_SECRET = process.env.WALLET_SECRET || "0123456789abcdef0123456789abcdef";
 
-const test = require("node:test");
+const _test = require("node:test");
+
+// Node's mock.timers gained the { apis } OPTIONS OBJECT and Date support in
+// v20.4. On v18 `enable` takes a bare array and cannot mock Date at all, so
+// every test in this file dies with
+//   The "timers" argument must be an instance of Array. Received an instance of Object
+// — nineteen red lines that say nothing about the bot, on a server running
+// v18.19.1 while package.json claimed ">=18" was enough. A test suite that
+// cannot run is worse than one that admits it: this SKIPS with the reason, so
+// `npm test` stays a usable deploy gate on the Node the box actually has.
+const [NODE_MAJ, NODE_MIN] = process.versions.node.split(".").map(Number);
+const MOCK_TIMERS_OK = NODE_MAJ > 20 || (NODE_MAJ === 20 && NODE_MIN >= 4);
+const SKIP = MOCK_TIMERS_OK
+  ? false
+  : `needs Node >= 20.4 for mock.timers({ apis, Date }) — this is v${process.versions.node}`;
+const test = (name, fn) => _test(name, { skip: SKIP }, fn);
 const assert = require("node:assert");
 
 const core = require("./core");

@@ -5,7 +5,11 @@
  *
  *   cd tradebot && node scripts/robinhood-preflight.js
  *   cd tradebot && node scripts/robinhood-preflight.js --token 0x<a pools.trade token>
- *   cd tradebot && node scripts/robinhood-preflight.js --tx 0x<a launch tx hash>
+ *   cd tradebot && node scripts/robinhood-preflight.js --discover
+ *   cd tradebot && node scripts/robinhood-preflight.js --tx 0xTHE_REAL_HASH
+ *
+ * NOTE the placeholder style: `0x<hash>` pasted into bash is a REDIRECT, and the
+ * shell dies with "syntax error near unexpected token" before node ever runs.
  *
  * WHY THIS EXISTS
  * The bot discovers launches exactly one way: it filters the launchpad factory for a
@@ -41,6 +45,8 @@ const argOf = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? (argv[i 
 const TOKEN = argOf('--token').trim();
 const TX = argOf('--tx').trim();
 const SPAN = Math.max(100, Number(argOf('--blocks') || 5000));
+const DISCOVER = argv.includes('--discover');
+const EXPLORER = argOf('--explorer').trim().replace(/\/+$/, '');
 
 let failures = 0;
 let warnings = 0;
@@ -197,12 +203,136 @@ async function main() {
     } catch (_) { /* best-effort */ }
   }
 
+  // ── 4b. find the launchpad without needing a tx hash ──────────────────────
+  // `--tx` settles it, but it asks the operator to go and find a launch
+  // transaction by hand first. This asks the chain instead: scan recent blocks
+  // for EVERY log, tally by (address, event), and print the busiest. On a chain
+  // this size the launchpad is near the top, so the address the bot SHOULD be
+  // watching usually falls out of the list.
+  if (DISCOVER) {
+    console.log(`\n4b. Who is actually emitting events  (--discover, last ${SPAN} blocks)`);
+    const tally = new Map();   // `${address}|${topic0}` → count
+    let scanned = 0, refused = 0;
+    const STEP = 200;          // small window: an unfiltered getLogs is what most RPCs cap
+    try {
+      const head = await prov.getBlockNumber();
+      for (let to = head; to > head - SPAN; to -= STEP) {
+        const from = Math.max(head - SPAN + 1, to - STEP + 1);
+        try {
+          for (const lg of await prov.getLogs({ fromBlock: from, toBlock: to })) {
+            const k = `${(lg.address || '').toLowerCase()}|${(lg.topics && lg.topics[0]) || ''}`;
+            const cur = tally.get(k);
+            // Keep the FIRST hash seen for a pair. The scan walks from the head
+            // downwards, so first-seen is the most RECENT — which is the one
+            // worth handing to --tx: a launch from an hour ago decodes the same
+            // as one from last week and is likelier to still be reachable on a
+            // pruning node. One 66-char string per distinct (address, event)
+            // pair, which is tens of entries, not thousands.
+            if (cur) cur.n++;
+            else tally.set(k, { n: 1, tx: lg.transactionHash || '' });
+          }
+          scanned += to - from + 1;
+        } catch (_) { refused++; }   // rate limit / range cap — keep going, report at the end
+      }
+    } catch (e) { bad('could not read the head block', (e && e.message) || String(e)); }
+
+    if (refused) note(`${refused} block range(s) refused by the RPC — the counts below are a sample, not a census`);
+    if (!tally.size) {
+      bad('no logs at all in that window', `${scanned} block(s) scanned`);
+      note('Either the chain is idle, or this RPC will not serve unfiltered getLogs.');
+    } else {
+      const rows = [...tally.entries()].map(([k, v]) => { const [addr, t0] = k.split('|'); return { addr, t0, n: v.n, tx: v.tx }; })
+        .sort((a, b) => b.n - a.n).slice(0, 10);
+      const cfg = String(chain.factory || '').toLowerCase();
+
+      // A topic0 is a keccak hash: unreadable, and not reversible. But a
+      // VERIFIED contract publishes its ABI, so the explorer can name the event
+      // for us. Without this the operator is handed ten rows of hex and asked
+      // to recognise a launchpad in it — which is the manual step this mode
+      // exists to remove. Best-effort throughout: an unverified contract, a
+      // rate limit or an explorer that speaks a different API just leaves the
+      // hash unnamed.
+      // Explorers do not agree on how to serve an ABI. Blockscout's newer REST
+      // API answers /api/v2/smart-contracts/{addr} with { abi: [...] }; the
+      // older Etherscan-compatible one answers /api?module=contract&action=
+      // getabi with the ABI as a JSON *string* in `result`. Try both, and keep
+      // WHY each attempt failed — the first cut swallowed everything and
+      // printed one line that blamed the contracts for not being verified,
+      // which is only one of three possible causes and not the likeliest. This
+      // repo has TWO different explorer hosts configured for this same chain
+      // (tradebot/chains.js vs bot/src/config/chains.js), so "wrong host" was
+      // always on the table and the output could not say it.
+      const names = new Map();   // topic0 → "EventName"
+      const why = [];            // one line per address we could not name
+      const base = String(EXPLORER || chain.explorer || '').replace(/\/+$/, '');
+      const abiOf = async (addr) => {
+        const tries = [
+          { url: `${base}/api/v2/smart-contracts/${addr}`, pick: (j) => (Array.isArray(j && j.abi) ? j.abi : null),
+            unverified: (j) => j && j.is_verified === false },
+          { url: `${base}/api?module=contract&action=getabi&address=${addr}`,
+            pick: (j) => (j && j.status === '1' && typeof j.result === 'string' ? JSON.parse(j.result) : null),
+            unverified: (j) => j && j.status === '0' && /not verified/i.test(String(j.result || '')) },
+        ];
+        let last = 'no explorer configured';
+        if (!base) return { abi: null, why: last };
+        for (const t of tries) {
+          try {
+            const res = await fetch(t.url, { signal: AbortSignal.timeout(8000) });
+            if (!res.ok) { last = `HTTP ${res.status}`; continue; }
+            const body = await res.text();
+            let j = null;
+            try { j = JSON.parse(body); } catch (_) { last = `not JSON (${body.slice(0, 40).replace(/\s+/g, ' ')}…)`; continue; }
+            if (t.unverified(j)) return { abi: null, why: 'not verified on this explorer' };
+            const abi = t.pick(j);
+            if (abi) return { abi, why: '' };
+            last = 'answered, but no ABI in the response';
+          } catch (e) { last = (e && e.name === 'TimeoutError') ? 'timed out' : ((e && e.message) || String(e)).slice(0, 60); }
+        }
+        return { abi: null, why: last };
+      };
+      for (const addr of [...new Set(rows.map((r) => r.addr))]) {
+        const { abi, why: w } = await abiOf(addr);
+        if (!abi) { why.push(`${addr.slice(0, 10)}… ${w}`); continue; }
+        try { new ethers.Interface(abi).forEachEvent((ev) => names.set(ev.topicHash.toLowerCase(), ev.name)); }
+        catch (e) { why.push(`${addr.slice(0, 10)}… ABI did not parse`); }
+      }
+
+      console.log('');
+      for (const r of rows) {
+        const mine = r.addr === cfg ? '  ← the factory the bot watches' : '';
+        const nm = names.get(r.t0.toLowerCase());
+        console.log(`     ${String(r.n).padStart(5)}×  ${r.addr}  ${nm ? nm.padEnd(20) : r.t0.slice(0, 18) + '…'}${mine}`);
+        // The whole point of printing this: --tx needs a transaction and the
+        // instruction used to be "go to pools.trade and find one". Every log
+        // already carries the hash of the transaction that emitted it, so the
+        // next command is right here, ready to paste.
+        if (r.tx) console.log(`            --tx ${r.tx}`);
+      }
+      if (!names.size && why.length) {
+        note(`no event names from ${base || '(no explorer set)'} —`);
+        for (const w of why.slice(0, 4)) note(`  ${w}`);
+        note('If that reads like a wrong host rather than unverified contracts, try');
+        note('  --explorer https://robinhoodchain.blockscout.com   (the other host this repo configures)');
+        note('Either way the --tx lines below settle it without any explorer.');
+      }
+      console.log('');
+      if (!rows.some((r) => r.addr === cfg)) {
+        note(`FACTORY_ADDR (${chain.factory}) emitted nothing in this window.`);
+        note('If a launchpad is in that list, that address is what FACTORY_ADDR should be —');
+        note('confirm with --tx on one of its transactions before changing anything.');
+      }
+    }
+  } else {
+    console.log('\n4b. Who is actually emitting events');
+    note('Re-run with --discover to scan recent blocks and see which contracts are live.');
+  }
+
   // ── 5. the decisive check ─────────────────────────────────────────────────
   // Everything above can only say "the thing we look for is not there". Only a real
   // launch transaction can say what IS there.
   console.log('\n5. What a real launch actually emits  (--tx)');
   if (!TX) {
-    note('Pass --tx 0x<hash of a real pools.trade launch> to settle this.');
+    note('Pass --tx followed by the hash of a real pools.trade launch to settle this.');
     note('Find one: open a new token on pools.trade → its creation tx on the explorer.');
   } else if (!/^0x[a-fA-F0-9]{64}$/.test(TX)) {
     bad('--tx is not a transaction hash', TX);

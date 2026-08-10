@@ -122,6 +122,22 @@ async function startBot() {
   } catch (e) {
     log.warn(`[start] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }
+  // Stores that read their file at MODULE LOAD have to be told the file may
+  // have just appeared. Both of these are pulled in through handlers/registry
+  // when this module is required — before the line above runs — so on a fresh
+  // container, where the Mongo mirror is the only copy, they came up EMPTY and
+  // stayed that way until the next restart. For the buy bot that means every
+  // configured group silently stops getting alerts; for raids it means a raid
+  // that was live when the container was replaced is invisible to the boot
+  // sweep, and its group stays LOCKED. Both are silent, so neither shows up as
+  // anything but "the bot went quiet".
+  try {
+    const raids = require("./raid/store").reload();
+    const buyGroups = require("./group/config").reload();
+    log.info(`[start] stores reloaded after hydrate — ${buyGroups} buy-bot group(s), ${raids} raid record(s)`);
+  } catch (e) {
+    log.warn(`[start] store reload failed: ${e && e.message}`);
+  }
   // Keep the binary-media backup converged with files the web admin panel writes
   // into this shared DATA_DIR (the JSON stores already self-mirror via persist.js).
   require("./db/mediaMirror").startSweep();

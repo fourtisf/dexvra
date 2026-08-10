@@ -7,7 +7,7 @@ const {
   Transaction,
   sendAndConfirmTransaction,
 } = require("@solana/web3.js");
-const { RPC } = require("../../config/constants");
+const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 // A sweep must leave the temp wallet at EXACTLY zero lamports.
@@ -28,8 +28,10 @@ const log = require("../../helpers/logger");
 const FALLBACK_FEE = 5000n; // one signature, if getFeeForMessage is unavailable
 const ATTEMPTS = 3; // fee/blockhash can move between quote and send
 
-function conn() {
-  return new Connection(RPC.solana, "confirmed");
+function conn(url) {
+  const endpoint = url || rpcUrls("solana")[0];
+  if (!endpoint) throw new Error("no RPC configured for solana");
+  return new Connection(endpoint, "confirmed");
 }
 
 async function generate() {
@@ -40,9 +42,13 @@ async function generate() {
   };
 }
 
+/** Lamports (BigInt). Walks every configured endpoint — this read is what
+ *  decides whether a customer has paid, and a node that is down must surface as
+ *  an ERROR, never as a zero balance. */
 async function getBalance(_chain, address) {
-  const lamports = await conn().getBalance(new PublicKey(address));
-  return BigInt(lamports);
+  const key = new PublicKey(address);
+  const { value } = await rpcRead("solana", (url) => conn(url).getBalance(key));
+  return BigInt(value);
 }
 
 /** The fee the cluster will actually charge for this exact message. */
@@ -57,13 +63,39 @@ async function feeFor(c, tx) {
 }
 
 async function sweep(_chain, wallet, treasury) {
+  const kp = Keypair.fromSecretKey(Uint8Array.from(Buffer.from(wallet.privateKey, "hex")));
+  const to = new PublicKey(treasury);
+
+  // ONE endpoint for the whole sweep, chosen ONCE — outside the retry loop.
+  //
+  // Resolving it per attempt is a double-spend: attempt 1 broadcasts on node A
+  // and throws at confirmation (an expired blockhash is routine, and the
+  // transfer may still land); attempt 2's balance read gets a 429 from A —
+  // also routine on the public endpoints — falls through to node B, which has
+  // not caught up and still reports the pre-transfer balance; a SECOND transfer
+  // is signed with a fresh blockhash, a distinct signature, and broadcast.
+  // Both can land. Solana has no nonce to collapse them the way EVM does.
+  //
+  // Re-reading the balance from the SAME node is what makes a retry safe: if
+  // the first transfer landed, that node says zero.
+  let c;
+  let bal;
+  try {
+    const { value: opened } = await rpcRead("solana", async (url) => {
+      const client = conn(url);
+      return { client, bal: BigInt(await client.getBalance(kp.publicKey, "confirmed")) };
+    });
+    c = opened.client;
+    bal = opened.bal;
+  } catch (e) {
+    // Unreadable is UNKNOWN, not empty. sweepRetry comes back for it.
+    return { ok: false, error: e.message };
+  }
+
   let last = "unknown";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
-      const c = conn();
-      const kp = Keypair.fromSecretKey(Uint8Array.from(Buffer.from(wallet.privateKey, "hex")));
-      const to = new PublicKey(treasury);
-      const bal = BigInt(await c.getBalance(kp.publicKey, "confirmed"));
+      if (attempt > 1) bal = BigInt(await c.getBalance(kp.publicKey, "confirmed"));
       if (bal === 0n) return { ok: false, error: "empty" };
 
       const { blockhash } = await c.getLatestBlockhash("confirmed");
@@ -83,9 +115,20 @@ async function sweep(_chain, wallet, treasury) {
       // retry pass stops re-checking it every six hours forever.
       if (value <= 0n) return { ok: false, dust: true, error: `balance ${bal} does not cover fee ${fee}` };
 
-      const sig = await sendAndConfirmTransaction(c, build(Number(value)), [kp], {
-        commitment: "confirmed",
-      });
+      // Everything above is a quote and is safe to retry. From here it is not:
+      // sendAndConfirmTransaction signs, broadcasts and waits in one call, so a
+      // throw does not say whether the transfer reached the network. Treat it
+      // as committed — the same rule the EVM adapter follows — and report
+      // not-ok so sweepRetry re-checks the BALANCE later. The truth is
+      // on-chain; retrying here would build a second, differently-signed
+      // transfer for money that may already be gone.
+      let sig;
+      try {
+        sig = await sendAndConfirmTransaction(c, build(Number(value)), [kp], { commitment: "confirmed" });
+      } catch (e) {
+        log.warn(`[solana] sweep broadcast attempted but not confirmed: ${e.message}`);
+        return { ok: false, error: `unconfirmed: ${e.message}` };
+      }
       log.info(`[solana] swept ${value} lamports (fee ${fee}) → ${treasury} tx=${sig}`);
       return { ok: true, txid: sig, lamports: value };
     } catch (e) {

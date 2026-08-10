@@ -53,17 +53,25 @@ test("a PREMIUM tier emoji reaches the post as a custom_emoji entity", async () 
     ],
   });
   try {
+    // Scoped to the TIER's ids. The post's footer legitimately carries premium
+    // emoji of its own (💎 Dexvra.io · 🚨 Listings · 📢 Announcements), so
+    // "the post has no custom_emoji at all" stopped being the same question as
+    // "this tier stayed plain" the moment em() started emitting its ids.
+    const tierCe = (p) => p.entities.filter((e) => e.type === "custom_emoji" && ["111", "222"].includes(e.custom_emoji_id));
     const dia = fmt.listingPost(coin("DIAMOND"));
-    const ce = dia.entities.filter((e) => e.type === "custom_emoji");
-    assert.ok(ce.some((e) => e.custom_emoji_id === "111"), "the premium diamond survived into the post");
-    assert.strictEqual(dia.text.substr(ce[0].offset, ce[0].length), "💎", "…sitting on its own fallback char");
+    const d = tierCe(dia);
+    assert.strictEqual(d.length, 1, "the premium diamond survived into the post");
+    assert.strictEqual(dia.text.substr(d[0].offset, d[0].length), "💎", "…sitting on its own fallback char");
     // A different tier picks up ITS id, not the first one in the file.
     const plat = fmt.listingPost(coin("PLATINUM"));
-    assert.ok(plat.entities.some((e) => e.type === "custom_emoji" && e.custom_emoji_id === "222"), plat.text);
+    assert.ok(tierCe(plat).some((e) => e.custom_emoji_id === "222"), plat.text);
     // A tier the admin left plain stays plain — no id borrowed from a neighbour.
     const gold = fmt.listingPost(coin("GOLD"));
-    assert.ok(!gold.entities.some((e) => e.type === "custom_emoji"), gold.text);
-    assert.ok(gold.text.includes("🥇"), gold.text);
+    assert.strictEqual(tierCe(gold).length, 0, gold.text);
+    const at = gold.text.indexOf("🥇");
+    assert.ok(at > -1, gold.text);
+    assert.ok(!gold.entities.some((e) => e.type === "custom_emoji" && e.offset === at),
+      "the plain gold char got covered by a custom_emoji entity");
   } finally {
     await tpl.resetTemplate("tier_emojis");
   }

@@ -32,6 +32,7 @@ const GROUP_ICON = {
   "Channel Posts": "📢",
   "Mass DM": "📣",
   "Group Buy Bot": "🤖",
+  "Dexvra Raid": "🚀",
 };
 const slugOf = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "grp";
 const groupNames = () => Object.keys(tpl.groups());
@@ -96,6 +97,18 @@ const SAMPLE_VARS = {
   trending: "https://t.me/dexvratrending", announce: "https://t.me/dexvraio",
   sol: "1 SOL", bnb: "0.15 BNB", eth: "0.05 ETH", ref: "MDX-4821", reached: "8,214",
   emoji: "🟢🟢🟢", count: "3", buysWord: "buys", tokenAmt: "1.2M", bot: "@dexvrabot",
+  // Group buy alerts (verified path)
+  tier: "Whale Buy", impact: "0.42%", change: "+18.4%",
+  verify: "🔗 Txn · 👤 0x1f4b…9ac2",
+  tradeUrl: "https://t.me/dexvratradebot?start=ca_solana_G9j8",
+  // Dexvra Raid. {progress} is GENERATED at render time, so the preview shows a
+  // representative block rather than a placeholder — an admin editing the card
+  // needs to see how much room those rows take up.
+  seq: "#7", percent: "62", left: "38m", crew: "14",
+  roster: "@ana, @bo, @cy +11 more",
+  progress: "❤️ Likes   ▰▰▰▰▰▰▱▱▱▱  209/215\n💬 Replies ▰▰▰▰▰▰▰▰▱▱  14/15\n🤝 Crew    ▰▰▰▰▰▰▰▱▱▱  14/20",
+  url: "https://x.com/i/status/1", post: "gm — like + reply and we're there 🚀",
+  updated: "12:33:57", note: "",
 };
 
 async function sendTemplateAudit(ctx, arg = "") {
@@ -217,7 +230,7 @@ function bannerExists() {
 }
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
-const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up" };
+const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up", buy: "🟢 Buy Bot", whale: "🐋 Whale Alert" };
 // Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
@@ -240,7 +253,9 @@ function btHomeText() {
     `(atau <b>gambar client</b> untuk Banner Ads) ke dalam kotak di gambar itu, ` +
     `plus tulisan <b>$TICKER + nama</b> kalau diaktifkan.\n\n` +
     `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
-    `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n\n` +
+    `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n` +
+    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video" : "— teks biasa"}\n` +
+    `🐋 Whale Alert: ${bannerTpl.mediaOverride("whale") ? "✅ ada GIF/video sendiri" : "— teks biasa (GIF terpisah dari Buy Bot)"}\n\n` +
     `Pilih layanan yang mau diatur:`
   );
 }
@@ -250,7 +265,8 @@ function btHomeKb() {
     [Markup.button.callback(on ? "🟢 Kirim banner: AKTIF — tekan untuk matikan" : "🔴 Kirim banner: MATI — tekan untuk nyalakan", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
-    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup")],
+    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup"), Markup.button.callback(BT_KINDS.buy, "btk:buy")],
+    [Markup.button.callback(BT_KINDS.whale, "btk:whale")],
     [Markup.button.callback("⬅ Kembali", "home")],
   ]);
 }
@@ -263,7 +279,14 @@ function btKindText(kind) {
     const note =
       kind === "rankup"
         ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
-        : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
+        : kind === "whale"
+          ? `\nGIF/video KHUSUS alert 🐋 <b>WHALE WALLET</b> — pembelian dari dompet yang sudah pegang banyak token itu, dan alertnya <b>di-pin</b> di grup.\n\n` +
+            `⚠️ Ini <b>terpisah</b> dari GIF 🟢 Buy Bot dan <b>tidak saling pinjam</b>: whale cuma pakai GIF ini, beli biasa cuma pakai GIF itu. ` +
+            `Kalau di sini kosong, alert whale dikirim <b>tanpa GIF</b> — bukan pakai GIF Buy Bot.`
+          : kind === "buy"
+          ? `\nGIF/video ini dipakai <b>SEMUA grup</b> yang pakai buy bot — diputar di atas setiap alert pembelian, dengan detail transaksi jadi captionnya.\n\n` +
+            `Kalau kosong, alert dikirim sebagai <b>teks biasa</b> (tetap jalan normal).`
+          : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
     return `🎨 <b>${BT_KINDS[kind]}</b>\n\n` + clipLine + note;
   }
   const s = bannerTpl.getSettings(kind);
@@ -1859,7 +1882,7 @@ function build() {
 
   // ── Channel banner artwork (template compositor, per service) ──
   const K = "(listing|trending|banner)";
-  const KM = "(listing|trending|banner|pump|rankup)"; // media-capable kinds (incl. pump + rank-up)
+  const KM = "(listing|trending|banner|pump|rankup|buy|whale)"; // media-capable kinds (incl. pump, rank-up + group buy alerts)
   bot.action("bt", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -3089,7 +3112,7 @@ function build() {
 async function startAdminBot() {
   if (!ADMIN_BOT_TOKEN) {
     log.warn("[adminbot] ADMIN_BOT_TOKEN not set — admin bot disabled");
-    return;
+    return false; // the caller has to keep the process alive; see adminbot.js
   }
   // Restore/seed templates + banner config from the Mongo durable mirror before
   // serving the editor (fail-open without MONGO_URI).
@@ -3125,6 +3148,7 @@ async function startAdminBot() {
       throw e;
     });
   log.info("[adminbot] polling started ✔");
+  return true;
 }
 
 module.exports = {

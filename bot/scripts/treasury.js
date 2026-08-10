@@ -60,10 +60,20 @@ function reportConfig() {
   }
 
   console.log("\n── RPC endpoints ─────────────────────────────────────────────");
-  for (const [chain, url] of Object.entries(RPC)) {
-    const custom = !/publicnode|api\.mainnet-beta|api\.trongrid|toncenter|rpc\.mainnet\.chain/.test(url);
-    console.log(`  ${chain.padEnd(10)} ${url} ${custom ? ok("(custom)") : dim("(public default — rate-limited)")}`);
+  console.log(dim("  (the first is tried first; ONE sweep uses ONE node — whichever answers its"));
+  console.log(dim("   opening balance read — so every endpoint listed must be trusted to send)"));
+  const rpc = require("../src/config/rpc");
+  for (const chain of rpc.RPC_CHAINS) {
+    const urls = rpc.rpcUrls(chain);
+    const defaults = rpc.DEFAULTS[chain] || [];
+    const custom = urls[0] && urls[0] !== defaults[0];
+    const spare = urls.length - 1;
+    console.log(
+      `  ${chain.padEnd(10)} ${urls[0]} ${custom ? ok("(custom)") : dim("(public default — rate-limited)")}` +
+        (spare > 0 ? dim(` +${spare} fallback${spare > 1 ? "s" : ""}`) : warn(" — no fallback")),
+    );
   }
+  console.log(dim("  run `npm run rpc:check` to see which of these actually answer"));
 
   console.log("\n── Key storage ───────────────────────────────────────────────");
   console.log(`  dir        ${WALLETS_DIR}`);

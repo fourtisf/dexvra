@@ -77,6 +77,18 @@ const short = (a) => a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
 // resolution announces amounts the reader sees as 0.0000.
 const fmtNZ = (n) => Number(fmt(n).replace(/[KM]$/, '')) > 0;
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
+// Money, for screens where the exact figure is the point.
+//
+// fmt() switches to K at $1,000, which is right for a market cap and wrong for
+// a balance: the wallet screen showed one wallet as "≈ $1.01K" on one line and
+// broke the SAME number down as "native $999.62 · tokens $8.18" two lines
+// below. Both were correct and the pair reads as a bug. Thousands separators
+// stay legible to about a million, and above that K/M is genuinely easier.
+const usdX = (n) => {
+  n = Number(n) || 0;
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 // A "contract" the user can paste: a 0x EVM address OR a base58 Solana mint. Both
 // map to a token card (scoped to the active chain), and a withdraw destination.
 const isEvmCa = (s) => /^0x[0-9a-fA-F]{40}$/.test(String(s || '').trim());
@@ -104,8 +116,15 @@ const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(()
 // chains by slug; anything else (e.g. Robinhood Chain) falls back to search.
 // Buy amounts accept native units ('0.05') or USD ('$10', '10$', '10usd') —
 // USD converts to native at the live price-feed rate at parse time.
-function parseAmt(input, native) {
-  const s = String(input == null ? '' : input).trim().toLowerCase();
+function parseAmt(input, native, info) {
+  const raw = String(input == null ? '' : input).trim().toLowerCase();
+  // Same comma rules as parseUsd — this is the field that decides how much is
+  // SPENT, so it must not read "0,05" differently from the price fields. It
+  // previously rejected any comma outright, which was safe but meant a user
+  // typing their own decimal separator was told their amount was invalid.
+  const norm = normalizeDecimal(raw);
+  if (!norm.ok) { if (info && norm.ambiguous) info.ambiguous = true; return null; }
+  const s = norm.text;
   const m = s.match(/^\$?([0-9]*\.?[0-9]+)(\$|usd)?$/);
   if (!m) return null;
   const n = Number(m[1]); if (!(n > 0)) return null;
@@ -185,9 +204,60 @@ function cardSide(chatId, ca, want, holding) {
  *
  *  Returns null on anything it cannot read, never a guess: this number decides
  *  when a position is sold. */
-function parseUsd(input) {
+/**
+ * A comma in a number means different things to different people, and getting
+ * it wrong here costs money.
+ *
+ * parseUsd used to strip every comma as a thousands separator, so "1,5" — how
+ * most of this bot's users write one-and-a-half, see the note at the top of
+ * i18n.js — parsed as FIFTEEN. That figure becomes an order trigger. A user
+ * setting a stop-loss at "0,5" on a token trading at $2 got a target of $5, and
+ * the watcher fires a stop when price <= target: 2 <= 5, so the bot sold their
+ * entire bag the moment the order was created. Ten times off in the other
+ * direction is a take-profit that simply never fires.
+ *
+ * Rules, in order:
+ *   both separators   → the LAST one is the decimal ("1.234,56" and "1,234.56"
+ *                       both mean 1234.56). Unambiguous, accepted.
+ *   grouped thousands → "250,000", "1,234,567". Groups are exactly 3 digits and
+ *                       the leading group cannot start with 0, which is what
+ *                       separates "250,000" (grouping) from "0,001" (a decimal
+ *                       — nobody writes a thousands group as "0").
+ *   comma otherwise   → decimal ("1,5" → 1.5, "0,0025" → 0.0025).
+ *
+ * "1,500" therefore reads as 1500. It is the one form both conventions can
+ * produce, and grouping wins because somebody meaning one-and-a-half types
+ * "1,5" — the two trailing zeros are the tell. Anything that fits neither shape
+ * ("1,23,4") is refused rather than guessed at, and the caller says why.
+ */
+function normalizeDecimal(raw) {
+  const s = String(raw == null ? '' : raw);
+  const commas = (s.match(/,/g) || []).length;
+  if (!commas) return { ok: true, text: s };
+  const dots = (s.match(/\./g) || []).length;
+  if (dots) {
+    // Whichever appears last is the decimal point; the other is grouping.
+    const dec = s.lastIndexOf(',') > s.lastIndexOf('.') ? ',' : '.';
+    const other = dec === ',' ? /\./g : /,/g;
+    return { ok: true, text: s.replace(other, '').replace(dec, '.') };
+  }
+  // Grouped thousands: 3-digit groups, leading group 1-999 and never starting
+  // with 0. "0,001" fails that on purpose — a thousands group is never "0".
+  if (/^[1-9]\d{0,2}(,\d{3})+$/.test(s)) return { ok: true, text: s.replace(/,/g, '') };
+  if (commas >= 2) return { ok: false }; // several commas that are not grouping
+  return { ok: true, text: s.replace(',', '.') };
+}
+
+const AMBIGUOUS_COMMA = '\n\n<i>A comma can mean a decimal point or a thousands separator, and here the two differ by 1000×. Write it with a period (<code>1.5</code>) or with no separator at all (<code>1500</code>).</i>';
+
+/** `info` is optional; when passed, `info.ambiguous` tells the caller the input
+ *  was refused for the comma reason above rather than for being nonsense. */
+function parseUsd(input, info) {
   let s = String(input == null ? '' : input).trim().toLowerCase();
-  s = s.replace(/^\$/, '').replace(/(\$|usd)$/, '').replace(/,/g, '').trim();
+  s = s.replace(/^\$/, '').replace(/(\$|usd)$/, '').trim();
+  const norm = normalizeDecimal(s);
+  if (!norm.ok) { if (info && norm.ambiguous) info.ambiguous = true; return null; }
+  s = norm.text.trim();
   const m = s.match(/^([0-9]*\.?[0-9]+)\s*([kmb])?$/);
   if (!m) return null;
   const n = Number(m[1]);
@@ -308,7 +378,7 @@ function mainMenu() {
 // it stays fast. Returns a per-wallet USD array aligned to `list`.
 async function walletTokenUsd(list, enabledKeys) {
   const distinct = new Map();               // 'chain:caLower' -> { chain, ca }
-  const bags = list.map(() => []);          // per wallet: [{ ck, tokens, native }]
+  const bags = list.map(() => []);          // per wallet: [{ ck, tokens, native, chain, ca, sym }]
   list.forEach((w, wi) => {
     for (const key of Object.keys(w.positions || {})) {
       const p = w.positions[key];
@@ -319,21 +389,32 @@ async function walletTokenUsd(list, enabledKeys) {
       if (!(tokens > 0)) continue;
       const ck = p.chain + ':' + String(p.ca).toLowerCase();
       distinct.set(ck, { chain: p.chain, ca: p.ca });
-      bags[wi].push({ ck, tokens, native: (core.chainOf(p.chain) || {}).native || 'ETH' });
+      bags[wi].push({ ck, tokens, native: (core.chainOf(p.chain) || {}).native || 'ETH', chain: p.chain, ca: p.ca, sym: p.sym || '' });
     }
   });
-  if (!distinct.size) return list.map(() => 0);
+  // Same shape as the fully-priced return below — an empty BAG list per wallet,
+  // never a 0. This used to return numbers while the main path returned arrays,
+  // which is exactly the sort of split that only shows up on the one code path
+  // nobody renders in a test: a user with no positions at all.
+  if (!distinct.size) return list.map(() => []);
   const now = Date.now();
   const stale = [...distinct.entries()].filter(([ck]) => { const h = _priceCache.get(ck); return !(h && now - h.at < 30000); });
   await Promise.all(stale.map(([ck, { chain, ca }]) =>
     withTmo(core.tokenSnapshot(ca, chain).catch(() => null), 4000, null)
       .then((snap) => { _priceCache.set(ck, { priceEth: (snap && snap.priceEth > 0) ? snap.priceEth : 0, at: Date.now() }); })));
   if (_priceCache.size > 5000) { const first = _priceCache.keys().next().value; _priceCache.delete(first); }
-  return bags.map((wb) => wb.reduce((sum, b) => {
+  // Priced bags per wallet. The USD TOTAL on the wallet screen and the per-token
+  // BREAKDOWN on the tokens screen are both derived from this one array, so the
+  // two can never disagree — a screen that says "$24.87 in tokens" next to a
+  // list that adds up to something else is the kind of contradiction that makes
+  // a user distrust every other number on the page.
+  return bags.map((wb) => wb.map((b) => {
     const h = _priceCache.get(b.ck); const priceEth = h ? h.priceEth : 0;
-    return sum + b.tokens * priceEth * nativeUsd(b.native);
-  }, 0));
+    return { chain: b.chain, ca: b.ca, sym: b.sym, tokens: b.tokens, usd: b.tokens * priceEth * nativeUsd(b.native), priced: priceEth > 0 };
+  }));
 }
+/** Per-wallet USD totals — the shape walletScreen wants. */
+const bagsToUsd = (bags) => bags.map((wb) => wb.reduce((s, b) => s + b.usd, 0));
 async function walletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const ch = core.chainOf(core.userChain(u));
@@ -375,50 +456,210 @@ async function walletScreen(chatId) {
   const nativeUsdArr = matrix.map(usdOfRow);
   // Include TOKEN holdings so each wallet's total is the full portfolio value, not just
   // native coin (why "Wallet 4" reads $292 native but ~$1.3k with its bags).
-  const tokenUsdArr = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  const tokenBags = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  const tokenUsdArr = bagsToUsd(tokenBags);
   const walletUsd = nativeUsdArr.map((v, i) => v + (tokenUsdArr[i] || 0));
   const grandUsd = walletUsd.reduce((a, b) => a + b, 0);
   const grandNative = nativeUsdArr.reduce((a, b) => a + b, 0);
   const grandToken = tokenUsdArr.reduce((a, b) => a + b, 0);
   const anyFunds = grandToken > 0.05 || matrix.some((row) => row.some((b, i) => b != null && Number(fmtNat(b, allChains[i].key)) > 0));
-  // Active wallet's per-chain breakdown block.
+  // Active wallet's per-chain breakdown.
+  //
+  // Only chains that HOLD something get a row. The old version printed every
+  // enabled chain, so a normal wallet spent three of its seven lines saying
+  // "Base: 0 ETH · Arbitrum: 0 ETH · Solana: 0 SOL" — on a phone that pushed
+  // the balances that do exist off the first screen. The zeros are summarised
+  // in one line instead, and the ONE case where a zero is worth a sentence —
+  // no gas on the chain you are actually trading on — becomes a warning.
+  //
+  // A null (RPC did not answer) is NOT folded in with the zeros: "empty" and
+  // "we could not look" are different facts, and the second one means the total
+  // above is understated. That distinction is why readNative is strict.
   let chainBlock = '';
+  const emptyChains = [];
+  const unreadChains = [];
+  let activeChainNative = null;
   allChains.forEach((c, i) => {
     const b = (matrix[awIdx] || [])[i];
-    if (b == null) { chainBlock += `${c.emoji} ${esc(c.name)}: —\n`; return; }
+    if (b == null) { unreadChains.push(c.name); return; }
     const amt = Number(fmtNat(b, c.key));
+    if (c.key === ch.key) activeChainNative = amt;
+    if (!(amt > 0)) { emptyChains.push(c.name); return; }
     const usdV = nativeUsd(c.native) * amt;
-    chainBlock += `${c.emoji} ${esc(c.name)}: <b>${amt > 0 ? amt.toFixed(4) : '0'} ${c.native}</b>${usdV > 0.005 ? ` ($${fmt(usdV)})` : ''}\n`;
+    chainBlock += `${c.emoji} ${esc(c.name)} — <b>${amt.toFixed(4)} ${c.native}</b>${usdV > 0.005 ? ` · ${usdX(usdV)}` : ''}\n`;
   });
+  if ((tokenUsdArr[awIdx] || 0) > 0.05) chainBlock += `${T(chatId, 'wal.tokens_row')} — <b>${usdX(tokenUsdArr[awIdx])}</b>\n`;
+  if (emptyChains.length) chainBlock += T(chatId, 'wal.empty_on', { chains: esc(emptyChains.join(' · ')) }) + '\n';
+  if (unreadChains.length) chainBlock += T(chatId, 'wal.unread_on', { chains: esc(unreadChains.join(' · ')) }) + '\n';
   // One EVM key = one 0x address shared by every EVM chain; Solana has its own key.
   // Show BOTH addresses per wallet so it's obvious where to deposit each.
   const evmChain = allChains.find((c) => !core.chains.isSvm(c.key)) || allChains[0];
   const solChain = allChains.find((c) => core.chains.isSvm(c.key));
   const evmNames = allChains.filter((c) => !core.chains.isSvm(c.key)).map((c) => c.name).join(' · ');
-  let body = '';
+  // ONE block per wallet. The old layout rendered the active wallet twice — a
+  // detail block above and a row in the list below — under two different
+  // glyphs (🌐 then ✅) and two different roundings of the same number
+  // ($1.01K vs "native $999.62 · tokens $8.18"). Read from the top it looks
+  // like the bot listed a wallet it had already listed, and got it wrong.
+  //
+  // Addresses: full and copyable for the ACTIVE wallet only. Printing both a
+  // 42-char EVM and a 44-char Solana address for all ten wallets was ~2,500
+  // characters of the message, and every one of them wraps on a phone. 📥 on
+  // any row still gives that wallet's address and QR, which is also the only
+  // safe way to hand over an address — a shortened one must never be tappable
+  // to copy, because a copied 0x2d14…6B8 is a withdrawal into nowhere.
+  // Character budget for the "other wallets" list, sized so the whole screen
+  // stays under Telegram's 4096 with room for the header, the active wallet's
+  // chain rows, both of its addresses, the roll-up line and the hint.
+  const OTHERS_MAX_CHARS = 2600;
+  let others = '';
+  let rolledUp = 0;
+  let rolledUpUsd = 0;
   const kbRows = [];
   list.forEach((w, i) => {
     const active = i === awIdx;
     const label = core.walletLabel(w, i + 1);
     const nOrders = (w.orders && w.orders.length) || 0;
-    body += `${active ? '✅' : '▫️'} <b>${esc(label)}</b>${active ? ' <i>· active</i>' : ''} · <b>≈ $${fmt(walletUsd[i])}</b> total${nOrders ? ' · ' + nOrders + ' order' + (nOrders > 1 ? 's' : '') : ''}\n`;
-    if ((tokenUsdArr[i] || 0) > 0.05) body += `    <i>native $${fmt(nativeUsdArr[i])} · tokens $${fmt(tokenUsdArr[i])}</i>\n`;
-    body += `🔗 <b>EVM address</b> <i>(${esc(evmNames)})</i>\n<code>${wAddr(w, evmChain.key)}</code>\n`;
-    if (solChain) body += `🟣 <b>Solana address</b>\n<code>${wAddr(w, solChain.key)}</code>\n`;
-    body += `\n`;
+    const orders = nOrders ? ` · ${T(chatId, 'wal.orders', { n: nOrders })}` : '';
+    if (!active) {
+      // sendMessage caps at 4096 characters and tg() never inspects the
+      // response, so an oversized screen is not an error the user can see —
+      // /wallet simply does nothing. core.js lets MAX_WALLETS_PER_USER go to
+      // 99, which no layout of one line each can fit. The overflow is rolled
+      // into a line that SAYS how many and what they hold: this codebase's rule
+      // is that a card dropping wallets reads as a card that lost them. Every
+      // rolled-up wallet still has its own button below.
+      if (others.length < OTHERS_MAX_CHARS) others += `▫️ <b>${esc(label)}</b> · ${usdX(walletUsd[i])}${orders}\n`;
+      else { rolledUp++; rolledUpUsd += walletUsd[i]; }
+    }
     const row = [btn(`${active ? '✓ ' : '⚪ '}${label}`.slice(0, 26), active ? 'wal' : 'sw:' + w.id), btn('✏️', 'rnw:' + w.id), btn('📥', 'qrw:' + w.id)];
     if (list.length > 1) row.push(btn('🗑', 'rmw:' + w.id));
     kbRows.push(row);
   });
   if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
+  // "…in tokens" is a number with no answer to "which ones?" unless this button
+  // exists: /portfolio is scoped to the ACTIVE chain, so a bag on any other
+  // chain had no screen at all. Only offered when there is something to show.
+  if (grandToken > 0.05) kbRows.push([btn('🪙 My tokens', 'toks'), btn('📊 Portfolio', 'pos')]);
   kbRows.push([btn('🌐 Chain', 'chain'), btn('🔄 Refresh', 'wal'), btn('« Menu', 'menu')]);
-  const head = `💼 <b>Your Wallets</b> · ${ch.emoji} ${esc(ch.name)}\n${list.length}/${core.WALLET_CAP} wallets · total <b>≈ $${fmt(grandUsd)}</b>${grandToken > 0.05 ? ` <i>(native $${fmt(grandNative)} · tokens $${fmt(grandToken)})</i>` : ''}\n\n`
-    + `🌐 <b>${esc(core.walletLabel(list[awIdx], awIdx + 1))}</b>${walletUsd[awIdx] > 0.005 ? ` · ≈ $${fmt(walletUsd[awIdx])}` : ''}\n${chainBlock}${(tokenUsdArr[awIdx] || 0) > 0.05 ? `🪙 Tokens (bags): <b>$${fmt(tokenUsdArr[awIdx])}</b>\n` : ''}\n`;
+
+  const activeLabel = esc(core.walletLabel(list[awIdx], awIdx + 1));
+  const orders = ((list[awIdx] && list[awIdx].orders) || []).length;
+  const head = `${T(chatId, 'wal.title')} · ${ch.emoji} ${esc(ch.name)}\n`
+    + `${T(chatId, 'wal.total', { usd: `<b>${usdX(grandUsd)}</b>`, n: list.length, cap: core.WALLET_CAP })}\n`
+    + (grandToken > 0.05 ? `<i>${T(chatId, 'wal.split', { coins: usdX(grandNative), tokens: usdX(grandToken) })}</i>\n` : '')
+    + `\n${T(chatId, 'wal.active_head')}\n`
+    + `✅ <b>${activeLabel}</b> · <b>${usdX(walletUsd[awIdx])}</b>${orders ? ` · ${T(chatId, 'wal.orders', { n: orders })}` : ''}\n`
+    + chainBlock
+    // The only zero worth a sentence: no gas on the chain they are trading on.
+    + (activeChainNative === 0 ? T(chatId, 'wal.no_gas', { native: esc(ch.native), chain: esc(ch.name) }) + '\n' : '')
+    + `<i>${T(chatId, 'wal.addr_evm', { chains: esc(evmNames) })}</i>\n<code>${wAddr(list[awIdx], evmChain.key)}</code>\n`
+    + (solChain ? `<i>${T(chatId, 'wal.addr_sol', { chain: esc(solChain.name) })}</i>\n<code>${wAddr(list[awIdx], solChain.key)}</code>\n` : '')
+    + (others ? `\n${T(chatId, 'wal.others_head')}\n${others}` : '')
+    + (rolledUp ? `<i>${T(chatId, 'wal.more', { n: rolledUp, usd: usdX(rolledUpUsd) })}</i>\n` : '');
   const guide = !anyFunds
-    ? `<b>Start in 3 steps 👇</b>\n1️⃣ Deposit ${ch.native} to a wallet — tap <b>📥</b> on it for the address/QR.\n2️⃣ Tap <b>🔄 Refresh</b> to see it land.\n3️⃣ Paste any token contract → live card → one-tap buy.\n\n<i>Tap a name to switch · ✏️ rename · 📥 deposit · 🗑 remove. One key per wallet on every chain — EVM shares one 0x address, Solana has its own (switch with 🌐).</i>`
-    : `<i>Tap a wallet to switch · ✏️ rename · 📥 deposit · 🗑 remove. Paste any token address to trade.</i>`;
-  return { text: head + body + guide, kb: { inline_keyboard: kbRows } };
+    ? `\n${T(chatId, 'wal.first_steps', { native: esc(ch.native) })}\n\n${T(chatId, 'wal.keys_note')}`
+    : `\n${T(chatId, 'wal.hint')}`;
+  return { text: head + guide, kb: { inline_keyboard: kbRows } };
+}
+/**
+ * Every token you hold, on every chain, grouped by chain.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM /portfolio
+ * `core.portfolioAll` skips any position whose `p.chain !== chainKey`, so the
+ * portfolio only ever shows the ACTIVE chain — and it has to, because it reports
+ * PnL denominated in that chain's native coin, and ETH-denominated profit cannot
+ * be added to BNB-denominated profit. Meanwhile the wallet screen's "in tokens"
+ * figure counts EVERY enabled chain. So the bot could tell you that you held
+ * $24.87 of tokens and then offer no screen that showed you what they were: the
+ * ones on a chain you were not currently switched to were invisible.
+ *
+ * USD is what makes a cross-chain list possible at all, so that is the unit
+ * here. Per-token PnL stays on /portfolio where the native denomination is
+ * meaningful — this screen answers "what do I hold, and where", nothing else.
+ *
+ * HONEST LIMIT: positions are what the bot BOUGHT. A token sent in from an
+ * outside wallet was never recorded, so it is not here and is not in the wallet
+ * screen's total either — the two agree, and the note says so rather than
+ * letting a user conclude their balance vanished.
+ */
+async function tokensScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const list = core.walletList(u);
+  const allChains = core.chains.enabledChains();
+  const bags = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+
+  // chainKey -> caLower -> { sym, ca, chain, tokens, usd, holders:[label], unpriced }
+  const byChain = new Map();
+  let grand = 0;
+  bags.forEach((wb, wi) => {
+    const label = core.walletLabel(list[wi], wi + 1);
+    for (const b of wb) {
+      const per = byChain.get(b.chain) || new Map();
+      const k = String(b.ca).toLowerCase();
+      const row = per.get(k) || { sym: b.sym, ca: b.ca, chain: b.chain, tokens: 0, usd: 0, holders: [], unpriced: false };
+      row.tokens += b.tokens; row.usd += b.usd;
+      if (!b.priced) row.unpriced = true;
+      if (!row.holders.includes(label)) row.holders.push(label);
+      per.set(k, row); byChain.set(b.chain, per);
+      grand += b.usd;
+    }
+  });
+
+  if (!byChain.size) {
+    return { text: `${T(chatId, 'tok.title')}\n\n${T(chatId, 'tok.empty')}`,
+      kb: rows([btn('💼 Wallets', 'wal'), btn('« Menu', 'menu')]) };
+  }
+
+  const L = [`${T(chatId, 'tok.title')}`, `${T(chatId, 'tok.total', { usd: `<b>${usdX(grand)}</b>` })}`];
+  const kbRows = [];
+  let anyUnpriced = false;
+  // Chains in the order the picker shows them, so this screen and /chain agree.
+  for (const c of allChains) {
+    const per = byChain.get(c.key);
+    if (!per) continue;
+    const items = [...per.values()].sort((a, b) => b.usd - a.usd);
+    const chainUsd = items.reduce((s, r) => s + r.usd, 0);
+    // A price we could not read is NOT zero. A chain whose only bag is unpriced
+    // must not head its section with "$0.00" — that reads as "you hold nothing
+    // here" about a wallet holding 900K of something. Where some bags priced and
+    // others did not, the subtotal is real but incomplete, and says so.
+    const blind = items.filter((r) => r.unpriced && !(r.usd > 0)).length;
+    anyUnpriced = anyUnpriced || blind > 0;
+    const chainVal = blind === items.length ? T(chatId, 'tok.no_price')
+      : blind ? `${usdX(chainUsd)} ${T(chatId, 'tok.plus_unknown')}` : usdX(chainUsd);
+    L.push(`\n${c.emoji} <b>${esc(c.name)}</b> · ${chainVal}`);
+    for (const r of items) {
+      const val = r.unpriced && !(r.usd > 0) ? T(chatId, 'tok.no_price') : usdX(r.usd);
+      const where = list.length > 1 ? ` · <i>${esc(r.holders.join(', '))}</i>` : '';
+      // Name it by its CONTRACT when it has no symbol on record — the same
+      // rule the live-position card follows. "$?" tells a holder the bot cannot
+      // even name what they own.
+      const label = r.sym ? `<b>$${esc(r.sym)}</b>` : `<code>${esc(short(r.ca))}</code>`;
+      L.push(`${fmt(r.tokens)} ${label} · ${val}${where}`);
+      // Reuses the existing token-card callback (tok:<chain>:<walletIdx>:<ca>)
+      // rather than a new one — an empty wallet index means "the active wallet",
+      // which is what the card already falls back to. Bounded at 12 buttons:
+      // Telegram's callback_data is 64 bytes and a wall of them is unreadable;
+      // the text list above is complete either way.
+      // tok:<chain>:<walletIdx>:<ca> — the card callback that already exists. An
+      // empty wallet index is the documented "fall back to the active wallet"
+      // path at the parser. Bounded at 12: a wall of buttons is unreadable and
+      // the text list above is complete either way.
+      if (kbRows.length < 12) {
+        // "$PEPE · $0.00" on a button is the same lie the row above refuses to
+        // tell, so an unpriced bag shows its amount instead of a price.
+        const tag = r.unpriced && !(r.usd > 0) ? fmt(r.tokens) : usdX(r.usd);
+        kbRows.push([btn(`${(r.sym ? '$' + r.sym : 'token').slice(0, 14)} · ${tag}`.slice(0, 30), `tok:${r.chain}::${r.ca}`)]);
+      }
+    }
+  }
+  if (anyUnpriced) L.push(`\n${T(chatId, 'tok.unpriced_note')}`);
+  L.push(`\n${T(chatId, 'tok.note')}`);
+  kbRows.push([btn('🔄 Refresh', 'toks'), btn('📊 Portfolio', 'pos')]);
+  kbRows.push([btn('💼 Wallets', 'wal'), btn('« Menu', 'menu')]);
+  return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
 }
 // Maestro-style deposit: a QR of the address + the address text. Works for any wallet
 // (not just the active one). Degrades to a plain text address if QR is disabled/fails.
@@ -507,7 +748,25 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   L.push(`<b>${esc(name)}</b> · <b>$${esc(sym)}</b>`);
   L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}${created ? `  ·  ${fmtAge(created)} old` : ''}`);
   L.push(`<code>${ca}</code>`);
-  if (sec) { const v = safety.verdict(chainKey, sec); if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`); else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`); }
+  // SILENCE IS NOT A CLEAN BILL OF HEALTH.
+  //
+  // This printed a line only for `danger` and `warn`, so a token that PASSED the
+  // check and a token whose check FAILED — a GoPlus/RugCheck timeout, an
+  // unindexed mint, a rate limit; `tokeninfo.js` catches all of them to null —
+  // rendered identically: nothing at all. A user who has learned that this bot
+  // warns about honeypots reads that absence as "checked, fine" and taps Buy.
+  // The one place the difference matters most is the one screen that never
+  // stated it. All four states now say which one they are, in one line.
+  if (sec) {
+    const v = safety.verdict(chainKey, sec);
+    if (v.level === 'danger') L.push(`🚨 <b>HIGH RISK</b> — ${esc(v.red.join(', '))}`);
+    else if (v.level === 'warn') L.push(`⚠️ <b>Caution</b> — ${esc(v.warn.join(', '))}`);
+    else L.push(T(chatId, 'sec.clean'));
+  } else if (safety.supported(chainKey)) {
+    L.push(T(chatId, 'sec.unchecked'));
+  } else {
+    L.push(T(chatId, 'sec.unsupported', { chain: esc(ch.name) }));
+  }
   // ── Market ─────────────────────────────────────────────────────────────────
   // Every value is labelled and every line leads with what it is. The old card
   // printed bare fragments — "LP burned" alone on a line, "Liq 0.02 ETH" with
@@ -766,8 +1025,13 @@ async function portfolioScreen(chatId) {
   const pctStr = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
   const dot = (v) => (v >= 0 ? '🟢' : '🔴');
   if (!pf.rows.length) {
-    return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\nNo holdings on this chain across your wallets. Paste a token contract to buy, or switch chain.`,
-      kb: rows([btn('🌐 Chain', 'chain'), btn('« Menu', 'menu')]) };
+    // "No holdings" is true only of THIS chain — portfolioAll skips every
+    // position on any other one. Said flatly it reads as "you hold nothing",
+    // which for a user with a bag on another chain is simply false. /tokens is
+    // the screen that can answer it, so point at it instead of leaving them to
+    // switch chains one at a time to find out.
+    return { text: `📊 <b>Portfolio</b> · ${pf.chain ? pf.chain.emoji + ' ' + esc(pf.chain.name) : ''}\n\n${T(chatId, 'pf.empty_chain')}`,
+      kb: rows([btn('🪙 My tokens', 'toks'), btn('🌐 Chain', 'chain')], [btn('« Menu', 'menu')]) };
   }
 
   const open = pf.rows.filter((r) => r.open);
@@ -789,16 +1053,24 @@ async function portfolioScreen(chatId) {
   if (Math.abs(pf.totalRealizedEth) > 1e-9) {
     L.push(`${dot(pf.totalRealizedEth)} <b>Realized:</b> ${both(pf.totalRealizedEth)} <i>banked from closed trades</i>`);
   }
+  // A total that quietly omits rows is a total presented as complete when it is
+  // not. Naming the count is the difference between a figure a user can act on
+  // and one they later discover was wrong.
+  if (pf.unpriced > 0) L.push(T(chatId, 'pf.unpriced', { n: String(pf.unpriced) }));
 
   // ── Open positions ────────────────────────────────────────────────────────
   if (open.length) {
     L.push(`\n<b>── Open ──</b>`);
     for (const r of open) {
-      const pct = r.costEth > 0 ? (r.unrealizedEth / r.costEth) * 100 : null;
+      // unrealizedEth === null means the price could not be read. Printing a
+      // PnL there would be inventing one, and the shape it invents is always
+      // "-100%", because value 0 minus cost is the whole cost.
+      const known = r.unrealizedEth != null;
+      const pct = known && r.costEth > 0 ? (r.unrealizedEth / r.costEth) * 100 : null;
       const who = (r.holders && r.holders.length)
         ? r.holders.map((h) => `${esc(h.label)} ${fmt(h.tokens)}`).join(' · ')
         : '—';
-      L.push(`\n<b>$${esc(r.sym)}</b> · ${money(r.valueEth)}`);
+      L.push(`\n<b>$${esc(r.sym)}</b> · ${known ? money(r.valueEth) : T(chatId, 'tok.no_price')}`);
       L.push(`   ${fmt(r.tokens)} tokens · cost ${money(r.costEth)}`);
       if (pct != null) L.push(`   ${dot(r.unrealizedEth)} ${both(r.unrealizedEth)} · ${pctStr(pct)}`);
       L.push(`   held: ${who}`);
@@ -1654,6 +1926,7 @@ async function onMessageImpl(m) {
   if (text === '/wallet') { const w = await walletScreen(chatId); return send(chatId, w.text, w.kb); }
   if (text === '/chain') { const s = chainScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/portfolio' || text === '/positions') { const s = await portfolioScreen(chatId); return send(chatId, s.text, s.kb); }
+  if (text === '/tokens' || text === '/bags') { const s = await tokensScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/snipe') { const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -1786,6 +2059,7 @@ async function onCallback(q) {
   if (data === 'chain') { const s = chainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'setch') { try { core.setChain(chatId, ca); } catch (_) {} const w = await walletScreen(chatId); return edit(chatId, mid, w.text, w.kb); }
   if (data === 'pos') { const s = await portfolioScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'toks') { const s = await tokensScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'monlist') { const s = await monitorListScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'hist') { const s = historyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snipe') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -2039,8 +2313,9 @@ async function resolvePending(chatId, p, text, m) {
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const raw = String(t).trim();
       const isMcap = /^mc\b/i.test(raw);
-      const usdVal = parseUsd(raw.replace(/^mc\s*/i, ''));
-      if (!(usdVal > 0)) return send(chatId, `Send a positive ${isMcap ? 'market cap' : 'USD price'} (or prefix with <code>mc</code> for a market-cap target).`);
+      const info = {};
+      const usdVal = parseUsd(raw.replace(/^mc\s*/i, ''), info);
+      if (!(usdVal > 0)) return send(chatId, `Send a positive ${isMcap ? 'market cap' : 'USD price'} (or prefix with <code>mc</code> for a market-cap target).` + (info.ambiguous ? AMBIGUOUS_COMMA : ''));
       const meta = await core.tokenMeta(p.ca, ch.key);
       const type = p.action === 'tp_price' ? 'tp' : 'sl';
       // Store the target in native units of the chosen metric (price or mcap).
@@ -2050,7 +2325,9 @@ async function resolvePending(chatId, p, text, m) {
       return send(chatId, `✅ ${type === 'tp' ? 'Take-profit' : 'Stop-loss'} set for $${esc(meta.sym)} at ${isMcap ? 'market cap $' + fmt(usdVal) : '$' + usdVal} on ${ch.emoji} ${esc(ch.name)}.\n${speedNote(order)}`, rows([btn('📋 Orders', 'orders')]));
     }
     if (p.action === 'lb_price') {
-      const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = parseUsd(pxStr), amount = Number(amtStr);
+      const info = {};
+      const [pxStr, amtStr] = t.split(/\s+/); const usdPrice = parseUsd(pxStr, info), amount = Number(amtStr);
+      if (info.ambiguous) return send(chatId, 'Could not read that price.' + AMBIGUOUS_COMMA);
       if (!(usdPrice > 0) || !(amount > 0)) return send(chatId, 'Format: <code>&lt;usd_price&gt; &lt;amount&gt;</code>');
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
@@ -2105,7 +2382,9 @@ async function resolvePending(chatId, p, text, m) {
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
     }
     if (p.action === 'alert_price') {
-      const usdPrice = parseUsd(t); if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price — <code>0.0025</code>, <code>$2k</code>, <code>101k</code>.');
+      const info = {};
+      const usdPrice = parseUsd(t, info);
+      if (!(usdPrice > 0)) return send(chatId, 'Send a positive USD price — <code>0.0025</code>, <code>$2k</code>, <code>101k</code>.' + (info.ambiguous ? AMBIGUOUS_COMMA : ''));
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!(nativeUsd(ch.native) > 0)) return send(chatId, 'Price feed unavailable — try again shortly.');
       const meta = await core.tokenMeta(p.ca, ch.key);
       const snap = await core.tokenSnapshot(p.ca, ch.key).catch(() => null);   // infer direction from current price
@@ -2245,7 +2524,32 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   ]);
   const nat = ch.native; const usdRate = nativeUsd(nat);
   const inUsd = (v) => (usdRate > 0 ? ` ($${(v * usdRate).toFixed(2)})` : '');
-  const sym = (pos && pos.sym) || (snap && snap.sym) || '?';
+  // A SYMBOL IS A PROPERTY OF THE TOKEN, not of one wallet's position record —
+  // exactly the defect the decimals note below describes, one line further on.
+  // `pos` is only the BOUND wallet, so a card opened on Wallet 1 while Wallets
+  // 2-4 hold the token found no record; and tokenSnapshot carries `sym` only on
+  // the Solana/DEX branch (core.js:1101) — the EVM curve snapshot has no such
+  // field — so there was nothing to fall back to and the card printed "$?" in
+  // its own title, four times over, on a position worth real money.
+  //
+  // Cheapest source first. The wallet scan is in-memory and resolves the case
+  // above without a single request; tokenMeta is a network call and therefore
+  // last, reached only when no wallet has ever recorded this token.
+  let sym = (pos && pos.sym) || (snap && snap.sym) || '';
+  if (!sym) {
+    for (const wal of core.walletList(u)) {
+      const q = (wal.positions || {})[posKey];
+      if (q && q.sym) { sym = q.sym; break; }
+    }
+  }
+  if (!sym) {
+    const meta = await withTmo(core.tokenMeta(ca, chainKey).catch(() => null), SNAP_TMO_MS, null);
+    sym = (meta && meta.sym) || '';
+  }
+  // Still nothing: name the token by its CONTRACT rather than by a punctuation
+  // mark. "$?" tells the reader their money is in something the bot cannot even
+  // name; the short address at least identifies it and can be searched.
+  const symTxt = sym ? `$${esc(sym)}` : `<code>${esc(short(ca))}</code>`;
   // DECIMALS ARE A PROPERTY OF THE TOKEN, not of one wallet's position record.
   // This read `(pos && pos.dec) || 18`, where `pos` is only the BOUND wallet's
   // record — so a wallet holding the token with no record of its own (exactly
@@ -2370,7 +2674,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
   const scopeN = selN || 1;
   const scopeHolding = holders.filter((h) => inScope(h.id)).length;
   const more = multi ? ` <i>· +${holders.length - 1} more below</i>` : '';
-  const L = [`📍 <b>Live position — $${esc(sym)}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
+  const L = [`📍 <b>Live position — ${symTxt}</b>\n${ch.emoji} ${esc(ch.name)} · 💳 ${esc(core.walletLabel(w, wi))}${more}\n`];
   // Reading the LIVE on-chain balance (not pos.tokens) is what stops tokens sent
   // out via 📤 Send from leaving the Monitor showing a phantom bag with fake PnL.
   //
@@ -2397,7 +2701,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // Say when the bag is the one the BUY recorded rather than one read from the
     // chain just now — otherwise a failing RPC renders identically to a live
     // read, and tokens sent out with 📤 would show as a bag the user still has.
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} $${esc(sym)}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} ${symTxt}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {
@@ -2419,7 +2723,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // announced "ℹ️ 0.0000 $PONS has no entry price on record", which reads as a
     // bug rather than as information.
     if (fmtNZ(unpricedTokens)) {
-      L.push(`ℹ️ <i>${fmt(unpricedTokens)} $${esc(sym)} has no entry price on record (sent in, or bought outside the bot) — counted in what you hold, left out of P/L.</i>`);
+      L.push(`ℹ️ <i>${fmt(unpricedTokens)} ${symTxt} has no entry price on record (sent in, or bought outside the bot) — counted in what you hold, left out of P/L.</i>`);
     }
     // Named OUTSIDE the per-wallet list, because the list is capped and these
     // rows sort last: with more than MON_WALLET_ROWS wallets the truncation
@@ -2436,7 +2740,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
       L.push('');
       L.push('💳 <b>Per wallet</b>');
       if (scopeN > 1) {
-        L.push(`🔻 <i>The Sell buttons act on <b>${scopeN} wallets</b>${scopeHolding < scopeN ? ` — ${scopeHolding} of them hold $${esc(sym)}` : ''}. Tap 🔎 Card to change which.</i>`);
+        L.push(`🔻 <i>The Sell buttons act on <b>${scopeN} wallets</b>${scopeHolding < scopeN ? ` — ${scopeHolding} of them hold ${symTxt}` : ''}. Tap 🔎 Card to change which.</i>`);
       }
       // Dollars first, native beside it. A row that gave a token count, a cost
       // and a percentage never answered the question the section exists for —
@@ -2459,7 +2763,7 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
         const note = h.stale ? ' <i>(last known)</i>' : '';
         const bound = !inScope(h.id) ? ''
           : (scopeN > 1 ? '  ✅ <i>Sell includes this</i>' : '  ⬅️ <i>Sell acts here</i>');
-        L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} $${esc(sym)}${note}${bound}`);
+        L.push(`• <b>${esc(h.label)}</b> — ${fmt(h.tokens)} ${symTxt}${note}${bound}`);
         const parts = [`worth ${px > 0 ? usdFirst(hv, true) : '—'}`];
         if (h.cost > 0) parts.push(`in ${usdFirst(h.cost, false)}`);
         if (h.uncosted > 0 && fmtNZ(h.uncosted)) parts.push(`<i>${fmt(h.uncosted)} not bought here</i>`);
@@ -2950,6 +3254,7 @@ async function registerCommands() {
     { command: 'start',     description: 'Open the bot — wallet & main menu' },
     { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
     { command: 'portfolio', description: 'Your holdings & profit/loss' },
+    { command: 'tokens', description: 'Every token you hold, and on which chain' },
     { command: 'monitor',   description: 'Live position tracker — pins & refreshes itself' },
     { command: 'history',   description: 'Your past trades' },
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
@@ -3053,5 +3358,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
 if (require.main === module) start();

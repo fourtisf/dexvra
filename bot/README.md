@@ -43,9 +43,10 @@ Base, Robinhood, Tron, TON.
 
 ```bash
 cd bot
-cp .env.example .env      # fill in BOT_TOKEN + INTERNAL_API_TOKEN (+ treasuries)
+cp -n .env.example .env   # -n so a live box's existing .env is never clobbered
 npm install
 npm run check             # boot-wiring smoke test (no network)
+npm run rpc:check         # do the chain RPC endpoints answer from this server?
 npm run x:check           # is X auto-posting configured + do the keys work?
 npm start                 # node main.js (long-polling)
 ```
@@ -53,12 +54,23 @@ npm start                 # node main.js (long-polling)
 `INTERNAL_API_TOKEN` must equal the web app's value (see the root `README.md`).
 The bot must be an **admin** in all three channels.
 
+**[`KEYS.md`](KEYS.md)** is the full audit of every credential: what is
+required, what each optional key unlocks, and — the part that costs time — what
+degrades *silently* without it. Short version: only `BOT_TOKEN` and
+`INTERNAL_API_TOKEN` are needed, and **no paid market-data API key is used
+anywhere** (GeckoTerminal, DexScreener and CoinGecko are all called keyless).
+
 ### Production (PM2, same VPS as the web app)
 
 ```bash
-pm2 start main.js --name dexvra-bot --cwd /path/to/dexvra/bot
-pm2 save
+cd /path/to/dexvra/bot
+pm2 start ecosystem.config.js && pm2 save
+pm2 startup      # survive a reboot
 ```
+
+`ecosystem.config.js` starts **both** processes — `dexvra-bot` and
+`dexvra-adminbot`. Starting `main.js` by hand runs only the first, so the
+template/banner editor is silently absent.
 
 ## Layout
 
@@ -72,6 +84,8 @@ pm2 save
 | `src/dexscreener.js` | DexScreener feeds + token info (every chain but Robinhood) |
 | `src/poolstrade.js` | pools.trade launchpad — Robinhood Chain, which DexScreener does not index |
 | `src/handlers/` | `start`, `listing`, `trending`, `banner`, `text`, `menu`, `registry` |
+| `src/group/` | group buy bot — pool resolver, per-transaction trades feed, delivery latch |
+| `src/raid/` | Dexvra Raid — X metrics resolver, card, chat lock, runner, `/raid` panel |
 | `src/payments/` | temp-wallet gen, balance poll, sweep, confirm handler (per-chain adapters) |
 | `src/channels/` | Bot-API channel posting + post formatters |
 | `src/twitter.js` | X posting — every post type (disabled unless keys present) |
@@ -249,14 +263,214 @@ late is worse than no post.
    **Read and write before** the access token is generated. Verify with
    `npm run x:check`. Full walkthrough + troubleshooting:
    [`X-AUTOPOST.md`](X-AUTOPOST.md). Leave the four blank to keep X off.
-7. `npm run check` → `npm test` → `npm start`.
+6b. **RPC**: `npm run rpc:check`. Every chain ships with a list of keyless
+   public endpoints and a read walks the list until one answers. **One sweep
+   uses one node** — whichever answered its opening balance read — and never
+   re-broadcasts to a second, so every url you list must be a node you trust to
+   *send*, not only to read. The defaults are shared with the whole internet and
+   rate-limit by IP; put a paid endpoint in `RPC_<CHAIN>` (or a full list in
+   `RPC_<CHAIN>_URLS`) before you take real volume. Details in
+   [`KEYS.md`](KEYS.md).
+7. `npm run check` → `npm run rpc:check` → `npm test` → `npm start`.
 8. **Security**: rotate the bot token in @BotFather if it was ever shared, then
    update `.env`.
+
+## Group tools — Buy Bot & Raid
+
+Both are free, both run inside a project's own Telegram group, and both are
+reachable from the main menu (**🤖 Buy Bot & Raid for your group**).
+
+### Buy Bot — real transactions, not estimates
+
+`/settoken <CA>` in the group and every on-chain buy posts an alert carrying the
+**actual transaction hash and buyer address**, read from GeckoTerminal's
+per-pool trades feed (`src/group/gtTrades.js`).
+
+The volume-diff estimator it replaced is still in the tree, but it now runs
+**only when the trades feed cannot be read**, and it labels itself when it does.
+That distinction is the whole design, and it lives in one place:
+`fetchPoolBuys()` resolves `null` when the feed is *unavailable* and `[]` when
+the feed *answered and the pool is quiet*. Conflating them fails in one of two
+directions — read an outage as silence and the group hears nothing for hours;
+read silence as an outage and every buy posts twice, once real and once
+estimated.
+
+Four rules that look like details and are not:
+
+- **Direction comes from the token addresses, never GeckoTerminal's `kind`.**
+  `kind` is relative to the pool's *base* token, so on a pool where the tracked
+  token is the quote side, `kind:"buy"` means our token was **sold** — a green
+  buy alert on every dump.
+- **Multi-hop swaps are merged by transaction hash before alerting.** Un-merged,
+  a $120 routed buy posts as "$40" and the other legs vanish into the dedupe.
+- **The dedupe budget is spent only after Telegram returns a `message_id`**
+  (`src/group/alertLatch.js`). A short claim stops two overlapping polls
+  double-sending; the hour-long latch is written on success. One 429 must never
+  mean the alert never posted *and* can never post again.
+- **A dead group latches; a bad moment does not.** Fatal-vs-transient lives in
+  exactly one file (`src/group/fatalChatError.js`) so no two pipelines can drift
+  into retrying a chat the other already gave up on.
+
+The alert itself:
+
+```
+🟢 NEW BUY — The Nietzschean Dog
+
+🟢🟢🟢
+
+💲 Spent: $48.97 (0.6646 SOL)
+🪙 Got: 926,311.94 $RUSS
+📊 Price: $0.00004823 · 🏦 MCap: $46.5K
+👤 Buyer: AFqu1M…jcBb · View txn
+
+⚡ Trade on Dexvra · 📈 Chart · 🔥 Trending
+```
+
+This is **deliberately not** the layout every copy-trading bot shares. Those
+are icon-only rows joined by `|`, with a `<Brand>Trending | Chart` footer —
+adopt it and Dexvra reads as one more clone of the same card. The grammar
+here is the one the listing post already uses: **Label:** value, joined by
+`·`, with a bracketed CTA row, so a reader who knows one Dexvra surface
+knows the other.
+
+The header word is the size tier (`NEW BUY` / `WHALE BUY` / `MEGA BUY`,
+thresholds in `.env`, wording in `group_buy_tiers`), and the row below it
+grows with the buy — one icon per `BUYBOT_EMOJI_STEP_USD`, floored at 3 and
+capped at 16 so it never wraps.
+
+It is a ROW and not a fill-meter on purpose. A meter renders the part that
+is *missing*, so a real buy comes out as `▰▱▱▱▱▱▱▱▱▱` and reads like
+something failed rather than like something good happened — a buy alert
+must never look like that. Change the icons with `group_buy_style`
+(`buy|whale`, default `🟢|🐋`).
+
+Two figures there are easy to get subtly wrong, so they are worth stating:
+the **native amount** is the token the buyer actually spent, read from the
+trade — not `usd ÷ nativePrice`, which is invented precision that disagrees
+with the transaction linked directly beneath it, and it is omitted entirely
+when the counterparty was not the native coin or a routed swap paid in
+several. **Price and market cap both come from the pool**, so the card
+cannot contradict itself the way an effective trade price beside a pool
+market cap does.
+
+### 🐋 Whale wallets
+
+A second alert class, keyed on **who bought**, not on how much they spent:
+
+```
+🐋 WHALE WALLET — The Nietzschean Dog
+
+🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋
+
+💲 Spent: $804.72 (10.7568 SOL)
+🪙 Got: 51,874.15 $RUSS
+💰 Holds: 1,980,000 $RUSS · $95,523
+📈 Position: +3.82%
+📊 Price: $0.00004823 · 🏦 MCap: $15.5M
+👤 Buyer: AFqu1M…jcBb · View txn
+```
+
+A $200 top-up from someone sitting on $80k is news in a way a $200 buy from
+a fresh wallet is not — so the bar is the buyer's **holding**
+(`BUYBOT_WHALE_WALLET_USD`, default $50,000; per group `/setwhale 50000`).
+These are **pinned**, each replacing the last, which is the point of
+separating them; ordinary buys never are, because a pin per buy is not a
+highlight, it is a scrollbar. `/buybot pin off` opts out.
+
+**"Holds" is deliberately not "Wallet Balance".** It is the buyer's balance
+of *this token* at the pool price, read on chain. This bot has no portfolio
+API, so a label promising a total would be a wrong number presented as a
+right one — and the signal a group actually wants (is this a big holder of
+*our* token?) is exactly what the figure measures. `Position` is how much
+the buy grew that bag; a first-ever buy says `new position` rather than
+inventing `+100%`.
+
+Holdings are readable on Solana and every EVM chain in the registry. On
+others, whale detection is skipped and buys alert normally — `/setwhale`
+says so rather than silently doing nothing. Lookups cost one RPC call,
+gated behind `BUYBOT_WHALE_CHECK_MIN_USD` and cached per wallet for two
+minutes, with misses cached briefly so a dead RPC cannot cost a timeout per
+buy.
+
+**A GIF or video above every buy alert** — upload it in @dexvraadminbot →
+🎨 Gambar Banner Channel → 🟢 Buy Bot, and a
+**separate** one under 🐋 Whale Alert. One clip each, used by every group,
+with the transaction details as the caption.
+
+The two slots **never borrow from each other**: a whale alert plays the
+whale clip and nothing else, an ordinary buy plays the buy clip and nothing
+else. That is the point of having two — a whale should *look* different
+scrolling past, and falling back would give both alerts identical artwork
+with only the wording changed. A whale with no clip uploaded is sent as
+text, and the admin menu says so rather than quietly borrowing. It is resolved per send, so swapping
+it applies to the next alert with no restart; leave it empty and alerts are
+plain text. A clip Telegram refuses costs the artwork, never the alert. It
+is stored like every other banner clip (`banner-media-buy.*`), which is what
+gets it into the Mongo media mirror and through a container replace alive.
+
+```bash
+npm run buybot:check                              # a known-good pool
+npm run buybot:check -- solana <token-address>    # your token
+```
+
+Grep pm2 logs for `verified <chain> buys` (real) vs `volume-diff buy estimate`
+(degraded), and `is unreachable` for a group that removed the bot.
+
+### Raid — rally the chat behind one X post
+
+`/raid` opens an admin panel: set goals (**+15 likes**, **+5 replies**,
+**+10 crew**), paste the post, launch. One card is posted and kept updated, and
+optionally the chat is locked until the targets are met.
+
+**The X API is optional.** The 🤝 **Crew** goal counts everyone who shows up in
+the chat while the raid is live — no key, no plan, no quota — so:
+
+- crew goal only → X is never called at all;
+- X goals but X refuses → the raid launches crew-only, and *re-arms itself* if
+  X starts answering mid-raid;
+- X goals and no crew goal → the launch is refused, with the way out in the
+  message.
+
+Worth being precise about the cost, because it is the thing people get wrong: an
+X API bill is a toll on **reading X's database**, not rent on your own account —
+the post's author is not involved. Since X moved to pay-per-use, reads are
+$0.005 each, **deduplicated per post per 24h UTC window**, so a 60-minute raid
+polling every 30s bills as roughly **one read (≈ $0.005)**. The binding
+constraint is the app-level rate limit, not money; if you hit it, raise
+`RAID_POLL_SEC`.
+
+Two keyless sources exist and both ship **off**: `RAID_FREE_METRICS` (X's embed
+endpoint — likes and replies, cannot see reposts, and its reply figure is the
+whole conversation so it disagrees with the number X prints on the post) and
+`RAID_GUEST_METRICS` (X's internal GraphQL with an anonymous guest token — the
+only free route to a repost count). **They are not independent fallbacks**: both
+are gated by X's IP reputation, so a datacenter block takes them out together.
+The genuinely independent paths are the paid token and the Crew goal.
+
+The one part that can hurt a customer is the chat lock, so it is built around
+that: the chat's current permissions are snapshotted and **written to disk
+before anything is touched**, the deadline (`expiresAt`) is durable so a boot
+sweep frees a group whose process was killed mid-raid, `finishRaid()` is the
+only exit door because it is the function that unlocks, and a failed unlock
+deliberately leaves `locked: true` so the next sweep retries.
+
+```bash
+npm run raid:check                       # which X source answers from this server
+npm run raid:check -- <post-url>
+```
+
+Grep pm2 logs for `[raid]` — `started`, `completed`, `expired`, `locked group`,
+`unlocked group`, `UNLOCK FAILED`, `boot recovery`, `X came back`.
+
+All raid and buy-alert copy is admin-editable in `@dexvraadminbot`
+(**🤖 Group Buy Bot** and **🚀 Dexvra Raid**), including the bar characters via
+`raid_style`.
 
 ## Tests
 
 ```bash
-npm run check   # boot-wiring smoke (no network)
-npm test        # unit tests (pricing, units, chains, formatting, cards)
+npm run check     # boot-wiring smoke (no network)
+npm test          # unit tests (pricing, units, chains, formatting, cards)
+npm run rpc:check # which chain RPC endpoints answer from this server
 ```
 

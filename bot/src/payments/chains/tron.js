@@ -1,7 +1,7 @@
 // Tron adapter (tronweb v6). Native TRX, 6 decimals (sun).
 const TronPkg = require("tronweb");
 const TronWeb = TronPkg.TronWeb || TronPkg.default || TronPkg;
-const { RPC } = require("../../config/constants");
+const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 // Reserve ladder, in sun (1 TRX = 1,000,000 sun). Tried in order, cheapest
@@ -18,8 +18,10 @@ const log = require("../../helpers/logger");
 const RESERVE_LADDER = [0n, 400000n, 1500000n];
 const ATTEMPTS = 2; // network flakiness, per rung
 
-function client(privateKey) {
-  const opts = { fullHost: RPC.tron };
+function client(privateKey, url) {
+  const endpoint = url || rpcUrls("tron")[0];
+  if (!endpoint) throw new Error("no RPC configured for tron");
+  const opts = { fullHost: endpoint };
   if (privateKey) opts.privateKey = privateKey.replace(/^0x/, "");
   return new TronWeb(opts);
 }
@@ -36,18 +38,36 @@ async function generate() {
   }
 }
 
+/** Balance in sun. Walks every configured endpoint — this read decides whether
+ *  a customer has paid, and a dead node must surface as an ERROR, never as a
+ *  zero balance. */
 async function getBalance(_chain, address) {
-  const sun = await client().trx.getBalance(address);
-  return BigInt(sun);
+  const { value } = await rpcRead("tron", (url) => client(null, url).trx.getBalance(address));
+  return BigInt(value);
 }
 
 async function sweep(_chain, wallet, treasury) {
-  let bal = 0n;
+  // ONE node for the whole sweep, chosen ONCE by the opening balance read —
+  // outside the retry loop. See the send rule in config/rpc.js: a broadcast is
+  // never re-sent to a second node, so re-resolving per attempt would let
+  // attempt 2 broadcast from a node that never saw attempt 1.
+  let tw;
+  let bal;
+  try {
+    const { value: opened } = await rpcRead("tron", async (url) => {
+      const c = client(wallet.privateKey, url);
+      return { c, bal: BigInt(await c.trx.getBalance(wallet.address)) };
+    });
+    tw = opened.c;
+    bal = opened.bal;
+  } catch (e) {
+    return { ok: false, error: e.message }; // unreadable is UNKNOWN, not empty
+  }
+
   let last = "unknown";
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
-      const tw = client(wallet.privateKey);
-      bal = BigInt(await tw.trx.getBalance(wallet.address));
+      if (attempt > 1) bal = BigInt(await tw.trx.getBalance(wallet.address));
       if (bal <= 0n) return { ok: false, error: "empty" };
 
       for (const reserve of RESERVE_LADDER) {

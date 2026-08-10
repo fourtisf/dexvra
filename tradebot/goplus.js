@@ -104,6 +104,11 @@ async function _fetchSecurity(cid, addr, ca) {
 // Turn the normalized fields into a risk verdict: 'danger' | 'warn' | 'ok',
 // plus the specific red/yellow flags that drove it.
 function verdict(s) {
+  // tokenSecurity returns null when the check could not be made, and every
+  // caller that forgets to guard that used to crash a screen on `s.honeypot`.
+  // 'unknown' is not 'ok': callers testing for 'danger' fall through
+  // harmlessly, and the ones that care can tell the two apart.
+  if (!s || typeof s !== 'object') return { level: 'unknown', red: [], warn: [] };
   const red = [];
   if (s.honeypot) red.push('honeypot (can’t sell)');
   if (s.cannotSellAll) red.push('can’t sell all');

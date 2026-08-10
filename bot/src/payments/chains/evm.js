@@ -1,20 +1,20 @@
 // EVM adapter (ethers v6) — covers ethereum / bsc / base / robinhood. One keypair
 // is valid on all of them; the chain only selects the RPC + gas market.
 const { ethers } = require("ethers");
-const { RPC } = require("../../config/constants");
+const { rpcRead, rpcUrls } = require("../../config/rpc");
 const log = require("../../helpers/logger");
 
 const PLAIN_TRANSFER_GAS = 21000n; // intrinsic cost of an EOA → EOA send
 const ATTEMPTS = 3; // public RPCs rate-limit; a quote can also go stale
 const CONFIRM_TIMEOUT_MS = 120000; // never block a sweep pass on a stuck mempool
 
-function provider(chain) {
-  const url = RPC[chain];
+function provider(chain, url) {
   // No silent fallback to the Ethereum RPC: reading (or sweeping) the wrong
   // chain reports an empty wallet while the funds sit untouched on the real
   // one — a silent loss. A missing RPC is a config error and must say so.
-  if (!url) throw new Error(`no RPC configured for EVM chain "${chain}"`);
-  return new ethers.JsonRpcProvider(url);
+  const endpoint = url || rpcUrls(chain)[0];
+  if (!endpoint) throw new Error(`no RPC configured for EVM chain "${chain}"`);
+  return new ethers.JsonRpcProvider(endpoint);
 }
 
 async function generate() {
@@ -22,9 +22,41 @@ async function generate() {
   return { address: w.address, privateKey: w.privateKey };
 }
 
-/** Native balance in wei (BigInt). */
+// Every provider built during one call, so they can all be torn down when it
+// ends. A JsonRpcProvider pointed at an unreachable node retries network
+// detection once a second FOREVER and holds the event loop open doing it — so
+// one left behind per failed sweep attempt is a permanent background request
+// loop, and a CLI pass (treasury --live, a sweep run) never exits.
+function tracked(chain, url, made) {
+  const p = provider(chain, url);
+  made.set(url, p);
+  return p;
+}
+function dropAll(made) {
+  for (const p of made.values()) {
+    try {
+      p.destroy?.();
+    } catch {
+      /* best effort */
+    }
+  }
+  made.clear();
+}
+
+/** Native balance in wei (BigInt).
+ *
+ *  This is the read that decides whether a customer has paid, so it walks every
+ *  endpoint the chain has. A node that is down must surface as an ERROR — an
+ *  unreadable balance is unknown, never zero. Returning 0 here reports a paid
+ *  order as unpaid and the buyer is told their payment timed out. */
 async function getBalance(chain, address) {
-  return provider(chain).getBalance(address);
+  const made = new Map();
+  try {
+    const { value } = await rpcRead(chain, (url) => tracked(chain, url, made).getBalance(address));
+    return value;
+  } finally {
+    dropAll(made);
+  }
 }
 
 /** The fee cap to sign with on an EIP-1559 chain.
@@ -77,13 +109,43 @@ async function gasFor(p, from, to) {
 /** Sweep the native balance to `treasury`, keeping back only what the node
  *  actually reserves for gas. */
 async function sweep(chain, wallet, treasury) {
+  // ONE endpoint for the whole sweep, chosen ONCE — OUTSIDE the retry loop.
+  //
+  // The opening read PICKS THE ENDPOINT, and everything after it — the fee
+  // quote, the gas estimate, the broadcast, and every later attempt — stays on
+  // that same node. Reading from a healthy backup and then broadcasting to the
+  // dead primary only moves where it fails; and re-resolving PER ATTEMPT is
+  // worse still, because attempt 2 can then broadcast from a node that never
+  // saw attempt 1's transaction. Here the nonce collapses the duplicates (every
+  // attempt signs nonce n, only one can be mined) so the cost is wasted
+  // broadcasts — on Solana, which has no nonce, the same shape is a real
+  // double-spend. Nothing is signed until a node has answered, so choosing the
+  // endpoint at this point cannot double-spend.
+  const made = new Map();
+  let p;
+  let bal;
+  try {
+    const { value: opened } = await rpcRead(chain, async (url) => {
+      const prov = tracked(chain, url, made);
+      return { prov, bal: BigInt(await prov.getBalance(wallet.address)) };
+    });
+    p = opened.prov;
+    bal = opened.bal;
+  } catch (e) {
+    dropAll(made);
+    // Unreadable is UNKNOWN, not empty. sweepRetry comes back for it.
+    return { ok: false, error: e.message };
+  }
+
   let last = "unknown";
+  try {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     let sent = null;
     try {
-      const p = provider(chain);
+      // Re-read on the SAME node: if a previous attempt's transfer landed, that
+      // node is the one that knows.
+      if (attempt > 1) bal = BigInt(await p.getBalance(wallet.address));
       const signer = new ethers.Wallet(wallet.privateKey, p);
-      const bal = BigInt(await p.getBalance(wallet.address));
       if (bal <= 0n) return { ok: false, error: "empty" };
 
       const fee = await p.getFeeData();
@@ -132,6 +194,13 @@ async function sweep(chain, wallet, treasury) {
     }
   }
   return { ok: false, error: last };
+  } finally {
+    // Wraps the WHOLE loop, not one attempt: the provider is shared across
+    // attempts now, so tearing it down after attempt 1 would destroy the node
+    // attempt 2 is about to use. Runs after every await above has settled —
+    // including `sent.wait()` — so it can never cut off a live broadcast.
+    dropAll(made);
+  }
 }
 
 module.exports = { family: "evm", generate, getBalance, sweep, gasFor };

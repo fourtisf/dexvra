@@ -20,7 +20,16 @@ const assert = require("node:assert");
 // ── A fake cluster that enforces the two rules that matter ──────────────────
 const FEE = 5000;
 const RENT_MIN = 890880; // rent-exempt minimum for a 0-data account
-const state = { balance: 0, sent: [], failBalanceTimes: 0, fee: FEE };
+const state = {
+  balance: 0,
+  sent: [],
+  failBalanceTimes: 0,
+  fee: FEE,
+  failByUrl: {},
+  balanceReads: [],
+  broadcasts: [],
+  confirmThrows: 0,
+};
 
 class PublicKey {
   constructor(v) {
@@ -56,7 +65,17 @@ class Transaction {
 }
 const SystemProgram = { transfer: (o) => ({ ...o }) };
 class Connection {
+  constructor(url) {
+    this.url = url;
+  }
   async getBalance() {
+    state.balanceReads.push(this.url);
+    // Per-endpoint failures: a count keyed by url fails only that node, which
+    // is what makes the read fall through to the next one.
+    if (state.failByUrl[this.url] > 0) {
+      state.failByUrl[this.url]--;
+      throw new Error("429 Too Many Requests");
+    }
     if (state.failBalanceTimes > 0) {
       state.failBalanceTimes--;
       throw new Error("429 Too Many Requests");
@@ -70,8 +89,16 @@ class Connection {
     return { value: state.fee };
   }
 }
-async function sendAndConfirmTransaction(_c, tx) {
+async function sendAndConfirmTransaction(c, tx) {
   const amount = tx.instructions[0].lamports;
+  state.broadcasts.push({ url: c && c.url, amount });
+  if (state.confirmThrows > 0) {
+    state.confirmThrows--;
+    // The transfer LANDED; only the confirmation wait failed. This is the shape
+    // that turns a retry into a second transfer.
+    state.balance -= amount + FEE;
+    throw new Error("Transaction was not confirmed in 30.00 seconds");
+  }
   const remaining = state.balance - amount - FEE;
   if (remaining < 0) throw new Error("Attempt to debit an account but found no record of a prior credit.");
   if (remaining > 0 && remaining < RENT_MIN) {
@@ -101,6 +128,11 @@ const reset = (balance) => {
   state.sent = [];
   state.failBalanceTimes = 0;
   state.fee = FEE;
+  state.failByUrl = {};
+  state.balanceReads = [];
+  state.broadcasts = [];
+  state.confirmThrows = 0;
+  require("../src/config/rpc")._reset();
 };
 
 test("the fake cluster reproduces the production failure (dust below rent)", async () => {
@@ -166,4 +198,54 @@ test("a permanently failing RPC returns the real reason, not a generic one", asy
   const r = await solana.sweep("solana", WALLET, TREASURY);
   assert.ok(!r.ok);
   assert.match(r.error, /429/, "the operator needs the actual cause in the log");
+});
+
+// ── One sweep, one node ──────────────────────────────────────────────────────
+
+test("a whole sweep stays on ONE node, even across retries", async () => {
+  // Resolving the endpoint per attempt is a double-spend on Solana, which has
+  // no nonce to collapse two transfers: attempt 1 broadcasts on node A and
+  // throws at CONFIRMATION (an expired blockhash is routine, and the transfer
+  // still lands); attempt 2 reads the balance, A answers 429 — also routine on
+  // the public endpoints — the read falls through to node B, which has not
+  // caught up and reports the pre-transfer balance; a second transfer is signed
+  // with a fresh blockhash and a distinct signature. Both land.
+  process.env.RPC_SOLANA_URLS = "https://a.example,https://b.example";
+  try {
+    reset(1_000_000_000);
+    state.confirmThrows = 1; // attempt 1 lands but times out waiting
+    state.failByUrl["https://a.example"] = 0;
+    const r = await solana.sweep("solana", WALLET, TREASURY);
+
+    assert.strictEqual(state.broadcasts.length, 1, "a confirmation timeout must not produce a second transfer");
+    assert.ok(!r.ok, "reported not-ok so sweepRetry re-checks the balance on-chain");
+    assert.match(r.error, /unconfirmed/);
+    assert.strictEqual(
+      new Set(state.balanceReads).size,
+      1,
+      "every read in one sweep goes to the same node it will broadcast from",
+    );
+  } finally {
+    delete process.env.RPC_SOLANA_URLS;
+  }
+});
+
+test("the node is chosen ONCE — a mid-sweep 429 cannot move the broadcast", async () => {
+  // The first node 429s twice: once on the opening read (so the sweep starts on
+  // B) and once more later. Whatever happens, all broadcasts must come from a
+  // single node.
+  process.env.RPC_SOLANA_URLS = "https://a.example,https://b.example";
+  try {
+    reset(1_000_000_000);
+    state.failByUrl["https://a.example"] = 9;
+    const r = await solana.sweep("solana", WALLET, TREASURY);
+    assert.ok(r.ok, `gave up: ${r.error}`);
+    assert.deepStrictEqual(
+      [...new Set(state.broadcasts.map((b) => b.url))],
+      ["https://b.example"],
+      "the read fell through to B, and the send stayed on B",
+    );
+  } finally {
+    delete process.env.RPC_SOLANA_URLS;
+  }
 });

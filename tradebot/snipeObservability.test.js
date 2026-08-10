@@ -136,8 +136,20 @@ test('a failing curveOf is recorded instead of silently reading as "no curve"', 
   // a graduation, and that routing choice is correct. What was missing is any record
   // that it happened, which is what let a permanently wrong factory look like a market
   // of ordinary graduated tokens.
-  const real = core.providerFor;
-  core.providerFor = () => ({
+  // resolveCurve returns a cached NEGATIVE answer before it ever reaches the
+  // provider, so without this the test asserts against whatever a previous test
+  // left behind — it passed on one machine and failed on the server for that
+  // reason alone, with an assertion message that named none of it.
+  core._clearReadCaches();
+  core._launchpadFailClear();
+  const chain = core.chainOf('robinhood');
+  assert.ok(chain && chain.curve && chain.factory,
+    `robinhood has no launchpad factory configured, so resolveCurve returns early and records nothing: ${JSON.stringify(chain && { curve: chain.curve, factory: chain.factory })}`);
+
+  // core._deps, not core.providerFor: the latter is a copy on the exports
+  // object and internal callers never read it, so assigning to it stubs nothing.
+  const real = core._deps.providerFor;
+  core._deps.providerFor = () => ({
     call: async () => { throw new Error('execution reverted'); },
     getNetwork: async () => new ethers.Network('robinhood', 4663),
     _detectNetwork: async () => new ethers.Network('robinhood', 4663),
@@ -147,10 +159,15 @@ test('a failing curveOf is recorded instead of silently reading as "no curve"', 
     const curve = await core.resolveCurve('0x1234567890abcdef1234567890abcdef12345678', 'robinhood');
     assert.equal(curve, '', 'routing is unchanged: a factory error still reads as no curve');
     const diag = core.launchpadDiag('robinhood');
-    assert.ok(diag, 'the failure must be recorded');
+    assert.ok(diag, `the failure must be recorded — launchpadDiag returned ${JSON.stringify(diag)}; all chains: ${JSON.stringify(core.launchpadDiag())}`);
     assert.ok(diag.count >= 1);
     assert.ok(diag.factory, 'the diagnostic names the factory that failed');
-  } finally { core.providerFor = real; }
+    // Proves the stub actually ran. Without this the test passes on any box
+    // whose RPC merely happens to be unreachable, which is how it hid the fact
+    // that it was stubbing nothing at all.
+    assert.match(String(diag.err), /execution reverted/,
+      `the recorded error did not come from this test's stub: ${diag.err}`);
+  } finally { core._deps.providerFor = real; }
 });
 
 test('launchpadDiag with no argument returns every chain it has seen fail', () => {

@@ -137,7 +137,29 @@ test('a closed row costs no network call — there is no live price to fetch', a
 });
 
 test('unrealized is zero on a closed row by construction, not by luck', async () => {
-  assert.match(CORE_SRC, /unrealizedEth: open \? valueEth - agg\.costEth : 0/);
+  assert.match(CORE_SRC, /unrealizedEth: !open \? 0 : \(priced \? valueEth - agg\.costEth : null\)/);
+});
+
+test('a price we could not read is null, never a 100% loss', async () => {
+  // `snap ? snap.priceEth : 0` made a failed lookup set valueEth to 0, so
+  // unrealized became MINUS THE WHOLE COST BASIS and got summed into the
+  // header. One API hiccup and the user's book read as wiped out — a number we
+  // invented, not one the market produced.
+  assert.ok(!/const priceEth = snap \? snap\.priceEth : 0/.test(CORE_SRC),
+    'the unpriced-is-zero fallback is back');
+  assert.match(CORE_SRC, /const priceEth = \(snap && snap\.priceEth > 0\) \? snap\.priceEth : 0/);
+  assert.match(CORE_SRC, /const priced = !open \|\| priceEth > 0/);
+});
+
+test('the unrealized total and the cost it is measured against cover the same rows', async () => {
+  // Leaving an unpriced row's cost in the denominator while its gain is absent
+  // from the numerator prints a percentage against money the numerator never
+  // saw — a smaller, quieter version of the same invented loss.
+  assert.match(CORE_SRC, /const priced = rows\.filter\(\(r\) => r\.priced\)/);
+  assert.match(CORE_SRC, /const totalCostEth = priced\.reduce/);
+  assert.match(CORE_SRC, /const totalUnrealEth = priced\.reduce/);
+  assert.match(CORE_SRC, /const unpriced = rows\.filter\(\(r\) => !r\.priced\)\.length/,
+    'the count is not returned, so the screen cannot admit the total is partial');
 });
 
 // ---------------------------------------------------------------- /monitor

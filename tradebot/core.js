@@ -25,6 +25,14 @@ const path = require('path');
 // pm2 --update-env / systemd env still override. Keeps secrets out of git.
 (function loadDotEnv() {
   try {
+    // SKIP_DOTENV=1 loads nothing. `npm test` sets it, because otherwise every
+    // test runs against the OPERATOR'S configuration: a knob like
+    // MONITOR_REFRESH_MS in this file lands in process.env before telegram.js
+    // reads it, and a test asserting the advertised refresh period fails on the
+    // live server while passing everywhere else. A test that changes its answer
+    // depending on which machine it runs on cannot gate a deploy, and this one
+    // did — twenty of them at once. Never set it in production.
+    if (/^(1|true|yes)$/i.test(String(process.env.SKIP_DOTENV || ''))) return;
     const file = path.join(__dirname, '.env');
     if (!fs.existsSync(file)) return;
     for (let line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
@@ -41,7 +49,17 @@ const path = require('path');
 })();
 
 const chains = require('./chains');
-const { providerFor, chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
+const { chainOf, isEnabled, DEFAULT_CHAIN, isSvm } = chains;
+// TEST SEAM. `providerFor` used to be destructured here, so every internal call
+// captured the original function and a test doing `core.providerFor = stub` was
+// SILENTLY INERT — the stub never ran. snipeObservability's curveOf test looked
+// green for years for the wrong reason: on a machine with no outbound network
+// the REAL rpc threw, which recorded the diagnostic by accident. On a server
+// whose RPC works, nothing throws, nothing is recorded, and the test fails
+// while reporting the assertion rather than the cause. Internal callers must go
+// through this object.
+const _deps = { providerFor: chains.providerFor };
+const providerFor = (k) => _deps.providerFor(k);
 const solana = require('./solana');   // non-EVM (Solana) adapter — used only on kind:'svm' chains
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
@@ -907,6 +925,11 @@ const _curveCache = new Map();   // `${chain}:${ca}`    → { curve, ts }; '' = 
 const _gradCache = new Set();    // `${chain}:${curve}` — graduation is ONE-WAY, so only `true` is cached
 const NO_CURVE_TTL_MS = 60000;   // a token CAN gain a curve later, so a negative answer expires
 const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : String(x).toLowerCase());
+// Exported for tests: resolveCurve short-circuits on a NEGATIVE cache entry
+// BEFORE its try block, so a test that expects the provider to be called has to
+// start from a clean cache or it silently asserts against a previous test's
+// answer — which is order- and timing-dependent, i.e. green here and red on the
+// server.
 function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); }
 
 // Why the launchpad last failed to answer, per chain. resolveCurve deliberately
@@ -2121,11 +2144,15 @@ async function portfolio(chatId, walletId) {
     const bal = Number(ethers.formatUnits(balRaw, p.dec || 18));
     if (bal <= 1e-9 && !(p.ethIn > 0)) continue;
     const snap = await tokenSnapshot(p.ca, chainKey).catch(() => null);
-    const priceEth = snap ? snap.priceEth : 0;
+    // A price we could not read is UNKNOWN, not zero — see the note on
+    // portfolioAll below. `unrealizedEth: null` means "we don't know", and the
+    // renderer must print that rather than a loss.
+    const priceEth = (snap && snap.priceEth > 0) ? snap.priceEth : 0;
+    const priced = priceEth > 0 || bal <= 1e-9;
     const valueEth = bal * priceEth;
     totalValueEth += valueEth;
     const costBasis = (p.costEth != null) ? p.costEth : Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));
-    rows.push({ ca: p.ca, name: p.name, sym: p.sym, tokens: bal, valueEth, ethIn: p.ethIn, ethOut: p.ethOut, costEth: costBasis, unrealizedEth: valueEth - costBasis, realizedEth: p.realizedEth || 0 });
+    rows.push({ ca: p.ca, name: p.name, sym: p.sym, tokens: bal, valueEth, priced, ethIn: p.ethIn, ethOut: p.ethOut, costEth: costBasis, unrealizedEth: priced ? valueEth - costBasis : null, realizedEth: p.realizedEth || 0 });
   }
   rows.sort((a, b) => b.valueEth - a.valueEth);
   return { rows, totalValueEth, address: walletAddress(wal, chainKey), chain, native: chain.native };
@@ -2171,21 +2198,42 @@ async function portfolioAll(chatId) {
     // long history that is most of the list.
     const open = totalTokens > 1e-9;
     const snap = open ? await tokenSnapshot(agg.ca, chainKey).catch(() => null) : null;
-    const priceEth = snap ? snap.priceEth : 0;
+    // A PRICE WE COULD NOT READ IS NOT A PRICE OF ZERO.
+    //
+    // This used to be `snap ? snap.priceEth : 0`, so a failed lookup — a network
+    // blip, a rate limit, a pool with no liquidity right now — set valueEth to 0
+    // and therefore unrealized to MINUS THE ENTIRE COST BASIS. The row read as a
+    // 100% loss, and it was summed into the header's "Unrealized", so a user who
+    // opened /portfolio during an API hiccup watched their whole book get wiped
+    // out. The number was invented by us, not by the market.
+    //
+    // We cannot tell "the source failed" from "the source says zero": the
+    // snapshot fallback object itself carries priceEth 0. So anything that is
+    // not a positive price is treated as UNKNOWN. The asymmetry decides it —
+    // reporting a real zero as unknown costs a line of copy, reporting an
+    // unknown as zero costs the user their trust in the whole screen. Same rule
+    // as the tokens screen, deliberately, so the two agree.
+    const priceEth = (snap && snap.priceEth > 0) ? snap.priceEth : 0;
+    const priced = !open || priceEth > 0;
     const valueEth = totalTokens * priceEth;
     totalValueEth += valueEth;
-    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, open, tokens: totalTokens, valueEth,
+    rows.push({ ca: agg.ca, name: agg.name, sym: agg.sym, open, tokens: totalTokens, valueEth, priced,
       ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth, realizedEth: agg.realizedEth,
       // Unrealized is only meaningful while something is still held. On a closed
       // row it is zero by construction, and printing it beside a realized figure
-      // is what made "3.99x (+299%)" sit next to "PnL +0.0000".
-      unrealizedEth: open ? valueEth - agg.costEth : 0, holders });
+      // is what made "3.99x (+299%)" sit next to "PnL +0.0000". null = unknown.
+      unrealizedEth: !open ? 0 : (priced ? valueEth - agg.costEth : null), holders });
   }
   rows.sort((a, b) => (Number(b.open) - Number(a.open)) || (b.valueEth - a.valueEth) || (b.realizedEth - a.realizedEth));
   const totalRealizedEth = rows.reduce((t, r) => t + (Number(r.realizedEth) || 0), 0);
-  const totalCostEth = rows.reduce((t, r) => t + (r.open ? Number(r.costEth) || 0 : 0), 0);
-  const totalUnrealEth = rows.reduce((t, r) => t + (Number(r.unrealizedEth) || 0), 0);
-  return { rows, totalValueEth, totalCostEth, totalUnrealEth, totalRealizedEth, chain, native: chain.native };
+  // Cost and unrealized are summed over the SAME rows — the priced ones. Leaving
+  // an unpriced row's cost in the denominator while its gain is missing from the
+  // numerator prints a percentage against money the numerator never saw.
+  const priced = rows.filter((r) => r.priced);
+  const totalCostEth = priced.reduce((t, r) => t + (r.open ? Number(r.costEth) || 0 : 0), 0);
+  const totalUnrealEth = priced.reduce((t, r) => t + (Number(r.unrealizedEth) || 0), 0);
+  const unpriced = rows.filter((r) => !r.priced).length;
+  return { rows, totalValueEth, totalCostEth, totalUnrealEth, totalRealizedEth, unpriced, chain, native: chain.native };
 }
 
 // Trade history (newest first) + realized PnL for a wallet.
@@ -2222,4 +2270,7 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
+  // Test-only seams — see the notes at each definition.
+  _deps,
+  _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),
 };

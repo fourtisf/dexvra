@@ -63,6 +63,29 @@ function attachServices(bot, services) {
   if (require("../config/constants").GROUP_BUYBOT_ENABLED) {
     add("groupBuyMonitor", () => require("../group/buyMonitor").start(tg)); // group buy alerts
   }
+  // The raid runner's boot sweep is the ONLY thing that unlocks a group whose
+  // raid died with the process, so this service failing to start is not
+  // cosmetic — it can leave a customer's chat silenced. startOne() reports it
+  // by name, which is what makes that visible.
+  if (require("../config/constants").RAID_ENABLED) {
+    add("raidRunner", () => require("../raid/runner").start(bot));
+  } else {
+    // The sweep runs EVEN WITH THE FEATURE OFF, and that is the point. The
+    // obvious response to a raid misbehaving in a customer's group is
+    // RAID_ENABLED=0 plus a restart — which, without this, would also remove
+    // the boot sweep and the /raid panel's Stop button, leaving every currently
+    // locked group muted with no remaining path to an unlock. Turning a feature
+    // off must not strand the chats it was holding.
+    add("raidUnlockSweep", () => {
+      // forceExpire: with no poll loop running, a raid still inside its
+      // deadline would be "resumed" and then never finish, so its group would
+      // stay locked until a restart after the deadline had passed.
+      require("../raid/runner")
+        .recoverOnBoot(bot.telegram, { forceExpire: true })
+        .catch((e) => log.warn(`[raid] disabled-mode unlock sweep failed: ${e && e.message}`));
+      return { stop: () => {} };
+    });
+  }
 
   // Is any of the above actually working? Nothing answered that until now: a
   // wedged poller, a vanished Mongo, or an order that took money and stalled

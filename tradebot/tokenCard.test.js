@@ -35,8 +35,16 @@ function render(f) {
   const usd = (a) => "$" + fmt(Number(a) * f.rate);
   const taxStr = (v) => (v == null ? "?" : `${Number(v).toFixed(0)}%`);
   const fmtAge = (ms) => { const s = Math.floor((Date.now() - ms) / 1000); if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; };
-  const safety = { verdict: () => ({ level: "ok" }) };
+  // Fixture-driven so the four safety states can each be rendered: a verdict
+  // level, and whether the chain supports screening at all.
+  const safety = { verdict: () => ({ level: f.secLevel || "ok", red: f.secRed || [], warn: f.secWarn || [] }),
+    supported: () => f.secSupported !== false };
   const chainKey = ch.key;
+  const chatId = 1;
+  // The REAL copy, so a test cannot pass against wording the bot does not send.
+  const i18n = require("./i18n");
+  const T = (_id, key, vars) => i18n.t("en", key, vars);
+  void chatId; void T;
   void chainKey; void safety; void esc; void fmt; void nativeUsd; void usd; void taxStr; void fmtAge; void SEP;
   void info; void ch; void api; void sec; void name; void sym; void nat; void px; void priceUsd; void ca;
   eval(block);
@@ -286,4 +294,47 @@ test('every token-card callback fits Telegram\'s 64-byte limit', async () => {
       assert.ok(d.length <= 64, `${d} is ${d.length} bytes — Telegram rejects >64`);
     }
   }
+});
+
+// ── "no warning" used to mean two opposite things ────────────────────────────
+// The card printed a line only for `danger` and `warn`. So a token that PASSED
+// the check and a token whose check FAILED — a GoPlus/RugCheck timeout, an
+// unindexed mint, a rate limit; tokeninfo.js catches every one of them to null
+// — rendered identically: nothing at all. A user who has learned this bot warns
+// about honeypots reads that silence as "checked, fine", on the one screen
+// where the next tap is Buy.
+
+test("a token that passed the check SAYS it passed", () => {
+  const f = JSON.parse(JSON.stringify(FULL));
+  f.secLevel = "ok";
+  assert.match(plain(render(f)), /Safety check passed/);
+});
+
+test("a check that could not be made says so — it does not stay quiet", () => {
+  const f = JSON.parse(JSON.stringify(FULL));
+  f.sec = null;                 // what tokeninfo.js stores on timeout/failure
+  f.secSupported = true;        // …on a chain that DOES support screening
+  const out = plain(render(f));
+  assert.match(out, /Not checked/);
+  assert.match(out, /has NOT been screened/);
+  assert.ok(!/Safety check passed/.test(out), 'a failed check is claiming to have passed');
+});
+
+test("a chain with no screening says that, rather than nothing", () => {
+  const f = JSON.parse(JSON.stringify(FULL));
+  f.sec = null;
+  f.secSupported = false;
+  const out = plain(render(f));
+  assert.match(out, /Not checked/);
+  assert.match(out, /unavailable on/);
+});
+
+test("passed, unchecked and dangerous are three different sentences", () => {
+  const mk = (over) => plain(render(Object.assign(JSON.parse(JSON.stringify(FULL)), over)));
+  const passed = mk({ secLevel: "ok" });
+  const unchecked = mk({ sec: null, secSupported: true });
+  const danger = mk({ secLevel: "danger", secRed: ["honeypot (can’t sell)"] });
+  assert.notStrictEqual(passed, unchecked, 'a passed check and a failed one render the same');
+  assert.notStrictEqual(passed, danger);
+  assert.notStrictEqual(unchecked, danger);
 });

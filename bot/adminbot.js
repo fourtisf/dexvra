@@ -11,7 +11,22 @@ process.on("uncaughtException", (e) => log.warn(`[adminbot] uncaughtException: $
 
 const { startAdminBot } = require("./src/admin/adminBot");
 
-startAdminBot().catch((e) => {
-  log.error(`[adminbot] fatal boot error: ${e && e.message}`);
-  process.exitCode = 1;
-});
+startAdminBot()
+  .then((started) => {
+    if (started) return;
+    // ADMIN_BOT_TOKEN is unset — the admin bot is OFF, which is a legitimate
+    // free-tier configuration, not a failure. But this process is started by
+    // PM2 with autorestart, so simply returning here exits 0, PM2 restarts it,
+    // it exits again — 50 times in a couple of minutes, then `errored`. An
+    // operator who deliberately skipped the second BotFather token gets a red
+    // process and a wall of restarts telling them something is broken.
+    //
+    // So: stay parked. PM2 shows `online`, the log line above says why, and a
+    // later `pm2 restart dexvra-adminbot --update-env` picks the token up.
+    log.warn("[adminbot] idling — set ADMIN_BOT_TOKEN in bot/.env and restart to enable the editor");
+    setInterval(() => {}, 1 << 30);
+  })
+  .catch((e) => {
+    log.error(`[adminbot] fatal boot error: ${e && e.message}`);
+    process.exitCode = 1;
+  });

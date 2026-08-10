@@ -3,7 +3,9 @@
 // A project adds @dexvrabot to their group and points it at their token.
 const cfg = require("./config");
 const gt = require("./gtPairs");
+const holdings = require("./walletHoldings");
 const { CHAIN_IDS, chainOf } = require("../config/chains");
+const { BUYBOT_WHALE_WALLET_USD: WHALE_DEFAULT } = require("../config/constants");
 const log = require("../helpers/logger");
 
 const HTML = { parse_mode: "HTML" };
@@ -53,10 +55,17 @@ async function settoken(ctx) {
       .reply("Couldn't find a live pool for that address. Double-check it, or set the chain first with <code>/setchain &lt;chain&gt;</code> then <code>/settoken</code>.", HTML)
       .catch(() => {});
   }
+  // One extra lookup, once, for the token's NAME — the pool listing only knows
+  // the PAIR ("HOPPY / WETH"), and the name is what headlines every alert.
+  const info = await gt.fetchTokenInfo(res.chain, address).catch(() => null);
   await cfg.upsert(ctx.chat.id, {
     chain: res.chain,
     address,
     pairAddress: res.pool.poolAddress,
+    // Without these every alert reads "$TOKEN" — the placeholder the renderer
+    // falls back to. Nothing else in the bot ever learns a group's ticker.
+    sym: (info && info.symbol) || res.pool.symbol || "",
+    name: (info && info.name) || res.pool.name || "",
     on: true,
   });
   const label = chainOf(res.chain).label;
@@ -100,10 +109,58 @@ async function setminbuy(ctx) {
   await ctx.reply(`✅ Minimum buy to alert: <b>$${usd}</b>.`, HTML).catch(() => {});
 }
 
+/** `/setwhale 50000` — the holding that makes a buyer a whale here, or `off`. */
+async function setwhale(ctx) {
+  if (!isGroup(ctx)) return;
+  if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can change this.").catch(() => {});
+  const raw = arg(ctx).toLowerCase();
+  if (raw === "off") {
+    await cfg.upsert(ctx.chat.id, { whales: false });
+    return ctx.reply("🐋 Whale wallet alerts are <b>off</b> here.", HTML).catch(() => {});
+  }
+  const usd = Number(raw.replace(/[$,_]/g, ""));
+  if (!Number.isFinite(usd) || usd <= 0) {
+    return ctx
+      .reply(
+        `Usage: <code>/setwhale 50000</code> — a buyer already holding at least this much of your token gets a ` +
+          `pinned 🐋 <b>WHALE WALLET</b> alert.\n\n<code>/setwhale off</code> turns it off.`,
+        HTML,
+      )
+      .catch(() => {});
+  }
+  await cfg.upsert(ctx.chat.id, { whales: true, whaleWalletUsd: usd });
+  const { chainOf: co } = require("../config/chains");
+  const supported = holdings.supports((cfg.get(ctx.chat.id) || {}).chain);
+  await ctx
+    .reply(
+      `🐋 <b>Whale wallet: $${usd.toLocaleString("en-US")}</b>\n\nA buy from a wallet holding that much gets its own pinned alert.` +
+        (supported ? "" : `\n\n⚠️ Holdings can't be read on <b>${co((cfg.get(ctx.chat.id) || {}).chain)?.label || "this chain"}</b> yet, so whale alerts stay off until that changes.`),
+      HTML,
+    )
+    .catch(() => {});
+}
+
+/** `/buybot pin on|off` — whether whale alerts are pinned in this group. */
+async function setPin(ctx, on) {
+  await cfg.upsert(ctx.chat.id, { pin: on });
+  return ctx
+    .reply(
+      on
+        ? '📌 Whale alerts will be <b>pinned</b> here. The bot needs "Pin messages" — each new one replaces the last.'
+        : "📌 Whale alerts <b>won't be pinned</b> here.",
+      HTML,
+    )
+    .catch(() => {});
+}
+
 async function buybot(ctx) {
   if (!isGroup(ctx)) return;
   const a = arg(ctx).toLowerCase();
   const g = cfg.get(ctx.chat.id);
+  if (a === "pin on" || a === "pin off") {
+    if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can change this.").catch(() => {});
+    return setPin(ctx, a === "pin on");
+  }
   if (a === "on" || a === "off") {
     if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can toggle the buy bot.").catch(() => {});
     if (!g || !g.address) return ctx.reply("Set the token first: <code>/settoken &lt;CA&gt;</code>", HTML).catch(() => {});
@@ -121,10 +178,12 @@ async function buybot(ctx) {
         `Chain: <b>${chainOf(g.chain)?.label || g.chain}</b>\n` +
         `Pool: ${g.pairAddress ? "resolved ✓" : "—"}\n` +
         `Min buy: <b>$${g.minBuyUsd || 0}</b>\n` +
+        `Whale wallet: <b>${g.whales === false ? "off" : "$" + Number(g.whaleWalletUsd || WHALE_DEFAULT).toLocaleString("en-US")}</b>${holdings.supports(g.chain) ? "" : " <i>(not readable on this chain)</i>"}\n` +
+        `Pin whale alerts: <b>${g.pin === false ? "off" : "on"}</b>\n` +
         `State: <b>${g.on ? "🟢 ON" : "🔴 OFF"}</b>`,
       HTML,
     )
     .catch(() => {});
 }
 
-module.exports = { settoken, setchain, setminbuy, buybot, resolveToken, candidateChains };
+module.exports = { settoken, setchain, setminbuy, setwhale, buybot, setPin, resolveToken, candidateChains };

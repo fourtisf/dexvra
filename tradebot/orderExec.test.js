@@ -225,9 +225,9 @@ test('the order handlers use the parser, not Number()', () => {
   // Number('2k') is NaN, so the shorthand would be rejected with "send a
   // positive USD price" — the exact wall this removes.
   const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
-  assert.match(SRC, /const usdVal = parseUsd\(raw\.replace\(\/\^mc\\s\*\/i, ''\)\)/, 'TP/SL still parse with Number()');
-  assert.match(SRC, /const usdPrice = parseUsd\(pxStr\)/, 'limit buy still parses with Number()');
-  assert.match(SRC, /const usdPrice = parseUsd\(t\);/, 'price alerts still parse with Number()');
+  assert.match(SRC, /const usdVal = parseUsd\(raw\.replace\(\/\^mc\\s\*\/i, ''\), info\)/, 'TP/SL still parse with Number()');
+  assert.match(SRC, /const usdPrice = parseUsd\(pxStr, info\)/, 'limit buy still parses with Number()');
+  assert.match(SRC, /const usdPrice = parseUsd\(t, info\);/, 'price alerts still parse with Number()');
   assert.ok(!/const usdVal = Number\(raw\.replace/.test(SRC), 'the old numeric parse is back');
 });
 

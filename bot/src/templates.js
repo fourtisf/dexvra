@@ -48,7 +48,21 @@ const E = {
   diamond: "5427168083074628963", // 💎
   cross: "5454335838575936647", // ❌
 };
-const em = (emoji) => emoji;
+// `em(char, id)` → the premium-emoji markup this file's header documents:
+// "[😀](emoji/1234567890)". It took the id and THREW IT AWAY — the signature
+// said (emoji) — so every one of the 34 call sites below rendered the bare
+// unicode char and the whole E map above was dead code. Nothing errored, and
+// the loss is invisible for a char like 💎 or 🚨 whose unicode art is already
+// colourful; it is obvious for 📢, whose premium art is a different picture
+// entirely. That is the difference an operator spotted in the channel footer.
+//
+// Emitting the markup is safe on both transports, and neither needed changing:
+// GramJS sends the custom_emoji entities and retries without them on
+// PREMIUM_ACCOUNT_REQUIRED / EMOJI_INVALID (gramjs.js isPremiumEmojiError),
+// while the Bot API path filters type "custom_emoji" out and shows the fallback
+// char (trendingPoster.js). The legacy-HTML render branch cannot swallow it
+// either: it is guarded on !hasPremiumMarkup.
+const em = (emoji, id) => (id ? `[${emoji}](emoji/${id})` : emoji);
 
 // ── Channel-post building blocks (code-level only, NOT separate templates) ──
 // Inlined into every channel-post DEFAULT below so each stored template is the
@@ -318,35 +332,142 @@ const DEFAULTS = {
     "{queueNote}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   group_start:
-    "🟢 **Dexvra Buy Bot**\n\n" +
-    "I post a live alert here on **every on-chain buy** of your token.\n\n" +
-    "**Set me up (30 seconds):**\n" +
+    "🟢 **Dexvra — free tools for your group**\n\n" +
+    "**🤖 Buy Bot** — a live alert here on **every on-chain buy** of your token, with a link to the real transaction and the wallet that made it.\n" +
     "1. Make me an **admin** of this group\n" +
     "2. Send `/settoken <your contract address>`\n" +
-    "3. Done — buys start posting here\n\n" +
-    "**Handy commands**\n" +
-    "`/buybot` — status · `/setminbuy 50` — only alert buys ≥ $50 · `/buybot off` — pause\n\n" +
+    "3. Done — buys start posting\n\n" +
+    "`/buybot` status · `/setminbuy 50` only alert buys ≥ $50 · `/buybot off` pause\n\n" +
+    "**🐋 Whale wallets** — a buy from someone already holding a lot of your token gets its own **pinned** alert.\n" +
+    "`/setwhale 50000` set the bar · `/setwhale off` · `/buybot pin off` don't pin\n\n" +
+    "**🚀 Raid** — rally the chat behind one X post. Set targets, launch, and I keep a live scoreboard pinned until you hit them.\n" +
+    "Send `/raid` to set it up. No X API key needed — the 🤝 Crew goal counts whoever shows up in the chat.\n\n" +
     "Want to list, trend or advertise your token? DM me → {bot}\n" +
     "𝕏 Listing alerts on X → {xlisting}",
   buybot_help:
-    `${em("🟢", E.green)} **Dexvra Buy Bot — free for your group**\n\n` +
-    "Add @dexvrabot to your project's Telegram group and it posts a live alert on **every on-chain buy** of your token — amount, price, market cap, all automatic.\n\n" +
-    "**Setup (60 seconds)**\n" +
+    `${em("🟢", E.green)} **Group tools — free for your project**\n\n` +
+    "Add @dexvrabot to your Telegram group and you get both of these, no charge:\n\n" +
+    "**🤖 Buy Bot**\n" +
+    "A live alert on **every on-chain buy** of your token — amount, price, market cap, price impact, plus a link to the real transaction and the buyer's wallet.\n" +
     "1. Tap **➕ Add to your group** below and pick your group\n" +
     "2. Make the bot an **admin** (so it can post)\n" +
     "3. In the group send `/settoken <your contract address>`\n" +
-    "4. Done — buys start posting. Tune with `/setminbuy <usd>`, pause with `/buybot off`\n\n" +
+    "4. Tune with `/setminbuy <usd>`, pause with `/buybot off`\n\n" +
+    "**🐋 Whale wallets** — a buy from a wallet already holding a lot of your token gets its own alert, **pinned** in the group so nobody misses it. Set the bar with `/setwhale 50000`.\n\n" +
+    "**🚀 Raid**\n" +
+    "Point your community at one X post and watch the numbers climb on a live card. Set the targets (**+15 likes**, **+5 replies**, **+10 crew**), paste the link, launch. Optionally lock the chat until the targets are hit.\n" +
+    "In the group, send `/raid`.\n\n" +
     "Works on Solana, BSC, Ethereum, Base, Tron, TON, Sui, Plasma & Robinhood.\n\n" +
     "𝕏 Every listing is announced on X too — [Listing Alerts]({xlisting})",
+  // THE REAL ALERT — one verified transaction, one card. Every number here
+  // comes from the trade itself or the pool it happened in, so a reader can
+  // open {verify} and check it. Do NOT add a placeholder to this template that
+  // the estimated path cannot fill; the two are separate templates precisely so
+  // neither has to pretend.
+  // Dexvra's OWN grammar, not the icon-only / pipe-separated layout the
+  // copy-trading bots all share: **Label:** value, joined by ·, with a bracketed
+  // CTA row — the same shape as the listing card above, so a reader who knows
+  // one knows the other. {emoji} is the size row (see group_buy_style); {bar} is
+  // a fill-meter, still available as a placeholder if you ever want one.
   group_buy_alert:
-    "{emoji}\n" +
-    `${em("🟢", E.green)} **{symbol} Buy!**\n\n` +
-    `${em("💲", E.dollar)} **{usd}** · {count} {buysWord}\n` +
-    `🪙 {tokenAmt} {symbol}\n` +
-    `${em("💲", E.dollar)} Price — {price}\n` +
-    `${em("📈", E.chartUp)} Market cap — {mcap}\n` +
-    `${em("📊", E.chart)} {chain}\n\n` +
-    "_Estimated from on-chain volume._",
+    `${em("🟢", E.green)} **{tier}** — [{name}]({coinUrl})\n\n` +
+    "{emoji}\n\n" +
+    `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
+    "🪙 **Got:** {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    "{verify}\n\n" +
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+  // WHALE WALLET — a buy from someone already holding a lot of the token,
+  // whatever they just spent. Pinned in the group, so it is deliberately its own
+  // card rather than the normal one with a louder word on it.
+  //
+  // {holds} is the buyer's balance OF THIS TOKEN valued at the pool price — not
+  // a portfolio total, which this bot cannot see. The label says so.
+  group_whale_alert:
+    `${em("🐋", E.diamond)} **WHALE WALLET** — [{name}]({coinUrl})\n\n` +
+    "{emoji}\n\n" +
+    `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
+    "🪙 **Got:** {tokenAmt} {symbol}\n" +
+    "💰 **Holds:** {holds} {symbol} · **{holdsUsd}**\n" +
+    "📈 **Position:** {position}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    "{verify}\n\n" +
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+  // The icons in the size row, pipe separated: normal buy | whale wallet.
+  // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
+  // ever GROWS with the buy.
+  //
+  // It is a row and not a fill-meter on purpose: a meter shows how much is
+  // MISSING, and "▰▱▱▱▱▱▱▱▱▱" on a real buy reads as something failing rather
+  // than something good happening. A buy alert should never render mostly empty.
+  //
+  // PLAIN UNICODE ONLY — this string is split apart and repeated as plain text,
+  // so it cannot carry premium-emoji entities. Same rule as raid_style.
+  group_buy_style: "🟢|🐋",
+  // THE DEGRADED ALERT — only sent when the per-transaction feed is unreadable.
+  // It says "≈" and says why, because a number that cannot be checked must not
+  // be dressed up as one that can.
+  group_buy_alert_est:
+    `${em("🟢", E.green)} **BUYS DETECTED** — {symbol}\n\n` +
+    "{emoji}\n\n" +
+    `${em("💲", E.dollar)} **Spent:** ≈ {usd} across {count} {buysWord}\n` +
+    "🪙 **Got:** ≈ {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n\n` +
+    // Plain text, NOT `_italics_` — the premium-markup parser understands
+    // **bold**, [links](url) and `code` and nothing else, so the underscores in
+    // the previous version of this template reached the group as literal
+    // underscores. Check src/premium.js `parse()` before adding markup here.
+    "⚠️ Estimated from pool volume — the live transaction feed is down, so there's no txn link on this one.\n\n" +
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
+  // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
+  // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
+  // a time, so a half-typed override still renders a card.
+  group_buy_tiers: "NEW BUY|WHALE BUY|MEGA BUY",
+  // ── Dexvra Raid ─────────────────────────────────────────────────────────
+  // The live card and its three end states. {progress} is GENERATED (the goal
+  // rows and their bars) because which rows exist depends on which goals are
+  // set, and a flat template cannot express that — edit the copy around it, and
+  // the characters INSIDE it via raid_style below.
+  //
+  // Premium emoji work in these four templates (they ARE the template, so they
+  // travel in its entity array). They do NOT work inside {progress} or
+  // raid_style — see the note on raid_style.
+  raid_card:
+    "🚀 **DEXVRA RAID {seq}**\n\n" +
+    "📊 **{percent}% complete** · ⏱ **{left}** on the clock\n\n" +
+    "{progress}\n\n" +
+    "🤝 **Crew: {crew}**\n{roster}\n\n" +
+    "📝 “{post}”\n\n" +
+    "{note}\n" +
+    "Updated {updated} UTC",
+  raid_complete:
+    "✅ **RAID {seq} — TARGETS HIT**\n\n" +
+    "🎉 Every goal cleared. That's how it's done.\n\n" +
+    "{progress}\n\n" +
+    "🤝 **Crew: {crew}**\n{roster}\n\n" +
+    "📝 “{post}”\n\n" +
+    "Closed {updated} UTC",
+  raid_expired:
+    "⌛ **RAID {seq} — TIME'S UP**\n\n" +
+    "📊 Finished at **{percent}%**. Good push — run it back.\n\n" +
+    "{progress}\n\n" +
+    "🤝 **Crew: {crew}**\n\n" +
+    "Closed {updated} UTC",
+  raid_cancelled:
+    "🛑 **RAID {seq} — STOPPED**\n\n" +
+    "📊 Stopped at **{percent}%** by an admin.\n\n" +
+    "{progress}\n\n" +
+    "Closed {updated} UTC",
+  raid_complete_note: "✅ **Raid cleared.** Every target hit — {crew} of you turned up. 🚀",
+  // The icons and bar characters inside {progress}. Six fields, pipe-separated:
+  //   likes | replies | reposts | crew | bar-filled | bar-empty
+  // PLAIN UNICODE ONLY. This string is split apart and rebuilt inside a
+  // generated block, so it cannot carry the template's premium-emoji entities —
+  // a premium emoji here reaches the group as a plain fallback character at
+  // best. Try coloured blocks for a bolder bar: ❤️|💬|🔁|🤝|🟩|⬛
+  // A missing or malformed field falls back to its own default, so a typo
+  // cannot break the card. Must stay in step with STYLE_DEFAULT in raid/card.js.
+  raid_style: "❤️|💬|🔁|🤝|▰|▱",
   massdm_disabled: "📣 Mass DM broadcasts are paused right now — check back soon.",
   massdm_intro:
     `${em("📢", E.megaphone)} **Mass DM Broadcast**\n\n` +
@@ -602,9 +723,19 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
-  group_start: { group: "Group Buy Bot", label: "Buy bot: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  buybot_help: { group: "Group Buy Bot", label: "Buy bot: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain"] },
+  group_start: { group: "Group Buy Bot", label: "Group tools: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
+  buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
+  group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "price", "mcap", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
+  group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
+  group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
+  raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },
+  raid_complete: { group: "Dexvra Raid", label: "Raid: all targets hit", ph: ["seq", "percent", "crew", "roster", "progress", "url", "post", "updated"] },
+  raid_expired: { group: "Dexvra Raid", label: "Raid: time ran out", ph: ["seq", "percent", "crew", "progress", "url", "post", "updated"] },
+  raid_cancelled: { group: "Dexvra Raid", label: "Raid: stopped by an admin", ph: ["seq", "percent", "progress", "url", "post", "updated"] },
+  raid_complete_note: { group: "Dexvra Raid", label: "Raid: shout when it clears", ph: ["crew", "url"] },
+  raid_style: { group: "Dexvra Raid", label: "Raid bar style (likes|replies|reposts|crew|filled|empty)", ph: [] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },
   massdm_ca_invalid: { group: "Mass DM", label: "Mass DM: invalid CA", ph: [] },
