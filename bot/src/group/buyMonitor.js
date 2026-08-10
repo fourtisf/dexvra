@@ -49,7 +49,6 @@ const tpl = require("../templates");
 const { payloadArgs } = require("../helpers/message");
 const { fmtPrice, formatNumber, fmtPct, trimAmount } = require("../helpers/format");
 const { chainOf, txUrl, accountUrl, shortAddress, chartUrl } = require("../config/chains");
-const listedCache = require("./listedCache");
 const premium = require("../premium");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
@@ -324,7 +323,7 @@ function positionRow(g, pos) {
 /** Every value both buy cards share. Split out so the whale card cannot drift
  *  away from the ordinary one — the two are the same event, told differently.
  *  `pos` is the buyer's holding when it could be read, null otherwise. */
-function alertVars(g, buy, pool, pos, listed) {
+function alertVars(g, buy, pool, pos) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
   const dexvraPage = `${SITE_URL}/token/${g.chain}/${g.address}`;
   const chart = chartUrl(g.chain, g.pairAddress || g.address) || dexvraPage;
@@ -372,22 +371,22 @@ function alertVars(g, buy, pool, pos, listed) {
     // one chain DexScreener does not index (Robinhood), so the button never
     // points at a 404.
     chartUrl: premium.sanitizeUrl(chart),
-    // "The best page for this token", NOT "the Dexvra page" — and that is the
-    // whole point. The header links the token's NAME through this, so on an
-    // unlisted token it was sending the group to a dexvra.io 404 on every
-    // single buy. Unlisted, it goes to the chart, which is real.
-    coinUrl: premium.sanitizeUrl(listed === false ? chart : dexvraPage),
+    // Always the Dexvra page, listed or not. It used to be a 404 for an
+    // unlisted token — which is most of them, since the buy bot is free and
+    // runs on any contract — so the alert hid the link and apologised instead.
+    // The SITE answers that now: /token/<chain>/<ca> renders a real page for an
+    // unlisted contract, with its live price, its chart and a way to list it.
+    // Fixing the destination beat teaching every caller to route around it.
+    coinUrl: premium.sanitizeUrl(dexvraPage),
     // The buy bot is free and runs on ANY contract, so most groups using it
     // have never bought a listing — and the Dexvra link was a 404 on every
     // alert. Both of these are WHOLE segments so each vanishes cleanly.
     // `listed` is null when the check could not run, and null is not false: an
     // unreachable API must never tell a paying customer they are not listed.
-    dexvraCta: listed === false ? "" : ` · [💎 Dexvra](${premium.sanitizeUrl(dexvraPage)})`,
-    notListed: listed === false ? tpl.markup("not_listed_note", { symbol: premium.sanitizeVar(`$${sym}`) }) : "",
   };
 }
 
-const renderRealAlert = (g, buy, pool, pos, listed) => tpl.render("group_buy_alert", alertVars(g, buy, pool, pos, listed));
+const renderRealAlert = (g, buy, pool, pos) => tpl.render("group_buy_alert", alertVars(g, buy, pool, pos));
 
 /**
  * The bar a group judges a holding against: its own `/setwhale`, else the
@@ -447,8 +446,8 @@ async function whaleCheck(g, buy, pool) {
   return pos.holdsUsd >= threshold ? { ...pos, threshold } : null;
 }
 
-function renderWhaleAlert(g, buy, pool, whale, listed) {
-  const base = alertVars(g, buy, pool, whale, listed);
+function renderWhaleAlert(g, buy, pool, whale) {
+  const base = alertVars(g, buy, pool, whale);
   return tpl.render("group_whale_alert", {
     ...base,
     // Its own icon, so a whale reads as a whale at a glance in a scrolling chat.
@@ -464,7 +463,7 @@ function renderWhaleAlert(g, buy, pool, whale, listed) {
   });
 }
 
-function renderEstimateAlert(g, est, pool, listed) {
+function renderEstimateAlert(g, est, pool) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
   const estPage = `${SITE_URL}/token/${g.chain}/${g.address}`;
   const estChart = chartUrl(g.chain, g.pairAddress || g.address) || estPage;
@@ -484,10 +483,8 @@ function renderEstimateAlert(g, est, pool, listed) {
     mcap: pool && pool.mcap ? "$" + formatNumber(pool.mcap) : "—",
     chain: chainOf(g.chain)?.label || g.chain,
     tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
-    coinUrl: premium.sanitizeUrl(listed === false ? estChart : estPage),
+    coinUrl: premium.sanitizeUrl(estPage),
     chartUrl: premium.sanitizeUrl(estChart),
-    dexvraCta: listed === false ? "" : ` · [💎 Dexvra](${premium.sanitizeUrl(estPage)})`,
-    notListed: listed === false ? tpl.markup("not_listed_note", { symbol: premium.sanitizeVar(`$${sym}`) }) : "",
   });
 }
 
@@ -742,7 +739,6 @@ async function pollTrades(tg, entry) {
     const pos = await buyerPosition(wants, buy, pool).catch(() => null);
     // Once per buy, not per group: whether the TOKEN is on dexvra.io is a
     // property of the token. Cached upstream, so a quiet pool costs nothing.
-    const listed = await listedCache.isListed(entry.chain, entry.address).catch(() => null);
     for (const g of entry.groups) {
       if (buy.usd < (Number(g.minBuyUsd) || 0)) continue; // each group's own threshold
       // A group that turned holdings off gets neither the whale card nor the
@@ -753,7 +749,7 @@ async function pollTrades(tg, entry) {
       // second group got the first group's answer.
       const whale = gPos && gPos.holdsUsd >= whaleBarFor(g) ? { ...gPos, threshold: whaleBarFor(g) } : null;
       const isWhale = !!whale;
-      const render = () => (isWhale ? renderWhaleAlert(g, buy, pool, whale, listed) : renderRealAlert(g, buy, pool, gPos, listed));
+      const render = () => (isWhale ? renderWhaleAlert(g, buy, pool, whale) : renderRealAlert(g, buy, pool, gPos));
       const opts = { kind: isWhale ? "whale" : "buy", pin: isWhale && g.pin !== false && BUYBOT_PIN_WHALES };
       if (await deliver(tg, g.chatId, render, buy.txHash, opts)) {
         posted++;
@@ -799,10 +795,9 @@ async function pollEstimate(tg, entry, pool) {
 
   const est = estimateBuys(prev, pool);
   if (!est) return;
-  const listed = await listedCache.isListed(entry.chain, entry.address).catch(() => null);
   for (const g of entry.groups) {
     if (g.minBuyUsd && est.usd < g.minBuyUsd) continue;
-    await deliver(tg, g.chatId, () => renderEstimateAlert(g, est, pool, listed), null);
+    await deliver(tg, g.chatId, () => renderEstimateAlert(g, est, pool), null);
   }
   // Mark everything up to now as already announced, so the real path does not
   // re-tell the group about the same money when the feed comes back. An
@@ -907,7 +902,6 @@ module.exports = {
   alertVars,
   positionRow,
   buyerPosition,
-  listedCache,
   whaleBarFor,
   whaleCheck,
   renderWhaleAlert,

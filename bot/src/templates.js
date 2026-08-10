@@ -418,8 +418,7 @@ const DEFAULTS = {
     // {holds}, {holdsUsd} and {position} are the same three facts on their own
     // if you would rather lay them out yourself.
     "{wallet}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}){dexvraCta}\n" +
-    "{notListed}",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
   // whatever they just spent. Pinned in the group, so it is deliberately its own
   // card rather than the normal one with a louder word on it.
@@ -445,8 +444,7 @@ const DEFAULTS = {
     "**Price:** {price} · **24h:** {change}\n" +
     "**MCap:** {mcap} · **Liq:** {liq}\n" +
     "{verify}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}){dexvraCta}\n" +
-    "{notListed}",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
   // ever GROWS with the buy.
@@ -472,14 +470,7 @@ const DEFAULTS = {
     // the previous version of this template reached the group as literal
     // underscores. Check src/premium.js `parse()` before adding markup here.
     "⚠️ Estimated from pool volume — the live txn feed is down, so no txn link on this one.\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}){dexvraCta}\n" +
-    "{notListed}",
-  // Shown on a buy alert when the token is NOT on dexvra.io — which is most
-  // groups, because the buy bot is free and runs on any contract. It is the one
-  // place the product can be sold to a room that is already watching its own
-  // token trade, so it says what is missing and where to fix it, once, in a
-  // line that disappears the moment they list.
-  not_listed_note: "⚠️ {symbol} isn't listed on Dexvra yet — [list it in minutes]({bot})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
@@ -879,12 +870,11 @@ const META = {
   group_added: { group: "Group Setup", label: "Group: posted the moment the bot is added", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl", "dexvraCta", "notListed"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl", "dexvraCta", "notListed"] },
-  group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl", "coinUrl", "chartUrl", "dexvraCta", "notListed"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
-  not_listed_note: { group: "Group Buy Bot", label: "Buy alert: token not listed on Dexvra yet", ph: ["symbol", "bot", "site"] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.
   setup_admin_only: { group: "Group Setup", label: "Error: group admins only", ph: [] },

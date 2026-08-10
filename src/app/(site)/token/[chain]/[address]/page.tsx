@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { useApp } from "@/components/AppState";
@@ -8,6 +7,7 @@ import { Coin } from "@/components/Coin";
 import { ChainLogo } from "@/components/ChainLogo";
 import { Socials } from "@/components/Socials";
 import { TokenTrades } from "@/components/TokenTrades";
+import { UnlistedToken } from "@/components/UnlistedToken";
 import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
@@ -35,17 +35,10 @@ export default function TokenPage() {
       </section>
     );
   }
-  if (!t) {
-    return (
-      <section className="view">
-        <div className="panel big-empty">
-          <div className="em">🔍</div>
-          <p>This token isn&apos;t a Dexvra listing (yet). Only paid listings appear here.</p>
-          <Link href="/" className="btn-primary">Back to board →</Link>
-        </div>
-      </section>
-    );
-  }
+  // NOT a dead end. Every buy-bot alert links here, the buy bot is free and
+  // runs on any contract, so most arrivals on this page are for a token nobody
+  // has listed — see UnlistedToken.
+  if (!t) return <UnlistedToken chain={chain} address={address} />;
 
   const c = CHAINS[t.chain];
   const network = c?.geckoNetwork ?? null;
