@@ -165,3 +165,42 @@ test("a corrupt local file never overwrites a good copy in the mirror", async ()
   await persist.hydrate();
   assert.deepStrictEqual(kv.get("torn.json"), { good: true }, "and hydrate leaves it alone too");
 });
+
+test("rapid saves reach Mongo in the order they happened", async () => {
+  // orders.json is rewritten WHOLE on every status change during a payment
+  // poll, so two kvSets are routinely in flight at once. Unchained, B then A
+  // leaves the mirror holding the OLDER payment state — a backup that is
+  // sometimes a few minutes behind, on the one store where that matters most.
+  const { kv } = fakeMongo({});
+  const landed = [];
+  mongo.kvSet = async (n, d) => {
+    // Make the FIRST write slow, so an unordered implementation lands it last.
+    await new Promise((r) => setTimeout(r, d.step === 1 ? 40 : 0));
+    landed.push(d.step);
+    kv.set(n, d);
+  };
+  await persist.saveJSON("orders.json", { step: 1 });
+  await persist.saveJSON("orders.json", { step: 2 });
+  await persist.mirrorIdle();
+  assert.deepStrictEqual(landed, [1, 2], "the slow first write still lands first");
+  assert.deepStrictEqual(kv.get("orders.json"), { step: 2 }, "and the mirror holds the NEWEST state");
+});
+
+test("a failed mirror write does not swallow the next one", async () => {
+  // The chain must never be left rejected: the following save links onto it,
+  // and a rejected link would drop that write silently — the exact failure the
+  // chain exists to prevent.
+  const { kv } = fakeMongo({});
+  let first = true;
+  mongo.kvSet = async (n, d) => {
+    if (first) {
+      first = false;
+      throw new Error("connection reset");
+    }
+    kv.set(n, d);
+  };
+  await persist.saveJSON("orders.json", { step: 1 });
+  await persist.saveJSON("orders.json", { step: 2 });
+  await persist.mirrorIdle();
+  assert.deepStrictEqual(kv.get("orders.json"), { step: 2 }, "the second write still landed");
+});

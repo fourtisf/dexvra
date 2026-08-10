@@ -133,7 +133,13 @@ const HEADLINE = {
       if (state === undefined) {
         if (serialize(localData) === serialize(remote.get(name))) state = "in sync";
         else {
-          state = "STALE IN MONGO";
+          // NOT stale yet — possibly just in flight. saveJSON writes the file
+          // first and mirrors asynchronously, so a store being written while
+          // this runs is momentarily ahead of Mongo through no fault of
+          // anything. orders.json is rewritten whole on every payment poll,
+          // which makes it by far the likeliest to be caught mid-write and
+          // reported as a failure it never had. Look twice before accusing.
+          state = "recheck";
           stale.push(name);
         }
       }
@@ -142,10 +148,36 @@ const HEADLINE = {
     rows.push({ name, size, state });
   }
 
+  // Second look at anything that did not match, after giving an in-flight
+  // mirror write time to land.
+  if (stale.length) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const settled = [];
+    for (const name of stale) {
+      let localData = null;
+      try {
+        localData = JSON.parse(fss.readFileSync(path.join(DATA_DIR, name), "utf8"));
+      } catch {
+        settled.push(name);
+        continue;
+      }
+      const fresh = await mongo.kvGet(name);
+      const row = rows.find((r) => r.name === name);
+      if (serialize(localData) === serialize(fresh && fresh.data !== undefined ? fresh.data : fresh)) {
+        row.state = "in sync (mirror landed while checking)";
+      } else {
+        row.state = "STALE IN MONGO";
+        settled.push(name);
+      }
+    }
+    stale.length = 0;
+    stale.push(...settled);
+  }
+
   console.log("\nStores");
   const w = Math.max(...rows.map((r) => r.name.length), 8);
   for (const r of rows) {
-    const mark = r.state === "in sync" || r.state.startsWith("mongo only") ? "✅" : "❌";
+    const mark = r.state.startsWith("in sync") || r.state.startsWith("mongo only") ? "✅" : "❌";
     const note = HEADLINE[r.name] ? `   ← ${HEADLINE[r.name]}` : "";
     console.log(`  ${mark} ${r.name.padEnd(w)}  ${r.size.padStart(8)}  ${r.state}${note}`);
   }
@@ -185,7 +217,28 @@ const HEADLINE = {
     process.exit(0);
   }
   if (missing.length) console.log(bad(`${missing.length} store(s) never mirrored: ${missing.join(", ")}`));
-  if (stale.length) console.log(bad(`${stale.length} store(s) stale in Mongo: ${stale.join(", ")}`));
+  if (stale.length) {
+    console.log(bad(`${stale.length} store(s) stale in Mongo: ${stale.join(", ")}`));
+    // WHICH keys differ, never their values: orders.json is payment records and
+    // this output gets pasted into chats. Key names alone are enough to tell a
+    // lagging mirror from a genuinely divergent one.
+    for (const name of stale) {
+      try {
+        const localData = JSON.parse(fss.readFileSync(path.join(DATA_DIR, name), "utf8"));
+        const doc = await mongo.kvGet(name);
+        const remoteData = doc && doc.data !== undefined ? doc.data : doc;
+        if (localData && remoteData && typeof localData === "object" && typeof remoteData === "object") {
+          const lk = Object.keys(localData);
+          const rk = Object.keys(remoteData);
+          const onlyLocal = lk.filter((k) => !(k in remoteData));
+          const changed = lk.filter((k) => k in remoteData && serialize(remoteData[k]) !== serialize(localData[k]));
+          console.log(`     ${name}: ${lk.length} key(s) on disk, ${rk.length} in mongo` +
+            `${onlyLocal.length ? ` · ${onlyLocal.length} only on disk` : ""}` +
+            `${changed.length ? ` · ${changed.length} differing` : ""}`);
+        }
+      } catch { /* the summary is a nicety — never fail the check over it */ }
+    }
+  }
   if (FIX) {
     console.log("\nRe-mirroring…");
     const res = await persist.sweepMirror();

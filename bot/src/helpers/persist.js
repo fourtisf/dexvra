@@ -61,19 +61,42 @@ async function saveJSON(name, data) {
   // Durable mirror — best-effort, never blocks or fails the local write. A slow
   // or down Mongo must never delay a payment/broadcast; the sweep and boot-time
   // convergence catch anything a fire-and-forget write missed.
-  if (mongo.enabled()) {
-    const h = hashOf(serialize(data));
-    mongo
-      .kvSet(name, data)
-      .then(() => mirroredHash.set(name, h))
-      .catch((e) => {
+  if (mongo.enabled()) queueMirror(name, data, hashOf(serialize(data)));
+}
+
+// One in-flight mirror write per store, in the order the saves happened.
+//
+// Without this, two saves close together race: orders.json is rewritten WHOLE on
+// every status change during a payment poll, so kvSet(A) and kvSet(B) are
+// routinely in flight at once — and nothing makes them land in that order. B
+// then A leaves Mongo holding the OLDER order state, and mirroredHash agreeing
+// with neither. The sweep repairs it within MIRROR_SWEEP_MS, but "the payment
+// record in the backup is a few minutes behind, sometimes" is not a property
+// worth having when serialising the writes costs one Map entry.
+const mirrorChain = new Map(); // store name → the promise for its last queued write
+function queueMirror(name, data, hash) {
+  const prev = mirrorChain.get(name) || Promise.resolve();
+  const next = prev.then(
+    () => mongo.kvSet(name, data).then(
+      () => { mirroredHash.set(name, hash); },
+      (e) => {
         // Drop any hash we were holding: this store is now UNPROVEN, and the
         // sweep must treat it as needing a retry rather than as up to date.
         mirroredHash.delete(name);
         log.warn(`[persist] mongo mirror failed for ${name} — will retry on the next sweep: ${e && e.message}`);
-      });
-  }
+      },
+    ),
+  );
+  // The chain must never reject, or the next write links onto a rejected
+  // promise and is dropped silently — the exact failure this is meant to stop.
+  mirrorChain.set(name, next);
+  next.then(() => { if (mirrorChain.get(name) === next) mirrorChain.delete(name); });
+  return next;
 }
+
+/** Resolves once every queued mirror write has settled. Tests and the backup
+ *  checker use it; nothing on the hot path waits for the mirror. */
+const mirrorIdle = () => Promise.all([...mirrorChain.values()]);
 
 /**
  * Re-mirror every local store whose bytes we have not PROVED are in Mongo.
@@ -231,4 +254,5 @@ class DedupSet {
 
 module.exports = {
   sweepMirror,
+  mirrorIdle,
   startMirrorSweep, loadJSONSync, saveJSON, ensureDir, hydrate, DedupSet, DATA_DIR };
