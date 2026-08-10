@@ -137,8 +137,15 @@ test("{xlisting} resolves in EVERY template, with no call site passing it", () =
   // baseVars() is what makes this true. Before it, a template that gained an X
   // link rendered it blank until someone remembered to update the one handler
   // that renders it — which is exactly what happened to four of these.
+  //
+  // The list is DERIVED, not typed: which templates carry an X link is a copy
+  // decision an admin is invited to change, and a hardcoded list turns that
+  // edit into a red build. What must hold is that wherever {xlisting} appears,
+  // it resolves.
   const { X_LISTING_URL } = require("../src/config/constants");
-  for (const key of ["welcome", "intro_xpress", "intro_tiered", "intro_banner", "already_listed", "trending_ca_prompt", "buybot_help", "group_start"]) {
+  const users = tpl.keys().filter((k) => String(tpl.getRaw(k)).includes("{xlisting}"));
+  assert.ok(users.length >= 5, `expected several templates to link X, found ${users.length}`);
+  for (const key of users) {
     const p = tpl.render(key, {});
     const text = p.html != null ? p.html : p.text;
     assert.ok(!text.includes("{xlisting}"), `${key} left {xlisting} unsubstituted`);

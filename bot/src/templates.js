@@ -365,9 +365,7 @@ const DEFAULTS = {
     "**🐋 Whale wallets** — when a wallet already deep in your bags adds more, that one gets **pinned**.\n" +
     "`/setwhale 50000` sets the bar · `/setwhale off` · `/buybot pin off`\n\n" +
     "**🚀 Raid** — point the chat at one post and keep the board pinned until the numbers hit.\n" +
-    "`/raid` to set it up. No X key needed — 🤝 Crew counts whoever shows up.\n\n" +
-    "Solana · BSC · Ethereum · Base · Tron · TON · Sui · Plasma · Robinhood\n\n" +
-    "[List, trend or advertise]({bot})  ·  [Listing alerts on X]({xlisting})",
+    "`/raid` to set it up. No X key needed — 🤝 Crew counts whoever shows up.",
   buybot_help:
     `${em("🟢", E.green)} **Group tools — free for your project**\n\n` +
     "Add @dexvrabot to your Telegram group and you get both of these, no charge:\n\n" +

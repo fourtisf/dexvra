@@ -73,13 +73,14 @@ test("every link in every default template is a URL Telegram accepts", () => {
 });
 
 test("{bot} is a URL and {botName} is the handle — they are not interchangeable", () => {
-  // The bug: a caller passed bot: "@dexvrabot", which beat baseVars, and the
-  // template used {bot} as a link target.
-  const out = tpl.t("group_start");
-  assert.ok(!out.includes("@dexvrabot"), "the handle does not leak into the copy");
-  const p = tpl.render("group_start");
-  const link = (p.entities || []).find((e) => e.type === "text_link" && /t\.me/.test(e.url));
-  assert.ok(link, "the bot link is a t.me URL");
+  // Tested on the VARIABLES, not on one template's wording: which template
+  // happens to carry a bot link is an admin's copy decision, and pinning this
+  // to group_start meant the test broke the moment the operator asked for that
+  // line to go.
+  const link = tpl.renderValue("[x]({bot})", {});
+  const url = (link.entities || []).find((e) => e.type === "text_link")?.url;
+  assert.match(String(url), /^https:\/\/t\.me\/\S+$/, "{bot} resolves to a t.me URL");
+  assert.match(tpl.renderValue("{botName}", {}).text, /^@\S+$/, "{botName} is the @handle");
 });
 
 test("no caller overrides {bot} with a bare @handle", () => {
