@@ -750,12 +750,28 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     // operator can act on — and stops sending users to a chain picker for no reason.
     const diag = core.launchpadDiag ? core.launchpadDiag(chainKey) : null;
     const stale = diag && Date.now() - diag.at < 120000;
+    // "It trades on another chain" was a GUESS, printed whether or not it was
+    // true, with a chain picker attached and no hint of which entry to pick. Ask
+    // the indexers where the market actually is — and if it is on a chain we
+    // support, take the user straight there instead of describing the problem.
+    const probe = await core.marketProbe(ca).catch(() => ({ chains: [], checked: [], source: 'none' }));
+    const elsewhere = probe.chains.filter((k) => k !== chainKey);
+    if (elsewhere.length) {
+      const list = elsewhere.map((k) => core.chainOf(k)).filter(Boolean);
+      return {
+        text: `🔎 <code>${short(ca)}</code> has no market on ${ch.emoji} ${esc(ch.name)} — it trades on <b>${list.map((c) => esc(c.name)).join(', ')}</b>.`,
+        kb: rows(...list.slice(0, 3).map((c) => [btn(`${c.emoji} Open on ${c.name}`, `tok:${c.key}::${ca}`)]), [btn('« Menu', 'menu')]),
+      };
+    }
     const why = stale
       ? `\n\n⚠️ The <b>launchpad factory</b> (<code>${short(diag.factory)}</code>) isn't answering on this chain — so this token can't be recognised as a bonding-curve launch and was looked up on the DEX instead, where it has no pool yet.\n\n<i>Operator: run <code>node scripts/robinhood-preflight.js --token ${esc(ca)}</code> — the factory address is likely wrong for this launchpad.</i>`
-      : `\n\nThis usually means it hasn't got a pool yet (still on a launchpad bonding curve) or it trades on another chain.`;
+      // Name what was consulted. A token on a chain whose RPC is being throttled
+      // used to look exactly like one that does not exist, and neither the user
+      // nor the operator could tell the two apart from this message.
+      : `\n\nNo pool on ${esc(ch.name)}, and no market on ${probe.checked.length ? probe.checked.map((k) => esc((core.chainOf(k) || {}).name || k)).join(', ') : 'any chain'} at either index (DexScreener, GeckoTerminal).\n\nUsually that means it is brand new, still on a launchpad bonding curve, or trading somewhere neither index covers.`;
     return {
       text: `❌ Couldn't price <code>${short(ca)}</code> on ${ch.emoji} ${esc(ch.name)}.${why}`,
-      kb: rows([btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]),
+      kb: rows([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }], [btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]),
     };
   }
   // Priced by the indexer, not by the router — Uniswap v4 and anything else the
@@ -3329,6 +3345,11 @@ async function start() {
   if (!core.CFG.tgToken) { console.error('TRADEBOT_TOKEN missing.'); process.exit(1); }
   if (!core.CFG.walletSecret) { console.error('WALLET_SECRET missing — refusing to run custodial without key encryption.'); process.exit(1); }
   core.loadStore();
+  // Which chains this process will even LOOK at, printed at boot. A CA pasted
+  // for a chain that is not in ENABLED_CHAINS is never probed and never priced,
+  // and until now the only evidence of that was a card saying the token could
+  // not be priced on whatever chain the user happened to have selected.
+  console.log(`[boot] chains enabled: ${core.chains.enabledChains().map((c) => c.key).join(', ')}`);
   await getMe();
   await registerCommands();
   await refreshPrices();

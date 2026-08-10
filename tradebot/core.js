@@ -932,7 +932,7 @@ const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : S
 // server.
 // _dsCache too: it is a 30s memo of an EXTERNAL answer, and a test that swaps
 // the indexer out gets the previous test's response without this.
-function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); }
+function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); _gtCache.clear(); }
 
 // Why the launchpad last failed to answer, per chain. resolveCurve deliberately
 // collapses a factory error into '' — the same value that means "this token genuinely
@@ -1134,12 +1134,60 @@ async function dsPairs(ca) {
   if (hit && Date.now() - hit.at < DS_TTL_MS) return hit.pairs;
   let pairs = [];
   try {
-    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+    // LOWERCASED. An EVM address is case-insensitive but its EIP-55 checksum
+    // form is not the string these indexes are keyed on, and a paste from a
+    // block explorer is always the checksummed one.
+    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${_idQ(ca)}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
     if (r.ok) { const j = await r.json(); pairs = Array.isArray(j && j.pairs) ? j.pairs : []; }
   } catch (_) { pairs = []; }
   if (_dsCache.size >= DS_CACHE_MAX) _dsCache.delete(_dsCache.keys().next().value);
   _dsCache.set(key, { at: Date.now(), pairs });
   return pairs;
+}
+
+// Solana mints are base58 and CASE-SIGNIFICANT — lowercasing one destroys it.
+const _idQ = (ca) => (/^0x[a-fA-F0-9]{40}$/.test(String(ca)) ? String(ca).toLowerCase() : String(ca));
+
+// GeckoTerminal, the SECOND opinion. Not redundancy for its own sake: one
+// indexer is a single point of failure the operator cannot see past — DexScreener
+// rate-limits datacenter IPs, and when it returns nothing there is no way to tell
+// "this token has no market" from "this VPS is being throttled". GT also names
+// the venue precisely ("uniswap-v4"), where DexScreener splits it across dexId
+// and a label.
+const GT_NET = { ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
+const _gtCache = new Map();   // `${chainKey}:${caLower}` → { at, m }
+
+async function gtMarket(ca, chainKey) {
+  const net = GT_NET[chainKey];
+  if (!net) return null;
+  const key = chainKey + ':' + String(ca).toLowerCase();
+  const hit = _gtCache.get(key);
+  if (hit && Date.now() - hit.at < DS_TTL_MS) return hit.m;
+  let m = null;
+  try {
+    const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${_idQ(ca)}/pools?page=1`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+    if (r.ok) {
+      const j = await r.json();
+      const pools = Array.isArray(j && j.data) ? j.data : [];
+      const best = pools
+        .filter((p) => p && p.attributes && Number(p.attributes.base_token_price_usd) > 0)
+        .sort((a, b) => Number(b.attributes.reserve_in_usd || 0) - Number(a.attributes.reserve_in_usd || 0))[0];
+      if (best) {
+        const a = best.attributes;
+        const dex = ((best.relationships && best.relationships.dex && best.relationships.dex.data) || {}).id || '';
+        m = {
+          priceUsd: Number(a.base_token_price_usd),
+          mcapUsd: Number(a.market_cap_usd || a.fdv_usd || 0) || 0,
+          liqUsd: Number(a.reserve_in_usd || 0) || 0,
+          volH24Usd: (a.volume_usd && a.volume_usd.h24 != null) ? Number(a.volume_usd.h24) : null,
+          dexId: String(dex), labels: [], name: '', sym: String(a.name || '').split('/')[0].trim(),
+        };
+      }
+    }
+  } catch (_) { m = null; }
+  if (_gtCache.size >= DS_CACHE_MAX) _gtCache.delete(_gtCache.keys().next().value);
+  _gtCache.set(key, { at: Date.now(), m });
+  return m;
 }
 
 const _dsLiq = (p) => Number((p && p.liquidity && p.liquidity.usd) || 0);
@@ -1179,12 +1227,38 @@ async function dsChainsOf(ca) {
 
 // A market label an operator will recognise. DexScreener's dexId for Uniswap v4
 // is "uniswap" with a "v4" label, so the version has to be glued back on or the
-// card claims plain "uniswap" for a venue the router cannot reach.
+// card claims plain "uniswap" for a venue the router cannot reach. GeckoTerminal
+// gives it whole ("uniswap-v4"), hyphen and all.
 function dsVenueLabel(m) {
   if (!m) return 'an indexed DEX';
-  const dex = (m.dexId || 'dex').replace(/^\w/, (c) => c.toUpperCase());
+  const dex = String(m.dexId || 'dex').replace(/-/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
   const ver = (m.labels || []).find((l) => /^v\d/i.test(String(l)));
   return ver ? `${dex} ${String(ver).toLowerCase()}` : dex;
+}
+
+/** The best market for `ca` on `chainKey` from EITHER indexer. */
+async function marketOf(ca, chainKey) {
+  const ds = await dsMarket(ca, chainKey).catch(() => null);
+  if (ds) return ds;
+  return gtMarket(ca, chainKey).catch(() => null);
+}
+
+/**
+ * Which enabled chains this token trades on, and what was actually consulted.
+ *
+ * The `checked` list is the point. "Couldn't price it" told the user nothing
+ * they could act on and told the operator nothing they could debug — a token on
+ * a chain whose RPC was throttled looked identical to one that does not exist.
+ * The failure card prints this, so a screenshot IS the diagnosis.
+ */
+async function marketProbe(ca) {
+  const enabled = chains.enabledChains().map((c) => c.key);
+  const ds = await dsChainsOf(ca).catch(() => []);
+  if (ds.length) return { chains: ds, checked: enabled, source: 'dexscreener' };
+  // DexScreener came back empty — which is also what a throttled request looks
+  // like. Ask GeckoTerminal per chain before concluding the token has no market.
+  const gt = (await Promise.all(enabled.map(async (k) => ((await gtMarket(ca, k).catch(() => null)) ? k : null)))).filter(Boolean);
+  return { chains: gt, checked: enabled, source: gt.length ? 'geckoterminal' : 'none' };
 }
 
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.
@@ -1244,8 +1318,8 @@ async function tokenSnapshot(ca, chainKey) {
     // v4 pool has no pair contract to find, so this is the only way such a token
     // ever gets a price. Marked routable:false — the card shows the market and
     // says plainly that a swap can't be filled here yet.
-    const m = await dsMarket(ca, chainKey);
-    if (!m) return null;   // genuinely no market anywhere we can see
+    const m = await marketOf(ca, chainKey);
+    if (!m) return null;   // genuinely no market either indexer can see
     const usd = await ethUsd(chainKey).catch(() => 0);
     return {
       ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
@@ -1834,7 +1908,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
       // "no pool? try again", which sends the user to retry a buy that can never
       // fill no matter how many times they press it.
       if (pick.kind === 'v2' && !pick.pair) {
-        const m = await dsMarket(ca, chainKey).catch(() => null);
+        const m = await marketOf(ca, chainKey).catch(() => null);
         if (m) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
       }
       // NO price-impact ceiling. Operator's rule: the user must always be able
@@ -2373,7 +2447,7 @@ module.exports = {
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
-  dsMarket, dsChainsOf, dsVenueLabel,
+  dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
   // Test-only seams — see the notes at each definition.
   _deps,

@@ -116,3 +116,67 @@ test("routable is set on BOTH snapshot returns, not just the new one", () => {
   const rets = CORE.match(/routable: (true|false)/g) || [];
   assert.ok(rets.includes("routable: true") && rets.includes("routable: false"));
 });
+
+// ── Two indexers, and a failure card that says what it checked ───────────────
+
+test("GeckoTerminal answers when DexScreener does not", async () => {
+  // One indexer is a single point of failure the operator cannot see past:
+  // DexScreener throttles datacenter IPs, and an empty response from a throttled
+  // request is indistinguishable from "this token has no market".
+  const realFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes("dexscreener")) return { ok: true, json: async () => ({ pairs: [] }) };
+    return { ok: true, json: async () => ({ data: [{
+      attributes: { base_token_price_usd: "0.0042", reserve_in_usd: "310000", fdv_usd: "4200000", name: "SMPL / WETH" },
+      relationships: { dex: { data: { id: "uniswap-v4" } } },
+    }] }) };
+  };
+  try {
+    core._clearReadCaches();
+    const m = await core.marketOf(CA, "ethereum");
+    assert.ok(m, "the second opinion found it");
+    assert.strictEqual(core.dsVenueLabel(m), "Uniswap v4", "and names the venue whole");
+    const probe = await core.marketProbe(CA);
+    assert.ok(probe.chains.includes("ethereum"));
+    assert.strictEqual(probe.source, "geckoterminal");
+  } finally { global.fetch = realFetch; }
+});
+
+test("the probe reports what it checked when nothing is found", async () => {
+  const realFetch = global.fetch;
+  global.fetch = async (url) => ({ ok: true, json: async () => (String(url).includes("dexscreener") ? { pairs: [] } : { data: [] }) });
+  try {
+    core._clearReadCaches();
+    const probe = await core.marketProbe(CA);
+    assert.deepStrictEqual(probe.chains, []);
+    assert.ok(probe.checked.length > 1, "it names every chain it looked on");
+    assert.strictEqual(probe.source, "none");
+  } finally { global.fetch = realFetch; }
+});
+
+test("an EVM address is lowercased for the indexers, a Solana mint is not", async () => {
+  // A CA pasted from a block explorer is EIP-55 checksummed. Base58 is
+  // case-SIGNIFICANT, so the same treatment would destroy a Solana mint.
+  const seen = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url) => { seen.push(String(url)); return { ok: true, json: async () => ({ pairs: [] }) }; };
+  try {
+    core._clearReadCaches();
+    await core.dsMarket(CA, "ethereum");
+    assert.ok(seen.some((u) => u.includes(CA.toLowerCase())), "checksummed EVM address went out lowercased");
+    seen.length = 0;
+    core._clearReadCaches();
+    const mint = "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump";
+    await core.dsMarket(mint, "solana");
+    assert.ok(seen.some((u) => u.includes(mint)), "the base58 mint went out untouched");
+  } finally { global.fetch = realFetch; }
+});
+
+test("the dead-end card points at the chain that has the market", () => {
+  const i = TG.indexOf("const probe = await core.marketProbe(ca)");
+  assert.ok(i > -1, "the failure path still probes for a market");
+  const body = TG.slice(i, i + 1600);
+  assert.match(body, /Open on \$\{c\.name\}/, "it offers to open the card on the right chain");
+  assert.match(body, /tok:\$\{c\.key\}::\$\{ca\}/, "wired to the real card callback");
+  assert.match(body, /DexScreener, GeckoTerminal/, "and names what it consulted when it finds nothing");
+});
