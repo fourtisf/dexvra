@@ -349,11 +349,26 @@ async function detectChain(chatId, ca) {
     return sol ? { chain: sol.key } : {};
   }
   const evm = core.chains.enabledChains().filter((c) => !core.chains.isSvm(c.key));
-  const hits = (await Promise.all(evm.map(async (c) => {
-    const code = await withTmo(core.providerFor(c.key).getCode(ca).catch(() => null), 4000, null);
-    return (code && code !== '0x') ? c.key : null;
-  }))).filter(Boolean);
+  // Bytecode presence and traded-ness, in one wave — the indexer call is the
+  // same 6s budget as the code probes, so this costs no extra wall clock.
+  const [hits, traded] = await Promise.all([
+    Promise.all(evm.map(async (c) => {
+      const code = await withTmo(core.providerFor(c.key).getCode(ca).catch(() => null), 4000, null);
+      return (code && code !== '0x') ? c.key : null;
+    })).then((r) => r.filter(Boolean)),
+    core.dsChainsOf(ca).catch(() => []),
+  ]);
   const active = core.userChain(core.ensureUser(chatId));
+  // WHERE IT TRADES BEATS WHERE IT EXISTS. Bytecode says only that somebody
+  // deployed something at that address — routine for multichain deployments, and
+  // it was enough to pin a paste onto whatever chain the user happened to have
+  // selected. That is how an Ethereum token got answered with "couldn't price it
+  // on Robinhood Chain": the active chain won a tie it should never have been in.
+  if (traded.length) {
+    if (traded.includes(active)) return { chain: active };
+    if (traded.length === 1) return { chain: traded[0] };
+    return { choices: traded };
+  }
   if (hits.includes(active)) return { chain: active };
   if (hits.length === 1) return { chain: hits[0] };
   if (hits.length > 1) return { choices: hits };
@@ -685,6 +700,35 @@ function chainScreen(chatId) {
   kb.push([btn('« Menu', 'menu')]);
   return { text: `🌐 <b>Select chain</b>\n\nYour wallet is the same address on all of them, and pasting a CA <b>auto-detects its chain</b> — this only sets the default for deposits, snipes and quick commands:`, kb: { inline_keyboard: kb } };
 }
+/**
+ * A token that trades on a venue this bot cannot route through.
+ *
+ * Uniswap v4 is the case this exists for: its pools live inside one PoolManager
+ * singleton keyed by a PoolKey hash, so there is no pair or pool contract for
+ * the V2/V3 factory lookups to return, and the token was previously answered
+ * with "❌ Couldn't price it" — indistinguishable, to the person reading it,
+ * from a dead token or a broken bot.
+ *
+ * So: show the market, name the venue, and say plainly that a swap can't be
+ * filled here yet. No Buy button — see the caller.
+ */
+function unroutableCard(ca, chainKey, info) {
+  const ch = core.chainOf(chainKey);
+  const L = [`🔎 <b>${esc(info.sym ? '$' + info.sym : 'Token')}</b>${info.name ? ' · ' + esc(info.name) : ''}`, `${ch.emoji} <b>${esc(ch.name)}</b> · <code>${short(ca)}</code>`, ''];
+  L.push(`<b>Price:</b> ${usdX(info.priceUsd)}`);
+  if (info.mcapUsd > 0) L.push(`<b>MCap:</b> ${usdX(info.mcapUsd)}`);
+  if (info.liquidityUsd > 0) L.push(`<b>Liquidity:</b> ${usdX(info.liquidityUsd)}`);
+  if (info.volH24Usd > 0) L.push(`<b>24h volume:</b> ${usdX(info.volH24Usd)}`);
+  L.push('', `⚠️ This token's liquidity is on <b>${esc(info.extVenue)}</b>, which Dexvra can't route through yet — so there's nothing to quote and no swap to sign. Price above is live from the indexer.`);
+  return {
+    text: L.join('\n'),
+    kb: rows(
+      [{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, { text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }],
+      [btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')],
+    ),
+  };
+}
+
 // `opts.multi` opens the wallet toggles INLINE on the card (Maestro's 🟢 Multi
 // panel) instead of pushing the user to a separate screen — the price, liquidity
 // and per-wallet bags stay on screen while you choose which wallets to trade.
@@ -714,6 +758,12 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
       kb: rows([btn('🌐 Switch chain', 'chain'), btn('« Menu', 'menu')]),
     };
   }
+  // Priced by the indexer, not by the router — Uniswap v4 and anything else the
+  // engine has no path to. Its own card: the market is real and worth showing,
+  // but every Buy/Sell button on the normal card would build a swap that cannot
+  // be filled, and a trade screen that quotes a price it can't honour is worse
+  // than one that says so.
+  if (info.routable === false) return unroutableCard(ca, chainKey, info);
   const meta = await core.tokenMeta(ca, chainKey);
   // Maestro-style: this token's balance across EVERY wallet (live on-chain). Bind the
   // card to the wallet that actually HOLDS the token so Buy/Sell act on the right one —

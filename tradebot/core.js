@@ -930,7 +930,9 @@ const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : S
 // start from a clean cache or it silently asserts against a previous test's
 // answer — which is order- and timing-dependent, i.e. green here and red on the
 // server.
-function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); }
+// _dsCache too: it is a 30s memo of an EXTERNAL answer, and a test that swaps
+// the indexer out gets the previous test's response without this.
+function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); }
 
 // Why the launchpad last failed to answer, per chain. resolveCurve deliberately
 // collapses a factory error into '' — the same value that means "this token genuinely
@@ -1107,6 +1109,84 @@ async function ethUsd(chainKey) {
     return hit ? hit.px : 0;
   } catch (_) { return hit ? hit.px : 0; }
 }
+// ------------------------------------------------- venues we cannot route through
+// DexScreener indexes markets this bot has no way to FIND on-chain, and Uniswap
+// v4 is the one that matters: every v4 pool lives inside a single PoolManager
+// singleton, keyed by a hash of the PoolKey, so there is no pair contract for a
+// factory getPair/getPool call to return. bestDexVenue therefore comes back
+// empty, tokenSnapshot returns null, and the card says "couldn't price it" about
+// a token that is trading perfectly well.
+//
+// This is a PRICE source, never a routing one: everything it returns is marked
+// routable:false, and the buy path refuses those. Quoting a price the engine
+// cannot actually fill is the one failure mode worse than saying "not supported".
+const DS_CHAIN_KEY = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+const DS_TO_CHAIN = Object.fromEntries(Object.entries(DS_CHAIN_KEY).map(([k, v]) => [v, k]));
+const _dsCache = new Map();   // caLower → { at, pairs }
+const DS_TTL_MS = 30000;
+const DS_CACHE_MAX = 500;
+
+/** Every DexScreener pair for a token, across all chains. [] on any failure —
+ *  this is an enrichment, and a dead indexer must never break a trade screen. */
+async function dsPairs(ca) {
+  const key = String(ca).toLowerCase();
+  const hit = _dsCache.get(key);
+  if (hit && Date.now() - hit.at < DS_TTL_MS) return hit.pairs;
+  let pairs = [];
+  try {
+    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+    if (r.ok) { const j = await r.json(); pairs = Array.isArray(j && j.pairs) ? j.pairs : []; }
+  } catch (_) { pairs = []; }
+  if (_dsCache.size >= DS_CACHE_MAX) _dsCache.delete(_dsCache.keys().next().value);
+  _dsCache.set(key, { at: Date.now(), pairs });
+  return pairs;
+}
+
+const _dsLiq = (p) => Number((p && p.liquidity && p.liquidity.usd) || 0);
+
+/** The deepest indexed market for `ca` on `chainKey`, or null. */
+async function dsMarket(ca, chainKey) {
+  const slug = DS_CHAIN_KEY[chainKey];
+  if (!slug) return null;   // a chain DexScreener does not index (Robinhood) — GeckoTerminal covers those elsewhere
+  const pairs = (await dsPairs(ca)).filter((p) => p && p.chainId === slug && Number(p.priceUsd) > 0);
+  if (!pairs.length) return null;
+  const p = pairs.sort((a, b) => _dsLiq(b) - _dsLiq(a))[0];
+  return {
+    priceUsd: Number(p.priceUsd),
+    mcapUsd: Number(p.marketCap || p.fdv || 0) || 0,
+    liqUsd: _dsLiq(p),
+    volH24Usd: (p.volume && p.volume.h24 != null) ? Number(p.volume.h24) : null,
+    dexId: String(p.dexId || ''),
+    labels: Array.isArray(p.labels) ? p.labels : [],
+    name: (p.baseToken && p.baseToken.name) || '',
+    sym: (p.baseToken && p.baseToken.symbol) || '',
+  };
+}
+
+/** Enabled chain keys where `ca` actually TRADES, deepest market first.
+ *  Used by chain auto-detect: a chain the token merely has bytecode on is a much
+ *  weaker signal than one where somebody is buying it. */
+async function dsChainsOf(ca) {
+  const enabled = new Set(chains.enabledChains().map((c) => c.key));
+  const byChain = new Map();
+  for (const p of await dsPairs(ca)) {
+    const key = DS_TO_CHAIN[p && p.chainId];
+    if (!key || !enabled.has(key) || !(Number(p.priceUsd) > 0)) continue;
+    byChain.set(key, Math.max(byChain.get(key) || 0, _dsLiq(p)));
+  }
+  return [...byChain.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+}
+
+// A market label an operator will recognise. DexScreener's dexId for Uniswap v4
+// is "uniswap" with a "v4" label, so the version has to be glued back on or the
+// card claims plain "uniswap" for a venue the router cannot reach.
+function dsVenueLabel(m) {
+  if (!m) return 'an indexed DEX';
+  const dex = (m.dexId || 'dex').replace(/^\w/, (c) => c.toUpperCase());
+  const ver = (m.labels || []).find((l) => /^v\d/i.test(String(l)));
+  return ver ? `${dex} ${String(ver).toLowerCase()}` : dex;
+}
+
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.
 async function tokenSnapshot(ca, chainKey) {
   const chain = chainOf(chainKey); if (!chain) return null;
@@ -1159,8 +1239,23 @@ async function tokenSnapshot(ca, chainKey) {
     const ts = await new ethers.Contract(ca, ERC20_ABI, prov).totalSupply();
     mcapEth = priceEth * Number(ethers.formatUnits(ts, dec));
   } catch (_) {}
-  if (!(priceEth > 0)) return null;   // no pool here / can't price
-  return { ca, curve: '', priceEth, mcapEth, graduated: true, progressPct: 100, decimals: dec, dex: true, dexVenue, venueWethEth };
+  if (!(priceEth > 0)) {
+    // Nothing the ROUTER can see. Before giving up, ask the indexer: a Uniswap
+    // v4 pool has no pair contract to find, so this is the only way such a token
+    // ever gets a price. Marked routable:false — the card shows the market and
+    // says plainly that a swap can't be filled here yet.
+    const m = await dsMarket(ca, chainKey);
+    if (!m) return null;   // genuinely no market anywhere we can see
+    const usd = await ethUsd(chainKey).catch(() => 0);
+    return {
+      ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
+      priceEth: usd > 0 ? m.priceUsd / usd : 0, priceUsd: m.priceUsd,
+      mcapEth: usd > 0 && m.mcapUsd ? m.mcapUsd / usd : 0, mcapUsd: m.mcapUsd,
+      liquidityUsd: m.liqUsd, volH24Usd: m.volH24Usd, name: m.name, sym: m.sym,
+      dexVenue: 'ext', extVenue: dsVenueLabel(m), routable: false,
+    };
+  }
+  return { ca, curve: '', priceEth, mcapEth, graduated: true, progressPct: 100, decimals: dec, dex: true, dexVenue, venueWethEth, routable: true };
 }
 
 // ---------------------------------------------------------------- gas
@@ -1733,6 +1828,15 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     } else {
       const dexSlip = slip + 1200n > 5000n ? 5000n : slip + 1200n;
       const pick = await bestDexVenue(ca, chainKey);
+      // No V2 pair and no V3 pool — but the token may still be trading, on a
+      // venue with nothing for a factory lookup to return (Uniswap v4 keeps every
+      // pool inside one PoolManager). Say which venue, instead of the old
+      // "no pool? try again", which sends the user to retry a buy that can never
+      // fill no matter how many times they press it.
+      if (pick.kind === 'v2' && !pick.pair) {
+        const m = await dsMarket(ca, chainKey).catch(() => null);
+        if (m) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
+      }
       // NO price-impact ceiling. Operator's rule: the user must always be able
       // to buy. Their slippage is the only limit that applies, and the on-chain
       // minOut below enforces it — a trade that would fill worse than they
@@ -2269,6 +2373,7 @@ module.exports = {
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
+  dsMarket, dsChainsOf, dsVenueLabel,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
   // Test-only seams — see the notes at each definition.
   _deps,
