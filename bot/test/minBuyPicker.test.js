@@ -58,12 +58,33 @@ test("tapping a preset sets the floor and refreshes the picker in place", async 
   assert.ok(ctx.toasts[0] && ctx.toasts[0].includes("250"), "the tapper gets a toast naming the amount");
 });
 
-test("the All buys preset means no floor, not a broken one", async () => {
+test("$10 is the bottom of the range, in every path into it", async () => {
+  // A chat of $0.40 alerts reads as a dead token, so "call every buy" is not on
+  // offer — the picker starts at the floor and a smaller typed amount lands on
+  // it rather than being refused.
+  assert.strictEqual(cfg.MIN_BUY_FLOOR_USD, 10);
+  assert.ok(!setup.MIN_BUY_PRESETS.some((n) => n < 10), "no preset undercuts the floor");
+
   await cfg.upsert(-1003, { chain: "solana", address: "AAA", minBuyUsd: 100 });
-  const ctx = ctxFor({ data: "mb_0", chatId: -1003 });
-  await setup.minBuyPick(ctx);
-  assert.strictEqual(cfg.get(-1003).minBuyUsd, 0);
-  assert.deepStrictEqual(ticked(ctx.edits[0].extra), ["mb_0"]);
+  const typed = ctxFor({ text: "/setminbuy 2", chatId: -1003 });
+  await setup.setminbuy(typed);
+  assert.strictEqual(cfg.get(-1003).minBuyUsd, 10, "a typed $2 lands on the floor");
+
+  // A stale keyboard from before the floor existed still carries mb_0.
+  const tapped = ctxFor({ data: "mb_0", chatId: -1003 });
+  await setup.minBuyPick(tapped);
+  assert.strictEqual(cfg.get(-1003).minBuyUsd, 10);
+  assert.deepStrictEqual(ticked(tapped.edits[0].extra), ["mb_10"]);
+});
+
+test("a group that never chose a floor is on $10, not $0", async () => {
+  // Every group created before the floor carries a literal minBuyUsd: 0, and so
+  // does one the bare-/setminbuy bug reset. Neither ever meant "call dust", so
+  // buyMonitor reads through minBuyOf rather than off the record.
+  await cfg.upsert(-1006, { chain: "solana", address: "AAA", minBuyUsd: 0 });
+  assert.strictEqual(cfg.minBuyOf(cfg.get(-1006)), 10);
+  assert.strictEqual(cfg.minBuyOf({}), 10, "a record with no floor at all");
+  assert.strictEqual(cfg.minBuyOf({ minBuyUsd: 250 }), 250, "a chosen floor is left alone");
 });
 
 test("a non-admin tapping the picker changes nothing", async () => {
@@ -82,7 +103,7 @@ test("/setminbuy with an amount still sets it; junk gets the usage note", async 
   await setup.setminbuy(ok);
   assert.strictEqual(cfg.get(-1005).minBuyUsd, 1000, "$ and thousands separators are tolerated");
 
-  const junk = ctxFor({ text: "/setminbuy soon", chatId: -1005 });
+  const junk = ctxFor({ text: "/setminbuy later", chatId: -1005 });
   await setup.setminbuy(junk);
   assert.strictEqual(cfg.get(-1005).minBuyUsd, 1000, "junk left the floor alone");
   assert.ok(!junk.replies[0].extra.reply_markup, "junk gets the usage note, not the picker");

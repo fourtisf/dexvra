@@ -113,12 +113,15 @@ async function setchain(ctx) {
 // Preset floors for the /setminbuy picker. Round numbers a project actually
 // chooses — the point is that this setting costs one tap, not a decision about
 // which number to type into a command.
-const MIN_BUY_PRESETS = [0, 10, 25, 50, 100, 250, 500, 1000];
+//
+// It starts at the $10 minimum, not at "every buy": a chat of $0.40 alerts
+// reads as a dead token, and the project wearing that is the one paying for the
+// bot. See cfg.MIN_BUY_FLOOR_USD.
+const MIN_BUY_PRESETS = [cfg.MIN_BUY_FLOOR_USD, 25, 50, 100, 250, 500, 1000, 5000];
 
 /** The picker's keyboard, with a ✓ on whatever the group is currently set to. */
 function minBuyKeyboard(current) {
-  const btn = (n) =>
-    Markup.button.callback((n === 0 ? "All buys" : usd$(n)) + (Number(current) === n ? " ✓" : ""), `mb_${n}`);
+  const btn = (n) => Markup.button.callback(usd$(n) + (Number(current) === n ? " ✓" : ""), `mb_${n}`);
   const rows = [];
   for (let i = 0; i < MIN_BUY_PRESETS.length; i += 3) rows.push(MIN_BUY_PRESETS.slice(i, i + 3).map(btn));
   return Markup.inlineKeyboard(rows);
@@ -127,11 +130,8 @@ function minBuyKeyboard(current) {
 /** Picker text + keyboard for THIS group's current floor. Built in one place so
  *  the first send and every in-place refresh after a tap cannot drift apart. */
 function minBuyPanel(chatId) {
-  const current = Number((cfg.get(chatId) || {}).minBuyUsd || 0);
-  const { text, extra } = payloadArgs(
-    tpl.render("setminbuy_panel", { usd: current > 0 ? usd$(current) : "no minimum — every buy" }),
-    false,
-  );
+  const current = cfg.minBuyOf(cfg.get(chatId));
+  const { text, extra } = payloadArgs(tpl.render("setminbuy_panel", { usd: usd$(current) }), false);
   return { text, extra: { ...extra, disable_web_page_preview: true, ...minBuyKeyboard(current) } };
 }
 
@@ -149,8 +149,11 @@ async function setminbuy(ctx) {
   }
   const usd = Number(raw);
   if (!Number.isFinite(usd) || usd < 0) return say(ctx, "setminbuy_usage");
-  await cfg.upsert(ctx.chat.id, { minBuyUsd: usd });
-  await say(ctx, usd > 0 ? "setminbuy_ok" : "setminbuy_ok_all", { usd: usd$(usd) });
+  // Below the floor is not an error — it is someone asking for every buy. They
+  // get the floor and a line saying so, rather than a refusal to act.
+  const floored = Math.max(usd, cfg.MIN_BUY_FLOOR_USD);
+  await cfg.upsert(ctx.chat.id, { minBuyUsd: floored });
+  await say(ctx, usd < floored ? "setminbuy_min" : "setminbuy_ok", { usd: usd$(floored) });
 }
 
 /**
@@ -160,16 +163,14 @@ async function setminbuy(ctx) {
  * another single tap on the same message instead of a new card each time.
  */
 async function minBuyPick(ctx) {
-  const usd = Number((ctx.match && ctx.match[1]) || 0);
+  const usd = Math.max(Number((ctx.match && ctx.match[1]) || 0), cfg.MIN_BUY_FLOOR_USD);
   if (!isGroup(ctx)) return ctx.answerCbQuery().catch(() => {});
   // The picker sits in a group where anyone can tap it, so the admin check has
   // to happen HERE too — the one on /setminbuy only covers who opened it.
   if (!(await isGroupAdmin(ctx)))
     return ctx.answerCbQuery(tpl.t("setup_admin_only"), { show_alert: true }).catch(() => {});
   await cfg.upsert(ctx.chat.id, { minBuyUsd: usd });
-  await ctx
-    .answerCbQuery(usd > 0 ? tpl.t("setminbuy_toast", { usd: usd$(usd) }) : tpl.t("setminbuy_toast_all"))
-    .catch(() => {});
+  await ctx.answerCbQuery(tpl.t("setminbuy_toast", { usd: usd$(usd) })).catch(() => {});
   const p = minBuyPanel(ctx.chat.id);
   // Re-tapping the active preset edits a message to its own contents, which
   // Telegram answers with "message is not modified". Nothing to do about it and

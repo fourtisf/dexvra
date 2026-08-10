@@ -674,7 +674,7 @@ async function pollTrades(tg, entry) {
   const net = gt.networkOf(entry.chain);
   if (!net || !entry.pool) return false;
 
-  const minUsd = Math.min(...entry.groups.map((g) => Number(g.minBuyUsd) || 0));
+  const minUsd = Math.min(...entry.groups.map((g) => cfg.minBuyOf(g)));
   const buys = await trades.fetchPoolBuys(net, entry.pool, entry.address, { minUsd }).catch(() => null);
   if (buys === null) return false; // unavailable — degrade
 
@@ -740,7 +740,7 @@ async function pollTrades(tg, entry) {
     // Once per buy, not per group: whether the TOKEN is on dexvra.io is a
     // property of the token. Cached upstream, so a quiet pool costs nothing.
     for (const g of entry.groups) {
-      if (buy.usd < (Number(g.minBuyUsd) || 0)) continue; // each group's own threshold
+      if (buy.usd < cfg.minBuyOf(g)) continue; // each group's own threshold
       // A group that turned holdings off gets neither the whale card nor the
       // 💼 Position row, even though a neighbour paid for the lookup.
       const gPos = g.whales === false ? null : pos;
@@ -796,7 +796,7 @@ async function pollEstimate(tg, entry, pool) {
   const est = estimateBuys(prev, pool);
   if (!est) return;
   for (const g of entry.groups) {
-    if (g.minBuyUsd && est.usd < g.minBuyUsd) continue;
+    if (est.usd < cfg.minBuyOf(g)) continue;
     await deliver(tg, g.chatId, () => renderEstimateAlert(g, est, pool), null);
   }
   // Mark everything up to now as already announced, so the real path does not

@@ -24,6 +24,29 @@ function reload() {
 
 const key = (chatId) => String(chatId);
 
+/**
+ * The lowest buy worth a message, in USD — the default for every group and the
+ * bottom of the range /setminbuy accepts.
+ *
+ * Groups were created with a $0 floor, so a fresh group called every dust trade
+ * a bot swept through: a chat full of $0.40 alerts is worth less than no alerts,
+ * and it is the project's own token that looks bad. $10 is the level below which
+ * a buy tells a reader nothing.
+ */
+const MIN_BUY_FLOOR_USD = 10;
+
+/**
+ * A group's floor, honouring the $10 minimum.
+ *
+ * Read through this, never off g.minBuyUsd directly: every group that predates
+ * MIN_BUY_FLOOR_USD carries the old literal 0, and so does any group whose floor
+ * the bare-/setminbuy bug reset. Both mean "never chosen", not "call dust".
+ */
+function minBuyOf(g) {
+  const n = Number(g && g.minBuyUsd);
+  return Number.isFinite(n) && n > MIN_BUY_FLOOR_USD ? n : MIN_BUY_FLOOR_USD;
+}
+
 function get(chatId) {
   return groups[key(chatId)] || null;
 }
@@ -39,7 +62,11 @@ function active() {
 
 async function upsert(chatId, patch) {
   const k = key(chatId);
-  groups[k] = { ...(groups[k] || { chatId: k, on: false, minBuyUsd: 0, createdAt: Date.now() }), ...patch, chatId: k };
+  groups[k] = {
+    ...(groups[k] || { chatId: k, on: false, minBuyUsd: MIN_BUY_FLOOR_USD, createdAt: Date.now() }),
+    ...patch,
+    chatId: k,
+  };
   await saveJSON(FILE, groups).catch(() => {});
   return groups[k];
 }
@@ -49,4 +76,4 @@ async function remove(chatId) {
   await saveJSON(FILE, groups).catch(() => {});
 }
 
-module.exports = { get, all, active, upsert, remove, reload };
+module.exports = { get, all, active, upsert, remove, reload, minBuyOf, MIN_BUY_FLOOR_USD };

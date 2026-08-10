@@ -512,11 +512,13 @@ const DEFAULTS = {
     "💲 **Minimum buy**\n\n" +
     "That isn't an amount. Send /setminbuy 50 — or just /setminbuy to pick from a list.",
   setminbuy_ok: "✅ **Minimum buy — {usd}**\n\nAnything smaller stays out of the chat.",
-  setminbuy_ok_all: "✅ **No minimum — every buy gets called.**\n\nSet a floor any time with /setminbuy",
-  // Button toasts. Plain text by design: Telegram shows a callback answer as a
+  // Sent when the amount asked for is under the $10 floor. Not a refusal: the
+  // floor is applied and the reason given, because "call every buy" fills a
+  // chat with dust and makes the project's own token look dead.
+  setminbuy_min: "✅ **Minimum buy — {usd}**\n\nThat's the lowest floor — under it the feed is mostly dust.",
+  // Button toast. Plain text by design: Telegram shows a callback answer as a
   // bare toast, so bold and links in here would reach the tapper as literals.
   setminbuy_toast: "Minimum buy: {usd}",
-  setminbuy_toast_all: "No minimum — every buy gets called",
   setwhale_usage:
     "🐋 **Whale bar**\n\n" +
     "/setwhale 50000 — anyone **already sitting on** that much of your token gets a pinned 🐋 **WHALE WALLET** call, however small the buy.\n\n" +
@@ -907,9 +909,8 @@ const META = {
   setminbuy_panel: { group: "Group Setup", label: "/setminbuy — picker", ph: ["usd"] },
   setminbuy_usage: { group: "Group Setup", label: "/setminbuy — not an amount", ph: [] },
   setminbuy_ok: { group: "Group Setup", label: "/setminbuy — done", ph: ["usd"] },
-  setminbuy_ok_all: { group: "Group Setup", label: "/setminbuy — no floor", ph: [] },
+  setminbuy_min: { group: "Group Setup", label: "/setminbuy — below the floor", ph: ["usd"] },
   setminbuy_toast: { group: "Group Setup", label: "/setminbuy — button toast", ph: ["usd"] },
-  setminbuy_toast_all: { group: "Group Setup", label: "/setminbuy — button toast, no floor", ph: [] },
   setwhale_usage: { group: "Group Setup", label: "/setwhale — usage", ph: [] },
   setwhale_ok: { group: "Group Setup", label: "/setwhale — done", ph: ["usd", "chain", "unsupported"] },
   setwhale_unsupported: { group: "Group Setup", label: "/setwhale — chain can't be read", ph: ["chain"] },
