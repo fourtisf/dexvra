@@ -32,6 +32,7 @@ interface Preview {
   mcap: number | null;
   logoUrl: string | null;
   poolAddress: string | null;
+  source?: "dexscreener" | "geckoterminal";
 }
 
 export function UnlistedToken({ chain, address }: { chain: string; address: string }) {
@@ -67,6 +68,17 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
   };
 
   const ticker = tok?.symbol ? `$${tok.symbol.replace(/^\$/, "")}` : null;
+
+  // The chart comes from WHOEVER found the token. Embedding GeckoTerminal for a
+  // pool DexScreener found renders an empty frame — and a pool GT has never
+  // indexed is the exact case DexScreener is here to cover.
+  const chartSrc = !tok?.poolAddress
+    ? null
+    : tok.source === "dexscreener" && c?.dexscreener
+      ? `https://dexscreener.com/${c.dexscreener}/${tok.poolAddress}?embed=1&theme=dark&info=0&trades=0`
+      : c?.geckoNetwork
+        ? `https://www.geckoterminal.com/${c.geckoNetwork}/pools/${tok.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`
+        : null;
 
   return (
     <section className="view">
@@ -138,11 +150,11 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
         {/* The chart is the reason a lot of people followed the link at all, and
             it does not depend on a listing — GeckoTerminal has the pool either
             way. Only rendered once a pool is known, so no empty frame. */}
-        {tok?.poolAddress && c?.geckoNetwork && (
+        {chartSrc && (
           <iframe
             className="tp-chart unlisted-chart"
-            title={`${tok.symbol ?? "Token"} chart`}
-            src={`https://www.geckoterminal.com/${c.geckoNetwork}/pools/${tok.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`}
+            title={`${tok?.symbol ?? "Token"} chart`}
+            src={chartSrc}
             allow="clipboard-write"
             allowFullScreen
           />

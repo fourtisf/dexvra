@@ -45,7 +45,8 @@ test("it shows the live price and market cap it can get for an UNLISTED token", 
 
 test("the chart does not depend on a listing either", () => {
   assert.match(COMPONENT, /geckoterminal\.com\/\$\{c\.geckoNetwork\}\/pools\/\$\{tok\.poolAddress\}/);
-  assert.match(COMPONENT, /tok\?\.poolAddress && c\?\.geckoNetwork &&/, "and never renders an empty frame");
+  assert.match(COMPONENT, /const chartSrc = !tok\?\.poolAddress\s*\?\s*null/, "no pool, no frame");
+  assert.match(COMPONENT, /\{chartSrc && \(/, "and never an empty one");
 });
 
 test("a contract the feed has never seen still renders the page", () => {
@@ -59,7 +60,7 @@ test("the preview route bounds the address it puts into an upstream URL", () => 
   // It is interpolated into a GeckoTerminal path, so it is checked rather than
   // trusted — the same guard /api/pool uses.
   assert.match(ROUTE, /address\.length > 90 \|\| \/\[\^A-Za-z0-9:_-\]\/\.test\(address\)/);
-  assert.match(ROUTE, /CHAINS\[chain\]\?\.geckoNetwork/, "and only serves chains the app supports");
+  assert.match(ROUTE, /if \(!CHAINS\[chain\]\) return NextResponse\.json/, "and only serves chains the app supports");
 });
 
 test("a feed outage degrades to the useful half, never to an error screen", () => {
@@ -162,4 +163,56 @@ test("the not-listed mark is a warning, not a broken-image tile", () => {
 test("the not-yet-listed badge reads as an invitation, not a failure", () => {
   assert.match(CSS, /\.sdd-unlisted\{/);
   assert.ok(!/\.sdd-unlisted\{[^}]*#F76A85/.test(CSS), "not the error red used elsewhere");
+});
+
+// ── A second, independent market source ──────────────────────────────────────
+
+test("DexScreener is asked FIRST, because GeckoTerminal misses new launches", () => {
+  // A pump.fun mint trading at a $250K cap answered "not on any network we
+  // index": GeckoTerminal indexes DEX pools, so a token that has not graduated
+  // to one is invisible to it. No amount of tuning the GT probe fixes that —
+  // it needed a second source.
+  assert.match(ROUTE, /api\.dexscreener\.com\/latest\/dex\/tokens\//);
+  const fn = ROUTE.slice(ROUTE.indexOf("async function findAnyChain"));
+  assert.ok(fn.indexOf("fromDexScreener(address)") < fn.indexOf("searchNetwork(address)"), "DexScreener before GT");
+});
+
+test("the token page asks in the same order, scoped to the chain in its URL", () => {
+  // Unscoped, a copycat deployed at the same address on another chain could
+  // answer for the token the URL actually names.
+  const handler = ROUTE.slice(ROUTE.indexOf("export async function GET"));
+  assert.match(handler, /fromDexScreener\(address, chain\)/);
+});
+
+test("the DEEPEST pair wins, not whichever the upstream listed first", () => {
+  // A token has pairs on several DEXes and sometimes several chains. Liquidity
+  // is an honest tie-break; array order is not a decision.
+  assert.match(ROUTE, /\.sort\(\(a, b\) => \(b\.liquidity\?\.usd \?\? 0\) - \(a\.liquidity\?\.usd \?\? 0\)\)/);
+  assert.match(ROUTE, /\(p\.baseToken\?\.address \?\? ""\)\.toLowerCase\(\) === want/, "and only pairs where it IS the base token");
+});
+
+test("every chain declares a DexScreener id, or explicitly declares it has none", () => {
+  for (const c of Object.values(CHAINS)) {
+    assert.ok("dexscreener" in c, `${c.id} must declare a dexscreener id (null if unsupported)`);
+  }
+  assert.strictEqual(CHAINS.robinhood.dexscreener, null, "DexScreener does not carry Robinhood Chain");
+  assert.strictEqual(CHAINS.sei.dexscreener, "seiv2", "its id differs from ours");
+});
+
+test("the chart is embedded from whoever actually found the pool", () => {
+  // A GT embed for a pool GT has never indexed is an empty frame — and that is
+  // precisely the case DexScreener is here to cover.
+  assert.match(COMPONENT, /tok\.source === "dexscreener" && c\?\.dexscreener/);
+  assert.match(COMPONENT, /dexscreener\.com\/\$\{c\.dexscreener\}\/\$\{tok\.poolAddress\}/);
+  assert.match(ROUTE, /source: "dexscreener"/);
+  assert.match(ROUTE, /source: "geckoterminal"/);
+});
+
+test("a failed lookup can be diagnosed instead of guessed at", () => {
+  // "No token matches" and "the upstream 404'd" look identical from outside,
+  // and guessing between them cost two deploys.
+  assert.match(ROUTE, /searchParams\.get\("debug"\) === "1"/);
+  const dbg = ROUTE.slice(ROUTE.indexOf('debug") === "1"'), );
+  assert.match(dbg.slice(0, 700), /tried\.dexscreener/);
+  assert.match(dbg.slice(0, 700), /tried\.gtSearch/);
 });

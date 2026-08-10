@@ -24,6 +24,10 @@ interface Preview {
   mcap: number | null;
   logoUrl: string | null;
   poolAddress: string | null;
+  /** WHICH source found this. The chart embed has to come from the same one —
+   *  a pool GeckoTerminal has never indexed renders an empty GT frame, which is
+   *  the exact case DexScreener is here to cover. */
+  source: "dexscreener" | "geckoterminal";
 }
 
 const num = (s: unknown): number | null => {
@@ -61,6 +65,74 @@ async function fetchPreview(network: string, address: string): Promise<Preview |
     mcap: num(a.market_cap_usd) ?? num(a.fdv_usd),
     logoUrl: img && !img.endsWith("missing.png") ? img : null,
     poolAddress: pool?.attributes?.address ?? topId?.split("_").slice(1).join("_") ?? null,
+    source: "geckoterminal",
+  };
+}
+
+/** DexScreener chain id → ours. */
+const CHAIN_OF_DS = new Map(
+  Object.values(CHAINS)
+    .filter((c) => c.dexscreener)
+    .map((c) => [c.dexscreener as string, c.id]),
+);
+
+interface DsPair {
+  chainId?: string;
+  pairAddress?: string;
+  baseToken?: { address?: string; name?: string; symbol?: string };
+  priceUsd?: string;
+  fdv?: number;
+  marketCap?: number;
+  liquidity?: { usd?: number };
+  info?: { imageUrl?: string };
+}
+
+/**
+ * DexScreener — ONE request, every chain, no key, and it carries the launches
+ * GeckoTerminal has not indexed yet.
+ *
+ * This is the primary lookup, and the reason is a pump.fun mint that GT simply
+ * does not have: GT indexes DEX pools, so a token that has not graduated to one
+ * is invisible to it, and "not on any network we index" was the answer for a
+ * token trading at a $250K cap. Tuning the GT probe further could never have
+ * fixed that — it needed a second source.
+ *
+ * The DEEPEST pair wins. A token has pairs on several DEXes and sometimes
+ * several chains (bridged, or a copycat at the same address); liquidity is the
+ * honest tie-break, where "first in the array" is whatever order the upstream
+ * happened to return.
+ */
+async function fromDexScreener(address: string, wantChain?: string): Promise<{ chain: string; token: Preview } | null> {
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`, {
+    signal: AbortSignal.timeout(8000),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { pairs?: DsPair[] | null };
+  const want = address.toLowerCase();
+  const usable = (json.pairs ?? [])
+    .filter((p) => (p.baseToken?.address ?? "").toLowerCase() === want)
+    .filter((p) => {
+      const chain = CHAIN_OF_DS.get(p.chainId ?? "");
+      return chain && (!wantChain || chain === wantChain);
+    })
+    .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+  const top = usable[0];
+  if (!top) return null;
+  const price = Number(top.priceUsd);
+  return {
+    chain: CHAIN_OF_DS.get(top.chainId ?? "") as string,
+    token: {
+      name: top.baseToken?.name ?? null,
+      symbol: top.baseToken?.symbol ?? null,
+      priceUsd: Number.isFinite(price) ? price : null,
+      // marketCap when the supply is known, fdv otherwise — for a fresh launch
+      // fdv is the only one either source reports.
+      mcap: top.marketCap ?? top.fdv ?? null,
+      logoUrl: top.info?.imageUrl ?? null,
+      poolAddress: top.pairAddress ?? null,
+      source: "dexscreener",
+    },
   };
 }
 
@@ -150,6 +222,12 @@ async function searchNetwork(address: string): Promise<{ chain: string; token: s
  */
 async function findAnyChain(address: string): Promise<{ chain: string; token: Preview } | null> {
   try {
+    const ds = await fromDexScreener(address);
+    if (ds) return ds;
+  } catch {
+    /* fall through to GeckoTerminal */
+  }
+  try {
     const hit = await searchNetwork(address);
     if (hit) {
       const network = CHAINS[hit.chain].geckoNetwork as string;
@@ -183,6 +261,17 @@ export async function GET(req: NextRequest) {
   if (!address || address.length > 90 || /[^A-Za-z0-9:_-]/.test(address)) {
     return NextResponse.json({ token: null, chain: null }, { status: 200 });
   }
+  // ?debug=1 reports which sources were asked and what each said. Read-only and
+  // returns nothing private — it exists because "no token matches" is
+  // indistinguishable from "the upstream 404'd" from the outside, and guessing
+  // between those cost two deploys.
+  if (req.nextUrl.searchParams.get("debug") === "1") {
+    const tried: Record<string, unknown> = {};
+    tried.candidates = candidateChains(address);
+    tried.dexscreener = await fromDexScreener(address, chain || undefined).catch((e) => `error: ${String(e)}`);
+    tried.gtSearch = await searchNetwork(address).catch((e) => `error: ${String(e)}`);
+    return NextResponse.json({ address, chain: chain || null, tried });
+  }
   try {
     // No chain given — the search box has a pasted CA and nothing else. Work
     // out which chain it is on rather than making the person pick.
@@ -190,7 +279,14 @@ export async function GET(req: NextRequest) {
       const hit = await findAnyChain(address);
       return NextResponse.json({ token: hit?.token ?? null, chain: hit?.chain ?? null });
     }
-    const network = CHAINS[chain]?.geckoNetwork;
+    if (!CHAINS[chain]) return NextResponse.json({ token: null, chain: null }, { status: 200 });
+    // Same order as the no-chain path, for the same reason: the token page is
+    // reached from a buy alert, and a buy alert fires on tokens far too new for
+    // GeckoTerminal. Scoped to the chain the URL names so a copycat at the same
+    // address on another chain cannot answer for it.
+    const ds = await cached(`ds:${chain}:${address}`, TTL, () => fromDexScreener(address, chain).catch(() => null));
+    if (ds) return NextResponse.json({ token: ds.token, chain });
+    const network = CHAINS[chain].geckoNetwork;
     if (!network) return NextResponse.json({ token: null, chain: null }, { status: 200 });
     const token = await cached(`preview:${network}:${address}`, TTL, () => fetchPreview(network, forQuery(address)));
     return NextResponse.json({ token, chain: token ? chain : null });
