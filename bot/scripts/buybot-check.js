@@ -3,12 +3,11 @@
 //
 // WHY THIS SCRIPT EXISTS
 // The buy bot posts REAL per-transaction alerts read from
-// /networks/{net}/pools/{pool}/trades. If that feed is unreachable from your
-// server — a blocked egress, a rate limit, a rotated response shape — the bot
-// does not go silent and does not crash: it DEGRADES to volume-diff estimates,
-// which look almost the same in the group. So "are my alerts real?" is a
-// question you cannot answer by watching the chat, and this script answers it
-// by asking the live API exactly what the bot asks.
+// /networks/{net}/pools/{pool}/trades, and posts NOTHING when that feed cannot
+// be read — there is no estimated fallback any more. So a quiet group has two
+// completely different explanations, "nobody is buying" and "this server cannot
+// read the feed", and from inside the chat they look identical. This script
+// tells them apart by asking the live API exactly what the bot asks.
 //
 //     cd bot && npm run buybot:check
 //     cd bot && npm run buybot:check -- solana <token-address>
@@ -21,7 +20,7 @@
 //   ⚠️  feed answered, 0    the pool is genuinely quiet, or the token address
 //                          does not match either side of the pool's trades
 //                          (check you passed the TOKEN address, not the pool).
-//   ❌ feed unavailable     the bot will fall back to estimates. The status
+//   ❌ feed unavailable     the group is getting NO alerts at all. The status
 //                          printed tells you whether it is egress (no response),
 //                          a rate limit (429) or a bad pool (404).
 require("dotenv").config();
@@ -58,8 +57,8 @@ async function main() {
   console.log("─".repeat(64));
 
   if (!net) {
-    console.log("\n❌ This chain has no geckoNetwork in src/config/chains.js, so the buy bot can only");
-    console.log("   ever estimate for it. Add the GT network slug to that chain's entry.");
+    console.log("\n❌ This chain has no geckoNetwork in src/config/chains.js, so the buy bot can never");
+    console.log("   read trades for it and will never post. Add the GT network slug to that chain's entry.");
     process.exit(1);
   }
 
@@ -75,16 +74,20 @@ async function main() {
   console.log(`   price    : ${pool.priceUsd == null ? "—" : "$" + pool.priceUsd}`);
   console.log(`   mcap/liq : ${money(pool.mcap)} / ${money(pool.liquidity)}`);
 
-  // 2. Ask for real trades — the thing that decides real-vs-estimated.
+  // 2. Ask for real trades — the thing that decides whether anything posts.
   console.log("\n② reading the per-transaction trades feed…");
   const buys = await trades.fetchPoolBuys(net, pool.poolAddress, token, { minUsd: 0 });
 
   if (buys === null) {
-    console.log("\n❌ FEED UNAVAILABLE — the buy bot will post ESTIMATES, not verified transactions.");
-    console.log(`   GeckoTerminal cooldown armed: ${gt.inCooldown() ? "yes (429/5xx seen)" : "no"}`);
+    console.log("\n❌ FEED UNAVAILABLE — this pool posts NOTHING until it reads again.");
+    console.log("   Nothing is lost: buys from the last 30 minutes still post, with their hashes,");
+    console.log("   on the first poll that works. Beyond that they age out silently.");
+    console.log(`   GeckoTerminal cooldown armed: ${gt.inCooldown() ? "yes (429 seen — every group is quiet right now)" : "no"}`);
+    console.log(`   API key                     : ${gt.hasApiKey() ? "set (Pro base)" : "NOT set — free tier, ~30 req/min for this whole process"}`);
     console.log("\n   What to check, in order:");
-    console.log("   • egress from this server to api.geckoterminal.com (curl it)");
+    console.log(`   • egress from this server to ${gt.GT_BASE} (curl it)`);
     console.log("   • whether you are sharing an IP with something else hitting GT's ~30 req/min");
+    console.log("   • GECKOTERMINAL_API_KEY — the real fix if the cooldown keeps arming");
     console.log("   • BUYBOT_POOL_MIN_MS — raise it if you track many pools");
     process.exit(1);
   }
