@@ -8,10 +8,20 @@ const lock = require("./lock");
 const xMetrics = require("./xMetrics");
 const card = require("./card");
 const { RAID_MAX_MINUTES } = require("../config/constants");
-const { escapeHtml } = require("../helpers/format");
+const tpl = require("../templates");
+const premium = require("../premium");
+const { payloadArgs } = require("../helpers/message");
 const log = require("../helpers/logger");
 
 const HTML = { parse_mode: "HTML", link_preview_options: { is_disabled: true } };
+
+/** Reply with an admin-editable template. Every prose string in this file goes
+ *  through here — the panel is the first thing a project sees of Raid, and it
+ *  was the one screen an operator could not reword without a deploy. */
+function say(ctx, key, vars) {
+  const { text, extra } = payloadArgs(tpl.render(key, vars), false);
+  return ctx.reply(text, { ...extra, disable_web_page_preview: true }).catch(() => {});
+}
 
 // Each setting cycles through a fixed ladder; 0 means "not tracked". A value
 // that isn't in the ladder (an old config, a hand-edited file) yields -1 from
@@ -78,33 +88,32 @@ function renderPanel(g) {
   const s = g.settings;
   const sources = xMetrics.sourcesAvailable();
   const live = g.raid && g.raid.status === "running";
-  const lines = [
-    "🚀 <b>DEXVRA RAID</b>",
-    "",
-    `🔗 Post: ${s.postUrl ? escapeHtml(s.postUrl) : "<i>not set yet</i>"}`,
-    "",
-    "🎯 <b>Goals</b>",
-    `🤝 Crew     <b>${fmtTarget(s.crew)}</b>`,
-    `❤️ Likes    <b>${fmtTarget(s.likes)}</b>`,
-    `💬 Replies  <b>${fmtTarget(s.replies)}</b>`,
-    `🔁 Reposts  <b>${fmtTarget(s.reposts)}</b>`,
-    "",
-    `🔒 Chat lock: <b>${s.lockChat ? "on" : "off"}</b>`,
-  ];
-  if (g.stats.started > 0) {
-    lines.push(`📈 Group record: <b>${g.stats.started}</b> run · <b>${g.stats.completed || 0}</b> cleared`);
-  }
-  lines.push("");
-  lines.push(`<i>Goals count UP from the post's numbers at launch. Raids end after ${RAID_MAX_MINUTES} min.</i>`);
+  // GENERATED, like the live card's {progress}: the goal rows carry their own
+  // live targets and the icons come from raid_style, so they cannot be a flat
+  // string in the template. The copy AROUND them is.
+  const [likeIcon, replyIcon, repostIcon, crewIcon] = card.raidStyle();
+  const goals = [
+    `${crewIcon} **Crew** — ${fmtTarget(s.crew)}`,
+    `${likeIcon} **Likes** — ${fmtTarget(s.likes)}`,
+    `${replyIcon} **Replies** — ${fmtTarget(s.replies)}`,
+    `${repostIcon} **Reposts** — ${fmtTarget(s.reposts)}`,
+  ].join("\n");
   // Say up front what this install can actually measure, so nobody sets a
   // likes goal and then discovers at launch that nothing can read it.
-  if (!sources.api && !sources.guest && !sources.embed) {
-    lines.push("");
-    lines.push("<i>⚡ No X API key on this bot — the 🤝 Crew goal works anyway, and needs nothing.</i>");
-  } else if (!sources.api && !sources.guest) {
-    lines.push("");
-    lines.push("<i>⚡ Reposts need a paid X key — Likes, Replies and Crew work.</i>");
-  }
+  const sourceKey =
+    !sources.api && !sources.guest && !sources.embed ? "raid_sources_none" : !sources.api && !sources.guest ? "raid_sources_partial" : null;
+  const payload = tpl.render("raid_panel", {
+    // The URL is admin-supplied and this template is premium markup, so a ")"
+    // in it would close a link early and let the rest inject markup into the
+    // group's panel.
+    post: s.postUrl ? premium.sanitizeVar(s.postUrl) : "not set yet",
+    goals,
+    lock: s.lockChat ? "on" : "off",
+    record: g.stats.started > 0 ? tpl.t("raid_panel_record", { started: g.stats.started, completed: g.stats.completed || 0 }) : "",
+    maxMinutes: RAID_MAX_MINUTES,
+    sources: sourceKey ? tpl.t(sourceKey) : "",
+  });
+  const { text, extra } = payloadArgs(payload, false);
 
   const kb = live
     ? [[{ text: "🛑 Stop raid", callback_data: "dr_stop" }], [{ text: "✖️ Close", callback_data: "dr_close" }]]
@@ -125,16 +134,12 @@ function renderPanel(g) {
         [{ text: "✖️ Close", callback_data: "dr_close" }],
       ];
 
-  return { text: lines.join("\n"), extra: { ...HTML, reply_markup: { inline_keyboard: kb } } };
+  return { text, extra: { ...extra, disable_web_page_preview: true, reply_markup: { inline_keyboard: kb } } };
 }
 
 async function showPanel(ctx) {
-  if (!isGroup(ctx)) {
-    return ctx
-      .reply("Raids run inside a group. Add me to your project's group, make me an admin, then send /raid there.")
-      .catch(() => {});
-  }
-  if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can set up a raid.").catch(() => {});
+  if (!isGroup(ctx)) return say(ctx, "raid_group_only");
+  if (!(await isGroupAdmin(ctx))) return say(ctx, "raid_admin_only");
   const g = store.getOrCreate(ctx.chat.id, ctx.chat.title || "");
   await store.save();
   const p = renderPanel(g);
@@ -208,9 +213,7 @@ async function handleCallback(ctx) {
       // handler, and anything looser would consume an unrelated member's message.
       armUrlStep(ctx.chat.id, ctx.from && ctx.from.id);
       await ctx.answerCbQuery().catch(() => {});
-      return ctx
-        .reply("🔗 Paste the X post link you want raided.\n\nLike: <code>https://x.com/dexvraio/status/1234567890</code>", HTML)
-        .catch(() => {});
+      return say(ctx, "raid_seturl_prompt");
     } else if (data === "dr_start") {
       await ctx.answerCbQuery("Launching…").catch(() => {});
       const res = await runner.startRaid(ctx.telegram, g, { startedBy: ctx.from && ctx.from.id });
@@ -222,7 +225,7 @@ async function handleCallback(ctx) {
     } else if (data === "dr_stop") {
       await ctx.answerCbQuery().catch(() => {});
       if (g.raid && g.raid.status === "running") await runner.finishRaid(ctx.telegram, g, "cancelled");
-      else await ctx.reply("No raid is running here.").catch(() => {});
+      else await say(ctx, "raid_none_running");
       return refreshPanel(ctx, g);
     }
 
@@ -285,7 +288,7 @@ async function handleText(ctx) {
 
   const id = xMetrics.parseTweetId(raw);
   if (!id) {
-    await ctx.reply("That isn't an X post link. Paste the full URL of the post — it should contain /status/.").catch(() => {});
+    await say(ctx, "raid_bad_url");
     return true; // consumed: the admin is still in this step
   }
   clearUrlStep(ctx.chat.id, ctx.from.id);

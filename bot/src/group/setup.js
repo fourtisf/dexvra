@@ -6,9 +6,25 @@ const gt = require("./gtPairs");
 const holdings = require("./walletHoldings");
 const { CHAIN_IDS, chainOf } = require("../config/chains");
 const whaleCfg = require("../services/whaleConfig");
+const tpl = require("../templates");
+const premium = require("../premium");
+const { payloadArgs } = require("../helpers/message");
 const log = require("../helpers/logger");
 
-const HTML = { parse_mode: "HTML" };
+/**
+ * Reply with an admin-editable template.
+ *
+ * Every user-facing string in this file goes through here. They used to be HTML
+ * literals, which meant the copy a paying project reads while wiring the bot up
+ * — the whole first-run experience — was the one part of the bot an operator
+ * could not touch without a deploy.
+ *
+ * Always .catch(): a group that removed the bot mid-command must not throw.
+ */
+function say(ctx, key, vars) {
+  const { text, extra } = payloadArgs(tpl.render(key, vars), false);
+  return ctx.reply(text, { ...extra, disable_web_page_preview: true }).catch(() => {});
+}
 
 // Only a group admin/creator may configure the buy bot.
 async function isGroupAdmin(ctx) {
@@ -43,114 +59,89 @@ async function resolveToken(address) {
   return null;
 }
 
+const usd$ = (n) => "$" + Number(n).toLocaleString("en-US");
+
 async function settoken(ctx) {
-  if (!isGroup(ctx)) return ctx.reply("Add me to your project's group, then run /settoken there.").catch(() => {});
-  if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can set the token.").catch(() => {});
+  if (!isGroup(ctx)) return say(ctx, "setup_group_only");
+  if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
   const address = arg(ctx);
-  if (!address) return ctx.reply("Usage: <code>/settoken &lt;contract address&gt;</code>", HTML).catch(() => {});
-  await ctx.reply("🔎 Resolving your token…").catch(() => {});
+  if (!address) return say(ctx, "settoken_usage");
+  await say(ctx, "settoken_resolving");
   const res = await resolveToken(address);
-  if (!res) {
-    return ctx
-      .reply("Couldn't find a live pool for that address. Double-check it, or set the chain first with <code>/setchain &lt;chain&gt;</code> then <code>/settoken</code>.", HTML)
-      .catch(() => {});
-  }
+  if (!res) return say(ctx, "settoken_not_found");
   // One extra lookup, once, for the token's NAME — the pool listing only knows
   // the PAIR ("HOPPY / WETH"), and the name is what headlines every alert.
   const info = await gt.fetchTokenInfo(res.chain, address).catch(() => null);
+  const sym = (info && info.symbol) || res.pool.symbol || "";
+  const name = (info && info.name) || res.pool.name || "";
   await cfg.upsert(ctx.chat.id, {
     chain: res.chain,
     address,
     pairAddress: res.pool.poolAddress,
     // Without these every alert reads "$TOKEN" — the placeholder the renderer
     // falls back to. Nothing else in the bot ever learns a group's ticker.
-    sym: (info && info.symbol) || res.pool.symbol || "",
-    name: (info && info.name) || res.pool.name || "",
+    sym,
+    name,
     on: true,
   });
-  const label = chainOf(res.chain).label;
-  await ctx
-    .reply(
-      `✅ <b>Buy bot armed</b> on <b>${label}</b>.\nEvery buy of your token now posts here. Tune it with <code>/setminbuy &lt;usd&gt;</code>, pause with <code>/buybot off</code>.`,
-      HTML,
-    )
-    .catch(() => {});
+  await say(ctx, "settoken_ok", {
+    chain: chainOf(res.chain).label,
+    // The token's own name and ticker come from a third-party feed, so they go
+    // through the same sanitiser the alert cards use — a token literally named
+    // "[click](url)" would otherwise inject a link into the group's setup reply.
+    name: premium.sanitizeVar(name || "your token"),
+    symbol: premium.sanitizeVar(sym ? `$${String(sym).replace(/^\$/, "")}` : ""),
+    address,
+  });
   log.info(`[group] ${ctx.chat.id} set token ${res.chain}/${address} pool ${res.pool.poolAddress}`);
 }
 
 async function setchain(ctx) {
   if (!isGroup(ctx)) return;
-  if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can change the chain.").catch(() => {});
+  if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
   const chain = arg(ctx).toLowerCase();
-  if (!CHAIN_IDS.includes(chain)) {
-    return ctx.reply(`Unknown chain. One of: <code>${CHAIN_IDS.join(", ")}</code>`, HTML).catch(() => {});
-  }
+  if (!CHAIN_IDS.includes(chain)) return say(ctx, "setchain_unknown", { chains: CHAIN_IDS.join(", ") });
   const g = cfg.get(ctx.chat.id);
-  if (!g || !g.address) return ctx.reply("Set the token first: <code>/settoken &lt;CA&gt;</code>", HTML).catch(() => {});
+  if (!g || !g.address) return say(ctx, "setchain_need_token");
   // re-resolve the pool on the NEW chain (used to leave a stale wrong-chain pair)
   const pool = await gt.fetchPool(chain, g.address).catch(() => null);
   await cfg.upsert(ctx.chat.id, { chain, pairAddress: pool ? pool.poolAddress : null });
-  await ctx
-    .reply(
-      pool
-        ? `✅ Chain set to <b>${chainOf(chain).label}</b> and pool re-resolved.`
-        : `⚠️ Chain set to <b>${chainOf(chain).label}</b>, but no pool found yet — I'll keep trying each cycle.`,
-      HTML,
-    )
-    .catch(() => {});
+  await say(ctx, pool ? "setchain_ok" : "setchain_ok_nopool", { chain: chainOf(chain).label });
 }
 
 async function setminbuy(ctx) {
   if (!isGroup(ctx)) return;
   if (!(await isGroupAdmin(ctx))) return;
   const usd = Number(arg(ctx));
-  if (!Number.isFinite(usd) || usd < 0) return ctx.reply("Usage: <code>/setminbuy 50</code>", HTML).catch(() => {});
+  if (!Number.isFinite(usd) || usd < 0) return say(ctx, "setminbuy_usage");
   await cfg.upsert(ctx.chat.id, { minBuyUsd: usd });
-  await ctx.reply(`✅ Minimum buy to alert: <b>$${usd}</b>.`, HTML).catch(() => {});
+  await say(ctx, "setminbuy_ok", { usd: usd$(usd) });
 }
 
 /** `/setwhale 50000` — the holding that makes a buyer a whale here, or `off`. */
 async function setwhale(ctx) {
   if (!isGroup(ctx)) return;
-  if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can change this.").catch(() => {});
+  if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
   const raw = arg(ctx).toLowerCase();
   if (raw === "off") {
     await cfg.upsert(ctx.chat.id, { whales: false });
-    return ctx.reply("🐋 Whale wallet alerts are <b>off</b> here.", HTML).catch(() => {});
+    return say(ctx, "setwhale_off");
   }
   const usd = Number(raw.replace(/[$,_]/g, ""));
-  if (!Number.isFinite(usd) || usd <= 0) {
-    return ctx
-      .reply(
-        `Usage: <code>/setwhale 50000</code> — a buyer already holding at least this much of your token gets a ` +
-          `pinned 🐋 <b>WHALE WALLET</b> alert.\n\n<code>/setwhale off</code> turns it off.`,
-        HTML,
-      )
-      .catch(() => {});
-  }
+  if (!Number.isFinite(usd) || usd <= 0) return say(ctx, "setwhale_usage");
   await cfg.upsert(ctx.chat.id, { whales: true, whaleWalletUsd: usd });
-  const { chainOf: co } = require("../config/chains");
-  const supported = holdings.supports((cfg.get(ctx.chat.id) || {}).chain);
-  await ctx
-    .reply(
-      `🐋 <b>Whale wallet: $${usd.toLocaleString("en-US")}</b>\n\nA buy from a wallet holding that much gets its own pinned alert.` +
-        (supported ? "" : `\n\n⚠️ Holdings can't be read on <b>${co((cfg.get(ctx.chat.id) || {}).chain)?.label || "this chain"}</b> yet, so whale alerts stay off until that changes.`),
-      HTML,
-    )
-    .catch(() => {});
+  const chain = (cfg.get(ctx.chat.id) || {}).chain;
+  const label = chainOf(chain)?.label || "this network";
+  // The caveat is its OWN template, rendered to plain text and spliced in, so an
+  // operator can reword or delete it without touching the confirmation around it.
+  const unsupported = holdings.supports(chain) ? "" : tpl.t("setwhale_unsupported", { chain: label });
+  await say(ctx, "setwhale_ok", { usd: usd$(usd), chain: label, unsupported });
 }
 
 /** `/buybot pin on|off` — whether whale alerts are pinned in this group. */
 async function setPin(ctx, on) {
   await cfg.upsert(ctx.chat.id, { pin: on });
-  return ctx
-    .reply(
-      on
-        ? '📌 Whale alerts will be <b>pinned</b> here. The bot needs "Pin messages" — each new one replaces the last.'
-        : "📌 Whale alerts <b>won't be pinned</b> here.",
-      HTML,
-    )
-    .catch(() => {});
+  return say(ctx, on ? "pin_on" : "pin_off");
 }
 
 async function buybot(ctx) {
@@ -158,35 +149,32 @@ async function buybot(ctx) {
   const a = arg(ctx).toLowerCase();
   const g = cfg.get(ctx.chat.id);
   if (a === "pin on" || a === "pin off") {
-    if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can change this.").catch(() => {});
+    if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
     return setPin(ctx, a === "pin on");
   }
   if (a === "on" || a === "off") {
-    if (!(await isGroupAdmin(ctx))) return ctx.reply("Only a group admin can toggle the buy bot.").catch(() => {});
-    if (!g || !g.address) return ctx.reply("Set the token first: <code>/settoken &lt;CA&gt;</code>", HTML).catch(() => {});
+    if (!(await isGroupAdmin(ctx))) return say(ctx, "setup_admin_only");
+    if (!g || !g.address) return say(ctx, "buybot_need_token");
     await cfg.upsert(ctx.chat.id, { on: a === "on" });
-    return ctx.reply(a === "on" ? "🟢 Buy bot ON." : "🔴 Buy bot OFF.", HTML).catch(() => {});
+    return say(ctx, a === "on" ? "buybot_on" : "buybot_off");
   }
   // status
-  if (!g || !g.address) {
-    return ctx.reply("Buy bot isn't set up here yet. Run <code>/settoken &lt;CA&gt;</code>.", HTML).catch(() => {});
-  }
-  await ctx
-    .reply(
-      `📊 <b>Buy bot status</b>\n` +
-        `Token: <code>${g.address}</code>\n` +
-        `Chain: <b>${chainOf(g.chain)?.label || g.chain}</b>\n` +
-        `Pool: ${g.pairAddress ? "resolved ✓" : "—"}\n` +
-        `Min buy: <b>$${g.minBuyUsd || 0}</b>\n` +
-        // The GLOBAL bar is read live, so a group that never ran /setwhale sees
-        // whatever the operator currently has set — not the value baked into
-        // .env at boot, which is what this line used to print.
-        `Whale wallet: <b>${g.whales === false ? "off" : "$" + Number(g.whaleWalletUsd || whaleCfg.get().walletUsd).toLocaleString("en-US")}</b>${holdings.supports(g.chain) ? "" : " <i>(not readable on this chain)</i>"}\n` +
-        `Pin whale alerts: <b>${g.pin === false ? "off" : "on"}</b>\n` +
-        `State: <b>${g.on ? "🟢 ON" : "🔴 OFF"}</b>`,
-      HTML,
-    )
-    .catch(() => {});
+  if (!g || !g.address) return say(ctx, "buybot_need_token");
+  await say(ctx, "buybot_status", {
+    address: g.address,
+    chain: chainOf(g.chain)?.label || g.chain,
+    pool: g.pairAddress ? "resolved ✓" : "—",
+    minBuy: usd$(g.minBuyUsd || 0),
+    // The GLOBAL bar is read live, so a group that never ran /setwhale sees
+    // whatever the operator currently has set — not the value baked into .env
+    // at boot, which is what this line used to print.
+    whale:
+      g.whales === false
+        ? "off"
+        : usd$(g.whaleWalletUsd || whaleCfg.get().walletUsd) + (holdings.supports(g.chain) ? "" : " (not readable on this network)"),
+    pin: g.pin === false ? "off" : "on",
+    state: g.on ? "🟢 ON" : "🔴 OFF",
+  });
 }
 
 module.exports = { settoken, setchain, setminbuy, setwhale, buybot, setPin, resolveToken, candidateChains };

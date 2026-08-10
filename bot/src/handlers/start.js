@@ -87,15 +87,64 @@ async function homeHandler(ctx) {
 }
 
 // /start or /help inside a group → buy-bot setup steps for this group.
-async function groupStart(ctx) {
+async function sendGroupTemplate(ctx, key) {
   try {
     const { BOT_USERNAME } = require("../config/constants");
     const { payloadArgs } = require("../helpers/message");
-    const { text, extra } = payloadArgs(tpl.render("group_start", { bot: `@${BOT_USERNAME}` }), false);
+    const { text, extra } = payloadArgs(tpl.render(key, { bot: `@${BOT_USERNAME}` }), false);
     await ctx.reply(text, { ...extra, disable_web_page_preview: true });
   } catch {
     /* ignore */
   }
+}
+
+async function groupStart(ctx) {
+  // Skip the setup guide when the "thanks for adding me" greeting has only just
+  // gone out. Adding the bot through the ➕ button on the main menu fires BOTH:
+  // Telegram delivers /start into the group the moment the deep link completes,
+  // right behind the my_chat_member update the greeting rides on. Without this
+  // the group's first two messages are two different welcomes stacked on top of
+  // each other. A /start typed later is a real request and always answers.
+  if (justGreeted(ctx.chat && ctx.chat.id)) return;
+  return sendGroupTemplate(ctx, "group_start");
+}
+
+// chatId → ms of the last "thanks for adding me". In memory only: it guards a
+// window of seconds, and a restart inside that window is not worth a disk write
+// — the worst case is one duplicate welcome, once.
+const greeted = new Map();
+const GREET_QUIET_MS = 20 * 1000;
+
+function justGreeted(chatId, at = Date.now()) {
+  if (!chatId) return false;
+  for (const [k, t] of greeted) if (at - t > GREET_QUIET_MS) greeted.delete(k);
+  const t = greeted.get(String(chatId));
+  return !!t && at - t <= GREET_QUIET_MS;
+}
+
+/**
+ * The bot was just added to a group — ask for the permissions it actually uses.
+ *
+ * Fires on my_chat_member, so it lands whether the group was joined through the
+ * ➕ deep link or by someone adding the bot by hand. Before this, a hand-added
+ * bot sat silent until somebody thought to type /start, and every operator who
+ * did that first hit "not enough rights to pin a message" later.
+ *
+ * Guarded on the status TRANSITION, not on the new status alone: Telegram sends
+ * my_chat_member for every permission change too, and greeting on each one
+ * means a fresh welcome every time an admin adjusts a checkbox.
+ */
+async function botAddedToGroup(ctx) {
+  const u = ctx.myChatMember;
+  if (!u || !ctx.chat || (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup")) return;
+  const was = (u.old_chat_member && u.old_chat_member.status) || "";
+  const now = (u.new_chat_member && u.new_chat_member.status) || "";
+  const wasIn = was === "member" || was === "administrator" || was === "creator";
+  const isIn = now === "member" || now === "administrator" || now === "creator";
+  if (wasIn || !isIn) return; // a permission change, a demotion, or a removal
+  greeted.set(String(ctx.chat.id), Date.now());
+  log.info(`[group] added to ${ctx.chat.id} (${ctx.chat.title || "?"}) as ${now}`);
+  return sendGroupTemplate(ctx, "group_added");
 }
 
 // "🤖 Add Buy Bot to your group" — how-to + a one-tap "add to group" deep link.
@@ -110,4 +159,4 @@ async function buyBotHelp(ctx) {
   await sendCard(ctx, tpl.render("buybot_help"), kb);
 }
 
-module.exports = { startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart };
+module.exports = { startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart, botAddedToGroup, justGreeted, _greeted: greeted };

@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
+const fss = require("node:fs");
+const path = require("node:path");
 const tpl = require("../src/templates");
 
 test("substitute replaces placeholders and blanks missing ones", () => {
@@ -26,13 +28,19 @@ test("t() renders a channel-post template with real values", () => {
 });
 
 test("every default template key has editor metadata + a group", () => {
+  // The allowed group names are read from the admin bot's own icon map rather
+  // than duplicated here. That was the actual coupling all along: a category
+  // the editor has no icon for renders a button with a blank glyph, and a
+  // second hardcoded list only ever catches a typo by ALSO having to be edited
+  // — which makes it a chore that gets rubber-stamped, not a check.
+  const admin = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
+  const map = admin.slice(admin.indexOf("const GROUP_ICON = {"), admin.indexOf("const slugOf"));
+  const known = new Set([...map.matchAll(/"([^"]+)":\s*"/g)].map((m) => m[1]));
+  assert.ok(known.size >= 5, "the icon map was found and parsed");
   for (const k of tpl.keys()) {
     const m = tpl.meta(k);
     assert.ok(m.label, `missing label for ${k}`);
-    assert.ok(
-      ["Bot Messages", "Channel Posts", "Mass DM", "Group Buy Bot", "Dexvra Raid", "X Posts", "Other"].includes(m.group),
-      `bad group for ${k}`,
-    );
+    assert.ok(known.has(m.group) || m.group === "Other", `${k} is in group "${m.group}", which has no icon in adminBot GROUP_ICON`);
   }
   const g = tpl.groups();
   assert.ok(g["Bot Messages"].length > 0);

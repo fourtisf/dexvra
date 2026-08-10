@@ -21,6 +21,14 @@ function registerHandlers(bot) {
   // it actually consumed the update.
   if (RAID_ENABLED) registerRaidHandlers(bot);
 
+  // Added to a group → ask for the permissions the bot actually uses. Placed
+  // before the command handlers so it is obvious this rides a DIFFERENT update
+  // type (my_chat_member) and cannot be starved by the text routers below.
+  bot.on("my_chat_member", (ctx, next) => {
+    start.botAddedToGroup(ctx).catch((e) => log.debug(`[group] add greeting: ${e && e.message}`));
+    return next(); // other pipelines still need this update
+  });
+
   // ── Commands ──────────────────────────────────────────────────────────────
   bot.start(start.startHandler);
   bot.command("home", start.homeHandler);

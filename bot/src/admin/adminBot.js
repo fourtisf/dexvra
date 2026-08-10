@@ -33,7 +33,11 @@ const GROUP_ICON = {
   "Channel Posts": "📢",
   "Mass DM": "📣",
   "Group Buy Bot": "🤖",
+  "Group Setup": "⚙️",
   "Dexvra Raid": "🚀",
+  // Was falling through to the generic 📄 — every other category had a chosen
+  // glyph, so the X row read as the odd one out in the editor's menu.
+  "X Posts": "𝕏",
 };
 const slugOf = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "grp";
 const groupNames = () => Object.keys(tpl.groups());

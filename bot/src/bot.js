@@ -89,6 +89,39 @@ const COMMANDS = [
   { command: "help", description: "How it works" },
 ];
 
+// What the "/" menu offers INSIDE a group. Telegram scopes command lists, and
+// the default scope was the only one ever set — so a project that added the bot
+// to their group got start/home/help and no hint that /settoken, /setwhale or
+// /raid existed. They had to be read off a welcome message and typed from
+// memory. Every command here is registered in handlers/registry.js; a command
+// listed and not registered is worse than one that is missing, because tapping
+// it does nothing at all.
+const GROUP_COMMANDS = [
+  { command: "start", description: "Set up Dexvra in this group" },
+  { command: "settoken", description: "Point the buy bot at your token — /settoken <CA>" },
+  { command: "setchain", description: "Force the network — /setchain bsc" },
+  { command: "setminbuy", description: "Only alert buys over this — /setminbuy 50" },
+  { command: "setwhale", description: "Whale wallet bar — /setwhale 50000 · off" },
+  { command: "buybot", description: "Status · on · off · pin on · pin off" },
+  { command: "raid", description: "Rally the chat behind one X post" },
+];
+
+/**
+ * Publish both lists.
+ *
+ * The group scope is set FIRST and its failure is not fatal: an older Bot API
+ * or a revoked scope must not cost the default list, which is the one every DM
+ * user sees. Both go through the same retry, because one transient timeout used
+ * to leave the menu unset for the whole process lifetime.
+ */
+async function publishCommands(bot) {
+  await bot.telegram
+    .setMyCommands(GROUP_COMMANDS, { scope: { type: "all_group_chats" } })
+    .then(() => log.info(`[start] group command menu published (${GROUP_COMMANDS.length} commands)`))
+    .catch((e) => log.warn(`[start] group setMyCommands failed: ${e.message} — groups keep the default list`));
+  return setCommandsWithRetry(bot);
+}
+
 async function setCommandsWithRetry(bot, attempts = 4, baseDelay = 5000) {
   for (let i = 0; i < attempts; i++) {
     try {
@@ -150,7 +183,7 @@ async function startBot() {
   // All pre-launch work happens here — in Telegraf v4, launch() only resolves
   // when the bot STOPS, so anything after `await launch()` never runs.
   // Background, retried — polling must not wait on Telegram's command API.
-  setCommandsWithRetry(bot).catch(() => {});
+  publishCommands(bot).catch(() => {});
 
   api.ping().then((ok) => log.info(`[start] internal API reachable: ${ok}`));
 
@@ -297,6 +330,9 @@ module.exports = {
   generateSessionKey,
   rateLimitConfig,
   setCommandsWithRetry,
+  publishCommands,
+  GROUP_COMMANDS,
+  COMMANDS,
   onHandlerError,
   xSelfCheck,
   xSourceReport,

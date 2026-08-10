@@ -331,6 +331,24 @@ const DEFAULTS = {
     "🗓 **Runs:** {startsAt} → {endsAt}\n" +
     "{queueNote}\n{postLinks}\n{announceX}\n\n" +
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
+  // ── The moment the bot lands in a group ─────────────────────────────────
+  // Posted from the my_chat_member update, BEFORE anyone types anything. It
+  // asks for the three permissions the bot actually uses and then stops: a
+  // group that has just added a bot wants to know what to grant it, not to read
+  // a feature list. The full setup steps are /start (group_start below), which
+  // this line points at.
+  //
+  // Every permission named here is one the code really needs — "Pin messages"
+  // for whale alerts and the raid card, "Delete messages" for the raid panel's
+  // own cleanup, "Ban users" for the raid chat lock. Ask for more than you use
+  // and an operator is right to refuse all of it.
+  group_added:
+    "👋 **Thanks for adding me!**\n\n" +
+    "‼️ To get started, make me an **Admin** with these permissions:\n" +
+    "• **Delete messages**\n" +
+    "• **Ban users**\n" +
+    "• **Pin messages**\n\n" +
+    "🚀 Then send **/start** to set everything up.",
   group_start:
     "🟢 **Dexvra — free tools for your group**\n\n" +
     "**🤖 Buy Bot** — a live alert here on **every on-chain buy** of your token, with a link to the real transaction and the wallet that made it.\n" +
@@ -448,6 +466,58 @@ const DEFAULTS = {
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
   group_buy_tiers: "NEW BUY|WHALE BUY|MEGA BUY",
+
+  // ── Setup replies, /settoken → /buybot ──────────────────────────────────
+  // Every one of these is a message a PAYING PROJECT sees inside their own
+  // group while wiring the bot up, which is exactly the copy an operator wants
+  // to be able to reword — so none of it is hardcoded any more.
+  //
+  // These render through the same premium-markup parser as everything else:
+  // **bold**, `code`, [text](url). NOT HTML tags.
+  setup_admin_only: "🔒 Only a **group admin** can change this.",
+  setup_group_only: "👥 Add me to your project's group first, then run `/settoken` there.",
+  settoken_usage: "📄 **Set your token**\n\nUsage: `/settoken <contract address>`",
+  settoken_resolving: "🔎 Resolving your token…",
+  settoken_not_found:
+    "❌ **No live pool for that address**\n\n" +
+    "Double-check the contract, or name the network first with `/setchain <chain>` and run `/settoken` again.",
+  settoken_ok:
+    "✅ **Buy bot armed** on **{chain}**\n\n" +
+    "🪙 **{name}** ({symbol})\n\n" +
+    "Every on-chain buy of your token now posts here.\n" +
+    "`/setminbuy 50` only alert buys ≥ $50 · `/setwhale 50000` whale bar · `/buybot off` pause",
+  setchain_unknown: "❌ Unknown network.\n\nOne of: `{chains}`",
+  setchain_need_token: "📄 Set the token first: `/settoken <contract address>`",
+  setchain_ok: "✅ Network set to **{chain}** — pool re-resolved.",
+  setchain_ok_nopool: "⚠️ Network set to **{chain}**, but no pool found yet. I'll keep trying every cycle.",
+  setminbuy_usage: "💲 **Minimum buy to alert**\n\nUsage: `/setminbuy 50`",
+  setminbuy_ok: "✅ Minimum buy to alert: **{usd}**.",
+  setwhale_usage:
+    "🐋 **Whale wallet bar**\n\n" +
+    "Usage: `/setwhale 50000` — a buyer **already holding** at least this much of your token gets its own pinned 🐋 **WHALE WALLET** alert, whatever they just spent.\n\n" +
+    "`/setwhale off` turns it off.",
+  setwhale_ok:
+    "🐋 **Whale wallet: {usd}**\n\n" +
+    "A buy from a wallet holding that much gets its own **pinned** alert.{unsupported}",
+  // Appended to setwhale_ok as {unsupported}. Its own template because it is a
+  // caveat an operator may want to word differently — or drop.
+  setwhale_unsupported:
+    "\n\n⚠️ Holdings can't be read on **{chain}** yet, so whale alerts stay quiet until that changes.",
+  setwhale_off: "🐋 Whale wallet alerts are **off** here.",
+  pin_on: "📌 Whale alerts will be **pinned** here — each new one replaces the last. The bot needs the **Pin messages** permission.",
+  pin_off: "📌 Whale alerts **won't be pinned** here.",
+  buybot_on: "🟢 **Buy bot ON.**",
+  buybot_off: "🔴 **Buy bot OFF.**",
+  buybot_need_token: "📄 Buy bot isn't set up here yet. Run `/settoken <contract address>`.",
+  buybot_status:
+    "📊 **Buy bot status**\n\n" +
+    "🪙 **Token:** `{address}`\n" +
+    "🔗 **Network:** {chain}\n" +
+    "💧 **Pool:** {pool}\n" +
+    "💲 **Min buy:** {minBuy}\n" +
+    "🐋 **Whale wallet:** {whale}\n" +
+    "📌 **Pin whale alerts:** {pin}\n" +
+    "⚡ **State:** {state}",
   // ── Dexvra Raid ─────────────────────────────────────────────────────────
   // The live card and its three end states. {progress} is GENERATED (the goal
   // rows and their bars) because which rows exist depends on which goals are
@@ -484,6 +554,46 @@ const DEFAULTS = {
     "{progress}\n\n" +
     "Closed {updated} UTC",
   raid_complete_note: "✅ **Raid cleared.** Every target hit — {crew} of you turned up. 🚀",
+  // ── The setup panel and its notices ─────────────────────────────────────
+  // {goals} is GENERATED (one row per goal, with its live target) because which
+  // rows exist depends on what is set — the same reason {progress} above is
+  // generated. Everything around it is yours.
+  //
+  // {sources} is the one honest line about what THIS install can measure: with
+  // no X key the Likes/Replies/Reposts goals cannot be read, and an operator
+  // finding that out at launch instead of at setup is the failure it exists to
+  // prevent. It empties itself when every source is available.
+  raid_panel:
+    "🚀 **DEXVRA RAID**\n\n" +
+    "🔗 **Post:** {post}\n\n" +
+    "🎯 **Goals**\n" +
+    "{goals}\n\n" +
+    "🔒 **Chat lock:** {lock}\n" +
+    "{record}\n\n" +
+    "Goals count **up** from the post's numbers at launch. A raid ends after {maxMinutes} minutes.\n" +
+    "{sources}",
+  raid_panel_record: "📈 **Group record:** {started} run · {completed} cleared",
+  raid_sources_none: "⚡ No X API key on this bot — the 🤝 **Crew** goal works anyway, and needs nothing.",
+  raid_sources_partial: "⚡ Reposts need a paid X key — **Likes**, **Replies** and **Crew** work.",
+  raid_group_only: "👥 Raids run inside a group.\n\nAdd me to your project's group, make me an admin, then send `/raid` there.",
+  raid_admin_only: "🔒 Only a **group admin** can set up a raid.",
+  // The example is deliberately NOT a Dexvra link. It used to be, and it told
+  // the reader to paste a post from an account that is not theirs — the raid is
+  // meant to point at the PROJECT's own post.
+  raid_seturl_prompt: "🔗 **Paste the X post link you want raided.**\n\nLike: `https://x.com/yourproject/status/1234567890`",
+  raid_bad_url: "❌ That isn't an X post link.\n\nPaste the full URL of the post — it has to contain `/status/`.",
+  raid_none_running: "🚀 No raid is running here.\n\nSend `/raid` to set one up.",
+  // Launch refusals. Only the ones that are pure prose live here — the two that
+  // splice in a diagnostic from the X layer ("…— 429 from the guest API") stay
+  // in runner.js, because an operator cannot improve a machine-generated reason
+  // and a botched edit would hide the one line that says what actually broke.
+  raid_already_running: "🚀 A raid is already running in this group.",
+  raid_already_launching: "⏳ That raid is already being launched.",
+  raid_bad_post: "❌ That post link doesn't look right.\n\nPaste the full URL of an X post.",
+  raid_no_goals: "🎯 Set at least one goal first.",
+  raid_reposts_only:
+    "🔁 Reposts are the only goal set, and they can't be counted without a **paid** X API key.\n\n" +
+    "Set a ❤️ **Likes**, 💬 **Replies** or 🤝 **Crew** goal and launch again.",
   // The icons and bar characters inside {progress}. Six fields, pipe-separated:
   //   likes | replies | reposts | crew | bar-filled | bar-empty
   // PLAIN UNICODE ONLY. This string is split apart and rebuilt inside a
@@ -748,19 +858,58 @@ const META = {
   success_trending: { group: "Bot Messages", label: "Success: trending", ph: ["symbol", "hours", "siteUrl", "trendingUrl", "announceUrl", "xUrl", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   success_banner: { group: "Bot Messages", label: "Success: banner", ph: ["slot", "startsAt", "endsAt", "queueNote", "postLinks", "announceX", "site", "listing", "trending", "announce", "xlisting"] },
   upsell_expiry: { group: "Bot Messages", label: "Upsell: trending slot ending", ph: ["symbol", "hours", "discount"] },
-  group_start: { group: "Group Buy Bot", label: "Group tools: /start in a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
+  group_added: { group: "Group Setup", label: "Group: posted the moment the bot is added", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
+  group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "trending"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
   group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
+  // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
+  // alert cards, which are what an operator actually opens this editor for.
+  setup_admin_only: { group: "Group Setup", label: "Error: group admins only", ph: [] },
+  setup_group_only: { group: "Group Setup", label: "Error: run it in a group", ph: [] },
+  settoken_usage: { group: "Group Setup", label: "/settoken — usage", ph: [] },
+  settoken_resolving: { group: "Group Setup", label: "/settoken — looking it up", ph: [] },
+  settoken_not_found: { group: "Group Setup", label: "/settoken — no pool found", ph: [] },
+  settoken_ok: { group: "Group Setup", label: "/settoken — armed ✅", ph: ["chain", "name", "symbol", "address"] },
+  setchain_unknown: { group: "Group Setup", label: "/setchain — unknown network", ph: ["chains"] },
+  setchain_need_token: { group: "Group Setup", label: "/setchain — set the token first", ph: [] },
+  setchain_ok: { group: "Group Setup", label: "/setchain — done", ph: ["chain"] },
+  setchain_ok_nopool: { group: "Group Setup", label: "/setchain — done, no pool yet", ph: ["chain"] },
+  setminbuy_usage: { group: "Group Setup", label: "/setminbuy — usage", ph: [] },
+  setminbuy_ok: { group: "Group Setup", label: "/setminbuy — done", ph: ["usd"] },
+  setwhale_usage: { group: "Group Setup", label: "/setwhale — usage", ph: [] },
+  setwhale_ok: { group: "Group Setup", label: "/setwhale — done", ph: ["usd", "chain", "unsupported"] },
+  setwhale_unsupported: { group: "Group Setup", label: "/setwhale — chain can't be read", ph: ["chain"] },
+  setwhale_off: { group: "Group Setup", label: "/setwhale off", ph: [] },
+  pin_on: { group: "Group Setup", label: "/buybot pin on", ph: [] },
+  pin_off: { group: "Group Setup", label: "/buybot pin off", ph: [] },
+  buybot_on: { group: "Group Setup", label: "/buybot on", ph: [] },
+  buybot_off: { group: "Group Setup", label: "/buybot off", ph: [] },
+  buybot_need_token: { group: "Group Setup", label: "/buybot — not set up yet", ph: [] },
+  buybot_status: { group: "Group Setup", label: "/buybot — status card", ph: ["address", "chain", "pool", "minBuy", "whale", "pin", "state"] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },
   raid_complete: { group: "Dexvra Raid", label: "Raid: all targets hit", ph: ["seq", "percent", "crew", "roster", "progress", "url", "post", "updated"] },
   raid_expired: { group: "Dexvra Raid", label: "Raid: time ran out", ph: ["seq", "percent", "crew", "progress", "url", "post", "updated"] },
   raid_cancelled: { group: "Dexvra Raid", label: "Raid: stopped by an admin", ph: ["seq", "percent", "progress", "url", "post", "updated"] },
   raid_complete_note: { group: "Dexvra Raid", label: "Raid: shout when it clears", ph: ["crew", "url"] },
   raid_style: { group: "Dexvra Raid", label: "Raid bar style (likes|replies|reposts|crew|filled|empty)", ph: [] },
+  raid_panel: { group: "Dexvra Raid", label: "Raid: setup panel (/raid)", ph: ["post", "goals", "lock", "record", "maxMinutes", "sources"] },
+  raid_panel_record: { group: "Dexvra Raid", label: "Raid panel: group record line", ph: ["started", "completed"] },
+  raid_sources_none: { group: "Dexvra Raid", label: "Raid panel: no X key at all", ph: [] },
+  raid_sources_partial: { group: "Dexvra Raid", label: "Raid panel: no paid X key", ph: [] },
+  raid_group_only: { group: "Dexvra Raid", label: "Error: raids run in a group", ph: [] },
+  raid_admin_only: { group: "Dexvra Raid", label: "Error: group admins only", ph: [] },
+  raid_seturl_prompt: { group: "Dexvra Raid", label: "Raid: ask for the X post link", ph: [] },
+  raid_bad_url: { group: "Dexvra Raid", label: "Raid: that isn't an X post link", ph: [] },
+  raid_none_running: { group: "Dexvra Raid", label: "Raid: nothing running here", ph: [] },
+  raid_already_running: { group: "Dexvra Raid", label: "Launch refused: one already running", ph: [] },
+  raid_already_launching: { group: "Dexvra Raid", label: "Launch refused: already launching", ph: [] },
+  raid_bad_post: { group: "Dexvra Raid", label: "Launch refused: bad post link", ph: [] },
+  raid_no_goals: { group: "Dexvra Raid", label: "Launch refused: no goals set", ph: [] },
+  raid_reposts_only: { group: "Dexvra Raid", label: "Launch refused: reposts need a paid key", ph: [] },
   massdm_disabled: { group: "Mass DM", label: "Mass DM: disabled", ph: [] },
   massdm_intro: { group: "Mass DM", label: "Mass DM: intro + price (ask CA)", ph: ["sol", "bnb", "eth"] },
   massdm_ca_invalid: { group: "Mass DM", label: "Mass DM: invalid CA", ph: [] },

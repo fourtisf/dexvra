@@ -72,7 +72,7 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
     // Guarded HERE and not only in the panel: a second raid would overwrite the
     // first one's permission snapshot, and the group could then never be
     // restored to how it was before the FIRST lock.
-    return { ok: false, error: "A raid is already running in this group." };
+    return { ok: false, error: tpl.t("raid_already_running") };
   }
   // ...and the status check alone is not enough. `g.raid` is not assigned until
   // several awaits later (the X read, then the permission snapshot), and
@@ -85,7 +85,7 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
   // This claim is synchronous, before any await, which is what closes the
   // window. Released in the finally at the end.
   const gid = String(g.chatId);
-  if (starting.has(gid)) return { ok: false, error: "That raid is already being launched." };
+  if (starting.has(gid)) return { ok: false, error: tpl.t("raid_already_launching") };
   starting.add(gid);
   try {
     return await launch(telegram, g, s, startedBy);
@@ -96,11 +96,11 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
 
 async function launch(telegram, g, s, startedBy) {
   const postId = xMetrics.parseTweetId(s.postUrl);
-  if (!postId) return { ok: false, error: "That post link doesn't look right. Paste the full URL of an X post." };
+  if (!postId) return { ok: false, error: tpl.t("raid_bad_post") };
 
   const wantsX = (s.likes || 0) > 0 || (s.replies || 0) > 0 || (s.reposts || 0) > 0;
   const crewTarget = (s.crew || 0) > 0 ? s.crew : 0;
-  if (!wantsX && !crewTarget) return { ok: false, error: "Set at least one goal first." };
+  if (!wantsX && !crewTarget) return { ok: false, error: tpl.t("raid_no_goals") };
 
   let baseline = { likes: 0, replies: 0, reposts: 0 };
   let target = { likes: 0, replies: 0, reposts: 0 };
@@ -143,9 +143,7 @@ async function launch(telegram, g, s, startedBy) {
       if (!measurable && !crewTarget) {
         return {
           ok: false,
-          error:
-            "Reposts are the only goal set, and they can't be counted without a paid X API key.\n\n" +
-            "Set a ❤️ Likes, 💬 Replies or 🤝 Crew goal and launch again.",
+          error: tpl.t("raid_reposts_only"),
         };
       }
       if (!measurable) crewOnly = true;
