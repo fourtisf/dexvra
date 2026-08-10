@@ -20,13 +20,27 @@ function withHome(rows) {
 }
 
 function mainMenu() {
+  // The group row is a URL button, not a callback: it opens Telegram's own
+  // "choose a group" picker on the first tap.
+  //
+  // It used to open a how-to card whose only real content was another button
+  // saying "➕ Add to your group" — a screen between the operator and the thing
+  // they had already chosen. Nothing is lost by skipping it: ?startgroup= makes
+  // Telegram deliver /start into the group the moment the bot lands there, and
+  // that renders the `group_start` template — the same setup steps, in the place
+  // they are actually carried out. The card itself is still reachable from the
+  // "already listed" prompt (helpers/listedGuard.js).
+  //
+  // Required lazily: config/constants reads process.env at load time, and this
+  // module is pulled in through handlers/registry.js.
+  const { BOT_USERNAME } = require("../config/constants");
   return Markup.inlineKeyboard([
     [Markup.button.callback("⚡ Xpress Listing", "submit_coin")],
     [Markup.button.callback("🏆 Listing & Trending", "listing_trend_coin")],
     [Markup.button.callback("🔥 Trending Token", "trend_coin")],
     [Markup.button.callback("📢 Banner Ads", "ad_banner")],
     [Markup.button.callback("📣 Mass DM Broadcast", "ad_massdm")],
-    [Markup.button.callback("🤖 Buy Bot & Raid for your group", "buybot_help")],
+    [Markup.button.url("➕ Add Buy Bot & Raid to your group", `https://t.me/${BOT_USERNAME}?startgroup=true`)],
   ]);
 }
 

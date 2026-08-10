@@ -73,3 +73,42 @@ test("config store: upsert, active filter, remove", async () => {
   await cfg.remove(123);
   assert.strictEqual(cfg.get(123), null);
 });
+
+// ── The main-menu entry point ────────────────────────────────────────────────
+
+test("the group button opens Telegram's group picker on the FIRST tap", () => {
+  // It used to be a callback opening a how-to card whose only real content was
+  // another button saying "➕ Add to your group" — one screen between the
+  // operator and the thing they had already chosen.
+  const { mainMenu } = require("../src/handlers/menu");
+  const rows = mainMenu().reply_markup.inline_keyboard;
+  const btn = rows.flat().find((b) => /group/i.test(b.text));
+  assert.ok(btn, "the group entry is still on the main menu");
+  assert.ok(!btn.callback_data, "no intermediate screen");
+  assert.match(btn.url, /^https:\/\/t\.me\/[^/?]+\?startgroup=/, "a ?startgroup deep link");
+});
+
+test("the deep link points at THIS bot, never a hardcoded handle", () => {
+  // Nothing calls getMe, so BOT_USERNAME is used verbatim. Hardcode a handle
+  // here and every operator running their own instance is sending their users
+  // to add somebody else's bot to their group — and this is now the most-tapped
+  // button on the menu, not a link buried two screens deep.
+  const { BOT_USERNAME } = require("../src/config/constants");
+  const { mainMenu } = require("../src/handlers/menu");
+  const btn = mainMenu()
+    .reply_markup.inline_keyboard.flat()
+    .find((b) => /group/i.test(b.text));
+  assert.strictEqual(btn.url, `https://t.me/${BOT_USERNAME}?startgroup=true`);
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "handlers", "menu.js"), "utf8");
+  assert.ok(!/t\.me\/dexvrabot/.test(src), "the handle is read from config, not written in");
+});
+
+test("landing in a group still explains itself, which is what the skipped card said", () => {
+  // /start in a NON-private chat renders group_start — Telegram delivers it
+  // automatically after a ?startgroup= add. That is why dropping the card costs
+  // nothing: the setup steps arrive where they are carried out.
+  const tpl = require("../src/templates");
+  const out = tpl.t("group_start", { bot: "@dexvrabot" });
+  assert.match(out, /settoken/, "it names the command that starts the buy bot");
+  assert.match(out, /admin/i, "and says the bot has to be an admin");
+});
