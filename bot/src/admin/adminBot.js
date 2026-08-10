@@ -13,6 +13,7 @@ const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
 const pumpConfig = require("../services/pumpConfig");
+const whaleConfig = require("../services/whaleConfig");
 const trendingBoard = require("../services/trendingBoard");
 const autoTrend = require("../services/autoTrend");
 const autoLister = require("../services/autoLister");
@@ -100,6 +101,9 @@ const SAMPLE_VARS = {
   // Group buy alerts (verified path)
   tier: "Whale Buy", impact: "0.42%", change: "+18.4%",
   verify: "🔗 Txn · 👤 0x1f4b…9ac2",
+  // 🐋 WHALE WALLET card. {whaleBar} is the bar the wallet cleared — the group's
+  // own /setwhale, else the global one in ⚙ Batas whale.
+  holds: "1,980,000", holdsUsd: "$95,523", position: "+3.82%", whaleBar: "$50,000",
   tradeUrl: "https://t.me/dexvratradebot?start=ca_solana_G9j8",
   // Dexvra Raid. {progress} is GENERATED at render time, so the preview shows a
   // representative block rather than a placeholder — an admin editing the card
@@ -230,7 +234,20 @@ function bannerExists() {
 }
 
 // ── Channel banner artwork (fourtis-style template compositor) ───────────────
-const BT_KINDS = { listing: "📄 Listing", trending: "🔥 Trending", banner: "📢 Banner Ads", pump: "📈 Pump alert", rankup: "🚀 Rank up", buy: "🟢 Buy Bot", whale: "🐋 Whale Alert" };
+const BT_KINDS = {
+  listing: "📄 Listing",
+  trending: "🔥 Trending",
+  banner: "📢 Banner Ads",
+  pump: "📈 Pump alert",
+  rankup: "🚀 Rank up",
+  buy: "🟢 Buy Bot",
+  whale: "🐋 Whale Alert",
+  // The one FALLBACK slot, used by any group-alert kind whose own slot is empty
+  // (see buyMonitor.buyClip). Kinds still never borrow from EACH OTHER — only
+  // from here — so an operator who wants one house clip everywhere uploads it
+  // once, and one who wants a whale to look different still can.
+  default: "⭐ GIF Default",
+};
 // Media (GIF/video) is allowed for every kind incl. pump; artwork compositing
 // only for the three still-image kinds.
 const BT_ARTWORK_KINDS = new Set(["listing", "trending", "banner"]);
@@ -247,6 +264,10 @@ const BT_CLIP_FILL_KINDS = new Set([...BT_FILL_KINDS, "banner"]);
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ punya sendiri" : bannerTpl.hasTemplate(k) ? "💎 bawaan" : "— belum ada");
   const on = bannerTpl.postingEnabled();
+  const hasDefault = !!bannerTpl.mediaOverride("default");
+  // What an EMPTY buy/whale slot actually does depends on whether a default is
+  // uploaded — so the line says which, instead of always claiming "teks biasa".
+  const fb = hasDefault ? "↩️ pakai GIF Default" : "— teks biasa";
   return (
     `🎨 <b>Gambar Banner Channel</b>\n\n` +
     `Setiap layanan punya gambar sendiri. Bot menempelkan <b>logo</b> token ` +
@@ -254,8 +275,9 @@ function btHomeText() {
     `plus tulisan <b>$TICKER + nama</b> kalau diaktifkan.\n\n` +
     `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
     `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n` +
-    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video" : "— teks biasa"}\n` +
-    `🐋 Whale Alert: ${bannerTpl.mediaOverride("whale") ? "✅ ada GIF/video sendiri" : "— teks biasa (GIF terpisah dari Buy Bot)"}\n\n` +
+    `⭐ GIF Default: ${hasDefault ? "✅ ada — dipakai kalau slot di bawah kosong" : "— belum ada"}\n` +
+    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video sendiri" : fb}\n` +
+    `🐋 Whale Alert: ${bannerTpl.mediaOverride("whale") ? "✅ ada GIF/video sendiri" : fb}\n\n` +
     `Pilih layanan yang mau diatur:`
   );
 }
@@ -265,8 +287,8 @@ function btHomeKb() {
     [Markup.button.callback(on ? "🟢 Kirim banner: AKTIF — tekan untuk matikan" : "🔴 Kirim banner: MATI — tekan untuk nyalakan", `bt_on:${on ? 0 : 1}`)],
     [Markup.button.callback(BT_KINDS.listing, "btk:listing"), Markup.button.callback(BT_KINDS.trending, "btk:trending")],
     [Markup.button.callback(BT_KINDS.banner, "btk:banner"), Markup.button.callback(BT_KINDS.pump, "btk:pump")],
-    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup"), Markup.button.callback(BT_KINDS.buy, "btk:buy")],
-    [Markup.button.callback(BT_KINDS.whale, "btk:whale")],
+    [Markup.button.callback(BT_KINDS.rankup, "btk:rankup"), Markup.button.callback(BT_KINDS.default, "btk:default")],
+    [Markup.button.callback(BT_KINDS.buy, "btk:buy"), Markup.button.callback(BT_KINDS.whale, "btk:whale")],
     [Markup.button.callback("⬅ Kembali", "home")],
   ]);
 }
@@ -276,16 +298,28 @@ function btKindText(kind) {
   if (!BT_ARTWORK_KINDS.has(kind)) {
     // media-only kinds (pump alert = text card; rank-up = auto dynamic banner). A clip
     // plays above / overrides the default.
+    // What an EMPTY buy/whale slot falls back to — the ⭐ GIF Default when one is
+    // uploaded, plain text otherwise. Stated live rather than in the abstract, so
+    // the screen never promises artwork that isn't there.
+    const dflt = bannerTpl.mediaOverride("default");
+    const emptyMeans = dflt
+      ? `Kalau slot ini kosong, alert otomatis pakai <b>⭐ GIF Default</b> (sudah ada).`
+      : `Kalau slot ini kosong dan <b>⭐ GIF Default</b> juga kosong, alert dikirim sebagai <b>teks biasa</b> (tetap jalan normal).`;
     const note =
       kind === "rankup"
         ? `\nAlert naik peringkat memakai <b>banner otomatis</b> (medali peringkat + % kenaikan). GIF/video di sini <b>menggantikannya</b> dan diputar di atas setiap post naik peringkat.`
+        : kind === "default"
+          ? `\nGIF/video <b>cadangan</b> untuk alert grup: dipakai kalau slot 🟢 Buy Bot atau 🐋 Whale Alert <b>kosong</b>.\n\n` +
+            `Cocok kalau Anda mau <b>satu GIF untuk semuanya</b> — upload sekali di sini, selesai. ` +
+            `Mau whale kelihatan beda? Upload GIF sendiri di slot 🐋 Whale Alert, dan itu yang menang.\n\n` +
+            `⚠️ 🟢 Buy Bot dan 🐋 Whale Alert <b>tidak pernah saling pinjam</b> GIF — keduanya cuma bisa jatuh ke slot ini.`
         : kind === "whale"
           ? `\nGIF/video KHUSUS alert 🐋 <b>WHALE WALLET</b> — pembelian dari dompet yang sudah pegang banyak token itu, dan alertnya <b>di-pin</b> di grup.\n\n` +
-            `⚠️ Ini <b>terpisah</b> dari GIF 🟢 Buy Bot dan <b>tidak saling pinjam</b>: whale cuma pakai GIF ini, beli biasa cuma pakai GIF itu. ` +
-            `Kalau di sini kosong, alert whale dikirim <b>tanpa GIF</b> — bukan pakai GIF Buy Bot.`
+            `⚠️ Ini <b>terpisah</b> dari GIF 🟢 Buy Bot dan <b>tidak saling pinjam</b>: whale cuma pakai GIF ini, beli biasa cuma pakai GIF itu.\n\n` +
+            emptyMeans
           : kind === "buy"
           ? `\nGIF/video ini dipakai <b>SEMUA grup</b> yang pakai buy bot — diputar di atas setiap alert pembelian, dengan detail transaksi jadi captionnya.\n\n` +
-            `Kalau kosong, alert dikirim sebagai <b>teks biasa</b> (tetap jalan normal).`
+            emptyMeans
           : `\nUpload GIF atau MP4 pendek untuk diputar di atas setiap post ${BT_KINDS[kind].replace(/^\S+\s/, "")}. Detail token tetap di teks caption.`;
     return `🎨 <b>${BT_KINDS[kind]}</b>\n\n` + clipLine + note;
   }
@@ -324,6 +358,12 @@ function btKindKb(kind) {
     if (kind === "pump") {
       const { minPct, maxPct } = pumpConfig.get();
       rows.push([Markup.button.callback(`⚙ Alert window · ${minPct}%–${maxPct}%`, "pth")]);
+    }
+    // Same idea for whales: the bar that DECIDES the alert lives next to the
+    // artwork that dresses it, so an operator tuning one can see the other.
+    if (kind === "whale") {
+      const w = whaleConfig.get();
+      rows.push([Markup.button.callback(`⚙ Batas whale · $${w.walletUsd.toLocaleString("en-US")}`, "wth")]);
     }
     rows.push([Markup.button.callback("⬅ Menu gambar", "bt")]);
     return Markup.inlineKeyboard(rows);
@@ -366,6 +406,39 @@ function pthKb() {
     [cb(`👁 ${minPct}%`, `pwpv:${minPct}`), cb(`👁 ${mid}%`, `pwpv:${mid}`), cb(`👁 ${maxPct}%`, `pwpv:${maxPct}`)],
     [cb("👁 Preview @ custom %", "pwpvc")],
     [cb(`↩️ Reset (${pumpConfig.DEFAULT_MIN}–${pumpConfig.DEFAULT_MAX})`, "pwrst"), cb("⬅ Back", "btk:pump")],
+  ]);
+}
+
+// ── Whale WALLET bar editor ─────────────────────────────────────────────────
+// A buy is a 🐋 WHALE WALLET alert when the BUYER ALREADY HOLDS at least
+// `walletUsd` of that token — not when the buy itself is big. Tunable here so
+// the operator can move the bar without a redeploy; a project that ran
+// /setwhale in its own group still overrides it there.
+const usdLabel = (n) => "$" + Number(n).toLocaleString("en-US");
+function wthText() {
+  const w = whaleConfig.get();
+  const d = whaleConfig.defaults();
+  return (
+    `⚙ <b>Batas Whale Wallet</b>\n\n` +
+    `Alert 🐋 <b>WHALE WALLET</b> keluar kalau pembelinya <b>sudah memegang</b> minimal ` +
+    `<b>${usdLabel(w.walletUsd)}</b> token itu — bukan karena belinya besar. Alertnya <b>di-pin</b> di grup.\n\n` +
+    `• 💰 <b>Batas saldo dompet:</b> ${usdLabel(w.walletUsd)}\n` +
+    `• 🔎 <b>Beli minimal dicek:</b> ${usdLabel(w.minBuyUsd)} — di bawah ini saldonya tidak dicek sama sekali (hemat panggilan RPC)\n` +
+    `• 🐋 <b>Status:</b> ${w.enabled ? "🟢 aktif" : "🔴 mati"}\n\n` +
+    `ℹ️ Ini nilai <b>global</b>. Grup yang menjalankan <code>/setwhale 50000</code> sendiri tetap pakai angkanya sendiri.\n\n` +
+    `Berlaku di alert berikutnya — tanpa restart. Bawaan: ${usdLabel(d.walletUsd)}.`
+  );
+}
+function wthKb() {
+  const cb = Markup.button.callback;
+  const w = whaleConfig.get();
+  const d = whaleConfig.defaults();
+  return Markup.inlineKeyboard([
+    [cb("Saldo ➖25K", "wwal:-25000"), cb("➖5K", "wwal:-5000"), cb("➕5K", "wwal:5000"), cb("➕25K", "wwal:25000")],
+    [cb("Min beli ➖100", "wmin:-100"), cb("➖25", "wmin:-25"), cb("➕25", "wmin:25"), cb("➕100", "wmin:100")],
+    [cb("⌨ Ketik batas saldo", "wwset")],
+    [cb(w.enabled ? "🐋 Whale alert: AKTIF — tekan untuk matikan" : "🔴 Whale alert: MATI — tekan untuk nyalakan", `wwon:${w.enabled ? 0 : 1}`)],
+    [cb(`↩️ Reset (${usdLabel(d.walletUsd)})`, "wwrst"), cb("⬅ Kembali", "btk:whale")],
   ]);
 }
 
@@ -1449,6 +1522,17 @@ const PH_HELP = {
   linkUrl: "advertiser link",
   title: "advertiser / project title",
   tier: "tier name (Diamond, Gold…)",
+  // 🐋 WHALE WALLET card
+  holds: "how much of THIS token the buyer holds (token amount)",
+  holdsUsd: "that holding valued in USD at the pool price",
+  position: "how much this buy grew their bag (or “new position”)",
+  whaleBar: "the whale bar this wallet cleared (group’s /setwhale, else the global one)",
+  impact: "this buy as a % of the pool’s liquidity",
+  tokenAmt: "tokens the buyer received",
+  usd: "USD the buyer spent",
+  verify: "the buyer + “View txn” row (drops on chains with no explorer)",
+  emoji: "the buy-size icon row — one icon per step, bigger buy, longer row",
+  bar: "a fill-meter version of the size row (off by default — see the template note)",
 };
 const AUTO_PH = new Set([
   "head", "tierLine", "logoEmoji", "overview", "socials", "footer",
@@ -1882,7 +1966,10 @@ function build() {
 
   // ── Channel banner artwork (template compositor, per service) ──
   const K = "(listing|trending|banner)";
-  const KM = "(listing|trending|banner|pump|rankup|buy|whale)"; // media-capable kinds (incl. pump, rank-up + group buy alerts)
+  // Media-capable kinds (incl. pump, rank-up, the group buy/whale alerts and the
+  // shared ⭐ default fallback). A kind missing from here renders a button that
+  // silently does nothing.
+  const KM = "(listing|trending|banner|pump|rankup|buy|whale|default)";
   bot.action("bt", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -1990,6 +2077,52 @@ function build() {
       `⌨ <b>Preview at what %?</b>\nWindow is <b>${minPct}%–${maxPct}%</b>.\n\nSend a number, e.g. <code>${minPct}</code>, <code>${Math.round((minPct + maxPct) / 2)}</code> or <code>${maxPct}</code>.\n\n/cancel to abort.`,
       HTML,
     );
+  });
+
+  // ── Whale WALLET bar (global; a group's own /setwhale still wins) ──
+  bot.action("wth", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, wthText(), wthKb());
+  });
+  bot.action(/^wwal:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const cur = whaleConfig.get();
+    const res = await whaleConfig.set({ walletUsd: cur.walletUsd + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Batas saldo ${usdLabel(res.walletUsd)}`).catch(() => {});
+    await edit(ctx, wthText(), wthKb());
+  });
+  bot.action(/^wmin:(-?\d+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const cur = whaleConfig.get();
+    const res = await whaleConfig.set({ minBuyUsd: cur.minBuyUsd + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`Min beli ${usdLabel(res.minBuyUsd)}`).catch(() => {});
+    await edit(ctx, wthText(), wthKb());
+  });
+  bot.action("wwset", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    ctx.session.awaitingBt = { mode: "whalebar" };
+    const w = whaleConfig.get();
+    await ctx.reply(
+      `⌨ <b>Batas Whale Wallet</b>\nSekarang: <b>${usdLabel(w.walletUsd)}</b>\n\n` +
+        `Kirim angka USD-nya saja.\n👉 Contoh: <code>50000</code>\n\n/cancel untuk batal.`,
+      HTML,
+    );
+  });
+  bot.action(/^wwon:(0|1)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const res = await whaleConfig.set({ enabled: ctx.match[1] === "1" });
+    log.info(`[adminbot] whale wallet alerts turned ${res.enabled ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(res.enabled ? "🐋 Whale alert AKTIF" : "🔴 Whale alert MATI").catch(() => {});
+    await edit(ctx, wthText(), wthKb());
+  });
+  bot.action("wwrst", async (ctx) => {
+    if (!guard(ctx)) return;
+    const res = await whaleConfig.reset();
+    log.info(`[adminbot] whale bar reset to ${res.walletUsd} by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery(`↩️ Reset ${usdLabel(res.walletUsd)}`).catch(() => {});
+    await edit(ctx, wthText(), wthKb());
   });
 
   // ── Auto Trending (auto-fill slots, random duration/timing, max 18h) ──
@@ -2821,6 +2954,21 @@ function build() {
         if (!m) return ctx.reply("❌ Format: <code>MIN,MAX</code> — e.g. <code>100,2000</code>.", HTML).catch(() => {});
         const res = await pumpConfig.set({ minPct: Number(m[1]), maxPct: Number(m[2]) });
         await ctx.reply(`✅ Pump alert window set to <b>${res.minPct}%–${res.maxPct}%</b>.`, { ...HTML, ...pthKb() }).catch(() => {});
+        return;
+      }
+      // ── Whale WALLET bar: a plain USD figure ("50000" / "$50,000" / "50k") ──
+      if (mode === "whalebar") {
+        // Operators type money the way they say it. "50k" and "$50,000" are the
+        // same number, and rejecting either as a format error is the bot being
+        // pedantic about its own input box.
+        const m = low.replace(/[$,_\s]/g, "").match(/^(\d+(?:\.\d+)?)(k|m)?$/);
+        if (!m) return ctx.reply("❌ Kirim angka USD saja — contoh <code>50000</code>, <code>$50,000</code> atau <code>50k</code>.", HTML).catch(() => {});
+        const usd = Number(m[1]) * (m[2] === "k" ? 1e3 : m[2] === "m" ? 1e6 : 1);
+        const res = await whaleConfig.set({ walletUsd: usd });
+        // Echo the STORED value, not what was typed: it passes through the
+        // clamp, so "5" comes back as $100 and the operator sees that happen
+        // instead of believing a bar the bot never accepted.
+        await ctx.reply(`✅ Batas whale wallet: <b>${usdLabel(res.walletUsd)}</b>.`, { ...HTML, ...wthKb() }).catch(() => {});
         return;
       }
       // ── Pump preview at a typed % ──

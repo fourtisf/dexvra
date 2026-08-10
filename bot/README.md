@@ -319,8 +319,9 @@ The alert itself:
 🟢🟢🟢
 
 💲 Spent: $48.97 (0.6646 SOL)
-🪙 Got: 926,311.94 $RUSS
-📊 Price: $0.00004823 · 🏦 MCap: $46.5K
+🪙 Received: 926,311.94 $RUSS
+📊 Price: $0.00004823 · 📈 24h: +18.4%
+🏦 Market cap: $46.5K · 💧 Liquidity: $183.5K
 👤 Buyer: AFqu1M…jcBb · View txn
 
 ⚡ Trade on Dexvra · 📈 Chart · 🔥 Trending
@@ -363,16 +364,41 @@ A second alert class, keyed on **who bought**, not on how much they spent:
 🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋🐋
 
 💲 Spent: $804.72 (10.7568 SOL)
-🪙 Got: 51,874.15 $RUSS
+🪙 Received: 51,874.15 $RUSS
 💰 Holds: 1,980,000 $RUSS · $95,523
-📈 Position: +3.82%
-📊 Price: $0.00004823 · 🏦 MCap: $15.5M
+📈 Position: +3.82% · 🎯 Whale bar: $50,000
+📊 Price: $0.00004823 · 🏦 Market cap: $15.5M
 👤 Buyer: AFqu1M…jcBb · View txn
+
+🐋 A wallet this size adding to its position is conviction, not noise.
+
+⚡ Trade on Dexvra · 📈 Chart · 🔥 Trending
 ```
 
 A $200 top-up from someone sitting on $80k is news in a way a $200 buy from
-a fresh wallet is not — so the bar is the buyer's **holding**
-(`BUYBOT_WHALE_WALLET_USD`, default $50,000; per group `/setwhale 50000`).
+a fresh wallet is not — so the bar is the buyer's **holding**, and it
+resolves in three layers, most specific first:
+
+| Layer | Where | Scope |
+| --- | --- | --- |
+| `/setwhale 50000` | in the project's own group | that group |
+| ⚙ **Batas whale** | @dexvraadminbot → 🎨 Gambar Banner Channel → 🐋 Whale Alert | every group with no preference |
+| `BUYBOT_WHALE_WALLET_USD` | `.env`, default **$50,000** | the shipped fallback |
+
+The admin-bot layer is read **fresh on every check** — deliberately, because
+the admin bot runs as its own process, so a cache in the main bot would
+never see the operator's change at all. Move the bar and the very next buy
+is judged against it, with no restart. The same screen carries the dust
+floor (buys under it never cost an RPC lookup) and an on/off switch for the
+whole class. Typed input takes `50000`, `$50,000` or `50k`, and is clamped
+to $100–$100M so one stray zero cannot turn every buy into a pinned whale
+or silence whales entirely.
+
+`{whaleBar}` on the card prints **the bar that wallet actually cleared** —
+the group's own if it set one, otherwise the global. It is a placeholder and
+not the literal `$50,000` precisely because either can move, and a card
+stating the wrong entry condition is worse than one stating none.
+
 These are **pinned**, each replacing the last, which is the point of
 separating them; ordinary buys never are, because a pin per buy is not a
 highlight, it is a scrollbar. `/buybot pin off` opts out.
@@ -392,21 +418,33 @@ gated behind `BUYBOT_WHALE_CHECK_MIN_USD` and cached per wallet for two
 minutes, with misses cached briefly so a dead RPC cannot cost a timeout per
 buy.
 
-**A GIF or video above every buy alert** — upload it in @dexvraadminbot →
-🎨 Gambar Banner Channel → 🟢 Buy Bot, and a
-**separate** one under 🐋 Whale Alert. One clip each, used by every group,
-with the transaction details as the caption.
+**A GIF or video above every alert** — upload it in @dexvraadminbot →
+🎨 Gambar Banner Channel. Three slots, used by every group, with the
+transaction details as the caption:
 
-The two slots **never borrow from each other**: a whale alert plays the
-whale clip and nothing else, an ordinary buy plays the buy clip and nothing
-else. That is the point of having two — a whale should *look* different
-scrolling past, and falling back would give both alerts identical artwork
-with only the wording changed. A whale with no clip uploaded is sent as
-text, and the admin menu says so rather than quietly borrowing. It is resolved per send, so swapping
-it applies to the next alert with no restart; leave it empty and alerts are
-plain text. A clip Telegram refuses costs the artwork, never the alert. It
-is stored like every other banner clip (`banner-media-buy.*`), which is what
-gets it into the Mongo media mirror and through a container replace alive.
+| Slot | Plays above |
+| --- | --- |
+| 🟢 **Buy Bot** | every ordinary buy alert |
+| 🐋 **Whale Alert** | every 🐋 WHALE WALLET alert |
+| ⭐ **GIF Default** | either of the above whose own slot is **empty** |
+
+⭐ **GIF Default** is the only thing the two share. Want one house clip
+everywhere? Upload it there once and you are done. Want a whale to look
+different? Upload a whale clip too, and it wins.
+
+What they still **never** do is borrow from *each other*: with a buy clip
+set and no whale clip and no default, a whale alert posts as text — it does
+not quietly play the buy clip. That is the point of having two slots at all,
+since cross-borrowing would give both alerts identical artwork with only the
+wording changed. The admin menu states which of the three cases you are in
+rather than leaving you to find out in a customer's group.
+
+Clips are resolved per send, so swapping one applies to the next alert with
+no restart; leave all three empty and alerts are plain text, exactly as
+before. A clip Telegram refuses costs the artwork, never the alert. Each is
+stored like every other banner clip (`banner-media-buy.*`,
+`banner-media-whale.*`, `banner-media-default.*`), which is what gets it into
+the Mongo media mirror and through a container replace alive.
 
 ```bash
 npm run buybot:check                              # a known-good pool

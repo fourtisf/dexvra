@@ -34,14 +34,12 @@ const {
   BUYBOT_EMOJI_MAX,
   BUYBOT_WHALE_USD,
   BUYBOT_MEGA_USD,
-  BUYBOT_WHALE_WALLET_ENABLED,
-  BUYBOT_WHALE_WALLET_USD,
-  BUYBOT_WHALE_CHECK_MIN_USD,
   BUYBOT_PIN_WHALES,
   TRADEBOT_USERNAME,
   SITE_URL,
 } = require("../config/constants");
 const cfg = require("./config");
+const whaleCfg = require("../services/whaleConfig");
 const gt = require("./gtPairs");
 const trades = require("./gtTrades");
 const holdings = require("./walletHoldings");
@@ -348,15 +346,18 @@ const renderRealAlert = (g, buy, pool) => tpl.render("group_buy_alert", alertVar
  * the buy: the caller falls back to the ordinary alert.
  */
 async function whaleCheck(g, buy, pool) {
-  if (!BUYBOT_WHALE_WALLET_ENABLED || g.whales === false) return null;
+  // The GLOBAL bar, read fresh so an operator's change in @dexvraadminbot lands
+  // on the very next buy. A group's own /setwhale still wins over it below.
+  const wc = whaleCfg.get();
+  if (!wc.enabled || g.whales === false) return null;
   if (!buy.buyer || !pool || !(pool.priceUsd > 0)) return null;
-  if (buy.usd < BUYBOT_WHALE_CHECK_MIN_USD) return null; // dust does not order an RPC call
+  if (buy.usd < wc.minBuyUsd) return null; // dust does not order an RPC call
   if (!holdings.supports(g.chain)) return null;
 
   const held = await holdings.holdingOf(g.chain, g.address, buy.buyer);
   if (held == null || !(held > 0)) return null;
   const holdsUsd = held * pool.priceUsd;
-  const threshold = Number(g.whaleWalletUsd) > 0 ? Number(g.whaleWalletUsd) : BUYBOT_WHALE_WALLET_USD;
+  const threshold = Number(g.whaleWalletUsd) > 0 ? Number(g.whaleWalletUsd) : wc.walletUsd;
   if (holdsUsd < threshold) return null;
 
   // How much this buy GREW the bag. `held` is the balance after the trade, so
@@ -364,7 +365,10 @@ async function whaleCheck(g, buy, pool) {
   // and calling that +∞ or +100% would both be inventions.
   const before = held - (buy.tokenAmount || 0);
   const position = before > 0 ? `+${((buy.tokenAmount / before) * 100).toFixed(2)}%` : "new position";
-  return { held, holdsUsd, position };
+  // The bar this wallet actually cleared, carried through to the card. Without
+  // it the template can only hardcode a number, which goes stale the moment an
+  // operator retunes the threshold or a group sets its own.
+  return { held, holdsUsd, position, threshold };
 }
 
 function renderWhaleAlert(g, buy, pool, whale) {
@@ -376,6 +380,11 @@ function renderWhaleAlert(g, buy, pool, whale) {
     holds: tokenAmount(whale.held),
     holdsUsd: usdAmount(whale.holdsUsd),
     position: whale.position,
+    // The bar this wallet cleared — the group's own /setwhale, else the global
+    // one set in @dexvraadminbot. Never a literal in the copy: it would go stale
+    // the moment either is retuned, and a card that states the wrong entry
+    // condition is worse than one that states none.
+    whaleBar: whale.threshold > 0 ? usdAmount(whale.threshold) : "—",
   });
 }
 
@@ -412,8 +421,8 @@ function renderEstimateAlert(g, est, pool) {
  * look like deduplication while deduplicating nothing.
  */
 /**
- * The GIF/video an admin uploaded in @dexvraadminbot → 🎨 Gambar Banner Channel
- * → 🟢 Buy Bot. One clip for every group, played above every buy alert with the
+ * The GIF/video an admin uploaded in @dexvraadminbot → 🎨 Gambar Banner Channel.
+ * One clip per kind, shared by every group, played above the alert with the
  * transaction details as its caption.
  *
  * Resolved per send rather than cached, because `mediaOverride` is a stat() of
@@ -421,17 +430,27 @@ function renderEstimateAlert(g, est, pool) {
  * whole point of editing it at runtime. Nothing here can fail the alert: no
  * clip, or a clip Telegram rejects, falls back to the plain text card.
  */
+const DEFAULT_CLIP_KIND = "default";
+
 function buyClip(kind = "buy") {
   try {
-    // NO CROSS-KIND FALLBACK, deliberately. A whale alert plays the whale clip
-    // and nothing else; an ordinary buy plays the buy clip and nothing else.
+    const bt = require("../bannerTemplate");
+    const own = bt.mediaOverride(kind);
+    if (own) return own;
+    // The one FALLBACK slot — ⭐ Default GIF in the admin menu — and the only
+    // one there is. A kind still never borrows ANOTHER kind's clip: whale does
+    // not play the buy clip and buy does not play the whale clip. That rule is
+    // what makes two uploads worth making, because the operator uploads them
+    // precisely so a whale LOOKS different scrolling past, and cross-borrowing
+    // would give both alerts identical artwork with only the wording changed.
     //
-    // Falling back would defeat the point of the separate slot: the operator
-    // uploads two clips precisely so a whale LOOKS different scrolling past,
-    // and reusing the ordinary one would make the two alerts identical artwork
-    // with only the wording changed. A whale with no clip uploaded is sent as
-    // text — the admin menu says so rather than quietly borrowing.
-    return require("../bannerTemplate").mediaOverride(kind);
+    // A shared default is a different thing: it is house artwork the operator
+    // chose ONCE for "anything I haven't dressed individually", so an operator
+    // who wants one clip everywhere uploads it once instead of twice, and every
+    // alert has artwork out of the box. Leave it empty and behaviour is exactly
+    // what it was — the alert posts as plain text.
+    if (kind === DEFAULT_CLIP_KIND) return null; // already looked; don't ask twice
+    return bt.mediaOverride(DEFAULT_CLIP_KIND);
   } catch {
     return null;
   }
@@ -793,6 +812,7 @@ module.exports = {
   whaleCheck,
   renderWhaleAlert,
   buyClip,
+  DEFAULT_CLIP_KIND,
   sendAlert,
   deliver,
   renderRealAlert,

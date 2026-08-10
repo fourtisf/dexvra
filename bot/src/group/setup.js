@@ -5,7 +5,7 @@ const cfg = require("./config");
 const gt = require("./gtPairs");
 const holdings = require("./walletHoldings");
 const { CHAIN_IDS, chainOf } = require("../config/chains");
-const { BUYBOT_WHALE_WALLET_USD: WHALE_DEFAULT } = require("../config/constants");
+const whaleCfg = require("../services/whaleConfig");
 const log = require("../helpers/logger");
 
 const HTML = { parse_mode: "HTML" };
@@ -178,7 +178,10 @@ async function buybot(ctx) {
         `Chain: <b>${chainOf(g.chain)?.label || g.chain}</b>\n` +
         `Pool: ${g.pairAddress ? "resolved ✓" : "—"}\n` +
         `Min buy: <b>$${g.minBuyUsd || 0}</b>\n` +
-        `Whale wallet: <b>${g.whales === false ? "off" : "$" + Number(g.whaleWalletUsd || WHALE_DEFAULT).toLocaleString("en-US")}</b>${holdings.supports(g.chain) ? "" : " <i>(not readable on this chain)</i>"}\n` +
+        // The GLOBAL bar is read live, so a group that never ran /setwhale sees
+        // whatever the operator currently has set — not the value baked into
+        // .env at boot, which is what this line used to print.
+        `Whale wallet: <b>${g.whales === false ? "off" : "$" + Number(g.whaleWalletUsd || whaleCfg.get().walletUsd).toLocaleString("en-US")}</b>${holdings.supports(g.chain) ? "" : " <i>(not readable on this chain)</i>"}\n` +
         `Pin whale alerts: <b>${g.pin === false ? "off" : "on"}</b>\n` +
         `State: <b>${g.on ? "🟢 ON" : "🔴 OFF"}</b>`,
       HTML,

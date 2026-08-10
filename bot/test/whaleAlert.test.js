@@ -10,6 +10,7 @@ const assert = require("node:assert");
 const mon = require("../src/group/buyMonitor");
 const holdings = require("../src/group/walletHoldings");
 const latch = require("../src/group/alertLatch");
+const whaleCfg = require("../src/services/whaleConfig");
 
 const g = () => ({ chatId: "-100", chain: "solana", address: "So1", sym: "RUSS", name: "The Nietzschean Dog", minBuyUsd: 0 });
 const pool = { priceUsd: 0.05, mcap: 15511897, counterSymbol: "SOL", counterAddress: "SoNATIVE" };
@@ -21,8 +22,9 @@ test.beforeEach(() => {
   holdings._reset();
   latch._reset();
 });
-test.afterEach(() => {
+test.afterEach(async () => {
   holdings.holdingOf = realHolding;
+  await whaleCfg.reset(); // no test may leave a bar behind for the next one
 });
 
 // ── Detection ────────────────────────────────────────────────────────────────
@@ -46,6 +48,81 @@ test("the group's own threshold beats the global default", async () => {
   assert.strictEqual(await mon.whaleCheck(g(), buy, pool), null, "under the $50k default");
   const whale = await mon.whaleCheck({ ...g(), whaleWalletUsd: 5000 }, buy, pool);
   assert.ok(whale, "over this group's own $5k bar");
+});
+
+// ── The admin-set global bar ─────────────────────────────────────────────────
+
+test("the bar ships at $50,000, and nothing overrides it out of the box", async () => {
+  // Compared against defaults() rather than the literal, because a live box's
+  // .env may legitimately move it — the assertion that must hold everywhere is
+  // that get() resolves to whatever is configured, and that the SHIPPED value
+  // (no .env, which is how this suite runs) is $50,000.
+  const shipped = whaleCfg.defaults().walletUsd;
+  if (!process.env.BUYBOT_WHALE_WALLET_USD) assert.strictEqual(shipped, 50000);
+  assert.strictEqual(whaleCfg.get().walletUsd, shipped, "no admin override yet");
+  // pool.priceUsd is $0.05, so the holding either side of the bar is bar/0.05.
+  holdings.holdingOf = async () => (shipped / pool.priceUsd) * 0.999;
+  assert.strictEqual(await mon.whaleCheck(g(), buy, pool), null, "a hair under");
+  holdings.holdingOf = async () => (shipped / pool.priceUsd) * 1.001;
+  assert.ok(await mon.whaleCheck(g(), buy, pool), "a hair over");
+});
+
+test("moving the bar in the admin bot lands on the very NEXT buy", async () => {
+  // It is read fresh per check precisely because the admin bot is a separate
+  // process: a cache here would never see the operator's change at all.
+  holdings.holdingOf = async () => 200_000; // $10,000 held
+  await whaleCfg.set({ walletUsd: 25000 });
+  assert.strictEqual(await mon.whaleCheck(g(), buy, pool), null, "under the operator's $25k bar");
+  await whaleCfg.set({ walletUsd: 8000 });
+  assert.ok(await mon.whaleCheck(g(), buy, pool), "over their new $8k one");
+});
+
+test("a group's own /setwhale still beats the admin bar", async () => {
+  // Three layers, most specific first: the group, the admin bot, then .env.
+  holdings.holdingOf = async () => 200_000; // $10,000 held
+  await whaleCfg.set({ walletUsd: 5000 });
+  assert.strictEqual(await mon.whaleCheck({ ...g(), whaleWalletUsd: 25000 }, buy, pool), null, "this group wants a higher bar");
+  assert.ok(await mon.whaleCheck(g(), buy, pool), "a group with no preference takes the admin's");
+});
+
+test("turning whales off in the admin bot silences every group at once", async () => {
+  let calls = 0;
+  holdings.holdingOf = async () => {
+    calls++;
+    return 9e9;
+  };
+  await whaleCfg.set({ enabled: false });
+  assert.strictEqual(await mon.whaleCheck(g(), buy, pool), null);
+  assert.strictEqual(await mon.whaleCheck({ ...g(), whaleWalletUsd: 1 }, buy, pool), null, "not even a group that asked for it");
+  assert.strictEqual(calls, 0, "and no RPC call is spent finding that out");
+});
+
+test("a fat-finger cannot make every buy a whale, or silence them forever", async () => {
+  // The rails are the difference between a typo costing a wrong screen and a
+  // typo costing every group a pinned alert on every $5 buy.
+  assert.strictEqual((await whaleCfg.set({ walletUsd: 5 })).walletUsd, whaleCfg.HARD_MIN_WALLET_USD);
+  assert.strictEqual((await whaleCfg.set({ walletUsd: 5e12 })).walletUsd, whaleCfg.HARD_MAX_WALLET_USD);
+  assert.strictEqual((await whaleCfg.set({ walletUsd: "not a number" })).walletUsd, whaleCfg.HARD_MAX_WALLET_USD, "kept the last good value");
+});
+
+test("reset drops the override and the shipped $50,000 comes back", async () => {
+  await whaleCfg.set({ walletUsd: 1234, minBuyUsd: 0, enabled: false });
+  const back = await whaleCfg.reset();
+  assert.deepStrictEqual(back, whaleCfg.defaults());
+  if (!process.env.BUYBOT_WHALE_WALLET_USD) assert.strictEqual(back.walletUsd, 50000);
+});
+
+test("the dust floor is admin-set too, and still costs no RPC call", async () => {
+  let calls = 0;
+  holdings.holdingOf = async () => {
+    calls++;
+    return 9e9;
+  };
+  await whaleCfg.set({ minBuyUsd: 2000 });
+  assert.strictEqual(await mon.whaleCheck(g(), { ...buy, usd: 900 }, pool), null);
+  assert.strictEqual(calls, 0);
+  assert.ok(await mon.whaleCheck(g(), { ...buy, usd: 2500 }, pool));
+  assert.strictEqual(calls, 1);
 });
 
 test("dust never orders an RPC call", async () => {
@@ -121,6 +198,20 @@ test("the whale card labels the figure HOLDS, not 'wallet balance'", () => {
   assert.match(out, /Holds: 1,980,000 \$RUSS · \$95,523/);
   assert.match(out, /Position: \+3\.82%/);
   assert.ok(!/wallet balance/i.test(out));
+});
+
+test("the card states the bar this wallet CLEARED, never a hardcoded $50,000", async () => {
+  // The copy has to survive the operator retuning the bar, and a group setting
+  // its own. A card asserting the wrong entry condition is worse than one
+  // asserting none.
+  holdings.holdingOf = async () => 200_000; // $10,000 held
+  const whale = await mon.whaleCheck({ ...g(), whaleWalletUsd: 7500 }, buy, pool);
+  assert.strictEqual(whale.threshold, 7500);
+  assert.match(mon.renderWhaleAlert(g(), buy, pool, whale).text, /Whale bar: \$7,500/);
+
+  const tplSrc = fss.readFileSync(path.join(__dirname, "..", "src", "templates.js"), "utf8");
+  const card = tplSrc.slice(tplSrc.indexOf("group_whale_alert:"), tplSrc.indexOf("group_buy_style:"));
+  assert.ok(!/\$50,?000/.test(card), "the default template hardcodes no threshold");
 });
 
 // ── Pinning ──────────────────────────────────────────────────────────────────

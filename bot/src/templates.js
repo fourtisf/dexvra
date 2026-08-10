@@ -370,11 +370,18 @@ const DEFAULTS = {
   // one knows the other. {emoji} is the size row (see group_buy_style); {bar} is
   // a fill-meter, still available as a placeholder if you ever want one.
   group_buy_alert:
-    `${em("🟢", E.green)} **{tier}** — [{name}]({coinUrl})\n\n` +
+    `${em("🟢", E.green)} **{tier}** · [{name}]({coinUrl})\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
-    "🪙 **Got:** {tokenAmt} {symbol}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    // "Received", not "Got" — the card sits above a link to the transaction and
+    // reads alongside an exchange fill, so it uses the vocabulary of one.
+    "🪙 **Received:** {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · 📈 **24h:** {change}\n` +
+    // Market cap and liquidity, side by side: the two numbers that say whether
+    // this buy is a rounding error or a dent. Both were already computed and
+    // both were being thrown away — {liq} and {change} had been placeholders no
+    // default template ever printed.
+    `${em("🏦", E.dollar)} **Market cap:** {mcap} · 💧 **Liquidity:** {liq}\n` +
     "{verify}\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
@@ -383,15 +390,24 @@ const DEFAULTS = {
   //
   // {holds} is the buyer's balance OF THIS TOKEN valued at the pool price — not
   // a portfolio total, which this bot cannot see. The label says so.
+  //
+  // {whaleBar} is the bar this wallet actually cleared — the group's own
+  // /setwhale, else the global one set in @dexvraadminbot (ships at $50,000).
+  // It is a placeholder and not the literal "$50,000" precisely because either
+  // can be retuned at any time, and a card stating the wrong entry condition is
+  // worse than one stating none.
   group_whale_alert:
-    `${em("🐋", E.diamond)} **WHALE WALLET** — [{name}]({coinUrl})\n\n` +
+    `${em("🐋", E.diamond)} **WHALE WALLET** · [{name}]({coinUrl})\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
-    "🪙 **Got:** {tokenAmt} {symbol}\n" +
+    "🪙 **Received:** {tokenAmt} {symbol}\n" +
     "💰 **Holds:** {holds} {symbol} · **{holdsUsd}**\n" +
-    "📈 **Position:** {position}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    "📈 **Position:** {position} · 🎯 **Whale bar:** {whaleBar}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **Market cap:** {mcap}\n` +
     "{verify}\n\n" +
+    // Says, in one line, WHY this alert is louder than the last one — a reader
+    // who does not already know the rule cannot infer it from the numbers.
+    "🐋 A wallet this size adding to its position is conviction, not noise.\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
@@ -408,11 +424,11 @@ const DEFAULTS = {
   // It says "≈" and says why, because a number that cannot be checked must not
   // be dressed up as one that can.
   group_buy_alert_est:
-    `${em("🟢", E.green)} **BUYS DETECTED** — {symbol}\n\n` +
+    `${em("🟢", E.green)} **BUY PRESSURE** · {symbol}\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** ≈ {usd} across {count} {buysWord}\n` +
-    "🪙 **Got:** ≈ {tokenAmt} {symbol}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n\n` +
+    "🪙 **Received:** ≈ {tokenAmt} {symbol}\n" +
+    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **Market cap:** {mcap}\n\n` +
     // Plain text, NOT `_italics_` — the premium-markup parser understands
     // **bold**, [links](url) and `code` and nothing else, so the underscores in
     // the previous version of this template reached the group as literal
@@ -727,7 +743,7 @@ const META = {
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "price", "mcap", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "trending"] },
   group_buy_alert_est: { group: "Group Buy Bot", label: "Group: buy alert (estimated fallback)", ph: ["emoji", "symbol", "usd", "count", "buysWord", "tokenAmt", "price", "mcap", "chain", "tradeUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },
