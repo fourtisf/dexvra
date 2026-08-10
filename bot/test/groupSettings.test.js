@@ -63,7 +63,7 @@ test("replying to the prompt sets the token; nothing else is touched", async () 
   await setup.groupTokenReply(chatter, chatter.next);
   assert.strictEqual(chatter.nexted, 1, "ordinary group talk falls through to the private router");
 
-  const stranger = ctxFor({ text: CA, chatId: -2002, userId: 999, replyTo: 99 });
+  const stranger = ctxFor({ text: CA, chatId: -2002, userId: 999, admin: false, replyTo: 99 });
   await setup.groupTokenReply(stranger, stranger.next);
   assert.strictEqual(stranger.nexted, 1, "a member who did not open the prompt is not answered");
   assert.strictEqual(cfg.get(-2002), null);
@@ -79,6 +79,42 @@ test("replying to the prompt sets the token; nothing else is touched", async () 
   await setup.groupTokenReply(late, late.next);
   assert.strictEqual(late.nexted, 1);
   assert.strictEqual(cfg.get(-2002).address, CA, "and it did not overwrite the token");
+});
+
+test("an admin dropping a bare CA arms the bot, with no command at all", async () => {
+  const paste = ctxFor({ text: `  ${CA} `, chatId: -2009 });
+  await setup.groupTokenReply(paste, paste.next);
+  assert.strictEqual(paste.nexted, 0);
+  assert.strictEqual(cfg.get(-2009).address, CA);
+
+  // And the three guards around it. A CA inside a sentence is someone TALKING
+  // about a token; a group that already has one must never have it swapped out
+  // by a paste; a non-admin cannot point the bot anywhere.
+  const chat = ctxFor({ text: `have you seen ${CA} yet`, chatId: -2010 });
+  await setup.groupTokenReply(chat, chat.next);
+  assert.strictEqual(chat.nexted, 1);
+
+  const other = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr";
+  const swap = ctxFor({ text: other, chatId: -2009 });
+  await setup.groupTokenReply(swap, swap.next);
+  assert.strictEqual(swap.nexted, 1);
+  assert.strictEqual(cfg.get(-2009).address, CA, "the live token survived");
+
+  const member = ctxFor({ text: other, chatId: -2011, admin: false });
+  await setup.groupTokenReply(member, member.next);
+  assert.strictEqual(member.nexted, 1);
+  assert.strictEqual(cfg.get(-2011), null);
+});
+
+test("setting a token reports what is live and offers the hub, not homework", async () => {
+  const ctx = ctxFor({ text: `/settoken ${CA}`, chatId: -2012 });
+  await setup.settoken(ctx);
+  const done = ctx.replies[ctx.replies.length - 1];
+  assert.match(done.text, /\$10/, "it names the floor that is already in force");
+  assert.deepStrictEqual(labels(done.extra), ["⚙️ Settings"]);
+  // The old card ended on "/setminbuy 50 · /setwhale 50000 · /buybot off" —
+  // three commands to go and run at the moment setup had just finished.
+  assert.ok(!/\/setminbuy|\/setwhale|\/buybot/.test(done.text), "no command list");
 });
 
 test("/buybot on a group with no token offers the one button that means anything", async () => {

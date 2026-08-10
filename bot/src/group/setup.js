@@ -97,18 +97,48 @@ async function promptForToken(ctx, replyTo) {
  * sits in front of the private-chat text router and sees every message in every
  * group the bot is in.
  */
+/**
+ * A message that is NOTHING BUT a contract address, on a chain we run on.
+ *
+ * Deliberately anchored to the whole message: a CA quoted inside a sentence is
+ * someone talking about a token, not someone configuring the bot. Kept in step
+ * with candidateChains — anything that shape cannot place has no chain to
+ * resolve on either.
+ */
+function looksLikeAddress(s) {
+  return (
+    /^0x[a-fA-F0-9]{40}$/.test(s) || // EVM
+    /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(s) || // Tron
+    /^(EQ|UQ)[A-Za-z0-9_-]{46}$/.test(s) || // TON
+    /^0x[a-fA-F0-9]+::[A-Za-z0-9_]+::[A-Za-z0-9_]+$/.test(s) || // Sui
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) // Solana mint
+  );
+}
+
 async function groupTokenReply(ctx, next) {
   if (!isGroup(ctx)) return next();
+  const body = String((ctx.message && ctx.message.text) || "").trim();
   const replyTo = ctx.message && ctx.message.reply_to_message;
   const pending = pendingToken.get(String(ctx.chat.id));
-  if (!replyTo || !pending || replyTo.message_id !== pending.messageId) return next();
-  // Whoever opened the prompt answers it. A different member replying to the
-  // same message is just chat, and was never admin-checked.
-  if (!ctx.from || ctx.from.id !== pending.userId) return next();
-  pendingToken.delete(String(ctx.chat.id));
-  const address = String((ctx.message.text || "").trim().split(/\s+/)[0] || "");
-  if (!address) return say(ctx, "settoken_not_found");
-  return applyToken(ctx, address);
+  const answering =
+    replyTo && pending && replyTo.message_id === pending.messageId && ctx.from && ctx.from.id === pending.userId;
+  if (answering) {
+    pendingToken.delete(String(ctx.chat.id));
+    const address = body.split(/\s+/)[0] || "";
+    if (!address) return say(ctx, "settoken_not_found");
+    return applyToken(ctx, address);
+  }
+  // Not the prompt's reply — but an admin dropping a bare contract address into
+  // a group the bot is not yet pointed at is the same request without the
+  // ceremony, so it arms on it. Guarded three ways: the message is ONLY an
+  // address, the group has no token yet (so a live config can never be swapped
+  // out by a pasted CA), and the sender is an admin. The admin lookup costs an
+  // API call, so it is the LAST check, not the first.
+  if (!looksLikeAddress(body)) return next();
+  const g = cfg.get(ctx.chat.id);
+  if (g && g.address) return next();
+  if (!(await isGroupAdmin(ctx))) return next();
+  return applyToken(ctx, body);
 }
 
 async function settoken(ctx) {
@@ -140,15 +170,27 @@ async function applyToken(ctx, address) {
     name,
     on: true,
   });
-  await say(ctx, "settoken_ok", {
-    chain: chainOf(res.chain).label,
-    // The token's own name and ticker come from a third-party feed, so they go
-    // through the same sanitiser the alert cards use — a token literally named
-    // "[click](url)" would otherwise inject a link into the group's setup reply.
-    name: premium.sanitizeVar(name || "your token"),
-    symbol: premium.sanitizeVar(sym ? `$${String(sym).replace(/^\$/, "")}` : ""),
-    address,
-  });
+  // Everything the bot needs is now set — the floor, the whale bar and the
+  // on-switch all have working defaults — so the confirmation reports what is
+  // ALREADY running and offers one button to change it, instead of handing back
+  // a row of commands to go and run.
+  const g = cfg.get(ctx.chat.id) || {};
+  const { text, extra } = payloadArgs(
+    tpl.render("settoken_ok", {
+      chain: chainOf(res.chain).label,
+      // The token's own name and ticker come from a third-party feed, so they go
+      // through the same sanitiser the alert cards use — a token literally named
+      // "[click](url)" would otherwise inject a link into the group's setup reply.
+      name: premium.sanitizeVar(name || "your token"),
+      symbol: premium.sanitizeVar(sym ? `$${String(sym).replace(/^\$/, "")}` : ""),
+      address,
+      minBuy: usd$(cfg.minBuyOf(g)),
+      whale: usd$(g.whaleWalletUsd || whaleCfg.get().walletUsd),
+    }),
+    false,
+  );
+  const kb = Markup.inlineKeyboard([[Markup.button.callback("⚙️ Settings", "bs_home")]]);
+  await ctx.reply(text, { ...extra, disable_web_page_preview: true, ...kb }).catch(() => {});
   log.info(`[group] ${ctx.chat.id} set token ${res.chain}/${address} pool ${res.pool.poolAddress}`);
 }
 
@@ -407,6 +449,13 @@ async function settingsTap(ctx) {
   if (!(await tapAllowed(ctx))) return;
   const what = (ctx.match && ctx.match[1]) || "";
   const g = cfg.get(ctx.chat.id) || {};
+  // ⚙️ Settings, from the confirmation card. Sent, not edited: that card is the
+  // record of what was set up, and replacing it with the hub loses it.
+  if (what === "home") {
+    await ctx.answerCbQuery().catch(() => {});
+    const p = statusPanel(ctx.chat.id);
+    return void ctx.reply(p.text, p.extra).catch(() => {});
+  }
   if (what === "token") {
     await ctx.answerCbQuery().catch(() => {});
     const msg = ctx.callbackQuery && ctx.callbackQuery.message;

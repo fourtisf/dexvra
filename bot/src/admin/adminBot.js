@@ -265,6 +265,22 @@ const BT_FILL_KINDS = new Set(["listing", "trending", "pump"]);
 // banner clip played as pure decoration and the ad the buyer paid for never
 // appeared in it at all.
 const BT_CLIP_FILL_KINDS = new Set([...BT_FILL_KINDS, "banner"]);
+// Kinds whose media may be a STILL PHOTO as well as a clip. Only the group-alert
+// slots, where the media is sent as-is above a caption and a house image is a
+// real choice. The compositing kinds are excluded on purpose: their still image
+// is the ⬆ Upload artwork slot, which gets DRAWN ON — a photo dropped into the
+// media slot there would silently replace the composited banner with a flat one.
+const BT_PHOTO_KINDS = new Set(["buy", "whale", "default"]);
+const btMediaWord = (kind) => (BT_PHOTO_KINDS.has(kind) ? "GIF/Video/Foto" : "GIF/Video");
+
+/** "✅ ada Foto sendiri" / "✅ ada GIF/video sendiri" / the empty-slot fallback.
+ *  Naming the type matters: an operator who uploaded a JPG and reads "GIF/video"
+ *  has no way to tell whether the right file is live. */
+function btSlotState(kind, empty) {
+  const m = bannerTpl.mediaOverride(kind);
+  if (!m) return empty;
+  return `✅ ada ${m.type === "photo" ? "Foto" : "GIF/video"} sendiri`;
+}
 
 function btHomeText() {
   const st = (k) => (bannerTpl.hasUploaded(k) ? "✅ punya sendiri" : bannerTpl.hasTemplate(k) ? "💎 bawaan" : "— belum ada");
@@ -281,8 +297,8 @@ function btHomeText() {
     `Kirim banner: <b>${on ? "🟢 AKTIF" : "🔴 MATI — post channel cuma pakai logo token polos!"}</b>\n\n` +
     `📄 Listing: ${st("listing")}\n🔥 Trending: ${st("trending")}\n📢 Banner Ads: ${st("banner")}\n` +
     `⭐ GIF Default: ${hasDefault ? "✅ ada — dipakai kalau slot di bawah kosong" : "— belum ada"}\n` +
-    `🟢 Buy Bot: ${bannerTpl.mediaOverride("buy") ? "✅ ada GIF/video sendiri" : fb}\n` +
-    `🐋 Whale Alert: ${bannerTpl.mediaOverride("whale") ? "✅ ada GIF/video sendiri" : fb}\n\n` +
+    `🟢 Buy Bot: ${btSlotState("buy", fb)}\n` +
+    `🐋 Whale Alert: ${btSlotState("whale", fb)}\n\n` +
     `Pilih layanan yang mau diatur:`
   );
 }
@@ -299,7 +315,13 @@ function btHomeKb() {
 }
 function btKindText(kind) {
   const clip = bannerTpl.mediaOverride(kind);
-  const clipLine = clip ? `🎞 GIF/Video: <b>sudah ada — dipakai menggantikan gambar diam</b>\n` : `🎞 GIF/Video: <b>— belum ada</b>\n`;
+  // Name what is actually in the slot. "GIF/Video: sudah ada" over an uploaded
+  // JPG reads as the wrong file being live, which is the one thing this screen
+  // exists to make certain of.
+  const what = clip && clip.type === "photo" ? "Foto" : clip && clip.type === "video" ? "Video" : "GIF";
+  const clipLine = clip
+    ? `🎞 ${what}: <b>sudah ada — dipakai menggantikan gambar diam</b>\n`
+    : `🎞 ${btMediaWord(kind)}: <b>— belum ada</b>\n`;
   if (!BT_ARTWORK_KINDS.has(kind)) {
     // media-only kinds (pump alert = text card; rank-up = auto dynamic banner). A clip
     // plays above / overrides the default.
@@ -344,8 +366,8 @@ function btKindText(kind) {
   );
 }
 function btKindKb(kind) {
-  const clipRow = [Markup.button.callback("🎞 Upload GIF/Video", `bt_med:${kind}`)];
-  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback("🗑 Hapus GIF/Video", `bt_medrm:${kind}`));
+  const clipRow = [Markup.button.callback(`🎞 Upload ${btMediaWord(kind)}`, `bt_med:${kind}`)];
+  if (bannerTpl.mediaOverride(kind)) clipRow.push(Markup.button.callback(`🗑 Hapus ${btMediaWord(kind)}`, `bt_medrm:${kind}`));
   if (!BT_ARTWORK_KINDS.has(kind)) {
     const rows = [clipRow];
     if (bannerTpl.mediaOverride(kind)) {
@@ -1459,7 +1481,8 @@ async function bxPreview(ctx, kind) {
   const media = bannerTpl.mediaOverride(kind);
   // With a clip set, render and send the REAL animated result (exactly what posts),
   // not just a still frame. Falls back to a still if ffmpeg compositing isn't available.
-  if (media) {
+  // A photo has no frames to composite onto — the layout editor does not apply.
+  if (media && media.type !== "photo") {
     const filled = await bannerTpl.composeOntoClip(kind, media, sampleMedia(kind), sampleData(kind)).catch(() => null);
     if (filled) {
       await ctx
@@ -1484,6 +1507,15 @@ async function btPreview(ctx, kind, pct) {
   // A GIF/video clip WINS over the still artwork in real posts, so preview IT — this is
   // exactly what will play above every post, letting the admin verify it before going live.
   const media = bannerTpl.mediaOverride(kind);
+  // A still photo posts as a photo. Everything below it is clip machinery —
+  // ffmpeg normalising, frame compositing — which would either fail on a JPG or
+  // show the admin something the group will never receive.
+  if (media && media.type === "photo") {
+    await ctx
+      .replyWithPhoto({ source: media.source }, { caption: `👁 <b>${BT_KINDS[kind]} preview</b> — dikirim apa adanya, detail token jadi captionnya.`, parse_mode: "HTML" })
+      .catch((e) => ctx.reply(`⚠️ Gagal menampilkan foto: ${e.message}`).catch(() => {}));
+    return;
+  }
   if (media) {
     // Diagnostic: which exact clip file the preview resolved to (path+size+mtime).
     // If a stale-clip report ever recurs, this line pins whether the newest file
@@ -2070,8 +2102,11 @@ function build() {
       : kind === "banner"
         ? `\n\n⚠️ Banner Ads play the advertiser's clip <b>as-is</b> — token data is not drawn onto it.`
         : "";
+    const photoNote = BT_PHOTO_KINDS.has(kind)
+      ? ` <b>Foto juga boleh</b> (JPG/PNG) kalau Anda mau gambar diam — dikirim apa adanya di atas caption alert.`
+      : "";
     await ctx.reply(
-      `🎞 Kirim <b>GIF atau video untuk ${BT_KINDS[kind]}</b> — GIF/animasi atau MP4 pendek (kirim sebagai <b>file/dokumen</b> supaya kualitasnya bagus, maks ~20 MB). Ini diputar di atas setiap post ${BT_KINDS[kind]}.${fillNote}\n\n/cancel untuk batal.`,
+      `🎞 Kirim <b>${btMediaWord(kind)} untuk ${BT_KINDS[kind]}</b> — GIF/animasi atau MP4 pendek (kirim sebagai <b>file/dokumen</b> supaya kualitasnya bagus, maks ~20 MB). Ini diputar di atas setiap post ${BT_KINDS[kind]}.${photoNote}${fillNote}\n\n/cancel untuk batal.`,
       HTML,
     );
   });
@@ -3269,15 +3304,24 @@ function build() {
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode === "media_upload") {
       const { kind } = ctx.session.awaitingBt;
       const m = ctx.message;
+      // A still photo counts as media for the group-alert slots only — see
+      // BT_PHOTO_KINDS. Everywhere else a photo lands in the ⬆ Upload artwork
+      // slot instead, and accepting it here would quietly replace a composited
+      // banner with a flat one.
+      const photoOk = BT_PHOTO_KINDS.has(kind);
       let fileId, ext;
       if (m.animation) { fileId = m.animation.file_id; ext = "gif"; } // looping clip → sendAnimation
       else if (m.video) { fileId = m.video.file_id; ext = "mp4"; }
+      else if (m.photo && photoOk) { fileId = m.photo[m.photo.length - 1].file_id; ext = "jpg"; } // largest size
       else if (m.document) {
         fileId = m.document.file_id;
         const fn = String(m.document.file_name || "").toLowerCase();
-        ext = fn.endsWith(".gif") ? "gif" : fn.endsWith(".webm") ? "webm" : fn.endsWith(".mov") ? "mov" : "mp4";
+        const still = photoOk && /\.(jpe?g|png)$/.test(fn);
+        ext = still
+          ? fn.endsWith(".png") ? "png" : "jpg"
+          : fn.endsWith(".gif") ? "gif" : fn.endsWith(".webm") ? "webm" : fn.endsWith(".mov") ? "mov" : "mp4";
       }
-      if (!fileId) return ctx.reply("Kirim GIF atau video (atau file mp4/gif).").catch(() => {});
+      if (!fileId) return ctx.reply(`Kirim ${btMediaWord(kind)}.`).catch(() => {});
       ctx.session.awaitingBt = null;
       try {
         // Clips can be up to ~20 MB, so allow a generous timeout, and retry the
@@ -3288,9 +3332,11 @@ function build() {
         const mb = (bytes / 1048576).toFixed(2);
         // ONE preview only, and it's admin-triggered — auto-previewing here on top
         // of the admin tapping 👁 Preview produced two identical previews.
-        await ctx.reply(`✅ <b>GIF/video ${BT_KINDS[kind]} tersimpan</b> (${mb} MB). Sekarang diputar di atas setiap post ${BT_KINDS[kind]} (menggantikan gambar diamnya).\n\nTekan 👁 <b>Lihat hasil</b> di bawah untuk melihatnya.`, { ...HTML, ...btKindKb(kind) });
+        const word = type === "photo" ? "Foto" : "GIF/video";
+        const verb = type === "photo" ? "dikirim" : "diputar";
+        await ctx.reply(`✅ <b>${word} ${BT_KINDS[kind]} tersimpan</b> (${mb} MB). Sekarang ${verb} di atas setiap post ${BT_KINDS[kind]} (menggantikan gambar diamnya).\n\nTekan 👁 <b>Lihat hasil</b> di bawah untuk melihatnya.`, { ...HTML, ...btKindKb(kind) });
       } catch (e) {
-        await ctx.reply(`⚠️ Gagal menyimpan GIF/video: ${e.message}`).catch(() => {});
+        await ctx.reply(`⚠️ Gagal menyimpan media: ${e.message}`).catch(() => {});
       }
       return;
     }

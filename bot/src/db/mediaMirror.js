@@ -22,7 +22,10 @@ const SESSION_BLOB = "gramjs-session";
 // gainers-background.png is the artwork an admin uploads for the Top-Gainers
 // banner; like every other uploaded asset it must survive a container replace,
 // or the operator silently loses their background on the next deploy.
-const BLOB_RE = /^(banner-media-.+\.(gif|mp4|webm|mov)|banner-template-.+\.png|gainers-background\.png|banner)$/i;
+// jpg/png belong on the banner-media branch too: the group-alert slots take a
+// still photo as their media, and a media type missing from here is an upload
+// the operator loses on the next container replace, silently.
+const BLOB_RE = /^(banner-media-.+\.(gif|mp4|webm|mov|jpe?g|png)|banner-template-.+\.png|gainers-background\.png|banner)$/i;
 const isBlob = (name) => BLOB_RE.test(name) && !name.endsWith(".tmp");
 
 function localBlobs() {

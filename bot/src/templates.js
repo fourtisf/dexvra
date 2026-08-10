@@ -492,13 +492,16 @@ const DEFAULTS = {
   settoken_not_found:
     "❌ **No live pool on that CA**\n\n" +
     "Check the address, or name the chain first with /setchain <chain> and run /settoken again.",
+  // The token is set and the bot is LIVE — so this says what is already running,
+  // not what to run next. It used to end on a row of three commands, which reads
+  // as homework at the exact moment the setup finished.
   settoken_ok:
-    "✅ **Armed on {chain}**\n\n" +
+    "✅ **Live on {chain}**\n\n" +
     "🪙 **{name}** ({symbol})\n\n" +
-    "Every buy gets called in here from now on.\n" +
-    "/setminbuy 50 floor · /setwhale 50000 whale bar · /buybot off pause",
+    "Every buy from **{minBuy}** up gets called in here. A buyer already holding **{whale}** or more gets pinned.\n\n" +
+    "That's everything — the ⚙️ button changes any of it.",
   setchain_unknown: "❌ Not a chain we run on.\n\nOne of: `{chains}`",
-  setchain_need_token: "📄 Set the token first: /settoken <CA>",
+  setchain_need_token: "📄 Set the token first: /settoken <contract address>",
   setchain_ok: "✅ Chain set to **{chain}** — pool found.",
   setchain_ok_nopool: "⚠️ Chain set to **{chain}** — no pool yet. It keeps looking every cycle.",
   // Sent when /setminbuy arrives with no amount — a question, so it answers with
@@ -913,7 +916,11 @@ const META = {
   settoken_prompt: { group: "Group Setup", label: "/settoken — paste prompt", ph: [] },
   settoken_resolving: { group: "Group Setup", label: "/settoken — looking it up", ph: [] },
   settoken_not_found: { group: "Group Setup", label: "/settoken — no pool found", ph: [] },
-  settoken_ok: { group: "Group Setup", label: "/settoken — armed ✅", ph: ["chain", "name", "symbol", "address"] },
+  settoken_ok: {
+    group: "Group Setup",
+    label: "/settoken — live ✅",
+    ph: ["chain", "name", "symbol", "address", "minBuy", "whale"],
+  },
   setchain_unknown: { group: "Group Setup", label: "/setchain — unknown network", ph: ["chains"] },
   setchain_need_token: { group: "Group Setup", label: "/setchain — set the token first", ph: [] },
   setchain_ok: { group: "Group Setup", label: "/setchain — done", ph: ["chain"] },

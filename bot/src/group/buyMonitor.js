@@ -545,7 +545,7 @@ async function sendAlert(tg, chatId, text, extra, kind = "buy") {
       delete caption.entities;
     }
     try {
-      const send = clip.type === "video" ? tg.sendVideo : tg.sendAnimation;
+      const send = clip.type === "video" ? tg.sendVideo : clip.type === "photo" ? tg.sendPhoto : tg.sendAnimation;
       return await send.call(tg, chatId, { source: clip.source }, caption);
     } catch (e) {
       // A rejected clip must cost the ARTWORK, never the alert.

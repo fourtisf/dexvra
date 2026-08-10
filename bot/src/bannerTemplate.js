@@ -51,7 +51,15 @@ const unset = (v) => v == null || v === "";
 // still — a generic hype clip (the per-token details live in the caption, so
 // nothing is composited into a video). Kind here is free-form (listing /
 // trending / banner / pump) so pump alerts can carry a clip too.
-const MEDIA_EXT = { gif: "animation", mp4: "video", webm: "video", mov: "video" };
+//
+// jpg/png are here for the group-alert kinds only (buy / whale / the ⭐ default
+// slot), where the media is played AS-IS above a caption — a still house image
+// is a legitimate choice there and used to be impossible: the upload accepted
+// nothing but a clip, so an operator with artwork had to animate it first. The
+// admin bot is what gates which kinds may take one; the compositing kinds
+// (listing/trending/banner) still get their still artwork through the separate
+// banner-template-<kind>.png upload, which is drawn on, not played.
+const MEDIA_EXT = { gif: "animation", mp4: "video", webm: "video", mov: "video", jpg: "photo", png: "photo" };
 let _mediaSeq = 0; // process-local counter → collision-free temp filenames on write
 function mediaPath(kind, ext) {
   return path.join(DATA_DIR, `banner-media-${kind}.${ext}`);
@@ -93,7 +101,7 @@ function mediaOverride(kind) {
 }
 async function saveMedia(kind, buffer, ext) {
   const e = String(ext || "mp4").toLowerCase();
-  if (!MEDIA_EXT[e]) throw new Error(`unsupported media type .${e} (use gif/mp4/webm/mov)`);
+  if (!MEDIA_EXT[e]) throw new Error(`unsupported media type .${e} (use gif/mp4/webm/mov/jpg/png)`);
   await fss.promises.mkdir(DATA_DIR, { recursive: true });
   const outPath = mediaPath(kind, e);
   // Write the NEW clip FIRST, atomically (temp + rename). rename gives a clean

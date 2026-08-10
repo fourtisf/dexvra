@@ -18,7 +18,7 @@ const writeKind = (kind, ext) => fss.writeFileSync(kindPath(kind, ext), "GIF89a-
 const writeClip = (ext) => writeKind("buy", ext);
 const clearClips = () => {
   for (const kind of ["buy", "whale", "default"]) {
-    for (const ext of ["gif", "mp4", "webm", "mov"]) {
+    for (const ext of ["gif", "mp4", "webm", "mov", "jpg", "png"]) {
       try {
         fss.unlinkSync(kindPath(kind, ext));
       } catch {
@@ -73,6 +73,48 @@ test("an MP4 is sent as a VIDEO", async () => {
   };
   await mon.sendAlert(tg, "-100", "buy!", {});
   assert.strictEqual(calls[0][0], "video");
+});
+
+test("a still photo is sent as a PHOTO", async () => {
+  // The media slot took clips only, so an operator with house artwork had to
+  // animate it before the buy bot would carry it at all.
+  writeClip("jpg");
+  const calls = [];
+  const tg = {
+    sendMessage: async () => calls.push(["text"]),
+    sendAnimation: async () => calls.push(["anim"]),
+    sendVideo: async () => calls.push(["video"]),
+    sendPhoto: async (c, media, extra) => calls.push(["photo", c, media, extra]),
+  };
+  await mon.sendAlert(tg, "-100", "buy!", { entities: [{ type: "bold", offset: 0, length: 3 }] });
+  assert.strictEqual(calls[0][0], "photo");
+  // Same caption rule as a clip: a photo's formatting rides on caption_entities.
+  assert.ok(calls[0][3].caption_entities, "the alert's formatting survives");
+  assert.strictEqual(calls[0][3].entities, undefined);
+});
+
+test("only the group-alert slots may take a still photo", () => {
+  // Everywhere else the still image is the ⬆ Upload artwork slot, which gets
+  // DRAWN ON. A photo accepted into the media slot there would silently replace
+  // a composited banner with a flat one.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
+  const set = src.match(/const BT_PHOTO_KINDS = new Set\(\[([^\]]+)\]\)/);
+  assert.ok(set, "the photo-capable kinds are still declared as a set");
+  const kinds = set[1].match(/"([a-z]+)"/g).map((s) => s.replace(/"/g, ""));
+  assert.deepStrictEqual(kinds.sort(), ["buy", "default", "whale"]);
+});
+
+test("an uploaded photo is mirrored, so a container replace does not eat it", () => {
+  // Every media extension has to be on the blob regex. One that is missing is
+  // an upload the operator silently loses on the next deploy.
+  const mirror = fss.readFileSync(path.join(__dirname, "..", "src", "db", "mediaMirror.js"), "utf8");
+  const re = mirror.match(/const BLOB_RE = (\/.+\/i);/);
+  assert.ok(re, "the blob regex still exists");
+  // eslint-disable-next-line no-eval -- the file's own literal, read from disk
+  const rx = eval(re[1]);
+  const bannerTemplate = fss.readFileSync(path.join(__dirname, "..", "src", "bannerTemplate.js"), "utf8");
+  const exts = bannerTemplate.match(/const MEDIA_EXT = \{([^}]+)\}/)[1].match(/(\w+):/g).map((s) => s.slice(0, -1));
+  for (const ext of exts) assert.ok(rx.test(`banner-media-buy.${ext}`), `.${ext} uploads are mirrored`);
 });
 
 test("a clip Telegram REFUSES costs the artwork, never the alert", async () => {
