@@ -1229,16 +1229,54 @@ function sampleData(kind, pct) {
   }
   return BX_SAMPLE;
 }
+// Size steps offered on every element screen, fine → coarse.
+//
+// One step per element was both too coarse and too fine at once: 40px could not
+// nudge a logo into a socket, and 8px could not carry a font anywhere. Three
+// steps is what the operator asked for, and the range each element accepts is
+// clamped in the handler, so the same three are safe everywhere — a font pinned
+// at its smin simply stops shrinking.
+const BX_SIZE_STEPS = [5, 10, 20];
 const BX = {
-  logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, sf: 10, recenter: true },
-  ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12, sf: 4 },
-  name: { label: "📝 Nama token", sizeKey: "nameFontSize", smin: 12, smax: 140, sc: 8, sf: 3, nomove: true },
+  logo: { label: "🪙 Logo", sizeKey: "logoSize", xKey: "logoX", yKey: "logoY", smin: 60, smax: 1600, sc: 40, recenter: true },
+  ticker: { label: "🔤 Ticker", sizeKey: "tickerFontSize", xKey: "tickerX", yKey: "tickerY", smin: 24, smax: 220, sc: 12 },
+  // The name used to be nomove: it is DRAWN under the ticker at nameOffsetY, so
+  // there was no coordinate to move. It has nameX/nameY now — both null until
+  // the operator moves it, which is what keeps it following the ticker on every
+  // layout tuned before those keys existed. `follows` is what tells this editor
+  // where "here" is before the first nudge.
+  name: { label: "📝 Nama token", sizeKey: "nameFontSize", xKey: "nameX", yKey: "nameY", smin: 12, smax: 140, sc: 8, follows: "ticker" },
   // Pump-only elements: the big "▲ +N%" headline and the "old → new" price line.
-  pct: { label: "📈 % Kenaikan", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12, sf: 4 },
-  price: { label: "💱 Harga →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10, sf: 4 },
-  meta: { label: "📊 Info (chain·harga·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8, sf: 3 },
-  badge: { label: "🏷 Label tier", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8, sf: 3 },
+  pct: { label: "📈 % Kenaikan", sizeKey: "pctFontSize", xKey: "pctX", yKey: "pctY", smin: 60, smax: 320, sc: 12 },
+  price: { label: "💱 Harga →", sizeKey: "priceFontSize", xKey: "priceX", yKey: "priceY", smin: 24, smax: 200, sc: 10 },
+  meta: { label: "📊 Info (chain·harga·MC)", sizeKey: "metaFontSize", xKey: "metaX", yKey: "metaY", smin: 16, smax: 120, sc: 8 },
+  badge: { label: "🏷 Label tier", sizeKey: "badgeFontSize", xKey: "badgeX", yKey: "badgeY", smin: 16, smax: 120, sc: 8 },
 };
+
+/**
+ * Where an element ACTUALLY sits right now — which is not always what is
+ * stored.
+ *
+ * The token name has no coordinate of its own until someone moves it; it is
+ * drawn under the ticker. So the first arrow tap has to start from THERE. Read
+ * the raw null instead and `btNum(null, 1070)` hands back a default constant,
+ * which is how one nudge teleports the name across the banner.
+ */
+function bxPos(s, elem) {
+  const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
+  if (!c || !c.xKey) return null;
+  let x = s[c.xKey];
+  let y = s[c.yKey];
+  // Per AXIS, because they are pinned independently: centring the name
+  // horizontally must not silently pin its vertical position too.
+  const followsX = c.follows === "ticker" && unsetPos(x);
+  const followsY = c.follows === "ticker" && unsetPos(y);
+  if (followsX) x = s.tickerX; // may itself be "center" — carried through
+  if (followsY) y = btNum(s.tickerY, 640) + (Number(s.nameOffsetY) || 0);
+  return { x, y, followsX, followsY, inherited: followsX || followsY };
+}
+// 0 is a real coordinate; only null/"" mean "nothing stored".
+const unsetPos = (v) => v == null || v === "";
 const BX_MOVE_COARSE = 40; // px per coarse arrow on the 2560×1280 canvas
 const BX_MOVE_FINE = 10;
 
@@ -1336,8 +1374,15 @@ function bxElemText(kind, elem) {
     );
   }
   const c = BX[elem];
-  const pos = c.nomove ? "" : ` · di <b>(${s[c.xKey]}, ${s[c.yKey]})</b>`;
-  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nUkuran <b>${s[c.sizeKey]}px</b>${pos}`;
+  const p = bxPos(s, elem);
+  const pos = c.nomove || !p ? "" : ` · di <b>(${p.x}, ${p.y})</b>`;
+  // Said out loud, because "(210, 714)" on a name that has never been moved
+  // looks like a stored position and is not — nudging the TICKER moves it too,
+  // right up until the first arrow tap here pins it. Named per axis, since
+  // centring one leaves the other still following.
+  const axes = p && p.followsX && p.followsY ? "Posisi" : p && p.followsX ? "Posisi kiri–kanan" : p && p.followsY ? "Posisi atas–bawah" : "";
+  const note = axes ? `\n\n🔗 ${axes} masih <b>ikut Ticker</b>. Tekan panah di bawah untuk melepas dan menaruhnya sendiri.` : "";
+  return `🎛 <b>${BT_KINDS[kind]} — ${c.label}</b>\nUkuran <b>${s[c.sizeKey]}px</b>${pos}${note}`;
 }
 function bxElemKb(kind, elem) {
   const cb = Markup.button.callback;
@@ -1367,13 +1412,22 @@ function bxElemKb(kind, elem) {
     ]);
   }
   const c = BX[elem];
-  const rows = [[cb("Ukuran ➖", `bxsd:${kind}:${elem}:${-c.sc}`), cb("Ukuran ➕", `bxsd:${kind}:${elem}:${c.sc}`)]];
-  if (c.nomove) {
-    rows.push([cb("⌨ Atur ukuran", `bxsn:${kind}:${elem}`)]);
-  } else {
+  // Two mirrored rows, same magnitude in the same column, so "smaller by 10" is
+  // directly above "bigger by 10" and a mis-tap is one tap to undo.
+  const rows = [
+    BX_SIZE_STEPS.map((n) => cb(`➖ ${n}px`, `bxsd:${kind}:${elem}:${-n}`)),
+    BX_SIZE_STEPS.map((n) => cb(`➕ ${n}px`, `bxsd:${kind}:${elem}:${n}`)),
+  ];
+  rows.push([cb("⌨ Atur ukuran", `bxsn:${kind}:${elem}`)]);
+  if (!c.nomove) {
     rows.push([cb("⬅", `bxmd:${kind}:${elem}:${-M}:0`), cb("⬆", `bxmd:${kind}:${elem}:0:${-M}`), cb("⬇", `bxmd:${kind}:${elem}:0:${M}`), cb("➡", `bxmd:${kind}:${elem}:${M}:0`)]);
     rows.push([cb("⬌ Ke tengah", `bxc:${kind}:${elem}`), cb("⬍ Ke tengah", `bxcy:${kind}:${elem}`)]);
     rows.push([cb("⌨ Atur posisi", `bxmn:${kind}:${elem}`)]);
+    // The way BACK. Moving the name pins it, and without this the only undo was
+    // "🔄 Kembalikan awal", which throws away every other tweak on the kind too.
+    if (c.follows && bxPos(bannerTpl.getSettings(kind), elem)?.inherited === false) {
+      rows.push([cb("🔗 Ikut Ticker lagi", `bxfollow:${kind}:${elem}`)]);
+    }
   }
   rows.push([cb("👁 Lihat hasil", `bxp:${kind}`), cb("⬅ Kembali", `bxo:${kind}`)]);
   return Markup.inlineKeyboard(rows);
@@ -2523,8 +2577,14 @@ function build() {
     const c = BX[elem];
     if (elem === "logo") {
       const size = Math.max(c.smin, Math.min(c.smax, Number(s.logoSize) + d));
-      // grow/shrink around the slot CENTRE so the ring doesn't drift while resizing
-      const dx = (Number(s.logoSize) - size) / 2;
+      // Grow/shrink around the slot CENTRE so the ring doesn't drift while
+      // resizing. TRUNCATED toward zero, not rounded: an odd step (5px) makes
+      // the half-delta 2.5, and Math.round on the SUM sent ➕5 and ➖5 to
+      // different places — press one then the other and the logo came back a
+      // pixel off. Truncating makes them exact inverses. (The centre can still
+      // sit half a pixel out per odd-step tap; that is sub-pixel once the
+      // 2560px canvas is delivered at 1280, and ⬌ Ke tengah resets it exactly.)
+      const dx = Math.trunc((Number(s.logoSize) - size) / 2);
       await bannerTpl.updateSettings(kind, {
         logoSize: size,
         logoX: Math.round(btNum(s.logoX, 1070) + dx),
@@ -2543,9 +2603,12 @@ function build() {
     const [, kind, elem, dxs, dys] = ctx.match;
     const s = bannerTpl.getSettings(kind);
     const c = elem === "slot" ? { xKey: "logoX", yKey: "logoY" } : BX[elem];
-    if (!c || c.nomove) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
-    const x = Math.max(-800, Math.min(3200, btNum(s[c.xKey], 1070) + Number(dxs)));
-    const y = Math.max(-800, Math.min(3200, btNum(s[c.yKey], 430) + Number(dys)));
+    const p = bxPos(s, elem);
+    if (!c || c.nomove || !p) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
+    // From where it IS, not from what is stored — the token name inherits the
+    // ticker's position until this very tap pins it (see bxPos).
+    const x = Math.max(-800, Math.min(3200, btNum(p.x, 1070) + Number(dxs)));
+    const y = Math.max(-800, Math.min(3200, btNum(p.y, 430) + Number(dys)));
     await bannerTpl.updateSettings(kind, { [c.xKey]: x, [c.yKey]: y });
     ctx.answerCbQuery(`📍 ${x}, ${y}`).catch(() => {});
     await bxElemOpen(ctx, kind, elem);
@@ -2569,6 +2632,18 @@ function build() {
     if (!c || c.nomove || !c.yKey) return ctx.answerCbQuery("Bagian ini tidak bisa digeser.").catch(() => {});
     await bannerTpl.updateSettings(kind, { [c.yKey]: "center" });
     ctx.answerCbQuery("⬍ Sudah di tengah (atas–bawah)").catch(() => {});
+    await bxElemOpen(ctx, kind, elem);
+  });
+  // Un-pin: back to "wherever the ticker is". Clearing BOTH keys is the point —
+  // a half-cleared name follows on one axis and not the other, which is exactly
+  // the state that made the position readout confusing to begin with.
+  bot.action(new RegExp(`^bxfollow:${KL}:${EX}$`), async (ctx) => {
+    if (!guard(ctx)) return;
+    const [, kind, elem] = ctx.match;
+    const c = BX[elem];
+    if (!c || !c.follows) return ctx.answerCbQuery("Bagian ini tidak mengikuti apa pun.").catch(() => {});
+    await bannerTpl.updateSettings(kind, { [c.xKey]: null, [c.yKey]: null });
+    ctx.answerCbQuery("🔗 Kembali ikut Ticker").catch(() => {});
     await bxElemOpen(ctx, kind, elem);
   });
   bot.action(new RegExp(`^bxsn:${KL}:${EX}$`), async (ctx) => {
@@ -2602,8 +2677,9 @@ function build() {
     ctx.session.awaitingBt = { mode: "bxmove", kind, elem };
     const s = bannerTpl.getSettings(kind);
     const c = elem === "slot" ? { label: "🖼 Ad slot", xKey: "logoX", yKey: "logoY" } : BX[elem];
-    const cx = s[c.xKey];
-    const cy = s[c.yKey];
+    const p = bxPos(s, elem) || { x: s[c.xKey], y: s[c.yKey] };
+    const cx = p.x;
+    const cy = p.y;
     await ctx.reply(
       `⌨ <b>${BT_KINDS[kind]} — geser ${c.label}</b>\nSekarang di: <b>(${cx}, ${cy})</b>\n\n` +
         `Kirim dua angka, dipisah koma:\n` +

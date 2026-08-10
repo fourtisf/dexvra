@@ -40,6 +40,12 @@ const exists = (p) => {
   }
 };
 
+/** "No coordinate stored" — the token name then follows the ticker (see
+ *  nameX/nameY below). Not `!v`: 0 is a real coordinate (the left/top edge),
+ *  and treating it as unset would make the one position an operator cannot
+ *  choose the one they are most likely to want. */
+const unset = (v) => v == null || v === "";
+
 // ── Admin-uploaded GIF / VIDEO override (per kind) ───────────────────────────
 // When set, the channel post uses this ANIMATED media instead of the composited
 // still — a generic hype clip (the per-token details live in the caption, so
@@ -156,6 +162,15 @@ const BASE_DEFAULTS = {
   nameFontSize: 48,
   nameColor: "#B8CCC8",
   nameOffsetY: 96,
+  // The token name FOLLOWS the ticker by default — same X, nameOffsetY below it
+  // — which is what every layout tuned before these two keys existed relies on.
+  // null means exactly that: "wherever the ticker is". The moment the operator
+  // drags the name in the position editor these hold an absolute coordinate (or
+  // "center") and the name stops following. Kept null-by-default rather than
+  // seeded with a number so adding them changes NO existing banner: a default
+  // coordinate would have teleported every tuned name to one spot.
+  nameX: null,
+  nameY: null,
   // token meta chips (CHAIN · price · MC) — auto-arranged as a row from metaX
   // (or centred), constant gap, each auto-sized to its text so they never
   // overflow or collide. Positioned & sized as a GROUP. X = LEFT edge / "center".
@@ -552,8 +567,21 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         ctx.shadowOffsetY = 2;
         ctx.font = `500 ${cfg.nameFontSize}px TplReg, sans-serif`;
         ctx.fillStyle = cfg.nameColor;
-        const nx = cfg.tickerX === "center" ? (W - ctx.measureText(name).width) / 2 : tx;
-        ctx.fillText(String(name).slice(0, 32), nx, ty + Number(cfg.nameOffsetY));
+        // Measure the string that is actually DRAWN. Measuring the full name and
+        // drawing a 32-char slice put a long centred name off-centre by exactly
+        // the width of the text that got cut.
+        const label = String(name).slice(0, 32);
+        const nameW = ctx.measureText(label).width;
+        // An explicit nameX/nameY wins; unset, the name follows the ticker.
+        const nx = unset(cfg.nameX)
+          ? cfg.tickerX === "center"
+            ? (W - nameW) / 2
+            : tx
+          : cfg.nameX === "center"
+            ? (W - nameW) / 2
+            : Number(cfg.nameX) || 0;
+        const ny = unset(cfg.nameY) ? ty + Number(cfg.nameOffsetY) : cfg.nameY === "center" ? H / 2 : Number(cfg.nameY) || 0;
+        ctx.fillText(label, nx, ny);
       }
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
