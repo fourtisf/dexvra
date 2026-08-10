@@ -399,7 +399,7 @@ const DEFAULTS = {
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
     // "Received", not "Got" — the card sits above a link to the transaction and
     // reads alongside an exchange fill, so it uses the vocabulary of one.
-    "🪙 **Bagged:** {tokenAmt} {symbol}\n" +
+    "🪙 **Token:** {tokenAmt} {symbol}\n" +
     `${em("📊", E.chart)} **Price:** {price} · 📈 **24h:** {change}\n` +
     // Market cap and liquidity, side by side: the two numbers that say whether
     // this buy is a rounding error or a dent. Both were already computed and
@@ -424,23 +424,24 @@ const DEFAULTS = {
   // {holds} is the buyer's balance OF THIS TOKEN valued at the pool price — not
   // a portfolio total, which this bot cannot see. The label says so.
   //
-  // {whaleBar} is the bar this wallet actually cleared — the group's own
-  // /setwhale, else the global one set in @dexvraadminbot (ships at $50,000).
-  // It is a placeholder and not the literal "$50,000" precisely because either
-  // can be retuned at any time, and a card stating the wrong entry condition is
-  // worse than one stating none.
+  // {whaleBar} — the bar this wallet cleared — is a PLACEHOLDER, not a default
+  // row. It is the operator's own threshold, and a reader in the group has no
+  // use for it: it explains the bot's mechanism instead of reporting the event.
+  // Available for anyone who does want it, and never a hardcoded "$50,000",
+  // because the group's /setwhale or the admin bot can move it at any time.
   group_whale_alert:
     `${em("🐋", E.diamond)} **WHALE WALLET** · [{name}]({coinUrl})\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** {usd}{native}\n` +
-    "🪙 **Bagged:** {tokenAmt} {symbol}\n" +
-    "💰 **Bag:** {holds} {symbol} · **{holdsUsd}**\n" +
-    "📈 **Added:** {position} · 🎯 **Whale bar:** {whaleBar}\n" +
-    `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n` +
+    "🪙 **Token:** {tokenAmt} {symbol}\n" +
+    // The one row the ordinary card cannot carry: what this wallet is sitting
+    // on, and how much this buy grew it. That IS the news — everything else on
+    // this card is the same market context the buy card shows, deliberately, so
+    // the louder alert is not also the thinner one.
+    "💰 **Position:** {holds} {symbol} · **{holdsUsd}** ({position})\n" +
+    `${em("📊", E.chart)} **Price:** {price} · 📈 **24h:** {change}\n` +
+    `${em("🏦", E.dollar)} **MCap:** {mcap} · 💧 **Liq:** {liq}\n` +
     "{verify}\n\n" +
-    // Says, in one line, WHY this alert is louder than the last one — a reader
-    // who does not already know the rule cannot infer it from the numbers.
-    "🐋 Big bag getting bigger. That is not noise.\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({coinUrl}) · [🔥 Trending]({trending})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
@@ -460,7 +461,7 @@ const DEFAULTS = {
     `${em("🟢", E.green)} **BUY PRESSURE** · {symbol}\n\n` +
     "{emoji}\n\n" +
     `${em("💲", E.dollar)} **Spent:** ≈ {usd} across {count} {buysWord}\n` +
-    "🪙 **Bagged:** ≈ {tokenAmt} {symbol}\n" +
+    "🪙 **Token:** ≈ {tokenAmt} {symbol}\n" +
     `${em("📊", E.chart)} **Price:** {price} · ${em("🏦", E.dollar)} **MCap:** {mcap}\n\n` +
     // Plain text, NOT `_italics_` — the premium-markup parser understands
     // **bold**, [links](url) and `code` and nothing else, so the underscores in

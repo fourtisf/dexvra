@@ -234,9 +234,8 @@ test("groups sharing a pool each get their OWN verdict on one shared lookup", as
 
     assert.strictEqual(lookups, 1, "one RPC call served all three groups");
     assert.match(sent["-1"], /NEW BUY/, "the $25k group sees an ordinary buy");
-    assert.match(sent["-1"], /💼 Bag: 10,000 \$DEX · \$10,000/, "…still carrying the position row");
+    assert.match(sent["-1"], /💼 Position: 10,000 \$DEX · \$10,000/, "…still carrying the position row");
     assert.match(sent["-2"], /WHALE WALLET/, "the $5k group sees a whale");
-    assert.match(sent["-2"], /Whale bar: \$5,000/, "…against ITS bar, not its neighbour's");
     assert.ok(!/💼/.test(sent["-3"]), "the opted-out group gets neither card nor row");
   } finally {
     trades.fetchPoolBuys = realFetch;

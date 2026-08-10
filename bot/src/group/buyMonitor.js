@@ -317,7 +317,7 @@ function verifyRow(chain, buy) {
 function positionRow(g, pos) {
   if (!pos || !(pos.held > 0)) return "";
   const sym = premium.sanitizeVar(`$${String(g.sym || "").replace(/^\$/, "") || "TOKEN"}`);
-  return `💼 **Bag:** ${tokenAmount(pos.held)} ${sym} · ${usdAmount(pos.holdsUsd)} (${pos.position})`;
+  return `💼 **Position:** ${tokenAmount(pos.held)} ${sym} · ${usdAmount(pos.holdsUsd)} (${pos.position})`;
 }
 
 /** Every value both buy cards share. Split out so the whale card cannot drift

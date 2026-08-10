@@ -195,23 +195,45 @@ test("the whale card labels the figure HOLDS, not 'wallet balance'", () => {
   const out = mon.renderWhaleAlert(g(), buy, pool, { held: 1_980_000, holdsUsd: 95_523, position: "+3.82%" }).text;
   assert.match(out, /WHALE WALLET/);
   assert.match(out, /🐋🐋/, "the row carries the whale icon, not the plain buy one");
-  assert.match(out, /Bag: 1,980,000 \$RUSS · \$95,523/);
-  assert.match(out, /Added: \+3\.82%/);
+  assert.match(out, /Position: 1,980,000 \$RUSS · \$95,523/);
+  assert.match(out, /\(\+3\.82%\)/, "and how much this buy grew it, on the same row");
   assert.ok(!/wallet balance/i.test(out));
 });
 
-test("the card states the bar this wallet CLEARED, never a hardcoded $50,000", async () => {
-  // The copy has to survive the operator retuning the bar, and a group setting
-  // its own. A card asserting the wrong entry condition is worse than one
-  // asserting none.
+test("the default card does not leak the operator's own threshold", async () => {
+  // {whaleBar} was a default ROW and should never have been: the bar is the
+  // operator's setting, and a reader in the group has no use for it. It explains
+  // the bot's mechanism where the card's job is to report the event.
   holdings.holdingOf = async () => 200_000; // $10,000 held
   const whale = await mon.whaleCheck({ ...g(), whaleWalletUsd: 7500 }, buy, pool);
-  assert.strictEqual(whale.threshold, 7500);
-  assert.match(mon.renderWhaleAlert(g(), buy, pool, whale).text, /Whale bar: \$7,500/);
+  const out = mon.renderWhaleAlert(g(), buy, pool, whale).text;
+  assert.ok(!/whale bar/i.test(out), "not on the card by default");
+  assert.ok(!/7,500/.test(out), "and the number is nowhere on it either");
+});
 
+test("{whaleBar} still resolves for an operator who DOES want it", async () => {
+  // Dropping it from the default must not drop the capability — it stays a
+  // placeholder, carrying the bar this wallet actually cleared.
+  const tplMod = require("../src/templates");
+  const saved = tplMod.getRawValue("group_whale_alert");
+  try {
+    await tplMod.setTemplate("group_whale_alert", "bar={whaleBar}");
+    holdings.holdingOf = async () => 200_000; // $10,000 held
+    const whale = await mon.whaleCheck({ ...g(), whaleWalletUsd: 7500 }, buy, pool);
+    assert.strictEqual(whale.threshold, 7500, "the group's own bar, not the global one");
+    assert.strictEqual(mon.renderWhaleAlert(g(), buy, pool, whale).text, "bar=$7,500");
+  } finally {
+    if (saved == null) await tplMod.resetTemplate("group_whale_alert");
+    else await tplMod.setTemplate("group_whale_alert", saved);
+  }
+});
+
+test("no alert template hardcodes a threshold", async () => {
+  // The group's /setwhale and the admin bot can both move it, so a literal
+  // "$50,000" in the copy states an entry condition that may not be true.
   const tplSrc = fss.readFileSync(path.join(__dirname, "..", "src", "templates.js"), "utf8");
   const card = tplSrc.slice(tplSrc.indexOf("group_whale_alert:"), tplSrc.indexOf("group_buy_style:"));
-  assert.ok(!/\$50,?000/.test(card), "the default template hardcodes no threshold");
+  assert.ok(!/\$\s?50,?000/.test(card), "the default template hardcodes no threshold");
 });
 
 // ── 💼 Position on the ORDINARY buy card ─────────────────────────────────────
@@ -223,20 +245,20 @@ test("an ordinary buy carries the buyer's position, under the buyer", async () =
   const lines = out.split("\n").filter(Boolean);
   const buyerAt = lines.findIndex((l) => l.startsWith("👤 Buyer:"));
   assert.ok(buyerAt >= 0, "the buyer row is still there");
-  assert.strictEqual(lines[buyerAt + 1], "💼 Bag: 1,980,000 $RUSS · $99,000 (+2.69%)", "and the position sits right under it");
+  assert.strictEqual(lines[buyerAt + 1], "💼 Position: 1,980,000 $RUSS · $99,000 (+2.69%)", "and the position sits right under it");
 });
 
 test("a first-ever buyer says so on the ordinary card too", async () => {
   holdings.holdingOf = async () => 51_874.15; // exactly what they just bought
   const pos = await mon.buyerPosition(g(), { ...buy, tokenAmount: 51_874.15 }, pool);
-  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Bag: 51,874\.15 \$RUSS · \$2,594 \(new position\)/);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Position: 51,874\.15 \$RUSS · \$2,594 \(new position\)/);
 });
 
 test("an unreadable holding removes the WHOLE row, not just its value", async () => {
   // A dangling "💼 Position:" with nothing after it is not a row, it is a
   // rendering bug — and the buy is worth alerting either way.
   const out = mon.renderRealAlert(g(), buy, pool, null).text;
-  assert.ok(!/\bBag\b/.test(out), "no label left behind");
+  assert.ok(!/Position/.test(out), "no label left behind");
   assert.ok(!/💼/.test(out), "and no orphan emoji");
   assert.match(out, /👤 Buyer:[^\n]*\n\n⚡ Trade/, "the buyer row runs straight into the CTA");
   assert.strictEqual(mon.positionRow(g(), null), "");
@@ -253,7 +275,7 @@ test("every reason a holding is unreadable ends in no row, never a broken one", 
   holdings.holdingOf = async () => 2_000_000;
   for (const [why, args] of Object.entries(cases)) {
     assert.strictEqual(await mon.buyerPosition(...args), null, why);
-    assert.ok(!/\bBag\b/.test(mon.renderRealAlert(args[0], args[1], args[2], null).text), `${why}: no dangling row`);
+    assert.ok(!/Position/.test(mon.renderRealAlert(args[0], args[1], args[2], null).text), `${why}: no dangling row`);
   }
 });
 
@@ -266,8 +288,8 @@ test("the position row is read ONCE and serves both cards", async () => {
   };
   const pos = await mon.buyerPosition(g(), buy, pool);
   assert.strictEqual(calls, 1);
-  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Bag: 2,000,000 \$RUSS · \$100,000/);
-  assert.match(mon.renderWhaleAlert(g(), buy, pool, { ...pos, threshold: 50000 }).text, /💰 Bag: 2,000,000 \$RUSS · \$100,000/);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /💼 Position: 2,000,000 \$RUSS · \$100,000/);
+  assert.match(mon.renderWhaleAlert(g(), buy, pool, { ...pos, threshold: 50000 }).text, /💰 Position: 2,000,000 \$RUSS · \$100,000/);
   assert.strictEqual(calls, 1, "and the whale card did not order a second lookup");
 });
 
