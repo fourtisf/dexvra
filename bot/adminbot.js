@@ -3,6 +3,7 @@
 const envFiles = require("./src/config/loadEnv").loadEnv();
 
 const log = require("./src/helpers/logger");
+log.info(`[boot] build ${require("./src/helpers/build").stamp()}`);   // same reason as main.js
 log.info(envFiles.length ? `[env] loaded ${envFiles.join(", ")}` : "[env] no .env found — using process env only");
 require("./src/helpers/net").preferIPv4(); // same flaky-IPv6 workaround as main.js
 

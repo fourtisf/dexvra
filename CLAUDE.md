@@ -28,6 +28,8 @@ server checks out.
    ```
 3. Merge into `main` and push `main`.
 4. Deploy on the server **from `main`** — see [`bot/DEPLOY.md`](bot/DEPLOY.md).
+5. **Verify what is running before believing anything about it.** Every process
+   prints its commit at boot.
 
 A branch left unmerged after it is deployed is the failure mode this rule
 exists to prevent: the server sits on a branch, the next change is cut from
@@ -35,6 +37,44 @@ exists to prevent: the server sits on a branch, the next change is cut from
 
 If a pull request for a branch has already been merged, do not add commits to
 that branch — restart it from the current `main` and open a new one.
+
+### The whole deploy, all four processes
+
+```bash
+cd /opt/dexvra && git checkout main && git pull origin main
+cd /opt/dexvra/bot && pm2 restart ecosystem.config.js --update-env   # dexvra-bot + dexvra-adminbot
+pm2 restart dexvra-tradebot --update-env                             # tradebot/ — its OWN process
+# web app (only if src/ or the repo root changed):
+cd /opt/dexvra && npm run build && pm2 restart dexvra
+pm2 ls
+```
+
+### Step 5 is not optional
+
+```bash
+pm2 logs dexvra-bot      --lines 50 --nostream | grep '\[boot\] build'
+pm2 logs dexvra-tradebot --lines 50 --nostream | grep '\[boot\]'
+```
+
+The sha printed must equal `git rev-parse --short HEAD`. A `+dirty` suffix means
+the checkout has uncommitted changes and is **not** what `main` says it is.
+
+This exists because a pull that never reached the server and a change that did
+not work are indistinguishable from Telegram, and an evening was spent debugging
+the first while assuming the second. Do not report a fix as deployed, and do not
+start diagnosing why one "did not work", until the sha matches.
+
+### Config a fix depends on
+
+A code change that needs a new `.env` value is not finished when it is merged —
+it is finished when the value is set. Say so explicitly, with the exact variable
+name, and expect the behaviour to be unchanged until then. `data/`, `.env` and
+`.keys/` live only on the server, so nothing here can set them.
+
+Current examples: `tradebot/.env` needs `<CHAIN>_V4_POOLMANAGER` before Uniswap
+v4 pools can be priced at all, and `<CHAIN>_V4_UNIVERSAL_ROUTER` +
+`<CHAIN>_V4_PERMIT2` before they can be traded. Until those are set, a v4 token
+falls back to the public indexes, which rate-limit.
 
 ## Two bot processes, one config
 

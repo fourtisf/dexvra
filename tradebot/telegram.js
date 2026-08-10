@@ -3376,7 +3376,20 @@ async function start() {
   // for a chain that is not in ENABLED_CHAINS is never probed and never priced,
   // and until now the only evidence of that was a card saying the token could
   // not be priced on whatever chain the user happened to have selected.
+  // Commit FIRST. Every other boot line is only meaningful once you know which
+  // code produced it, and "is my fix even running?" has cost more rounds in this
+  // repo than any actual bug.
+  console.log(`[boot] build ${require('./build').stamp()}`);
   console.log(`[boot] chains enabled: ${core.chains.enabledChains().map((c) => c.key).join(', ')}`);
+  // Which optional venues this process can actually use. A v4 token reads as
+  // "couldn't price it" when v4 is unconfigured, and that looked exactly like a
+  // broken bot for an entire evening.
+  for (const c of core.chains.enabledChains().filter((x) => !core.chains.isSvm(x.key))) {
+    const bits = [];
+    if (core.v4.enabled(c.key)) bits.push(core.v4.canSwap(c.key) ? 'v4 read+swap' : 'v4 read-only');
+    else bits.push('v4 OFF');
+    console.log(`[boot] ${c.key}: ${bits.join(' · ')}`);
+  }
   await getMe();
   await registerCommands();
   await refreshPrices();

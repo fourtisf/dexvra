@@ -5,6 +5,10 @@ const envFiles = require("./src/config/loadEnv").loadEnv();
 const log = require("./src/helpers/logger");
 // Named out loud: "which .env is this process actually reading" is the first
 // question behind every setting that appears not to apply.
+// Commit FIRST. "Is my fix even running?" has cost more rounds in this repo
+// than any actual bug — a pull that did not reach the server and a change
+// that did not work look identical from Telegram.
+log.info(`[boot] build ${require("./src/helpers/build").stamp()}`);
 log.info(envFiles.length ? `[env] loaded ${envFiles.join(", ")}` : "[env] no .env found — using process env only");
 require("./src/helpers/net").preferIPv4(); // before any socket opens
 
