@@ -333,35 +333,41 @@ const DEFAULTS = {
     "🌐 [dexvra.io]({site})  |  🚨 [Listing]({listing})  |  🔥 [Trending]({trending})  |  📢 [Announcement]({announce})",
   // ── The moment the bot lands in a group ─────────────────────────────────
   // Posted from the my_chat_member update, BEFORE anyone types anything. It
-  // asks for the three permissions the bot actually uses and then stops: a
-  // group that has just added a bot wants to know what to grant it, not to read
-  // a feature list. The full setup steps are /start (group_start below), which
-  // this line points at.
+  // asks for the permissions the bot actually uses and then stops: a group that
+  // has just added a bot wants to know what to grant it, not to read a feature
+  // list. The full setup steps are /start (group_start below).
   //
-  // Every permission named here is one the code really needs — "Pin messages"
-  // for whale alerts and the raid card, "Delete messages" for the raid panel's
-  // own cleanup, "Ban users" for the raid chat lock. Ask for more than you use
-  // and an operator is right to refuse all of it.
+  // NOT the "👋 Thanks for adding me! ‼️ … 🚀 Then type /start" card every other
+  // group bot posts — Dexvra reads as a clone the moment it borrows that, which
+  // is the same reason group_buy_alert refuses the copy-trading bots' layout.
+  //
+  // Each permission SAYS WHAT IT IS FOR, and that is the substantive difference,
+  // not the wording: a bare list of three powerful rights reads as a bot asking
+  // for the keys to the group, and an admin is right to hesitate. Every one
+  // named here is a right the code genuinely exercises — ask for more than you
+  // use and refusing all of it is the correct response.
   group_added:
-    "👋 **Thanks for adding me!**\n\n" +
-    "‼️ To get started, make me an **Admin** with these permissions:\n" +
-    "• **Delete messages**\n" +
-    "• **Ban users**\n" +
-    "• **Pin messages**\n\n" +
-    "🚀 Then send **/start** to set everything up.",
+    "🟢 **Dexvra is in — one step left**\n\n" +
+    "Buy alerts and raids need three admin permissions:\n\n" +
+    "📌 **Pin messages** — whale alerts and the live raid card\n" +
+    "🗑 **Delete messages** — clears the raid panel once it closes\n" +
+    "🚫 **Ban users** — only for the optional raid chat lock\n\n" +
+    "Grant them under **Group Settings → Administrators**, then send **/start**.",
+  // The setup guide, sent on /start in a group — the message straight after
+  // group_added. Same voice as that one: section headers, one line of what it
+  // does, then the commands. It used to be written in the first person ("make
+  // me an admin", "DM me", "I keep a scoreboard"), which reads as a different
+  // product to the card above it.
   group_start:
-    "🟢 **Dexvra — free tools for your group**\n\n" +
-    "**🤖 Buy Bot** — a live alert here on **every on-chain buy** of your token, with a link to the real transaction and the wallet that made it.\n" +
-    "1. Make me an **admin** of this group\n" +
-    "2. Send `/settoken <your contract address>`\n" +
-    "3. Done — buys start posting\n\n" +
-    "`/buybot` status · `/setminbuy 50` only alert buys ≥ $50 · `/buybot off` pause\n\n" +
-    "**🐋 Whale wallets** — a buy from someone already holding a lot of your token gets its own **pinned** alert.\n" +
-    "`/setwhale 50000` set the bar · `/setwhale off` · `/buybot pin off` don't pin\n\n" +
-    "**🚀 Raid** — rally the chat behind one X post. Set targets, launch, and I keep a live scoreboard pinned until you hit them.\n" +
-    "Send `/raid` to set it up. No X API key needed — the 🤝 Crew goal counts whoever shows up in the chat.\n\n" +
-    "Want to list, trend or advertise your token? DM me → {bot}\n" +
-    "𝕏 Listing alerts on X → {xlisting}",
+    "🟢 **Dexvra — free tools for this group**\n\n" +
+    "**🤖 Buy Bot** — a live alert on every on-chain buy of your token: amount, price, market cap, the buyer's wallet, and a link to the transaction itself.\n" +
+    "Start with `/settoken <contract address>` · tune with `/setminbuy 50` · pause with `/buybot off`\n\n" +
+    "**🐋 Whale wallets** — a buy from a wallet already holding a lot of your token gets its own **pinned** alert.\n" +
+    "`/setwhale 50000` sets the bar · `/setwhale off` · `/buybot pin off`\n\n" +
+    "**🚀 Raid** — point the chat at one X post and keep a live scoreboard pinned until the targets are hit.\n" +
+    "`/raid` to set it up. No X API key needed — the 🤝 Crew goal counts whoever turns up.\n\n" +
+    "Works on Solana, BSC, Ethereum, Base, Tron, TON, Sui, Plasma and Robinhood.\n\n" +
+    "[List, trend or advertise your token]({bot})  ·  [Listing alerts on X]({xlisting})",
   buybot_help:
     `${em("🟢", E.green)} **Group tools — free for your project**\n\n` +
     "Add @dexvrabot to your Telegram group and you get both of these, no charge:\n\n" +
@@ -475,21 +481,21 @@ const DEFAULTS = {
   // These render through the same premium-markup parser as everything else:
   // **bold**, `code`, [text](url). NOT HTML tags.
   setup_admin_only: "🔒 Only a **group admin** can change this.",
-  setup_group_only: "👥 Add me to your project's group first, then run `/settoken` there.",
+  setup_group_only: "👥 This command runs inside your project's group — add the bot there first.",
   settoken_usage: "📄 **Set your token**\n\nUsage: `/settoken <contract address>`",
   settoken_resolving: "🔎 Resolving your token…",
   settoken_not_found:
     "❌ **No live pool for that address**\n\n" +
     "Double-check the contract, or name the network first with `/setchain <chain>` and run `/settoken` again.",
   settoken_ok:
-    "✅ **Buy bot armed** on **{chain}**\n\n" +
+    "✅ **Buy bot is live** on **{chain}**\n\n" +
     "🪙 **{name}** ({symbol})\n\n" +
     "Every on-chain buy of your token now posts here.\n" +
     "`/setminbuy 50` only alert buys ≥ $50 · `/setwhale 50000` whale bar · `/buybot off` pause",
   setchain_unknown: "❌ Unknown network.\n\nOne of: `{chains}`",
   setchain_need_token: "📄 Set the token first: `/settoken <contract address>`",
   setchain_ok: "✅ Network set to **{chain}** — pool re-resolved.",
-  setchain_ok_nopool: "⚠️ Network set to **{chain}**, but no pool found yet. I'll keep trying every cycle.",
+  setchain_ok_nopool: "⚠️ Network set to **{chain}** — no pool found yet. It will keep retrying each cycle.",
   setminbuy_usage: "💲 **Minimum buy to alert**\n\nUsage: `/setminbuy 50`",
   setminbuy_ok: "✅ Minimum buy to alert: **{usd}**.",
   setwhale_usage:
@@ -506,8 +512,8 @@ const DEFAULTS = {
   setwhale_off: "🐋 Whale wallet alerts are **off** here.",
   pin_on: "📌 Whale alerts will be **pinned** here — each new one replaces the last. The bot needs the **Pin messages** permission.",
   pin_off: "📌 Whale alerts **won't be pinned** here.",
-  buybot_on: "🟢 **Buy bot ON.**",
-  buybot_off: "🔴 **Buy bot OFF.**",
+  buybot_on: "🟢 **Buy bot on** — alerts resume here.",
+  buybot_off: "🔴 **Buy bot off** — alerts paused. `/buybot on` brings them back.",
   buybot_need_token: "📄 Buy bot isn't set up here yet. Run `/settoken <contract address>`.",
   buybot_status:
     "📊 **Buy bot status**\n\n" +

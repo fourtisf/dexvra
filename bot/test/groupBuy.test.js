@@ -104,11 +104,14 @@ test("the deep link points at THIS bot, never a hardcoded handle", () => {
 });
 
 test("landing in a group still explains itself, which is what the skipped card said", () => {
-  // /start in a NON-private chat renders group_start — Telegram delivers it
-  // automatically after a ?startgroup= add. That is why dropping the card costs
-  // nothing: the setup steps arrive where they are carried out.
+  // Dropping the DM how-to costs nothing because the two in-group messages
+  // cover it between them, in the place the work is actually done: group_added
+  // (my_chat_member) asks for the rights, group_start (/start) points the bot
+  // at a token. Asserted as a PAIR, not against one template — which of the two
+  // carries which half is a copy decision, and pinning it to group_start is how
+  // this test failed the moment the admin ask moved to where it belongs.
   const tpl = require("../src/templates");
-  const out = tpl.t("group_start", { bot: "@dexvrabot" });
-  assert.match(out, /settoken/, "it names the command that starts the buy bot");
-  assert.match(out, /admin/i, "and says the bot has to be an admin");
+  const flow = tpl.t("group_added") + "\n" + tpl.t("group_start", { bot: "@dexvrabot" });
+  assert.match(flow, /settoken/, "it names the command that starts the buy bot");
+  assert.match(flow, /admin/i, "and says the bot needs admin rights");
 });

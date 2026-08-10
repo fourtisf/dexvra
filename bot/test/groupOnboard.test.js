@@ -49,6 +49,35 @@ test("being added asks for the three permissions the bot actually uses", async (
   assert.match(t, /\/start/, "and says what to send next");
 });
 
+test("the greeting is Dexvra's own copy, not the card every other group bot posts", () => {
+  // The first cut of this was the neighbouring bot's message with two words
+  // changed. Dexvra reads as a clone the moment it borrows that — the same
+  // reason group_buy_alert refuses the copy-trading bots' layout.
+  const t = tpl.t("group_added");
+  for (const tell of [/thanks for adding me/i, /‼️/, /then type \/start/i, /to setting/i]) {
+    assert.ok(!tell.test(t), `the greeting still carries "${tell}"`);
+  }
+  // The substantive difference, and the part worth locking: every permission
+  // SAYS WHAT IT IS FOR. A bare list of three powerful rights reads as a bot
+  // asking for the keys to the group, and an admin is right to hesitate.
+  for (const perm of ["Pin messages", "Delete messages", "Ban users"]) {
+    const line = t.split("\n").find((l) => l.includes(perm));
+    assert.ok(line, `${perm} is named`);
+    assert.match(line, /—\s*\S/, `${perm} says what it is used for`);
+  }
+});
+
+test("the in-group copy does not talk about itself in the first person", () => {
+  // "make me an admin", "DM me", "I keep a scoreboard" — three different voices
+  // across two messages that arrive seconds apart in the same chat.
+  for (const key of ["group_added", "group_start"]) {
+    const t = tpl.t(key);
+    for (const m of t.matchAll(/\b(I'll|I keep|DM me|add me|make me)\b/gi)) {
+      assert.fail(`${key} says "${m[0]}" — state what happens, not who does it`);
+    }
+  }
+});
+
 test("a permission change is not a new arrival", async () => {
   // Telegram sends my_chat_member for every admin-rights edit too. Greeting on
   // each one means a fresh welcome every time somebody ticks a checkbox.
