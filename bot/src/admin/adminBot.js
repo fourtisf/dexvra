@@ -333,9 +333,12 @@ const BUY_CARD_EMOJI_KEYS = [
   "group_whale_alert",
 ];
 
-/** A template's text, whether it is stored as prose or as {text, entities}. */
+/** A template's BASE text, whether stored as prose or as {text, entities}.
+ *  Base, not the overlaid value: listEmojis() hands out BASE offsets (that is
+ *  what keeps a swapped slot editable and the buttons aligned), so the hints
+ *  read out of this text have to be sliced with the same coordinates. */
 function rawText(key) {
-  const val = tpl.getRawValue(key);
+  const val = tpl.getBaseValue(key);
   return val && typeof val === "object" && val.text != null ? val.text : String(val || "");
 }
 

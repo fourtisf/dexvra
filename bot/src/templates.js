@@ -1519,13 +1519,40 @@ function parseFragment(fragment) {
 }
 
 /**
- * Every emoji in a template, in reading order:
+ * Every SLOT a template's card can restyle, in reading order:
  *   { i, char, id, start, end }   — id set only for premium ones
- * `start`/`end` index into the RAW value (markup string or entity text), which
- * is what replaceEmojiAt() splices.
+ *
+ * Built from the BASE value's structure (what the code ships, or the admin's
+ * saved rewording) and DECORATED with the overlay — never scanned out of the
+ * overlaid text. Scanning the result was how slots vanished: swap 💲 for a
+ * custom emoji whose fallback is "Ⓢ" or "$" — not a pictographic char — and
+ * the scanner stopped seeing it, so the picker lost the button while the card
+ * kept the icon. Unfixable from the UI, and worse: every slot BELOW shifted
+ * one index up, so the picker's buttons quietly edited the wrong rows.
+ *
+ * `i`/`start`/`end` are BASE coordinates — exactly what replaceEmojiAt()
+ * resolves against, so a button always edits the slot it shows.
  */
 function listEmojis(key) {
-  return listEmojisIn(getRawValue(key));
+  const base = listEmojisIn(baseValue(key));
+  const entries = loadEmojiOverlay()[key];
+  if (!entries || !entries.length) return base;
+  // The same forgiving resolution applyEmojiOverlay uses, so the picker shows
+  // exactly the icons the card renders.
+  const used = new Set();
+  const shown = base.map((e) => ({ ...e }));
+  for (const en of entries) {
+    let idx = base[en.i] && base[en.i].char === en.from && !used.has(en.i) ? en.i : -1;
+    if (idx < 0) idx = base.findIndex((x, n) => x.char === en.from && !used.has(n));
+    if (idx < 0) continue;
+    used.add(idx);
+    const { char, id } = parseFragment(en.to);
+    if (char) {
+      shown[idx].char = char;
+      shown[idx].id = id;
+    }
+  }
+  return shown;
 }
 
 /** The same scan, against a VALUE rather than a key. Split out because the
@@ -1875,6 +1902,7 @@ module.exports = {
   FOOTER_BLOCK,
   getRaw,
   getRawValue,
+  getBaseValue: baseValue,
   listEmojis,
   replaceEmojiAt,
   isCustom,

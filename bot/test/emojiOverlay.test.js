@@ -156,6 +156,38 @@ test("a premium emoji inside a link label STAYS premium — and keeps the button
   }
 });
 
+test("a slot swapped to a NON-emoji char never vanishes from the picker", async () => {
+  // Some custom emoji carry fallback chars that are not pictographic ("Ⓢ",
+  // "$", "≣"). Scanning the OVERLAID text for the slot list dropped those
+  // slots: the card kept the icon, the picker lost the button — unfixable from
+  // the UI — and every slot below shifted one index up, so buttons quietly
+  // edited the wrong rows. The list is built from the BASE structure now.
+  const before = tpl.listEmojis("group_buy_alert");
+  await tpl.replaceEmojiAt("group_buy_alert", 0, "Ⓢ");
+  try {
+    const list = tpl.listEmojis("group_buy_alert");
+    assert.strictEqual(list.length, before.length, "no slot vanished");
+    assert.strictEqual(list[0].char, "Ⓢ", "the slot shows what the card shows");
+    assert.strictEqual(list[1].char, before[1].char, "…and nothing below it shifted");
+    // A button edits ITS OWN slot: restoring #0 brings the shipped 💲 back.
+    await tpl.replaceEmojiAt("group_buy_alert", 0, "💲");
+    assert.strictEqual(tpl.listEmojis("group_buy_alert")[0].char, "💲");
+  } finally {
+    await tpl.resetTemplate("group_buy_alert");
+  }
+});
+
+test("a premium swap with a non-pictographic fallback keeps its 💎 and its id", async () => {
+  await tpl.replaceEmojiAt("group_buy_alert", 1, "[≣](emoji/123)");
+  try {
+    const e = tpl.listEmojis("group_buy_alert")[1];
+    assert.strictEqual(e.char, "≣");
+    assert.strictEqual(e.id, "123");
+  } finally {
+    await tpl.resetTemplate("group_buy_alert");
+  }
+});
+
 test("reset clears the swapped icons too — 'default' means the card as shipped", async () => {
   await tpl.replaceEmojiAt("group_buy_alert", 0, "🤑");
   await tpl.resetTemplate("group_buy_alert");
