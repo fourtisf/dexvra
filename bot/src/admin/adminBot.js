@@ -214,10 +214,177 @@ function groupText(name, p, pages) {
   const head = pages > 1 ? ` <i>(page ${p + 1}/${pages})</i>` : "";
   return `<b>${escapeHtml(name)}</b>${head}\n\nPick a template:`;
 }
+/**
+ * The caveat that stops an operator wasting an evening.
+ *
+ * A premium emoji only renders animated when a Telegram PREMIUM USER ACCOUNT
+ * sends it — that is what GramJS is for, and it is how the channel posts go
+ * out. Everything named `group_*` is posted into a customer's group by the
+ * ORDINARY BOT, and Telegram silently strips custom-emoji entities from a
+ * regular bot, leaving the fallback character. So the swap is accepted, saved
+ * and then invisible, which is the worst way for a setting to fail.
+ *
+ * Said here rather than in a doc nobody opens, because this is the exact screen
+ * where somebody is about to paste one.
+ */
+const GROUP_PREMIUM_NOTE =
+  "\n\n⚠️ <b>Kartu grup dikirim bot biasa</b>, dan Telegram membuang premium emoji dari bot " +
+  "— yang tampil emoji cadangannya. Premium hanya menyala di post channel (lewat akun premium/GramJS). " +
+  "Ganti emoji di sini tetap berguna: emoji unicode biasa apa pun bisa dipakai.";
+const isGroupPosted = (key) => String(key).startsWith("group_") || String(key).startsWith("buybot_");
+
+/*
+ * ── The buy card's emoji, all on one screen ─────────────────────────────────
+ *
+ * Restyling the buy alert used to mean visiting EIGHT templates. The banner
+ * lives in group_buy_intro, the size icons in group_buy_style, the buyer row in
+ * group_buyer_row, the Position tick in group_position_row, the network mark in
+ * chain_emojis, and the 💲🪙📊💧 column in group_buy_alert — with group_whale_alert
+ * carrying its own copy of that same column. Eight screens, each with its own
+ * "😀 Swap emoji", and no way to see the card's palette as one thing.
+ *
+ * So: one screen, every icon on it, and NO template text is ever rewritten.
+ *
+ * IDENTICAL ICONS ARE ONE SLOT. 💲 appears on both the buy card and the whale
+ * card; swapping it here changes both. That is not a shortcut — the two cards
+ * are deliberately one grammar, they land in the same chat minutes apart, and a
+ * feed that mixes two palettes reads as a bug in the bot. Every previous drift
+ * between these two cards happened because one of them was edited alone.
+ *
+ * CHAIN MARKS ARE NOT DEDUPED, and that is why they are a separate section:
+ * `plasma = 🟢` collides with the 🟢 buy-size icon, and folding those together
+ * would repaint every small buy the day somebody rebranded Plasma.
+ */
+const BUY_CARD_EMOJI_KEYS = [
+  "group_buy_intro",
+  "group_whale_intro",
+  "group_buy_style",
+  "group_name_row",
+  "group_buyer_row",
+  "group_position_row",
+  "group_buy_alert",
+  "group_whale_alert",
+];
+
+/** A template's text, whether it is stored as prose or as {text, entities}. */
+function rawText(key) {
+  const val = tpl.getRawValue(key);
+  return val && typeof val === "object" && val.text != null ? val.text : String(val || "");
+}
+
+/** For a `key = emoji` template, the key belonging to each emoji in reading
+ *  order (empty array for ordinary prose templates). */
+function mapKeyLabels(key) {
+  const text = rawText(key);
+  const lines = text.split("\n").filter((l) => /^[^=\n]+=/.test(l));
+  // Only treat it as a map when EVERY non-empty line is `key = value`.
+  if (!lines.length || lines.length !== text.split("\n").filter((l) => l.trim()).length) return [];
+  return lines.map((l) => l.split("=")[0].trim());
+}
+
+// Pipe-separated lists have no words to read a hint from — the fields ARE the
+// meaning, positionally. Spelled out here because "🟢|🐋" tells an operator
+// nothing about which circle is the ordinary buy.
+const PIPE_FIELD_LABELS = {
+  group_buy_style: ["buy", "whale"],
+  group_buy_tiers: ["buy", "whale", "mega"],
+};
+
+/**
+ * What this icon is FOR, in one word, read out of the template itself.
+ *
+ * Derived rather than hand-written, so it stays true when an operator rewords a
+ * row: the hint is the first word (or placeholder name) that follows the emoji
+ * on its own line. "💲 {usd}{native}" → usd. "📈 Chart" → Chart. A hand-written
+ * table would be a second copy of the card's layout, and would start lying the
+ * first time somebody edited a row.
+ */
+function emojiHint(key, e) {
+  const labels = mapKeyLabels(key);
+  if (labels.length) return labels[e.i] || "";
+  const text = rawText(key);
+  const fields = PIPE_FIELD_LABELS[key];
+  if (fields) return fields[text.slice(0, e.start).split("|").length - 1] || "";
+  const nl = text.indexOf("\n", e.end);
+  const after = text.slice(e.end, nl === -1 ? undefined : nl);
+  const word = after.match(/[A-Za-z]{2,}/);
+  return word ? word[0].slice(0, 12) : "";
+}
+
+/**
+ * Every icon the buy card shows, as tappable slots.
+ *
+ * @returns {{char: string, id: string|null, label: string, chain: boolean,
+ *            spots: {key: string, i: number}[]}[]}
+ */
+function buyEmojiSlots() {
+  const bySlot = new Map();
+  for (const key of BUY_CARD_EMOJI_KEYS) {
+    for (const e of tpl.listEmojis(key)) {
+      const slot = bySlot.get(e.char) || { char: e.char, id: e.id, label: emojiHint(key, e), chain: false, spots: [] };
+      // A premium id anywhere in the group marks the slot premium: the operator
+      // needs to see 💎 on the button whichever card carries it.
+      if (!slot.id && e.id) slot.id = e.id;
+      if (!slot.label) slot.label = emojiHint(key, e);
+      slot.spots.push({ key, i: e.i });
+      bySlot.set(e.char, slot);
+    }
+  }
+  const chains = tpl.listEmojis("chain_emojis").map((e) => ({
+    char: e.char,
+    id: e.id,
+    label: emojiHint("chain_emojis", e),
+    chain: true,
+    spots: [{ key: "chain_emojis", i: e.i }],
+  }));
+  return [...bySlot.values(), ...chains];
+}
+
+function buyEmojiKb() {
+  const cb = Markup.button.callback;
+  const slots = buyEmojiSlots();
+  const rows = [];
+  // The card's own icons and the network marks are laid out as two blocks, in
+  // that order, because they answer different questions and the chain block is
+  // long enough to bury the four rows somebody actually came to restyle.
+  for (const chain of [false, true]) {
+    const btns = slots
+      .map((s, n) => ({ s, n }))
+      .filter(({ s }) => s.chain === chain)
+      .map(({ s, n }) => cb(`${s.id ? "💎" : ""}${s.char}${s.label ? ` ${s.label}` : ""}`, `bemx:${n}`));
+    for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3));
+  }
+  rows.push([cb("⬅ Kembali", "v:group_buy_alert")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function buyEmojiText() {
+  const slots = buyEmojiSlots();
+  const nPrem = slots.filter((s) => s.id).length;
+  return (
+    `😀 <b>Emoji kartu buy alert</b>\n\n` +
+    `Tekan emoji yang mau diganti, lalu kirim emoji penggantinya. ` +
+    `<b>Teksnya tidak disentuh sama sekali</b> — hanya emoji itu yang berubah, jadi tata letak kartu tetap.\n\n` +
+    `Emoji yang sama dipakai kartu <b>buy dan whale</b> sekaligus, jadi sekali ganti keduanya ikut — ` +
+    `dua kartu ini memang harus seragam.\n\n` +
+    `Blok kedua adalah <b>lambang jaringan</b>: bot memilih sendiri sesuai chain token, ` +
+    `tidak perlu diatur per grup.` +
+    (nPrem ? `\n\n💎 ${nPrem} emoji sudah premium.` : "") +
+    GROUP_PREMIUM_NOTE
+  );
+}
+
 function viewKb(key) {
   const rows = [[Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)]];
   // Only offer the emoji swap when there is something to swap.
   if (tpl.listEmojis(key).length) rows.push([Markup.button.callback("😀 Swap emoji", `tem:${key}`)]);
+  // …and on any template the buy card is built from, the way in to ALL of its
+  // icons at once. Offered from every piece rather than one blessed screen:
+  // whichever of the eight an operator happens to open, the whole palette is
+  // one tap away instead of seven screens away.
+  if (BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis") {
+    rows.push([Markup.button.callback("🎨 Semua emoji kartu buy", "bem")]);
+  }
   rows.push([Markup.button.callback("⬅ Back", `grp:${groupIdOf(key)}`)]);
   return Markup.inlineKeyboard(rows);
 }
@@ -2022,6 +2189,41 @@ function build() {
     if (!tpl.keys().includes(key)) return;
     await sendEmojiPicker(ctx, key);
   });
+
+  // ── Every icon on the buy card, one screen ───────────────────────────────
+  async function sendBuyEmojiPicker(ctx) {
+    await ctx.reply(buyEmojiText(), { ...HTML, ...buyEmojiKb() }).catch(() => {});
+  }
+
+  bot.action("bem", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await sendBuyEmojiPicker(ctx);
+  });
+
+  bot.action(/^bemx:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    // Re-derived at press time, never trusted from the button: an operator can
+    // leave this screen open, edit a template from another chat, and come back
+    // to a keyboard whose slot numbers no longer describe anything.
+    const slot = buyEmojiSlots()[Number(ctx.match[1])];
+    if (!slot) return sendBuyEmojiPicker(ctx);
+    ctx.session.awaitingEmoji = { spots: slot.spots, from: "bem", was: slot.char };
+    const where = slot.chain
+      ? `lambang jaringan <b>${escapeHtml(slot.label)}</b>`
+      : `ikon <b>${escapeHtml(slot.label || slot.char)}</b>`;
+    await ctx.reply(
+      `⌨ Kirim emoji pengganti untuk ${escapeHtml(slot.char)} — ${where}` +
+        `${slot.id ? " (sekarang 💎 premium)" : ""}.\n\n` +
+        `Kirim emoji <b>premium</b> dan tetap premium. ` +
+        `Teks template tidak diubah sama sekali` +
+        (slot.spots.length > 1 ? `, dan ${slot.spots.length} tempat yang memakai ikon ini ikut berubah` : "") +
+        `. /cancel untuk batal.` +
+        GROUP_PREMIUM_NOTE,
+      HTML,
+    );
+  });
   bot.action(/^temx:([^:]+):(\d+)$/, async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -2047,36 +2249,6 @@ function build() {
     await tpl.resetTemplate(key);
     await sendTemplateView(ctx, key);
   });
-
-  /** For a `key = emoji` template, the key belonging to each emoji in reading
-   *  order (empty array for ordinary prose templates). */
-  function mapKeyLabels(key) {
-    const val = tpl.getRawValue(key);
-    const text = val && typeof val === "object" && val.text != null ? val.text : String(val || "");
-    const lines = text.split("\n").filter((l) => /^[^=\n]+=/.test(l));
-    // Only treat it as a map when EVERY non-empty line is `key = value`.
-    if (!lines.length || lines.length !== text.split("\n").filter((l) => l.trim()).length) return [];
-    return lines.map((l) => l.split("=")[0].trim());
-  }
-
-  /**
-   * The caveat that stops an operator wasting an evening.
-   *
-   * A premium emoji only renders animated when a Telegram PREMIUM USER ACCOUNT
-   * sends it — that is what GramJS is for, and it is how the channel posts go
-   * out. Everything named `group_*` is posted into a customer's group by the
-   * ORDINARY BOT, and Telegram silently strips custom-emoji entities from a
-   * regular bot, leaving the fallback character. So the swap is accepted, saved
-   * and then invisible, which is the worst way for a setting to fail.
-   *
-   * Said here rather than in a doc nobody opens, because this is the exact
-   * screen where somebody is about to paste one.
-   */
-  const GROUP_PREMIUM_NOTE =
-    "\n\n⚠️ <b>Kartu grup dikirim bot biasa</b>, dan Telegram membuang premium emoji dari bot " +
-    "— yang tampil emoji cadangannya. Premium hanya menyala di post channel (lewat akun premium/GramJS). " +
-    "Ganti emoji di sini tetap berguna: emoji unicode biasa apa pun bisa dipakai.";
-  const isGroupPosted = (key) => String(key).startsWith("group_") || String(key).startsWith("buybot_");
 
   async function sendEmojiPicker(ctx, key) {
     const list = tpl.listEmojis(key);
@@ -3314,25 +3486,40 @@ function build() {
       return;
     }
     if (ctx.session.awaitingEmoji) {
-      const { key, i } = ctx.session.awaitingEmoji;
+      const { key, i, spots, from } = ctx.session.awaitingEmoji;
       ctx.session.awaitingEmoji = null;
       const frag = emojiFragment(ctx.message);
       if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
+      // One slot on the buy-card screen can own several spots across several
+      // templates (the 💲 on the buy card and the 💲 on the whale card are one
+      // icon to the operator). A single-template swap is that same list of one.
+      const targets = spots && spots.length ? spots : [{ key, i }];
       try {
-        await tpl.replaceEmojiAt(key, i, frag);
+        // Every replacement is exactly one emoji for one emoji, so the indices
+        // of the spots still to come do not move. Anything that changed the
+        // COUNT would have to run back-to-front instead.
+        for (const t of targets) await tpl.replaceEmojiAt(t.key, t.i, frag);
       } catch (e) {
         return ctx.reply(`⚠️ ${escapeHtml(e.message)}`, HTML).catch(() => {});
       }
-      const now = tpl.listEmojis(key)[i];
-      log.info(`[adminbot] template '${key}' emoji #${i + 1} → ${frag} by @${ctx.from.username || ctx.from.id}`);
+      const head = targets[0];
+      const now = tpl.listEmojis(head.key)[head.i];
+      const who = `@${ctx.from.username || ctx.from.id}`;
+      log.info(
+        `[adminbot] emoji → ${frag} by ${who} in ${targets.map((t) => `${t.key}#${t.i + 1}`).join(", ")}`,
+      );
       await ctx
         .reply(
-          `✅ Swapped to ${escapeHtml(now ? now.char : frag)}${now && now.id ? " — 💎 premium" : ""}. Live within ~30s.` +
-            placeholderWarning(key),
+          `✅ Diganti jadi ${escapeHtml(now ? now.char : frag)}${now && now.id ? " — 💎 premium" : ""}` +
+            `${targets.length > 1 ? ` di ${targets.length} tempat` : ""}. Aktif dalam ~30 detik.` +
+            // Every template that was touched gets checked: a swap landing on the
+            // wrong span is exactly how "{💎}" reached a customer's group.
+            [...new Set(targets.map((t) => t.key))].map((k) => placeholderWarning(k)).join(""),
           HTML,
         )
         .catch(() => {});
-      await sendEmojiPicker(ctx, key);
+      if (from === "bem") await sendBuyEmojiPicker(ctx);
+      else await sendEmojiPicker(ctx, head.key);
       return;
     }
     const key = ctx.session.awaitingTemplate;
@@ -3520,4 +3707,6 @@ module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, emojiF
 // Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
 module.exports._net = { fetchTelegramFileBuffer };
 // Exposed for tests: the template controls card and its broken-placeholder guard.
-module.exports._tpl = { viewText, placeholderWarning };
+module.exports._tpl = { viewText, placeholderWarning, viewKb };
+// Exposed for tests: the one screen that owns every icon on the buy card.
+module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, BUY_CARD_EMOJI_KEYS };
