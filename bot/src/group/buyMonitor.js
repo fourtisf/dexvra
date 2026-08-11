@@ -524,7 +524,26 @@ function buyClip(kind = "buy") {
 }
 
 async function sendAlert(tg, chatId, text, extra, kind = "buy") {
-  const clip = buyClip(kind);
+  let clip = buyClip(kind);
+  // NORMALISE BEFORE SENDING. An admin who uploads an .mp4 gets MEDIA_EXT's
+  // "video", which dispatches to sendVideo — and sendVideo renders a PLAYER:
+  // a play button the viewer has to tap, no autoplay, no loop. That is a video,
+  // and a buy alert's artwork is a decorative loop nobody wants to press play
+  // on. Telegram's distinction is not the extension but the AUDIO TRACK, so
+  // toInlineClip strips it, rewraps as MP4 and returns type "animation" —
+  // exactly what the channel posts already do (bannerTemplate.js explains it in
+  // full). The conversion is cached on the source's mtime, so it costs one
+  // ffmpeg run per upload, not one per alert.
+  //
+  // Fails open: no ffmpeg, or a clip it cannot read, returns the original and
+  // the alert posts as it did before. Artwork is never worth an alert.
+  if (clip) {
+    try {
+      clip = (await require("../bannerTemplate").toInlineClip(clip)) || clip;
+    } catch (e) {
+      log.debug(`[buybot] clip normalise failed (${e && e.message}) — sending it as uploaded`);
+    }
+  }
   if (clip) {
     // caption_entities, not entities — a caption carries its formatting under a
     // different key, and sending the wrong one drops every link silently.

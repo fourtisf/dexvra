@@ -216,3 +216,45 @@ test("asking for the default kind directly does not look itself up twice", () =>
     bt.mediaOverride = real;
   }
 });
+
+test("an uploaded .mp4 is sent as an ANIMATION, not as a video player", async () => {
+  // MEDIA_EXT maps mp4/webm/mov → "video", and sendVideo renders a PLAYER: a
+  // play button the viewer has to tap, no autoplay, no loop. A buy alert's
+  // artwork is a decorative loop nobody wants to press play on — which is
+  // exactly what the group reported. The channel posts already normalise their
+  // clips; this path did not.
+  const mon = require("../src/group/buyMonitor");
+  const bt = require("../src/bannerTemplate");
+  const realClip = bt.mediaOverride;
+  const realInline = bt.toInlineClip;
+  const calls = [];
+  try {
+    bt.mediaOverride = () => ({ type: "video", source: "/tmp/whatever.mp4" });
+    // Stand in for the ffmpeg step: the point under test is that sendAlert ASKS
+    // for the normalised clip and dispatches on what it gets back.
+    bt.toInlineClip = async () => ({ type: "animation", source: "/tmp/whatever.mp4" });
+    const tg = {
+      sendAnimation: async (...a) => { calls.push(["animation", ...a]); return { message_id: 1 }; },
+      sendVideo: async (...a) => { calls.push(["video", ...a]); return { message_id: 1 }; },
+      sendPhoto: async () => ({ message_id: 1 }),
+      sendMessage: async () => ({ message_id: 1 }),
+    };
+    await mon.sendAlert(tg, -1, "hi", {}, "buy");
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0][0], "animation", "sendVideo means a play button and no loop");
+  } finally {
+    bt.mediaOverride = realClip;
+    bt.toInlineClip = realInline;
+  }
+});
+
+test("a clip that cannot be normalised still posts the alert", () => {
+  // Artwork is never worth an alert. ffmpeg missing, or a file it cannot read,
+  // must cost the loop and nothing else.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "buyMonitor.js"), "utf8");
+  const fn = src.slice(src.indexOf("async function sendAlert"));
+  const body = fn.slice(0, fn.indexOf("\n}"));
+  assert.match(body, /toInlineClip/, "the clip is normalised");
+  assert.match(body, /catch \(e\)/, "and a failure is swallowed, not propagated");
+  assert.match(body, /\|\| clip/, "falling back to the clip as uploaded");
+});
