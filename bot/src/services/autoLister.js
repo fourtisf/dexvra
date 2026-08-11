@@ -530,6 +530,10 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     // not a quiet market. It used to return silently — the single most likely
     // way for this service to look enabled and do nothing indefinitely.
     report.blocker = "discovery returned no candidates (every source empty — DexScreener feeds and pools.trade)";
+    // To pm2 too, not just the panel: an operator grepping `autolist` during an
+    // outage saw NOTHING between two healthy scans — hours of silence that read
+    // as the loop having died, when it was running and being starved.
+    log.warn(`[autolist] ${report.blocker}`);
     await fileReport(report, state);
     return 0;
   }
