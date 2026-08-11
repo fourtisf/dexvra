@@ -94,6 +94,10 @@ const SAMPLE_VARS = {
   logo: "✅ set", overview: "A community-driven memecoin on Solana.",
   website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat",
   label: "Diamond Listing — $BULLCAT on Solana", amount: "1", order: "k3n8_a1b2",
+  // The socials row, prebuilt — it is a rendered fragment in the real callers
+  // (group/setup.js builds it from DexScreener), so an empty string here left
+  // every template that carries it previewing a gap where a row belongs.
+  links: "🌐 [Website](https://bullcat.io) · 𝕏 [X](https://x.com/bullcat) · 💬 [Telegram](https://t.me/bullcat)",
   hours: "48", size: "728×90", slot: "Wide Banner", duration: "3 Days", usd: "670",
   endsAt: "Jul 22, 14:00 UTC", discount: "20", field: "name",
   postLinks: "🚨 Listing post: https://t.me/dexvralisting/6\n📢 Announcement: https://t.me/dexvraio/9",
@@ -118,43 +122,96 @@ const SAMPLE_VARS = {
   progress: "❤️ Likes   ▰▰▰▰▰▰▱▱▱▱  209/215\n💬 Replies ▰▰▰▰▰▰▰▰▱▱  14/15\n🤝 Crew    ▰▰▰▰▰▰▰▱▱▱  14/20",
   url: "https://x.com/i/status/1", post: "gm — like + reply and we're there 🚀",
   updated: "12:33:57", note: "",
+  // ── Everything else a template advertises ────────────────────────────────
+  // These were simply absent, and a missing var renders as nothing: the
+  // /settoken receipt previewed "Every buy from ** up" — two orphaned bold
+  // markers where the floor belongs. Harmless in the old one-line audit, but
+  // the preview button now shows an operator the whole card and asks them to
+  // judge it, so a blank here reads as a template they broke.
+  //
+  // A test pins this list against every meta.ph in templates.js, so a new
+  // placeholder cannot go blank in the preview unnoticed.
+  nameRow: "📃 **The Bull Cat** $BULLCAT", chainEmoji: "🟣", logoEmoji: "🐶", tierEmoji: "💎",
+  intro: "🚨 **NEW BUY ALERT** ", introWhale: "🐋 **WHALE ALERT** ",
+  poweredBy: " | Powered by @dexvralisting", listingChannel: "@dexvralisting",
+  bar: "▰▰▰▰▰▰▱▱▱▱", buyer: "0x1f4b…9ac2", txn: " · [Txn](https://solscan.io/tx/5xTx)",
+  minBuy: "$50", whale: "$50,000", pool: "resolved ✓", pin: "on", state: "🟢 ON",
+  chains: "solana, bsc, ethereum, base", unsupported: "", lock: "off",
+  walletUrl: "https://solscan.io/account/AFqu1M", chartUrl: "https://dexscreener.com/solana/G9j8",
+  coinUrlLabel: "dexvra.io/token/solana/G9j8", xUrl: "https://x.com/i/status/1",
+  xlisting: "https://x.com/dexvraio", handle: "@dexvralisting", mention: " @bullcat",
+  listingUrl: "https://t.me/dexvralisting/6", trendingUrl: "https://t.me/dexvratrending/3",
+  announceUrl: "https://t.me/dexvraio/9", linkUrl: "https://bullcat.io",
+  title: "The Bull Cat", description: "A community-driven memecoin on Solana.",
+  size2x: "1456×180", queueNote: "", startsAt: "Jul 19, 14:00 UTC", date: "Aug 10",
+  rank: "2", gain: "+42%", multiple: "2×", firstMc: "$310K", lastMc: "$1.3M",
+  list: "1. $BULLCAT +42%\n2. $DEX +18%", tag: "BULLCAT",
+  goals: "❤️ Likes — +15\n💬 Replies — +5\n🤝 Crew — +10", maxMinutes: "30",
+  record: "Best so far: 312 likes", sources: "likes + replies via X API",
+  started: "3", completed: "1",
 };
 
+const SAMPLE_COIN = {
+  name: "The Bull Cat", symbol: "$BULLCAT", chain: "solana", tier: "DIAMOND",
+  address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+  price: 0.001266, mcap: 1300000, liq: 183475,
+  links: { website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat" },
+  siteUrl: "https://dexvra.io/token/solana/G9j8", overview: "A community-driven memecoin on Solana.",
+  xUrl: "https://x.com/i/status/1",
+};
+
+/**
+ * The templates that are NOT simple var-substitution.
+ *
+ * Channel posts are assembled by format.js, so rendering the raw template would
+ * show something the channel never sends. Module scope, not a local inside the
+ * audit, because the preview needs the same map — and a second copy would be a
+ * second sample coin to keep in step.
+ */
+const SPECIAL_RENDER = {
+  // /ca renders with dropEmpty and with its OWN {label} — the shared sample bag
+  // spells that "Diamond Listing — $BULLCAT on Solana", because {label} is the
+  // ad-slot name everywhere else. Previewing it from the generic bag showed a
+  // card no group will ever receive, which is worse than showing nothing.
+  group_ca: () =>
+    tpl.render(
+      "group_ca",
+      {
+        ...SAMPLE_VARS,
+        label: "**The Bull Cat** $BULLCAT",
+        links: "🌐 [Website](https://bullcat.io) · 𝕏 [X](https://x.com/bullcat) · 💬 [Telegram](https://t.me/bullcat)",
+      },
+      { dropEmpty: true },
+    ),
+  post_listing_xpress: () => require("../channels/format").listingPost({ ...SAMPLE_COIN, tier: "XPRESS" }),
+  post_listing_tiered: () => require("../channels/format").listingPost(SAMPLE_COIN),
+  post_trending: () => require("../channels/format").trendingPost(SAMPLE_COIN),
+  post_pump: () => require("../channels/format").pumpPost(SAMPLE_COIN, 137.6, 310000, 1300000),
+  post_rankup: () => require("../channels/format").rankupPost(SAMPLE_COIN, 2, 82),
+  post_banner: () =>
+    require("../channels/format").bannerPost(
+      {
+        title: "The Bull Cat",
+        slot: "Wide Banner",
+        linkUrl: "https://bullcat.io",
+        description: "The Bull Cat is a community-driven memecoin on Solana with a deflationary burn on every trade.",
+        address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
+        twitter: "https://x.com/bullcat",
+        telegram: "https://t.me/bullcat",
+      },
+      "https://x.com/i/status/1",
+    ),
+};
+
+/** Any template, rendered on sample values, as a sendable payload. */
+function renderSample(key) {
+  return SPECIAL_RENDER[key] ? SPECIAL_RENDER[key]() : tpl.render(key, SAMPLE_VARS);
+}
+
 async function sendTemplateAudit(ctx, arg = "") {
-  // Channel posts are built by format.js (not simple var-substitution), so
-  // render them from a sample coin to show the true post.
-  const fmt = require("../channels/format");
-  const sampleCoin = {
-    name: "The Bull Cat", symbol: "$BULLCAT", chain: "solana", tier: "DIAMOND",
-    address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
-    price: 0.001266, mcap: 1300000, liq: 183475,
-    links: { website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat" },
-    siteUrl: "https://dexvra.io/token/solana/G9j8", overview: "A community-driven memecoin on Solana.",
-    xUrl: "https://x.com/i/status/1",
-  };
-  const CHANNEL = {
-    post_listing_xpress: () => fmt.listingPost({ ...sampleCoin, tier: "XPRESS" }),
-    post_listing_tiered: () => fmt.listingPost(sampleCoin),
-    post_trending: () => fmt.trendingPost(sampleCoin),
-    post_pump: () => fmt.pumpPost(sampleCoin, 137.6, 310000, 1300000),
-    post_rankup: () => fmt.rankupPost(sampleCoin, 2, 82),
-    post_banner: () =>
-      fmt.bannerPost(
-        {
-          title: "The Bull Cat",
-          slot: "Wide Banner",
-          linkUrl: "https://bullcat.io",
-          description: "The Bull Cat is a community-driven memecoin on Solana with a deflationary burn on every trade.",
-          address: "G9j8WWDeJXZdvwQgP82ooDuHmpc3Gy8NCSins71Lpump",
-          twitter: "https://x.com/bullcat",
-          telegram: "https://t.me/bullcat",
-        },
-        "https://x.com/i/status/1",
-      ),
-  };
   const cleanOf = (k) => {
     try {
-      const r = CHANNEL[k] ? CHANNEL[k]() : tpl.render(k, SAMPLE_VARS);
+      const r = renderSample(k);
       return String((r && r.text) || "").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, " · ").trim();
     } catch {
       return "(render error)";
@@ -430,6 +487,10 @@ function viewKb(key) {
   const rows = [[Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)]];
   // Only offer the emoji swap when there is something to swap.
   if (tpl.listEmojis(key).length) rows.push([Markup.button.callback("😀 Swap emoji", `tem:${key}`)]);
+  // The message as it will actually be sent, from the controls card too — the
+  // text above it is the RAW template, {placeholders} and all, which is what an
+  // operator edits but not what anybody receives.
+  rows.push([Markup.button.callback("👁 Lihat hasilnya", `temp:${key}`)]);
   // …and on any template the buy card is built from, the way in to ALL of its
   // icons at once. Offered from every piece rather than one blessed screen:
   // whichever of the eight an operator happens to open, the whole palette is
@@ -2264,6 +2325,50 @@ function build() {
     await ctx.reply(buyEmojiText(), { ...HTML, ...buyEmojiKb() }).catch(() => {});
   }
 
+  /**
+   * ANY template, rendered, right after it was changed.
+   *
+   * An emoji on a button is not the message. Whether 💧 sits well under 🪙, or
+   * whether a swapped glyph is wider than the one it replaced and pushes a row
+   * onto two lines, is only visible in the assembled card — and until now the
+   * only way to see one was to make the bot send it for real: wait for a buy,
+   * post to the channel, or trigger the flow by hand.
+   *
+   * The pieces of the buy card get the WHOLE card instead of their own fragment.
+   * Previewing `group_position_row` on its own shows one line out of context,
+   * which answers nothing about the thing that was actually edited.
+   *
+   * Sent unwrapped, with entities: a "here is your preview" header would count
+   * the entity offsets against the wrong string and slide every link and every
+   * premium emoji onto the wrong character.
+   */
+  async function sendTemplatePreview(ctx, key) {
+    if (BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis") return sendBuyPreview(ctx);
+    let payload;
+    try {
+      payload = renderSample(key);
+    } catch (e) {
+      return ctx.reply(`⚠️ Template ini gagal dirender: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+    }
+    const { text, extra } = payloadArgs(payload);
+    if (!text || !text.trim()) return; // a template an operator emptied on purpose
+    await ctx.reply(`👁 <b>${escapeHtml(tpl.meta(key).label)}</b> — contoh`, HTML).catch(() => {});
+    await ctx.reply(text, extra).catch((e) => {
+      // The most useful thing this screen can report. A card Telegram refuses
+      // is a message that would have failed silently, later, in a customer's
+      // group or a channel, with nothing but a log line to say why.
+      ctx.reply(`⚠️ Telegram menolak pesan ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+    });
+  }
+
+  bot.action(/^temp:(.+)$/, async (ctx) => {
+    ctx.answerCbQuery("Merender…").catch(() => {});
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    if (!tpl.keys().includes(key)) return;
+    await sendTemplatePreview(ctx, key);
+  });
+
   bot.action("bemp", async (ctx) => {
     ctx.answerCbQuery("Merender…").catch(() => {});
     if (!guard(ctx)) return;
@@ -2342,6 +2447,9 @@ function build() {
     const perRow = labels.length ? 3 : 6;
     const rows = [];
     for (let i = 0; i < btns.length; i += perRow) rows.push(btns.slice(i, i + perRow));
+    // Look at the result without changing anything first — the same button the
+    // buy-card screen has, on every template.
+    rows.push([cb("👁 Lihat hasilnya", `temp:${key}`)]);
     rows.push([cb("⬅ Back", `v:${key}`)]); // the view handler is v:, not t: — this button was dead
     await ctx
       .reply(
@@ -3602,7 +3710,7 @@ function build() {
         await sendBuyPreview(ctx);
         await sendBuyEmojiPicker(ctx);
       } else {
-        if (BUY_CARD_EMOJI_KEYS.includes(head.key) || head.key === "chain_emojis") await sendBuyPreview(ctx);
+        await sendTemplatePreview(ctx, head.key);
         await sendEmojiPicker(ctx, head.key);
       }
       return;
@@ -3622,9 +3730,14 @@ function build() {
       `[adminbot] template '${key}' updated by @${ctx.from.username || ctx.from.id} (${text.length} chars, ${entities.length} entities, ${nPrem} premium emoji)`,
     );
     await ctx.reply(
-      `✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>${nPrem ? ` with 💎 ${nPrem} premium emoji` : ""}. It goes live within ~30s.`,
+      `✅ Saved <b>${escapeHtml(tpl.meta(key).label)}</b>${nPrem ? ` with 💎 ${nPrem} premium emoji` : ""}. It goes live within ~30s.` +
+        placeholderWarning(key),
       HTML,
     );
+    // Rewriting a card is exactly when a placeholder gets mistyped or a row
+    // ends up two lines long. Showing the result costs one message and answers
+    // both without waiting for the bot to send it somewhere real.
+    await sendTemplatePreview(ctx, key);
     await sendTemplateView(ctx, key);
   });
 
@@ -3795,3 +3908,6 @@ module.exports._net = { fetchTelegramFileBuffer };
 module.exports._tpl = { viewText, placeholderWarning, viewKb };
 // Exposed for tests: the one screen that owns every icon on the buy card.
 module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS };
+// Exposed for tests: any template rendered on sample values, the thing every
+// preview button shows.
+module.exports._preview = { renderSample, SPECIAL_RENDER, SAMPLE_VARS };
