@@ -70,6 +70,7 @@ const tpl = require("../templates");
 const { payloadArgs } = require("../helpers/message");
 const { fmtPrice, formatNumber, fmtPct, trimAmount } = require("../helpers/format");
 const { chainOf, txUrl, accountUrl, shortAddress, chartUrl } = require("../config/chains");
+const { chainEmoji } = require("../channels/format");
 const premium = require("../premium");
 const { loadJSONSync, saveJSON } = require("../helpers/persist");
 const log = require("../helpers/logger");
@@ -401,10 +402,11 @@ function alertVars(g, buy, pool, pos) {
     // "📃 $DEX $DEX", the same word printed twice for no reason. Whole row, like
     // {verify} and {wallet}, so it collapses to just the ticker instead of
     // leaving a gap. {name} and {symbol} stay available to lay out yourself.
-    // Same split as the buyer row: the 📃 is copy and lives in
+    // Same split as the buyer row: the icon is copy and lives in
     // `group_name_row`; which label to print is logic and stays here.
     nameRow: tpl
       .markup("group_name_row", {
+        chainEmoji: chainEmoji(g.chain),
         label:
           g.name && g.name !== `$${sym}`
             ? `**${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
@@ -430,6 +432,11 @@ function alertVars(g, buy, pool, pos) {
     impact: impact != null ? `${impact < 1 ? impact.toFixed(2) : impact.toFixed(1)}%` : "—",
     change: (pool && fmtPct(pool.change24h)) || "—",
     chain: chainOf(g.chain)?.label || g.chain,
+    // The network's own glyph, picked from the token's chain with no per-group
+    // setup — a Solana buy leads with the Solana mark, a Base buy with Base's.
+    // Same `chain_emojis` template the channel posts read, so pasting a PREMIUM
+    // custom emoji there lights up every buy card on that network at once.
+    chainEmoji: chainEmoji(g.chain),
     verify: verifyRow(g.chain, buy),
     // The prebuilt row, and its three parts on their own so an admin can lay
     // them out differently. All EMPTY rather than "—" when the holding could not

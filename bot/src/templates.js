@@ -503,9 +503,13 @@ const DEFAULTS = {
   //
   // A group that saved an override for the old `group_buy_alert_est` key keeps
   // a harmless orphan entry in data/templates.json; nothing reads it.
-  // The banner line above the header, and the byline under the CTA row. Both
-  // are WHOLE ROWS: clear either one in @dexvraadminbot and it vanishes cleanly
-  // rather than leaving a blank line behind.
+  // The banner line and the byline. BOTH SIT ON THE OPENING LINE — the byline
+  // rides at the END of the header, not at the foot of the card. It spent a
+  // while down under the CTA row, where it was the last thing a reader reached
+  // and the first thing a screenshot cropped off; the point of a byline is to
+  // be seen next to the event it is vouching for. Both are WHOLE ROWS: clear
+  // either one in @dexvraadminbot and it vanishes cleanly rather than leaving a
+  // blank line behind.
   //
   // ONE OPENING LINE: banner, token, event, byline. It used to be three
   // separate blocks stacked down the card, which pushed the numbers people
@@ -536,7 +540,15 @@ const DEFAULTS = {
   // to is LOGIC, not copy: the token row falls back to the ticker alone when no
   // name resolved, and the buyer row drops either half that has no explorer
   // link. The emoji, the spacing and the separator are copy, and live here.
-  group_name_row: "📃 {label}",
+  //
+  // THE TOKEN ROW LEADS WITH ITS NETWORK'S OWN GLYPH, not a fixed 📃. {chainEmoji}
+  // comes from the `chain_emojis` template below, picked from the token's chain
+  // with nothing for a group to configure — a Solana buy opens with the Solana
+  // mark, a Base buy with Base's, and an unknown chain with 💠. That map takes
+  // PREMIUM custom emoji, so pasting the real network logos there lights up
+  // every buy card on that network at once. Still a placeholder like any other:
+  // put 📃 back in front of it if you want both.
+  group_name_row: "{chainEmoji} {label}",
   group_buyer_row: "👤 {buyer}{txn}",
   // The 💼 Position row, for the ORDINARY buy card.
   //
@@ -901,9 +913,18 @@ const DEFAULTS = {
     "silver = 🥈\n" +
     "bronze = 🥉\n" +
     "xpress = ⚡",
-  // Per-network emoji the bot AUTO-PICKS for the "Chain:" line from the token's
-  // chain. One `chainid = emoji` per line; unknown chains fall back to 💠.
-  // Edit an emoji to rebrand a network everywhere at once.
+  // Per-network emoji the bot AUTO-PICKS from the token's chain. One
+  // `chainid = emoji` per line; unknown chains fall back to 💠. Edit an emoji to
+  // rebrand a network everywhere at once.
+  //
+  // TWO PLACES READ THIS, not one: the "Chain:" line on a channel post, and the
+  // token row on every group buy alert ({chainEmoji} in group_name_row). That is
+  // deliberate — the network mark a reader learns in the channel is the same one
+  // that leads the buy card.
+  //
+  // PREMIUM EMOJI WORK HERE. Paste the real network logos as custom emoji and
+  // channels.js rebuilds them as premium markup, so every Solana buy card in
+  // every group carries the animated Solana mark from one edit.
   chain_emojis:
     "solana = 🟣\n" +
     "ethereum = 🔷\n" +
@@ -1022,18 +1043,18 @@ const META = {
   group_added: { group: "Group Setup", label: "Group: posted the moment the bot is added", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["intro", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["intro", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "chainEmoji", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
   group_start_buttons: { group: "Group Buy Bot", label: "Group welcome buttons (buybot|raid|settings|listing|channel)", ph: [] },
   buybot_remove_confirm: { group: "Group Buy Bot", label: "Group: confirm removing the CA", ph: ["symbol", "address"] },
   buybot_removed_toast: { group: "Group Buy Bot", label: "Group: CA removed (toast)", ph: [] },
   group_buy_intro: { group: "Group Buy Bot", label: "Group: banner line above a buy", ph: [] },
   group_whale_intro: { group: "Group Buy Bot", label: "Group: banner line above a whale", ph: [] },
-  group_powered_by: { group: "Group Buy Bot", label: "Group: byline under the CTA row", ph: ["listingChannel"] },
-  group_name_row: { group: "Group Buy Bot", label: "Group: the token row", ph: ["label", "name", "symbol"] },
+  group_powered_by: { group: "Group Buy Bot", label: "Group: byline on the header line", ph: ["listingChannel"] },
+  group_name_row: { group: "Group Buy Bot", label: "Group: the token row", ph: ["chainEmoji", "label", "name", "symbol"] },
   group_buyer_row: { group: "Group Buy Bot", label: "Group: the buyer + txn row", ph: ["buyer", "txn"] },
   group_position_row: { group: "Group Buy Bot", label: "Group: the Position row", ph: ["holds", "symbol", "holdsUsd", "position", "wallet", "walletUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "wallet", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "wallet", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "chainEmoji", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.
@@ -1106,7 +1127,7 @@ const META = {
   post_pump: { group: "Channel Posts", label: "Post: Pump alert", ph: ["chainEmoji", "symbol", "name", "percent", "multiple", "firstMc", "lastMc", "chain", "address", "coinUrl", "coinUrlLabel", "xUrl", "twitter", "website", "telegram", "site", "listing", "trending", "announce", "xlisting"] },
   post_gainers: { group: "Channel Posts", label: "Post: Top Gainers banner", ph: ["date", "list", "count", "xUrl", "site", "listing", "trending", "announce", "xlisting"] },
   tier_emojis: { group: "Channel Posts", label: "Tier badges (Diamond → Bronze)", ph: [] },
-  chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network, auto-picked)", ph: [] },
+  chain_emojis: { group: "Channel Posts", label: "Chain emoji (per network — channel posts + buy alerts)", ph: [] },
   x_listing: { group: "X Posts", label: "X post: Xpress listing", ph: ["name", "tag", "mention", "url", "address", "price", "mcap", "chain", "handle"] },
   x_listing_tiered: { group: "X Posts", label: "X post: Listing & Trending", ph: ["tierEmoji", "tier", "name", "tag", "mention", "url", "address", "price", "mcap", "chain", "handle"] },
   x_trending: { group: "X Posts", label: "X post: trending", ph: ["symbol", "name", "chain", "url", "tag", "mention", "handle"] },
@@ -1452,6 +1473,37 @@ function isCustom(key) {
 function overrideCount() {
   return Object.keys(loadJSONSync(FILE, {})).length;
 }
+/**
+ * Placeholders the DEFAULT relies on that a saved value has lost.
+ *
+ * THE FAILURE THIS CATCHES: a group card went out reading "{💎}" where its size
+ * row belongs. Something — a hand edit, an emoji pasted over the wrong span —
+ * had turned `{emoji}` into `{💎}`, and nothing anywhere objected: a mangled
+ * placeholder is just text, so it renders as text, in a customer's group, under
+ * their ticker. The template editor is the only place that can notice, because
+ * by the time an alert posts it is far too late.
+ *
+ * Reported, never rejected. An operator is allowed to drop a placeholder they
+ * do not want — that is the whole point of editing — so this returns what
+ * changed and lets the caller say so.
+ */
+function missingPlaceholders(key, value) {
+  const def = DEFAULTS[key];
+  if (typeof def !== "string") return [];
+  const text = value && typeof value === "object" && value.text != null ? value.text : String(value || "");
+  const names = (t) => new Set([...String(t).matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+  const had = names(def);
+  const has = names(text);
+  return [...had].filter((n) => !has.has(n));
+}
+
+/** A `{...}` whose contents are not a plain name — `{💎}`, `{emo ji}`. Always a
+ *  mistake: nothing substitutes it, so it reaches the group verbatim. */
+function mangledPlaceholders(value) {
+  const text = value && typeof value === "object" && value.text != null ? value.text : String(value || "");
+  return [...String(text).matchAll(/\{([^{}]{0,40})\}/g)].map((m) => m[0]).filter((m) => !/^\{\w+\}$/.test(m));
+}
+
 async function setTemplate(key, value) {
   const saved = loadJSONSync(FILE, {});
   saved[key] = value;
@@ -1486,6 +1538,8 @@ const groups = () => {
 };
 
 module.exports = {
+  missingPlaceholders,
+  mangledPlaceholders,
   t,
   markup,
   render,

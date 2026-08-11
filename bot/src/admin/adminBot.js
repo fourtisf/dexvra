@@ -1670,6 +1670,42 @@ function phLegend(phList) {
 // NOT embedded here — it's sent as its own PLAIN message just above (see
 // sendTemplateView), like fourtisadminbot, so operators see it as normal text
 // with no code-box / blockquote / copy button.
+/**
+ * What the saved template did to its placeholders, as a line to append.
+ *
+ * A group card went out reading "{💎}" where its size row belongs: something had
+ * turned {emoji} into {💎}, and nothing objected — a mangled placeholder is just
+ * text, so it renders as text, in a customer's group, under their ticker. This
+ * editor is the only place that can notice; by the time an alert posts it is far
+ * too late.
+ *
+ * Shown on the CONTROLS CARD too, not only after a save, because the template
+ * that broke was already broken — an operator opening it has to be told, not
+ * left to spot a stray brace in a wall of copy.
+ *
+ * A WARNING, never a refusal. Dropping a placeholder on purpose is the whole
+ * point of editing a template. Saying so is not.
+ */
+function placeholderWarning(key) {
+  const val = tpl.getRawValue(key);
+  const mangled = tpl.mangledPlaceholders(val);
+  const missing = tpl.missingPlaceholders(key, val);
+  const bits = [];
+  if (mangled.length) {
+    bits.push(
+      `⚠️ <b>Placeholder rusak:</b> <code>${escapeHtml(mangled.join(" "))}</code> — ` +
+        `ini tidak diisi apa pun dan akan tampil apa adanya di grup.`,
+    );
+  }
+  if (missing.length) {
+    bits.push(
+      `ℹ️ Tidak lagi dipakai: <code>${escapeHtml(missing.map((m) => "{" + m + "}").join(" "))}</code>. ` +
+        `Sengaja? Kalau tidak, ♻️ Reset default mengembalikannya.`,
+    );
+  }
+  return bits.length ? "\n\n" + bits.join("\n") : "";
+}
+
 function viewText(key) {
   const m = tpl.meta(key);
   const val = tpl.getRawValue(key);
@@ -1687,7 +1723,8 @@ function viewText(key) {
     `type it like a normal message (emoji & line breaks are kept).` +
     (m.ph.length
       ? ` The <code>{tags}</code> below get swapped for live data — keep the ones you want, delete the rest.\n${phLegend(m.ph)}`
-      : ``)
+      : ``) +
+    placeholderWarning(key)
   );
 }
 
@@ -3290,7 +3327,8 @@ function build() {
       log.info(`[adminbot] template '${key}' emoji #${i + 1} → ${frag} by @${ctx.from.username || ctx.from.id}`);
       await ctx
         .reply(
-          `✅ Swapped to ${escapeHtml(now ? now.char : frag)}${now && now.id ? " — 💎 premium" : ""}. Live within ~30s.`,
+          `✅ Swapped to ${escapeHtml(now ? now.char : frag)}${now && now.id ? " — 💎 premium" : ""}. Live within ~30s.` +
+            placeholderWarning(key),
           HTML,
         )
         .catch(() => {});
@@ -3481,3 +3519,5 @@ module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROU
 module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, emojiFragment, premiumReportText };
 // Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
 module.exports._net = { fetchTelegramFileBuffer };
+// Exposed for tests: the template controls card and its broken-placeholder guard.
+module.exports._tpl = { viewText, placeholderWarning };

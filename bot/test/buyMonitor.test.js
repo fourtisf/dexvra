@@ -323,7 +323,9 @@ test("the alert renders the reference layout", () => {
   // ONE opening line: banner, token, event, byline. Three stacked blocks pushed
   // the numbers people came for off the first screen on a phone.
   assert.match(out, /^🚨 NEW BUY ALERT The Nietzschean Dog BUY! \| Powered by @\w+$/m, "the whole opening line");
-  assert.match(out, /^📃 The Nietzschean Dog \$RUSS$/m);
+  // The token row leads with the NETWORK's own glyph — 🟣 for Solana, from the
+  // shared chain_emojis map — not a fixed 📃 that made every chain look alike.
+  assert.match(out, /^🟣 The Nietzschean Dog \$RUSS$/m);
   assert.match(out, /^💲 \$48\.97 \(0\.6646 SOL\)$/m);
   assert.match(out, /^🪙 926,311\.94 \$RUSS$/m);
   assert.match(out, /^📊 .+ · MC .+$/m);
@@ -411,7 +413,9 @@ test("both buy cards speak ONE grammar", () => {
     // the next one, with no blank line between them.
     assert.match(lines[0], /ALERT Dexvra Token .+!( \| Powered by @\w+)?$/, `${which}: the whole opening line`);
     assert.match(lines[1], /^[🟢🐋]+$/u, `${which}: the size row follows it directly`);
-    assert.match(text, /^📃 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);
+    // 🟡 is BSC's mark, from chain_emojis — the token row leads with its own
+    // network on both cards, not a fixed icon on either.
+    assert.match(text, /^🟡 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);
     // Every row carrying a NUMBER leads with an icon. The bold labels these
     // replaced ("**Spent:**", "**MCap:**") must not survive on any card —
     // half-converted is worse than either layout on its own.
@@ -423,7 +427,7 @@ test("both buy cards speak ONE grammar", () => {
   }
   // And the ticker-only fallback does not print the same word twice.
   const noName = mon.renderRealAlert({ ...g, name: "" }, buy, pool, null).text;
-  assert.match(noName, /^📃 \$DEX$/m, "no name → just the ticker, not '$DEX $DEX'");
+  assert.match(noName, /^🟡 \$DEX$/m, "no name → just the ticker, not '$DEX $DEX'");
 });
 
 test("every placeholder a default template uses is offered in the editor", () => {
@@ -500,10 +504,15 @@ test("the Position row is editable on BOTH cards, from one template", () => {
 test("every emoji on the buy card is reachable from the editor", () => {
   // 📃 and 👤 were written into buyMonitor.js, so they were the only two icons
   // an operator swapping the rest could not change — and nothing said why.
+  //
+  // chain_emojis belongs in this list for the same reason: the network glyph
+  // leading the token row is picked by the bot, so the ONE place an operator can
+  // change it is that map. Leave it out and the card's first character is once
+  // again an icon the editor cannot reach.
   const tpl = require("../src/templates");
   const swappable = new Set(
     ["group_buy_alert", "group_whale_alert", "group_buy_intro", "group_whale_intro",
-     "group_name_row", "group_buyer_row", "group_position_row", "group_buy_style"]
+     "group_name_row", "group_buyer_row", "group_position_row", "group_buy_style", "chain_emojis"]
       .flatMap((k) => tpl.listEmojis(k).map((e) => e.char)),
   );
   const g = { chatId: "-1", chain: "solana", address: "So1", sym: "ALON", name: "alon", minBuyUsd: 0 };

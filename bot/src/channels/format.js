@@ -764,4 +764,9 @@ function rankupPost(coin, rank, change24h) {
   }), postUrls(coin));
 }
 
-module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, channelLinks };
+// chainEmoji is exported because the group buy card wants the SAME glyph the
+// channel posts use. A second copy in bot/src/group/ would be a second place to
+// paste a premium custom emoji into, and the two would read differently for the
+// same chain the first time only one of them was updated — the exact drift the
+// comment above emojiMapTemplate is about.
+module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, channelLinks };
