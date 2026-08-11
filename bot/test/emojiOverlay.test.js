@@ -124,14 +124,20 @@ test("a premium swap keeps its id, and the card carries the entity", async () =>
   }
 });
 
-test("a premium emoji inside a link label falls back to plain, keeping the button", async () => {
-  // "[⚡ Trade](url)" would become "[[⚡](emoji/1) Trade](url)" — no parser reads
-  // that as a link, and it reached the card as literal brackets. Losing the
-  // animation on one icon beats losing the button it is sitting on.
+test("a premium emoji inside a link label STAYS premium — and keeps the button", async () => {
+  // The ⚡ Trade / 📈 Chart / 💎 Dexvra row is three link labels, and a premium
+  // swap there used to be silently downgraded to the plain char (the old parser
+  // choked on "[[⚡](emoji/1) Trade](url)" and leaked literal brackets). To the
+  // operator that read as "premium chart gagal": no 💎 on the button, nothing
+  // animated in channel posts. The parser now reads the nesting, so the swap
+  // keeps its id AND the button.
   const i = chars("group_buy_alert").indexOf("⚡");
   assert.ok(i >= 0, "the CTA row still leads with ⚡");
   await tpl.replaceEmojiAt("group_buy_alert", i, "[🔥](emoji/555)");
   try {
+    const e = tpl.listEmojis("group_buy_alert").find((x) => x.char === "🔥");
+    assert.ok(e, "the swapped icon is listed");
+    assert.strictEqual(e.id, "555", "…as premium, so the picker shows its 💎");
     // A full bag: an empty {name} would render "[](url)" and leave brackets of
     // its own, which has nothing to do with what this test is checking.
     const payload = tpl.render("group_buy_alert", {
@@ -141,6 +147,9 @@ test("a premium emoji inside a link label falls back to plain, keeping the butto
     });
     const labels = payload.entities.filter((e) => e.type === "text_link").map((e) => payload.text.substr(e.offset, e.length));
     assert.ok(labels.includes("🔥 Trade on Dexvra"), `the button survived: ${labels.join(" | ")}`);
+    const prem = payload.entities.find((e) => e.type === "custom_emoji" && e.custom_emoji_id === "555");
+    assert.ok(prem, "the custom_emoji entity reached the card");
+    assert.strictEqual(payload.text.substr(prem.offset, prem.length), "🔥", "…on the right character, nested in the link");
     assert.doesNotMatch(payload.text, /\[|\]/, "no literal brackets reached the card");
   } finally {
     await tpl.resetTemplate("group_buy_alert");

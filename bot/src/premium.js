@@ -15,39 +15,99 @@ const PH_RE = /\{(\w+)\}/g;
 
 /** Parse premium markup → { text, entities } (Bot API entity objects). */
 function parse(input) {
-  const text = String(input == null ? "" : input);
+  const raw = String(input == null ? "" : input);
+
+  // Premium fragments are reduced to their bare char BEFORE the pattern scan,
+  // wherever they sit. This is what lets one live INSIDE a link label or a bold
+  // span: "[[⚡](emoji/1) Trade](url)" is unreadable to the link regex (the
+  // label may not contain "]"), so a single-pass scan either lost the link or
+  // leaked literal brackets into the card. Reduced first, the scan sees
+  // "[⚡ Trade](url)" — plain and matchable — and the emoji survives as a
+  // recorded position that becomes a custom_emoji entity NESTED in the link,
+  // which is exactly the shape Telegram accepts.
+  const marks = []; // { at: offset into `reduced`, char, id }
+  let reduced = "";
+  let last = 0;
+  // The char may contain NO markup-control character — the same set
+  // emojiFragment strips when it builds a fragment. "[" would make the match on
+  // "[[⚡](emoji/1) Trade](url)" start one char early and swallow the outer
+  // link's opening bracket; "*" or "`" inside the char would pair with
+  // delimiters OUTSIDE the fragment after reduction, and the pattern scan
+  // below would cut a span through the middle of the char — emitting an
+  // entity past the end of the text, which Telegram rejects wholesale.
+  const fragRe = /\[([^[\]()`*\n]+)\]\(emoji\/(\d+)\)/g;
+  for (let f; (f = fragRe.exec(raw)) !== null; ) {
+    reduced += raw.substring(last, f.index);
+    marks.push({ at: reduced.length, char: f[1], id: f[2] });
+    reduced += f[1];
+    last = f.index + f[0].length;
+  }
+  reduced += raw.substring(last);
+
+  // `pre` = delimiter chars before the visible text, so the spans the scan
+  // strips ([start, start+pre) and [textEnd, end)) can be named exactly — the
+  // premium marks below need them to know how far their char slid left.
   const patterns = [];
   let m;
-  let r = /\[([^\]]+)\]\(emoji\/(\d+)\)/g;
-  while ((m = r.exec(text)) !== null)
-    patterns.push({ type: "custom_emoji", start: m.index, end: m.index + m[0].length, text: m[1], id: m[2] });
-  r = /\*\*([^*]+)\*\*/g;
-  while ((m = r.exec(text)) !== null)
-    patterns.push({ type: "bold", start: m.index, end: m.index + m[0].length, text: m[1] });
+  let r = /\*\*([^*]+)\*\*/g;
+  while ((m = r.exec(reduced)) !== null)
+    patterns.push({ type: "bold", start: m.index, end: m.index + m[0].length, text: m[1], pre: 2 });
   r = /\[([^\]]+)\]\(([^)]+)\)/g;
-  while ((m = r.exec(text)) !== null)
+  while ((m = r.exec(reduced)) !== null)
+    // A NEAR-MISS fragment — emoji-shaped but with a junk id ("[🔥](emoji/12x)")
+    // or a malformed char — is not consumed by the pre-pass, and without this
+    // guard it would become a text_link whose url is the relative "emoji/…",
+    // which the Bot API refuses — failing the whole message. Left literal, the
+    // typo is visible and the message still sends.
     if (!m[2].startsWith("emoji/"))
-      patterns.push({ type: "text_link", start: m.index, end: m.index + m[0].length, text: m[1], url: m[2] });
+      patterns.push({ type: "text_link", start: m.index, end: m.index + m[0].length, text: m[1], url: m[2], pre: 1 });
   r = /`([^`\n]+)`/g;
-  while ((m = r.exec(text)) !== null)
-    patterns.push({ type: "code", start: m.index, end: m.index + m[0].length, text: m[1] });
+  while ((m = r.exec(reduced)) !== null)
+    patterns.push({ type: "code", start: m.index, end: m.index + m[0].length, text: m[1], pre: 1 });
 
   patterns.sort((a, b) => a.start - b.start || b.end - a.end);
   const entities = [];
+  const kept = [];
   let clean = "";
   let lastEnd = 0;
   for (const p of patterns) {
     if (p.start < lastEnd) continue; // overlapping match (e.g. link inside bold) — keep the first
-    clean += text.substring(lastEnd, p.start);
+    clean += reduced.substring(lastEnd, p.start);
     const offset = clean.length; // UTF-16 code units — what Telegram expects
     clean += p.text;
     const e = { type: p.type, offset, length: p.text.length };
-    if (p.type === "custom_emoji") e.custom_emoji_id = p.id;
     if (p.type === "text_link") e.url = p.url;
     entities.push(e);
+    kept.push(p);
     lastEnd = p.end;
   }
-  clean += text.substring(lastEnd);
+  clean += reduced.substring(lastEnd);
+
+  // Place each premium mark into `clean`: its char slid left by every delimiter
+  // the scan removed before it. A mark whose char TOUCHES a removed span (a
+  // URL, a `**`) is not intact in `clean` — dropped whole rather than emitted
+  // over the wrong characters. And a mark inside a `code` span keeps its char
+  // but no entity: Telegram allows nothing nested inside code, and an illegal
+  // shape can fail the whole send.
+  for (const mk of marks) {
+    const mkEnd = mk.at + mk.char.length;
+    let removed = 0;
+    let gone = false;
+    for (const p of kept) {
+      const textStart = p.start + p.pre;
+      const textEnd = textStart + p.text.length;
+      if (p.type === "code" && mk.at >= textStart && mk.at < textEnd) gone = true;
+      for (const [a, b] of [[p.start, textStart], [textEnd, p.end]]) {
+        if (b <= mk.at) removed += b - a;
+        else if (a < mkEnd && mk.at < b) gone = true;
+      }
+    }
+    if (gone) continue;
+    entities.push({ type: "custom_emoji", offset: mk.at - removed, length: mk.char.length, custom_emoji_id: mk.id });
+  }
+  // Offset order, containing entity first — the shape clients and GramJS expect
+  // for nested entities.
+  entities.sort((a, b) => a.offset - b.offset || b.length - a.length);
   return { text: clean, entities };
 }
 

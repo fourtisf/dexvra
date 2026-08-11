@@ -1503,12 +1503,18 @@ function getRawValue(key) {
 //     every entity offset after the cut.
 const EMOJI_RE =
   /(?:\p{RI}\p{RI}|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*|[0-9#*]\uFE0F?\u20E3)/gu;
-const PREMIUM_FRAG_RE = /\[([^\]\n]+)\]\(emoji\/(\d+)\)/g;
+// The char half may contain NO markup-control character — the same rule (and
+// set) premium.parse() enforces, so what this file lists as premium is exactly
+// what the renderer will treat as premium. "[" would make the match on a
+// NESTED fragment ("[[⚡](emoji/1) Trade](url)") swallow the outer link's
+// opening bracket; "*"/"`" inside a char would let the parser's pattern scan
+// cut a span through the middle of it.
+const PREMIUM_FRAG_RE = /\[([^[\]()`*\n]+)\]\(emoji\/(\d+)\)/g;
 
 /** Parse a replacement the admin sent: "😀" or "[😀](emoji/123)". */
 function parseFragment(fragment) {
   const f = String(fragment || "").trim();
-  const m = /^\[([^\]\n]+)\]\(emoji\/(\d+)\)$/.exec(f);
+  const m = /^\[([^[\]()`*\n]+)\]\(emoji\/(\d+)\)$/.exec(f);
   return m ? { char: m[1], id: m[2] } : { char: f, id: null };
 }
 
@@ -1557,18 +1563,6 @@ function listEmojisIn(val) {
   return out.map((e, i) => ({ i, ...e }));
 }
 
-/** Is `at` inside the LABEL half of a "[label](target)" — where nested markup
- *  cannot go? Premium-emoji fragments are themselves links, so this is what
- *  stops one being spliced into another. */
-function insideLinkLabel(text, at) {
-  const re = /\[([^\]\n]*)\]\(([^)\s]*)\)/g;
-  for (let m; (m = re.exec(text)); ) {
-    const labelStart = m.index + 1;
-    if (at >= labelStart && at < labelStart + m[1].length) return true;
-  }
-  return false;
-}
-
 /** One emoji swapped for another, in place, in a template VALUE. Pure. */
 function spliceEmoji(val, target, fragment) {
   const { char, id } = parseFragment(fragment);
@@ -1577,12 +1571,13 @@ function spliceEmoji(val, target, fragment) {
 
   if (!isEntity) {
     const text = String(val || "");
-    // A premium emoji is markup — "[char](emoji/id)" — so it CANNOT go inside a
-    // link label: "[⚡ Trade](url)" would become "[[⚡](emoji/1) Trade](url)",
-    // which no parser reads as a link and which reached the card as literal
-    // brackets. The swap still happens, in plain form. Losing the animation on
-    // one icon beats losing the button it is sitting on.
-    const replacement = id && !insideLinkLabel(text, target.start) ? `[${char}](emoji/${id})` : char;
+    // A premium fragment goes in AS a fragment even inside a link label:
+    // "[[⚡](emoji/1) Trade](url)" is what premium.parse() reads as a link with
+    // a custom_emoji entity nested in it. It used to be downgraded to the plain
+    // char here because the old single-pass parser choked on the nesting and
+    // leaked literal brackets — which is why a premium swap on the ⚡ Trade /
+    // 📈 Chart row looked like it silently failed.
+    const replacement = id ? `[${char}](emoji/${id})` : char;
     return text.slice(0, target.start) + replacement + text.slice(target.end);
   }
 

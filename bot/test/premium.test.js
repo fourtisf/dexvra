@@ -45,6 +45,69 @@ test("parse: no markup → plain text, no entities; emoji tags ≠ normal links"
   assert.strictEqual(p2.entities[1].type, "text_link");
 });
 
+test("parse: premium emoji NESTED in a link label — link intact, emoji entity inside it", () => {
+  // The buy card's CTA row is "[⚡ Trade on Dexvra](url) · [📈 Chart](url)…" —
+  // three link labels. A premium swap there writes the fragment INSIDE the
+  // label, and the old single-pass scan could not read that: the link died or
+  // literal brackets leaked. This is the exact shape the footer swap produces.
+  const { text, entities } = premium.parse("[[⚡](emoji/111) Trade on Dexvra](https://t.me/x) · [[🆙](emoji/222) Chart](https://c)");
+  assert.strictEqual(text, "⚡ Trade on Dexvra · 🆙 Chart");
+  const links = entities.filter((e) => e.type === "text_link");
+  assert.deepStrictEqual(links.map((e) => text.substr(e.offset, e.length)), ["⚡ Trade on Dexvra", "🆙 Chart"]);
+  const prem = entities.filter((e) => e.type === "custom_emoji");
+  assert.deepStrictEqual(prem.map((e) => [text.substr(e.offset, e.length), e.custom_emoji_id]), [["⚡", "111"], ["🆙", "222"]]);
+  // Nested: each emoji entity sits inside its link's span, containing entity first.
+  assert.ok(prem[0].offset >= links[0].offset && prem[0].offset + prem[0].length <= links[0].offset + links[0].length);
+  assert.ok(entities.indexOf(links[0]) < entities.indexOf(prem[0]), "link (container) sorted before its emoji");
+});
+
+test("parse: premium emoji inside **bold** keeps both", () => {
+  const { text, entities } = premium.parse("**[🔥](emoji/9) hot**");
+  assert.strictEqual(text, "🔥 hot");
+  assert.deepStrictEqual(
+    entities.map((e) => [e.type, e.offset, e.length]),
+    [["bold", 0, 6], ["custom_emoji", 0, 2]],
+  );
+});
+
+test("parse: a NEAR-MISS fragment stays literal — never a text_link with an emoji/ url", () => {
+  // Emoji-shaped but malformed (a junk id, a bracket or newline in the char)
+  // is not consumed by the fragment pre-pass. Without the emoji/ guard on the
+  // link scan it became a text_link whose url is the relative "emoji/…" — and
+  // the Bot API refuses that ENTIRE message. Literal text is ugly; a buy alert
+  // that silently stops sending is a production incident.
+  for (const s of ["[🔥](emoji/12x) now", "[x](emoji/abc)", "[a\nb](emoji/5) x", "[🔥*](emoji/5) y"]) {
+    const { entities } = premium.parse(s);
+    assert.ok(
+      !entities.some((e) => e.type === "text_link" && String(e.url).startsWith("emoji/")),
+      `no emoji/ text_link for ${JSON.stringify(s)}`,
+    );
+  }
+});
+
+test("parse: entities NEVER extend past the text, whatever junk comes in", () => {
+  // A fragment char carrying markup delimiters used to let the pattern scan
+  // cut a span through the middle of the char, emitting a custom_emoji entity
+  // beyond the end of the message — which Telegram rejects wholesale.
+  for (const s of [
+    "[x**](emoji/1)b**", "**a[x**](emoji/1)", "[`x`](emoji/5) hi", "x[a**b](emoji/1)c**d",
+    "`[😀](emoji/5)`", "[[⚡](emoji/1) T](u) `c` **b**", "[😀](emoji/", "](emoji/1)[",
+  ]) {
+    const { text, entities } = premium.parse(s);
+    for (const e of entities) {
+      assert.ok(e.offset >= 0 && e.offset + e.length <= text.length, `${JSON.stringify(s)} → in-bounds ${JSON.stringify(e)} in ${JSON.stringify(text)}`);
+    }
+  }
+});
+
+test("parse: a fragment inside `code` shows its char but nests NO entity in the code span", () => {
+  // Telegram allows nothing nested inside code — an illegal shape can fail the
+  // whole send. The char still lands (monospace emoji beats leaked markup).
+  const { text, entities } = premium.parse("`a [🔥](emoji/9) b`");
+  assert.strictEqual(text, "a 🔥 b");
+  assert.deepStrictEqual(entities.map((e) => e.type), ["code"]);
+});
+
 test("parse: overlapping patterns keep the first, never corrupt offsets", () => {
   // link text containing ** — bold pattern overlaps the link match
   const { text, entities } = premium.parse("[**x**](https://a.b) tail");
