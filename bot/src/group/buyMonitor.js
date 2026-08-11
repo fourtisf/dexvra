@@ -1,11 +1,20 @@
 // Group buy-bot monitor.
 //
 // ONE PATH: A BUY IS ALERTED WHEN, AND ONLY WHEN, WE HAVE ITS TRANSACTION.
+// That link is not decoration on a buy alert, it is the entire claim being made.
 //
-// GeckoTerminal's per-pool trades feed gives every buy a transaction hash, a
-// buyer address and GT's own USD figure, so the alert is verifiable: the reader
-// opens the transaction and sees the same number. That link is not decoration
-// on a buy alert, it is the entire claim being made.
+// THE CHAIN IS THE SOURCE (group/chainTrades.js). It reads the pool's own Swap
+// events — or on Solana, the fee payer's token balance delta — so every alert
+// carries a hash the reader can open. GeckoTerminal's trades feed is kept as a
+// FALLBACK only, because it refuses this server at the IP level: 429 on the
+// second call from a fresh process, tracking one pool, needing 2.4 requests a
+// minute against a 25/minute budget. Nothing about that is a volume problem and
+// no amount of pacing argues with it.
+//
+// Prices still come from the indexer, which is fine — that path resolves
+// through DexScreener when GT is unreachable, and it answered this server the
+// whole time the trades feed did not. One cached lookup per pool, not one per
+// buy.
 //
 // THERE USED TO BE A SECOND PATH and it is worth knowing why it is gone. When
 // the feed was unreadable, the bot diffed the rolling 24h volume between polls,
@@ -53,6 +62,7 @@ const cfg = require("./config");
 const whaleCfg = require("../services/whaleConfig");
 const gt = require("./gtPairs");
 const trades = require("./gtTrades");
+const chainTrades = require("./chainTrades");
 const holdings = require("./walletHoldings");
 const latch = require("./alertLatch");
 const { isFatalChatError, describeChatError } = require("./fatalChatError");
@@ -658,10 +668,42 @@ function noteDeadPool(entry) {
  */
 async function pollTrades(tg, entry) {
   const net = gt.networkOf(entry.chain);
-  if (!net || !entry.pool) return false;
+  if (!entry.pool) return false;
 
   const minUsd = Math.min(...entry.groups.map((g) => cfg.minBuyOf(g)));
-  const buys = await trades.fetchPoolBuys(net, entry.pool, entry.address, { minUsd }).catch(() => null);
+  const cursorNow = state.cursors[entry.key] || null;
+
+  // THE CHAIN FIRST. GeckoTerminal refuses this server outright — 429 on the
+  // second call from a fresh process, tracking one pool — and no pacing can
+  // argue with an IP-level block. Reading the swaps ourselves is free, cannot
+  // be rate-limited out of our own product, and is realtime rather than
+  // realtime-once-an-index-catches-up.
+  //
+  // Pricing still comes from the pool snapshot, which resolves through
+  // DexScreener when GT is unreachable — that path was answering this server
+  // the whole time the trades feed was not.
+  let buys = null;
+  if (chainTrades.supports(entry.chain)) {
+    const snap = await gt.fetchPoolCached(entry.chain, entry.address).catch(() => null);
+    if (snap && snap.priceUsd > 0) {
+      buys = await chainTrades
+        .fetchPoolBuys(entry.chain, entry.pool, entry.address, {
+          minUsd,
+          priceUsd: snap.priceUsd,
+          counterSymbol: snap.counterSymbol,
+          counterAddress: snap.counterAddress,
+          sinceBlock: (cursorNow && cursorNow.b) || 0,
+          sinceSig: (cursorNow && cursorNow.sig) || null,
+        })
+        .catch(() => null);
+    }
+  }
+  // Only when the chain could not be read — a missing library, every endpoint
+  // down, a pool shape we do not decode. The indexer stays as the second
+  // opinion rather than the only one.
+  if (buys === null && net) {
+    buys = await trades.fetchPoolBuys(net, entry.pool, entry.address, { minUsd }).catch(() => null);
+  }
   if (buys === null) return false; // unavailable — degrade
 
   const cursor = state.cursors[entry.key] || null;
@@ -677,16 +719,21 @@ async function pollTrades(tg, entry) {
 
   const fresh = selectFresh(cursor, buys);
   const newest = buys[buys.length - 1].blockNumber || 0;
+  // Solana has no "read from block N" — getSignaturesForAddress walks BACK
+  // until it recognises a signature. Carrying the newest one is what stops each
+  // poll re-reading the same window, and slots alone cannot do it: several
+  // transactions share a slot.
+  const newestSig = buys[buys.length - 1].txHash || null;
   if (!fresh.length) {
     // Everything filtered out (too old, or already past). The cursor still
     // advances to the newest block seen, so the next poll does not re-read it.
-    state.cursors[entry.key] = { b: newest, t: now() };
+    state.cursors[entry.key] = { b: newest, t: now(), sig: newestSig };
     await saveState();
     return true;
   }
 
-  // Price / mcap / liquidity only DECORATE the alert, so they are fetched only
-  // now — an idle pool costs exactly one GT request per poll, the trades read.
+  // Cached upstream, so this is the same object the chain path already priced
+  // against rather than a second lookup.
   const pool = await gt.fetchPoolCached(entry.chain, entry.address);
   if (!pool) {
     // HOLD the buys rather than drop them, and do NOT advance the cursor: they
@@ -743,7 +790,7 @@ async function pollTrades(tg, entry) {
   const lastSent = fresh[fresh.length - 1].blockNumber || 0;
   const capped = fresh.length === MAX_PER_POLL && lastSent < newest;
   const cursorBlock = hold !== null ? hold : capped ? lastSent : newest;
-  state.cursors[entry.key] = { b: cursorBlock, t: now() };
+  state.cursors[entry.key] = { b: cursorBlock, t: now(), sig: newestSig };
   await saveState();
   if (capped) log.info(`[buybot] ${entry.key}: paced — more buys queued for the next poll`);
   if (posted) {
