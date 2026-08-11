@@ -426,7 +426,7 @@ const DEFAULTS = {
   // separator with nothing on its left is punctuation for a word that is not
   // there.
   group_buy_alert:
-    "[{name}]({coinUrl}) **{tier}!**\n\n" +
+    "{intro}[{name}]({coinUrl}) **{tier}!**\n\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
@@ -445,7 +445,7 @@ const DEFAULTS = {
     // {holds}, {holdsUsd} and {position} are the same three facts on their own
     // if you would rather lay them out yourself.
     "{wallet}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl}){poweredBy}",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
   // whatever they just spent. Pinned in the group, so it is deliberately its own
   // card rather than the normal one with a louder word on it.
@@ -459,7 +459,7 @@ const DEFAULTS = {
   // Available for anyone who does want it, and never a hardcoded "$50,000",
   // because the group's /setwhale or the admin bot can move it at any time.
   group_whale_alert:
-    "[{name}]({coinUrl}) **WHALE WALLET!**\n\n" +
+    "{introWhale}[{name}]({coinUrl}) **WHALE WALLET!**\n\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
@@ -472,7 +472,7 @@ const DEFAULTS = {
     "📊 {price} · MC {mcap}\n" +
     "💧 {liq} · 24h {change}\n" +
     "{verify}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl}){poweredBy}",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
   // ever GROWS with the buy.
@@ -498,6 +498,38 @@ const DEFAULTS = {
   //
   // A group that saved an override for the old `group_buy_alert_est` key keeps
   // a harmless orphan entry in data/templates.json; nothing reads it.
+  // The banner line above the header, and the byline under the CTA row. Both
+  // are WHOLE ROWS: clear either one in @dexvraadminbot and it vanishes cleanly
+  // rather than leaving a blank line behind.
+  //
+  // SELF-SPACING, both of them. dropEmptyLines is opt-in and these cards do not
+  // use it, so an empty placeholder on its own line would leave the line behind
+  // — an operator who cleared the banner would get a blank first line instead of
+  // no banner. So the banner carries its own trailing blank line and the byline
+  // its own leading newline, and both sit on a line with other content. Same
+  // pattern as {socials}/{overview} in the channel posts.
+  //
+  // {poweredBy} carries the channel handle from config, not a literal — change
+  // LISTING_CHANNEL in .env and the byline follows instead of going stale. A
+  // bare @handle is deliberate: Telegram links it by itself, and putting one
+  // inside a [text](url) target is what made an earlier card fail to send at
+  // all ("400: Wrong HTTP URL").
+  group_buy_intro: "🚨 **NEW BUY ALERT**",
+  group_whale_intro: "🐋 **WHALE ALERT**",
+  group_powered_by: "⚡ powered by {listingChannel}",
+  // The 💼 Position row, for the ORDINARY buy card.
+  //
+  // It used to be built in code and injected as {wallet}, which made it the one
+  // row on the card an admin could not reword — while the whale card spelled
+  // the same row out in its own template and could. Same row, two rules, and
+  // the difference was invisible until somebody went looking for it.
+  //
+  // The WHOLE row lives here, emoji and label included, so it disappears
+  // entirely when the holding could not be read: an unsupported chain, an RPC
+  // that did not answer, a buy under the dust floor, or a group that turned
+  // holdings off. A label with nothing after it is not a row, it is a
+  // rendering bug.
+  group_position_row: "✅ Position: {holds} {symbol} · {holdsUsd} ({position})",
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
@@ -969,12 +1001,16 @@ const META = {
   group_added: { group: "Group Setup", label: "Group: posted the moment the bot is added", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_start: { group: "Group Setup", label: "Group: /start inside a group", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
-  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["intro", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
   group_start_buttons: { group: "Group Buy Bot", label: "Group welcome buttons (buybot|raid|settings|listing|channel)", ph: [] },
   buybot_remove_confirm: { group: "Group Buy Bot", label: "Group: confirm removing the CA", ph: ["symbol", "address"] },
   buybot_removed_toast: { group: "Group Buy Bot", label: "Group: CA removed (toast)", ph: [] },
+  group_buy_intro: { group: "Group Buy Bot", label: "Group: banner line above a buy", ph: [] },
+  group_whale_intro: { group: "Group Buy Bot", label: "Group: banner line above a whale", ph: [] },
+  group_powered_by: { group: "Group Buy Bot", label: "Group: byline under the CTA row", ph: ["listingChannel"] },
+  group_position_row: { group: "Group Buy Bot", label: "Group: the Position row", ph: ["holds", "symbol", "holdsUsd", "position"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.

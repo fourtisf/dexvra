@@ -322,14 +322,40 @@ function verifyRow(chain, buy) {
 function positionRow(g, pos) {
   if (!pos || !(pos.held > 0)) return "";
   const sym = premium.sanitizeVar(`$${String(g.sym || "").replace(/^\$/, "") || "TOKEN"}`);
-  return `✅ Position: ${tokenAmount(pos.held)} ${sym} · ${usdAmount(pos.holdsUsd)} (${pos.position})`;
+  // Rendered from `group_position_row`, not built here. This was the one row on
+  // the card an admin could not reword — while the whale card spelled the same
+  // row out in its own template and could. Same row, two rules.
+  //
+  // .trim() because an operator who empties the template means "drop this row",
+  // and a row of whitespace is still a row to dropEmptyLines.
+  return tpl
+    .t("group_position_row", {
+      holds: tokenAmount(pos.held),
+      symbol: sym,
+      holdsUsd: usdAmount(pos.holdsUsd),
+      position: pos.position,
+    })
+    .trim();
 }
 
 /** Every value both buy cards share. Split out so the whale card cannot drift
  *  away from the ordinary one — the two are the same event, told differently.
  *  `pos` is the buyer's holding when it could be read, null otherwise. */
+/** A banner line plus the blank line under it, or nothing at all. Self-spacing
+ *  because dropEmptyLines is opt-in and these cards do not use it: a bare
+ *  "{intro}\n" with nothing in it leaves the newline, which reads as a blank
+ *  first line rather than as no banner. */
+function introRow(key) {
+  const t = tpl.t(key).trim();
+  return t ? `${t}\n\n` : "";
+}
+
 function alertVars(g, buy, pool, pos) {
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
+  // From config, never a literal: change LISTING_CHANNEL in .env and the byline
+  // follows instead of quietly advertising a channel that moved.
+  const { CHANNELS } = require("../config/constants");
+  const listingChannel = String((CHANNELS && CHANNELS.listing) || "").trim();
   const dexvraPage = `${SITE_URL}/token/${g.chain}/${g.address}`;
   const chart = chartUrl(g.chain, g.pairAddress || g.address) || dexvraPage;
   const price = (pool && pool.priceUsd) || (buy.tokenAmount > 0 ? buy.usd / buy.tokenAmount : null);
@@ -373,6 +399,18 @@ function alertVars(g, buy, pool, pos) {
     // what the reader should see, instead of three dashes that look like a
     // wallet holding nothing.
     wallet: positionRow(g, pos),
+    // The banner line and the byline. WHOLE ROWS, like {verify} and {wallet}:
+    // an operator who clears either template gets the row gone rather than a
+    // blank line where it was.
+    // Each carries its OWN spacing — see introRow. Both sit on a line with
+    // other content, so an empty one leaves nothing behind at all.
+    intro: introRow("group_buy_intro"),
+    introWhale: introRow("group_whale_intro"),
+    poweredBy: (() => {
+      const t = tpl.t("group_powered_by", { listingChannel }).trim();
+      return t ? `\n${t}` : "";
+    })(),
+    listingChannel,
     holds: pos ? tokenAmount(pos.held) : "",
     holdsUsd: pos ? usdAmount(pos.holdsUsd) : "",
     position: pos ? pos.position : "",

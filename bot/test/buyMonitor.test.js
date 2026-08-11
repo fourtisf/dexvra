@@ -405,13 +405,15 @@ test("both buy cards speak ONE grammar", () => {
     // The token's name FIRST — no Dexvra mark and no separator in front of it.
     // That position is the most valuable one on the card and it belongs to the
     // project, not to us.
-    assert.match(lines[0], /^Dexvra Token .+!$/, `${which}: token, then event, nothing before`);
+    // The banner line sits above the header; the header is the line after it.
+    assert.match(lines[0], /ALERT$/, `${which}: the banner line leads`);
+    assert.match(lines[1], /^Dexvra Token .+!$/, `${which}: then the token and the event`);
     assert.match(text, /^📃 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);
     // Every row carrying a NUMBER leads with an icon. The bold labels these
     // replaced ("**Spent:**", "**MCap:**") must not survive on any card —
     // half-converted is worse than either layout on its own.
     assert.ok(!/^\*\*\w+:\*\*/m.test(text), `${which}: no bold-label rows left`);
-    for (const l of lines.slice(2)) {
+    for (const l of lines.slice(3)) {
       if (/^[⚡⚠️🟢🐋]/u.test(l) || l.startsWith("Trade")) continue;
       assert.match(l, /^\p{Extended_Pictographic}/u, `${which}: "${l}" should lead with its icon`);
     }
@@ -432,4 +434,60 @@ test("every placeholder a default template uses is offered in the editor", () =>
     const missing = [...used].filter((p) => !offered.has(p));
     assert.deepStrictEqual(missing, [], `${key}: ${missing.join(", ")} used but not offered`);
   }
+});
+
+test("clearing the banner or the byline removes the row, not just its text", () => {
+  // Both are WHOLE rows. An operator who empties one in @dexvraadminbot means
+  // "drop this", and a blank line where it was is a rendering bug, not an
+  // absence.
+  const tpl = require("../src/templates");
+  const real = tpl.t;
+  const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", name: "Dexvra Token", minBuyUsd: 0 };
+  const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 4 };
+  const buy = { txHash: "0xt", buyer: "0xb", usd: 40, tokenAmount: 100 };
+  try {
+    tpl.t = (k, v) => (k === "group_buy_intro" || k === "group_powered_by" ? "   " : real(k, v));
+    const out = mon.renderRealAlert(g, buy, pool, null).text;
+    assert.ok(!/^\s*$/m.test(out.split("\n").slice(0, 1).join("")), "no blank first line");
+    assert.ok(!/\n\n\n/.test(out), "and no hole where either row was");
+    assert.match(out.split("\n")[0], /Dexvra Token .+!/, "the header is now the first line");
+  } finally {
+    tpl.t = real;
+  }
+});
+
+test("the byline names the channel from config, never a literal", () => {
+  // Change LISTING_CHANNEL in .env and the byline follows, instead of quietly
+  // advertising a channel that moved.
+  const tpl = require("../src/templates");
+  const { CHANNELS } = require("../src/config/constants");
+  assert.match(tpl.DEFAULTS.group_powered_by, /\{listingChannel\}/, "it is a placeholder");
+  const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", minBuyUsd: 0 };
+  const out = mon.renderRealAlert(g, { txHash: "0xt", buyer: "0xb", usd: 40, tokenAmount: 1 }, { priceUsd: 1, mcap: 1 }, null).text;
+  assert.ok(out.includes(CHANNELS.listing), `the byline should name ${CHANNELS.listing}`);
+  // A bare @handle, never a link target: an @handle inside [text](url) is what
+  // made an earlier card fail to send at all ("400: Wrong HTTP URL").
+  assert.ok(!new RegExp(`\\]\\(${CHANNELS.listing}`).test(tpl.DEFAULTS.group_powered_by), "not used as a URL");
+});
+
+test("the Position row is editable on BOTH cards, from one template", () => {
+  // It used to be built in code for the ordinary card and spelled out in the
+  // template for the whale one — the same row under two rules, and the
+  // difference invisible until somebody went looking for it.
+  const tpl = require("../src/templates");
+  const real = tpl.t;
+  try {
+    // Substitute like the real t() does — a stub that returns the raw template
+    // tests the stub, not the code.
+    tpl.t = (k, v) =>
+      k === "group_position_row"
+        ? "BAG {holds} {symbol}".replace(/\{(\w+)\}/g, (_, n) => (v && v[n] != null ? v[n] : ""))
+        : real(k, v);
+    const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", minBuyUsd: 0 };
+    const row = mon.positionRow(g, { held: 1000, holdsUsd: 50, position: "+1%" });
+    assert.strictEqual(row, "BAG 1,000 $DEX", "the ordinary card renders the template");
+  } finally {
+    tpl.t = real;
+  }
+  assert.ok(tpl.meta("group_position_row").ph.includes("holds"), "and the editor offers its placeholders");
 });
