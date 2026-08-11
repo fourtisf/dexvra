@@ -2474,25 +2474,38 @@ function build() {
       return ctx.reply("This template has no emoji to swap — use ✏️ Edit to change the text.", HTML).catch(() => {});
     }
     const cb = Markup.button.callback;
-    // A `key = emoji` map (tier_emojis / chain_emojis) gets its KEY on the
-    // button. Without it the picker is a row of near-identical coloured circles
-    // — 🔷 vs 🔵 vs 🔹 with nothing saying which is Ethereum, Base or TON.
-    const labels = mapKeyLabels(key);
+    // EVERY button says which row it belongs to, read out of the template
+    // itself — the same hint the buy-card screen shows. Without it this was six
+    // anonymous glyphs in a grid: an operator could see 💎📈 twice and had no way
+    // to tell the price row from the Chart button, and a `key = emoji` map was a
+    // row of near-identical coloured circles with nothing saying which is
+    // Ethereum, Base or TON.
+    const hints = list.map((e) => emojiHint(key, e));
+    const labelled = hints.some(Boolean);
     const btns = list
       .slice(0, 48)
-      .map((e) => cb(`${e.id ? "💎" : ""}${e.char}${labels[e.i] ? ` ${labels[e.i]}` : ""}`, `temx:${key}:${e.i}`));
-    const perRow = labels.length ? 3 : 6;
+      .map((e) => cb(`${e.id ? "💎" : ""}${e.char}${hints[e.i] ? ` ${hints[e.i]}` : ""}`, `temx:${key}:${e.i}`));
+    const perRow = labelled ? 3 : 6;
     const rows = [];
     for (let i = 0; i < btns.length; i += perRow) rows.push(btns.slice(i, i + perRow));
     // Look at the result without changing anything first — the same button the
     // buy-card screen has, on every template.
     rows.push([cb("👁 Lihat hasilnya", `temp:${key}`)]);
     rows.push([cb("⬅ Back", `v:${key}`)]); // the view handler is v:, not t: — this button was dead
+    // The buy and whale cards each have their own copy of the same icon column,
+    // so editing one here leaves the other looking different — which is exactly
+    // the "the emoji do not match the card" confusion. Point at the screen that
+    // changes both at once.
+    const bothCards = BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis";
     await ctx
       .reply(
         `😀 <b>Swap an emoji</b> — ${escapeHtml(tpl.meta(key).label)}\n\n` +
-          `Tap the one you want to change. 💎 marks the ones that are already premium.` +
+          `Tekan ikon yang mau diganti. Tulisan di sampingnya adalah baris tempat ikon itu dipakai. ` +
+          `💎 menandai yang sudah premium.` +
           (list.length > 48 ? `\n\n<i>Showing the first 48 of ${list.length}.</i>` : "") +
+          (bothCards
+            ? `\n\nℹ️ Ini hanya kartu <b>${escapeHtml(tpl.meta(key).label)}</b>. Untuk mengganti ikon di kartu buy <b>dan</b> whale sekaligus, pakai <b>🎨 Semua emoji kartu buy</b>.`
+            : "") +
           (isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""),
         { ...HTML, ...Markup.inlineKeyboard(rows) },
       )

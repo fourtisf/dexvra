@@ -150,6 +150,31 @@ test("every button maps back to the slot it was built from", () => {
   }
 });
 
+test("every emoji in every template can say which row it is for", () => {
+  // The per-template picker used to show bare glyphs: six anonymous icons in a
+  // grid, two of them 📈, with nothing saying which was the price row and which
+  // was the Chart button. "the emoji don't match the card" is what that looks
+  // like from the other side of the screen.
+  const { emojiHint } = admin._buyEmoji;
+  const unlabelled = [];
+  for (const key of ["group_buy_alert", "group_whale_alert", "chain_emojis", "group_buy_style", "group_position_row"]) {
+    for (const e of tpl.listEmojis(key)) if (!emojiHint(key, e)) unlabelled.push(`${key}#${e.i} ${e.char}`);
+  }
+  assert.deepStrictEqual(unlabelled, []);
+});
+
+test("the hint is the row's own word, so the button matches the card", () => {
+  const { emojiHint } = admin._buyEmoji;
+  const hint = (key, char) => emojiHint(key, tpl.listEmojis(key).find((e) => e.char === char));
+  assert.strictEqual(hint("group_buy_alert", "💲"), "usd");
+  assert.strictEqual(hint("group_buy_alert", "📊"), "price");
+  assert.strictEqual(hint("group_buy_alert", "📈"), "Chart", "the CTA button, not the price row");
+  // Both cards read the same, because they ARE the same card below the banner.
+  for (const char of ["💲", "🪙", "📊", "⚡", "📈", "💎"]) {
+    assert.strictEqual(hint("group_whale_alert", char), hint("group_buy_alert", char), char);
+  }
+});
+
 test("the screen says the group cards cannot animate premium emoji", () => {
   // Telegram strips custom-emoji entities from a regular bot, and these cards
   // are posted by one. Saying it here beats an evening spent wondering.
