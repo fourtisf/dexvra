@@ -402,13 +402,51 @@ async function buybot(ctx) {
  */
 function settingsKeyboard(g) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("📄 Token", "bs_token"), Markup.button.callback("💲 Min buy", "bs_minbuy")],
+    // "📄 Token" said what the button was ABOUT, not what tapping it does. The
+    // panel above already prints the CA, so the only thing left to offer is
+    // replacing it.
+    [Markup.button.callback("📄 Change CA", "bs_token"), Markup.button.callback("💲 Min buy", "bs_minbuy")],
     [
       Markup.button.callback("🐋 Whale bar", "bs_whale"),
       Markup.button.callback(g.pin === false ? "📌 Pin: off" : "📌 Pin: on", "bs_pin"),
     ],
     [Markup.button.callback(g.on ? "🔴 Turn the buy bot off" : "🟢 Turn the buy bot on", "bs_power")],
+    // On its OWN row, deliberately not beside the power toggle. Two buttons that
+    // both stop the alerts, side by side on a phone, is a mis-tap waiting to
+    // happen — and this is the one that cannot be undone with the same tap.
+    [Markup.button.callback("🗑 Remove CA", "bs_rmca")],
   ]);
+}
+
+/**
+ * "Remove this CA?" — asked in place, over the panel that was tapped.
+ *
+ * A confirm step, on a feature whose whole brief was "make it as easy as
+ * possible", because the cost is asymmetric: removing takes one tap and stops
+ * every alert in a group where nobody is watching for that, and the first
+ * anybody notices is somebody asking why the bot died. Two taps to remove,
+ * still one paste to put it back.
+ *
+ * Editing the same message rather than sending a new one is what keeps it
+ * cheap: no navigation, and cancelling puts the panel back exactly as it was.
+ */
+function removeConfirmPanel(chatId) {
+  const g = cfg.get(chatId) || {};
+  const sym = String(g.sym || "").replace(/^\$/, "");
+  const { text, extra } = payloadArgs(
+    tpl.render("buybot_remove_confirm", {
+      symbol: sym ? `$${sym}` : "this token",
+      address: g.address || "—",
+    }),
+    false,
+  );
+  const kb = Markup.inlineKeyboard([
+    [
+      Markup.button.callback("✅ Yes, remove", "bs_rmyes"),
+      Markup.button.callback("↩️ Keep it", "bs_rmno"),
+    ],
+  ]);
+  return { text, extra: { ...extra, disable_web_page_preview: true, ...kb } };
 }
 
 function statusPanel(chatId) {
@@ -417,7 +455,7 @@ function statusPanel(chatId) {
   // starts it. Offering "min buy" on a group with no token is a dead end.
   if (!g || !g.address) {
     const { text, extra } = payloadArgs(tpl.render("buybot_need_token"), false);
-    const kb = Markup.inlineKeyboard([[Markup.button.callback("📄 Set token", "bs_token")]]);
+    const kb = Markup.inlineKeyboard([[Markup.button.callback("📄 Add CA", "bs_token")]]);
     return { text, extra: { ...extra, disable_web_page_preview: true, ...kb } };
   }
   const { text, extra } = payloadArgs(
@@ -484,6 +522,29 @@ async function settingsTap(ctx) {
     const p = whalePanel(ctx.chat.id);
     return void ctx.reply(p.text, p.extra).catch(() => {});
   }
+  if (what === "rmca") {
+    if (!g.address) {
+      await ctx.answerCbQuery(tpl.t("buybot_need_token"), { show_alert: true }).catch(() => {});
+      return;
+    }
+    await ctx.answerCbQuery().catch(() => {});
+    return void repaint(ctx, removeConfirmPanel(ctx.chat.id));
+  }
+  if (what === "rmno") {
+    await ctx.answerCbQuery().catch(() => {});
+    return void repaint(ctx, statusPanel(ctx.chat.id));
+  }
+  if (what === "rmyes") {
+    // The TOKEN goes, the group's TUNING stays. Wiping minBuyUsd / whaleWalletUsd
+    // / pin along with it would make swapping a contract — the ordinary reason
+    // to do this — silently reset numbers the admin chose deliberately, and they
+    // would only find out from the first alert that came in under the wrong
+    // floor. `on` is left alone too: cfg.active() already requires an address,
+    // so a group with no CA calls nothing regardless.
+    await cfg.upsert(ctx.chat.id, { address: null, pairAddress: null, sym: null, name: null });
+    await ctx.answerCbQuery(tpl.t("buybot_removed_toast")).catch(() => {});
+    return void repaint(ctx, statusPanel(ctx.chat.id));
+  }
   if (what === "pin") {
     const on = g.pin === false;
     await cfg.upsert(ctx.chat.id, { pin: on });
@@ -505,6 +566,8 @@ async function settingsTap(ctx) {
 
 module.exports = {
   settoken,
+  removeConfirmPanel,
+  settingsKeyboard,
   groupTokenReply,
   setchain,
   setminbuy,

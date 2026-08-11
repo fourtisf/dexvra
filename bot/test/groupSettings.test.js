@@ -120,7 +120,10 @@ test("setting a token reports what is live and offers the hub, not homework", as
 test("/buybot on a group with no token offers the one button that means anything", async () => {
   const ctx = ctxFor({ text: "/buybot", chatId: -2003 });
   await setup.buybot(ctx);
-  assert.deepStrictEqual(labels(ctx.replies[0].extra), ["📄 Set token"]);
+  // "Add CA", not "Set token": the panel's own copy calls it a contract address
+  // and so does every other surface, and one button is still the whole point —
+  // offering a min-buy picker to a group with no token is a dead end.
+  assert.deepStrictEqual(labels(ctx.replies[0].extra), ["📄 Add CA"]);
 });
 
 test("the settings hub toggles pin and power in place", async () => {

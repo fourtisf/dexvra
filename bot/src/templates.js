@@ -583,8 +583,26 @@ const DEFAULTS = {
   pin_off: "📌 Whale calls **won't be pinned** here.",
   buybot_on: "🟢 **Buy bot on** — calls resume.",
   buybot_off: "🔴 **Buy bot off** — calls paused. /buybot on brings it back.",
+  // The empty state, and the shortest true instruction for getting out of it.
+  // It used to say "Send /settoken <contract address>", which is the slowest of
+  // the three ways that work and the only one requiring syntax. Pasting the
+  // address on its own line is what the middleware in group/setup.js already
+  // listens for, so that is what this leads with.
   buybot_need_token:
-    "📄 **No token set here yet**\n\nSend /settoken <contract address> and the buy bot goes live.",
+    "📄 **No token set here yet**\n\n" +
+    "Paste your contract address in this chat — that's the whole setup. The network is detected from the address.\n\n" +
+    "Or tap **📄 Add CA** below.",
+  // The confirm behind 🗑 Remove CA. Says what STOPS and what is KEPT, because
+  // an admin swapping one contract for another needs to know their floor and
+  // whale bar are not about to be reset — and an admin who mis-tapped needs to
+  // see instantly that this is the destructive one.
+  buybot_remove_confirm:
+    "🗑 **Remove {symbol}?**\n\n" +
+    "`{address}`\n\n" +
+    "Buy alerts stop the moment you confirm. Your minimum buy, whale bar and pin setting are **kept** — paste a new contract any time to start again.",
+  // Button toast. Plain text: Telegram renders a callback answer as a bare
+  // toast, so bold and links reach the tapper as literals.
+  buybot_removed_toast: "Removed. Paste a new contract address to start again.",
   buybot_status:
     "📊 **Buy bot status**\n\n" +
     "🪙 **CA:** `{address}`\n" +
@@ -939,6 +957,8 @@ const META = {
   buybot_help: { group: "Group Buy Bot", label: "Group tools: how-to (main menu)", ph: ["bot", "site", "listing", "trending", "announce", "xlisting"] },
   group_buy_alert: { group: "Group Buy Bot", label: "Group: buy alert (verified txn)", ph: ["bar", "emoji", "name", "nameRow", "tier", "symbol", "usd", "native", "tokenAmt", "price", "mcap", "liq", "impact", "change", "chain", "verify", "wallet", "holds", "holdsUsd", "position", "tradeUrl", "coinUrl", "chartUrl"] },
   group_start_buttons: { group: "Group Buy Bot", label: "Group welcome buttons (buybot|raid|settings|listing|channel)", ph: [] },
+  buybot_remove_confirm: { group: "Group Buy Bot", label: "Group: confirm removing the CA", ph: ["symbol", "address"] },
+  buybot_removed_toast: { group: "Group Buy Bot", label: "Group: CA removed (toast)", ph: [] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
