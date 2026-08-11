@@ -98,6 +98,9 @@ const COMMANDS = [
 // it does nothing at all.
 const GROUP_COMMANDS = [
   { command: "start", description: "Set up Dexvra in this group" },
+  // Second, ahead of every setup command: this is the one members run, and the
+  // rest are for the admin who set the group up once and never opens the menu.
+  { command: "ca", description: "Show the contract address" },
   { command: "settoken", description: "Point the buy bot at your token — paste the CA" },
   { command: "setchain", description: "Force the network — /setchain bsc" },
   { command: "setminbuy", description: "Minimum buy worth an alert — tap to pick" },

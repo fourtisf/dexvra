@@ -47,6 +47,18 @@ function chartUrl(chain, poolOrToken) {
   return `https://dexscreener.com/${slug}/${poolOrToken}`;
 }
 
+/**
+ * The trade bot, already scanning this contract.
+ *
+ * ?start=ca_<chain>_<address> is the payload tradebot/telegram.js reads to skip
+ * straight to the scan instead of asking for an address. Lives here, beside
+ * chartUrl and txUrl, because more than one surface offers it — the buy card
+ * and /ca — and a second copy is a second thing to fix when the payload shape
+ * changes. Required lazily: config/constants reads process.env at load time.
+ */
+const tradeDeepLink = (chain, address) =>
+  `https://t.me/${require("./constants").TRADEBOT_USERNAME}?start=ca_${String(chain).toLowerCase().replace(/[^a-z0-9]/g, "")}_${address}`;
+
 const CHAINS = {
   solana: {
     id: "solana", label: "Solana", native: "SOL", family: "solana", decimals: 9,
@@ -331,6 +343,7 @@ function shortAddress(a, head = 6, tail = 4) {
 
 module.exports = {
   chartUrl,
+  tradeDeepLink,
   DEXSCREENER_SLUG,
   CHAINS,
   CHAIN_ORDER,

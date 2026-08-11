@@ -261,8 +261,9 @@ const tierFor = (usd) => {
   return normal;
 };
 
-const tradeDeepLink = (chain, address) =>
-  `https://t.me/${TRADEBOT_USERNAME}?start=ca_${String(chain).toLowerCase().replace(/[^a-z0-9]/g, "")}_${address}`;
+// Moved to config/chains.js — /ca offers the same link, and two copies of the
+// payload shape is one to forget when it changes.
+const { tradeDeepLink } = require("../config/chains");
 
 /**
  * The "🔗 Txn · 👤 Buyer" row. Returns "" when the chain has no explorer we

@@ -175,6 +175,14 @@ async function groupTokenReply(ctx, next) {
     if (!address) return say(ctx, "settoken_not_found");
     return applyToken(ctx, address);
   }
+  // "ca" on its own — the question this group asks all day, without the slash.
+  // Only when a token IS set: see CA_WORD_RE. Checked before the address scan
+  // because it is a cheap string test and cannot match an address.
+  if (CA_WORD_RE.test(body)) {
+    const gc = cfg.get(ctx.chat.id);
+    if (gc && gc.address) return ca(ctx);
+    return next();
+  }
   // Not the prompt's reply — but an admin dropping a bare contract address into
   // a group the bot is not yet pointed at is the same request without the
   // ceremony, so it arms on it. Guarded three ways: the message is ONLY an
@@ -430,6 +438,68 @@ async function setPin(ctx, on) {
   return say(ctx, on ? "pin_on" : "pin_off");
 }
 
+/**
+ * /ca — "what's the contract?", the most-asked question in any token group.
+ *
+ * NOT admin-gated, and that is the point: the people asking are holders and
+ * newcomers, not the admin who already knows. Every group answers this by hand
+ * a hundred times, or pins a message that scrolls out of reach.
+ *
+ * The answer is deliberately NOT the /buybot status card. Somebody asking for
+ * the CA wants to paste it into a wallet, not read the whale bar and the pin
+ * setting. The address rides in a `code` span so one tap copies it — a
+ * hand-typed contract address is a lost transaction.
+ */
+async function ca(ctx) {
+  if (!isGroup(ctx)) return say(ctx, "setup_group_only");
+  const g = cfg.get(ctx.chat.id);
+  if (!g || !g.address) {
+    // The same card /buybot shows on an unconfigured group, with the same
+    // "📄 Add CA" button — one place that explains how to set a token, not two
+    // that will eventually disagree about it.
+    const p = statusPanel(ctx.chat.id);
+    return ctx.reply(p.text, p.extra).catch(() => {});
+  }
+  const { SITE_URL } = require("../config/constants");
+  const { chartUrl, tradeDeepLink } = require("../config/chains");
+  const { chainEmoji } = require("../channels/format");
+  const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
+  const page = `${SITE_URL}/token/${g.chain}/${g.address}`;
+  return say(ctx, "group_ca", {
+    // Same row the buy card uses, for the same reason: a group whose token
+    // never resolved a name would otherwise read "$DEX $DEX".
+    nameRow: tpl
+      .markup("group_name_row", {
+        chainEmoji: chainEmoji(g.chain),
+        label:
+          g.name && g.name !== `$${sym}`
+            ? `**${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
+            : `**${premium.sanitizeVar(`$${sym}`)}**`,
+        name: premium.sanitizeVar(g.name || ""),
+        symbol: premium.sanitizeVar(`$${sym}`),
+      })
+      .trim(),
+    name: premium.sanitizeVar(g.name || `$${sym}`),
+    symbol: premium.sanitizeVar(`$${sym}`),
+    chain: chainOf(g.chain)?.label || g.chain,
+    chainEmoji: chainEmoji(g.chain),
+    address: g.address,
+    chartUrl: premium.sanitizeUrl(chartUrl(g.chain, g.pairAddress || g.address) || page),
+    tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
+    coinUrl: premium.sanitizeUrl(page),
+  });
+}
+
+/**
+ * A bare "ca" in the chat is the same question without the slash.
+ *
+ * ONLY answered when a token IS set. /ca is explicit and always deserves a
+ * reply, including the "not set up yet" card — but a bot that answers a random
+ * "ca" in a group it was never pointed at is a bot posting unprompted into
+ * somebody's chat, which is how it gets removed.
+ */
+const CA_WORD_RE = /^\/?(ca|contract)\s*[?!.]*$/i;
+
 async function buybot(ctx) {
   if (!isGroup(ctx)) return;
   const a = arg(ctx).toLowerCase();
@@ -624,6 +694,8 @@ async function settingsTap(ctx) {
 
 module.exports = {
   settoken,
+  ca,
+  CA_WORD_RE,
   tokenLinks,
   removeConfirmPanel,
   settingsKeyboard,

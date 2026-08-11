@@ -44,6 +44,11 @@ function registerHandlers(bot) {
   bot.command("setminbuy", groupSetup.setminbuy);
   bot.command("setwhale", groupSetup.setwhale);
   bot.command("buybot", groupSetup.buybot);
+  // "What's the contract?" — the most-asked question in any token group, and
+  // NOT admin-gated: the people asking are holders, not the admin who already
+  // knows. A bare "ca" is caught by groupTokenReply below.
+  bot.command("ca", groupSetup.ca);
+  bot.command("contract", groupSetup.ca);
   bot.action(/^mb_(\d+)$/, groupSetup.minBuyPick); // /setminbuy preset picker
   bot.action(/^wb_(\d+|off)$/, groupSetup.whalePick); // /setwhale preset picker
   bot.action(/^bs_([a-z]+)$/, groupSetup.settingsTap); // /buybot settings hub
