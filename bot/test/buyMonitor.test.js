@@ -392,6 +392,22 @@ test("the row icons are admin-editable, falling back per position", () => {
   }
 });
 
+test("the two cards are the SAME card — only the banner line differs", () => {
+  // Row for row, placeholder for placeholder. The Position row used to sit above
+  // the price on the whale card, which is defensible in isolation (the holding
+  // IS the news there) and indefensible next to the other card: two layouts in
+  // one feed, minutes apart, and a reader re-learning where the price sits reads
+  // that as a bug rather than as emphasis.
+  const tpl = require("../src/templates");
+  const buy = String(tpl.DEFAULTS.group_buy_alert).split("\n");
+  const whale = String(tpl.DEFAULTS.group_whale_alert).split("\n");
+  assert.strictEqual(whale.length, buy.length, "same number of rows");
+  assert.deepStrictEqual(whale.slice(1), buy.slice(1), "every row below the banner is identical");
+  // The banner line is the ONE difference, and it is a real one.
+  assert.match(buy[0], /\{intro\}.*\{tier\}/);
+  assert.match(whale[0], /\{introWhale\}.*WHALE WALLET/);
+});
+
 test("both buy cards speak ONE grammar", () => {
   // A feed that mixes two layouts reads as a bug in the bot rather than as a
   // choice, and these land in the same chat minutes apart. So: every card opens

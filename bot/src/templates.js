@@ -469,26 +469,30 @@ const DEFAULTS = {
   // use for it: it explains the bot's mechanism instead of reporting the event.
   // Available for anyone who does want it, and never a hardcoded "$50,000",
   // because the group's /setwhale or the admin bot can move it at any time.
+  // THE SAME BODY AS THE BUY CARD, ROW FOR ROW. Only the banner and the header
+  // word differ, and that is the entire point: these two land in the same chat
+  // minutes apart, and a reader who has to re-learn where the price sits reads
+  // the difference as a bug rather than as emphasis.
+  //
+  // The Position row used to sit ABOVE the price here — the holding IS the news
+  // on a whale alert, so leading with it was defensible in isolation. It was not
+  // defensible next to the other card: two layouts, one feed. The whale card is
+  // already louder by its banner, its icon row and its pin; it does not also
+  // need its own row order.
   group_whale_alert:
     "{introWhale}[{name}]({coinUrl}) **WHALE WALLET!**{poweredBy}\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
     "🪙 {tokenAmt} {symbol}\n" +
-    // The one row the ordinary card cannot carry: what this wallet is sitting
-    // on, and how much this buy grew it. That IS the news — everything else on
-    // this card is the same market context the buy card shows, deliberately, so
-    // the louder alert is not also the thinner one.
-    // {wallet} — the SAME group_position_row the ordinary card renders. This
-    // used to be spelled out inline here, which is how the two cards drifted:
-    // the buy card gained a linked "· Wallet" and the whale card, which is the
-    // one where the holding IS the news, silently did not. One row, one
-    // template, one place to edit it.
-    "{wallet}\n" +
-    // Dropped here too, and it has to be: the two cards are one grammar, and
-    // every drift between them started with one of them being edited alone.
     "📊 {price} · MC {mcap}\n" +
-    "{verify}\n\n" +
+    "{verify}\n" +
+    // {wallet} — the SAME group_position_row the ordinary card renders, in the
+    // same place. It used to be spelled out inline here, which is how the two
+    // cards drifted: the buy card gained a linked "· Wallet" and the whale card,
+    // the one where the holding IS the news, silently did not. One row, one
+    // template, one place to edit it.
+    "{wallet}\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
