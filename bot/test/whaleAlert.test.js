@@ -392,3 +392,22 @@ test("a dead RPC is remembered, so it cannot cost a timeout on every buy", async
     holdings._resetProviders();
   }
 });
+
+test("both cards render the SAME Position row, from one template", async () => {
+  // They drifted once already: the ordinary card gained a linked "· Wallet" and
+  // the whale card — the one where the holding IS the news — silently did not,
+  // because it spelled the row out inline instead of using {wallet}.
+  const tplMod = require("../src/templates");
+  assert.match(tplMod.DEFAULTS.group_whale_alert, /\{wallet\}/, "the whale card uses the shared row");
+  assert.ok(
+    !/Position: \{holds\}/.test(tplMod.DEFAULTS.group_whale_alert),
+    "and does not keep a second copy of it",
+  );
+  holdings.holdingOf = async () => 2_000_000;
+  const pos = await mon.buyerPosition(g(), buy, pool);
+  const ordinary = mon.renderRealAlert(g(), buy, pool, pos).text;
+  const whale = mon.renderWhaleAlert(g(), buy, pool, { ...pos, threshold: 50000 }).text;
+  const rowOf = (t) => (t.split("\n").find((l) => l.startsWith("✅ Position:")) || "");
+  assert.ok(rowOf(ordinary), "the ordinary card has the row");
+  assert.strictEqual(rowOf(whale), rowOf(ordinary), "and the whale card renders it identically");
+});

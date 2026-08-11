@@ -468,7 +468,12 @@ const DEFAULTS = {
     // on, and how much this buy grew it. That IS the news — everything else on
     // this card is the same market context the buy card shows, deliberately, so
     // the louder alert is not also the thinner one.
-    "✅ Position: {holds} {symbol} · **{holdsUsd}** ({position})\n" +
+    // {wallet} — the SAME group_position_row the ordinary card renders. This
+    // used to be spelled out inline here, which is how the two cards drifted:
+    // the buy card gained a linked "· Wallet" and the whale card, which is the
+    // one where the holding IS the news, silently did not. One row, one
+    // template, one place to edit it.
+    "{wallet}\n" +
     "📊 {price} · MC {mcap}\n" +
     "💧 {liq} · 24h {change}\n" +
     "{verify}\n\n" +
@@ -1014,7 +1019,7 @@ const META = {
   group_powered_by: { group: "Group Buy Bot", label: "Group: byline under the CTA row", ph: ["listingChannel"] },
   group_position_row: { group: "Group Buy Bot", label: "Group: the Position row", ph: ["holds", "symbol", "holdsUsd", "position", "wallet", "walletUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
-  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
+  group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "wallet", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
   // Own category: 22 setup replies stacked into "Group Buy Bot" would bury the
   // alert cards, which are what an operator actually opens this editor for.
