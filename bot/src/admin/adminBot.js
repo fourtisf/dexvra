@@ -391,13 +391,20 @@ function buyEmojiSlots() {
   const bySlot = new Map();
   for (const key of BUY_CARD_EMOJI_KEYS) {
     for (const e of tpl.listEmojis(key)) {
-      const slot = bySlot.get(e.char) || { char: e.char, id: e.id, label: emojiHint(key, e), chain: false, spots: [] };
+      // Grouped on the SHIPPED glyph, never the current one. Identical shipped
+      // icons are one slot on purpose (💲 buy + 💲 whale move together) — but
+      // grouping on the current char let SWAPS merge unrelated rows: price
+      // swapped to a custom emoji with a 📈 fallback swallowed the Chart
+      // button, whose spots then moved with every "price" edit. Buttons
+      // disappeared into each other, which read as "the setting is gone".
+      const identity = e.baseChar || e.char;
+      const slot = bySlot.get(identity) || { char: e.char, id: e.id, label: emojiHint(key, e), chain: false, spots: [] };
       // A premium id anywhere in the group marks the slot premium: the operator
       // needs to see 💎 on the button whichever card carries it.
       if (!slot.id && e.id) slot.id = e.id;
       if (!slot.label) slot.label = emojiHint(key, e);
       slot.spots.push({ key, i: e.i });
-      bySlot.set(e.char, slot);
+      bySlot.set(identity, slot);
     }
   }
   const chains = tpl.listEmojis("chain_emojis").map((e) => ({

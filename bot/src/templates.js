@@ -1534,7 +1534,10 @@ function parseFragment(fragment) {
  * resolves against, so a button always edits the slot it shows.
  */
 function listEmojis(key) {
-  const base = listEmojisIn(baseValue(key));
+  // `baseChar` is the slot's IDENTITY — the glyph the code ships there. The
+  // current char is only how the slot looks today: two different rows whose
+  // swaps happen to share a fallback char are still two different slots.
+  const base = listEmojisIn(baseValue(key)).map((e) => ({ ...e, baseChar: e.char }));
   const entries = loadEmojiOverlay()[key];
   if (!entries || !entries.length) return base;
   // The same forgiving resolution applyEmojiOverlay uses, so the picker shows

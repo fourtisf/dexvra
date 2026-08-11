@@ -175,6 +175,28 @@ test("the hint is the row's own word, so the button matches the card", () => {
   }
 });
 
+test("colliding swaps never swallow a button — slots group on the SHIPPED glyph", async () => {
+  // The operator swapped price to a custom emoji whose fallback is 📈 — the
+  // Chart icon's char — and the intro to one whose fallback is 💎, the Dexvra
+  // icon's char. Grouped on the current char, Chart merged into "price" and
+  // Dexvra into "NEW": their buttons vanished and their spots moved with every
+  // edit of the wrong row. Identity is the shipped glyph, not today's look.
+  await tpl.replaceEmojiAt("group_buy_intro", 0, "[💎](emoji/1)");
+  await tpl.replaceEmojiAt("group_buy_alert", 2, "[📈](emoji/2)");
+  try {
+    const labels = buyEmojiSlots().filter((s) => !s.chain).map((s) => s.label);
+    for (const wanted of ["Chart", "Dexvra", "price", "NEW"]) {
+      assert.ok(labels.includes(wanted), `${wanted} still has its own button: ${labels.join(", ")}`);
+    }
+    // …and the swallowed-button failure mode: the Chart slot's spots must NOT
+    // be carried by the price slot.
+    const price = buyEmojiSlots().find((s) => s.label === "price");
+    assert.strictEqual(price.spots.length, 2, "price owns its own two spots (buy + whale), nothing else's");
+  } finally {
+    await reset();
+  }
+});
+
 test("the screen states the REAL premium rule — owner Premium, not 'bots never can'", () => {
   // Bot API formatting rules: a bot's custom emoji render in group chats when
   // the bot's OWNER has Telegram Premium (channels still need GramJS). The old
