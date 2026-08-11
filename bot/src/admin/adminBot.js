@@ -1996,7 +1996,8 @@ function build() {
     await ctx.reply(
       `⌨ Send the emoji to put in place of <b>${escapeHtml(cur.char)}</b> (#${i + 1})` +
         `${cur.id ? " — 💎 currently premium" : ""}.\n\n` +
-        `Send a <b>premium</b> emoji and it stays premium. Everything else in the template is left untouched. /cancel to abort.`,
+        `Send a <b>premium</b> emoji and it stays premium. Everything else in the template is left untouched. /cancel to abort.` +
+        (isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""),
       HTML,
     );
   });
@@ -2021,6 +2022,25 @@ function build() {
     return lines.map((l) => l.split("=")[0].trim());
   }
 
+  /**
+   * The caveat that stops an operator wasting an evening.
+   *
+   * A premium emoji only renders animated when a Telegram PREMIUM USER ACCOUNT
+   * sends it — that is what GramJS is for, and it is how the channel posts go
+   * out. Everything named `group_*` is posted into a customer's group by the
+   * ORDINARY BOT, and Telegram silently strips custom-emoji entities from a
+   * regular bot, leaving the fallback character. So the swap is accepted, saved
+   * and then invisible, which is the worst way for a setting to fail.
+   *
+   * Said here rather than in a doc nobody opens, because this is the exact
+   * screen where somebody is about to paste one.
+   */
+  const GROUP_PREMIUM_NOTE =
+    "\n\n⚠️ <b>Kartu grup dikirim bot biasa</b>, dan Telegram membuang premium emoji dari bot " +
+    "— yang tampil emoji cadangannya. Premium hanya menyala di post channel (lewat akun premium/GramJS). " +
+    "Ganti emoji di sini tetap berguna: emoji unicode biasa apa pun bisa dipakai.";
+  const isGroupPosted = (key) => String(key).startsWith("group_") || String(key).startsWith("buybot_");
+
   async function sendEmojiPicker(ctx, key) {
     const list = tpl.listEmojis(key);
     if (!list.length) {
@@ -2042,7 +2062,8 @@ function build() {
       .reply(
         `😀 <b>Swap an emoji</b> — ${escapeHtml(tpl.meta(key).label)}\n\n` +
           `Tap the one you want to change. 💎 marks the ones that are already premium.` +
-          (list.length > 48 ? `\n\n<i>Showing the first 48 of ${list.length}.</i>` : ""),
+          (list.length > 48 ? `\n\n<i>Showing the first 48 of ${list.length}.</i>` : "") +
+          (isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""),
         { ...HTML, ...Markup.inlineKeyboard(rows) },
       )
       .catch(() => {});

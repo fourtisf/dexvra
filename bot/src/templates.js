@@ -526,6 +526,18 @@ const DEFAULTS = {
   group_buy_intro: "🚨 **NEW BUY ALERT**",
   group_whale_intro: "🐋 **WHALE ALERT**",
   group_powered_by: "| Powered by {listingChannel}",
+  // The token row and the buyer row. Both were built in CODE, with their emoji
+  // written into buyMonitor.js — so 📃 and 👤 were the only two icons on the
+  // card that the "😀 Swap emoji" editor could not reach, and an operator
+  // swapping the rest would be left with two that would not change. Same gap
+  // the Position row had.
+  //
+  // {label} and {buyer}/{txn} stay prebuilt in code because what they collapse
+  // to is LOGIC, not copy: the token row falls back to the ticker alone when no
+  // name resolved, and the buyer row drops either half that has no explorer
+  // link. The emoji, the spacing and the separator are copy, and live here.
+  group_name_row: "📃 {label}",
+  group_buyer_row: "👤 {buyer}{txn}",
   // The 💼 Position row, for the ORDINARY buy card.
   //
   // It used to be built in code and injected as {wallet}, which made it the one
@@ -1017,6 +1029,8 @@ const META = {
   group_buy_intro: { group: "Group Buy Bot", label: "Group: banner line above a buy", ph: [] },
   group_whale_intro: { group: "Group Buy Bot", label: "Group: banner line above a whale", ph: [] },
   group_powered_by: { group: "Group Buy Bot", label: "Group: byline under the CTA row", ph: ["listingChannel"] },
+  group_name_row: { group: "Group Buy Bot", label: "Group: the token row", ph: ["label", "name", "symbol"] },
+  group_buyer_row: { group: "Group Buy Bot", label: "Group: the buyer + txn row", ph: ["buyer", "txn"] },
   group_position_row: { group: "Group Buy Bot", label: "Group: the Position row", ph: ["holds", "symbol", "holdsUsd", "position", "wallet", "walletUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "wallet", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },

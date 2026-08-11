@@ -301,8 +301,17 @@ function verifyRow(chain, buy) {
   // used to live here; only the label changed.
   if (who) bits.push(`[${premium.sanitizeVar(shortAddress(buy.buyer))}](${premium.sanitizeUrl(who)})`);
   else if (buy.buyer) bits.push(premium.sanitizeVar(shortAddress(buy.buyer)));
-  if (tx) bits.push(`[Txn](${premium.sanitizeUrl(tx)})`);
-  return bits.length ? `👤 ${bits.join(" · ")}` : "";
+  if (!bits.length && !tx) return "";
+  // The 👤 and the separator come from `group_buyer_row`, so the editor's emoji
+  // swap can reach them. What COLLAPSES stays here: either half can be missing
+  // — no buyer address, or a chain with no explorer — and a lone " · " is a
+  // rendering bug, not a row.
+  return tpl
+    .markup("group_buyer_row", {
+      buyer: bits.join(""),
+      txn: tx ? `${bits.length ? " · " : ""}[Txn](${premium.sanitizeUrl(tx)})` : "",
+    })
+    .trim();
 }
 
 /**
@@ -392,9 +401,18 @@ function alertVars(g, buy, pool, pos) {
     // "📃 $DEX $DEX", the same word printed twice for no reason. Whole row, like
     // {verify} and {wallet}, so it collapses to just the ticker instead of
     // leaving a gap. {name} and {symbol} stay available to lay out yourself.
-    nameRow: g.name && g.name !== `$${sym}`
-      ? `📃 **${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
-      : `📃 **${premium.sanitizeVar(`$${sym}`)}**`,
+    // Same split as the buyer row: the 📃 is copy and lives in
+    // `group_name_row`; which label to print is logic and stays here.
+    nameRow: tpl
+      .markup("group_name_row", {
+        label:
+          g.name && g.name !== `$${sym}`
+            ? `**${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
+            : `**${premium.sanitizeVar(`$${sym}`)}**`,
+        name: premium.sanitizeVar(g.name || ""),
+        symbol: premium.sanitizeVar(`$${sym}`),
+      })
+      .trim(),
     // The tier IS the header label — "NEW BUY" / "WHALE BUY" / "MEGA BUY" —
     // rather than a suffix bolted onto a fixed one, which read as two headings
     // fighting for the same line.

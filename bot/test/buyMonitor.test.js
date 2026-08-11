@@ -496,3 +496,36 @@ test("the Position row is editable on BOTH cards, from one template", () => {
   }
   assert.ok(tpl.meta("group_position_row").ph.includes("holds"), "and the editor offers its placeholders");
 });
+
+test("every emoji on the buy card is reachable from the editor", () => {
+  // 📃 and 👤 were written into buyMonitor.js, so they were the only two icons
+  // an operator swapping the rest could not change — and nothing said why.
+  const tpl = require("../src/templates");
+  const swappable = new Set(
+    ["group_buy_alert", "group_whale_alert", "group_buy_intro", "group_whale_intro",
+     "group_name_row", "group_buyer_row", "group_position_row", "group_buy_style"]
+      .flatMap((k) => tpl.listEmojis(k).map((e) => e.char)),
+  );
+  const g = { chatId: "-1", chain: "solana", address: "So1", sym: "ALON", name: "alon", minBuyUsd: 0 };
+  const card = mon.renderRealAlert(
+    g,
+    { txHash: "t", buyer: "GDAtwgaaaaaaaaaaaaaaaaaaaaaaaaZ7tX", usd: 40, tokenAmount: 100 },
+    { priceUsd: 1, mcap: 1, liquidity: 1, change24h: 1 },
+    { held: 100, holdsUsd: 100, position: "+1%" },
+  ).text;
+  const onCard = [...new Set((card.match(/\p{Extended_Pictographic}/gu) || []))];
+  const stranded = onCard.filter((c) => !swappable.has(c));
+  assert.deepStrictEqual(stranded, [], `emoji on the card that no template owns: ${stranded.join(" ")}`);
+});
+
+test("the editor warns that a group card cannot render premium emoji", () => {
+  // Telegram strips custom-emoji entities from a regular bot, and the group
+  // cards are posted by one. The swap is accepted, saved, and then invisible —
+  // the worst way for a setting to fail, so the screen says so before somebody
+  // pastes one.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
+  assert.match(src, /GROUP_PREMIUM_NOTE/, "the note exists");
+  assert.match(src, /isGroupPosted\(key\) \? GROUP_PREMIUM_NOTE/, "and it is shown on the picker");
+  assert.strictEqual((src.match(/isGroupPosted\(key\) \? GROUP_PREMIUM_NOTE/g) || []).length, 2,
+    "on the list AND on the per-slot prompt — either one alone is missable");
+});
