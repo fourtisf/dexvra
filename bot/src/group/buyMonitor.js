@@ -644,7 +644,7 @@ function retryAfterOf(e) {
   return Number(n) > 0 ? Number(n) : 0;
 }
 
-async function sendAlert(tg, chatId, text, extra, kind = "buy") {
+async function sendAlert(tg, chatId, text, extra, kind = "buy", onClipError = null) {
   let clip = buyClip(kind);
   // NORMALISE BEFORE SENDING. An admin who uploads an .mp4 gets MEDIA_EXT's
   // "video", which dispatches to sendVideo — and sendVideo renders a PLAYER:
@@ -699,6 +699,11 @@ async function sendAlert(tg, chatId, text, extra, kind = "buy") {
       if (cacheKey && known) clipFileIds.delete(cacheKey);
       // A rejected clip must cost the ARTWORK, never the alert.
       log.warn(`[buybot] buy clip failed for ${chatId} (${e.message}) — sending the alert as text`);
+      // The admin preview passes a reporter here: a clip Telegram refuses (a
+      // card too long for a caption, broken entities, a bad file) is invisible
+      // from the group — the text fallback looks exactly like "no clip
+      // uploaded" — and the preview screen exists to make that visible.
+      if (onClipError) await Promise.resolve().then(() => onClipError(e)).catch(() => {});
     }
   }
   return tg.sendMessage(chatId, text, extra);

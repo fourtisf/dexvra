@@ -15,7 +15,7 @@ const tpl = require("../src/templates");
 const mon = require("../src/group/buyMonitor");
 const admin = require("../src/admin/adminBot");
 const { payloadArgs } = require("../src/helpers/message");
-const { buyPreviews, buyEmojiKb, buyEmojiSlots, BUY_CARD_EMOJI_KEYS } = admin._buyEmoji;
+const { buyPreviews, buyEmojiKb, buyEmojiSlots, BUY_CARD_EMOJI_KEYS, CARD_OF_KEY, sendBuyPreview, sendTemplatePreview } = admin._buyEmoji;
 
 const preview = (label) => buyPreviews().find((p) => p.label === label).payload;
 const reset = () => Promise.all([...BUY_CARD_EMOJI_KEYS, "chain_emojis"].map((k) => tpl.resetTemplate(k)));
@@ -115,4 +115,114 @@ test("previewing never writes anything", async () => {
   const before = tpl.overrideCount();
   buyPreviews();
   assert.strictEqual(tpl.overrideCount(), before);
+});
+
+// ── One card per template, and the clip rides along ──────────────────────────
+
+test("a card's own template previews that card ALONE — the other is not noise under it", () => {
+  // "Lihat hasilnya" on the buy-alert template used to send the whale card too,
+  // every time — two cards for a one-card question. Each card's own pieces
+  // preview just that card; only the shared rows (money column, buyer row,
+  // position, chain marks) show both, because a swap there moves both.
+  assert.deepStrictEqual(buyPreviews("buy").map((p) => p.label), ["Buy alert"]);
+  assert.deepStrictEqual(buyPreviews("whale").map((p) => p.label), ["Whale alert"]);
+  assert.deepStrictEqual(buyPreviews().map((p) => p.label), ["Buy alert", "Whale alert"]);
+  assert.strictEqual(CARD_OF_KEY.group_buy_alert, "buy");
+  assert.strictEqual(CARD_OF_KEY.group_buy_intro, "buy");
+  assert.strictEqual(CARD_OF_KEY.group_whale_alert, "whale");
+  assert.strictEqual(CARD_OF_KEY.group_whale_intro, "whale");
+  for (const shared of ["group_buy_style", "group_name_row", "group_buyer_row", "group_position_row", "chain_emojis"]) {
+    assert.strictEqual(CARD_OF_KEY[shared], undefined, `${shared} feeds both cards`);
+  }
+});
+
+/** A ctx that records what the preview sends, shaped like sendAlert's fake tg. */
+function fakeCtx() {
+  const sent = [];
+  return {
+    sent,
+    chat: { id: 42 },
+    reply: async (text, extra) => sent.push(["reply", text, extra]),
+    telegram: {
+      sendMessage: async (c, text, extra) => sent.push(["text", c, text, extra]),
+      sendAnimation: async (c, media, extra) => sent.push(["anim", c, media, extra]),
+      sendVideo: async (c, media, extra) => sent.push(["video", c, media, extra]),
+      sendPhoto: async (c, media, extra) => sent.push(["photo", c, media, extra]),
+    },
+  };
+}
+const DIR = process.env.BOT_DATA_DIR;
+const clipPath = (kind) => path.join(DIR, `banner-media-${kind}.gif`);
+const clearClips = () => {
+  for (const kind of ["buy", "whale", "default"]) {
+    try {
+      fss.unlinkSync(clipPath(kind));
+    } catch {
+      /* not there */
+    }
+  }
+};
+
+test("the preview rides the alert's OWN sender — clip above, card as its caption", async (t) => {
+  t.after(clearClips);
+  // A real alert plays the uploaded GIF with the card as caption. A preview
+  // that arrives as bare text is answering a question nobody asked: whether
+  // the icons read well is a question about the message the group actually
+  // gets, clip included.
+  fss.writeFileSync(clipPath("buy"), "GIF89a-not-really");
+  fss.writeFileSync(clipPath("whale"), "GIF89a-not-really-either");
+  const ctx = fakeCtx();
+  await sendBuyPreview(ctx, "buy");
+  const [header, card] = ctx.sent;
+  assert.strictEqual(header[0], "reply");
+  assert.match(header[1], /Buy alert/);
+  assert.strictEqual(card[0], "anim", "the clip leads, exactly like a group alert");
+  assert.strictEqual(card[1], 42);
+  assert.strictEqual(card[2].source, clipPath("buy"), "the BUY clip — never the whale's");
+  assert.match(card[3].caption, /NEW BUY ALERT/);
+  assert.ok(card[3].caption_entities && card[3].caption_entities.length, "links survive as caption_entities");
+  assert.strictEqual(ctx.sent.length, 2, "one header, one card — nothing else");
+
+  const whaleCtx = fakeCtx();
+  await sendBuyPreview(whaleCtx, "whale");
+  assert.strictEqual(whaleCtx.sent[1][2].source, clipPath("whale"), "the whale preview plays the WHALE clip");
+});
+
+test("a REFUSED clip is reported to the operator, not silently degraded to text", async (t) => {
+  t.after(clearClips);
+  // In a group the text fallback is the right instinct; here it renders
+  // indistinguishable from "no clip uploaded" and hides the one
+  // misconfiguration (card too long for the 1024-char caption) this screen
+  // exists to surface.
+  fss.writeFileSync(clipPath("buy"), "GIF89a-not-really");
+  const ctx = fakeCtx();
+  ctx.telegram.sendAnimation = async () => {
+    throw new Error("400: message caption is too long");
+  };
+  await sendBuyPreview(ctx, "buy");
+  const warn = ctx.sent.find(([k, text]) => k === "reply" && /ditolak Telegram/.test(text));
+  assert.ok(warn, `the refusal is reported: ${JSON.stringify(ctx.sent.map((s) => s[0]))}`);
+  assert.match(warn[1], /caption is too long/, "…with Telegram's own reason");
+  assert.ok(ctx.sent.some(([k]) => k === "text"), "and the plain-text card still arrives, like a real group");
+});
+
+test("with no clip uploaded the preview is plain text — same fallback as a real alert", async () => {
+  clearClips();
+  const ctx = fakeCtx();
+  await sendBuyPreview(ctx, "buy");
+  assert.strictEqual(ctx.sent[1][0], "text");
+  assert.match(ctx.sent[1][2], /NEW BUY ALERT/);
+});
+
+test("sendTemplatePreview routes each buy-card key to its own card", async () => {
+  clearClips();
+  const headers = async (key) => {
+    const ctx = fakeCtx();
+    await sendTemplatePreview(ctx, key);
+    return ctx.sent.filter(([k]) => k === "reply").map(([, text]) => text);
+  };
+  assert.match((await headers("group_buy_alert")).join("|"), /^[^|]*Buy alert[^|]*$/, "buy template → buy card only");
+  assert.match((await headers("group_whale_alert")).join("|"), /^[^|]*Whale alert[^|]*$/, "whale template → whale card only");
+  const both = await headers("group_position_row");
+  assert.strictEqual(both.length, 2, "a shared row previews both cards");
 });

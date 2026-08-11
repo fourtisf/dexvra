@@ -439,13 +439,103 @@ const PREVIEW_WHALE = { ...PREVIEW_POS, held: 902445190.0, holdsUsd: 43521.9, po
 
 /** The two cards as they would really be posted. Lazily required: buyMonitor
  *  pulls in the chain readers, and the admin bot has no business loading those
- *  until somebody actually asks to look at a card. */
-function buyPreviews() {
+ *  until somebody actually asks to look at a card. `only` ("buy"/"whale")
+ *  narrows to one card; `kind` is also the clip slot the real alert plays. */
+function buyPreviews(only) {
   const mon = require("../group/buyMonitor");
   return [
-    { label: "Buy alert", payload: mon.renderRealAlert(PREVIEW_GROUP, PREVIEW_BUY, PREVIEW_POOL, PREVIEW_POS) },
-    { label: "Whale alert", payload: mon.renderWhaleAlert(PREVIEW_GROUP, PREVIEW_BUY, PREVIEW_POOL, PREVIEW_WHALE) },
-  ];
+    { kind: "buy", label: "Buy alert", payload: mon.renderRealAlert(PREVIEW_GROUP, PREVIEW_BUY, PREVIEW_POOL, PREVIEW_POS) },
+    { kind: "whale", label: "Whale alert", payload: mon.renderWhaleAlert(PREVIEW_GROUP, PREVIEW_BUY, PREVIEW_POOL, PREVIEW_WHALE) },
+  ].filter((c) => !only || c.kind === only);
+}
+
+// Which of the two cards a template actually feeds. A card's OWN pieces (its
+// intro, its body) preview that card alone — an operator restyling the buy
+// header has no use for a whale card underneath it repeating the shared rows.
+// Keys absent here (the money column, buyer row, position row, chain marks)
+// feed both cards and preview both, because a swap there moves both.
+const CARD_OF_KEY = {
+  group_buy_intro: "buy",
+  group_buy_alert: "buy",
+  group_whale_intro: "whale",
+  group_whale_alert: "whale",
+};
+
+/**
+ * The card(s), sent exactly as a group would receive them — through the alert's
+ * OWN sender, so the uploaded GIF/video plays above the text with the card as
+ * its caption, precisely like a real alert. A preview that arrives as bare text
+ * while every real alert arrives under a clip is answering a question nobody
+ * asked; whether the swapped icon reads well is a question about the message
+ * the group gets, clip included.
+ *
+ * `only` narrows to one card — the whale template previews the whale card, not
+ * both. Each card is its OWN message with no HTML wrapper: a preview wrapped in
+ * a "here is your preview" card renders the entity offsets against the wrong
+ * string and slides every premium emoji onto the wrong character.
+ */
+async function sendBuyPreview(ctx, only) {
+  const mon = require("../group/buyMonitor");
+  for (const { kind, label, payload } of buyPreviews(only)) {
+    const { text, extra } = payloadArgs(payload);
+    await ctx.reply(`👁 <b>${label}</b> — contoh`, HTML).catch(() => {});
+    // A refused CLIP is reported too, not just a refused card. sendAlert falls
+    // back to plain text when Telegram rejects the clip+caption (a card longer
+    // than the 1024-char caption limit, most likely) — in a group that is the
+    // right instinct, but here it renders indistinguishable from "no clip
+    // uploaded", and a preview that hides the one misconfiguration it could
+    // have caught is not a preview.
+    const clipRefused = (e) =>
+      ctx.reply(
+        `⚠️ <b>Klipnya ditolak Telegram</b> dengan kartu ini sebagai caption — grup juga akan menerima teks polos tanpa klip: <code>${escapeHtml(String(e && e.message))}</code>` +
+          (text.length > 1024 ? `\n\nKartunya ${text.length} karakter — melebihi batas caption 1024. Pendekkan templatenya supaya klipnya ikut.` : ""),
+        HTML,
+      ).catch(() => {});
+    await mon.sendAlert(ctx.telegram, ctx.chat.id, text, extra, kind, clipRefused).catch((e) => {
+      // A card that Telegram REFUSES is the single most useful thing this
+      // screen can report — it is the failure a real group would have hit
+      // silently, hours later, with nobody watching.
+      ctx.reply(`⚠️ Telegram menolak kartu ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+    });
+  }
+}
+
+/**
+ * ANY template, rendered, right after it was changed.
+ *
+ * An emoji on a button is not the message. Whether 💧 sits well under 🪙, or
+ * whether a swapped glyph is wider than the one it replaced and pushes a row
+ * onto two lines, is only visible in the assembled card — and until now the
+ * only way to see one was to make the bot send it for real: wait for a buy,
+ * post to the channel, or trigger the flow by hand.
+ *
+ * The pieces of the buy card get the WHOLE card instead of their own fragment.
+ * Previewing `group_position_row` on its own shows one line out of context,
+ * which answers nothing about the thing that was actually edited. But only the
+ * card the key FEEDS: the buy template previews the buy card, the whale
+ * template the whale card, and just the shared rows show both.
+ *
+ * Sent unwrapped, with entities: a "here is your preview" header would count
+ * the entity offsets against the wrong string and slide every link and every
+ * premium emoji onto the wrong character.
+ */
+async function sendTemplatePreview(ctx, key) {
+  if (BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis") return sendBuyPreview(ctx, CARD_OF_KEY[key]);
+  let payload;
+  try {
+    payload = renderSample(key);
+  } catch (e) {
+    return ctx.reply(`⚠️ Template ini gagal dirender: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+  }
+  const { text, extra } = payloadArgs(payload);
+  if (!text || !text.trim()) return; // a template an operator emptied on purpose
+  await ctx.reply(`👁 <b>${escapeHtml(tpl.meta(key).label)}</b> — contoh`, HTML).catch(() => {});
+  await ctx.reply(text, extra).catch((e) => {
+    // The most useful thing this screen can report. A card Telegram refuses
+    // is a message that would have failed silently, later, in a customer's
+    // group or a channel, with nothing but a log line to say why.
+    ctx.reply(`⚠️ Telegram menolak pesan ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+  });
 }
 
 function buyEmojiKb() {
@@ -2311,61 +2401,9 @@ function build() {
   });
 
   // ── Every icon on the buy card, one screen ───────────────────────────────
-  /** Both cards, sent exactly as a group would receive them. */
-  async function sendBuyPreview(ctx) {
-    for (const { label, payload } of buyPreviews()) {
-      const { text, extra } = payloadArgs(payload);
-      // Sent as its OWN message with no HTML wrapper: a preview wrapped in a
-      // "here is your preview" card renders the entity offsets against the
-      // wrong string and slides every premium emoji onto the wrong character.
-      await ctx.reply(`👁 <b>${label}</b> — contoh`, HTML).catch(() => {});
-      await ctx.reply(text, extra).catch((e) => {
-        // A card that Telegram REFUSES is the single most useful thing this
-        // screen can report — it is the failure a real group would have hit
-        // silently, hours later, with nobody watching.
-        ctx.reply(`⚠️ Telegram menolak kartu ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
-      });
-    }
-  }
 
   async function sendBuyEmojiPicker(ctx) {
     await ctx.reply(buyEmojiText(), { ...HTML, ...buyEmojiKb() }).catch(() => {});
-  }
-
-  /**
-   * ANY template, rendered, right after it was changed.
-   *
-   * An emoji on a button is not the message. Whether 💧 sits well under 🪙, or
-   * whether a swapped glyph is wider than the one it replaced and pushes a row
-   * onto two lines, is only visible in the assembled card — and until now the
-   * only way to see one was to make the bot send it for real: wait for a buy,
-   * post to the channel, or trigger the flow by hand.
-   *
-   * The pieces of the buy card get the WHOLE card instead of their own fragment.
-   * Previewing `group_position_row` on its own shows one line out of context,
-   * which answers nothing about the thing that was actually edited.
-   *
-   * Sent unwrapped, with entities: a "here is your preview" header would count
-   * the entity offsets against the wrong string and slide every link and every
-   * premium emoji onto the wrong character.
-   */
-  async function sendTemplatePreview(ctx, key) {
-    if (BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis") return sendBuyPreview(ctx);
-    let payload;
-    try {
-      payload = renderSample(key);
-    } catch (e) {
-      return ctx.reply(`⚠️ Template ini gagal dirender: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
-    }
-    const { text, extra } = payloadArgs(payload);
-    if (!text || !text.trim()) return; // a template an operator emptied on purpose
-    await ctx.reply(`👁 <b>${escapeHtml(tpl.meta(key).label)}</b> — contoh`, HTML).catch(() => {});
-    await ctx.reply(text, extra).catch((e) => {
-      // The most useful thing this screen can report. A card Telegram refuses
-      // is a message that would have failed silently, later, in a customer's
-      // group or a channel, with nothing but a log line to say why.
-      ctx.reply(`⚠️ Telegram menolak pesan ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
-    });
   }
 
   bot.action(/^adopt:(.+)$/, async (ctx) => {
@@ -3966,7 +4004,7 @@ module.exports._net = { fetchTelegramFileBuffer };
 // Exposed for tests: the template controls card and its broken-placeholder guard.
 module.exports._tpl = { viewText, placeholderWarning, viewKb };
 // Exposed for tests: the one screen that owns every icon on the buy card.
-module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS };
+module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS, CARD_OF_KEY, sendBuyPreview, sendTemplatePreview };
 // Exposed for tests: any template rendered on sample values, the thing every
 // preview button shows.
 module.exports._preview = { renderSample, SPECIAL_RENDER, SAMPLE_VARS };
