@@ -186,11 +186,18 @@ const BAR_WIDTH = 10;
 const BAR_DEFAULT = ["🟢", "🐋"];
 
 /** The row's two icons — normal buy | whale — falling back per position so a
- *  half-written override still renders a row rather than nothing. */
+ *  half-written override still renders a row rather than nothing.
+ *
+ *  markup(), not t(), for the same reason as introRow: these icons are VARS
+ *  injected into the card template and parsed there. t() resolves to clean
+ *  text, so a premium-swapped 🟢 arrived as its bare fallback char and the
+ *  size row was the one part of the card a 💎 swap silently did not reach.
+ *  A premium icon here is the fragment "[🟢](emoji/id)" — repeat() multiplies
+ *  the fragment, and the card's parse turns each copy into its own entity. */
 function buyBarStyle() {
   let raw = "";
   try {
-    raw = String(tpl.t("group_buy_style") || "");
+    raw = String(tpl.markup("group_buy_style") || "");
   } catch {
     return BAR_DEFAULT.slice();
   }

@@ -377,18 +377,45 @@ test("the size row only ever GROWS — it is never rendered mostly empty", () =>
 });
 
 test("the row icons are admin-editable, falling back per position", () => {
+  // markup(), not t(): the icons travel as VARS into the card template and are
+  // parsed there, so a premium icon has to arrive still wearing its markup.
   const tpl = require("../src/templates");
-  const real = tpl.t;
+  const real = tpl.markup;
   try {
-    tpl.t = (k) => (k === "group_buy_style" ? "🔥|🐳" : real(k));
+    tpl.markup = (k) => (k === "group_buy_style" ? "🔥|🐳" : real(k));
     assert.strictEqual(mon.buyEmojiRow(50), "🔥🔥🔥");
     assert.strictEqual(mon.buyBarStyle()[1], "🐳", "whales get their own icon");
-    tpl.t = () => "🚀|"; // half typed
+    tpl.markup = () => "🚀|"; // half typed
     assert.deepStrictEqual(mon.buyBarStyle(), ["🚀", "🐋"], "the missing half keeps its default");
-    tpl.t = () => { throw new Error("template layer down"); };
+    tpl.markup = () => { throw new Error("template layer down"); };
     assert.deepStrictEqual(mon.buyBarStyle(), ["🟢", "🐋"]);
   } finally {
-    tpl.t = real;
+    tpl.markup = real;
+  }
+});
+
+test("a PREMIUM size icon reaches the card — one entity per repeated glyph", async () => {
+  // The size row was the one part of the card a 💎 swap silently did not
+  // reach: buyBarStyle read the template through t(), which strips markup, so
+  // the operator's premium 🟢 arrived as its bare fallback char on every alert.
+  const tpl = require("../src/templates");
+  const g = { chatId: "-1", chain: "solana", address: "So1", sym: "RUSS", minBuyUsd: 0 };
+  const pool = { priceUsd: 1, mcap: 1e6, liquidity: 1e5, counterSymbol: "SOL", counterAddress: "SoNATIVE" };
+  const b = { txHash: "t", buyer: "b", usd: 400, tokenAmount: 400 };
+  const styleSlots = tpl.listEmojis("group_buy_style");
+  await tpl.replaceEmojiAt("group_buy_style", 0, "[🟢](emoji/888)");
+  await tpl.replaceEmojiAt("group_buy_style", 1, "[🐋](emoji/999)");
+  try {
+    const p = mon.renderRealAlert(g, b, pool, { held: 1, holdsUsd: 1, position: "+1%" });
+    const prem = p.entities.filter((e) => e.type === "custom_emoji" && e.custom_emoji_id === "888");
+    assert.strictEqual(prem.length, 8, "every repeated glyph carries its own entity"); // $400 → 8 icons
+    for (const e of prem) assert.strictEqual(p.text.substr(e.offset, e.length), "🟢", "over the right character");
+    const w = mon.renderWhaleAlert(g, b, pool, { held: 9e8, holdsUsd: 5e4, position: "+2%", threshold: 5e4 });
+    assert.ok(w.entities.some((e) => e.custom_emoji_id === "999"), "the whale row uses the WHALE icon's id");
+    assert.ok(!w.entities.some((e) => e.custom_emoji_id === "888"), "…never the buy icon's");
+  } finally {
+    await tpl.resetTemplate("group_buy_style");
+    assert.strictEqual(tpl.listEmojis("group_buy_style").length, styleSlots.length, "reset restored the shipped icons");
   }
 });
 
