@@ -485,6 +485,13 @@ function buyEmojiText() {
 
 function viewKb(key) {
   const rows = [[Markup.button.callback("✏️ Edit", `e:${key}`), Markup.button.callback("♻️ Reset default", `r:${key}`)]];
+  // Offered ONLY when this template still carries a saved layout that no longer
+  // matches the shipped one. It is the answer to "I pulled, I restarted, the
+  // card is unchanged": the saved copy is what the group receives, and this is
+  // the one action that takes the new layout WITHOUT throwing away the icons.
+  if (tpl.layoutDiffers(key)) {
+    rows.push([Markup.button.callback("🔄 Layout terbaru, emoji tetap", `adopt:${key}`)]);
+  }
   // Only offer the emoji swap when there is something to swap.
   if (tpl.listEmojis(key).length) rows.push([Markup.button.callback("😀 Swap emoji", `tem:${key}`)]);
   // The message as it will actually be sent, from the controls card too — the
@@ -2360,6 +2367,36 @@ function build() {
       ctx.reply(`⚠️ Telegram menolak pesan ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
     });
   }
+
+  bot.action(/^adopt:(.+)$/, async (ctx) => {
+    ctx.answerCbQuery("Mengambil layout terbaru…").catch(() => {});
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    if (!tpl.keys().includes(key)) return;
+    let res;
+    try {
+      res = await tpl.adoptShippedLayout(key);
+    } catch (e) {
+      return ctx.reply(`⚠️ ${escapeHtml(String(e && e.message))}`, HTML).catch(() => {});
+    }
+    log.info(`[adminbot] '${key}' adopted the shipped layout by @${ctx.from.username || ctx.from.id} — ${res.carried} icon(s) kept, ${res.dropped.length} line(s) dropped`);
+    // Every dropped line is named. This action deletes copy, and an operator has
+    // to be able to see exactly what left rather than trust that it was stale.
+    await ctx
+      .reply(
+        `✅ <b>${escapeHtml(tpl.meta(key).label)}</b> sekarang pakai layout terbaru.\n` +
+          `🎨 ${res.carried} emoji Anda dipertahankan.` +
+          (res.dropped.length
+            ? `\n\n🗑 Baris yang hilang (sudah tidak ada di versi terbaru):\n` +
+              res.dropped.map((l) => `<code>${escapeHtml(l)}</code>`).join("\n")
+            : "\n\nTidak ada baris yang dibuang.") +
+          `\n\nKalau ini bukan yang Anda mau, ♻️ Reset default mengembalikan kartu bawaan.`,
+        HTML,
+      )
+      .catch(() => {});
+    await sendTemplatePreview(ctx, key);
+    await sendTemplateView(ctx, key);
+  });
 
   bot.action(/^temp:(.+)$/, async (ctx) => {
     ctx.answerCbQuery("Merender…").catch(() => {});

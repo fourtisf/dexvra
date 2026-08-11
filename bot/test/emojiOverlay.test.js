@@ -284,3 +284,80 @@ test("an entity-saved template is skipped — pasting formatting IS a rewrite", 
     await tpl.resetAllTemplates();
   }
 });
+
+// ── Taking the shipped layout without losing the icons ──────────────────────
+
+/** The server's real state: the current default, plus the row that was dropped
+ *  from it, with three icons swapped to premium. */
+function frozenBuyCard() {
+  return String(tpl.DEFAULTS.group_buy_alert)
+    .replace("💲", "[💵](emoji/111)")
+    .replace("🪙", "[⚡](emoji/222)")
+    .replace("📊 {price}", "[📈](emoji/333) {price}")
+    .replace("{verify}", "💧 {liq} · 24h {change}\n{verify}");
+}
+
+test("the stale row goes, and every icon lands back on its own row", async () => {
+  // Pairing icons across the whole template by position is guesswork once a row
+  // moves — the 4th icon in the saved card and the 4th in the shipped one are on
+  // different rows. Matching LINE BY LINE is what makes this safe.
+  fss.writeFileSync(path.join(DIR, "templates.json"), JSON.stringify({ group_buy_alert: frozenBuyCard() }));
+  try {
+    assert.strictEqual(tpl.layoutDiffers("group_buy_alert"), true);
+    const res = await tpl.adoptShippedLayout("group_buy_alert");
+    assert.deepStrictEqual(res.dropped, ["💧 {liq} · 24h {change}"]);
+    assert.strictEqual(res.carried, 3);
+    const live = String(tpl.getRawValue("group_buy_alert"));
+    assert.doesNotMatch(live, /24h/, "the row the operator asked to lose");
+    assert.match(live, /\[💵\]\(emoji\/111\) \{usd\}/, "their money icon, on the money row");
+    assert.match(live, /\[⚡\]\(emoji\/222\) \{tokenAmt\}/, "their token icon, on the token row");
+    assert.match(live, /\[📈\]\(emoji\/333\) \{price\}/, "their price icon, on the price row");
+    assert.ok(!("group_buy_alert" in savedFile()), "the frozen text is gone");
+  } finally {
+    await tpl.resetAllTemplates();
+  }
+});
+
+test("after adopting, the NEXT shipped change reaches the card too", async () => {
+  // Adopting once must not just re-freeze at a newer version.
+  fss.writeFileSync(path.join(DIR, "templates.json"), JSON.stringify({ group_buy_alert: frozenBuyCard() }));
+  try {
+    await tpl.adoptShippedLayout("group_buy_alert");
+    const live = String(tpl.getRawValue("group_buy_alert"));
+    const shipped = String(tpl.DEFAULTS.group_buy_alert);
+    // Only the icons differ now — the layout is the shipped one, live.
+    assert.strictEqual(
+      live.replace("[💵](emoji/111)", "💲").replace("[⚡](emoji/222)", "🪙").replace("[📈](emoji/333)", "📊"),
+      shipped,
+    );
+  } finally {
+    await tpl.resetAllTemplates();
+  }
+});
+
+test("the button appears only when there IS a stale layout to replace", () => {
+  const admin = require("../src/admin/adminBot");
+  const has = (key) =>
+    admin._tpl.viewKb(key).reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `adopt:${key}`);
+  assert.strictEqual(has("group_buy_alert"), false, "a template on the shipped layout has nothing to adopt");
+  fss.writeFileSync(path.join(DIR, "templates.json"), JSON.stringify({ group_buy_alert: frozenBuyCard() }));
+  try {
+    assert.strictEqual(has("group_buy_alert"), true);
+  } finally {
+    fss.writeFileSync(path.join(DIR, "templates.json"), "{}");
+  }
+});
+
+test("an icon-only fork needs no button — the boot migration already has it", async () => {
+  const frozen = String(tpl.DEFAULTS.group_buyer_row).replace("👤", "🕵️");
+  fss.writeFileSync(path.join(DIR, "templates.json"), JSON.stringify({ group_buyer_row: frozen }));
+  try {
+    assert.strictEqual(tpl.layoutDiffers("group_buyer_row"), false, "same skeleton — not a layout fork");
+  } finally {
+    fss.writeFileSync(path.join(DIR, "templates.json"), "{}");
+  }
+});
+
+test("adopting a template with nothing saved is refused, not silently ignored", async () => {
+  await assert.rejects(() => tpl.adoptShippedLayout("group_buy_alert"), /no saved text layout/);
+});

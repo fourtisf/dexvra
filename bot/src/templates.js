@@ -1701,6 +1701,72 @@ async function migrateEmojiOnlyOverrides() {
   return moved;
 }
 
+/** Does this template carry a saved LAYOUT that no longer matches the shipped
+ *  one? True only when there is something for adoptShippedLayout to do. */
+function layoutDiffers(key) {
+  const saved = loadJSONSync(FILE, {})[key];
+  const def = DEFAULTS[key];
+  if (typeof saved !== "string" || typeof def !== "string") return false;
+  return emojiSkeleton(saved) !== emojiSkeleton(def);
+}
+
+/**
+ * Take the shipped card's LAYOUT, keep the operator's ICONS.
+ *
+ * The case migrateEmojiOnlyOverrides deliberately refuses: a saved card that has
+ * both swapped icons AND a row the shipped card no longer has. Pairing icons
+ * across the whole template by position is guesswork once a row moves, so this
+ * pairs them LINE BY LINE instead, matching each shipped line to the saved line
+ * with the same emoji skeleton. A line whose icons were changed still matches,
+ * because the skeleton is the text with the icons blanked out.
+ *
+ * What that buys: every icon lands back on the row it was chosen for, and a row
+ * that no longer exists in the shipped card is simply not carried over.
+ *
+ * DELIBERATE, never automatic. It drops lines, and a line the OPERATOR added is
+ * indistinguishable from a stale one left over from an older release — so this
+ * is a button somebody presses, and it reports every line it dropped.
+ *
+ * @returns {{dropped: string[], carried: number}}
+ */
+async function adoptShippedLayout(key) {
+  const def = DEFAULTS[key];
+  const savedAll = loadJSONSync(FILE, {});
+  const saved = savedAll[key];
+  if (typeof def !== "string" || typeof saved !== "string") {
+    throw new Error("this template has no saved text layout to replace");
+  }
+  const defLines = def.split("\n");
+  const savedLines = saved.split("\n");
+  const used = new Set();
+  const entries = [];
+  let at = 0; // running emoji index across the shipped template
+  for (const dl of defLines) {
+    const shipped = listEmojisIn(dl);
+    const si = savedLines.findIndex((sl, n) => !used.has(n) && emojiSkeleton(sl) === emojiSkeleton(dl));
+    if (si >= 0) {
+      used.add(si);
+      const mine = listEmojisIn(savedLines[si]);
+      for (let k = 0; k < shipped.length; k++) {
+        const m = mine[k];
+        if (!m || (m.char === shipped[k].char && m.id === shipped[k].id)) continue;
+        entries.push({ i: at + k, from: shipped[k].char, to: m.id ? `[${m.char}](emoji/${m.id})` : m.char });
+      }
+    }
+    at += shipped.length;
+  }
+  const dropped = savedLines.filter((sl, n) => !used.has(n) && sl.trim());
+  const overlay = loadJSONSync(EMOJI_FILE, {});
+  if (entries.length) overlay[key] = entries;
+  else delete overlay[key];
+  delete savedAll[key];
+  await saveJSON(EMOJI_FILE, overlay);
+  await saveJSON(FILE, savedAll);
+  emojiCache = null;
+  cache = null;
+  return { dropped, carried: entries.length };
+}
+
 function isCustom(key) {
   if (loadJSONSync(FILE, {})[key] != null) return true;
   const o = loadEmojiOverlay()[key];
@@ -1798,6 +1864,8 @@ module.exports = {
   listEmojisIn,
   emojiSkeleton,
   migrateEmojiOnlyOverrides,
+  layoutDiffers,
+  adoptShippedLayout,
   applyEmojiOverlay,
   EMOJI_FILE,
   t,
