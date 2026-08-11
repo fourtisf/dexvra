@@ -7,7 +7,7 @@ const { promises: fs } = require("node:fs");
 const fss = require("node:fs");
 const path = require("node:path");
 const { isAdminUser, ADMIN_BOT_TOKEN, CHANNELS } = require("../config/constants");
-const { getMediaFileId } = require("../helpers/message");
+const { getMediaFileId, payloadArgs } = require("../helpers/message");
 const { escapeHtml, fmtPrice } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
@@ -340,6 +340,57 @@ function buyEmojiSlots() {
   return [...bySlot.values(), ...chains];
 }
 
+/*
+ * ── Seeing the card before a real buy does ──────────────────────────────────
+ *
+ * An emoji on a button is not the card. 💧 next to 🔵 in a keyboard grid tells
+ * you nothing about whether the 💧 row reads well under the 🪙 row, and the only
+ * way to find out used to be to wait for somebody to buy the token — which on a
+ * quiet contract is hours, in a customer's group, in public.
+ *
+ * So the preview is rendered by THE ALERT'S OWN RENDERER on sample values, not
+ * by a lookalike built here. A second renderer would agree with the real one
+ * right up until the day it did not, and the whole point of looking is to trust
+ * what you see.
+ *
+ * It is also the honest answer to "does premium survive in a group?". This
+ * preview is sent BY THE ADMIN BOT — a regular bot, exactly like the one that
+ * posts into groups — so whatever the operator sees here is what the group gets.
+ * If the 💎 shows up animated, it works; if it falls back, it falls back. No
+ * documentation to argue with.
+ */
+const PREVIEW_GROUP = {
+  chatId: "-100",
+  chain: "solana",
+  address: "8XtRWb4uAAJFMP4QQhoYYCWR6XXb7ybcCdiqPwz9s5WS",
+  pairAddress: "9dHVJ1oFDaXqLGxsvLmvJZoXPRDCLnFbwEFmZgHTMxYz",
+  sym: "ALON",
+  name: "alon",
+  minBuyUsd: 0,
+};
+const PREVIEW_POOL = { priceUsd: 0.00004823, mcap: 15511897, liquidity: 183475, change24h: 18.42, counterSymbol: "SOL", counterAddress: "SoNATIVE" };
+const PREVIEW_BUY = {
+  txHash: "5xTxPreviewaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  buyer: "AFqu1MaaaaaaaaaaaaaaaaaaaaaaaaaaajcBb",
+  usd: 804.72,
+  tokenAmount: 16684015.34,
+  spentAmount: 4.2318,
+  spentToken: "SoNATIVE",
+};
+const PREVIEW_POS = { held: 41210338.5, holdsUsd: 1987.57, position: "+68.2%" };
+const PREVIEW_WHALE = { ...PREVIEW_POS, held: 902445190.0, holdsUsd: 43521.9, position: "+2.1%", threshold: 50000 };
+
+/** The two cards as they would really be posted. Lazily required: buyMonitor
+ *  pulls in the chain readers, and the admin bot has no business loading those
+ *  until somebody actually asks to look at a card. */
+function buyPreviews() {
+  const mon = require("../group/buyMonitor");
+  return [
+    { label: "Buy alert", payload: mon.renderRealAlert(PREVIEW_GROUP, PREVIEW_BUY, PREVIEW_POOL, PREVIEW_POS) },
+    { label: "Whale alert", payload: mon.renderWhaleAlert(PREVIEW_GROUP, PREVIEW_BUY, PREVIEW_POOL, PREVIEW_WHALE) },
+  ];
+}
+
 function buyEmojiKb() {
   const cb = Markup.button.callback;
   const slots = buyEmojiSlots();
@@ -354,6 +405,7 @@ function buyEmojiKb() {
       .map(({ s, n }) => cb(`${s.id ? "💎" : ""}${s.char}${s.label ? ` ${s.label}` : ""}`, `bemx:${n}`));
     for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3));
   }
+  rows.push([cb("👁 Lihat kartunya", "bemp")]);
   rows.push([cb("⬅ Kembali", "v:group_buy_alert")]);
   return Markup.inlineKeyboard(rows);
 }
@@ -2191,9 +2243,33 @@ function build() {
   });
 
   // ── Every icon on the buy card, one screen ───────────────────────────────
+  /** Both cards, sent exactly as a group would receive them. */
+  async function sendBuyPreview(ctx) {
+    for (const { label, payload } of buyPreviews()) {
+      const { text, extra } = payloadArgs(payload);
+      // Sent as its OWN message with no HTML wrapper: a preview wrapped in a
+      // "here is your preview" card renders the entity offsets against the
+      // wrong string and slides every premium emoji onto the wrong character.
+      await ctx.reply(`👁 <b>${label}</b> — contoh`, HTML).catch(() => {});
+      await ctx.reply(text, extra).catch((e) => {
+        // A card that Telegram REFUSES is the single most useful thing this
+        // screen can report — it is the failure a real group would have hit
+        // silently, hours later, with nobody watching.
+        ctx.reply(`⚠️ Telegram menolak kartu ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+      });
+    }
+  }
+
   async function sendBuyEmojiPicker(ctx) {
     await ctx.reply(buyEmojiText(), { ...HTML, ...buyEmojiKb() }).catch(() => {});
   }
+
+  bot.action("bemp", async (ctx) => {
+    ctx.answerCbQuery("Merender…").catch(() => {});
+    if (!guard(ctx)) return;
+    await sendBuyPreview(ctx);
+    await sendBuyEmojiPicker(ctx);
+  });
 
   bot.action("bem", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -3518,8 +3594,17 @@ function build() {
           HTML,
         )
         .catch(() => {});
-      if (from === "bem") await sendBuyEmojiPicker(ctx);
-      else await sendEmojiPicker(ctx, head.key);
+      // The card, immediately, without being asked. "Aktif dalam ~30 detik" is
+      // not something an operator can check: on a quiet contract the next real
+      // buy is hours away, in a customer's group, in public. Seeing it here is
+      // the difference between changing an icon and choosing one.
+      if (from === "bem") {
+        await sendBuyPreview(ctx);
+        await sendBuyEmojiPicker(ctx);
+      } else {
+        if (BUY_CARD_EMOJI_KEYS.includes(head.key) || head.key === "chain_emojis") await sendBuyPreview(ctx);
+        await sendEmojiPicker(ctx, head.key);
+      }
       return;
     }
     const key = ctx.session.awaitingTemplate;
@@ -3709,4 +3794,4 @@ module.exports._net = { fetchTelegramFileBuffer };
 // Exposed for tests: the template controls card and its broken-placeholder guard.
 module.exports._tpl = { viewText, placeholderWarning, viewKb };
 // Exposed for tests: the one screen that owns every icon on the buy card.
-module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, BUY_CARD_EMOJI_KEYS };
+module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS };
