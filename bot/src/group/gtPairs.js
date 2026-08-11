@@ -155,6 +155,82 @@ async function fetchTokenInfo(chain, address) {
   return null;
 }
 
+// ── One rate limiter for every GeckoTerminal request in this process ─────────
+//
+// The free tier is ~30 requests/minute for the whole IP, and the bot used to
+// discover that ceiling the only way it could: by being punished. A 429 arms a
+// 120-SECOND PROCESS-WIDE cooldown, during which no group gets a buy alert at
+// all. So the cost of one request too many was two minutes of silence for
+// everybody, and the cost of DELAYING that request by two seconds is nothing
+// anyone notices. Pacing is strictly better than backing off.
+//
+// PRIORITY matters as much as the pacing. Nine background pipelines — pump,
+// rank-up, auto-trend, gainers, trending poster, fulfilment — price tokens on
+// timers, and marketdata.js used to reach GeckoTerminal through its OWN fetch,
+// so those requests were invisible to the cooldown AND to any budget. The
+// realtime path was being starved by jobs that did not know there was a budget
+// to starve it out of. The buy bot's trades feed now goes first, always.
+const GT_RPM = (() => {
+  const n = Number(String(process.env.GT_MAX_RPM || "").trim());
+  if (Number.isFinite(n) && n > 0) return n;
+  // Comfortably under the free ceiling, because the penalty for touching it is
+  // shared by every group. A key raises the real limit far past this.
+  return GT_KEY ? 300 : 25;
+})();
+const GT_MIN_GAP_MS = Math.ceil(60000 / GT_RPM);
+// Past this the request is refused rather than queued. An unbounded queue turns
+// a rate limit into a memory leak, and a buy alert that arrives ten minutes
+// late is not a buy alert.
+const GT_QUEUE_MAX = 200;
+
+const PRIO_REALTIME = 0; // the buy bot's trades feed
+const PRIO_BACKGROUND = 1; // everything on a timer
+
+const gtQueue = [[], []];
+let gtNextFreeAt = 0;
+let gtTimer = null;
+
+function gtDrain() {
+  if (gtTimer) return;
+  const next = gtQueue[PRIO_REALTIME].length ? PRIO_REALTIME : PRIO_BACKGROUND;
+  if (!gtQueue[next].length) return;
+  const wait = Math.max(0, gtNextFreeAt - Date.now());
+  gtTimer = setTimeout(() => {
+    gtTimer = null;
+    // Re-pick the tier AFTER waiting: a realtime request that arrived during the
+    // gap must not sit behind the background one that was queued first.
+    const tier = gtQueue[PRIO_REALTIME].length ? PRIO_REALTIME : PRIO_BACKGROUND;
+    const release = gtQueue[tier].shift();
+    if (release) {
+      gtNextFreeAt = Date.now() + GT_MIN_GAP_MS;
+      release();
+    }
+    gtDrain();
+  }, wait);
+  // NOT unref'd. A queued request is WORK: an unref'd timer does not hold the
+  // event loop open, so a short-lived process — every scripts/*-check.js, and
+  // any test — would exit with the promise still pending and the caller hanging
+  // forever. The timer only exists while somebody is waiting, and never lasts
+  // longer than one gap, so refing it cannot keep the process alive by itself.
+}
+
+/** Wait for this process's turn to call GeckoTerminal. Rejects when the queue
+ *  is saturated, which the caller must treat as "unavailable" — the same as any
+ *  other failed read. */
+function gtSlot(priority = PRIO_BACKGROUND) {
+  const p = priority === PRIO_REALTIME ? PRIO_REALTIME : PRIO_BACKGROUND;
+  if (gtQueue[0].length + gtQueue[1].length >= GT_QUEUE_MAX) {
+    return Promise.reject(new Error("GeckoTerminal request queue is full"));
+  }
+  return new Promise((resolve) => {
+    gtQueue[p].push(resolve);
+    gtDrain();
+  });
+}
+
+/** Queue depth, for the diagnostics scripts. */
+const gtPressure = () => ({ realtime: gtQueue[0].length, background: gtQueue[1].length, rpm: GT_RPM });
+
 // ── Shared rate-limit cooldown ───────────────────────────────────────────────
 // Armed by a 429 (or a 5xx run) and honoured by EVERY caller. While it is armed
 // gtGet returns `{ ok: false }` without making a request — which the trades feed
@@ -187,10 +263,19 @@ function armCooldown(why, at = Date.now()) {
  * only thing a caller can do with any of them is stop trusting the answer, and
  * collapsing them here keeps that decision in one place.
  */
-async function gtGet(path, params) {
+async function gtGet(path, params, priority = PRIO_BACKGROUND) {
   if (inCooldown()) return { ok: false, status: 0, reason: "cooldown" };
   const qs = new URLSearchParams(params || {}).toString();
   const url = `${GT}${path}${qs ? `?${qs}` : ""}`;
+  // Wait for a slot BEFORE checking the clock again: a request that queued for
+  // a while may have been overtaken by a 429 armed by whatever went out ahead
+  // of it, and firing it anyway is how a cooldown gets extended.
+  try {
+    await gtSlot(priority);
+  } catch (e) {
+    return { ok: false, status: 0, reason: (e && e.message) || "queue full" };
+  }
+  if (inCooldown()) return { ok: false, status: 0, reason: "cooldown" };
   try {
     const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (res.status === 429) {
@@ -319,6 +404,10 @@ function _reset() {
 
 module.exports = {
   GT_BASE: GT,
+  gtSlot,
+  gtPressure,
+  PRIO_REALTIME,
+  PRIO_BACKGROUND,
   gtAddr,
   isHexAddress,
   hasApiKey: () => !!GT_KEY,

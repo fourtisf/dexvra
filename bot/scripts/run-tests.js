@@ -31,7 +31,15 @@ const files = args.length
       .map((f) => path.join("test", f));
 const res = spawnSync(process.execPath, ["--test", ...files], {
   stdio: "inherit",
-  env: { ...process.env, BOT_DATA_DIR: dir },
+  env: {
+    ...process.env,
+    BOT_DATA_DIR: dir,
+    // The GeckoTerminal limiter paces against a REMOTE quota, and there is no
+    // remote here — every test stubs global.fetch. Left at the production
+    // default it makes the suite wait 2.4s per stubbed request. Raised, not
+    // disabled, so the queue and the priority ordering are still exercised.
+    GT_MAX_RPM: process.env.GT_MAX_RPM || "100000",
+  },
 });
 try {
   fs.rmSync(dir, { recursive: true, force: true });

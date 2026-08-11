@@ -25,6 +25,20 @@
 //                          a rate limit (429) or a bad pool (404).
 require("dotenv").config();
 
+const { BUYBOT_POOL_MIN_MS: POOL_MIN_MS } = require("../src/config/constants");
+/** How many distinct pools this deployment polls. null when it cannot be read —
+ *  a missing config file is not a reason to fail the check. */
+function poolCount() {
+  try {
+    const groups = require("../src/group/config");
+    return new Set(
+      groups.active().map((g) => `${g.chain}:${String(g.pairAddress || g.address).toLowerCase()}`),
+    ).size;
+  } catch (_) {
+    return null;
+  }
+}
+
 const gt = require("../src/group/gtPairs");
 const trades = require("../src/group/gtTrades");
 const { chainOf, txUrl, accountUrl, shortAddress } = require("../src/config/chains");
@@ -84,6 +98,18 @@ async function main() {
     console.log("   on the first poll that works. Beyond that they age out silently.");
     console.log(`   GeckoTerminal cooldown armed: ${gt.inCooldown() ? "yes (429 seen — every group is quiet right now)" : "no"}`);
     console.log(`   API key                     : ${gt.hasApiKey() ? "set (Pro base)" : "NOT set — free tier, ~30 req/min for this whole process"}`);
+    // The arithmetic that decides whether a key is optional or the only fix.
+    const { rpm } = gt.gtPressure();
+    const pools = poolCount();
+    if (pools != null) {
+      const need = (pools * 60000) / POOL_MIN_MS;
+      console.log(`   pools tracked               : ${pools} → ~${need.toFixed(1)} trades reads/min needed, ${rpm}/min budgeted`);
+      if (need > rpm) {
+        console.log(`   ⚠️  DEMAND EXCEEDS BUDGET. Alerts will be late no matter what, because the`);
+        console.log(`      requests cannot all fit. Set GECKOTERMINAL_API_KEY, or raise`);
+        console.log(`      BUYBOT_POOL_MIN_MS above ${Math.ceil((pools * 60000) / rpm / 1000)}s to fit ${pools} pools in ${rpm}/min.`);
+      }
+    }
     console.log("\n   What to check, in order:");
     console.log(`   • egress from this server to ${gt.GT_BASE} (curl it)`);
     console.log("   • whether you are sharing an IP with something else hitting GT's ~30 req/min");

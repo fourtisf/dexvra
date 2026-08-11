@@ -7,6 +7,30 @@ const { chainOf } = require("./config/chains");
 const log = require("./helpers/logger");
 
 const GT = "https://api.geckoterminal.com/api/v2";
+// This module has its own fetch calls against GeckoTerminal, and for a long
+// time they went out with no regard for the shared 429 cooldown or for any
+// budget — nine background pipelines (pump, rank-up, auto-trend, gainers,
+// trending poster, fulfilment, listing) all price tokens through here on
+// timers. So the jobs nobody is watching in real time were tripping the rate
+// limit, and the buy bot — the one path a group notices going quiet — took the
+// two-minute punishment for it.
+//
+// Same gate as group/gtPairs now, at BACKGROUND priority: these wait, the buy
+// bot's trades feed does not.
+const gtGate = require("./group/gtPairs");
+/** Wait for this process's GeckoTerminal turn. Resolves false when the shared
+ *  cooldown is armed or the queue is saturated — the caller must then treat GT
+ *  as unavailable and fall through to DexScreener, which is what it already
+ *  does for a timeout. */
+async function gtTurn() {
+  if (gtGate.inCooldown()) return false;
+  try {
+    await gtGate.gtSlot(gtGate.PRIO_BACKGROUND);
+  } catch (_) {
+    return false;
+  }
+  return !gtGate.inCooldown();
+}
 const HEADERS = { accept: "application/json;version=20230302" };
 
 // num(null) must be null, NOT 0 — Number(null) === 0, which silently defeated
@@ -82,6 +106,7 @@ async function fetchGT(chain, address) {
   const net = chainOf(chain) && chainOf(chain).geckoNetwork;
   if (!net) return null;
   try {
+    if (!(await gtTurn())) return null; // GT is rate limited — DexScreener fills in
     const res = await fetch(`${GT}/networks/${net}/tokens/${address}?include=top_pools`, {
       headers: HEADERS,
       signal: AbortSignal.timeout(8000),
@@ -195,7 +220,11 @@ async function fetchPumpFunDescription(address) {
  *  launches). One collapsed paragraph, or null. */
 async function fetchTokenDescription(chain, address) {
   const net = chainOf(chain) && chainOf(chain).geckoNetwork;
-  if (net) {
+  // `if (net && await gtTurn())`, NOT an early return inside the try: a rate
+  // limited GeckoTerminal must fall THROUGH to pump.fun below, which is the
+  // better source for a fresh Solana launch anyway. Returning here would have
+  // made every description on Solana disappear for the length of a cooldown.
+  if (net && (await gtTurn())) {
     try {
       const res = await fetch(`${GT}/networks/${net}/tokens/${address}/info`, {
         headers: HEADERS,

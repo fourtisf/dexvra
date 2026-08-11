@@ -23,7 +23,7 @@
 //
 // The estimator is still in buyMonitor.js and still runs — but only when THIS
 // module says the feed is unavailable. See the null-vs-[] rule on fetchPoolBuys.
-const { gtGet, sameToken, inCooldown, gtAddr } = require("./gtPairs");
+const { gtGet, sameToken, inCooldown, gtAddr, PRIO_REALTIME } = require("./gtPairs");
 const log = require("../helpers/logger");
 
 // GT returns at most 300 trades (newest first, last 24h) and pages are not
@@ -190,9 +190,13 @@ async function fetchPoolBuys(net, pool, tokenAddress, { minUsd = 0, tokenIsBase 
   // gtAddr, NOT toLowerCase(). See gtPairs.gtAddr — a lowercased Solana pool is
   // a different address, GT 404s it, and this function then reports the feed as
   // unavailable for a pool that is trading perfectly well.
-  const res = await gtGet(`/networks/${net}/pools/${gtAddr(pool)}/trades`, {
-    trade_volume_in_usd_greater_than: floor > 0 ? floor.toFixed(6) : 0,
-  });
+  // REALTIME priority. This is the only read in the process whose lateness a
+  // group actually sees; everything else runs on a timer and can wait.
+  const res = await gtGet(
+    `/networks/${net}/pools/${gtAddr(pool)}/trades`,
+    { trade_volume_in_usd_greater_than: floor > 0 ? floor.toFixed(6) : 0 },
+    PRIO_REALTIME,
+  );
   if (!res || !res.ok) {
     // Unavailable — NOT "no buys". Nothing will be posted for this pool until it
     // reads again, so the reason has to reach the log: silence with no
