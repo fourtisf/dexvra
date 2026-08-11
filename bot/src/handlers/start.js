@@ -77,6 +77,20 @@ async function startHandler(ctx) {
   } catch (e) {
     log.debug(`[start] visitor log: ${e.message}`);
   }
+  // A deep link lands on the screen it names. Session is reset first so a link
+  // followed mid-form starts clean rather than inheriting half an old one.
+  const payload = String(ctx.startPayload || "").trim().toLowerCase();
+  const route = Object.prototype.hasOwnProperty.call(DEEP_LINKS, payload) ? DEEP_LINKS[payload] : null;
+  if (route) {
+    resetSession(ctx);
+    try {
+      return await route(ctx);
+    } catch (e) {
+      // Never leave a deep link showing nothing. Falling through to home is a
+      // worse answer than the right screen and a far better one than silence.
+      log.warn(`[start] deep link "${payload}" failed: ${e && e.message}`);
+    }
+  }
   await showHome(ctx);
 }
 
@@ -106,7 +120,7 @@ function groupStartKeyboard() {
   const [buybot, raid, settings, listing, channel] = START_BUTTON_DEFAULTS.map(
     (def, i) => (parts[i] || "").trim() || def,
   );
-  const { SITE_URL, CHANNELS } = require("../config/constants");
+  const { BOT_USERNAME, CHANNELS } = require("../config/constants");
   const rows = [
     [{ text: buybot, callback_data: "bs_buybot" }],
     [
@@ -114,15 +128,47 @@ function groupStartKeyboard() {
       { text: settings, callback_data: "bs_home" },
     ],
   ];
-  // URL buttons only when there is a real URL to point at. Telegram rejects the
-  // whole message for a malformed one, which would take the welcome card down
-  // over a link — the same failure mode {bot} caused below.
-  const site = String(SITE_URL || "").trim();
-  if (/^https?:\/\//i.test(site)) rows.push([{ text: listing, url: site.replace(/\/+$/, "") }]);
-  const ch = String((CHANNELS && CHANNELS.announce) || "").trim();
+  // URL buttons only when there is a real target. Telegram rejects the WHOLE
+  // message over one malformed URL, so a bad link would take the welcome card
+  // down rather than just itself — the same failure mode {bot} caused below.
+  //
+  // Listing / Trending goes to the BOT, not to the website. The site can only
+  // describe the packages; the bot is where one is actually bought, and
+  // ?start=listing lands on the package picker instead of the main menu — one
+  // tap, no hunting through a menu for the row they already chose.
+  const bot = String(BOT_USERNAME || "").replace(/^@/, "").trim();
+  if (/^[A-Za-z0-9_]{4,32}$/.test(bot)) {
+    rows.push([{ text: listing, url: `https://t.me/${bot}?start=${DEEP_LINK_LISTING}` }]);
+  }
+  // The LISTING channel, not the announcement one: this button sits under a
+  // Listing / Trending button, and the two pointing at different channels is
+  // how somebody ends up in the wrong feed looking for their own listing.
+  const ch = String((CHANNELS && (CHANNELS.listing || CHANNELS.announce)) || "").trim();
   if (/^@[A-Za-z0-9_]{4,}$/.test(ch)) rows.push([{ text: channel, url: `https://t.me/${ch.slice(1)}` }]);
   return { inline_keyboard: rows };
 }
+
+/**
+ * Deep links: t.me/<bot>?start=<payload>.
+ *
+ * Telegram opens the private chat with a START button on it, and tapping that
+ * sends "/start <payload>" — so a link from a group can land somebody on an
+ * exact screen instead of on the main menu with a row to find.
+ *
+ * The payload is TYPED BY TELEGRAM, not by us: it may only contain
+ * [A-Za-z0-9_-] and is capped at 64 characters, so keep these short and plain.
+ * Anything unrecognised falls through to the ordinary home screen rather than
+ * erroring — a stale link in an old group post must still open the bot.
+ */
+const DEEP_LINK_LISTING = "listing";
+const DEEP_LINKS = {
+  // Required lazily, and inside the handler: handlers/listing.js pulls in
+  // handlers/menu.js, which this module is itself imported by.
+  [DEEP_LINK_LISTING]: (ctx) => require("./listing").entryListingTrending(ctx),
+  xpress: (ctx) => require("./listing").entryXpress(ctx),
+  trending: (ctx) => require("./trending").entryTrending(ctx),
+  banner: (ctx) => require("./banner").entryBanner(ctx),
+};
 
 // /start or /help inside a group → buy-bot setup steps for this group.
 async function sendGroupTemplate(ctx, key) {
@@ -219,4 +265,6 @@ async function buyBotHelp(ctx) {
 }
 
 module.exports = {
-  groupStartKeyboard, startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart, botAddedToGroup, justGreeted, _greeted: greeted };
+  groupStartKeyboard,
+  DEEP_LINKS,
+  DEEP_LINK_LISTING, startHandler, homeHandler, showHome, resetSession, buyBotHelp, groupStart, botAddedToGroup, justGreeted, _greeted: greeted };
