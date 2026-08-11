@@ -252,13 +252,16 @@ async function botAddedToGroup(ctx) {
   return sendGroupTemplate(ctx, "group_added");
 }
 
-// "🤖 Add Buy Bot to your group" — how-to + a one-tap "add to group" deep link.
+// The group-tools how-to. No button emits `buybot_help` any more — every "add
+// the bot" button now opens Telegram's group picker on the first tap — but the
+// handler stays: inline keyboards live forever in chat history, and an old card
+// somebody scrolls back to must still do something rather than nothing.
 async function buyBotHelp(ctx) {
   await answer(ctx);
-  const { BOT_USERNAME } = require("../config/constants");
+  const { addToGroupUrl } = require("../config/constants");
   const { Markup } = require("./menu");
   const kb = Markup.inlineKeyboard([
-    [Markup.button.url("➕ Add to your group", `https://t.me/${BOT_USERNAME}?startgroup=true`)],
+    [Markup.button.url("➕ Add to your group", addToGroupUrl())],
     [Markup.button.callback("🏠 Home", "home")],
   ]);
   await sendCard(ctx, tpl.render("buybot_help"), kb);

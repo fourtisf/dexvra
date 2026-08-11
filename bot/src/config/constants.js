@@ -14,6 +14,32 @@ const BOT_ROOT = path.join(__dirname, "..", "..");
 // ── Telegram ───────────────────────────────────────────────────────────────
 const BOT_TOKEN = env.BOT_TOKEN || "";
 const BOT_USERNAME = (env.BOT_USERNAME || "dexvrabot").replace(/^@/, ""); // for ?startgroup deep links
+
+/**
+ * The one-tap "put this bot in my group" link.
+ *
+ * EVERY button offering the Buy Bot or Raid opens Telegram's own group picker
+ * with this. One of them used to open a how-to card whose real content was
+ * another button saying "➕ Add to your group" — a screen standing between the
+ * operator and the thing they had already chosen, and a second tap most people
+ * never made. The setup steps are not lost: `group_added` posts them into the
+ * group the moment the bot lands, which is where they are actually carried out.
+ *
+ * `admin=` makes Telegram TICK THE RIGHTS IN THE ADD DIALOG, and this is the
+ * quiet failure it prevents: added as a plain member, the bot posts buy alerts
+ * fine, so everything looks healthy — while whale alerts never pin, the raid
+ * panel cannot tidy up after itself, and /raid lock does nothing at all. Three
+ * features that fail silently, days apart, with no error anywhere.
+ *
+ * Exactly the three rights the code uses, and no more. Asking for promote or
+ * invite rights we never exercise is how an add dialog starts looking like
+ * something to refuse:
+ *   pin_messages     → whale alerts + the raid panel  (group/buyMonitor, raid/runner)
+ *   delete_messages  → the raid panel replacing itself (raid/runner)
+ *   restrict_members → /raid lock                      (raid/lock)
+ */
+const ADD_TO_GROUP_RIGHTS = "pin_messages+delete_messages+restrict_members";
+const addToGroupUrl = () => `https://t.me/${BOT_USERNAME}?startgroup=true&admin=${ADD_TO_GROUP_RIGHTS}`;
 const TRADEBOT_USERNAME = (env.TRADEBOT_USERNAME || "dexvratradebot").replace(/^@/, ""); // for the ⚡ Trade deep links in channel posts
 const ADMIN_BOT_TOKEN = env.ADMIN_BOT_TOKEN || ""; // @dexvraadminbot — template editor
 
@@ -301,6 +327,8 @@ module.exports = {
   BOT_ROOT,
   BOT_TOKEN,
   BOT_USERNAME,
+  ADD_TO_GROUP_RIGHTS,
+  addToGroupUrl,
   TRADEBOT_USERNAME,
   ADMIN_BOT_TOKEN,
   CHANNELS,

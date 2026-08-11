@@ -94,7 +94,11 @@ function listedKeyboard(row) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔥 Book Trending", "trend_coin")],
     [Markup.button.url("🌐 View your token", tokenUrl(row))],
-    [Markup.button.callback("🤖 Add Buy Bot to your group", "buybot_help")],
+    // A URL button, NOT a callback. This used to open a how-to card whose one
+    // piece of real content was another button saying "➕ Add to your group":
+    // a screen between the operator and the thing they had already tapped. The
+    // same trip the main menu already skipped — the two had simply drifted.
+    [Markup.button.url("🤖 Add Buy Bot & Raid to your group", require("../config/constants").addToGroupUrl())],
     [Markup.button.callback("🏠 Home", "home")],
   ]);
 }
@@ -134,3 +138,6 @@ module.exports = {
   listedVars,
   tokenUrl,
 };
+// Exposed for tests: the keyboard is where the "add the bot" button lives, and
+// a button that costs an extra tap is invisible from anywhere else.
+module.exports._test = { listedKeyboard };

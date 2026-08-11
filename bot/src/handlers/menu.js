@@ -33,14 +33,14 @@ function mainMenu() {
   //
   // Required lazily: config/constants reads process.env at load time, and this
   // module is pulled in through handlers/registry.js.
-  const { BOT_USERNAME } = require("../config/constants");
+  const { addToGroupUrl } = require("../config/constants");
   return Markup.inlineKeyboard([
     [Markup.button.callback("⚡ Xpress Listing", "submit_coin")],
     [Markup.button.callback("🏆 Listing & Trending", "listing_trend_coin")],
     [Markup.button.callback("🔥 Trending Token", "trend_coin")],
     [Markup.button.callback("📢 Banner Ads", "ad_banner")],
     [Markup.button.callback("📣 Mass DM Broadcast", "ad_massdm")],
-    [Markup.button.url("➕ Add Buy Bot & Raid to your group", `https://t.me/${BOT_USERNAME}?startgroup=true`)],
+    [Markup.button.url("➕ Add Buy Bot & Raid to your group", addToGroupUrl())],
   ]);
 }
 

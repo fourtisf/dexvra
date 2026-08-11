@@ -77,12 +77,16 @@ test("the deep link points at THIS bot, never a hardcoded handle", () => {
   // here and every operator running their own instance is sending their users
   // to add somebody else's bot to their group — and this is now the most-tapped
   // button on the menu, not a link buried two screens deep.
-  const { BOT_USERNAME } = require("../src/config/constants");
+  const { BOT_USERNAME, addToGroupUrl } = require("../src/config/constants");
   const { mainMenu } = require("../src/handlers/menu");
   const btn = mainMenu()
     .reply_markup.inline_keyboard.flat()
     .find((b) => /group/i.test(b.text));
-  assert.strictEqual(btn.url, `https://t.me/${BOT_USERNAME}?startgroup=true`);
+  // Built by the shared helper, so this button cannot drift from the one on the
+  // already-listed card. What the link CARRIES beyond the handle — the admin
+  // rights — is test/addToGroup.test.js's business, not this test's.
+  assert.strictEqual(btn.url, addToGroupUrl());
+  assert.match(btn.url, new RegExp(`^https://t\\.me/${BOT_USERNAME}\\?startgroup=true`));
   const src = fss.readFileSync(path.join(__dirname, "..", "src", "handlers", "menu.js"), "utf8");
   assert.ok(!/t\.me\/dexvrabot/.test(src), "the handle is read from config, not written in");
 });
