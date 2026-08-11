@@ -320,7 +320,9 @@ test("the alert renders the reference layout", () => {
   assert.match(out, /👤 AFqu1M…jcBb · Txn/);
   // The icon column: one emoji per row at the left edge, value straight after.
   // The header names the token and then says what happened to it.
-  assert.match(out, /^The Nietzschean Dog BUY!$/m, "header opens on the token's own name");
+  // ONE opening line: banner, token, event, byline. Three stacked blocks pushed
+  // the numbers people came for off the first screen on a phone.
+  assert.match(out, /^🚨 NEW BUY ALERT The Nietzschean Dog BUY! \| Powered by @\w+$/m, "the whole opening line");
   assert.match(out, /^📃 The Nietzschean Dog \$RUSS$/m);
   assert.match(out, /^💲 \$48\.97 \(0\.6646 SOL\)$/m);
   assert.match(out, /^🪙 926,311\.94 \$RUSS$/m);
@@ -405,15 +407,16 @@ test("both buy cards speak ONE grammar", () => {
     // The token's name FIRST — no Dexvra mark and no separator in front of it.
     // That position is the most valuable one on the card and it belongs to the
     // project, not to us.
-    // The banner line sits above the header; the header is the line after it.
-    assert.match(lines[0], /ALERT$/, `${which}: the banner line leads`);
-    assert.match(lines[1], /^Dexvra Token .+!$/, `${which}: then the token and the event`);
+    // Banner, token, event and byline share the opening line; the size row is
+    // the next one, with no blank line between them.
+    assert.match(lines[0], /ALERT Dexvra Token .+!( \| Powered by @\w+)?$/, `${which}: the whole opening line`);
+    assert.match(lines[1], /^[🟢🐋]+$/u, `${which}: the size row follows it directly`);
     assert.match(text, /^📃 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);
     // Every row carrying a NUMBER leads with an icon. The bold labels these
     // replaced ("**Spent:**", "**MCap:**") must not survive on any card —
     // half-converted is worse than either layout on its own.
     assert.ok(!/^\*\*\w+:\*\*/m.test(text), `${which}: no bold-label rows left`);
-    for (const l of lines.slice(3)) {
+    for (const l of lines.slice(2)) {
       if (/^[⚡⚠️🟢🐋]/u.test(l) || l.startsWith("Trade")) continue;
       assert.match(l, /^\p{Extended_Pictographic}/u, `${which}: "${l}" should lead with its icon`);
     }

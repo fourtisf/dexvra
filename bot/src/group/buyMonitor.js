@@ -354,7 +354,7 @@ function positionRow(g, pos, buy) {
 /** Every value both buy cards share. Split out so the whale card cannot drift
  *  away from the ordinary one — the two are the same event, told differently.
  *  `pos` is the buyer's holding when it could be read, null otherwise. */
-/** A banner line plus the blank line under it, or nothing at all.
+/** The banner and the space after it, or nothing at all.
  *
  *  markup(), not t(): these are VARS injected into another template and parsed
  *  there, so they have to arrive carrying their markup. t() resolves to clean
@@ -367,7 +367,7 @@ function positionRow(g, pos, buy) {
  *  first line rather than as no banner. */
 function introRow(key) {
   const t = tpl.markup(key).trim();
-  return t ? `${t}\n\n` : "";
+  return t ? `${t} ` : "";
 }
 
 function alertVars(g, buy, pool, pos) {
@@ -428,7 +428,7 @@ function alertVars(g, buy, pool, pos) {
     introWhale: introRow("group_whale_intro"),
     poweredBy: (() => {
       const t = tpl.markup("group_powered_by", { listingChannel }).trim();
-      return t ? `\n${t}` : "";
+      return t ? ` ${t}` : "";
     })(),
     listingChannel,
     holds: pos ? tokenAmount(pos.held) : "",

@@ -426,7 +426,7 @@ const DEFAULTS = {
   // separator with nothing on its left is punctuation for a word that is not
   // there.
   group_buy_alert:
-    "{intro}[{name}]({coinUrl}) **{tier}!**\n\n" +
+    "{intro}[{name}]({coinUrl}) **{tier}!**{poweredBy}\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
@@ -445,7 +445,7 @@ const DEFAULTS = {
     // {holds}, {holdsUsd} and {position} are the same three facts on their own
     // if you would rather lay them out yourself.
     "{wallet}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl}){poweredBy}",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
   // whatever they just spent. Pinned in the group, so it is deliberately its own
   // card rather than the normal one with a louder word on it.
@@ -459,7 +459,7 @@ const DEFAULTS = {
   // Available for anyone who does want it, and never a hardcoded "$50,000",
   // because the group's /setwhale or the admin bot can move it at any time.
   group_whale_alert:
-    "{introWhale}[{name}]({coinUrl}) **WHALE WALLET!**\n\n" +
+    "{introWhale}[{name}]({coinUrl}) **WHALE WALLET!**{poweredBy}\n" +
     "{emoji}\n\n" +
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
@@ -472,7 +472,7 @@ const DEFAULTS = {
     "📊 {price} · MC {mcap}\n" +
     "💧 {liq} · 24h {change}\n" +
     "{verify}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl}){poweredBy}",
+    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
   // ever GROWS with the buy.
@@ -502,12 +502,16 @@ const DEFAULTS = {
   // are WHOLE ROWS: clear either one in @dexvraadminbot and it vanishes cleanly
   // rather than leaving a blank line behind.
   //
-  // SELF-SPACING, both of them. dropEmptyLines is opt-in and these cards do not
-  // use it, so an empty placeholder on its own line would leave the line behind
-  // — an operator who cleared the banner would get a blank first line instead of
-  // no banner. So the banner carries its own trailing blank line and the byline
-  // its own leading newline, and both sit on a line with other content. Same
-  // pattern as {socials}/{overview} in the channel posts.
+  // ONE OPENING LINE: banner, token, event, byline. It used to be three
+  // separate blocks stacked down the card, which pushed the numbers people
+  // actually came for further off the first screen on a phone for no gain.
+  //
+  // SELF-SPACING, all of them. dropEmptyLines is opt-in and these cards do not
+  // use it, so an empty placeholder would leave its separator behind — clearing
+  // the banner would open the card on a stray space. The banner carries its own
+  // trailing space and the byline its own leading one, and both sit on a line
+  // with other content, so an empty one leaves nothing at all. Same pattern as
+  // {socials}/{overview} in the channel posts.
   //
   // {poweredBy} carries the channel handle from config, not a literal — change
   // LISTING_CHANNEL in .env and the byline follows instead of going stale. A
@@ -516,7 +520,7 @@ const DEFAULTS = {
   // all ("400: Wrong HTTP URL").
   group_buy_intro: "🚨 **NEW BUY ALERT**",
   group_whale_intro: "🐋 **WHALE ALERT**",
-  group_powered_by: "⚡ powered by {listingChannel}",
+  group_powered_by: "| Powered by {listingChannel}",
   // The 💼 Position row, for the ORDINARY buy card.
   //
   // It used to be built in code and injected as {wallet}, which made it the one
