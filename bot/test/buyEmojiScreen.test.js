@@ -175,8 +175,11 @@ test("the hint is the row's own word, so the button matches the card", () => {
   }
 });
 
-test("the screen says the group cards cannot animate premium emoji", () => {
-  // Telegram strips custom-emoji entities from a regular bot, and these cards
-  // are posted by one. Saying it here beats an evening spent wondering.
-  assert.match(buyEmojiText(), /bot biasa/);
+test("the screen states the REAL premium rule — owner Premium, not 'bots never can'", () => {
+  // Bot API formatting rules: a bot's custom emoji render in group chats when
+  // the bot's OWNER has Telegram Premium (channels still need GramJS). The old
+  // note said bots can never animate premium — an operator read their fallback
+  // chars as a bug, because the note told them nothing could be done.
+  assert.match(buyEmojiText(), /PEMILIK bot/, "names the thing that unlocks it");
+  assert.match(buyEmojiText(), /Transfer Ownership/, "…and the exact BotFather action");
 });

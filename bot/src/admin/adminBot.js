@@ -284,10 +284,20 @@ function groupText(name, p, pages) {
  * Said here rather than in a doc nobody opens, because this is the exact screen
  * where somebody is about to paste one.
  */
+// The rule, verbatim from the Bot API formatting docs: "Custom emoji entities
+// can only be used by bots that purchased additional usernames on Fragment or
+// in the messages directly sent by the bot to private, group and supergroup
+// chats if the owner of the bot has a Telegram Premium subscription." Channels
+// are NOT in that list — channel posts still need the GramJS premium account.
+// So the one thing standing between a 💎 swap and an animated group card is
+// WHO OWNS THE BOT in BotFather — say so, or the operator reads the fallback
+// char as "premium gagal" and files it as a bug (which happened).
 const GROUP_PREMIUM_NOTE =
-  "\n\n⚠️ <b>Kartu grup dikirim bot biasa</b>, dan Telegram membuang premium emoji dari bot " +
-  "— yang tampil emoji cadangannya. Premium hanya menyala di post channel (lewat akun premium/GramJS). " +
-  "Ganti emoji di sini tetap berguna: emoji unicode biasa apa pun bisa dipakai.";
+  "\n\n⚠️ <b>Premium emoji di kartu grup menyala kalau akun PEMILIK bot ber-Telegram Premium.</b> " +
+  "Aturan Telegram: bot boleh mengirim custom emoji ke grup hanya jika akun pemilik bot (di @BotFather) " +
+  "sedang berlangganan Premium — kalau tidak, yang tampil emoji cadangannya. " +
+  "Pindahkan kepemilikan bot ke akun Premium Anda lewat @BotFather → Bot Settings → Transfer Ownership, " +
+  "dan 💎 langsung menyala di kartu buy/whale. Post channel tetap lewat akun premium/GramJS.";
 const isGroupPosted = (key) => String(key).startsWith("group_") || String(key).startsWith("buybot_");
 
 /*

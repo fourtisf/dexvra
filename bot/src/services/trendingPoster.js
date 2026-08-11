@@ -254,8 +254,11 @@ async function runOnce(tg) {
     const markup = await buildText();
     if (!markup) return;
     const parsed = premium.parse(markup);
-    // Bot API can't render custom (premium) emoji from a non-owner bot — drop
-    // those entities so it shows the unicode fallback; GramJS keeps them.
+    // Custom emoji from a BOT render only in private/group/supergroup chats,
+    // and only when the bot's OWNER has Telegram Premium (Bot API formatting
+    // rules) — never in a channel, which is where this board lives. Drop them
+    // on the Bot API fallback so the unicode char shows; GramJS (a premium
+    // USER account) is the one transport that can render them here.
     const botEntities = parsed.entities.filter((e) => e.type !== "custom_emoji");
     const hasPremiumEmoji = parsed.entities.length !== botEntities.length;
 
