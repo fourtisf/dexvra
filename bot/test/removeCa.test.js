@@ -129,3 +129,70 @@ test("the empty state leads with pasting, not with syntax", () => {
   assert.match(t, /[Pp]aste your contract address/);
   assert.ok(!t.includes("/settoken"), "no command to copy out");
 });
+
+// ── The /settoken receipt ────────────────────────────────────────────────────
+
+test("the receipt echoes the CA the bot actually heard", async () => {
+  // The address was pasted from somewhere else moments ago. A group about to
+  // run alerts on it should be able to check the bot heard the right one BEFORE
+  // the first buy lands, not from the first alert that names a token nobody
+  // recognises.
+  const t = tpl.t("settoken_ok", {
+    chain: "Solana",
+    nameRow: "📃 alon $ALON",
+    address: "8XtRWb4uAAJFMP4QQhoYYCWR6XXb7ybcCdiqPwz9s5WS",
+    links: "",
+    minBuy: "$10",
+    whale: "$50,000",
+  });
+  assert.match(t, /8XtRWb4uAAJFMP4QQhoYYCWR6XXb7ybcCdiqPwz9s5WS/, "the whole address, not a prefix");
+  assert.match(t, /alon \$ALON/);
+  assert.match(t, /Solana/);
+});
+
+test("a token with no socials loses the row, not the receipt", async () => {
+  // Most fresh launches have none. A bare label with nothing after it is not a
+  // row, it is a rendering bug.
+  const t = tpl.t("settoken_ok", {
+    chain: "Solana", nameRow: "📃 $ALON", address: "8XtRW", links: "", minBuy: "$10", whale: "$50,000",
+  });
+  assert.ok(!/\n\n\n/.test(t), "no hole where the links row was");
+  assert.match(t, /Buy alerts are live/, "and the receipt still says what is running");
+});
+
+test("socials that cannot be fetched cost a row, never the setup", async () => {
+  // By the time this runs the token is configured and the alerts are live. An
+  // indexer having a bad minute must not turn a successful setup into an error.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  try {
+    ds.fetchTokenInfo = async () => { throw new Error("ENOTFOUND"); };
+    assert.deepStrictEqual(await setup.tokenLinks("solana", "8XtRW"), {
+      links: "", website: "", twitter: "", telegram: "",
+    });
+  } finally {
+    ds.fetchTokenInfo = real;
+  }
+});
+
+test("a hostile URL never reaches the group's setup reply", async () => {
+  // These come from a third-party feed and land inside an href. A javascript:
+  // URL has no business there, and a malformed one makes Telegram reject the
+  // WHOLE message — taking the receipt down over a link.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  try {
+    ds.fetchTokenInfo = async () => ({
+      website: "javascript:alert(1)",
+      twitter: "https://x.com/real",
+      telegram: "not a url at all",
+    });
+    const out = await setup.tokenLinks("solana", "8XtRW");
+    assert.strictEqual(out.website, "", "javascript: dropped");
+    assert.strictEqual(out.telegram, "", "junk dropped");
+    assert.match(out.twitter, /https:\/\/x\.com\/real/, "the real one survives");
+    assert.strictEqual(out.links, out.twitter, "and the row carries only what survived");
+  } finally {
+    ds.fetchTokenInfo = real;
+  }
+});

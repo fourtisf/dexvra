@@ -528,10 +528,24 @@ const DEFAULTS = {
   // The token is set and the bot is LIVE — so this says what is already running,
   // not what to run next. It used to end on a row of three commands, which reads
   // as homework at the exact moment the setup finished.
+  // The receipt for /settoken. Same icon column as the buy cards, so the first
+  // thing a group sees from this bot and every alert after it read as one
+  // product — and it ECHOES THE CA. That is not decoration: the address was
+  // pasted from somewhere else moments ago, and a group that is about to run
+  // alerts on it should be able to check the bot heard the right one before the
+  // first buy lands, not after.
+  //
+  // {links} is the whole "Links:" row, so it VANISHES when a token has no
+  // socials rather than leaving a dangling label. {website} {twitter}
+  // {telegram} are the same three on their own if you would rather lay them out
+  // yourself; each is empty when that link was not found.
   settoken_ok:
     "✅ **Live on {chain}**\n\n" +
-    "🪙 **{name}** ({symbol})\n\n" +
-    "Every buy from **{minBuy}** up gets called in here. A buyer already holding **{whale}** or more gets pinned.\n\n" +
+    "{nameRow}\n" +
+    "🔗 Chain: {chain}\n" +
+    "💎 CA: `{address}`\n" +
+    "{links}\n\n" +
+    "🚀 Buy alerts are live. Every buy from **{minBuy}** up gets called in here, and a buyer already holding **{whale}** or more gets pinned.\n\n" +
     "That's everything — the ⚙️ button changes any of it.",
   setchain_unknown: "❌ Not a chain we run on.\n\nOne of: `{chains}`",
   setchain_need_token: "📄 Set the token first: /settoken <contract address>",
@@ -972,7 +986,7 @@ const META = {
   settoken_ok: {
     group: "Group Setup",
     label: "/settoken — live ✅",
-    ph: ["chain", "name", "symbol", "address", "minBuy", "whale"],
+    ph: ["chain", "name", "nameRow", "symbol", "address", "links", "website", "twitter", "telegram", "minBuy", "whale"],
   },
   setchain_unknown: { group: "Group Setup", label: "/setchain — unknown network", ph: ["chains"] },
   setchain_need_token: { group: "Group Setup", label: "/setchain — set the token first", ph: [] },

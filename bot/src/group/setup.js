@@ -77,6 +77,53 @@ const pendingToken = new Map();
  * who ran it. Without that, every member of the group gets an input box shoved
  * in front of them by a setting that is not theirs to change.
  */
+/**
+ * The project's website / X / Telegram, for the /settoken receipt.
+ *
+ * Purely decorative, so every failure resolves to empty rows rather than
+ * propagating: the token is configured and the alerts are running by the time
+ * this is called, and an indexer having a bad minute must not turn a successful
+ * setup into an error message. Bounded by its own timeout for the same reason.
+ *
+ * Returns the prebuilt {links} row AND the three parts separately, so an
+ * operator who rewrites the template can lay them out differently.
+ */
+const LINKS_TIMEOUT_MS = 4000;
+async function tokenLinks(chain, address) {
+  const empty = { links: "", website: "", twitter: "", telegram: "" };
+  let info = null;
+  try {
+    info = await Promise.race([
+      require("../dexscreener").fetchTokenInfo(chain, address),
+      new Promise((r) => setTimeout(() => r(null), LINKS_TIMEOUT_MS)),
+    ]);
+  } catch (_) {
+    return empty;
+  }
+  if (!info) return empty;
+  // Each URL goes through the same sanitiser the alert cards use. These come
+  // from a third-party feed and land inside an href in a group message: a
+  // javascript: URL has no business there, and a malformed one makes Telegram
+  // reject the WHOLE message, which would take the receipt down over a link.
+  const one = (url, label, icon) => {
+    const safe = url ? premium.sanitizeUrl(url) : "";
+    return safe && /^https?:\/\//i.test(safe) ? `${icon} [${label}](${safe})` : "";
+  };
+  const website = one(info.website, "Website", "🌐");
+  const twitter = one(info.twitter, "X", "𝕏");
+  const telegram = one(info.telegram, "Telegram", "💬");
+  const found = [website, twitter, telegram].filter(Boolean);
+  return {
+    // The WHOLE row, so it collapses cleanly on a token with no socials — which
+    // is most fresh launches. A bare "Links:" with nothing after it is not a
+    // row, it is a rendering bug.
+    links: found.length ? found.join(" · ") : "",
+    website,
+    twitter,
+    telegram,
+  };
+}
+
 async function promptForToken(ctx, replyTo) {
   const { text, extra } = payloadArgs(tpl.render("settoken_prompt"), false);
   const sent = await ctx
@@ -175,15 +222,26 @@ async function applyToken(ctx, address) {
   // ALREADY running and offers one button to change it, instead of handing back
   // a row of commands to go and run.
   const g = cfg.get(ctx.chat.id) || {};
+  // The project's own links, best-effort. NEVER awaited on the critical path
+  // for longer than it takes to give up: the token is already configured and
+  // the alerts are already live by this point, so a slow or dead indexer must
+  // cost a row on a receipt, never the receipt itself.
+  const links = await tokenLinks(res.chain, address);
+  const safeName = premium.sanitizeVar(name || "your token");
+  const safeSym = premium.sanitizeVar(sym ? `$${String(sym).replace(/^\$/, "")}` : "");
   const { text, extra } = payloadArgs(
     tpl.render("settoken_ok", {
       chain: chainOf(res.chain).label,
       // The token's own name and ticker come from a third-party feed, so they go
       // through the same sanitiser the alert cards use — a token literally named
       // "[click](url)" would otherwise inject a link into the group's setup reply.
-      name: premium.sanitizeVar(name || "your token"),
-      symbol: premium.sanitizeVar(sym ? `$${String(sym).replace(/^\$/, "")}` : ""),
+      name: safeName,
+      symbol: safeSym,
+      // Prebuilt, so a token with no name resolved prints just the ticker
+      // instead of "your token $ALON" — same rule as the buy cards' 📃 row.
+      nameRow: name ? `📃 **${safeName}** ${safeSym}` : `📃 **${safeSym || "your token"}**`,
       address,
+      ...links,
       minBuy: usd$(cfg.minBuyOf(g)),
       whale: usd$(g.whaleWalletUsd || whaleCfg.get().walletUsd),
     }),
@@ -566,6 +624,7 @@ async function settingsTap(ctx) {
 
 module.exports = {
   settoken,
+  tokenLinks,
   removeConfirmPanel,
   settingsKeyboard,
   groupTokenReply,
