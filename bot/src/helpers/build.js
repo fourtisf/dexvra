@@ -36,11 +36,19 @@ function sha() {
   return _cached;
 }
 
-/** True when the working tree has uncommitted changes — a deploy that is not
- *  what `main` says it is, which is worth knowing before debugging anything. */
+/** True when TRACKED files differ from the commit — a deploy that is not what
+ *  `main` says it is, which is worth knowing before debugging anything.
+ *
+ *  --untracked-files=no is the whole point. This used to be a bare
+ *  `git status --porcelain`, which counts untracked files too, and a production
+ *  server is never without them: data.bak-2026-08-03/, .env.bak,
+ *  session.txt.bak, a stray FETCH_HEAD. So the stamp read '+dirty' on a
+ *  perfectly clean checkout, every boot, forever — and a warning that is always
+ *  on is a warning nobody reads. The question this flag answers is "is the CODE
+ *  what main says", and an untracked backup directory cannot change that. */
 function dirty() {
   try {
-    return execFileSync('git', ['status', '--porcelain'], {
+    return execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], {
       cwd: __dirname, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'],
     }).trim().length > 0;
   } catch (_) { return false; }
