@@ -523,6 +523,43 @@ function buyClip(kind = "buy") {
   }
 }
 
+// Clip → file_id, so the bytes cross the wire ONCE. Keyed on the file's path
+// and mtime, so an admin uploading a new clip invalidates it without anything
+// having to remember to.
+const clipFileIds = new Map();
+function clipKeyOf(clip) {
+  try {
+    const st = require("node:fs").statSync(clip.source);
+    return `${clip.type}:${clip.source}:${Math.round(st.mtimeMs)}`;
+  } catch {
+    return null; // not a local file (already a file_id, or gone) — do not cache
+  }
+}
+/** The id Telegram assigned the clip it just accepted. */
+function fileIdOf(msg) {
+  if (!msg) return null;
+  if (msg.animation) return msg.animation.file_id;
+  if (msg.video) return msg.video.file_id;
+  if (Array.isArray(msg.photo) && msg.photo.length) return msg.photo[msg.photo.length - 1].file_id;
+  if (msg.document) return msg.document.file_id;
+  return null;
+}
+
+// chatId → when Telegram said we may speak to it again. A 429 carries
+// retry_after, and it is the ONE error where the right response is to wait
+// exactly as long as we are told: retrying inside the window does not just
+// fail, it extends it.
+const floodUntil = new Map();
+/** The seconds Telegram asked us to wait, from wherever the client put them. */
+function retryAfterOf(e) {
+  const n =
+    (e && e.parameters && e.parameters.retry_after) ||
+    (e && e.response && e.response.parameters && e.response.parameters.retry_after) ||
+    (e && e.on && e.on.payload && e.on.payload.retry_after) ||
+    0;
+  return Number(n) > 0 ? Number(n) : 0;
+}
+
 async function sendAlert(tg, chatId, text, extra, kind = "buy") {
   let clip = buyClip(kind);
   // NORMALISE BEFORE SENDING. An admin who uploads an .mp4 gets MEDIA_EXT's
@@ -552,10 +589,30 @@ async function sendAlert(tg, chatId, text, extra, kind = "buy") {
       caption.caption_entities = extra.entities;
       delete caption.entities;
     }
+    const send = clip.type === "video" ? tg.sendVideo : clip.type === "photo" ? tg.sendPhoto : tg.sendAnimation;
+    // A file_id if Telegram has already seen this exact clip, the file itself
+    // only the first time.
+    //
+    // `{ source }` is a fresh MULTIPART UPLOAD, and this ran once per alert —
+    // so a poll posting eight buys uploaded the same few hundred kilobytes
+    // eight times, to the same group, inside a second. Telegram answered what
+    // it always answers to that: "429: Too Many Requests: retry after 99", and
+    // for those 99 seconds the group got nothing. The bytes never needed to
+    // move more than once; every send after the first is a short string.
+    const cacheKey = clipKeyOf(clip);
+    const known = cacheKey && clipFileIds.get(cacheKey);
     try {
-      const send = clip.type === "video" ? tg.sendVideo : clip.type === "photo" ? tg.sendPhoto : tg.sendAnimation;
-      return await send.call(tg, chatId, { source: clip.source }, caption);
+      const sent = await send.call(tg, chatId, known || { source: clip.source }, caption);
+      if (cacheKey && !known) {
+        const id = fileIdOf(sent);
+        if (id) clipFileIds.set(cacheKey, id);
+      }
+      return sent;
     } catch (e) {
+      // A file_id can go stale (Telegram expires them, and a re-upload changes
+      // it). Forget it so the next alert re-uploads rather than failing forever
+      // on a reference to something that is gone.
+      if (cacheKey && known) clipFileIds.delete(cacheKey);
       // A rejected clip must cost the ARTWORK, never the alert.
       log.warn(`[buybot] buy clip failed for ${chatId} (${e.message}) — sending the alert as text`);
     }
@@ -596,6 +653,13 @@ async function deliver(tg, chatId, payload, dedupeId, opts = {}) {
   // must stop costing us Telegram calls even on a path that cannot latch, and
   // the per-transaction claim below only guards repeats of the SAME buy.
   if (latch.isChatMuted(chatId)) return false;
+  // Telegram told us to wait. Trying anyway does not merely fail — it RESETS
+  // the window, so a bot that retries every poll can stay locked out
+  // indefinitely while every buy it was holding ages past MAX_ALERT_AGE_MS and
+  // is dropped. That is the shape of "sometimes it posts, sometimes it does
+  // not" with buys plainly visible on the chart.
+  const until = floodUntil.get(String(chatId)) || 0;
+  if (until > now()) return false; // not latched — it is still wanted
   if (dedupeId && !latch.claim(chatId, dedupeId)) return false;
   // Accepts a thunk so the caller can defer rendering until the claim is won.
   // With a `>=` block cursor a quiet pool re-reads its newest block on every
@@ -617,6 +681,15 @@ async function deliver(tg, chatId, payload, dedupeId, opts = {}) {
     if (opts.pin) await pinAlert(tg, chatId, sent.message_id).catch(() => {});
     return true;
   } catch (e) {
+    const wait = retryAfterOf(e);
+    if (wait) {
+      // Release the claim: this buy was NOT delivered, and leaving it claimed
+      // would let the latch swallow the retry.
+      if (dedupeId) await latch.release(chatId, dedupeId);
+      floodUntil.set(String(chatId), now() + wait * 1000);
+      log.warn(`[buybot] ${chatId} is rate limited by Telegram — holding off ${wait}s before the next alert`);
+      return false;
+    }
     if (isFatalChatError(e)) {
       // The bot is not in this chat, or may not speak in it. Mute the whole
       // chat: retrying can never succeed and burns Telegram calls plus the
