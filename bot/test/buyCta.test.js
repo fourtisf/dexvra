@@ -30,17 +30,17 @@ test("Trade on Dexvra opens the TRADE BOT already scanning this CA", () => {
   // ?start=ca_<chain>_<address> — the payload tradebot/telegram.js reads to skip
   // straight to the scan instead of asking for an address.
   const l = links(mon.renderRealAlert(g(), buy, pool, null));
-  assert.match(l["⚡ Trade on Dexvra"], /^https:\/\/t\.me\/[^/?]+\?start=ca_solana_So1Token$/);
+  assert.match(l["Trade on Dexvra"], /^https:\/\/t\.me\/[^/?]+\?start=ca_solana_So1Token$/);
 });
 
 test("Chart is DexScreener, on the POOL — the pair, not a token search", () => {
   const l = links(mon.renderRealAlert(g(), buy, pool, null));
-  assert.strictEqual(l["📈 Chart"], "https://dexscreener.com/solana/PooLAddr");
+  assert.strictEqual(l["Chart"], "https://dexscreener.com/solana/PooLAddr");
 });
 
 test("a group whose pool hasn't resolved yet still gets a chart", () => {
   const l = links(mon.renderRealAlert(g({ pairAddress: null }), buy, pool, null));
-  assert.strictEqual(l["📈 Chart"], "https://dexscreener.com/solana/So1Token", "DexScreener resolves a token too");
+  assert.strictEqual(l["Chart"], "https://dexscreener.com/solana/So1Token", "DexScreener resolves a token too");
 });
 
 test("the one chain DexScreener does not index never gets a dexscreener link", () => {
@@ -48,8 +48,8 @@ test("the one chain DexScreener does not index never gets a dexscreener link", (
   // deliberately absent and the button falls back rather than 404ing.
   assert.strictEqual(chartUrl("robinhood", "0xPool"), null);
   const l = links(mon.renderRealAlert(g({ chain: "robinhood", address: "0xCA" }), buy, pool, null));
-  assert.ok(!/dexscreener/.test(l["📈 Chart"]), "no dead dexscreener link");
-  assert.match(l["📈 Chart"], /dexvra\.io\/token\/robinhood\/0xCA/);
+  assert.ok(!/dexscreener/.test(l["Chart"]), "no dead dexscreener link");
+  assert.match(l["Chart"], /dexvra\.io\/token\/robinhood\/0xCA/);
 });
 
 test("every chain the bot supports either has a chart or is a known exception", () => {
@@ -59,7 +59,7 @@ test("every chain the bot supports either has a chart or is a known exception", 
 
 test("the third link is Dexvra, on the token's own page", () => {
   const l = links(mon.renderRealAlert(g(), buy, pool, null));
-  assert.strictEqual(l["💎 Dexvra"], "https://dexvra.io/token/solana/So1Token");
+  assert.strictEqual(l["Dexvra"], "https://dexvra.io/token/solana/So1Token");
 });
 
 // ── A token nobody has listed ────────────────────────────────────────────────
@@ -72,7 +72,7 @@ test("the Dexvra link is there whether or not the token is listed", () => {
   // alert has nothing to route around.
   for (const chain of ["solana", "bsc"]) {
     const l = links(mon.renderRealAlert(g({ chain }), buy, pool, null));
-    assert.match(l["💎 Dexvra"], new RegExp(`/token/${chain}/`), `${chain}: the link is on the card`);
+    assert.match(l["Dexvra"], new RegExp(`/token/${chain}/`), `${chain}: the link is on the card`);
   }
 });
 
@@ -90,9 +90,9 @@ test("the token name headlines through the same page, always", () => {
 
 test("the whale card carries the same three links as the ordinary one", () => {
   const whale = links(mon.renderWhaleAlert(g(), buy, pool, { held: 1e6, holdsUsd: 5e4, position: "+1%" }));
-  assert.match(whale["⚡ Trade on Dexvra"], /\?start=ca_solana_So1Token$/);
-  assert.strictEqual(whale["📈 Chart"], "https://dexscreener.com/solana/PooLAddr");
-  assert.match(whale["💎 Dexvra"], /dexvra\.io\/token\/solana\/So1Token$/);
+  assert.match(whale["Trade on Dexvra"], /\?start=ca_solana_So1Token$/);
+  assert.strictEqual(whale["Chart"], "https://dexscreener.com/solana/PooLAddr");
+  assert.match(whale["Dexvra"], /dexvra\.io\/token\/solana\/So1Token$/);
 });
 
 test("every alert links the transaction it is reporting", () => {

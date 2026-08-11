@@ -124,13 +124,13 @@ test("a premium swap keeps its id, and the card carries the entity", async () =>
   }
 });
 
-test("a premium emoji inside a link label STAYS premium — and keeps the button", async () => {
-  // The ⚡ Trade / 📈 Chart / 💎 Dexvra row is three link labels, and a premium
-  // swap there used to be silently downgraded to the plain char (the old parser
-  // choked on "[[⚡](emoji/1) Trade](url)" and leaked literal brackets). To the
-  // operator that read as "premium chart gagal": no 💎 on the button, nothing
-  // animated in channel posts. The parser now reads the nesting, so the swap
-  // keeps its id AND the button.
+test("a premium CTA icon sits OUTSIDE its link — the one place Telegram animates it", async () => {
+  // The ⚡ Trade / 📈 Chart / 💎 Dexvra icons used to live INSIDE the link
+  // labels, and Telegram refuses to render a bot's custom emoji inside a
+  // text_link: on a live card every other icon animated while exactly these
+  // three stayed fallback chars. The icons now precede their links, so a
+  // premium swap renders as a top-level custom_emoji entity — and the link,
+  // with its icon-less label, still works.
   const i = chars("group_buy_alert").indexOf("⚡");
   assert.ok(i >= 0, "the CTA row still leads with ⚡");
   await tpl.replaceEmojiAt("group_buy_alert", i, "[🔥](emoji/555)");
@@ -145,11 +145,14 @@ test("a premium emoji inside a link label STAYS premium — and keeps the button
       nameRow: "alon", emoji: "🟢", verify: "v", wallet: "w", native: "", intro: "", poweredBy: "",
       tradeUrl: "https://t.me/x", chartUrl: "https://c", coinUrl: "https://d",
     });
-    const labels = payload.entities.filter((e) => e.type === "text_link").map((e) => payload.text.substr(e.offset, e.length));
-    assert.ok(labels.includes("🔥 Trade on Dexvra"), `the button survived: ${labels.join(" | ")}`);
+    const links = payload.entities.filter((e) => e.type === "text_link");
+    const labels = links.map((e) => payload.text.substr(e.offset, e.length));
+    assert.ok(labels.includes("Trade on Dexvra"), `the button survived: ${labels.join(" | ")}`);
     const prem = payload.entities.find((e) => e.type === "custom_emoji" && e.custom_emoji_id === "555");
     assert.ok(prem, "the custom_emoji entity reached the card");
-    assert.strictEqual(payload.text.substr(prem.offset, prem.length), "🔥", "…on the right character, nested in the link");
+    assert.strictEqual(payload.text.substr(prem.offset, prem.length), "🔥", "…on the right character");
+    const trade = links.find((e) => payload.text.substr(e.offset, e.length) === "Trade on Dexvra");
+    assert.ok(prem.offset + prem.length <= trade.offset, "the icon precedes the link — never inside it");
     assert.doesNotMatch(payload.text, /\[|\]/, "no literal brackets reached the card");
   } finally {
     await tpl.resetTemplate("group_buy_alert");

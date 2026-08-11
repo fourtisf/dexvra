@@ -82,8 +82,8 @@ test("the links a reader taps all survive into the preview", () => {
   const byLabel = {};
   const p = preview("Buy alert");
   for (const e of p.entities) if (e.type === "text_link") byLabel[p.text.substr(e.offset, e.length)] = e.url;
-  assert.match(byLabel["⚡ Trade on Dexvra"], /^https:\/\/t\.me\/.+\?start=ca_solana_/);
-  assert.match(byLabel["📈 Chart"], /^https:\/\/dexscreener\.com\//);
+  assert.match(byLabel["Trade on Dexvra"], /^https:\/\/t\.me\/.+\?start=ca_solana_/);
+  assert.match(byLabel["Chart"], /^https:\/\/dexscreener\.com\//);
   assert.ok(byLabel["Txn"], "the proof link — the card's whole claim");
   assert.ok(byLabel["Wallet"], "the buyer's holdings");
 });

@@ -456,7 +456,12 @@ const DEFAULTS = {
     // {holds}, {holdsUsd} and {position} are the same three facts on their own
     // if you would rather lay them out yourself.
     "{wallet}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
+    // The icons sit OUTSIDE the link labels. Telegram will not render a bot's
+    // custom emoji inside a text_link — proven on a live card where every other
+    // icon animated and exactly these three stayed fallback chars — so an icon
+    // inside the label is an icon a 💎 swap can never light up. Outside, it is
+    // an ordinary top-level emoji: swappable, animatable, same look.
+    "⚡ [Trade on Dexvra]({tradeUrl}) · 📈 [Chart]({chartUrl}) · 💎 [Dexvra]({coinUrl})",
   // WHALE WALLET — a buy from someone already holding a lot of the token,
   // whatever they just spent. Pinned in the group, so it is deliberately its own
   // card rather than the normal one with a louder word on it.
@@ -493,7 +498,8 @@ const DEFAULTS = {
     // the one where the holding IS the news, silently did not. One row, one
     // template, one place to edit it.
     "{wallet}\n\n" +
-    "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
+    // Icons outside the labels for the same reason as the buy card's row above.
+    "⚡ [Trade on Dexvra]({tradeUrl}) · 📈 [Chart]({chartUrl}) · 💎 [Dexvra]({coinUrl})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.
   // One icon per BUYBOT_EMOJI_STEP_USD, floored and capped, so the row only
   // ever GROWS with the buy.
