@@ -702,17 +702,43 @@ const DEFAULTS = {
   // network's own mark, and the same glyph twice in three lines reads as a
   // rendering fault. {chainEmoji} stays available if you lay the rows out
   // differently.
-  // {links} is the project's OWN website / X / Telegram, read from DexScreener's
-  // pair info — the links a newcomer asks for in the same breath as the CA.
-  // Rendered with dropEmpty, so a token with no socials (most fresh launches)
-  // loses the whole row instead of leaving a blank line where it was.
-  // {website}, {twitter} and {telegram} are the same three on their own.
+  // TIGHT. Name, network and address on three consecutive lines, one gap, then
+  // the project's own links. Somebody asking for the CA is going to copy it and
+  // leave; every blank line between them and the address is a line they scroll
+  // past to get there.
+  //
+  // NO Chart / Trade / Dexvra row. Those three are on every buy alert this group
+  // already receives, and repeating our own links under a question the project
+  // asked about THEIR contract turns an answer into an advert.
+  //
+  // The 💵 and 🔗 are LITERALS here, not {chainEmoji}, so both show up in this
+  // template's own "😀 Swap emoji" picker and can be changed without touching
+  // the buy card. {chainEmoji} and {nameRow} are still available if you would
+  // rather this row led with the network's mark like the buy card does.
+  //
+  // {links} is website / X / Telegram from DexScreener's pair info — the links a
+  // newcomer asks for in the same breath as the CA. Rendered with dropEmpty, so
+  // a token with no socials (most fresh launches) loses the whole row instead of
+  // leaving a blank line where it was. Their icons and wording live in
+  // `social_emojis` / `social_labels`.
   group_ca:
-    "{nameRow}\n" +
-    "🔗 {chain}\n\n" +
+    "💵 {label}\n" +
+    "🔗 {chain}\n" +
     "`{address}`\n\n" +
-    "{links}\n" +
-    "[📈 Chart]({chartUrl}) · [⚡ Trade]({tradeUrl}) · [💎 Dexvra]({coinUrl})",
+    "{links}",
+  // The icons and the wording on the socials row — for /ca AND the /settoken
+  // receipt, which build the same row.
+  //
+  // They used to be written into group/setup.js, so 🌐 𝕏 💬 were the only icons
+  // on either card the "😀 Swap emoji" editor could not reach. Same gap 📃 and
+  // 👤 had on the buy card, and the same fix: the glyph and the label are COPY
+  // and live here; which of the three a token actually has is LOGIC and stays in
+  // the code.
+  //
+  // A `key = emoji` map, so the picker labels each button with the network it
+  // belongs to instead of showing three anonymous glyphs.
+  social_emojis: "website = 🌐\nx = 𝕏\ntelegram = 💬",
+  social_labels: "Website|X|Telegram",
   // ── Dexvra Raid ─────────────────────────────────────────────────────────
   // The live card and its three end states. {progress} is GENERATED (the goal
   // rows and their bars) because which rows exist depends on which goals are
@@ -1112,7 +1138,9 @@ const META = {
   buybot_off: { group: "Group Setup", label: "/buybot off", ph: [] },
   buybot_need_token: { group: "Group Setup", label: "/buybot — not set up yet", ph: [] },
   buybot_status: { group: "Group Setup", label: "/buybot — status card", ph: ["address", "chain", "pool", "minBuy", "whale", "pin", "state"] },
-  group_ca: { group: "Group Setup", label: "/ca — the contract address", ph: ["nameRow", "name", "symbol", "chain", "chainEmoji", "address", "links", "website", "twitter", "telegram", "chartUrl", "tradeUrl", "coinUrl"] },
+  group_ca: { group: "Group Setup", label: "/ca — the contract address", ph: ["label", "nameRow", "name", "symbol", "chain", "chainEmoji", "address", "links", "website", "twitter", "telegram", "chartUrl", "tradeUrl", "coinUrl"] },
+  social_emojis: { group: "Group Setup", label: "Socials row: icons (website/X/telegram)", ph: [] },
+  social_labels: { group: "Group Setup", label: "Socials row: wording (website|x|telegram)", ph: [] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },
   raid_complete: { group: "Dexvra Raid", label: "Raid: all targets hit", ph: ["seq", "percent", "crew", "roster", "progress", "url", "post", "updated"] },
   raid_expired: { group: "Dexvra Raid", label: "Raid: time ran out", ph: ["seq", "percent", "crew", "progress", "url", "post", "updated"] },

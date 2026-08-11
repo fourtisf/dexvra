@@ -43,25 +43,41 @@ test("it answers with the contract address, tap-to-copy", async () => {
   assert.strictEqual(text.substr(code.offset, code.length), ADDR, "the span covers the address exactly");
 });
 
-test("it names the token and its network, and offers the three links", async () => {
-  const ctx = ctxFor("-1002");
-  await configure("-1002");
+test("name, network and address sit on three consecutive lines", async () => {
+  // TIGHT. Somebody asking for the CA is going to copy it and leave; every
+  // blank line between them and the address is a line they scroll past.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => null;
+  setup._linksCache.clear();
+  try {
+    const ctx = ctxFor("-1002");
+    await configure("-1002");
+    await setup.ca(ctx);
+    assert.strictEqual(ctx.sent[0].text, `💵 alon $ALON\n🔗 Solana\n${ADDR}`);
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("it does NOT repeat our own Chart / Trade / Dexvra links", async () => {
+  // Those three are on every buy alert this group already receives. Repeating
+  // them under a question the project asked about THEIR contract turns an
+  // answer into an advert.
+  const ctx = ctxFor("-1009");
+  await configure("-1009");
   await setup.ca(ctx);
   const { text, extra } = ctx.sent[0];
-  assert.match(text, /^🟣 alon \$ALON$/m, "the same token row the buy card uses");
-  assert.match(text, /^🔗 Solana$/m);
-  const links = {};
-  for (const e of extra.entities || []) if (e.type === "text_link") links[text.substr(e.offset, e.length)] = e.url;
-  assert.match(links["📈 Chart"], /^https:\/\/dexscreener\.com\/solana\/PooL1$/);
-  assert.match(links["⚡ Trade"], /\?start=ca_solana_/);
-  assert.match(links["💎 Dexvra"], new RegExp(`/token/solana/${ADDR}$`));
+  const labels = (extra.entities || []).filter((e) => e.type === "text_link").map((e) => text.substr(e.offset, e.length));
+  for (const gone of ["📈 Chart", "⚡ Trade", "💎 Dexvra"]) assert.ok(!labels.includes(gone), `${gone} must be gone`);
 });
 
 test("a token with no resolved name prints the ticker once, not twice", async () => {
   const ctx = ctxFor("-1003");
   await configure("-1003", { name: "" });
   await setup.ca(ctx);
-  assert.match(ctx.sent[0].text, /^🟣 \$ALON$/m);
+  assert.match(ctx.sent[0].text, /^💵 \$ALON$/m);
 });
 
 test("no token set → the same card /buybot shows, with the same Add CA button", async () => {
@@ -220,6 +236,85 @@ test("a failed lookup is cached too, but only briefly", async () => {
     assert.ok(entry.ttl < 5 * 60 * 1000, "a miss expires in minutes, not tens of minutes");
   } finally {
     ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("EVERY emoji on the card is reachable from the emoji editor", async () => {
+  // The gap this closes: 🌐 𝕏 💬 were written into group/setup.js, so they were
+  // the only glyphs on this card the "😀 Swap emoji" screen could not touch —
+  // the same gap 📃 and 👤 had on the buy card.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => ({ website: "https://a.io", twitter: "https://x.com/a", telegram: "https://t.me/a" });
+  setup._linksCache.clear();
+  try {
+    const ctx = ctxFor("-1015");
+    await configure("-1015");
+    await setup.ca(ctx);
+    const swappable = new Set(
+      ["group_ca", "social_emojis"].flatMap((k) => tpl.listEmojis(k).map((e) => e.char)),
+    );
+    const onCard = [...new Set([...ctx.sent[0].text.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]))];
+    assert.deepStrictEqual(onCard.filter((c) => !swappable.has(c)), []);
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("swapping a socials icon changes the card, without touching its wording", async () => {
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => ({ website: "https://a.io" });
+  setup._linksCache.clear();
+  await tpl.setTemplate("social_emojis", "website = 🏠\nx = 𝕏\ntelegram = 💬");
+  try {
+    const ctx = ctxFor("-1016");
+    await configure("-1016");
+    await setup.ca(ctx);
+    assert.match(ctx.sent[0].text, /🏠 Website/);
+  } finally {
+    ds.fetchTokenInfo = real;
+    await tpl.resetTemplate("social_emojis");
+    setup._linksCache.clear();
+  }
+});
+
+test("the socials wording is editable too, field by field", async () => {
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => ({ website: "https://a.io", telegram: "https://t.me/a" });
+  setup._linksCache.clear();
+  // Only the first field overridden — the rest must fall back rather than blank.
+  await tpl.setTemplate("social_labels", "Situs");
+  try {
+    const ctx = ctxFor("-1017");
+    await configure("-1017");
+    await setup.ca(ctx);
+    assert.match(ctx.sent[0].text, /🌐 Situs/);
+    assert.match(ctx.sent[0].text, /💬 Telegram/, "an untyped field keeps its default");
+  } finally {
+    ds.fetchTokenInfo = real;
+    await tpl.resetTemplate("social_labels");
+    setup._linksCache.clear();
+  }
+});
+
+test("an emptied icon drops the glyph, not into a leading space", async () => {
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => ({ website: "https://a.io" });
+  setup._linksCache.clear();
+  await tpl.setTemplate("social_emojis", "website =\nx = 𝕏\ntelegram = 💬");
+  try {
+    const ctx = ctxFor("-1018");
+    await configure("-1018");
+    await setup.ca(ctx);
+    assert.match(ctx.sent[0].text, /\n\nWebsite$/, "no orphaned space where the icon was");
+  } finally {
+    ds.fetchTokenInfo = real;
+    await tpl.resetTemplate("social_emojis");
     setup._linksCache.clear();
   }
 });

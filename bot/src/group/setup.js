@@ -107,11 +107,21 @@ async function tokenLinks(chain, address) {
   // reject the WHOLE message, which would take the receipt down over a link.
   const one = (url, label, icon) => {
     const safe = url ? premium.sanitizeUrl(url) : "";
-    return safe && /^https?:\/\//i.test(safe) ? `${icon} [${label}](${safe})` : "";
+    if (!safe || !/^https?:\/\//i.test(safe)) return "";
+    // The icon is optional: an operator who empties one in `social_emojis`
+    // means "no glyph on this one", not "a leading space".
+    return icon ? `${icon} [${label}](${safe})` : `[${label}](${safe})`;
   };
-  const website = one(info.website, "Website", "🌐");
-  const twitter = one(info.twitter, "X", "𝕏");
-  const telegram = one(info.telegram, "Telegram", "💬");
+  // Icons and wording from their templates, not from literals here — these were
+  // the only three glyphs on this row the emoji editor could not reach.
+  // Field-by-field fallback, the same rule as every other pipe template: a
+  // half-typed override still renders a row instead of blanks.
+  const icons = require("../channels/format").emojiMapTemplate("social_emojis");
+  const words = String(tpl.t("social_labels") || "").split("|");
+  const word = (i, def) => (words[i] || "").trim() || def;
+  const website = one(info.website, word(0, "Website"), icons.website);
+  const twitter = one(info.twitter, word(1, "X"), icons.x);
+  const telegram = one(info.telegram, word(2, "Telegram"), icons.telegram);
   const found = [website, twitter, telegram].filter(Boolean);
   return {
     // The WHOLE row, so it collapses cleanly on a token with no socials — which
@@ -496,21 +506,24 @@ async function ca(ctx) {
   // drops out, because a third-party indexer having a bad minute must never
   // cost a member the contract address they actually asked for.
   const social = await cachedTokenLinks(g.chain, g.address);
+  // "**alon** $ALON", or just "**$ALON**" when no name ever resolved — printing
+  // the ticker twice is what the fallback exists to avoid. LOGIC, so it stays
+  // here; the emoji in front of it is copy and lives in the template.
+  const label =
+    g.name && g.name !== `$${sym}`
+      ? `**${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
+      : `**${premium.sanitizeVar(`$${sym}`)}**`;
   return say(ctx, "group_ca", {
     ...social,
-    // Same row the buy card uses, for the same reason: a group whose token
-    // never resolved a name would otherwise read "$DEX $DEX".
-    nameRow: tpl
-      .markup("group_name_row", {
-        chainEmoji: chainEmoji(g.chain),
-        label:
-          g.name && g.name !== `$${sym}`
-            ? `**${premium.sanitizeVar(g.name)}** ${premium.sanitizeVar(`$${sym}`)}`
-            : `**${premium.sanitizeVar(`$${sym}`)}**`,
-        name: premium.sanitizeVar(g.name || ""),
-        symbol: premium.sanitizeVar(`$${sym}`),
-      })
-      .trim(),
+    label,
+    // The buy card's whole token row, for an operator who would rather this
+    // card led with the network's own mark than with 💵.
+    nameRow: tpl.markup("group_name_row", {
+      chainEmoji: chainEmoji(g.chain),
+      label,
+      name: premium.sanitizeVar(g.name || ""),
+      symbol: premium.sanitizeVar(`$${sym}`),
+    }).trim(),
     name: premium.sanitizeVar(g.name || `$${sym}`),
     symbol: premium.sanitizeVar(`$${sym}`),
     chain: chainOf(g.chain)?.label || g.chain,

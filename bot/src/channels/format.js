@@ -769,4 +769,8 @@ function rankupPost(coin, rank, change24h) {
 // paste a premium custom emoji into, and the two would read differently for the
 // same chain the first time only one of them was updated — the exact drift the
 // comment above emojiMapTemplate is about.
-module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, channelLinks };
+// emojiMapTemplate is exported for the same reason chainEmoji is: the socials
+// row on /ca reads `social_emojis` the same way, and re-implementing the entity
+// arithmetic in a second file is how a premium emoji ends up sliding onto the
+// wrong character on one card and not the other.
+module.exports = { tierBadge, tierBadgeChar, listingPost, trendingPost, pumpPost, bannerPost, rankupPost, coinUrl, sym, chainName, chainEmoji, emojiMapTemplate, channelLinks };
