@@ -431,10 +431,16 @@ const DEFAULTS = {
     "{nameRow}\n" +
     "💲 {usd}{native}\n" +
     "🪙 {tokenAmt} {symbol}\n" +
-    // Price and market cap on one row, liquidity and the 24h move on the next:
-    // the numbers that say whether this buy is a rounding error or a dent.
+    // Price and market cap, the two numbers that say whether this buy is a
+    // rounding error or a dent.
+    //
+    // THE LIQUIDITY / 24h ROW IS GONE, and {liq} and {change} are placeholders
+    // now rather than a shipped row. Put "💧 {liq} · 24h {change}" back on a line
+    // of its own if you want it. It was the row a reader's eye skipped: pool
+    // depth is a property of the token that has not changed since the last alert
+    // and will not change by the next, so repeating it under every buy spent a
+    // line restating the background instead of reporting the event.
     "📊 {price} · MC {mcap}\n" +
-    "💧 {liq} · 24h {change}\n" +
     "{verify}\n" +
     // The buyer's own position, directly under WHO bought — how much of the
     // token that wallet now holds, what it is worth, and how much this buy grew
@@ -474,8 +480,9 @@ const DEFAULTS = {
     // one where the holding IS the news, silently did not. One row, one
     // template, one place to edit it.
     "{wallet}\n" +
+    // Dropped here too, and it has to be: the two cards are one grammar, and
+    // every drift between them started with one of them being edited alone.
     "📊 {price} · MC {mcap}\n" +
-    "💧 {liq} · 24h {change}\n" +
     "{verify}\n\n" +
     "[⚡ Trade on Dexvra]({tradeUrl}) · [📈 Chart]({chartUrl}) · [💎 Dexvra]({coinUrl})",
   // The icons in the size row, pipe separated: normal buy | whale wallet.

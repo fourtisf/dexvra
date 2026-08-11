@@ -1,7 +1,7 @@
 // Seeing the buy card before a real buy does.
 //
-// An emoji on a button is not the card. 💧 next to 🔵 in a keyboard grid says
-// nothing about whether the 💧 row reads well under the 🪙 row, and the only way
+// An emoji on a button is not the card. 🪙 next to 🔵 in a keyboard grid says
+// nothing about whether the 🪙 row reads well under the 💲 row, and the only way
 // to find out was to wait for somebody to buy the token — hours on a quiet
 // contract, in a customer's group, in public.
 const path = require("node:path");
@@ -34,19 +34,23 @@ test("the preview is the REAL card — every row a group would get", () => {
   // does not, and the whole point of looking is to trust what you see.
   const text = preview("Buy alert").text;
   for (const row of [/^🚨 NEW BUY ALERT alon BUY!/m, /^🟣 alon \$ALON$/m, /^💲 \$804\.72 \(4\.2318 SOL\)$/m,
-                     /^🪙 [\d,.]+ \$ALON$/m, /^📊 .+ · MC .+$/m, /^💧 .+ · 24h .+$/m,
+                     /^🪙 [\d,.]+ \$ALON$/m, /^📊 .+ · MC .+$/m,
                      /^👤 .+ · Txn$/m, /^✅ Position: .+ · Wallet$/m]) {
     assert.match(text, row);
   }
+  // The liquidity / 24h row was dropped: pool depth has not changed since the
+  // last alert and will not change by the next, so repeating it under every buy
+  // spent a line restating the background instead of reporting the event.
+  assert.doesNotMatch(text, /24h/);
   assert.match(preview("Whale alert").text, /WHALE WALLET!/);
 });
 
 test("a swapped icon shows up in the preview immediately", async () => {
   // The reason the preview exists: choosing an icon, not just changing one.
-  await swap("💧", "🌊");
+  await swap("🪙", "🌊");
   try {
     assert.match(preview("Buy alert").text, /^🌊 /m);
-    assert.doesNotMatch(preview("Buy alert").text, /💧/);
+    assert.doesNotMatch(preview("Buy alert").text, /🪙/);
     assert.match(preview("Whale alert").text, /^🌊 /m, "the whale card moves with it");
   } finally {
     await reset();

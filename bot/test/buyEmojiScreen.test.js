@@ -2,7 +2,7 @@
 //
 // Restyling the buy alert used to mean visiting EIGHT templates: the banner in
 // group_buy_intro, the size icons in group_buy_style, the buyer row, the
-// Position tick, the network mark in chain_emojis, and the 💲🪙📊💧 column in
+// Position tick, the network mark in chain_emojis, and the 💲🪙📊 column in
 // group_buy_alert — with group_whale_alert carrying its own copy of that column.
 // Eight screens, each with its own "😀 Swap emoji", and the only way to change
 // an icon in some of them was to retype the whole card.
@@ -57,9 +57,9 @@ test("swapping one slot moves BOTH cards — they are deliberately one grammar",
 
 test("a chain mark is NOT folded into a card icon that happens to look the same", async () => {
   // `plasma = 🟢` and the 🟢 buy-size icon are the same character and completely
-  // different settings; `sui = 💧` collides with the 💧 liquidity row the same
-  // way. Folding them would repaint every small buy the day somebody rebranded
-  // a network.
+  // different settings. Folding them would repaint every small buy the day
+  // somebody rebranded a network — and the collision list is not fixed, so this
+  // stays true whatever rows the cards gain.
   await swap(chainSlot("plasma"), "🥑");
   try {
     assert.strictEqual(slotFor("🟢").label, "buy", "the size icon is untouched");
