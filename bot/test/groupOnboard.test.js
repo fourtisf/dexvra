@@ -218,7 +218,11 @@ test("no user-facing string is left hardcoded in the group setup commands", () =
   // to ctx.reply is one the operator cannot reword without a deploy.
   const literals = [...s.matchAll(/ctx\s*\.?\s*reply\(\s*(["'`])/g)];
   assert.strictEqual(literals.length, 0, "no ctx.reply with a literal string");
-  assert.match(s, /function say\(ctx, key, vars\)/, "there is one helper and it takes a key");
+  // The KEY is what matters — that every reply names a template instead of
+  // carrying a sentence. What say() takes after that is free to grow (it gained
+  // an `opts` for dropEmpty), and pinning the exact arity made this fail over a
+  // change that could not put a literal anywhere.
+  assert.match(s, /function say\(ctx, key, vars[,)]/, "there is one helper and it takes a key");
 });
 
 test("no user-facing string is left hardcoded in the raid panel", () => {
@@ -238,6 +242,7 @@ test("every setup and raid template is reachable in the editor", () => {
     "setwhale_off",
     "buybot_status",
     "buybot_need_token",
+    "group_ca",
     "pin_on",
     "setup_admin_only",
   ]) {

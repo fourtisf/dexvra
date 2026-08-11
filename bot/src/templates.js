@@ -702,10 +702,16 @@ const DEFAULTS = {
   // network's own mark, and the same glyph twice in three lines reads as a
   // rendering fault. {chainEmoji} stays available if you lay the rows out
   // differently.
+  // {links} is the project's OWN website / X / Telegram, read from DexScreener's
+  // pair info — the links a newcomer asks for in the same breath as the CA.
+  // Rendered with dropEmpty, so a token with no socials (most fresh launches)
+  // loses the whole row instead of leaving a blank line where it was.
+  // {website}, {twitter} and {telegram} are the same three on their own.
   group_ca:
     "{nameRow}\n" +
     "🔗 {chain}\n\n" +
     "`{address}`\n\n" +
+    "{links}\n" +
     "[📈 Chart]({chartUrl}) · [⚡ Trade]({tradeUrl}) · [💎 Dexvra]({coinUrl})",
   // ── Dexvra Raid ─────────────────────────────────────────────────────────
   // The live card and its three end states. {progress} is GENERATED (the goal
@@ -1106,7 +1112,7 @@ const META = {
   buybot_off: { group: "Group Setup", label: "/buybot off", ph: [] },
   buybot_need_token: { group: "Group Setup", label: "/buybot — not set up yet", ph: [] },
   buybot_status: { group: "Group Setup", label: "/buybot — status card", ph: ["address", "chain", "pool", "minBuy", "whale", "pin", "state"] },
-  group_ca: { group: "Group Setup", label: "/ca — the contract address", ph: ["nameRow", "name", "symbol", "chain", "chainEmoji", "address", "chartUrl", "tradeUrl", "coinUrl"] },
+  group_ca: { group: "Group Setup", label: "/ca — the contract address", ph: ["nameRow", "name", "symbol", "chain", "chainEmoji", "address", "links", "website", "twitter", "telegram", "chartUrl", "tradeUrl", "coinUrl"] },
   raid_card: { group: "Dexvra Raid", label: "Raid: live card", ph: ["seq", "percent", "left", "crew", "roster", "progress", "url", "post", "updated", "note"] },
   raid_complete: { group: "Dexvra Raid", label: "Raid: all targets hit", ph: ["seq", "percent", "crew", "roster", "progress", "url", "post", "updated"] },
   raid_expired: { group: "Dexvra Raid", label: "Raid: time ran out", ph: ["seq", "percent", "crew", "progress", "url", "post", "updated"] },

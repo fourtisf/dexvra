@@ -22,8 +22,8 @@ const log = require("../helpers/logger");
  *
  * Always .catch(): a group that removed the bot mid-command must not throw.
  */
-function say(ctx, key, vars) {
-  const { text, extra } = payloadArgs(tpl.render(key, vars), false);
+function say(ctx, key, vars, opts) {
+  const { text, extra } = payloadArgs(tpl.render(key, vars, opts), false);
   return ctx.reply(text, { ...extra, disable_web_page_preview: true }).catch(() => {});
 }
 
@@ -122,6 +122,32 @@ async function tokenLinks(chain, address) {
     twitter,
     telegram,
   };
+}
+
+/**
+ * tokenLinks, memoised — because /ca is asked by MEMBERS, not once by an admin.
+ *
+ * /settoken calls tokenLinks exactly once per setup, so it never needed this.
+ * /ca is the opposite: a busy group asks it dozens of times a day, and every
+ * one of those would be a fresh DexScreener request for socials that change
+ * about never. That is a self-inflicted rate limit, and this project has
+ * already had one third-party feed refuse this server at the IP level.
+ *
+ * A FAILURE IS CACHED TOO, briefly. An indexer having a bad minute must not be
+ * re-asked on every single /ca for that minute — and the empty answer is
+ * harmless, because the socials row simply collapses.
+ */
+const LINKS_TTL_MS = 10 * 60 * 1000;
+const LINKS_FAIL_TTL_MS = 60 * 1000;
+const linksCache = new Map(); // `${chain}:${address}` → { at, ttl, value }
+
+async function cachedTokenLinks(chain, address) {
+  const k = `${chain}:${address}`;
+  const hit = linksCache.get(k);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.value;
+  const value = await tokenLinks(chain, address);
+  linksCache.set(k, { at: Date.now(), ttl: value.links ? LINKS_TTL_MS : LINKS_FAIL_TTL_MS, value });
+  return value;
 }
 
 async function promptForToken(ctx, replyTo) {
@@ -465,7 +491,13 @@ async function ca(ctx) {
   const { chainEmoji } = require("../channels/format");
   const sym = String(g.sym || "").replace(/^\$/, "") || "TOKEN";
   const page = `${SITE_URL}/token/${g.chain}/${g.address}`;
+  // The project's own website / X / Telegram, from DexScreener's pair info.
+  // Purely additive: every failure resolves to empty rows and the socials line
+  // drops out, because a third-party indexer having a bad minute must never
+  // cost a member the contract address they actually asked for.
+  const social = await cachedTokenLinks(g.chain, g.address);
   return say(ctx, "group_ca", {
+    ...social,
     // Same row the buy card uses, for the same reason: a group whose token
     // never resolved a name would otherwise read "$DEX $DEX".
     nameRow: tpl
@@ -487,7 +519,9 @@ async function ca(ctx) {
     chartUrl: premium.sanitizeUrl(chartUrl(g.chain, g.pairAddress || g.address) || page),
     tradeUrl: premium.sanitizeUrl(tradeDeepLink(g.chain, g.address)),
     coinUrl: premium.sanitizeUrl(page),
-  });
+    // dropEmpty, so a token with no socials — which is most fresh launches —
+    // loses the whole row rather than leaving a blank line where it was.
+  }, { dropEmpty: true });
 }
 
 /**
@@ -696,6 +730,8 @@ module.exports = {
   settoken,
   ca,
   CA_WORD_RE,
+  cachedTokenLinks,
+  _linksCache: linksCache,
   tokenLinks,
   removeConfirmPanel,
   settingsKeyboard,

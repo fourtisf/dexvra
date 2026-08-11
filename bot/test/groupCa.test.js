@@ -123,10 +123,111 @@ test("ordinary chat containing the word is left alone", async () => {
   }
 });
 
+test("the project's own socials ride along, from DexScreener", async () => {
+  // Asked for in the same breath as the CA. Read from the pair info, so a
+  // project that set them on DexScreener gets them here with no extra setup.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => ({
+    website: "https://alon.fun",
+    twitter: "https://x.com/alon",
+    telegram: "https://t.me/alon",
+  });
+  setup._linksCache.clear();
+  try {
+    const ctx = ctxFor("-1010");
+    await configure("-1010");
+    await setup.ca(ctx);
+    const { text, extra } = ctx.sent[0];
+    const links = {};
+    for (const e of extra.entities || []) if (e.type === "text_link") links[text.substr(e.offset, e.length)] = e.url;
+    assert.strictEqual(links.Website, "https://alon.fun");
+    assert.strictEqual(links.X, "https://x.com/alon");
+    assert.strictEqual(links.Telegram, "https://t.me/alon");
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("no socials → the row VANISHES, it does not leave a gap", async () => {
+  // Most fresh launches have none. A blank line where a row was reads as a
+  // rendering fault on exactly the tokens that look least trustworthy already.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => null;
+  setup._linksCache.clear();
+  try {
+    const ctx = ctxFor("-1011");
+    await configure("-1011");
+    await setup.ca(ctx);
+    assert.doesNotMatch(ctx.sent[0].text, /\n\n\n/, "no blank line where the socials were");
+    assert.ok(ctx.sent[0].text.includes(ADDR), "the CA still arrives — socials are a bonus, not the answer");
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("an indexer that is down never costs a member the address", async () => {
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => {
+    throw new Error("ECONNRESET");
+  };
+  setup._linksCache.clear();
+  try {
+    const ctx = ctxFor("-1012");
+    await configure("-1012");
+    await setup.ca(ctx);
+    assert.ok(ctx.sent[0].text.includes(ADDR));
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("the socials lookup is cached — /ca is asked by members, over and over", async () => {
+  // A busy group asks this dozens of times a day. One fresh DexScreener request
+  // per ask is a self-inflicted rate limit, and this project has already had a
+  // third-party feed refuse this server at the IP level.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  let calls = 0;
+  ds.fetchTokenInfo = async () => (calls++, { website: "https://alon.fun" });
+  setup._linksCache.clear();
+  try {
+    await configure("-1013");
+    for (let i = 0; i < 5; i++) await setup.ca(ctxFor("-1013"));
+    assert.strictEqual(calls, 1, "five asks, one lookup");
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
+test("a failed lookup is cached too, but only briefly", async () => {
+  // An indexer having a bad minute must not be re-asked on every single /ca for
+  // that minute — and it must not be written off for ten either.
+  const ds = require("../src/dexscreener");
+  const real = ds.fetchTokenInfo;
+  ds.fetchTokenInfo = async () => null;
+  setup._linksCache.clear();
+  try {
+    await configure("-1014");
+    await setup.ca(ctxFor("-1014"));
+    const entry = setup._linksCache.get(`solana:${ADDR}`);
+    assert.ok(entry.ttl < 5 * 60 * 1000, "a miss expires in minutes, not tens of minutes");
+  } finally {
+    ds.fetchTokenInfo = real;
+    setup._linksCache.clear();
+  }
+});
+
 test("the card is admin-editable like every other group message", () => {
   const m = tpl.meta("group_ca");
   assert.strictEqual(m.group, "Group Setup");
-  for (const ph of ["nameRow", "chain", "address", "chartUrl", "tradeUrl", "coinUrl"]) {
+  for (const ph of ["nameRow", "chain", "address", "links", "website", "twitter", "telegram", "chartUrl", "tradeUrl", "coinUrl"]) {
     assert.ok(m.ph.includes(ph), `{${ph}} must be offered in the editor`);
   }
 });
