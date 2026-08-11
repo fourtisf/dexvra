@@ -108,3 +108,63 @@ test("a Solana cursor carries the signature, not just the slot", () => {
   assert.match(src, /sig: newestSig/, "the cursor stores it");
   assert.match(src, /sinceSig: \(cursorNow && cursorNow\.sig\)/, "and the next read uses it");
 });
+
+// ── Not being slower than the thing it replaced ──────────────────────────────
+//
+// The first cut of this reader fetched up to forty transactions ONE AT A TIME
+// from a public Solana node. A poll that should take 25 seconds took SIX
+// MINUTES, and then fell back to the indexer anyway — so the group was served a
+// growing backlog, eight stale alerts at a time, and the logs read as if it
+// were working. A reader that makes the bot slower than the feed it replaced is
+// worse than no reader.
+
+test("the whole read is bounded by one wall-clock deadline", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "chainTrades.js"), "utf8");
+  assert.match(src, /const DEADLINE_MS =/, "there is a ceiling");
+  assert.match(src, /const deadline = Date\.now\(\) \+ DEADLINE_MS/, "set once for the whole read");
+  // Both chain paths must receive it, or the one that does not is unbounded.
+  assert.match(src, /solanaBuys\(chain, pool, token, \{[^}]*deadline/, "solana");
+  assert.match(src, /evmBuys\(chain, pool, token, \{[^}]*deadline/, "evm");
+});
+
+test("transactions are fetched concurrently, never in a bare sequential loop", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "chainTrades.js"), "utf8");
+  const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  // getTransaction is the expensive call. Every one of them goes through the
+  // bounded mapper; a `for` loop awaiting one is what cost the six minutes.
+  const seq = code.match(/for \([^)]*\) \{[^}]*await [^}]*getTransaction/s);
+  assert.strictEqual(seq, null, "a sequential getTransaction loop is back");
+  assert.match(code, /mapBounded\(/, "the bounded mapper is used");
+  assert.match(code, /const CONCURRENCY =/, "with a ceiling on how many at once");
+});
+
+test("stale signatures are dropped BEFORE a transaction is fetched for them", () => {
+  // The listing already carries slot, blockTime and err. Spending a
+  // getTransaction on a buy that buyMonitor will drop for being 40 minutes old
+  // is the whole cost, and it is avoidable for free.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "chainTrades.js"), "utf8");
+  const fn = src.slice(src.indexOf("async function solanaBuys"));
+  // CODE ONLY. The comment explaining the filter names getTransaction, and
+  // matching it makes the test trip over its own explanation — which is how a
+  // red test stops meaning anything.
+  const body = fn
+    .slice(0, fn.indexOf("\n/**"))
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join("\n");
+  const filterAt = body.indexOf("blockTime * 1000 >= cutoff");
+  const fetchAt = body.indexOf("getTransaction");
+  assert.ok(filterAt > -1, "the age filter exists");
+  assert.ok(fetchAt > -1 && filterAt < fetchAt, "and it runs first");
+  assert.match(body, /\.filter\(\(x\) => !x\.err\)/, "a failed transaction is not fetched either");
+});
+
+test("the log says which source served the poll, and how long it took", () => {
+  // Six minutes of latency looked identical to a quiet pool. Both facts have to
+  // be in the line, or the next time this happens it is guesswork again.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "buyMonitor.js"), "utf8");
+  assert.match(src, /via \$\{source\}/, "chain or indexer");
+  assert.match(src, /\$\{Date\.now\(\) - startedAt\}ms/, "and the duration");
+  assert.match(src, /alerts will run late/, "and it warns when it outruns the interval");
+  assert.match(src, /took > BUYBOT_POOL_MIN_MS/, "measured against the poll interval, not a magic number");
+});

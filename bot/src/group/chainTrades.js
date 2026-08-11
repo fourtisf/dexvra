@@ -29,6 +29,20 @@ const log = require("../helpers/logger");
 
 const TIMEOUT_MS = 9000;
 const BUDGET_MS = 20000;
+// A HARD CEILING ON THE WHOLE READ. The first cut had none, and it cost the
+// thing it was built to fix: a poll fetched up to forty transactions ONE AT A
+// TIME from a public Solana node, so a cycle that should take 25 seconds took
+// six MINUTES — and then fell back to the indexer anyway. A reader that makes
+// the bot slower than the feed it replaced is worse than no reader.
+const DEADLINE_MS = 12000;
+// How many transaction reads are in flight at once. Sequential is what made the
+// poll take minutes; unbounded is how a free RPC key answers 429 to everything.
+const CONCURRENCY = 6;
+// Anything older than this is not news and buyMonitor drops it anyway
+// (MAX_ALERT_AGE_MS). Filtering here, on the block time the signature listing
+// already carries, is the difference between spending a getTransaction on it
+// and not.
+const MAX_AGE_MS = 30 * 60 * 1000;
 // A poll that finds more than this is a pool we have fallen far behind on —
 // buyMonitor caps what it will post anyway (MAX_PER_POLL), and reading a
 // thousand transactions to throw away 992 of them is how a free RPC key gets
@@ -92,6 +106,32 @@ function dropEndpoint(url) {
 // shape this first assumed. Guessing it wrong is silent: supports() returns
 // false for every chain and the reader is never called at all, which looks
 // exactly like the reader not working.
+/**
+ * Map with bounded concurrency and a deadline.
+ *
+ * Returns what finished in time. A partial read is fine here — the cursor only
+ * advances past what was actually posted, so anything missed is picked up on
+ * the next poll. Blocking the whole poll waiting for the tail is not.
+ */
+async function mapBounded(items, fn, { limit = CONCURRENCY, deadline }) {
+  const out = [];
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      if (deadline && Date.now() > deadline) return;
+      const item = items[i++];
+      try {
+        const r = await fn(item);
+        if (r) out.push(r);
+      } catch {
+        /* one unreadable transaction is not a failed poll */
+      }
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 const isEvm = (chain) => (chainOf(chain) || {}).family === "evm";
 const isSvm = (chain) => (chainOf(chain) || {}).family === "solana";
 
@@ -194,7 +234,7 @@ function decodeEvmSwap(ethers, ifaceV2, ifaceV3, logEntry, tokenIsZero) {
   return { tokenOut, spent };
 }
 
-async function evmBuys(chain, pool, token, { sinceBlock, counterAddress }) {
+async function evmBuys(chain, pool, token, { sinceBlock, counterAddress, deadline }) {
   const ethers = ethersLib();
   if (!ethers) return null;
   const tok0 = await evmToken0(chain, pool);
@@ -230,32 +270,55 @@ async function evmBuys(chain, pool, token, { sinceBlock, counterAddress }) {
         toBlock: head,
         topics: [[ethers.id(V2_SWAP), ethers.id(V3_SWAP)]],
       });
+      // NEWEST first when there are more than we can use, for the same reason
+      // as the Solana path: a backlog crawled oldest-first makes every alert
+      // staler than the last.
       const recent = logs.slice(-MAX_TX);
-      const out = [];
+      const decoded = [];
+      for (const l of recent) {
+        const hit = decodeEvmSwap(ethers, ifaceV2, ifaceV3, l, tokenIsZero);
+        if (hit) decoded.push({ log: l, hit });
+      }
+      if (!decoded.length) return [];
+
       // Block timestamps come from a per-block cache: a burst of buys shares
       // blocks, and asking for the same one per log is the difference between
       // three requests and thirty.
       const blockTimes = new Map();
-      for (const l of recent) {
-        const hit = decodeEvmSwap(ethers, ifaceV2, ifaceV3, l, tokenIsZero);
-        if (!hit) continue;
-        if (!blockTimes.has(l.blockNumber)) {
-          const b = await provider.getBlock(l.blockNumber).catch(() => null);
-          blockTimes.set(l.blockNumber, b && b.timestamp ? b.timestamp * 1000 : 0);
-        }
-        // The BUYER is the transaction's sender, not the Swap event's
-        // `to`/`recipient`: on any routed swap those are the router, and a buy
-        // bot that names the router names the same wallet on every alert.
-        const tx = await provider.getTransaction(l.transactionHash).catch(() => null);
-        out.push({
-          txHash: l.transactionHash,
-          buyer: (tx && tx.from) || "",
-          tokenAmount: Number(ethers.formatUnits(hit.tokenOut, decimals)),
-          spentAmount: Number(ethers.formatUnits(hit.spent, counterDecimals ?? 18)),
-          blockNumber: Number(l.blockNumber),
-          blockTimeMs: blockTimes.get(l.blockNumber) || 0,
-        });
-      }
+      const blocks = [...new Set(decoded.map((d) => d.log.blockNumber))];
+      await mapBounded(
+        blocks,
+        async (n) => {
+          const b = await provider.getBlock(n).catch(() => null);
+          blockTimes.set(n, b && b.timestamp ? b.timestamp * 1000 : 0);
+          return null;
+        },
+        { deadline },
+      );
+      const cutoff = Date.now() - MAX_AGE_MS;
+      const wanted = decoded.filter((d) => {
+        const t = blockTimes.get(d.log.blockNumber) || 0;
+        return !t || t >= cutoff;
+      });
+
+      // The BUYER is the transaction's sender, not the Swap event's
+      // `to`/`recipient`: on any routed swap those are the router, and a buy
+      // bot that names the router names the same wallet on every alert.
+      const out = await mapBounded(
+        wanted,
+        async (d) => {
+          const tx = await provider.getTransaction(d.log.transactionHash).catch(() => null);
+          return {
+            txHash: d.log.transactionHash,
+            buyer: (tx && tx.from) || "",
+            tokenAmount: Number(ethers.formatUnits(d.hit.tokenOut, decimals)),
+            spentAmount: Number(ethers.formatUnits(d.hit.spent, counterDecimals ?? 18)),
+            blockNumber: Number(d.log.blockNumber),
+            blockTimeMs: blockTimes.get(d.log.blockNumber) || 0,
+          };
+        },
+        { deadline },
+      );
       return out;
     },
     { timeoutMs: TIMEOUT_MS, budgetMs: BUDGET_MS, onFail: dropEndpoint },
@@ -271,7 +334,7 @@ async function evmBuys(chain, pool, token, { sinceBlock, counterAddress }) {
 // every time one of them ships a new version. The signer's token balance going
 // UP is the same fact on every one of them, and it is what a block explorer
 // shows the user anyway.
-async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot }) {
+async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot, deadline }) {
   const web3 = solLib();
   if (!web3) return null;
   const { value } = await rpcRead(
@@ -286,46 +349,65 @@ async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot }) {
       if (!sigs.length) return [];
       // getSignaturesForAddress returns NEWEST first; alerts must post in the
       // order the buys happened.
-      const ordered = sigs.slice(0, MAX_TX).reverse().filter((s) => !s.err);
-      const out = [];
-      for (const s of ordered) {
-        if (sinceSlot && s.slot <= sinceSlot) continue;
-        const tx = await conn
-          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0 })
-          .catch(() => null);
-        if (!tx || !tx.meta) continue;
-        const keys = tx.transaction.message.staticAccountKeys
-          ? tx.transaction.message.staticAccountKeys.map((k) => k.toBase58())
-          : (tx.transaction.message.accountKeys || []).map((k) => (k.toBase58 ? k.toBase58() : String(k)));
-        const payer = keys[0] || "";
-        if (!payer) continue;
-        // The fee payer's balance of OUR mint, before and after. Anyone else's
-        // delta in the same transaction is the pool's or the router's.
-        const mine = (list) =>
-          (list || []).find(
-            (b) => b.mint === token && (b.owner === payer || keys[b.accountIndex] === payer),
-          );
-        const pre = mine(tx.meta.preTokenBalances);
-        const post = mine(tx.meta.postTokenBalances);
-        const before = Number((pre && pre.uiTokenAmount && pre.uiTokenAmount.uiAmount) || 0);
-        const after = Number((post && post.uiTokenAmount && post.uiTokenAmount.uiAmount) || 0);
-        const gained = after - before;
-        if (!(gained > 0)) continue; // a sell, or not a trade of this token
-        // What they paid, in SOL: the lamport delta, with the fee added back so
-        // the figure matches the swap rather than the swap plus gas.
-        const idx = keys.indexOf(payer);
-        const solBefore = Number((tx.meta.preBalances || [])[idx] || 0);
-        const solAfter = Number((tx.meta.postBalances || [])[idx] || 0);
-        const lamports = solBefore - solAfter - Number(tx.meta.fee || 0);
-        out.push({
-          txHash: s.signature,
-          buyer: payer,
-          tokenAmount: gained,
-          spentAmount: lamports > 0 ? lamports / 1e9 : 0,
-          blockNumber: Number(s.slot) || 0,
-          blockTimeMs: s.blockTime ? s.blockTime * 1000 : 0,
-        });
-      }
+      //
+      // FILTERED BEFORE ANY getTransaction. The listing already carries slot,
+      // blockTime and err, so a failed transaction or one older than half an
+      // hour can be dropped for free — and buyMonitor was going to drop it
+      // anyway. Fetching forty transactions to keep eight is how this reader
+      // turned a 25-second poll into a six-minute one.
+      const cutoff = Date.now() - MAX_AGE_MS;
+      const wanted = sigs
+        .filter((x) => !x.err)
+        .filter((x) => !sinceSlot || x.slot > sinceSlot)
+        .filter((x) => !x.blockTime || x.blockTime * 1000 >= cutoff)
+        // NEWEST first is what we keep when there are more than we can use: a
+        // buy from forty minutes ago is not news, and crawling through a
+        // backlog oldest-first means every alert is staler than the last.
+        .slice(0, MAX_TX)
+        .reverse();
+      if (!wanted.length) return [];
+
+      const out = await mapBounded(
+        wanted,
+        async (sig) => {
+          const tx = await conn
+            .getTransaction(sig.signature, { maxSupportedTransactionVersion: 0 })
+            .catch(() => null);
+          if (!tx || !tx.meta) return null;
+          const keys = tx.transaction.message.staticAccountKeys
+            ? tx.transaction.message.staticAccountKeys.map((k) => k.toBase58())
+            : (tx.transaction.message.accountKeys || []).map((k) => (k.toBase58 ? k.toBase58() : String(k)));
+          const payer = keys[0] || "";
+          if (!payer) return null;
+          // The fee payer's balance of OUR mint, before and after. Anyone
+          // else's delta in the same transaction is the pool's or the router's.
+          const mine = (list) =>
+            (list || []).find(
+              (b) => b.mint === token && (b.owner === payer || keys[b.accountIndex] === payer),
+            );
+          const pre = mine(tx.meta.preTokenBalances);
+          const post = mine(tx.meta.postTokenBalances);
+          const before = Number((pre && pre.uiTokenAmount && pre.uiTokenAmount.uiAmount) || 0);
+          const after = Number((post && post.uiTokenAmount && post.uiTokenAmount.uiAmount) || 0);
+          const gained = after - before;
+          if (!(gained > 0)) return null; // a sell, or not a trade of this token
+          // What they paid, in SOL: the lamport delta with the fee added back,
+          // so the figure matches the swap rather than the swap plus gas.
+          const idx = keys.indexOf(payer);
+          const solBefore = Number((tx.meta.preBalances || [])[idx] || 0);
+          const solAfter = Number((tx.meta.postBalances || [])[idx] || 0);
+          const lamports = solBefore - solAfter - Number(tx.meta.fee || 0);
+          return {
+            txHash: sig.signature,
+            buyer: payer,
+            tokenAmount: gained,
+            spentAmount: lamports > 0 ? lamports / 1e9 : 0,
+            blockNumber: Number(sig.slot) || 0,
+            blockTimeMs: sig.blockTime ? sig.blockTime * 1000 : 0,
+          };
+        },
+        { deadline },
+      );
       return out;
     },
     { timeoutMs: TIMEOUT_MS, budgetMs: BUDGET_MS, onFail: dropEndpoint },
@@ -343,11 +425,15 @@ async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot }) {
 async function fetchPoolBuys(chain, pool, token, opts = {}) {
   if (!pool || !token || !supports(chain)) return null;
   const { minUsd = 0, priceUsd = 0, counterSymbol, counterAddress } = opts;
+  // Every read shares ONE wall-clock budget. The poll interval is the thing
+  // this must never exceed: a reader that makes the bot slower than the feed it
+  // replaced is worse than no reader, which is exactly what the first cut was.
+  const deadline = Date.now() + DEADLINE_MS;
   let raw = null;
   try {
     raw = isSvm(chain)
-      ? await solanaBuys(chain, pool, token, { sinceSig: opts.sinceSig, sinceSlot: opts.sinceBlock })
-      : await evmBuys(chain, pool, token, { sinceBlock: opts.sinceBlock, counterAddress });
+      ? await solanaBuys(chain, pool, token, { sinceSig: opts.sinceSig, sinceSlot: opts.sinceBlock, deadline })
+      : await evmBuys(chain, pool, token, { sinceBlock: opts.sinceBlock, counterAddress, deadline });
   } catch (e) {
     log.debug(`[chaintrades] ${chain}/${pool}: ${e && e.message}`);
     return null;

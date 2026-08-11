@@ -672,6 +672,7 @@ async function pollTrades(tg, entry) {
 
   const minUsd = Math.min(...entry.groups.map((g) => cfg.minBuyOf(g)));
   const cursorNow = state.cursors[entry.key] || null;
+  const startedAt = now();
 
   // THE CHAIN FIRST. GeckoTerminal refuses this server outright — 429 on the
   // second call from a fresh process, tracking one pool — and no pacing can
@@ -683,6 +684,7 @@ async function pollTrades(tg, entry) {
   // DexScreener when GT is unreachable — that path was answering this server
   // the whole time the trades feed was not.
   let buys = null;
+  let source = "none";
   if (chainTrades.supports(entry.chain)) {
     const snap = await gt.fetchPoolCached(entry.chain, entry.address).catch(() => null);
     if (snap && snap.priceUsd > 0) {
@@ -696,6 +698,7 @@ async function pollTrades(tg, entry) {
           sinceSig: (cursorNow && cursorNow.sig) || null,
         })
         .catch(() => null);
+      if (buys !== null) source = "chain";
     }
   }
   // Only when the chain could not be read — a missing library, every endpoint
@@ -703,6 +706,7 @@ async function pollTrades(tg, entry) {
   // opinion rather than the only one.
   if (buys === null && net) {
     buys = await trades.fetchPoolBuys(net, entry.pool, entry.address, { minUsd }).catch(() => null);
+    if (buys !== null) source = "indexer";
   }
   if (buys === null) return false; // unavailable — degrade
 
@@ -793,9 +797,21 @@ async function pollTrades(tg, entry) {
   state.cursors[entry.key] = { b: cursorBlock, t: now(), sig: newestSig };
   await saveState();
   if (capped) log.info(`[buybot] ${entry.key}: paced — more buys queued for the next poll`);
+  // A poll that takes longer than the interval means the group is being served
+  // a backlog, not a feed: each alert is staler than the last and the gap only
+  // grows. Say so — this is the shape the first chain reader failed in, and it
+  // looked identical to "the pool is quiet" from the outside.
+  const took = now() - startedAt;
+  if (took > BUYBOT_POOL_MIN_MS) {
+    log.warn(
+      `[buybot] ${entry.key}: poll took ${Math.round(took / 1000)}s, longer than the ${Math.round(BUYBOT_POOL_MIN_MS / 1000)}s ` +
+        "interval — alerts will run late. A faster RPC endpoint is the fix (RPC_<CHAIN> in .env).",
+    );
+  }
   if (posted) {
     log.info(
-      `[buybot] verified ${entry.chain} buys: feed=${buys.length} fresh=${fresh.length} posted=${posted} pool=${entry.pool}`,
+      `[buybot] verified ${entry.chain} buys via ${source} in ${Date.now() - startedAt}ms: ` +
+        `feed=${buys.length} fresh=${fresh.length} posted=${posted} pool=${entry.pool}`,
     );
   }
   return true;
