@@ -179,6 +179,20 @@ async function startBot() {
   } catch (e) {
     log.warn(`[start] store reload failed: ${e && e.message}`);
   }
+  // Un-fork the cards that were frozen by an icon swap before swaps had
+  // somewhere of their own to live. Until this runs, a template an operator once
+  // changed one emoji on ignores every copy fix we ship — which is
+  // indistinguishable from a deploy that never landed, and was diagnosed as one.
+  //
+  // AFTER the hydrate above, not before: on a fresh container data/ is restored
+  // from the Mongo mirror, and migrating an empty directory would find nothing
+  // and leave the real overrides frozen for another release.
+  try {
+    const moved = await require("./templates").migrateEmojiOnlyOverrides();
+    if (moved.length) log.info(`[start] ${moved.length} icon-only override(s) now follow releases again: ${moved.join(", ")}`);
+  } catch (e) {
+    log.warn(`[start] emoji overlay migration skipped: ${e && e.message}`);
+  }
   // Keep the binary-media backup converged with files the web admin panel writes
   // into this shared DATA_DIR (the JSON stores already self-mirror via persist.js).
   require("./db/mediaMirror").startSweep();

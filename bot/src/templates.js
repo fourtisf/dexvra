@@ -18,6 +18,11 @@ const { escapeHtml } = require("./helpers/format");
 const premium = require("./premium");
 
 const FILE = "templates.json";
+// Swapped icons live SEPARATELY from the templates they decorate. Writing them
+// into templates.json meant one emoji swap froze that card's whole layout, so
+// every later copy fix silently stopped reaching the server — see
+// replaceEmojiAt.
+const EMOJI_FILE = "templates.emoji.json";
 const BANNER_PATH = path.join(DATA_DIR, "banner"); // image bytes (any ext), set by adminbot
 const REFRESH_MS = 30000;
 
@@ -1198,12 +1203,75 @@ const META = {
 // ── Load / cache with auto-refresh ───────────────────────────────────────────
 let cache = null;
 let lastLoad = 0;
+let emojiCache = null;
+let emojiLoad = 0;
+
+/** The template as WRITTEN — code default, or an admin's saved rewording. No
+ *  emoji overlay applied. This is what an overlay entry is recorded against. */
+function baseValue(key) {
+  const saved = loadJSONSync(FILE, {});
+  return saved[key] != null ? saved[key] : DEFAULTS[key] || "";
+}
+
+function loadEmojiOverlay() {
+  const now = Date.now();
+  if (emojiCache && now - emojiLoad < REFRESH_MS) return emojiCache;
+  emojiCache = loadJSONSync(EMOJI_FILE, {});
+  emojiLoad = now;
+  return emojiCache;
+}
+
+/**
+ * Re-apply an operator's swapped icons on top of whatever the code ships.
+ *
+ * Each entry is {i, from, to}: slot #i shipped `from`, show `to`. Resolution is
+ * deliberately forgiving, because the template underneath moves:
+ *
+ *  • slot #i still holds `from` → that one. The ordinary case.
+ *  • it does not → the first unclaimed slot that still holds `from`. A row added
+ *    or removed ABOVE shifts every index below it, and losing an operator's
+ *    icons because a line moved is exactly the brittleness this replaces.
+ *  • `from` is gone from the template entirely → the entry is dropped. The row
+ *    it belonged to no longer exists; there is nothing to recolour.
+ *
+ * Applied BACK TO FRONT so each splice leaves the offsets of the ones still to
+ * come untouched.
+ */
+function applyEmojiOverlay(key, val) {
+  const entries = loadEmojiOverlay()[key];
+  if (!entries || !entries.length) return val;
+  const list = listEmojisIn(val);
+  const used = new Set();
+  const jobs = [];
+  for (const e of entries) {
+    let idx = list[e.i] && list[e.i].char === e.from && !used.has(e.i) ? e.i : -1;
+    if (idx < 0) idx = list.findIndex((x, n) => x.char === e.from && !used.has(n));
+    if (idx < 0) continue;
+    used.add(idx);
+    jobs.push({ target: list[idx], to: e.to });
+  }
+  jobs.sort((a, b) => b.target.start - a.target.start);
+  let out = val;
+  for (const j of jobs) {
+    try {
+      out = spliceEmoji(out, j.target, j.to);
+    } catch {
+      /* a malformed entry must never take the template down with it */
+    }
+  }
+  return out;
+}
 
 function loadAll() {
   const now = Date.now();
   if (cache && now - lastLoad < REFRESH_MS) return cache;
   const saved = loadJSONSync(FILE, {});
-  cache = { ...DEFAULTS, ...saved };
+  const merged = { ...DEFAULTS, ...saved };
+  const overlay = loadEmojiOverlay();
+  for (const key of Object.keys(overlay)) {
+    if (merged[key] != null) merged[key] = applyEmojiOverlay(key, merged[key]);
+  }
+  cache = merged;
   lastLoad = now;
   return cache;
 }
@@ -1447,7 +1515,13 @@ function parseFragment(fragment) {
  * is what replaceEmojiAt() splices.
  */
 function listEmojis(key) {
-  const val = getRawValue(key);
+  return listEmojisIn(getRawValue(key));
+}
+
+/** The same scan, against a VALUE rather than a key. Split out because the
+ *  emoji overlay has to read a template's emoji while resolving that very
+ *  template — going back through getRawValue() would recurse. */
+function listEmojisIn(val) {
   const isEntity = val && typeof val === "object" && val.text != null;
   const text = isEntity ? val.text : String(val || "");
   const out = [];
@@ -1479,24 +1553,33 @@ function listEmojis(key) {
   return out.map((e, i) => ({ i, ...e }));
 }
 
-/**
- * Replace emoji #i with `fragment` and persist. Returns the emoji list after
- * the change, so the caller can redraw its keyboard.
- */
-async function replaceEmojiAt(key, i, fragment) {
-  const list = listEmojis(key);
-  const target = list[i];
-  if (!target) throw new Error(`no emoji #${i + 1} in this template`);
+/** Is `at` inside the LABEL half of a "[label](target)" — where nested markup
+ *  cannot go? Premium-emoji fragments are themselves links, so this is what
+ *  stops one being spliced into another. */
+function insideLinkLabel(text, at) {
+  const re = /\[([^\]\n]*)\]\(([^)\s]*)\)/g;
+  for (let m; (m = re.exec(text)); ) {
+    const labelStart = m.index + 1;
+    if (at >= labelStart && at < labelStart + m[1].length) return true;
+  }
+  return false;
+}
+
+/** One emoji swapped for another, in place, in a template VALUE. Pure. */
+function spliceEmoji(val, target, fragment) {
   const { char, id } = parseFragment(fragment);
   if (!char) throw new Error("send a single emoji");
-  const val = getRawValue(key);
   const isEntity = val && typeof val === "object" && val.text != null;
 
   if (!isEntity) {
     const text = String(val || "");
-    const replacement = id ? `[${char}](emoji/${id})` : char;
-    await setTemplate(key, text.slice(0, target.start) + replacement + text.slice(target.end));
-    return listEmojis(key);
+    // A premium emoji is markup — "[char](emoji/id)" — so it CANNOT go inside a
+    // link label: "[⚡ Trade](url)" would become "[[⚡](emoji/1) Trade](url)",
+    // which no parser reads as a link and which reached the card as literal
+    // brackets. The swap still happens, in plain form. Losing the animation on
+    // one icon beats losing the button it is sitting on.
+    const replacement = id && !insideLinkLabel(text, target.start) ? `[${char}](emoji/${id})` : char;
+    return text.slice(0, target.start) + replacement + text.slice(target.end);
   }
 
   // Entity form: splice the text, then move every entity that sits after the
@@ -1514,22 +1597,123 @@ async function replaceEmojiAt(key, i, fragment) {
   }
   if (id) next.push({ type: "custom_emoji", offset: target.start, length: char.length, custom_emoji_id: id });
   next.sort((a, b) => a.offset - b.offset);
-  await setTemplate(key, {
-    text: text.slice(0, target.start) + char + text.slice(target.end),
-    entities: next,
-  });
+  return { text: text.slice(0, target.start) + char + text.slice(target.end), entities: next };
+}
+
+/**
+ * Replace emoji #i and persist. Returns the emoji list after the change, so the
+ * caller can redraw its keyboard.
+ *
+ * THIS DOES NOT SAVE THE TEMPLATE. It records "the glyph that ships at slot #i
+ * is shown as X instead", and the overlay is re-applied to whatever the code
+ * ships. That distinction is the whole point:
+ *
+ * It used to write the entire rendered template into data/templates.json, so
+ * changing ONE icon forked that card from every future release — permanently
+ * and invisibly. Ship a copy fix and the server keeps the old card; the operator
+ * pulls, restarts, checks the boot sha, and the change is still not there. That
+ * happened, and it looked exactly like a deploy that had not landed.
+ *
+ * It is also how "{💎}" reached a customer's group: a full-text rewrite on every
+ * swap is a rewrite that can go wrong, and one did.
+ *
+ * Rewording a template still saves text, as it must — that IS a fork, chosen on
+ * purpose. Swapping an icon is not.
+ */
+async function replaceEmojiAt(key, i, fragment) {
+  const { char } = parseFragment(fragment);
+  if (!char) throw new Error("send a single emoji");
+  // Recorded against the BASE glyph — what the code ships at that slot, not what
+  // the operator is currently seeing there. Swapping the same slot twice then
+  // replaces the entry instead of chaining X→Y→Z, and the entry stays meaningful
+  // when the surrounding copy changes.
+  const base = listEmojisIn(baseValue(key))[i];
+  if (!base) throw new Error(`no emoji #${i + 1} in this template`);
+  const all = loadJSONSync(EMOJI_FILE, {});
+  const list = (all[key] || []).filter((e) => e.i !== i);
+  list.push({ i, from: base.char, to: String(fragment) });
+  list.sort((a, b) => a.i - b.i);
+  all[key] = list;
+  await saveJSON(EMOJI_FILE, all);
+  emojiCache = null;
+  cache = null;
   return listEmojis(key);
 }
 
+/** A value's text with every emoji blanked out — two templates share a skeleton
+ *  when they differ ONLY in their icons. */
+function emojiSkeleton(val) {
+  const text = val && typeof val === "object" && val.text != null ? val.text : String(val || "");
+  const list = listEmojisIn(text);
+  let out = "";
+  let at = 0;
+  for (const e of list) {
+    out += text.slice(at, e.start) + " ";
+    at = e.end;
+  }
+  return out + text.slice(at);
+}
+
+/**
+ * Un-fork the templates that were frozen before icon swaps had somewhere to go.
+ *
+ * Every existing server has full-text overrides in data/templates.json that the
+ * operator never meant as a rewording — they tapped "😀 Swap emoji" and the old
+ * code wrote the whole card. Those templates stopped following releases, which
+ * is why a shipped copy fix could look exactly like a deploy that never landed.
+ *
+ * Converted ONLY when the saved text differs from the shipped default in
+ * nothing but its emoji. That is the whole test, and it is a strict one: a
+ * reworded card has a different skeleton and is left completely alone, because
+ * an operator's own wording is theirs and must never be silently discarded.
+ *
+ * Entity-saved values are skipped too. Those come from pasting a message with
+ * real formatting, which is a deliberate rewrite by definition.
+ *
+ * Idempotent — a second run finds nothing left to move.
+ */
+async function migrateEmojiOnlyOverrides() {
+  const saved = loadJSONSync(FILE, {});
+  const overlay = loadJSONSync(EMOJI_FILE, {});
+  const moved = [];
+  for (const key of Object.keys(saved)) {
+    const def = DEFAULTS[key];
+    if (typeof def !== "string" || typeof saved[key] !== "string") continue;
+    if (overlay[key] && overlay[key].length) continue; // an overlay already speaks for this one
+    if (emojiSkeleton(saved[key]) !== emojiSkeleton(def)) continue; // a real rewording — leave it
+    const mine = listEmojisIn(saved[key]);
+    const shipped = listEmojisIn(def);
+    if (mine.length !== shipped.length) continue;
+    const entries = [];
+    for (let i = 0; i < shipped.length; i++) {
+      if (mine[i].char === shipped[i].char && mine[i].id === shipped[i].id) continue;
+      entries.push({ i, from: shipped[i].char, to: mine[i].id ? `[${mine[i].char}](emoji/${mine[i].id})` : mine[i].char });
+    }
+    if (entries.length) overlay[key] = entries;
+    delete saved[key];
+    moved.push(key);
+  }
+  if (!moved.length) return [];
+  await saveJSON(EMOJI_FILE, overlay);
+  await saveJSON(FILE, saved);
+  emojiCache = null;
+  cache = null;
+  return moved;
+}
+
 function isCustom(key) {
-  return loadJSONSync(FILE, {})[key] != null;
+  if (loadJSONSync(FILE, {})[key] != null) return true;
+  const o = loadEmojiOverlay()[key];
+  return !!(o && o.length);
 }
 /** Number of admin-saved overrides on disk — INCLUDING orphaned keys from
  *  older template generations (keys that no longer exist in DEFAULTS). The
  *  reset-all flow must offer to clear those too, or a data file holding only
  *  stale keys reads as "nothing to reset" while the file is not empty. */
 function overrideCount() {
-  return Object.keys(loadJSONSync(FILE, {})).length;
+  const saved = Object.keys(loadJSONSync(FILE, {}));
+  const overlay = Object.keys(loadJSONSync(EMOJI_FILE, {}));
+  return new Set([...saved, ...overlay]).size;
 }
 /**
  * Placeholders the DEFAULT relies on that a saved value has lost.
@@ -1574,6 +1758,15 @@ async function resetTemplate(key) {
     delete saved[key];
     await saveJSON(FILE, saved);
   }
+  // The swapped icons go too. "Reset default" means the card as shipped, and an
+  // operator who resets a template because it looks wrong is not asking to keep
+  // the half of their edits that lives in another file.
+  const overlay = loadJSONSync(EMOJI_FILE, {});
+  if (key in overlay) {
+    delete overlay[key];
+    await saveJSON(EMOJI_FILE, overlay);
+  }
+  emojiCache = null;
   cache = null;
 }
 
@@ -1581,8 +1774,11 @@ async function resetTemplate(key) {
  *  Returns how many custom templates were cleared. */
 async function resetAllTemplates() {
   const saved = loadJSONSync(FILE, {});
-  const n = Object.keys(saved).length;
+  const overlay = loadJSONSync(EMOJI_FILE, {});
+  const n = Object.keys(saved).length + Object.keys(overlay).length;
   await saveJSON(FILE, {});
+  await saveJSON(EMOJI_FILE, {});
+  emojiCache = null;
   cache = null;
   return n;
 }
@@ -1598,6 +1794,12 @@ const groups = () => {
 module.exports = {
   missingPlaceholders,
   mangledPlaceholders,
+  baseValue,
+  listEmojisIn,
+  emojiSkeleton,
+  migrateEmojiOnlyOverrides,
+  applyEmojiOverlay,
+  EMOJI_FILE,
   t,
   markup,
   render,

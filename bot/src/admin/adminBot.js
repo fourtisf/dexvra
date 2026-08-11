@@ -3866,6 +3866,15 @@ async function startAdminBot() {
   } catch (e) {
     log.warn(`[adminbot] persist hydrate failed (continuing on local files): ${e && e.message}`);
   }
+  // Same un-forking the main bot does, and run here too because THIS is the
+  // process that shows an operator whether a template is ✏️ custom or 📋 default.
+  // Whichever of the two boots first does the work; it is idempotent.
+  try {
+    const moved = await tpl.migrateEmojiOnlyOverrides();
+    if (moved.length) log.info(`[adminbot] ${moved.length} icon-only override(s) now follow releases again: ${moved.join(", ")}`);
+  } catch (e) {
+    log.warn(`[adminbot] emoji overlay migration skipped: ${e && e.message}`);
+  }
   const bot = build();
   await bot.telegram.setMyCommands([
     { command: "start", description: "Open the template editor" },
