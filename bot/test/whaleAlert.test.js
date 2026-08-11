@@ -245,13 +245,13 @@ test("an ordinary buy carries the buyer's position, under the buyer", async () =
   const lines = out.split("\n").filter(Boolean);
   const buyerAt = lines.findIndex((l) => l.startsWith("👤 "));
   assert.ok(buyerAt >= 0, "the buyer row is still there");
-  assert.strictEqual(lines[buyerAt + 1], "✅ Position: 1,980,000 $RUSS · $99,000 (+2.69%)", "and the position sits right under it");
+  assert.strictEqual(lines[buyerAt + 1], "✅ Position: 1,980,000 $RUSS · $99,000 (+2.69%) · Wallet", "and the position sits right under it");
 });
 
 test("a first-ever buyer says so on the ordinary card too", async () => {
   holdings.holdingOf = async () => 51_874.15; // exactly what they just bought
   const pos = await mon.buyerPosition(g(), { ...buy, tokenAmount: 51_874.15 }, pool);
-  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /^✅ Position: 51,874\.15 \$RUSS · \$2,594 \(new position\)$/m);
+  assert.match(mon.renderRealAlert(g(), buy, pool, pos).text, /^✅ Position: 51,874\.15 \$RUSS · \$2,594 \(new position\) · Wallet$/m);
 });
 
 test("an unreadable holding removes the WHOLE row, not just its value", async () => {

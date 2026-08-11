@@ -319,9 +319,18 @@ function verifyRow(chain, buy) {
  * verifyRow above: a label with a dash after it is not a row, it is a rendering
  * bug, and the buy is worth alerting either way.
  */
-function positionRow(g, pos) {
+function positionRow(g, pos, buy) {
   if (!pos || !(pos.held > 0)) return "";
   const sym = premium.sanitizeVar(`$${String(g.sym || "").replace(/^\$/, "") || "TOKEN"}`);
+  // The buyer's wallet on the explorer — the "(Wallet)" every other buy bot
+  // carries, and the one link on this row that lets a reader go and check what
+  // else that address is holding.
+  //
+  // A WHOLE SEGMENT, so it vanishes on a chain we have no explorer for rather
+  // than rendering "Wallet" as dead text. Same sanitiser as everywhere else:
+  // the address comes from a feed, and this ends up inside an href.
+  const url = buy && buy.buyer ? accountUrl(g.chain, buy.buyer) : null;
+  const walletLink = url ? `[Wallet](${premium.sanitizeUrl(url)})` : "";
   // Rendered from `group_position_row`, not built here. This was the one row on
   // the card an admin could not reword — while the whale card spelled the same
   // row out in its own template and could. Same row, two rules.
@@ -329,11 +338,15 @@ function positionRow(g, pos) {
   // .trim() because an operator who empties the template means "drop this row",
   // and a row of whitespace is still a row to dropEmptyLines.
   return tpl
-    .t("group_position_row", {
+    .markup("group_position_row", {
       holds: tokenAmount(pos.held),
       symbol: sym,
       holdsUsd: usdAmount(pos.holdsUsd),
       position: pos.position,
+      // Prebuilt so it disappears cleanly; {walletUrl} is the bare URL for an
+      // operator who would rather word the link themselves.
+      wallet: walletLink ? ` · ${walletLink}` : "",
+      walletUrl: url ? premium.sanitizeUrl(url) : "",
     })
     .trim();
 }
@@ -341,12 +354,19 @@ function positionRow(g, pos) {
 /** Every value both buy cards share. Split out so the whale card cannot drift
  *  away from the ordinary one — the two are the same event, told differently.
  *  `pos` is the buyer's holding when it could be read, null otherwise. */
-/** A banner line plus the blank line under it, or nothing at all. Self-spacing
+/** A banner line plus the blank line under it, or nothing at all.
+ *
+ *  markup(), not t(): these are VARS injected into another template and parsed
+ *  there, so they have to arrive carrying their markup. t() resolves to clean
+ *  text — it silently dropped the banner's bold and, on the Position row, the
+ *  entire [Wallet](url) link, leaving the word sitting there as dead text.
+ *
+ *  Self-spacing
  *  because dropEmptyLines is opt-in and these cards do not use it: a bare
  *  "{intro}\n" with nothing in it leaves the newline, which reads as a blank
  *  first line rather than as no banner. */
 function introRow(key) {
-  const t = tpl.t(key).trim();
+  const t = tpl.markup(key).trim();
   return t ? `${t}\n\n` : "";
 }
 
@@ -398,7 +418,7 @@ function alertVars(g, buy, pool, pos) {
     // be read: a custom row built from them then collapses to nothing, which is
     // what the reader should see, instead of three dashes that look like a
     // wallet holding nothing.
-    wallet: positionRow(g, pos),
+    wallet: positionRow(g, pos, buy),
     // The banner line and the byline. WHOLE ROWS, like {verify} and {wallet}:
     // an operator who clears either template gets the row gone rather than a
     // blank line where it was.
@@ -407,7 +427,7 @@ function alertVars(g, buy, pool, pos) {
     intro: introRow("group_buy_intro"),
     introWhale: introRow("group_whale_intro"),
     poweredBy: (() => {
-      const t = tpl.t("group_powered_by", { listingChannel }).trim();
+      const t = tpl.markup("group_powered_by", { listingChannel }).trim();
       return t ? `\n${t}` : "";
     })(),
     listingChannel,

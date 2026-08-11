@@ -441,18 +441,20 @@ test("clearing the banner or the byline removes the row, not just its text", () 
   // "drop this", and a blank line where it was is a rendering bug, not an
   // absence.
   const tpl = require("../src/templates");
-  const real = tpl.t;
+  const realMarkup = tpl.markup;
   const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", name: "Dexvra Token", minBuyUsd: 0 };
   const pool = { priceUsd: 0.0125, mcap: 2.4e6, liquidity: 1.8e5, change24h: 4 };
   const buy = { txHash: "0xt", buyer: "0xb", usd: 40, tokenAmount: 100 };
   try {
-    tpl.t = (k, v) => (k === "group_buy_intro" || k === "group_powered_by" ? "   " : real(k, v));
+    // markup(), not t(): that is what these rows are built with, precisely so
+    // their bold and links survive into the card.
+    tpl.markup = (k, v) => (k === "group_buy_intro" || k === "group_powered_by" ? "   " : realMarkup(k, v));
     const out = mon.renderRealAlert(g, buy, pool, null).text;
     assert.ok(!/^\s*$/m.test(out.split("\n").slice(0, 1).join("")), "no blank first line");
     assert.ok(!/\n\n\n/.test(out), "and no hole where either row was");
     assert.match(out.split("\n")[0], /Dexvra Token .+!/, "the header is now the first line");
   } finally {
-    tpl.t = real;
+    tpl.markup = realMarkup;
   }
 });
 
@@ -475,19 +477,19 @@ test("the Position row is editable on BOTH cards, from one template", () => {
   // template for the whale one — the same row under two rules, and the
   // difference invisible until somebody went looking for it.
   const tpl = require("../src/templates");
-  const real = tpl.t;
+  const realMk = tpl.markup;
   try {
-    // Substitute like the real t() does — a stub that returns the raw template
-    // tests the stub, not the code.
-    tpl.t = (k, v) =>
+    // Substitute like the real markup() does — a stub that returns the raw
+    // template tests the stub, not the code.
+    tpl.markup = (k, v) =>
       k === "group_position_row"
         ? "BAG {holds} {symbol}".replace(/\{(\w+)\}/g, (_, n) => (v && v[n] != null ? v[n] : ""))
-        : real(k, v);
+        : realMk(k, v);
     const g = { chatId: "-1", chain: "bsc", address: "0x" + "a".repeat(40), sym: "DEX", minBuyUsd: 0 };
     const row = mon.positionRow(g, { held: 1000, holdsUsd: 50, position: "+1%" });
     assert.strictEqual(row, "BAG 1,000 $DEX", "the ordinary card renders the template");
   } finally {
-    tpl.t = real;
+    tpl.markup = realMk;
   }
   assert.ok(tpl.meta("group_position_row").ph.includes("holds"), "and the editor offers its placeholders");
 });

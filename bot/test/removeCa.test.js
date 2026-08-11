@@ -196,3 +196,21 @@ test("a hostile URL never reaches the group's setup reply", async () => {
     ds.fetchTokenInfo = real;
   }
 });
+
+test("the Position row links the buyer's wallet, and drops the link cleanly", () => {
+  // The "(Wallet)" every other buy bot carries: the one link on this row that
+  // lets a reader go and see what else that address holds.
+  const mon = require("../src/group/buyMonitor");
+  const g = { chatId: "-1", chain: "solana", address: "So1", sym: "ALON", minBuyUsd: 0 };
+  const buy = { txHash: "t", buyer: "GDAtwgaaaaaaaaaaaaaaaaaaaaaaaaZ7tX" };
+  const pos = { held: 187161.15, holdsUsd: 941.79, position: "+18.70%" };
+  const row = mon.positionRow(g, pos, buy);
+  assert.match(row, /\[Wallet\]\(https:\/\//, "linked, not dead text");
+  assert.match(row, /GDAtwg/, "and it points at the buyer");
+  // A WHOLE SEGMENT: a chain with no explorer loses the link, not the row.
+  const noExplorer = mon.positionRow({ ...g, chain: "nosuchchain" }, pos, buy);
+  assert.ok(noExplorer.length, "the row survives");
+  assert.ok(!/Wallet/.test(noExplorer), "without a dangling label");
+  // And no buyer at all is the same case.
+  assert.ok(!/Wallet/.test(mon.positionRow(g, pos, { txHash: "t", buyer: "" })));
+});

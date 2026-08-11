@@ -529,7 +529,7 @@ const DEFAULTS = {
   // that did not answer, a buy under the dust floor, or a group that turned
   // holdings off. A label with nothing after it is not a row, it is a
   // rendering bug.
-  group_position_row: "✅ Position: {holds} {symbol} · {holdsUsd} ({position})",
+  group_position_row: "✅ Position: {holds} {symbol} · {holdsUsd} ({position}){wallet}",
   // Buy-size tier labels, pipe separated: normal|whale|mega. Thresholds are
   // BUYBOT_WHALE_USD / BUYBOT_MEGA_USD in .env. Missing fields fall back one at
   // a time, so a half-typed override still renders a card.
@@ -1008,7 +1008,7 @@ const META = {
   group_buy_intro: { group: "Group Buy Bot", label: "Group: banner line above a buy", ph: [] },
   group_whale_intro: { group: "Group Buy Bot", label: "Group: banner line above a whale", ph: [] },
   group_powered_by: { group: "Group Buy Bot", label: "Group: byline under the CTA row", ph: ["listingChannel"] },
-  group_position_row: { group: "Group Buy Bot", label: "Group: the Position row", ph: ["holds", "symbol", "holdsUsd", "position"] },
+  group_position_row: { group: "Group Buy Bot", label: "Group: the Position row", ph: ["holds", "symbol", "holdsUsd", "position", "wallet", "walletUrl"] },
   group_buy_style: { group: "Group Buy Bot", label: "Buy size icons (buy|whale)", ph: [] },
   group_whale_alert: { group: "Group Buy Bot", label: "Group: WHALE WALLET alert (pinned)", ph: ["introWhale", "poweredBy", "listingChannel", "bar", "emoji", "name", "nameRow", "symbol", "usd", "native", "tokenAmt", "holds", "holdsUsd", "position", "whaleBar", "price", "mcap", "liq", "change", "chain", "verify", "tradeUrl", "coinUrl", "chartUrl"] },
   group_buy_tiers: { group: "Group Buy Bot", label: "Buy tiers (normal|whale|mega)", ph: [] },
