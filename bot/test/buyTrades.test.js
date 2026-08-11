@@ -169,11 +169,20 @@ test("buys come back oldest-first, so alerts post in the order they happened", a
 test("the server-side volume filter is a FRACTION of the threshold, so routed legs survive", async () => {
   let seen = "";
   await withFetch(async (url) => { seen = String(url); return jsonRes({ data: [] }); }, async () => {
-    await trades.fetchPoolBuys("eth", "0xPoOl", CA, { minUsd: 100 });
+    // A REAL hex address, mixed case. "0xPoOl" only looks like one — it has no
+    // business folding, and gtAddr is right to leave it alone, so it cannot
+    // exercise the rule this line is here to check.
+    await trades.fetchPoolBuys("eth", "0xAbCdEf0123456789AbCdEf0123456789AbCdEf01", CA, { minUsd: 100 });
   });
   const q = new URL(seen).searchParams.get("trade_volume_in_usd_greater_than");
   assert.strictEqual(Number(q), 20, "100 * 0.2 — filtering at the full threshold drops legs that only sum above it");
-  assert.ok(seen.includes("/pools/0xpool/trades"), "the pool address is lowercased for GT");
+  // A HEX pool is folded, because hex is case-insensitive and folding it is
+  // free. This assertion used to read "the pool address is lowercased for GT"
+  // full stop — which pinned the bug rather than the rule, and hid it: on
+  // Solana, base58 "5P…" and "5p…" are different addresses, so every Solana
+  // group asked GT for a pool that does not exist and had its feed reported as
+  // unavailable. See gtAddressCase.test.js.
+  assert.ok(seen.includes("/pools/0xabcdef0123456789abcdef0123456789abcdef01/trades"), "a hex pool address is safe to fold");
 });
 
 // ── The shared cooldown ──────────────────────────────────────────────────────

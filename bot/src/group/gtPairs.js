@@ -47,6 +47,22 @@ const num = (x) => {
 const isHexAddress = (s) => /^0x[0-9a-fA-F]+$/.test(s);
 
 /**
+ * An address as it must appear IN A GECKOTERMINAL PATH.
+ *
+ * Hex is case-insensitive, so folding an EVM address is free. Everything else
+ * is not: a Solana pool is base58, where `5P…` and `5p…` are different
+ * addresses, and TON/Sui/Tron are the same. Lowercasing one produces a path
+ * GeckoTerminal 404s — which the trades feed reads as "unavailable", which used
+ * to mean the volume estimator posted instead, and now means the group is
+ * simply silent. That is exactly what happened: every Solana group was being
+ * served estimates it should never have needed, and the moment the estimator
+ * was retired they went quiet while other bots on the same token kept posting.
+ *
+ * So: fold hex, never anything else. Mirrors tradebot/core.js `_idQ`.
+ */
+const gtAddr = (a) => (isHexAddress(String(a)) ? String(a).toLowerCase() : String(a));
+
+/**
  * Do two token addresses refer to the same token?
  *
  * Lives here because gtTrades.js imports from this module (not the other way
@@ -303,6 +319,8 @@ function _reset() {
 
 module.exports = {
   GT_BASE: GT,
+  gtAddr,
+  isHexAddress,
   hasApiKey: () => !!GT_KEY,
   inCooldown,
   fetchPool,
