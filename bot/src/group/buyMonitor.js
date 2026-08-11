@@ -804,32 +804,26 @@ async function pollTrades(tg, entry) {
   const cursorNow = state.cursors[entry.key] || null;
   const startedAt = now();
 
-  // THE CHAIN FIRST. GeckoTerminal refuses this server outright — 429 on the
-  // second call from a fresh process, tracking one pool — and no pacing can
-  // argue with an IP-level block. Reading the swaps ourselves is free, cannot
-  // be rate-limited out of our own product, and is realtime rather than
-  // realtime-once-an-index-catches-up.
+  // THE CHAIN FIRST, AND WITHOUT A PRICE.
   //
-  // Pricing still comes from the pool snapshot, which resolves through
-  // DexScreener when GT is unreachable — that path was answering this server
-  // the whole time the trades feed was not.
-  let buys = null;
-  let source = "none";
+  // Reading a swap needs no dollar figure — only deciding whether it clears a
+  // group's floor does. The first cut gated the chain read on fetchPoolCached
+  // returning a price, which put GeckoTerminal back on the trade path through
+  // the back door: a GT cooldown made the snapshot unavailable, so the chain
+  // reader was never even CALLED, and the pool fell through to the GT trades
+  // feed — which was cooled down too. A pool with a perfectly healthy RPC went
+  // quiet because an indexer it no longer needs was rate limited.
+  //
+  // So the trades come off the chain unpriced, and the price is applied below,
+  // only once there is something to price.
   if (chainTrades.supports(entry.chain)) {
-    const snap = await gt.fetchPoolCached(entry.chain, entry.address).catch(() => null);
-    if (snap && snap.priceUsd > 0) {
-      buys = await chainTrades
-        .fetchPoolBuys(entry.chain, entry.pool, entry.address, {
-          minUsd,
-          priceUsd: snap.priceUsd,
-          counterSymbol: snap.counterSymbol,
-          counterAddress: snap.counterAddress,
-          sinceBlock: (cursorNow && cursorNow.b) || 0,
-          sinceSig: (cursorNow && cursorNow.sig) || null,
-        })
-        .catch(() => null);
-      if (buys !== null) source = "chain";
-    }
+    buys = await chainTrades
+      .fetchPoolBuys(entry.chain, entry.pool, entry.address, {
+        sinceBlock: (cursorNow && cursorNow.b) || 0,
+        sinceSig: (cursorNow && cursorNow.sig) || null,
+      })
+      .catch(() => null);
+    if (buys !== null) source = "chain";
   }
   // Only when the chain could not be read — a missing library, every endpoint
   // down, a pool shape we do not decode. The indexer stays as the second
@@ -866,14 +860,26 @@ async function pollTrades(tg, entry) {
     return true;
   }
 
-  // Cached upstream, so this is the same object the chain path already priced
-  // against rather than a second lookup.
+  // Priced only NOW, and only because there is something to price. A quiet pool
+  // never asks an indexer anything.
   const pool = await gt.fetchPoolCached(entry.chain, entry.address);
-  if (!pool) {
+  if (!pool || !(pool.priceUsd > 0)) {
     // HOLD the buys rather than drop them, and do NOT advance the cursor: they
     // are real, and the next poll can price them.
-    log.debug(`[buybot] ${entry.key}: ${fresh.length} new buy(s) held — no pool metadata this cycle`);
+    log.debug(`[buybot] ${entry.key}: ${fresh.length} new buy(s) held — no price this cycle`);
     return true;
+  }
+  if (source === "chain") {
+    // The chain knows amounts, not dollars. This is the POOL's price, so the
+    // USD on the card and the price printed beside it come from one number
+    // instead of disagreeing.
+    for (const b of fresh) {
+      b.priceUsd = pool.priceUsd;
+      b.usd = b.tokenAmount * pool.priceUsd;
+      // Naming what they paid with lets the card print "(0.34 SOL)" instead of
+      // deriving one from USD, which is invented precision.
+      if (!b.spentToken) b.spentToken = pool.counterAddress || "";
+    }
   }
 
   let posted = 0;

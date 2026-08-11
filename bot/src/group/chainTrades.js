@@ -418,13 +418,13 @@ async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot, deadline })
 /**
  * Buys of `token` in `pool`, read from the chain.
  *
- * `priceUsd` prices them — the chain knows amounts, not dollars — and it is the
- * POOL's price, so the alert's USD figure and the price printed beside it come
- * from the same number instead of disagreeing.
+ * Amounts only — the chain does not know dollars. The caller applies the pool's
+ * price, and does so only once there is something to price, so a quiet pool
+ * never asks an indexer anything at all.
  */
 async function fetchPoolBuys(chain, pool, token, opts = {}) {
   if (!pool || !token || !supports(chain)) return null;
-  const { minUsd = 0, priceUsd = 0, counterSymbol, counterAddress } = opts;
+  const { counterSymbol, counterAddress } = opts;
   // Every read shares ONE wall-clock budget. The poll interval is the thing
   // this must never exceed: a reader that makes the bot slower than the feed it
   // replaced is worse than no reader, which is exactly what the first cut was.
@@ -439,23 +439,13 @@ async function fetchPoolBuys(chain, pool, token, opts = {}) {
     return null;
   }
   if (raw == null) return null;
-  const out = [];
-  for (const b of raw) {
-    const usd = priceUsd > 0 ? b.tokenAmount * priceUsd : 0;
-    // An UNPRICED buy is dropped, exactly as the indexer path drops one: an
-    // alert that cannot say what was spent is not worth posting, and letting it
-    // through as $0 would put it under every group's floor anyway.
-    if (!(usd > 0)) continue;
-    if (usd < minUsd) continue;
-    out.push({
-      ...b,
-      usd,
-      priceUsd,
-      spentToken: counterAddress || "",
-      counterSymbol: counterSymbol || "",
-    });
-  }
-  return out.sort((a, b) => a.blockNumber - b.blockNumber || a.blockTimeMs - b.blockTimeMs);
+  // NO USD HERE. Dollars are not on the chain, and asking an indexer for a
+  // price before we even know whether anything traded is what let a rate limit
+  // on that indexer silence a pool whose RPC was healthy. The caller prices
+  // these once it has something worth pricing.
+  return raw
+    .map((b) => ({ ...b, spentToken: counterAddress || "", counterSymbol: counterSymbol || "" }))
+    .sort((a, b) => a.blockNumber - b.blockNumber || a.blockTimeMs - b.blockTimeMs);
 }
 
 module.exports = {

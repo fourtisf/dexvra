@@ -168,3 +168,43 @@ test("the log says which source served the poll, and how long it took", () => {
   assert.match(src, /alerts will run late/, "and it warns when it outruns the interval");
   assert.match(src, /took > BUYBOT_POOL_MIN_MS/, "measured against the poll interval, not a magic number");
 });
+
+test("a GeckoTerminal cooldown cannot silence a pool the chain can read", () => {
+  // THE FAILURE, from the server: the chain reader was working — "via chain in
+  // 1525ms" — and minutes later the same pool logged "trades feed unreadable —
+  // the shared GeckoTerminal cooldown is armed" and posted nothing. The chain
+  // read had been gated on fetchPoolCached returning a PRICE, which put the
+  // indexer back on the trade path through the back door: GT cooled down, the
+  // snapshot went away, and the chain reader was never even called.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "buyMonitor.js"), "utf8");
+  const fn = src.slice(src.indexOf("async function pollTrades"));
+  const body = fn.slice(0, fn.indexOf("\nasync function"));
+  const chainAt = body.search(/chainTrades\s*\.\s*fetchPoolBuys/);
+  const priceAt = body.search(/gt\s*\.\s*fetchPoolCached/);
+  assert.ok(chainAt > -1 && priceAt > -1);
+  assert.ok(chainAt < priceAt, "the chain is read BEFORE any price lookup");
+  // And the reader must not be handed a price at all — taking one is what
+  // invites the gate back.
+  assert.doesNotMatch(body.slice(chainAt, priceAt), /priceUsd/, "the chain read asks for no price");
+});
+
+test("the chain reader returns amounts, never dollars", () => {
+  // Dollars are not on the chain. Computing them here would mean asking an
+  // indexer for a price before knowing whether anything traded at all.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "chainTrades.js"), "utf8");
+  const fn = src.slice(src.indexOf("async function fetchPoolBuys"));
+  const body = fn.slice(0, fn.indexOf("\nmodule.exports"));
+  assert.doesNotMatch(body, /minUsd/, "no floor applied without a price to apply it to");
+  assert.doesNotMatch(body, /usd:/, "and no usd field invented");
+});
+
+test("buys that cannot be priced are HELD, not dropped", () => {
+  // They are real. Advancing the cursor past them would lose them for good,
+  // where holding costs one poll.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "buyMonitor.js"), "utf8");
+  const at = src.indexOf("no price this cycle");
+  assert.ok(at > -1, "the hold exists");
+  // `return true` — handled, nothing posted — and crucially NOT a cursor write.
+  const around = src.slice(at - 400, at + 200);
+  assert.doesNotMatch(around, /state\.cursors\[entry\.key\] =/, "the cursor must not advance past a held buy");
+});
