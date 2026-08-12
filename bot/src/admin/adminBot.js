@@ -128,7 +128,22 @@ const SAMPLE_VARS = {
   // needs to see how much room those rows take up.
   seq: "#7", percent: "62", left: "38m", crew: "14",
   roster: "@ana, @bo, @cy +11 more",
-  progress: "❤️ Likes   ▰▰▰▰▰▰▱▱▱▱  209/215\n💬 Replies ▰▰▰▰▰▰▰▰▱▱  14/15\n🤝 Crew    ▰▰▰▰▰▰▰▱▱▱  14/20",
+  // THE RAID'S OWN BUILDER, on sample numbers — never a hand-written lookalike.
+  //
+  // It used to be a literal string with ❤️ 💬 🤝 ▰ ▱ typed into it, so the
+  // preview showed those five icons PLAIN no matter what the operator had set.
+  // They swapped them for premium, opened the preview, saw bare glyphs and
+  // reported the swap as broken — twice — when the swap had worked and the
+  // preview was the thing lying. Same rule the buy card already follows: the
+  // preview is rendered by the card's own renderer, because a second renderer
+  // agrees with the real one right up until the day it does not.
+  get progress() {
+    try {
+      return require("../raid/card").buildProgressBlock(PREVIEW_RAID);
+    } catch {
+      return "❤️ Likes   ▰▰▰▰▰▰▱▱▱▱  209/215"; // the raid module is optional to this screen
+    }
+  },
   url: "https://x.com/i/status/1", post: "gm — like + reply and we're there 🚀",
   updated: "12:33:57", note: "",
   // ── Everything else a template advertises ────────────────────────────────
@@ -432,9 +447,18 @@ function allEmojiKb(page = 0) {
     // The index is into the FULL list, so a button keeps meaning the same slot
     // whichever page it was drawn on.
     const n = slots.indexOf(s);
-    return cb(`${s.id ? "💎" : ""}${s.char}${s.spots.length > 1 ? ` ×${s.spots.length}` : ""}`, `aemx:${n}`);
+    // THE NAME, not just the glyph. A button showing only the current char
+    // becomes unfindable the moment it is swapped: change 🤝 for a premium
+    // emoji whose fallback is ⚡ and the row reads "💎⚡ ×6", so an operator
+    // hunting for Crew cannot see it and reports it as missing. The name comes
+    // from the template itself — the same hint the per-template picker shows —
+    // so it stays true when a row is reworded.
+    const name = s.label ? ` ${s.label}` : "";
+    return cb(`${s.id ? "💎" : ""}${s.char}${name}${s.spots.length > 1 ? ` ×${s.spots.length}` : ""}`, `aemx:${n}`);
   });
-  for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3));
+  // Two per row, not three: the label needs the width, and a truncated name is
+  // no more findable than no name at all.
+  for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
   if (pages > 1) {
     rows.push([
       cb("◀ Prev", `aem:${(p - 1 + pages) % pages}`),
@@ -587,6 +611,20 @@ function buyEmojiSlots() {
  * because what the screen is for is judging LAYOUT and ICONS. Do not "fix" this
  * back to a real contract.
  */
+/** Sample numbers for the raid preview, in the shape renderCard reads. Field
+ *  names match raid/card.js exactly — `target`/`baseline`/`current`, not a
+ *  paraphrase — or buildProgressBlock returns "No goals set." and the preview
+ *  quietly shows nothing at all. */
+const PREVIEW_RAID = {
+  seq: 7,
+  status: "running",
+  target: { likes: 215, replies: 15 },
+  baseline: { likes: 0, replies: 0 },
+  current: { likes: 209, replies: 14 },
+  crewTarget: 20,
+  crew: Array.from({ length: 14 }, (_, i) => `u${i}`),
+};
+
 const PREVIEW_GROUP = {
   chatId: "-100",
   chain: "solana",

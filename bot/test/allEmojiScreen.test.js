@@ -180,3 +180,33 @@ test("a slot previews the card it actually lives on, and only that one", () => {
   // 🤝 is the raid's Crew row and has nothing to do with a buy alert.
   assert.deepStrictEqual(surfaces("🤝"), { buy: false, raid: true });
 });
+
+test("a button carries the slot's NAME, so a swapped icon stays findable", () => {
+  // A button showing only the current glyph becomes unfindable the moment it is
+  // swapped: change 🤝 for a premium emoji whose fallback is ⚡ and the row
+  // reads "💎⚡ ×6", so an operator hunting for Crew cannot see it and reports
+  // it as missing. That is exactly what happened.
+  const labels = flat(allEmojiKb(0)).map((b) => b.text);
+  for (const name of ["Crew", "Chart", "Likes"]) {
+    assert.ok(labels.some((l) => l.includes(name)), `"${name}" is on a button: ${labels.slice(0, 6).join(" | ")}`);
+  }
+  const named = allEmojiSlots().filter((s) => s.label).length;
+  assert.ok(named > allEmojiSlots().length / 2, `${named} of ${allEmojiSlots().length} slots know their own name`);
+});
+
+test("the raid preview is built by the RAID'S OWN builder, not a typed lookalike", async () => {
+  // SAMPLE_VARS.progress was a literal string with ❤️ 💬 🤝 ▰ ▱ typed into it,
+  // so the preview showed those five PLAIN whatever the operator had set. They
+  // swapped them for premium, opened the preview, saw bare glyphs and reported
+  // the swap as broken — when the swap had worked and the preview was lying.
+  const { renderSample } = admin._preview;
+  await tpl.replaceEmojiAt("raid_style", 0, "[❤️](emoji/111)");
+  try {
+    const card = renderSample("raid_card");
+    const prem = (card.entities || []).filter((e) => e.type === "custom_emoji" && e.custom_emoji_id === "111");
+    assert.strictEqual(prem.length, 1, "the preview shows what the group would actually receive");
+    assert.strictEqual(card.text.substr(prem[0].offset, prem[0].length), "❤️");
+  } finally {
+    await tpl.resetTemplate("raid_style");
+  }
+});
