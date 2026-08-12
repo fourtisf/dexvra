@@ -41,7 +41,12 @@ const TEMPLATE_KEYS = {
 function raidStyle() {
   let raw = "";
   try {
-    raw = String(tpl.t("raid_style") || "");
+    // markup(), NOT t(). These six glyphs are VARS spliced into raid_card and
+    // parsed there, so they have to arrive still wearing their markup — t()
+    // resolves to clean text, which meant a premium ❤️ / 💬 / 🤝 arrived as its
+    // bare fallback char and the metric rows were the one part of the card a 💎
+    // swap silently could not reach. Exactly the bug buyBarStyle had.
+    raw = String(tpl.markup("raid_style") || "");
   } catch {
     return STYLE_DEFAULT.slice();
   }

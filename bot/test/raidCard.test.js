@@ -99,25 +99,29 @@ test("the error FLAG is in the signature, its wording is not", () => {
 // ── Style ────────────────────────────────────────────────────────────────────
 
 test("raid_style falls back FIELD BY FIELD, so a typo can never break the card", () => {
-  const real = tpl.t;
+  // markup(), not t(): these six glyphs are VARS spliced into raid_card and
+  // parsed there, so a premium one has to arrive still wearing its markup.
+  const real = tpl.markup;
   try {
     // An admin who types "🟩|⬛" meaning filled|empty gets odd metric icons —
     // and still gets a card.
-    tpl.t = (k) => (k === "raid_style" ? "🟩|⬛" : real(k));
+    tpl.markup = (k) => (k === "raid_style" ? "🟩|⬛" : real(k));
     const s = card.raidStyle();
     assert.deepStrictEqual(s, ["🟩", "⬛", "🔁", "🤝", "▰", "▱"]);
-    tpl.t = () => "   |||||   ";
+    tpl.markup = () => "   |||||   ";
     assert.deepStrictEqual(card.raidStyle(), card.STYLE_DEFAULT);
-    tpl.t = () => { throw new Error("template layer down"); };
+    tpl.markup = () => { throw new Error("template layer down"); };
     assert.deepStrictEqual(card.raidStyle(), card.STYLE_DEFAULT);
   } finally {
-    tpl.t = real;
+    tpl.markup = real;
   }
 });
 
-test("the progress block is PLAIN TEXT — it cannot carry entities", () => {
-  // It is inserted into the template as a plain value, so any markup in it
-  // would reach the group as literal characters.
+test("the progress block carries no HTML and no bold — only the icons may be markup", () => {
+  // It is spliced into raid_card and parsed THERE, so a premium-emoji fragment
+  // in it is intended and resolves. Anything else is not: an HTML tag or a **
+  // run would reach the group as literal characters, or worse, swallow the
+  // markup that follows it.
   const block = card.buildProgressBlock(raidOf());
   assert.ok(!/[<>]/.test(block));
   assert.ok(!block.includes("**"));
@@ -221,4 +225,40 @@ test("time left reads in minutes, then hours, and never goes negative", () => {
   assert.strictEqual(card.timeLeft({ expiresAt: NOW + 42 * 60000 }, NOW), "42m");
   assert.strictEqual(card.timeLeft({ expiresAt: NOW + 125 * 60000 }, NOW), "2h 05m");
   assert.strictEqual(card.timeLeft({ expiresAt: NOW - 1 }, NOW), "0m");
+});
+
+test("a PREMIUM metric icon reaches the live raid card", async () => {
+  // raidStyle() read raid_style through t(), which resolves to CLEAN text —
+  // exactly the wrong call for six glyphs that travel as a VAR into raid_card
+  // and get parsed there. So an operator who set a premium ❤️ / 💬 / 🤝 saw
+  // every other icon on the card animate while the metric rows stayed bare
+  // fallback chars, with nothing to say why. The same bug buyBarStyle had.
+  const tpl = require("../src/templates");
+  const card = require("../src/raid/card");
+  await tpl.replaceEmojiAt("raid_style", 0, "[❤️](emoji/111)"); // likes
+  await tpl.replaceEmojiAt("raid_style", 3, "[🤝](emoji/444)"); // crew
+  try {
+    const raid = {
+      seq: 7,
+      status: "running",
+      postUrl: "https://x.com/a/1",
+      postText: "gm",
+      crew: ["a", "b"],
+      target: { likes: 215 },
+      baseline: { likes: 0 },
+      current: { likes: 209 },
+      crewTarget: 20,
+      deadline: Date.now() + 38 * 60000,
+      createdAt: Date.now(),
+    };
+    const out = card.renderCard(raid);
+    const prem = (out.extra.entities || []).filter((e) => e.type === "custom_emoji");
+    const byId = Object.fromEntries(prem.map((e) => [e.custom_emoji_id, out.text.substr(e.offset, e.length)]));
+    assert.strictEqual(byId["111"], "❤️", "the likes row carries its premium entity");
+    assert.strictEqual(byId["444"], "🤝", "and so does the crew row");
+    // The rows still read correctly — a premium swap must not disturb the bar.
+    assert.match(out.text, /❤️ Likes\s+[▰▱]+\s+209\/215/);
+  } finally {
+    await tpl.resetTemplate("raid_style");
+  }
 });
