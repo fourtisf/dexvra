@@ -67,6 +67,10 @@ function mainKb() {
   ]);
   return Markup.inlineKeyboard([
     ...groupRows,
+    // Above the per-group list on purpose: restyling the bot's icons is the
+    // thing an operator comes here to do most, and doing it one template at a
+    // time was thirty-nine taps for a single glyph.
+    [Markup.button.callback("🎨 Semua emoji bot (ganti sekaligus)", "aem:0")],
     [Markup.button.callback("🔍 Preview all templates", "audit")],
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
@@ -337,6 +341,104 @@ const BUY_CARD_EMOJI_KEYS = [
   "group_buy_alert",
   "group_whale_alert",
 ];
+
+/*
+ * ── EVERY icon the bot uses, on one screen ──────────────────────────────────
+ *
+ * 141 templates carry 395 emoji between them — and only 74 DISTINCT glyphs.
+ * 🔹 alone appears in 39 places across 31 templates, ⚡ in 21, ✅ in 20. So an
+ * operator restyling the bot was opening a template, tapping "😀 Swap emoji",
+ * choosing, going back, and doing it again — thirty-nine times for one icon,
+ * with no way to know they were not finished. "saya capek set ulang 1/1" is
+ * the whole design brief.
+ *
+ * IDENTICAL GLYPHS ARE ONE SLOT, exactly as they are on the buy-card screen and
+ * for the same reason: an operator thinks in ICONS, not in template rows. The ✅
+ * on the position row and the ✅ on a receipt are one decision, and a bot whose
+ * ✅ changed in some places and not others reads as broken rather than styled.
+ *
+ * The button says how many places it covers, because one tap here can move
+ * thirty-nine of them and that is not something to discover afterwards.
+ *
+ * chain_emojis is DELIBERATELY excluded — same carve-out the buy screen makes.
+ * Those are per-network marks the bot picks by itself, `plasma = 🟢` collides
+ * with the buy-size 🟢, and folding them in would repaint every small buy the
+ * day somebody rebranded a chain.
+ */
+const ALL_EMOJI_PER_PAGE = 21;
+
+/** Every icon in every template, deduped by the glyph the CODE ships — never
+ *  by the glyph it currently wears, or two unrelated rows whose swaps happen to
+ *  share a fallback char would merge into one button. */
+function allEmojiSlots() {
+  const bySlot = new Map();
+  for (const key of tpl.keys()) {
+    if (key === "chain_emojis") continue;
+    let list = [];
+    try {
+      list = tpl.listEmojis(key);
+    } catch {
+      continue; // a template that will not parse must not take the screen down
+    }
+    for (const e of list) {
+      const identity = e.baseChar || e.char;
+      const slot = bySlot.get(identity) || { char: e.char, id: e.id, label: "", spots: [] };
+      if (!slot.id && e.id) slot.id = e.id;
+      if (!slot.label) slot.label = emojiHint(key, e);
+      slot.spots.push({ key, i: e.i });
+      bySlot.set(identity, slot);
+    }
+  }
+  // Most-used first: the icons worth changing are the ones the reader sees
+  // everywhere, and they should not be on page four.
+  return [...bySlot.values()].sort((a, b) => b.spots.length - a.spots.length);
+}
+
+function allEmojiPages() {
+  return Math.max(1, Math.ceil(allEmojiSlots().length / ALL_EMOJI_PER_PAGE));
+}
+
+function allEmojiKb(page = 0) {
+  const cb = Markup.button.callback;
+  const slots = allEmojiSlots();
+  const pages = Math.max(1, Math.ceil(slots.length / ALL_EMOJI_PER_PAGE));
+  const p = Math.max(0, Math.min(pages - 1, Number(page) || 0));
+  const rows = [];
+  const shown = slots.slice(p * ALL_EMOJI_PER_PAGE, (p + 1) * ALL_EMOJI_PER_PAGE);
+  const btns = shown.map((s) => {
+    // The index is into the FULL list, so a button keeps meaning the same slot
+    // whichever page it was drawn on.
+    const n = slots.indexOf(s);
+    return cb(`${s.id ? "💎" : ""}${s.char}${s.spots.length > 1 ? ` ×${s.spots.length}` : ""}`, `aemx:${n}`);
+  });
+  for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3));
+  if (pages > 1) {
+    rows.push([
+      cb("◀ Prev", `aem:${(p - 1 + pages) % pages}`),
+      cb(`Page ${p + 1}/${pages}`, "noop"),
+      cb("Next ▶", `aem:${(p + 1) % pages}`),
+    ]);
+  }
+  rows.push([cb("⬅ Kembali", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function allEmojiText(page = 0) {
+  const slots = allEmojiSlots();
+  const places = slots.reduce((n, s) => n + s.spots.length, 0);
+  const nPrem = slots.filter((s) => s.id).length;
+  return (
+    `🎨 <b>Semua emoji bot</b>\n\n` +
+    `${slots.length} ikon, dipakai di ${places} tempat di seluruh pesan bot. ` +
+    `Tekan satu ikon, kirim penggantinya — <b>semua tempat yang memakai ikon itu ikut berubah sekaligus</b>.\n\n` +
+    `Angka <b>×N</b> di tombol adalah berapa tempat yang ikut berubah, jadi Anda tahu dampaknya sebelum menekan. ` +
+    `Diurutkan dari yang paling sering dipakai.\n\n` +
+    `<b>Teksnya tidak disentuh sama sekali</b> — hanya ikonnya.\n\n` +
+    `ℹ️ Lambang jaringan tidak ada di sini: bot memilihnya sendiri sesuai chain token. ` +
+    `Aturnya di <b>Channel Posts → Chain emoji</b>.` +
+    (nPrem ? `\n\n💎 ${nPrem} ikon sudah premium.` : "")
+  );
+}
 
 /** A template's BASE text, whether stored as prose or as {text, entities}.
  *  Base, not the overlaid value: listEmojis() hands out BASE offsets (that is
@@ -2496,6 +2598,39 @@ function build() {
     await sendBuyEmojiPicker(ctx);
   });
 
+  // ── Every icon in the bot, one screen ────────────────────────────────────
+  async function sendAllEmojiPicker(ctx, page) {
+    await ctx.reply(allEmojiText(page), { ...HTML, ...allEmojiKb(page) }).catch(() => {});
+  }
+  bot.action(/^aem:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const page = Number(ctx.match[1]) || 0;
+    // Repainted in place when paging, so flipping through four pages does not
+    // leave four identical screens in the chat.
+    await edit(ctx, allEmojiText(page), allEmojiKb(page));
+  });
+  bot.action(/^aemx:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    // Re-derived at press time, never trusted from the button: an operator can
+    // leave this open, edit a template elsewhere, and come back to a keyboard
+    // whose slot numbers no longer describe anything.
+    const slots = allEmojiSlots();
+    const slot = slots[Number(ctx.match[1])];
+    if (!slot) return sendAllEmojiPicker(ctx, 0);
+    const page = Math.floor(Number(ctx.match[1]) / ALL_EMOJI_PER_PAGE);
+    ctx.session.awaitingEmoji = { spots: slot.spots, from: "aem", page, was: slot.char };
+    const where = [...new Set(slot.spots.map((s) => s.key))].length;
+    await ctx.reply(
+      `⌨ Kirim emoji pengganti untuk ${escapeHtml(slot.char)}` +
+        `${slot.label ? ` — <b>${escapeHtml(slot.label)}</b>` : ""}${slot.id ? " (sekarang 💎 premium)" : ""}.\n\n` +
+        `Ini akan mengubah <b>${slot.spots.length} tempat</b> di ${where} template sekaligus. ` +
+        `Teks template tidak diubah sama sekali.\n\n/cancel untuk batal.`,
+      HTML,
+    );
+  });
+
   bot.action(/^bemx:(\d+)$/, async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -3797,7 +3932,7 @@ function build() {
       return;
     }
     if (ctx.session.awaitingEmoji) {
-      const { key, i, spots, from } = ctx.session.awaitingEmoji;
+      const { key, i, spots, from, page } = ctx.session.awaitingEmoji;
       ctx.session.awaitingEmoji = null;
       const frag = emojiFragment(ctx.message);
       if (!frag) return ctx.reply("❌ Send a single emoji.", HTML).catch(() => {});
@@ -3833,7 +3968,12 @@ function build() {
       // not something an operator can check: on a quiet contract the next real
       // buy is hours away, in a customer's group, in public. Seeing it here is
       // the difference between changing an icon and choosing one.
-      if (from === "bem") {
+      if (from === "aem") {
+        // Straight back to the same page, so restyling forty icons is forty
+        // taps and not forty round trips through the main menu. No preview:
+        // a slot here spans templates that have no single card to show.
+        await sendAllEmojiPicker(ctx, page || 0);
+      } else if (from === "bem") {
         await sendBuyPreview(ctx);
         await sendBuyEmojiPicker(ctx);
       } else {
@@ -4044,6 +4184,7 @@ module.exports._net = { fetchTelegramFileBuffer };
 module.exports._tpl = { viewText, placeholderWarning, viewKb };
 // Exposed for tests: the one screen that owns every icon on the buy card.
 module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS, CARD_OF_KEY, sendBuyPreview, sendTemplatePreview };
+module.exports._allEmoji = { allEmojiSlots, allEmojiKb, allEmojiText, allEmojiPages, ALL_EMOJI_PER_PAGE };
 // Exposed for tests: any template rendered on sample values, the thing every
 // preview button shows.
 module.exports._preview = { renderSample, SPECIAL_RENDER, SAMPLE_VARS };
