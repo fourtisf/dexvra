@@ -24,16 +24,17 @@ test("there is no volume estimator to fall back to", () => {
   assert.ok(!require("../src/templates").getRawValue("group_buy_alert_est"), "and no template to render");
 });
 
-// 🟢 is a surrogate pair, so string length is 2 per glyph.
-const glyphs = (s) => s.length / 2;
+// Icons are space-separated (premium icons render as wide art tiles, and a
+// crammed row wrapped on phones), so count icons, not code units.
+const glyphs = (s) => s.split(" ").filter(Boolean).length;
 
 test("buyEmojiRow scales with size, and is floored AND capped", () => {
-  assert.strictEqual(glyphs(mon.buyEmojiRow(500)), 10); // one per $50
-  assert.strictEqual(glyphs(mon.buyEmojiRow(1_000_000)), 16); // capped, never a wall
+  assert.strictEqual(glyphs(mon.buyEmojiRow(500)), 8); // one per $50, capped at 8
+  assert.strictEqual(glyphs(mon.buyEmojiRow(1_000_000)), 8); // capped, never a wall
   assert.strictEqual(glyphs(mon.buyEmojiRow(0)), 3); // floored, never empty
-  // The cap is the point: an uncapped row wraps to several lines on a phone and
-  // pushes the numbers off the first screen.
-  assert.ok(glyphs(mon.buyEmojiRow(9e9)) <= 16);
+  // The cap is the point: an uncapped row wraps on a phone — premium tiles
+  // even sooner than unicode — and pushes the numbers off the first screen.
+  assert.ok(glyphs(mon.buyEmojiRow(9e9)) <= 8);
 });
 
 test("candidateChains guesses by address shape", () => {

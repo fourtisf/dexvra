@@ -550,7 +550,11 @@ const DEFAULTS = {
   // inside a [text](url) target is what made an earlier card fail to send at
   // all ("400: Wrong HTTP URL").
   group_buy_intro: "🚨 **NEW BUY ALERT**",
-  group_whale_intro: "🐋 **WHALE ALERT**",
+  // Just the mark. The header already ends "**WHALE WALLET!**", so an intro
+  // announcing "WHALE ALERT" printed the word twice in one line — the operator
+  // read it as clutter, and they were right. The buy intro keeps its words
+  // because its tier ("BUY!") does not repeat them.
+  group_whale_intro: "🐋",
   group_powered_by: "| Powered by {listingChannel}",
   // The token row and the buyer row. Both were built in CODE, with their emoji
   // written into buyMonitor.js — so 📃 and 👤 were the only two icons on the

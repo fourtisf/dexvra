@@ -174,12 +174,18 @@ function selectFresh(cursor, buys, at = now()) {
  * It only ever GROWS — that is the whole reason it is a row and not a
  * fill-meter. A meter renders what is missing, so a real buy comes out mostly
  * empty and reads as something failing rather than something good happening.
+ *
+ * SPACED, and capped low enough to stay ONE line. Premium icons render as
+ * square art tiles, wider than unicode emoji: sixteen of them crammed edge to
+ * edge wrapped onto a second line, which reads as a glitch rather than a big
+ * buy. The cap is BUYBOT_EMOJI_MAX (.env) for an operator who wants it longer
+ * anyway.
  */
 function buyEmojiRow(usd, glyph) {
   const icon = glyph || buyBarStyle()[0];
   const step = BUYBOT_EMOJI_STEP_USD;
   const n = Math.max(BUYBOT_EMOJI_MIN, Math.min(BUYBOT_EMOJI_MAX, Math.round(usd / step)));
-  return icon.repeat(n);
+  return Array(n).fill(icon).join(" ");
 }
 
 const BAR_WIDTH = 10;

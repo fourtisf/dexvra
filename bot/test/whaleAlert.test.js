@@ -194,7 +194,7 @@ test("the whale card labels the figure HOLDS, not 'wallet balance'", () => {
   // total would be a wrong number presented as a right one.
   const out = mon.renderWhaleAlert(g(), buy, pool, { held: 1_980_000, holdsUsd: 95_523, position: "+3.82%" }).text;
   assert.match(out, /WHALE WALLET/);
-  assert.match(out, /🐋🐋/, "the row carries the whale icon, not the plain buy one");
+  assert.match(out, /🐋 🐋/, "the row carries the whale icon, not the plain buy one");
   assert.match(out, /Position: 1,980,000 \$RUSS · \$95,523/);
   assert.match(out, /\(\+3\.82%\)/, "and how much this buy grew it, on the same row");
   assert.ok(!/wallet balance/i.test(out));

@@ -369,10 +369,12 @@ test("the size row only ever GROWS — it is never rendered mostly empty", () =>
   // A fill-meter shows what is MISSING, so a real buy comes out as
   // "▰▱▱▱▱▱▱▱▱▱" and reads like something failed rather than like something
   // good happened. A buy alert must never look like that.
-  const glyphs = (s) => Array.from(s).length;
-  assert.strictEqual(glyphs(mon.buyEmojiRow(500)), 10); // one per $50
+  // Space-separated icons (premium tiles are wide; a crammed row wrapped on
+  // phones) — count icons, not code units.
+  const glyphs = (s) => s.split(" ").filter(Boolean).length;
+  assert.strictEqual(glyphs(mon.buyEmojiRow(500)), 8); // one per $50, capped at 8
   assert.strictEqual(glyphs(mon.buyEmojiRow(0)), 3, "floored, never empty");
-  assert.strictEqual(glyphs(mon.buyEmojiRow(1e9)), 16, "capped, never a wall");
+  assert.strictEqual(glyphs(mon.buyEmojiRow(1e9)), 8, "capped, never a wall — one line even as art tiles");
   assert.ok(!mon.buyEmojiRow(50).includes("▱"), "no empty cells anywhere");
 });
 
@@ -383,7 +385,7 @@ test("the row icons are admin-editable, falling back per position", () => {
   const real = tpl.markup;
   try {
     tpl.markup = (k) => (k === "group_buy_style" ? "🔥|🐳" : real(k));
-    assert.strictEqual(mon.buyEmojiRow(50), "🔥🔥🔥");
+    assert.strictEqual(mon.buyEmojiRow(50), "🔥 🔥 🔥");
     assert.strictEqual(mon.buyBarStyle()[1], "🐳", "whales get their own icon");
     tpl.markup = () => "🚀|"; // half typed
     assert.deepStrictEqual(mon.buyBarStyle(), ["🚀", "🐋"], "the missing half keeps its default");
@@ -454,8 +456,10 @@ test("both buy cards speak ONE grammar", () => {
     // project, not to us.
     // Banner, token, event and byline share the opening line; the size row is
     // the next one, with no blank line between them.
-    assert.match(lines[0], /ALERT Dexvra Token .+!( \| Powered by @\w+)?$/, `${which}: the whole opening line`);
-    assert.match(lines[1], /^[🟢🐋]+$/u, `${which}: the size row follows it directly`);
+    // "ALERT" is not required: the whale intro is just the mark now (its tier
+    // already says WHALE WALLET, and saying whale twice read as clutter).
+    assert.match(lines[0], /Dexvra Token .+!( \| Powered by @\w+)?$/, `${which}: the whole opening line`);
+    assert.match(lines[1], /^[🟢🐋 ]+$/u, `${which}: the size row follows it directly`);
     // 🟡 is BSC's mark, from chain_emojis — the token row leads with its own
     // network on both cards, not a fixed icon on either.
     assert.match(text, /^🟡 Dexvra Token \$DEX$/m, `${which}: the token names itself the same way`);

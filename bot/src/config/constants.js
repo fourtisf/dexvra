@@ -270,7 +270,10 @@ const BUYBOT_POOL_MIN_MS = Math.max(5000, int(env.BUYBOT_POOL_MIN_MS, 25 * 1000)
 // cue, not a bar chart — 3 to 16 glyphs reads instantly and never wraps.
 const BUYBOT_EMOJI_STEP_USD = Math.max(1, int(env.BUYBOT_EMOJI_STEP_USD, 50));
 const BUYBOT_EMOJI_MIN = Math.max(1, int(env.BUYBOT_EMOJI_MIN, 3));
-const BUYBOT_EMOJI_MAX = Math.max(BUYBOT_EMOJI_MIN, int(env.BUYBOT_EMOJI_MAX, 16));
+// 8, not 16: the row is spaced now and premium icons render as square art
+// tiles wider than unicode emoji — sixteen wrapped onto a second line on every
+// phone, which reads as a glitch rather than a big buy.
+const BUYBOT_EMOJI_MAX = Math.max(BUYBOT_EMOJI_MIN, int(env.BUYBOT_EMOJI_MAX, 8));
 // Buy-size tiers. The LABELS are template-editable (group_buy_tiers); only the
 // thresholds live here, because a group that trades in cents and one that
 // trades in thousands do not agree on what "whale" means.
