@@ -17,12 +17,6 @@ const ct = require("../src/group/chainTrades");
 const TOKEN = "0x" + "aa".repeat(20);
 const WETH = "0x" + "bb".repeat(20);
 
-const ifaceV2 = new ethers.Interface([
-  "event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)",
-]);
-const ifaceV3 = new ethers.Interface([
-  "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)",
-]);
 const topicAddr = (a) => ethers.zeroPadValue(a, 32);
 const coder = ethers.AbiCoder.defaultAbiCoder();
 
@@ -37,12 +31,12 @@ const v3Log = (a0, a1) => ({
 
 test("a V2 buy is read as a buy, either way round the pool sits", () => {
   // token is token0: it leaves the pool as amount0Out, paid for with amount1In.
-  const asZero = ct.decodeEvmSwap(ethers, ifaceV2, ifaceV3, v2Log(0n, 10n ** 18n, 500n, 0n), true);
+  const asZero = ct.decodeEvmSwap(ethers, v2Log(0n, 10n ** 18n, 500n, 0n), true);
   assert.strictEqual(asZero.tokenOut, 500n);
   assert.strictEqual(asZero.spent, 10n ** 18n);
   // token is token1: the sides swap. A pool is free to be created either way
   // round, and guessing from address ordering costs a reversed alert.
-  const asOne = ct.decodeEvmSwap(ethers, ifaceV2, ifaceV3, v2Log(10n ** 18n, 0n, 0n, 500n), false);
+  const asOne = ct.decodeEvmSwap(ethers, v2Log(10n ** 18n, 0n, 0n, 500n), false);
   assert.strictEqual(asOne.tokenOut, 500n);
   assert.strictEqual(asOne.spent, 10n ** 18n);
 });
@@ -50,23 +44,94 @@ test("a V2 buy is read as a buy, either way round the pool sits", () => {
 test("a V2 SELL is not reported as a buy", () => {
   // The token went INTO the pool. Posting this as a green buy alert is the
   // single most damaging thing a buy bot can do to a project's chat.
-  assert.strictEqual(ct.decodeEvmSwap(ethers, ifaceV2, ifaceV3, v2Log(500n, 0n, 0n, 10n ** 18n), true), null);
+  assert.strictEqual(ct.decodeEvmSwap(ethers, v2Log(500n, 0n, 0n, 10n ** 18n), true), null);
 });
 
 test("V3's SIGNED amounts are read as signed, not as V2's unsigned ones", () => {
   // This is the failure that does not announce itself: reading a V3 log with
   // V2's shape does not throw, it reports the wrong direction. Negative means
   // the amount left the pool — i.e. the trader received it.
-  const buy = ct.decodeEvmSwap(ethers, ifaceV3, ifaceV3, v3Log(-500n, 10n ** 18n), true);
+  const buy = ct.decodeEvmSwap(ethers, v3Log(-500n, 10n ** 18n), true);
   assert.strictEqual(buy.tokenOut, 500n, "our token came out");
   assert.strictEqual(buy.spent, 10n ** 18n, "and the other side went in");
   // Positive on our side = our token went IN = a sell.
-  assert.strictEqual(ct.decodeEvmSwap(ethers, ifaceV3, ifaceV3, v3Log(500n, -(10n ** 18n)), true), null);
+  assert.strictEqual(ct.decodeEvmSwap(ethers, v3Log(500n, -(10n ** 18n)), true), null);
 });
 
 test("a log that is neither shape is skipped, not guessed at", () => {
   const alien = { topics: [ethers.id("Mint(address,uint256,uint256)")], data: "0x" };
-  assert.strictEqual(ct.decodeEvmSwap(ethers, ifaceV2, ifaceV3, alien, true), null);
+  assert.strictEqual(ct.decodeEvmSwap(ethers, alien, true), null);
+});
+
+// ── The two shapes that were invisible ───────────────────────────────────────
+//
+// PancakeSwap V3 is the dominant DEX on BSC and Aerodrome is the dominant DEX
+// on Base, and NEITHER matched the old two-topic filter. Their pools did not
+// error and did not fall back to the indexer: getLogs returned nothing, so the
+// pool read as one nobody trades — permanently, on the busiest venue of each
+// chain.
+
+const pcsV3Log = (a0, a1) => ({
+  topics: [ethers.id(ct.PCS_V3_SWAP), topicAddr(WETH), topicAddr(WETH)],
+  // Uniswap V3's payload plus the two protocol-fee words.
+  data: coder.encode(
+    ["int256", "int256", "uint160", "uint128", "int24", "uint128", "uint128"],
+    [a0, a1, 0, 0, 0, 0, 0],
+  ),
+});
+// `to` is INDEXED here, so it leaves the data — and pushes the amounts one slot
+// right in parseLog's args.
+const solidlyLog = (a0In, a1In, a0Out, a1Out) => ({
+  topics: [ethers.id(ct.SOLIDLY_SWAP), topicAddr(WETH), topicAddr("0x" + "22".repeat(20))],
+  data: coder.encode(["uint256", "uint256", "uint256", "uint256"], [a0In, a1In, a0Out, a1Out]),
+});
+
+test("a PancakeSwap V3 buy decodes — BSC's busiest DEX was reading as a dead pool", () => {
+  const asZero = ct.decodeEvmSwap(ethers, pcsV3Log(-500n, 10n ** 18n), true);
+  assert.strictEqual(asZero.tokenOut, 500n);
+  assert.strictEqual(asZero.spent, 10n ** 18n);
+  const asOne = ct.decodeEvmSwap(ethers, pcsV3Log(10n ** 18n, -500n), false);
+  assert.strictEqual(asOne.tokenOut, 500n, "and either way round the pool sits");
+  assert.strictEqual(ct.decodeEvmSwap(ethers, pcsV3Log(500n, -(10n ** 18n)), true), null, "a sell is still a sell");
+});
+
+test("an Aerodrome buy decodes, and its shifted amounts are read at the RIGHT offsets", () => {
+  const asZero = ct.decodeEvmSwap(ethers, solidlyLog(0n, 10n ** 18n, 500n, 0n), true);
+  assert.strictEqual(asZero.tokenOut, 500n);
+  assert.strictEqual(asZero.spent, 10n ** 18n);
+  const asOne = ct.decodeEvmSwap(ethers, solidlyLog(10n ** 18n, 0n, 0n, 500n), false);
+  assert.strictEqual(asOne.tokenOut, 500n);
+  assert.strictEqual(ct.decodeEvmSwap(ethers, solidlyLog(500n, 0n, 0n, 10n ** 18n), true), null, "a sell is still a sell");
+});
+
+test("reading Solidly at Uniswap's offsets would REVERSE the trade, so the offset is per-shape", () => {
+  // The regression that justifies the shape table. Solidly indexes `to` as well
+  // as `sender`, so its amounts sit at args[2..5]. Reading them at args[1..4]
+  // does not throw — args[1] is an address string and BigInt("0x2222…") is a
+  // perfectly good number — it reports the wrong direction, which on a buy bot
+  // means a green alert on somebody's dump.
+  const buy = ct.decodeEvmSwap(ethers, solidlyLog(0n, 10n ** 18n, 500n, 0n), true);
+  assert.strictEqual(buy.tokenOut, 500n, "the amount out, not the `to` address read as a number");
+  assert.ok(buy.tokenOut < 10n ** 30n, "a token address misread as an amount is astronomically large");
+});
+
+test("the getLogs filter is DERIVED from the decode table — the two cannot drift", () => {
+  // They already had. The filter named two topics while four shapes exist in
+  // the wild, and nothing in the code connected the two lists.
+  const topics = [...ct.swapShapes(ethers).keys()];
+  assert.strictEqual(topics.length, ct.SWAP_SHAPES.length);
+  assert.deepStrictEqual(new Set(topics), new Set(ct.SWAP_SHAPES.map((s) => ethers.id(s.sig))));
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "chainTrades.js"), "utf8");
+  assert.match(src, /topics:\s*\[wantTopics\]/, "the filter comes from the table, not a literal");
+});
+
+test("a flash swap is not a buy — nobody paid for it", () => {
+  // Borrow and repay the same token in one log: our token comes OUT, and the
+  // other side never went in. Arb bots do this routinely, and it used to post
+  // as a full green alert priced at whatever the tokens were worth.
+  assert.strictEqual(ct.decodeEvmSwap(ethers, v2Log(0n, 0n, 500n, 0n), true), null);
+  assert.strictEqual(ct.decodeEvmSwap(ethers, solidlyLog(0n, 0n, 500n, 0n), true), null);
+  assert.strictEqual(ct.decodeEvmSwap(ethers, v3Log(-500n, 0n), true), null);
 });
 
 test("unreadable resolves to null, which is not the same as no buys", async () => {

@@ -52,6 +52,31 @@ const MAX_TX = 40;
 // window on top; this only bounds the work.
 const FIRST_SIGHT_BLOCKS = 500;
 const FIRST_SIGHT_SIGS = 25;
+/**
+ * THE WIDEST eth_getLogs WINDOW WE WILL ASK FOR.
+ *
+ * Without this a quiet pool destroys itself. buyMonitor only advances the
+ * cursor when a poll actually finds buys, so on a pool nobody is trading the
+ * window grows by one poll interval, every poll, forever — until it passes
+ * whatever the node allows (5000 blocks on the public BSC dataseeds) and the
+ * node refuses it. That refusal is NOT a transport error, so rpcRead rethrows
+ * on the first endpoint instead of walking the rest, fetchPoolBuys returns
+ * null, and the pool falls onto the indexer permanently. Cursors are persisted,
+ * so it survives every restart: a pool that goes quiet for long enough never
+ * reads the chain again.
+ *
+ * The floor is set by what buyMonitor can still POST — MAX_ALERT_AGE_MS is 30
+ * minutes, so the window only has to outlast that. 3000 blocks is ~37min on
+ * BSC (0.75s), ~100min on Base, ~10h on Ethereum: past the age filter on every
+ * chain we read, and under the caps the free endpoints enforce.
+ */
+const MAX_LOG_RANGE = Math.max(200, Number(process.env.CHAINTRADES_MAX_LOG_RANGE) || 3000);
+// A node refusing a window says so in its own words, and it is deliberately NOT
+// in rpc.js's TRANSPORT_RE: asking three more endpoints the same oversized
+// question just fails four times instead of once. Shrink and re-ask the SAME
+// node instead.
+const RANGE_RE =
+  /exceed[sd]? maximum block range|block range too large|query returned more than|response size exceeded|limit exceeded|too many blocks|range is too large/i;
 
 // ── lazy libs ────────────────────────────────────────────────────────────────
 let ethersMod = null;
@@ -148,6 +173,76 @@ const supports = (chain) => isEvm(chain) || isSvm(chain);
 // direction — which on a buy bot means posting a green alert on a dump.
 const V2_SWAP = "Swap(address,uint256,uint256,uint256,uint256,address)";
 const V3_SWAP = "Swap(address,address,int256,int256,uint160,uint128,int24)";
+// PancakeSwap V3 — THE dominant DEX on BSC. Uniswap V3's event plus two
+// protocol-fee words, so a DIFFERENT topic0 and the amounts in the same place.
+const PCS_V3_SWAP = "Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)";
+// Aerodrome / Velodrome / Solidly — THE dominant DEX on Base. V2's four
+// amounts, but `to` is indexed as well as `sender`.
+const SOLIDLY_SWAP = "Swap(address,address,uint256,uint256,uint256,uint256)";
+
+/**
+ * Every Swap shape we decode.
+ *
+ * WHY A TABLE. The filter used to name two topics and the decoder used to
+ * branch on the same two, written out separately — so the two lists could
+ * drift, and they had both been wrong in the same way since the file was
+ * written: a PancakeSwap V3 pool on BSC and an Aerodrome pool on Base matched
+ * NEITHER topic, so getLogs returned nothing and the pool read as one that
+ * nobody trades. Not an error, not a fallback to the indexer — a silent,
+ * permanent "quiet pool" on the busiest DEX of each chain. The getLogs filter
+ * is derived from this table now, so the two can no longer disagree.
+ *
+ * `kind` — v2: four UNSIGNED amounts (ours = out, spent = in).
+ *          v3: two SIGNED amounts, negative meaning it LEFT the pool, i.e. the
+ *              trader received it.
+ * `at`   — where the amounts start in parseLog's args, which follow
+ *          DECLARATION order and include the indexed params. This index is the
+ *          entire reason a table beats a branch: Solidly indexes `to` as well
+ *          as `sender`, which shifts its amounts from args[1..4] to args[2..5].
+ *          Reading them at Uniswap's offsets does NOT throw — args[1] is an
+ *          address string and BigInt("0x2222…") is a perfectly good number — it
+ *          silently reports a sell as a buy.
+ */
+const SWAP_SHAPES = [
+  {
+    kind: "v2",
+    at: 1,
+    sig: V2_SWAP,
+    abi: "event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)",
+  },
+  {
+    kind: "v3",
+    at: 2,
+    sig: V3_SWAP,
+    abi: "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)",
+  },
+  {
+    kind: "v3",
+    at: 2,
+    sig: PCS_V3_SWAP,
+    abi: "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint128 protocolFeesToken0, uint128 protocolFeesToken1)",
+  },
+  {
+    kind: "v2",
+    at: 2,
+    sig: SOLIDLY_SWAP,
+    abi: "event Swap(address indexed sender, address indexed to, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out)",
+  },
+];
+
+// Built on first use, never at module scope: `ethers` is an optional lazy
+// dependency here, and a top-level ethers.id() would crash the whole bot on a
+// box that has not installed it.
+let shapeMap = null;
+function swapShapes(ethers) {
+  if (!shapeMap) {
+    shapeMap = new Map();
+    for (const s of SWAP_SHAPES) {
+      shapeMap.set(ethers.id(s.sig), { ...s, iface: new ethers.Interface([s.abi]) });
+    }
+  }
+  return shapeMap;
+}
 
 const token0Cache = new Map(); // `${chain}:${pool}` → token0 address, lowercased
 const decimalsCache = new Map(); // `${chain}:${token}` → decimals
@@ -203,34 +298,41 @@ async function evmToken0(chain, pool) {
  * pool's own token0() rather than from address ordering — a pool is free to be
  * created either way round and guessing costs a reversed alert.
  */
-function decodeEvmSwap(ethers, ifaceV2, ifaceV3, logEntry, tokenIsZero) {
+function decodeEvmSwap(ethers, logEntry, tokenIsZero) {
+  const shape = swapShapes(ethers).get((logEntry.topics || [])[0]);
+  if (!shape) return null; // a shape we do not decode — never guessed at
   let tokenOut = 0n;
   let spent = 0n;
   try {
-    if (logEntry.topics[0] === ethers.id(V2_SWAP)) {
-      const d = ifaceV2.parseLog(logEntry);
-      if (!d) return null;
-      const [, a0In, a1In, a0Out, a1Out] = d.args;
-      tokenOut = tokenIsZero ? BigInt(a0Out) : BigInt(a1Out);
-      spent = tokenIsZero ? BigInt(a1In) : BigInt(a0In);
-    } else if (logEntry.topics[0] === ethers.id(V3_SWAP)) {
-      const d = ifaceV3.parseLog(logEntry);
-      if (!d) return null;
-      const a0 = BigInt(d.args[2]);
-      const a1 = BigInt(d.args[3]);
+    const d = shape.iface.parseLog(logEntry);
+    if (!d) return null;
+    const at = shape.at;
+    if (shape.kind === "v2") {
+      const a0In = BigInt(d.args[at]);
+      const a1In = BigInt(d.args[at + 1]);
+      const a0Out = BigInt(d.args[at + 2]);
+      const a1Out = BigInt(d.args[at + 3]);
+      tokenOut = tokenIsZero ? a0Out : a1Out;
+      spent = tokenIsZero ? a1In : a0In;
+    } else {
+      const a0 = BigInt(d.args[at]);
+      const a1 = BigInt(d.args[at + 1]);
       // Negative = out of the pool, into the trader's hands.
       const ours = tokenIsZero ? a0 : a1;
       const other = tokenIsZero ? a1 : a0;
       if (ours >= 0n) return null; // our token went INTO the pool — a sell
       tokenOut = -ours;
       spent = other > 0n ? other : 0n;
-    } else {
-      return null;
     }
   } catch {
     return null;
   }
   if (tokenOut <= 0n) return null; // not a buy of our token
+  // NOBODY PAID. A flash swap borrows and repays the same token in one log
+  // (amount0In === amount0Out), which reads as a buy of our token for nothing —
+  // and arbitrage bots do it routinely. Posting it means a green alert, priced
+  // at whatever the tokens are worth, for a trade in which no one bought.
+  if (spent <= 0n) return null;
   return { tokenOut, spent };
 }
 
@@ -250,33 +352,48 @@ async function evmBuys(chain, pool, token, { sinceBlock, counterAddress, deadlin
   // and not the alert.
   const counterDecimals = counterAddress ? await evmDecimals(chain, counterAddress).catch(() => null) : null;
 
-  const ifaceV2 = new ethers.Interface([
-    "event Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)",
-  ]);
-  const ifaceV3 = new ethers.Interface([
-    "event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)",
-  ]);
+  // DERIVED from the decode table, never written out again: the filter and the
+  // decoder disagreeing is exactly how PancakeSwap V3 and Aerodrome pools read
+  // as pools nobody trades.
+  const wantTopics = [...swapShapes(ethers).keys()];
 
   const { value } = await rpcRead(
     chain,
     async (url) => {
       const provider = evmProvider(ethers, url);
       const head = await provider.getBlockNumber();
-      const from = sinceBlock > 0 ? Math.max(0, Number(sinceBlock)) : Math.max(0, head - FIRST_SIGHT_BLOCKS);
+      const want = sinceBlock > 0 ? Math.max(0, Number(sinceBlock)) : Math.max(0, head - FIRST_SIGHT_BLOCKS);
+      // Math.max, so this can only ever NARROW: a first sight stays at its own
+      // 500 blocks and is never widened to the cap.
+      let from = Math.max(0, want, head - MAX_LOG_RANGE);
       if (from > head) return [];
-      const logs = await provider.getLogs({
-        address: pool,
-        fromBlock: from,
-        toBlock: head,
-        topics: [[ethers.id(V2_SWAP), ethers.id(V3_SWAP)]],
-      });
+      let logs = null;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          logs = await provider.getLogs({
+            address: pool,
+            fromBlock: from,
+            toBlock: head,
+            topics: [wantTopics],
+          });
+          break;
+        } catch (e) {
+          // Only a window refusal is retryable here, and only by narrowing.
+          // Bounded at two shrinks because this runs inside rpcRead's
+          // per-endpoint timeout — a long retry chain spends the budget and
+          // the timeout DOES match TRANSPORT_RE, which would then walk every
+          // endpoint for a question none of them will answer.
+          if (attempt >= 2 || !RANGE_RE.test(String((e && (e.message || e.code)) || e))) throw e;
+          from = Math.max(0, head - Math.max(200, Math.floor((head - from) / 4)));
+        }
+      }
       // NEWEST first when there are more than we can use, for the same reason
       // as the Solana path: a backlog crawled oldest-first makes every alert
       // staler than the last.
       const recent = logs.slice(-MAX_TX);
       const decoded = [];
       for (const l of recent) {
-        const hit = decodeEvmSwap(ethers, ifaceV2, ifaceV3, l, tokenIsZero);
+        const hit = decodeEvmSwap(ethers, l, tokenIsZero);
         if (hit) decoded.push({ log: l, hit });
       }
       if (!decoded.length) return [];
@@ -454,11 +571,16 @@ module.exports = {
   decodeEvmSwap,
   V2_SWAP,
   V3_SWAP,
+  PCS_V3_SWAP,
+  SOLIDLY_SWAP,
+  SWAP_SHAPES,
+  swapShapes,
   MAX_TX,
   _reset: () => {
     token0Cache.clear();
     decimalsCache.clear();
     providers.clear();
     connections.clear();
+    shapeMap = null; // the interfaces are built from whichever `ethers` a test injected
   },
 };
