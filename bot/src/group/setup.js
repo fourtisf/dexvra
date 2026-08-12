@@ -4,6 +4,7 @@
 const { Markup } = require("telegraf");
 const cfg = require("./config");
 const gt = require("./gtPairs");
+const chainPools = require("./chainPools");
 const holdings = require("./walletHoldings");
 const { CHAIN_IDS, chainOf } = require("../config/chains");
 const whaleCfg = require("../services/whaleConfig");
@@ -53,9 +54,25 @@ function candidateChains(address) {
 
 /** Probe candidate chains for a live pool; return {chain, pool} or null. */
 async function resolveToken(address) {
+  // The indexer first, on every candidate chain: one cheap request, and it
+  // carries the price and market cap the chain cannot.
   for (const chain of candidateChains(address)) {
     const pool = await gt.fetchPool(chain, address).catch(() => null);
     if (pool && pool.poolAddress) return { chain, pool };
+  }
+  // Then the chain itself. An indexer's coverage is a business decision about
+  // which tokens are worth indexing, taken by somebody else, about our
+  // customers — and a pool with $400 in it on a young chain does not survive
+  // that decision. It is still a real pool with real buys, and the group was
+  // being told "No live pool on that CA" about a pool that plainly exists.
+  //
+  // Second pass rather than per-chain, so the cheap probe covers ALL five
+  // chains before any expensive one runs: a token the indexer knows never pays
+  // for a log sweep.
+  for (const chain of candidateChains(address)) {
+    if (!chainPools.supports(chain)) continue;
+    const found = await chainPools.findPool(chain, address).catch(() => null);
+    if (found && found.poolAddress) return { chain, pool: found };
   }
   return null;
 }
@@ -249,8 +266,13 @@ async function applyToken(ctx, address) {
   // One extra lookup, once, for the token's NAME — the pool listing only knows
   // the PAIR ("HOPPY / WETH"), and the name is what headlines every alert.
   const info = await gt.fetchTokenInfo(res.chain, address).catch(() => null);
-  const sym = (info && info.symbol) || res.pool.symbol || "";
-  const name = (info && info.name) || res.pool.name || "";
+  // …and when the indexer has never heard of the token — which is exactly the
+  // case a chain-found pool describes — the token contract itself is asked.
+  // Without this every alert headlines the "$TOKEN" placeholder, because
+  // nothing else in the bot ever learns a group's ticker.
+  const meta = info && info.symbol ? null : await chainPools.tokenMeta(res.chain, address).catch(() => null);
+  const sym = (info && info.symbol) || res.pool.symbol || (meta && meta.symbol) || "";
+  const name = (info && info.name) || res.pool.name || (meta && meta.name) || "";
   await cfg.upsert(ctx.chat.id, {
     chain: res.chain,
     address,

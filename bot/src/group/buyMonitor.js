@@ -63,6 +63,7 @@ const whaleCfg = require("../services/whaleConfig");
 const gt = require("./gtPairs");
 const trades = require("./gtTrades");
 const chainTrades = require("./chainTrades");
+const chainPools = require("./chainPools");
 const holdings = require("./walletHoldings");
 const latch = require("./alertLatch");
 const { isFatalChatError, describeChatError } = require("./fatalChatError");
@@ -950,7 +951,15 @@ async function pollTrades(tg, entry) {
 
   // Priced only NOW, and only because there is something to price. A quiet pool
   // never asks an indexer anything.
-  const pool = await gt.fetchPoolCached(entry.chain, entry.address);
+  let pool = await gt.fetchPoolCached(entry.chain, entry.address);
+  // The indexer does not know every token, and a group whose pool was found on
+  // the chain has one it has never heard of by definition. Without this the
+  // buys read perfectly and are then held forever waiting for a price that is
+  // never coming — silence that looks exactly like a broken bot. The pool
+  // itself knows what the token is worth.
+  if (!pool || !(pool.priceUsd > 0)) {
+    pool = await chainPools.readPool(entry.chain, entry.pool, entry.address).catch(() => null);
+  }
   if (!pool || !(pool.priceUsd > 0)) {
     // HOLD the buys rather than drop them, and do NOT advance the cursor: they
     // are real, and the next poll can price them.
