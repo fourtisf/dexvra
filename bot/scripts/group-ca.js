@@ -24,7 +24,14 @@ require("dotenv").config({ override: true });
 const path = require("node:path");
 const fss = require("node:fs");
 
-const DATA_DIR = process.env.BOT_DATA_DIR || path.join(__dirname, "..", "..", "data");
+// THE BOT'S OWN CONSTANT, never a path rebuilt here. The first cut computed
+// `__dirname/../../data`, which from bot/scripts/ is /opt/dexvra/data — one
+// level above the /opt/dexvra/bot/data the bot actually uses — so the script
+// reported "nothing has been configured yet" about a server with configured
+// groups, which is precisely the wrong answer to the question it exists to
+// settle. Reading the same constant also means BOT_DATA_DIR in .env is honoured
+// without this file knowing that it exists.
+const { DATA_DIR } = require("../src/config/constants");
 const FILE = path.join(DATA_DIR, "groups.json");
 
 const args = process.argv.slice(2);
@@ -36,7 +43,8 @@ try {
   groups = JSON.parse(fss.readFileSync(FILE, "utf8"));
 } catch (e) {
   console.error(`❌ Could not read ${FILE}: ${e.message}`);
-  console.error("   (Nothing has been configured yet, or BOT_DATA_DIR points elsewhere.)");
+  console.error("   No group has ever been configured on this server — or the bot has not booted since");
+  console.error("   the last restore, in which case start it and run this again.");
   process.exit(1);
 }
 

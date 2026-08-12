@@ -86,3 +86,23 @@ test("clearing a group that has no token says so instead of pretending to work",
   const dir = withData(configured());
   assert.match(run(dir, "-1002", "--clear"), /already has no token/i);
 });
+
+test("it reads the SAME data directory the bot writes", () => {
+  // The first cut rebuilt the path itself as __dirname/../../data, which from
+  // bot/scripts/ is one level above the bot's own bot/data — so on a live
+  // server it reported "nothing has been configured yet" about groups that
+  // plainly were. That is the exact wrong answer to the only question this
+  // script exists to settle, so the path is taken from the bot's constant.
+  const src = fss.readFileSync(SCRIPT, "utf8");
+  assert.match(src, /require\("\.\.\/src\/config\/constants"\)/, "DATA_DIR comes from the bot, not from a guess");
+  assert.doesNotMatch(src, /__dirname,\s*"\.\.",\s*"\.\.",\s*"data"/, "never rebuilt by hand");
+  // And the bot's own constant really does land inside bot/, which is the half
+  // the hand-built path got wrong. Read in a clean child, because the tests
+  // above set BOT_DATA_DIR in this process and that would mask it.
+  const real = execFileSync(process.execPath, ["-e", 'process.stdout.write(require("./src/config/constants").DATA_DIR)'], {
+    cwd: path.join(__dirname, ".."),
+    env: { ...process.env, BOT_DATA_DIR: "" },
+    encoding: "utf8",
+  });
+  assert.ok(real.endsWith(path.join("bot", "data")), `the bot stores under bot/data, got ${real}`);
+});
