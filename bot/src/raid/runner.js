@@ -8,6 +8,7 @@ const {
   RAID_POLL_SEC,
   RAID_MAX_MINUTES,
   RAID_BUMP_MINUTES,
+  RAID_MOVE_BUMP_SEC,
 } = require("../config/constants");
 const store = require("./store");
 const xMetrics = require("./xMetrics");
@@ -535,7 +536,14 @@ async function tickOne(telegram, g) {
   await store.save();
 
   const after = card.signature(raid, "running");
-  const bumpDue = Date.now() - (raid.lastBumpAt || 0) >= RAID_BUMP_MINUTES * 60000;
+  const sinceBump = Date.now() - (raid.lastBumpAt || 0);
+  const bumpDue = sinceBump >= RAID_BUMP_MINUTES * 60000;
+  // A MOVE gets its own, much shorter floor. Waiting five minutes to announce a
+  // like that already landed is how a live raid reads as a finished one: the
+  // in-place edit changes the number and notifies nobody, so from anywhere in
+  // the chat except directly on the card, progress and silence look identical.
+  // Chatter is only about visibility and keeps the full RAID_BUMP_MINUTES.
+  const moveDue = sinceBump >= RAID_MOVE_BUMP_SEC * 1000;
   const chattered = (chatterSinceBump.get(String(g.chatId)) || 0) > 0;
   // TWO independent reasons to re-post, and they are not the same thing:
   //  • the group has been talking, so the card has scrolled away and the raid
@@ -545,7 +553,7 @@ async function tickOne(telegram, g) {
   //    one thing a raid exists to broadcast.
   const movedSinceBump = countsMark(raid) !== raid.lastBumpMark;
 
-  if (bumpDue && (chattered || movedSinceBump)) {
+  if ((movedSinceBump && moveDue) || (chattered && bumpDue)) {
     // A bump REPLACES this poll's edit rather than adding a second call —
     // unless it fails, in which case the card must still be updated in place.
     // Returning here regardless left the card frozen for the rest of the raid

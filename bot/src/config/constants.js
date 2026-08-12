@@ -309,6 +309,14 @@ const RAID_MAX_MINUTES = Math.max(5, int(env.RAID_MAX_MINUTES, 60));
 // Floored at 2: without a floor, a popular post would delete and re-post its
 // card on every poll — the group spammed by its own raid.
 const RAID_BUMP_MINUTES = Math.max(2, int(env.RAID_BUMP_MINUTES, 5));
+// How soon the card may re-post when THE NUMBERS MOVED, as opposed to when the
+// group merely talked over it. They are different events and they earned
+// different urgency: a like, a reply or a new crew member IS the raid's news,
+// and an in-place edit notifies nobody — so a raid that is progressing looks,
+// to everyone not staring at the card, exactly like a raid that is not. Five
+// minutes of that is the difference between a live board and a screenshot.
+// Chatter is only about visibility and can wait its full RAID_BUMP_MINUTES.
+const RAID_MOVE_BUMP_SEC = Math.max(20, int(env.RAID_MOVE_BUMP_SEC, 60));
 
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
@@ -404,6 +412,7 @@ module.exports = {
   RAID_POLL_SEC,
   RAID_MAX_MINUTES,
   RAID_BUMP_MINUTES,
+  RAID_MOVE_BUMP_SEC,
   MASS_DM_ENABLED,
   MASS_DM_PRICE,
   MASS_DM_REVIEW_CHAT_ID,

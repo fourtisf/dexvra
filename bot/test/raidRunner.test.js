@@ -626,3 +626,28 @@ test("canLock names the missing permission instead of just failing", async () =>
   const res = await lock.canLock(tg, CHAT, "supergroup");
   assert.match(res.reason, /Ban users/);
 });
+
+test("a MOVED count re-posts within a minute; mere chatter still waits", () => {
+  // The two reasons to re-post are not the same event and no longer share a
+  // cooldown. A like that already landed is the raid's news, and an in-place
+  // edit notifies nobody — so from anywhere in the chat except directly on the
+  // card, five minutes of progress and five minutes of silence looked
+  // identical. Chatter is only about visibility and keeps its full wait.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "raid", "runner.js"), "utf8");
+  assert.match(src, /\(movedSinceBump && moveDue\) \|\| \(chattered && bumpDue\)/, "the two reasons are gated separately");
+  assert.match(src, /moveDue = sinceBump >= RAID_MOVE_BUMP_SEC \* 1000/, "moves use their own, shorter floor");
+  const c = require("../src/config/constants");
+  assert.ok(c.RAID_MOVE_BUMP_SEC <= 120, `a move waits at most two minutes, got ${c.RAID_MOVE_BUMP_SEC}s`);
+  assert.ok(c.RAID_MOVE_BUMP_SEC >= 20, "…but never fast enough to trip Telegram's flood limits");
+  assert.ok(c.RAID_BUMP_MINUTES * 60 > c.RAID_MOVE_BUMP_SEC, "chatter waits strictly longer than a move");
+});
+
+test("a bump sends BEFORE it deletes, and re-pins the card it just sent", () => {
+  // The reverse order leaves the group with no card at all if the send fails —
+  // losing the raid's only surface to save one message. And a card that moved
+  // without its pin moving is a pin pointing at a deleted message.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "raid", "runner.js"), "utf8");
+  const bump = src.slice(src.indexOf("async function bumpCard"), src.indexOf("// ── Finishing"));
+  assert.ok(bump.indexOf("sendMessage") < bump.indexOf("deleteMessage"), "send first, delete after");
+  assert.ok(bump.indexOf("deleteMessage") < bump.indexOf("pinCard"), "then pin the new one");
+});
