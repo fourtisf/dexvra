@@ -876,6 +876,21 @@ async function pollTrades(tg, entry) {
   const minUsd = Math.min(...entry.groups.map((g) => cfg.minBuyOf(g)));
   const cursorNow = state.cursors[entry.key] || null;
   const startedAt = now();
+  // DECLARED, because this file is sloppy-mode CommonJS and these two were not.
+  // `buys = …` on an undeclared name writes globalThis, and scanOnce walks every
+  // pool sequentially in ONE process — so the value survived into the next pool:
+  //
+  //   • A chain with no chainTrades reader never entered the block below, read
+  //     the PREVIOUS pool's array at `buys === null`, and therefore skipped its
+  //     only feed — then posted that other pool's buys, buyers and tx hashes
+  //     into this group, repriced at this token's price, behind this chain's
+  //     explorer link. A wrong alert in a customer's chat, from a token they
+  //     do not track.
+  //   • On the first such pool in a fresh process there is no previous value at
+  //     all, so it was a ReferenceError — swallowed by scanOnce's
+  //     .catch(log.debug), which prints nothing without DEBUG. Silent.
+  let buys = null;
+  let source = null;
 
   // THE CHAIN FIRST, AND WITHOUT A PRICE.
   //
