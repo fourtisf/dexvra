@@ -10,6 +10,7 @@
     "x:check": "node scripts/x-check.js",
     "poolstrade:check": "node scripts/poolstrade-check.js",
     "buybot:check": "node scripts/buybot-check.js",
+    "group:ca": "node scripts/group-ca.js",
     "raid:check": "node scripts/raid-check.js",
     "mongo:check": "node scripts/mongo-check.js",
     "backup:check": "node scripts/backup-check.js",
