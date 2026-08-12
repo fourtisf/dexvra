@@ -388,6 +388,44 @@ const BUY_CARD_EMOJI_KEYS = [
 const ALL_EMOJI_PER_PAGE = 21;
 const ALL_EMOJI_GROUPS = ["Group Buy Bot", "Dexvra Raid"];
 
+/**
+ * Names for the icons whose DERIVED hint is useless.
+ *
+ * emojiHint reads the first word after the icon, which is exactly right on a
+ * data row — "💲 {usd}{native}" → usd, "📈 Chart" → Chart — and worthless in a
+ * sentence: "❌ That isn't an X post link" → "That", "🎉 Every goal cleared" →
+ * "Every", and BOTH "⌛ RAID EXPIRED" and "🛑 RAID STOPPED" → "RAID", which put
+ * two different icons on the screen under one meaningless name.
+ *
+ * Keyed on the glyph the CODE SHIPS, so it survives every swap — the operator
+ * who changed ⌛ for something else still sees "expired". English, to match the
+ * derived hints beside them (Crew, Chart, Likes); a half-translated screen
+ * reads worse than a consistent one.
+ *
+ * Only the ones the heuristic gets WRONG are listed. Anything absent keeps its
+ * derived hint, which stays true when an operator rewords the row.
+ */
+const EMOJI_NAMES = {
+  "❌": "bad link",
+  "🎉": "raid done",
+  "⌛": "expired",
+  "🛑": "stopped",
+  "👥": "group only",
+  "⏳": "launching",
+  "⏱": "clock",
+  "🔗": "post link",
+  "🔒": "lock chat",
+  "🔥": "listing",
+  "➕": "add to group",
+  "🗑": "remove CA",
+  "🚨": "buy banner",
+  // 🟢 and 🤖 both derived to "buy" — the size row and the Buy Bot button, two
+  // unrelated icons under one name, which is the same failure as ⌛/🛑.
+  "🐋": "whale",
+  "🟢": "buy bar",
+  "🤖": "buy bot",
+};
+
 /** The keys this screen owns: the buy card's own eight, plus every template in
  *  the buy-bot and raid groups. Derived from the registry rather than listed,
  *  so a raid template added tomorrow is on the screen the same day. */
@@ -422,7 +460,9 @@ function allEmojiSlots() {
       const identity = e.baseChar || e.char;
       const slot = bySlot.get(identity) || { char: e.char, id: e.id, label: "", spots: [] };
       if (!slot.id && e.id) slot.id = e.id;
-      if (!slot.label) slot.label = emojiHint(key, e);
+      // The curated name wins where the heuristic is wrong; everywhere else the
+      // derived hint stays, so a reworded row still names itself correctly.
+      if (!slot.label) slot.label = EMOJI_NAMES[identity] || emojiHint(key, e);
       slot.spots.push({ key, i: e.i });
       bySlot.set(identity, slot);
     }

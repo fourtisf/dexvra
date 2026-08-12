@@ -210,3 +210,32 @@ test("the raid preview is built by the RAID'S OWN builder, not a typed lookalike
     await tpl.resetTemplate("raid_style");
   }
 });
+
+test("no two icons share a name, and none is named after a stray word", () => {
+  // emojiHint reads the first word after the icon — right on a data row
+  // ("💲 {usd}" → usd), worthless in a sentence: "❌ That isn't an X post link"
+  // → "That", and BOTH "⌛ RAID EXPIRED" and "🛑 RAID STOPPED" → "RAID", which
+  // put two different icons on the screen under one meaningless name.
+  const slots = allEmojiSlots();
+  const named = slots.filter((s) => s.label);
+  assert.strictEqual(named.length, slots.length, "every icon on this screen has a name");
+  const names = named.map((s) => s.label.toLowerCase());
+  assert.strictEqual(new Set(names).size, names.length, `no duplicate names: ${names.join(", ")}`);
+  // The specific words the heuristic produced, as a regression guard.
+  for (const junk of ["that", "every", "raid"]) {
+    const dupes = named.filter((s) => s.label.toLowerCase() === junk);
+    assert.ok(dupes.length <= 1, `"${junk}" must not name several icons`);
+  }
+});
+
+test("a curated name survives the swap that hides the icon", () => {
+  // Keyed on the glyph the CODE ships, so the operator who changed ⌛ for
+  // something else still reads "expired" rather than hunting for an hourglass
+  // that is no longer there.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
+  assert.match(src, /EMOJI_NAMES\[identity\] \|\| emojiHint/, "curated first, derived as the fallback");
+  const slots = allEmojiSlots();
+  for (const want of ["expired", "stopped", "bad link", "group only"]) {
+    assert.ok(slots.some((s) => s.label === want), `"${want}" is on the screen`);
+  }
+});
