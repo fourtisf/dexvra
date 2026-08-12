@@ -179,3 +179,25 @@ test("a bare /setwhale opens the picker instead of printing syntax", async () =>
   assert.ok(setup.WHALE_PRESETS.length >= 3);
   assert.ok(labels(ctx.replies[0].extra).some((l) => l.startsWith("$")), "bars to tap");
 });
+
+test("the /settoken receipt leads its chain row with THAT chain's own mark", async () => {
+  // A fixed 🔗 said "chain" to a reader who could already see the word Chain
+  // beside it, and spent the one position on the row that could carry the
+  // network's identity. It reads the same admin-editable `chain_emojis` map as
+  // the buy cards and the channel posts, so setting a premium Solana emoji
+  // once lights it up in all three.
+  const tpl = require("../src/templates");
+  const { chainEmoji } = require("../src/channels/format");
+  const vars = { nameRow: "📃 **Plumber**", address: "GCa9pump", links: "", minBuy: "$10", whale: "$50,000" };
+  for (const chain of ["solana", "robinhood", "bsc"]) {
+    const line = tpl
+      .render("settoken_ok", { ...vars, chain, chainEmoji: chainEmoji(chain) })
+      .text.split("\n")
+      .find((l) => l.includes("Chain:"));
+    assert.ok(line.startsWith(chainEmoji(chain)), `${chain}: row leads with its own mark, got ${line}`);
+  }
+  // Two different chains must not render the same mark, or the row says nothing.
+  assert.notStrictEqual(chainEmoji("solana"), chainEmoji("robinhood"));
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "setup.js"), "utf8");
+  assert.match(src, /chainEmoji: require\("\.\.\/channels\/format"\)\.chainEmoji/, "fed from the shared map, not a literal");
+});

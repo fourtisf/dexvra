@@ -484,13 +484,38 @@ async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot, deadline })
         .reverse();
       if (!wanted.length) return [];
 
+      // COUNTED, because "nothing decoded" and "nothing could be read" are
+      // opposite facts that used to look identical.
+      //
+      // A public Solana endpoint rate-limits a burst of getTransaction calls
+      // long before forty of them land. Every fetch then failed, `out` came
+      // back empty, and an empty array means "the pool is quiet" — so
+      // buyMonitor advanced the cursor past buys it had never seen and the
+      // group went silent for good, with nothing logged and nothing to fall
+      // back to. A token that was set up correctly simply never alerted.
+      //
+      // The count is of transactions FETCHED, never of buys emitted: a window
+      // of forty sells reads perfectly and emits nothing, and calling that
+      // unreadable would put every dumping pool on the indexer and fire a
+      // dead-pool warning at a reader that is working exactly as intended.
+      let fetched = 0;
+      let firstErr = null;
       const out = await mapBounded(
         wanted,
         async (sig) => {
-          const tx = await conn
-            .getTransaction(sig.signature, { maxSupportedTransactionVersion: 0 })
-            .catch(() => null);
+          let tx = null;
+          try {
+            tx = await conn.getTransaction(sig.signature, { maxSupportedTransactionVersion: 0 });
+          } catch (e) {
+            // KEPT, not swallowed. The node's own words are what rpcRead
+            // classifies on: a 429 is a transport failure worth asking another
+            // endpoint about, and a malformed request is not. Replacing it
+            // with a message of our own throws that away and makes every
+            // failure look permanent.
+            if (!firstErr) firstErr = e;
+          }
           if (!tx || !tx.meta) return null;
+          fetched++;
           const keys = tx.transaction.message.staticAccountKeys
             ? tx.transaction.message.staticAccountKeys.map((k) => k.toBase58())
             : (tx.transaction.message.accountKeys || []).map((k) => (k.toBase58 ? k.toBase58() : String(k)));
@@ -525,6 +550,11 @@ async function solanaBuys(chain, pool, token, { sinceSig, sinceSlot, deadline })
         },
         { deadline },
       );
+      // Signatures to read, and not one of them readable. That is the endpoint
+      // refusing us, not a quiet pool — throw, so rpcRead tries the next node
+      // and, if they all refuse, fetchPoolBuys returns null and the caller
+      // falls back to the indexer instead of advancing past buys it never saw.
+      if (!fetched) throw firstErr || new Error(`solana: ${wanted.length} signature(s) to read, none readable`);
       return out;
     },
     { timeoutMs: TIMEOUT_MS, budgetMs: BUDGET_MS, onFail: dropEndpoint },

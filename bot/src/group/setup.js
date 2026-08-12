@@ -380,6 +380,10 @@ async function applyToken(ctx, address) {
   const { text, extra } = payloadArgs(
     tpl.render("settoken_ok", {
       chain: chainOf(res.chain).label,
+      // The network's own mark, from the same admin-editable `chain_emojis`
+      // map the buy cards read — so setting a premium Solana emoji once lights
+      // it up here, on the alert cards and in the channel posts together.
+      chainEmoji: require("../channels/format").chainEmoji(res.chain),
       // The token's own name and ticker come from a third-party feed, so they go
       // through the same sanitiser the alert cards use — a token literally named
       // "[click](url)" would otherwise inject a link into the group's setup reply.

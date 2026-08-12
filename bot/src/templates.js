@@ -630,10 +630,16 @@ const DEFAULTS = {
   // socials rather than leaving a dangling label. {website} {twitter}
   // {telegram} are the same three on their own if you would rather lay them out
   // yourself; each is empty when that link was not found.
+  // {chainEmoji} is the NETWORK'S OWN mark, from the same `chain_emojis`
+  // template the buy cards and the channel posts read — so a Solana token
+  // leads with Solana's, a Robinhood token with Robinhood's, and a PREMIUM
+  // emoji pasted there animates here too. A fixed 🔗 said "chain" to a reader
+  // who could already see the word Chain next to it, and spent the one
+  // position on the row that could have carried the network's identity.
   settoken_ok:
     "✅ **Live on {chain}**\n\n" +
     "{nameRow}\n" +
-    "🔗 Chain: {chain}\n" +
+    "{chainEmoji} Chain: {chain}\n" +
     "💎 CA: `{address}`\n" +
     "{links}\n\n" +
     "🚀 Buy alerts are live. Every buy from **{minBuy}** up gets called in here, and a buyer already holding **{whale}** or more gets pinned.\n\n" +
@@ -1157,7 +1163,7 @@ const META = {
   settoken_ok: {
     group: "Group Setup",
     label: "/settoken — live ✅",
-    ph: ["chain", "name", "nameRow", "symbol", "address", "links", "website", "twitter", "telegram", "minBuy", "whale"],
+    ph: ["chain", "chainEmoji", "name", "nameRow", "symbol", "address", "links", "website", "twitter", "telegram", "minBuy", "whale"],
   },
   setchain_unknown: { group: "Group Setup", label: "/setchain — unknown network", ph: ["chains"] },
   setchain_need_token: { group: "Group Setup", label: "/setchain — set the token first", ph: [] },
