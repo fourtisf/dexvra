@@ -243,11 +243,12 @@ const inCooldown = (at = Date.now()) => at < cooldownUntil;
 function armCooldown(why, at = Date.now()) {
   if (inCooldown(at)) return;
   cooldownUntil = at + COOLDOWN_MS;
-  // Louder than it used to need to be. When the volume estimator still existed
-  // this cost a group some accuracy; now that a buy is only alerted with its
-  // transaction, it costs them the alert entirely until the feed is back — so
-  // the log has to say what to do about it, not just that it happened.
-  log.warn(
+  // noise, not warn: the bot handles this by itself (pauses, then recovers),
+  // and under a sustained limit the same message re-armed every couple of
+  // minutes and drowned the ops channel — the operator asked for it gone.
+  // pm2 logs keep every line, with the GECKOTERMINAL_API_KEY hint; set
+  // OPS_VERBOSE=1 to put it back in the channel while chasing something.
+  log.noise(
     `[buybot] GeckoTerminal backing off for ${COOLDOWN_MS / 1000}s — ${why}. ` +
       (GT_KEY
         ? "Buy alerts are paused process-wide until it lifts."

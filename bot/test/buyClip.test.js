@@ -63,6 +63,30 @@ test("a GIF is sent as an ANIMATION with the alert as its caption", async () => 
   assert.strictEqual(extra.entities, undefined);
 });
 
+test("a self-handled clip fallback stays OUT of the ops channel", async () => {
+  // The alert still goes out (as text), the preview screen reports refused
+  // clips where the operator edits the card, and pm2 logs keep the line — the
+  // ops channel is for things somebody must act on, and this is not one.
+  const log = require("../src/helpers/logger");
+  const channel = [];
+  log._resetDedupe();
+  log.attach({ telegram: { sendMessage: async (_c, text) => channel.push(text) } }, "@logs");
+  try {
+    writeClip("gif");
+    const tg = {
+      sendMessage: async () => ({ message_id: 1 }),
+      sendAnimation: async () => {
+        throw new Error("400: wrong file identifier");
+      },
+      sendVideo: async () => {},
+    };
+    await mon.sendAlert(tg, "-100", "buy!", {});
+    assert.deepStrictEqual(channel, [], "nothing forwarded for a handled fallback");
+  } finally {
+    log.attach(null, "", "");
+  }
+});
+
 test("a 429 on the clip BUBBLES — one flood event, one warning, the clip kept for the retry", async () => {
   // The chat is flooded, not the clip rejected: the text fallback would hit
   // the same wall, warning the ops channel twice for one event and delivering

@@ -715,8 +715,10 @@ async function sendAlert(tg, chatId, text, extra, kind = "buy", onClipError = nu
       // and a clipless alert where holding off keeps the buy for a retry WITH
       // its artwork. Let it bubble to the flood handler, whose job this is.
       if (retryAfterOf(e)) throw e;
-      // A rejected clip must cost the ARTWORK, never the alert.
-      log.warn(`[buybot] buy clip failed for ${chatId} (${e.message}) — sending the alert as text`);
+      // A rejected clip must cost the ARTWORK, never the alert. noise: the
+      // alert still goes out, and the admin preview reports clip refusals
+      // where the operator actually edits the card.
+      log.noise(`[buybot] buy clip failed for ${chatId} (${e.message}) — sending the alert as text`);
       // The admin preview passes a reporter here: a clip Telegram refuses (a
       // card too long for a caption, broken entities, a bad file) is invisible
       // from the group — the text fallback looks exactly like "no clip
@@ -794,7 +796,9 @@ async function deliver(tg, chatId, payload, dedupeId, opts = {}) {
       // would let the latch swallow the retry.
       if (dedupeId) await latch.release(chatId, dedupeId);
       floodUntil.set(String(chatId), now() + wait * 1000);
-      log.warn(`[buybot] ${chatId} is rate limited by Telegram — holding off ${wait}s before the next alert`);
+      // noise: the hold-off IS the handling — waiting exactly as long as
+      // Telegram asked — and there is nothing for an operator to do about it.
+      log.noise(`[buybot] ${chatId} is rate limited by Telegram — holding off ${wait}s before the next alert`);
       return false;
     }
     if (isFatalChatError(e)) {

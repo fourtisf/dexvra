@@ -900,7 +900,9 @@ async function toInlineClip(media) {
     log.info(`[bannerTpl] clip→animation ✔ ${path.basename(media.source)} → ${path.basename(out)} (autoplays, loops, no controls)`);
     return { type: "animation", source: out };
   } catch (e) {
-    log.warn(`[bannerTpl] clip→animation failed (${e.message}) — sending as-is (may post as a file card)`);
+    // noise: fails open by design — the clip still posts, just as uploaded.
+    // Babysitting lines like this were drowning the ops channel.
+    log.noise(`[bannerTpl] clip→animation failed (${e.message}) — sending as-is (may post as a file card)`);
     fss.promises.unlink(out).catch(() => {});
     return media;
   }

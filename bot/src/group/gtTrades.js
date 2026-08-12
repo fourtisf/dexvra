@@ -54,7 +54,9 @@ function noteUnavailable(key, reason) {
   const why = reason === "cooldown"
     ? "the shared GeckoTerminal cooldown is armed (rate limited)"
     : reason;
-  log.warn(
+  // noise: self-handled (the pool resumes on the first poll that works), and
+  // during a rate-limit spell one copy per pool per 10min flooded the channel.
+  log.noise(
     `[buybot] ${key}: trades feed unreadable — ${why}. No alert is posted without its ` +
       "transaction, so this pool stays quiet until the feed answers; buys inside the last " +
       "30 minutes still post, with their hashes, on the first poll that works.",
