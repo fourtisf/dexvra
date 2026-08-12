@@ -143,7 +143,7 @@ const poolKeyOf = (chain, pool) => `${chain}:${String(pool).toLowerCase()}`;
  * The cost is that a quiet pool re-reads its newest block every poll — which
  * is exactly what the per-transaction dedupe below is for.
  */
-function selectFresh(cursor, buys, at = now()) {
+function selectFresh(cursor, buys, at = now(), minUsd = 0) {
   if (!cursor) {
     const cutoff = at - FIRST_SIGHT_MS;
     return buys.filter((b) => b.blockTimeMs && b.blockTimeMs >= cutoff).slice(-FIRST_SIGHT_MAX);
@@ -162,9 +162,25 @@ function selectFresh(cursor, buys, at = now()) {
   // left it with one "≈ $340 across 11 buys" instead. Nothing summarises buys
   // ahead of this path now, so nothing needs suppressing: the per-tx latch is
   // the only dedupe, and it has a hash to work with.
-  return after
-    .filter((b) => !b.blockTimeMs || b.blockTimeMs >= at - MAX_ALERT_AGE_MS)
-    .slice(0, MAX_PER_POLL); // oldest first, so a burst is paced in order
+  return (
+    after
+      .filter((b) => !b.blockTimeMs || b.blockTimeMs >= at - MAX_ALERT_AGE_MS)
+      // A buy under EVERY group's floor cannot be posted by anyone, so it must
+      // not spend one of the MAX_PER_POLL slots either.
+      //
+      // It used to. A token with a busy dust tail — a few hundred sub-dollar
+      // trades between two real buys — handed the pacer eight of them per
+      // poll, posted none, advanced the cursor by eight and logged "paced —
+      // more buys queued for the next poll". Forever. The group's genuine
+      // $100 buy sat behind that queue for hours, so a bot that was working
+      // perfectly produced no alerts and a wall of pacing lines.
+      //
+      // Only applied when the amount is KNOWN: the chain reader returns
+      // amounts and gets its dollars later in pollTrades, and dropping those
+      // here would drop every chain-read buy there is.
+      .filter((b) => !(minUsd > 0) || !(Number(b.usd) > 0) || Number(b.usd) >= minUsd)
+      .slice(0, MAX_PER_POLL) // oldest first, so a burst is paced in order
+  );
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -934,7 +950,7 @@ async function pollTrades(tg, entry) {
     return true;
   }
 
-  const fresh = selectFresh(cursor, buys);
+  const fresh = selectFresh(cursor, buys, now(), minUsd);
   const newest = buys[buys.length - 1].blockNumber || 0;
   // Solana has no "read from block N" — getSignaturesForAddress walks BACK
   // until it recognises a signature. Carrying the newest one is what stops each

@@ -585,3 +585,24 @@ test("the editor warns that a group card cannot render premium emoji", () => {
   assert.strictEqual((src.match(/isGroupPosted\(key\) \? GROUP_PREMIUM_NOTE/g) || []).length, 2,
     "on the list AND on the per-slot prompt — either one alone is missable");
 });
+
+test("dust never spends a pacing slot — a real buy behind it must not wait hours", () => {
+  // The reported failure: a pool with a busy sub-dollar tail handed the pacer
+  // eight dust trades per poll, posted none, advanced the cursor by eight and
+  // logged "paced — more buys queued for the next poll" every single time. The
+  // group's genuine $112 buy sat behind that queue while the bot worked
+  // perfectly and produced nothing.
+  const t = Date.now();
+  const dust = Array.from({ length: 200 }, (_, i) => ({
+    txHash: `d${i}`, usd: 0.4, blockNumber: 1000 + i, blockTimeMs: t - 60_000,
+  }));
+  const real = { txHash: "REAL", usd: 112.9, blockNumber: 1300, blockTimeMs: t - 60_000 };
+  const cursor = { b: 1000, t };
+  const paced = mon.selectFresh(cursor, [...dust, real], t, 10);
+  assert.ok(paced.some((b) => b.txHash === "REAL"), "the postable buy is reachable on THIS poll");
+  assert.ok(!paced.some((b) => b.usd < 10), "and no sub-floor trade took a slot");
+  // Without a floor nothing is dropped — the chain reader has no dollars yet
+  // at this point, and discarding those would discard every chain-read buy.
+  const unpriced = [{ txHash: "x", tokenAmount: 5, blockNumber: 1000, blockTimeMs: t - 60_000 }];
+  assert.strictEqual(mon.selectFresh(cursor, unpriced, t, 10).length, 1, "unpriced buys survive the filter");
+});
