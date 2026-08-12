@@ -129,3 +129,25 @@ test("the screen is one tap from the main menu", () => {
   const labels = admin._menu.mainKb().reply_markup.inline_keyboard.flat();
   assert.ok(labels.some((b) => b.callback_data === "aem:0"), "an entry on the front page");
 });
+
+test("the screen can SHOW the result — an icon on a button is not the card", () => {
+  // The hint beside a button names the row the icon sits on, which is enough to
+  // pick the right button and nowhere near enough to judge the result: whether
+  // the new glyph is wider than the one it replaced, whether it still reads
+  // under the row above it. Both surfaces this screen owns are previewable.
+  const cb = flat(allEmojiKb(0)).map((b) => b.callback_data);
+  assert.ok(cb.some((d) => /^aemp:\d+$/.test(d)), `a look-at-it button: ${cb.join(", ")}`);
+  // And it returns to the page it was opened from, not to page one.
+  const fromPage2 = flat(allEmojiKb(1)).map((b) => b.callback_data);
+  assert.ok(fromPage2.includes("aemp:1"), "the preview carries the page back with it");
+});
+
+test("both cards this screen styles actually render", () => {
+  // A preview that throws is worse than none: it is the screen telling an
+  // operator their template is broken when it is the preview that is.
+  const { renderSample } = admin._preview;
+  const raid = renderSample("raid_card");
+  assert.ok(raid.text.includes("Crew"), "the raid card is real");
+  const buy = admin._buyEmoji.buyPreviews("buy")[0].payload;
+  assert.match(buy.text, /BUY!/, "and so is the buy card");
+});

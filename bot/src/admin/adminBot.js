@@ -442,6 +442,12 @@ function allEmojiKb(page = 0) {
       cb("Next ▶", `aem:${(p + 1) % pages}`),
     ]);
   }
+  // An icon on a button is not the card. The hint beside it names the ROW the
+  // icon sits on, which is enough to pick the right button and nowhere near
+  // enough to judge the result — whether the new glyph is wider than the one it
+  // replaced, whether it still reads under the row above it. Both surfaces this
+  // screen owns, sent as a group would receive them.
+  rows.push([cb("👁 Lihat hasilnya (buy + raid)", `aemp:${p}`)]);
   rows.push([cb("⬅ Kembali", "home")]);
   return Markup.inlineKeyboard(rows);
 }
@@ -2622,10 +2628,33 @@ function build() {
     await sendBuyEmojiPicker(ctx);
   });
 
-  // ── Every icon in the bot, one screen ────────────────────────────────────
+  // ── The buy card's and the raid's icons, one screen ──────────────────────
   async function sendAllEmojiPicker(ctx, page) {
     await ctx.reply(allEmojiText(page), { ...HTML, ...allEmojiKb(page) }).catch(() => {});
   }
+  /** Both surfaces this screen owns, as a group would receive them: the buy
+   *  card through the alert's own sender (so its clip plays too), the raid card
+   *  through the same renderer the live board uses. */
+  async function sendAllEmojiPreview(ctx) {
+    await sendBuyPreview(ctx, "buy");
+    let payload;
+    try {
+      payload = renderSample("raid_card");
+    } catch (e) {
+      return void ctx.reply(`⚠️ Kartu raid gagal dirender: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+    }
+    const { text, extra } = payloadArgs(payload);
+    await ctx.reply(`👁 <b>Raid</b> — contoh`, HTML).catch(() => {});
+    await ctx.reply(text, extra).catch((e) => {
+      ctx.reply(`⚠️ Telegram menolak kartu ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
+    });
+  }
+  bot.action(/^aemp:(\d+)$/, async (ctx) => {
+    ctx.answerCbQuery("Merender…").catch(() => {});
+    if (!guard(ctx)) return;
+    await sendAllEmojiPreview(ctx);
+    await sendAllEmojiPicker(ctx, Number(ctx.match[1]) || 0);
+  });
   bot.action(/^aem:(\d+)$/, async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -3993,9 +4022,12 @@ function build() {
       // buy is hours away, in a customer's group, in public. Seeing it here is
       // the difference between changing an icon and choosing one.
       if (from === "aem") {
-        // Straight back to the same page, so restyling forty icons is forty
-        // taps and not forty round trips through the main menu. No preview:
-        // a slot here spans templates that have no single card to show.
+        // The cards, then straight back to the same page — so restyling forty
+        // icons is forty taps rather than forty round trips through the menu,
+        // and each one is CHOSEN rather than merely changed. "Aktif dalam ~30
+        // detik" is not something an operator can check: the next real buy is
+        // hours away, in a customer's group, in public.
+        await sendAllEmojiPreview(ctx);
         await sendAllEmojiPicker(ctx, page || 0);
       } else if (from === "bem") {
         await sendBuyPreview(ctx);
