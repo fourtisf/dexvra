@@ -770,9 +770,15 @@ const DEFAULTS = {
   // a token with no socials (most fresh launches) loses the whole row instead of
   // leaving a blank line where it was. Their icons and wording live in
   // `social_emojis` / `social_labels`.
+  // {chainEmoji} is the NETWORK'S OWN mark, from the admin-editable
+  // `chain_emojis` map — the same one the buy cards and the channel posts read,
+  // so a premium Solana emoji set once lights up in all of them. It was already
+  // passed to this template and simply never used: the row led with a fixed 🔗,
+  // which told a reader "chain" next to a word that already said Solana, and
+  // spent the only icon position on the row saying nothing.
   group_ca:
     "💵 {label}\n" +
-    "🔗 {chain}\n" +
+    "{chainEmoji} {chain}\n" +
     "`{address}`\n\n" +
     "{links}",
   // The icons and the wording on the socials row — for /ca AND the /settoken

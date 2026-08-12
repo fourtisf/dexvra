@@ -54,7 +54,10 @@ test("name, network and address sit on three consecutive lines", async () => {
     const ctx = ctxFor("-1002");
     await configure("-1002");
     await setup.ca(ctx);
-    assert.strictEqual(ctx.sent[0].text, `💵 alon $ALON\n🔗 Solana\n${ADDR}`);
+    // The network row leads with the NETWORK'S mark, not a fixed 🔗 — read from
+    // the shared chain_emojis map so it moves with the buy cards.
+    const { chainEmoji } = require("../src/channels/format");
+    assert.strictEqual(ctx.sent[0].text, `💵 alon $ALON\n${chainEmoji("solana")} Solana\n${ADDR}`);
   } finally {
     ds.fetchTokenInfo = real;
     setup._linksCache.clear();
@@ -252,8 +255,12 @@ test("EVERY emoji on the card is reachable from the emoji editor", async () => {
     const ctx = ctxFor("-1015");
     await configure("-1015");
     await setup.ca(ctx);
+    // chain_emojis is in the list because the network mark on the row is the
+    // NETWORK'S own, from the map the buy cards and channel posts share — a
+    // different template, but reachable from the same admin bot, which is what
+    // this test is actually about.
     const swappable = new Set(
-      ["group_ca", "social_emojis"].flatMap((k) => tpl.listEmojis(k).map((e) => e.char)),
+      ["group_ca", "social_emojis", "chain_emojis"].flatMap((k) => tpl.listEmojis(k).map((e) => e.char)),
     );
     const onCard = [...new Set([...ctx.sent[0].text.matchAll(/\p{Extended_Pictographic}/gu)].map((m) => m[0]))];
     assert.deepStrictEqual(onCard.filter((c) => !swappable.has(c)), []);
@@ -339,4 +346,21 @@ test("the trade link has ONE definition, shared with the buy card", () => {
     null,
   );
   assert.strictEqual(vars.tradeUrl, tradeDeepLink("solana", ADDR));
+});
+
+test("the /ca card leads its chain row with THAT chain's own mark", () => {
+  // {chainEmoji} was already passed to this template and simply never used: the
+  // row led with a fixed 🔗, which told a reader "chain" beside a word that
+  // already said Solana. It reads the same admin-editable chain_emojis map as
+  // the buy cards and the channel posts, so one premium emoji covers all three.
+  const tpl = require("../src/templates");
+  const { chainEmoji } = require("../src/channels/format");
+  const row = (chain) =>
+    tpl
+      .render("group_ca", { label: "**T** $T", chain, chainEmoji: chainEmoji(chain), address: "CA", links: "" })
+      .text.split("\n")[1];
+  for (const chain of ["solana", "robinhood", "bsc"]) {
+    assert.ok(row(chain).startsWith(chainEmoji(chain)), `${chain}: got ${row(chain)}`);
+  }
+  assert.notStrictEqual(chainEmoji("solana"), chainEmoji("robinhood"), "or the row says nothing");
 });
