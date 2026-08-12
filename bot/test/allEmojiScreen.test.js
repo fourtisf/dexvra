@@ -151,3 +151,32 @@ test("both cards this screen styles actually render", () => {
   const buy = admin._buyEmoji.buyPreviews("buy")[0].payload;
   assert.match(buy.text, /BUY!/, "and so is the buy card");
 });
+
+test("the prompt NAMES the templates, it does not just count them", () => {
+  // "6 tempat di 6 template" tells an operator the blast radius and nothing
+  // about the blast: they are about to change an icon they cannot place, on
+  // cards they cannot see from that screen. "untuk yang mana?" was the question,
+  // and it has to be answered before the answer matters.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
+  assert.match(src, /labels\.map\(\(l\) => `• \$\{escapeHtml\(l\)\}`\)/, "each template is listed by its own label");
+  assert.match(src, /await sendSlotPreview\(ctx, slot\)/, "and the card is shown with it");
+});
+
+test("a slot previews the card it actually lives on, and only that one", () => {
+  // Sending a raid card under a question about the money row is noise, and
+  // noise is what an operator scrolls past instead of reading.
+  const { BUY_CARD_EMOJI_KEYS } = admin._buyEmoji;
+  const surfaces = (char) => {
+    const slot = allEmojiSlots().find((s) => s.char === char);
+    assert.ok(slot, `${char} is on the screen`);
+    const keys = new Set(slot.spots.map((s) => s.key));
+    return {
+      buy: BUY_CARD_EMOJI_KEYS.some((k) => keys.has(k)),
+      raid: [...keys].some((k) => k.startsWith("raid_")),
+    };
+  };
+  // 💲 is the buy card's money row and has nothing to do with a raid.
+  assert.deepStrictEqual(surfaces("💲"), { buy: true, raid: false });
+  // 🤝 is the raid's Crew row and has nothing to do with a buy alert.
+  assert.deepStrictEqual(surfaces("🤝"), { buy: false, raid: true });
+});

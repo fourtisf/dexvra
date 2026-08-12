@@ -2649,6 +2649,33 @@ function build() {
       ctx.reply(`⚠️ Telegram menolak kartu ini: <code>${escapeHtml(String(e && e.message))}</code>`, HTML).catch(() => {});
     });
   }
+  /**
+   * The card(s) ONE slot appears on — the answer to "untuk yang mana?".
+   *
+   * Only the surfaces the slot actually touches. An icon that lives on the buy
+   * card gets the buy card; a raid icon gets the raid card; the handful that
+   * appear on both get both. Sending everything every time would make the
+   * preview something an operator scrolls past instead of reads.
+   */
+  async function sendSlotPreview(ctx, slot) {
+    const keys = new Set(slot.spots.map((s) => s.key));
+    const onBuy = BUY_CARD_EMOJI_KEYS.some((k) => keys.has(k));
+    const onRaid = [...keys].some((k) => k.startsWith("raid_"));
+    if (onBuy) await sendBuyPreview(ctx, "buy");
+    if (onRaid) {
+      try {
+        const { text, extra } = payloadArgs(renderSample("raid_card"));
+        await ctx.reply(`👁 <b>Raid</b> — contoh`, HTML).catch(() => {});
+        await ctx.reply(text, extra).catch(() => {});
+      } catch {
+        /* a template that will not render must not block the swap */
+      }
+    }
+    // Neither: the icon lives on a toast or a prompt, which has no card. The
+    // named list above is the whole answer, and inventing a card for it would
+    // be worse than saying nothing.
+  }
+
   bot.action(/^aemp:(\d+)$/, async (ctx) => {
     ctx.answerCbQuery("Merender…").catch(() => {});
     if (!guard(ctx)) return;
@@ -2674,14 +2701,32 @@ function build() {
     if (!slot) return sendAllEmojiPicker(ctx, 0);
     const page = Math.floor(Number(ctx.match[1]) / ALL_EMOJI_PER_PAGE);
     ctx.session.awaitingEmoji = { spots: slot.spots, from: "aem", page, was: slot.char };
-    const where = [...new Set(slot.spots.map((s) => s.key))].length;
+    const keys = [...new Set(slot.spots.map((s) => s.key))];
+    // NAMED, not counted. "6 tempat di 6 template" tells an operator the blast
+    // radius and nothing about the blast: they are about to change an icon they
+    // cannot place, on cards they cannot see from here. The templates are
+    // listed by their own labels, and the CARD each one feeds is previewed
+    // below — so the question "untuk yang mana?" is answered before the answer
+    // matters rather than after.
+    const labels = keys.map((k) => {
+      try {
+        return tpl.meta(k).label;
+      } catch {
+        return k;
+      }
+    });
     await ctx.reply(
       `⌨ Kirim emoji pengganti untuk ${escapeHtml(slot.char)}` +
         `${slot.label ? ` — <b>${escapeHtml(slot.label)}</b>` : ""}${slot.id ? " (sekarang 💎 premium)" : ""}.\n\n` +
-        `Ini akan mengubah <b>${slot.spots.length} tempat</b> di ${where} template sekaligus. ` +
-        `Teks template tidak diubah sama sekali.\n\n/cancel untuk batal.`,
+        `Ini akan mengubah <b>${slot.spots.length} tempat</b> di ${keys.length} template:\n` +
+        labels.map((l) => `• ${escapeHtml(l)}`).join("\n") +
+        `\n\nTeks template tidak diubah sama sekali.\n\n/cancel untuk batal.`,
       HTML,
     );
+    // …and the card itself, so the icon is seen where it lives. Only the
+    // surfaces this slot actually touches: previewing a raid card under a
+    // question about the money row is noise.
+    await sendSlotPreview(ctx, slot);
   });
 
   bot.action(/^bemx:(\d+)$/, async (ctx) => {
