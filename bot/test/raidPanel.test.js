@@ -240,3 +240,17 @@ test("a display name is clipped by CODE POINT, so an emoji is never split", () =
   assert.strictEqual(panel.displayName({}), "anon");
   assert.strictEqual(panel.displayName({ username: "abc" }), "@abc");
 });
+
+test("the no-X-key line reads as a design, not as a bot somebody forgot to finish", () => {
+  // It is read by a project's own members, in their own group. It used to open
+  // "No X key on this bot", which reads as an incomplete setup — while the
+  // welcome card sells the opposite as the feature: "No X key needed — 🤝 Crew
+  // counts whoever shows up". A raid runs on Crew alone by design.
+  const tpl = require("../src/templates");
+  const line = tpl.t("raid_sources_none");
+  assert.doesNotMatch(line, /^⚡?\s*No X key/i, "it does not open by naming a missing key");
+  assert.match(line, /no X account needed/i, "it states the design");
+  // …and still names the constraint: an admin who sets a Likes target that can
+  // never move has been misled by a friendlier silence.
+  assert.match(line, /Likes/, "the metrics that cannot move are named");
+});

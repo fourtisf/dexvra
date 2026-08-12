@@ -849,8 +849,17 @@ const DEFAULTS = {
     "Targets count **up** from where the post is at launch. A raid runs {maxMinutes} min max.\n" +
     "{sources}",
   raid_panel_record: "📈 **Record:** {started} run · {completed} cleared",
-  raid_sources_none: "⚡ No X key on this bot — 🤝 **Crew** still works, and needs nothing.",
-  raid_sources_partial: "⚡ Reposts need a paid X key — **Likes**, **Replies** and **Crew** are live.",
+  // LEADS WITH WHAT WORKS. These lines are read by a project's own members, in
+  // their own group, and the first one used to open "No X key on this bot" —
+  // which reads as a bot somebody forgot to finish setting up. It is the
+  // opposite: needing no X account is the feature the welcome card sells
+  // ("No X key needed — 🤝 Crew counts whoever shows up"), and a raid runs on
+  // Crew alone by design.
+  //
+  // The constraint is still stated, because an admin who sets a Likes target
+  // that can never move has been misled by a friendlier silence.
+  raid_sources_none: "⚡ 🤝 **Crew** counts whoever shows up — no X account needed. **Likes** and **Replies** stay at 0 until an X key is set.",
+  raid_sources_partial: "⚡ **Likes**, **Replies** and **Crew** are live. **Reposts** need a paid X key — leave that target off.",
   raid_group_only: "👥 Raids run in a group.\n\nAdd the bot to yours, make it admin, then hit /raid there.",
   raid_admin_only: "🔒 Group admins only.",
   // The example is deliberately NOT a Dexvra link. It used to be, and it told
