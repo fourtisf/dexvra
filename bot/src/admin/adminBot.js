@@ -70,7 +70,7 @@ function mainKb() {
     // Above the per-group list on purpose: restyling the bot's icons is the
     // thing an operator comes here to do most, and doing it one template at a
     // time was thirty-nine taps for a single glyph.
-    [Markup.button.callback("🎨 Semua emoji bot (ganti sekaligus)", "aem:0")],
+    [Markup.button.callback("🎨 Emoji buy alert + raid (ganti sekaligus)", "aem:0")],
     [Markup.button.callback("🔍 Preview all templates", "audit")],
     [Markup.button.callback("♻️ Reset ALL templates to default", "resetall")],
     [Markup.button.callback("🖼 Banner Image", "banner")],
@@ -343,22 +343,27 @@ const BUY_CARD_EMOJI_KEYS = [
 ];
 
 /*
- * ── EVERY icon the bot uses, on one screen ──────────────────────────────────
+ * ── The buy card's and the raid's icons, on one screen ──────────────────────
  *
- * 141 templates carry 395 emoji between them — and only 74 DISTINCT glyphs.
- * 🔹 alone appears in 39 places across 31 templates, ⚡ in 21, ✅ in 20. So an
- * operator restyling the bot was opening a template, tapping "😀 Swap emoji",
- * choosing, going back, and doing it again — thirty-nine times for one icon,
- * with no way to know they were not finished. "saya capek set ulang 1/1" is
- * the whole design brief.
+ * Restyling the buy alert used to mean visiting eight templates; the raid card
+ * spreads its icons over twenty more. An operator changing one glyph was
+ * opening a template, tapping "😀 Swap emoji", choosing, going back, and doing
+ * it again — once per template, with no way to know they had finished. "saya
+ * capek set ulang 1/1" is the design brief.
  *
- * IDENTICAL GLYPHS ARE ONE SLOT, exactly as they are on the buy-card screen and
- * for the same reason: an operator thinks in ICONS, not in template rows. The ✅
- * on the position row and the ✅ on a receipt are one decision, and a bot whose
- * ✅ changed in some places and not others reads as broken rather than styled.
+ * SCOPED TO THE TWO SURFACES A PROJECT ACTUALLY SEES, on the operator's own
+ * instruction: these are the cards that land in a customer's group all day. The
+ * receipts, prompts and error lines are already styled and must not be dragged
+ * along by a swap aimed at a buy alert — a screen that changes everything is a
+ * screen you cannot use once you are happy with most of it.
  *
- * The button says how many places it covers, because one tap here can move
- * thirty-nine of them and that is not something to discover afterwards.
+ * IDENTICAL GLYPHS ARE ONE SLOT, exactly as on the buy-card screen and for the
+ * same reason: an operator thinks in ICONS, not in template rows. The ✅ on the
+ * position row and the ✅ on the raid card are one decision, and a bot whose ✅
+ * changed in some places and not others reads as broken rather than styled.
+ *
+ * The button says how many places it covers, because one tap here moves all of
+ * them and that is not something to discover afterwards.
  *
  * chain_emojis is DELIBERATELY excluded — same carve-out the buy screen makes.
  * Those are per-network marks the bot picks by itself, `plasma = 🟢` collides
@@ -366,14 +371,32 @@ const BUY_CARD_EMOJI_KEYS = [
  * day somebody rebranded a chain.
  */
 const ALL_EMOJI_PER_PAGE = 21;
+const ALL_EMOJI_GROUPS = ["Group Buy Bot", "Dexvra Raid"];
 
-/** Every icon in every template, deduped by the glyph the CODE ships — never
- *  by the glyph it currently wears, or two unrelated rows whose swaps happen to
- *  share a fallback char would merge into one button. */
-function allEmojiSlots() {
-  const bySlot = new Map();
+/** The keys this screen owns: the buy card's own eight, plus every template in
+ *  the buy-bot and raid groups. Derived from the registry rather than listed,
+ *  so a raid template added tomorrow is on the screen the same day. */
+function allEmojiKeys() {
+  const keys = new Set(BUY_CARD_EMOJI_KEYS);
   for (const key of tpl.keys()) {
     if (key === "chain_emojis") continue;
+    let group = "";
+    try {
+      group = tpl.meta(key).group;
+    } catch {
+      continue;
+    }
+    if (ALL_EMOJI_GROUPS.includes(group)) keys.add(key);
+  }
+  return [...keys];
+}
+
+/** Every icon on those two surfaces, deduped by the glyph the CODE ships —
+ *  never by the glyph it currently wears, or two unrelated rows whose swaps
+ *  happen to share a fallback char would merge into one button. */
+function allEmojiSlots() {
+  const bySlot = new Map();
+  for (const key of allEmojiKeys()) {
     let list = [];
     try {
       list = tpl.listEmojis(key);
@@ -428,13 +451,14 @@ function allEmojiText(page = 0) {
   const places = slots.reduce((n, s) => n + s.spots.length, 0);
   const nPrem = slots.filter((s) => s.id).length;
   return (
-    `🎨 <b>Semua emoji bot</b>\n\n` +
-    `${slots.length} ikon, dipakai di ${places} tempat di seluruh pesan bot. ` +
+    `🎨 <b>Emoji buy alert + raid</b>\n\n` +
+    `${slots.length} ikon, dipakai di ${places} tempat pada kartu <b>buy/whale</b> dan <b>raid</b>. ` +
     `Tekan satu ikon, kirim penggantinya — <b>semua tempat yang memakai ikon itu ikut berubah sekaligus</b>.\n\n` +
     `Angka <b>×N</b> di tombol adalah berapa tempat yang ikut berubah, jadi Anda tahu dampaknya sebelum menekan. ` +
     `Diurutkan dari yang paling sering dipakai.\n\n` +
     `<b>Teksnya tidak disentuh sama sekali</b> — hanya ikonnya.\n\n` +
-    `ℹ️ Lambang jaringan tidak ada di sini: bot memilihnya sendiri sesuai chain token. ` +
+    `ℹ️ Hanya dua kartu ini yang tersentuh. Struk, prompt dan pesan lain tidak ikut berubah.\n` +
+    `ℹ️ Lambang jaringan juga tidak ada di sini: bot memilihnya sendiri sesuai chain token. ` +
     `Aturnya di <b>Channel Posts → Chain emoji</b>.` +
     (nPrem ? `\n\n💎 ${nPrem} ikon sudah premium.` : "")
   );

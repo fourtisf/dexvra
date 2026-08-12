@@ -1,10 +1,14 @@
-// Every icon the bot uses, on one screen.
+// The buy card's and the raid's icons, on one screen.
 //
-// THE FAILURE, in the operator's own words: "saya capek set ulang 1/1". 141
-// templates carry 395 emoji between them and only 74 DISTINCT glyphs — 🔹 alone
-// appears in 39 places across 31 templates. Restyling the bot meant opening a
-// template, tapping Swap emoji, choosing, going back, and repeating: thirty-nine
-// times for ONE icon, with no way to know when you were finished.
+// THE FAILURE, in the operator's own words: "saya capek set ulang 1/1".
+// Restyling the buy alert meant visiting eight templates and the raid card
+// twenty more — open, tap Swap emoji, choose, go back, repeat, with no way to
+// know you had finished.
+//
+// SCOPED to those two surfaces on the operator's own instruction: "khusus buy
+// alert dan raid, yang lainnya ga usah, jangan diubah apapun". The receipts and
+// prompts are already styled, and a screen that changes everything is a screen
+// you cannot use once you are happy with most of it.
 const path = require("node:path");
 const os = require("node:os");
 const fss = require("node:fs");
@@ -18,17 +22,37 @@ const { allEmojiSlots, allEmojiKb, allEmojiText, allEmojiPages, ALL_EMOJI_PER_PA
 
 const flat = (kb) => kb.reply_markup.inline_keyboard.flat();
 
-test("one screen reaches every icon in every template", () => {
+test("one screen reaches every icon on BOTH surfaces", () => {
   const slots = allEmojiSlots();
   const covered = new Set(slots.flatMap((s) => s.spots.map((p) => `${p.key}#${p.i}`)));
   const missing = [];
   for (const key of tpl.keys()) {
     if (key === "chain_emojis") continue;
+    const group = tpl.meta(key).group;
+    if (group !== "Group Buy Bot" && group !== "Dexvra Raid") continue;
     for (const e of tpl.listEmojis(key)) {
       if (!covered.has(`${key}#${e.i}`)) missing.push(`${key}#${e.i} ${e.char}`);
     }
   }
   assert.deepStrictEqual(missing, [], "an icon with no slot is an icon the operator cannot reach");
+});
+
+test("and it reaches NOTHING else — the rest is already styled and stays put", () => {
+  // The operator's instruction, as a test: a swap aimed at a buy alert must not
+  // drag a receipt or a prompt along with it.
+  const touched = new Set(allEmojiSlots().flatMap((s) => s.spots.map((p) => p.key)));
+  const strays = [...touched].filter((k) => {
+    const g = tpl.meta(k).group;
+    return g !== "Group Buy Bot" && g !== "Dexvra Raid";
+  });
+  assert.deepStrictEqual(strays, [], "only the buy-bot and raid groups are in scope");
+  assert.ok(touched.size < tpl.keys().length / 2, "a small, deliberate slice of the templates");
+});
+
+test("the raid card is genuinely covered, not just the buy card", () => {
+  const touched = new Set(allEmojiSlots().flatMap((s) => s.spots.map((p) => p.key)));
+  assert.ok(touched.has("raid_card"), "the live raid card's icons are reachable here");
+  assert.ok(touched.has("group_buy_alert"), "…and so are the buy card's");
 });
 
 test("identical icons are ONE tap, which is the entire point", () => {
@@ -39,9 +63,9 @@ test("identical icons are ONE tap, which is the entire point", () => {
   const chars = slots.map((s) => s.char);
   assert.strictEqual(new Set(chars).size, chars.length, "no glyph appears on two buttons");
   const busiest = slots[0];
-  assert.ok(busiest.spots.length > 10, `the top slot covers many places, got ${busiest.spots.length}`);
+  assert.ok(busiest.spots.length > 3, `the top slot covers several places, got ${busiest.spots.length}`);
   const places = slots.reduce((n, s) => n + s.spots.length, 0);
-  assert.ok(places > slots.length * 3, `${places} places behind ${slots.length} buttons — that ratio IS the feature`);
+  assert.ok(places > slots.length, `${places} places behind ${slots.length} buttons — that ratio IS the feature`);
 });
 
 test("the busiest icons come first — they are not on page four", () => {
@@ -81,6 +105,7 @@ test("network marks are NOT here — the bot picks those by chain", () => {
   const keys = new Set(allEmojiSlots().flatMap((s) => s.spots.map((p) => p.key)));
   assert.ok(!keys.has("chain_emojis"));
   assert.match(allEmojiText(0), /Chain emoji/, "…and the screen says where they live instead");
+  assert.match(allEmojiText(0), /tidak ikut berubah/, "and that nothing else is touched");
 });
 
 test("one swap really does move every place at once", async () => {
