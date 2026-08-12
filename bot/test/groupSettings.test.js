@@ -81,25 +81,23 @@ test("replying to the prompt sets the token; nothing else is touched", async () 
   assert.strictEqual(cfg.get(-2002).address, CA, "and it did not overwrite the token");
 });
 
-test("an admin dropping a bare CA arms the bot, with no command at all", async () => {
+test("an admin dropping a bare CA is ANSWERED, and nothing is armed until they tap", async () => {
+  // This used to arm the bot on the spot. That is how a group ends up watching
+  // a token nobody chose — somebody pastes a contract to show it to a member
+  // and the bot reads a message that was never addressed to it as a command.
+  // See test/pastedCa.test.js for the confirmation card in full.
   const paste = ctxFor({ text: `  ${CA} `, chatId: -2009 });
   await setup.groupTokenReply(paste, paste.next);
-  assert.strictEqual(paste.nexted, 0);
-  assert.strictEqual(cfg.get(-2009).address, CA);
+  assert.strictEqual(paste.nexted, 0, "the paste is handled, not passed along");
+  assert.strictEqual(cfg.get(-2009), null, "…but nothing is configured by the paste itself");
 
-  // And the three guards around it. A CA inside a sentence is someone TALKING
-  // about a token; a group that already has one must never have it swapped out
-  // by a paste; a non-admin cannot point the bot anywhere.
+  // The guards that remain. A CA inside a sentence is someone TALKING about a
+  // token, and a non-admin cannot point the bot anywhere.
   const chat = ctxFor({ text: `have you seen ${CA} yet`, chatId: -2010 });
   await setup.groupTokenReply(chat, chat.next);
   assert.strictEqual(chat.nexted, 1);
 
   const other = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr";
-  const swap = ctxFor({ text: other, chatId: -2009 });
-  await setup.groupTokenReply(swap, swap.next);
-  assert.strictEqual(swap.nexted, 1);
-  assert.strictEqual(cfg.get(-2009).address, CA, "the live token survived");
-
   const member = ctxFor({ text: other, chatId: -2011, admin: false });
   await setup.groupTokenReply(member, member.next);
   assert.strictEqual(member.nexted, 1);

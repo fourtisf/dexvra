@@ -697,6 +697,23 @@ const DEFAULTS = {
     "📄 **No token set here yet**\n\n" +
     "Paste your contract address in this chat — that's the whole setup. The network is detected from the address.\n\n" +
     "Or tap **📄 Add CA** below.",
+  // ASKED, never assumed. A pasted address used to arm the buy bot on the spot,
+  // which is how a group ended up watching a token nobody in it had chosen:
+  // somebody pasted a CA to show it to someone, and the bot took it as an
+  // instruction. Pointing a project's group at a contract is not a thing to
+  // infer from a message that was never addressed to us.
+  // {current} is the whole "this REPLACES …" line, so it vanishes on a group
+  // with nothing set instead of leaving a dangling label.
+  buybot_activate_ask:
+    "🤖 **Activate the buy bot for this token?**\n\n" +
+    "`{address}`\n" +
+    "{current}" +
+    "Requested by {requester}. Tap below to confirm or cancel.",
+  buybot_activate_replaces: "⚠️ This **replaces** the token this group is watching now — **{symbol}**.\n\n",
+  // Button labels for the card above, pipe separated: confirm | cancel.
+  buybot_activate_buttons: "🤖 Activate buy bot|❌ Cancel",
+  buybot_activate_cancelled: "Cancelled — nothing changed.",
+  buybot_activate_stale: "That request expired. Paste the address again.",
   // The confirm behind 🗑 Remove CA. Says what STOPS and what is KEPT, because
   // an admin swapping one contract for another needs to know their floor and
   // whale bar are not about to be reset — and an admin who mis-tapped needs to
@@ -1164,6 +1181,11 @@ const META = {
   buybot_off: { group: "Group Setup", label: "/buybot off", ph: [] },
   buybot_need_token: { group: "Group Setup", label: "/buybot — not set up yet", ph: [] },
   buybot_status: { group: "Group Setup", label: "/buybot — status card", ph: ["address", "chain", "pool", "minBuy", "whale", "pin", "state"] },
+  buybot_activate_ask: { group: "Group Setup", label: "Pasted CA: activate buy bot?", ph: ["address", "requester", "current"] },
+  buybot_activate_replaces: { group: "Group Setup", label: "Pasted CA: the 'this replaces' warning", ph: ["symbol"] },
+  buybot_activate_buttons: { group: "Group Setup", label: "Pasted CA: buttons (activate|cancel)", ph: [] },
+  buybot_activate_cancelled: { group: "Group Setup", label: "Pasted CA: cancelled toast", ph: [] },
+  buybot_activate_stale: { group: "Group Setup", label: "Pasted CA: expired request toast", ph: [] },
   group_ca: { group: "Group Setup", label: "/ca — the contract address", ph: ["label", "nameRow", "name", "symbol", "chain", "chainEmoji", "address", "links", "website", "twitter", "telegram", "chartUrl", "tradeUrl", "coinUrl"] },
   social_emojis: { group: "Group Setup", label: "Socials row: icons (website/X/telegram)", ph: [] },
   social_labels: { group: "Group Setup", label: "Socials row: wording (website|x|telegram)", ph: [] },

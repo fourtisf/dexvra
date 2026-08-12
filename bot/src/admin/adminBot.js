@@ -94,6 +94,11 @@ const SAMPLE_VARS = {
   logo: "✅ set", overview: "A community-driven memecoin on Solana.",
   website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat",
   label: "Diamond Listing — $BULLCAT on Solana", amount: "1", order: "k3n8_a1b2",
+  // The pasted-CA confirmation card. `current` is a WHOLE row (the "this
+  // replaces …" warning), so the preview shows the swap case — the one an
+  // operator needs to read carefully — rather than the empty first-setup one.
+  requester: "@alfa",
+  current: "⚠️ This **replaces** the token this group is watching now — **$ALON**.\n\n",
   // The socials row, prebuilt — it is a rendered fragment in the real callers
   // (group/setup.js builds it from DexScreener), so an empty string here left
   // every template that carries it previewing a gap where a row belongs.

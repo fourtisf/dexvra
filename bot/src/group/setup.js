@@ -236,17 +236,99 @@ async function groupTokenReply(ctx, next) {
     if (gc && gc.address) return ca(ctx);
     return next();
   }
-  // Not the prompt's reply — but an admin dropping a bare contract address into
-  // a group the bot is not yet pointed at is the same request without the
-  // ceremony, so it arms on it. Guarded three ways: the message is ONLY an
-  // address, the group has no token yet (so a live config can never be swapped
-  // out by a pasted CA), and the sender is an admin. The admin lookup costs an
-  // API call, so it is the LAST check, not the first.
+  // An admin dropping a bare contract address into the group is asking for the
+  // buy bot, near enough — but it is ASKED, never assumed.
+  //
+  // This used to call applyToken() on the spot. That is how a group ends up
+  // watching a token nobody chose: somebody pastes a CA to show it to a member,
+  // and the bot reads a message that was never addressed to it as an
+  // instruction. The admin then finds a contract configured they have no memory
+  // of setting, which is exactly the report that produced this change.
+  //
+  // It also now fires when a token IS already set — the old code returned early
+  // there, so pasting a new CA into a configured group did nothing at all and
+  // looked like a dead bot. Replacing a live config is precisely the case that
+  // must be confirmed rather than skipped, so the card says what it replaces.
+  //
+  // The admin lookup costs an API call, so it stays the LAST check.
   if (!looksLikeAddress(body)) return next();
   const g = cfg.get(ctx.chat.id);
-  if (g && g.address) return next();
+  if (g && g.address && String(g.address).toLowerCase() === body.toLowerCase()) return next(); // already watching it
   if (!(await isGroupAdmin(ctx))) return next();
-  return applyToken(ctx, body);
+  return askActivate(ctx, body, g);
+}
+
+// chatId → the outstanding "activate this token?" card. In memory only, for the
+// same reason pendingToken is: a stale confirmation surviving a restart could
+// arm a contract somebody pasted days ago.
+const pendingActivate = new Map();
+const ACTIVATE_TTL_MS = 10 * 60 * 1000;
+let activateSeq = 0;
+
+/**
+ * Offer to point the buy bot at a pasted address.
+ *
+ * The address travels in the MAP, not in the callback data: Telegram caps
+ * callback_data at 64 bytes and a Sui type string ("0x…::coin::COIN") blows
+ * straight past it — which would fail silently, on exactly the chains this bot
+ * had to grow support for. The callback carries a sequence number instead, so a
+ * card left open in history cannot arm whatever the group is discussing now.
+ */
+async function askActivate(ctx, address, g) {
+  const id = ++activateSeq;
+  pendingActivate.set(String(ctx.chat.id), { id, address, at: Date.now() });
+  const who = ctx.from && ctx.from.username ? `@${ctx.from.username}` : "an admin";
+  const current =
+    g && g.address
+      ? tpl.markup("buybot_activate_replaces", { symbol: premium.sanitizeVar(g.sym ? `$${String(g.sym).replace(/^\$/, "")}` : "the current token") })
+      : "";
+  const [yes, no] = String(tpl.t("buybot_activate_buttons") || "").split("|");
+  const { text, extra } = payloadArgs(
+    tpl.render("buybot_activate_ask", {
+      address: premium.sanitizeVar(address),
+      requester: premium.sanitizeVar(who),
+      current,
+    }),
+    false,
+  );
+  const kb = Markup.inlineKeyboard([
+    [Markup.button.callback(yes || "🤖 Activate buy bot", `bs_act:${id}`)],
+    [Markup.button.callback(no || "❌ Cancel", `bs_actno:${id}`)],
+  ]);
+  await ctx.reply(text, { ...extra, disable_web_page_preview: true, ...kb }).catch(() => {});
+}
+
+/**
+ * The confirm / cancel on that card.
+ *
+ * Re-checks ADMIN at tap time rather than trusting the card: an inline keyboard
+ * is visible to every member of the group, and the tap is the moment the
+ * contract actually changes.
+ */
+async function activateTap(ctx) {
+  const m = /^bs_(act|actno):(\d+)$/.exec((ctx.callbackQuery && ctx.callbackQuery.data) || "");
+  if (!m || !isGroup(ctx)) return;
+  const [, what, id] = m;
+  const pending = pendingActivate.get(String(ctx.chat.id));
+  // Expired, superseded by a newer paste, or lost to a restart. Say so rather
+  // than arming an address the group has moved on from.
+  if (!pending || String(pending.id) !== id || Date.now() - pending.at > ACTIVATE_TTL_MS) {
+    pendingActivate.delete(String(ctx.chat.id));
+    return void ctx.answerCbQuery(tpl.t("buybot_activate_stale"), { show_alert: true }).catch(() => {});
+  }
+  if (!(await isGroupAdmin(ctx))) {
+    return void ctx.answerCbQuery(tpl.t("setup_admin_only"), { show_alert: true }).catch(() => {});
+  }
+  pendingActivate.delete(String(ctx.chat.id));
+  if (what === "actno") {
+    await ctx.answerCbQuery(tpl.t("buybot_activate_cancelled")).catch(() => {});
+    // The card goes with it: a cancelled question left on screen reads as one
+    // still waiting for an answer.
+    return void ctx.deleteMessage().catch(() => {});
+  }
+  await ctx.answerCbQuery().catch(() => {});
+  await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {}); // no double-arming from a second tap
+  return applyToken(ctx, pending.address);
 }
 
 async function settoken(ctx) {
@@ -771,6 +853,8 @@ module.exports = {
   removeConfirmPanel,
   settingsKeyboard,
   groupTokenReply,
+  activateTap,
+  _pendingActivate: pendingActivate,
   setchain,
   setminbuy,
   minBuyPick,
