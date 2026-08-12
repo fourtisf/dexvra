@@ -441,11 +441,25 @@ function buyEmojiSlots() {
  * If the 💎 shows up animated, it works; if it falls back, it falls back. No
  * documentation to argue with.
  */
+/*
+ * THE SAMPLE MUST READ AS A SAMPLE. These were a real third-party token's real
+ * addresses, which is wrong twice over: every operator's preview screen
+ * advertised somebody else's coin with live links to it, and — the reason it
+ * was changed — an operator who found that same contract configured in their
+ * group could not tell the two facts apart. They spent an evening certain the
+ * bot shipped a hardcoded default CA. It never did: this object is render-only
+ * (buyPreview.test.js pins that previewing writes nothing), and their group's
+ * token had been set two days earlier by a pasted address arming itself.
+ *
+ * A made-up address costs the preview its working chart link and nothing else,
+ * because what the screen is for is judging LAYOUT and ICONS. Do not "fix" this
+ * back to a real contract.
+ */
 const PREVIEW_GROUP = {
   chatId: "-100",
   chain: "solana",
-  address: "8XtRWb4uAAJFMP4QQhoYYCWR6XXb7ybcCdiqPwz9s5WS",
-  pairAddress: "9dHVJ1oFDaXqLGxsvLmvJZoXPRDCLnFbwEFmZgHTMxYz",
+  address: "DexvraPreviewToken11111111111111111111111111",
+  pairAddress: "DexvraPreviewPair11111111111111111111111111",
   sym: "ALON",
   name: "alon",
   minBuyUsd: 0,

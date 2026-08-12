@@ -226,3 +226,18 @@ test("sendTemplatePreview routes each buy-card key to its own card", async () =>
   const both = await headers("group_position_row");
   assert.strictEqual(both.length, 2, "a shared row previews both cards");
 });
+
+test("the preview sample is unmistakably a SAMPLE, not a real contract", () => {
+  // It used to be a real third-party token's real addresses, which is wrong
+  // twice over: every operator's preview advertised somebody else's coin with
+  // live links to it, and an operator who later found that same contract
+  // configured in their group could not tell the two facts apart — they spent
+  // an evening certain the bot shipped a hardcoded default CA.
+  // The token address rides in the link URLs, not in the visible text — the
+  // card shows the BUYER shortened and keeps the contract inside the entities.
+  const p = buyPreviews("buy")[0].payload;
+  const urls = (p.entities || []).filter((e) => e.type === "text_link").map((e) => e.url).join(" ");
+  assert.match(urls, /DexvraPreview/, "the contract the preview links to names itself as a preview");
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "adminBot.js"), "utf8");
+  assert.doesNotMatch(src, /8XtRWb4uAAJFMP4QQhoYYCWR6XXb7ybcCdiqPwz9s5WS/, "the real contract is gone from the source");
+});
