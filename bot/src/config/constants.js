@@ -316,7 +316,17 @@ const RAID_BUMP_MINUTES = Math.max(2, int(env.RAID_BUMP_MINUTES, 5));
 // to everyone not staring at the card, exactly like a raid that is not. Five
 // minutes of that is the difference between a live board and a screenshot.
 // Chatter is only about visibility and can wait its full RAID_BUMP_MINUTES.
-const RAID_MOVE_BUMP_SEC = Math.max(20, int(env.RAID_MOVE_BUMP_SEC, 60));
+//
+// DEFAULT 0 — a movement re-posts on the very NEXT poll. The floor is 0 too,
+// because the flood bound is already the poll cadence: a bump can only happen
+// inside a tick, and a tick with no movement posts nothing. So the worst case
+// is one card per RAID_POLL_SEC on a post that is genuinely moving every 30
+// seconds, which is a raid working. The old 60s floor bought nothing against
+// spam and cost exactly what the split above exists to prevent: a like landing
+// at 0:05 stayed invisible until 1:00, so for most of a quiet raid "the numbers
+// are climbing" and "nothing is happening" looked the same from the chat.
+// Raise it if a busy launch post feels chatty.
+const RAID_MOVE_BUMP_SEC = Math.max(0, int(env.RAID_MOVE_BUMP_SEC, 0));
 
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);

@@ -1,17 +1,20 @@
 // Keyless likes + replies + REPOSTS, via X's internal GraphQL and an anonymous
 // guest token — the session x.com mints for a logged-out visitor.
 //
-// SHIPS OFF (RAID_GUEST_METRICS=1 turns it on). It is the only free route that
-// returns a repost count, and it is also the least sanctioned thing in this
-// repo. What makes it defensible:
+// SHIPS ON (`RAID_GUEST_METRICS=0` turns it off — see sourceFlag.js for why the
+// default flipped). It is the only free route that returns a repost count, and
+// it is also the least sanctioned thing in this repo. What makes it defensible:
 //
 //  • NO ACCOUNT IS ATTACHED. That is the entire reason it uses a guest token
 //    rather than a session cookie. The exposure is an IP being throttled, not
 //    the @dexvralisting account the listing, trending and pump pipelines post
 //    from. Do not "improve" this into cookie auth.
-//  • X rotates the GraphQL operation hash on its own schedule, so the queryId
-//    is an env var (X_GUEST_QUERY_ID): an operator fixes a rotation in .env and
-//    restarts, instead of waiting for a deploy.
+//  • X rotates the GraphQL operation hash on its own schedule. The id is
+//    resolved in THREE tiers — `X_GUEST_QUERY_ID` in .env, then one discovered
+//    from x.com's own JavaScript bundle, then the built-in seed — so a rotation
+//    publishes its own fix and costs neither a deploy nor an operator who
+//    happens to be awake. TREAT THE SEED AS EXPECTED-TO-BE-STALE: do not
+//    "fix" a 404 by editing it.
 //  • When a feature flag is missing, X answers with a message naming the exact
 //    key. That message IS the fix, so it is logged verbatim.
 //
@@ -21,10 +24,18 @@
 // redundancy. The only genuinely independent paths are the paid token
 // (metered per app, not per IP) and the Crew goal, which makes zero X requests.
 const log = require("../helpers/logger");
+const { sourceEnabled } = require("./sourceFlag");
 
 const TIMEOUT_MS = 8000;
 const COOLDOWN_MS = 120 * 1000;
 const GUEST_TTL_MS = 60 * 60 * 1000;
+// Discovery is best-effort and strictly bounded: it runs only AFTER a 404 has
+// proved the current id stale, at most once per window, and over a handful of
+// bundles. A bundle is megabytes, so an unbounded sweep would cost more than
+// the outage it repairs.
+const DISCOVERY_TTL_MS = 6 * 60 * 60 * 1000;
+const DISCOVERY_TIMEOUT_MS = 10000;
+const DISCOVERY_MAX_BUNDLES = 4;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -36,7 +47,9 @@ const WEB_BEARER =
   "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
 const OPERATION = "TweetResultByRestId";
-const DEFAULT_QUERY_ID = process.env.X_GUEST_QUERY_ID || "0hWvDhmW8YQ-S_ib3azIrw";
+// EXPECTED TO BE STALE. It is the last resort, not the source of truth — X
+// rotates this hash on its own schedule and every rotation 404s every post.
+const SEED_QUERY_ID = "0hWvDhmW8YQ-S_ib3azIrw";
 
 // Not a set of choices — a compatibility shim. X rejects the WHOLE request when
 // a flag it expects is absent, and the rejection names the missing key.
@@ -69,8 +82,26 @@ const DEFAULT_FEATURES = {
 let cooldownUntil = 0;
 let cooldownReason = "";
 let guest = null; // { token, at }
+let discovered = null; // { at, id }
+let discoveryTried = 0;
 
 const isOnCooldown = (at = Date.now()) => at < cooldownUntil;
+
+/**
+ * The operation id to use right now, and where it came from.
+ *
+ * Read PER CALL. An operator's `X_GUEST_QUERY_ID` ALWAYS wins — discovery must
+ * never overrule a value a human set deliberately, or the documented escape
+ * hatch stops working exactly when they reach for it.
+ */
+function queryId() {
+  const env = String(process.env.X_GUEST_QUERY_ID || "").trim();
+  if (env) return { id: env, from: "env" };
+  if (discovered && Date.now() - discovered.at < DISCOVERY_TTL_MS) {
+    return { id: discovered.id, from: "discovered" };
+  }
+  return { id: SEED_QUERY_ID, from: "seed" };
+}
 
 function armCooldown(reason, at = Date.now()) {
   cooldownUntil = at + COOLDOWN_MS;
@@ -88,6 +119,88 @@ function features() {
     log.warn(`[raid] X_GUEST_FEATURES is not valid JSON (${e.message}) — using the built-in set`);
     return DEFAULT_FEATURES;
   }
+}
+
+/**
+ * Read the live operation id out of x.com's own JavaScript.
+ *
+ * The bundle that broke us also carries the fix, so the honest answer to "the
+ * hash churns" is to read it rather than to page an operator who may be asleep
+ * while every group's repost goal sits at 0. Never throws; a failure simply
+ * leaves the previous tier in force.
+ *
+ * @returns {Promise<string>} the discovered id, or "" when nothing was found.
+ */
+async function discoverQueryId() {
+  const now = Date.now();
+  if (discovered && now - discovered.at < DISCOVERY_TTL_MS) return discovered.id;
+  // Throttled on the ATTEMPT, not on success: a box that cannot reach the
+  // bundle host at all must not re-run a multi-megabyte sweep on every 404.
+  if (discoveryTried && now - discoveryTried < DISCOVERY_TTL_MS) return "";
+  discoveryTried = now;
+
+  try {
+    const shell = await fetch("https://x.com/", {
+      headers: { "User-Agent": UA, Accept: "text/html" },
+      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+    });
+    const html = await readText(shell);
+    if (!html) return "";
+    const urls = [
+      ...new Set(html.match(/https:\/\/abs\.twimg\.com\/responsive-web\/client-web[^"'\s)]+\.js/g) || []),
+    ];
+    const ranked = urls.sort((a, b) => score(b) - score(a)).slice(0, DISCOVERY_MAX_BUNDLES);
+    for (const url of ranked) {
+      // eslint-disable-next-line no-await-in-loop
+      const js = await fetch(url, {
+        headers: { "User-Agent": UA },
+        signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+      })
+        .then(readText)
+        .catch(() => "");
+      const found = js && findQueryId(js, OPERATION);
+      if (found) {
+        discovered = { at: Date.now(), id: found };
+        log.info(`[raid] X rotated its hash — discovered a live queryId for ${OPERATION}: ${found}`);
+        return found;
+      }
+    }
+    log.warn(`[raid] could not find a ${OPERATION} queryId in x.com's bundle`);
+    return "";
+  } catch (e) {
+    log.warn(`[raid] queryId discovery failed: ${(e && e.message) || e}`);
+    return "";
+  }
+}
+
+/** A response body as text, or "" for anything unreadable. Tolerates a stub
+ *  without `.text()` rather than throwing inside the discovery path. */
+async function readText(res) {
+  if (!res || !res.ok || typeof res.text !== "function") return "";
+  try {
+    return String((await res.text()) || "");
+  } catch {
+    return "";
+  }
+}
+
+// The operation map lives in the api/endpoint chunks; `main` is the fallback.
+// Ordering matters only because the bundle budget is deliberately small.
+function score(url) {
+  if (/\/api\./.test(url) || /endpoint/i.test(url)) return 3;
+  if (/main\./.test(url)) return 2;
+  return 1;
+}
+
+/**
+ * Pull one operation's id out of a bundle. BOTH field orders occur across
+ * builds, so both are matched rather than assuming the one that shipped today.
+ */
+function findQueryId(js, operationName) {
+  const a = js.match(new RegExp(`queryId:"([\\w-]{10,40})",operationName:"${operationName}"`));
+  if (a) return a[1];
+  const b = js.match(new RegExp(`operationName:"${operationName}",[^}]{0,80}?queryId:"([\\w-]{10,40})"`));
+  return b ? b[1] : "";
 }
 
 /**
@@ -117,12 +230,16 @@ async function guestToken({ force = false } = {}) {
  *   { ok:true, likes, replies, retweets, quotes, bookmarks, text, source:"guest" }
  *   { ok:false, error, cooldown?, gone? }
  */
-async function fetchGuestMetrics(tweetId, { retried = false } = {}) {
+async function fetchGuestMetrics(tweetId, { retried = false, rediscovered = false } = {}) {
   if (!tweetId) return { ok: false, error: "no post id" };
   if (isOnCooldown()) return { ok: false, error: cooldownReason, cooldown: true };
 
   let res;
   let token;
+  // Resolved ONCE per attempt and carried into the 404 branch, which has to
+  // know which id was actually refused to decide whether a retry is anything
+  // more than a second identical request.
+  const qid = queryId();
   try {
     token = await guestToken();
     const qs = new URLSearchParams({
@@ -134,7 +251,7 @@ async function fetchGuestMetrics(tweetId, { retried = false } = {}) {
       }),
       features: JSON.stringify(features()),
     });
-    res = await fetch(`https://api.x.com/graphql/${DEFAULT_QUERY_ID}/${OPERATION}?${qs}`, {
+    res = await fetch(`https://api.x.com/graphql/${qid.id}/${OPERATION}?${qs}`, {
       headers: {
         Authorization: WEB_BEARER,
         "x-guest-token": token,
@@ -156,7 +273,9 @@ async function fetchGuestMetrics(tweetId, { retried = false } = {}) {
     // one failure worth retrying immediately. Retrying forever is not.
     if (!retried) {
       guest = null;
-      return fetchGuestMetrics(tweetId, { retried: true });
+      // `rediscovered` is carried through: the two retries are bounded
+      // independently, but neither may reset the other's budget.
+      return fetchGuestMetrics(tweetId, { retried: true, rediscovered });
     }
     armCooldown("X refused the anonymous session");
     return { ok: false, error: cooldownReason, cooldown: true };
@@ -174,9 +293,26 @@ async function fetchGuestMetrics(tweetId, { retried = false } = {}) {
     // — so the raid on the dead post keeps polling for its full hour, re-arming
     // the backoff every time it lapsed and freezing every other group's counts
     // for the duration.
+    // A stale hash is the half we can repair without anyone's help, so ask
+    // x.com's own bundle for the current id and retry ONCE — but only when
+    // discovery came back with a DIFFERENT one. Retrying the id that was just
+    // refused is a guaranteed second 404: one more request against a host that
+    // has already said no, and one more chance to look like progress.
+    //
+    // An operator-pinned X_GUEST_QUERY_ID is never overruled. It is the
+    // documented escape hatch, and a hatch that quietly ignores the value you
+    // put in it is worse than none — so their id is named in the log instead.
+    if (!rediscovered && qid.from !== "env") {
+      const fresh = await discoverQueryId();
+      if (fresh && fresh !== qid.id) {
+        return fetchGuestMetrics(tweetId, { retried, rediscovered: true });
+      }
+    }
     log.warn(
-      `[raid] guest read 404 for post ${tweetId} with queryId ${DEFAULT_QUERY_ID} — ` +
-        "if EVERY post 404s, X rotated the hash: set a current X_GUEST_QUERY_ID in .env and restart.",
+      `[raid] guest read 404 for post ${tweetId} with queryId ${qid.id} (${qid.from}) — ` +
+        (qid.from === "env"
+          ? "if EVERY post 404s, the X_GUEST_QUERY_ID you pinned in .env is stale: clear it to let the bot rediscover one."
+          : "if EVERY post 404s, X rotated the hash and rediscovery could not reach x.com. Run: npm run raid:check"),
     );
     return { ok: false, error: "X's anonymous read endpoint returned nothing for this post" };
   }
@@ -220,13 +356,18 @@ async function fetchGuestMetrics(tweetId, { retried = false } = {}) {
   };
 }
 
-const isEnabled = () => /^(1|true|yes|on)$/i.test(String(process.env.RAID_GUEST_METRICS || ""));
+const isEnabled = () => sourceEnabled("RAID_GUEST_METRICS");
 
 /** Test seam. */
 function _reset() {
   cooldownUntil = 0;
   cooldownReason = "";
   guest = null;
+  // Without these two a discovered id — or a spent discovery budget — leaks
+  // into the next test, which is the kind of cross-test coupling that reads as
+  // a flake months later.
+  discovered = null;
+  discoveryTried = 0;
 }
 
 module.exports = {
@@ -235,8 +376,12 @@ module.exports = {
   features,
   isEnabled,
   isOnCooldown,
+  queryId,
+  discoverQueryId,
+  findQueryId,
   _reset,
-  DEFAULT_QUERY_ID,
+  SEED_QUERY_ID,
   DEFAULT_FEATURES,
   COOLDOWN_MS,
+  DISCOVERY_TTL_MS,
 };

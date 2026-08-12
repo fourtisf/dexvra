@@ -92,10 +92,14 @@ async function main() {
   });
   const guest = api
     ? null
-    : await tryOne("guest GraphQL", xGuest.isEnabled(), "RAID_GUEST_METRICS=0", () => xGuest.fetchGuestMetrics(id));
+    : await tryOne("guest GraphQL", xGuest.isEnabled(), "RAID_GUEST_METRICS=0 in .env — it is ON by default", () =>
+        xGuest.fetchGuestMetrics(id),
+      );
   const embed = api || guest
     ? null
-    : await tryOne("embed endpoint", xEmbed.isEnabled(), "RAID_FREE_METRICS=0", () => xEmbed.fetchEmbedMetrics(id));
+    : await tryOne("embed endpoint", xEmbed.isEnabled(), "RAID_FREE_METRICS=0 in .env — it is ON by default", () =>
+        xEmbed.fetchEmbedMetrics(id),
+      );
 
   line();
   const winner = api || guest || embed;
@@ -109,13 +113,29 @@ async function main() {
 
   console.log("\n⚠️  No X source answered. Raids will still work — the 🤝 Crew goal needs no key at all —");
   console.log("   but likes/replies/reposts will be unavailable and the card will say so.");
+  // The two keyless sources are ON unless .env says otherwise, so "off" here is
+  // an explicit choice on this box — say that, rather than telling an operator
+  // to enable something they already believe is enabled.
+  const offByEnv = [
+    !xGuest.isEnabled() ? "RAID_GUEST_METRICS" : null,
+    !xEmbed.isEnabled() ? "RAID_FREE_METRICS" : null,
+  ].filter(Boolean);
+
   console.log("\n   To fix, pick one:");
+  if (offByEnv.length) {
+    const many = offByEnv.length > 1;
+    console.log(`   • ${offByEnv.join(" and ")} ${many ? "are" : "is"} set to 0 in this server's .env — that is the whole reason.`);
+    console.log(`     Set ${many ? "them" : "it"} to 1 (or delete the ${many ? "lines" : "line"}) and restart with --update-env.`);
+  }
   console.log("   • set a real X_BEARER_TOKEN (≈ half a cent per raid; reads are billed per post per day)");
-  console.log("   • RAID_GUEST_METRICS=1 — keyless, includes reposts, blocked on many datacenter IPs");
-  console.log("   • RAID_FREE_METRICS=1  — keyless, no reposts, and its reply count is the whole conversation");
-  console.log("\n   If a keyless source is already on and failing, it is almost always this server's IP.");
-  console.log("   A repeated 404 from the guest source instead means X rotated its GraphQL hash — set a");
-  console.log("   current X_GUEST_QUERY_ID in .env and restart.");
+  if (!offByEnv.length) {
+    console.log("\n   Both keyless sources are ON and still failed, so this is almost always this server's IP —");
+    console.log("   X blocks datacenter ranges hardest, and both keyless routes share that one reputation.");
+    console.log("   A paid X_BEARER_TOKEN is metered per app rather than per IP, so it is the way out.");
+    console.log("   A repeated 404 from the guest source is a different thing: X rotated its GraphQL hash.");
+    console.log("   The bot rediscovers that by itself after a 404 — if it persists, x.com is unreachable");
+    console.log("   from here too, or a stale X_GUEST_QUERY_ID is pinned in .env (clear it to self-heal).");
+  }
   process.exit(1);
 }
 

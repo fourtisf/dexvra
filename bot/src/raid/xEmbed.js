@@ -1,8 +1,9 @@
 // Keyless likes + replies, from the endpoint behind X's embedded-tweet widget.
 //
-// SHIPS OFF (RAID_FREE_METRICS=1 turns it on). That is not squeamishness —
-// there are three concrete reasons, and an operator should read them before
-// flipping the switch:
+// SHIPS ON since the raid could otherwise read nothing at all (see
+// sourceFlag.js for that reversal). `RAID_FREE_METRICS=0` turns it off, and
+// there are three concrete reasons an operator might want to — none of them
+// squeamishness, and all three are still true:
 //
 //  1. It IP-blocks datacenter ranges hardest, and a VPS is exactly that
 //     profile. When it goes it takes every group's raid at once, with no error
@@ -18,7 +19,11 @@
 // It also CANNOT see reposts — the field is not withheld, it is not sent — so
 // `retweets` is null, never 0. The caller uses exactly that to drop a repost
 // goal it could never measure instead of running a raid that can only expire.
+//
+// It is tried AFTER xGuest.js, which answers the question this one cannot
+// (reposts) and reports the true reply count rather than the conversation size.
 const log = require("../helpers/logger");
+const { sourceEnabled } = require("./sourceFlag");
 
 const HOST = "https://cdn.syndication.twimg.com";
 const TIMEOUT_MS = 8000;
@@ -121,7 +126,7 @@ async function fetchEmbedMetrics(tweetId, { timeoutMs = TIMEOUT_MS } = {}) {
   };
 }
 
-const isEnabled = () => /^(1|true|yes|on)$/i.test(String(process.env.RAID_FREE_METRICS || ""));
+const isEnabled = () => sourceEnabled("RAID_FREE_METRICS");
 
 /** Test seam. */
 function _reset() {

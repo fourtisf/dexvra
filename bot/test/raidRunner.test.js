@@ -627,19 +627,54 @@ test("canLock names the missing permission instead of just failing", async () =>
   assert.match(res.reason, /Ban users/);
 });
 
-test("a MOVED count re-posts within a minute; mere chatter still waits", () => {
-  // The two reasons to re-post are not the same event and no longer share a
+test("a MOVED count re-posts on the very next poll — that is what 'realtime' means here", async () => {
+  // The two reasons to re-post are not the same event and do not share a
   // cooldown. A like that already landed is the raid's news, and an in-place
-  // edit notifies nobody — so from anywhere in the chat except directly on the
-  // card, five minutes of progress and five minutes of silence looked
-  // identical. Chatter is only about visibility and keeps its full wait.
+  // edit notifies NOBODY — so from anywhere in the chat except directly on the
+  // card, progress and silence look identical. Chatter is only about
+  // visibility and keeps its full wait.
+  //
+  // DRIVEN, not grepped. The previous version asserted that the source still
+  // contained the gate and that the constant sat between 20 and 120 seconds —
+  // both of which stayed true while the floor was still long enough to hide a
+  // like for a full minute. A source pattern cannot tell you when the group
+  // actually hears about it; only running the tick can.
+  const c = require("../src/config/constants");
+  assert.strictEqual(c.RAID_MOVE_BUMP_SEC, 0, "a move waits for nothing but the poll itself");
+  assert.ok(c.RAID_BUMP_MINUTES * 60 > c.RAID_MOVE_BUMP_SEC, "chatter waits strictly longer than a move");
+
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ likes: 15, replies: 0, reposts: 0, crew: 0 });
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  const sentAfterStart = tg.calls.sent.length;
+  // One like lands a second into the raid — exactly the case the old floor hid.
+  xMetrics.fetchTweetMetrics = metricsOk({ likes: 201 });
+  await runner.tickOne(tg, g);
+  assert.strictEqual(tg.calls.sent.length, sentAfterStart + 1, "the group is told, with a fresh card that notifies");
+});
+
+test("a poll with NO movement posts nothing — which is why a zero floor is safe", async () => {
+  // The flood bound is the poll cadence itself: a bump can only happen inside a
+  // tick, and a tick that saw nothing move sends nothing. Without this, cutting
+  // the floor to zero would be a card per RAID_POLL_SEC forever.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group({ likes: 15, replies: 0, reposts: 0, crew: 0 });
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  const sentAfterStart = tg.calls.sent.length;
+  await runner.tickOne(tg, g);
+  await runner.tickOne(tg, g);
+  assert.strictEqual(tg.calls.sent.length, sentAfterStart, "two quiet polls, no cards");
+});
+
+test("the two re-post reasons are still gated separately", () => {
+  // Kept as a source check on purpose: it pins the SHAPE of the gate, which the
+  // behavioural tests above cannot distinguish from a single shared cooldown
+  // that happens to be short.
   const src = fss.readFileSync(path.join(__dirname, "..", "src", "raid", "runner.js"), "utf8");
   assert.match(src, /\(movedSinceBump && moveDue\) \|\| \(chattered && bumpDue\)/, "the two reasons are gated separately");
-  assert.match(src, /moveDue = sinceBump >= RAID_MOVE_BUMP_SEC \* 1000/, "moves use their own, shorter floor");
-  const c = require("../src/config/constants");
-  assert.ok(c.RAID_MOVE_BUMP_SEC <= 120, `a move waits at most two minutes, got ${c.RAID_MOVE_BUMP_SEC}s`);
-  assert.ok(c.RAID_MOVE_BUMP_SEC >= 20, "…but never fast enough to trip Telegram's flood limits");
-  assert.ok(c.RAID_BUMP_MINUTES * 60 > c.RAID_MOVE_BUMP_SEC, "chatter waits strictly longer than a move");
+  assert.match(src, /moveDue = sinceBump >= RAID_MOVE_BUMP_SEC \* 1000/, "moves use their own floor");
 });
 
 test("a bump sends BEFORE it deletes, and re-pins the card it just sent", () => {

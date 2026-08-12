@@ -60,15 +60,48 @@ test("0 renders as 'off', not as '+0'", () => {
 });
 
 test("the panel says up front what this install can actually measure", () => {
-  const g = store.getOrCreate(CHAT);
-  const text = panel.renderPanel(g).text;
   // Nobody should set a likes goal and discover at launch that nothing can read
-  // it. Asserted as "the no-sources template is what got rendered", not against
-  // its prose: that copy is admin-editable now, so matching a phrase would tie
-  // this test to wording the operator is invited to change.
+  // it. Asserted as "which sources template got rendered", not against its
+  // prose: that copy is admin-editable, so matching a phrase would tie this
+  // test to wording the operator is invited to change.
+  //
+  // All three states, because the warning is only useful if it is ABSENT when
+  // things work. It used to fire on a stock install — the keyless sources were
+  // opt-in, so a bot with no token really could measure nothing — and that is
+  // the state src/raid/sourceFlag.js removed.
   const tpl = require("../src/templates");
-  assert.ok(text.includes(tpl.t("raid_sources_none")), "the no-X-key line is on the panel");
-  assert.ok(!text.includes(tpl.t("raid_sources_partial")), "and not the paid-key one");
+  const g = store.getOrCreate(CHAT);
+  const render = () => panel.renderPanel(g).text;
+  const saved = { free: process.env.RAID_FREE_METRICS, guest: process.env.RAID_GUEST_METRICS };
+
+  try {
+    // 1. Stock: no token, both keyless sources on by default → nothing to warn about.
+    delete process.env.RAID_FREE_METRICS;
+    delete process.env.RAID_GUEST_METRICS;
+    let text = render();
+    assert.ok(!text.includes(tpl.t("raid_sources_none")), "a stock install can read a post, so no warning");
+    assert.ok(!text.includes(tpl.t("raid_sources_partial")), "and reposts are measurable via the guest source");
+
+    // 2. Only the embed source: likes and replies, but reposts are unmeasurable.
+    process.env.RAID_GUEST_METRICS = "0";
+    process.env.RAID_FREE_METRICS = "1";
+    text = render();
+    assert.ok(text.includes(tpl.t("raid_sources_partial")), "the reposts-need-a-key line is on the panel");
+    assert.ok(!text.includes(tpl.t("raid_sources_none")));
+
+    // 3. An operator who turned both off, with no token — the original state.
+    process.env.RAID_FREE_METRICS = "0";
+    text = render();
+    assert.ok(text.includes(tpl.t("raid_sources_none")), "the no-X-source line is on the panel");
+    assert.ok(!text.includes(tpl.t("raid_sources_partial")), "and not the paid-key one");
+  } finally {
+    // Restored explicitly: these are process-wide and every later case in this
+    // file renders the same panel.
+    if (saved.free === undefined) delete process.env.RAID_FREE_METRICS;
+    else process.env.RAID_FREE_METRICS = saved.free;
+    if (saved.guest === undefined) delete process.env.RAID_GUEST_METRICS;
+    else process.env.RAID_GUEST_METRICS = saved.guest;
+  }
 });
 
 test("a live raid replaces the whole keyboard with Stop", () => {
