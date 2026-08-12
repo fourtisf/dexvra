@@ -65,6 +65,40 @@ test("nothing is lost — the fold count is reported when the window reopens", (
   assert.match(sent[1], /\+40 more like this/, `the count must survive: ${sent[1]}`);
 });
 
+test("a condition that PERSISTS pages less and less — the window widens", (t) => {
+  // A GeckoTerminal rate limit that held for nine hours paged every fifteen
+  // minutes, all day — thirty-odd copies of a message whose content never
+  // changed. The window doubles (15m → 30m → 60m → 2h cap) while the same key
+  // keeps folding, and one quiet window resets the ladder.
+  const sent = attachRecorder();
+  const realNow = Date.now;
+  let clock = realNow();
+  t.after(() => (Date.now = realNow));
+  Date.now = () => clock;
+  const nag = () => log.warn("[buybot] GeckoTerminal backing off for 120s — HTTP 429 (rate limited)");
+  nag();
+  assert.strictEqual(sent.length, 1);
+  for (let i = 0; i < 5; i++) {
+    clock += 3 * 60 * 1000;
+    nag(); // all inside the first 15m window — folded
+  }
+  clock += 60 * 1000; // 16m after the first send: window closed WITH folds
+  nag();
+  assert.strictEqual(sent.length, 2, "the reopen sends, and widens the window");
+  clock += 16 * 60 * 1000; // 16m later — would have sent under a fixed 15m window
+  nag();
+  assert.strictEqual(sent.length, 2, "…but the widened 30m window still holds it");
+  clock += 15 * 60 * 1000; // 31m after send #2
+  nag();
+  assert.strictEqual(sent.length, 3, "the 30m window reopens");
+  clock += 61 * 60 * 1000; // a QUIET hour — the condition cleared
+  nag();
+  assert.strictEqual(sent.length, 4, "a fresh hit after quiet pages promptly");
+  clock += 16 * 60 * 1000;
+  nag();
+  assert.strictEqual(sent.length, 5, "and the ladder is back at 15m, not stuck wide");
+});
+
 test("purchase reports are never de-duplicated", () => {
   // Two identical-looking purchase lines are two real sales. Folding them would
   // hide revenue, which is a far worse failure than a noisy channel.

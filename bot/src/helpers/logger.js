@@ -26,8 +26,15 @@ function out(level, args) {
 // the window closes a single line reports how many were folded into it. The
 // console still gets every line — that is what pm2 logs are for.
 const DEDUPE_MS = 15 * 60 * 1000;
+// A condition still firing when its window closes gets a LONGER window next
+// time — 15m → 30m → 60m → 2h. A GeckoTerminal rate limit that holds for nine
+// hours used to page every fifteen minutes, all day: thirty-odd copies of a
+// message whose content never changed, burying real alerts exactly the way the
+// dedupe was built to prevent. One quiet window resets the ladder, so a
+// problem that comes BACK after going away pages promptly again.
+const DEDUPE_MAX_MS = 2 * 60 * 60 * 1000;
 const MAX_KEYS = 500; // bounded: a runaway loop must not also leak memory
-const recent = new Map(); // key → { last: ms, suppressed: n, sample: string }
+const recent = new Map(); // key → { last: ms, suppressed: n, windowMs }
 
 const dedupeKey = (text) =>
   String(text)
@@ -46,22 +53,27 @@ function evictOldest() {
 function admit(text, now) {
   const key = dedupeKey(text);
   const hit = recent.get(key);
-  if (hit && now - hit.last < DEDUPE_MS) {
+  const windowMs = (hit && hit.windowMs) || DEDUPE_MS;
+  if (hit && now - hit.last < windowMs) {
     hit.suppressed++;
     return { send: false };
   }
   const folded = hit ? hit.suppressed : 0;
-  recent.set(key, { last: now, suppressed: 0 });
+  // Folds in the window just closed → the condition persists → widen. A window
+  // that passed quietly means it cleared, and the next hit starts fresh.
+  const nextWindow = folded > 0 ? Math.min(windowMs * 2, DEDUPE_MAX_MS) : DEDUPE_MS;
+  const sinceMin = hit ? Math.max(1, Math.round((now - hit.last) / 60000)) : 0;
+  recent.set(key, { last: now, suppressed: 0, windowMs: nextWindow });
   evictOldest();
-  return { send: true, folded };
+  return { send: true, folded, sinceMin };
 }
 
 function forward(text, channel) {
   const to = channel || logChannel;
   if (!botRef || !to) return;
-  const { send, folded } = admit(text, Date.now());
+  const { send, folded, sinceMin } = admit(text, Date.now());
   if (!send) return;
-  const body = folded > 0 ? `${text}\n(+${folded} more like this in the last ${DEDUPE_MS / 60000} min)` : text;
+  const body = folded > 0 ? `${text}\n(+${folded} more like this in the last ${sinceMin} min)` : text;
   botRef.telegram
     .sendMessage(to, body.slice(0, 3800), { disable_web_page_preview: true })
     .catch(() => {});

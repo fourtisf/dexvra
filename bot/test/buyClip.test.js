@@ -63,6 +63,26 @@ test("a GIF is sent as an ANIMATION with the alert as its caption", async () => 
   assert.strictEqual(extra.entities, undefined);
 });
 
+test("a 429 on the clip BUBBLES — one flood event, one warning, the clip kept for the retry", async () => {
+  // The chat is flooded, not the clip rejected: the text fallback would hit
+  // the same wall, warning the ops channel twice for one event and delivering
+  // a clipless alert where holding off keeps the buy for a retry WITH its
+  // artwork. deliver()'s flood handler owns this error.
+  writeClip("gif");
+  const calls = [];
+  const tg = {
+    sendMessage: async () => calls.push(["text"]),
+    sendAnimation: async () => {
+      const e = new Error("429: Too Many Requests: retry after 99");
+      e.parameters = { retry_after: 99 };
+      throw e;
+    },
+    sendVideo: async () => calls.push(["video"]),
+  };
+  await assert.rejects(() => mon.sendAlert(tg, "-100", "buy!", {}), /retry after 99/);
+  assert.deepStrictEqual(calls, [], "no text fallback during a flood wait");
+});
+
 test("an MP4 is sent as a VIDEO", async () => {
   writeClip("mp4");
   const calls = [];

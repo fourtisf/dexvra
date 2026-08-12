@@ -710,6 +710,11 @@ async function sendAlert(tg, chatId, text, extra, kind = "buy", onClipError = nu
       // it). Forget it so the next alert re-uploads rather than failing forever
       // on a reference to something that is gone.
       if (cacheKey && known) clipFileIds.delete(cacheKey);
+      // A 429 is not the CLIP being rejected — the CHAT is flooded, and the
+      // text fallback would hit the same wall: two ops warnings for one event,
+      // and a clipless alert where holding off keeps the buy for a retry WITH
+      // its artwork. Let it bubble to the flood handler, whose job this is.
+      if (retryAfterOf(e)) throw e;
       // A rejected clip must cost the ARTWORK, never the alert.
       log.warn(`[buybot] buy clip failed for ${chatId} (${e.message}) — sending the alert as text`);
       // The admin preview passes a reporter here: a clip Telegram refuses (a
