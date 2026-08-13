@@ -27,6 +27,7 @@ const activeGroups = new Set();
 const chatterSinceBump = new Map(); // chatId → messages since the card last moved
 const pinnedByUs = new Set(); // `${chatId}:${messageId}` — see handlePinned
 const cantDelete = new Set(); // chatIds we've already warned about once
+const cantPin = new Set(); // ditto, for the pin right — see pinCard
 const starting = new Set(); // chatIds mid-launch — see the note in startRaid
 
 const isRaidActive = (chatId) => activeGroups.has(String(chatId));
@@ -275,12 +276,43 @@ async function launch(telegram, g, s, startedBy) {
 // ── Card upkeep ──────────────────────────────────────────────────────────────
 
 async function pinCard(telegram, chatId, messageId) {
-  if (!messageId) return;
+  if (!messageId) return false;
   try {
     await telegram.pinChatMessage(chatId, messageId, { disable_notification: true });
     pinnedByUs.add(`${chatId}:${messageId}`);
+    cantPin.delete(String(chatId));
+    return true;
+  } catch (e) {
+    // Pinning is still a nicety — it must never fail a raid. But a SILENT nicety
+    // is indistinguishable from one that was never built: the card is meant to
+    // sit at the top of the chat for the whole raid, and when it doesn't, there
+    // was nothing anywhere saying the bot simply lacks the right. Warned once
+    // per chat per outage, not once per bump, because a bump happens every poll.
+    if (!cantPin.has(String(chatId))) {
+      cantPin.add(String(chatId));
+      log.warn(
+        `[raid] can't pin the card in ${chatId} (${e && e.message}) — ` +
+          'give the bot "Pin messages" so the live card stays at the top of the chat',
+      );
+    }
+    return false;
+  }
+}
+
+/**
+ * Take OUR pin off one specific message. Never throws.
+ *
+ * The id is passed EXPLICITLY. `unpinChatMessage` with no message id removes the
+ * chat's most recent pin, which in a group where an admin has pinned their own
+ * announcement is somebody else's message — a raid must never touch that.
+ */
+async function unpinCard(telegram, chatId, messageId) {
+  if (!messageId) return;
+  pinnedByUs.delete(`${chatId}:${messageId}`);
+  try {
+    await telegram.unpinChatMessage(chatId, messageId);
   } catch {
-    /* pinning is a nicety, never a reason to fail a raid */
+    /* usually because the message is already gone, taking its pin with it */
   }
 }
 
@@ -327,9 +359,20 @@ async function editCard(telegram, g, status) {
 /**
  * Delete the card and re-send it at the bottom of the chat.
  *
- * The new card is SENT BEFORE the old one is deleted. The reverse ordering
- * leaves the group with no card at all if the send fails — losing the raid's
- * only surface to save one message.
+ * THE ORDER IS THE DESIGN, and each step is one failure that has already been
+ * paid for somewhere:
+ *
+ *   1. SEND the new card. The reverse leaves the group with no card at all if
+ *      the send fails — losing the raid's only surface to save one message.
+ *   2. PIN it, before releasing the old one. Unpinning first opens a window with
+ *      no pinned card, and leaves the group with none at all if the pin then
+ *      fails. Two pins for a moment is the cheaper mistake.
+ *   3. UNPIN the old one EXPLICITLY, rather than trusting the delete to take the
+ *      pin with it. Telegram refuses to delete a message older than 48h, and a
+ *      bot without "Delete messages" cannot delete at all — in both cases the
+ *      old card stays, and without this it stays PINNED beside the new one. Over
+ *      an hour-long raid that is one stranded pin per bump.
+ *   4. DELETE it.
  */
 async function bumpCard(telegram, g) {
   const rendered = card.renderCard(g.raid, { status: "running" });
@@ -346,11 +389,11 @@ async function bumpCard(telegram, g) {
   g.raid.lastBumpMark = countsMark(g.raid);
   chatterSinceBump.set(String(g.chatId), 0);
   await store.save();
-  if (old && old !== g.raid.messageId) {
-    await telegram.deleteMessage(g.chatId, old).catch(() => {});
-    pinnedByUs.delete(`${g.chatId}:${old}`);
-  }
   await pinCard(telegram, g.chatId, g.raid.messageId);
+  if (old && old !== g.raid.messageId) {
+    await unpinCard(telegram, g.chatId, old);
+    await telegram.deleteMessage(g.chatId, old).catch(() => {});
+  }
   log.debug(`[raid] bumped card in ${g.chatId}`);
   return true;
 }
@@ -421,7 +464,9 @@ async function finishRaid(telegram, g, status) {
       log.debug(`[raid] completion note failed in ${g.chatId}: ${e && e.message}`);
     }
   }
-  if (raid.messageId) await telegram.unpinChatMessage(g.chatId, raid.messageId).catch(() => {});
+  // Through the same helper as a bump, so the finished card's pin is released
+  // and its bookkeeping entry cleared in one place rather than two.
+  await unpinCard(telegram, g.chatId, raid.messageId);
   log.info(`[raid] ${status} group=${g.chatId} post=${raid.postId}`);
 }
 
@@ -664,6 +709,7 @@ module.exports = {
   editCard,
   bumpCard,
   pinCard,
+  unpinCard,
   handlePinned,
   isRaidActive,
   markActive,

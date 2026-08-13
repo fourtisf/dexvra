@@ -568,6 +568,87 @@ test("the new card is sent BEFORE the old one is deleted", async () => {
   assert.strictEqual(g.raid.lastBumpMark, runner.countsMark(g.raid));
 });
 
+test("a bump pins the NEW card and releases the old one's pin", async () => {
+  // What a group sees: the live card sits at the top of the chat, and there is
+  // exactly ONE of them there. Every step below is a pin that would otherwise
+  // strand.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group();
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  const first = g.raid.messageId;
+  await runner.bumpCard(tg, g);
+  const next = g.raid.messageId;
+
+  assert.deepStrictEqual(tg.calls.pinned.at(-1), { chatId: CHAT, mid: next }, "the new card is pinned");
+  assert.deepStrictEqual(tg.calls.unpinned.at(-1), { chatId: CHAT, mid: first }, "and the old pin is released");
+  assert.deepStrictEqual(tg.calls.deleted.at(-1), { chatId: CHAT, mid: first }, "and the old card deleted");
+});
+
+test("the new card is PINNED before the old pin is released", async () => {
+  // Unpinning first opens a window with no pinned card at all — and leaves the
+  // group with none if the pin then fails. Two pins for a moment is the cheaper
+  // mistake, so the order is load-bearing rather than incidental.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group();
+  const order = [];
+  const tg = fakeTg({
+    pinChatMessage: async (_c, mid) => order.push(`pin:${mid}`),
+    unpinChatMessage: async (_c, mid) => order.push(`unpin:${mid}`),
+  });
+  await runner.startRaid(tg, g);
+  const first = g.raid.messageId;
+  order.length = 0;
+  await runner.bumpCard(tg, g);
+  assert.deepStrictEqual(order, [`pin:${g.raid.messageId}`, `unpin:${first}`]);
+});
+
+test("the old pin is released even when the old card CANNOT be deleted", async () => {
+  // Telegram refuses to delete a message older than 48h, and a bot without
+  // "Delete messages" cannot delete at all. Relying on the delete to carry the
+  // pin away leaves the old card pinned beside the new one — one stranded pin
+  // per bump, for the length of the raid.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group();
+  const tg = fakeTg({
+    deleteMessage: async () => {
+      throw new Error("Bad Request: message can't be deleted");
+    },
+  });
+  await runner.startRaid(tg, g);
+  const first = g.raid.messageId;
+  assert.strictEqual(await runner.bumpCard(tg, g), true, "a stuck delete must not fail the bump");
+  assert.deepStrictEqual(tg.calls.unpinned.at(-1), { chatId: CHAT, mid: first });
+  assert.deepStrictEqual(tg.calls.pinned.at(-1), { chatId: CHAT, mid: g.raid.messageId });
+});
+
+test("an unpin always names its message — never the chat's latest pin", async () => {
+  // `unpinChatMessage` with no message id removes the chat's MOST RECENT pin,
+  // which in a group where an admin pinned their own announcement is somebody
+  // else's message. A raid may never touch that.
+  const tg = fakeTg();
+  await runner.unpinCard(tg, CHAT, 4242);
+  assert.deepStrictEqual(tg.calls.unpinned, [{ chatId: CHAT, mid: 4242 }]);
+  await runner.unpinCard(tg, CHAT, 0);
+  assert.strictEqual(tg.calls.unpinned.length, 1, "nothing to unpin, nothing called");
+});
+
+test("a group that will not let the bot pin still gets its raid", async () => {
+  // Pinning is a nicety and must never fail a raid — but a silent nicety is
+  // indistinguishable from one that was never built, so the refusal is logged
+  // once per chat rather than swallowed.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group();
+  const tg = fakeTg({
+    pinChatMessage: async () => {
+      throw new Error("Bad Request: not enough rights to pin a message");
+    },
+  });
+  const res = await runner.startRaid(tg, g);
+  assert.strictEqual(res.ok, true, "the raid launched anyway");
+  assert.strictEqual(await runner.bumpCard(tg, g), true, "and it keeps bumping");
+});
+
 test("a failed bump keeps the existing card rather than losing it", async () => {
   xMetrics.fetchTweetMetrics = metricsOk();
   const g = group();
@@ -677,12 +758,26 @@ test("the two re-post reasons are still gated separately", () => {
   assert.match(src, /moveDue = sinceBump >= RAID_MOVE_BUMP_SEC \* 1000/, "moves use their own floor");
 });
 
-test("a bump sends BEFORE it deletes, and re-pins the card it just sent", () => {
-  // The reverse order leaves the group with no card at all if the send fails —
-  // losing the raid's only surface to save one message. And a card that moved
-  // without its pin moving is a pin pointing at a deleted message.
-  const src = fss.readFileSync(path.join(__dirname, "..", "src", "raid", "runner.js"), "utf8");
-  const bump = src.slice(src.indexOf("async function bumpCard"), src.indexOf("// ── Finishing"));
-  assert.ok(bump.indexOf("sendMessage") < bump.indexOf("deleteMessage"), "send first, delete after");
-  assert.ok(bump.indexOf("deleteMessage") < bump.indexOf("pinCard"), "then pin the new one");
+test("a bump that cannot SEND touches neither the old card nor its pin", async () => {
+  // The old card is the raid's only surface. Deleting or unpinning it before the
+  // replacement exists trades a working card for nothing at all — which is why
+  // the send comes first and why every later step is conditional on it.
+  //
+  // This used to be a source check on the ORDER of three calls inside bumpCard.
+  // It passed for the wrong reason the moment the order legitimately changed:
+  // pinning now happens before the old pin is released, on purpose.
+  xMetrics.fetchTweetMetrics = metricsOk();
+  const g = group();
+  const tg = fakeTg();
+  await runner.startRaid(tg, g);
+  const first = g.raid.messageId;
+  const pinsAfterStart = tg.calls.pinned.length;
+  tg.sendMessage = async () => {
+    throw new Error("Bad Gateway");
+  };
+  assert.strictEqual(await runner.bumpCard(tg, g), false);
+  assert.strictEqual(g.raid.messageId, first, "the group keeps the card it has");
+  assert.strictEqual(tg.calls.deleted.length, 0, "nothing was deleted");
+  assert.strictEqual(tg.calls.unpinned.length, 0, "and its pin was left alone");
+  assert.strictEqual(tg.calls.pinned.length, pinsAfterStart, "no pin was moved either");
 });
