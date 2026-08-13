@@ -424,6 +424,21 @@ const EMOJI_NAMES = {
   "🐋": "whale",
   "🟢": "buy bar",
   "🤖": "buy bot",
+  // These three are SHARED between the buy card and the raid card, and the hint
+  // is derived from whichever template the screen reads first — which is always
+  // a buy one. So an operator hunting for the raid's "12% complete" icon found a
+  // button labelled "price", the raid's "Record" line found "Chart", and the
+  // completed-raid banner found "Position". The icon was editable the whole
+  // time and unfindable by the person looking for it, which from where they were
+  // standing is the same thing.
+  //
+  // Each one EXTENDS the word it used to derive, keeping its case, rather than
+  // replacing it: whoever already knows the button as "Chart" must still find it
+  // by that word. Naming both uses is also the warning — a swap here changes the
+  // other card too.
+  "📊": "price & raid %",
+  "📈": "Chart & record",
+  "✅": "Position & done",
 };
 
 /** The keys this screen owns: the buy card's own eight, plus every template in
@@ -837,12 +852,19 @@ function viewKb(key) {
   // text above it is the RAW template, {placeholders} and all, which is what an
   // operator edits but not what anybody receives.
   rows.push([Markup.button.callback("👁 Lihat hasilnya", `temp:${key}`)]);
-  // …and on any template the buy card is built from, the way in to ALL of its
-  // icons at once. Offered from every piece rather than one blessed screen:
-  // whichever of the eight an operator happens to open, the whole palette is
-  // one tap away instead of seven screens away.
-  if (BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis") {
-    rows.push([Markup.button.callback("🎨 Semua emoji kartu buy", "bem")]);
+  // …and on any template those two cards are built from, the way in to ALL of
+  // their icons at once. Offered from every piece rather than one blessed
+  // screen: whichever one an operator happens to open, the whole palette is one
+  // tap away instead of a dozen screens away.
+  //
+  // GATED ON THE SCREEN'S OWN KEY LIST, not on the buy card's eight. The raid
+  // templates were added to the SCREEN and never to the way IN, so an admin who
+  // opened raid_card looking for 📊 saw only that one template's icons and no
+  // route to the rest — and the button they could not see was labelled "kartu
+  // buy" anyway. Between them that is indistinguishable from raid icons simply
+  // not being editable, which is exactly how it was reported.
+  if (allEmojiKeys().includes(key) || key === "chain_emojis") {
+    rows.push([Markup.button.callback("🎨 Semua emoji kartu buy + raid", "bem")]);
   }
   rows.push([Markup.button.callback("⬅ Back", `grp:${groupIdOf(key)}`)]);
   return Markup.inlineKeyboard(rows);
@@ -2884,7 +2906,11 @@ function build() {
     // so editing one here leaves the other looking different — which is exactly
     // the "the emoji do not match the card" confusion. Point at the screen that
     // changes both at once.
-    const bothCards = BUY_CARD_EMOJI_KEYS.includes(key) || key === "chain_emojis";
+    // Same key list as the button itself — see the note there. Gated on the buy
+    // card's eight, this pointer was invisible on every raid template, so the
+    // one screen that can restyle a raid card was unreachable from the screen an
+    // operator opens when they want to.
+    const bothCards = allEmojiKeys().includes(key) || key === "chain_emojis";
     await ctx
       .reply(
         `😀 <b>Swap an emoji</b> — ${escapeHtml(tpl.meta(key).label)}\n\n` +
@@ -2892,7 +2918,7 @@ function build() {
           `💎 menandai yang sudah premium.` +
           (list.length > 48 ? `\n\n<i>Showing the first 48 of ${list.length}.</i>` : "") +
           (bothCards
-            ? `\n\nℹ️ Ini hanya kartu <b>${escapeHtml(tpl.meta(key).label)}</b>. Untuk mengganti ikon di kartu buy <b>dan</b> whale sekaligus, pakai <b>🎨 Semua emoji kartu buy</b>.`
+            ? `\n\nℹ️ Ini hanya kartu <b>${escapeHtml(tpl.meta(key).label)}</b>. Untuk mengganti ikon di kartu <b>buy</b>, <b>whale</b> dan <b>raid</b> sekaligus, pakai <b>🎨 Semua emoji kartu buy + raid</b>.`
             : "") +
           (isGroupPosted(key) ? GROUP_PREMIUM_NOTE : ""),
         { ...HTML, ...Markup.inlineKeyboard(rows) },
@@ -4363,7 +4389,7 @@ module.exports._net = { fetchTelegramFileBuffer };
 module.exports._tpl = { viewText, placeholderWarning, viewKb };
 // Exposed for tests: the one screen that owns every icon on the buy card.
 module.exports._buyEmoji = { buyEmojiSlots, buyEmojiKb, buyEmojiText, emojiHint, buyPreviews, BUY_CARD_EMOJI_KEYS, CARD_OF_KEY, sendBuyPreview, sendTemplatePreview };
-module.exports._allEmoji = { allEmojiSlots, allEmojiKb, allEmojiText, allEmojiPages, ALL_EMOJI_PER_PAGE };
+module.exports._allEmoji = { allEmojiSlots, allEmojiKeys, allEmojiKb, allEmojiText, allEmojiPages, ALL_EMOJI_PER_PAGE };
 // Exposed for tests: any template rendered on sample values, the thing every
 // preview button shows.
 module.exports._preview = { renderSample, SPECIAL_RENDER, SAMPLE_VARS };

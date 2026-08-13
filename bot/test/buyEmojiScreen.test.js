@@ -123,16 +123,51 @@ test("the hint follows a reworded row instead of going stale", async () => {
   }
 });
 
-test("the way in is on every template the card is built from", () => {
-  // Whichever of the eight an operator happens to open, the whole palette is one
-  // tap away rather than seven screens away.
-  for (const key of [...BUY_CARD_EMOJI_KEYS, "chain_emojis"]) {
+test("the way in is on every template the screen covers — raid included", () => {
+  // Whichever piece an operator happens to open, the whole palette is one tap
+  // away rather than a dozen screens away.
+  //
+  // THE RAID KEYS ARE THE POINT. They were added to the SCREEN and never to the
+  // way IN, which was gated on the buy card's eight — so an admin who opened
+  // raid_card looking for 📊 saw that one template's icons and no route to the
+  // rest, and the button they could not see was labelled "kartu buy" anyway.
+  // Between them, indistinguishable from raid icons not being editable at all.
+  const covered = admin._allEmoji.allEmojiKeys();
+  assert.ok(covered.includes("raid_card"), "the screen covers the raid card");
+  assert.ok(covered.includes("raid_panel"), "…and the raid panel");
+  for (const key of [...covered, "chain_emojis"]) {
     const flat = admin._tpl.viewKb(key).reply_markup.inline_keyboard.flat();
-    assert.ok(flat.some((b) => b.callback_data === "bem"), `${key} must offer the buy-card emoji screen`);
+    assert.ok(flat.some((b) => b.callback_data === "bem"), `${key} must offer the shared emoji screen`);
   }
   // And nowhere else — it would be a dead end on a channel post.
   const flat = admin._tpl.viewKb("post_trending").reply_markup.inline_keyboard.flat();
   assert.ok(!flat.some((b) => b.callback_data === "bem"));
+});
+
+test("the button says which cards it changes", () => {
+  // It covers buy, whale AND raid, and said "kartu buy". A label that names the
+  // wrong surface is why the screen went unopened by the person who needed it.
+  const label = admin._tpl
+    .viewKb("raid_card")
+    .reply_markup.inline_keyboard.flat()
+    .find((b) => b.callback_data === "bem").text;
+  assert.match(label, /buy/i);
+  assert.match(label, /raid/i);
+});
+
+test("an icon shared by both cards is named for BOTH of its jobs", () => {
+  // The hint is derived from whichever template the screen reads first, and that
+  // is always a buy one — so the raid's "12% complete" icon was labelled
+  // "price", its Record line "Chart", and its completed banner "Position". The
+  // icons were editable the whole time and unfindable by anyone looking for
+  // them, which from where that person is standing is the same thing.
+  const slots = admin._allEmoji.allEmojiSlots();
+  const named = (char) => (slots.find((s) => s.char === char) || {}).label || "";
+  assert.match(named("📊"), /raid/i, "📊 draws the raid's % complete as well as the buy price");
+  assert.match(named("📈"), /record/i);
+  assert.match(named("✅"), /done/i);
+  // …and the buy meaning is not lost in the process.
+  assert.match(named("📊"), /price/i);
 });
 
 test("every button maps back to the slot it was built from", () => {
