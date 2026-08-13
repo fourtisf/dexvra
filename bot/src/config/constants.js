@@ -327,6 +327,23 @@ const RAID_BUMP_MINUTES = Math.max(2, int(env.RAID_BUMP_MINUTES, 5));
 // are climbing" and "nothing is happening" looked the same from the chat.
 // Raise it if a busy launch post feels chatty.
 const RAID_MOVE_BUMP_SEC = Math.max(0, int(env.RAID_MOVE_BUMP_SEC, 0));
+// How many cells the raid card's progress bar draws.
+//
+// SIX, not ten, because the row has to survive a PHONE. Telegram wraps at a
+// space, and the last space on a metric row is the one before the count — so a
+// row one glyph too wide does not shrink, it drops "0/5" onto a line of its own
+// under the bar. Three metrics doing that turns a six-line card into nine, and
+// the numbers, which are the only part anyone reads, end up furthest from the
+// label they belong to.
+//
+// The bar glyphs are the expensive part: ▱ is about a full em each, so ten of
+// them cost more width than the icon, the label and the count combined. Cutting
+// four is what buys the row back; the resolution lost is invisible at this size.
+//
+// Tunable because the wrap point depends on the reader's font, language and
+// device, none of which this process can see — so an operator who still sees a
+// wrap sets it lower in .env instead of waiting for a deploy.
+const RAID_BAR_WIDTH = Math.min(12, Math.max(3, int(env.RAID_BAR_WIDTH, 6)));
 
 // ── Paid Mass DM (public pays a flat price to DM the /start audience once) ────
 const MASS_DM_ENABLED = bool(env.MASS_DM_ENABLED, true);
@@ -423,6 +440,7 @@ module.exports = {
   RAID_MAX_MINUTES,
   RAID_BUMP_MINUTES,
   RAID_MOVE_BUMP_SEC,
+  RAID_BAR_WIDTH,
   MASS_DM_ENABLED,
   MASS_DM_PRICE,
   MASS_DM_REVIEW_CHAT_ID,

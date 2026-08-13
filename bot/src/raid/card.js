@@ -16,8 +16,12 @@
 const tpl = require("../templates");
 const premium = require("../premium");
 const { escapeHtml } = require("../helpers/format");
+const { RAID_BAR_WIDTH } = require("../config/constants");
 
-const BAR_WIDTH = 10;
+// Sized so a metric row survives a phone — see the reasoning on RAID_BAR_WIDTH.
+// A row one glyph too wide does not shrink; Telegram drops the count onto its
+// own line under the bar, which is where the numbers stop being readable.
+const BAR_WIDTH = RAID_BAR_WIDTH;
 const ROSTER_SHOWN = 6;
 const POST_CLIP = 140;
 
@@ -66,7 +70,13 @@ function progress(cur, base, tgt) {
 }
 
 function bar(fraction, style) {
-  const filled = Math.round(clamp01(fraction) * BAR_WIDTH);
+  const f = clamp01(fraction);
+  // ANY progress fills at least one cell. A narrower bar rounds a real 1/16 down
+  // to zero, and an all-empty bar sitting next to "1/16" says nothing happened
+  // when something did — the same failure buySizeBar guards against, and it gets
+  // easier to hit the fewer cells there are. Exactly zero still renders empty:
+  // that one IS "nothing yet".
+  const filled = f > 0 ? Math.max(1, Math.round(f * BAR_WIDTH)) : 0;
   return style[4].repeat(filled) + style[5].repeat(BAR_WIDTH - filled);
 }
 

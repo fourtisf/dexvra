@@ -42,6 +42,53 @@ test("un-liking clamps to zero instead of throwing", () => {
   assert.doesNotThrow(() => card.bar(-1, card.STYLE_DEFAULT));
 });
 
+// ── The row has to survive a phone ───────────────────────────────────────────
+
+test("a metric row keeps its count on the SAME line as the bar", () => {
+  // Reported from a live card: ten bar cells pushed the row past the width of a
+  // phone, and Telegram wraps at a space — the last one being the gap before the
+  // count. So "0/5" and "0/10" landed on lines of their own UNDER the bar, and
+  // the numbers, the only part anyone reads, ended up furthest from the label.
+  //
+  // The row cannot be measured in pixels from here, so this pins the two things
+  // that made it overflow: one line per goal, and a budget on its length.
+  const raid = {
+    crewOnly: false,
+    baseline: { likes: 0, replies: 0, reposts: 0 },
+    target: { likes: 16, replies: 5, reposts: 0 },
+    current: { likes: 1, replies: 0, reposts: 0 },
+    crewTarget: 10,
+    crew: [],
+  };
+  const rows = card.buildProgressBlock(raid).split("\n").filter(Boolean);
+  assert.strictEqual(rows.length, 3, "likes, replies, crew — one line each, nothing wrapped onto its own");
+  for (const r of rows) {
+    assert.ok(/\d+\/\d+$/.test(r), `the count ends the row: ${r}`);
+    assert.ok(r.length <= 26, `row is ${r.length} chars, too wide for a phone: ${r}`);
+  }
+});
+
+test("the default bar is short, and stays tunable without a deploy", () => {
+  // The wrap point depends on the reader's font, language and device — none of
+  // which this process can see — so an operator who still sees a wrap lowers it
+  // in .env. Clamped at both ends: 0 cells is not a bar, and a wide one is the
+  // bug this came from.
+  const { RAID_BAR_WIDTH } = require("../src/config/constants");
+  assert.ok(RAID_BAR_WIDTH <= 8, `a bar of ${RAID_BAR_WIDTH} cells is what pushed the count onto its own line`);
+  assert.strictEqual(card.bar(1, card.STYLE_DEFAULT).length, RAID_BAR_WIDTH);
+});
+
+test("ANY progress lights a cell; exactly zero lights none", () => {
+  // 1/16 is 6.25%, which rounds to zero cells on a short bar — and an all-empty
+  // bar beside "1/16" says nothing happened when something did. Rounding down to
+  // nothing gets easier the fewer cells there are, so the floor arrived with the
+  // narrower bar.
+  const [, , , , FILLED] = card.STYLE_DEFAULT;
+  assert.ok(card.bar(1 / 16, card.STYLE_DEFAULT).startsWith(FILLED), "one like is visible");
+  assert.ok(!card.bar(0, card.STYLE_DEFAULT).includes(FILLED), "…but nothing yet is still nothing");
+  assert.strictEqual(card.bar(1, card.STYLE_DEFAULT).includes(card.STYLE_DEFAULT[5]), false, "a met goal is full");
+});
+
 test("an untracked metric is invisible — target equal to baseline IS 'off'", () => {
   const raid = raidOf();
   assert.deepStrictEqual(card.activeMetrics(raid).map((m) => m.key), ["likes", "replies"]);
