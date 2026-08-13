@@ -69,6 +69,11 @@ function attachServices(bot, services) {
   // by name, which is what makes that visible.
   if (require("../config/constants").RAID_ENABLED) {
     add("raidRunner", () => require("../raid/runner").start(bot));
+    // A SEPARATE timer from the runner's, on purpose: this one polls X for new
+    // POSTS by a watched account, the runner polls one post's numbers. They fail
+    // for different reasons and at different cadences, and sharing a tick would
+    // make a blocked timeline read delay every live raid's counts.
+    add("raidAutoWatcher", () => require("../raid/autoRaid").start(bot));
   } else {
     // The sweep runs EVEN WITH THE FEATURE OFF, and that is the point. The
     // obvious response to a raid misbehaving in a customer's group is

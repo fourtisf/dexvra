@@ -128,6 +128,24 @@ const SAMPLE_VARS = {
   // needs to see how much room those rows take up.
   seq: "#7", percent: "62", left: "38m", crew: "14",
   roster: "@ana, @bo, @cy +11 more",
+  handle: "dexvraio",
+  // The auto-raid block, and the HEALTHY state of it: a preview is for judging
+  // layout, and previewing the "the bot can't see X" branch would put an alarm
+  // in front of an operator who has nothing wrong. Its own builder, like
+  // {progress} below and for the same reason.
+  get autoraid() {
+    try {
+      return require("../raid/panel").autoRaidStatus({
+        autoRaid: { handle: "dexvraio", on: true, lastCheckedAt: Date.now(), lastOkAt: Date.now(), lastSeenTweetId: "1" },
+      });
+    } catch {
+      return "🤖 Auto-raid: on — watching @dexvraio";
+    }
+  },
+  // The refusal quoted back inside the group notice. A REAL one, not "an error":
+  // this template's whole job is to hand an admin something they can act on, and
+  // that reads differently with a real sentence in it.
+  reason: "No goals are set — tap 🤝 Crew on /raid and pick one.",
   // THE RAID'S OWN BUILDER, on sample numbers — never a hand-written lookalike.
   //
   // It used to be a literal string with ❤️ 💬 🤝 ▰ ▱ typed into it, so the

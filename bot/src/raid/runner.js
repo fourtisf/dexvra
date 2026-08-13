@@ -68,13 +68,16 @@ const countsMark = (raid) => {
  * Launch a raid. Returns { ok, error, warning } and NEVER throws — it is called
  * straight from a button tap.
  */
-async function startRaid(telegram, g, { startedBy = "" } = {}) {
+async function startRaid(telegram, g, { startedBy = "", tweetUrl = "" } = {}) {
   const s = g.settings || {};
   if (g.raid && g.raid.status === "running") {
     // Guarded HERE and not only in the panel: a second raid would overwrite the
     // first one's permission snapshot, and the group could then never be
     // restored to how it was before the FIRST lock.
-    return { ok: false, error: tpl.t("raid_already_running") };
+    //
+    // `retryable`: the auto-raid watcher re-queues on this rather than burning
+    // the post — the group really will be free in a few minutes.
+    return { ok: false, error: tpl.t("raid_already_running"), retryable: true };
   }
   // ...and the status check alone is not enough. `g.raid` is not assigned until
   // several awaits later (the X read, then the permission snapshot), and
@@ -90,14 +93,18 @@ async function startRaid(telegram, g, { startedBy = "" } = {}) {
   if (starting.has(gid)) return { ok: false, error: tpl.t("raid_already_launching") };
   starting.add(gid);
   try {
-    return await launch(telegram, g, s, startedBy);
+    return await launch(telegram, g, s, startedBy, tweetUrl);
   } finally {
     starting.delete(gid);
   }
 }
 
-async function launch(telegram, g, s, startedBy) {
-  const postId = xMetrics.parseTweetId(s.postUrl);
+async function launch(telegram, g, s, startedBy, tweetUrl) {
+  // An EXPLICIT post wins over the panel's saved target, and never writes back
+  // to it. Auto-raid, a pasted link and "raid the latest post" each raid THEIR
+  // post; `settings.postUrl` stays whatever the admin chose, because a field the
+  // bot writes on an admin's behalf is one they cannot explain or remove.
+  const postId = xMetrics.parseTweetId(tweetUrl || s.postUrl);
   if (!postId) return { ok: false, error: tpl.t("raid_bad_post") };
 
   const wantsX = (s.likes || 0) > 0 || (s.replies || 0) > 0 || (s.reposts || 0) > 0;
@@ -263,7 +270,11 @@ async function launch(telegram, g, s, startedBy) {
       reportStranded(g.chatId, "the card could not be posted and the rollback unlock failed");
     }
     await store.save();
-    return { ok: false, error: `Couldn't post the raid card — ${e && e.message}` };
+    // A 429 or a Telegram blip should be tried again on the next tick; a group
+    // that removed the bot should not. Judged HERE, at the source of truth,
+    // rather than by string-matching the message at the caller — and delegated
+    // to fatalChatError, which is the single owner of that list.
+    return { ok: false, error: `Couldn't post the raid card — ${e && e.message}`, retryable: !isFatalChatError(e) };
   }
 
   markActive(g.chatId, true);

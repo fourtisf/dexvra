@@ -845,6 +845,7 @@ const DEFAULTS = {
     "🎯 **Targets**\n" +
     "{goals}\n\n" +
     "🔒 **Chat lock:** {lock}\n" +
+    "{autoraid}\n" +
     "{record}\n\n" +
     "Targets count **up** from where the post is at launch. A raid runs {maxMinutes} min max.\n" +
     "{sources}",
@@ -862,6 +863,39 @@ const DEFAULTS = {
   raid_sources_partial: "⚡ **Likes**, **Replies** and **Crew** are live. **Reposts** need a paid X key — leave that target off.",
   raid_group_only: "👥 Raids run in a group.\n\nAdd the bot to yours, make it admin, then hit /raid there.",
   raid_admin_only: "🔒 Group admins only.",
+  // ── Auto-raid ──────────────────────────────────────────────────────────────
+  // {autoraid} on the panel. A VALUE, so it carries NO markup: the saved-template
+  // path inserts values verbatim beside `entities`, and a <b> would reach the
+  // group as literal angle brackets. Emphasis is CAPS or an emoji.
+  raid_watch_prompt:
+    "👤 Send the project's X account — @handle or a link to their profile.\n\n" +
+    "Every NEW post on it starts a raid here with the goals above. Posts made BEFORE now never will.\n\n" +
+    "Send - to stop watching. /cancel to leave it as it is.",
+  raid_watch_set:
+    "👤 Watching @{handle}.\n\n" +
+    "Auto-raid is ON. Only posts made from now on start a raid — older ones never will.\n\n" +
+    "You can also just paste their post link here and the raid starts immediately.",
+  raid_watch_cleared: "👤 Not watching any account now. Auto-raid is off.",
+  raid_watch_bad: "👤 That doesn't look like an X account. Send @handle, or a link to their profile.",
+  // The two GROUP notices. They land in a customer's community chat, in front of
+  // members who did not ask and cannot act — one line of what happened, one line
+  // of what the ADMIN does, and nothing about our infrastructure or billing.
+  raid_notice_failed:
+    "⚡ A new post was spotted, but the raid couldn't start.\n\n{reason}\n\nAdmin: send this link here to raid it —\n{url}",
+  raid_notice_blind:
+    "⚡ The bot can't see this account's posts on X right now, so new ones won't start a raid on their own.\n\n" +
+    "Admin: paste the post link here and the raid starts immediately.",
+  raid_help:
+    "❓ HOW A RAID WORKS\n\n" +
+    "1. 🔗 Target post — send the X post you want raided.\n" +
+    "2. Set the goals. 🤝 Crew counts whoever talks in this chat during the raid — it needs NO X account and always works.\n" +
+    "3. 🚀 Launch raid. The bot posts a card and keeps it updated as the real numbers climb.\n\n" +
+    "GOALS ARE HOW MANY MORE. A post already on 200 likes with a +15 goal finishes at 215, not at 15.\n\n" +
+    "👤 X ACCOUNT is optional. Name the project's account and every new post starts a raid by itself. " +
+    "You can also paste a post link here at any time and the raid starts immediately — that always works, " +
+    "even when X won't show the bot that account's posts.\n\n" +
+    "🔒 CHAT LOCK is off by default. When it is on the chat is muted until the goals are met, and it is ALWAYS " +
+    "re-opened — when the raid completes, when it expires, when an admin stops it, and even if the bot restarts.",
   // The example is deliberately NOT a Dexvra link. It used to be, and it told
   // the reader to paste a post from an account that is not theirs — the raid is
   // meant to point at the PROJECT's own post.
@@ -1216,12 +1250,19 @@ const META = {
   raid_cancelled: { group: "Dexvra Raid", label: "Raid: stopped by an admin", ph: ["seq", "percent", "progress", "url", "post", "updated"] },
   raid_complete_note: { group: "Dexvra Raid", label: "Raid: shout when it clears", ph: ["crew", "url"] },
   raid_style: { group: "Dexvra Raid", label: "Raid bar style (likes|replies|reposts|crew|filled|empty)", ph: [] },
-  raid_panel: { group: "Dexvra Raid", label: "Raid: setup panel (/raid)", ph: ["post", "goals", "lock", "record", "maxMinutes", "sources"] },
+  raid_panel: { group: "Dexvra Raid", label: "Raid: setup panel (/raid)", ph: ["post", "goals", "lock", "autoraid", "record", "maxMinutes", "sources"] },
   raid_panel_record: { group: "Dexvra Raid", label: "Raid panel: group record line", ph: ["started", "completed"] },
   raid_sources_none: { group: "Dexvra Raid", label: "Raid panel: no X key at all", ph: [] },
   raid_sources_partial: { group: "Dexvra Raid", label: "Raid panel: no paid X key", ph: [] },
   raid_group_only: { group: "Dexvra Raid", label: "Error: raids run in a group", ph: [] },
   raid_admin_only: { group: "Dexvra Raid", label: "Error: group admins only", ph: [] },
+  raid_watch_prompt: { group: "Dexvra Raid", label: "Auto-raid: ask for the X account", ph: [] },
+  raid_watch_set: { group: "Dexvra Raid", label: "Auto-raid: account saved", ph: ["handle"] },
+  raid_watch_cleared: { group: "Dexvra Raid", label: "Auto-raid: account removed", ph: [] },
+  raid_watch_bad: { group: "Dexvra Raid", label: "Auto-raid: that isn't an X account", ph: [] },
+  raid_notice_failed: { group: "Dexvra Raid", label: "Auto-raid: couldn't start (group notice)", ph: ["reason", "url"] },
+  raid_notice_blind: { group: "Dexvra Raid", label: "Auto-raid: can't see X (group notice)", ph: [] },
+  raid_help: { group: "Dexvra Raid", label: "Raid: how it works", ph: [] },
   raid_seturl_prompt: { group: "Dexvra Raid", label: "Raid: ask for the X post link", ph: [] },
   raid_bad_url: { group: "Dexvra Raid", label: "Raid: that isn't an X post link", ph: [] },
   raid_none_running: { group: "Dexvra Raid", label: "Raid: nothing running here", ph: [] },

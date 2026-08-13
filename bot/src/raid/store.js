@@ -59,6 +59,29 @@ const DEFAULT_SETTINGS = {
   postUrl: "",
 };
 
+/**
+ * The auto-raid watcher's state, per group.
+ *
+ * `lastCheckedAt` and `lastOkAt` are BOTH here on purpose, and the pair is the
+ * whole point: the first is written on every tick whether or not X answered, so
+ * a stale value means the WATCHER is down; the second only on a successful read,
+ * so a fresh check with a stale ok means X is refusing us. With only the first,
+ * a watcher blind for hours still rendered a green tick — the state that looks
+ * most like a healthy one, because the timer really is alive.
+ */
+const DEFAULT_AUTORAID = {
+  handle: "", // the watched account, bare, no @
+  on: false,
+  lastSeenTweetId: "", // "" means NEVER LOOKED — the first read only seeds
+  lastCheckedAt: 0,
+  lastOkAt: 0,
+  lastError: "",
+  lastErrorAt: 0,
+  pendingPostId: "", // detected mid-raid, fires when the group is free
+  pendingAt: 0,
+  pendingTries: 0,
+};
+
 const blankRaid = () => ({ status: "idle" });
 
 function get(chatId) {
@@ -80,6 +103,10 @@ function getOrCreate(chatId, title = "") {
   }
   const g = groups[k];
   g.settings = { ...DEFAULT_SETTINGS, ...(g.settings || {}) };
+  // Merged rather than assigned, so a record written before auto-raid existed
+  // gains the new fields on first touch instead of reading as `undefined`
+  // everywhere downstream.
+  g.autoRaid = { ...DEFAULT_AUTORAID, ...(g.autoRaid || {}) };
   if (!g.raid) g.raid = blankRaid();
   if (!g.stats) g.stats = { started: 0, completed: 0, expired: 0 };
   if (title && g.title !== title) g.title = title;
@@ -184,5 +211,6 @@ module.exports = {
   reload,
   _reset,
   DEFAULT_SETTINGS,
+  DEFAULT_AUTORAID,
   FILE,
 };

@@ -25,17 +25,15 @@
 // (metered per app, not per IP) and the Crew goal, which makes zero X requests.
 const log = require("../helpers/logger");
 const { sourceEnabled } = require("./sourceFlag");
+// The bundle sweep is SHARED with the timeline reader — see xBundle.js. Two
+// sweeps would download the same megabytes twice and get the host blocked twice
+// as fast, for ids that live in the same files.
+const bundle = require("./xBundle");
 
 const TIMEOUT_MS = 8000;
 const COOLDOWN_MS = 120 * 1000;
 const GUEST_TTL_MS = 60 * 60 * 1000;
-// Discovery is best-effort and strictly bounded: it runs only AFTER a 404 has
-// proved the current id stale, at most once per window, and over a handful of
-// bundles. A bundle is megabytes, so an unbounded sweep would cost more than
-// the outage it repairs.
-const DISCOVERY_TTL_MS = 6 * 60 * 60 * 1000;
-const DISCOVERY_TIMEOUT_MS = 10000;
-const DISCOVERY_MAX_BUNDLES = 4;
+const DISCOVERY_TTL_MS = bundle.TTL_MS;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -122,85 +120,24 @@ function features() {
 }
 
 /**
- * Read the live operation id out of x.com's own JavaScript.
+ * Ask x.com's own bundle for a live id for THIS operation.
  *
- * The bundle that broke us also carries the fix, so the honest answer to "the
- * hash churns" is to read it rather than to page an operator who may be asleep
- * while every group's repost goal sits at 0. Never throws; a failure simply
- * leaves the previous tier in force.
+ * Delegated to xBundle, which owns the sweep and its throttle: the timeline
+ * reader needs ids out of the same megabytes, and two sweeps would download
+ * them twice and get the host blocked twice as fast.
  *
  * @returns {Promise<string>} the discovered id, or "" when nothing was found.
  */
 async function discoverQueryId() {
-  const now = Date.now();
-  if (discovered && now - discovered.at < DISCOVERY_TTL_MS) return discovered.id;
-  // Throttled on the ATTEMPT, not on success: a box that cannot reach the
-  // bundle host at all must not re-run a multi-megabyte sweep on every 404.
-  if (discoveryTried && now - discoveryTried < DISCOVERY_TTL_MS) return "";
-  discoveryTried = now;
-
-  try {
-    const shell = await fetch("https://x.com/", {
-      headers: { "User-Agent": UA, Accept: "text/html" },
-      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
-    });
-    const html = await readText(shell);
-    if (!html) return "";
-    const urls = [
-      ...new Set(html.match(/https:\/\/abs\.twimg\.com\/responsive-web\/client-web[^"'\s)]+\.js/g) || []),
-    ];
-    const ranked = urls.sort((a, b) => score(b) - score(a)).slice(0, DISCOVERY_MAX_BUNDLES);
-    for (const url of ranked) {
-      // eslint-disable-next-line no-await-in-loop
-      const js = await fetch(url, {
-        headers: { "User-Agent": UA },
-        signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
-      })
-        .then(readText)
-        .catch(() => "");
-      const found = js && findQueryId(js, OPERATION);
-      if (found) {
-        discovered = { at: Date.now(), id: found };
-        log.info(`[raid] X rotated its hash — discovered a live queryId for ${OPERATION}: ${found}`);
-        return found;
-      }
-    }
-    log.warn(`[raid] could not find a ${OPERATION} queryId in x.com's bundle`);
-    return "";
-  } catch (e) {
-    log.warn(`[raid] queryId discovery failed: ${(e && e.message) || e}`);
-    return "";
+  const cachedId = bundle.cached(OPERATION);
+  if (cachedId) {
+    discovered = { at: Date.now(), id: cachedId };
+    return cachedId;
   }
-}
-
-/** A response body as text, or "" for anything unreadable. Tolerates a stub
- *  without `.text()` rather than throwing inside the discovery path. */
-async function readText(res) {
-  if (!res || !res.ok || typeof res.text !== "function") return "";
-  try {
-    return String((await res.text()) || "");
-  } catch {
-    return "";
-  }
-}
-
-// The operation map lives in the api/endpoint chunks; `main` is the fallback.
-// Ordering matters only because the bundle budget is deliberately small.
-function score(url) {
-  if (/\/api\./.test(url) || /endpoint/i.test(url)) return 3;
-  if (/main\./.test(url)) return 2;
-  return 1;
-}
-
-/**
- * Pull one operation's id out of a bundle. BOTH field orders occur across
- * builds, so both are matched rather than assuming the one that shipped today.
- */
-function findQueryId(js, operationName) {
-  const a = js.match(new RegExp(`queryId:"([\\w-]{10,40})",operationName:"${operationName}"`));
-  if (a) return a[1];
-  const b = js.match(new RegExp(`operationName:"${operationName}",[^}]{0,80}?queryId:"([\\w-]{10,40})"`));
-  return b ? b[1] : "";
+  const ids = await bundle.discoverQueryIds([OPERATION]);
+  const id = ids[OPERATION] || "";
+  if (id) discovered = { at: Date.now(), id };
+  return id;
 }
 
 /**
@@ -363,11 +300,14 @@ function _reset() {
   cooldownUntil = 0;
   cooldownReason = "";
   guest = null;
-  // Without these two a discovered id — or a spent discovery budget — leaks
-  // into the next test, which is the kind of cross-test coupling that reads as
-  // a flake months later.
+  // Without these a discovered id — or a spent discovery budget — leaks into
+  // the next test, which is the kind of cross-test coupling that reads as a
+  // flake months later. The shared sweep is cleared too: it now outlives this
+  // module, so resetting only the local copy would leave the next case looking
+  // at an id this one discovered.
   discovered = null;
   discoveryTried = 0;
+  bundle._reset();
 }
 
 module.exports = {
@@ -378,7 +318,9 @@ module.exports = {
   isOnCooldown,
   queryId,
   discoverQueryId,
-  findQueryId,
+  // Re-exported from its new owner so callers (and tests) that reach for it here
+  // keep working — the sweep moved, the contract did not.
+  findQueryId: bundle.findQueryId,
   _reset,
   SEED_QUERY_ID,
   DEFAULT_FEATURES,

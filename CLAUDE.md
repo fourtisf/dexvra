@@ -174,6 +174,71 @@ cd bot && npm run raid:check     # which source answers from THIS box, and why n
 Whether X answers is a property of the server's egress today, not of the code,
 so it has to be measured on the box.
 
+## Auto-raid — the project posts, the raid starts itself
+
+Ported to match FourtisRaid's panel (2026-08-13). 👤 X account names the
+project's account, 🤖 toggles the watching, 🗑 Remove clears the target and
+❓ How it works explains the three things this feature keeps being asked.
+
+**There are TWO ways in, and the cheap one is the one that always works.** The
+watcher polls each watched handle (`AUTORAID_POLL_SEC`, 60s) and raids a new
+original post. A PASTED LINK does the same with **zero X requests** — the bot
+already reads every group message for crew enrolment, so an admin pasting the
+project's post IS the signal, and it works on an account X hides.
+
+**X serves logged-out timelines SELECTIVELY, per account.** Two public accounts
+read from one IP can give different answers, and no free source gets past that
+— it is an authorization decision about the ACCOUNT, not about the box. Only
+`X_BEARER_TOKEN` reads any account. Measure before concluding:
+
+```bash
+cd bot && npm run raid:timeline -- @yourproject   # probes a CONTROL account too
+```
+
+The control read is what separates "X is unreachable from this server" from
+"X won't serve THIS account" — they need different answers and used to get one
+shrug.
+
+Rules that are load-bearing, each one a way a raid fires on the wrong post:
+
+- **The first look only SEEDS.** Empty cursor = never looked; the first read
+  records the newest post WITHOUT raiding it. Switching accounts resets it —
+  snowflakes are one global sequence, so a stale cursor would instantly
+  "detect" half the new account's history.
+- **The cursor advances BEFORE the raid starts.** A missed auto-raid is a
+  shrug; a double raid is the group spammed. A cursor that cannot be SAVED does
+  not raid at all.
+- **`auto(g)` mutates in place and returns the same object.** The spread form
+  replaced `g.autoRaid` on every call, so a reference taken at the top of a
+  function stopped pointing at the record the moment a nested call re-derived
+  it — the cursor was written to a discarded object and the next tick raided the
+  same post again. Caught by a test, not by reading.
+- **The clear-words are matched BEFORE `parseHandle`.** `none`, `off`, `clear`,
+  `stop`, `remove` are all VALID X handles, so parsing first starts watching
+  `@none` — with the account being deleted replaced by a stranger's.
+- **`lastCheckedAt` and `lastOkAt` are both needed.** The first is written on
+  every tick whether or not X answered (so a stale value means the BOT stopped);
+  only the second says X actually answered. With one, a bot blind for hours
+  still rendered a green tick — the state that looks most like a healthy one.
+- **A blind or stalled panel DROPS the ready line**, never rewords it. "The next
+  post starts a raid" under "the bot can't see X" is two lines contradicting
+  each other, and the false one is the reassuring one.
+- **`settings.postUrl` has ONE writer** — the 🔗 Target post step.
+  `startRaid(…, { tweetUrl })` lets auto-raid and a pasted link raid THEIR post
+  without touching what the admin configured. A field the bot writes on an
+  admin's behalf is one they cannot explain or remove.
+- **The link route checks cheap → expensive**: regex on text already in memory →
+  the group's config → is it the watched account? → is the sender an admin,
+  LAST. That last one is a network round trip and this runs on every group
+  message. A member's paste is ignored SILENTLY.
+- **`xBundle.js` owns the queryId sweep** for both GraphQL callers. A bundle is
+  megabytes; two sweeps would download the same bytes twice and get the host
+  blocked twice as fast.
+
+```bash
+cd bot && node scripts/run-tests.js test/raidAuto.test.js   # 25 tests, no network
+```
+
 ## The buy card had TWO ideas of "whale" and only one reached the artwork
 
 A live card, 2026-08-13: header **MEGA BUY**, eight ordinary Dexvra icons under

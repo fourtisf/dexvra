@@ -6,6 +6,11 @@ const store = require("./store");
 const runner = require("./runner");
 const lock = require("./lock");
 const xMetrics = require("./xMetrics");
+const xTimeline = require("./xTimeline");
+// Lazy at call time inside handleText would be tidier for the cycle, but the
+// cycle is broken on the OTHER side: autoRaid requires ./panel lazily, inside
+// the one function that needs isGroupAdmin.
+const autoRaid = require("./autoRaid");
 const card = require("./card");
 const { RAID_MAX_MINUTES } = require("../config/constants");
 const tpl = require("../templates");
@@ -46,18 +51,26 @@ const STEP_TTL_MS = 10 * 60 * 1000;
 // ever says anything in any group — none of whom have a flow open. Nothing else
 // in the bot reads session for group traffic. A small keyed map with an explicit
 // expiry costs nothing and stays bounded.
-const awaitingUrl = new Map(); // `${chatId}:${userId}` → armed-at ms
+// Carries the KIND of answer being waited for, so two steps can share one
+// bounded map without either eating the other's reply. One admin can only be in
+// one step at a time, which is why the kind lives on the value rather than in
+// the key: arming the second must CANCEL the first, not run both.
+const awaitingUrl = new Map(); // `${chatId}:${userId}` → { at, kind }
 const stepKey = (chatId, userId) => `${chatId}:${userId}`;
 
-function armUrlStep(chatId, userId, at = Date.now()) {
-  for (const [k, t] of awaitingUrl) if (at - t > STEP_TTL_MS) awaitingUrl.delete(k);
-  awaitingUrl.set(stepKey(chatId, userId), at);
+function armStep(chatId, userId, kind, at = Date.now()) {
+  for (const [k, v] of awaitingUrl) if (at - v.at > STEP_TTL_MS) awaitingUrl.delete(k);
+  awaitingUrl.set(stepKey(chatId, userId), { at, kind });
 }
-const urlStepArmed = (chatId, userId, at = Date.now()) => {
-  const t = awaitingUrl.get(stepKey(chatId, userId));
-  return !!t && at - t <= STEP_TTL_MS;
-};
-const clearUrlStep = (chatId, userId) => awaitingUrl.delete(stepKey(chatId, userId));
+function stepArmed(chatId, userId, kind, at = Date.now()) {
+  const v = awaitingUrl.get(stepKey(chatId, userId));
+  return !!v && v.kind === kind && at - v.at <= STEP_TTL_MS;
+}
+const clearStep = (chatId, userId) => awaitingUrl.delete(stepKey(chatId, userId));
+
+const armUrlStep = (chatId, userId, at = Date.now()) => armStep(chatId, userId, "url", at);
+const urlStepArmed = (chatId, userId, at = Date.now()) => stepArmed(chatId, userId, "url", at);
+const clearUrlStep = clearStep;
 
 const isGroup = (ctx) => ctx.chat && (ctx.chat.type === "group" || ctx.chat.type === "supergroup");
 
@@ -80,6 +93,81 @@ const fmtTarget = (n) => (n > 0 ? `+${n}` : "off");
 function displayName(from) {
   const raw = from && (from.username ? `@${from.username}` : from.first_name);
   return Array.from(String(raw || "anon")).slice(0, 24).join("");
+}
+
+const BLIND_MIN = 10; // no successful read for this long → say so, loudly
+const STALE_MIN = 10; // no tick at all for this long → the watcher, not X
+
+const agoMin = (t) => (t ? Math.max(0, Math.round((Date.now() - t) / 60000)) : Infinity);
+const when = (t) => (agoMin(t) < 1 ? "just now" : `${agoMin(t)}min ago`);
+
+/**
+ * The 🤖 block on the panel. PLAIN TEXT — it is substituted into an
+ * admin-editable template as a value, and a value cannot carry markup or
+ * entities. Emphasis is CAPS.
+ *
+ * EVERY LINE NAMES A CONSEQUENCE, not the internal state that produced it. The
+ * words this module would naturally use — armed, watcher, cursor, timeline read
+ * — are its own vocabulary, and a status line that has to be explained is not
+ * reporting status.
+ *
+ * AND IT MUST NEVER PRINT A PROMISE THAT CANNOT COME TRUE. A panel that says
+ * "the next post starts a raid" directly under "the bot can't see X" is two
+ * lines that contradict each other, and the false one is the reassuring one.
+ * Blind and stalled therefore DROP the ready line rather than reword it.
+ */
+function autoRaidStatus(g) {
+  const a = g.autoRaid || {};
+  if (!a.handle) {
+    return (
+      "🤖 Auto-raid: off — no X account set.\n" +
+      "   👤 X account names one, and then every new post starts a raid here by itself."
+    );
+  }
+  if (!a.on) {
+    return (
+      `🤖 Auto-raid: off — @${a.handle} is saved but not being watched.\n` +
+      "   🔗 An admin can still paste a post link here to raid it — that always works."
+    );
+  }
+
+  const lines = [`🤖 Auto-raid: on — watching @${a.handle}`];
+  const stalled = agoMin(a.lastCheckedAt) >= STALE_MIN;
+  // A successful READ, not merely a tick. lastCheckedAt is written whether or
+  // not X answered — deliberately, so a stale value means the bot stopped — so
+  // on its own it renders a green tick for a bot that has seen nothing for
+  // hours. That is the state that looks most like a healthy one.
+  const blind = !stalled && a.lastCheckedAt && agoMin(a.lastOkAt) >= BLIND_MIN;
+
+  if (stalled) {
+    lines.push(`   ⚠️ last check ${when(a.lastCheckedAt)} — the bot may have stopped`);
+  } else if (blind) {
+    lines.push(`   🚫 the bot hasn't been able to see X for ${agoMin(a.lastOkAt)}min — new posts will NOT be spotted`);
+  } else if (a.lastCheckedAt) {
+    lines.push(`   ⏱ the bot is running, checked ${when(a.lastCheckedAt)}`);
+  }
+
+  if (a.pendingPostId) {
+    lines.push("   ⏸ 1 post is waiting — it starts when this raid finishes");
+  } else if (!stalled && !blind) {
+    if (!a.lastSeenTweetId) {
+      lines.push(a.lastCheckedAt ? "   ⏳ not ready yet — it starts watching at the next check" : "   ⏳ starting up — it begins watching at the next check");
+    } else {
+      lines.push("   👀 ready — only posts made from now on start a raid, older ones never will");
+    }
+  }
+
+  // A reason with no age reads as live, and this one deliberately survives quiet
+  // ticks — only a raid actually starting clears it — so it is routinely older
+  // than the check printed above.
+  if (a.lastError) lines.push(`   ⚠️ last outcome (${when(a.lastErrorAt)}): ${a.lastError}`);
+
+  lines.push(
+    stalled || blind
+      ? "   🔗 ADMIN: paste the post link here to raid it — this always works"
+      : "   🔗 An admin pasting a post link here raids it immediately",
+  );
+  return lines.join("\n");
 }
 
 // ── The panel ────────────────────────────────────────────────────────────────
@@ -112,6 +200,10 @@ function renderPanel(g) {
     record: g.stats.started > 0 ? tpl.markup("raid_panel_record", { started: g.stats.started, completed: g.stats.completed || 0 }) : "",
     maxMinutes: RAID_MAX_MINUTES,
     sources: sourceKey ? tpl.markup(sourceKey) : "",
+    // A template that drops this placeholder silently removes the only answer
+    // to "is auto-raid actually alive?" — which is the question this block was
+    // built to stop people guessing at.
+    autoraid: autoRaidStatus(g),
   });
   const { text, extra } = payloadArgs(payload, false);
 
@@ -127,11 +219,22 @@ function renderPanel(g) {
           { text: `🔁 Reposts ${fmtTarget(s.reposts)}`, callback_data: "dr_reposts" },
         ],
         [
-          { text: `🔒 Lock chat: ${s.lockChat ? "on" : "off"}`, callback_data: "dr_lock" },
-          { text: "🔗 Set post", callback_data: "dr_seturl" },
+          { text: "🔗 Target post", callback_data: "dr_seturl" },
+          // Shown only when there IS one. A route that needs a magic word is a
+          // route nobody finds, and a button carries no template — so it works
+          // in a group whatever copy they have saved.
+          ...(s.postUrl ? [{ text: "🗑 Remove", callback_data: "dr_rmurl" }] : []),
+        ],
+        [{ text: `🔒 Lock chat: ${s.lockChat ? "on" : "off"}`, callback_data: "dr_lock" }],
+        [
+          { text: `🤖 Auto-raid: ${g.autoRaid && g.autoRaid.on ? "on" : "off"}`, callback_data: "dr_auto" },
+          { text: "👤 X account", callback_data: "dr_watch" },
         ],
         [{ text: "🚀 Launch raid", callback_data: "dr_start" }],
-        [{ text: "✖️ Close", callback_data: "dr_close" }],
+        [
+          { text: "❓ How it works", callback_data: "dr_help" },
+          { text: "✖️ Close", callback_data: "dr_close" },
+        ],
       ];
 
   return { text, extra: { ...extra, disable_web_page_preview: true, reply_markup: { inline_keyboard: kb } } };
@@ -214,6 +317,47 @@ async function handleCallback(ctx) {
       armUrlStep(ctx.chat.id, ctx.from && ctx.from.id);
       await ctx.answerCbQuery().catch(() => {});
       return say(ctx, "raid_seturl_prompt");
+    } else if (data === "dr_rmurl") {
+      // One tap. The magic word this replaces was told to operators twice and
+      // asked about a third time — a route nobody can see is not a route.
+      s.postUrl = "";
+      await store.save();
+      await ctx.answerCbQuery("Target post removed.", { show_alert: true }).catch(() => {});
+      return refreshPanel(ctx, g);
+    } else if (data === "dr_watch") {
+      armStep(ctx.chat.id, ctx.from && ctx.from.id, "handle");
+      await ctx.answerCbQuery().catch(() => {});
+      return say(ctx, "raid_watch_prompt");
+    } else if (data === "dr_auto") {
+      const a = g.autoRaid;
+      if (!a.handle && !a.on) {
+        // Nothing to watch. Switching it on would render "Auto-raid: on" over an
+        // account that does not exist — the green light this whole block exists
+        // to stop.
+        await ctx.answerCbQuery("Set 👤 X account first — there is nothing to watch yet.", { show_alert: true }).catch(() => {});
+        return;
+      }
+      a.on = !a.on;
+      await store.save();
+      // show_alert, not a toast: a toast is easy to tap past, and this changes
+      // whether the group's raids start by themselves. It says what was LOST,
+      // not merely what changed.
+      await ctx
+        .answerCbQuery(
+          a.on
+            ? `Auto-raid ON — new posts by @${a.handle} will start a raid here.`
+            : "Auto-raid OFF — new posts will no longer start a raid. Pasting a post link here still works.",
+          { show_alert: true },
+        )
+        .catch(() => {});
+      return refreshPanel(ctx, g);
+    } else if (data === "dr_help") {
+      // Its OWN message, not an edit of the panel: the admin is reading it in
+      // order to tap the buttons it describes, and a show_alert caps at ~200
+      // characters. Long on purpose — one person asked for it, rather than it
+      // being pushed at a room.
+      await ctx.answerCbQuery().catch(() => {});
+      return say(ctx, "raid_help");
     } else if (data === "dr_start") {
       await ctx.answerCbQuery("Launching…").catch(() => {});
       const res = await runner.startRaid(ctx.telegram, g, { startedBy: ctx.from && ctx.from.id });
@@ -270,10 +414,87 @@ function maybeAutoEnroll(ctx) {
   }
 }
 
+// Words that mean "stop watching". Matched BEFORE parseHandle, and that order is
+// load-bearing: `none`, `off`, `clear`, `stop` and `remove` are all VALID X
+// handles, so parsing first starts watching @none — with the account the admin
+// was deleting replaced by a stranger's.
+const CLEAR_WORDS = new Set(["-", "none", "off", "clear", "stop", "remove", "hapus"]);
+
+/** Consume the "name the X account" answer. Returns true when it did. */
+async function handleWatchText(ctx, raw) {
+  const g = store.getOrCreate(ctx.chat.id, ctx.chat.title || "");
+  const a = g.autoRaid;
+  if (CLEAR_WORDS.has(raw.trim().toLowerCase())) {
+    clearStep(ctx.chat.id, ctx.from.id);
+    clearWatchedAccount(a);
+    await store.save();
+    await say(ctx, "raid_watch_cleared");
+    const p = renderPanel(g);
+    await ctx.reply(p.text, p.extra).catch(() => {});
+    return true;
+  }
+  const handle = xTimeline.parseHandle(raw);
+  if (!handle) {
+    await say(ctx, "raid_watch_bad");
+    return true; // consumed: the admin is still in this step
+  }
+  clearStep(ctx.chat.id, ctx.from.id);
+  if (String(a.handle || "").toLowerCase() !== handle.toLowerCase()) clearWatchedAccount(a);
+  a.handle = handle;
+  // Naming an account IS the consent to watch it — nobody names one and then
+  // wants it not watched. 🤖 is the off switch, and the ack says so.
+  a.on = true;
+  await store.save();
+  log.info(`[raid] auto-raid watching @${handle} for ${ctx.chat.id} by=${ctx.from && ctx.from.id}`);
+  await say(ctx, "raid_watch_set", { handle });
+  const p = renderPanel(g);
+  await ctx.reply(p.text, p.extra).catch(() => {});
+  return true;
+}
+
+/**
+ * Forget everything we know about the account being watched.
+ *
+ * Shared by "remove" and "switch to a different account", because every field
+ * here is a statement ABOUT one handle and is nonsense under another: a recorded
+ * outcome about @a rendered under @b is the panel confidently explaining a
+ * problem the group does not have, and a queued post from @a must never fire as
+ * @b. The CURSOR especially — snowflakes are one global sequence, so a cursor
+ * from the old account would instantly "detect" half the new one's history.
+ *
+ * `lastCheckedAt` deliberately survives: it is a fact about the BOT, and it is
+ * what tells a stale panel from a dead one.
+ */
+function clearWatchedAccount(a) {
+  a.handle = "";
+  a.on = false;
+  a.lastSeenTweetId = "";
+  a.lastOkAt = 0;
+  a.lastError = "";
+  a.lastErrorAt = 0;
+  a.pendingPostId = "";
+  a.pendingAt = 0;
+  a.pendingTries = 0;
+}
+
 /** Consume the "paste the post URL" answer. Returns true when it did. */
 async function handleText(ctx) {
   maybeAutoEnroll(ctx);
   if (!isGroup(ctx) || !ctx.from) return false;
+
+  // The pasted-link raid runs on EVERY group message, so it is deliberately
+  // cheap and bails early — and it NEVER consumes: a pasted link is an
+  // observation, and the group's own flows still have to see the message.
+  await autoRaid.startFromLink(ctx, (ctx.message && ctx.message.text) || "").catch((e) => {
+    log.debug(`[raid] link raid: ${e && e.message}`);
+  });
+
+  const rawText = (ctx.message && ctx.message.text) || "";
+  if (rawText.startsWith("/")) return false; // see below — never consume a command
+  if (stepArmed(ctx.chat.id, ctx.from.id, "handle")) {
+    if (!(await isGroupAdmin(ctx))) return false;
+    return handleWatchText(ctx, rawText);
+  }
   if (!urlStepArmed(ctx.chat.id, ctx.from.id)) return false;
 
   const raw = (ctx.message && ctx.message.text) || "";
@@ -315,6 +536,13 @@ module.exports = {
   armUrlStep,
   urlStepArmed,
   clearUrlStep,
+  armStep,
+  stepArmed,
+  clearStep,
+  autoRaidStatus,
+  clearWatchedAccount,
+  handleWatchText,
+  CLEAR_WORDS,
   LIKE_STEPS,
   REPLY_STEPS,
   REPOST_STEPS,
