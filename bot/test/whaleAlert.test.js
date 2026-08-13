@@ -50,6 +50,55 @@ test("the group's own threshold beats the global default", async () => {
   assert.ok(whale, "over this group's own $5k bar");
 });
 
+// ── The Position row ─────────────────────────────────────────────────────────
+
+test("a first-ever buy reads 'new position' even when the two sources disagree", async () => {
+  // The live card this comes from:
+  //   "Position: 23,507,098.11 $Plumber · $14,922 (+6913050524503.39%)"
+  // and the buy row directly above it printed the SAME token amount. The whole
+  // bag came from that one trade, so there was no previous position at all.
+  //
+  // `held` is an on-chain balance read and `tokenAmount` is parsed out of the
+  // swap. They agree to about eleven significant digits and disagree after that,
+  // so the subtraction leaves a residue instead of zero — and dividing 23.5
+  // million by 0.00034 is a thirteen-digit percentage.
+  const held = 23_507_098.11;
+  holdings.holdingOf = async () => held;
+  const pos = await mon.buyerPosition(g(), { ...buy, usd: 14922, tokenAmount: held - 0.00034 }, pool);
+  assert.strictEqual(pos.position, "new position");
+  assert.strictEqual(pos.held, held, "the holding itself is untouched — only the percentage was fiction");
+});
+
+test("an exact first buy still reads 'new position'", async () => {
+  // The case that always worked, kept so the floor cannot regress it.
+  holdings.holdingOf = async () => 5000;
+  const pos = await mon.buyerPosition(g(), { ...buy, usd: 5000, tokenAmount: 5000 }, pool);
+  assert.strictEqual(pos.position, "new position");
+});
+
+test("a balance read that lands after a later SELL cannot invent a position", async () => {
+  // held < bought, so `before` is negative rather than merely tiny.
+  holdings.holdingOf = async () => 100;
+  const pos = await mon.buyerPosition(g(), { ...buy, usd: 5000, tokenAmount: 500 }, pool);
+  assert.strictEqual(pos.position, "new position");
+});
+
+test("a real previous position still prints its real percentage", async () => {
+  holdings.holdingOf = async () => 2000; // held 1000 before, doubled it
+  const pos = await mon.buyerPosition(g(), { ...buy, usd: 5000, tokenAmount: 1000 }, pool);
+  assert.strictEqual(pos.position, "+100.00%");
+});
+
+test("the floor is PRECISION, not a cap on large numbers", async () => {
+  // Deliberately not capped: a genuinely tiny prior position produces a
+  // genuinely huge percentage, and extreme-but-true is a different thing from
+  // fabricated. Only the residue of two sources disagreeing is suppressed —
+  // here the previous bag is 1e-4 of the holding, a hundred times the floor.
+  holdings.holdingOf = async () => 1_000_000;
+  const pos = await mon.buyerPosition(g(), { ...buy, usd: 5000, tokenAmount: 999_900 }, pool);
+  assert.strictEqual(pos.position, "+999900.00%");
+});
+
 // ── The admin-set global bar ─────────────────────────────────────────────────
 
 test("the bar ships at $50,000, and nothing overrides it out of the box", async () => {

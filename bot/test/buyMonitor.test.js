@@ -378,6 +378,61 @@ test("the size row only ever GROWS — it is never rendered mostly empty", () =>
   assert.ok(!mon.buyEmojiRow(50).includes("▱"), "no empty cells anywhere");
 });
 
+test("a MEGA BUY wears the whale icon — the label and the artwork are ONE claim", () => {
+  // The live card that produced this: a header reading "MEGA BUY" with eight
+  // ORDINARY icons under it and the ordinary "new buy" clip. tierFor() read the
+  // buy's size for the label; the icon and the clip asked a different question
+  // (is the BUYER a whale by holdings?) and answered it about a $14,922 wallet.
+  // So the card contradicted its own headline, in two places at once.
+  const tpl = require("../src/templates");
+  const real = tpl.markup;
+  try {
+    tpl.markup = (k) => (k === "group_buy_style" ? "🟢|🐋" : real(k));
+    assert.strictEqual(mon.buyIconFor(50), "🟢", "an ordinary buy keeps the ordinary icon");
+    assert.strictEqual(mon.buyIconFor(1500), "🐋", "a WHALE BUY by size");
+    assert.strictEqual(mon.buyIconFor(14922), "🐋", "and the $14,922 MEGA BUY that was reported");
+    assert.ok(mon.buyEmojiRow(14922).includes("🐋"), "the whole row, not just the first icon");
+    assert.ok(!mon.buyEmojiRow(14922).includes("🟢"));
+    assert.ok(mon.buyEmojiRow(50).includes("🟢"), "and an ordinary buy is untouched");
+  } finally {
+    tpl.markup = real;
+  }
+});
+
+test("the tier KEY survives an admin renaming the labels", () => {
+  // The artwork keys on tierKey(), never on tierFor()'s text. An operator who
+  // renames "MEGA BUY" — or translates the three labels — must not silently
+  // take the whale icon and the whale clip away with them, which is exactly
+  // what keying off the rendered label would have done.
+  const tpl = require("../src/templates");
+  const realT = tpl.t;
+  try {
+    tpl.t = (k, ...a) => (k === "group_buy_tiers" ? "BELI|PAUS|PAUS RAKSASA" : realT(k, ...a));
+    assert.strictEqual(mon.tierFor(14922), "PAUS RAKSASA", "the label follows the admin");
+    assert.strictEqual(mon.tierKey(14922), "mega", "the key does not");
+    assert.strictEqual(mon.isBigBuy(14922), true, "so the artwork still knows this is big");
+    assert.strictEqual(mon.tierKey(50), "buy");
+    assert.strictEqual(mon.isBigBuy(50), false);
+  } finally {
+    tpl.t = realT;
+  }
+});
+
+test("the whale CLIP follows a mega buy, while PINNING deliberately does not", () => {
+  // A shape check, for the same reason as the bump-ordering one below: the
+  // decision itself is pinned behaviourally by isBigBuy above, but which of the
+  // two verdicts each option reads is a wiring fact that happens deep inside the
+  // poll loop, past a live feed and a Telegram client.
+  //
+  // Pinning writes to somebody else's group. Widening it to every mega buy would
+  // start pinning in every existing customer's chat without them asking, so it
+  // stays tied to the whale-by-WALLET verdict it has always meant.
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "group", "buyMonitor.js"), "utf8");
+  const opts = src.slice(src.indexOf("const opts = {"), src.indexOf("if (await deliver("));
+  assert.match(opts, /kind: isWhale \|\| isBigBuy\(buy\.usd\) \? "whale" : "buy"/, "a mega buy plays the whale clip");
+  assert.match(opts, /pin: isWhale &&/, "pinning stays on the wallet verdict");
+});
+
 test("the row icons are admin-editable, falling back per position", () => {
   // markup(), not t(): the icons travel as VARS into the card template and are
   // parsed there, so a premium icon has to arrive still wearing its markup.

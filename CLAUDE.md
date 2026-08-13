@@ -174,6 +174,50 @@ cd bot && npm run raid:check     # which source answers from THIS box, and why n
 Whether X answers is a property of the server's egress today, not of the code,
 so it has to be measured on the box.
 
+## The buy card had TWO ideas of "whale" and only one reached the artwork
+
+A live card, 2026-08-13: header **MEGA BUY**, eight ordinary Dexvra icons under
+it, the ordinary "New Buy" GIF, and
+`Position: 23,507,098.11 $Plumber · $14,922 (+6913050524503.39%)`. Three
+complaints, two causes.
+
+**The label and the artwork answered different questions.** `tierFor(buy.usd)`
+gives the headline from what was SPENT (`whale` ≥ $1,000, `mega` ≥ $5,000),
+while the icon, the clip and the pin all keyed off `whaleCheck()` — whether the
+BUYER is a whale by HOLDINGS (≥ $50,000). A $14,922 buy from a wallet holding
+$14,922 is a mega buy by one measure and an ordinary buyer by the other, so the
+card contradicted its own headline in two places at once.
+
+- **`tierKey(usd)` is the single owner of the size thresholds** — `"buy"` |
+  `"whale"` | `"mega"` — and the label, the icon (`buyIconFor`) and the clip
+  kind all read it. **Never key artwork off `tierFor()`**: that returns the
+  ADMIN-EDITABLE label, so an operator renaming or translating "MEGA BUY" would
+  silently take the whale icon and the whale GIF away with it.
+- **Pinning deliberately did NOT move with them.** A pin writes to somebody
+  else's group; widening it to every mega buy would start pinning in every
+  existing customer's chat without them asking. It stays on the whale-by-WALLET
+  verdict. Same reasoning as `autoPinWhale` shipping off.
+- The whale card itself is still the wallet verdict. Only the ARTWORK follows
+  size — that is what "a big buy should look big" means.
+
+**The Position percentage was two different sources subtracted.** `held` is an
+on-chain balance read; `tokenAmount` is parsed out of the swap. Both land in a
+float64 and agree to ~11 significant digits, so a first-ever buy does **not**
+subtract to exactly zero — it leaves a residue (~0.0003 on a 23.5M bag, i.e.
+1.4e-11 of it), and `bought / residue` is a thirteen-digit percentage. The tell
+was on the card: the 💎 row and the Position row printed the **same** token
+amount, so there was no previous position at all.
+
+`POSITION_NOISE_FLOOR` (1e-6 of the holding) reads anything below it as that
+residue and renders `new position`. It is a **precision floor, not a cap**: a
+genuinely tiny prior position still prints its real, huge percentage, because
+extreme-but-true is a different thing from fabricated. If you ever compare two
+quantities from different feeds, assume the low digits disagree.
+
+```bash
+cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
+```
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

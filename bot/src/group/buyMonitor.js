@@ -198,8 +198,43 @@ function selectFresh(cursor, buys, at = now(), minUsd = 0) {
  * buy. The cap is BUYBOT_EMOJI_MAX (.env) for an operator who wants it longer
  * anyway.
  */
+/**
+ * The size tier as a STABLE key — "buy" | "whale" | "mega".
+ *
+ * Deliberately NOT derived from tierFor(), which returns the admin-editable
+ * LABEL: keying artwork off that string would silently stop working the moment
+ * an operator renamed "MEGA BUY" to anything else, and nothing would report it.
+ * One place owns the thresholds; the label and the artwork both read from here.
+ */
+const tierKey = (usd) => {
+  const n = Number(usd) || 0;
+  if (n >= BUYBOT_MEGA_USD) return "mega";
+  if (n >= BUYBOT_WHALE_USD) return "whale";
+  return "buy";
+};
+
+/**
+ * Is this buy big BY ITS OWN SIZE? A different question from the whale-by-
+ * WALLET verdict in whaleCheck(), which asks about the buyer instead — and
+ * conflating them is what put an ordinary icon and the ordinary clip on a card
+ * headed MEGA BUY: a $14,922 buy from a wallet holding $14,922 is a mega buy by
+ * size and an ordinary buyer by holdings, so the label said one thing and every
+ * piece of artwork said the other.
+ */
+const isBigBuy = (usd) => tierKey(usd) !== "buy";
+
+/**
+ * The row's icon for a buy of this size — the whale glyph once the buy is big
+ * enough to be LABELLED one. The label and the icon are the same claim about
+ * the same buy; they may not disagree.
+ */
+function buyIconFor(usd) {
+  const [normal, whale] = buyBarStyle();
+  return isBigBuy(usd) ? whale : normal;
+}
+
 function buyEmojiRow(usd, glyph) {
-  const icon = glyph || buyBarStyle()[0];
+  const icon = glyph || buyIconFor(usd);
   const step = BUYBOT_EMOJI_STEP_USD;
   const n = Math.max(BUYBOT_EMOJI_MIN, Math.min(BUYBOT_EMOJI_MAX, Math.round(usd / step)));
   return Array(n).fill(icon).join(" ");
@@ -284,11 +319,11 @@ function buyTiers() {
   return d.map((def, i) => (parts[i] || "").trim() || def);
 }
 
+/** The label for a buy of this size. The thresholds live in tierKey() alone, so
+ *  the label, the icon and the clip can never drift apart. */
 const tierFor = (usd) => {
   const [normal, whale, mega] = buyTiers();
-  if (usd >= BUYBOT_MEGA_USD) return mega;
-  if (usd >= BUYBOT_WHALE_USD) return whale;
-  return normal;
+  return { buy: normal, whale, mega }[tierKey(usd)];
 };
 
 // Moved to config/chains.js — /ca offers the same link, and two copies of the
@@ -539,6 +574,11 @@ function whaleBarFor(g) {
  * IS the cost of both features: one lever, not two. A group that opted out of
  * whale alerts is not billed an RPC call to decorate its ordinary ones.
  */
+// A prior position smaller than this FRACTION of the current holding is read as
+// rounding residue between the balance read and the trade amount, not as a bag.
+// See the reasoning in buyerPosition — it is a precision floor, not a policy.
+const POSITION_NOISE_FLOOR = 1e-6;
+
 async function buyerPosition(g, buy, pool) {
   const wc = whaleCfg.get();
   if (!wc.enabled || g.whales === false) return null;
@@ -551,8 +591,27 @@ async function buyerPosition(g, buy, pool) {
   // How much this buy GREW the bag. `held` is the balance after the trade, so
   // the position before it is held - bought; a first-ever buy has no "before",
   // and calling that +∞ or +100% would both be inventions.
-  const before = held - (buy.tokenAmount || 0);
-  const position = before > 0 ? `+${((buy.tokenAmount / before) * 100).toFixed(2)}%` : "new position";
+  //
+  // THE SUBTRACTION IS BETWEEN TWO DIFFERENT SOURCES, and that is the whole
+  // reason for the floor below. `held` is an on-chain balance read; `bought` is
+  // the amount parsed out of the swap (a decimal string from the trade feed, or
+  // formatUnits on the transfer) — and both land in a float64. On a 23.5-million
+  // token bag they agree to about eleven significant digits and disagree after
+  // that, so a first-ever buy does NOT subtract to exactly zero: it leaves a
+  // residue around 0.0003. Dividing the whole bag by THAT is what published
+  // "+6913050524503.39%" on a live card, under a Position row whose token amount
+  // was identical to the buy's — the two numbers on screen were the same number.
+  //
+  // So the floor is about SOURCE PRECISION, not taste: a "previous position"
+  // below a millionth of what the wallet now holds is the residue of that
+  // disagreement, not a bag. Observed noise was ~1.4e-11 of the holding, four
+  // orders of magnitude under this. A genuine small position still prints its
+  // real (large) percentage — extreme but true is not the same as fabricated.
+  const bought = buy.tokenAmount || 0;
+  const before = held - bought;
+  const hadPosition = before > held * POSITION_NOISE_FLOOR;
+  const pct = hadPosition ? (bought / before) * 100 : null;
+  const position = pct != null && Number.isFinite(pct) ? `+${pct.toFixed(2)}%` : "new position";
   return { held, holdsUsd: held * pool.priceUsd, position };
 }
 
@@ -1024,7 +1083,19 @@ async function pollTrades(tg, entry) {
       const whale = gPos && gPos.holdsUsd >= whaleBarFor(g) ? { ...gPos, threshold: whaleBarFor(g) } : null;
       const isWhale = !!whale;
       const render = () => (isWhale ? renderWhaleAlert(g, buy, pool, whale) : renderRealAlert(g, buy, pool, gPos));
-      const opts = { kind: isWhale ? "whale" : "buy", pin: isWhale && g.pin !== false && BUYBOT_PIN_WHALES };
+      // The CLIP follows the size tier as well as the wallet verdict: a card
+      // headed MEGA BUY that plays the ordinary "new buy" artwork contradicts
+      // its own headline, and the operator uploaded a whale clip precisely so a
+      // big buy looks different scrolling past.
+      //
+      // PINNING deliberately does NOT move with it. Pinning writes to somebody
+      // else's group, and widening it to every mega buy would start pinning in
+      // every existing customer's chat without them asking — so it stays tied
+      // to the whale-by-WALLET verdict it has always meant.
+      const opts = {
+        kind: isWhale || isBigBuy(buy.usd) ? "whale" : "buy",
+        pin: isWhale && g.pin !== false && BUYBOT_PIN_WHALES,
+      };
       if (await deliver(tg, g.chatId, render, buy.txHash, opts)) {
         posted++;
         continue;
@@ -1152,6 +1223,9 @@ module.exports = {
   buyBarStyle,
   buyTiers,
   tierFor,
+  tierKey,
+  isBigBuy,
+  buyIconFor,
   groupByPool,
   verifyRow,
   spentNative,
