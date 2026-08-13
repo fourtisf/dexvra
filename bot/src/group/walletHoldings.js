@@ -171,12 +171,28 @@ function sweepCache(at) {
  * an unsupported chain, a dead RPC, a malformed address. NEVER throws, and a
  * null must never stop an alert: not knowing how big a holder someone is is not
  * a reason to withhold the buy.
+ *
+ * `fresh` skips a cached SUCCESS. The Position row reports the balance AFTER a
+ * specific trade, and the one wallet whose balance certainly just moved is the
+ * one that made it — by exactly the amount the row is reporting. The cache
+ * comment used to justify itself with "a wallet's holding barely moves between
+ * two buys seconds apart", which is true of every wallet EXCEPT this one.
+ *
+ * That made the cache pure harm on the only path that uses it: one read per buy
+ * is already guaranteed by the caller resolving the position once per buy rather
+ * than once per group, so a cached hit could only ever be a SECOND buy by the
+ * same wallet inside two minutes — the exact case where the stale number is
+ * wrong, and wrong in a way the group can check against an explorer.
+ *
+ * A cached MISS still short-circuits even when `fresh` is set: it is there to
+ * stop a dead RPC costing a six-second timeout on every qualifying buy, and that
+ * cost does not change according to who is asking.
  */
-async function holdingOf(chain, token, wallet, at = Date.now()) {
+async function holdingOf(chain, token, wallet, { at = Date.now(), fresh = false } = {}) {
   if (!chain || !token || !wallet) return null;
   const key = `${chain}:${token}:${wallet}`;
   const hit = holdCache.get(key);
-  if (hit && at - hit.at < CACHE_MS) return hit.amount;
+  if (hit && at - hit.at < CACHE_MS && (!fresh || hit.amount == null)) return hit.amount;
 
   let amount = null;
   try {

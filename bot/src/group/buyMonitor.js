@@ -586,7 +586,12 @@ async function buyerPosition(g, buy, pool) {
   if (buy.usd < wc.minBuyUsd) return null; // dust does not order an RPC call
   if (!holdings.supports(g.chain)) return null;
 
-  const held = await holdings.holdingOf(g.chain, g.address, buy.buyer);
+  // fresh: this wallet's balance moved by exactly the amount this row is about
+  // to report, so a cached one is stale by construction — and a Position that
+  // disagrees with the explorer is the one number on this card a reader can
+  // check. See holdingOf: a cached MISS still applies, so a dead RPC is still
+  // only paid for once.
+  const held = await holdings.holdingOf(g.chain, g.address, buy.buyer, { fresh: true });
   if (held == null || !(held > 0)) return null;
   // How much this buy GREW the bag. `held` is the balance after the trade, so
   // the position before it is held - bought; a first-ever buy has no "before",

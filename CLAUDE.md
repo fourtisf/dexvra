@@ -214,6 +214,23 @@ genuinely tiny prior position still prints its real, huge percentage, because
 extreme-but-true is a different thing from fabricated. If you ever compare two
 quantities from different feeds, assume the low digits disagree.
 
+**And the balance behind it is read `{ fresh: true }`.** `holdingOf` caches a
+success for two minutes, justified by "a wallet's holding barely moves between
+two buys seconds apart" — true of every wallet except the ONE that just traded,
+whose balance moved by exactly the amount the row is reporting. The cache was
+pure harm on this path: `buyerPosition` is already resolved once per BUY (outside
+the group loop), so a cached hit could only ever be a second buy by the same
+wallet inside the window — printing the previous balance under the new buy, and
+disagreeing with any explorer the group checked. A cached MISS still
+short-circuits, because that one exists so a dead RPC costs one six-second
+timeout rather than one per buy.
+
+**Position is ONE token at the pool price, never a portfolio.** Solscan's "Total
+Value" sums SOL plus every token in the wallet, so the two legitimately differ
+and comparing them proves nothing. `walletHoldings.js` says so at the top and it
+is worth repeating here: the comparable number on an explorer is the tracked
+token's own balance line.
+
 ```bash
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
