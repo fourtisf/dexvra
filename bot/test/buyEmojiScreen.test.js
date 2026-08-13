@@ -132,27 +132,49 @@ test("the way in is on every template the screen covers — raid included", () =
   // raid_card looking for 📊 saw that one template's icons and no route to the
   // rest, and the button they could not see was labelled "kartu buy" anyway.
   // Between them, indistinguishable from raid icons not being editable at all.
+  // WHERE it goes, not merely that it is there. There are TWO screens — `bem` is
+  // the buy card's, `aem` covers buy AND raid — and a raid template sent to
+  // `bem` opens a wall of buy-card glyphs holding no raid icon at all, which
+  // looks like the wrong button was pressed. Asserting only that a button exists
+  // is what let that through the first time.
   const covered = admin._allEmoji.allEmojiKeys();
   assert.ok(covered.includes("raid_card"), "the screen covers the raid card");
   assert.ok(covered.includes("raid_panel"), "…and the raid panel");
-  for (const key of [...covered, "chain_emojis"]) {
-    const flat = admin._tpl.viewKb(key).reply_markup.inline_keyboard.flat();
-    assert.ok(flat.some((b) => b.callback_data === "bem"), `${key} must offer the shared emoji screen`);
+
+  const wayIn = (key) =>
+    admin._tpl
+      .viewKb(key)
+      .reply_markup.inline_keyboard.flat()
+      .find((b) => /^(bem|aem:)/.test(String(b.callback_data)));
+
+  for (const key of covered) {
+    const btn = wayIn(key);
+    assert.ok(btn, `${key} must offer a shared emoji screen`);
+    const buyPiece = BUY_CARD_EMOJI_KEYS.includes(key);
+    assert.strictEqual(
+      btn.callback_data,
+      buyPiece ? "bem" : "aem:0",
+      `${key} must open the screen that actually holds its icons`,
+    );
   }
+  assert.strictEqual(wayIn("chain_emojis").callback_data, "bem");
+
   // And nowhere else — it would be a dead end on a channel post.
-  const flat = admin._tpl.viewKb("post_trending").reply_markup.inline_keyboard.flat();
-  assert.ok(!flat.some((b) => b.callback_data === "bem"));
+  assert.strictEqual(wayIn("post_trending"), undefined);
 });
 
-test("the button says which cards it changes", () => {
-  // It covers buy, whale AND raid, and said "kartu buy". A label that names the
-  // wrong surface is why the screen went unopened by the person who needed it.
-  const label = admin._tpl
-    .viewKb("raid_card")
-    .reply_markup.inline_keyboard.flat()
-    .find((b) => b.callback_data === "bem").text;
-  assert.match(label, /buy/i);
-  assert.match(label, /raid/i);
+test("the button names the screen it opens", () => {
+  // A label naming the wrong surface is why the screen went unopened by the
+  // person who needed it — and a label promising raid while opening the buy-only
+  // screen would be worse than the silence it replaced.
+  const label = (key) =>
+    admin._tpl
+      .viewKb(key)
+      .reply_markup.inline_keyboard.flat()
+      .find((b) => /^(bem|aem:)/.test(String(b.callback_data))).text;
+  assert.match(label("raid_card"), /raid/i, "the raid route says raid");
+  assert.match(label("raid_card"), /buy/i, "…and warns it moves the buy card too");
+  assert.doesNotMatch(label("group_buy_alert"), /raid/i, "the buy-only screen must not promise raid");
 });
 
 test("an icon shared by both cards is named for BOTH of its jobs", () => {
