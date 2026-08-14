@@ -31,12 +31,13 @@ const pos = (chain, ca, sym, tok, dec) =>
 let WALLETS = [];
 let BAL = [];
 let PRICE = {};
+let ACTIVE = 'robinhood';   // the chain the user picked with 🌐 Chain
 
 const core = {
   CFG: { tgToken: 'test' },
   ensureUser: () => ({ activeWalletId: WALLETS[0] && WALLETS[0].id, wallets: WALLETS }),
   chainOf: (k) => CH[idx(k)] || CH[0],
-  userChain: () => 'robinhood',
+  userChain: () => ACTIVE,
   walletList: () => WALLETS,
   walletLabel: (w, i) => w.name || 'Wallet ' + i,
   WALLET_CAP: 10,
@@ -73,7 +74,7 @@ const W = (id, name) => { const u = id + '_' + (++_uid); return { id: u, name: n
   address: '0x' + u.padEnd(40, '0'), sol: 'So' + u.padEnd(42, '1') }; };
 const plain = (s) => s.replace(/<[^>]+>/g, '');
 
-test.beforeEach(() => { WALLETS = []; BAL = []; PRICE = {}; });
+test.beforeEach(() => { WALLETS = []; BAL = []; PRICE = {}; ACTIVE = 'robinhood'; });
 
 // ── The path the source tests could not see ──────────────────────────────────
 
@@ -144,6 +145,110 @@ test('only the active wallet prints its addresses', async () => {
   assert.ok(!r.text.includes(WALLETS[1].address), "an inactive wallet's address is on screen");
   // …but it still has a button to get it.
   assert.ok(JSON.stringify(r.kb).includes('qrw:' + WALLETS[1].id));
+});
+
+// ── The active chain is not the total ────────────────────────────────────────
+// Reported from a live screen: the user switched to Solana and read
+//
+//   💼 Your wallets · 🟣 Solana
+//   $1,322.54 across 5 of 10 wallets
+//
+// with 0 SOL. The $1,322.54 was on Robinhood Chain. Both numbers were right;
+// the layout put the all-chains one directly under a Solana badge, which is as
+// plainly as a layout can claim it is a Solana balance.
+
+test('picking a chain with nothing on it does not print the all-chains total under its badge', async () => {
+  ACTIVE = 'solana';
+  WALLETS = [W('w1')];
+  BAL = [[E(0.66), 0n, 0n, 0n]];   // $1,320 — all of it on Robinhood Chain
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.match(txt, /🟣 Solana — \$0\.00 here/, 'the chain the user picked has no figure of its own');
+  assert.match(txt, /\$1,320\.00 across 1 of 10 wallets, every chain/);
+  // The killer: the grand total must not be the line under the chain badge.
+  assert.ok(!/🟣 Solana\n\$1,320\.00/.test(txt), 'the all-chains total is still sitting under the chain badge');
+});
+
+test('the chain you are trading on is never listed among the empty ones', async () => {
+  // It used to be: "Nothing yet on Ethereum · BNB Chain · Solana" one line above
+  // "⚠️ 0 SOL on Solana" — the same fact twice, contradicting the badge above it.
+  ACTIVE = 'solana';
+  WALLETS = [W('w1')];
+  BAL = [[E(0.66), 0n, 0n, 0n]];
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.ok(!/Nothing yet on[^\n]*Solana/.test(txt), 'the active chain is in the empty roll-up as well');
+  assert.strictEqual(txt.split('Solana').length - 1 - (txt.split('Deposit on Solana').length - 1), 2,
+    'Solana is named more times than the chain line + the gas warning');
+});
+
+test('the active chain leads the breakdown, whatever the registry order', async () => {
+  ACTIVE = 'bsc';
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 0n, BigInt(2e18), 0n]];   // Robinhood first in CH, BNB third
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.ok(txt.indexOf('BNB Chain — 2.0000 BNB') < txt.indexOf('Robinhood Chain — 1.0000 ETH'),
+    'the chain being traded on is below one that is merely funded');
+});
+
+test('no gas here, but another wallet has some — say which one', async () => {
+  // Otherwise "🟣 Solana — $200.00 here" (all wallets) and "⚠️ 0 SOL" (this
+  // wallet) read as the screen contradicting itself.
+  ACTIVE = 'solana';
+  WALLETS = [W('w1'), W('w2', 'Sniper')];
+  BAL = [[E(1), 0n, 0n, 0n], [0n, 0n, 0n, BigInt(1e9)]];   // 1 SOL, in wallet 2
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.match(txt, /⚠️ 0 SOL on Solana/);
+  assert.match(txt, /Sniper has 1\.0000 SOL here — tap it below to switch/);
+});
+
+test('the deposit address for the chain you picked comes first', async () => {
+  ACTIVE = 'solana';
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 0n, 0n, 0n]];
+  const r = await t.walletScreen(1);
+  assert.ok(r.text.indexOf(WALLETS[0].sol) < r.text.indexOf(WALLETS[0].address),
+    'a user on Solana has to scroll past the EVM address to reach the one that can receive SOL');
+});
+
+test('one chain in play means one number, not the same number twice', async () => {
+  // The fix must not become its own clutter: when everything IS on the active
+  // chain, the per-chain line and the all-chains line are the same figure.
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 0n, 0n, 0n]];
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.match(txt, /💼 Your wallets · 🚀 Robinhood Chain\n\$2,000\.00 across 1 of 10 wallets\n/);
+  assert.ok(!/every chain/.test(txt), 'a second, identical total line was added');
+});
+
+test('a chain we could not reach never reads as $0.00 on it', async () => {
+  // "$0.00 here" is the sentence that sends someone to check whether their
+  // deposit arrived. An RPC timeout must not produce it.
+  ACTIVE = 'solana';
+  WALLETS = [W('w1')];
+  BAL = [[E(1), 0n, 0n, 'fail']];
+  const txt = plain((await t.walletScreen(1)).text);
+  assert.match(txt, /🟣 Solana — couldn't read your balance here just now/);
+  assert.ok(!/Solana — \$0\.00 here/.test(txt), 'an unreadable balance was rendered as zero');
+});
+
+test('a trivial token bag does not spend a line restating the total', async () => {
+  // "$1,322.22 in coins · $0.33 in tokens" — a whole line to say the total is
+  // still the total. The 🪙 route to the detail screen stays either way.
+  WALLETS = [W('w1')];
+  // A CA of its own: telegram.js caches prices per chain:ca for 30s, so reusing
+  // one across two tests with two prices reads the first test's number.
+  WALLETS[0].positions = { a: pos('robinhood', '0xDUST', 'HOPPY', 100, 18) };
+  PRICE = { '0xDUST': 0.0000001 };   // $0.02 against $2,000 of ETH
+  BAL = [[E(1), 0n, 0n, 0n]];
+  const r = await t.walletScreen(1);
+  assert.ok(!/in coins ·/.test(plain(r.text)), 'the split line is back for a rounding-error bag');
+});
+
+test('a token bag worth reading still gets the split line', async () => {
+  WALLETS = [W('w1')];
+  WALLETS[0].positions = { a: pos('robinhood', '0xBAG', 'HOPPY', 100000, 18) };
+  PRICE = { '0xBAG': 0.000005 };   // $1,000 against $2,000 of ETH
+  BAL = [[E(1), 0n, 0n, 0n]];
+  assert.match(plain((await t.walletScreen(1)).text), /\$2,000\.00 in coins · \$1,000\.00 in tokens/);
 });
 
 test('the screen fits in a Telegram message at the wallet cap', async () => {
