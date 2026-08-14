@@ -496,39 +496,95 @@ async function walletScreen(chatId) {
   const grandNative = nativeUsdArr.reduce((a, b) => a + b, 0);
   const grandToken = tokenUsdArr.reduce((a, b) => a + b, 0);
   const anyFunds = grandToken > 0.05 || matrix.some((row) => row.some((b, i) => b != null && Number(fmtNat(b, allChains[i].key)) > 0));
+  // What is on the chain the user actually PICKED — coins plus the bags that
+  // live there — summed over every wallet, so it is directly comparable with
+  // grandUsd on the line below it.
+  //
+  // This number is the whole point of this block. The screen used to print the
+  // chain badge on the title line and the ALL-CHAINS total immediately under
+  // it, which is as plainly as a layout can say "this is what you have on
+  // Solana". A user switched to Solana, read "$1,322.54", and had 0 SOL — the
+  // money was on Robinhood Chain. Neither number was wrong; the screen simply
+  // never printed the one being asked for.
+  const acIdx = allChains.findIndex((c) => c.key === ch.key);
+  const acNativeAmt = (wi) => {
+    const b = acIdx < 0 ? null : (matrix[wi] || [])[acIdx];
+    return b == null ? null : Number(fmtNat(b, ch.key));
+  };
+  const activeChainUsd = list.reduce((sum, _w, wi) => {
+    const amt = acNativeAmt(wi);
+    const bags = (tokenBags[wi] || []).reduce((s, b) => s + (b.chain === ch.key ? b.usd : 0), 0);
+    return sum + (amt == null ? 0 : amt * nativeUsd(ch.native)) + bags;
+  }, 0);
+  // One wallet we could not read makes that sum understated, and "$0.00 here" is
+  // the most damaging way to be wrong on this line — it is the sentence that
+  // sends someone to check whether their deposit arrived. Same rule as the
+  // per-chain rows below: empty and unreadable are different facts.
+  const acUnread = acIdx < 0 || matrix.some((row) => row[acIdx] == null);
   // Active wallet's per-chain breakdown.
   //
-  // Only chains that HOLD something get a row. The old version printed every
-  // enabled chain, so a normal wallet spent three of its seven lines saying
-  // "Base: 0 ETH · Arbitrum: 0 ETH · Solana: 0 SOL" — on a phone that pushed
-  // the balances that do exist off the first screen. The zeros are summarised
-  // in one line instead, and the ONE case where a zero is worth a sentence —
-  // no gas on the chain you are actually trading on — becomes a warning.
+  // The ACTIVE chain's row comes FIRST, whatever it holds. Everything else is
+  // ordered behind it, and only chains that HOLD something get a row: the
+  // version before that printed every enabled chain in registry order, so a
+  // normal wallet spent three of its seven lines saying "Base: 0 ETH ·
+  // Arbitrum: 0 ETH · Solana: 0 SOL" and the chain being traded on could land
+  // anywhere in the list — or, at zero, nowhere. The zeros are summarised in
+  // one line instead, and the ONE case where a zero is worth a sentence — no
+  // gas on the chain you are actually trading on — becomes a warning that
+  // REPLACES the row rather than following it, so "0 SOL" is said once.
   //
   // A null (RPC did not answer) is NOT folded in with the zeros: "empty" and
   // "we could not look" are different facts, and the second one means the total
   // above is understated. That distinction is why readNative is strict.
+  let activeChainLine = '';
   let chainBlock = '';
   const emptyChains = [];
   const unreadChains = [];
   let activeChainNative = null;
-  allChains.forEach((c, i) => {
+  const cells = allChains.map((c, i) => ({ c, i }));
+  for (const { c, i } of [...cells.filter((x) => x.c.key === ch.key), ...cells.filter((x) => x.c.key !== ch.key)]) {
+    const isActive = c.key === ch.key;
     const b = (matrix[awIdx] || [])[i];
-    if (b == null) { unreadChains.push(c.name); return; }
+    if (b == null) { unreadChains.push(c.name); continue; }
     const amt = Number(fmtNat(b, c.key));
-    if (c.key === ch.key) activeChainNative = amt;
-    if (!(amt > 0)) { emptyChains.push(c.name); return; }
+    if (isActive) activeChainNative = amt;
+    if (!(amt > 0)) { if (!isActive) emptyChains.push(c.name); continue; }
     const usdV = nativeUsd(c.native) * amt;
-    chainBlock += `${c.emoji} ${esc(c.name)} — <b>${amt.toFixed(4)} ${c.native}</b>${usdV > 0.005 ? ` · ${usdX(usdV)}` : ''}\n`;
-  });
+    const row = `${c.emoji} ${esc(c.name)} — <b>${amt.toFixed(4)} ${c.native}</b>${usdV > 0.005 ? ` · ${usdX(usdV)}` : ''}\n`;
+    if (isActive) activeChainLine = row; else chainBlock += row;
+  }
+  // The only zero worth a sentence: no gas on the chain they are trading on.
+  // When ANOTHER wallet does have some, say which — otherwise the chain line
+  // above ("🟣 Solana — $700.00") and this warning ("0 SOL") read as the screen
+  // contradicting itself, when in fact they are about different wallets.
+  if (activeChainNative === 0) {
+    activeChainLine = T(chatId, 'wal.no_gas', { native: esc(ch.native), chain: esc(ch.name) }) + '\n';
+    const alt = list.map((w, i) => ({ i, w, amt: acNativeAmt(i) })).find((x) => x.i !== awIdx && x.amt > 0);
+    if (alt) {
+      activeChainLine += T(chatId, 'wal.gas_elsewhere', {
+        wallet: `<b>${esc(core.walletLabel(alt.w, alt.i + 1))}</b>`,
+        amt: alt.amt.toFixed(4),
+        native: esc(ch.native),
+      }) + '\n';
+    }
+  }
+  chainBlock = activeChainLine + chainBlock;
   if ((tokenUsdArr[awIdx] || 0) > 0.05) chainBlock += `${T(chatId, 'wal.tokens_row')} — <b>${usdX(tokenUsdArr[awIdx])}</b>\n`;
   if (emptyChains.length) chainBlock += T(chatId, 'wal.empty_on', { chains: esc(emptyChains.join(' · ')) }) + '\n';
   if (unreadChains.length) chainBlock += T(chatId, 'wal.unread_on', { chains: esc(unreadChains.join(' · ')) }) + '\n';
   // One EVM key = one 0x address shared by every EVM chain; Solana has its own key.
-  // Show BOTH addresses per wallet so it's obvious where to deposit each.
+  // Show BOTH addresses per wallet so it's obvious where to deposit each — but
+  // the ACTIVE chain's goes first. Depositing is the reason someone reads this
+  // block, and a user on Solana had to skip a five-chain EVM label and a 42-char
+  // 0x address to reach the only one that could receive their SOL.
   const evmChain = allChains.find((c) => !core.chains.isSvm(c.key)) || allChains[0];
   const solChain = allChains.find((c) => core.chains.isSvm(c.key));
   const evmNames = allChains.filter((c) => !core.chains.isSvm(c.key)).map((c) => c.name).join(' · ');
+  const evmAddrBlock = `<i>${T(chatId, 'wal.addr_evm', { chains: esc(evmNames) })}</i>\n<code>${wAddr(list[awIdx], evmChain.key)}</code>\n`;
+  const solAddrBlock = solChain
+    ? `<i>${T(chatId, 'wal.addr_sol', { chain: esc(solChain.name) })}</i>\n<code>${wAddr(list[awIdx], solChain.key)}</code>\n`
+    : '';
+  const addrBlock = core.chains.isSvm(ch.key) ? solAddrBlock + evmAddrBlock : evmAddrBlock + solAddrBlock;
   // ONE block per wallet. The old layout rendered the active wallet twice — a
   // detail block above and a row in the list below — under two different
   // glyphs (🌐 then ✅) and two different roundings of the same number
@@ -579,16 +635,29 @@ async function walletScreen(chatId) {
 
   const activeLabel = esc(core.walletLabel(list[awIdx], awIdx + 1));
   const orders = ((list[awIdx] && list[awIdx].orders) || []).length;
-  const head = `${T(chatId, 'wal.title')} · ${ch.emoji} ${esc(ch.name)}\n`
-    + `${T(chatId, 'wal.total', { usd: `<b>${usdX(grandUsd)}</b>`, n: list.length, cap: core.WALLET_CAP })}\n`
-    + (grandToken > 0.05 ? `<i>${T(chatId, 'wal.split', { coins: usdX(grandNative), tokens: usdX(grandToken) })}</i>\n` : '')
+  // TWO numbers, never one wearing a chain badge. When the active chain holds
+  // everything there IS only one number, and printing it twice is the same
+  // clutter from the other side — so that case collapses back to the old
+  // single line, chain badge and all.
+  const oneChainOnly = !acUnread && Math.abs(activeChainUsd - grandUsd) < 0.005;
+  const totals = oneChainOnly
+    ? `${T(chatId, 'wal.title')} · ${ch.emoji} ${esc(ch.name)}\n`
+      + `${T(chatId, 'wal.total', { usd: `<b>${usdX(grandUsd)}</b>`, n: list.length, cap: core.WALLET_CAP })}\n`
+    : `${T(chatId, 'wal.title')}\n`
+      + `${T(chatId, acUnread ? 'wal.on_chain_unread' : 'wal.on_chain', {
+        emoji: ch.emoji, chain: `<b>${esc(ch.name)}</b>`, usd: `<b>${usdX(activeChainUsd)}</b>` })}\n`
+      + `${T(chatId, 'wal.total_all', { usd: usdX(grandUsd), n: list.length, cap: core.WALLET_CAP })}\n`;
+  // The coins/tokens split earns its line only when both halves are worth
+  // reading. "$1,322.22 in coins · $0.33 in tokens" spends a line restating the
+  // total; 🪙 My tokens is still offered, because a route to detail is not the
+  // same as a claim about the balance.
+  const showSplit = grandToken > 0.05 && grandToken > grandUsd * 0.01 && grandNative > grandUsd * 0.01;
+  const head = totals
+    + (showSplit ? `<i>${T(chatId, 'wal.split', { coins: usdX(grandNative), tokens: usdX(grandToken) })}</i>\n` : '')
     + `\n${T(chatId, 'wal.active_head')}\n`
     + `✅ <b>${activeLabel}</b> · <b>${usdX(walletUsd[awIdx])}</b>${orders ? ` · ${T(chatId, 'wal.orders', { n: orders })}` : ''}\n`
     + chainBlock
-    // The only zero worth a sentence: no gas on the chain they are trading on.
-    + (activeChainNative === 0 ? T(chatId, 'wal.no_gas', { native: esc(ch.native), chain: esc(ch.name) }) + '\n' : '')
-    + `<i>${T(chatId, 'wal.addr_evm', { chains: esc(evmNames) })}</i>\n<code>${wAddr(list[awIdx], evmChain.key)}</code>\n`
-    + (solChain ? `<i>${T(chatId, 'wal.addr_sol', { chain: esc(solChain.name) })}</i>\n<code>${wAddr(list[awIdx], solChain.key)}</code>\n` : '')
+    + addrBlock
     + (others ? `\n${T(chatId, 'wal.others_head')}\n${others}` : '')
     + (rolledUp ? `<i>${T(chatId, 'wal.more', { n: rolledUp, usd: usdX(rolledUpUsd) })}</i>\n` : '');
   const guide = !anyFunds

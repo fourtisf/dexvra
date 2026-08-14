@@ -71,8 +71,12 @@ test('chains holding nothing are summarised, not listed one per line', () => {
 test("'empty' and 'we could not read it' stay different facts", () => {
   // A null is an RPC that did not answer, which means the total above is
   // understated. Folding it in with the genuine zeros hides that.
-  assert.match(walletFn, /if \(b == null\) \{ unreadChains\.push\(c\.name\); return; \}/);
+  assert.match(walletFn, /if \(b == null\) \{ unreadChains\.push\(c\.name\); continue; \}/);
   assert.match(walletFn, /wal\.unread_on/);
+  // …and the same rule on the header's active-chain figure, which is the one
+  // line a user reads to decide whether their deposit arrived.
+  assert.match(walletFn, /const acUnread = acIdx < 0 \|\| matrix\.some\(\(row\) => row\[acIdx\] == null\)/);
+  assert.match(walletFn, /wal\.on_chain_unread/);
 });
 
 test('a zero balance on the ACTIVE chain becomes a warning', () => {
@@ -80,6 +84,41 @@ test('a zero balance on the ACTIVE chain becomes a warning', () => {
   // are trading on. It was previously just another "Base: 0 ETH" row.
   assert.match(walletFn, /activeChainNative === 0/);
   assert.match(walletFn, /wal\.no_gas/);
+});
+
+// ── The active chain is not the total ────────────────────────────────────────
+// The complaint this block exists for: switched to Solana, screen said
+// "🟣 Solana" then "$1,322.54", and there was 0 SOL — the money was on
+// Robinhood Chain. Every number was individually right and the layout still
+// answered a question nobody asked.
+
+test('the active chain has its own figure, summed over every wallet', () => {
+  assert.match(walletFn, /const activeChainUsd = list\.reduce\(/);
+  assert.match(walletFn, /b\.chain === ch\.key \? b\.usd : 0/, 'bags on the active chain are not counted into it');
+  assert.match(walletFn, /wal\.on_chain/);
+});
+
+test('the all-chains total says so, and is only merged with the chain badge when they are equal', () => {
+  assert.match(walletFn, /const oneChainOnly = !acUnread && Math\.abs\(activeChainUsd - grandUsd\) < 0\.005/);
+  assert.match(walletFn, /wal\.total_all/);
+  // The old unconditional "title · chain badge" header is what made the
+  // all-chains total read as a per-chain one. It may only appear on the
+  // collapsed branch, where the two numbers are the same number.
+  const badge = walletFn.match(/wal\.title'\)\} · \$\{ch\.emoji\}/g) || [];
+  assert.strictEqual(badge.length, 1, 'the chain badge is back on the header unconditionally');
+});
+
+test('the active chain is rendered first and never folded into the empty list', () => {
+  // Rendering in registry order put the chain being traded on wherever it
+  // landed — for Solana, dead last, under "Nothing yet on … · Solana", one line
+  // above a warning saying the same thing.
+  assert.match(walletFn, /cells\.filter\(\(x\) => x\.c\.key === ch\.key\), \.\.\.cells\.filter\(\(x\) => x\.c\.key !== ch\.key\)/);
+  assert.match(walletFn, /if \(!\(amt > 0\)\) \{ if \(!isActive\) emptyChains\.push\(c\.name\); continue; \}/);
+  assert.match(walletFn, /chainBlock = activeChainLine \+ chainBlock/);
+});
+
+test('the deposit address for the chain you are on comes first', () => {
+  assert.match(walletFn, /const addrBlock = core\.chains\.isSvm\(ch\.key\) \? solAddrBlock \+ evmAddrBlock : evmAddrBlock \+ solAddrBlock/);
 });
 
 // ── Length ───────────────────────────────────────────────────────────────────
@@ -126,8 +165,9 @@ test('the wallet copy is translated, not hardcoded English', () => {
   // A large share of this bot's users trade in Indonesian (see i18n.js). The
   // wallet screen was one of the biggest remaining blocks of English literals.
   const i18n = require('./i18n');
-  for (const key of ['wal.title', 'wal.total', 'wal.split', 'wal.active_head', 'wal.others_head',
-    'wal.empty_on', 'wal.unread_on', 'wal.no_gas', 'wal.hint', 'wal.first_steps']) {
+  for (const key of ['wal.title', 'wal.total', 'wal.total_all', 'wal.on_chain', 'wal.on_chain_unread',
+    'wal.split', 'wal.active_head', 'wal.others_head', 'wal.empty_on', 'wal.unread_on', 'wal.no_gas',
+    'wal.gas_elsewhere', 'wal.hint', 'wal.first_steps']) {
     assert.ok(i18n._strings[key], `${key} missing`);
     assert.notStrictEqual(i18n._strings[key].en, i18n._strings[key].id, `${key} was not actually translated`);
   }

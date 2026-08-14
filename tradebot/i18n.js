@@ -85,6 +85,25 @@ const S = {
     en: '{usd} across {n} of {cap} wallets',
     id: '{usd} di {n} dari {cap} wallet',
   },
+  // The two lines that exist because one number wearing a chain badge is not an
+  // answer. Switched to Solana with the money on Robinhood Chain, the screen
+  // said "🟣 Solana" and "$1,322.54" on consecutive lines and there was $0 of
+  // Solana. `wal.on_chain` is the chain you picked; `wal.total_all` says out
+  // loud that the other figure spans every chain.
+  'wal.on_chain': {
+    en: '{emoji} {chain} — {usd} here',
+    id: '{emoji} {chain} — {usd} di sini',
+  },
+  // …and never "$0.00 here" for a chain we simply could not reach. That is the
+  // line that sends someone to check whether their deposit arrived.
+  'wal.on_chain_unread': {
+    en: "{emoji} {chain} — <i>couldn't read your balance here just now</i>",
+    id: '{emoji} {chain} — <i>saldo di sini belum bisa dibaca sekarang</i>',
+  },
+  'wal.total_all': {
+    en: '<i>{usd} across {n} of {cap} wallets, every chain</i>',
+    id: '<i>{usd} di {n} dari {cap} wallet, semua chain</i>',
+  },
   'wal.split': { en: '{coins} in coins · {tokens} in tokens', id: '{coins} berupa coin · {tokens} berupa token' },
   'wal.active_head': { en: '<b>Active wallet</b>', id: '<b>Wallet aktif</b>' },
   'wal.others_head': { en: '<b>Your other wallets</b>', id: '<b>Wallet kamu yang lain</b>' },
@@ -100,6 +119,13 @@ const S = {
   'wal.no_gas': {
     en: "⚠️ <b>0 {native} on {chain}</b> — you can't buy or pay gas here until you deposit.",
     id: '⚠️ <b>0 {native} di {chain}</b> — belum bisa beli atau bayar gas di sini sampai kamu deposit.',
+  },
+  // …and when a DIFFERENT wallet has gas on that chain, name it. Without this,
+  // the chain line above ("🟣 Solana — $700.00 here", every wallet) and the
+  // warning ("0 SOL", this wallet) read as the screen contradicting itself.
+  'wal.gas_elsewhere': {
+    en: '<i>{wallet} has {amt} {native} here — tap it below to switch.</i>',
+    id: '<i>{wallet} punya {amt} {native} di sini — tap di bawah untuk pindah ke situ.</i>',
   },
   'wal.orders': { en: '{n} open', id: '{n} order jalan' },
   // Named, never silent: a screen that quietly drops wallets reads as a screen
