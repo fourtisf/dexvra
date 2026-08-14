@@ -66,8 +66,14 @@ async function check(name, fn) {
     return 'score ' + (s.scoreNorm != null ? s.scoreNorm + '/100' : '?') + ' · freeze ' + (s.freezeAuthorityEnabled ? 'ON' : 'off');
   });
   await check('pump.fun new-coins feed', async () => {
-    const c = await solana.pumpfunNew(5);
-    if (!c.length) throw new Error('feed empty/unreachable (snipe discovery would be blind)');
+    // Names the host and the REASON. "feed empty/unreachable" could not tell a
+    // dead host from a quiet minute, which is the whole reason snipe discovery
+    // could be blind for days behind a green tick.
+    const r = await solana.pumpfunNewX(5);
+    if (!r.ok) throw new Error(`${r.why}  (tried: ${solana.PUMPFUN_BASES.join(', ')})`);
+    const c = r.coins;
+    if (!c.length) throw new Error('feed answered but returned nothing — check the response shape, not the network');
+    console.log('     via ' + solana.pumpBase());
     return c.length + ' recent launches';
   });
 

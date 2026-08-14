@@ -57,6 +57,16 @@ const JUP_TOKEN_BASES = JUP_TOKEN_BASE ? [JUP_TOKEN_BASE] : [
   'https://lite-api.jup.ag/tokens/v1/token',
   'https://tokens.jup.ag/token',
 ];
+// pump.fun moved the same way Jupiter did, and this bot was left on the old host
+// while its SIBLING PROCESS in this very repo (bot/src/marketdata.js) already
+// called the v3 one — one repo holding two answers to "which host is current",
+// neither knowing about the other. Measured on the box: the legacy host does not
+// answer, so Solana snipe discovery has been blind.
+const PUMPFUN_API = (process.env.PUMPFUN_API || '').trim().replace(/\/+$/, '');
+const PUMPFUN_BASES = PUMPFUN_API ? [PUMPFUN_API] : [
+  'https://frontend-api-v3.pump.fun/coins',
+  'https://frontend-api.pump.fun/coins',
+];
 
 // ---------------------------------------------------------------- validation
 
@@ -172,8 +182,18 @@ function swapBody(quoteResponse, userPublicKey, { feeAccount, priorityLamports }
     dynamicSlippage: false,
   };
   if (feeAccount) body.feeAccount = feeAccount;                                   // ATA that receives the platform fee
+  // A NUMBER, or the field is left out entirely.
+  //
+  // This used to send the string 'auto' whenever no explicit priority was set —
+  // which is every trade on a stock box, because SOL_PRIORITY_LAMPORTS defaults
+  // to 0. 'auto' was v6's spelling; the current /swap/v1 endpoint rejects it and
+  // the preflight caught it as "Jupiter swap-build failed (500)" while /quote on
+  // the very same base answered fine. Omitting the field lets Jupiter choose,
+  // which is what 'auto' was asking for, and is accepted by both APIs.
+  //
+  // The lesson the host failover did not carry: moving a base is not the same as
+  // moving an API. The query path happened to be identical; the POST body was not.
   if (priorityLamports > 0) body.prioritizationFeeLamports = Math.floor(priorityLamports);
-  else body.prioritizationFeeLamports = 'auto';
   return body;
 }
 // Pull the headline numbers out of a /quote response (defensive).
@@ -364,22 +384,47 @@ async function jupFetch(path, init) {
 // The token registry is a different host family with the same failover story.
 let _tokBase = null;
 async function tokenFetch(path, init) {
-  const bases = _tokBase ? [_tokBase, ...JUP_TOKEN_BASES.filter((b) => b !== _tokBase)] : JUP_TOKEN_BASES;
+  return _overBases(JUP_TOKEN_BASES, () => _tokBase, (b) => { _tokBase = b; }, path, init, 'Jupiter token');
+}
+// …and so is the launchpad feed. Three hosts families, one failover, because the
+// next one to be retired should cost a config line and not an outage.
+let _pumpBase = null;
+async function pumpFetch(path, init) {
+  return _overBases(PUMPFUN_BASES, () => _pumpBase, (b) => { _pumpBase = b; }, path, init, 'pump.fun');
+}
+// Try each base in turn, sticking to the one that answered. Fails over ONLY on a
+// transport error: an HTTP status means the host is there and answered, and the
+// same request would get the same status from every other base.
+async function _overBases(bases, get, set, path, init, what) {
+  const cur = get();
+  const order = cur ? [cur, ...bases.filter((b) => b !== cur)] : bases;
   let last = null;
-  for (const base of bases) {
+  for (const base of order) {
     const url = base + path;
-    try { const r = await _fetch(url, init); _tokBase = base; return r; }
-    catch (e) { if (_tokBase === base) _tokBase = null; last = netErr(e, url); }
+    try { const r = await _fetch(url, init); set(base); return r; }
+    catch (e) { if (get() === base) set(null); last = netErr(e, url); }
   }
-  throw last || new Error('no Jupiter token base configured');
+  throw last || new Error(`no ${what} base configured`);
 }
 
 // GET a Jupiter quote and return the parsed headline numbers + the raw object (which
 // the /swap endpoint requires verbatim). Throws a readable reason when there's no route.
+// What Jupiter actually SAID when it refused. A bare status is the same defect as
+// undici's bare "fetch failed": "Jupiter swap-build failed (500)" was true, useless,
+// and cost a round of guessing about which field the newer API disliked — while
+// the answer was in the response body all along, being discarded one line later.
+async function jupWhy(r) {
+  try {
+    const t = (await r.text()).slice(0, 300).replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    try { const j = JSON.parse(t); return ' — ' + (j.error || j.message || j.errorCode || t); }
+    catch (_) { return ' — ' + t; }
+  } catch (_) { return ''; }
+}
 async function getQuote({ inputMint, outputMint, amountRaw, slippageBps = 100, platformFeeBps }) {
   const qs = quotePath({ inputMint, outputMint, amountRaw, slippageBps, platformFeeBps });
   const r = await jupFetch(qs, { signal: AbortSignal.timeout(12000) });
-  if (!r.ok) throw new Error('Jupiter quote failed (' + r.status + ')');
+  if (!r.ok) throw new Error('Jupiter quote failed (' + r.status + ')' + await jupWhy(r));
   const j = await r.json();
   const q = parseQuote(j);
   if (!q || q.outAmount <= 0n) throw new Error('no route / no liquidity for this token on Jupiter');
@@ -389,7 +434,7 @@ async function getQuote({ inputMint, outputMint, amountRaw, slippageBps = 100, p
 async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports } = {}) {
   const body = swapBody(quoteRaw, userPublicKey, { feeAccount, priorityLamports });
   const r = await jupFetch('/swap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(12000) });
-  if (!r.ok) throw new Error('Jupiter swap-build failed (' + r.status + ')');
+  if (!r.ok) throw new Error('Jupiter swap-build failed (' + r.status + ')' + await jupWhy(r));
   const j = await r.json();
   if (!j || !j.swapTransaction) throw new Error('Jupiter returned no swap transaction');
   return j.swapTransaction;   // base64
@@ -533,15 +578,27 @@ async function dexScreener(mint) {
 // effort: returns [] on any failure / unsupported response. Override the host via
 // PUMPFUN_API (e.g. a proxy) if the public frontend API is unreachable.
 async function pumpfunNew(limit = 50) {
-  const base = (process.env.PUMPFUN_API || 'https://frontend-api.pump.fun/coins').replace(/\/+$/, '');
+  const r = await pumpfunNewX(limit);
+  return r.coins;
+}
+// The same call, but honest about WHY it is empty.
+//
+// `ok` is whether the feed ANSWERED, kept apart from whether it had anything —
+// the distinction core.js dsPairsX already makes for the same reason. A 403
+// (pump.fun blocking a datacenter IP), a 429, a 500 and a dead host all used to
+// arrive as the same empty array as a genuinely quiet minute on the launchpad,
+// so no caller could classify it and none could warn. The snipe loop's early
+// `if (!coins.length) return` then counted as a SUCCESSFUL tick, and /health
+// printed a green solSnipe while discovery had been blind for days.
+async function pumpfunNewX(limit = 50) {
   try {
     const n = Math.max(1, Math.min(100, limit));
-    const url = `${base}?offset=0&limit=${n}&sort=created_timestamp&order=DESC&includeNsfw=true`;
-    const r = await _fetch(url, { signal: AbortSignal.timeout(9000), headers: { accept: 'application/json' } });
-    if (!r.ok) return [];
+    const r = await pumpFetch(`?offset=0&limit=${n}&sort=created_timestamp&order=DESC&includeNsfw=true`,
+      { signal: AbortSignal.timeout(9000), headers: { accept: 'application/json' } });
+    if (!r.ok) return { coins: [], ok: false, why: `pump.fun answered ${r.status}` };
     const j = await r.json();
     const arr = Array.isArray(j) ? j : (Array.isArray(j && j.coins) ? j.coins : []);
-    return arr.map((c) => ({
+    return { ok: true, why: '', coins: arr.map((c) => ({
       mint: String((c && (c.mint || c.address)) || ''),
       name: String((c && c.name) || '').slice(0, 40),
       symbol: String((c && c.symbol) || '').slice(0, 20),
@@ -551,12 +608,13 @@ async function pumpfunNew(limit = 50) {
       // The launch's creator/dev wallet (base58) — used by dev-wallet snipe to match a
       // followed dev. Absent/renamed field → '' → simply never matches (fails safe).
       creator: String((c && (c.creator || c.creator_address || c.dev)) || ''),
-    })).filter((c) => isSolAddress(c.mint));
-  } catch (_) { return []; }
+    })).filter((c) => isSolAddress(c.mint)) };
+  } catch (e) { return { coins: [], ok: false, why: (e && e.message) || 'pump.fun unreachable' }; }
 }
 
 module.exports = {
-  KIND, WSOL_MINT, SOL_PATH, LAMPORTS_PER_SOL, JUP_BASE, JUP_BASES, JUP_TOKEN_BASES,
+  KIND, WSOL_MINT, SOL_PATH, LAMPORTS_PER_SOL, JUP_BASE, JUP_BASES, JUP_TOKEN_BASES, PUMPFUN_BASES,
+  pumpfunNewX, pumpBase: () => _pumpBase,
   isSolAddress, isSolSecretKey,
   deriveKeypair, secretToBase58, keypairFromStored, newWallet,
   solToLamports, lamportsToSol, fmtUnits, toRaw,

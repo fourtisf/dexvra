@@ -167,3 +167,82 @@ test('a sell does not escalate gas against an unreachable host', () => {
   const line = /const _retriable = \(m\) => i18n\.errorKey\(m\) !== 'err\.offline'/;
   assert.match(src, line, 'a transport failure is retriable again');
 });
+
+// ── The lesson the host failover did not carry ───────────────────────────────
+// Moving a base is not the same as moving an API. Measured on the production box
+// after the failover shipped: /quote answered on lite-api.jup.ag and /swap on the
+// SAME base returned 500 — because the POST body was still v6-shaped.
+
+test("the swap body never sends v6's 'auto' priority string", () => {
+  // SOL_PRIORITY_LAMPORTS defaults to 0, so this was sent on EVERY trade from a
+  // stock box. The current /swap/v1 endpoint rejects it; omitting the field asks
+  // for the same thing and is accepted by both APIs.
+  const body = solana.swapBody({ q: 1 }, 'SomePubkey', {});
+  assert.ok(!('prioritizationFeeLamports' in body), "the field is present with no priority set — it used to be 'auto'");
+  assert.ok(!JSON.stringify(body).includes('auto'), "'auto' is back in the swap body");
+});
+
+test('an explicit priority is still sent, as a number', () => {
+  const body = solana.swapBody({ q: 1 }, 'SomePubkey', { priorityLamports: 50000 });
+  assert.strictEqual(body.prioritizationFeeLamports, 50000);
+  assert.strictEqual(typeof body.prioritizationFeeLamports, 'number');
+});
+
+test('a refusal carries what Jupiter actually said, not just a status', () => {
+  // "Jupiter swap-build failed (500)" was true, useless, and cost a round of
+  // guessing about which field the newer API disliked — while the answer was in
+  // the response body being discarded one line later. Same defect as undici's
+  // bare "fetch failed".
+  global.fetch = async () => ({ ok: false, status: 500, text: async () => JSON.stringify({ error: 'Invalid prioritizationFeeLamports' }) });
+  return assert.rejects(() => solana.getQuote(ARGS), (e) => {
+    assert.match(e.message, /500/);
+    assert.match(e.message, /Invalid prioritizationFeeLamports/, 'the response body was dropped');
+    return true;
+  });
+});
+
+// ── pump.fun: the same host migration, the same failover ─────────────────────
+
+test('pump.fun has a base list too, v3 first', () => {
+  assert.ok(solana.PUMPFUN_BASES.length >= 2, 'a single hardcoded host is back');
+  assert.match(solana.PUMPFUN_BASES[0], /frontend-api-v3\.pump\.fun/);
+  assert.ok(solana.PUMPFUN_BASES.some((b) => /frontend-api\.pump\.fun/.test(b)), 'the legacy host was dropped');
+});
+
+test('a dead pump.fun host fails over instead of reporting a quiet launchpad', () => {
+  const calls = fakeFetch(['frontend-api-v3.pump.fun'], [
+    { mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', name: 'Bonk', symbol: 'BONK', created_timestamp: 1 },
+  ]);
+  return solana.pumpfunNewX(5).then((r) => {
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.coins.length, 1);
+    assert.ok(calls.some((u) => u.includes('frontend-api.pump.fun')), 'the legacy base was never tried');
+  });
+});
+
+test('"the feed is gone" and "nothing launched" stop being the same answer', () => {
+  // The snipe loop's `if (!coins.length) return` counted as a SUCCESSFUL tick, so
+  // /health showed a green solSnipe while discovery had been blind for days.
+  fakeFetch(['pump.fun'], []);
+  return solana.pumpfunNewX(5).then((r) => {
+    assert.strictEqual(r.ok, false, 'an unreachable feed still reports ok');
+    assert.match(r.why, /can't reach|unreachable/, 'the reason is empty');
+    assert.deepStrictEqual(r.coins, []);
+  });
+});
+
+test('an HTTP status from pump.fun is reported as an answer, not as silence', () => {
+  global.fetch = async () => ({ ok: false, status: 429, json: async () => [] });
+  return solana.pumpfunNewX(5).then((r) => {
+    assert.strictEqual(r.ok, false);
+    assert.match(r.why, /429/, 'a rate-limit is indistinguishable from an empty launchpad');
+  });
+});
+
+test('the old array-returning signature still works for existing callers', () => {
+  fakeFetch([], [{ mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', name: 'Bonk', symbol: 'BONK' }]);
+  return solana.pumpfunNew(5).then((a) => {
+    assert.ok(Array.isArray(a), 'pumpfunNew stopped returning an array — watchers.js indexes it');
+    assert.strictEqual(a.length, 1);
+  });
+});
