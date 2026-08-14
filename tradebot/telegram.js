@@ -1113,7 +1113,18 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     ...walletRow,
   ];
   if (buying) {
-    ikb.push([btn(`Buy ${bp[0]}`, `b:${chainKey}:${wi}:${ca}:${bp[0]}`), btn(`Buy ${bp[1]}`, `b:${chainKey}:${wi}:${ca}:${bp[1]}`), btn(`Buy ${bp[2]}`, `b:${chainKey}:${wi}:${ca}:${bp[2]}`), btn('Buy X', `bx:${chainKey}:${wi}:${ca}`)]);
+    // The preset count is no longer fixed at three, so the row is BUILT rather
+    // than written out — indexing the first three by hand is what made three a
+    // structural fact of the card as much as of the validators. Chunked four to
+    // a row because tokenCard.test.js caps a row at 4 buttons; the custom-amount
+    // button rides at the end of the last row when there is space and gets its
+    // own row when there is not, so it is never the button that drops.
+    //
+    // ✏️ names it: "Buy X" reads as a preset called X — the one button that
+    // answers "I want a different size" was the one nobody could identify.
+    const buyBtns = bp.map((a) => btn(`Buy ${a}`, `b:${chainKey}:${wi}:${ca}:${a}`));
+    buyBtns.push(btn('✏️ Buy custom', `bx:${chainKey}:${wi}:${ca}`));
+    for (let i = 0; i < buyBtns.length; i += 4) ikb.push(buyBtns.slice(i, i + 4));
     ikb.push([btn('⏳ Limit buy', `lb:${chainKey}:${wi}:${ca}`), btn('🔁 DCA', `dca:${chainKey}:${wi}:${ca}`)]);
   } else {
     ikb.push([btn('Sell 25%', `s:${chainKey}:${wi}:${ca}:25`), btn('Sell 50%', `s:${chainKey}:${wi}:${ca}:50`), btn('Sell 75%', `s:${chainKey}:${wi}:${ca}:75`), btn('Sell 100%', `s:${chainKey}:${wi}:${ca}:100`)]);
@@ -1807,7 +1818,23 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // Same order as the single-wallet path: every buy is in flight before the
       // progress message is awaited.
       const buys = Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
-      const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress.multi', { amt: esc(amt), native: chG.native, n: targets.length }));
+      // …and the entry snapshot too, which this branch simply did not have. The
+      // whole ENTRY_MC_WAIT_MS machinery lived inside `if (targets.length <= 1)`,
+      // so selecting a second wallet silently removed the market cap from every
+      // message: the progress line, and the receipt. "At what MC did I get in"
+      // was answerable on one wallet and unanswerable on five — and five wallets
+      // is the case where it matters MOST, because the fills move the price and
+      // the only cap ever printed was read afterwards, from a market the user's
+      // own buys had already pushed.
+      //
+      // Started AFTER the fan-out and only raced, never blocking it — same rule
+      // as the single path, for the same reason (see the latency note above).
+      const entryPM = withTmo(core.tokenSnapshot(ca, chG.key).catch(() => null), 6000, null);
+      const entryM = await Promise.race([entryPM, new Promise((res) => setTimeout(res, ENTRY_MC_WAIT_MS, null))]);
+      const eRateM = nativeUsd(chG.native);
+      const eMcM = entryM ? (entryM.mcapUsd || (entryM.mcapEth || 0) * eRateM) : 0;
+      const atMcM = eMcM > 0 ? T(chatId, 'buy.at_mc', { mc: fmt(eMcM) }) : '';
+      const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress.multi', { amt: esc(amt), native: chG.native, n: targets.length, atMc: atMcM }));
       const results = await buys;
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       const fails = [];
@@ -1842,6 +1869,14 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // that did not happen has neither, and the market line under a failure
       // reads as a fill.
       const mkt = okN > 0 ? await marketLine(ca, chainKey) : '';
+      // "Entered at" and "worth now" are DIFFERENT facts, and on five parallel
+      // buys into one pool they differ by the user's own price impact — so the
+      // post-trade read is wrong in a known direction as an entry. The pre-fill
+      // snapshot above is the honest one; print it as its own labelled line
+      // rather than letting `mkt` be mistaken for it.
+      const entryLine = (okN > 0 && eMcM > 0)
+        ? '\n' + T(chatId, 'buy.receipt.entry_mc', { mc: fmt(eMcM) })
+        : '';
       // Every wallet failing the SAME way is ONE fact, not five. Five copies of
       // a raw engine string ("buy failed on Solana: fetch failed") is both the
       // spammiest and the least useful way to say "the aggregator is
@@ -1854,7 +1889,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const body = oneReason
         ? `${esc(friendlyError(chatId, fails[0].e, 'buy'))}\n<i>${T(chatId, 'buy.receipt.multi.same', { wallets: esc(fails.map((f) => f.label).join(', ')) })}</i>`
         : lines.join('\n');
-      const txt = head + (mkt ? '\n' + mkt : '') + '\n\n' + body;
+      const txt = head + entryLine + (mkt ? '\n' + mkt : '') + '\n\n' + body;
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
       // The multi-wallet branch never opened a monitor and its receipt had no 📍
       // button either, so anyone trading more than one wallet got a fill and
@@ -2288,7 +2323,11 @@ async function onCallback(q) {
   if (data === 'setslip') { setPending(chatId, { action: 'slip_val' }); return send(chatId, 'Send your <b>slippage %</b> (e.g. <code>5</code>). <code>0</code> = default (5%). Max 50.'); }
   if (data === 'setgas') { const s = gasScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'gasset') { const n = Number((data.split(':')[1]) || 1); try { core.setGasBoost(chatId, n); } catch (_) {} const s = gasScreen(chatId); await answer(q.id, `Gas priority: ${gasLabel(core.userGasBoost(core.ensureUser(chatId)))}`); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'setbp') { const ck = core.userChain(core.ensureUser(chatId)); const cn = core.chainOf(ck); setPending(chatId, { action: 'bp_val', chain: ck }); return send(chatId, `Send <b>3 quick-buy amounts</b> for <b>${cn.emoji} ${esc(cn.name)}</b> (in ${cn.native}), separated by spaces, e.g. <code>0.01 0.05 0.1</code>:`); }
+  // The prompt names the RANGE and shows this chain's own current amounts as the
+  // example. It used to hardcode "3" and "0.01 0.05 0.1" — an ETH-denominated
+  // example offered to someone on Solana, next to a count the code no longer
+  // requires.
+  if (data === 'setbp') { const ck = core.userChain(core.ensureUser(chatId)); const cn = core.chainOf(ck); const cur = core.buyPresets(core.ensureUser(chatId), ck).join(' '); setPending(chatId, { action: 'bp_val', chain: ck }); return send(chatId, `Send <b>${core.PRESETS_MIN}–${core.PRESETS_MAX} quick-buy amounts</b> for <b>${cn.emoji} ${esc(cn.name)}</b> (in ${cn.native}), separated by spaces.\n\nNow: <code>${esc(cur)}</code>`); }
   if (data === 'cbtog') { const u = core.ensureUser(chatId); try { core.setConfirmBuy(chatId, !u.settings.confirmBuy); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'extog') { const u = core.ensureUser(chatId); try { core.setExpert(chatId, !u.settings.expert); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'ntf') { const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }

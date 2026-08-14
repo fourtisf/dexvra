@@ -198,9 +198,15 @@ const S = {
     id: '⏳ Token itu sedang diproses — tunggu hasilnya dulu sebelum beli lagi.',
   },
   'buy.progress': { en: '⏳ <b>Buying {amt} {native}</b>{atMc}…', id: '⏳ <b>Beli {amt} {native}</b>{atMc}…' },
+  // {atMc} exists here for the same reason it exists on 'buy.progress': the one
+  // question everybody asks is what market cap they got in at. It was on the
+  // single-wallet line only, so selecting a second wallet silently deleted it.
+  // Both languages carry the slot or i18n.test.js fails on the mismatch — and a
+  // template without the slot would discard the value in silence, which is the
+  // failure mode that makes a fix look like it did nothing.
   'buy.progress.multi': {
-    en: '⏳ <b>Buying {amt} {native} on {n} wallets…</b>',
-    id: '⏳ <b>Beli {amt} {native} di {n} wallet…</b>',
+    en: '⏳ <b>Buying {amt} {native} on {n} wallets</b>{atMc}…',
+    id: '⏳ <b>Beli {amt} {native} di {n} wallet</b>{atMc}…',
   },
   'buy.at_mc': { en: ' at MC <b>${mc}</b>', id: ' di MC <b>${mc}</b>' },
   // Shown the instant the transaction is broadcast, well before it confirms. On a
@@ -218,6 +224,14 @@ const S = {
   'buy.receipt.spent': { en: 'Spent: <b>{amt} {native}</b> ({usd})', id: 'Terpakai: <b>{amt} {native}</b> ({usd})' },
   'buy.receipt.got': { en: 'Got: <b>{amt} ${sym}</b> ({usd})', id: 'Dapat: <b>{amt} ${sym}</b> ({usd})' },
   'buy.receipt.entry': { en: 'Entry: <b>${px}</b>', id: 'Harga masuk: <b>${px}</b>' },
+  // The multi-wallet receipt's own entry line. Deliberately worded as "entered
+  // at", never just "market cap": the line under it IS a market cap — the
+  // current one — and two unlabelled caps on one card is how a user concludes
+  // the bot cannot count.
+  'buy.receipt.entry_mc': {
+    en: '🎯 Entered at market cap <b>${mc}</b>',
+    id: '🎯 Masuk di market cap <b>${mc}</b>',
+  },
   'buy.receipt.wallet': { en: 'Wallet: {wallet} · {venue}', id: 'Wallet: {wallet} · {venue}' },
   // Three outcomes, three headers. ✅ is a claim about what happened, so it may
   // not be the header for a trade where nothing happened: a card once read

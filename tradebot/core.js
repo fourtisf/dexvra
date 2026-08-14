@@ -338,7 +338,21 @@ function userChain(u) { return (u && u.activeChain && chainOf(u.activeChain) && 
 // Capped at 99 so a wallet index is always ≤2 digits — keeps every token-card
 // callback (which encodes the index) under Telegram's 64-byte limit.
 const WALLET_CAP = Math.max(1, Math.min(99, Number(process.env.MAX_WALLETS_PER_USER || 10)));
-const DEFAULT_BUY_PRESETS = [0.01, 0.05, 0.1];   // the three quick-buy amounts on a token card
+// Quick-buy amounts on a token card. NOT a fixed count any more: three was baked
+// into the getter, the setter AND the store migration, and the migration did not
+// merely reject a longer array — it overwrote and SAVED the default over it, so a
+// five-amount set could never survive a restart.
+const PRESETS_MIN = 2;
+const PRESETS_MAX = 6;   // the card's row budget (4 per row) fits 6 presets + Buy X across two rows
+const DEFAULT_BUY_PRESETS = [0.01, 0.05, 0.1];
+// …and per-chain defaults, because 0.01 of one coin is not 0.01 of another. A user
+// on Solana was offered 0.01/0.05/0.1 SOL — under a dollar at the top end — which
+// is why every buy on the cards we saw was a dust trade. A chain with no entry here
+// falls back to DEFAULT_BUY_PRESETS.
+const CHAIN_BUY_PRESETS = {
+  solana: [0.1, 0.2, 0.5, 1, 2],
+};
+const defaultPresetsFor = (chainKey) => (CHAIN_BUY_PRESETS[chainKey] || DEFAULT_BUY_PRESETS).slice();
 function _refCode() { let c; do { c = crypto.randomBytes(4).toString('hex'); } while (DB.refByCode[c]); return c; }
 function _walletId() { return crypto.randomBytes(5).toString('hex'); }
 function walletFromSecret(secret) {
@@ -465,7 +479,11 @@ function ensureUser(chatId, referredBy) {
     if (!u.settings || typeof u.settings !== 'object') { u.settings = {}; ch = true; }
     { const s = u.settings;
       if (typeof s.slippage !== 'number') { s.slippage = 0; ch = true; }                                   // 0 → 5% default
-      if (!Array.isArray(s.buyPresets) || s.buyPresets.length !== 3 || !s.buyPresets.every((x) => x > 0)) { s.buyPresets = DEFAULT_BUY_PRESETS.slice(); ch = true; }
+      // Range, not an exact count. This line used to demand exactly 3 and then
+      // OVERWRITE anything else with the default and saveStore() it — so a longer
+      // set was not ignored, it was destroyed on the owner's next touch and could
+      // never be configured at all.
+      if (!Array.isArray(s.buyPresets) || s.buyPresets.length < PRESETS_MIN || s.buyPresets.length > PRESETS_MAX || !s.buyPresets.every((x) => x > 0)) { s.buyPresets = DEFAULT_BUY_PRESETS.slice(); ch = true; }
       if (typeof s.autoBuy !== 'boolean') { s.autoBuy = false; ch = true; }
       if (typeof s.autoBuyAmount !== 'string' || !(Number(s.autoBuyAmount) > 0)) { s.autoBuyAmount = '0.01'; ch = true; }
       if (typeof s.confirmBuy !== 'boolean') { s.confirmBuy = false; ch = true; }
@@ -788,7 +806,7 @@ function setCopyOn(chatId, on) {
 // even if the store was hand-edited. Falls back to the defaults if anything's off.
 function _presetsOk(a) {
   const okOne = (x) => x > 0 && x <= 100 && String(x).length <= 6 && !/e/i.test(String(x));
-  return Array.isArray(a) && a.length === 3 && a.every(okOne);
+  return Array.isArray(a) && a.length >= PRESETS_MIN && a.length <= PRESETS_MAX && a.every(okOne);
 }
 // Quick-buy amounts. Per-chain override (settings.presetsByChain[chainKey]) wins,
 // then the global settings.buyPresets, then the default. Chain amounts differ in
@@ -796,7 +814,17 @@ function _presetsOk(a) {
 function buyPresets(u, chainKey) {
   const s = (u && u.settings) || {};
   if (chainKey && s.presetsByChain && _presetsOk(s.presetsByChain[chainKey])) return s.presetsByChain[chainKey];
-  return _presetsOk(s.buyPresets) ? s.buyPresets : DEFAULT_BUY_PRESETS;
+  // A user who never touched the setting gets the CHAIN's default, not a global
+  // one denominated in somebody else's coin. Anyone who DID set a global keeps it
+  // — an explicit choice outranks a better default, which is what buyPresetsSet
+  // records. It matters that this is a FLAG and not "does it differ from the
+  // default": every user is SEEDED with the default (see ensureUser), and
+  // setBuyPresets can only reach the global when the chain is disabled, so
+  // "differs from the default" would be false for essentially everyone and the
+  // chain default would never apply.
+  if (s.buyPresetsSet && _presetsOk(s.buyPresets)) return s.buyPresets;
+  const byChain = defaultPresetsFor(chainKey);
+  return _presetsOk(byChain) ? byChain : (_presetsOk(s.buyPresets) ? s.buyPresets : DEFAULT_BUY_PRESETS);
 }
 function setSlippage(chatId, pct) {
   const u = ensureUser(chatId);
@@ -823,7 +851,10 @@ function setGasBoost(chatId, n) {
 function setBuyPresets(chatId, input, chainKey) {
   const u = ensureUser(chatId);
   const toks = String(input).trim().split(/[\s,]+/).filter(Boolean);
-  if (toks.length !== 3) throw new Error('give exactly 3 positive amounts, e.g. "0.01 0.05 0.1"');
+  // A RANGE, matching _presetsOk and the store migration — all three used to
+  // demand exactly 3 and every one of them had to be loosened together, or a
+  // longer set would be accepted here and then silently reverted on load.
+  if (toks.length < PRESETS_MIN || toks.length > PRESETS_MAX) throw new Error(`give ${PRESETS_MIN}–${PRESETS_MAX} positive amounts, e.g. "0.1 0.2 0.5 1 2"`);
   const nums = [];
   for (const t of toks) {
     // Plain decimals only — exponential like "1e-7" would pass Number() but then
@@ -836,7 +867,7 @@ function setBuyPresets(chatId, input, chainKey) {
     nums.push(n);
   }
   if (chainKey && isEnabled(chainKey)) { u.settings.presetsByChain = u.settings.presetsByChain || {}; u.settings.presetsByChain[chainKey] = nums; }
-  else u.settings.buyPresets = nums;
+  else { u.settings.buyPresets = nums; u.settings.buyPresetsSet = true; }   // an explicit global choice, so a chain default must not override it
   saveStore();
   return nums;
 }
@@ -2675,7 +2706,7 @@ module.exports = {
   walletList, walletById, activeWallet, activeAddress, addWallet, switchWallet, removeWallet, listWallets, WALLET_CAP,
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,
-  buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, setSnipeChain, setSnipeAmount,
+  buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, defaultPresetsFor, PRESETS_MIN, PRESETS_MAX, setSnipeChain, setSnipeAmount,
   setConfirmBuy, setExpert, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
