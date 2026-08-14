@@ -246,3 +246,20 @@ test('the old array-returning signature still works for existing callers', () =>
     assert.strictEqual(a.length, 1);
   });
 });
+
+test('the swap-build probe never reuses the derivation anchor address', () => {
+  // MN is the standard BIP39 test-vector mnemonic, so MN_SOL is a heavily-used
+  // public address whose accounts carry whatever strangers have done to them.
+  // A real run failed with "Token account Hpjz… is owned by usdc8UkQ… instead of
+  // the user" — a fact about that address, reported to the operator as a reason
+  // not to trade. The anchor keeps its own job; the probe gets a fresh key.
+  const pf = require('node:fs').readFileSync(require.resolve('./scripts/solana-preflight.js'), 'utf8');
+  const build = pf.slice(pf.indexOf("await check('Jupiter swap-build"), pf.indexOf("await check('DexScreener"));
+  assert.ok(!/getSwapTx\(q\.raw, MN_SOL/.test(build), 'the probe is back on the shared test address');
+  assert.match(build, /const probe = Keypair\.generate\(\)\.publicKey\.toBase58\(\)/);
+  assert.match(build, /getSwapTx\(q\.raw, probe/);
+  // …and the anchor check must still use the mnemonic, or the regression guard
+  // it exists to be is gone.
+  assert.match(pf, /const a = solana\.deriveKeypair\(MN\)\.publicKey\.toBase58\(\)/);
+  assert.match(pf, /if \(a !== MN_SOL\) throw new Error\('derivation changed!/);
+});

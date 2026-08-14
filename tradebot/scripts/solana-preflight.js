@@ -14,7 +14,7 @@
 const path = require('path');
 const solana = require(path.join(__dirname, '..', 'solana'));
 const rugcheck = require(path.join(__dirname, '..', 'rugcheck'));
-const { Connection } = require('@solana/web3.js');
+const { Connection, Keypair } = require('@solana/web3.js');
 
 const RPC = (process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com').trim();
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';   // a known, always-liquid mint
@@ -53,9 +53,24 @@ async function check(name, fn) {
     return 'out ' + q.outAmount + ' USDC-units · impact ' + q.priceImpactPct + '%';
   });
   await check('Jupiter swap-build (does not send)', async () => {
+    // A FRESH random address, never MN_SOL.
+    //
+    // MN is the standard BIP39 test-vector mnemonic — one of the most widely
+    // used keys in existence — so its accounts carry whatever strangers have
+    // done to them. On a real run Jupiter refused with "Token account Hpjz… is
+    // owned by usdc8UkQ… instead of the user": someone had created a token
+    // account at its USDC ATA under a different owner. That is a fact about a
+    // public test address, not about this box, and it failed a check the
+    // operator is told to fix before trading.
+    //
+    // A brand-new keypair has no on-chain state at all, so Jupiter builds the
+    // create-ATA-and-swap transaction it would build for a real user's first
+    // buy — which is the thing this check is actually for. It is never signed
+    // and never sent. MN_SOL keeps its own job as the derivation anchor above.
+    const probe = Keypair.generate().publicKey.toBase58();
     const q = await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: USDC, amountRaw: 10000000n, slippageBps: 100 });
-    const tx = await solana.getSwapTx(q.raw, MN_SOL, {});
-    return 'tx ' + Math.round(Buffer.from(tx, 'base64').length) + ' bytes';
+    const tx = await solana.getSwapTx(q.raw, probe, {});
+    return 'tx ' + Math.round(Buffer.from(tx, 'base64').length) + ' bytes  · for a fresh address';
   });
   await check('DexScreener pricing (USDC)', async () => {
     const d = await solana.dexScreener(USDC); if (!d) throw new Error('no market data');
