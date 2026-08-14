@@ -232,6 +232,18 @@ const S = {
     en: '🎯 Entered at market cap <b>${mc}</b>',
     id: '🎯 Masuk di market cap <b>${mc}</b>',
   },
+  // The price the trade ACTUALLY filled at — spent ÷ received. Both halves were
+  // already on the receipt, one line apart, and nothing divided them, so a buy
+  // that filled at 3x the displayed price printed the whole proof and never the
+  // conclusion.
+  'buy.receipt.realised': {
+    en: '🧾 You actually paid <b>${px}</b> per token',
+    id: '🧾 Kamu sebenarnya bayar <b>${px}</b> per token',
+  },
+  'buy.receipt.worse_than_shown': {
+    en: '⚠️ <b>{times}× worse</b> than the price on the card — the pool is thinner than it looks, or the token charges a transfer fee.',
+    id: '⚠️ <b>{times}× lebih buruk</b> dari harga di kartu — pool-nya lebih tipis dari kelihatannya, atau tokennya memungut transfer fee.',
+  },
   'buy.receipt.wallet': { en: 'Wallet: {wallet} · {venue}', id: 'Wallet: {wallet} · {venue}' },
   // Three outcomes, three headers. ✅ is a claim about what happened, so it may
   // not be the header for a trade where nothing happened: a card once read
@@ -320,6 +332,14 @@ const S = {
   // moment" invites a user to burn five more wallets on the same dead host, and
   // because the operator needs to know it is their server's egress, not the
   // token.
+  // The guard that would have saved the trade this whole investigation started
+  // from: the card said one price, the aggregator quoted three times worse, and
+  // nothing compared them. Worded so the user knows their money is untouched and
+  // that the token — not the bot — is the problem.
+  'err.diverged': {
+    en: "Refused: the real trading price is far worse than the price shown for this token, so the {act} was NOT sent and nothing was spent. That gap means the pool is much thinner than it looks or the token charges a transfer fee. Raise the limit in ⚙️ Settings only if you know what you are buying.",
+    id: 'Ditolak: harga trading sebenarnya jauh lebih buruk dari harga yang ditampilkan untuk token ini, jadi {act}-nya <b>tidak</b> dikirim dan tidak ada dana yang terpakai. Selisih itu artinya pool-nya jauh lebih tipis dari kelihatannya, atau tokennya memungut transfer fee. Naikkan batasnya di ⚙️ Settings hanya kalau kamu paham token yang kamu beli.',
+  },
   'err.offline': {
     en: "Couldn't reach the swap service, so the {act} was never sent — nothing was spent. This is a connection problem on our side, not the token. Try again shortly; if it keeps happening, tell an admin.",
     id: 'Layanan swap tidak bisa dihubungi, jadi {act}-nya tidak pernah dikirim — tidak ada dana yang terpakai. Ini masalah koneksi di sisi kami, bukan tokennya. Coba lagi sebentar lagi; kalau terus begini, kabari admin.',
@@ -365,6 +385,9 @@ function errorKey(raw) {
   // bare `fetch failed`, our own `can't reach <host>`, and the syscall codes)
   // never appear in an on-chain revert.
   if (/can't reach |fetch failed|enotfound|eai_again|econnrefused|econnreset|und_err|getaddrinfo|network error/.test(m)) return 'err.offline';
+  // Refused BEFORE signing, so it belongs with the "nothing was sent" class and
+  // not with slippage — the trade did not fail, it was declined.
+  if (/worse than the price shown/.test(m)) return 'err.diverged';
   if (/token balance is 0|no bag/.test(m)) return 'err.no_bag';
   if (/insufficient|need ~|exceeds balance/.test(m)) return 'err.insufficient';
   if (/max fee per gas|base fee|underpriced|replacement|nonce/.test(m)) return 'err.gas_moved';

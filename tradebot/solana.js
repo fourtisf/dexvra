@@ -395,8 +395,14 @@ async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports
   return j.swapTransaction;   // base64
 }
 // One-shot: quote → build → sign → send → confirm. Returns { sig, quote }.
-async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent }) {
+// `onQuote` is the LAST point at which a trade can still be called off for free:
+// Jupiter has priced it, nothing is signed, nothing is broadcast. It may throw to
+// abort. This hook exists because the quote is the only executable price in the
+// system, and the price the user tapped came from somewhere else entirely — see
+// the divergence guard in core.js _buySol.
+async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent, onQuote }) {
   const quote = await getQuote({ inputMint, outputMint, amountRaw, slippageBps });
+  if (onQuote) await onQuote(quote);
   const txB64 = await getSwapTx(quote.raw, keypair.publicKey.toBase58(), { priorityLamports });
   const sig = await sendJupiterSwap(conn, keypair, txB64, onSent);
   return { sig, quote };

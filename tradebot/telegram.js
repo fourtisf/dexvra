@@ -1877,6 +1877,24 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const entryLine = (okN > 0 && eMcM > 0)
         ? '\n' + T(chatId, 'buy.receipt.entry_mc', { mc: fmt(eMcM) })
         : '';
+      // THE REALISED PRICE. `totSpent` and `totTok` have always sat on the same
+      // receipt, one line apart, and nothing ever divided them — so a buy that
+      // filled at 3x the price on the card printed both halves of the proof and
+      // never the quotient. This is the number the user is actually holding.
+      //
+      // It is shown against the entry MC we read pre-fill, so a fill far from
+      // the displayed market is visible AS a gap rather than as a number the
+      // reader has to compare by hand.
+      const realPx = (okN > 0 && totTok > 0 && totSpent > 0) ? (totSpent / totTok) * mUsd : 0;
+      const refPx = (entryM && entryM.priceEth > 0) ? entryM.priceEth * eRateM : 0;
+      const offBy = (realPx > 0 && refPx > 0) ? realPx / refPx : 0;
+      const realLine = realPx > 0
+        ? '\n' + T(chatId, 'buy.receipt.realised', { px: Number(realPx.toPrecision(3)) })
+          // Only when it is genuinely off. A fill within a few percent of the
+          // displayed price is the normal case and needs no commentary; the
+          // warning has to stay rare or it stops being read.
+          + (offBy > 1.15 ? ' ' + T(chatId, 'buy.receipt.worse_than_shown', { times: offBy.toFixed(1) }) : '')
+        : '';
       // Every wallet failing the SAME way is ONE fact, not five. Five copies of
       // a raw engine string ("buy failed on Solana: fetch failed") is both the
       // spammiest and the least useful way to say "the aggregator is
@@ -1889,7 +1907,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const body = oneReason
         ? `${esc(friendlyError(chatId, fails[0].e, 'buy'))}\n<i>${T(chatId, 'buy.receipt.multi.same', { wallets: esc(fails.map((f) => f.label).join(', ')) })}</i>`
         : lines.join('\n');
-      const txt = head + entryLine + (mkt ? '\n' + mkt : '') + '\n\n' + body;
+      const txt = head + realLine + entryLine + (mkt ? '\n' + mkt : '') + '\n\n' + body;
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
       // The multi-wallet branch never opened a monitor and its receipt had no 📍
       // button either, so anyone trading more than one wallet got a fill and
@@ -1990,20 +2008,34 @@ async function doSell(chatId, ca, pct, chain, walletId) {
     } else {
       const progress = expert ? null : await send(chatId, T(chatId, 'sell.progress.multi', { pct, n: targets.length }));
       const results = await Promise.allSettled(targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id)));
-      let okN = 0, skip = 0, totProceeds = 0, totFee = 0, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
+      let okN = 0, skip = 0, totProceeds = 0, totFee = 0, totPnl = 0, pnlSeen = false, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
-        if (res.status === 'fulfilled') { const r = res.value; okN++; totProceeds += Number(r.proceedsEth) || 0; totFee += Number(r.feeEth) || 0; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: r.proceedsEth })); }
+        // netEth is the proceeds AFTER the bot's cut. On Solana that cut is a
+        // separate transfer broadcast after the wallet delta is measured, so
+        // proceedsEth — what this used to sum — is money the user never kept.
+        if (res.status === 'fulfilled') { const r = res.value; okN++; const kept = Number(r.netEth != null ? r.netEth : r.proceedsEth) || 0; totProceeds += kept; totFee += Number(r.feeEth) || 0; totPnl += Number(r.realizedEth) || 0; pnlSeen = pnlSeen || Number.isFinite(Number(r.realizedEth)); chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: kept })); }
         else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• <b>${esc(t.label)}</b> · ${T(chatId, 'sell.no_bag')}`); } else lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(friendlyError(chatId, e, 'sell'))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
       const msUsd = nativeUsd(nat || 'ETH');
       const head = T(chatId, 'sell.receipt.multi', { pct, ok: okN, n: targets.length, skip: skip ? T(chatId, 'sell.receipt.multi.skip', { n: skip }) : '', amt: totProceeds.toFixed(5), native: esc(nat || 'ETH'), usd: msUsd > 0 ? ` ($${(totProceeds * msUsd).toFixed(2)})` : '' });
+      // The exit had no profit-or-loss line in ANY code path — not this one,
+      // which never had a field for it, and not the single-wallet one, whose
+      // r.realizedEth was NaN on Solana because _sellSol computed it, stored it
+      // and left it out of what it returned. A user sold five wallets at −78%
+      // and the receipt reported only a positive-looking "Total received".
+      const pnlLineM = (okN > 0 && pnlSeen && totPnl !== 0)
+        ? '\n' + T(chatId, 'sell.receipt.pnl', {
+          pnl: `${totPnl > 0 ? '+' : '−'}${Math.abs(totPnl).toFixed(5)} ${esc(nat || 'ETH')}`,
+          usd: msUsd > 0 ? ` (${totPnl > 0 ? '+' : '−'}$${Math.abs(totPnl * msUsd).toFixed(2)})` : '',
+        })
+        : '';
       const kb = rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       // The two questions a receipt leaves behind — what did it fill at, and
       // what is this worth now. Read after the trade, never before it.
       const mkt = await marketLine(ca, chainKey);
-      const txt = head + (mkt ? '\n' + mkt : '') + '\n\n' + lines.join('\n');
+      const txt = head + pnlLineM + (mkt ? '\n' + mkt : '') + '\n\n' + lines.join('\n');
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
     }

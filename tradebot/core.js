@@ -87,6 +87,12 @@ const CFG = {
   // Solana: reserve for the swap's tx fee + ATA rent (creating the token account costs
   // ~0.002 SOL) so a buy is never left unable to pay for its own swap. 9-decimal SOL.
   solGasBuffer: String(process.env.SOL_GAS_BUFFER || '0.003'),
+  // How many times worse than the DISPLAYED price a Jupiter quote may be before
+  // the buy is refused. This is not slippage — slippage bounds the fill against
+  // the quote, and did its job perfectly while the user lost 78%; this bounds the
+  // quote against the number the user actually tapped. 2 = "never fill me at
+  // double what the card said". 0 disables it.
+  solMaxQuoteDivergence: Math.max(0, Number(process.env.SOL_MAX_QUOTE_DIVERGENCE || 2)),
   // Solana priority fee (lamports) added to every swap so buys/snipes land under load.
   // 0 = let Jupiter pick ('auto'). A few hundred-thousand lamports is competitive.
   solPriorityLamports: Math.max(0, Math.round(Number(process.env.SOL_PRIORITY_LAMPORTS || 0))),
@@ -1824,11 +1830,50 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     const spend = gross - fee;
     const slip = Number(slipBps(u));
     const before = beforeBag.raw;
+    // THE DIVERGENCE GUARD.
+    //
+    // A user bought a token whose card said $0.00000967 and filled at $0.0000297
+    // — 3.07x worse — and lost 78% on a market that had moved 15%. It was not
+    // slippage: permitting a 3.07x-worse fill needs 6744 bps and this codebase
+    // cannot express more than 5000. It was not a post-quote skim either; that
+    // would have broken minOut and reverted. It was that the price on the card
+    // and the price of the trade come from two different systems that nothing
+    // reconciles — the card from a single DexScreener pair, the fill from
+    // Jupiter routing across every AMM — and Jupiter QUOTED 3x worse.
+    //
+    // So compare them, at the one moment it is still free: after Jupiter has
+    // priced the trade and before anything is signed. The reference read runs
+    // CONCURRENTLY with the quote's own round trip, so this costs no fill time —
+    // the rule that the trade is never held up for a display value still holds.
+    const refP = withTmo(tokenSnapshot(ca, chainKey).catch(() => null), 5000, null);
+    const onQuote = async (q) => {
+      if (!(CFG.solMaxQuoteDivergence > 0)) return;
+      const ref = await refP.catch(() => null);
+      const refPx = ref && ref.priceEth > 0 ? ref.priceEth : 0;
+      if (!(refPx > 0) || !(q.outAmount > 0n)) return;   // no reference is not a reason to block a trade
+      const outTokens = Number(solana.fmtUnits(q.outAmount, meta.decimals));
+      if (!(outTokens > 0)) return;
+      const quotedPx = solana.lamportsToSol(spend) / outTokens;   // SOL per token, executable
+      const times = quotedPx / refPx;
+      if (times > CFG.solMaxQuoteDivergence) {
+        const err = new Error(
+          `quote is ${times.toFixed(1)}x worse than the price shown (${quotedPx.toPrecision(3)} vs ${refPx.toPrecision(3)} SOL/token) — nothing was sent`);
+        err.divergence = times;
+        throw err;
+      }
+    };
     let sig, quote;
-    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent })); }
+    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent, onQuote })); }
     catch (e) { const err = new Error('buy failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
     const after = (await solana.splBalance(conn, signer.address, ca)).raw;
     const got = after > before ? after - before : (quote ? quote.outAmount : 0n);
+    // Jupiter's PROMISE and the wallet's REALITY, on two adjacent lines, never
+    // subtracted. A token that skims on transfer (Token-2022 TransferFeeConfig,
+    // which nothing in this repo can otherwise see) delivers less than the quote
+    // said, and this is the one place the difference is observable for free.
+    const shortfall = (quote && quote.outAmount > 0n && got > 0n && got < quote.outAmount)
+      ? 1 - Number(got) / Number(quote.outAmount) : 0;
+    if (shortfall > 0.01) console.warn(`[sol] ${ca} delivered ${(shortfall * 100).toFixed(1)}% under quote — possible transfer fee`);
     // Broadcast-and-defer, same as EVM: the referral credit fires from the
     // background confirmation, so the fill is not held behind the fee transfer.
     const feeSig = await _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
@@ -1845,7 +1890,14 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     wal.positions[key] = p;
     _pushHistory(wal, { side: 'buy', chain: chainKey, ca, sym: meta.sym, ethAmount: solana.lamportsToSol(spend), tokens: solana.fmtUnits(got, meta.decimals), hash: sig });
     saveStore();
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), dec: meta.decimals, sym: meta.sym };
+    // `grossEth` is what actually left the wallet for this trade; `spentEth` is
+    // what reached the swap. They differ by the bot's own cut, which is taken
+    // BEFORE the swap on a buy — so every screen that said "Invested 0.04950"
+    // for a 0.05 SOL action was quietly reporting the smaller of the two, in the
+    // direction that flatters the trade. `shortfall` is the quote-vs-delivered
+    // gap; a receipt that can name it is the only warning a transfer-fee token
+    // ever gives.
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), grossEth: solana.lamportsToSol(gross), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), shortfall, dec: meta.decimals, sym: meta.sym };
     _afterTrade(u, 'buy', res).catch(() => {});
     return res;
   });
@@ -1900,20 +1952,34 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
 
     const key = posKey(chainKey, ca);
     const pos = wal.positions[key];
+    // HOISTED out of the `if (pos)` block, exactly as the EVM path does with
+    // realizedThisSell. It used to live only inside, so the number existed,
+    // was computed correctly and was written to the stored position — and then
+    // the returned object omitted it. telegram.js reads `Number(r.realizedEth)`,
+    // got NaN, and its `Number.isFinite` guard silently dropped the line. Every
+    // Solana sell the bot has ever done printed a receipt with no profit or
+    // loss on it, on both the single- and multi-wallet paths.
+    let realizedThisSell = 0;
     if (pos) {
       if (pos.costEth == null) pos.costEth = Math.max(0, (pos.ethIn || 0) - (pos.ethOut || 0));   // migrate legacy
       const soldFrac = bal > 0n ? Number(amount) / Number(bal) : 1;
       const costOfSold = pos.costEth * Math.min(1, Math.max(0, soldFrac));
       const netProceeds = solana.lamportsToSol(proceeds - fee);
+      realizedThisSell = netProceeds - costOfSold;
       pos.ethOut += netProceeds;
-      pos.realizedEth = (Number(pos.realizedEth) || 0) + (netProceeds - costOfSold);
+      pos.realizedEth = (Number(pos.realizedEth) || 0) + realizedThisSell;
       pos.costEth = Math.max(0, pos.costEth - costOfSold);
       pos.tokens = (await solana.splBalance(conn, signer.address, ca)).raw.toString();
       if (pos.tokens === '0') { pos.costEth = 0; pos.closed = true; }
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: solana.lamportsToSol(proceeds), pct: p, hash: sig });
     saveStore();
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, soldPct: p, proceedsEth: solana.lamportsToSol(proceeds), feeEth: solana.lamportsToSol(fee), sym: (pos && pos.sym) || '' };
+    // `proceedsEth` is the wallet delta BEFORE the bot's cut — that transfer is
+    // broadcast after the delta is measured — so "Total received" was never what
+    // landed. `netEth` is. Both are returned: the gross keeps every existing
+    // reader working, the net is what a receipt should print, and `realizedEth`
+    // is the P/L the EVM path has always returned and this one silently did not.
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, soldPct: p, proceedsEth: solana.lamportsToSol(proceeds), netEth: solana.lamportsToSol(proceeds - fee), feeEth: solana.lamportsToSol(fee), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
     _afterTrade(u, 'sell', res).catch(() => {});
     return res;
   });
