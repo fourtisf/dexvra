@@ -138,7 +138,11 @@ test('the market read happens AFTER the trade, never before it', async () => {
   // A receipt is not worth a round trip on the path where the money moves.
   const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
   const fans = [...SRC.matchAll(/Promise\.allSettled\(targets\.map/g)].map((m) => m.index);
-  const reads = [...SRC.matchAll(/const mkt = await marketLine/g)].map((m) => m.index);
+  // The buy path guards the read on something having filled — a price line
+  // under "❌ Nothing bought" reads as the price it filled at — so the read is
+  // no longer unconditional. Its ORDER relative to the fan-out is what this
+  // test is about, and that is unchanged.
+  const reads = [...SRC.matchAll(/const mkt = (?:okN > 0 \? )?await marketLine/g)].map((m) => m.index);
   assert.equal(fans.length, 2, `expected the buy and sell fan-outs, found ${fans.length}`);
   assert.equal(reads.length, 2, `expected a market read on each receipt, found ${reads.length}`);
   // Pairwise: each receipt's read must come after its own fan-out. Matching on

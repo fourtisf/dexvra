@@ -172,6 +172,16 @@ async function marketLine(ca, chainKey) {
   return bits.length ? `📈 Price: ${bits.join(' · ')}` : '';
 }
 
+/** The token's ticker, best-effort, for a receipt that has no fill to read it
+ *  off. A failed multi-wallet buy printed "Bought $" with nothing after the
+ *  dollar sign, because the only source of the symbol was a wallet that filled.
+ *  Never throws and never blocks a receipt: an empty string, and the caller
+ *  falls back to a shortened contract address. */
+async function tokenSym(ca, chainKey) {
+  const meta = await withTmo(core.tokenMeta(ca, chainKey).catch(() => null), 3000, null);
+  return (meta && meta.sym) || '';
+}
+
 /** One wallet's line on a multi-wallet receipt.
  *
  *  It used to print the raw float — "0.000801724630395044 ETH" — with no dollar
@@ -1800,20 +1810,51 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress.multi', { amt: esc(amt), native: chG.native, n: targets.length }));
       const results = await buys;
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
+      const fails = [];
       results.forEach((res, i) => {
         const t = targets[i];
         if (res.status === 'fulfilled') { const r = res.value; okN++; totTok += Number(r.gotTokens) || 0; totSpent += Number(r.spentEth) || 0; totFee += Number(r.feeEth) || 0; sym = r.sym || sym; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: r.spentEth, tokens: `${fmt(r.gotTokens)} $${esc(r.sym)}` })); _placeAutoExit(chatId, r, t.id).catch(() => {}); }
-        else { const e = res.reason; lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`); }
+        else { const e = res.reason; fails.push({ label: t.label, e }); lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`); }
       });
       const wi = walletIndex(chatId, targets[0].id);
-      const mUsd = nativeUsd(nat || 'ETH');
-      const head = T(chatId, 'buy.receipt.multi', { sym: esc(sym || ''), ok: okN, n: targets.length, tokens: fmt(totTok), spent: totSpent.toFixed(5), native: esc(nat || 'ETH'), usd: mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : '' });
-      const kb = rows([btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
+      // `sym` and `nat` are only ever written by a wallet that FILLED, so when
+      // none did they were '' — and the fallbacks were the literal 'ETH' and an
+      // empty symbol. A user's card read "✅ Bought $ · 0/5 wallets · spent
+      // 0.00000 ETH" on a Solana buy: wrong coin, no token, and a green tick
+      // over five red errors. The chain being traded is known either way.
+      const symShown = sym || (await tokenSym(ca, chainKey)) || short(ca);
+      const natShown = nat || chG.native || 'ETH';
+      const mUsd = nativeUsd(natShown);
+      // Three outcomes, three headers. ✅ is a claim about what happened, so it
+      // may only appear when every wallet actually filled — the receipt is the
+      // only record of this trade the user gets, and a green tick over "0/5" is
+      // worse than no receipt at all.
+      const headKey = okN === 0 ? 'buy.receipt.multi.none' : okN < targets.length ? 'buy.receipt.multi.some' : 'buy.receipt.multi';
+      const head = T(chatId, headKey, { sym: esc(symShown), ok: okN, n: targets.length, tokens: fmt(totTok), spent: totSpent.toFixed(5), native: esc(natShown), usd: mUsd > 0 ? ` ($${(totSpent * mUsd).toFixed(2)})` : '' });
+      // Nothing filled → nothing to monitor and no card worth refreshing; what
+      // the user needs is the way back to the token to try again.
+      const kb = okN === 0
+        ? rows([btn('🔄 Try again', `tok:${chainKey}:${wi}:${ca}`), btn('« Menu', 'menu')])
+        : rows([btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`), btn('📊 Portfolio', 'pos')]);
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       // The two questions a receipt leaves behind — what did it fill at, and
-      // what is this worth now. Read after the trade, never before it.
-      const mkt = await marketLine(ca, chainKey);
-      const txt = head + (mkt ? '\n' + mkt : '') + '\n\n' + lines.join('\n');
+      // what is this worth now. Read after the trade, never before it. A trade
+      // that did not happen has neither, and the market line under a failure
+      // reads as a fill.
+      const mkt = okN > 0 ? await marketLine(ca, chainKey) : '';
+      // Every wallet failing the SAME way is ONE fact, not five. Five copies of
+      // a raw engine string ("buy failed on Solana: fetch failed") is both the
+      // spammiest and the least useful way to say "the aggregator is
+      // unreachable" — so when nothing filled and every wallet gave the same
+      // reason, it is said once, translated, in a sentence that ends in what to
+      // do. Mixed reasons still get the per-wallet list: they are genuinely
+      // different facts.
+      const oneReason = okN === 0 && fails.length > 1
+        && new Set(fails.map((f) => String((f.e && (f.e.message || f.e)) || ''))).size === 1;
+      const body = oneReason
+        ? `${esc(friendlyError(chatId, fails[0].e, 'buy'))}\n<i>${T(chatId, 'buy.receipt.multi.same', { wallets: esc(fails.map((f) => f.label).join(', ')) })}</i>`
+        : lines.join('\n');
+      const txt = head + (mkt ? '\n' + mkt : '') + '\n\n' + body;
       if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
       // The multi-wallet branch never opened a monitor and its receipt had no 📍
       // button either, so anyone trading more than one wallet got a fill and
@@ -1834,7 +1875,14 @@ const SELL_ESCALATION = [
   { gasMult: 2, slipAddBps: 500 },      // 2nd: 2× gas, +5% slippage
   { gasMult: 4, slipAddBps: 1500 },     // 3rd: 4× gas, +15% slippage
 ];
-const _retriable = (m) => /max fee per gas|base fee|reverted|not confirmed|try again|could not (read|price)|coalesce|timeout|replacement|underpriced|nonce/i.test(String(m || ''));
+// A sell escalates gas and slippage and tries again. That only helps a trade the
+// chain SAW, so a transport failure is explicitly not retriable: raising gas
+// cannot make a name resolve, and the loop spent two extra rounds — each one
+// telling the user "raising gas & slippage to complete the sell" — against a
+// host that was never going to answer. i18n.errorKey stays the single owner of
+// what an error IS; this only decides what to do about it.
+const _retriable = (m) => i18n.errorKey(m) !== 'err.offline'
+  && /max fee per gas|base fee|reverted|not confirmed|try again|could not (read|price)|coalesce|timeout|replacement|underpriced|nonce/i.test(String(m || ''));
 // Turn a raw on-chain / RPC error into one clear sentence a non-technical user
 // understands, IN THEIR LANGUAGE. The classification lives in i18n.errorKey so
 // the regexes are shared by every locale and testable on their own; the original

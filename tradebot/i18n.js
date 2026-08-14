@@ -219,9 +219,28 @@ const S = {
   'buy.receipt.got': { en: 'Got: <b>{amt} ${sym}</b> ({usd})', id: 'Dapat: <b>{amt} ${sym}</b> ({usd})' },
   'buy.receipt.entry': { en: 'Entry: <b>${px}</b>', id: 'Harga masuk: <b>${px}</b>' },
   'buy.receipt.wallet': { en: 'Wallet: {wallet} · {venue}', id: 'Wallet: {wallet} · {venue}' },
+  // Three outcomes, three headers. ✅ is a claim about what happened, so it may
+  // not be the header for a trade where nothing happened: a card once read
+  // "✅ Bought $ · 0/5 wallets · spent 0.00000 ETH" over five red errors, on a
+  // Solana buy. Green tick, no token, wrong coin, and a total of zero presented
+  // as a total.
   'buy.receipt.multi': {
     en: '✅ <b>Bought ${sym}</b> · {ok}/{n} wallets\nTotal: <b>{tokens} ${sym}</b> · spent <b>{spent} {native}</b>{usd}',
     id: '✅ <b>Berhasil beli ${sym}</b> · {ok}/{n} wallet\nTotal: <b>{tokens} ${sym}</b> · terpakai <b>{spent} {native}</b>{usd}',
+  },
+  'buy.receipt.multi.some': {
+    en: '⚠️ <b>Bought ${sym}</b> · only {ok} of {n} wallets\nTotal: <b>{tokens} ${sym}</b> · spent <b>{spent} {native}</b>{usd}',
+    id: '⚠️ <b>Berhasil beli ${sym}</b> · cuma {ok} dari {n} wallet\nTotal: <b>{tokens} ${sym}</b> · terpakai <b>{spent} {native}</b>{usd}',
+  },
+  'buy.receipt.multi.none': {
+    en: "❌ <b>Nothing bought</b> · 0 of {n} wallets\n<i>No {native} was spent.</i>",
+    id: '❌ <b>Tidak ada yang kebeli</b> · 0 dari {n} wallet\n<i>Tidak ada {native} yang terpakai.</i>',
+  },
+  // Five wallets failing the same way is one fact. Naming them keeps the roll-up
+  // from reading as "and the others are still going".
+  'buy.receipt.multi.same': {
+    en: 'Same on every wallet: {wallets}.',
+    id: 'Sama di semua wallet: {wallets}.',
   },
   'buy.failed': { en: "❌ <b>Buy didn't go through</b>", id: '❌ <b>Buy tidak berhasil</b>' },
 
@@ -282,6 +301,15 @@ const S = {
     en: "The {act} didn't go through. Please try again in a moment.",
     id: '{act} tidak berhasil. Coba lagi sebentar lagi.',
   },
+  // Nothing was sent and nothing was spent — the bot could not reach the service
+  // that prices and builds the swap. Said plainly, because "try again in a
+  // moment" invites a user to burn five more wallets on the same dead host, and
+  // because the operator needs to know it is their server's egress, not the
+  // token.
+  'err.offline': {
+    en: "Couldn't reach the swap service, so the {act} was never sent — nothing was spent. This is a connection problem on our side, not the token. Try again shortly; if it keeps happening, tell an admin.",
+    id: 'Layanan swap tidak bisa dihubungi, jadi {act}-nya tidak pernah dikirim — tidak ada dana yang terpakai. Ini masalah koneksi di sisi kami, bukan tokennya. Coba lagi sebentar lagi; kalau terus begini, kabari admin.',
+  },
   // Substituted into the {act} slot above, so the sentence reads naturally.
   'word.buy': { en: 'buy', id: 'buy' },
   'word.sell': { en: 'sell', id: 'sell' },
@@ -316,6 +344,13 @@ function t(lang, key, vars) {
  *  own and shared by every language. */
 function errorKey(raw) {
   const m = String((raw && (raw.message || raw)) || '').toLowerCase();
+  // FIRST, because a transport failure can carry words the trade rules also
+  // match — "no answer before the timeout" is not an unconfirmed transaction,
+  // and telling someone to "check your wallet before trying again" when nothing
+  // was ever sent is the worst of the available answers. These markers (undici's
+  // bare `fetch failed`, our own `can't reach <host>`, and the syscall codes)
+  // never appear in an on-chain revert.
+  if (/can't reach |fetch failed|enotfound|eai_again|econnrefused|econnreset|und_err|getaddrinfo|network error/.test(m)) return 'err.offline';
   if (/token balance is 0|no bag/.test(m)) return 'err.no_bag';
   if (/insufficient|need ~|exceeds balance/.test(m)) return 'err.insufficient';
   if (/max fee per gas|base fee|underpriced|replacement|nonce/.test(m)) return 'err.gas_moved';

@@ -82,7 +82,11 @@ const CHAINS = {
     key: 'solana', name: 'Solana', emoji: '🟣', kind: 'svm', native: 'SOL', decimals: 9, curve: false,
     rpc: env('SOLANA_RPC', 'https://api.mainnet-beta.solana.com'),
     weth: 'So11111111111111111111111111111111111111112',   // WSOL mint (the "wrapped native")
-    jupBase: env('JUP_BASE', 'https://quote-api.jup.ag/v6'),
+    // solana.js OWNS the Jupiter base: it resolves one from JUP_BASES at request
+    // time and fails over when a host has been withdrawn. A literal default here
+    // would be a second, silently stale answer to the same question — which is
+    // how this chain ended up pointed at a retired host in the first place.
+    jupBase: env('JUP_BASE', ''),
     explorer: 'https://solscan.io',
   },
 };

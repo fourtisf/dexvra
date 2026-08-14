@@ -27,7 +27,36 @@ const KIND = 'svm';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 // Phantom / Solflare standard derivation path for the first account.
 const SOL_PATH = "m/44'/501'/0'/0'";
-const JUP_BASE = (process.env.JUP_BASE || 'https://quote-api.jup.ag/v6').replace(/\/+$/, '');
+
+// ---------------------------------------------------------------- Jupiter hosts
+//
+// Jupiter moved its public API off `quote-api.jup.ag/v6` and its token registry
+// off `tokens.jup.ag`; the keyless tier now lives under `lite-api.jup.ag`. A
+// host that has been withdrawn does NOT answer with a status you can read — DNS
+// stops resolving and undici throws `TypeError: fetch failed`, whose message
+// carries nothing. That string reached a user's buy card five times over
+// ("buy failed on Solana: fetch failed"), where it is indistinguishable from
+// the token having no route.
+//
+// So the base is RESOLVED, not assumed. `JUP_BASE` wins outright when set — the
+// escape hatch AND a skip, the same contract `<CHAIN>_V4_POOLMANAGER` has in
+// v4.js — otherwise the known bases are tried in order and the one that answers
+// is remembered. Which host is live is a property of today's Jupiter, not of
+// this code, so it gets measured rather than pinned. Both are kept so a
+// rollover in either direction needs no deploy.
+//
+// The relative paths are identical under both bases (`/quote`, `/swap`), which
+// is the only reason a plain base swap is enough.
+const JUP_BASE = (process.env.JUP_BASE || '').trim().replace(/\/+$/, '');
+const JUP_BASES = JUP_BASE ? [JUP_BASE] : [
+  'https://lite-api.jup.ag/swap/v1',
+  'https://quote-api.jup.ag/v6',
+];
+const JUP_TOKEN_BASE = (process.env.JUP_TOKEN_BASE || '').trim().replace(/\/+$/, '');
+const JUP_TOKEN_BASES = JUP_TOKEN_BASE ? [JUP_TOKEN_BASE] : [
+  'https://lite-api.jup.ag/tokens/v1/token',
+  'https://tokens.jup.ag/token',
+];
 
 // ---------------------------------------------------------------- validation
 
@@ -118,14 +147,20 @@ function toRaw(amount, decimals) {
 
 // GET .../quote URL. amountRaw is the input amount in the input mint's base units
 // (lamports for WSOL). platformFeeBps (optional) is the bot's cut Jupiter withholds.
-function quoteUrl({ inputMint, outputMint, amountRaw, slippageBps = 100, platformFeeBps }) {
+// The PATH is what the live caller needs, because the base is chosen per request
+// (see jupFetch) — a builder that baked one in could only ever address the host
+// that happened to be up at require() time.
+function quotePath({ inputMint, outputMint, amountRaw, slippageBps = 100, platformFeeBps }) {
   const p = new URLSearchParams({
     inputMint, outputMint, amount: String(amountRaw),
     slippageBps: String(slippageBps), swapMode: 'ExactIn',
     onlyDirectRoutes: 'false', asLegacyTransaction: 'false',
   });
   if (platformFeeBps > 0) p.set('platformFeeBps', String(platformFeeBps));
-  return `${JUP_BASE}/quote?${p.toString()}`;
+  return `/quote?${p.toString()}`;
+}
+function quoteUrl(opts, base) {
+  return (base || JUP_BASES[0]) + quotePath(opts);
 }
 // POST .../swap body. `quoteResponse` is the JSON object returned by /quote.
 function swapBody(quoteResponse, userPublicKey, { feeAccount, priorityLamports } = {}) {
@@ -273,11 +308,77 @@ async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
 // ---------------------------------------------------------------- Jupiter (live HTTP)
 
 const _fetch = (...a) => (global.fetch ? global.fetch(...a) : Promise.reject(new Error('fetch unavailable')));
+
+// undici throws `TypeError: fetch failed` for EVERY transport failure and puts the
+// only useful part — the syscall code — in `err.cause`. Reading `e.message` and
+// stopping there is what put the bare words "fetch failed" on a buy card: it
+// cannot be told apart from a dead RPC, a blocked egress, a withdrawn host or a
+// TLS failure, and all four need different answers from the operator.
+//
+// The returned error carries `.offline` so callers classify on the flag rather
+// than by matching this text again somewhere else.
+function netErr(e, url) {
+  let host = url;
+  try { host = new URL(url).host; } catch (_) {}
+  const c = (e && e.cause) || {};
+  const code = c.code || c.errno || (e && e.code) || '';
+  const why = (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) ? 'no answer before the timeout'
+    : code === 'ENOTFOUND' || code === 'EAI_AGAIN' ? 'the name does not resolve from this server'
+    : code === 'ECONNREFUSED' ? 'connection refused'
+    : code === 'ECONNRESET' ? 'connection reset'
+    : code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT' ? 'connection timed out'
+    : /CERT|SSL|TLS/i.test(String(code)) ? 'TLS failed (' + code + ')'
+    : code || (c.message || (e && e.message) || 'unknown');
+  const err = new Error(`can't reach ${host} — ${why}`);
+  err.offline = true;
+  err.host = host;
+  err.code = code || undefined;
+  return err;
+}
+
+// The base that last answered, so the healthy host is tried first rather than
+// paying the dead one's connect timeout on every single trade.
+let _jupBase = null;
+
+// One Jupiter request, across the known bases. Failover happens ONLY on a
+// transport error: an HTTP status means the host is there and answered, and a
+// 400 from the right host would be a 400 from every other one too — retrying it
+// elsewhere just doubles the latency of a request that was always going to fail.
+async function jupFetch(path, init) {
+  const bases = _jupBase ? [_jupBase, ...JUP_BASES.filter((b) => b !== _jupBase)] : JUP_BASES;
+  let last = null;
+  for (const base of bases) {
+    const url = base + path;
+    try {
+      const r = await _fetch(url, init);
+      _jupBase = base;
+      return r;
+    } catch (e) {
+      if (_jupBase === base) _jupBase = null;
+      last = netErr(e, url);
+    }
+  }
+  throw last || new Error('no Jupiter base configured');
+}
+
+// The token registry is a different host family with the same failover story.
+let _tokBase = null;
+async function tokenFetch(path, init) {
+  const bases = _tokBase ? [_tokBase, ...JUP_TOKEN_BASES.filter((b) => b !== _tokBase)] : JUP_TOKEN_BASES;
+  let last = null;
+  for (const base of bases) {
+    const url = base + path;
+    try { const r = await _fetch(url, init); _tokBase = base; return r; }
+    catch (e) { if (_tokBase === base) _tokBase = null; last = netErr(e, url); }
+  }
+  throw last || new Error('no Jupiter token base configured');
+}
+
 // GET a Jupiter quote and return the parsed headline numbers + the raw object (which
 // the /swap endpoint requires verbatim). Throws a readable reason when there's no route.
 async function getQuote({ inputMint, outputMint, amountRaw, slippageBps = 100, platformFeeBps }) {
-  const url = quoteUrl({ inputMint, outputMint, amountRaw, slippageBps, platformFeeBps });
-  const r = await _fetch(url, { signal: AbortSignal.timeout(12000) });
+  const qs = quotePath({ inputMint, outputMint, amountRaw, slippageBps, platformFeeBps });
+  const r = await jupFetch(qs, { signal: AbortSignal.timeout(12000) });
   if (!r.ok) throw new Error('Jupiter quote failed (' + r.status + ')');
   const j = await r.json();
   const q = parseQuote(j);
@@ -287,7 +388,7 @@ async function getQuote({ inputMint, outputMint, amountRaw, slippageBps = 100, p
 // POST the quote back to /swap and get the base64 VersionedTransaction to sign.
 async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports } = {}) {
   const body = swapBody(quoteRaw, userPublicKey, { feeAccount, priorityLamports });
-  const r = await _fetch(JUP_BASE + '/swap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(12000) });
+  const r = await jupFetch('/swap', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(12000) });
   if (!r.ok) throw new Error('Jupiter swap-build failed (' + r.status + ')');
   const j = await r.json();
   if (!j || !j.swapTransaction) throw new Error('Jupiter returned no swap transaction');
@@ -370,7 +471,9 @@ async function splDecimals(conn, mint) {
 // Returns null on any failure — callers fall back to a shortened mint. Never throws.
 async function jupTokenMeta(mint) {
   try {
-    const r = await _fetch('https://tokens.jup.ag/token/' + mint, { signal: AbortSignal.timeout(8000) });
+    // Same host migration as the swap API, same failover, same reason to keep
+    // both: the registry moved off tokens.jup.ag to lite-api.jup.ag/tokens/v1.
+    const r = await tokenFetch('/' + mint, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
     const j = await r.json();
     if (!j || (!j.symbol && !j.name)) return null;
@@ -447,11 +550,12 @@ async function pumpfunNew(limit = 50) {
 }
 
 module.exports = {
-  KIND, WSOL_MINT, SOL_PATH, LAMPORTS_PER_SOL, JUP_BASE,
+  KIND, WSOL_MINT, SOL_PATH, LAMPORTS_PER_SOL, JUP_BASE, JUP_BASES, JUP_TOKEN_BASES,
   isSolAddress, isSolSecretKey,
   deriveKeypair, secretToBase58, keypairFromStored, newWallet,
   solToLamports, lamportsToSol, fmtUnits, toRaw,
-  quoteUrl, swapBody, parseQuote, feeLamports,
+  quoteUrl, quotePath, swapBody, parseQuote, feeLamports, netErr,
+  jupBase: () => _jupBase,   // which host actually answered — for the preflight
   getConnection, solBalance, splBalance, sendJupiterSwap, sendSplToken, confirmSignature,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
 };

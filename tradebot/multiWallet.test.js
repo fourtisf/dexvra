@@ -143,8 +143,10 @@ test("the selection actually drives the trade, on both sides", () => {
   // Both report per wallet, so a partial failure is visible rather than averaged
   // into a single number.
   // The per-wallet tally moved into the i18n template with the rest of the
-  // receipt copy; both languages must still carry it.
-  assert.match(tg, /'buy\.receipt\.multi', \{ sym: esc\(sym \|\| ''\), ok: okN, n: targets\.length/);
+  // receipt copy; both languages must still carry it. The template is now
+  // CHOSEN by the outcome (see multiBuyReceipt.test.js — ✅ may not head a
+  // receipt where nothing filled), so the tally is what this pins, not the key.
+  assert.match(tg, /T\(chatId, headKey, \{ sym: esc\(symShown\), ok: okN, n: targets\.length/);
   const i18n = require("./i18n");
   for (const lang of i18n.LANGS) {
     const head = i18n.t(lang, "buy.receipt.multi", { sym: "PEPE", ok: 2, n: 3, tokens: "1.2M", spent: "0.05", native: "ETH", usd: "" });

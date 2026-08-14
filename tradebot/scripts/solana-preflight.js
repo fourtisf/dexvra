@@ -38,6 +38,16 @@ async function check(name, fn) {
     if (a !== MN_SOL) throw new Error('derivation changed! got ' + a + ' — funds would be stranded');
     return a;
   });
+  // WHICH Jupiter host answers, named, before anything that depends on one. The
+  // hosts move (quote-api.jup.ag/v6 → lite-api.jup.ag/swap/v1) and a withdrawn
+  // one fails at the transport, not with a status — from Telegram that was
+  // indistinguishable from the token having no route. This line is the
+  // difference between "our server can't reach Jupiter" and "that token can't
+  // be bought", which need completely different answers.
+  await check('Jupiter reachable (which base answers)', async () => {
+    await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: USDC, amountRaw: 10000000n, slippageBps: 100 });
+    return solana.jupBase() + (process.env.JUP_BASE ? '  (pinned by JUP_BASE)' : '  (auto, tried: ' + solana.JUP_BASES.join(', ') + ')');
+  });
   await check('Jupiter quote (0.01 SOL → USDC)', async () => {
     const q = await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: USDC, amountRaw: 10000000n, slippageBps: 100 });
     return 'out ' + q.outAmount + ' USDC-units · impact ' + q.priceImpactPct + '%';
