@@ -70,4 +70,27 @@ function onKeyRecovery(adminId, target) {
   return post(`🔐 <b>Key recovery</b> (audit)\nAdmin <code>${esc(adminId)}</code> recovered wallet key(s) for ${who(target)}.`);
 }
 
-module.exports = { enabled, post, esc, onStart, onWallet, onTrade, onKeyRecovery };
+// A third party started or stopped answering.
+//
+// Written for someone who is NOT at a terminal: it names what the user loses,
+// not only which host is unreachable, because "lite-api.jup.ag ENOTFOUND" does
+// not tell an operator whether to stop the bot or finish their dinner.
+//
+// Only transitions reach here (see watchers.upstreamCycle) — a broken upstream
+// posting every sweep is a channel nobody reads by the second hour.
+function upstreamChange(broke, fixed) {
+  const lines = [];
+  if (broke.length) {
+    lines.push(`🔴 <b>Upstream down</b>`);
+    for (const r of broke) lines.push(`• <b>${esc(r.label)}</b>${r.critical ? ' ⛔' : ''} — ${esc(r.costs)}\n  <i>${esc(r.detail)}</i>`);
+    if (broke.some((r) => r.critical)) lines.push(`\n⛔ marks a break that stops users trading. Check <code>npm run preflight:solana</code> on the box.`);
+  }
+  if (fixed.length) {
+    if (lines.length) lines.push('');
+    lines.push(`🟢 <b>Upstream recovered</b>`);
+    for (const r of fixed) lines.push(`• <b>${esc(r.label)}</b> — ${esc(r.detail)}`);
+  }
+  return post(lines.join('\n'));
+}
+
+module.exports = { enabled, post, esc, onStart, onWallet, onTrade, onKeyRecovery, upstreamChange };

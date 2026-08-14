@@ -64,6 +64,74 @@ not work are indistinguishable from Telegram, and an evening was spent debugging
 the first while assuming the second. Do not report a fix as deployed, and do not
 start diagnosing why one "did not work", until the sha matches.
 
+## A third party will move, and it must not cost a user money
+
+Three outages in two days, all one shape: Jupiter retired
+`quote-api.jup.ag/v6` and every Solana buy died with the word `fetch failed`,
+five wallets at a time, under a green ✅ receipt. pump.fun moved to
+`frontend-api-v3` and snipe discovery went blind while `/health` printed 🟢.
+Then `/swap` began failing on a base whose `/quote` answered fine.
+
+Each was found by a human typing `npm run preflight:solana` **after** a user
+complained. So the rules below are not style — every one of them is an outage
+that already happened.
+
+- **Never one hardcoded host.** A base LIST, current first, legacy kept so a
+  rollover in either direction needs no deploy. `<THING>_API` env pins one host
+  and skips discovery — an override *and* a skip, the contract
+  `<CHAIN>_V4_POOLMANAGER` already has. `solana.js` `JUP_BASES` / `_overBases`
+  is the reference; copy it, do not write a fourth private idea of failure.
+- **Fail over on a TRANSPORT error only.** An HTTP status means the host is
+  there and answered; the same request gets the same status everywhere else, so
+  retrying it just doubles the latency of a request that was always going to
+  fail.
+- **Never discard the reason.** undici's `fetch failed` puts the syscall code in
+  `err.cause`; an HTTP error puts the explanation in the response body. Both were
+  being thrown away, and both cost a round of guessing —
+  `Jupiter swap-build failed (500)` was true, useless, and hiding
+  *"Token account … is owned by … instead of the user"*. `netErr()` and
+  `jupWhy()` exist for this.
+- **"It answered with nothing" and "it did not answer" are different facts.**
+  `pumpfunNew` returned `[]` for both, so a 403, a 429, a dead host and a quiet
+  launchpad were indistinguishable. Return `{ items, ok, why }` — `pumpfunNewX`
+  and `core.dsPairsX` are the shape.
+- **A loop that RAN is not a loop that WORKS.** The Solana snipe's early
+  `return` on an empty feed counted as a successful tick, so a feed dead for days
+  rendered a green tick — the state that looks most like a healthy one.
+  `lastFeedOkAt` (the feed answered) and `lastLaunchAt` (it had something) are
+  both needed; one alone lies.
+- **Moving a base is not moving an API.** The host failover was right and still
+  left `prioritizationFeeLamports: 'auto'` — v6's spelling — going to a v1
+  endpoint. The query path happened to be identical; the POST body was not.
+- **Probe with a fresh address, never a shared one.** The preflight built its
+  swap for the address derived from the standard BIP39 test mnemonic; a stranger
+  had created a token account under a foreign owner, Jupiter rightly refused, and
+  the operator was told not to trade. `Keypair.generate()` has no history.
+
+### The watchdog is the point
+
+`upstreams.js` holds the probe list, and **both** the preflight script and the
+running bot use it — two copies of "is Jupiter up" would eventually disagree,
+which is exactly what two pump.fun hosts in two processes already cost.
+
+It sweeps every `UPSTREAM_CHECK_MS` (default 10 min) and posts to the ops
+channel **on the transition only** — a broken upstream posting every sweep is a
+channel nobody reads by the second hour. **A recovery is an alert too**, or the
+operator cannot tell a fixed outage from a forgotten one. A bot that boots
+*into* an outage reports it on the first sweep, because the transition it would
+otherwise wait for already happened while it was down.
+
+`UPSTREAM_CHECK=0` disables it; the floor on the interval is 60s.
+
+When adding a probe: say what the USER loses (`costs`), not which host is down.
+"lite-api.jup.ag ENOTFOUND" does not tell an operator whether to stop the bot or
+finish dinner. Mark `critical` only when users cannot trade — an alert where
+everything is critical has no priority in it.
+
+```bash
+cd tradebot && npm run preflight:solana    # the same probes, on demand
+```
+
 ### Config a fix depends on
 
 A code change that needs a new `.env` value is not finished when it is merged —

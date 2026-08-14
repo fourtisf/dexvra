@@ -20,6 +20,8 @@ const core = require('./core');
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware safety (GoPlus on EVM, RugCheck on Solana)
 const solana = require('./solana');   // Solana snipe/copy helpers
+const upstreams = require('./upstreams');   // are the third parties answering? (one list, shared with the preflight)
+const report = require('./report');         // ops channel — never secrets
 
 let _notify = () => {};
 function setNotifier(fn) { if (typeof fn === 'function') _notify = fn; }
@@ -68,6 +70,11 @@ function _snipeMark(chainKey, token) {
 // topic nothing emits. So a snipe pointed at the wrong launchpad ran forever, reported
 // 🟢 on /health, and never fired. These counters are what make that state visible.
 const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt: null, lastScanAt: null };
+// The Solana twin. `lastFeedOkAt` and `lastLaunchAt` are BOTH needed and mean
+// different things: the first says pump.fun answered, the second says it had
+// something. With only the loop's own heartbeat, a feed that had been dead for
+// days still rendered a green tick — the state that looks most like a healthy one.
+const _solSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastFeedOkAt: null, lastErr: null, lastErrAt: null };
 function snipeStats() { return { ..._snipeStats }; }
 
 async function snipeCycle() {
@@ -1185,7 +1192,19 @@ async function solSnipeCycle() {
   const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.solana && Number(u.snipe.ethAmount) > 0);
   const devFollowers = launchFollowers('solana');   // users sniping specific dev wallets on Solana
   if (!armed.length && !devFollowers.length) return;
-  const coins = await solana.pumpfunNew(50);
+  // A FEED THAT DID NOT ANSWER IS NOT A QUIET LAUNCHPAD.
+  //
+  // This used to be `pumpfunNew()`, which returned [] for both, and the early
+  // `return` below counted as a SUCCESSFUL tick — so /health printed a green
+  // solSnipe while discovery had been blind for days. The same rule the EVM
+  // snipe loop has carried since it was written ("a loop that RAN is not a loop
+  // that WORKS"), finally applied to its Solana twin.
+  const feed = await solana.pumpfunNewX(50);
+  _solSnipeStats.polls++;
+  if (!feed.ok) { _solSnipeStats.lastErr = feed.why || 'feed unreachable'; _solSnipeStats.lastErrAt = Date.now(); throw new Error('pump.fun feed: ' + _solSnipeStats.lastErr); }
+  _solSnipeStats.lastFeedOkAt = Date.now();
+  const coins = feed.coins;
+  if (coins.length) { _solSnipeStats.launchesSeen += coins.length; _solSnipeStats.lastLaunchAt = Date.now(); }
   if (!coins.length) return;
   const newestTs = Math.max(0, ...coins.map((c) => c.createdTs || 0));
   if (!_solSnipeCursorTs) { _solSnipeCursorTs = newestTs; return; }   // pin near head first pass (no startup flood)
@@ -1367,9 +1386,71 @@ function health() {
     out.snipe.sinceLastLaunchMs = _snipeStats.lastLaunchAt ? now - _snipeStats.lastLaunchAt : null;
     out.snipe.blocksScanned = _snipeStats.blocksScanned;
   }
+  // The same two numbers for Solana. They were only ever wired to the EVM loop,
+  // which is precisely why a dead pump.fun host could sit behind a green tick:
+  // `lastFeedOkAt` is the only field that says the FEED answered, as opposed to
+  // the loop having run.
+  if (out.solSnipe) {
+    out.solSnipe.launchesSeen = _solSnipeStats.launchesSeen;
+    out.solSnipe.sinceFeedOkMs = _solSnipeStats.lastFeedOkAt ? now - _solSnipeStats.lastFeedOkAt : null;
+    out.solSnipe.sinceLastLaunchMs = _solSnipeStats.lastLaunchAt ? now - _solSnipeStats.lastLaunchAt : null;
+    out.solSnipe.feedErr = _solSnipeStats.lastErr || null;
+  }
+  // Third parties, as of the last watchdog sweep. `/health` answering "the loops
+  // are running" while every Solana buy fails at Jupiter is the gap this closes.
+  if (_lastUpstream) {
+    out.upstreams = { ageMs: now - _lastUpstream.at, ok: _lastUpstream.ok, criticalOk: _lastUpstream.criticalOk,
+      failing: _lastUpstream.results.filter((r) => !r.ok).map((r) => `${r.label}: ${r.detail}`) };
+  }
   return out;
 }
+// ------------------------------------------------------------------ upstream watchdog
+//
+// Every outage in this bot's short history was found by a human typing
+// `npm run preflight:solana` AFTER a user complained: Jupiter's retired host,
+// pump.fun's move to v3, the swap-build failing while quotes worked. The check
+// existed and named each one in a line. It just only ran when somebody already
+// suspected something.
+//
+// This runs it on a timer and says so out loud. Two rules keep it worth reading:
+//
+//   • Alert on the TRANSITION, not the state. A broken upstream that posts every
+//     sweep is a channel nobody reads by the second hour, and the alert that
+//     matters is buried in its own repetitions.
+//   • A RECOVERY is an alert too. "It is broken" with no matching "it is back"
+//     leaves the operator unable to tell a fixed outage from a forgotten one,
+//     and that is how a stale alarm becomes furniture.
+let _lastUpstream = null;
+const _upState = new Map();   // key -> ok, so only changes are announced
+async function upstreamCycle() {
+  const snap = await upstreams.checkAll();
+  _lastUpstream = snap;
+  const broke = [], fixed = [];
+  for (const r of snap.results) {
+    const was = _upState.get(r.key);
+    _upState.set(r.key, r.ok);
+    if (was === undefined) {
+      // First sweep after a restart. Report a problem, because a bot that boots
+      // into an outage must not wait for a transition that already happened —
+      // but say nothing about the things that are simply fine.
+      if (!r.ok) broke.push(r);
+      continue;
+    }
+    if (was && !r.ok) broke.push(r);
+    else if (!was && r.ok) fixed.push(r);
+  }
+  for (const r of broke) console.error(`[upstream] DOWN ${r.label} — ${r.detail}`);
+  for (const r of fixed) console.log(`[upstream] recovered ${r.label} — ${r.detail}`);
+  if (broke.length || fixed.length) report.upstreamChange(broke, fixed).catch(() => {});
+}
+
 function start() {
+  // Default 10 minutes. Each sweep is four read-only calls; the cost of missing
+  // an outage for hours is a user's money, so this is not the knob to save on.
+  const upMs = Math.max(60000, Number(process.env.UPSTREAM_CHECK_MS || 600000));
+  if (core.chains.isEnabled('solana') && String(process.env.UPSTREAM_CHECK || '1') !== '0') {
+    runLoop('upstreams', upstreamCycle, upMs);
+  }
   const snipeMs = Math.max(4000, Number(process.env.SNIPE_POLL_MS || 6000));
   const orderMs = Math.max(8000, Number(process.env.ORDER_POLL_MS || 15000));
   const alertMs = Math.max(8000, Number(process.env.ALERT_POLL_MS || 20000));

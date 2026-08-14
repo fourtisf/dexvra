@@ -14,6 +14,7 @@
 const path = require('path');
 const solana = require(path.join(__dirname, '..', 'solana'));
 const rugcheck = require(path.join(__dirname, '..', 'rugcheck'));
+const upstreams = require(path.join(__dirname, '..', 'upstreams'));
 const { Connection, Keypair } = require('@solana/web3.js');
 
 const RPC = (process.env.SOLANA_RPC || 'https://api.mainnet-beta.solana.com').trim();
@@ -48,6 +49,16 @@ async function check(name, fn) {
     await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: USDC, amountRaw: 10000000n, slippageBps: 100 });
     return solana.jupBase() + (process.env.JUP_BASE ? '  (pinned by JUP_BASE)' : '  (auto, tried: ' + solana.JUP_BASES.join(', ') + ')');
   });
+  // The upstream probes the RUNNING BOT uses, run here too — one list, two
+  // callers. Two copies of "is Jupiter up" would eventually disagree, and this
+  // repo has already paid for that once with two pump.fun hosts.
+  for (const p of upstreams.PROBES) {
+    await check(p.label + ' [watchdog]', async () => {
+      const r = await p.run();
+      if (!r.ok) throw new Error(r.detail);
+      return r.detail;
+    });
+  }
   await check('Jupiter quote (0.01 SOL → USDC)', async () => {
     const q = await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: USDC, amountRaw: 10000000n, slippageBps: 100 });
     return 'out ' + q.outAmount + ' USDC-units · impact ' + q.priceImpactPct + '%';
