@@ -401,3 +401,64 @@ test("the block never uses this module's own vocabulary", () => {
     assert.doesNotMatch(line, /<\/?[a-z]/i, "a template VALUE carries no markup");
   }
 });
+
+// ── The block is admin-editable, icons included ──────────────────────────────
+
+test("the status lines come from a TEMPLATE, so the emoji screen can see them", () => {
+  // The question this answers: "where do I edit 👤 and 🤖?" They were literals
+  // in panel.js, so no template contained them, so the emoji-swap screen had
+  // nothing to show and no premium emoji could ever reach them.
+  const tpl = require("../src/templates");
+  const raw = String(tpl.markup("raid_status") || "");
+  for (const glyph of ["🤖", "👤", "⏱", "👀", "🚫", "⏸", "🔗"]) {
+    assert.ok(raw.includes(glyph), `${glyph} must live in the template, not in code`);
+  }
+  assert.strictEqual(tpl.meta("raid_status").group, "Dexvra Raid", "…and in the group the emoji screen sweeps");
+});
+
+test("an admin can reword ONE line without losing the other fourteen", () => {
+  const tpl = require("../src/templates");
+  const copy = require("../src/raid/statusCopy");
+  const real = tpl.markup;
+  try {
+    tpl.markup = (k) => (k === "raid_status" ? "ready: 🔥 SIAP — post baru langsung raid" : real(k));
+    assert.strictEqual(copy.line("ready"), "🔥 SIAP — post baru langsung raid");
+    assert.strictEqual(copy.line("on", { handle: "x" }), copy.DEFAULTS.on.replace("{handle}", "x"), "untouched keys keep their built-in line");
+  } finally {
+    tpl.markup = real;
+  }
+});
+
+test("a line hidden with `-` disappears WITHOUT leaving an indent behind", () => {
+  const tpl = require("../src/templates");
+  const real = tpl.markup;
+  try {
+    tpl.markup = (k) => (k === "raid_status" ? "off_hint: -" : real(k));
+    const block = panel.autoRaidStatus({ autoRaid: { handle: "" } });
+    assert.doesNotMatch(block, /\n\s+$/, "no orphaned indent where the line was");
+    assert.strictEqual(block.split("\n").length, 1);
+  } finally {
+    tpl.markup = real;
+  }
+});
+
+test("pasting the rendered block back in changes nothing", () => {
+  // Values legitimately contain a colon, so only KNOWN keys are consumed —
+  // otherwise a pasted-back block invents fields out of its own prose.
+  const tpl = require("../src/templates");
+  const copy = require("../src/raid/statusCopy");
+  const real = tpl.markup;
+  try {
+    tpl.markup = (k) => (k === "raid_status" ? "🤖 Auto-raid: on — watching @x\n⏱ the bot is running, checked just now" : real(k));
+    assert.deepStrictEqual(copy.lines(), copy.DEFAULTS);
+  } finally {
+    tpl.markup = real;
+  }
+});
+
+test("an unsupplied placeholder renders empty, never a literal {name}", () => {
+  // A raw brace on a panel a whole group reads is the tell of a broken template.
+  const copy = require("../src/raid/statusCopy");
+  assert.doesNotMatch(copy.line("outcome", {}), /[{}]/);
+  assert.doesNotMatch(panel.autoRaidStatus({ autoRaid: { handle: "x", on: true } }), /[{}]/);
+});

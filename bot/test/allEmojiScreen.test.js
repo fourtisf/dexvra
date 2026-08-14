@@ -186,9 +186,14 @@ test("a button carries the slot's NAME, so a swapped icon stays findable", () =>
   // swapped: change 🤝 for a premium emoji whose fallback is ⚡ and the row
   // reads "💎⚡ ×6", so an operator hunting for Crew cannot see it and reports
   // it as missing. That is exactly what happened.
-  const labels = flat(allEmojiKb(0)).map((b) => b.text);
+  // ACROSS EVERY PAGE, not page 0. The screen is paginated and ordered by how
+  // many places a slot covers, so which page a name lands on shifts whenever a
+  // template is added — and that is not what this test is about. Pinning page 0
+  // made a new template group look like a lost button.
+  const labels = [];
+  for (let p = 0; p < allEmojiPages(); p++) labels.push(...flat(allEmojiKb(p)).map((b) => b.text));
   for (const name of ["Crew", "Chart", "Likes"]) {
-    assert.ok(labels.some((l) => l.includes(name)), `"${name}" is on a button: ${labels.slice(0, 6).join(" | ")}`);
+    assert.ok(labels.some((l) => l.includes(name)), `"${name}" is on a button somewhere: ${labels.slice(0, 6).join(" | ")}`);
   }
   const named = allEmojiSlots().filter((s) => s.label).length;
   assert.ok(named > allEmojiSlots().length / 2, `${named} of ${allEmojiSlots().length} slots know their own name`);

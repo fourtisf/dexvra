@@ -129,6 +129,10 @@ const SAMPLE_VARS = {
   seq: "#7", percent: "62", left: "38m", crew: "14",
   roster: "@ana, @bo, @cy +11 more",
   handle: "dexvraio",
+  // The auto-raid status lines. `when` reads as an age ("3min ago"), because
+  // every line that uses it is reporting how long ago something happened.
+  when: "just now",
+  min: "40",
   // The auto-raid block, and the HEALTHY state of it: a preview is for judging
   // layout, and previewing the "the bot can't see X" branch would put an alarm
   // in front of an operator who has nothing wrong. Its own builder, like
@@ -457,6 +461,17 @@ const EMOJI_NAMES = {
   "📊": "price & raid %",
   "📈": "Chart & record",
   "✅": "Position & done",
+  // The auto-raid block. 👤 and 🤖 are shared with the buy card and the main
+  // menu, so they derive a name from those and said nothing about the raid —
+  // which is how "where do I edit 👤 and 🤖" got asked with both sitting on this
+  // screen. Extended, not replaced, so the buy meaning survives.
+  "👤": "buyer & X account",
+  "🤖": "buy bot & auto-raid",
+  // These three derive their name from the first word of a SENTENCE, which is
+  // worthless: "🚫 the bot hasn't been able to see X" → "the".
+  "🚫": "auto-raid blind",
+  "⏸": "raid queued",
+  "⚠️": "warning",
 };
 
 /** The keys this screen owns: the buy card's own eight, plus every template in

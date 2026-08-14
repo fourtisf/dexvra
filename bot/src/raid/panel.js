@@ -7,6 +7,7 @@ const runner = require("./runner");
 const lock = require("./lock");
 const xMetrics = require("./xMetrics");
 const xTimeline = require("./xTimeline");
+const copy = require("./statusCopy");
 // Lazy at call time inside handleText would be tidier for the cycle, but the
 // cycle is broken on the OTHER side: autoRaid requires ./panel lazily, inside
 // the one function that needs isGroupAdmin.
@@ -102,9 +103,15 @@ const agoMin = (t) => (t ? Math.max(0, Math.round((Date.now() - t) / 60000)) : I
 const when = (t) => (agoMin(t) < 1 ? "just now" : `${agoMin(t)}min ago`);
 
 /**
- * The 🤖 block on the panel. PLAIN TEXT — it is substituted into an
- * admin-editable template as a value, and a value cannot carry markup or
- * entities. Emphasis is CAPS.
+ * The 🤖 block on the panel. Assembled here, WORDED in statusCopy.js.
+ *
+ * Its icons carry premium markup fine, and the earlier comment here claiming
+ * otherwise was wrong about this codebase: renderValue() parses a string var for
+ * premium markup and shifts the template's entity offsets around it, which is
+ * the same mechanism that already lets raid_style put a premium ❤️ on the card.
+ * What stopped 🤖 and 👤 from being editable was never the substitution — it was
+ * that they were literals in this file, so no template contained them and the
+ * emoji-swap screen had nothing to show.
  *
  * EVERY LINE NAMES A CONSEQUENCE, not the internal state that produced it. The
  * words this module would naturally use — armed, watcher, cursor, timeline read
@@ -118,20 +125,32 @@ const when = (t) => (agoMin(t) < 1 ? "just now" : `${agoMin(t)}min ago`);
  */
 function autoRaidStatus(g) {
   const a = g.autoRaid || {};
+  const L = (key, vars) => copy.line(key, vars);
+  // Indented under the 🤖 headline, and only ever around a line that HAS
+  // content — an admin who hid one with `-` must not leave a stray indent.
+  const push = (arr, text) => {
+    if (text) arr.push(`   ${text}`);
+  };
+
   if (!a.handle) {
-    return (
-      "🤖 Auto-raid: off — no X account set.\n" +
-      "   👤 X account names one, and then every new post starts a raid here by itself."
-    );
+    const out = [];
+    const head = L("off_none");
+    if (head) out.push(head);
+    push(out, L("off_hint"));
+    return out.join("\n");
   }
   if (!a.on) {
-    return (
-      `🤖 Auto-raid: off — @${a.handle} is saved but not being watched.\n` +
-      "   🔗 An admin can still paste a post link here to raid it — that always works."
-    );
+    const out = [];
+    const head = L("off_saved", { handle: a.handle });
+    if (head) out.push(head);
+    push(out, L("off_link"));
+    return out.join("\n");
   }
 
-  const lines = [`🤖 Auto-raid: on — watching @${a.handle}`];
+  const out = [];
+  const head = L("on", { handle: a.handle });
+  if (head) out.push(head);
+
   const stalled = agoMin(a.lastCheckedAt) >= STALE_MIN;
   // A successful READ, not merely a tick. lastCheckedAt is written whether or
   // not X answered — deliberately, so a stale value means the bot stopped — so
@@ -139,35 +158,24 @@ function autoRaidStatus(g) {
   // hours. That is the state that looks most like a healthy one.
   const blind = !stalled && a.lastCheckedAt && agoMin(a.lastOkAt) >= BLIND_MIN;
 
-  if (stalled) {
-    lines.push(`   ⚠️ last check ${when(a.lastCheckedAt)} — the bot may have stopped`);
-  } else if (blind) {
-    lines.push(`   🚫 the bot hasn't been able to see X for ${agoMin(a.lastOkAt)}min — new posts will NOT be spotted`);
-  } else if (a.lastCheckedAt) {
-    lines.push(`   ⏱ the bot is running, checked ${when(a.lastCheckedAt)}`);
-  }
+  if (stalled) push(out, L("stalled", { when: when(a.lastCheckedAt) }));
+  else if (blind) push(out, L("blind", { min: agoMin(a.lastOkAt) }));
+  else if (a.lastCheckedAt) push(out, L("ok", { when: when(a.lastCheckedAt) }));
 
   if (a.pendingPostId) {
-    lines.push("   ⏸ 1 post is waiting — it starts when this raid finishes");
+    push(out, L("pending"));
   } else if (!stalled && !blind) {
-    if (!a.lastSeenTweetId) {
-      lines.push(a.lastCheckedAt ? "   ⏳ not ready yet — it starts watching at the next check" : "   ⏳ starting up — it begins watching at the next check");
-    } else {
-      lines.push("   👀 ready — only posts made from now on start a raid, older ones never will");
-    }
+    if (!a.lastSeenTweetId) push(out, L(a.lastCheckedAt ? "notready" : "starting"));
+    else push(out, L("ready"));
   }
 
   // A reason with no age reads as live, and this one deliberately survives quiet
   // ticks — only a raid actually starting clears it — so it is routinely older
   // than the check printed above.
-  if (a.lastError) lines.push(`   ⚠️ last outcome (${when(a.lastErrorAt)}): ${a.lastError}`);
+  if (a.lastError) push(out, L("outcome", { when: when(a.lastErrorAt), reason: a.lastError }));
 
-  lines.push(
-    stalled || blind
-      ? "   🔗 ADMIN: paste the post link here to raid it — this always works"
-      : "   🔗 An admin pasting a post link here raids it immediately",
-  );
-  return lines.join("\n");
+  push(out, L(stalled || blind ? "link_only" : "link"));
+  return out.join("\n");
 }
 
 // ── The panel ────────────────────────────────────────────────────────────────

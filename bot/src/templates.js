@@ -867,6 +867,29 @@ const DEFAULTS = {
   // {autoraid} on the panel. A VALUE, so it carries NO markup: the saved-template
   // path inserts values verbatim beside `entities`, and a <b> would reach the
   // group as literal angle brackets. Emphasis is CAPS or an emoji.
+  // The 🤖 block on the panel. LABELLED LINES — see src/raid/statusCopy.js for
+  // why this is not raid_style's pipe form, and for the per-field fallback that
+  // makes a one-line edit a one-line change. `-` on any line hides it.
+  //
+  // The icons live HERE rather than in code precisely so the emoji-swap screen
+  // can see them: 🤖 and 👤 were literals in panel.js, which is why there was
+  // nowhere to edit them and no way to make either premium.
+  raid_status:
+    "off_none: 🤖 Auto-raid: off — no X account set.\n" +
+    "off_hint: 👤 X account names one, and then every new post starts a raid here by itself.\n" +
+    "off_saved: 🤖 Auto-raid: off — @{handle} is saved but not being watched.\n" +
+    "off_link: 🔗 An admin can still paste a post link here to raid it — that always works.\n" +
+    "on: 🤖 Auto-raid: on — watching @{handle}\n" +
+    "ok: ⏱ the bot is running, checked {when}\n" +
+    "blind: 🚫 the bot hasn't been able to see X for {min}min — new posts will NOT be spotted\n" +
+    "stalled: ⚠️ last check {when} — the bot may have stopped\n" +
+    "ready: 👀 ready — only posts made from now on start a raid, older ones never will\n" +
+    "notready: ⏳ not ready yet — it starts watching at the next check\n" +
+    "starting: ⏳ starting up — it begins watching at the next check\n" +
+    "pending: ⏸ 1 post is waiting — it starts when this raid finishes\n" +
+    "outcome: ⚠️ last outcome ({when}): {reason}\n" +
+    "link: 🔗 An admin pasting a post link here raids it immediately\n" +
+    "link_only: 🔗 ADMIN: paste the post link here to raid it — this always works",
   raid_watch_prompt:
     "👤 Send the project's X account — @handle or a link to their profile.\n\n" +
     "Every NEW post on it starts a raid here with the goals above. Posts made BEFORE now never will.\n\n" +
@@ -1256,6 +1279,7 @@ const META = {
   raid_sources_partial: { group: "Dexvra Raid", label: "Raid panel: no paid X key", ph: [] },
   raid_group_only: { group: "Dexvra Raid", label: "Error: raids run in a group", ph: [] },
   raid_admin_only: { group: "Dexvra Raid", label: "Error: group admins only", ph: [] },
+  raid_status: { group: "Dexvra Raid", label: "Raid panel: auto-raid status lines", ph: ["handle", "when", "min", "reason"] },
   raid_watch_prompt: { group: "Dexvra Raid", label: "Auto-raid: ask for the X account", ph: [] },
   raid_watch_set: { group: "Dexvra Raid", label: "Auto-raid: account saved", ph: ["handle"] },
   raid_watch_cleared: { group: "Dexvra Raid", label: "Auto-raid: account removed", ph: [] },
