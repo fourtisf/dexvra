@@ -15,7 +15,30 @@
 // inside core.js BEFORE core's .env loader runs, so capturing env at load time would
 // read an empty token and silently disable all reporting.
 const _token = () => (process.env.TRADEBOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
-const _channel = () => (process.env.REPORT_CHANNEL_ID || '-1003885406672').trim();
+
+// A Telegram chat id is `-100` + digits (supergroup/channel), a bare signed
+// integer, or an @username. Anything else cannot be a destination.
+//
+// This exists because a documented EXAMPLE was pasted into a live .env verbatim:
+// `REPORT_CHANNEL_ID=-100xxxxxxxxxx`. An env var that is set but nonsense is
+// worse than one that is unset — it silently overrode the working default, and
+// post() swallows its own failures by design, so every report simply stopped
+// arriving with nothing anywhere saying why. CLAUDE.md already carries this
+// lesson for filesystem paths; it is the same mistake with a different value.
+const _looksLikeChatId = (s) => /^-?\d{5,}$/.test(s) || /^@[A-Za-z]\w{3,}$/.test(s);
+const CHANNEL_FALLBACK = '-1003885406672';
+let _warnedChannel = false;
+const _channel = () => {
+  const raw = (process.env.REPORT_CHANNEL_ID || '').trim();
+  if (!raw) return CHANNEL_FALLBACK;
+  if (_looksLikeChatId(raw)) return raw;
+  if (!_warnedChannel) {
+    _warnedChannel = true;
+    console.error(`[report] REPORT_CHANNEL_ID=${JSON.stringify(raw)} is not a chat id — it must be -100… digits or @name. ` +
+      `Ignoring it and using the built-in channel; fix or remove the line in .env.`);
+  }
+  return CHANNEL_FALLBACK;   // a placeholder must never be able to silence reporting
+};
 
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const who = (u) => (u && u.username) ? '@' + esc(u.username) : ('id ' + (u && u.chatId != null ? u.chatId : '?'));

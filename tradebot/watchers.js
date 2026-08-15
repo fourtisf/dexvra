@@ -1456,12 +1456,6 @@ async function upstreamCycle() {
     const ok = snap.results.filter((r) => r.ok).length;
     console.log(`[upstream] first sweep: ${ok}/${snap.results.length} ok — ` +
       snap.results.map((r) => `${r.label}=${r.ok ? 'ok' : 'DOWN'}`).join(' · '));
-    // …and WHERE an alert would go. A watchdog whose alerts land nowhere is a
-    // watchdog that does not exist, and report.post() deliberately swallows its
-    // own failures so a channel hiccup can never touch the trade path — which
-    // means a misconfigured channel is silent in exactly the way an outage is.
-    // Say it once, at boot, where an operator can act on it.
-    console.log(`[upstream] alerts ${report.enabled() ? 'go to the ops channel' : 'are DISABLED — no token or REPORT_CHANNEL_ID, so a break will only appear in this log'}`);
   }
 }
 
@@ -1470,7 +1464,17 @@ function start() {
   // an outage for hours is a user's money, so this is not the knob to save on.
   const upMs = Math.max(60000, Number(process.env.UPSTREAM_CHECK_MS || 600000));
   if (core.chains.isEnabled('solana') && String(process.env.UPSTREAM_CHECK || '1') !== '0') {
+    // Announced BEFORE the first sweep, not after it.
+    //
+    // The sweep itself can take ~20s (four probes, one of which builds a real
+    // swap transaction), and an operator runs `pm2 logs | grep upstream`
+    // seconds after `pm2 restart`. They saw nothing, which is exactly what a
+    // watchdog that failed to start looks like. This line is instant, so the
+    // grep answers "is it armed?" immediately and the sweep result follows.
+    console.log(`[upstream] watchdog armed — sweeping every ${Math.round(upMs / 1000)}s · alerts ${report.enabled() ? 'to the ops channel' : 'DISABLED (log only)'}`);
     runLoop('upstreams', upstreamCycle, upMs);
+  } else if (core.chains.isEnabled('solana')) {
+    console.log('[upstream] watchdog OFF (UPSTREAM_CHECK=0) — a third party going down will not be reported');
   }
   const snipeMs = Math.max(4000, Number(process.env.SNIPE_POLL_MS || 6000));
   const orderMs = Math.max(8000, Number(process.env.ORDER_POLL_MS || 15000));

@@ -12,6 +12,15 @@ Production server: the repo is checked out at **`/opt/dexvra`**. Never write
 `/path/to/dexvra` in an instruction — it has been pasted literally into a live
 shell before.
 
+**The same is true of every placeholder, not just paths.** `REPORT_CHANNEL_ID=-100xxxxxxxxxx`
+was offered as an example and appended to a live `.env` verbatim, where it
+overrode a working default and silently stopped every ops report — `post()`
+swallows its own failures by design, so nothing anywhere said why. A command
+an operator can paste must contain only real values, or it must not be a
+command: describe where the value comes from and let them fill it in, and make
+the code reject a value that cannot possibly be right (`report.js`
+`_looksLikeChatId`).
+
 ## Release flow — `main` is what the server runs
 
 **Every change ends up on `main`, and the server only ever deploys `main`.**

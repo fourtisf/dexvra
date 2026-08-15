@@ -168,10 +168,39 @@ test('the first sweep always prints, even when everything is fine', () => {
   assert.match(WSRC, /let _upFirstDone = false;/);
 });
 
-test('boot says whether an alert would actually reach anyone', () => {
-  // report.post() swallows its own failures so a channel hiccup can never touch
-  // the trade path — which means a misconfigured channel is silent in precisely
-  // the way an outage is. A watchdog whose alerts land nowhere does not exist.
-  assert.match(WSRC, /report\.enabled\(\) \? 'go to the ops channel' : 'are DISABLED/);
-  assert.match(RSRC, /function enabled\(\) \{ return !!\(_token\(\) && _channel\(\)\); \}/);
+test('the watchdog says it is armed BEFORE its first sweep, not after', () => {
+  // A sweep takes ~20s (four probes, one building a real swap transaction) and
+  // an operator greps the log seconds after `pm2 restart`. They saw nothing —
+  // which is exactly what a watchdog that failed to start looks like.
+  assert.match(WSRC, /\[upstream\] watchdog armed — sweeping every/);
+  const armed = WSRC.indexOf('watchdog armed');
+  const loop = WSRC.indexOf("runLoop('upstreams'");
+  assert.ok(armed > -1 && loop > armed, 'the announcement is after the loop starts, so it races the first sweep');
+  // …and it says where an alert would go. report.post() swallows its own
+  // failures by design, so a misconfigured channel is silent in precisely the
+  // way an outage is. A watchdog whose alerts land nowhere does not exist.
+  assert.match(WSRC, /alerts \$\{report\.enabled\(\) \? 'to the ops channel' : 'DISABLED \(log only\)'\}/);
+  // Turning it off is also stated, so an operator never mistakes a disabled
+  // watchdog for a quiet one.
+  assert.match(WSRC, /watchdog OFF \(UPSTREAM_CHECK=0\)/);
+});
+
+test('a placeholder chat id cannot silence reporting', () => {
+  // A documented EXAMPLE was pasted into a live .env verbatim:
+  // REPORT_CHANNEL_ID=-100xxxxxxxxxx. Set-but-nonsense is worse than unset — it
+  // overrode the working default and every report stopped arriving, silently,
+  // because post() swallows its own failures.
+  assert.match(RSRC, /const _looksLikeChatId = \(s\) => \/\^-\?\\d\{5,\}\$\/\.test\(s\)/);
+  assert.match(RSRC, /is not a chat id — it must be -100… digits or @name/);
+  const prev = process.env.REPORT_CHANNEL_ID;
+  try {
+    delete require.cache[require.resolve('./report')];
+    process.env.REPORT_CHANNEL_ID = '-100xxxxxxxxxx';
+    const rep = require('./report');
+    assert.strictEqual(rep.enabled(), !!(process.env.TRADEBOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN),
+      'a junk channel id changed whether reporting is considered configured');
+  } finally {
+    if (prev === undefined) delete process.env.REPORT_CHANNEL_ID; else process.env.REPORT_CHANNEL_ID = prev;
+    delete require.cache[require.resolve('./report')];
+  }
 });
