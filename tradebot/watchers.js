@@ -1421,6 +1421,7 @@ function health() {
 //     leaves the operator unable to tell a fixed outage from a forgotten one,
 //     and that is how a stale alarm becomes furniture.
 let _lastUpstream = null;
+let _upFirstDone = false;     // so the boot sweep is provable in the log
 const _upState = new Map();   // key -> ok, so only changes are announced
 async function upstreamCycle() {
   const snap = await upstreams.checkAll();
@@ -1442,6 +1443,26 @@ async function upstreamCycle() {
   for (const r of broke) console.error(`[upstream] DOWN ${r.label} — ${r.detail}`);
   for (const r of fixed) console.log(`[upstream] recovered ${r.label} — ${r.detail}`);
   if (broke.length || fixed.length) report.upstreamChange(broke, fixed).catch(() => {});
+  // The FIRST sweep always prints, even when everything is fine.
+  //
+  // Silence afterwards is the design — a healthy watchdog says nothing. But
+  // silence is also what a watchdog that never started looks like, and an
+  // operator grepping the log for it cannot tell those apart. One line at boot
+  // makes the quiet afterwards mean something. This is the same rule as
+  // lastFeedOkAt: "it did not report a problem" and "it did not run" are
+  // different facts.
+  if (!_upFirstDone) {
+    _upFirstDone = true;
+    const ok = snap.results.filter((r) => r.ok).length;
+    console.log(`[upstream] first sweep: ${ok}/${snap.results.length} ok — ` +
+      snap.results.map((r) => `${r.label}=${r.ok ? 'ok' : 'DOWN'}`).join(' · '));
+    // …and WHERE an alert would go. A watchdog whose alerts land nowhere is a
+    // watchdog that does not exist, and report.post() deliberately swallows its
+    // own failures so a channel hiccup can never touch the trade path — which
+    // means a misconfigured channel is silent in exactly the way an outage is.
+    // Say it once, at boot, where an operator can act on it.
+    console.log(`[upstream] alerts ${report.enabled() ? 'go to the ops channel' : 'are DISABLED — no token or REPORT_CHANNEL_ID, so a break will only appear in this log'}`);
+  }
 }
 
 function start() {

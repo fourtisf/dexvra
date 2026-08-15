@@ -155,3 +155,23 @@ test('/health carries the last upstream sweep', () => {
   assert.match(WSRC, /out\.upstreams = \{ ageMs: now - _lastUpstream\.at, ok: _lastUpstream\.ok, criticalOk: _lastUpstream\.criticalOk/);
   assert.match(WSRC, /failing: _lastUpstream\.results\.filter\(\(r\) => !r\.ok\)/);
 });
+
+// ── "It reported nothing" and "it never ran" are different facts ─────────────
+
+test('the first sweep always prints, even when everything is fine', () => {
+  // Silence afterwards is the design — a healthy watchdog says nothing. But
+  // silence is also exactly what a watchdog that never started looks like, and
+  // an operator grepping for it cannot tell them apart. The same rule as
+  // lastFeedOkAt, applied to the monitor itself.
+  assert.match(WSRC, /if \(!_upFirstDone\) \{/);
+  assert.match(WSRC, /\[upstream\] first sweep: \$\{ok\}\/\$\{snap\.results\.length\} ok/);
+  assert.match(WSRC, /let _upFirstDone = false;/);
+});
+
+test('boot says whether an alert would actually reach anyone', () => {
+  // report.post() swallows its own failures so a channel hiccup can never touch
+  // the trade path — which means a misconfigured channel is silent in precisely
+  // the way an outage is. A watchdog whose alerts land nowhere does not exist.
+  assert.match(WSRC, /report\.enabled\(\) \? 'go to the ops channel' : 'are DISABLED/);
+  assert.match(RSRC, /function enabled\(\) \{ return !!\(_token\(\) && _channel\(\)\); \}/);
+});
