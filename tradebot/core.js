@@ -1569,6 +1569,11 @@ async function canTradeNow(ca, chainKey) {
   } catch (_) { return false; }
 }
 
+// How long a card waits for the launchpad badge once it already has a price.
+// Short on purpose: the badge is a nicety and the paste is the thing the user
+// is staring at. The registry caches, so a second render pays nothing.
+const CURVE_BADGE_WAIT_MS = Math.max(0, Number(process.env.CURVE_BADGE_WAIT_MS || 700));
+
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.
 async function tokenSnapshot(ca, chainKey) {
   const chain = chainOf(chainKey); if (!chain) return null;
@@ -1581,9 +1586,17 @@ async function tokenSnapshot(ca, chainKey) {
     // depth, volume) while only the launchpad knows the curve's phase. Serially
     // this would cost the sum of two timeouts on the one path where the token is
     // brand new and neither is fast.
-    const [d, lpRec, mintDec] = await Promise.all([
+    // THE LAUNCHPAD IS NOT AWAITED WITH THE PRICE.
+    //
+    // It was, and that put up to LAUNCHPAD_TIMEOUT_MS of somebody else's HTTP
+    // in front of every card render — four pads asked concurrently, the caller
+    // waiting for the slowest. When DexScreener answers, the pads add a badge
+    // and nothing else; a badge may not hold the price hostage. It is awaited
+    // in full only on the path where it is the ONLY source (no indexed pool),
+    // which is the case the whole feature exists for.
+    const lpP = launchpads.covers(chainKey) ? launchpads.record(chainKey, ca).catch(() => null) : Promise.resolve(null);
+    const [d, mintDec] = await Promise.all([
       solana.dexScreener(ca),
-      launchpads.covers(chainKey) ? launchpads.record(chainKey, ca) : Promise.resolve(null),
       // THE MINT'S OWN DECIMALS, read from the chain, in the same wave so it
       // costs nothing. This field used to be the literal `9`, because
       // DexScreener does not report decimals and nine is what a Solana example
@@ -1606,8 +1619,12 @@ async function tokenSnapshot(ca, chainKey) {
       // card said "❌ Couldn't price it" about a token trading perfectly well on
       // its launchpad. That is the entire pre-migration life of every Solana
       // launch, and it is the window in which people actually ask.
+      // No pool anywhere, so the launchpad is the only thing that can price
+      // this at all — here it IS the answer, and worth waiting for.
+      const lpRec = await lpP;
       const snap = launchpads.curveSnapshot(ca, chainKey, lpRec, solUsd);
       if (!snap) return null;   // no pool AND no launchpad knows it — genuinely nothing to show
+      snap.lp = lpRec || null;
       // ROUTABILITY IS MEASURED, NEVER INFERRED FROM HAVING A PRICE. Reading a
       // number off an HTTP API says nothing about whether a swap can be filled;
       // that is the same line v4.js draws between price() and canSwapLive(), and
@@ -1634,6 +1651,14 @@ async function tokenSnapshot(ca, chainKey) {
     // migrated), but a launchpad that says otherwise now overrides it. The
     // overlay returns null unless a pad states the token is ON the curve, so a
     // pad that merely knows the token changes nothing.
+    // Whatever arrived by now, bounded. A pad that is slow costs the badge, not
+    // the card: the price, the depth and the volume above are already read.
+    const lpRec = await Promise.race([lpP, new Promise((r) => setTimeout(r, CURVE_BADGE_WAIT_MS, null))]);
+    // Carried on the snapshot so tokeninfo.enrich does not ask again. The
+    // registry caches, so the second lookup was usually free — but "usually
+    // free" depends on a TTL, and handing over the answer we already hold costs
+    // nothing and depends on nothing.
+    snap.lp = lpRec || null;
     const overlay = launchpads.curveOverlay(lpRec);
     return overlay ? { ...snap, ...overlay } : snap;
   }

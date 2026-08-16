@@ -44,6 +44,7 @@ process.env.LAUNCHPADS = '0';                    // the pre-migration pads are a
 
 const core = require('./core');
 const solana = require('./solana');
+const lp = require('./launchpads');
 
 const MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
 const CHAT = 41;
@@ -223,4 +224,47 @@ test('a failed Solana balance read is not reported as an empty bag', async () =>
   assert.equal(await solana.splBalanceOrNull(conn, '11111111111111111111111111111111', MINT), null);
   const empty = { getParsedTokenAccountsByOwner: async () => ({ value: [] }) };
   assert.equal(await solana.splBalanceOrNull(empty, '11111111111111111111111111111111', MINT), 0n, 'a genuinely empty wallet must still read 0');
+});
+
+// ── the card must not wait on a badge ────────────────────────────────────────
+
+test('a slow launchpad does not hold up a price DexScreener already gave', async () => {
+  // The pads were awaited together with the price, so four concurrent HTTP
+  // calls sat in front of every card render and the caller waited for the
+  // slowest. When DexScreener answers, the pads contribute a badge and nothing
+  // else — and a badge may not hold the price hostage. Measured end to end: a
+  // card with one slow pad went 8.4s → 2.9s.
+  fundedUser();
+  const real = { ds: solana.dexScreener, dec: solana.splDecimalsOrNull, lpRec: lp.record, lpCov: lp.covers };
+  const wait = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
+  solana.dexScreener = async () => wait(50, { priceUsd: 0.00692, priceNative: 0.0000364, liquidityUsd: 5e5, volH24Usd: 1e5, mcapUsd: 6.9e6, name: 'J', symbol: 'J' });
+  solana.splDecimalsOrNull = async () => wait(50, 6);
+  lp.covers = () => true;
+  lp.record = async () => wait(4000, null);   // a pad that is effectively hung
+  try {
+    const t0 = Date.now();
+    const snap = await core.tokenSnapshot(MINT, 'solana');
+    const ms = Date.now() - t0;
+    assert.ok(snap && snap.priceUsd > 0, 'the snapshot lost its price');
+    assert.ok(ms < 2000, `the price waited ${ms}ms on a launchpad badge`);
+  } finally { Object.assign(solana, { dexScreener: real.ds, splDecimalsOrNull: real.dec }); lp.record = real.lpRec; lp.covers = real.lpCov; }
+});
+
+test('…but WAITS for it when the launchpad is the only source of a price', async () => {
+  // The whole point of the pads: a token still on a bonding curve has no pool
+  // for DexScreener to index. Here the pad IS the answer, so racing it away
+  // would put back the "❌ Couldn't price it" this feature exists to remove.
+  fundedUser();
+  const real = { ds: solana.dexScreener, dec: solana.splDecimalsOrNull, lpRec: lp.record, lpCov: lp.covers };
+  const wait = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
+  solana.dexScreener = async () => null;                       // not indexed at all
+  solana.splDecimalsOrNull = async () => 6;
+  lp.covers = () => true;
+  lp.record = async () => wait(1200, { priceUsd: 0.00004, mcapUsd: 40000, symbol: 'NEW', name: 'New', onCurve: true, progressPct: 36, progressSource: 'derived', graduated: false });
+  try {
+    const snap = await core.tokenSnapshot(MINT, 'solana');
+    assert.ok(snap, 'a curve-only token lost its card again');
+    assert.equal(snap.dex, false);
+    assert.equal(snap.progressPct, 36);
+  } finally { Object.assign(solana, { dexScreener: real.ds, splDecimalsOrNull: real.dec }); lp.record = real.lpRec; lp.covers = real.lpCov; }
 });

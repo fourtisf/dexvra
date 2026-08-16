@@ -895,6 +895,12 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   const explicit = (walletId && core.walletById(u, walletId)) || null;
   // Rich scan: on-chain price/mcap + liquidity + launchpad API (vol/socials) + GoPlus
   // (tax/honeypot/holders/LP) — all best-effort, never throws (tokeninfo swallows).
+  // Started WITH the scan, not after it. `tokenMeta` is an RPC read plus a
+  // registry fetch and it does not depend on anything `enrich` produces, so
+  // awaiting it afterwards simply added its latency to the card. On the one
+  // screen a user stares at after pasting an address, two independent waits in
+  // series is the difference between "fast" and "did it hear me".
+  const metaP = core.tokenMeta(ca, chainKey).catch(() => null);
   const info = await tokeninfo.enrich(ca, chainKey).catch(() => null);
   if (!info) {
     // "Switch chain" was the ONLY thing this card ever said, and on a curve chain it is
@@ -943,7 +949,7 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // be filled, and a trade screen that quotes a price it can't honour is worse
   // than one that says so.
   if (info.routable === false) return unroutableCard(ca, chainKey, info);
-  const meta = await core.tokenMeta(ca, chainKey);
+  const meta = (await metaP) || await core.tokenMeta(ca, chainKey);
   // Maestro-style: this token's balance across EVERY wallet (live on-chain). Bind the
   // card to the wallet that actually HOLDS the token so Buy/Sell act on the right one —
   // this is what fixes "Sell failed: token balance is 0" when the bag sits on another

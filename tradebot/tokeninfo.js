@@ -228,7 +228,19 @@ async function enrich(ca, chainKey) {
     // launch time, its holder count, the pad it came from. The lookup is the
     // same one tokenSnapshot just made and the registry caches it, so this is
     // ordinarily a cache hit rather than a second round trip.
-    const rec = launchpads.covers(chainKey) ? await launchpads.record(chainKey, ca).catch(() => null) : null;
+    // BOTH LEGS AT ONCE. These were awaited one after the other — the launchpad
+    // record, then RugCheck with its own nine-second ceiling — so a Solana card
+    // paid the SUM of two independent waits before it could render. They know
+    // nothing about each other; the only reason they were serial is the order
+    // they were written in.
+    const [rec, sec] = await Promise.all([
+      // The snapshot already fetched this and carries it — see core.tokenSnapshot.
+      // Only asked again when it did not (an older snapshot shape, or a path
+      // that skipped the pads).
+      snap.lp !== undefined ? Promise.resolve(snap.lp)
+        : launchpads.covers(chainKey) ? launchpads.record(chainKey, ca).catch(() => null) : Promise.resolve(null),
+      withTimeout(safety.tokenSecurity(chainKey, ca).catch(() => null), Math.max(3000, Number(process.env.SCAN_TIMEOUT_MS || 9000))),
+    ]);
     const api = launchpads.toApi(rec) || {};
     // THE SNAPSHOT WINS ON THE NUMBERS, the launchpad fills what it cannot
     // know. Market cap and volume out of an indexed pool are live and
@@ -248,8 +260,9 @@ async function enrich(ca, chainKey) {
     // "🚀 Raised 30 / 85 SOL · 35% to graduation" — the curve row the card has
     // always been able to render and has never had the numbers for on Solana.
     if (snap.raised != null) { info.raised = snap.raised; info.target = snap.target; }
-    // RugCheck safety (best-effort, bounded) — mint/freeze authority, LP lock, holders.
-    info.security = await withTimeout(safety.tokenSecurity(chainKey, ca).catch(() => null), Math.max(3000, Number(process.env.SCAN_TIMEOUT_MS || 9000)));
+    // RugCheck safety (best-effort, bounded) — mint/freeze authority, LP lock,
+    // holders. Resolved above, alongside the launchpad rather than after it.
+    info.security = sec;
     return info;
   }
   const tasks = [];
