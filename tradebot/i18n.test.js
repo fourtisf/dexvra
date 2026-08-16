@@ -97,6 +97,37 @@ test('an error message never leaks the raw chain/RPC text to the user', () => {
   }
 });
 
+test('a per-wallet failure reaches the SERVER LOG, not only the card', () => {
+  // `grep 'buy failed'` came back empty on a trade that had just failed five
+  // times. The catch at the bottom of doBuy was the only thing that ever wrote
+  // one, and it fires only when the whole block throws — a per-wallet rejection
+  // lands in Promise.allSettled, becomes a friendly sentence, and left nothing
+  // on the server, which is the one place the real reason could still be read.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  assert.match(SRC, /console\.error\(`buy failed \[\$\{t\.label\}\]/, 'a per-wallet buy failure is still silent server-side');
+  assert.match(SRC, /console\.error\(`sell failed \[\$\{t\.label\}\]/, 'a per-wallet sell failure is still silent server-side');
+});
+
+test("the engine's own errors do not fall through to the generic sentence", () => {
+  // Enumerated from the strings solana.js actually throws, not guessed. Each
+  // was reaching the user as "didn't go through, try again in a moment" — the
+  // sentence that says nothing and is indistinguishable from every other cause.
+  const cases = {
+    'buy failed on Solana: Jupiter swap-build failed (500) — Invalid request': 'err.build_failed',
+    'buy failed on Solana: Jupiter returned no swap transaction': 'err.build_failed',
+    'buy failed on Solana: transaction failed on-chain: {"InstructionError":[3,{"Custom":6001}]}': 'err.slippage',
+  };
+  for (const [msg, key] of Object.entries(cases)) {
+    assert.equal(i18n.errorKey(msg), key, `"${msg.slice(0, 50)}…" is still unclassified`);
+  }
+  // The build failure must say the two things that decide what the user does
+  // next: nothing was spent, and it is worth retrying.
+  for (const lang of i18n.LANGS) {
+    const out = i18n.errorText(lang, new Error('Jupiter swap-build failed (500)'), 'buy');
+    assert.match(out, /nothing was sent|tidak ada yang dikirim/i, `${lang} does not say the money is safe`);
+  }
+});
+
 test('the gas-moved message names the button to press, not a verb', () => {
   assert.match(i18n.errorText('en', new Error('nonce too low'), 'buy'), /tap Buy again/i);
   assert.match(i18n.errorText('id', new Error('nonce too low'), 'sell'), /Sell/);

@@ -389,6 +389,12 @@ const S = {
     en: "Couldn't read live pricing for this token right now. Please try again in a moment.",
     id: 'Harga live token ini belum bisa dibaca sekarang. Coba lagi sebentar lagi.',
   },
+  // Priced, then refused at the build step. Says the two things that matter:
+  // nothing was signed, and it is the router's problem rather than the token's.
+  'err.build_failed': {
+    en: "The router priced this token but refused to build the {act} — <b>nothing was sent and nothing was spent</b>. This is usually brief: tap {btn} again, or try a smaller amount.",
+    id: 'Router berhasil menghitung harga tapi menolak membuat transaksi {act}-nya — <b>tidak ada yang dikirim dan tidak ada dana keluar</b>. Biasanya sebentar: tap {btn} lagi, atau coba jumlah lebih kecil.',
+  },
   'err.restricted': {
     en: "This token can't be traded yet (it may be restricted). Try a different token.",
     id: 'Token ini belum bisa ditradingkan (kemungkinan masih dibatasi). Coba token lain.',
@@ -465,6 +471,17 @@ function errorKey(raw) {
   if (/not confirmed|timeout|pending/.test(m)) return 'err.unconfirmed';
   if (/could not (read|price)|pool read|quote|no pool|no liquidity/.test(m)) return 'err.no_price';
   if (/private beta|not allowed|notallowed/.test(m)) return 'err.restricted';
+  // THE AGGREGATOR PRICED IT AND THEN REFUSED TO BUILD THE TRANSACTION. A
+  // different fact from "no route" (it quoted) and from slippage (nothing was
+  // signed), and the strings are this repo's own — solana.js throws both. They
+  // matched nothing and came out as the generic "try again in a moment", which
+  // is what a user saw on all five wallets at once with no way to tell whether
+  // their money had moved. `swapBody`'s v6-vs-v1 spelling produced exactly this
+  // in production once already; see the note in solana.js.
+  if (/swap-build failed|returned no swap transaction/.test(m)) return 'err.build_failed';
+  // Sent, and the chain rejected it. Belongs with the revert family, not with
+  // "nothing happened": the signature fee is spent either way.
+  if (/transaction failed on-chain|failed on-chain/.test(m)) return 'err.slippage';
   return 'err.generic';
 }
 

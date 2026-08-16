@@ -2100,7 +2100,21 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       results.forEach((res, i) => {
         const t = targets[i];
         if (res.status === 'fulfilled') { const r = res.value; okN++; totTok += Number(r.gotTokens) || 0; totSpent += Number(r.spentEth) || 0; totFee += Number(r.feeEth) || 0; sym = r.sym || sym; chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: r.spentEth, tokens: `${fmt(r.gotTokens)} $${esc(r.sym)}` })); _placeAutoExit(chatId, r, t.id).catch(() => {}); }
-        else { const e = res.reason; fails.push({ label: t.label, e }); lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`); }
+        else {
+          const e = res.reason;
+          // LOGGED, not only rendered.
+          //
+          // The catch at the bottom of doBuy is the ONLY place that ever wrote a
+          // buy failure to the log, and it fires only when the whole block
+          // throws. A per-wallet rejection lands here instead, gets turned
+          // straight into a friendly sentence, and vanished — so a five-wallet
+          // total failure left NOTHING on the server, which is the one place the
+          // real reason could still be read. `grep 'buy failed'` came back empty
+          // on a trade that had just failed five times.
+          console.error(`buy failed [${t.label}] ${chG.key} ${ca}:`, (e && (e.message || e)));
+          fails.push({ label: t.label, e });
+          lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(String((e && (e.message || e)) || 'failed').slice(0, 60))}`);
+        }
       });
       const wi = walletIndex(chatId, targets[0].id);
       // `sym` and `nat` are only ever written by a wallet that FILLED, so when
@@ -2317,7 +2331,16 @@ async function doSell(chatId, ca, pct, chain, walletId) {
         // separate transfer broadcast after the wallet delta is measured, so
         // proceedsEth — what this used to sum — is money the user never kept.
         if (res.status === 'fulfilled') { const r = res.value; okN++; const kept = Number(r.netEth != null ? r.netEth : r.proceedsEth) || 0; totProceeds += kept; totFee += Number(r.feeEth) || 0; totPnl += Number(r.realizedEth) || 0; pnlSeen = pnlSeen || Number.isFinite(Number(r.realizedEth)); chainKey = r.chain || chainKey; nat = r.native || nat; lines.push(walletLine(t.label, r.chain, r, nativeUsd(r.native), { amount: kept })); }
-        else { const e = res.reason; const msg = String((e && (e.message || e)) || 'failed'); if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• <b>${esc(t.label)}</b> · ${T(chatId, 'sell.no_bag')}`); } else lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(friendlyError(chatId, e, 'sell'))}`); }
+        else {
+          const e = res.reason; const msg = String((e && (e.message || e)) || 'failed');
+          if (/token balance is 0/i.test(msg)) { skip++; lines.push(`• <b>${esc(t.label)}</b> · ${T(chatId, 'sell.no_bag')}`); }
+          else {
+            // Same hole as the buy branch above: an empty wallet is expected and
+            // stays quiet, but a real exit failure has to reach the log.
+            console.error(`sell failed [${t.label}] ${chainKey} ${ca}:`, msg);
+            lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(friendlyError(chatId, e, 'sell'))}`);
+          }
+        }
       });
       const wi = walletIndex(chatId, targets[0].id);
       const msUsd = nativeUsd(nat || 'ETH');
