@@ -42,6 +42,14 @@ async function receipt(side, { rate = 1858, snap = { sym: 'PONS', priceEth: 0.00
   u.wallets = [1, 2, 3, 4].map((i) => ({ id: 'w' + i, name: 'Wallet ' + i, address: '0x' + String(i).repeat(40), positions: {}, orders: [], history: [] }));
   u.activeWalletId = 'w4';
   core.setTradeAll(CHAT, true);
+  // THIS FILE IS ABOUT THE COMBINED RECEIPT, which is no longer the default.
+  // A multi-wallet trade now posts one message PER WALLET as each one settles
+  // (walletReceipt.test.js holds those to the identical standard: a transaction
+  // on every wallet that traded, none on one that did not, readable amounts, a
+  // dollar figure, and never a confident $0.00). `combined` is still a
+  // supported choice in ⚙️ Settings, so the contract below still has to hold —
+  // it just has to be asked for explicitly now.
+  core.setReceiptStyle(CHAT, 'combined');
   const real = { snap: core.tokenSnapshot, meta: core.tokenMeta, sell: core.sell, buy: core.buy, fetch: global.fetch };
   let n = 0;
   core.tokenSnapshot = async () => snap;
@@ -137,7 +145,12 @@ test('an unreadable market leaves the line out rather than printing zeros', asyn
 test('the market read happens AFTER the trade, never before it', async () => {
   // A receipt is not worth a round trip on the path where the money moves.
   const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
-  const fans = [...SRC.matchAll(/Promise\.allSettled\(targets\.map/g)].map((m) => m.index);
+  // The fan-outs are now named bindings (`raw` / `rawSells`) rather than being
+  // written inline inside the allSettled, because each trade carries a `.then`
+  // tap that posts that wallet's own receipt as it settles. Their POSITION
+  // relative to the market read is what this test is about, and that is what
+  // the match still finds.
+  const fans = [...SRC.matchAll(/const raw(?:Sells)? = targets\.map/g)].map((m) => m.index);
   // The buy path guards the read on something having filled — a price line
   // under "❌ Nothing bought" reads as the price it filled at — so the read is
   // no longer unconditional. Its ORDER relative to the fan-out is what this

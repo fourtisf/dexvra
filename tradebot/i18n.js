@@ -292,6 +292,34 @@ const S = {
   'sell.no_bag': { en: '— no bag', id: '— tidak ada posisi' },
   'sell.failed': { en: "❌ <b>Sell didn't go through</b>", id: '❌ <b>Sell tidak berhasil</b>' },
 
+  // ------------------------------------------------- one wallet, one receipt
+  // A multi-wallet trade posts one of these PER WALLET, the moment that wallet
+  // settles, instead of a single message built after the slowest one finished.
+  // See receipt.js for why.
+  //
+  // 🟢 means SUCCEEDED, on a buy and on a sell alike — it answers "did it go
+  // through", not "which direction". A red dot on a completed exit would read
+  // as a failure.
+  'wallet.receipt.buy.ok': {
+    en: '🟢 <b>Buy</b> of {qty} {sym} succeeded · 💳 <b>{wallet}</b>',
+    id: '🟢 <b>Beli</b> {qty} {sym} berhasil · 💳 <b>{wallet}</b>',
+  },
+  'wallet.receipt.sell.ok': {
+    en: '🟢 <b>Sell</b> of {qty} {sym} succeeded · 💳 <b>{wallet}</b>',
+    id: '🟢 <b>Jual</b> {qty} {sym} berhasil · 💳 <b>{wallet}</b>',
+  },
+  'wallet.receipt.buy.fail': { en: '❌ <b>Buy failed</b> · 💳 <b>{wallet}</b>', id: '❌ <b>Buy gagal</b> · 💳 <b>{wallet}</b>' },
+  'wallet.receipt.sell.fail': { en: '❌ <b>Sell failed</b> · 💳 <b>{wallet}</b>', id: '❌ <b>Sell gagal</b> · 💳 <b>{wallet}</b>' },
+  // Deliberately not ❌. A wallet holding nothing did exactly the right thing
+  // when asked to sell, and a red cross sends people hunting for a fault.
+  'wallet.receipt.nobag': { en: '⚪️ <b>Nothing to sell</b> · 💳 <b>{wallet}</b>', id: '⚪️ <b>Tidak ada posisi</b> · 💳 <b>{wallet}</b>' },
+  'wallet.receipt.spent': { en: '💸 Spent <b>{amt} {native}</b>{usd}', id: '💸 Keluar <b>{amt} {native}</b>{usd}' },
+  'wallet.receipt.gained': { en: '💰 You gained <b>{amt} {native}</b>{usd}', id: '💰 Kamu dapat <b>{amt} {native}</b>{usd}' },
+  'wallet.receipt.pnl': { en: '{icon} P/L <b>{pnl}</b>{usd}', id: '{icon} Untung/Rugi <b>{pnl}</b>{usd}' },
+  'wallet.receipt.entry_mc': { en: '🌊 Entry MC · <b>${mc}</b>', id: '🌊 MC masuk · <b>${mc}</b>' },
+  'wallet.receipt.exit_mc': { en: '🌊 Exit MC · <b>${mc}</b>', id: '🌊 MC keluar · <b>${mc}</b>' },
+  'wallet.receipt.tx': { en: '🔍 Transaction', id: '🔍 Transaksi' },
+
   // ---------------------------------------------------------------- errors
   // One clear sentence per failure class, each ending in what to actually do.
   // The raw on-chain / RPC text is still logged server-side for the operator.

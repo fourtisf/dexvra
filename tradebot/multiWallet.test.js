@@ -135,9 +135,16 @@ test("the selection actually drives the trade, on both sides", () => {
   const tg = code("telegram.js");
   // Started as one Promise.allSettled over every target — parallel, and (since
   // the latency work) in flight before the progress message is awaited.
-  assert.match(tg, /Promise\.allSettled\(targets\.map\(\(t\) => core\.buy\(chatId, ca, amt, chain, t\.id\)\)\)/,
+  // The fan-out itself is what this pins — one call per target, all in flight
+  // at once. It is no longer written inline inside the allSettled: each buy now
+  // carries a `.then` tap that posts that wallet's own receipt the moment it
+  // settles (see receipt.js), so the promises are created first and the
+  // reporting is attached to them. That changes the telling, not the
+  // parallelism.
+  assert.match(tg, /const raw = targets\.map\(\(t\) => core\.buy\(chatId, ca, amt, chain, t\.id\)\);/,
     "a multi Buy runs on every selected wallet, in parallel");
-  assert.match(tg, /const results = await buys;/, "…and every one of them is awaited");
+  assert.match(tg, /Promise\.allSettled\(raw\.map\(/, "…as one settled batch");
+  assert.match(tg, /await Promise\.all\(\[progressP, buys\]\)/, "…and every one of them is awaited");
   const sell = tg.slice(tg.indexOf("async function doSell("));
   assert.match(sell, /const targets = tradeTargets\(chatId, walletId\);/, "Sell reads the same selection");
   // Both report per wallet, so a partial failure is visible rather than averaged

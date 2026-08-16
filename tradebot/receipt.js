@@ -1,0 +1,177 @@
+'use strict';
+/*
+ * receipt.js — ONE WALLET, ONE RECEIPT.
+ *
+ * WHAT WAS WRONG
+ * A multi-wallet trade produced a single message, built only after
+ * `Promise.allSettled` had resolved every wallet, with the wallets reduced to
+ * bullet points inside it:
+ *
+ *     ✅ Bought $PONS · 4/4 wallets
+ *     Total: 225.08 $PONS · spent 0.04 ETH ($74.32)
+ *     • Wallet 1 · 56.27 $PONS · 0.01000 ETH ($18.58) · tx ↗
+ *     • Wallet 2 · 56.27 $PONS · 0.01000 ETH ($18.58) · tx ↗
+ *     …
+ *
+ * Two separate problems, and the user named both:
+ *
+ *   1. NOTHING ARRIVES UNTIL THE SLOWEST WALLET SETTLES. Four wallets fill in
+ *      two seconds and the fifth takes twenty; the user sees an empty chat for
+ *      twenty seconds and then the whole batch at once. The trades were always
+ *      parallel — only the reporting was serial — so a bot that is genuinely
+ *      fast read as a bot that had hung.
+ *   2. A BULLET IS NOT A RECEIPT. One line per wallet cannot carry the token,
+ *      the amount in token units, the market cap, and a transaction button; and
+ *      the one thing a person does after a trade is check that ONE wallet.
+ *
+ * So each wallet now gets its own message, posted the moment that wallet
+ * settles, in the shape every other Telegram trading bot uses.
+ *
+ * WHY THIS IS A MODULE AND NOT MORE INLINE STRING-BUILDING
+ * telegram.js is 3,600 lines and every receipt in it was assembled inline,
+ * which is why the tests that guard them read the SOURCE with a regex instead
+ * of calling anything. This is a pure function of its arguments: no I/O, no
+ * core.js, no network. It can be asserted directly.
+ *
+ * CONVENTIONS, same as i18n.js
+ *   • Callers pass values that are ALREADY HTML-escaped. This module adds no
+ *     escaping and must not — pre-escaped copy would be double-escaped and
+ *     render as markup.
+ *   • `t(key, vars)` is the caller's translator, already bound to a chat, so
+ *     every string here is translatable and none of it lives in this file.
+ */
+
+/**
+ * A token quantity the way a person reads it: grouped thousands, and enough
+ * decimals to be true without being noise.
+ *
+ * NOT the `fmt()` used elsewhere in the bot, which compresses to "10.28M". That
+ * is right for a market cap and wrong here: "Sell of 10.28M RUIN" is not the
+ * number in the wallet, and the whole point of this line is that it states the
+ * trade in the units the user thinks in. Sub-unit amounts keep more decimals,
+ * because 0.00 is not an amount.
+ */
+function qty(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v === 0) return '0';
+  const abs = Math.abs(v);
+  const dp = abs >= 1000 ? 2 : abs >= 1 ? 4 : 8;
+  // Trailing zeros carry no information once the magnitude is clear.
+  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: dp });
+}
+
+/** A native amount: five decimals, which is where ETH/SOL stops being readable
+ *  and starts being eighteen digits of noise. */
+const nat = (n) => (Number(n) || 0).toFixed(5);
+
+/**
+ * " ≈ $178.16", or NOTHING.
+ *
+ * An absent price feed must never render as "$0.00": a confident zero next to a
+ * real trade is worse than no figure at all, and this bot has printed one
+ * before. Only a rate that is actually a rate produces a dollar figure.
+ */
+function usdTail(amount, rate) {
+  if (!(Number(rate) > 0)) return '';
+  const v = Math.abs(Number(amount) || 0) * Number(rate);
+  return ` ≈ $${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** A market cap, compressed — this one IS a headline figure, so "27.20M" is
+ *  the readable form. */
+function mcap(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+  return v.toFixed(2);
+}
+
+/**
+ * The two header lines: what the token is, and its contract.
+ *
+ * The contract is on the receipt because a receipt is a record — the message
+ * survives in the chat long after the card that produced it is gone, and
+ * "which token was that" is unanswerable from a ticker alone when two projects
+ * share one. `name` is dropped when it merely repeats the ticker rather than
+ * printing "PONS ($PONS)".
+ */
+function header(d) {
+  const sym = d.sym ? `$${d.sym}` : '';
+  const nm = d.name && d.name.toUpperCase() !== String(d.sym || '').toUpperCase() ? d.name : '';
+  const title = nm && sym ? `<b>${nm}</b> (${sym})` : `<b>${sym || 'Token'}</b>`;
+  const chain = [d.chainEmoji, d.chainName].filter(Boolean).join(' ');
+  return `${title}${chain ? ` · ${chain}` : ''}\n<code>${d.ca}</code>`;
+}
+
+/**
+ * One wallet's receipt.
+ *
+ * @param {(key: string, vars?: object) => string} t  bound translator
+ * @param {object} d
+ *   side       'buy' | 'sell'
+ *   ok         did this wallet actually trade?
+ *   noBag      sell only: it had nothing to sell — not a failure
+ *   name/sym/ca/chainEmoji/chainName   already escaped
+ *   wallet     wallet label, already escaped
+ *   tokens     tokens bought or sold
+ *   amount     native spent (buy) or kept (sell)
+ *   native     'ETH' | 'SOL' | …, already escaped
+ *   rate       native→USD, 0 when the feed is down
+ *   pnl        sell only: realised P/L in native, null when unknown
+ *   mcUsd      market cap around the trade, 0 when unread
+ *   reason     failure text, already escaped and made friendly
+ * @returns {string} HTML
+ */
+function walletReceipt(t, d) {
+  const L = [header(d), ''];
+
+  if (d.noBag) {
+    // NOT a failure, and it must not look like one. A wallet that holds nothing
+    // did exactly what it should when asked to sell 100% of nothing, and a red
+    // ❌ next to it sends people looking for a problem that is not there.
+    L.push(t('wallet.receipt.nobag', { wallet: d.wallet }));
+    return L.join('\n');
+  }
+  if (!d.ok) {
+    L.push(t(d.side === 'sell' ? 'wallet.receipt.sell.fail' : 'wallet.receipt.buy.fail', { wallet: d.wallet }));
+    if (d.reason) L.push(d.reason);
+    return L.join('\n');
+  }
+
+  // 🟢 is SUCCESS, not direction — the same green dot on a buy and on a sell,
+  // because the question this line answers is "did it go through". Using red
+  // for a sell would put a failure colour on a completed exit.
+  L.push(t(d.side === 'sell' ? 'wallet.receipt.sell.ok' : 'wallet.receipt.buy.ok', {
+    qty: qty(d.tokens),
+    sym: d.sym ? `$${d.sym}` : '',
+    wallet: d.wallet,
+  }));
+  L.push('');
+
+  if (d.side === 'sell') {
+    L.push(t('wallet.receipt.gained', { amt: nat(d.amount), native: d.native, usd: usdTail(d.amount, d.rate) }));
+    // P/L only when it is KNOWN. A position opened outside this bot has no cost
+    // basis, so `pnl` is null — and "P/L 0.00000" on a profitable exit is a
+    // stated fact that happens to be false.
+    if (Number.isFinite(d.pnl) && d.pnl !== 0) {
+      const up = d.pnl > 0;
+      L.push(t('wallet.receipt.pnl', {
+        icon: up ? '📈' : '📉',
+        pnl: `${up ? '+' : '−'}${nat(Math.abs(d.pnl))} ${d.native}`,
+        usd: usdTail(d.pnl, d.rate).replace(' ≈ $', up ? ' (+$' : ' (−$'),
+      }) + (Number(d.rate) > 0 ? ')' : ''));
+    }
+  } else {
+    L.push(t('wallet.receipt.spent', { amt: nat(d.amount), native: d.native, usd: usdTail(d.amount, d.rate) }));
+  }
+
+  // The market cap AROUND the trade. Left out entirely when it could not be
+  // read: a "$0" cap is a claim about the token, and an unread indexer is not.
+  if (Number(d.mcUsd) > 0) {
+    L.push(t(d.side === 'sell' ? 'wallet.receipt.exit_mc' : 'wallet.receipt.entry_mc', { mc: mcap(d.mcUsd) }));
+  }
+  return L.join('\n');
+}
+
+module.exports = { walletReceipt, qty, nat, usdTail, mcap, header };

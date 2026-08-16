@@ -450,6 +450,67 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
+## One wallet, one receipt
+
+A multi-wallet trade used to produce a SINGLE message, built only after
+`Promise.allSettled` had resolved **every** wallet, with the wallets reduced to
+bullet points inside it. Two complaints, both right:
+
+1. **Nothing arrives until the slowest wallet settles.** Four fills in two
+   seconds and a fifth that takes twenty is twenty seconds of empty chat and
+   then the whole batch at once. The trades were always parallel; only the
+   telling was serial, so a bot that is genuinely fast read as one that had hung.
+2. **A bullet is not a receipt.** It cannot carry the token, the amount in token
+   units, the market cap and a transaction button — and checking ONE wallet is
+   the first thing anyone does after a trade.
+
+`tradebot/receipt.js` is the renderer (pure, no I/O, no `core`), and each wallet
+is now posted the moment its own promise settles. `receiptStyle` in ⚙️ Settings
+switches back to `combined`; **per-wallet is the default**.
+
+- **The tap reports, `allSettled` still aggregates.** `raw.map((p, i) => p.then(
+  post, post))` — the summary is computed from exactly the same results as
+  before. What the summary keeps is only what no single receipt can say: the
+  totals, the average realised fill, and the "every wallet failed the same way"
+  collapse. The bullet list is gone in per-wallet mode; the same information
+  twice is noise.
+- **Receipts go through `queuedSend`, one at a time per chat.** Five concurrent
+  sends is exactly what provokes Telegram's flood limit, and `tg()` used to
+  return the 429 to callers that do not check `ok` — i.e. the receipt was simply
+  gone. `tg()` now honours `parameters.retry_after`, bounded. A trade the user
+  cannot see is worse than a slow one.
+- **The header claims the queue first.** `progressP` is enqueued before any tap
+  can be, or a wallet that fills before Telegram answers has its receipt appear
+  ABOVE the "Buying on 4 wallets…" line for its own batch.
+- **The identity and market reads are raced, never awaited.** Both start with
+  the fan-out; a receipt waits at most `RECEIPT_MC_WAIT_MS` (600ms) for them.
+  Without that wait the FIRST receipt prints `$PONS` with no market cap while
+  the other four say `Pons Finance ($PONS) … Entry MC $27.20M` — one trade,
+  reported two ways, which reads as a bug in the numbers rather than a race.
+- **🟢 means SUCCEEDED, on a buy and a sell alike.** It answers "did it go
+  through", not "which direction". An empty wallet gets ⚪️, never ❌ — it did
+  exactly the right thing when asked to sell nothing, and a red cross sends
+  people hunting for a fault.
+- **No transaction, no transaction button.** A link on a receipt for something
+  that did not happen is worse than no link.
+- **`qty()` groups, it does not compress.** `fmt()` gives "10.28M", which is
+  right for a market cap and wrong for "Sell of 10,279,471.93 $RUIN" — that is
+  the number in the wallet, in the units the user thinks in. Both sell paths
+  now return `soldTokens`; neither did before, so no receipt could ever state it.
+- **`receipt.js` adds no escaping**, same contract as `i18n.js`. Callers pass
+  pre-escaped values; escaping twice renders `<b>` as literal markup.
+
+```bash
+cd tradebot && node --test walletReceipt.test.js   # 19 tests, no network
+```
+
+⚠️ **Tests that drive `doBuy` must stop the monitors they open.** A buy starts a
+live monitor, the monitor is a self-rescheduling `setTimeout` chain, and
+`node --test` then never exits — the failure looks like a hang with no output at
+all. `walletReceipt.test.js` clears `_monitors` in its `finally`, and drains
+`_sendQ` rather than sleeping a guessed number of milliseconds (a fixed sleep
+let one trade's receipts land inside the next trade's captured output).
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
