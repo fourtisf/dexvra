@@ -197,6 +197,101 @@ test('a restart never resurrects a target that was mid-flight', () => {
   assert.equal(core.snipeTargetById(u, t.id).status, 'failed');
 });
 
+// ── the way a person actually arms one ───────────────────────────────────────
+
+/** Drive the real Telegram text handler, not core directly. */
+async function typed(text, chain = 'robinhood') {
+  const tg = require('./telegram');
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage/.test(String(url))) sent.push(b.text); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: 1 } }) };
+  };
+  try { await tg._test.resolvePending(CHAT, { action: 'ca_snipe', chain }, text, {}); }
+  finally { global.fetch = realFetch; }
+  return sent.join('\n').replace(/<[^>]+>/g, '');
+}
+
+test('typing a contract and an amount actually arms it', async () => {
+  // EVERY TEST ABOVE CALLS core.addSnipeTarget DIRECTLY, and that is how the
+  // handler shipped with its arguments reversed — `isAddrFor(chainKey, ca)`
+  // instead of `isAddrFor(ca, chainKey)`. It type-checks, it is always false,
+  // and it rejected every arm attempt with "not a valid contract address"
+  // while the store underneath worked perfectly.
+  const u = user();
+  const out = await typed(`${CA} 0.05 25`);
+  assert.match(out, /Armed/, `arming failed:\n${out}`);
+  const armed = core.armedSnipeTargets(u);
+  assert.equal(armed.length, 1);
+  assert.equal(armed[0].amount, '0.05');
+  assert.equal(armed[0].slipBps, 2500);
+});
+
+test('the slippage is optional and defaults to the user setting', async () => {
+  const u = user();
+  await typed(`${CA} 0.05`);
+  assert.equal(core.armedSnipeTargets(u)[0].slipBps, 0);
+});
+
+test('a Solana mint arms through the handler on Solana', async () => {
+  const u = user();
+  const out = await typed(`${MINT} 0.5`, 'solana');
+  assert.match(out, /Armed/, `arming a mint failed:\n${out}`);
+  assert.equal(core.armedSnipeTargets(u)[0].chain, 'solana');
+});
+
+test('bad input is refused with a reason, and arms nothing', async () => {
+  const u = user();
+  assert.match(await typed('not-an-address 0.05'), /not a valid/i);
+  assert.match(await typed(`${CA} 0`), /amount/i);
+  assert.match(await typed(`${CA} 0.05 90`), /Slippage/i);
+  assert.match(await typed(`${MINT} 0.05`), /not a valid/i);   // Solana mint, EVM chain
+  assert.equal(core.armedSnipeTargets(u).length, 0, 'a rejected input still armed something');
+});
+
+// ── the probe budget ─────────────────────────────────────────────────────────
+
+test('one contract is probed ONCE however many people are sniping it', async () => {
+  // "Is this tradeable yet" is a fact about the chain, not about the user.
+  // Probing per target made the busiest case — everyone armed on the same hot
+  // address — the most expensive one, which is backwards; and on Solana it
+  // multiplies a rate-limited aggregator call by the number of subscribers.
+  core.DB.users = {};
+  for (const id of [31, 32, 33, 34]) {
+    const u = core.ensureUser(id);
+    u.wallets = [{ id: 'w1', name: 'w', address: '0x' + '2'.repeat(40), positions: {}, orders: [], history: [] }];
+    u.activeWalletId = 'w1';
+    core.addSnipeTarget(id, { ca: CA, chain: 'robinhood', amount: 0.01 });
+  }
+  let probes = 0, buys = 0;
+  const real = { can: core.canTradeNow, buy: core.buy };
+  core.canTradeNow = async () => { probes++; return true; };
+  core.buy = async (cid, ca, amt, chain) => { buys++; return { chain, native: 'ETH', ca, hash: '0x' + buys, spentEth: 0.01, gotTokens: 1, sym: 'P' }; };
+  watchers.setNotifier(() => {});
+  try { await watchers._test.caSnipeCycle(); } finally { core.canTradeNow = real.can; core.buy = real.buy; }
+  assert.equal(probes, 1, `the same contract was probed ${probes} times for 4 users`);
+  // …and every one of them still buys. They are separate wallets making
+  // separate trades.
+  assert.equal(buys, 4, `${buys} of 4 users were filled`);
+});
+
+test('Solana probes draw from their own, much tighter budget', () => {
+  // Every other chain's probe is an RPC read against a node this bot already
+  // hammers. Solana's is an aggregator quote against the SAME keyless host that
+  // prices and builds every real buy — so the loop rate-limiting itself would
+  // break ordinary trading, and do it invisibly, because canTradeNow returns a
+  // boolean and a throttled probe is indistinguishable from "no pool yet".
+  const SRC = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+  assert.match(SRC, /CA_SNIPE_SVM_PER_TICK/, 'Solana probes share the general budget');
+  assert.match(SRC, /if \(g\.svm\) \{ if \(svmLeft <= 0\) continue; svmLeft--; \}/, 'the SVM budget is not enforced');
+  // Skipping an over-budget group must still advance the cursor past it, or the
+  // same groups are reconsidered first every tick and the ones behind them
+  // never come up at all.
+  assert.match(SRC, /_caSnipeCursor = groups\.length \? \(_caSnipeCursor \+ Math\.min\(groups\.length, CA_SNIPE_MAX_PROBES\)\) % groups\.length : 0;/,
+    'the ring advances by what was taken, which starves the tail');
+});
+
 // ── dev-wallet snipe, on every chain ─────────────────────────────────────────
 
 test('dev-wallet snipe is no longer refused on EVM chains', () => {

@@ -2918,7 +2918,10 @@ async function resolvePending(chatId, p, text, m) {
       const ca = parts[0], amount = Number(parts[1]);
       const slipPct = parts[2] !== undefined ? Number(String(parts[2]).replace('%', '')) : 0;
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
-      if (!ca || !isAddrFor(ch.key, ca)) return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc(ch.name) }));
+      // isAddrFor(address, chainKey) — ADDRESS FIRST. Passing the chain first
+      // type-checks fine and is always false, which would have rejected every
+      // single arm attempt with "not a valid contract address".
+      if (!ca || !isAddrFor(ca, ch.key)) return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc(ch.name) }));
       if (!(amount > 0)) return send(chatId, T(chatId, 'snipe.ca.bad_amount', { native: esc(ch.native) }));
       if (parts[2] !== undefined && (!Number.isFinite(slipPct) || slipPct < 0 || slipPct > 50)) return send(chatId, T(chatId, 'snipe.ca.bad_slip'));
       try {
@@ -3976,5 +3979,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

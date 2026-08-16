@@ -1416,7 +1416,23 @@ const CA_SNIPE_POLL_MS = Math.max(2000, Number(process.env.CA_SNIPE_POLL_MS || 4
 // one the buy needs a second later.
 const CA_SNIPE_MAX_PROBES = Math.max(1, Number(process.env.CA_SNIPE_MAX_PROBES || 24));
 const CA_SNIPE_CONCURRENCY = Math.max(1, Number(process.env.CA_SNIPE_CONCURRENCY || 6));
-const _caSnipeStats = { polls: 0, probes: 0, armed: 0, fired: 0, lastFiredAt: null, lastErr: null, lastErrAt: null };
+/*
+ * A SEPARATE, MUCH TIGHTER BUDGET FOR SOLANA.
+ *
+ * Every other chain's probe is an RPC read against a node this bot already
+ * hammers. Solana's is an aggregator QUOTE — against the same keyless host that
+ * prices and builds every real buy. At the shared budget above this loop alone
+ * would issue several quotes a second, get itself rate-limited, and then two
+ * things fail at once: the snipe never fires, and ordinary trading starts
+ * failing too.
+ *
+ * Worse, it would fail INVISIBLY. canTradeNow returns a boolean, so a throttled
+ * probe and "no pool yet" are the same `false` — the exact shape of the pump.fun
+ * outage that sat behind a green health tick for days. The fix is to not
+ * generate the load: bound the quotes, and dedupe them.
+ */
+const CA_SNIPE_SVM_PER_TICK = Math.max(1, Number(process.env.CA_SNIPE_SVM_PER_TICK || 4));
+const _caSnipeStats = { polls: 0, probes: 0, armed: 0, contracts: 0, fired: 0, lastFiredAt: null, lastErr: null, lastErrAt: null };
 
 /** Round-robin cursor over armed targets, so target 25 is not starved by 1–24. */
 let _caSnipeCursor = 0;
@@ -1441,26 +1457,57 @@ async function caSnipeCycle() {
   _caSnipeStats.polls++;
   _caSnipeStats.armed = jobs.length;
   if (!jobs.length) return;
-  // A window over the ring, so every target is probed within a bounded number of
-  // ticks no matter how many are armed.
-  const n = Math.min(jobs.length, CA_SNIPE_MAX_PROBES);
-  const slice = [];
-  for (let i = 0; i < n; i++) slice.push(jobs[(_caSnipeCursor + i) % jobs.length]);
-  _caSnipeCursor = (_caSnipeCursor + n) % jobs.length;
 
-  await mapLimit(slice, CA_SNIPE_CONCURRENCY, async ({ u, t }) => {
+  // ONE PROBE PER CONTRACT, not per target.
+  //
+  // "Is this contract tradeable yet" is a fact about the chain, not about the
+  // user — so fifty people sniping the same launch is one question asked once.
+  // Probing per target made the busiest case (everyone armed on the same hot
+  // address) the most expensive one, which is exactly backwards, and on Solana
+  // it multiplied a rate-limited aggregator call by the number of subscribers.
+  const byKey = new Map();
+  for (const j of jobs) {
+    const svm = core.chains.isSvm(j.t.chain);
+    const key = j.t.chain + ':' + (svm ? j.t.ca : String(j.t.ca).toLowerCase());
+    const g = byKey.get(key) || { chain: j.t.chain, ca: j.t.ca, svm, jobs: [] };
+    g.jobs.push(j);
+    byKey.set(key, g);
+  }
+  const groups = [...byKey.values()];
+  _caSnipeStats.contracts = groups.length;
+
+  // A window over the ring, so contract 25 is not starved by 1–24 no matter how
+  // many are armed. Solana groups draw from their own, much smaller budget.
+  const slice = [];
+  let svmLeft = CA_SNIPE_SVM_PER_TICK;
+  for (let i = 0; i < groups.length && slice.length < CA_SNIPE_MAX_PROBES; i++) {
+    const g = groups[(_caSnipeCursor + i) % groups.length];
+    if (g.svm) { if (svmLeft <= 0) continue; svmLeft--; }
+    slice.push(g);
+  }
+  // Advance by the WINDOW, not by what was taken: skipping a Solana group over
+  // budget must still move the cursor past it, or the same over-budget groups
+  // are reconsidered first every tick and the ones behind them never come up.
+  _caSnipeCursor = groups.length ? (_caSnipeCursor + Math.min(groups.length, CA_SNIPE_MAX_PROBES)) % groups.length : 0;
+
+  await mapLimit(slice, CA_SNIPE_CONCURRENCY, async (g) => {
     let ready = false;
-    try { ready = await core.canTradeNow(t.ca, t.chain); }
+    try { ready = await core.canTradeNow(g.ca, g.chain); }
     catch (_) { return; }   // an unreadable chain is not a launch; try again next tick
     _caSnipeStats.probes++;
-    t.checks = (Number(t.checks) || 0) + 1;
+    for (const { t } of g.jobs) t.checks = (Number(t.checks) || 0) + 1;
     if (!ready) return;
-    // CLAIMED BEFORE THE BUY, and persisted synchronously. This poll runs every
-    // few seconds; a target left `armed` while its buy is in flight is picked up
-    // again by the very next tick and bought twice. A missed snipe is a shrug —
-    // spending twice is not.
-    if (!core.claimSnipeTarget(u, t.id)) return;
-    await _fireCaSnipe(u, t);
+    // Everyone armed on this contract fires, in parallel — they are separate
+    // wallets making separate trades, and serialising them would hand the first
+    // block to whoever happened to be first in the list.
+    await mapLimit(g.jobs, CA_SNIPE_CONCURRENCY, async ({ u, t }) => {
+      // CLAIMED BEFORE THE BUY, and persisted synchronously. This poll runs
+      // every few seconds; a target left `armed` while its buy is in flight is
+      // picked up again by the very next tick and bought twice. A missed snipe
+      // is a shrug — spending twice is not.
+      if (!core.claimSnipeTarget(u, t.id)) return;
+      await _fireCaSnipe(u, t);
+    });
   });
 }
 
@@ -1669,6 +1716,10 @@ function health() {
   // `armed: 0` is simply nobody waiting on a launch.
   if (out.caSnipe) {
     out.caSnipe.armed = _caSnipeStats.armed;
+    // Targets and contracts are different numbers: fifty users on one launch is
+    // fifty armed and one probe. Seeing only one of them makes a busy day and a
+    // starved ring look the same.
+    out.caSnipe.contracts = _caSnipeStats.contracts;
     out.caSnipe.probes = _caSnipeStats.probes;
     out.caSnipe.fired = _caSnipeStats.fired;
     out.caSnipe.sinceFiredMs = _caSnipeStats.lastFiredAt ? now - _caSnipeStats.lastFiredAt : null;

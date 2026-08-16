@@ -124,7 +124,10 @@ function mcap(n) {
 function header(d) {
   const sym = d.sym ? `$${d.sym}` : '';
   const nm = d.name && d.name.toUpperCase() !== String(d.sym || '').toUpperCase() ? d.name : '';
-  const title = nm && sym ? `<b>${nm}</b> (${sym})` : `<b>${sym || 'Token'}</b>`;
+  // Name AND ticker → "Pons Finance ($PONS)". Either one alone is still better
+  // than the generic word: falling straight to `sym || 'Token'` threw away a
+  // name we had, and printed "Token" for a token we could name.
+  const title = nm && sym ? `<b>${nm}</b> (${sym})` : `<b>${sym || nm || 'Token'}</b>`;
   const chain = [d.chainEmoji, d.chainName].filter(Boolean).join(' ');
   return `${title}${chain ? ` · ${chain}` : ''}\n<code>${d.ca}</code>`;
 }

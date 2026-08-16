@@ -19,6 +19,7 @@
  * `curveSnapshot` deliberately returns `routable: false` — see below.
  */
 const lp = require('../shared/launchpads');
+const { safeUrl } = require('../shared/launchpads/normalize');
 
 /** Chain keys this bot uses → the registry's. They already agree; the map is
  *  here so a future rename is one line rather than a silent no-op. */
@@ -169,8 +170,7 @@ function curveOverlay(rec) {
  */
 function socialsOf(rec) {
   if (!rec) return null;
-  const safe = require('../shared/launchpads/normalize').safeUrl;
-  const v = { website: safe(rec.website) || '', twitter: safe(rec.twitter) || '', telegram: safe(rec.telegram) || '' };
+  const v = { website: safeUrl(rec.website) || '', twitter: safeUrl(rec.twitter) || '', telegram: safeUrl(rec.telegram) || '' };
   return (v.website || v.twitter || v.telegram) ? v : null;
 }
 
