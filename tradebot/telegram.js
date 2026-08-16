@@ -1357,6 +1357,57 @@ function historyScreen(chatId) {
   }
   return { text: `🧾 <b>History</b> · Wallet ${wi} · ${ch.emoji} ${esc(ch.name)}\n\nNet PnL (this chain): <b>${rp} ${ch.native}</b>\n<i>proceeds − total cost; a partly-sold bag reads low until fully exited</i>\n\n${body}`, kb: rows([btn('🔄 Refresh', 'hist'), btn('📊 Portfolio', 'pos'), btn('« Menu', 'menu')]) };
 }
+/**
+ * Snipe by CA — the armed list, and the way to add one.
+ *
+ * Kept apart from the launch snipe because they answer different questions and
+ * fail differently: that one watches a feed for tokens nobody has named yet and
+ * goes quiet when the feed dies; this one watches named contracts for a pool and
+ * goes quiet when the chain does. One screen for both would have to explain
+ * which half was broken.
+ */
+function caSnipeScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const now = Date.now();
+  const armed = core.armedSnipeTargets(u, now);
+  const recent = core.snipeTargets(u).filter((t) => t.status !== 'armed').slice(-4).reverse();
+  const ch = activeChain(chatId);
+  const L = [T(chatId, 'snipe.ca.title'), '', T(chatId, 'snipe.ca.blurb'), ''];
+
+  if (armed.length) {
+    L.push(T(chatId, 'snipe.ca.armed_head', { n: armed.length }));
+    for (const t of armed) {
+      const c = core.chainOf(t.chain) || { emoji: '', name: t.chain, native: '' };
+      const left = t.expiresAt ? Math.max(0, Math.round((t.expiresAt - now) / 3600000)) : null;
+      L.push(`${c.emoji} <code>${short(t.ca)}</code> · <b>${esc(t.amount)} ${esc(c.native)}</b>`
+        + (t.slipBps > 0 ? ` · ${t.slipBps / 100}%` : '')
+        + (left != null ? ` · <i>${left}h left</i>` : ''));
+    }
+    L.push('');
+  } else {
+    L.push(T(chatId, 'snipe.ca.none'), '');
+  }
+  if (recent.length) {
+    L.push(T(chatId, 'snipe.ca.recent_head'));
+    for (const t of recent) {
+      const icon = t.status === 'done' ? '✅' : t.status === 'expired' ? '⌛' : '❌';
+      L.push(`${icon} <code>${short(t.ca)}</code>${t.status !== 'done' && t.lastErr ? ` · <i>${esc(String(t.lastErr).slice(0, 60))}</i>` : ''}`);
+    }
+    L.push('');
+  }
+  L.push(T(chatId, 'snipe.ca.how', { native: esc(ch.native) }));
+
+  const kbRows = [[btn(T(chatId, 'snipe.ca.add_btn'), 'csnadd')]];
+  // One row per armed target, so removing one is a single tap and never a typed
+  // id. Bounded: past eight rows a keyboard stops being a keyboard.
+  for (const t of armed.slice(0, 8)) {
+    const c = core.chainOf(t.chain) || { emoji: '' };
+    kbRows.push([btn(`🗑 ${c.emoji} ${short(t.ca)}`, `csnx:${t.id}`)]);
+  }
+  kbRows.push([btn(T(chatId, 'snipe.ca.launch_btn'), 'snipe'), btn('« Menu', 'menu')]);
+  return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
+}
+
 function snipeScreen(chatId) {
   const u = core.ensureUser(chatId);
   const chains = u.snipe.chains || {};
@@ -1378,7 +1429,7 @@ function snipeScreen(chatId) {
     `Tap a chain to start or stop sniping on it. Done.\n\n` +
     SEP + `\n${statusLine}\n` + SEP + `\n\n` +
     `⚠️ <b>Buys every new launch</b> on the enabled chains. Brand-new tokens carry high risk, so keep the amount small. Honeypots are filtered automatically; always do your own research.\n\n` +
-    `<i>To follow one specific developer's launches instead, use 👥 Copy &amp; Dev Snipe.</i>`;
+    `<i>Already have the contract? <b>📍 Snipe one contract</b> arms a single address and buys the instant it becomes tradeable. To follow one developer's launches instead, use 👥 Copy &amp; Dev Snipe — now on every supported chain.</i>`;
   const cur = String(u.snipe.ethAmount);
   const QUICK = ['0.01', '0.05', '0.1', '0.5'];
   const kbRows = [];
@@ -1387,6 +1438,7 @@ function snipeScreen(chatId) {
   kbRows.push([btn('✏️ Custom amount', 'snamt')]);
   // Step 2 — one tap per chain to start/stop sniping there.
   enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
+  kbRows.push([btn('📍 Snipe one contract', 'csn')]);
   kbRows.push([btn('🎯 Snipe a specific developer', 'copy')]);
   kbRows.push([btn('« Back', 'menu')]);
   return { text, kb: { inline_keyboard: kbRows } };
@@ -2593,6 +2645,17 @@ async function onCallback(q) {
   if (data === 'setbp') { const ck = core.userChain(core.ensureUser(chatId)); const cn = core.chainOf(ck); const cur = core.buyPresets(core.ensureUser(chatId), ck).join(' '); setPending(chatId, { action: 'bp_val', chain: ck }); return send(chatId, `Send <b>${core.PRESETS_MIN}–${core.PRESETS_MAX} quick-buy amounts</b> for <b>${cn.emoji} ${esc(cn.name)}</b> (in ${cn.native}), separated by spaces.\n\nNow: <code>${esc(cur)}</code>`); }
   if (data === 'cbtog') { const u = core.ensureUser(chatId); try { core.setConfirmBuy(chatId, !u.settings.confirmBuy); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'extog') { const u = core.ensureUser(chatId); try { core.setExpert(chatId, !u.settings.expert); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'csn') { const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'csnadd') {
+    const ch = activeChain(chatId);
+    setPending(chatId, { action: 'ca_snipe', chain: ch.key });
+    return send(chatId, T(chatId, 'snipe.ca.prompt', { chain: `${ch.emoji} ${esc(ch.name)}`, native: esc(ch.native) }));
+  }
+  if (data.startsWith('csnx:')) {
+    core.removeSnipeTarget(chatId, data.slice(5));
+    const s = caSnipeScreen(chatId);
+    return edit(chatId, mid, s.text, s.kb);
+  }
   if (data === 'rstog') { const u = core.ensureUser(chatId); try { core.setReceiptStyle(chatId, core.perWalletReceipts(u) ? 'combined' : 'per_wallet'); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'ntf') { const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'ntftog') { const type = ca; try { core.setNotify(chatId, type, !core.notifyOn(chatId, type)); } catch (_) {} const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -2846,6 +2909,30 @@ async function resolvePending(chatId, p, text, m) {
       const meta = await core.tokenMeta(p.ca, ch.key);
       watchers.addOrder(chatId, { type: 'limitbuy', ca: p.ca, sym: meta.sym, chain: ch.key, targetPriceEth: usdPrice / nativeUsd(ch.native), ethAmount: String(amount) }, p.walletId);
       return send(chatId, `✅ Limit buy set: ${amount} ${ch.native} of $${esc(meta.sym)} when price ≤ $${usdPrice}.\n${speedNote({ type: 'limitbuy' })}`, rows([btn('📋 Orders', 'orders')]));
+    }
+    if (p.action === 'ca_snipe') {
+      // ONE line: address, amount, and optionally a slippage percent. Three
+      // prompts would be three round trips for a feature whose whole point is
+      // being ready before a pool opens.
+      const parts = String(t).trim().split(/\s+/);
+      const ca = parts[0], amount = Number(parts[1]);
+      const slipPct = parts[2] !== undefined ? Number(String(parts[2]).replace('%', '')) : 0;
+      const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
+      if (!ca || !isAddrFor(ch.key, ca)) return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc(ch.name) }));
+      if (!(amount > 0)) return send(chatId, T(chatId, 'snipe.ca.bad_amount', { native: esc(ch.native) }));
+      if (parts[2] !== undefined && (!Number.isFinite(slipPct) || slipPct < 0 || slipPct > 50)) return send(chatId, T(chatId, 'snipe.ca.bad_slip'));
+      try {
+        const tgt = core.addSnipeTarget(chatId, { ca, chain: ch.key, amount, slipBps: Math.round(slipPct * 100) });
+        const s = caSnipeScreen(chatId);
+        return send(chatId, T(chatId, 'snipe.ca.armed', {
+          chain: `${ch.emoji} ${esc(ch.name)}`,
+          ca: esc(tgt.ca),
+          amt: esc(tgt.amount),
+          native: esc(ch.native),
+          slip: tgt.slipBps > 0 ? `${tgt.slipBps / 100}%` : T(chatId, 'snipe.ca.slip_default'),
+          hours: Math.round((tgt.expiresAt - tgt.createdAt) / 3600000),
+        }), s.kb);
+      } catch (e) { return send(chatId, `⚠️ ${esc((e && e.message) || 'could not arm that')}`); }
     }
     if (p.action === 'ae_val') {
       const parts = String(t).trim().split(/\s+/);
@@ -3889,5 +3976,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ } };
 if (require.main === module) start();
