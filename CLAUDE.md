@@ -159,6 +159,79 @@ chain. The env vars still exist and still win when set; they are an override and
 a discovery skip, not a prerequisite. `<CHAIN>_V4_AUTODISCOVER=0` pins a chain
 to env alone.
 
+## Before a token migrates, only its launchpad knows it
+
+DexScreener and GeckoTerminal index **pools**. A token on a bonding curve has no
+pool, so for its entire pre-migration life — minutes to days, and the window in
+which people actually ask about it — both processes were blind in the same way:
+
+- the trade card said **"❌ Couldn't price it"** and offered a chain picker,
+  about a token trading perfectly well on its launchpad;
+- worse, `tokenSnapshot`'s Solana branch hardcoded `graduated: true,
+  progressPct: 100` for **every** mint, so even a token DexScreener *did* index
+  was badged `◆ DEX` while it sat at 12% of a curve;
+- the listing form autofilled nothing — no name, ticker, logo, socials or
+  overview — for a project whose whole profile is public on its pad.
+
+`shared/launchpads/` is the fix, and it is **one module both processes require**.
+That is not tidiness: `tradebot/solana.js` and `bot/src/marketdata.js` each
+carried their own idea of which pump.fun host was current, they drifted, one was
+left on the retired host, and Solana snipe discovery was blind for days behind a
+green `/health`. `bot/src/launchpads.js` and `tradebot/launchpads.js` are thin
+shims that reshape the output; neither names a host, and a test asserts they
+never grow one again.
+
+- **`pads.js` is a TABLE, and every entry is env-overridable.** These request
+  shapes are not published contracts. `LAUNCHPADS=0` kills the registry;
+  `LAUNCHPAD_<PAD>=0` kills one (blank ≠ false, same rule as
+  `raid/sourceFlag.js`); `LAUNCHPAD_<PAD>_API` pins one host **and** skips the
+  base list; `LAUNCHPAD_<PAD>_TOKEN_PATH` / `_FEED_PATH` rewrite the paths. A
+  pad whose guessed path is wrong costs a line in `.env`, not a deploy — which
+  is why adding a pad whose shape we cannot verify is safe. `verified: false`
+  marks those, and the check script prints it.
+- **`PUMPFUN_API` is honoured as an alias.** An operator's existing override
+  must not be silently outvoted by a second env var with a longer name.
+- **Display metadata only.** Nothing here prices, routes or authorises a swap —
+  same contract as `poolstrade.js`, and it matters more here because these pads
+  quote a price. `curveSnapshot()` returns `routable: false` *always*; `core.js`
+  upgrades it only after Jupiter has actually quoted the mint (`_solRoutable`).
+  Knowing a price and being able to fill a swap are different capabilities —
+  the line `v4.js` draws between `price()` and `canSwapLive()`.
+- **A dead pad must cost nothing.** Pads are asked concurrently and the caller
+  waits for all of them, so one unreachable host adds its full timeout to every
+  card render and every autofill. Three consecutive **transport** failures bench
+  a pad for `LAUNCHPAD_BREAKER_MS`; an HTTP status never benches it (the host
+  answered). A benched pad is reported in `tried`, never silently skipped.
+- **Curve state is taken WHOLE from one pad.** Facts outrank readings: a
+  migration pool beats a stale percentage. Taking `graduated` from one source
+  and `42%` from another is a card contradicting itself in two places — exactly
+  what the buy card's two ideas of "whale" already cost.
+- **`onCurve` is three-valued.** `true` / `false` / `null` for "no pad said".
+  Rendering the null as either one invents a fact.
+- ⚠️ **`Number('')` is `0`.** The first cut of the env reader used it, so every
+  default was silently replaced by zero — no caching at all, and a breaker that
+  tripped after 0 failures for 0ms. Nothing errored and nothing logged.
+- **The snipe keeps ONE CURSOR PER PAD.** A shared cursor lets one pad's bad
+  timestamp advance past every real launch on every other pad, and the snipe
+  goes quiet forever — which looks exactly like a slow day. `normalize.toMs()`
+  also refuses a future timestamp; that is the first line, and first lines have
+  been wrong before.
+
+```bash
+cd bot      && npm run launchpads:check            # which pads answer, and what a listing would autofill
+cd tradebot && npm run launchpads:check <mint>     # the same registry, pad by pad, for one token
+```
+
+Whether a launchpad answers is a property of the server's egress today, not of
+the code — these hosts block datacenter ranges — so it has to be measured on the
+box. `upstreams.js` picks up the pad probes automatically (none `critical`: a
+dead pad costs pre-migration data, not the ability to trade).
+
+**Config a fix depends on:** nothing. Every pad ships on, and blank means on.
+The one thing an operator has to do is hit **♻️ Reset default** on the
+`review_card` template if they have ever edited it, or the "🚀 Still bonding"
+line will not appear on the listing review card.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

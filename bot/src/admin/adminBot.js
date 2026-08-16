@@ -96,6 +96,10 @@ const SAMPLE_VARS = {
   price: "$0.001266", mcap: "$1.3M", liq: "$183.5K",
   siteUrl: "https://dexvra.io/token/solana/G9j8", coinUrl: "https://dexvra.io/token/solana/G9j8",
   logo: "✅ set", overview: "A community-driven memecoin on Solana.",
+  // The pre-migration notice on the review card. Sampled in its NON-empty form
+  // on purpose: an admin previewing the template needs to see the line they may
+  // be about to edit away, and it renders as "" for a token that has migrated.
+  bonding: "\n\n🚀 **Still bonding** on pump.fun — **49%** to graduation\n_No DEX pool yet, so charts and liquidity stay empty until it migrates._",
   website: "https://bullcat.io", twitter: "https://x.com/bullcat", telegram: "https://t.me/bullcat",
   label: "Diamond Listing — $BULLCAT on Solana", amount: "1", order: "k3n8_a1b2",
   // The pasted-CA confirmation card. `current` is a WHOLE row (the "this

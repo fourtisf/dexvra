@@ -225,7 +225,7 @@ const DEFAULTS = {
     "📋 **Review your listing**\n\n" +
     "🪙 **Token:** {name} ({symbol})\n" +
     "📊 **Chain:** {chain}\n" +
-    "📂 **Contract:**\n`{address}`\n\n" +
+    "📂 **Contract:**\n`{address}`{bonding}\n\n" +
     "🖼 **Logo:** {logo}\n\n" +
     "💬 **Overview:**\n{overview}\n\n" +
     "🌐 **Website:** {website}\n\n" +
@@ -1178,7 +1178,11 @@ const META = {
   trending_ca_prompt: { group: "Bot Messages", label: "Prompt: trending CA", ph: ["site", "listing", "trending", "announce", "xlisting"] },
   already_listed: { group: "Bot Messages", label: "Listing: token already listed", ph: ["name", "symbol", "chain", "address", "url", "site", "listing", "trending", "announce", "xlisting"] },
   trending_not_found: { group: "Bot Messages", label: "Trending: token not listed", ph: [] },
-  review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram"] },
+  // {bonding} carries its OWN leading blank line and is empty for a migrated
+  // token, so the card has no gap where the line would be. An admin who has
+  // already saved this template simply will not have the placeholder and will
+  // not see the notice — ♻️ Reset default picks it up.
+  review_card: { group: "Bot Messages", label: "Listing review card", ph: ["chain", "name", "symbol", "address", "logo", "overview", "website", "twitter", "telegram", "bonding"] },
   edit_field_prompt: { group: "Bot Messages", label: "Edit-field prompt", ph: ["field"] },
   invalid_address: { group: "Bot Messages", label: "Error: invalid address", ph: ["chain"] },
   invalid_url: { group: "Bot Messages", label: "Error: invalid URL", ph: [] },

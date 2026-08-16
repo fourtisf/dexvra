@@ -20,6 +20,7 @@ const core = require('./core');
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware safety (GoPlus on EVM, RugCheck on Solana)
 const solana = require('./solana');   // Solana snipe/copy helpers
+const launchpads = require('./launchpads');   // the other pads a Solana token can be born on
 const upstreams = require('./upstreams');   // are the third parties answering? (one list, shared with the preflight)
 const report = require('./report');         // ops channel — never secrets
 
@@ -74,7 +75,11 @@ const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt:
 // different things: the first says pump.fun answered, the second says it had
 // something. With only the loop's own heartbeat, a feed that had been dead for
 // days still rendered a green tick — the state that looks most like a healthy one.
-const _solSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastFeedOkAt: null, lastErr: null, lastErrAt: null };
+// `lastPadErr` is kept apart from `lastErr`: a secondary launchpad being down
+// costs that pad's launches and nothing else, while `lastErr` is pump.fun and
+// turns the loop red. Folding them together would either hide a real outage or
+// invent one.
+const _solSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastFeedOkAt: null, lastErr: null, lastErrAt: null, lastPadErr: null };
 function snipeStats() { return { ..._snipeStats }; }
 
 async function snipeCycle() {
@@ -1187,6 +1192,59 @@ async function _copySolTarget(u, t) {
 let _solSnipeCursorTs = 0;
 const _solSnipeSeen = new Set();
 const SOL_SNIPE_MAX_AGE_MS = Math.max(60000, Number(process.env.SOL_SNIPE_MAX_AGE_MS || 600000));   // ignore launches older than 10 min
+
+/**
+ * New launches from every Solana pad EXCEPT pump.fun, in the shape the loop
+ * above already handles.
+ *
+ * ONE CURSOR PER PAD, and that is the whole reason this is a separate function.
+ * A single shared cursor over a merged feed means one pad emitting a bad
+ * timestamp advances it past every real launch from every other pad, and the
+ * snipe then goes quiet forever — which looks exactly like a slow day. (The
+ * registry's toMs() already refuses a future timestamp; this is the second
+ * line, and the first one has been wrong before.)
+ *
+ * THE FIRST LOOK ONLY SEEDS, same rule as the auto-raid cursor: an empty cursor
+ * means "never looked", so the first read records the head WITHOUT sniping it.
+ * Otherwise a restart buys the last fifty launches at once.
+ *
+ * Never throws — this runs inside the snipe tick, and a pad being down must
+ * cost the pad's launches, not the pump.fun snipe that works.
+ */
+const _padCursors = new Map();   // pad key → newest createdAt already seen
+async function _solExtraLaunches() {
+  const only = launchpads.padsFor('solana').filter((p) => p.feedPath && p.key !== 'pumpfun').map((p) => p.key);
+  if (!only.length) return [];
+  const r = await launchpads.newLaunches('solana', 50, { only }).catch(() => null);
+  if (!r) return [];
+  const out = [];
+  for (const key of only) {
+    const res = r.byPad[key];
+    if (!res || !res.ok || !res.items.length) {
+      if (res && !res.ok && res.why) _solSnipeStats.lastPadErr = res.why;   // visible, never fatal
+      continue;
+    }
+    const newest = Math.max(0, ...res.items.map((i) => i.createdAt || 0));
+    const cursor = _padCursors.get(key) || 0;
+    if (newest) _padCursors.set(key, Math.max(cursor, newest));
+    if (!cursor) continue;   // first look seeds only
+    for (const i of res.items) {
+      if (!((i.createdAt || 0) > cursor)) continue;
+      out.push({
+        mint: i.address,
+        name: i.name || '',
+        symbol: i.symbol || '',
+        createdTs: i.createdAt || 0,
+        mcapUsd: i.mcapUsd || 0,
+        complete: i.graduated === true,
+        // Absent or renamed → '' → simply never matches a followed dev, which
+        // fails safe. Same contract as the pump.fun feed's creator field.
+        creator: i.creator || '',
+      });
+    }
+  }
+  return out;
+}
 async function solSnipeCycle() {
   if (!core.chains.isEnabled('solana')) return;
   const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.solana && Number(u.snipe.ethAmount) > 0);
@@ -1204,15 +1262,27 @@ async function solSnipeCycle() {
   if (!feed.ok) { _solSnipeStats.lastErr = feed.why || 'feed unreachable'; _solSnipeStats.lastErrAt = Date.now(); throw new Error('pump.fun feed: ' + _solSnipeStats.lastErr); }
   _solSnipeStats.lastFeedOkAt = Date.now();
   const coins = feed.coins;
-  if (coins.length) { _solSnipeStats.launchesSeen += coins.length; _solSnipeStats.lastLaunchAt = Date.now(); }
-  if (!coins.length) return;
+  // The OTHER launchpads, merged in — pump.fun is no longer the only place a
+  // Solana token is born, and a snipe that only watches one pad simply does not
+  // see the launches on the rest.
+  const extra = await _solExtraLaunches();
+  const seenNow = coins.length + extra.length;
+  if (seenNow) { _solSnipeStats.launchesSeen += seenNow; _solSnipeStats.lastLaunchAt = Date.now(); }
+  if (!seenNow) return;
+  // COMPUTED FROM pump.fun ALONE. This cursor is pump.fun's, and letting
+  // another pad's timestamps advance it is how one pad reporting a bad clock
+  // takes the pump.fun snipe offline permanently — silently, because a cursor
+  // parked ahead of the feed is indistinguishable from a quiet launchpad. Every
+  // other pad carries its own cursor inside _solExtraLaunches.
   const newestTs = Math.max(0, ...coins.map((c) => c.createdTs || 0));
-  if (!_solSnipeCursorTs) { _solSnipeCursorTs = newestTs; return; }   // pin near head first pass (no startup flood)
+  if (!_solSnipeCursorTs && newestTs) { _solSnipeCursorTs = newestTs; return; }   // pin near head first pass (no startup flood)
   const now = Date.now();
   const fresh = coins
-    .filter((c) => c.createdTs > _solSnipeCursorTs && (now - c.createdTs) < SOL_SNIPE_MAX_AGE_MS && !_solSnipeSeen.has(c.mint))
+    .filter((c) => c.createdTs > _solSnipeCursorTs)
+    .concat(extra)
+    .filter((c) => (now - c.createdTs) < SOL_SNIPE_MAX_AGE_MS && !_solSnipeSeen.has(c.mint))
     .sort((a, b) => a.createdTs - b.createdTs);
-  _solSnipeCursorTs = Math.max(_solSnipeCursorTs, newestTs);
+  if (newestTs) _solSnipeCursorTs = Math.max(_solSnipeCursorTs, newestTs);
   let processed = 0;
   for (const c of fresh) {
     if (processed >= DEX_SNIPE_MAX_TOKENS) break;
@@ -1395,6 +1465,11 @@ function health() {
     out.solSnipe.sinceFeedOkMs = _solSnipeStats.lastFeedOkAt ? now - _solSnipeStats.lastFeedOkAt : null;
     out.solSnipe.sinceLastLaunchMs = _solSnipeStats.lastLaunchAt ? now - _solSnipeStats.lastLaunchAt : null;
     out.solSnipe.feedErr = _solSnipeStats.lastErr || null;
+    // A secondary pad being down does NOT turn the loop red — it costs that
+    // pad's launches and nothing more — so it needs somewhere to be visible
+    // that is not `feedErr`. Silently narrowing which launchpads are watched is
+    // the kind of degradation nobody notices for a month.
+    out.solSnipe.padErr = _solSnipeStats.lastPadErr || null;
   }
   // Third parties, as of the last watchdog sweep. `/health` answering "the loops
   // are running" while every Solana buy fails at Jupiter is the gap this closes.

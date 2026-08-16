@@ -62,11 +62,17 @@ const JUP_TOKEN_BASES = JUP_TOKEN_BASE ? [JUP_TOKEN_BASE] : [
 // called the v3 one — one repo holding two answers to "which host is current",
 // neither knowing about the other. Measured on the box: the legacy host does not
 // answer, so Solana snipe discovery has been blind.
-const PUMPFUN_API = (process.env.PUMPFUN_API || '').trim().replace(/\/+$/, '');
-const PUMPFUN_BASES = PUMPFUN_API ? [PUMPFUN_API] : [
-  'https://frontend-api-v3.pump.fun/coins',
-  'https://frontend-api.pump.fun/coins',
-];
+//
+// THE LIST NOW HAS ONE OWNER. It lives in shared/launchpads, which both
+// processes require, so the divergence above cannot happen again by editing one
+// file and forgetting the other. `PUMPFUN_API` still wins outright — the
+// registry honours it as an alias, so an operator's existing override is not
+// silently outvoted by a second env var with a longer name.
+//
+// Read here rather than through the registry's enable flag on purpose:
+// `LAUNCHPAD_PUMPFUN=0` turns off the metadata pad, and taking the snipe feed
+// down with it would be a surprising second effect from a display setting.
+const PUMPFUN_BASES = require('../shared/launchpads').basesOf('pumpfun');
 
 // ---------------------------------------------------------------- validation
 

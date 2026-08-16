@@ -67,7 +67,7 @@ test("the background client goes through the same gate as the buy bot", () => {
   assert.strictEqual(gates, gtFetches, `${gtFetches} GT fetches but ${gates} gates`);
 });
 
-test("a rate-limited GT still lets Solana fall through to pump.fun", () => {
+test("a rate-limited GT still lets a token fall through to its launchpad", () => {
   // The gate must not become an early return: that would make every description
   // on Solana vanish for the length of a cooldown, replacing a rate limit with
   // a data outage.
@@ -75,5 +75,9 @@ test("a rate-limited GT still lets Solana fall through to pump.fun", () => {
   const fn = src.slice(src.indexOf("async function fetchTokenDescription"));
   const body = fn.slice(0, fn.indexOf("\n}"));
   assert.match(body, /if \(net && \(await gtTurn\(\)\)\)/, "gated as a condition, not a return");
-  assert.match(body, /fetchPumpFunDescription/, "and the fallback is still reachable");
+  assert.match(body, /fetchLaunchpadDescription/, "and the fallback is still reachable");
+  // Not `chain === "solana"` any more: four.meme on BNB Chain and Virtuals on
+  // Base have the identical gap, and a hardcoded chain meant they could never
+  // be asked.
+  assert.match(body, /launchpads\.covers\(chain\)/, "the fallback is gated on coverage, not on one chain name");
 });

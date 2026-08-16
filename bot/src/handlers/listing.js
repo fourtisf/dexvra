@@ -24,6 +24,9 @@ function emptyForm() {
   return {
     chain: null, address: null, sym: null, name: null, emoji: "🪙", overview: null,
     website: null, twitter: null, telegram: null, logoFileId: null, logoUrl: null,
+    // Set from the launchpad autofill when the token has not migrated; null
+    // otherwise. Declared here so the form has one shape, not two.
+    bonding: null,
   };
 }
 
@@ -120,6 +123,13 @@ async function handleText(ctx) {
       const symbol = (ds && ds.symbol) || (gt && gt.symbol);
       const logoUrl = (ds && ds.logoUrl) || (gt && gt.logoUrl);
       if (desc && !f.overview) f.overview = cleanOverview(desc);
+      // Only when a launchpad SAID the token is on a curve. `onCurve` is
+      // three-valued — true, false, or null for "no pad knows" — and treating
+      // the null as true would put a bonding notice on every token nothing
+      // happened to index.
+      f.bonding = ds && ds.onCurve === true
+        ? { progressPct: Number.isFinite(ds.progressPct) ? ds.progressPct : null, launchpad: ds.launchpad || null }
+        : null;
       // An AUTOFILLED ticker has to satisfy the site's rule too. DexScreener and
       // GeckoTerminal return whatever the token deployer wrote — "SAFE MOON",
       // "PEPE🐸" — and storing that verbatim only failed at fulfilment, i.e.
@@ -204,6 +214,29 @@ function reviewKb() {
   ]);
 }
 
+/**
+ * "Still bonding" for a token that has not migrated yet, or "" for one that
+ * has.
+ *
+ * Worth its own line on the review card because it changes what the buyer is
+ * buying: a pre-migration token has no pool, so the chart link on its listing
+ * post has nothing to plot and the market cap moves on a curve rather than on
+ * trades. Saying so here is cheaper than the support message afterwards.
+ *
+ * Carries its OWN leading blank line so a migrated token leaves no gap — the
+ * template has no line to drop, because the placeholder is not on one.
+ */
+function bondingLine(f) {
+  const b = f.bonding;
+  if (!b) return "";
+  const premium = require("../premium");
+  const pad = b.launchpad ? ` on ${premium.sanitizeVar(String(b.launchpad).slice(0, 30))}` : "";
+  // No percentage rather than a made-up one: some pads state a progress figure
+  // and some do not, and "0%" would read as a dead launch.
+  const pct = Number.isFinite(b.progressPct) ? ` — **${b.progressPct.toFixed(0)}%** to graduation` : "";
+  return `\n\n🚀 **Still bonding**${pad}${pct}\n_No DEX pool yet, so charts and liquidity stay empty until it migrates._`;
+}
+
 async function showReview(ctx) {
   const f = ctx.session.form;
   ctx.session.reviewShown = true;
@@ -218,6 +251,7 @@ async function showReview(ctx) {
     symbol: f.sym ? "$" + premium.sanitizeVar(f.sym) : "not set",
     address: premium.sanitizeVar(f.address),
     logo: f.logoFileId || f.logoUrl ? "added ✓" : "not set",
+    bonding: bondingLine(f),
     overview: f.overview
       ? premium.sanitizeVar(Array.from(f.overview).length > 160 ? cpSlice(f.overview, 157).trimEnd() + "…" : f.overview)
       : "not set — a short intro is auto-written on the channel post",
@@ -358,4 +392,5 @@ module.exports = {
   discard,
   handleText,
   handlePhoto,
+  _test: { bondingLine, emptyForm },
 };

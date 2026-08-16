@@ -16,6 +16,7 @@ const core = require('./core');
 const goplus = require('./goplus');
 const safety = require('./safety');   // chain-aware token safety (GoPlus / RugCheck)
 const poolstrade = require('./poolstrade');   // pools.trade launchpad (Robinhood Chain)
+const launchpads = require('./launchpads');   // pre-migration pads (pump.fun, bonk.fun, four.meme, Virtuals…)
 
 const SITE = (process.env.SITE || 'https://robinfun.io').replace(/\/+$/, '');
 const ROUTER_FACTORY_ABI = ['function factory() view returns (address)'];
@@ -193,6 +194,18 @@ async function socials(ca, chainKey) {
         for (const p of pairs) { v = _pickSocials(p.info); if (v) break; }
       }
     }
+    // The pre-migration pads, LAST. A token still on a bonding curve has no
+    // pool for DexScreener to hang an `info` block on, so the socials the
+    // project set at mint were unreachable for exactly as long as they were the
+    // only ones that existed.
+    //
+    // Last rather than first, deliberately: this runs behind the live monitor's
+    // render, and asking every pad on a chain before the one index that usually
+    // has the answer would add a round trip to the common case to serve the
+    // rare one. When DexScreener knows the token, the pads are never asked.
+    if (!v && launchpads.covers(chainKey)) {
+      v = launchpads.socialsOf(await launchpads.record(chainKey, ca).catch(() => null));
+    }
   } catch (_) { v = null; }   // a lookup that failed is a miss, not an error the card should show
   if (_socialCache.size >= SOCIAL_CACHE_MAX) _socialCache.delete(_socialCache.keys().next().value);
   _socialCache.set(key, { v, at: Date.now() });
@@ -210,7 +223,31 @@ async function enrich(ca, chainKey) {
   // (Token safety on Solana would come from a RugCheck integration; not wired yet.)
   if (core.chains.isSvm(chainKey)) {
     info.liquidityNative = (snap.liquiditySol != null) ? snap.liquiditySol : null;
-    info.api = { name: snap.name, symbol: snap.sym, volume: { h24Usd: snap.volH24Usd != null ? snap.volH24Usd : null, totalUsd: null }, marketCapUsd: snap.mcapUsd || null };
+    // The launchpad leg, which Solana never had. Everything a curve token's
+    // card was missing lives here and nowhere else: the project's socials, its
+    // launch time, its holder count, the pad it came from. The lookup is the
+    // same one tokenSnapshot just made and the registry caches it, so this is
+    // ordinarily a cache hit rather than a second round trip.
+    const rec = launchpads.covers(chainKey) ? await launchpads.record(chainKey, ca).catch(() => null) : null;
+    const api = launchpads.toApi(rec) || {};
+    // THE SNAPSHOT WINS ON THE NUMBERS, the launchpad fills what it cannot
+    // know. Market cap and volume out of an indexed pool are live and
+    // pool-derived; a launchpad's copy of them can lag by minutes. For a token
+    // with no pool the snapshot's numbers came from this same record anyway, so
+    // preferring it costs nothing there.
+    info.api = {
+      ...api,
+      name: snap.name || api.name || null,
+      symbol: snap.sym || api.symbol || null,
+      marketCapUsd: snap.mcapUsd || api.marketCapUsd || null,
+      volume: {
+        h24Usd: snap.volH24Usd != null ? snap.volH24Usd : ((api.volume && api.volume.h24Usd) != null ? api.volume.h24Usd : null),
+        totalUsd: (api.volume && api.volume.totalUsd) || null,
+      },
+    };
+    // "🚀 Raised 30 / 85 SOL · 35% to graduation" — the curve row the card has
+    // always been able to render and has never had the numbers for on Solana.
+    if (snap.raised != null) { info.raised = snap.raised; info.target = snap.target; }
     // RugCheck safety (best-effort, bounded) — mint/freeze authority, LP lock, holders.
     info.security = await withTimeout(safety.tokenSecurity(chainKey, ca).catch(() => null), Math.max(3000, Number(process.env.SCAN_TIMEOUT_MS || 9000)));
     return info;
