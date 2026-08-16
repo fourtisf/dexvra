@@ -450,6 +450,51 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
+## "Entry" was the price on the card, not the price anyone paid
+
+A live buy, 2026-08-16: `Spent 0.099 SOL ($7.46)` · `Got 129.16K ($6.77)` ·
+`Entry $0.0000524`, and the Monitor that opens straight after it read
+`Price $0.0000523 · P/L −9.48%` on a token that had not moved. Reported as
+*"ini baru beli lgsung minus 10%"*.
+
+**Every number was individually correct.** 0.099 SOL bought a bag worth 0.0896
+SOL at mid; the whole −9.48% was the cost of opening the position. What was
+wrong is that the receipt printed the *card* price under the label **Entry**.
+The fill was 0.099 ÷ 129,160 = $0.0000578, 10.4% higher — so the two messages
+the bot sends back to back asserted "you entered at 0.0000524" and "price is
+0.0000523, you are −9.48%", which cannot both hold. From inside Telegram that is
+a bot that cannot count, not a trade that cost 10% to open.
+
+- **`receipt.fillStats()` is the single owner** of realised-vs-shown. The
+  multi-wallet path had divided `totSpent / totTok` since the per-wallet
+  rewrite; the SINGLE-wallet path — much the commonest — never did, so the shape
+  most users see was the one shape that hid the gap. Both call it now and a test
+  asserts no path re-derives it.
+- **`offBy` is computed in NATIVE units** and is dimensionless, so the warning
+  survives a dead USD feed. `realPx`/`refPx` are `null`, never `0`, without a
+  rate — a confident $0 beside a real trade is worse than a blank.
+- **"10.4% above" and "opens at −9.4%" are DIFFERENT numbers** (`1−1/offBy`, not
+  `offBy−1`). Printing one as the other is the same contradiction one level down.
+- **The bot's cut is on the receipt now.** It is carved out *before* the swap, so
+  a 0.1 SOL action reached the pool as 0.099 and every screen showed the 0.099 —
+  real money leaving a wallet with nothing anywhere to account for it.
+- **The Monitor prints the entry beside the price.** `cost / pricedTokens`, the
+  same two figures the P/L line is already built from, so its percentage is
+  checkable on the card that states it. Costed tokens only — dividing a basis by
+  a bag that includes airdropped tokens invents an entry nobody paid.
+- **Jupiter returns a price impact on every quote** and nothing read it. It is a
+  FRACTION there and a PERCENT on `res.impactPct`; the conversion lives in
+  `core.js` once. It is what separates "the pool is thin" from "our price feed
+  disagrees with the router" — two problems with different answers that used to
+  get one shrug. `shortfall` (quote promised vs wallet received) was likewise
+  `console.warn`'d where no user could see it.
+
+```bash
+cd tradebot && node --test entryPrice.test.js   # 13 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ## One wallet, one receipt
 
 A multi-wallet trade used to produce a SINGLE message, built only after

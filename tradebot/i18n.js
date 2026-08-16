@@ -223,7 +223,37 @@ const S = {
   'buy.receipt.title': { en: '✅ <b>Bought ${sym}</b>', id: '✅ <b>Berhasil beli ${sym}</b>' },
   'buy.receipt.spent': { en: 'Spent: <b>{amt} {native}</b> ({usd})', id: 'Terpakai: <b>{amt} {native}</b> ({usd})' },
   'buy.receipt.got': { en: 'Got: <b>{amt} ${sym}</b> ({usd})', id: 'Dapat: <b>{amt} ${sym}</b> ({usd})' },
+  // "Entry" is the price the TRADE filled at — spent ÷ received — and it used to
+  // be the price on the CARD, which nobody paid. See receipt.js `fillStats`: the
+  // Monitor that opens straight after this receipt computes its P/L against the
+  // real basis, so a card-price "entry" put the two messages in open
+  // contradiction on every buy that cost more than mid.
   'buy.receipt.entry': { en: 'Entry: <b>${px}</b>', id: 'Harga masuk: <b>${px}</b>' },
+  // The bot's cut is carved out BEFORE the swap, so a 0.1 SOL buy reaches the
+  // pool as 0.099 and every screen showed the 0.099. The missing 1% was real
+  // money leaving a wallet with nothing on any card to account for it.
+  'buy.receipt.fee': { en: 'Bot fee: <b>{amt} {native}</b> ({pct}%)', id: 'Biaya bot: <b>{amt} {native}</b> ({pct}%)' },
+  // The line that turns "the bot instantly lost me 10%" into a cost the user can
+  // see and decide about. {down} is NOT {pct} — a fill 10.4% over mid opens at
+  // −9.4% — and stating one as the other is the same contradiction one level down.
+  'buy.receipt.vs_card': {
+    en: '<i>Card price was ${shown} — your fill is {pct}% above it, so the position starts around −{down}% until the price moves.</i>',
+    id: '<i>Harga di kartu ${shown} — fill kamu {pct}% di atasnya, jadi posisi mulai sekitar −{down}% sampai harganya bergerak.</i>',
+  },
+  // Jupiter returns a price impact on every quote and nothing ever read it. When
+  // the fill came in above the card, this is the difference between "the pool is
+  // thin" and "our price feed disagrees with the router" — two problems with
+  // different answers that used to get one shrug.
+  'buy.receipt.impact': {
+    en: '⚠️ Thin pool — this size moved the price ~<b>{pct}%</b>.',
+    id: '⚠️ Pool tipis — ukuran ini menggeser harga ~<b>{pct}%</b>.',
+  },
+  // Jupiter promised, the wallet received less. The only signal a Token-2022
+  // transfer fee ever gives, and it was console.warn'd where no user could see it.
+  'buy.receipt.shortfall': {
+    en: '⚠️ Delivered <b>{pct}%</b> under the quote — this token may charge a transfer fee.',
+    id: '⚠️ Diterima <b>{pct}%</b> di bawah quote — token ini mungkin memungut transfer fee.',
+  },
   // The multi-wallet receipt's own entry line. Deliberately worded as "entered
   // at", never just "market cap": the line under it IS a market cap — the
   // current one — and two unlabelled caps on one card is how a user concludes

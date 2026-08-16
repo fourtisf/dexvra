@@ -2220,7 +2220,14 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     // direction that flatters the trade. `shortfall` is the quote-vs-delivered
     // gap; a receipt that can name it is the only warning a transfer-fee token
     // ever gives.
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), grossEth: solana.lamportsToSol(gross), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), shortfall, dec: meta.decimals, sym: meta.sym };
+    // `impactPct` is a PERCENT, and Jupiter's `priceImpactPct` is a FRACTION —
+    // "0.0042" means 0.42%. The name is the trap, so the conversion lives here,
+    // once, rather than at each screen that prints it. It was parsed by solana.js
+    // and read by nothing: the one number that says whether a fill above the
+    // displayed price was the pool being thin or our price feed disagreeing with
+    // the router. Those need different answers and used to get one shrug.
+    const impactPct = quote && Number.isFinite(Number(quote.priceImpactPct)) ? Math.abs(Number(quote.priceImpactPct)) * 100 : 0;
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), grossEth: solana.lamportsToSol(gross), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), shortfall, impactPct, dec: meta.decimals, sym: meta.sym };
     _afterTrade(u, 'buy', res).catch(() => {});
     return res;
   });

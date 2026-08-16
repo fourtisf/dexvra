@@ -97,13 +97,12 @@ test('the guard does not swallow the errors that were already classified', () =>
 test('the receipt divides the two numbers it was already printing', () => {
   // totSpent and totTok have always been on the receipt, one line apart. Nothing
   // ever divided them, so a 3x fill printed the whole proof and no conclusion.
-  assert.match(TG, /const realPx = \(okN > 0 && totTok > 0 && totSpent > 0\) \? \(totSpent \/ totTok\) \* mUsd : 0;/);
-  assert.match(TG, /'buy\.receipt\.realised', \{ px: Number\(realPx\.toPrecision\(3\)\) \}/);
+  assert.match(TG, /receipt\.fillStats\(\{ spent: totSpent, tokens: totTok, refPxNative: entryM && entryM\.priceEth, rate: mUsd \}\)/);
+  assert.match(TG, /'buy\.receipt\.realised', \{ px: fstatM\.realPx \}/);
 });
 
 test('a fill far from the displayed price says so, and a normal one stays quiet', () => {
-  assert.match(TG, /const offBy = \(realPx > 0 && refPx > 0\) \? realPx \/ refPx : 0;/);
-  assert.match(TG, /offBy > 1\.15 \? ' ' \+ T\(chatId, 'buy\.receipt\.worse_than_shown'/);
+  assert.match(TG, /fstatM\.offBy > 1\.15 \? ' ' \+ T\(chatId, 'buy\.receipt\.worse_than_shown'/);
   // The warning has to stay rare or it stops being read: a few percent of
   // ordinary impact must not trip it.
   assert.ok(1.02 <= 1.15 && 1.10 <= 1.15, 'ordinary impact would trip the warning');

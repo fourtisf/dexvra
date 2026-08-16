@@ -57,7 +57,11 @@ test("the receipt answers all three questions at once", () => {
   // Spent how much · got how many · at what entry and market cap.
   assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.spent', \{ amt: spent\.toFixed\(6\), native: r\.native, usd: usd2\(spent\) \}\)/);
   assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.got', \{ amt: fmt\(got\), sym: esc\(r\.sym\), usd: holdUsd \}\)/);
-  assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.entry', \{ px: pxUsd\.toPrecision\(3\) \}\)/);
+  // "Entry" is the price the TRADE filled at — spent ÷ received. This assertion
+  // used to pin `pxUsd`, the price on the CARD, and so encoded the defect: a
+  // receipt claiming entry $0.0000524 above a Monitor reading "Price $0.0000523
+  // · P/L −9.48%". See entryPrice.test.js.
+  assert.match(SINGLE, /T\(chatId, 'buy\.receipt\.entry', \{ px: fstat\.realPx \}\)/);
   // …and in EVERY language. A translation that quietly drops one of the numbers
   // is the same bug as a receipt that never printed it.
   for (const lang of i18n.LANGS) {
@@ -69,9 +73,10 @@ test("the receipt answers all three questions at once", () => {
   }
 });
 
-test("one snapshot serves both, and it is the honest entry", () => {
-  // It used to fetch a SECOND time after the fill — slower, and a price taken
-  // seconds after the trade is not the price you entered at.
+test("one snapshot serves both, and it is the honest reference", () => {
+  // It used to fetch a SECOND time after the fill — slower, and a market read
+  // taken seconds after the trade is not the market the trade priced against.
+  // It is the REFERENCE the fill is measured against, never the entry itself.
   assert.match(SINGLE, /const snap = await entryP;/);
   assert.strictEqual(
     (SINGLE.match(/core\.tokenSnapshot\(/g) || []).length,

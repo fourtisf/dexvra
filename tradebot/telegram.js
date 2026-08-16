@@ -2008,15 +2008,50 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       let statLine = '';
       try {
         // The snapshot started with the trade — reuse it rather than fetching a
-        // second time. It is also the more honest "entry": taken as the buy went
-        // out, not seconds after it landed.
+        // second time. It is the market REFERENCE for this fill: taken as the buy
+        // went out, not seconds after it landed.
         const snap = await entryP;
-        if (snap && snap.priceEth > 0) {
-          if (usdRate > 0 && got > 0) holdUsd = `$${(got * snap.priceEth * usdRate).toFixed(2)}`;
-          const pxUsd = snap.priceEth * usdRate;
-          const mcUsd = snap.mcapUsd || ((snap.mcapEth || 0) * usdRate);
-          if (pxUsd > 0) statLine = '\n' + T(chatId, 'buy.receipt.entry', { px: pxUsd.toPrecision(3) }) + (mcUsd > 0 ? ` · MC <b>$${fmt(mcUsd)}</b>` : '');
+        // ENTRY IS WHAT YOU PAID. This line printed `snap.priceEth` — the price on
+        // the card — under the label "Entry", and then startMonitor opened a card
+        // whose P/L is measured against the real basis. A buy that filled 10.4%
+        // above mid therefore produced a receipt claiming entry $0.0000524 and,
+        // one message later, "Price $0.0000523 · P/L −9.48%". Both numbers true,
+        // the pair of them impossible. See receipt.js `fillStats`.
+        //
+        // The multi-wallet receipt has divided these two figures since the
+        // per-wallet rewrite; the SINGLE-wallet path — much the commonest — never
+        // did, so the one shape most users see was the one that hid it.
+        const fstat = receipt.fillStats({ spent, tokens: got, refPxNative: snap && snap.priceEth, rate: usdRate });
+        if (snap && snap.priceEth > 0 && usdRate > 0 && got > 0) holdUsd = `$${(got * snap.priceEth * usdRate).toFixed(2)}`;
+        const mcUsd = snap ? (snap.mcapUsd || ((snap.mcapEth || 0) * usdRate)) : 0;
+        const mcTail = mcUsd > 0 ? ` · MC <b>$${fmt(mcUsd)}</b>` : '';
+        if (fstat.realPx != null) statLine = '\n' + T(chatId, 'buy.receipt.entry', { px: fstat.realPx }) + mcTail;
+        else if (mcUsd > 0) statLine = '\n' + T(chatId, 'buy.receipt.entry_mc', { mc: fmt(mcUsd) });
+        // The bot's own cut, named. It is taken before the swap, so "Spent
+        // 0.099000" for a 0.1 SOL action is the smaller of two true numbers and
+        // the difference had nowhere to appear. Only when it is actually charged.
+        if (Number(r.feeEth) > 0) {
+          statLine += '\n' + T(chatId, 'buy.receipt.fee', {
+            amt: Number(r.feeEth).toFixed(6), native: r.native, pct: (core.CFG.feeBps / 100).toFixed(2).replace(/\.?0+$/, ''),
+          });
         }
+        // Only when the gap is real. Below ~2% it is ordinary pool fee and noise,
+        // and a warning on every receipt is a warning nobody reads — the same rule
+        // the 1.15x escalation already follows.
+        if (fstat.offBy > 1.02 && fstat.refPx != null) {
+          statLine += '\n' + T(chatId, 'buy.receipt.vs_card', {
+            shown: fstat.refPx, pct: fstat.overPct.toFixed(1), down: fstat.downPct.toFixed(1),
+          }) + (fstat.offBy > 1.15 ? ' ' + T(chatId, 'buy.receipt.worse_than_shown', { times: fstat.offBy.toFixed(1) }) : '');
+        }
+        // WHY the fill cost what it did, when the router told us. Jupiter returns
+        // a price impact on every quote and nothing had ever read it, so "thin
+        // pool" and "our price feed disagrees with the router" — two problems with
+        // different answers — arrived as the same shrug. impactNote() covers the
+        // EVM side and cannot see Solana at all.
+        if (Number(r.impactPct) >= 1) statLine += '\n' + T(chatId, 'buy.receipt.impact', { pct: Number(r.impactPct).toFixed(1) });
+        // Quote promised, wallet received less: the only signal a Token-2022
+        // transfer fee ever gives, and it was console.warn'd where no user is.
+        if (Number(r.shortfall) > 0.01) statLine += '\n' + T(chatId, 'buy.receipt.shortfall', { pct: (Number(r.shortfall) * 100).toFixed(1) });
       } catch (_) {}
       const exp2 = core.chainOf(r.chain);
       const venue = r.venue === 'curve' ? 'Launchpad' : (r.venue === 'dex·v3' ? 'DEX (V3)' : 'DEX');
@@ -2168,15 +2203,24 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // It is shown against the entry MC we read pre-fill, so a fill far from
       // the displayed market is visible AS a gap rather than as a number the
       // reader has to compare by hand.
-      const realPx = (okN > 0 && totTok > 0 && totSpent > 0) ? (totSpent / totTok) * mUsd : 0;
-      const refPx = (entryM && entryM.priceEth > 0) ? entryM.priceEth * eRateM : 0;
-      const offBy = (realPx > 0 && refPx > 0) ? realPx / refPx : 0;
-      const realLine = realPx > 0
-        ? '\n' + T(chatId, 'buy.receipt.realised', { px: Number(realPx.toPrecision(3)) })
+      //
+      // ONE OWNER of "how much worse than the card did this fill". This path and
+      // the single-wallet receipt each grew their own arithmetic for it, and the
+      // single-wallet one never grew it at all — which is exactly how the common
+      // case ended up being the shape that hid the gap. receipt.fillStats is
+      // pure and asserted directly; neither path may re-derive it.
+      const fstatM = okN > 0
+        ? receipt.fillStats({ spent: totSpent, tokens: totTok, refPxNative: entryM && entryM.priceEth, rate: mUsd })
+        : receipt.fillStats({});
+      const realLine = fstatM.realPx != null
+        ? '\n' + T(chatId, 'buy.receipt.realised', { px: fstatM.realPx })
           // Only when it is genuinely off. A fill within a few percent of the
           // displayed price is the normal case and needs no commentary; the
           // warning has to stay rare or it stops being read.
-          + (offBy > 1.15 ? ' ' + T(chatId, 'buy.receipt.worse_than_shown', { times: offBy.toFixed(1) }) : '')
+          + (fstatM.offBy > 1.02 && fstatM.refPx != null
+            ? '\n' + T(chatId, 'buy.receipt.vs_card', { shown: fstatM.refPx, pct: fstatM.overPct.toFixed(1), down: fstatM.downPct.toFixed(1) })
+              + (fstatM.offBy > 1.15 ? ' ' + T(chatId, 'buy.receipt.worse_than_shown', { times: fstatM.offBy.toFixed(1) }) : '')
+            : '')
         : '';
       // Every wallet failing the SAME way is ONE fact, not five. Five copies of
       // a raw engine string ("buy failed on Solana: fetch failed") is both the
@@ -3458,7 +3502,20 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
       : (snap.priceEth > 0 ? snap.priceEth.toPrecision(3) + ' ' + nat : '—');
     const mcStr = mcUsd > 0 ? '$' + fmt(mcUsd)
       : (snap.mcapEth > 0 ? fmt(snap.mcapEth) + ' ' + nat : '—');
-    L.push(`\n📈 <b>Price:</b> ${pxStr}  ·  <b>Market cap:</b> ${mcStr}`);
+    // THE CARD SHOWS WHAT YOU PAID, next to what it is worth. Without it the P/L
+    // percentage is a claim the reader cannot check: a card printing "Price
+    // $0.0000523 · P/L −9.48%" on a token that had not moved since the buy reads
+    // as arithmetic gone wrong, when it is the round-trip cost of the fill.
+    //
+    // Costs NOTHING — `cost` and `pricedTokens` are the same two figures the P/L
+    // line is already built from, one line up. Deliberately the COSTED tokens
+    // only, for the reason pricedTokens exists at all: dividing a basis by a bag
+    // that includes airdropped tokens invents an entry price nobody paid.
+    // Dropped when the position is closed; an entry price with no position is a
+    // number about nothing.
+    const entryUsd = (!closed && cost > 0 && pricedTokens > 0 && usdRate > 0) ? (cost / pricedTokens) * usdRate : 0;
+    const entryStr = entryUsd > 0 ? `<b>Entry:</b> $${entryUsd.toPrecision(3)}  ·  ` : '';
+    L.push(`\n📈 ${entryStr}<b>Price:</b> ${pxStr}  ·  <b>Market cap:</b> ${mcStr}`);
   }
   // The token's own identity. The card named a position and never once said WHICH
   // token — no contract, no links — so the only way to check what you were

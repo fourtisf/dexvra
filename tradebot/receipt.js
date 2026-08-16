@@ -102,6 +102,49 @@ function unitUsd(amount, tokens, rate) {
   return Number.isFinite(px) && px > 0 ? Number(px.toPrecision(3)) : null;
 }
 
+/**
+ * THE FILL, MEASURED AGAINST THE CARD.
+ *
+ * A live Solana buy, 2026-08-16: spent 0.099 SOL, got 129.16K tokens, and the
+ * receipt printed "Entry: $0.0000524" — the price on the CARD, which is not a
+ * price anyone paid. The fill was $0.0000578, 10.4% above it. Seconds later the
+ * Monitor read "−9.48%" on a token whose price had not moved, and from Telegram
+ * that is indistinguishable from a bot that cannot count: one card claims an
+ * entry of 0.0000524, the next shows a price of 0.0000523 and a double-digit
+ * loss.
+ *
+ * Neither number was wrong on its own. The receipt was answering a different
+ * question from the one its label asked, and the round-trip cost of the trade —
+ * pool fee, price impact, the gap between DexScreener's single pair and
+ * Jupiter's route across every AMM — had nowhere on the receipt to appear, so
+ * it appeared on the Monitor instead, as a loss the user had not taken.
+ *
+ * `offBy` is computed in NATIVE units and is dimensionless, so the warning it
+ * drives survives a dead USD feed — the one line on the receipt that must not
+ * depend on Coinbase being up. `realPx`/`refPx` are null, never 0, when there is
+ * no rate: a confident $0 beside a real trade is worse than a blank.
+ */
+function fillStats(d) {
+  const spent = Number(d && d.spent), tokens = Number(d && d.tokens);
+  const rate = Number(d && d.rate) || 0;
+  const ref = Number(d && d.refPxNative) || 0;
+  const paidNative = spent > 0 && tokens > 0 ? spent / tokens : 0;
+  const offBy = paidNative > 0 && ref > 0 ? paidNative / ref : 0;
+  const px = (v) => (v > 0 && rate > 0 ? Number((v * rate).toPrecision(3)) : null);
+  return {
+    paidNative,
+    realPx: px(paidNative),
+    refPx: px(ref),
+    offBy,
+    // How far ABOVE the card the fill sat, and how far BELOW the card the
+    // position therefore opens. They are not the same number — a fill 10.4%
+    // over mid shows as −9.4%, not −10.4% — and printing one as the other is
+    // how a receipt gets caught contradicting the Monitor it just opened.
+    overPct: offBy > 0 ? (offBy - 1) * 100 : 0,
+    downPct: offBy > 0 ? (1 - 1 / offBy) * 100 : 0,
+  };
+}
+
 /** A market cap, compressed — this one IS a headline figure, so "27.20M" is
  *  the readable form. */
 function mcap(n) {
@@ -219,4 +262,4 @@ function walletReceipt(t, d) {
   return L.join('\n');
 }
 
-module.exports = { walletReceipt, qty, nat, usdTail, signedUsd, unitUsd, mcap, header };
+module.exports = { walletReceipt, qty, nat, usdTail, signedUsd, unitUsd, fillStats, mcap, header };
