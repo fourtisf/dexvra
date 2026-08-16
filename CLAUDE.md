@@ -450,7 +450,7 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
-## A rug alert on a token that had not rugged
+## The "Possible rug / dump" alert is REMOVED — do not add it back
 
 Five wallets bought $Ge87…pump — 0.01312 SOL each, entry $0.00724, MC $7.25M —
 and one minute later the bot said this **four times**:
@@ -461,25 +461,34 @@ Nothing had dumped. `0.0131` is one wallet's brand-new bag at the price it was
 just bought at; `0.1004` was a holding in the *same* wallet that had already
 been sold. **A position record survives being sold to zero** — it is what carries
 the lifetime `ethIn`/`ethOut` — and `peakValueEth` rode along with it. With
-`POS_RUG_DROP` at 0.15, `0.0131 ≤ 0.1004 × 0.15` exactly, so it fires on the
-first tick after the buy, every time, for anyone buying back into a token they
-once held bigger.
+`POS_RUG_DROP` at 0.15, `0.0131 ≤ 0.1004 × 0.15` exactly: arithmetically
+certain, not unlucky, for anyone buying back into a token they once held bigger.
 
-- **The reset existed, in `buy()` only.** `_buySol` never had it, so the bug was
-  **Solana-only** — which is where the memecoins are. `_resetRiskIfFresh(p)` is
-  one function now, called by both, and a test names both call sites.
+**A PEAK IS NOT A FACT ABOUT THE TOKEN** — it is the highest number this bot
+happened to observe. That made the alert wrong in both directions: it fired on a
+token that had merely retraced from a spike, it fired on a fresh bag whenever a
+peak outlived a previous holding, and it stayed silent on a token that rugged
+before it ever had a peak worth measuring. A warning that cries wolf trains the
+reader to swipe the next one away, so the owner's call was to delete it rather
+than tune it. `peakValueEth` and `POS_RUG_DROP` went with it; a value written to
+the store every cycle for nobody is disk churn plus a field the next person has
+to work out is dead.
+
+- **🛡 Auto-protect is untouched, and is the guard that matters.** It *sells*, it
+  measures against **your entry** and never against a high-water mark, and its DM
+  is never muted by the 🔔 toggle. `RUG_MIN_PEAK` survives the deletion because
+  auto-protect uses it as a dust floor — the env var keeps the misleading name
+  because an operator may already have set it.
+- **`_resetRiskIfFresh(p)` survives for the auto-protect cooldown.** A stale
+  `protectAt` *suppresses* a real rescue on the new position — the same defect as
+  the false alarm, with the loss reversed and far more expensive. It existed in
+  `buy()` only; `_buySol` never had it, which is why the alarm was Solana-only.
+  One function now, called by both, and a test names both call sites.
 - **It must run BEFORE `p.tokens` is written**, or it inspects the bag it was
-  meant to test and never fires.
-- **Adding to a LIVE bag keeps its history.** A position that really did peak and
-  is on its way down is exactly what the alert is for; averaging down must not
-  silence it.
-- **`protectAt` is cleared too.** A stale auto-protect cooldown *suppresses* a
-  real rescue on the new position — the same defect with the loss reversed.
-- **One token, one alert.** Positions are per WALLET, so a five-wallet bag sent
-  five identical warnings, each quoting a fifth of the holding as if it were the
-  holding. The totals are summed from memory at the price already read, every
-  wallet is marked seen in the same pass (skipping once lets the next wallet in
-  the same cycle re-send it), and the line says `across N wallets`.
+  meant to test. Adding to a LIVE bag keeps its history.
+- **A deleted feature leaves a note where it was.** With no trace it reads as an
+  oversight, and the next person to notice positions have no dump warning simply
+  adds one back. `stalePeak.test.js` asserts both the removal and the note.
 
 ## A buy surfaces the monitor — reversed on purpose
 
@@ -495,7 +504,7 @@ pin is silent, so the churn this guarded against is the same frequency as the
 receipt itself.
 
 ```bash
-cd tradebot && node --test stalePeak.test.js   # 6 tests, no network
+cd tradebot && node --test stalePeak.test.js   # 9 tests, no network
 ```
 
 **Config a fix depends on:** nothing.

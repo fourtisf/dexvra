@@ -1,6 +1,6 @@
 'use strict';
 /*
- * stalePeak.test.js — a rug alert on a token that had not rugged.
+ * stalePeak.test.js — the "Possible rug / dump" alert, and why it is gone.
  *
  * A live report, 2026-08-16. Five wallets bought $Ge87…pump at 22:41 — 0.01312
  * SOL each, entry $0.00724, MC $7.25M. One minute later, at 22:42, the bot sent
@@ -10,23 +10,25 @@
  *     Value fell to ≈ 0.0131 SOL from a peak of ≈ 0.1004. Check the chart /
  *     your safety.
  *
- * NOTHING HAD DUMPED. 0.0131 is one wallet's brand-new bag, priced at the price
+ * Nothing had dumped. 0.0131 is one wallet's brand-new bag, priced at the price
  * it was just bought at. 0.1004 was a holding in the SAME wallet that had
- * already been sold — the position record survives being sold to zero, because
- * it is what carries the lifetime ethIn/ethOut, and `peakValueEth` rode along
- * with it.
+ * already been sold — a position record survives being sold to zero, because it
+ * is what carries the lifetime ethIn/ethOut, and the peak rode along with it.
+ * With POS_RUG_DROP at 0.15 the alert was arithmetically certain, not unlucky.
  *
- * The threshold makes it inevitable rather than unlucky: POS_RUG_DROP is 0.15,
- * and 0.0131 ≤ 0.1004 × 0.15 = 0.01506. It fires on the first tick after the
- * buy, every time, for anyone buying back into a token they once held bigger.
+ * THE ALERT IS REMOVED, on the owner's call, and this file now guards the
+ * removal instead of the fix. The reasoning is worth keeping: a PEAK is not a
+ * fact about the token, it is the highest number this bot happened to observe.
+ * That made the alert wrong in both directions — it fired on a token that had
+ * merely retraced from a spike, it fired on a fresh bag whenever a peak outlived
+ * a previous holding, and it stayed silent on a token that rugged before it ever
+ * had a peak worth measuring. A warning that cries wolf trains the reader to
+ * swipe the next one away.
  *
- * THE RESET EXISTED — in `_buyEvm` only. `_buySol` never had it, so the bug was
- * Solana-only, which is where the memecoins are. It is one function now, called
- * from both, because the next chain would have made it three.
- *
- * The second defect is in the same screenshot: FOUR copies. A position record is
- * per wallet, so a five-wallet bag sent five identical warnings, each quoting a
- * fifth of the holding as if it were the holding.
+ * WHAT MUST SURVIVE, and the real point of this file: 🛡 Auto-protect. It is the
+ * guard that actually saves money — it SELLS — it measures against YOUR ENTRY
+ * rather than a high-water mark, and it must not be collateral damage in the
+ * deletion of a message.
  *
  * No network, no RPC.
  */
@@ -37,51 +39,105 @@ const path = require('node:path');
 
 const CORE = fs.readFileSync(path.join(__dirname, 'core.js'), 'utf8');
 const WATCH = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+/**
+ * Comment lines stripped.
+ *
+ * "It is gone" is a claim about CODE, and the note explaining the removal quotes
+ * the very phrase being searched for — so asserting over the raw source failed
+ * on the documentation of the fix. A test that breaks when you explain yourself
+ * is a test that gets deleted rather than read.
+ */
+const code = (s) => s.replace(/^\s*\/\/.*$/gm, '').replace(/^\s*\*.*$/gm, '');
 
-// ── The arithmetic that made it certain ──────────────────────────────────────
+// ── Why it had to go ─────────────────────────────────────────────────────────
 
 test('the reported alert could not have failed to fire', () => {
-  const RUG_DROP = 0.15;          // POS_RUG_DROP default
-  const RUG_MIN_PEAK = 0.02;      // a "meaningful" peak; the stale one clears it
+  const RUG_DROP = 0.15;          // POS_RUG_DROP, as it then defaulted
+  const RUG_MIN_PEAK = 0.01;      // the stale peak cleared this by 10x
   const value = 0.0131, peak = 0.1004;
   assert.ok(peak >= RUG_MIN_PEAK, 'the stale peak was too small to arm the alert');
   assert.ok(value <= peak * RUG_DROP, `${value} > ${(peak * RUG_DROP).toFixed(5)} — the numbers do not reproduce`);
-  // And with the peak reset, the same buy is nowhere near it: a fresh bag's peak
-  // IS its own value, so the ratio is 1.0.
-  assert.ok(!(value <= value * RUG_DROP), 'a freshly reset peak still trips the alert');
 });
 
-// ── The reset ────────────────────────────────────────────────────────────────
+// ── It is gone, and stays gone ───────────────────────────────────────────────
 
-test('one owner of the reset, called by every buy path', () => {
-  assert.match(CORE, /function _resetRiskIfFresh\(p\) \{/);
-  const calls = CORE.match(/_resetRiskIfFresh\(p\);/g) || [];
-  assert.strictEqual(calls.length, 2, `${calls.length} call site(s) — a buy path is not resetting the peak`);
-  // Specifically: BOTH of them, named, so a future refactor cannot quietly drop
-  // the Solana one again — which is the exact way this bug existed.
-  const sol = CORE.slice(CORE.indexOf('async function _buySol('), CORE.indexOf('async function _sellSol('));
-  const evm = CORE.slice(CORE.indexOf('async function buy(chatId,'), CORE.indexOf('async function sell(chatId,'));
-  assert.match(sol, /_resetRiskIfFresh\(p\);/, 'the Solana buy does not reset the peak — this is the reported bug');
-  assert.match(evm, /_resetRiskIfFresh\(p\);/, 'the EVM buy stopped resetting the peak');
+test('nothing sends a rug/dump message any more', () => {
+  assert.ok(!/Possible rug \/ dump/.test(code(WATCH)), 'the alert is back');
+  assert.ok(!/notified\.rug = true/.test(code(WATCH)), 'the alert is back in another wording');
+  // Grepping the whole bot, not just this file: the alert must not reappear
+  // somewhere else wearing a different name.
+  for (const f of ['telegram.js', 'core.js']) {
+    assert.ok(!/Possible rug/.test(code(fs.readFileSync(path.join(__dirname, f), 'utf8'))), `${f} sends it now`);
+  }
 });
 
-test('it resets only a bag that is genuinely fresh', () => {
-  const fn = CORE.slice(CORE.indexOf('function _resetRiskIfFresh(p)'), CORE.indexOf('function _resetRiskIfFresh(p)') + 900);
-  // Adding to a LIVE position must keep its history: a bag that really did peak
-  // and is on its way down is exactly what the alert is for, and averaging down
-  // into it must not silence the warning.
-  assert.match(fn, /if \(!\(p\.closed \|\| prevHeld <= 0n\)\) return;/);
-  assert.match(fn, /p\.peakValueEth = 0;/);
-  assert.match(fn, /delete p\.notified\.rug;/);
-  // The auto-protect cooldown too. A stale `protectAt` SUPPRESSES a real rescue
-  // on the new position — the same defect with the loss reversed.
+test('the peak is no longer written on every cycle', () => {
+  // Its only reader was the alert. Left in, it is disk churn for nobody plus a
+  // field the next person has to work out is dead.
+  assert.ok(!/p\.peakValueEth = valueEth/.test(WATCH), 'the store is still being written for a value nothing reads');
+  assert.ok(!/RUG_DROP/.test(WATCH), 'the threshold constant outlived the thing it thresholded');
+});
+
+test('the removal says WHY, where the code used to be', () => {
+  // A deleted feature with no trace reads as an oversight, and the next person
+  // to notice positions have no dump warning will simply add one back.
+  const cycle = WATCH.slice(WATCH.indexOf('async function positionsCycle'), WATCH.indexOf('snapOf.report();', WATCH.indexOf('async function positionsCycle')));
+  assert.match(cycle, /"Possible rug \/ dump" ALERT IS GONE/);
+  assert.match(cycle, /Auto-protect above is\s*\n\s*\/\/ the real guard/);
+});
+
+// ── What must NOT have gone with it ──────────────────────────────────────────
+
+const PROTECT = WATCH.slice(WATCH.indexOf('if (wantProtect) {'), WATCH.indexOf('"Possible rug / dump" ALERT IS GONE'));
+
+test('auto-protect survived intact — it is the guard that actually sells', () => {
+  assert.ok(PROTECT.length > 400, 'the auto-protect block moved or went with the alert');
+  // Measured against COST, never a peak: a winner that merely retraces from its
+  // high must never be force-sold.
+  assert.match(PROTECT, /const lossFrac = cost > 0 \? 1 - \(valueEth \/ cost\) : 0;/);
+  assert.match(PROTECT, /lossFrac >= AUTO_PROTECT_DROP/);
+  assert.ok(!/peakValueEth/.test(PROTECT), 'auto-protect grew a dependency on the peak that was just deleted');
+  // The honeypot leg, and the sell itself.
+  assert.match(PROTECT, /sec\.honeypot === true \|\| Number\(sec\.sellTaxPct\) >= 50/);
+  assert.match(PROTECT, /core\.sell\(u\.chatId, p\.ca, 100, p\.chain, w\.id/);
+  // Its DM is never muted by the 🔔 alerts toggle — the bot sold something.
+  assert.match(PROTECT, /_notify\(u\.chatId, `🛡 <b>Auto-protect sold/);
+});
+
+test('the dust floor auto-protect depends on is still defined', () => {
+  // Shared with the deleted alert, so it was the easiest thing to remove by
+  // accident — and without it the bot force-sells dust positions.
+  assert.match(WATCH, /const RUG_MIN_PEAK = Math\.max\(0, Number\(process\.env\.POS_RUG_MIN_PEAK \|\| 0\.01\)\)/);
+  assert.match(PROTECT, /if \(cost >= RUG_MIN_PEAK\)/);
+});
+
+test('profit milestones survived too', () => {
+  const cycle = WATCH.slice(WATCH.indexOf('async function positionsCycle'));
+  assert.match(cycle, /is up \$\{hi\}×<\/b> on your entry/);
+  assert.match(WATCH, /const POS_MILESTONES = \[2, 5, 10, 25, 50, 100\];/);
+});
+
+// ── The reset that outlived the alert ────────────────────────────────────────
+
+test('a fresh bag still forgets the last one\'s auto-protect cooldown', () => {
+  // THIS is why _resetRiskIfFresh survives the deletion. A stale `protectAt`
+  // SUPPRESSES a real rescue on the new position — the same defect as the false
+  // alarm, with the loss reversed and far more expensive.
+  const fn = CORE.slice(CORE.indexOf('function _resetRiskIfFresh(p)'), CORE.indexOf('function _resetRiskIfFresh(p)') + 700);
   assert.match(fn, /delete p\.notified\.protectAt;/);
   assert.match(fn, /delete p\.notified\.protectCheckAt;/);
+  // Adding to a LIVE bag keeps its history: a cooldown exists to stop a retry
+  // loop, and averaging down must not reset it.
+  assert.match(fn, /if \(!\(p\.closed \|\| prevHeld <= 0n\)\) return;/);
+  // Legacy fields cleared, not left as dead weight on records written before
+  // the alert was removed.
+  assert.match(fn, /delete p\.peakValueEth;/);
+  assert.match(fn, /delete p\.notified\.rug;/);
 });
 
-test('the reset runs before anything reads the position', () => {
-  // After `p.tokens = after.toString()` it would see the NEW bag and never fire,
-  // which is the same as not having it.
+test('every buy path calls it — the EVM one did, the Solana one did not', () => {
+  const calls = CORE.match(/_resetRiskIfFresh\(p\);/g) || [];
+  assert.strictEqual(calls.length, 2, `${calls.length} call site(s) — a buy path is not resetting the cooldown`);
   for (const [name, from, to] of [
     ['sol', 'async function _buySol(', 'async function _sellSol('],
     ['evm', 'async function buy(chatId,', 'async function sell(chatId,'],
@@ -89,38 +145,9 @@ test('the reset runs before anything reads the position', () => {
     const body = CORE.slice(CORE.indexOf(from), CORE.indexOf(to));
     const iReset = body.indexOf('_resetRiskIfFresh(p);');
     const iWrite = body.indexOf('p.tokens =');
-    assert.ok(iReset > -1 && iWrite > -1, `${name}: markers missing`);
+    assert.ok(iReset > -1, `${name}: the buy path does not reset — this is how the bug existed`);
+    // After `p.tokens = …` it would inspect the NEW bag and never fire, which is
+    // the same as not being there.
     assert.ok(iReset < iWrite, `${name}: the reset reads the bag it was meant to test`);
   }
-});
-
-// ── One token, one alert ─────────────────────────────────────────────────────
-
-// Anchored FORWARD from the rug comment: `snapOf.report()` appears in an earlier
-// cycle too, and a bare indexOf found that one and sliced backwards to nothing.
-const _RUG0 = WATCH.indexOf('// rug/dump: value fell to');
-const RUG = WATCH.slice(_RUG0, WATCH.indexOf('snapOf.report();', _RUG0));
-
-test('five wallets holding one token send ONE warning', () => {
-  assert.ok(RUG.length > 300, 'the rug block moved — this test is asserting nothing');
-  assert.match(RUG, /for \(const wx of core\.walletList\(u\)\)/);
-  // Marked on EVERY wallet, not just skipped once: left unmarked, the next
-  // wallet in this very cycle trips the same condition and sends it again.
-  assert.match(RUG, /q\.notified\.rug = true;/);
-});
-
-test('the numbers describe the whole holding, not one fifth of it', () => {
-  // Each of the four copies quoted 0.0131 — one wallet's bag — as if it were the
-  // position. The totals cost no extra request: the other bags are in memory and
-  // the price is the snapshot already read.
-  assert.match(RUG, /totVal \+= Number\(ethers\.formatUnits\(hr, q\.dec \|\| 18\)\) \* snap\.priceEth;/);
-  assert.match(RUG, /totPeak \+= Number\(q\.peakValueEth\) \|\| 0;/);
-  assert.match(RUG, /Value fell to ≈ <b>\$\{totVal\.toFixed\(4\)\}/);
-  assert.match(RUG, /from a peak of ≈ \$\{totPeak\.toFixed\(4\)\}/);
-  // A total that came out empty falls back to the position that tripped it —
-  // a warning with a blank in it is worse than a warning about one wallet.
-  assert.match(RUG, /if \(!\(totVal > 0\) \|\| !\(totPeak > 0\)\) \{ totVal = valueEth; totPeak = p\.peakValueEth; nWal = 1; \}/);
-  // And it says how many wallets it is talking about, or the reader cannot tell
-  // this total from a single-wallet one.
-  assert.match(RUG, /across \$\{nWal\} wallets/);
 });

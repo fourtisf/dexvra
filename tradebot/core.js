@@ -2102,32 +2102,33 @@ function posKey(chainKey, ca) { return chainKey + ':' + (isSvm(chainKey) ? Strin
 /**
  * A freshly (re)opened bag forgets the last one's risk history.
  *
- * `peakValueEth` is the high-water mark the rug alert measures against, and it
- * lives on the POSITION record — which survives being sold to zero, because the
- * record is what carries the lifetime ethIn/ethOut. So buying back into a token
- * you once held big compares a small new bag against the old bag's peak, and the
- * alert fires on the very first tick after the buy.
+ * A POSITION RECORD SURVIVES BEING SOLD TO ZERO — it is what carries the
+ * lifetime ethIn/ethOut for the ×-multiple and the stats — so everything hanging
+ * off it survives too, and gets applied to the next bag in the same token as
+ * though it described that one.
  *
- * A live report, 2026-08-16: five wallets bought 0.01312 SOL of $Ge87…pump each,
- * and one minute later every one of them said
+ * That cost a false alarm once already: the "Possible rug / dump" alert compared
+ * a brand-new bag against a peak left behind by a holding that had been sold
+ * (2026-08-16 — "value fell to 0.0131 from a peak of 0.1004", on a token bought
+ * sixty seconds earlier, four times over). That alert has since been removed
+ * entirely, and `peakValueEth` with it.
  *
- *     ⚠️ Possible rug / dump — value fell to ≈ 0.0131 SOL from a peak of ≈ 0.1004
+ * WHAT KEEPS THIS FUNCTION ALIVE is the auto-protect cooldown. A stale
+ * `protectAt` SUPPRESSES a real rescue on the new position — the same defect
+ * with the loss reversed, and a much more expensive one than a spurious message.
  *
- * 0.0131 ≤ 0.1004 × 0.15 exactly, so it could not have done anything else. The
- * "peak" was a holding that had already been sold; nothing had dumped.
- *
- * THIS EXISTED, and only on the EVM path. `_buySol` never got it, so the bug was
- * Solana-only — which is where the memecoins are. One owner now, called from
- * both, because the next chain will make it three.
+ * It existed on the EVM path only; `_buySol` never got it, so the alarm was
+ * Solana-only. One owner now, called from both, because the next chain would
+ * have made it three.
  */
 function _resetRiskIfFresh(p) {
   let prevHeld = 0n; try { prevHeld = BigInt(p.tokens || '0'); } catch (_) {}
   if (!(p.closed || prevHeld <= 0n)) return;   // adding to a live bag keeps its history
-  p.peakValueEth = 0;
+  // Legacy cleanup: nothing writes these any more, but a store written before
+  // the alert was removed still carries them on every position it ever tracked.
+  delete p.peakValueEth;
   if (p.notified && typeof p.notified === 'object') {
     delete p.notified.rug;
-    // The auto-protect cooldown too: a stale `protectAt` would SUPPRESS a real
-    // rescue on the new position, which is the same defect with the loss reversed.
     delete p.notified.protectAt;
     delete p.notified.protectCheckAt;
   }

@@ -607,12 +607,17 @@ async function alertsCycle() {
 
 // ------------------------------------------------------------------ held-position alerts
 // Watch every open position and ping the holder on big moves — profit milestones (2×, 5×,
-// …) and a possible rug/dump (value collapsed from its peak). Uses the bot-tracked bag
-// (p.tokens) so it's cheap; notified milestones are remembered per position to avoid
-// spam. Gated by the user's 🔔 alerts toggle.
+// …). Uses the bot-tracked bag (p.tokens) so it's cheap; notified milestones are
+// remembered per position to avoid spam. Gated by the user's 🔔 alerts toggle.
+//
+// There was a second alert here, "Possible rug / dump", keyed off a high-water
+// mark. It is gone — see the note where it used to fire, at the foot of the
+// cycle. Auto-protect below is the guard that remains, and it never used a peak.
 const POS_MILESTONES = [2, 5, 10, 25, 50, 100];
+// The floor under auto-protect: never force-sell a dust position. Named for the
+// alert it once shared, and the env var keeps that name because an operator may
+// already have set it — it gates on COST now, not on any peak.
 const RUG_MIN_PEAK = Math.max(0, Number(process.env.POS_RUG_MIN_PEAK || 0.01));   // native; ignore dust positions
-const RUG_DROP = Math.min(0.9, Math.max(0.01, Number(process.env.POS_RUG_DROP || 0.15)));   // value ≤ 15% of peak = rug-ish
 // Auto-protect (rug guard) — opt-in per user. Sells 100% ONLY to protect capital:
 // when the bag is deep in LOSS versus your ENTRY (a dump/rug), or the contract turned
 // into a honeypot / sell-tax trap. Deliberately measured against COST, not the all-time
@@ -648,7 +653,10 @@ async function positionsCycle() {
     const held = Number(ethers.formatUnits(heldRaw, p.dec || 18));
     const valueEth = held * snap.priceEth;
     p.notified = (p.notified && typeof p.notified === 'object') ? p.notified : {};
-    if (!(p.peakValueEth > 0) || valueEth > p.peakValueEth) { p.peakValueEth = valueEth; dirty = true; }
+    // The peak is no longer tracked: the only reader was the rug alert, and a
+    // value written to the store on every cycle for nobody is disk churn plus a
+    // field the next person has to work out is dead. Auto-protect measures
+    // against the ENTRY and never wanted it.
     const wi = (core.walletList(u).findIndex((x) => x.id === w.id) + 1) || 1;
     const kb = { inline_keyboard: [[{ text: '📈 Trade', callback_data: `tok:${p.chain}:${wi}:${p.ca}` }]] };
     // profit milestone: notify the HIGHEST newly-crossed multiple, marking all below it seen.
@@ -692,37 +700,22 @@ async function positionsCycle() {
         }
       }
     }
-    // rug/dump: value fell to ≤RUG_DROP of a meaningful peak (once).
-    if (!p.notified.rug && p.peakValueEth >= RUG_MIN_PEAK && valueEth <= p.peakValueEth * RUG_DROP) {
-      p.notified.rug = true; dirty = true;
-      // ONE TOKEN, ONE ALERT — and one set of numbers that describe the whole
-      // holding. A position record is per WALLET, so a five-wallet bag sent five
-      // identical warnings, each quoting a fifth of the position as if it were
-      // the position. Same rule as the multi-wallet buy receipt: every wallet
-      // failing the same way is ONE fact, not five.
-      //
-      // Free to compute: the other wallets' bags are already in memory and the
-      // price is the snapshot we just read, so the total costs no extra request.
-      const tkey = core.posKey(p.chain, p.ca);
-      let totVal = 0, totPeak = 0, nWal = 0;
-      for (const wx of core.walletList(u)) {
-        const q = (wx.positions || {})[tkey];
-        if (!q) continue;
-        let hr = 0n; try { hr = BigInt(q.tokens || '0'); } catch (_) {}
-        if (hr <= 0n) continue;
-        totVal += Number(ethers.formatUnits(hr, q.dec || 18)) * snap.priceEth;
-        totPeak += Number(q.peakValueEth) || 0;
-        nWal++;
-        // Mark them all seen HERE. Left unmarked, the next wallet in this very
-        // cycle trips the same condition and sends the alert again — the collapse
-        // has to be persisted, not just skipped once.
-        q.notified = (q.notified && typeof q.notified === 'object') ? q.notified : {};
-        q.notified.rug = true;
-      }
-      if (!(totVal > 0) || !(totPeak > 0)) { totVal = valueEth; totPeak = p.peakValueEth; nWal = 1; }
-      const across = nWal > 1 ? ` <i>across ${nWal} wallets</i>` : '';
-      _notify(u.chatId, `⚠️ <b>Possible rug / dump: $${esc(p.sym || '')}</b>\nValue fell to ≈ <b>${totVal.toFixed(4)} ${c.native}</b> from a peak of ≈ ${totPeak.toFixed(4)}${across}. Check the chart / your safety.`, kb, 'alerts');
-    }
+    // THE "Possible rug / dump" ALERT IS GONE, on the owner's call.
+    //
+    // It compared the bag's value against a PEAK, and a peak is not a fact about
+    // the token — it is a fact about the highest number this bot happened to
+    // observe. That made it wrong in both directions: it fired on a token that
+    // had merely retraced from a spike, it fired on a brand-new bag whenever the
+    // peak survived a previous holding (the 2026-08-16 report: "value fell to
+    // 0.0131 from a peak of 0.1004", four times, on a token bought sixty seconds
+    // earlier), and it stayed silent on a token that rugged before it ever had a
+    // peak worth measuring. A warning that cries wolf is worse than no warning:
+    // it trains the reader to swipe the next one away.
+    //
+    // WHAT REPLACES IT: nothing passive, deliberately. 🛡 Auto-protect above is
+    // the real guard and it is untouched — it measures against YOUR ENTRY, not
+    // against a high-water mark, and it acts instead of narrating. The Monitor
+    // card already shows live P/L for anyone who wants to watch.
   });
   snapOf.report();
   if (dirty) core.saveStore();
