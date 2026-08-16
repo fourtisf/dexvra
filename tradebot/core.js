@@ -107,6 +107,23 @@ const FACTORY_ABI = [
   'function allTokens(uint256) view returns (address)',
   'event TokenCreated(address indexed token, address indexed curve, address indexed creator, string name, string symbol, string metadataURI, uint16 buyLevyBps, uint16 sellLevyBps, bool decayAtGraduation, bool renounceRateControl, uint256 deployFee, uint256 devBuyEth)',
 ];
+/**
+ * Race a promise against a fallback value.
+ *
+ * DEFINED HERE BECAUSE core.js CALLS IT. `_buySol` has used `withTmo` since the
+ * quote-divergence guard was added, and the only definition in the repo lived
+ * in telegram.js — a different module, never imported. Node does not complain
+ * about a free variable until the line RUNS, and that line runs inside the
+ * Solana buy, so every Solana buy threw `ReferenceError: withTmo is not
+ * defined` before it reached the aggregator. Five wallets, five identical
+ * failures, and the engine's own words never left the process.
+ *
+ * Two tests stub `core.buy` outright and one stubs the whole telegram layer, so
+ * nothing in the suite ever executed this function — which is why a hard crash
+ * on the money path sat green for two days. solanaBuyPath.test.js now runs it.
+ */
+const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(() => r(fb), ms))]);
+
 const CURVE_ABI = [
   'function marketCapEth() view returns (uint256)',
   'function currentPrice() view returns (uint256)',

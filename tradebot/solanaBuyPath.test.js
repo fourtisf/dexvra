@@ -1,0 +1,160 @@
+'use strict';
+/*
+ * solanaBuyPath.test.js — the Solana buy actually RUNS.
+ *
+ * THE FAILURE THIS EXISTS FOR
+ * A user's card, five wallets, five identical red crosses:
+ *
+ *     ❌ Nothing bought · 0 of 5 wallets
+ *     The buy didn't go through. Please try again in a moment.
+ *
+ * and in the server log, once per-wallet failures were finally being written:
+ *
+ *     buy failed [Wallet 1] solana Ge87…Tpump: withTmo is not defined
+ *
+ * A ReferenceError. `_buySol` had called `withTmo` since the quote-divergence
+ * guard was written, and the only definition in the repo lived in telegram.js —
+ * a different module, never imported. Node does not complain about a free
+ * variable until the line runs, so this was a hard crash on the money path that
+ * shipped, sat green for two days, and survived two code audits.
+ *
+ * It survived because NOTHING IN THE SUITE EVER EXECUTED IT. Every existing
+ * test of a Solana trade replaces `core.buy` wholesale to assert what the
+ * receipts say. That is the right way to test receipts and it means the engine
+ * underneath them had no execution coverage at all.
+ *
+ * So this file stubs the OUTSIDE — the RPC, the aggregator, the price feeds —
+ * and lets the real `_buySol` run. It asserts nothing about a good trade: only
+ * that the code path reaches the aggregator and comes back with the
+ * aggregator's own error rather than dying on the way there. Any
+ * ReferenceError, TypeError or missing import along that path fails this test.
+ */
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const test = require('node:test');
+const assert = require('node:assert');
+
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'solbuy-'));
+process.env.WALLET_SECRET = 's'.repeat(48);
+process.env.TRADEBOT_TOKEN = 'x:y';
+process.env.ENABLED_CHAINS = 'solana';
+process.env.SOLANA_RPC = 'http://127.0.0.1:1';   // never reached: every read below is stubbed
+process.env.LAUNCHPADS = '0';                    // the pre-migration pads are a different test's job
+
+const core = require('./core');
+const solana = require('./solana');
+
+const MINT = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+const CHAT = 41;
+
+/** A user holding a REAL, decryptable Solana wallet — `_signer` derives a
+ *  keypair from it, and a hand-built object literal cannot do that. */
+function fundedUser() {
+  core.DB.users = {};
+  core.ensureUser(CHAT);
+  const w = core.addWallet(CHAT);
+  return w;
+}
+
+/** Run a real core.buy on Solana with only the OUTSIDE world stubbed.
+ *  `swap` throws by default, because what this asserts is how far we got. */
+async function buy({ swap, solBalance = 5_000_000_000n, snapshot } = {}) {
+  const real = {
+    solBalance: solana.solBalance, splBalance: solana.splBalance, splMeta: solana.splMeta,
+    swap: solana.swap, sendSol: solana.sendSol, ds: solana.dexScreener,
+  };
+  const calls = { swap: 0 };
+  solana.solBalance = async () => solBalance;
+  solana.splBalance = async () => ({ raw: 0n, decimals: 6 });
+  solana.splMeta = async () => ({ name: 'Bonk', sym: 'BONK', decimals: 6 });
+  solana.sendSol = async () => ({ sig: 'feesig', confirmed: Promise.resolve('feesig') });
+  // STUBBED ON THE MODULE, NOT ON THE EXPORT.
+  //
+  // `_buySol` reaches its reference price through the module-local
+  // `tokenSnapshot`, so assigning `core.tokenSnapshot` replaces what OTHER
+  // modules see and changes nothing inside core.js itself. The first cut of
+  // this file did exactly that, the real snapshot ran against a dead RPC,
+  // returned null, and the divergence guard skipped — a test that passed for a
+  // reason unrelated to what it asserted. `solana.dexScreener` is the seam that
+  // actually works: tokenSnapshot calls it module-qualified.
+  solana.dexScreener = async () => (snapshot === undefined ? { priceUsd: 0.00019, priceNative: 0.000001, liquidityUsd: 5e5, volH24Usd: 1e5, mcapUsd: 7e6, name: 'Bonk', symbol: 'BONK' } : snapshot);
+  const refuse = async () => { throw new Error('Jupiter swap-build failed (500) — Invalid request'); };
+  const inner = swap || refuse;
+  solana.swap = async (...a) => { calls.swap++; return inner(...a); };
+  try {
+    const r = await core.buy(CHAT, MINT, '0.01', 'solana');
+    return { ok: true, r, calls };
+  } catch (e) {
+    return { ok: false, err: e, calls };
+  } finally {
+    Object.assign(solana, { solBalance: real.solBalance, splBalance: real.splBalance, splMeta: real.splMeta, swap: real.swap, sendSol: real.sendSol, dexScreener: real.ds });
+  }
+}
+
+// ── the regression ───────────────────────────────────────────────────────────
+
+test('a Solana buy reaches the aggregator instead of crashing on the way', async () => {
+  fundedUser();
+  const { ok, err, calls } = await buy();
+  assert.equal(ok, false, 'the stub was supposed to refuse the swap');
+  // THE ASSERTION. A ReferenceError here means an identifier used on the buy
+  // path is not defined in the module that uses it — exactly the defect that
+  // killed every Solana buy for two days while the suite stayed green.
+  assert.ok(!(err instanceof ReferenceError), `the buy path crashed before trading: ${err && err.message}`);
+  assert.ok(!/is not defined|is not a function|cannot read propert/i.test(String(err && err.message)),
+    `the buy path crashed before trading: ${err && err.message}`);
+  assert.equal(calls.swap, 1, 'the aggregator was never asked');
+  assert.match(String(err.message), /swap-build failed/, 'a different error than the stub threw');
+});
+
+test('the divergence guard runs, and does not need telegram.js to do it', async () => {
+  fundedUser();
+  // `withTmo` lived only in telegram.js. This is the line that used the free
+  // variable, so it is the line worth executing on purpose.
+  const CORE = fs.readFileSync(path.join(__dirname, 'core.js'), 'utf8');
+  assert.match(CORE, /^const withTmo = /m, 'core.js uses withTmo without defining it');
+  assert.match(CORE, /const refP = withTmo\(tokenSnapshot\(ca, chainKey\)/, 'the divergence guard moved — re-point this test');
+  // …and with a reference price present, a wildly worse quote is refused
+  // BEFORE anything is signed.
+  const { ok, err } = await buy({
+    swap: async (conn, kp, o) => {
+      // 0.01 SOL for 10 tokens = 0.001 SOL/token, a thousand times the reference.
+      await o.onQuote({ outAmount: 10_000_000n, inAmount: 10_000_000n });
+      throw new Error('should never get here');
+    },
+  });
+  assert.equal(ok, false);
+  assert.match(String(err.message), /worse than the price shown/, `the guard did not fire: ${err && err.message}`);
+});
+
+test('an unreadable reference price does not block the trade', async () => {
+  fundedUser();
+  // "No reference is not a reason to block a trade" — a dead indexer must not
+  // become a trading outage.
+  const { err, calls } = await buy({
+    snapshot: null,   // no indexed market at all
+    swap: async (conn, kp, o) => { await o.onQuote({ outAmount: 1n, inAmount: 10_000_000n }); throw new Error('Jupiter swap-build failed (500)'); },
+  });
+  assert.equal(calls.swap, 1);
+  assert.match(String(err.message), /swap-build failed/, 'a missing reference price blocked the buy');
+});
+
+test('an empty wallet is refused before the aggregator is called', async () => {
+  fundedUser();
+  const { ok, err, calls } = await buy({ solBalance: 1000n });
+  assert.equal(ok, false);
+  assert.equal(calls.swap, 0, 'it asked for a quote it could never pay for');
+  assert.match(String(err.message), /insufficient SOL/);
+});
+
+// ── the gap that let it ship ─────────────────────────────────────────────────
+
+test('the Solana engine is executed by the suite, not only stubbed over', () => {
+  // Every other Solana test replaces core.buy wholesale, which is correct for
+  // testing receipts and is why the engine had no coverage at all. If this file
+  // ever stops calling the real core.buy, the hole reopens.
+  const SELF = fs.readFileSync(__filename, 'utf8');
+  assert.match(SELF, /await core\.buy\(CHAT, MINT/, 'this file no longer exercises the real buy');
+  assert.ok(!/core\.buy = /.test(SELF), 'this file now stubs the very thing it exists to run');
+});
