@@ -4086,6 +4086,23 @@ async function start() {
   // repo than any actual bug.
   console.log(`[boot] build ${require('./build').stamp()}`);
   console.log(`[boot] chains enabled: ${core.chains.enabledChains().map((c) => c.key).join(', ')}`);
+  // THE TWO SOLANA EXECUTION KNOBS, ON THE BOOT LINE.
+  //
+  // Both live only in tradebot/.env, both default to something slow, and until
+  // now the ONLY way to find out whether either had been picked up was to spend
+  // real money and read `prio=` off a buy. An operator who edits the wrong
+  // file — /opt/dexvra/.env instead of /opt/dexvra/tradebot/.env, an easy
+  // mistake and one that has been made — gets no signal at all: the bot boots
+  // clean, trades fine, and stays slow.
+  //
+  // NEVER PRINT THE RPC URL. A paid endpoint carries its API key in the path,
+  // and this line goes to pm2's log. Whether one is SET is the whole fact worth
+  // reporting; which one it is, is a secret.
+  if (core.chains.isSvm('solana') || core.chains.ENABLED.includes('solana')) {
+    const prio = Number(core.CFG.solPriorityLamports) || 0;
+    console.log(`[boot] solana: rpc ${process.env.SOLANA_RPC ? 'custom' : 'PUBLIC default (rate-limited)'}`
+      + ` · priority fee ${prio > 0 ? prio + ' lamports (~' + (prio / 1e9).toFixed(6) + ' SOL/trade)' : 'OFF — transactions queue behind every paying one'}`);
+  }
   // Which optional venues this process can actually use. A v4 token reads as
   // "couldn't price it" when v4 is unreachable, and that looked exactly like a
   // broken bot for an entire evening.

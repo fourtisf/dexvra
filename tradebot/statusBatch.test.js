@@ -174,3 +174,21 @@ test('a phase that never ran is not printed as 0ms', () => {
   assert.match(buy, /FAILED reads=\$\{tSwap - tStart\}ms \$\{_phases\(T\)\}/);
   assert.match(buy, /\[buy\] sol \$\{ca\.slice\(0, 8\)\} reads=\$\{tSwap - tStart\}ms \$\{_phases\(T\)\}/);
 });
+
+// ── The knobs an operator cannot otherwise verify ────────────────────────────
+
+test('boot names both Solana execution knobs, and never the RPC url', () => {
+  const TG = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const boot = TG.slice(TG.indexOf("console.log(`[boot] chains enabled:"), TG.indexOf('// Which optional venues'));
+  // Both default to something slow and both live only in tradebot/.env, so
+  // without this the only way to learn whether either was picked up is to spend
+  // real money and read `prio=` off a buy. An operator who edits the wrong file
+  // gets no signal at all: the bot boots clean, trades fine, and stays slow.
+  assert.match(boot, /rpc \$\{process\.env\.SOLANA_RPC \? 'custom' : 'PUBLIC default \(rate-limited\)'\}/);
+  assert.match(boot, /priority fee \$\{prio > 0 \?/);
+  assert.match(boot, /OFF — transactions queue behind every paying one/);
+  // THE SECRET. A paid RPC carries its API key in the path, and this line goes
+  // to pm2's log. Whether one is set is the fact; which one it is, is not.
+  assert.ok(!/\$\{process\.env\.SOLANA_RPC\}/.test(boot), 'the RPC url — API key and all — is printed to the log');
+  assert.ok(!/\$\{core\.CFG\.solanaRpc\}|\$\{CFG\.solanaRpc\}/.test(boot));
+});

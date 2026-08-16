@@ -522,6 +522,21 @@ single request, so the fifth wallet stops paying for the other four.
 Both dwarf everything above, and neither can be set from this repo — `.env` lives
 only on the server.
 
+⚠️ **The trade bot reads `tradebot/.env`, not the repo root's.** `core.js` loads
+`path.join(__dirname, '.env')`, so on the box that is **`/opt/dexvra/tradebot/.env`**.
+A value written to `/opt/dexvra/.env` is read by the web app and by nothing else:
+the bot boots clean, trades fine, and stays slow, with no signal anywhere that
+the setting never arrived. That mistake has been made. **Both knobs are on the
+boot line now** precisely so it cannot be made silently again:
+
+```
+[boot] solana: rpc PUBLIC default (rate-limited) · priority fee OFF — transactions queue behind every paying one
+```
+
+The RPC **URL** is never printed — a paid endpoint carries its API key in the
+path, and this line goes to pm2's log. Whether one is set is the fact worth
+reporting; which one it is, is a secret.
+
 - **`SOLANA_RPC`** — unset, the bot uses Solana's public endpoint, which is
   aggressively rate-limited and throttles the websocket hard enough that
   `confirmSignature` had to be rewritten to poll HTTP. A paid RPC changes `reads=`
