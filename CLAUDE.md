@@ -450,6 +450,55 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
+## Trade speed — the code paid round trips it did not owe
+
+Three real serialisations on the Solana buy path, all found by reading the code
+after "saya ingin buat bot lebih cepat lgi respn dan eksekusi":
+
+- **The quote waited on chain reads it does not depend on.** `getQuote` needs two
+  mints, an amount and a slippage — none of it from the chain — yet it was issued
+  inside `solana.swap()`, i.e. only after `solBalance` + `splBalance` +
+  `tokenMeta` had all come back. `_buySol` starts it as `quoteP` now and hands
+  the promise in; `swap()` behaves exactly as before when it is absent. A buy
+  that fails its balance check wastes one quote, which is the whole cost.
+- **The divergence guard held a live quote for a display value** — the rule the
+  guard itself was written under. "The reference runs concurrently so it costs no
+  fill time" is true only while DexScreener is faster than Jupiter; when it is
+  not, that unbounded `await refP` sat between pricing and signature for up to
+  its own 5s timeout. Bounded by `SOL_GUARD_REF_WAIT_MS` (1200ms). Not a
+  weakening: *"no reference is not a reason to block a trade"* was already the
+  position two lines further down.
+- **The bot's own fee sat between the fill and the receipt.** Deferring its
+  *confirmation* was the first half; the *broadcast* was still awaited, and that
+  is `getLatestBlockhash` plus a send the RPC **simulates first** — the fee
+  transfer runs with preflight ON, unlike the swap. `feeHash` has exactly one
+  reader (`feeCollected` in the ops report), so the report waits and the receipt
+  does not; `res.feeHash` is filled in by the continuation so the flag stays
+  truthful rather than optimistic. Both buy and sell.
+
+**Every buy now logs where its time went**, because every speed change on this
+path had been argued from reading the code — which is how the reference await
+survived being called free for as long as it did:
+
+```
+[buy] sol Ge87Etsj reads=310ms swap=890ms prio=0
+```
+
+### The two biggest levers are CONFIG, not code
+
+Both dwarf everything above, and neither can be set from this repo — `.env` lives
+only on the server.
+
+- **`SOLANA_RPC`** — unset, the bot uses Solana's public endpoint, which is
+  aggressively rate-limited and throttles the websocket hard enough that
+  `confirmSignature` had to be rewritten to poll HTTP. A paid RPC changes `reads=`
+  and the confirm poll more than any code change here.
+- **`SOL_PRIORITY_LAMPORTS`** — defaults to **0**, and at 0 the field is omitted
+  from Jupiter's `/swap` body entirely. On a congested Solana this is the
+  difference between landing in the next slot and landing in ten, or being
+  dropped. It is printed as `prio=` on every buy line above so it cannot stay
+  invisible.
+
 ## The "Possible rug / dump" alert is REMOVED — do not add it back
 
 Five wallets bought $Ge87…pump — 0.01312 SOL each, entry $0.00724, MC $7.25M —

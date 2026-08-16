@@ -46,11 +46,32 @@ test('a quote far worse than the displayed price is refused before anything is s
 
 test('the guard runs at the last free moment — after the quote, before the signature', () => {
   const swapFn = SOL.slice(SOL.indexOf('async function swap(conn, keypair'), SOL.indexOf('// ---------------------------------------------------------------- native SOL transfer'));
-  const iQuote = swapFn.indexOf('const quote = await getQuote(');
+  // The quote may now be handed in already in flight (`quoteP`) — _buySol starts
+  // it alongside its chain reads rather than stacking the two round trips. The
+  // ORDER this test exists for is unchanged: quote resolved, then the hook, then
+  // the build.
+  const iQuote = swapFn.indexOf('const quote = await (quoteP || getQuote(');
   const iHook = swapFn.indexOf('if (onQuote) await onQuote(quote);');
   const iBuild = swapFn.indexOf('const txB64 = await getSwapTx(');
   assert.ok(iQuote > -1 && iHook > iQuote, 'the hook runs before there is a quote to judge');
   assert.ok(iBuild > iHook, 'the transaction is built before the trade can still be called off');
+});
+
+test('an early quote is still a quote the guard sees', () => {
+  // The whole risk of starting the quote early: if _buySol built its own
+  // transaction from `quoteP` and only passed the RESULT to swap(), the hook
+  // would be bypassed and the guard would silently stop running. It does not —
+  // the promise is handed in and awaited in the one place it always was.
+  const buy = CORE.slice(CORE.indexOf('async function _buySol('), CORE.indexOf('async function _sellSol('));
+  assert.match(buy, /const quoteP = solana\.getQuote\(\{ inputMint: solana\.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip \}\);/);
+  assert.match(buy, /onSent: sent, onQuote, quoteP \}\)/, 'the early quote no longer reaches swap()');
+  assert.ok(!/getSwapTx|sendJupiterSwap/.test(buy), '_buySol builds its own transaction, so the guard hook is bypassed');
+  // A pre-check that throws before the quote is awaited must not surface as an
+  // unhandled rejection and take the process down.
+  assert.match(buy, /quoteP\.catch\(\(\) => \{\}\);/);
+  // Started BEFORE the reads it does not depend on — that is the entire point.
+  assert.ok(buy.indexOf('const quoteP =') < buy.indexOf('solana.solBalance(conn, signer.address)'),
+    'the quote waits on chain reads it has no need of');
 });
 
 test('the reference read never delays the trade', () => {
@@ -61,6 +82,32 @@ test('the reference read never delays the trade', () => {
   const buy = CORE.slice(CORE.indexOf('async function _buySol('), CORE.indexOf('async function _sellSol('));
   assert.ok(buy.indexOf('const refP =') < buy.indexOf('const onQuote ='), 'the reference is started inside the hook, so it is serial');
   assert.ok(!/await refP;/.test(buy.slice(0, buy.indexOf('const onQuote ='))), 'the reference is awaited before the swap starts');
+  // AND IT IS BOUNDED. "Concurrent" only means "free" while the reference is
+  // faster than the quote; when DexScreener is slow the unbounded await held a
+  // live quote, between pricing and signature, for up to its own 5s timeout.
+  assert.match(buy, /const ref = await withTmo\(refP\.catch\(\(\) => null\), GUARD_REF_WAIT_MS, null\);/);
+  assert.match(CORE, /const GUARD_REF_WAIT_MS = Math\.max\(0, Number\(process\.env\.SOL_GUARD_REF_WAIT_MS \|\| 1200\)\);/);
+  // Started before the chain reads, so the bound is a ceiling it rarely reaches.
+  assert.ok(buy.indexOf('const refP =') < buy.indexOf('solana.solBalance(conn, signer.address)'),
+    'the reference starts after the reads, so it needs the full bound every time');
+});
+
+test('the bot fee never sits between the fill and the receipt', () => {
+  // Deferring the CONFIRMATION was the first half. The broadcast was still
+  // awaited, and it is getLatestBlockhash plus a send the RPC simulates first —
+  // the fee transfer runs with preflight ON, unlike the swap.
+  for (const [name, from, to] of [
+    ['buy', 'async function _buySol(', 'async function _sellSol('],
+    ['sell', 'async function _sellSol(', 'async function _withdrawSol('],
+  ]) {
+    const body = CORE.slice(CORE.indexOf(from), CORE.indexOf(to));
+    assert.ok(!/await _chargeFeeSol\(/.test(body), `${name}: the receipt waits for the bot's own fee again`);
+    assert.match(body, /const feeP = _chargeFeeSol\(conn, kp, fee/, `${name}: fee charge missing`);
+    // feeHash has ONE reader — feeCollected in the ops report — so the report is
+    // what waits, and the flag stays truthful instead of becoming optimistic.
+    assert.match(body, /feeP\.then\(\(feeSig\) => \{ res\.feeHash = feeSig \|\| null; \}\)/, `${name}: feeCollected would now always be false`);
+    assert.match(body, /feeHash: null,/, `${name}: res still claims a signature it does not have yet`);
+  }
 });
 
 test('no reference price is never a reason to block a trade', () => {

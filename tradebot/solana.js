@@ -469,8 +469,13 @@ async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports
 // abort. This hook exists because the quote is the only executable price in the
 // system, and the price the user tapped came from somewhere else entirely — see
 // the divergence guard in core.js _buySol.
-async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent, onQuote }) {
-  const quote = await getQuote({ inputMint, outputMint, amountRaw, slippageBps });
+async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent, onQuote, quoteP }) {
+  // `quoteP` lets a caller start the quote EARLIER than this function is reached.
+  // Nothing in a quote comes from the chain — two mints, an amount, a slippage —
+  // so _buySol issues it alongside its balance and metadata reads instead of
+  // stacking Jupiter's round trip on top of an RPC round trip it does not depend
+  // on. Absent, the behaviour is exactly as before.
+  const quote = await (quoteP || getQuote({ inputMint, outputMint, amountRaw, slippageBps }));
   if (onQuote) await onQuote(quote);
   const txB64 = await getSwapTx(quote.raw, keypair.publicKey.toBase58(), { priorityLamports });
   const sig = await sendJupiterSwap(conn, keypair, txB64, onSent);

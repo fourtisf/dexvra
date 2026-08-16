@@ -123,6 +123,22 @@ const FACTORY_ABI = [
  * on the money path sat green for two days. solanaBuyPath.test.js now runs it.
  */
 const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(() => r(fb), ms))]);
+/**
+ * How long the divergence guard will hold a LIVE QUOTE waiting for its reference
+ * price — the one thing on the buy path that is allowed to delay a signature.
+ *
+ * The reference read starts at the top of _buySol and normally lands well before
+ * Jupiter answers, which is why the guard was described as costing no fill time.
+ * That holds only while DexScreener is faster than Jupiter. When it is not, the
+ * unbounded await sat between a priced trade and its signature for up to the
+ * reference's own 5s timeout — a trade held for a display value, which is the
+ * rule the guard itself was written under.
+ *
+ * Bounded, the guard still fires on every trade whose reference arrived in time,
+ * and a slow indexer costs the guard rather than the fill. "No reference is not
+ * a reason to block a trade" was always this code's position.
+ */
+const GUARD_REF_WAIT_MS = Math.max(0, Number(process.env.SOL_GUARD_REF_WAIT_MS || 1200));
 
 const CURVE_ABI = [
   'function marketCapEth() view returns (uint256)',
@@ -2171,8 +2187,31 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);   // { svm, address, keypair, connection }
     const conn = signer.connection, kp = signer.keypair;
+    const tStart = Date.now();
     const gross = solana.solToLamports(amount);
     if (gross <= 0n) throw new Error('amount must be > 0');
+    // Everything the QUOTE needs is known right here — the two mints, the amount
+    // and the slippage. None of it comes from the chain.
+    const fee = solana.feeLamports(gross, CFG.feeBps);
+    const spend = gross - fee;
+    const slip = Number(slipBps(u, opts && opts.slipBps));
+    // THE QUOTE STARTS NOW, not after the reads.
+    //
+    // It used to be issued inside solana.swap(), i.e. only once the three reads
+    // below had all come back — so Jupiter's round trip was stacked on top of an
+    // RPC round trip it does not depend on. On a public RPC
+    // getParsedTokenAccountsByOwner alone is a few hundred milliseconds, and a
+    // snipe paid all of it before asking for a price.
+    //
+    // The wasted-request case is a buy that fails its balance check, which is
+    // one quote nobody used. The .catch keeps that from surfacing as an unhandled
+    // rejection when a pre-check throws before the promise is ever awaited.
+    const quoteP = solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip });
+    quoteP.catch(() => {});
+    // The divergence guard's reference read, started here for the same reason —
+    // see the guard below. Earliest possible start is the only thing that keeps
+    // it off the critical path.
+    const refP = withTmo(tokenSnapshot(ca, chainKey).catch(() => null), 5000, null);
     // Three independent lookups — SOL balance, the current bag, and the mint's
     // identity — that used to be awaited one at a time ahead of every Solana buy.
     // tokenMeta alone is an RPC call plus a Jupiter registry fetch, so this was
@@ -2184,9 +2223,6 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     ]);
     const gasBuf = solana.solToLamports(CFG.solGasBuffer);
     if (bal < gross + gasBuf) throw new Error(`insufficient SOL — need ~${solana.lamportsToSol(gross + gasBuf).toFixed(4)} incl. fees, have ${solana.lamportsToSol(bal).toFixed(4)}`);
-    const fee = solana.feeLamports(gross, CFG.feeBps);
-    const spend = gross - fee;
-    const slip = Number(slipBps(u, opts && opts.slipBps));
     const before = beforeBag.raw;
     // THE DIVERGENCE GUARD.
     //
@@ -2200,13 +2236,23 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     // Jupiter routing across every AMM — and Jupiter QUOTED 3x worse.
     //
     // So compare them, at the one moment it is still free: after Jupiter has
-    // priced the trade and before anything is signed. The reference read runs
-    // CONCURRENTLY with the quote's own round trip, so this costs no fill time —
-    // the rule that the trade is never held up for a display value still holds.
-    const refP = withTmo(tokenSnapshot(ca, chainKey).catch(() => null), 5000, null);
+    // priced the trade and before anything is signed. The reference read is
+    // started at the top of this function, concurrently with everything else.
     const onQuote = async (q) => {
       if (!(CFG.solMaxQuoteDivergence > 0)) return;
-      const ref = await refP.catch(() => null);
+      // AND IT IS NEVER WAITED FOR.
+      //
+      // "The reference runs concurrently, so this costs no fill time" was true
+      // only while the reference was faster than the quote. When DexScreener is
+      // slow it is not, and this await then sat here — between a live quote and
+      // the signature — for up to the reference's own 5s timeout, holding a
+      // trade for a DISPLAY value. That is the exact rule the guard was written
+      // under, broken by the guard.
+      //
+      // Not a weakening: "no reference is not a reason to block a trade" is
+      // already this function's position two lines down. A reference that has
+      // not arrived by now is the same as one that never comes.
+      const ref = await withTmo(refP.catch(() => null), GUARD_REF_WAIT_MS, null);
       const refPx = ref && ref.priceEth > 0 ? ref.priceEth : 0;
       if (!(refPx > 0) || !(q.outAmount > 0n)) return;   // no reference is not a reason to block a trade
       const outTokens = Number(solana.fmtUnits(q.outAmount, meta.decimals));
@@ -2221,8 +2267,18 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
       }
     };
     let sig, quote;
-    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent, onQuote })); }
+    const tSwap = Date.now();
+    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent, onQuote, quoteP })); }
     catch (e) { const err = new Error('buy failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
+    // WHERE THE TIME WENT. Every speed change on this path so far has been argued
+    // from reading the code, which is how the reference-price await survived
+    // being described as free for as long as it did. `reads` is the chain lookups
+    // this function waits on, `swap` covers quote→build→send→confirm, and `prio`
+    // is on the line because a zero priority fee is the difference between
+    // landing in the next slot and landing in ten — and it is a default nobody
+    // ever sees. One line per buy, ops-side only.
+    const tAfterSwap = Date.now();
+    console.log(`[buy] sol ${ca.slice(0, 8)} reads=${tSwap - tStart}ms swap=${tAfterSwap - tSwap}ms prio=${CFG.solPriorityLamports}`);
     const after = (await solana.splBalance(conn, signer.address, ca)).raw;
     const got = after > before ? after - before : (quote ? quote.outAmount : 0n);
     // Jupiter's PROMISE and the wallet's REALITY, on two adjacent lines, never
@@ -2232,9 +2288,19 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     const shortfall = (quote && quote.outAmount > 0n && got > 0n && got < quote.outAmount)
       ? 1 - Number(got) / Number(quote.outAmount) : 0;
     if (shortfall > 0.01) console.warn(`[sol] ${ca} delivered ${(shortfall * 100).toFixed(1)}% under quote — possible transfer fee`);
-    // Broadcast-and-defer, same as EVM: the referral credit fires from the
-    // background confirmation, so the fill is not held behind the fee transfer.
-    const feeSig = await _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
+    // Broadcast-and-defer, same as EVM — AND NO LONGER AWAITED, even for the
+    // broadcast. Deferring the confirmation already took a full confirm round
+    // off every fill, but what remained still sat on the critical path between
+    // the swap landing and the user seeing a receipt: `getLatestBlockhash`, then
+    // a send the RPC SIMULATES first — the fee transfer runs with preflight ON,
+    // unlike the swap. Two round trips and a simulation, for a transfer the
+    // trader has no stake in and no screen shows.
+    //
+    // `feeHash` has exactly one reader — `feeCollected` in the ops report — so
+    // the REPORT is what waits now, not the receipt, and that flag stays
+    // truthful rather than becoming optimistic.
+    const feeP = _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
+    feeP.catch(() => {});
 
     const key = posKey(chainKey, ca);
     const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
@@ -2263,8 +2329,12 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     // displayed price was the pool being thin or our price feed disagreeing with
     // the router. Those need different answers and used to get one shrug.
     const impactPct = quote && Number.isFinite(Number(quote.priceImpactPct)) ? Math.abs(Number(quote.priceImpactPct)) * 100 : 0;
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, spentEth: solana.lamportsToSol(spend), grossEth: solana.lamportsToSol(gross), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), shortfall, impactPct, dec: meta.decimals, sym: meta.sym };
-    _afterTrade(u, 'buy', res).catch(() => {});
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: null, spentEth: solana.lamportsToSol(spend), grossEth: solana.lamportsToSol(gross), feeEth: solana.lamportsToSol(fee), gotTokens: solana.fmtUnits(got, meta.decimals), gotRaw: got.toString(), shortfall, impactPct, dec: meta.decimals, sym: meta.sym };
+    // The report waits for the fee signature; the RECEIPT does not. `res` is
+    // returned before this settles, and nothing user-facing reads `feeHash` —
+    // the receipt's fee line is built from `feeEth`, which is arithmetic.
+    feeP.then((feeSig) => { res.feeHash = feeSig || null; }).catch(() => {})
+      .then(() => _afterTrade(u, 'buy', res)).catch(() => {});
     return res;
   });
 }
@@ -2312,9 +2382,10 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
     // Net SOL received (swap tx fee already netted out, exactly like EVM ethAfter-ethBefore).
     const proceeds = solAfter > solBefore ? solAfter - solBefore : (quote ? quote.outAmount : 0n);
     const fee = solana.feeLamports(proceeds, CFG.feeBps);
-    // Broadcast-and-defer, same as EVM: the referral credit fires from the
-    // background confirmation, so the fill is not held behind the fee transfer.
-    const feeSig = await _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
+    // Not awaited — see the identical note on the buy path. Same two round trips
+    // and the same simulation, on the path to the same receipt.
+    const feeP = _chargeFeeSol(conn, kp, fee, () => _creditReferral(u, fee, chainKey));
+    feeP.catch(() => {});
 
     const key = posKey(chainKey, ca);
     const pos = wal.positions[key];
@@ -2350,8 +2421,10 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
     // $RUIN", which is the line every other bot leads with and the only one that
     // states the trade in the units the user thinks in. Free here: the amount
     // and the mint's decimals were both already in hand.
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, soldPct: p, soldTokens: Number(solana.fmtUnits(amount, bag.decimals)), proceedsEth: solana.lamportsToSol(proceeds), netEth: solana.lamportsToSol(proceeds - fee), feeEth: solana.lamportsToSol(fee), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
-    _afterTrade(u, 'sell', res).catch(() => {});
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: null, soldPct: p, soldTokens: Number(solana.fmtUnits(amount, bag.decimals)), proceedsEth: solana.lamportsToSol(proceeds), netEth: solana.lamportsToSol(proceeds - fee), feeEth: solana.lamportsToSol(fee), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
+    // Report waits for the fee signature, receipt does not — see the buy path.
+    feeP.then((feeSig) => { res.feeHash = feeSig || null; }).catch(() => {})
+      .then(() => _afterTrade(u, 'sell', res)).catch(() => {});
     return res;
   });
 }
