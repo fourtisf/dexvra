@@ -974,8 +974,15 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   const mkt = info.market;
   const created = (api && api.createdAt) || (mkt && mkt.createdAt);
   const statusBadge = info.dex ? `◆ DEX${info.dexVenue === 'v3' ? ' · V3 pool' : ''}` : (info.graduated ? '◆ Graduated' : `◈ Bonding curve · ${(info.progressPct || 0).toFixed(0)}%`);
+  // WHERE THE TOKEN CAME FROM. Only a launchpad knows this, and it is the first
+  // thing anyone wants after the ticker: a pump.fun graduate and a token that
+  // appeared straight on Raydium are different propositions at the same market
+  // cap. Shown for a graduated token too — "◆ DEX · 🚀 pump.fun" says both that
+  // it trades on a pool now and that it came off a curve to get there.
+  const padName = (info.launchpad) || (api && api.launchpad) || '';
+  const padBadge = padName ? `  ·  🚀 ${esc(String(padName).slice(0, 24))}` : '';
   L.push(`<b>${esc(name)}</b> · <b>$${esc(sym)}</b>`);
-  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}${created ? `  ·  ${fmtAge(created)} old` : ''}`);
+  L.push(`${ch.emoji} ${esc(ch.name)}  ·  ${statusBadge}${padBadge}${created ? `  ·  ${fmtAge(created)} old` : ''}`);
   L.push(`<code>${ca}</code>`);
   // SILENCE IS NOT A CLEAN BILL OF HEALTH.
   //
@@ -1072,11 +1079,28 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // the reader the numbers above are still real, and read straight from chain.
   gap();
   const gaps = [];
-  if (!mkt) gaps.push('volume', 'price change');
+  // WHAT WAS RENDERED, not what one source returned.
+  //
+  // This keyed 'volume' off `mkt` alone — and `info.market` is only ever filled
+  // on the EVM path, so on Solana it is always absent. The card printed
+  // "🔄 Vol 24h $855.56K" from `api.volume` and then, four lines later, said
+  // volume was unavailable. One card, two code paths, contradicting each other
+  // about a number visible in both — the same defect as the buy card's two
+  // ideas of "whale".
+  if (vol24 == null) gaps.push('volume');
+  if (!mkt) gaps.push('price change');
   if (!sec) { gaps.push('holder count'); if (!ch.curve) gaps.push('tax'); }
   if (gaps.length) {
     const listed = gaps.length > 1 ? `${gaps.slice(0, -1).join(', ')} and ${gaps[gaps.length - 1]}` : gaps[0];
-    L.push(`ℹ️ <i>No indexer covers ${esc(ch.name)} yet — ${listed} unavailable. The prices above are read straight from the chain.</i>`);
+    // "No indexer covers this chain" and "this token is missing a field" are
+    // different facts, and the first one is false the moment ANY indexed number
+    // reached the card. Claiming a chain is uncovered while showing its live
+    // volume tells the reader the numbers above cannot be trusted, which is the
+    // opposite of what this line exists to say.
+    const indexed = !!mkt || vol24 != null;
+    L.push(indexed
+      ? `ℹ️ <i>Not available for this token: ${listed}.</i>`
+      : `ℹ️ <i>No indexer covers ${esc(ch.name)} yet — ${listed} unavailable. The prices above are read straight from the chain.</i>`);
   }
   // Maestro's own card shows a timestamp because its numbers can be minutes old.
   // Ours are fetched on render — saying so is what makes a stale-looking price
