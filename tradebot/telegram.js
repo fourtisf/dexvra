@@ -63,10 +63,65 @@ const _priceCache = new Map();
  */
 const RETRY_429_MAX = 3;
 const RETRY_429_CAP_MS = 10000;
+/**
+ * The host, WITHOUT the token.
+ *
+ * `API` ends in the bot token. netErr() falls back to the whole URL when it
+ * cannot parse one, and that string goes straight into an Error message, into
+ * pm2's log and — on the router's catch — very nearly into a chat. Never hand
+ * the tokenful base to anything that formats an error.
+ */
+const TG_HOST = 'https://api.telegram.org';
+/**
+ * Codes that PROVE the request never reached Telegram.
+ *
+ * A connection that was established and then broke (ECONNRESET, a socket hang
+ * up mid-response) may well have delivered the message, and a duplicate receipt
+ * is its own bug — so those are reported, never retried. This is the same
+ * transport-only rule the Jupiter client follows, applied to the one client
+ * that did not have it.
+ */
+const TG_NEVER_SENT = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_NODATA', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH']);
+const TG_NET_RETRIES = 2;
+const TG_NET_BACKOFF_MS = 400;
+
+/**
+ * One Telegram API call.
+ *
+ * IT RETRIED THE WRONG FAILURE. `tg()` honours Telegram's 429 — an HTTP answer,
+ * from a host that is plainly there and talking — and let a bare transport error
+ * out to the caller, where nothing catches it: it unwinds through
+ * send()/edit()/answer(), out of onMessage/onCallback, and lands in
+ * handleUpdate's catch as the whole of "⚠️ Something glitched handling that".
+ * The server log showed three of them, logged as the two words `fetch failed`,
+ * with no host, no syscall, and no clue what the user had tapped.
+ *
+ * A blip on the way to api.telegram.org is not a glitch in the bot and must not
+ * cost the user their action.
+ */
 async function tg(method, body) {
-  for (let attempt = 0; ; attempt++) {
-    const r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
-    const j = await r.json();
+  for (let http429 = 0, netTries = 0; ; ) {
+    let r;
+    try {
+      r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
+    } catch (e) {
+      // netErr, not a fourth private idea of failure: it is the module that
+      // already knows undici hides the syscall code in `err.cause`, and it sets
+      // `.offline` so callers classify on the flag instead of matching text.
+      const err = solana.netErr(e, TG_HOST);
+      if (netTries < TG_NET_RETRIES && TG_NEVER_SENT.has(String(err.code || ''))) {
+        netTries++;
+        await sleep(TG_NET_BACKOFF_MS * netTries);
+        continue;
+      }
+      throw err;
+    }
+    let j;
+    // A proxy's HTML 502 is not a transport failure and must not be reported as
+    // one — the status is the useful fact and it is the thing undici's message
+    // throws away.
+    try { j = await r.json(); }
+    catch (_) { const err = new Error(`Telegram returned a non-JSON ${r.status} response`); err.offline = true; err.host = 'api.telegram.org'; throw err; }
     if (j && j.ok) return j;
     const wait = (j && j.error_code === 429 && j.parameters && Number(j.parameters.retry_after) > 0)
       ? Math.min(RETRY_429_CAP_MS, Math.ceil(Number(j.parameters.retry_after) * 1000))
@@ -74,7 +129,8 @@ async function tg(method, body) {
     // Every other error is returned exactly as before: "message is not
     // modified", "message to edit not found" and a blocked bot are all answers,
     // and callers already read them.
-    if (!wait || attempt >= RETRY_429_MAX - 1) return j;
+    if (!wait || http429 >= RETRY_429_MAX - 1) return j;
+    http429++;
     await sleep(wait);
   }
 }
@@ -2475,12 +2531,36 @@ async function handleUpdate(up) {
     if (up.message) return await onMessage(up.message);
     if (up.callback_query) return await onCallback(up.callback_query);
   } catch (e) {
-    console.error('handleUpdate', e && (e.message || e));
+    const chat = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
+    // NAME THE PATH, not just the error.
+    //
+    // This catch is the source of every "⚠️ Something glitched handling that"
+    // the bot has ever sent, and it logged `e.message` alone — for undici that
+    // is the two words `fetch failed`, with no host, no syscall and no clue
+    // which of the bot's upstreams died or what the user had even done. Three of
+    // those in the server log cost a round of guessing only the box could answer.
+    //
+    // ⚠️ NEVER LOG MESSAGE TEXT to identify the path. The import-wallet step
+    // takes a private key as a plain chat message, so `up.message.text` — even
+    // truncated — puts key material into pm2's log for anyone with shell access.
+    // The bot's own pending action names the step better anyway, and carries
+    // nothing the user typed.
+    const p = chat && pending.get(chat.id);
+    const what = up.callback_query ? `cb:${String(up.callback_query.data || '?').slice(0, 48)}`
+      : up.message ? `msg:${(p && p.action) || 'command'}`
+      : 'update';
+    const code = (e && (e.code || (e.cause && (e.cause.code || e.cause.errno)))) || '';
+    console.error(`handleUpdate [${what}] chat=${(chat && chat.id) || '?'}${code ? ` ${code}` : ''}:`, (e && (e.message || e)), (e && e.stack) || '');
     // Last resort: never leave the user staring at nothing on an unhandled
     // error. Best-effort — this send must not itself throw out of the catch.
+    //
+    // "Something glitched" is a claim about the BOT, and on a transport failure
+    // it is the wrong one — it invites an immediate retry into the same dead
+    // host and quietly takes the blame for an upstream being down. The two cases
+    // now read differently, in the user's own language; the copy was hardcoded
+    // English on a bot that ships EN/ID everywhere else.
     try {
-      const chat = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
-      if (chat && chat.type === 'private') await send(chat.id, '⚠️ Something glitched handling that — please try again in a moment.');
+      if (chat && chat.type === 'private') await send(chat.id, T(chat.id, e && e.offline ? 'err.glitch_net' : 'err.glitch'));
     } catch (_) { /* ignore */ }
   }
 }
@@ -4090,11 +4170,26 @@ async function start() {
   console.log(`Dexvra Trade Bot up as @${BOT_USERNAME || '?'} — chains: ${core.chains.ENABLED.join(', ')}`);
 
   let offset = 0;
+  // A POLL THAT THREW IS NOT A POLL THAT WORKED. This catch slept two seconds
+  // and said nothing at all, so a bot that could not reach Telegram for an hour
+  // looked exactly like a quiet hour — the state that looks most like a healthy
+  // one, and the same defect `lastFeedOkAt` exists for on the snipe.
+  //
+  // On the TRANSITION only, and the RECOVERY is logged too: at one attempt every
+  // two seconds a per-failure line writes the same sentence 1,800 times an hour
+  // and buries the first one, and without the recovery an operator reading the
+  // log cannot tell a fixed outage from an ongoing one.
+  let pollDown = 0;
   for (;;) {
     try {
       const r = await tg('getUpdates', { offset, timeout: 50, allowed_updates: ['message', 'callback_query'] });
+      if (pollDown) { console.log(`[poll] Telegram reachable again — was down for ${pollDown} attempt(s)`); pollDown = 0; }
       if (r && r.ok && r.result.length) for (const up of r.result) { offset = up.update_id + 1; handleUpdate(up); }
-    } catch (e) { await new Promise((s) => setTimeout(s, 2000)); }
+    } catch (e) {
+      if (!pollDown) console.error('[poll] cannot reach Telegram —', (e && (e.message || e)));
+      pollDown++;
+      await new Promise((s) => setTimeout(s, 2000));
+    }
   }
 }
 

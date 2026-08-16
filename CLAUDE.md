@@ -450,6 +450,49 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
+## "Something glitched handling that" was `tg()` retrying the wrong failure
+
+The server log, asked what was behind that message, had three lines to say:
+`handleUpdate fetch failed`. Two words — not which host, not which syscall, not
+what the user had done.
+
+**`tg()` honoured Telegram's 429 and let a transport error out.** A 429 is an
+*answer*, from a host that is plainly there and talking; a `fetch failed` is the
+one thing worth retrying, and it was the one thing that was not. It unwound
+through `send()`/`edit()`/`answer()`, out of `onMessage`/`onCallback`, and landed
+in `handleUpdate`'s catch, which turns any error at all into that one sentence.
+So a momentary blip on the way to `api.telegram.org` cost the user their action
+and told the operator nothing.
+
+- **Retried ONLY on codes that prove the request never left** (`TG_NEVER_SENT`).
+  A connection that was established and then broke may already have delivered
+  the message, and a duplicate receipt is its own bug — worse than a missing one
+  on a buy confirmation.
+- **`netErr()` does the wording**, not a fourth private idea of failure. It is
+  the module that already knows undici hides the syscall in `err.cause`.
+- ⚠️ **`API` ends in the bot token, and `netErr()` falls back to the whole URL
+  when it cannot parse one.** Hand it `TG_HOST`, never `${API}/...`, or the
+  token lands in an Error message, in pm2's log, and very nearly in a chat.
+- ⚠️ **Never identify the failing path from message TEXT.** The import-wallet
+  step takes a private key as a plain chat message, so even a truncated
+  `up.message.text` puts key material in the log. The bot's own `pending.action`
+  names the step better and carries nothing the user typed; callback data is
+  bot-generated and safe.
+- **"Something glitched" is a claim about the BOT.** On an upstream outage it is
+  the wrong claim and it invites an instant retry into the same dead host —
+  `err.glitch` / `err.glitch_net`, and both are translated now; the original was
+  one hardcoded English string on a bot that ships EN/ID everywhere else.
+- **A poll that THREW is not a poll that worked.** The `getUpdates` loop slept
+  two seconds and said nothing, so a bot unable to reach Telegram for an hour
+  looked exactly like a quiet hour. Logged on the transition, recovery included
+  — same rule as `upstreams.js`.
+
+```bash
+cd tradebot && node --test routerError.test.js   # 9 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ## "Entry" was the price on the card, not the price anyone paid
 
 A live buy, 2026-08-16: `Spent 0.099 SOL ($7.46)` · `Got 129.16K ($6.77)` ·

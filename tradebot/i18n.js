@@ -450,6 +450,19 @@ const S = {
     en: "Couldn't reach the swap service, so the {act} was never sent — nothing was spent. This is a connection problem on our side, not the token. Try again shortly; if it keeps happening, tell an admin.",
     id: 'Layanan swap tidak bisa dihubungi, jadi {act}-nya tidak pernah dikirim — tidak ada dana yang terpakai. Ini masalah koneksi di sisi kami, bukan tokennya. Coba lagi sebentar lagi; kalau terus begini, kabari admin.',
   },
+  // The router's last resort. Two keys, because "something glitched" is a claim
+  // about the BOT and it was being made about upstreams that were simply down —
+  // which invites an instant retry into the same dead host and takes the blame
+  // for someone else's outage. Both were one hardcoded English string on a bot
+  // that ships EN/ID everywhere else.
+  'err.glitch': {
+    en: '⚠️ Something glitched handling that — please try again in a moment.',
+    id: '⚠️ Ada yang error waktu memproses itu — coba lagi sebentar lagi.',
+  },
+  'err.glitch_net': {
+    en: "⚠️ A service the bot depends on didn't answer just then, so that didn't go through — nothing was spent. It is a connection problem on our side, not yours. Try again in a moment.",
+    id: '⚠️ Layanan yang dipakai bot tidak menjawab barusan, jadi itu tidak jadi diproses — tidak ada dana yang terpakai. Ini masalah koneksi di sisi kami, bukan kamu. Coba lagi sebentar lagi.',
+  },
   // Substituted into the {act} slot above, so the sentence reads naturally.
   'word.buy': { en: 'buy', id: 'buy' },
   'word.sell': { en: 'sell', id: 'sell' },
