@@ -158,3 +158,69 @@ test('the Solana engine is executed by the suite, not only stubbed over', () => 
   assert.match(SELF, /await core\.buy\(CHAT, MINT/, 'this file no longer exercises the real buy');
   assert.ok(!/core\.buy = /.test(SELF), 'this file now stubs the very thing it exists to run');
 });
+
+// ── decimals are read, never assumed ─────────────────────────────────────────
+
+test('a 6-decimal mint is not decoded as 9 — the −99.90% card', async () => {
+  // A real buy, five wallets: each receipt said "Buy of 1,075.29 $Ge87…pump
+  // succeeded", and the position card pinned above them read
+  //
+  //     You hold: 5.38 across 5 wallets
+  //     Profit/Loss: −99.90% (−$37.20)
+  //
+  // minutes after the buy, on a token that had not moved. 1075.29 ÷ 1.08 is
+  // 1000, and 10^(9−6) is 1000: the receipts used the mint's real 6 decimals
+  // and the card used a hardcoded 9. tokenSnapshot's Solana branch carried
+  // `decimals: 9` as a literal — DexScreener does not report decimals, nine is
+  // what a Solana example uses, and every pump.fun token is six. monitorPayload
+  // prefers the snapshot's value over every other source, so the guess beat the
+  // figure the buy had actually read.
+  fundedUser();
+  const realDs = solana.dexScreener;
+  const realDec = solana.splDecimalsOrNull;
+  solana.dexScreener = async () => ({ priceUsd: 0.00692, priceNative: 0.0000364, liquidityUsd: 5e5, volH24Usd: 1e5, mcapUsd: 6.92e6, name: 'Jimothy', symbol: 'Jimothy' });
+  solana.splDecimalsOrNull = async () => 6;   // what the mint account actually says
+  try {
+    const snap = await core.tokenSnapshot(MINT, 'solana');
+    assert.equal(snap.decimals, 6, 'the snapshot is still asserting 9 decimals');
+  } finally { solana.dexScreener = realDs; solana.splDecimalsOrNull = realDec; }
+});
+
+test('an unreadable mint omits decimals rather than guessing', async () => {
+  // Absent, the caller falls through to the value recorded at buy time — which
+  // was read from the chain. A guess of 9 OVERRIDES that correct value, because
+  // the snapshot sits first in monitorPayload's chain. Wrong beats missing here.
+  fundedUser();
+  const realDs = solana.dexScreener;
+  const realDec = solana.splDecimalsOrNull;
+  solana.dexScreener = async () => ({ priceUsd: 0.00692, priceNative: 0.0000364, liquidityUsd: 1, volH24Usd: 1, mcapUsd: 1, name: 'X', symbol: 'X' });
+  solana.splDecimalsOrNull = async () => null;
+  try {
+    const snap = await core.tokenSnapshot(MINT, 'solana');
+    assert.ok(!('decimals' in snap), `the snapshot invented decimals: ${snap.decimals}`);
+  } finally { solana.dexScreener = realDs; solana.splDecimalsOrNull = realDec; }
+});
+
+test('the mint outranks the token registry on decimals', () => {
+  // The mint account's `decimals` field IS the definition of the token's units.
+  // splMeta preferred Jupiter's copy of it, which inverts the only thing here
+  // that is not a matter of opinion — name and symbol are metadata and the
+  // registry is the better source; decimals are arithmetic.
+  const SRC = fs.readFileSync(path.join(__dirname, 'solana.js'), 'utf8');
+  const start = SRC.indexOf('async function splMeta(');
+  assert.ok(start > 0, 'splMeta is gone');
+  const fn = SRC.slice(start, SRC.indexOf('\n}', start));
+  assert.match(fn, /decimals: Number\.isFinite\(dec\) \? dec :/, 'the registry still outranks the mint');
+  assert.match(fn, /splDecimalsOrNull\(conn, mint\)/, 'splMeta cannot tell a failed read from a real 9');
+});
+
+test('a failed Solana balance read is not reported as an empty bag', async () => {
+  // splBalance swallows its errors and answers 0n, so tokenBalanceOrNull — the
+  // function that exists so a caller can tell "no bag" from "the RPC did not
+  // answer" — could never do it on Solana. The monitor reads a zero as
+  // "position closed" and retires a pinned card on a live position.
+  const conn = { getParsedTokenAccountsByOwner: async () => { throw new Error('rpc down'); } };
+  assert.equal(await solana.splBalanceOrNull(conn, '11111111111111111111111111111111', MINT), null);
+  const empty = { getParsedTokenAccountsByOwner: async () => ({ value: [] }) };
+  assert.equal(await solana.splBalanceOrNull(empty, '11111111111111111111111111111111', MINT), 0n, 'a genuinely empty wallet must still read 0');
+});

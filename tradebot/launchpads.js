@@ -105,7 +105,12 @@ function curveSnapshot(ca, chainKey, rec, nativeUsd) {
   return {
     ca,
     curve: '',
-    decimals: 9,
+    // NO `decimals` FIELD. A launchpad record does not carry the mint's
+    // decimals, and inventing 9 here would be authoritative downstream:
+    // monitorPayload prefers the snapshot's value over the one recorded at buy
+    // time, so a guess of 9 on a 6-decimal mint renders a real bag a thousand
+    // times too small and a fresh buy as −99.90%. Absent, the caller falls
+    // through to a value that was actually read.
     priceUsd: rec.priceUsd,
     priceEth: usd > 0 ? rec.priceUsd / usd : 0,
     mcapUsd: rec.mcapUsd || 0,

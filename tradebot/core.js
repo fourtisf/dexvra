@@ -1243,7 +1243,10 @@ async function tokenBalance(ca, addr, chainKey) {
  *  that had actually filled. Callers that ACT on the number must use this. */
 async function tokenBalanceOrNull(ca, addr, chainKey) {
   try {
-    if (isSvm(chainKey)) { const { raw } = await solana.splBalance(providerFor(chainKey), addr, ca); return raw; }
+    // splBalance() swallows its own errors and answers 0n, so on Solana this
+    // function could never do the one thing it exists for — the monitor read a
+    // dead RPC as "position closed" and unpinned itself on a live bag.
+    if (isSvm(chainKey)) return await solana.splBalanceOrNull(providerFor(chainKey), addr, ca);
     return await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).balanceOf(addr);
   } catch (_) { return null; }
 }
@@ -1578,9 +1581,24 @@ async function tokenSnapshot(ca, chainKey) {
     // depth, volume) while only the launchpad knows the curve's phase. Serially
     // this would cost the sum of two timeouts on the one path where the token is
     // brand new and neither is fast.
-    const [d, lpRec] = await Promise.all([
+    const [d, lpRec, mintDec] = await Promise.all([
       solana.dexScreener(ca),
       launchpads.covers(chainKey) ? launchpads.record(chainKey, ca) : Promise.resolve(null),
+      // THE MINT'S OWN DECIMALS, read from the chain, in the same wave so it
+      // costs nothing. This field used to be the literal `9`, because
+      // DexScreener does not report decimals and nine is what a Solana example
+      // uses — but every pump.fun token is SIX, and the monitor card trusts this
+      // number above all others when it decodes a balance.
+      //
+      // A user bought 1,075.29 tokens on five wallets, and the position card
+      // pinned above the receipts read "You hold: 5.38 · Profit/Loss −99.90%".
+      // Nothing had moved: 1075 ÷ 1000 is 1.08, and 10^(9−6) is 1000. The
+      // receipts were right, the card was off by three decimal places, and the
+      // number it printed was the one that makes somebody sell.
+      //
+      // Same line, same defect, as the `graduated: true, progressPct: 100` that
+      // was hardcoded beside it — a placeholder that reads as a fact.
+      solana.splDecimalsOrNull(providerFor(chainKey), ca).catch(() => null),
     ]);
     let solUsd = 0; try { solUsd = await ethUsd(chainKey); } catch (_) {}
     if (!d || !(d.priceUsd > 0)) {
@@ -1603,7 +1621,12 @@ async function tokenSnapshot(ca, chainKey) {
     const mcapEth = solUsd > 0 ? d.mcapUsd / solUsd : 0;
     const liquiditySol = solUsd > 0 ? d.liquidityUsd / solUsd : 0;
     const snap = { ca, curve: '', priceEth, priceUsd: d.priceUsd, mcapEth, mcapUsd: d.mcapUsd, graduated: true, progressPct: 100,
-      decimals: 9, dex: true, liquiditySol, liquidityUsd: d.liquidityUsd, volH24Usd: d.volH24Usd, name: d.name, sym: d.symbol };
+      // OMITTED when the mint could not be read, never guessed. Downstream
+      // (monitorPayload) prefers this field over every other source, so a
+      // fabricated 9 here overrides a correct 6 recorded at buy time. Leaving it
+      // undefined lets that fallback chain reach the value the buy actually used.
+      ...(Number.isFinite(mintDec) ? { decimals: mintDec } : {}),
+      dex: true, liquiditySol, liquidityUsd: d.liquidityUsd, volH24Usd: d.volH24Usd, name: d.name, sym: d.symbol };
     // `graduated: true, progressPct: 100` above is the DEFAULT, and it used to
     // be the only answer this branch could give — every Solana token was
     // labelled "◆ DEX" on the card, including one sitting at 12% of a bonding

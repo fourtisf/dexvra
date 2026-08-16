@@ -241,6 +241,24 @@ async function splBalance(conn, owner, mint) {
     return { raw, decimals };
   } catch (_) { return { raw: 0n, decimals: 9 }; }
 }
+/**
+ * The same read, but a FAILED one is distinguishable from a genuine zero.
+ *
+ * `splBalance` swallows its own errors and answers `0n`, which made
+ * core.tokenBalanceOrNull — the function that exists precisely so a caller can
+ * tell "no bag" from "the RPC did not answer" — unable to do that on Solana at
+ * all. The live monitor reads a null as "keep watching" and a zero as "position
+ * closed", so one RPC blip retired a pinned card on a position that was still
+ * open. Null means the read failed; a real empty wallet still returns 0n.
+ */
+async function splBalanceOrNull(conn, owner, mint) {
+  try {
+    const res = await conn.getParsedTokenAccountsByOwner(new PublicKey(owner), { mint: new PublicKey(mint) }, 'confirmed');
+    let raw = 0n;
+    for (const it of (res.value || [])) raw += BigInt(it.account.data.parsed.info.tokenAmount.amount);
+    return raw;
+  } catch (_) { return null; }
+}
 // Preflight makes the RPC SIMULATE a transaction before it will accept it — an extra
 // round trip plus simulation time on every swap, paid on the hot path while the price
 // moves. Jupiter has ALREADY simulated the route when it built this transaction, so the
@@ -522,7 +540,24 @@ async function sendSplToken(conn, keypair, mint, toBase58, rawAmount, decimals) 
 // Mint decimals straight from the mint account (authoritative; name/symbol live in
 // Metaplex metadata, fetched best-effort below).
 async function splDecimals(conn, mint) {
-  try { const s = await conn.getTokenSupply(new PublicKey(mint)); return Number(s.value.decimals); } catch (_) { return 9; }
+  const d = await splDecimalsOrNull(conn, mint);
+  return d == null ? 9 : d;
+}
+/**
+ * The mint's decimals, or NULL when they could not be read.
+ *
+ * The difference matters more than it looks. `splDecimals` answers 9 for a
+ * failed read, which is a guess wearing the clothes of a fact — and on a
+ * 6-decimal mint (every pump.fun token) a guess of 9 divides the holding by a
+ * thousand. A caller that would rather show nothing than show a number that is
+ * out by 1000× needs to be able to tell the two apart.
+ */
+async function splDecimalsOrNull(conn, mint) {
+  try {
+    const s = await conn.getTokenSupply(new PublicKey(mint));
+    const d = Number(s.value.decimals);
+    return Number.isFinite(d) ? d : null;
+  } catch (_) { return null; }
 }
 // Best-effort token identity from Jupiter's token registry (name/symbol/decimals).
 // Returns null on any failure — callers fall back to a shortened mint. Never throws.
@@ -543,9 +578,20 @@ async function splMeta(conn, mint) {
   // One RPC call and one HTTP call that know nothing about each other — they used
   // to be awaited in series, so identifying a mint took the sum of both timeouts
   // instead of the slower one. On the buy path that was pure dead time.
-  const [dec, j] = await Promise.all([splDecimals(conn, mint), jupTokenMeta(mint)]);
+  const [dec, j] = await Promise.all([splDecimalsOrNull(conn, mint), jupTokenMeta(mint)]);
   const shortMint = mint.slice(0, 4) + '…' + mint.slice(-4);
-  return { name: (j && j.name) || shortMint, sym: (j && j.sym) || shortMint, decimals: (j && Number.isFinite(j.decimals)) ? j.decimals : dec };
+  // THE MINT WINS. This preferred the registry's `decimals` over the mint
+  // account's, which inverts the only thing that is not a matter of opinion
+  // here: the mint account's `decimals` field IS the definition of the token's
+  // units, and a registry disagreeing with it is a registry that is wrong. Name
+  // and symbol are metadata and the registry is the better source for those;
+  // decimals are arithmetic, and getting them from a third party is how a
+  // balance comes out a thousand times too large or too small.
+  return {
+    name: (j && j.name) || shortMint,
+    sym: (j && j.sym) || shortMint,
+    decimals: Number.isFinite(dec) ? dec : ((j && Number.isFinite(j.decimals)) ? j.decimals : 9),
+  };
 }
 
 // ---------------------------------------------------------------- market data (DexScreener)
@@ -626,6 +672,6 @@ module.exports = {
   solToLamports, lamportsToSol, fmtUnits, toRaw,
   quoteUrl, quotePath, swapBody, parseQuote, feeLamports, netErr,
   jupBase: () => _jupBase,   // which host actually answered — for the preflight
-  getConnection, solBalance, splBalance, sendJupiterSwap, sendSplToken, confirmSignature,
+  getConnection, solBalance, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
 };
