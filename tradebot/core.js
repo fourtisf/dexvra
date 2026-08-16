@@ -497,6 +497,13 @@ function ensureUser(chatId, referredBy) {
       if (typeof s.autoBuyAmount !== 'string' || !(Number(s.autoBuyAmount) > 0)) { s.autoBuyAmount = '0.01'; ch = true; }
       if (typeof s.confirmBuy !== 'boolean') { s.confirmBuy = false; ch = true; }
       if (typeof s.expert !== 'boolean') { s.expert = false; ch = true; }
+      // Multi-wallet receipts: one message PER WALLET (default) or one combined
+      // message for the batch. Per-wallet is the default because a combined
+      // receipt cannot be sent until the SLOWEST wallet settles — so five
+      // parallel buys showed nothing at all until the last one landed, and then
+      // dumped the lot in one block. Per-wallet posts each fill the moment it
+      // lands, which is both the clearer report and the faster-feeling one.
+      if (s.receiptStyle !== 'per_wallet' && s.receiptStyle !== 'combined') { s.receiptStyle = 'per_wallet'; ch = true; }
       if (!s.notify || typeof s.notify !== 'object') { s.notify = { snipe: true, copy: true, alerts: true }; ch = true; }
       if (typeof s.autoTpPct !== 'number') { s.autoTpPct = 0; ch = true; }   // 0 = off; else auto take-profit at +X% on every buy
       if (typeof s.autoSlPct !== 'number') { s.autoSlPct = 0; ch = true; }   // 0 = off; else auto stop-loss at −X%
@@ -891,6 +898,10 @@ function setAutoBuy(chatId, on, amount) {
 function setConfirmBuy(chatId, on) { const u = ensureUser(chatId); u.settings.confirmBuy = !!on; saveStore(); return u.settings.confirmBuy; }
 // Expert/fast mode: skip the intermediate "⏳ Buying…" progress messages.
 function setExpert(chatId, on) { const u = ensureUser(chatId); u.settings.expert = !!on; saveStore(); return u.settings.expert; }
+// Multi-wallet receipts: 'per_wallet' (one message each, as each fills) or
+// 'combined' (one message for the batch, once every wallet has settled).
+function setReceiptStyle(chatId, style) { const u = ensureUser(chatId); u.settings.receiptStyle = style === 'combined' ? 'combined' : 'per_wallet'; saveStore(); return u.settings.receiptStyle; }
+const perWalletReceipts = (u) => ((u && u.settings && u.settings.receiptStyle) || 'per_wallet') !== 'combined';
 function getLang(chatId) { const u = getUser(chatId); return (u && (u.lang === 'id' || u.lang === 'en')) ? u.lang : 'en'; }
 function setLang(chatId, lang) { const u = ensureUser(chatId); u.lang = (lang === 'id') ? 'id' : 'en'; saveStore(); return u.lang; }
 // Auto-exit: after every buy, auto-place a take-profit at +tpPct and/or a stop-loss at
@@ -2037,7 +2048,12 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
     // landed. `netEth` is. Both are returned: the gross keeps every existing
     // reader working, the net is what a receipt should print, and `realizedEth`
     // is the P/L the EVM path has always returned and this one silently did not.
-    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, soldPct: p, proceedsEth: solana.lamportsToSol(proceeds), netEth: solana.lamportsToSol(proceeds - fee), feeEth: solana.lamportsToSol(fee), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
+    // `soldTokens` is HOW MUCH left the wallet, and until now no sell returned
+    // it — so a receipt could say "Sold 100%" but never "Sold 10,279,471.93
+    // $RUIN", which is the line every other bot leads with and the only one that
+    // states the trade in the units the user thinks in. Free here: the amount
+    // and the mint's decimals were both already in hand.
+    const res = { chain: chainKey, native: 'SOL', ca, venue: 'jupiter', hash: sig, feeHash: feeSig, soldPct: p, soldTokens: Number(solana.fmtUnits(amount, bag.decimals)), proceedsEth: solana.lamportsToSol(proceeds), netEth: solana.lamportsToSol(proceeds - fee), feeEth: solana.lamportsToSol(fee), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
     _afterTrade(u, 'sell', res).catch(() => {});
     return res;
   });
@@ -2335,10 +2351,16 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // Same story as buy(): the bag size, the curve lookup and the gas price are
     // three independent reads that were awaited one after another. An exit is the
     // trade where latency is felt most, so they go out together.
-    const [bal, curve, gas] = await Promise.all([
+    // `dec` rides along for the RECEIPT, not for the trade: it is what turns a
+    // raw u256 into "10,279,471.93 $RUIN". Added to this wave rather than
+    // awaited on its own, and tokenDecimals answers from _metaCache on anything
+    // the user has already opened a card for — so on the exit path, where
+    // latency is felt most, it normally costs nothing at all.
+    const [bal, curve, gas, dec] = await Promise.all([
       erc.balanceOf(wallet.address),
       resolveCurve(ca, chainKey),
       gasOverrides(chainKey, gasMult),
+      tokenDecimals(ca, chainKey).catch(() => 18),
     ]);
     // AN EXACT AMOUNT, when the caller knows precisely what part of this bag is
     // theirs to sell. Copy-sell does: it may only ever close the slice IT
@@ -2558,7 +2580,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: Number(ethers.formatEther(proceeds)), pct: p, hash });
     saveStore();
-    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, proceedsEth: Number(ethers.formatEther(proceeds)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
+    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, soldTokens: Number(ethers.formatUnits(amount, dec)), proceedsEth: Number(ethers.formatEther(proceeds)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
     _afterTrade(u, 'sell', res).catch(() => {});   // account + report (fire-and-forget)
     return res;
   });
@@ -2831,7 +2853,7 @@ module.exports = {
   renameWallet, walletLabel, hasChainPresets, solAddressOf, walletAddress,
   getSecurity, setWithdrawLock, addWhitelist, removeWhitelist, MAX_WD_PER_HOUR, backupNow,
   buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, defaultPresetsFor, PRESETS_MIN, PRESETS_MAX, setSnipeChain, setSnipeAmount,
-  setConfirmBuy, setExpert, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
+  setConfirmBuy, setExpert, setReceiptStyle, perWalletReceipts, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   feePayoutEnabled, payFromFeeWallet,

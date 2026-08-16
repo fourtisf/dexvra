@@ -19,6 +19,7 @@ const _replyCtx = new AsyncLocalStorage();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const goplus = require('./goplus');
 const i18n = require('./i18n');       // EN/ID copy — see i18n.js for why this exists
+const receipt = require('./receipt'); // one wallet, one receipt — pure renderer, no I/O
 const safety = require('./safety');   // chain-aware token safety (GoPlus on EVM, RugCheck on Solana)
 const tokeninfo = require('./tokeninfo');
 const solana = require('./solana');   // base58 address validation + SVM helpers
@@ -40,9 +41,66 @@ const _balCache = new Map();
 const _priceCache = new Map();
 
 // ------------------------------------------------------------ telegram api
+/**
+ * One Telegram API call, with the ONE retry Telegram actually asks for.
+ *
+ * A 429 from Telegram is not a failure — it is the server telling you exactly
+ * how long to wait, in `parameters.retry_after`, and promising the call will
+ * work after that. This ignored it and returned the error object to callers
+ * that overwhelmingly do not check `ok`, so a throttled message was simply
+ * gone.
+ *
+ * That was survivable while a multi-wallet trade produced ONE message. It stops
+ * being survivable the moment it produces one per wallet: five receipts land in
+ * the same second, Telegram throttles the tail of the burst, and the trades
+ * with no receipt are the ones nobody can prove happened. A trade the user
+ * cannot see is worse than a slow one.
+ *
+ * Bounded hard: at most RETRY_429_MAX waits, and never longer than
+ * RETRY_429_CAP_MS each. A retry_after of two minutes means the chat is
+ * genuinely flooded, and sleeping a whole worker on it would be worse than
+ * dropping the message.
+ */
+const RETRY_429_MAX = 3;
+const RETRY_429_CAP_MS = 10000;
+const _naptime = (ms) => new Promise((r) => setTimeout(r, ms));
 async function tg(method, body) {
-  const r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
-  return r.json();
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
+    const j = await r.json();
+    if (j && j.ok) return j;
+    const wait = (j && j.error_code === 429 && j.parameters && Number(j.parameters.retry_after) > 0)
+      ? Math.min(RETRY_429_CAP_MS, Math.ceil(Number(j.parameters.retry_after) * 1000))
+      : 0;
+    // Every other error is returned exactly as before: "message is not
+    // modified", "message to edit not found" and a blocked bot are all answers,
+    // and callers already read them.
+    if (!wait || attempt >= RETRY_429_MAX - 1) return j;
+    await _naptime(wait);
+  }
+}
+
+/**
+ * Send in ORDER, one at a time, per chat.
+ *
+ * Firing five receipts concurrently is what provokes the flood limit in the
+ * first place, and it also delivers them in whatever order the Telegram
+ * frontend happens to finish — so the wallet that filled first is not
+ * necessarily the receipt that appears first. Chaining them costs nothing (the
+ * trades already happened in parallel; only the telling is serial) and makes
+ * the chat read as a ledger.
+ *
+ * A failure in one link never breaks the chain: the next receipt still goes.
+ */
+const _sendQ = new Map();   // chatId → tail of that chat's send chain
+function queuedSend(chatId, fn) {
+  const prev = _sendQ.get(chatId) || Promise.resolve();
+  const next = prev.then(fn, fn).catch(() => {});
+  _sendQ.set(chatId, next);
+  // Drop the chain once it is idle, so a long-lived process does not keep a
+  // resolved promise per chat it has ever answered.
+  next.then(() => { if (_sendQ.get(chatId) === next) _sendQ.delete(chatId); });
+  return next;
 }
 function send(chatId, text, kb) { const rt = _replyCtx.getStore(); return tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}), ...(rt ? { reply_to_message_id: rt, allow_sending_without_reply: true } : {}) }); }
 function edit(chatId, mid, text, kb) { return tg('editMessageText', { chat_id: chatId, message_id: mid, text, parse_mode: 'HTML', disable_web_page_preview: true, ...(kb ? { reply_markup: kb } : {}) }); }
@@ -1482,16 +1540,19 @@ function settingsScreen(chatId) {
       `<b>How buys behave</b>\n` +
       `Confirm before buy: <b>${onoff(s.confirmBuy)}</b>\n` +
       `Fast mode: <b>${onoff(s.expert)}</b>\n` +
-      `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n\n` +
+      `Auto-buy on paste: <b>${s.autoBuy ? '🟢 ON · ' + esc(s.autoBuyAmount) + ' ' + ch.native : '⚪ OFF'}</b>\n` +
+      `Receipts: <b>${core.perWalletReceipts(u) ? '📩 One per wallet' : '📋 One combined'}</b>\n\n` +
       `<b>Automatic exits</b>\n` +
       `Auto-exit after buy: <b>${(s.autoTpPct > 0 || s.autoSlPct > 0) ? [(s.autoTpPct > 0 ? 'TP +' + s.autoTpPct + '%' : ''), (s.autoSlPct > 0 ? 'SL −' + s.autoSlPct + '%' : '')].filter(Boolean).join(' · ') : '⚪ OFF'}</b>\n` +
       `🛡 Auto-protect (rug guard): <b>${onoff(s.autoProtect)}</b>\n\n` +
-      `<i>Quick-buy amounts are per-chain. Fast mode skips the "buying…" message. Auto-buy buys instantly on paste. Auto-protect auto-sells only on a ~60% loss vs entry or a honeypot — never a profitable dip.</i>`,
+      `<i>Quick-buy amounts are per-chain. Fast mode skips the "buying…" message. Auto-buy buys instantly on paste. Auto-protect auto-sells only on a ~60% loss vs entry or a honeypot — never a profitable dip.</i>\n` +
+      `<i>Receipts: one per wallet posts each fill the moment it lands — combined waits for the slowest wallet and sends one message.</i>`,
     kb: rows(
       [btn('🌐 Chain', 'chain'), btn('📉 Slippage', 'setslip'), btn('⛽ Gas', 'setgas')],
       [btn(`⚡ Buy amounts`, 'setbp')],
       [btn(`${s.confirmBuy ? '🔴 Confirm buy OFF' : '🟢 Confirm buy ON'}`, 'cbtog'), btn(`${s.expert ? '🔴 Fast mode OFF' : '🟢 Fast mode ON'}`, 'extog')],
       [btn(s.autoBuy ? '🔴 Auto-buy OFF' : '🟢 Auto-buy ON', 'abtog'), btn('✏️ Auto-buy amount', 'abamt')],
+      [btn(core.perWalletReceipts(u) ? '📋 Receipts: combined' : '📩 Receipts: per wallet', 'rstog')],
       [btn('🎯 Auto-exit (TP/SL)', 'aex'), btn(`${s.autoProtect ? '🔴 Rug guard OFF' : '🛡 Rug guard ON'}`, 'aptog')],
       [btn('🔐 Security', 'usec'), btn('🔔 Notifications', 'ntf')],
       [btn(i18n.t(core.getLang(chatId), 'lang.button') + ` · ${i18n.LANG_LABEL[core.getLang(chatId)]}`, 'lang')],
@@ -1701,6 +1762,11 @@ async function _placeAutoExit(chatId, r, walletId) {
 // one. The trade is already in flight by then, so this is never execution
 // latency — only how long the user stares at a message with a blank in it.
 const ENTRY_MC_WAIT_MS = 1200;
+// The same idea for a per-wallet receipt, but tighter: the trade is not only in
+// flight by then, it has FINISHED, and the user is waiting on the one message
+// that says so. Long enough to catch a read that is nearly home, short enough
+// that a dead indexer is never felt.
+const RECEIPT_MC_WAIT_MS = 600;
 
 async function impactNote(ca, chG, amt) {
   if (core.chains.isSvm(chG.key)) return '';
@@ -1713,6 +1779,85 @@ async function impactNote(ca, chG, amt) {
     return impact >= 5 ? `\n⚠️ Thin pool — this size moved the price ~<b>${impact.toFixed(0)}%</b>.` : '';
   } catch (_) {
     return '';   // an unreadable pool is not a reason to say anything
+  }
+}
+
+/**
+ * Post ONE wallet's receipt for a multi-wallet trade.
+ *
+ * Everything user-controlled is escaped HERE, once, so receipt.js stays a pure
+ * assembler that adds no escaping — the same contract i18n.js keeps, and the
+ * reason a token whose name contains "<b>" cannot break the message.
+ *
+ * `seen` is read, never awaited: it is a live box that the token-meta and
+ * market-snapshot lookups fill in as they arrive. A receipt that waited for
+ * them would be a receipt held behind an indexer, which is exactly what the
+ * per-wallet rewrite exists to stop.
+ *
+ * Never throws. A receipt that fails to render must not take down the trade
+ * loop that is still reporting the other wallets.
+ */
+async function _postWalletReceipt(chatId, { side, ca, chainKey, target, r, e, seen }) {
+  try {
+    const ch = core.chainOf(chainKey) || {};
+    // A SHORT wait for the identity and market reads, and in practice only for
+    // the FIRST receipt.
+    //
+    // Both run alongside the trade, so by the time a wallet settles they have
+    // normally landed and this resolves instantly. But a fill can beat them on
+    // a fast chain, and then the first receipt prints as "$PONS" with no market
+    // cap while the other four say "Pons ($PONS) … Entry MC $27.20M" — the same
+    // trade reported two ways, which reads as a bug in the numbers rather than
+    // as a race. One shared budget for both, so a hung indexer can never hold a
+    // receipt longer than this.
+    if (seen && (!seen.meta || !seen.entry)) {
+      const pend = [seen.metaP, seen.entryP].filter(Boolean).map((p) => p.catch(() => null));
+      if (pend.length) await Promise.race([Promise.all(pend), new Promise((res) => setTimeout(res, RECEIPT_MC_WAIT_MS))]);
+    }
+    const meta = (seen && seen.meta) || null;
+    const snap = (seen && seen.entry) || null;
+    const sym = (r && r.sym) || (meta && meta.sym) || (snap && snap.sym) || '';
+    const native = (r && r.native) || ch.native || '';
+    const rate = nativeUsd(native);
+    const mcUsd = snap ? (snap.mcapUsd || (snap.mcapEth || 0) * rate) : 0;
+    // A sell that found an empty wallet is NOT a failure — see the copy note on
+    // 'wallet.receipt.nobag'. The engine says so with this one message, and
+    // i18n.errorKey is not involved because there is nothing to explain.
+    const noBag = !!e && /token balance is 0/i.test(String((e && (e.message || e)) || ''));
+    const text = receipt.walletReceipt((k, v) => T(chatId, k, v), {
+      side,
+      ok: !e,
+      noBag,
+      name: esc((meta && meta.name) || (snap && snap.name) || ''),
+      sym: esc(sym),
+      ca: esc(ca),
+      chainEmoji: ch.emoji || '',
+      chainName: esc(ch.name || ''),
+      wallet: esc(target.label),
+      // On a sell the bot's cut is a separate transfer, so `netEth` is what the
+      // user actually kept and `proceedsEth` is not. Same choice the combined
+      // receipt makes.
+      tokens: side === 'sell' ? Number(r && r.soldTokens) : Number(r && r.gotTokens),
+      amount: side === 'sell' ? Number(r && (r.netEth != null ? r.netEth : r.proceedsEth)) : Number(r && r.spentEth),
+      native: esc(native),
+      rate,
+      pnl: side === 'sell' && r ? Number(r.realizedEth) : null,
+      mcUsd,
+      reason: e ? esc(friendlyError(chatId, e, side)) : '',
+    });
+    const wi = walletIndex(chatId, target.id);
+    const explorer = ch.explorer;
+    const kb = (!e && r && r.hash && explorer)
+      ? rows([{ text: T(chatId, 'wallet.receipt.tx'), url: `${explorer}/tx/${r.hash}` },
+        side === 'sell' ? btn('📊 Portfolio', 'pos') : btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`)])
+      // No transaction, no transaction button. A link on a row that never
+      // traded is worse than no link: it is a receipt for something that did
+      // not happen.
+      : rows([btn('🔄 Card', `tok:${chainKey}:${wi}:${ca}`)]);
+    return await send(chatId, text, kb);
+  } catch (err) {
+    console.error('wallet receipt failed:', err && (err.message || err));
+    return null;
   }
 }
 
@@ -1817,7 +1962,17 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
     } else {
       // Same order as the single-wallet path: every buy is in flight before the
       // progress message is awaited.
-      const buys = Promise.allSettled(targets.map((t) => core.buy(chatId, ca, amt, chain, t.id)));
+      const perWallet = core.perWalletReceipts(u);
+      // THE TRADES START ON THE FIRST LINE, exactly as on the single-wallet
+      // path. The per-wallet reporting is attached a few lines below, after the
+      // header has claimed its place in the send queue — attaching a `.then` to
+      // a promise that is already running costs nothing and moves nothing.
+      const raw = targets.map((t) => core.buy(chatId, ca, amt, chain, t.id));
+      // The token's identity and the pre-fill market, read ALONGSIDE the trade.
+      // `tokenMeta` answers from cache for any token whose card the user just
+      // came from, so in practice both are there before the first fill.
+      const seen = { meta: null, entry: null, metaP: null, entryP: null };
+      seen.metaP = core.tokenMeta(ca, chG.key).then((m) => { seen.meta = m; return m; }).catch(() => null);
       // …and the entry snapshot too, which this branch simply did not have. The
       // whole ENTRY_MC_WAIT_MS machinery lived inside `if (targets.length <= 1)`,
       // so selecting a second wallet silently removed the market cap from every
@@ -1830,12 +1985,41 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // Started AFTER the fan-out and only raced, never blocking it — same rule
       // as the single path, for the same reason (see the latency note above).
       const entryPM = withTmo(core.tokenSnapshot(ca, chG.key).catch(() => null), 6000, null);
-      const entryM = await Promise.race([entryPM, new Promise((res) => setTimeout(res, ENTRY_MC_WAIT_MS, null))]);
+      seen.entryP = entryPM;
+      entryPM.then((s) => { seen.entry = s; }).catch(() => {});
       const eRateM = nativeUsd(chG.native);
+      // THE HEADER CLAIMS THE QUEUE FIRST, and this is the only reason it is
+      // enqueued rather than simply awaited. A wallet that fills before
+      // Telegram answers would otherwise have its receipt appear ABOVE the
+      // "Buying on 4 wallets…" line for its own batch — which happens on a fast
+      // chain and reads as a receipt from some earlier trade.
+      const progressP = expert ? Promise.resolve(null) : queuedSend(chatId, async () => {
+        const e0 = await Promise.race([entryPM, new Promise((res) => setTimeout(res, ENTRY_MC_WAIT_MS, null))]);
+        const mc0 = e0 ? (e0.mcapUsd || (e0.mcapEth || 0) * eRateM) : 0;
+        return send(chatId, T(chatId, 'buy.progress.multi', { amt: esc(amt), native: chG.native, n: targets.length, atMc: mc0 > 0 ? T(chatId, 'buy.at_mc', { mc: fmt(mc0) }) : '' }));
+      });
+      // ONE RECEIPT PER WALLET, POSTED AS THAT WALLET SETTLES.
+      //
+      // `await Promise.allSettled(...)` alone is what made a fast bot feel slow:
+      // four wallets fill in two seconds, the fifth takes twenty, and the user
+      // watches an empty chat for twenty seconds before the whole batch arrives
+      // at once. The trades were always parallel; only the telling was serial.
+      //
+      // The tap reports each wallet the moment its own promise settles and then
+      // re-throws, so allSettled still produces the identical aggregate for the
+      // summary below. Queued per chat so five receipts do not race each other
+      // into Telegram's flood limit — see queuedSend.
+      const buys = Promise.allSettled(raw.map((p, i) => p.then(
+        (r) => { if (perWallet) queuedSend(chatId, () => _postWalletReceipt(chatId, { side: 'buy', ca, chainKey: r.chain || chG.key, target: targets[i], r, seen })); return r; },
+        (e) => { if (perWallet) queuedSend(chatId, () => _postWalletReceipt(chatId, { side: 'buy', ca, chainKey: chG.key, target: targets[i], e, seen })); throw e; },
+      )));
+      const [progress, results] = await Promise.all([progressP, buys]);
+      // Whatever the pre-fill read produced by now — never awaited again. Every
+      // wallet has settled and each receipt already gave it up to
+      // RECEIPT_MC_WAIT_MS, so a null here means the indexer genuinely did not
+      // answer, and the summary drops the line rather than waiting on it.
+      const entryM = seen.entry;
       const eMcM = entryM ? (entryM.mcapUsd || (entryM.mcapEth || 0) * eRateM) : 0;
-      const atMcM = eMcM > 0 ? T(chatId, 'buy.at_mc', { mc: fmt(eMcM) }) : '';
-      const progress = expert ? null : await send(chatId, T(chatId, 'buy.progress.multi', { amt: esc(amt), native: chG.native, n: targets.length, atMc: atMcM }));
-      const results = await buys;
       let okN = 0, totTok = 0, totSpent = 0, totFee = 0, sym = '', chainKey = chain || core.userChain(u), nat = '', lines = [];
       const fails = [];
       results.forEach((res, i) => {
@@ -1904,11 +2088,21 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // different facts.
       const oneReason = okN === 0 && fails.length > 1
         && new Set(fails.map((f) => String((f.e && (f.e.message || f.e)) || ''))).size === 1;
+      // In per-wallet mode every wallet has already reported itself, in its own
+      // message, with its own transaction button. Repeating them as bullets
+      // under the totals is the same information twice — so what stays is only
+      // what NO single receipt can say: the totals, the average fill, and the
+      // one-outage-said-once collapse.
       const body = oneReason
         ? `${esc(friendlyError(chatId, fails[0].e, 'buy'))}\n<i>${T(chatId, 'buy.receipt.multi.same', { wallets: esc(fails.map((f) => f.label).join(', ')) })}</i>`
-        : lines.join('\n');
-      const txt = head + realLine + entryLine + (mkt ? '\n' + mkt : '') + '\n\n' + body;
-      if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
+        : (perWallet ? '' : lines.join('\n'));
+      const txt = head + realLine + entryLine + (mkt ? '\n' + mkt : '') + (body ? '\n\n' + body : '');
+      // Through the same queue as the receipts. With a progress message this is
+      // an edit and its POSITION is already fixed at the head of the batch; in
+      // fast mode there is no progress message and the summary is a fresh send,
+      // which must land after the wallets it is summarising rather than in the
+      // middle of them.
+      await queuedSend(chatId, () => (pid ? edit(chatId, pid, txt, kb) : send(chatId, txt, kb)));
       // The multi-wallet branch never opened a monitor and its receipt had no 📍
       // button either, so anyone trading more than one wallet got a fill and
       // nothing to watch it with. Bound to the first wallet that actually
@@ -2006,8 +2200,32 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
       if (pid) await edit(chatId, pid, receipt, kb); else await send(chatId, receipt, kb);
     } else {
-      const progress = expert ? null : await send(chatId, T(chatId, 'sell.progress.multi', { pct, n: targets.length }));
-      const results = await Promise.allSettled(targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id)));
+      const perWallet = core.perWalletReceipts(core.ensureUser(chatId));
+      const chS = core.chainOf(chain) || core.chainOf(core.userChain(core.ensureUser(chatId))) || {};
+      // EVERY SELL IS IN FLIGHT BEFORE THE PROGRESS MESSAGE IS AWAITED. The buy
+      // path was fixed for this long ago and the exit was left behind: the
+      // fan-out sat after `await send(…)`, so every multi-wallet exit paid a
+      // full Telegram round trip before a single sell was dispatched — on the
+      // side where latency is felt most.
+      const rawSells = targets.map((t) => sellWithRetry(chatId, ca, pct, chain, t.id));
+      // Identity and the market AROUND the exit, read alongside the sells and
+      // never awaited on a receipt's path — the same arrangement the buy branch
+      // uses. The exit had no market-cap read at all before the fills; the only
+      // one on the receipt came from `marketLine` afterwards, i.e. from a market
+      // the user's own five sells had just pushed down.
+      const seen = { meta: null, entry: null, metaP: null, entryP: null };
+      seen.metaP = core.tokenMeta(ca, chS.key).then((m) => { seen.meta = m; return m; }).catch(() => null);
+      seen.entryP = withTmo(core.tokenSnapshot(ca, chS.key).catch(() => null), 6000, null);
+      seen.entryP.then((s) => { seen.entry = s; }).catch(() => {});
+      // Queued before the taps can enqueue, so a wallet that exits before
+      // Telegram answers cannot appear above the header for its own batch.
+      const progressP = expert ? Promise.resolve(null) : queuedSend(chatId, () => send(chatId, T(chatId, 'sell.progress.multi', { pct, n: targets.length })));
+      // One receipt per wallet, posted as that wallet settles. See the buy
+      // branch for why the aggregate-only version read as a hang.
+      const [progress, results] = await Promise.all([progressP, Promise.allSettled(rawSells.map((p, i) => p.then(
+        (r) => { if (perWallet) queuedSend(chatId, () => _postWalletReceipt(chatId, { side: 'sell', ca, chainKey: r.chain || chS.key, target: targets[i], r, seen })); return r; },
+        (e) => { if (perWallet) queuedSend(chatId, () => _postWalletReceipt(chatId, { side: 'sell', ca, chainKey: chS.key, target: targets[i], e, seen })); throw e; },
+      )))]);
       let okN = 0, skip = 0, totProceeds = 0, totFee = 0, totPnl = 0, pnlSeen = false, chainKey = chain || core.userChain(core.ensureUser(chatId)), nat = '', lines = [];
       results.forEach((res, i) => {
         const t = targets[i];
@@ -2035,9 +2253,14 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       // The two questions a receipt leaves behind — what did it fill at, and
       // what is this worth now. Read after the trade, never before it.
       const mkt = await marketLine(ca, chainKey);
-      const txt = head + pnlLineM + (mkt ? '\n' + mkt : '') + '\n\n' + lines.join('\n');
+      // Per-wallet mode: the wallets have already reported themselves, so the
+      // summary keeps only the facts no single receipt carries.
+      const txt = head + pnlLineM + (mkt ? '\n' + mkt : '') + (perWallet ? '' : '\n\n' + lines.join('\n'));
       const pid = progress && progress.ok && progress.result && progress.result.message_id;
-      if (pid) await edit(chatId, pid, txt, kb); else await send(chatId, txt, kb);
+      // Queued, for the same reason as the buy summary: in fast mode there is
+      // no progress message to edit, and a fresh send must land after the
+      // wallets it summarises.
+      await queuedSend(chatId, () => (pid ? edit(chatId, pid, txt, kb) : send(chatId, txt, kb)));
     }
   } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'sell.failed')}\n\n${esc(friendlyError(chatId, e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
 }
@@ -2362,6 +2585,7 @@ async function onCallback(q) {
   if (data === 'setbp') { const ck = core.userChain(core.ensureUser(chatId)); const cn = core.chainOf(ck); const cur = core.buyPresets(core.ensureUser(chatId), ck).join(' '); setPending(chatId, { action: 'bp_val', chain: ck }); return send(chatId, `Send <b>${core.PRESETS_MIN}–${core.PRESETS_MAX} quick-buy amounts</b> for <b>${cn.emoji} ${esc(cn.name)}</b> (in ${cn.native}), separated by spaces.\n\nNow: <code>${esc(cur)}</code>`); }
   if (data === 'cbtog') { const u = core.ensureUser(chatId); try { core.setConfirmBuy(chatId, !u.settings.confirmBuy); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'extog') { const u = core.ensureUser(chatId); try { core.setExpert(chatId, !u.settings.expert); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'rstog') { const u = core.ensureUser(chatId); try { core.setReceiptStyle(chatId, core.perWalletReceipts(u) ? 'combined' : 'per_wallet'); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'ntf') { const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'ntftog') { const type = ca; try { core.setNotify(chatId, type, !core.notifyOn(chatId, type)); } catch (_) {} const s = notifyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'abtog') { const u = core.ensureUser(chatId); try { core.setAutoBuy(chatId, !u.settings.autoBuy); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -3657,5 +3881,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ } };
 if (require.main === module) start();

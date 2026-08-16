@@ -59,14 +59,26 @@ test("the trade starts before ANYTHING is awaited", () => {
 test("the multi-wallet buy and the sell start the same way", () => {
   const fn = TG.slice(TG.indexOf("async function doBuy("));
   const multi = fn.slice(fn.indexOf("} else {"));
+  // The progress line is now ENQUEUED rather than awaited inline — it has to
+  // claim its slot in the chat before any wallet can report itself, or a fast
+  // fill lands above the header for its own batch. What this test is about is
+  // unchanged and still holds: the trades are dispatched first.
   assert.ok(
-    multi.indexOf("const buys = Promise.allSettled(") < multi.indexOf("const progress = expert ? null : await send("),
+    multi.indexOf("const raw = targets.map((t) => core.buy(") < multi.indexOf("const progressP = expert ?"),
     "every wallet's buy is in flight before the progress message",
   );
   const sell = TG.slice(TG.indexOf("async function doSell("));
   assert.ok(
     sell.indexOf("const selling = sellWithRetry(") < sell.indexOf("progress = expert ? null : await send("),
     "an exit is where a round-trip of delay is felt most",
+  );
+  // …and the MULTI-wallet exit, which was never held to this at all: its
+  // fan-out sat after the progress await, so every multi-wallet sell paid a
+  // full Telegram round trip before a single sell was dispatched.
+  const sellMulti = sell.slice(sell.indexOf("} else {"));
+  assert.ok(
+    sellMulti.indexOf("const rawSells = targets.map((t) => sellWithRetry(") < sellMulti.indexOf("const progressP = expert ?"),
+    "every wallet's sell is in flight before the progress message",
   );
 });
 
