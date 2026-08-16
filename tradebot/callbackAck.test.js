@@ -113,13 +113,33 @@ test('tapping 📍 on a token that already has a card SURFACES it', () => {
     'surfacing must retire the old card, not silently edit it');
 });
 
-test('a repeat BUY still reuses its card in place', () => {
-  // Churning the pinned message on every fill would be worse than leaving it.
-  // Only an explicit tap surfaces.
-  const buySites = SRC.split('\n').filter((l) => /startMonitor\(chatId, ca,/.test(l));
+test('a BUY surfaces the card too — REVERSED, deliberately', () => {
+  // This test used to assert the opposite: "a repeat BUY still reuses its card
+  // in place", on the reasoning that churning the pinned message on every fill
+  // would be worse than leaving it.
+  //
+  // That was wrong in the one case it mattered, and a user reported it:
+  // "harusnya ada monitor lgsung". Receipts are always posted AFTER the fill —
+  // a five-wallet buy pushes five messages on top of the card — so after a buy
+  // the card is ALWAYS buried, and the moment a person most wants to see what
+  // they now hold is the moment the numbers just changed. What they got instead
+  // was five receipts, each with a 📍 button, and a live card somewhere above
+  // the scroll.
+  //
+  // The churn this guarded against does not materialise: it is one surface per
+  // BUY, not per wallet, and the pin is silent — the same frequency as the
+  // receipt itself.
+  // The BUY call sites only. Unfiltered this also matched startMonitor's own
+  // declaration and the `_startMonitor(chatId, ca, …)` it forwards to inside —
+  // neither of which carries an option to assert about, so a passing fix failed
+  // the test on its own plumbing.
+  const buySites = SRC.split('\n').filter((l) =>
+    /startMonitor\(chatId, ca,/.test(l) && !/^\s*function /.test(l) && !/_startMonitor\(/.test(l));
   assert.ok(buySites.length >= 2, 'expected the post-buy start sites');
   for (const l of buySites) {
-    assert.ok(!/surface: true/.test(l), `a buy-path monitor asks to surface: ${l.trim()}`);
+    assert.ok(/surface: true/.test(l), `a buy-path monitor is buried again: ${l.trim()}`);
   }
+  // The in-place reuse path still exists — it is what a REFRESH uses, and what
+  // an adopted card after a restart needs. Only the buy stopped taking it.
   assert.match(SRC, /\} else if \(existing\) \{/, 'the in-place reuse path is gone');
 });

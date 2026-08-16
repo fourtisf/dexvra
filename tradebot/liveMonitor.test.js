@@ -84,7 +84,10 @@ test("a failed send is logged, not swallowed", () => {
 test("a multi-wallet buy opens a monitor and its receipt offers one", () => {
   const buy = TG.slice(TG.indexOf("async function doBuy("), TG.indexOf("const SELL_ESCALATION"));
   const multi = buy.slice(buy.indexOf("} else {"));
-  assert.match(multi, /if \(okN > 0\) startMonitor\(chatId, ca, chainKey, targets\[filled >= 0 \? filled : 0\]\.id\)/,
+  // `surface: true` since the "harusnya ada monitor lgsung" report: the five
+  // receipts land ON TOP of the card, so reusing it in place leaves the user
+  // looking at five 📍 buttons and no position. See callbackAck.test.js.
+  assert.match(multi, /if \(okN > 0\) startMonitor\(chatId, ca, chainKey, targets\[filled >= 0 \? filled : 0\]\.id, \{ surface: true \}\)/,
     "anyone trading more than one wallet used to get a fill and nothing to watch it with");
   assert.match(multi, /btn\('📍 Monitor', `monn:\$\{chainKey\}:\$\{wi\}:\$\{ca\}`\)/, "…and no button either");
   assert.ok(!/if \(okN > 0\) startMonitor[\s\S]{0,80}okN === 0/.test(multi), "sanity");

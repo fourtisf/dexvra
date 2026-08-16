@@ -695,7 +695,33 @@ async function positionsCycle() {
     // rug/dump: value fell to ≤RUG_DROP of a meaningful peak (once).
     if (!p.notified.rug && p.peakValueEth >= RUG_MIN_PEAK && valueEth <= p.peakValueEth * RUG_DROP) {
       p.notified.rug = true; dirty = true;
-      _notify(u.chatId, `⚠️ <b>Possible rug / dump: $${esc(p.sym || '')}</b>\nValue fell to ≈ <b>${valueEth.toFixed(4)} ${c.native}</b> from a peak of ≈ ${p.peakValueEth.toFixed(4)}. Check the chart / your safety.`, kb, 'alerts');
+      // ONE TOKEN, ONE ALERT — and one set of numbers that describe the whole
+      // holding. A position record is per WALLET, so a five-wallet bag sent five
+      // identical warnings, each quoting a fifth of the position as if it were
+      // the position. Same rule as the multi-wallet buy receipt: every wallet
+      // failing the same way is ONE fact, not five.
+      //
+      // Free to compute: the other wallets' bags are already in memory and the
+      // price is the snapshot we just read, so the total costs no extra request.
+      const tkey = core.posKey(p.chain, p.ca);
+      let totVal = 0, totPeak = 0, nWal = 0;
+      for (const wx of core.walletList(u)) {
+        const q = (wx.positions || {})[tkey];
+        if (!q) continue;
+        let hr = 0n; try { hr = BigInt(q.tokens || '0'); } catch (_) {}
+        if (hr <= 0n) continue;
+        totVal += Number(ethers.formatUnits(hr, q.dec || 18)) * snap.priceEth;
+        totPeak += Number(q.peakValueEth) || 0;
+        nWal++;
+        // Mark them all seen HERE. Left unmarked, the next wallet in this very
+        // cycle trips the same condition and sends the alert again — the collapse
+        // has to be persisted, not just skipped once.
+        q.notified = (q.notified && typeof q.notified === 'object') ? q.notified : {};
+        q.notified.rug = true;
+      }
+      if (!(totVal > 0) || !(totPeak > 0)) { totVal = valueEth; totPeak = p.peakValueEth; nWal = 1; }
+      const across = nWal > 1 ? ` <i>across ${nWal} wallets</i>` : '';
+      _notify(u.chatId, `⚠️ <b>Possible rug / dump: $${esc(p.sym || '')}</b>\nValue fell to ≈ <b>${totVal.toFixed(4)} ${c.native}</b> from a peak of ≈ ${totPeak.toFixed(4)}${across}. Check the chart / your safety.`, kb, 'alerts');
     }
   });
   snapOf.report();

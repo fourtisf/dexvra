@@ -2098,6 +2098,40 @@ function _creditReferral(user, feeWei, chainKey) {
 // Solana base58 mints are CASE-SENSITIVE, so keep their original case — lowercasing
 // could collide two distinct mints onto one position.
 function posKey(chainKey, ca) { return chainKey + ':' + (isSvm(chainKey) ? String(ca) : String(ca).toLowerCase()); }
+
+/**
+ * A freshly (re)opened bag forgets the last one's risk history.
+ *
+ * `peakValueEth` is the high-water mark the rug alert measures against, and it
+ * lives on the POSITION record — which survives being sold to zero, because the
+ * record is what carries the lifetime ethIn/ethOut. So buying back into a token
+ * you once held big compares a small new bag against the old bag's peak, and the
+ * alert fires on the very first tick after the buy.
+ *
+ * A live report, 2026-08-16: five wallets bought 0.01312 SOL of $Ge87…pump each,
+ * and one minute later every one of them said
+ *
+ *     ⚠️ Possible rug / dump — value fell to ≈ 0.0131 SOL from a peak of ≈ 0.1004
+ *
+ * 0.0131 ≤ 0.1004 × 0.15 exactly, so it could not have done anything else. The
+ * "peak" was a holding that had already been sold; nothing had dumped.
+ *
+ * THIS EXISTED, and only on the EVM path. `_buySol` never got it, so the bug was
+ * Solana-only — which is where the memecoins are. One owner now, called from
+ * both, because the next chain will make it three.
+ */
+function _resetRiskIfFresh(p) {
+  let prevHeld = 0n; try { prevHeld = BigInt(p.tokens || '0'); } catch (_) {}
+  if (!(p.closed || prevHeld <= 0n)) return;   // adding to a live bag keeps its history
+  p.peakValueEth = 0;
+  if (p.notified && typeof p.notified === 'object') {
+    delete p.notified.rug;
+    // The auto-protect cooldown too: a stale `protectAt` would SUPPRESS a real
+    // rescue on the new position, which is the same defect with the loss reversed.
+    delete p.notified.protectAt;
+    delete p.notified.protectCheckAt;
+  }
+}
 // Append a trade to a wallet's history (newest last), bounded so the store can't grow forever.
 function _pushHistory(wal, entry) {
   if (!Array.isArray(wal.history)) wal.history = [];
@@ -2203,6 +2237,7 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
 
     const key = posKey(chainKey, ca);
     const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
+    _resetRiskIfFresh(p);
     if (p.costEth == null) p.costEth = Math.max(0, (p.ethIn || 0) - (p.ethOut || 0));   // migrate legacy
     p.name = meta.name; p.sym = meta.sym; p.dec = meta.decimals;
     const spendSol = solana.lamportsToSol(spend);
@@ -2566,11 +2601,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
 
     const key = posKey(chainKey, ca);
     const p = wal.positions[key] || { chain: chainKey, ca, name: meta.name, sym: meta.sym, dec: meta.decimals, ethIn: 0, ethOut: 0, realizedEth: 0, tokens: '0', costEth: 0 };
-    // Freshly (re)opened bag = was closed or held nothing before this buy. Reset the
-    // risk-tracking state so a STALE peak from a prior holding can't instantly trip the
-    // rug guard / rug alert on a brand-new entry.
-    let prevHeld = 0n; try { prevHeld = BigInt(p.tokens || '0'); } catch (_) {}
-    if (p.closed || prevHeld <= 0n) { p.peakValueEth = 0; if (p.notified && typeof p.notified === 'object') { delete p.notified.rug; delete p.notified.protectAt; delete p.notified.protectCheckAt; } }
+    _resetRiskIfFresh(p);
     // costEth = cost basis of the CURRENTLY-HELD tokens (drained proportionally on
     // sells). ethIn/ethOut stay as LIFETIME totals for the ×-multiple/stats.
     // Migrate a legacy position (no costEth) from its net cash still in the trade.

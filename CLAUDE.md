@@ -450,6 +450,56 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
+## A rug alert on a token that had not rugged
+
+Five wallets bought $Ge87…pump — 0.01312 SOL each, entry $0.00724, MC $7.25M —
+and one minute later the bot said this **four times**:
+
+> ⚠️ Possible rug / dump: value fell to ≈ **0.0131 SOL** from a peak of ≈ 0.1004.
+
+Nothing had dumped. `0.0131` is one wallet's brand-new bag at the price it was
+just bought at; `0.1004` was a holding in the *same* wallet that had already
+been sold. **A position record survives being sold to zero** — it is what carries
+the lifetime `ethIn`/`ethOut` — and `peakValueEth` rode along with it. With
+`POS_RUG_DROP` at 0.15, `0.0131 ≤ 0.1004 × 0.15` exactly, so it fires on the
+first tick after the buy, every time, for anyone buying back into a token they
+once held bigger.
+
+- **The reset existed, in `buy()` only.** `_buySol` never had it, so the bug was
+  **Solana-only** — which is where the memecoins are. `_resetRiskIfFresh(p)` is
+  one function now, called by both, and a test names both call sites.
+- **It must run BEFORE `p.tokens` is written**, or it inspects the bag it was
+  meant to test and never fires.
+- **Adding to a LIVE bag keeps its history.** A position that really did peak and
+  is on its way down is exactly what the alert is for; averaging down must not
+  silence it.
+- **`protectAt` is cleared too.** A stale auto-protect cooldown *suppresses* a
+  real rescue on the new position — the same defect with the loss reversed.
+- **One token, one alert.** Positions are per WALLET, so a five-wallet bag sent
+  five identical warnings, each quoting a fifth of the holding as if it were the
+  holding. The totals are summed from memory at the price already read, every
+  wallet is marked seen in the same pass (skipping once lets the next wallet in
+  the same cycle re-send it), and the line says `across N wallets`.
+
+## A buy surfaces the monitor — reversed on purpose
+
+*"harusnya ada monitor lgsung"*. `startMonitor` reused the pinned card in place
+after a buy, on the reasoning that "churning the pinned message on every fill
+would be worse than leaving it". That was wrong in the one case it mattered:
+**receipts are always posted AFTER the fill** — a five-wallet buy pushes five
+messages on top of the card — so after a buy the card is always buried, and the
+moment a person most wants to see what they hold is the moment the numbers just
+changed. What they got was five receipts each with a 📍 button and a live card
+somewhere above the scroll. It is one surface per BUY (not per wallet) and the
+pin is silent, so the churn this guarded against is the same frequency as the
+receipt itself.
+
+```bash
+cd tradebot && node --test stalePeak.test.js   # 6 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ## "Something glitched handling that" was `tg()` retrying the wrong failure
 
 The server log, asked what was behind that message, had three lines to say:

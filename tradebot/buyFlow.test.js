@@ -88,9 +88,14 @@ test("one snapshot serves both, and it is the honest reference", () => {
 test("a filled buy opens the live position by itself", () => {
   // It already existed behind the 📍 button. Making someone tap for it after a
   // fill is asking them to do the obvious thing by hand.
-  assert.match(SINGLE, /startMonitor\(chatId, ca, r\.chain, wid\)\.catch\(\(\) => \{\}\);/);
+  // `surface: true`: the receipt lands on top of any card already pinned for
+  // this token, so reusing it in place buries the one thing the buy was about.
+  assert.match(SINGLE, /startMonitor\(chatId, ca, r\.chain, wid, \{ surface: true \}\)\.catch\(\(\) => \{\}\);/);
   const iReceipt = SINGLE.indexOf("await edit(chatId, pid, receipt + note, kb)");
-  const iMon = SINGLE.indexOf("startMonitor(chatId, ca, r.chain, wid)");
+  // No trailing paren: the call carries options now, and pinning `wid)` made
+  // this indexOf return -1 — which reads as "the monitor runs first" rather
+  // than as a stale search string.
+  const iMon = SINGLE.indexOf("startMonitor(chatId, ca, r.chain, wid");
   assert.ok(iMon > iReceipt, "the receipt lands first — the monitor follows it");
 });
 

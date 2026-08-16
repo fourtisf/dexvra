@@ -2130,7 +2130,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // Straight into the live position — pinned, refreshing itself, closing on
       // exit. It already existed behind the 📍 button; making someone tap for it
       // after a buy is asking them to do the obvious thing by hand.
-      startMonitor(chatId, ca, r.chain, wid).catch(() => {});
+      startMonitor(chatId, ca, r.chain, wid, { surface: true }).catch(() => {});
     } else {
       // Same order as the single-wallet path: every buy is in flight before the
       // progress message is awaited.
@@ -2307,7 +2307,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // nothing to watch it with. Bound to the first wallet that actually
       // filled — the monitor is per token, and that is the one holding a bag.
       const filled = results.findIndex((res) => res.status === 'fulfilled');
-      if (okN > 0) startMonitor(chatId, ca, chainKey, targets[filled >= 0 ? filled : 0].id).catch(() => {});
+      if (okN > 0) startMonitor(chatId, ca, chainKey, targets[filled >= 0 ? filled : 0].id, { surface: true }).catch(() => {});
     }
   } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'buy.failed')}\n\n${esc(friendlyError(chatId, e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
   finally { _inflightBuy.delete(key); }
@@ -3719,15 +3719,20 @@ function startMonitor(chatId, ca, chainKey, wid, opts) {
 }
 async function _startMonitor(chatId, ca, chainKey, wid, opts) {
   const tkey = monKey(chatId, ca);
-  // The user tapped 📍 to SEE this position. Quietly refreshing a card that is
-  // hundreds of messages up the scrollback is indistinguishable from the bot
-  // ignoring the tap — which is exactly what it looked like from /monitor, on
-  // the one token that already had a tracker running. Retire the old card and
-  // post a fresh one where they are actually looking.
+  // The user tapped 📍, or just bought, to SEE this position. Quietly refreshing
+  // a card that is hundreds of messages up the scrollback is indistinguishable
+  // from the bot ignoring them — which is exactly what it looked like from
+  // /monitor, on the one token that already had a tracker running. Retire the
+  // old card and post a fresh one where they are actually looking.
   //
-  // Only on an explicit request. A monitor re-opened by a repeat BUY still
-  // reuses its card in place; churning the pinned message on every fill would
-  // be worse than leaving it.
+  // A BUY SURFACES IT TOO, and used to be the counter-example: "churning the
+  // pinned message on every fill would be worse than leaving it." That was wrong
+  // in the one case it mattered. Receipts are always posted AFTER the fill, so
+  // after a buy the card is always buried — a five-wallet buy pushes five
+  // messages on top of it — and the moment a person most wants to see what they
+  // now hold is the moment the numbers just changed. It is one surface per BUY,
+  // not per wallet, and the pin is silent (`disable_notification`), so the churn
+  // this warned about is the same frequency as the receipt itself.
   const surface = !!(opts && opts.surface);
   try {
     // ONE live monitor per token — a repeat buy (or the 📍 button) reuses the
