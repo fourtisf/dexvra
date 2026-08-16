@@ -780,6 +780,9 @@ module.exports = {
   cfg, cfgLive, enabled, poolId, orderCurrencies, poolState, bestPool, price, priceNativeFromSqrt,
   quoteExactIn, discoverPoolManager, discoverPoolKeys, routerCandidates, electRouter, demoteRouter,
   routerCfg, canSwap, canSwapLive, swapCalldata, simulate, prepareSwap, permit2Calls,
+  // Whether this chain may DISCOVER its v4 deployment, as opposed to having one
+  // pinned in env. The boot log needs the difference: unset env is not "no v4".
+  autoOk: _autoOk,
   NATIVE, DEFAULT_TIERS, DEFAULT_POOLS_SLOT, CMD_V4_SWAP, CANONICAL_PERMIT2,
   INITIALIZE_EVENT, INITIALIZE_TOPIC, SWAP_TOPIC,
   _resetDiscovery,

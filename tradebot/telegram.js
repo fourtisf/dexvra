@@ -3892,12 +3892,21 @@ async function start() {
   console.log(`[boot] build ${require('./build').stamp()}`);
   console.log(`[boot] chains enabled: ${core.chains.enabledChains().map((c) => c.key).join(', ')}`);
   // Which optional venues this process can actually use. A v4 token reads as
-  // "couldn't price it" when v4 is unconfigured, and that looked exactly like a
+  // "couldn't price it" when v4 is unreachable, and that looked exactly like a
   // broken bot for an entire evening.
+  //
+  // "OFF" USED TO BE TRUE AND NO LONGER IS. This line was written when
+  // <CHAIN>_V4_POOLMANAGER was a PREREQUISITE, so an unset env meant no v4 at
+  // all. v4.js now discovers the deployment from the chain's own logs and the
+  // env vars are an override plus a discovery skip — so a boot log reading
+  // "v4 OFF" on every chain, which is what a stock box prints, was telling the
+  // operator the opposite of the truth about the one venue this line exists to
+  // stop them misreading. Only <CHAIN>_V4_AUTODISCOVER=0 is genuinely off.
   for (const c of core.chains.enabledChains().filter((x) => !core.chains.isSvm(x.key))) {
     const bits = [];
-    if (core.v4.enabled(c.key)) bits.push(core.v4.canSwap(c.key) ? 'v4 read+swap' : 'v4 read-only');
-    else bits.push('v4 OFF');
+    if (core.v4.enabled(c.key)) bits.push(core.v4.canSwap(c.key) ? 'v4 pinned · read+swap' : 'v4 pinned · read-only');
+    else if (core.v4.autoOk(c.key)) bits.push('v4 auto (discovered on first use)');
+    else bits.push('v4 OFF (autodiscover disabled)');
     console.log(`[boot] ${c.key}: ${bits.join(' · ')}`);
   }
   await getMe();
