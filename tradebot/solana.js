@@ -280,6 +280,57 @@ const CONFIRM_POLL_MS = Math.max(50, Number(process.env.SOL_CONFIRM_POLL_MS || 2
 const CONFIRM_TIMEOUT_MS = Math.max(5000, Number(process.env.SOL_CONFIRM_TIMEOUT_MS || 60000));
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * ONE STATUS READ FOR EVERY SIGNATURE BEING WATCHED RIGHT NOW.
+ *
+ * The "~5 status reads per trade" above is per TRADE, and a multi-wallet buy is
+ * five trades at once. Five confirmations each polling on their own 200ms timer
+ * is ~25 requests a second at the exact moment five sends and fifteen balance
+ * reads have just gone out — comfortably past what Solana's public endpoint
+ * serves one IP, and the throttling lands on the confirmations because they are
+ * what is still running.
+ *
+ * Measured on the box, five wallets into one token on one block:
+ *
+ *     swap=541ms  swap=527ms  swap=522ms  swap=1297ms  swap=2289ms
+ *
+ * Same route, same quote, same slot — a 4.4x spread that is not the trade.
+ *
+ * `getSignatureStatuses` takes an ARRAY, and always could. Coalescing the polls
+ * that fall in the same short window turns N concurrent confirmations into one
+ * request per tick, so the fifth wallet stops paying for the other four.
+ *
+ * An RPC failure RESOLVES NULL rather than rejecting: confirmSignature treats a
+ * transient failure as "keep polling", and a batch that rejected would turn one
+ * blip into five failed confirmations.
+ */
+const STATUS_BATCH_MS = Math.max(0, Number(process.env.SOL_STATUS_BATCH_MS || 25));
+const _statusQ = new Map();   // conn -> { sigs: Map<sig, resolve[]>, timer }
+
+function signatureStatus(conn, sig) {
+  if (!(STATUS_BATCH_MS > 0)) {
+    return conn.getSignatureStatuses([sig]).then((r) => (r && r.value && r.value[0]) || null, () => null);
+  }
+  return new Promise((resolve) => {
+    let q = _statusQ.get(conn);
+    if (!q) { q = { sigs: new Map(), timer: null }; _statusQ.set(conn, q); }
+    const waiting = q.sigs.get(sig);
+    if (waiting) waiting.push(resolve); else q.sigs.set(sig, [resolve]);
+    if (q.timer) return;
+    q.timer = setTimeout(async () => {
+      // Swap the map out FIRST: anything that arrives while the request is in
+      // flight belongs to the next batch, not this one, or a late arrival is
+      // resolved with a status read before it started waiting.
+      const batch = q.sigs; q.sigs = new Map(); q.timer = null;
+      if (!q.sigs.size && !batch.size) _statusQ.delete(conn);
+      const list = [...batch.keys()];
+      let vals = [];
+      try { const r = await conn.getSignatureStatuses(list); vals = (r && r.value) || []; } catch (_) { vals = []; }
+      list.forEach((s, i) => { for (const fn of batch.get(s)) fn(vals[i] || null); });
+    }, STATUS_BATCH_MS);
+  });
+}
+
 /** Wait for `sig` to reach `confirmed`, by POLLING getSignatureStatuses over HTTP.
  *
  *  web3.js's own connection.confirmTransaction() cannot be used here. With the
@@ -306,8 +357,8 @@ async function confirmSignature(conn, sig, opts = {}) {
   const started = Date.now();
   for (;;) {
     try {
-      const r = await conn.getSignatureStatuses([sig]);
-      const st = r && r.value && r.value[0];
+      // Batched across every confirmation in flight — see signatureStatus.
+      const st = await signatureStatus(conn, sig);
       if (st) {
         if (st.err) throw Object.assign(new Error('transaction failed on-chain: ' + JSON.stringify(st.err)), { onChainError: st.err });
         const cs = st.confirmationStatus;
@@ -324,7 +375,9 @@ async function confirmSignature(conn, sig, opts = {}) {
 
 // Execute a Jupiter swap: deserialize the base64 tx, sign with the keypair, send,
 // confirm. Returns the base58 signature. Throws with a readable reason on failure.
-async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
+async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent, timings) {
+  const T = timings || {};
+  let t = Date.now();
   const tx = VersionedTransaction.deserialize(Buffer.from(swapTransactionB64, 'base64'));
   tx.sign([keypair]);
   const raw = tx.serialize();
@@ -333,6 +386,7 @@ async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
   // every swap sat through a full extra RPC round trip — with the transaction already
   // in flight — before confirmation could even start.
   const sig = await conn.sendRawTransaction(raw, { skipPreflight: SKIP_PREFLIGHT, maxRetries: 3 });
+  T.send = Date.now() - t; t = Date.now();
   // Past this point the tx is BROADCAST, and the caller is told so immediately —
   // waiting for 'confirmed' is another round the user does not need to spend
   // staring at a message with nothing in it.
@@ -346,6 +400,10 @@ async function sendJupiterSwap(conn, keypair, swapTransactionB64, onSent) {
   } catch (e) {
     if (e && e.onChainError) throw new Error('swap reverted on-chain: ' + JSON.stringify(e.onChainError));
     throw Object.assign(new Error('swap broadcast but not confirmed yet: ' + sig), { broadcast: true, sig });
+  } finally {
+    // In a finally, so a trade that TIMED OUT still reports how long it waited —
+    // that is precisely the case worth knowing the number for.
+    T.confirm = Date.now() - t;
   }
 }
 
@@ -469,16 +527,25 @@ async function getSwapTx(quoteRaw, userPublicKey, { feeAccount, priorityLamports
 // abort. This hook exists because the quote is the only executable price in the
 // system, and the price the user tapped came from somewhere else entirely — see
 // the divergence guard in core.js _buySol.
-async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent, onQuote, quoteP }) {
+async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageBps, priorityLamports, onSent, onQuote, quoteP, timings }) {
+  // `timings` is filled in as each phase completes. A single opaque "swap=2289ms"
+  // cannot tell a slow router from a throttled RPC from a transaction that took
+  // ten slots to land, and those need three different answers — one of which is
+  // not a code change at all.
+  const T = timings || {};
+  let t = Date.now();
   // `quoteP` lets a caller start the quote EARLIER than this function is reached.
   // Nothing in a quote comes from the chain — two mints, an amount, a slippage —
   // so _buySol issues it alongside its balance and metadata reads instead of
   // stacking Jupiter's round trip on top of an RPC round trip it does not depend
   // on. Absent, the behaviour is exactly as before.
   const quote = await (quoteP || getQuote({ inputMint, outputMint, amountRaw, slippageBps }));
+  T.quote = Date.now() - t; t = Date.now();
   if (onQuote) await onQuote(quote);
+  T.guard = Date.now() - t; t = Date.now();
   const txB64 = await getSwapTx(quote.raw, keypair.publicKey.toBase58(), { priorityLamports });
-  const sig = await sendJupiterSwap(conn, keypair, txB64, onSent);
+  T.build = Date.now() - t;
+  const sig = await sendJupiterSwap(conn, keypair, txB64, onSent, T);
   return { sig, quote };
 }
 

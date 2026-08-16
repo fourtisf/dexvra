@@ -64,7 +64,7 @@ test('an early quote is still a quote the guard sees', () => {
   // the promise is handed in and awaited in the one place it always was.
   const buy = CORE.slice(CORE.indexOf('async function _buySol('), CORE.indexOf('async function _sellSol('));
   assert.match(buy, /const quoteP = solana\.getQuote\(\{ inputMint: solana\.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip \}\);/);
-  assert.match(buy, /onSent: sent, onQuote, quoteP \}\)/, 'the early quote no longer reaches swap()');
+  assert.match(buy, /onSent: sent, onQuote, quoteP, timings: T \}\)/, 'the early quote no longer reaches swap()');
   assert.ok(!/getSwapTx|sendJupiterSwap/.test(buy), '_buySol builds its own transaction, so the guard hook is bypassed');
   // A pre-check that throws before the quote is awaited must not surface as an
   // unhandled rejection and take the process down.

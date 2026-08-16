@@ -139,6 +139,11 @@ const withTmo = (p, ms, fb) => Promise.race([p, new Promise((r) => setTimeout(()
  * a reason to block a trade" was always this code's position.
  */
 const GUARD_REF_WAIT_MS = Math.max(0, Number(process.env.SOL_GUARD_REF_WAIT_MS || 1200));
+/** The swap's phase timings, in the order they happen, skipping any that did not
+ *  run — a phase printed as `0ms` when it never started is a measurement that
+ *  looks like a finding. */
+const _phases = (T) => ['quote', 'guard', 'build', 'send', 'confirm']
+  .filter((k) => Number.isFinite(T[k])).map((k) => `${k}=${T[k]}ms`).join(' ');
 
 const CURVE_ABI = [
   'function marketCapEth() view returns (uint256)',
@@ -2268,17 +2273,24 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     };
     let sig, quote;
     const tSwap = Date.now();
-    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent, onQuote, quoteP })); }
-    catch (e) { const err = new Error('buy failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err; }
-    // WHERE THE TIME WENT. Every speed change on this path so far has been argued
-    // from reading the code, which is how the reference-price await survived
-    // being described as free for as long as it did. `reads` is the chain lookups
-    // this function waits on, `swap` covers quote→build→send→confirm, and `prio`
-    // is on the line because a zero priority fee is the difference between
-    // landing in the next slot and landing in ten — and it is a default nobody
-    // ever sees. One line per buy, ops-side only.
-    const tAfterSwap = Date.now();
-    console.log(`[buy] sol ${ca.slice(0, 8)} reads=${tSwap - tStart}ms swap=${tAfterSwap - tSwap}ms prio=${CFG.solPriorityLamports}`);
+    // WHERE THE TIME WENT, PHASE BY PHASE. Every speed change on this path had
+    // been argued from reading the code — which is how the reference-price await
+    // survived being described as free for as long as it did. And one opaque
+    // `swap=2289ms` cannot separate a slow router from a throttled RPC from a
+    // transaction that took ten slots to land; those want three different
+    // answers, one of which is not code at all.
+    const T = {};
+    try { ({ sig, quote } = await solana.swap(conn, kp, { inputMint: solana.WSOL_MINT, outputMint: ca, amountRaw: spend, slippageBps: slip, priorityLamports: CFG.solPriorityLamports, onSent: sent, onQuote, quoteP, timings: T })); }
+    catch (e) {
+      // Logged on the failure path too: a buy that gave up waiting is the one
+      // whose timings most need reading.
+      console.log(`[buy] sol ${ca.slice(0, 8)} FAILED reads=${tSwap - tStart}ms ${_phases(T)} prio=${CFG.solPriorityLamports}`);
+      const err = new Error('buy failed on Solana: ' + (e.message || e)); if (e && e.broadcast) { err.broadcast = true; err.sig = e.sig; } throw err;
+    }
+    // `prio` is on this line because a zero priority fee is the difference
+    // between landing in the next slot and landing in ten — and it is a default
+    // nobody ever sees. One line per buy, ops-side only.
+    console.log(`[buy] sol ${ca.slice(0, 8)} reads=${tSwap - tStart}ms ${_phases(T)} prio=${CFG.solPriorityLamports}`);
     const after = (await solana.splBalance(conn, signer.address, ca)).raw;
     const got = after > before ? after - before : (quote ? quote.outAmount : 0n);
     // Jupiter's PROMISE and the wallet's REALITY, on two adjacent lines, never

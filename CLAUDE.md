@@ -476,13 +476,46 @@ after "saya ingin buat bot lebih cepat lgi respn dan eksekusi":
   does not; `res.feeHash` is filled in by the continuation so the flag stays
   truthful rather than optimistic. Both buy and sell.
 
-**Every buy now logs where its time went**, because every speed change on this
-path had been argued from reading the code — which is how the reference await
-survived being called free for as long as it did:
+**Every buy logs where its time went, phase by phase**, because every speed
+change on this path had been argued from reading the code — which is how the
+reference await survived being called free for as long as it did:
 
 ```
-[buy] sol Ge87Etsj reads=310ms swap=890ms prio=0
+[buy] sol Ge87Etsj reads=160ms quote=8ms guard=2ms build=210ms send=170ms confirm=150ms prio=0
 ```
+
+A phase that never ran is omitted, never printed as `0ms` — a zero meaning "did
+not happen" reads as a finding. The line is printed on the FAILURE path too: a
+buy that gave up waiting is the one whose confirm time most needs reading.
+
+### Five wallets were throttling each other
+
+The first thing the timings showed, five wallets into one token on one block:
+
+```
+swap=541ms  swap=527ms  swap=522ms  swap=1297ms  swap=2289ms
+```
+
+Same route, same quote, same slot — a 4.4× spread that is not the trade.
+`confirmSignature` polls every 200ms, and the "~5 status reads per trade" it is
+documented as costing is per **trade**: five concurrent confirmations is ~25
+requests a second, arriving alongside five sends and fifteen balance reads, at an
+endpoint that serves one IP far less than that. The throttling lands on the
+confirmations because they are what is still running.
+
+`getSignatureStatuses` takes an **array**, and always did. `signatureStatus()`
+coalesces the polls that fall in one `SOL_STATUS_BATCH_MS` window (25ms) into a
+single request, so the fifth wallet stops paying for the other four.
+
+- **Each waiter gets ITS OWN index** out of the response. Getting that wrong
+  reports four trades on one trade's outcome.
+- **An RPC failure RESOLVES NULL, never rejects.** `confirmSignature` treats a
+  transient failure as "keep polling"; a batch that rejected would turn one blip
+  into every in-flight trade reporting "not confirmed".
+- **The pending map is swapped out before the request goes**, so a signature that
+  starts waiting mid-flight lands in the next batch rather than being answered by
+  a read that predates it.
+- `SOL_STATUS_BATCH_MS=0` restores one-call-per-signature.
 
 ### The two biggest levers are CONFIG, not code
 
