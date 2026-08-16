@@ -322,11 +322,17 @@ function signatureStatus(conn, sig) {
       // flight belongs to the next batch, not this one, or a late arrival is
       // resolved with a status read before it started waiting.
       const batch = q.sigs; q.sigs = new Map(); q.timer = null;
-      if (!q.sigs.size && !batch.size) _statusQ.delete(conn);
       const list = [...batch.keys()];
       let vals = [];
       try { const r = await conn.getSignatureStatuses(list); vals = (r && r.value) || []; } catch (_) { vals = []; }
       list.forEach((s, i) => { for (const fn of batch.get(s)) fn(vals[i] || null); });
+      // Drop the per-connection entry once nothing is waiting on it. The first
+      // cut of this tested `q.sigs` immediately after replacing it with an empty
+      // Map, so the condition was always true on one side and never on the
+      // other: the cleanup could not fire at all. One connection is the normal
+      // case, so nothing leaked — but a line that cannot run is worse than no
+      // line, because the next reader believes it does.
+      if (!q.sigs.size && !q.timer && _statusQ.get(conn) === q) _statusQ.delete(conn);
     }, STATUS_BATCH_MS);
   });
 }
@@ -746,4 +752,5 @@ module.exports = {
   jupBase: () => _jupBase,   // which host actually answered — for the preflight
   getConnection, solBalance, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
+  _statusQ,   // test-only: proves the batch queue is emptied, not just drained
 };

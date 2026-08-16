@@ -100,6 +100,18 @@ test('a signature nobody asked about is never answered for', async () => {
   assert.ok(!conn.calls[0].includes('second'), 'a signature appeared in a batch issued before it existed');
 });
 
+test('the per-connection queue is dropped once nothing is waiting', async () => {
+  // The first cut tested the pending map immediately after replacing it with an
+  // empty one, so the cleanup could never fire. One connection is the normal
+  // case and nothing leaked — but a line that cannot run is worse than no line,
+  // because the next reader believes it does.
+  const conn = fakeConn(() => landed);
+  await solana.confirmSignature(conn, 'done');
+  assert.strictEqual(solana._statusQ.size, 0, 'the queue kept an entry for a connection with nothing in flight');
+  // …and it comes back cleanly for the next trade on the same connection.
+  assert.strictEqual(await solana.confirmSignature(conn, 'again'), 'again');
+});
+
 test('an on-chain revert still throws, batched or not', async () => {
   const conn = fakeConn(() => ({ err: { InstructionError: [3, { Custom: 6001 }] }, confirmationStatus: 'confirmed' }));
   await assert.rejects(solana.confirmSignature(conn, 'reverted'), (e) => {
