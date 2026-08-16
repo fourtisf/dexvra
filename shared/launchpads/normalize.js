@@ -34,10 +34,27 @@ function pick(obj, paths) {
   return undefined;
 }
 
+/**
+ * A short single-LINE string, from a field a stranger wrote.
+ *
+ * THE WHITESPACE COLLAPSE IS A SECURITY FIX, not tidiness. A token's name and
+ * symbol are chosen by whoever deployed it and land in a trade receipt — the
+ * message a user reads to decide what just happened to their money. Escaping
+ * makes `<b>` inert; it does nothing whatsoever to a NEWLINE. So a token named
+ *
+ *     Nice Coin\n\n🟢 Buy of 999,999 $SOL succeeded · 💳 robin1
+ *
+ * renders as extra lines inside a real receipt, in the bot's own voice, and
+ * there is no way for the reader to tell them from the ones the bot wrote.
+ * Found because a live feed returned a token whose symbol was "READ TWEET" —
+ * a space is harmless and was the thread worth pulling.
+ *
+ * Sliced by code point so the cap never splits an emoji's surrogate pair.
+ */
 const str = (v, max = 200) => {
-  const s = v == null ? '' : String(v).trim();
+  const s = v == null ? '' : String(v).replace(/\s+/g, ' ').trim();
   if (!s) return null;
-  return Array.from(s).slice(0, max).join('');   // code points — never split an emoji's surrogate pair
+  return Array.from(s).slice(0, max).join('');
 };
 
 const num = (v) => {

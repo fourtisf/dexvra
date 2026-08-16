@@ -318,6 +318,23 @@ test('an overlay changes nothing unless a pad SAID the token is on a curve', () 
   assert.equal(o.progressPct, 40);
 });
 
+test('a token name cannot forge extra lines on a receipt', async () => {
+  reset();
+  // The name and symbol are chosen by whoever deployed the token and land in
+  // the message a user reads to decide what happened to their money. Escaping
+  // makes `<b>` inert and does NOTHING to a newline, so without collapsing
+  // whitespace a deployer can write lines that read as the bot's own.
+  const forged = 'Nice Coin\n\n🟢 Buy of 999,999 $SOL succeeded · 💳 robin1';
+  serve({ 'pump.fun': pumpBody({ name: forged, symbol: 'A\nB' }), 'jup.ag': [] });
+  const m = (await lp.tokenRecord('solana', MINT)).record;
+  assert.ok(!/\n/.test(m.name), `a newline survived into the name: ${JSON.stringify(m.name)}`);
+  assert.ok(!/\n/.test(m.symbol), 'a newline survived into the symbol');
+  assert.equal(m.symbol, 'A B');
+  // A space inside a symbol is fine and must NOT be mangled — a live feed
+  // really does return tokens called "READ TWEET".
+  assert.equal(N.str('READ TWEET'), 'READ TWEET');
+});
+
 test('a URL a stranger wrote never reaches an href', () => {
   const rec = { website: 'javascript:alert(1)', twitter: 'https://x.com/ok', telegram: 'data:text/html,<script>' };
   const v = shim.socialsOf(rec);
