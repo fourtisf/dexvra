@@ -331,6 +331,37 @@ const S = {
   'wallet.receipt.exit_px': { en: '🌊 Exit <b>${px}</b>', id: '🌊 Keluar <b>${px}</b>' },
   'wallet.receipt.tx': { en: '🔍 Transaction', id: '🔍 Transaksi' },
 
+  // ------------------------------------------------------------ snipe by CA
+  // "Buy THIS contract the moment it can be bought." The launch snipe buys
+  // every new token on a chain and the dev snipe buys whatever a followed
+  // wallet launches; neither can express having the address in advance.
+  'snipe.ca.title': { en: '📍 <b>Snipe a contract</b>', id: '📍 <b>Snipe satu kontrak</b>' },
+  'snipe.ca.blurb': {
+    en: 'Arm an address before its pool opens. The bot checks it every few seconds and buys the instant a swap can actually be filled — on any enabled chain, Solana included.',
+    id: 'Pasang alamat sebelum pool-nya dibuka. Bot cek tiap beberapa detik dan langsung beli begitu swap benar-benar bisa jalan — di semua chain yang aktif, termasuk Solana.',
+  },
+  'snipe.ca.armed_head': { en: '<b>Armed ({n})</b>', id: '<b>Terpasang ({n})</b>' },
+  'snipe.ca.none': { en: '<i>Nothing armed yet.</i>', id: '<i>Belum ada yang dipasang.</i>' },
+  'snipe.ca.recent_head': { en: '<b>Recent</b>', id: '<b>Terakhir</b>' },
+  'snipe.ca.how': {
+    en: '<i>Send: contract, amount, and optionally a slippage %. A launch fills through a one-block-old pool, so a wider bound than your normal one is usually what gets you in.</i>',
+    id: '<i>Kirim: kontrak, jumlah, dan opsional slippage %. Launch itu isi lewat pool yang baru satu blok, jadi biasanya butuh slippage lebih lebar dari biasanya.</i>',
+  },
+  'snipe.ca.add_btn': { en: '➕ Arm a contract', id: '➕ Pasang kontrak' },
+  'snipe.ca.launch_btn': { en: '🎯 Launch snipe', id: '🎯 Snipe launch' },
+  'snipe.ca.prompt': {
+    en: '📍 <b>Snipe a contract</b> on {chain}\n\nSend <b>&lt;contract&gt; &lt;amount&gt;</b> and optionally <b>&lt;slippage%&gt;</b>:\n<code>0xabc… 0.05 25</code> → buy 0.05 {native} at 25% slippage\n<code>0xabc… 0.05</code> → buy 0.05 {native} at your normal slippage\n\n<i>Switch chain first if the launch is elsewhere. Nothing is spent until the pool opens.</i>',
+    id: '📍 <b>Snipe satu kontrak</b> di {chain}\n\nKirim <b>&lt;kontrak&gt; &lt;jumlah&gt;</b> dan opsional <b>&lt;slippage%&gt;</b>:\n<code>0xabc… 0.05 25</code> → beli 0.05 {native} dengan slippage 25%\n<code>0xabc… 0.05</code> → beli 0.05 {native} dengan slippage biasa\n\n<i>Ganti chain dulu kalau launch-nya di chain lain. Tidak ada dana keluar sampai pool-nya buka.</i>',
+  },
+  'snipe.ca.armed': {
+    en: '✅ <b>Armed</b> · {chain}\n<code>{ca}</code>\n\nBuys <b>{amt} {native}</b> at <b>{slip}</b> slippage the moment it becomes tradeable.\nExpires in <b>{hours}h</b> if it never launches.',
+    id: '✅ <b>Terpasang</b> · {chain}\n<code>{ca}</code>\n\nBeli <b>{amt} {native}</b> dengan slippage <b>{slip}</b> begitu bisa ditradingkan.\nHangus dalam <b>{hours} jam</b> kalau tidak pernah launch.',
+  },
+  'snipe.ca.slip_default': { en: 'your normal', id: 'slippage biasa' },
+  'snipe.ca.bad_addr': { en: "❌ That is not a valid <b>{chain}</b> contract address. Send it again, or switch chain first.", id: '❌ Itu bukan alamat kontrak <b>{chain}</b> yang valid. Kirim ulang, atau ganti chain dulu.' },
+  'snipe.ca.bad_amount': { en: '❌ Send an amount in <b>{native}</b> after the address, e.g. <code>0.05</code>.', id: '❌ Kirim jumlah dalam <b>{native}</b> setelah alamat, misalnya <code>0.05</code>.' },
+  'snipe.ca.bad_slip': { en: '❌ Slippage must be between <b>0</b> and <b>50</b> percent.', id: '❌ Slippage harus antara <b>0</b> dan <b>50</b> persen.' },
+
   // ---------------------------------------------------------------- errors
   // One clear sentence per failure class, each ending in what to actually do.
   // The raw on-chain / RPC text is still logged server-side for the operator.

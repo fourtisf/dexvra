@@ -511,6 +511,60 @@ all. `walletReceipt.test.js` clears `_monitors` in its `finally`, and drains
 `_sendQ` rather than sleeping a guessed number of milliseconds (a fixed sleep
 let one trade's receipts land inside the next trade's captured output).
 
+## Three snipes, and the two that were missing
+
+The bot had two: **Auto-Snipe** buys every new launch on a chain, **dev snipe**
+buys whatever a followed wallet launches. Neither could express the most common
+request there is — *"I have the contract, buy it the second the pool opens"* —
+and dev snipe was refused on every EVM chain.
+
+**Snipe by CA** (`caSnipeCycle`) polls armed contracts and buys on the first
+tick they are tradeable. **`core.canTradeNow()` is the single owner** of that
+question, because three callers were about to grow three answers to it. "There
+is a price" is a different question — the line `v4.js` draws between `price()`
+and `canSwapLive()`. A pair that exists with a **zero reserve is not tradeable**:
+it is a contract waiting for liquidity, and buying into it fills at an arbitrary
+price.
+
+- **A target is CLAIMED before the buy, persisted synchronously.** The poll runs
+  every few seconds, so a target left `armed` while its buy is in flight is
+  bought again by the next tick. A missed snipe is a shrug; spending twice is
+  not. Same rule as the auto-raid cursor.
+- **A BROADCAST buy is never re-armed** — it may still land. Anything that
+  clearly did not spend goes back on the shelf, because a launch that reverted
+  in its first block is exactly the one worth retrying a second later. An empty
+  wallet disarms instead of retrying forever.
+- **A restart never resurrects a `firing` target.** `ensureUser` marks it failed:
+  the buy may have been broadcast before the process died and nothing here can
+  tell.
+- **Every target carries its own amount and slippage.** `slipBps` **replaces**
+  the user's setting; `slipAddBps` (the retry escalation) still **adds** on top.
+  Folding them together would let an escalated snipe authorise more than the
+  user set. Both capped at 50%.
+- **The ring is bounded** (`CA_SNIPE_MAX_PROBES`, round-robin) so target 25 is
+  not starved by 1–24 and the RPC the *buy* needs is not spent probing.
+- **Targets expire** (`SNIPE_TARGET_TTL_MS`, 48h). An armed address with no
+  expiry polls forever.
+
+**Dev snipe now works on every enabled chain.** The old refusal said EVM has no
+cheap deployer signal — true of the *deployer*, false of the signal that matters.
+The DEX scan already reads `PairCreated`; the **sender of that transaction is the
+wallet that opened the pool**, one `getTransaction` away, and it is only resolved
+when somebody is actually following a dev on that chain. It is the pool-opener,
+not the deployer, and the UI says so — for a memecoin launch they are one key.
+The EVM path calls the **same `_followerBuy`** as Robinhood and Solana, so three
+chains cannot drift into three ideas of what a dev snipe does.
+
+⚠️ `devFollowers` must **not** be gated on `armed.length`. Following one
+developer is not the same as wanting every launch on the chain, and that early
+return is what kept dev snipe off EVM even after the chain check was relaxed.
+
+```bash
+cd tradebot && node --test snipeTarget.test.js   # 17 tests, no RPC
+```
+
+**Config a fix depends on:** nothing. Every knob has a working default.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -480,6 +480,12 @@ function ensureUser(chatId, referredBy) {
       if (!t.holding || typeof t.holding !== 'object') { t.holding = {}; ch = true; }
     }
     if (!Array.isArray(u.dca)) { u.dca = []; ch = true; }                                  // scheduled buys (DCA)
+    if (!Array.isArray(u.snipeTargets)) { u.snipeTargets = []; ch = true; }                // armed contract snipes (snipe by CA)
+    // A target left mid-flight by a crash or a restart is NOT re-armed. The buy
+    // may have been broadcast and we cannot tell from here; re-arming would risk
+    // buying twice, and the whole point of claiming before the buy is that a
+    // missed snipe is the cheaper of the two mistakes.
+    for (const t of u.snipeTargets) if (t && t.status === 'firing') { t.status = 'failed'; t.lastErr = 'interrupted by a restart — re-arm it if the launch has not happened'; ch = true; }
     if (u.lang !== 'id' && u.lang !== 'en') { u.lang = 'en'; ch = true; }                  // UI language
     if (!u.security || typeof u.security !== 'object') { u.security = { withdrawLock: false, whitelist: [], wdTimes: [] }; ch = true; }
     if (typeof u.security.withdrawLock !== 'boolean') { u.security.withdrawLock = false; ch = true; }
@@ -709,11 +715,23 @@ function setSnipeAmount(chatId, amt) {
 
 // ---------------------------------------------------------------- copy-trading
 const MAX_COPY_TARGETS = Math.max(1, Number(process.env.MAX_COPY_TARGETS || 5));
-// Chains where a "dev wallet snipe" is possible — i.e. where the token's creator is
-// knowable on-chain / from the launchpad feed: the Robinhood launchpad (TokenCreated
-// carries `creator`) and Solana/pump.fun (feed carries the creator). EVM DEX chains
-// have no cheap deployer signal, so launch-mode follows are refused there.
-function canDevSnipe(chain) { return chain === 'robinhood' || chain === 'solana'; }
+/**
+ * Chains where a "dev wallet snipe" is possible — i.e. where the wallet behind a
+ * launch is knowable without paying for an indexer.
+ *
+ * THIS USED TO BE ROBINHOOD AND SOLANA ONLY, on the grounds that "EVM DEX chains
+ * have no cheap deployer signal". That was true of the DEPLOYER and false of the
+ * signal that actually matters: the snipe already scans `PairCreated` on every
+ * EVM chain, and the SENDER of that transaction is the wallet that opened the
+ * pool. One `getTransaction` per new pair, and only when somebody is following a
+ * dev on that chain — so a chain nobody watches pays nothing.
+ *
+ * Pool-opener, not deployer, and the UI says so: for a memecoin launch they are
+ * the same wallet, because the deploy and the `addLiquidityETH` come from one
+ * key. When a team splits them, this follows the one that opens trading — which
+ * is the one a sniper wants anyway.
+ */
+function canDevSnipe(chain) { return !!chainOf(chain) && isEnabled(chain); }
 // mode: 'trades' = mirror the wallet's swap-BUYS (classic copy-trade);
 //       'launches' = buy tokens the wallet CREATES on a launchpad (dev-wallet snipe).
 function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
@@ -721,7 +739,7 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
   address = String(address || '').trim();
   mode = (mode === 'launches') ? 'launches' : 'trades';
   if (!isEnabled(chain)) throw new Error('chain not enabled');
-  if (mode === 'launches' && !canDevSnipe(chain)) throw new Error('dev-wallet snipe only works on Robinhood Chain and Solana (the launchpad chains)');
+  if (mode === 'launches' && !canDevSnipe(chain)) throw new Error('dev-wallet snipe needs an enabled chain — pick one from the chain list');
   const svm = isSvm(chain);
   // Validate per chain: base58 pubkey on Solana, 0x on EVM. Solana addresses are
   // case-SENSITIVE, so only lowercase EVM addresses for the dup check.
@@ -742,6 +760,124 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
   saveStore();
   return t;
 }
+// ---------------------------------------------------------------- snipe by CA
+/*
+ * "Buy THIS contract the moment it can be bought."
+ *
+ * The two snipes that already existed answer a different question — buy EVERY
+ * new launch on a chain, or buy whatever a followed dev launches. Neither can
+ * express the most common request there is: somebody has the contract address
+ * before the pool opens and wants to be in the first block that has one.
+ *
+ * Each target carries its OWN amount and slippage. A global slippage is right
+ * for ordinary trading and wrong here: a launch fills through a pool that is
+ * one block old, and the bound that gets you filled there would be reckless on
+ * anything else.
+ */
+const MAX_SNIPE_TARGETS = Math.max(1, Number(process.env.MAX_SNIPE_TARGETS || 20));
+// A target that never launches must not poll forever. Long enough for "the team
+// said tonight" to be wrong by a day, short enough that a forgotten address is
+// not still armed against a wallet next month.
+const SNIPE_TTL_MS = Math.max(3600000, Number(process.env.SNIPE_TARGET_TTL_MS || 48 * 3600 * 1000));
+
+function snipeTargets(u) { return (u && Array.isArray(u.snipeTargets)) ? u.snipeTargets : []; }
+function snipeTargetById(u, id) { return snipeTargets(u).find((t) => t.id === id) || null; }
+/** Targets still worth polling: armed, not expired. */
+function armedSnipeTargets(u, now = Date.now()) {
+  return snipeTargets(u).filter((t) => t.status === 'armed' && (!t.expiresAt || t.expiresAt > now));
+}
+
+function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs } = {}) {
+  const u = ensureUser(chatId);
+  const chainKey = chain && chainOf(chain) && isEnabled(chain) ? chain : userChain(u);
+  const svm = isSvm(chainKey);
+  ca = String(ca || '').trim();
+  if (svm) { if (!solana.isSolAddress(ca)) throw new Error('invalid Solana token mint'); }
+  else if (!/^0x[0-9a-fA-F]{40}$/.test(ca)) throw new Error('invalid contract address');
+  const amt = Number(amount);
+  if (!(amt > 0)) throw new Error('amount must be > 0');
+  u.snipeTargets = snipeTargets(u);
+  // Only ARMED targets count against the cap. A finished snipe is history, and
+  // making somebody delete their own receipts to arm the next one is the kind of
+  // limit that reads as a bug.
+  if (armedSnipeTargets(u).length >= MAX_SNIPE_TARGETS) throw new Error(`snipe limit (${MAX_SNIPE_TARGETS}) reached — remove one first`);
+  const key = svm ? ca : ca.toLowerCase();
+  if (armedSnipeTargets(u).some((t) => t.chain === chainKey && (svm ? t.ca : String(t.ca).toLowerCase()) === key)) {
+    throw new Error('that contract is already armed on this chain');
+  }
+  const w = walletId ? walletById(u, walletId) : activeWallet(u);
+  if (!w) throw new Error('no wallet');
+  const t = {
+    id: 'sn' + crypto.randomBytes(4).toString('hex'),
+    ca, chain: chainKey, amount: String(amt),
+    // 0 means "use my normal slippage" — stored as 0 rather than copying the
+    // current value, so a later change to the global setting still reaches a
+    // target the user never customised.
+    slipBps: Math.max(0, Math.min(5000, Math.round(Number(slipBps) || 0))),
+    walletId: w.id,
+    status: 'armed', createdAt: Date.now(),
+    expiresAt: Date.now() + Math.max(60000, Number(ttlMs) || SNIPE_TTL_MS),
+    checks: 0, firedAt: null, hash: null, lastErr: null, lastErrAt: null,
+  };
+  u.snipeTargets.push(t);
+  // Trim finished history so a long-lived account cannot grow this without bound.
+  const done = u.snipeTargets.filter((x) => x.status !== 'armed');
+  if (done.length > 30) u.snipeTargets = u.snipeTargets.filter((x) => x.status === 'armed' || done.slice(-30).includes(x));
+  saveStoreNow();
+  return t;
+}
+
+function removeSnipeTarget(chatId, id) {
+  const u = ensureUser(chatId);
+  const before = snipeTargets(u).length;
+  u.snipeTargets = snipeTargets(u).filter((t) => t.id !== id);
+  if (u.snipeTargets.length !== before) { saveStoreNow(); return true; }
+  return false;
+}
+
+/**
+ * Claim a target for firing, ATOMICALLY and BEFORE the buy.
+ *
+ * A missed snipe is a shrug; a double buy is money spent twice, and the poll
+ * that owns this runs every few seconds — so a target left `armed` while its
+ * buy is in flight WILL be picked up again by the next tick. Same rule the
+ * auto-raid cursor keeps, for the same reason, and it is written synchronously
+ * (`saveStoreNow`) so a crash mid-buy cannot resurrect it either.
+ *
+ * Returns false when somebody already claimed it.
+ */
+function claimSnipeTarget(u, id) {
+  const t = snipeTargetById(u, id);
+  if (!t || t.status !== 'armed') return false;
+  t.status = 'firing';
+  t.firedAt = Date.now();
+  saveStoreNow();
+  return true;
+}
+function settleSnipeTarget(u, id, { ok, hash, err }) {
+  const t = snipeTargetById(u, id);
+  if (!t) return;
+  t.status = ok ? 'done' : 'failed';
+  if (hash) t.hash = hash;
+  if (err) { t.lastErr = String(err).slice(0, 180); t.lastErrAt = Date.now(); }
+  saveStoreNow();
+}
+/** Put a claimed target back — used only when nothing was spent. */
+function rearmSnipeTarget(u, id, err) {
+  const t = snipeTargetById(u, id);
+  if (!t || t.status !== 'firing') return;
+  t.status = 'armed';
+  t.firedAt = null;
+  if (err) { t.lastErr = String(err).slice(0, 180); t.lastErrAt = Date.now(); }
+  saveStoreNow();
+}
+function expireSnipeTarget(u, id) {
+  const t = snipeTargetById(u, id);
+  if (!t || t.status !== 'armed') return;
+  t.status = 'expired';
+  saveStoreNow();
+}
+
 function removeCopyTarget(chatId, id) {
   const u = getUser(chatId); if (!u || !u.copy || !Array.isArray(u.copy.targets)) return false;
   const before = u.copy.targets.length;
@@ -1374,6 +1510,45 @@ async function _solRoutable(mint) {
   } catch (_) { return false; }
 }
 
+/**
+ * Can a swap for `ca` actually be FILLED on `chainKey` right now?
+ *
+ * The single owner of that question, because three callers were about to grow
+ * three private answers to it — and "there is a price" is not the same question,
+ * which is the distinction v4.js already draws between `price()` and
+ * `canSwapLive()`. A snipe that fires on a price it cannot fill spends gas to
+ * revert; one that waits for a fill it could already make arrives late.
+ *
+ * Deliberately CHEAP, because the CA-snipe polls this on a timer for every armed
+ * target. In order of cost:
+ *   • Solana  — one aggregator quote (the only thing that can answer there).
+ *   • curve   — a launchpad curve exists ⇒ the launchpad will fill it.
+ *   • V2/V3   — a pool with a non-zero native reserve. `bestDexVenue` caches for
+ *               ten minutes on a HIT; a miss is re-read, which is what a snipe
+ *               needs.
+ *   • v4      — no pair contract exists to look up, so this is the only way to
+ *               see one. Last, and cached per chain by v4.js itself.
+ *
+ * Never throws: a probe that can throw is a watcher that can die.
+ */
+async function canTradeNow(ca, chainKey) {
+  try {
+    if (isSvm(chainKey)) return await _solRoutable(ca);
+    const chain = chainOf(chainKey);
+    if (!chain) return false;
+    if (chain.curve) {
+      const curve = await resolveCurve(ca, chainKey).catch(() => null);
+      if (curve) return true;
+    }
+    const pick = await bestDexVenue(ca, chainKey).catch(() => null);
+    // A pair that EXISTS but holds nothing is not tradeable — it is a deployed
+    // contract waiting for liquidity, and buying into it is how a snipe fills at
+    // an arbitrary price. The reserve is the launch, not the pair.
+    if (pick && pick.wethBal != null && pick.wethBal > 0n) return true;
+    return await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false);
+  } catch (_) { return false; }
+}
+
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.
 async function tokenSnapshot(ca, chainKey) {
   const chain = chainOf(chainKey); if (!chain) return null;
@@ -1793,7 +1968,21 @@ async function ensureApprove(wallet, ca, spender, amount, chainKey) {
 }
 
 // ---------------------------------------------------------------- fee + referral
-function slipBps(u) { let s = Number(u && u.settings && u.settings.slippage); if (!(s > 0)) s = 5; if (s > 50) s = 50; return BigInt(Math.round(s * 100)); }
+/**
+ * The slippage bound for a trade, in basis points.
+ *
+ * `overrideBps` REPLACES the user's setting rather than adding to it, which is
+ * what a snipe needs: a launch fills through a pool one block old, and the bound
+ * that gets you in there would be reckless on ordinary trading. `slipAddBps`
+ * (the retry escalation) stays additive on top of whichever of the two applies —
+ * the two knobs answer different questions and must not be folded together.
+ * Capped at 50% either way; nothing may quietly authorise more.
+ */
+function slipBps(u, overrideBps) {
+  const o = Number(overrideBps);
+  if (Number.isFinite(o) && o > 0) return BigInt(Math.min(5000, Math.round(o)));
+  let s = Number(u && u.settings && u.settings.slippage); if (!(s > 0)) s = 5; if (s > 50) s = 50; return BigInt(Math.round(s * 100));
+}
 // Charge the bot fee. BROADCAST-AND-DEFER: this returns as soon as the transfer is
 // in the mempool, and the receipt is awaited in the BACKGROUND.
 //
@@ -1897,7 +2086,7 @@ async function _buySol(u, ca, amount, chainKey, walletId, opts) {
     if (bal < gross + gasBuf) throw new Error(`insufficient SOL — need ~${solana.lamportsToSol(gross + gasBuf).toFixed(4)} incl. fees, have ${solana.lamportsToSol(bal).toFixed(4)}`);
     const fee = solana.feeLamports(gross, CFG.feeBps);
     const spend = gross - fee;
-    const slip = Number(slipBps(u));
+    const slip = Number(slipBps(u, opts && opts.slipBps));
     const before = beforeBag.raw;
     // THE DIVERGENCE GUARD.
     //
@@ -2139,7 +2328,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     // urgent the fill was. The two sides are symmetric now.
     const gasBoost = Math.max(userGasBoost(u), (opts && opts.gasMult) || 1);
     const slipAdd = BigInt(Math.max(0, Math.round((opts && opts.slipAddBps) || 0)));
-    const slip = (() => { const s = slipBps(u) + slipAdd; return s > 5000n ? 5000n : s; })();   // capped 50%
+    const slip = (() => { const s = slipBps(u, opts && opts.slipBps) + slipAdd; return s > 5000n ? 5000n : s; })();   // capped 50%
 
     // PREFLIGHT — IN PARALLEL. These four reads do not depend on each other, and
     // they used to run strictly in series: balance, then curve, then gas, then the
@@ -2868,6 +3057,8 @@ module.exports = {
   setConfirmBuy, setExpert, setReceiptStyle, perWalletReceipts, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
+  canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets,
+  claimSnipeTarget, settleSnipeTarget, rearmSnipeTarget, expireSnipeTarget, MAX_SNIPE_TARGETS, SNIPE_TTL_MS,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,

@@ -91,8 +91,16 @@ test('a limit BUY carries its options too — buy() ignored them entirely', asyn
   const CORE = fs.readFileSync(path.join(__dirname, 'core.js'), 'utf8');
   assert.match(CORE, /const gasBoost = Math\.max\(userGasBoost\(u\), \(opts && opts\.gasMult\) \|\| 1\);/,
     'core.buy still ignores opts.gasMult');
-  assert.match(CORE, /const slipAdd = BigInt\(Math\.max\(0, Math\.round\(\(opts && opts\.slipAddBps\) \|\| 0\)\)\);[\s\S]{0,200}slipBps\(u\) \+ slipAdd/,
+  assert.match(CORE, /const slipAdd = BigInt\(Math\.max\(0, Math\.round\(\(opts && opts\.slipAddBps\) \|\| 0\)\)\);[\s\S]{0,200}slipBps\(u,[^)]*\) \+ slipAdd/,
     'core.buy still ignores opts.slipAddBps');
+  // The two slippage knobs answer different questions and must stay separate:
+  // `slipBps` REPLACES the user's setting (a CA snipe fills through a pool one
+  // block old and needs its own bound), `slipAddBps` ADDS to whichever applies
+  // (the retry escalation). Folding them together would make an escalated snipe
+  // silently authorise more than the user set.
+  assert.match(CORE, /function slipBps\(u, overrideBps\)/, 'slippage has no absolute override');
+  assert.match(CORE, /if \(Number\.isFinite\(o\) && o > 0\) return BigInt\(Math\.min\(5000, Math\.round\(o\)\)\);/,
+    'the override is not capped at 50%');
 });
 
 // ---------------------------------------------------------------- chosen by intent

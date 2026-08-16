@@ -284,9 +284,46 @@ async function dexSnipeCycle() {
   const list = core.chains.enabledChains().filter((ch) => !ch.curve);   // Robinhood is handled by snipeCycle
   await Promise.all(list.map((ch) => _dexSnipeChain(ch).catch((e) => console.error('dexsnipe', ch.key, (e && e.message) || e))));
 }
+/**
+ * The wallet that OPENED this pool.
+ *
+ * The dev-wallet snipe used to be refused on every EVM chain, on the grounds
+ * that there is no cheap deployer signal there. That is true of the DEPLOYER and
+ * false of the signal that matters: this scan already has the `PairCreated` log,
+ * and the sender of the transaction that emitted it is the wallet that opened
+ * trading. One `getTransaction` per new pair — and it is only ever called when
+ * somebody is actually following a dev on this chain, so a chain nobody watches
+ * pays nothing for the capability.
+ *
+ * Pool-opener, not deployer. For a memecoin launch they are one wallet, because
+ * the deploy and the `addLiquidityETH` come from the same key; when a team
+ * splits them this follows the one that opens trading, which is the one a
+ * sniper wants. The UI says "opens the pool" rather than "deploys", because a
+ * feature that quietly means something other than its label is a feature that
+ * will be reported as broken.
+ *
+ * Null on any failure — an unreadable transaction must not stop the snipe-all
+ * pass that shares this loop.
+ */
+async function _devFromPair(prov, ev) {
+  try {
+    const hash = ev && ev.transactionHash;
+    if (!hash) return null;
+    const tx = await prov.getTransaction(hash);
+    const from = tx && tx.from;
+    return from ? String(from).toLowerCase() : null;
+  } catch (_) { return null; }
+}
+
 async function _dexSnipeChain(ch) {
   const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains[ch.key] && Number(u.snipe.ethAmount) > 0);
-  if (!armed.length) return;
+  // Dev followers are a DIFFERENT set, and gating them on `armed` is what kept
+  // dev-snipe off every EVM chain even after the chain check was relaxed:
+  // following one developer does not mean wanting every launch on the chain,
+  // and the early return below treated the second as a precondition for the
+  // first.
+  const devFollowers = launchFollowers(ch.key);
+  if (!armed.length && !devFollowers.length) return;
   const prov = core.providerFor(ch.key);
   let head; try { head = await prov.getBlockNumber(); } catch (_) { return; }
   const cursor = _dexSnipeCursor[ch.key];
@@ -309,11 +346,33 @@ async function _dexSnipeChain(ch) {
     if (!token) continue;
     if (!_snipeMark(ch.key, token)) continue;   // already sniped → don't re-buy on a cursor regression / re-scan (audit #1)
     processed++;
+    // ── Dev-wallet snipe, on an EVM chain, which was simply not possible before.
+    // Resolved only when somebody is following a dev here, so the extra read is
+    // paid by the feature that needs it and by nobody else.
+    const devBoughtBy = new Set();
+    if (devFollowers.length) {
+      const dev = await _devFromPair(prov, e);
+      if (dev) {
+        const matches = [];
+        for (const u of devFollowers) {
+          for (const t of u.copy.targets) {
+            if (t.mode === 'launches' && t.chain === ch.key && String(t.address).toLowerCase() === dev) matches.push({ u, t });
+          }
+        }
+        // _followerBuy owns the budget cap, the dedup and the safety gate, and
+        // it is the SAME function the Robinhood and Solana dev snipes call — so
+        // the three chains cannot drift into three ideas of what a dev snipe
+        // does.
+        if (matches.length) await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => { if (await _followerBuy(u, t, token, ch.key)) devBoughtBy.add(u.chatId); });
+      }
+    }
+    if (!armed.length) continue;   // dev-snipe-only followers: skip the snipe-all pass
     // Skip anything GoPlus flags as DANGER (honeypot, can't-sell, pausable, owner-rug,
     // blacklist, >10% tax). When GoPlus has no data yet (brand-new token) we proceed —
     // sniping fresh launches is the whole point; blind-buy risk is bounded by the amount.
     if (safety.supported(ch.key)) { const s = await safety.tokenSecurity(ch.key, token).catch(() => null); if (s && safety.verdict(ch.key, s).level === 'danger') continue; }
     await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
+      if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
       const addr = core.activeAddress(u); if (!addr) return;
       try {
         const bal = await core.ethBalance(addr, ch.key);
@@ -1335,6 +1394,124 @@ async function solSnipeCycle() {
   }
 }
 
+// ------------------------------------------------------------------ snipe by CA
+/*
+ * "Buy THIS contract the moment it can be bought."
+ *
+ * The two snipes above answer a different question — every new launch on a
+ * chain, or whatever a followed dev launches. Neither can express the most
+ * common request there is: somebody has the contract address before the pool
+ * opens and wants to be in the first block that has one.
+ *
+ * The loop is a poll and not an event subscription on purpose. "Tradeable" is
+ * not one event: it is a V2 pair gaining a reserve, or a V3 pool being
+ * initialised, or a v4 pool appearing inside a singleton with no pair contract
+ * at all, or an aggregator finally routing a Solana mint. core.canTradeNow is
+ * the single owner of that question; this only decides how often to ask.
+ */
+const CA_SNIPE_POLL_MS = Math.max(2000, Number(process.env.CA_SNIPE_POLL_MS || 4000));
+// How many armed targets are probed per tick, across all users. A probe is one
+// to three RPC reads, so an unbounded fan-out over every armed target on every
+// tick is a self-inflicted rate limit — and the RPC it would exhaust is the same
+// one the buy needs a second later.
+const CA_SNIPE_MAX_PROBES = Math.max(1, Number(process.env.CA_SNIPE_MAX_PROBES || 24));
+const CA_SNIPE_CONCURRENCY = Math.max(1, Number(process.env.CA_SNIPE_CONCURRENCY || 6));
+const _caSnipeStats = { polls: 0, probes: 0, armed: 0, fired: 0, lastFiredAt: null, lastErr: null, lastErrAt: null };
+
+/** Round-robin cursor over armed targets, so target 25 is not starved by 1–24. */
+let _caSnipeCursor = 0;
+
+async function caSnipeCycle() {
+  const now = Date.now();
+  // Expire first, so an abandoned address stops costing RPC the moment it is
+  // stale rather than the next time somebody happens to look at the list.
+  const jobs = [];
+  for (const u of core.allUsers()) {
+    for (const t of core.snipeTargets(u)) {
+      if (t.status !== 'armed') continue;
+      if (t.expiresAt && t.expiresAt <= now) {
+        core.expireSnipeTarget(u, t.id);
+        _notify(u.chatId, `⌛ <b>Snipe expired</b> · ${esc(chainName(t.chain))}\n<code>${t.ca}</code>\nIt never became tradeable within the window. Re-arm it if the launch is still coming.`, undefined, 'snipe');
+        continue;
+      }
+      if (!core.chains.isEnabled(t.chain)) continue;   // chain turned off under it — leave armed, do not fire
+      jobs.push({ u, t });
+    }
+  }
+  _caSnipeStats.polls++;
+  _caSnipeStats.armed = jobs.length;
+  if (!jobs.length) return;
+  // A window over the ring, so every target is probed within a bounded number of
+  // ticks no matter how many are armed.
+  const n = Math.min(jobs.length, CA_SNIPE_MAX_PROBES);
+  const slice = [];
+  for (let i = 0; i < n; i++) slice.push(jobs[(_caSnipeCursor + i) % jobs.length]);
+  _caSnipeCursor = (_caSnipeCursor + n) % jobs.length;
+
+  await mapLimit(slice, CA_SNIPE_CONCURRENCY, async ({ u, t }) => {
+    let ready = false;
+    try { ready = await core.canTradeNow(t.ca, t.chain); }
+    catch (_) { return; }   // an unreadable chain is not a launch; try again next tick
+    _caSnipeStats.probes++;
+    t.checks = (Number(t.checks) || 0) + 1;
+    if (!ready) return;
+    // CLAIMED BEFORE THE BUY, and persisted synchronously. This poll runs every
+    // few seconds; a target left `armed` while its buy is in flight is picked up
+    // again by the very next tick and bought twice. A missed snipe is a shrug —
+    // spending twice is not.
+    if (!core.claimSnipeTarget(u, t.id)) return;
+    await _fireCaSnipe(u, t);
+  });
+}
+
+async function _fireCaSnipe(u, t) {
+  const ch = core.chainOf(t.chain) || { emoji: '', name: t.chain, native: 'ETH' };
+  // The safety gate the other snipes already keep: a DANGER verdict is skipped,
+  // and no verdict at all is not a veto — a token that has existed for one block
+  // has no verdict yet, and refusing those would refuse every snipe.
+  try {
+    if (safety.supported(t.chain)) {
+      const s = await safety.tokenSecurity(t.chain, t.ca).catch(() => null);
+      if (s && safety.verdict(t.chain, s).level === 'danger') {
+        core.settleSnipeTarget(u, t.id, { ok: false, err: 'blocked by the safety check' });
+        _notify(u.chatId, `🛡 <b>Snipe blocked</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\nIt became tradeable, and the safety check flagged it as high risk — nothing was bought.`, undefined, 'snipe');
+        return;
+      }
+    }
+  } catch (_) { /* an unreadable safety check is not a veto */ }
+  try {
+    const r = await core.buy(u.chatId, t.ca, t.amount, t.chain, t.walletId, { slipBps: t.slipBps || undefined });
+    core.settleSnipeTarget(u, t.id, { ok: true, hash: r.hash });
+    _caSnipeStats.fired++; _caSnipeStats.lastFiredAt = Date.now();
+    _notify(u.chatId, `🎯 <b>Sniped $${esc(r.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${t.ca}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'snipe');
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    _caSnipeStats.lastErr = msg.slice(0, 180); _caSnipeStats.lastErrAt = Date.now();
+    // A BROADCAST buy is not a failure we may retry: the transaction may still
+    // land, and re-arming would risk a second one. Anything that clearly did not
+    // spend goes back on the shelf, because a launch that reverted the first
+    // block is exactly the launch worth trying again a second later.
+    if (err && err.broadcast) {
+      core.settleSnipeTarget(u, t.id, { ok: true, hash: err.sig || null, err: 'broadcast but not confirmed' });
+      _notify(u.chatId, `🎯 <b>Snipe broadcast</b> on ${ch.emoji} ${esc(ch.name)}\n<code>${t.ca}</code>\nIt was sent but not confirmed yet — check your wallet before buying again.`, undefined, 'snipe');
+      return;
+    }
+    if (/insufficient funds|no wallet|balance/i.test(msg)) {
+      core.settleSnipeTarget(u, t.id, { ok: false, err: msg });
+      _notify(u.chatId, `⚠️ <b>Snipe failed</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\n${esc(msg)}\nThe target was disarmed — top up and re-arm it.`, undefined, 'snipe');
+      return;
+    }
+    core.rearmSnipeTarget(u, t.id, msg);
+    const now = Date.now(), key = u.chatId + ':casnipe:' + t.id;
+    if (now - (_snipeFailAt.get(key) || 0) > 300000) {
+      _snipeFailAt.set(key, now);
+      _notify(u.chatId, `⚠️ <b>Snipe attempt failed</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\n${esc(msg)}\nStill armed — retrying. (muted 5 min)`, undefined, 'snipe');
+    }
+  }
+}
+
+const chainName = (k) => ((core.chainOf(k) || {}).name || k);
+
 // ------------------------------------------------------------------ DCA (scheduled buys)
 // A DCA plan buys `amount` of a token every `intervalMin` minutes for `rounds` rounds
 // (and/or until an optional budget is spent), on the wallet it was created with. Each
@@ -1486,6 +1663,17 @@ function health() {
     // the kind of degradation nobody notices for a month.
     out.solSnipe.padErr = _solSnipeStats.lastPadErr || null;
   }
+  // A CA snipe that is armed and never probed is the failure mode here — the
+  // loop ticking says nothing about whether the targets are being looked at, so
+  // both numbers are needed. `armed` with `probes` stuck is a starved ring;
+  // `armed: 0` is simply nobody waiting on a launch.
+  if (out.caSnipe) {
+    out.caSnipe.armed = _caSnipeStats.armed;
+    out.caSnipe.probes = _caSnipeStats.probes;
+    out.caSnipe.fired = _caSnipeStats.fired;
+    out.caSnipe.sinceFiredMs = _caSnipeStats.lastFiredAt ? now - _caSnipeStats.lastFiredAt : null;
+    out.caSnipe.err = _caSnipeStats.lastErr || null;
+  }
   // Third parties, as of the last watchdog sweep. `/health` answering "the loops
   // are running" while every Solana buy fails at Jupiter is the gap this closes.
   if (_lastUpstream) {
@@ -1575,6 +1763,11 @@ function start() {
   // Solana snipe runs only when the chain is enabled (its own cadence; pump.fun poll).
   if (core.chains.isEnabled('solana')) runLoop('solSnipe', solSnipeCycle, Math.max(5000, Number(process.env.SOL_SNIPE_POLL_MS || 8000)));
   runLoop('orders', ordersCycle, orderMs);
+  // Snipe-by-CA. Its own loop rather than a leg of the launch snipes: those poll
+  // a feed for tokens nobody has named yet, this polls named contracts for a
+  // pool. Different cadence, different failure, different thing to say when it
+  // goes quiet.
+  runLoop('caSnipe', caSnipeCycle, CA_SNIPE_POLL_MS);
   runLoop('alerts', alertsCycle, alertMs);
   runLoop('positions', positionsCycle, Math.max(20000, Number(process.env.POS_POLL_MS || 60000)));
   runLoop('copy', copyCycle, Math.max(6000, Number(process.env.COPY_POLL_MS || 10000)));
@@ -1594,4 +1787,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, _targetPaid, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair } };
