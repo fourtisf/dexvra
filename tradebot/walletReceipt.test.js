@@ -227,13 +227,17 @@ test('the receipt says which token, at what market cap', async () => {
     const t = plain(walletMsgs(await trade(side))[0].text);
     assert.match(t, /Pons Finance \(\$PONS\)/, `${side}: the token is not named`);
     assert.match(t, new RegExp(CA), `${side}: the contract is missing from the record`);
-    assert.match(t, side === 'sell' ? /Exit MC · \$27\.20M/ : /Entry MC · \$27\.20M/, `${side}: no market cap`);
+    // Price and cap on one line — both known, so both are stated.
+    assert.match(t, side === 'sell' ? /Exit \$[\d.]+ · MC \$27\.20M/ : /Entry \$[\d.]+ · MC \$27\.20M/, `${side}: no fill price or market cap`);
   }
 });
 
 test('an unreadable market leaves the line out rather than printing zeros', async () => {
   const t = plain(walletMsgs(await trade('buy', { snap: null }))[0].text);
   assert.ok(!/MC/.test(t), `a failed read rendered as a market cap:\n${t}`);
+  // The fill price is derived from the trade, not from the indexer, so it
+  // survives a dead one — that is the point of deriving it.
+  assert.match(t, /Entry \$/, 'the fill price went missing with the indexer');
   assert.match(t, /succeeded/, 'the receipt itself must survive a failed market read');
 });
 
@@ -245,8 +249,41 @@ test('a sell states how many tokens left the wallet', async () => {
   // the line every other bot leads with.
   const t = plain(walletMsgs(await trade('sell'))[0].text);
   assert.match(t, /10,279,471\.93 \$PONS/, `the sold amount is missing or unreadable:\n${t}`);
-  assert.match(t, /You gained .*0\.09500 ETH/);
+  // "Received", not "You gained": a sell at a loss still has proceeds.
+  assert.match(t, /Received .*0\.09500 ETH/);
+  assert.ok(!/gained/i.test(t), 'proceeds are still being called a gain');
   assert.match(t, /P\/L .*\+0\.04200 ETH/, 'the realised profit is missing');
+  // proceeds 0.0950 − pnl 0.0420 = 0.0530 basis → +79.2%
+  assert.match(t, /\+79\.2%/, 'the P/L percentage is missing');
+});
+
+test('no message tells the user they received the gross', async () => {
+  // `proceedsEth` is the GROSS: the bot's cut is a separate transfer broadcast
+  // after the wallet delta is measured, so a line that says "Received" and
+  // prints it claims the user kept more than they did. Only the Solana sell
+  // returned `netEth`; the EVM one did not, so every EVM sell overstated.
+  const SRC = fs.readFileSync(path.join(__dirname, 'core.js'), 'utf8');
+  const results = [...SRC.matchAll(/const res = \{ chain: chainKey,[^\n]*soldPct[^\n]*\}/g)].map((m) => m[0]);
+  assert.equal(results.length, 2, `expected the Solana and EVM sell results, found ${results.length}`);
+  for (const r of results) assert.match(r, /netEth:/, `a sell result reports no net proceeds:\n${r}`);
+  // And nothing user-facing interpolates the gross directly. `${r.proceedsEth}`
+  // also printed a raw 18-decimal float on two of these paths.
+  for (const f of ['telegram.js', 'watchers.js']) {
+    const src = fs.readFileSync(path.join(__dirname, f), 'utf8');
+    const bad = src.split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))   // a comment quoting the old code is not the old code
+      .filter((l) => /\$\{[^}]*\br\.proceedsEth\b[^}]*\}/.test(l) && !/netEth/.test(l));
+    assert.deepEqual(bad, [], `${f} prints gross proceeds to the user:\n${bad.join('\n')}`);
+  }
+});
+
+test('a receipt reports the amount that SOLD, not the amount requested', () => {
+  // The curve path shaves the last dust off `amount` to get a full exit past
+  // the reserve boundary, so the two differ on exactly the trade a user is most
+  // likely to check against the explorer — a 100% exit.
+  const SRC = fs.readFileSync(path.join(__dirname, 'core.js'), 'utf8');
+  assert.match(SRC, /filledRaw = sellAmt;/, 'the shaved amount is not recorded');
+  assert.match(SRC, /soldTokens: Number\(ethers\.formatUnits\(filledRaw, dec\)\)/, 'the receipt still reports the requested amount');
 });
 
 test('both sell paths return soldTokens, or the line above is a lie', () => {
@@ -276,6 +313,8 @@ test('P/L is omitted when it is not known, never printed as zero', () => {
   assert.ok(!/P\/L/.test(receipt.walletReceipt(T, { ...base, pnl: null })));
   assert.ok(!/P\/L/.test(receipt.walletReceipt(T, { ...base, pnl: 0 })));
   assert.match(receipt.walletReceipt(T, { ...base, pnl: -0.5 }), /📉 P\/L .*−0\.50000 ETH.*\(−\$50\.00\)/);
+  // A bag with no cost basis has no return to state — "+∞%" is not a number.
+  assert.ok(!/%/.test(receipt.walletReceipt(T, { ...base, amount: 1, pnl: 1 })), 'a zero basis produced a percentage');
 });
 
 test('the renderer adds no escaping — the caller owns that', () => {

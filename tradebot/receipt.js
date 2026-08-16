@@ -64,6 +64,8 @@ function qty(n) {
  *  and starts being eighteen digits of noise. */
 const nat = (n) => (Number(n) || 0).toFixed(5);
 
+const money2 = (v) => Math.abs(Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 /**
  * " ≈ $178.16", or NOTHING.
  *
@@ -73,8 +75,31 @@ const nat = (n) => (Number(n) || 0).toFixed(5);
  */
 function usdTail(amount, rate) {
   if (!(Number(rate) > 0)) return '';
-  const v = Math.abs(Number(amount) || 0) * Number(rate);
-  return ` ≈ $${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return ` ≈ $${money2((Number(amount) || 0) * Number(rate))}`;
+}
+
+/** " (+$78.04)" / " (−$78.04)", or nothing. Built, not string-surgeried out of
+ *  usdTail(): the sign has to survive translation, and a `.replace()` on a
+ *  formatted value breaks the moment a locale moves the placeholder. */
+function signedUsd(amount, rate) {
+  if (!(Number(rate) > 0)) return '';
+  return ` (${Number(amount) >= 0 ? '+' : '−'}$${money2(Number(amount) * Number(rate))})`;
+}
+
+/**
+ * What one token actually cost, in dollars.
+ *
+ * Derived from the trade itself — spend ÷ tokens — so it is the price the user
+ * REALLY got, not the one the card was showing when they tapped. On a thin pool
+ * those are different numbers, and the difference is the whole reason to print
+ * it. Three significant figures, because a memecoin price is 0.00000129 and a
+ * fixed decimal count is either noise or zero.
+ */
+function unitUsd(amount, tokens, rate) {
+  const a = Number(amount), n = Number(tokens), r = Number(rate);
+  if (!(a > 0) || !(n > 0) || !(r > 0)) return null;
+  const px = (a * r) / n;
+  return Number.isFinite(px) && px > 0 ? Number(px.toPrecision(3)) : null;
 }
 
 /** A market cap, compressed — this one IS a headline figure, so "27.20M" is
@@ -150,28 +175,45 @@ function walletReceipt(t, d) {
   L.push('');
 
   if (d.side === 'sell') {
-    L.push(t('wallet.receipt.gained', { amt: nat(d.amount), native: d.native, usd: usdTail(d.amount, d.rate) }));
+    // "Received", NOT "You gained". The figure is the proceeds, and a sell at a
+    // loss still has proceeds — "you gained 0.095 ETH" above a −78% exit is the
+    // receipt telling the user the opposite of what happened. What was gained
+    // or lost is the P/L line, and only that line.
+    L.push(t('wallet.receipt.received', { amt: nat(d.amount), native: d.native, usd: usdTail(d.amount, d.rate) }));
     // P/L only when it is KNOWN. A position opened outside this bot has no cost
     // basis, so `pnl` is null — and "P/L 0.00000" on a profitable exit is a
     // stated fact that happens to be false.
     if (Number.isFinite(d.pnl) && d.pnl !== 0) {
       const up = d.pnl > 0;
+      // The percentage costs nothing to derive and is the number a trader
+      // actually reads: `pnl = proceeds − cost`, so the cost is already implied
+      // by the two figures we hold. Omitted when the basis works out to zero —
+      // a bag that arrived by airdrop or transfer has no entry to be up against,
+      // and "+∞%" is not a return.
+      const basis = Number(d.amount) - d.pnl;
+      const pct = basis > 0 ? ` · <b>${up ? '+' : '−'}${Math.abs((d.pnl / basis) * 100).toFixed(1)}%</b>` : '';
       L.push(t('wallet.receipt.pnl', {
         icon: up ? '📈' : '📉',
         pnl: `${up ? '+' : '−'}${nat(Math.abs(d.pnl))} ${d.native}`,
-        usd: usdTail(d.pnl, d.rate).replace(' ≈ $', up ? ' (+$' : ' (−$'),
-      }) + (Number(d.rate) > 0 ? ')' : ''));
+        usd: signedUsd(d.pnl, d.rate),
+        pct,
+      }));
     }
   } else {
     L.push(t('wallet.receipt.spent', { amt: nat(d.amount), native: d.native, usd: usdTail(d.amount, d.rate) }));
   }
 
-  // The market cap AROUND the trade. Left out entirely when it could not be
-  // read: a "$0" cap is a claim about the token, and an unread indexer is not.
-  if (Number(d.mcUsd) > 0) {
-    L.push(t(d.side === 'sell' ? 'wallet.receipt.exit_mc' : 'wallet.receipt.entry_mc', { mc: mcap(d.mcUsd) }));
-  }
+  // What it filled at, and what the token was capped at — the two questions a
+  // receipt leaves behind. Each is dropped independently when it is not known:
+  // a "$0" price or cap is a claim about the token, and an unread indexer is
+  // not a claim about anything.
+  const px = unitUsd(d.amount, d.tokens, d.rate);
+  const mc = Number(d.mcUsd) > 0 ? mcap(d.mcUsd) : null;
+  const sell = d.side === 'sell';
+  if (px != null && mc != null) L.push(t(sell ? 'wallet.receipt.exit_full' : 'wallet.receipt.entry_full', { px, mc }));
+  else if (mc != null) L.push(t(sell ? 'wallet.receipt.exit_mc' : 'wallet.receipt.entry_mc', { mc }));
+  else if (px != null) L.push(t(sell ? 'wallet.receipt.exit_px' : 'wallet.receipt.entry_px', { px }));
   return L.join('\n');
 }
 
-module.exports = { walletReceipt, qty, nat, usdTail, mcap, header };
+module.exports = { walletReceipt, qty, nat, usdTail, signedUsd, unitUsd, mcap, header };

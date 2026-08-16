@@ -2405,6 +2405,12 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // the pool paid native and the balance delta is the source.
     let venue, hash, trc, v3ProceedsWei = null, v4QuoteToken = null;
     let realizedThisSell = 0;   // profit/loss realized on this specific sell (for the receipt)
+    // What actually LEFT the wallet, for the receipt. Normally `amount`, but the
+    // curve path shaves the last dust off to get a full exit past the reserve
+    // boundary (see the loop below) — and a receipt that prints the amount we
+    // ASKED to sell rather than the amount that sold is a receipt that will not
+    // reconcile against the explorer.
+    let filledRaw = amount;
     if (p4Sell) {
       const dec4 = await tokenDecimals(ca, chainKey);
       // Same depth-aware quote as the buy: the pool's own fee and liquidity,
@@ -2483,6 +2489,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       // throws the opaque "could not coalesce error" / "missing revert data"). A curve
       // sell is bounded work, so 600k is safe headroom; rawSend surfaces the node's real
       // reason if it rejects (e.g. a private-beta NotAllowed).
+      filledRaw = sellAmt;   // the shaved amount is the one that actually sells
       const data = cc.interface.encodeFunctionData('sell', [sellAmt, minEth, deadline]);
       hash = await rawSend(wallet, chainKey, curve, data, 600000n, 0n, gasMult, { fee: gas });
       venue = 'curve'; sent(hash);
@@ -2580,7 +2587,12 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: Number(ethers.formatEther(proceeds)), pct: p, hash });
     saveStore();
-    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, soldTokens: Number(ethers.formatUnits(amount, dec)), proceedsEth: Number(ethers.formatEther(proceeds)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
+    // `netEth` is what the user actually KEPT, and until now only the Solana
+    // sell returned it. On EVM the bot's cut is a separate transfer broadcast
+    // after the wallet delta is measured, so `proceedsEth` is the gross — and
+    // every EVM sell receipt has been printing that as "Received", overstating
+    // it by the fee. A receipt may not claim the user got more than they did.
+    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, soldTokens: Number(ethers.formatUnits(filledRaw, dec)), proceedsEth: Number(ethers.formatEther(proceeds)), netEth: Number(ethers.formatEther(proceeds - fee)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
     _afterTrade(u, 'sell', res).catch(() => {});   // account + report (fire-and-forget)
     return res;
   });

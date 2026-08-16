@@ -63,7 +63,6 @@ const _priceCache = new Map();
  */
 const RETRY_429_MAX = 3;
 const RETRY_429_CAP_MS = 10000;
-const _naptime = (ms) => new Promise((r) => setTimeout(r, ms));
 async function tg(method, body) {
   for (let attempt = 0; ; attempt++) {
     const r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
@@ -76,7 +75,7 @@ async function tg(method, body) {
     // modified", "message to edit not found" and a blocked bot are all answers,
     // and callers already read them.
     if (!wait || attempt >= RETRY_429_MAX - 1) return j;
-    await _naptime(wait);
+    await sleep(wait);
   }
 }
 
@@ -2058,7 +2057,11 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // post-trade read is wrong in a known direction as an entry. The pre-fill
       // snapshot above is the honest one; print it as its own labelled line
       // rather than letting `mkt` be mistaken for it.
-      const entryLine = (okN > 0 && eMcM > 0)
+      // Dropped in per-wallet mode: every receipt already carries its own entry
+      // price and market cap, and a summary that repeats them is three lines
+      // saying what five messages just said. `mkt` stays either way — "what is
+      // it worth NOW" is the one question no receipt answers.
+      const entryLine = (okN > 0 && eMcM > 0 && !perWallet)
         ? '\n' + T(chatId, 'buy.receipt.entry_mc', { mc: fmt(eMcM) })
         : '';
       // THE REALISED PRICE. `totSpent` and `totTok` have always sat on the same
@@ -2175,7 +2178,12 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       settled = true;
       const wi = walletIndex(chatId, wid);
       const sUsd = nativeUsd(r.native);
-      const got2 = Number(r.proceedsEth) || 0;
+      // NET, not gross. The bot's cut is a separate transfer on both chains, so
+      // `proceedsEth` is money that passed through the wallet rather than money
+      // the user kept — and this line is labelled "Received". The multi-wallet
+      // receipt already made this distinction; the single-wallet one, which is
+      // the path most trades take, did not.
+      const got2 = Number(r.netEth != null ? r.netEth : r.proceedsEth) || 0;
       const sexp = core.chainOf(r.chain);
       const uu2 = core.getUser(chatId);
       const wl2 = core.walletLabel((uu2 && core.walletById(uu2, wid)) || core.activeWallet(uu2), wi);

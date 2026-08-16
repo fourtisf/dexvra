@@ -314,10 +314,21 @@ const S = {
   // when asked to sell, and a red cross sends people hunting for a fault.
   'wallet.receipt.nobag': { en: '⚪️ <b>Nothing to sell</b> · 💳 <b>{wallet}</b>', id: '⚪️ <b>Tidak ada posisi</b> · 💳 <b>{wallet}</b>' },
   'wallet.receipt.spent': { en: '💸 Spent <b>{amt} {native}</b>{usd}', id: '💸 Keluar <b>{amt} {native}</b>{usd}' },
-  'wallet.receipt.gained': { en: '💰 You gained <b>{amt} {native}</b>{usd}', id: '💰 Kamu dapat <b>{amt} {native}</b>{usd}' },
-  'wallet.receipt.pnl': { en: '{icon} P/L <b>{pnl}</b>{usd}', id: '{icon} Untung/Rugi <b>{pnl}</b>{usd}' },
+  // "Received", not "You gained" — a sell at a loss still has proceeds, and
+  // "you gained" above a −78% exit tells the user the opposite of what
+  // happened. Gain and loss belong on the P/L line and nowhere else.
+  'wallet.receipt.received': { en: '💰 Received <b>{amt} {native}</b>{usd}', id: '💰 Diterima <b>{amt} {native}</b>{usd}' },
+  'wallet.receipt.pnl': { en: '{icon} P/L <b>{pnl}</b>{usd}{pct}', id: '{icon} Untung/Rugi <b>{pnl}</b>{usd}{pct}' },
+  // Three shapes per side, because the fill price and the market cap are known
+  // independently: the price is derived from the trade itself and is almost
+  // always available, the cap comes from an indexer that may not have answered.
+  // Printing "$0" for either is a claim about the token that nobody made.
+  'wallet.receipt.entry_full': { en: '🌊 Entry <b>${px}</b> · MC <b>${mc}</b>', id: '🌊 Masuk <b>${px}</b> · MC <b>${mc}</b>' },
+  'wallet.receipt.exit_full': { en: '🌊 Exit <b>${px}</b> · MC <b>${mc}</b>', id: '🌊 Keluar <b>${px}</b> · MC <b>${mc}</b>' },
   'wallet.receipt.entry_mc': { en: '🌊 Entry MC · <b>${mc}</b>', id: '🌊 MC masuk · <b>${mc}</b>' },
   'wallet.receipt.exit_mc': { en: '🌊 Exit MC · <b>${mc}</b>', id: '🌊 MC keluar · <b>${mc}</b>' },
+  'wallet.receipt.entry_px': { en: '🌊 Entry <b>${px}</b>', id: '🌊 Masuk <b>${px}</b>' },
+  'wallet.receipt.exit_px': { en: '🌊 Exit <b>${px}</b>', id: '🌊 Keluar <b>${px}</b>' },
   'wallet.receipt.tx': { en: '🔍 Transaction', id: '🔍 Transaksi' },
 
   // ---------------------------------------------------------------- errors

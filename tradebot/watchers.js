@@ -80,6 +80,15 @@ const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt:
 // turns the loop red. Folding them together would either hide a real outage or
 // invent one.
 const _solSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastFeedOkAt: null, lastErr: null, lastErrAt: null, lastPadErr: null };
+
+/** What a sell actually left in the wallet.
+ *
+ *  `proceedsEth` is the GROSS — the bot's cut is a separate transfer broadcast
+ *  after the wallet delta is measured — so any message that says "received" or
+ *  "recovered" and prints it is claiming the user kept more than they did.
+ *  One helper, because three notifications here made the same mistake
+ *  independently and a fourth would have too. */
+const _kept = (r) => Number(r && (r.netEth != null ? r.netEth : r.proceedsEth)) || 0;
 function snipeStats() { return { ..._snipeStats }; }
 
 async function snipeCycle() {
@@ -476,7 +485,13 @@ async function ordersCycle() {
       } else {
         const r = await core.sell(u.chatId, o.ca, o.sellPct || 100, chain, w.id, exec);
         const label = o.type === 'tp' ? 'Take-profit' : o.type === 'trail' ? 'Trailing stop' : 'Stop-loss';
-        _notify(u.chatId, `✅ <b>${label} filled</b> $${esc(o.sym || '')}\nSold ${r.soldPct}% for ${r.proceedsEth} ${r.native}\n${txLink(chain, r.hash)}`);
+        // NET and ROUNDED. `${r.proceedsEth}` interpolated a raw float —
+        // "0.000801724630395044 ETH", eighteen decimals where five carry the
+        // information — and it is the GROSS, before the bot's cut, under the
+        // word "for". The trade receipts were fixed for both of these; the
+        // order-fill notification, which is the only message an automatic exit
+        // ever sends, was not.
+        _notify(u.chatId, `✅ <b>${label} filled</b> $${esc(o.sym || '')}\nSold ${r.soldPct}%${r.soldTokens > 0 ? ` (${fmt(r.soldTokens)})` : ''} for ${_kept(r).toFixed(5)} ${r.native}\n${txLink(chain, r.hash)}`);
       }
     } catch (err) {
       _notify(u.chatId, `⚠️ Order on $${esc(o.sym || '')} triggered but failed: ${esc(err.message || String(err))}\nIt was removed — re-create it if you still want it.`);
@@ -610,7 +625,7 @@ async function positionsCycle() {
           p.notified.protectAt = Date.now(); dirty = true; core.saveStoreNow();   // write-through the cooldown so a crash can't retry the sell
           try {
             const r = await core.sell(u.chatId, p.ca, 100, p.chain, w.id, { slipAddBps: 1500, gasMult: 2 });   // exit aggressively (wide slippage)
-            _notify(u.chatId, `🛡 <b>Auto-protect sold $${esc(p.sym || '')}</b>\nReason: ${reason}.\nRecovered <b>${Number(r.proceedsEth).toFixed(5)} ${c.native}</b>.\n${txLink(p.chain, r.hash)}`);
+            _notify(u.chatId, `🛡 <b>Auto-protect sold $${esc(p.sym || '')}</b>\nReason: ${reason}.\nRecovered <b>${_kept(r).toFixed(5)} ${c.native}</b>.\n${txLink(p.chain, r.hash)}`);
           } catch (err) {
             _notify(u.chatId, `🛡 <b>Auto-protect couldn't exit $${esc(p.sym || '')}</b>\n${esc((err && (err.message || err)) || 'sell failed')}\nThe token may be blocking sells (honeypot). I'll try again shortly.`);
           }
@@ -864,7 +879,7 @@ async function copyExitCycle() {
       _notify(u.chatId,
         `👥 <b>Copy-sell</b> $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\n` +
         `<code>${short(t.address)}</code> ${why} — you exited <b>100%</b>\n` +
-        `Received ${r.proceedsEth} ${r.native}\n<code>${token}</code>\n${txLink(t.chain, r.hash)}`,
+        `Received ${_kept(r).toFixed(5)} ${r.native}\n<code>${token}</code>\n${txLink(t.chain, r.hash)}`,
         undefined, 'copy');
     } catch (err) {
       const msg = String((err && err.message) || err);
