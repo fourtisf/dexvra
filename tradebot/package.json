@@ -9,6 +9,7 @@
     "start": "node index.js",
     "preflight:solana": "node scripts/solana-preflight.js",
     "preflight:robinhood": "node scripts/robinhood-preflight.js",
+    "launchpads:check": "node scripts/launchpads-check.js",
     "test": "SKIP_DOTENV=1 node --test *.test.js"
   },
   "engines": {

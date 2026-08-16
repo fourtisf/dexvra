@@ -149,16 +149,24 @@ test('only http(s) links survive — the token deployer writes these strings', a
 test('the socials lookup is cached — the monitor re-renders on a timer', async () => {
   // Uncached, this is a 6-second HTTP call paid on every refresh of every open
   // card. Links do not change often enough to be worth that.
+  //
+  // The invariant is "one ROUND of lookups per token", not "one fetch": there
+  // is more than one source now (DexScreener, then the pre-migration
+  // launchpads), and a token neither of them knows legitimately costs a call to
+  // each — ONCE. What must never happen is paying any of it again on the next
+  // render, so renders two and three are the assertion that matters.
   let calls = 0;
   const realFetch = global.fetch;
   global.fetch = async () => { calls++; return { ok: true, json: async () => ({ pairs: [] }) }; };
   try {
     const ca = '0x' + 'be'.repeat(20);
     await tokeninfo.socials(ca, 'base');
+    const afterFirst = calls;
     await tokeninfo.socials(ca, 'base');
     await tokeninfo.socials(ca, 'base');
+    assert.ok(afterFirst >= 1, 'the first render did not look anything up');
+    assert.equal(calls, afterFirst, `re-rendering cost ${calls - afterFirst} more lookups — the cache is not holding`);
   } finally { global.fetch = realFetch; }
-  assert.equal(calls, 1, `the lookup went out ${calls} times for three renders of one token`);
 });
 
 // ---------------------------------------------------------------- per wallet

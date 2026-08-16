@@ -62,6 +62,9 @@ const _deps = { providerFor: chains.providerFor };
 const providerFor = (k) => _deps.providerFor(k);
 const v4 = require('./v4');            // Uniswap V4 reader — priced from the PoolManager, never routed
 const solana = require('./solana');   // non-EVM (Solana) adapter — used only on kind:'svm' chains
+// Pre-migration metadata. DISPLAY ONLY — see the header of launchpads.js: it
+// may fill a card, never price, route or authorise a swap.
+const launchpads = require('./launchpads');
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // ---------------------------------------------------------------- config
@@ -1337,6 +1340,29 @@ function _chainsFromPairs(pairs, enabled) {
   return [...byChain.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
 }
 
+/**
+ * Can the engine actually FILL a swap for this mint right now?
+ *
+ * Asked only on the path where a token has a launchpad price and no indexed
+ * pool — i.e. it is still on a bonding curve. The aggregator does route most
+ * curves, so the answer is usually yes and the user gets a Buy button they
+ * would otherwise not have been offered; when it is no, the card says so
+ * instead of quoting a price nothing can honour.
+ *
+ * A QUOTE IS NOT A TRADE: this prices 0.01 SOL and signs nothing. Wide
+ * slippage because the question is "does a route exist", not "at what price" —
+ * a thin curve rejecting a 1% bound would read as "no route" and hide a Buy
+ * button that would have worked. Any failure is a no; this must never throw
+ * into the card.
+ */
+const SOL_ROUTE_PROBE_LAMPORTS = 10000000n;   // 0.01 SOL — priced, never sent
+async function _solRoutable(mint) {
+  try {
+    const q = await solana.getQuote({ inputMint: solana.WSOL_MINT, outputMint: mint, amountRaw: SOL_ROUTE_PROBE_LAMPORTS, slippageBps: 500 });
+    return !!(q && q.outAmount > 0n);
+  } catch (_) { return false; }
+}
+
 // Live token snapshot on a given chain: price (native), mcap (native), curve state.
 async function tokenSnapshot(ca, chainKey) {
   const chain = chainOf(chainKey); if (!chain) return null;
@@ -1344,14 +1370,46 @@ async function tokenSnapshot(ca, chainKey) {
   // priceEth/mcapEth in SOL (native) so the card/USD math is identical to EVM, and pass
   // through the USD figures + liquidity/volume that enrich() surfaces.
   if (isSvm(chainKey)) {
-    const d = await solana.dexScreener(ca);
-    if (!d || !(d.priceUsd > 0)) return null;
+    // ASKED TOGETHER, because they answer different questions and a bonding
+    // token frequently has BOTH: DexScreener indexes the curve pair (price,
+    // depth, volume) while only the launchpad knows the curve's phase. Serially
+    // this would cost the sum of two timeouts on the one path where the token is
+    // brand new and neither is fast.
+    const [d, lpRec] = await Promise.all([
+      solana.dexScreener(ca),
+      launchpads.covers(chainKey) ? launchpads.record(chainKey, ca) : Promise.resolve(null),
+    ]);
     let solUsd = 0; try { solUsd = await ethUsd(chainKey); } catch (_) {}
+    if (!d || !(d.priceUsd > 0)) {
+      // NO POOL ANYWHERE — which used to end here, with `return null`, and the
+      // card said "❌ Couldn't price it" about a token trading perfectly well on
+      // its launchpad. That is the entire pre-migration life of every Solana
+      // launch, and it is the window in which people actually ask.
+      const snap = launchpads.curveSnapshot(ca, chainKey, lpRec, solUsd);
+      if (!snap) return null;   // no pool AND no launchpad knows it — genuinely nothing to show
+      // ROUTABILITY IS MEASURED, NEVER INFERRED FROM HAVING A PRICE. Reading a
+      // number off an HTTP API says nothing about whether a swap can be filled;
+      // that is the same line v4.js draws between price() and canSwapLive(), and
+      // quoting a price the engine cannot honour is worse than saying "not yet".
+      // The aggregator routes most bonding curves, so asking is usually a Buy
+      // button the user would otherwise not have been offered.
+      snap.routable = await _solRoutable(ca);
+      return snap;
+    }
     const priceEth = solUsd > 0 ? d.priceUsd / solUsd : (d.priceNative || 0);
     const mcapEth = solUsd > 0 ? d.mcapUsd / solUsd : 0;
     const liquiditySol = solUsd > 0 ? d.liquidityUsd / solUsd : 0;
-    return { ca, curve: '', priceEth, priceUsd: d.priceUsd, mcapEth, mcapUsd: d.mcapUsd, graduated: true, progressPct: 100,
+    const snap = { ca, curve: '', priceEth, priceUsd: d.priceUsd, mcapEth, mcapUsd: d.mcapUsd, graduated: true, progressPct: 100,
       decimals: 9, dex: true, liquiditySol, liquidityUsd: d.liquidityUsd, volH24Usd: d.volH24Usd, name: d.name, sym: d.symbol };
+    // `graduated: true, progressPct: 100` above is the DEFAULT, and it used to
+    // be the only answer this branch could give — every Solana token was
+    // labelled "◆ DEX" on the card, including one sitting at 12% of a bonding
+    // curve. It is still the right default (most indexed Solana tokens have
+    // migrated), but a launchpad that says otherwise now overrides it. The
+    // overlay returns null unless a pad states the token is ON the curve, so a
+    // pad that merely knows the token changes nothing.
+    const overlay = launchpads.curveOverlay(lpRec);
+    return overlay ? { ...snap, ...overlay } : snap;
   }
   const prov = providerFor(chainKey);
   if (chain.curve) {

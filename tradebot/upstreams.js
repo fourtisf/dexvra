@@ -37,6 +37,7 @@
  */
 const { Keypair } = require('@solana/web3.js');
 const solana = require('./solana');
+const launchpads = require('./launchpads');
 
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';   // always-liquid, so a failure is never "no route"
 const PROBE_LAMPORTS = 10000000n;                                // 0.01 SOL — priced, never sent
@@ -56,6 +57,31 @@ function guard(ms, fn) {
     } finally { if (timer) clearTimeout(timer); }
   };
 }
+
+/**
+ * The launchpad feeds, one probe each, contributed by the registry.
+ *
+ * They are BUILT rather than listed because the pad table is the single owner
+ * of which pads exist — a hand-written list here would be a second answer to
+ * that question, and this file exists precisely because two copies of "is X up"
+ * eventually disagree.
+ *
+ * None is `critical`: a dead launchpad costs pre-migration DATA, not the
+ * ability to trade — a buy still prices and routes through the aggregator with
+ * every pad down. An alert where everything is critical has no priority in it.
+ *
+ * The registry's own timeout bounds each request; the guard here bounds the
+ * probe, and a probe that can hang is a watchdog that can hang.
+ */
+// pump.fun is left out: `pumpfun.feed` below already probes that exact host and
+// path, and two alerts for one outage is how a channel stops being read. Its
+// `costs` line carries both losses instead.
+const LAUNCHPAD_PROBES = launchpads.probes()
+  .filter((p) => p.key !== 'launchpad.pumpfun')
+  .map((p) => ({
+    key: p.key, label: p.label, critical: p.critical, costs: p.costs,
+    run: guard(15000, p.run),
+  }));
 
 const PROBES = [
   {
@@ -96,7 +122,7 @@ const PROBES = [
     key: 'pumpfun.feed',
     label: 'pump.fun new-coins feed',
     critical: false,
-    costs: 'Solana snipe discovery is blind — no new launch is seen',
+    costs: 'Solana snipe discovery is blind — no new launch is seen, and pre-migration tokens lose their description and socials',
     run: guard(15000, async () => {
       const r = await solana.pumpfunNewX(5);
       if (!r.ok) throw new Error(r.why || 'feed unreachable');
@@ -115,6 +141,7 @@ const PROBES = [
       return `$${d.priceUsd}`;
     }),
   },
+  ...LAUNCHPAD_PROBES,
 ];
 
 /** Run every probe concurrently. Always resolves; never throws. */

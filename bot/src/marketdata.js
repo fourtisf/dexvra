@@ -4,6 +4,7 @@
 // (never crawl a chain). Robinhood has no GT coverage (geckoNetwork:null) →
 // DexScreener only; chains neither indexes → null (posts show TBA).
 const { chainOf } = require("./config/chains");
+const launchpads = require("./launchpads");
 const log = require("./helpers/logger");
 
 const GT = "https://api.geckoterminal.com/api/v2";
@@ -197,32 +198,36 @@ const tidyDesc = (d) => {
   return clean.length >= 20 ? Array.from(clean).slice(0, 500).join("") : null;
 };
 
-/** pump.fun carries the project's OWN description (set at mint) for Solana
- *  launches that GeckoTerminal hasn't enriched yet — the text DexScreener shows.
+/** A launchpad carries the project's OWN description (set at mint) for launches
+ *  GeckoTerminal hasn't enriched yet — the text DexScreener shows.
+ *
+ *  THIS USED TO BE A HARDCODED pump.fun URL, and it was wrong twice over. A
+ *  token launched on bonk.fun, Believe, Boop or Moonshot got no overview at all
+ *  and the listing fell back to the auto-written intro; and it was this repo's
+ *  SECOND private answer to "which pump.fun host is current", the other living
+ *  in tradebot/solana.js — the two drifted apart once already and Solana snipe
+ *  discovery was blind for days behind a green health tick. There is now one
+ *  table, in shared/launchpads, and both processes read it.
+ *
  *  Best-effort: any failure → null, the caller falls back to an auto-intro. */
-async function fetchPumpFunDescription(address) {
+async function fetchLaunchpadDescription(chain, address) {
   try {
-    const res = await fetch(`https://frontend-api-v3.pump.fun/coins/${address}`, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const j = await res.json();
-    return tidyDesc(j && j.description);
+    return await launchpads.fetchDescription(chain, address);
   } catch (e) {
-    log.debug(`[market] pumpfun ${address}: ${e.message}`);
+    log.debug(`[market] launchpad ${chain}/${address}: ${e.message}`);
     return null;
   }
 }
 
 /** Project description for the "overview" paragraph — GeckoTerminal's token-info
- *  endpoint first, then pump.fun for Solana (GT often lacks it for fresh pump
- *  launches). One collapsed paragraph, or null. */
+ *  endpoint first, then the launchpad the token was minted on (GT often lacks
+ *  it for a fresh launch, and always lacks it before migration). One collapsed
+ *  paragraph, or null. */
 async function fetchTokenDescription(chain, address) {
   const net = chainOf(chain) && chainOf(chain).geckoNetwork;
   // `if (net && await gtTurn())`, NOT an early return inside the try: a rate
-  // limited GeckoTerminal must fall THROUGH to pump.fun below, which is the
-  // better source for a fresh Solana launch anyway. Returning here would have
+  // limited GeckoTerminal must fall THROUGH to the launchpad below, which is the
+  // better source for a fresh launch anyway. Returning here would have
   // made every description on Solana disappear for the length of a cooldown.
   if (net && (await gtTurn())) {
     try {
@@ -239,8 +244,49 @@ async function fetchTokenDescription(chain, address) {
       log.debug(`[market] GT info ${chain}/${address}: ${e.message}`);
     }
   }
-  if (chain === "solana") return fetchPumpFunDescription(address);
+  // Every chain a pad covers, not just Solana — four.meme on BNB Chain and
+  // Virtuals on Base have the same gap, and the old `chain === "solana"` guard
+  // meant they could never be asked.
+  if (launchpads.covers(chain)) return fetchLaunchpadDescription(chain, address);
   return null;
+}
+
+/**
+ * The launchpad, LAST, and only for what the indexers left blank.
+ *
+ * Both indexers read pools. A token that has not migrated has no pool, so both
+ * come back empty for its entire pre-migration life and every post about it
+ * said "TBA" — for a token whose price, market cap and holder count are all
+ * public on its launchpad. Filling here rather than replacing keeps the rule
+ * the rest of this file is built on: a live pool reading always beats a
+ * launchpad's copy of the same number.
+ */
+async function fillFromLaunchpad(chain, address, out) {
+  if (!launchpads.covers(chain)) return out;
+  const lp = await launchpads.fetchTokenInfo(chain, address).catch((e) => {
+    log.debug(`[market] launchpad ${chain}/${address}: ${e.message}`);
+    return null;
+  });
+  if (!lp) return out;
+  const base = out || {};
+  return {
+    ...base,
+    priceUsd: num(base.priceUsd) ?? num(lp.priceUsd),
+    mcap: num(base.mcap) ?? num(lp.mcap),
+    liq: num(base.liq) ?? num(lp.liq),
+    // No pool is the whole point — there is nothing to link to yet, and
+    // inventing an address here would send a chart link somewhere that 404s.
+    poolAddress: base.poolAddress || null,
+    change24h: base.change24h ?? null,
+    name: base.name || lp.name || null,
+    symbol: base.symbol || lp.symbol || null,
+    logoUrl: base.logoUrl || lp.logoUrl || null,
+    // Curve state, for the callers that know to look. Ignored by the ones that
+    // do not, which is every existing one.
+    onCurve: lp.onCurve,
+    progressPct: lp.progressPct,
+    launchpad: lp.launchpad,
+  };
 }
 
 /** @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>} */
@@ -252,24 +298,33 @@ async function fetchMarket(chain, address) {
   if (gt && gt.priceUsd && gt.mcap && gt.liq) return gt;
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   const ds = await fetchDS(chain, address);
-  if (!gt) return ds;
-  if (!ds) return gt;
-  // Both sources answered. If their market caps disagree wildly, one is reading
-  // a poisoned pool — take the numbers backed by the DEEPER liquidity, and say
-  // so. Silently averaging or preferring a fixed source is how a $1.3T BONK
-  // reaches a pinned public board.
-  const trusted = pickTrusted(gt, ds, chain, address);
-  return {
-    ...trusted,
-    priceUsd: trusted.priceUsd ?? gt.priceUsd ?? ds.priceUsd,
-    mcap: trusted.mcap ?? gt.mcap ?? ds.mcap,
-    liq: trusted.liq ?? gt.liq ?? ds.liq,
-    poolAddress: trusted.poolAddress || gt.poolAddress || ds.poolAddress,
-    change24h: trusted.change24h ?? gt.change24h ?? ds.change24h,
-    name: gt.name || ds.name,
-    symbol: gt.symbol || ds.symbol,
-    logoUrl: gt.logoUrl || ds.logoUrl,
-  };
+  let out;
+  if (!gt && !ds) out = null;
+  else if (!gt) out = ds;
+  else if (!ds) out = gt;
+  else {
+    // Both sources answered. If their market caps disagree wildly, one is reading
+    // a poisoned pool — take the numbers backed by the DEEPER liquidity, and say
+    // so. Silently averaging or preferring a fixed source is how a $1.3T BONK
+    // reaches a pinned public board.
+    const trusted = pickTrusted(gt, ds, chain, address);
+    out = {
+      ...trusted,
+      priceUsd: trusted.priceUsd ?? gt.priceUsd ?? ds.priceUsd,
+      mcap: trusted.mcap ?? gt.mcap ?? ds.mcap,
+      liq: trusted.liq ?? gt.liq ?? ds.liq,
+      poolAddress: trusted.poolAddress || gt.poolAddress || ds.poolAddress,
+      change24h: trusted.change24h ?? gt.change24h ?? ds.change24h,
+      name: gt.name || ds.name,
+      symbol: gt.symbol || ds.symbol,
+      logoUrl: gt.logoUrl || ds.logoUrl,
+    };
+  }
+  // Only when something the callers actually render is still missing — an
+  // indexed token must not pay a launchpad round trip on every poll, and nine
+  // background pipelines call this on timers.
+  if (!out || !out.priceUsd || !out.mcap) out = await fillFromLaunchpad(chain, address, out);
+  return out;
 }
 
 /** Which of two disagreeing sources to believe. Agreement (or a missing value)

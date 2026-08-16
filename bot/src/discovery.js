@@ -14,6 +14,7 @@
 // the auto-lister already reports as a blocker.
 const ds = require("./dexscreener");
 const poolstrade = require("./poolstrade");
+const launchpads = require("./launchpads");
 const log = require("./helpers/logger");
 
 /**
@@ -26,6 +27,19 @@ const log = require("./helpers/logger");
  * the exact bug the round-robin in dexscreener.js was written to fix, one level
  * up. Round-robin gives each SOURCE an even share of the budget; order within
  * a source is preserved.
+ *
+ * THE PRE-MIGRATION LAUNCHPADS ARE DELIBERATELY NOT A SOURCE HERE, even though
+ * they are one for fetchTokenInfo below. Auto-listing gates on minimum
+ * liquidity, minimum 24h volume and a minimum age (autoLister.rejectReason),
+ * and a token on a bonding curve fails all three by definition — it has no
+ * pool, so there is no liquidity to measure, and it is minutes old. Adding the
+ * feed would hand a third of every scan's lookup budget (round-robin, 40 per
+ * run) to candidates that are rejected on arrival, and take that budget away
+ * from the boosted feeds where the $1M projects actually are. That is the exact
+ * starvation the round-robin was written to fix, re-introduced one level up.
+ *
+ * Pre-migration data belongs in the MANUAL listing flow, where a project is
+ * paying to be listed and the form needs prefilling — which is fetchTokenInfo.
  *
  * @returns {Promise<Array<{chain: string, address: string}>>}
  */
@@ -65,6 +79,36 @@ async function fetchDiscovery() {
 }
 
 /**
+ * Merge a launchpad record UNDER an indexer record.
+ *
+ * `base` wins on every field it actually has, because a pool-backed indexer
+ * reading a live market beats a launchpad's copy of the same numbers. The
+ * launchpad fills the holes, and on a pre-migration token the holes are most of
+ * the form: DexScreener has no `info` block to hang socials on until a pool
+ * exists, so the project's X, Telegram, website, logo and description — set at
+ * mint, and the only ones that exist yet — were unreachable.
+ *
+ * ZERO IS A VALUE HERE, NOT A HOLE. autoLister.rejectReason reads `liq`,
+ * `vol24` and `pairCreatedAt` and treats 0 as "no data"; if a launchpad's
+ * numbers could overwrite a real 0 from DexScreener the auto-lister would be
+ * scoring a gate against a different source than the one it thinks it is
+ * reading. Only null/undefined/'' are treated as missing.
+ */
+function mergeInfo(base, extra) {
+  if (!extra) return base;
+  if (!base) return extra;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(extra)) {
+    const have = out[k];
+    if (have === null || have === undefined || have === "") out[k] = v;
+  }
+  // Provenance, so a caller (and a log line) can tell a merged record from a
+  // plain DexScreener one without guessing from which fields are populated.
+  out.source = base.source ? `${base.source}+${extra.source || "launchpad"}` : extra.source;
+  return out;
+}
+
+/**
  * Market data for one token, from whichever source knows it.
  *
  * pools.trade is asked FIRST for its own chain and only its own chain: it is
@@ -72,13 +116,28 @@ async function fetchDiscovery() {
  * the curve state that no general indexer has. It returns null for every other
  * chain, and null for a Robinhood token that was not launched through it —
  * either way the DexScreener/GeckoTerminal path below still runs.
+ *
+ * The pre-migration pads run CONCURRENTLY with DexScreener and are merged
+ * under it, rather than being a fallback. A fallback would have been wrong in
+ * both directions: pump.fun-style launches usually DO have a DexScreener pair
+ * (so the pads would never be asked, and the socials stay missing), while the
+ * numbers on that pair are the ones worth keeping (so the pads must not
+ * overwrite them). Filling holes is the only combination that gets both.
  */
 async function fetchTokenInfo(chain, address) {
   if (chain === poolstrade.OUR_CHAIN) {
     const info = await poolstrade.fetchTokenInfo(chain, address).catch(() => null);
     if (info) return info;
   }
-  return ds.fetchTokenInfo(chain, address);
+  if (!launchpads.covers(chain)) return ds.fetchTokenInfo(chain, address);
+  const [dsInfo, lpInfo] = await Promise.all([
+    ds.fetchTokenInfo(chain, address).catch(() => null),
+    launchpads.fetchTokenInfo(chain, address).catch((e) => {
+      log.debug(`[discovery] launchpads ${chain}/${address}: ${e.message}`);
+      return null;
+    }),
+  ]);
+  return mergeInfo(dsInfo, lpInfo);
 }
 
-module.exports = { fetchDiscovery, fetchTokenInfo };
+module.exports = { fetchDiscovery, fetchTokenInfo, mergeInfo };
