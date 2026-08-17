@@ -1165,15 +1165,51 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   `addCopyTarget` ('launches'), discriminated by `mode === 'launches'` on the
   return.
 - **The dev rows are honoured BEFORE they are shown.** "berapa banyak wallet
-  serta slippage … auto sale tp dimana fiturnya" — `_followerBuy` now honours
-  a per-target wallet (`t.walletId`, exit mirror pinned to it; a deleted
-  wallet falls back to active), per-target slippage (replaces the user's
+  serta slippage … auto sale tp dimana fiturnya" — `_followerBuy` honours the
+  per-target wallet selection, per-target slippage (replaces the user's
   normal bound, same contract as the CA snipe) and TP/SL that become real
   orders at each fill, at the realised entry, on the buying wallet — so the
   dev panel carries Wallet · Slippage · TP/SL rows. Expiry stays hidden (a
-  copy target does not expire) and the wallet picker offers ONE wallet, never
-  👥 All: the exit-mirror ledger records one `wid` per position, so an
-  all-wallet dev snipe would sell one wallet's bag and strand the rest.
+  copy target does not expire).
+- **The wallet row is a MULTI-SELECT, the buy/sell picker's model** ("bisa
+  pilih multi wallet, all on atau all off, sama kaya beli"): toggles per
+  wallet, ✅ All on ('*', resolved at fire time), ⬜ All off. The draft and
+  the targets carry `walletIds` ('*' | array; one id collapses to the plain
+  `walletId`); the amount is PER wallet and the panel + armed message state
+  the multiplied total. A multi-wallet DEV fill records one exit-mirror LEG
+  per wallet (`holding[token].legs = [{wid, own}]`) and `copyExitCycle` sells
+  every leg from the wallet that bought it, from ONE balances sweep — selling
+  one bag and stranding the rest would be the stop-loss-the-user-believes-
+  exists, per wallet. The fan-out is budgeted WHOLE (N × buyEth claimed
+  before the buys; fit whole or skip whole) and only clear failures are
+  rolled back — a broadcast leg stays committed and its leg records `own: ''`
+  so the mirror refuses to guess with it.
+- ⚠️ **The dev budget is priced per LAUNCH, not per wallet.** `_followerBuy`
+  fits the whole fan-out or skips it, so a budget that covers one wallet but
+  not the selection armed cleanly and then skipped every launch **silently,
+  for ever** — the inert-watch failure, arrived at by arithmetic. The floor
+  (`addCopyTarget`, `updateSnipeDraft`) and the ten-buys default are both
+  multiplied by `copyFanOut()`, and the panel's budget quick-picks are
+  multiples of one LAUNCH. A budget row and a wallet row that disagree is a
+  target that can never fire.
+- **A multi-leg exit leaves the ledger one leg at a time.** Dropping the whole
+  record before the first sell is right for ONE leg (a crash mid-sell must not
+  let the next cycle sell it twice) and strands the rest, whose sells never
+  started: `copyHoldingSet()` rewrites the record with the untouched legs
+  before each sell. A leg whose sell was **broadcast** is never retried — the
+  buy path's rule, for the same reason — and says so.
+- **"Nothing was sold" may not follow a sale.** The never-recorded notice is
+  emitted per POSITION from a per-LEG loop, so on a mixed record (one leg
+  filled, one only broadcast) it landed one message after a real exit. It
+  names the wallet instead when siblings sold.
+- **The armed sentence's cadence belongs to the FEATURE, not to the
+  selection.** A CA snipe fires once (`snipe.panel.armed_wallets`, "in
+  total"); a dev snipe fires on every launch (`dev.armed_wallets`, "per
+  launch"). Keyed on `'*'`-vs-subset instead, the one-shot wording landed on
+  the recurring watch. `walletScopeLine()` is the one renderer.
+- **Every standing screen carries the multiplier.** `caSnipeScreen`'s armed
+  rows and `copyScreen`'s target rows print `× N`, or a 3-wallet target reads
+  as spending a third of what it does on the screens where a user audits it.
 - **The dev budget is a CAP with a default, not a question** ("fitur yang tadi
   hapus aja"): unset, `addCopyTarget` defaults it to 10× the per-launch amount
   — an uncapped auto-buyer is the "buy ngasal" hazard class, so the cap

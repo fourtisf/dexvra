@@ -479,17 +479,34 @@ const S = {
   'snipe.panel.pick_btn': { en: 'Pick amount', id: 'Pilih jumlah' },
   'snipe.panel.custom_btn': { en: '✏️ Custom', id: '✏️ Isi sendiri' },
   // Sub-screens, one per row.
+  // The picker is a MULTI-SELECT, the same model as the buy/sell wallet picker
+  // ("bisa pilih multi wallet, all on atau all off, sama kaya beli"): tap to
+  // toggle, ✅/⬜ set the lot, ✔ Done returns to the panel.
   'snipe.panel.wal_pick': {
-    en: '💳 <b>Wallet</b>\n\nWhich wallet should this snipe buy with?\n\n<i>👥 All wallets fires the buy on every wallet at once — the amount is PER wallet.</i>',
-    id: '💳 <b>Wallet</b>\n\nSnipe ini beli pakai wallet yang mana?\n\n<i>👥 Semua wallet berarti buy jalan di semua wallet sekaligus — jumlahnya PER wallet.</i>',
+    en: '💳 <b>Wallets</b>\n\nTap wallets to turn them on or off — the snipe buys on <b>every selected wallet at once</b>, and the amount is <b>per wallet</b>.',
+    id: '💳 <b>Wallet</b>\n\nTap wallet untuk nyalakan atau matikan — snipe beli di <b>semua wallet yang dipilih sekaligus</b>, dan jumlahnya <b>per wallet</b>.',
   },
   'snipe.panel.wallet_all': { en: '👥 All ({n})', id: '👥 Semua ({n})' },
-  'snipe.panel.wallet_all_btn': { en: '👥 All wallets ({n}) — amount is per wallet', id: '👥 Semua wallet ({n}) — jumlahnya per wallet' },
+  'snipe.panel.wallet_n': { en: '👥 {k}/{n} wallets', id: '👥 {k}/{n} wallet' },
+  'snipe.panel.wallet_all_btn': { en: '✅ All on ({n})', id: '✅ Semua on ({n})' },
+  'snipe.panel.wallet_none_btn': { en: '⬜ All off', id: '⬜ Semua off' },
+  'snipe.panel.done_btn': { en: '✔ Done', id: '✔ Selesai' },
   // Appended to the armed confirmation when the target fires on every wallet:
   // the multiplied total is real money and belongs on the consent message.
-  'snipe.panel.armed_all': {
-    en: '👥 On <b>every wallet ({n})</b> — {amt} {native} each, up to <b>{total} {native}</b> total if all fill.',
-    id: '👥 Di <b>semua wallet ({n})</b> — {amt} {native} per wallet, total sampai <b>{total} {native}</b> kalau semuanya keisi.',
+  // The scope, and the two CADENCES. The cadence belongs to the FEATURE, not to
+  // the wallet selection: a CA snipe fires ONCE (its total is a one-off), a dev
+  // snipe fires on every launch until the budget runs out. Keying these on
+  // '*'-vs-subset instead put the one-shot sentence on a recurring watch — the
+  // most expensive half of the pair to understate.
+  'snipe.panel.scope_all': { en: 'every wallet ({n})', id: 'semua wallet ({n})' },
+  'snipe.panel.scope_n': { en: '{n} wallets', id: '{n} wallet' },
+  'snipe.panel.armed_wallets': {
+    en: '👥 On <b>{scope}</b> — {amt} {native} each, up to <b>{total} {native}</b> in total if every wallet fills.',
+    id: '👥 Di <b>{scope}</b> — {amt} {native} per wallet, total sampai <b>{total} {native}</b> kalau semuanya keisi.',
+  },
+  'dev.armed_wallets': {
+    en: '👥 On <b>{scope}</b> — {amt} {native} each, so <b>{total} {native}</b> per launch, until the budget runs out.',
+    id: '👥 Di <b>{scope}</b> — {amt} {native} per wallet, jadi <b>{total} {native}</b> per launch, sampai budget-nya habis.',
   },
   'snipe.panel.bud_pick': {
     en: '💰 <b>Budget</b> — optional\n\nThe max TOTAL to spend on this developer; I stop buying its launches once it is reached. Left unset it is <b>10×</b> the per-launch amount (per launch: <b>{amt}</b>). Tap one, or type your own in {native}.',

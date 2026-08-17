@@ -68,7 +68,7 @@ test('a new draft starts on the user chain and active wallet, with NO amount', (
   const u = user();
   const d = core.newSnipeDraft(CHAT);
   assert.equal(d.chain, core.userChain(u));
-  assert.equal(d.walletId, 'w1');
+  assert.deepEqual(d.walletIds, ['w1']);
   // The "buy ngasal" rule: spending is an explicit choice every time. A draft
   // with a default amount is an amount set by nobody.
   assert.strictEqual(d.amount, null);
@@ -93,7 +93,7 @@ test('every row is bounded exactly like addSnipeTarget, and a refused patch chan
   const d = core.snipeDraft(core.ensureUser(CHAT));
   assert.strictEqual(d.amount, null);
   assert.equal(d.slipPct, 0);
-  assert.equal(d.walletId, 'w1');
+  assert.deepEqual(d.walletIds, ['w1']);
 });
 
 test('a Solana mint is refused on an EVM chain row, and vice versa', () => {
@@ -392,20 +392,25 @@ test('the dev panel carries every setting the engine honours, and only those', (
     assert.ok(flat.includes(cb), `the dev panel lost ${cb}`);
   }
   assert.ok(!flat.includes('snw:ttl'), 'the dev panel shows an expiry the dev path ignores');
-  // …and the wallet picker offers ONE wallet, never 👥 All: the exit-mirror
-  // ledger pins one wid per position, so an all-wallet dev snipe would sell
-  // one wallet's bag and strand the rest.
+  // …and the wallet picker is the same multi-select the CA kind gets: the
+  // exit mirror records one LEG per wallet now, so every slice is sold from
+  // the wallet that bought it.
   const pick = tg._test.snwWalletScreen(CHAT).kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(!pick.includes('snww:*'), 'the dev wallet picker offers All, which the exit mirror cannot honour');
+  assert.ok(pick.includes('snww:*'), 'the dev wallet picker lost ✅ All on');
+  assert.ok(pick.includes('snw:waln'), 'the dev wallet picker lost ⬜ All off');
+  assert.ok(pick.some((cb) => String(cb).startsWith('snwwt:')), 'the dev wallet picker lost its toggles');
 });
 
 test('the engine honours the dev rows: wallet, slippage, TP/SL at the fill', () => {
   const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
   const fn = W.slice(W.indexOf('async function _followerBuy('), W.indexOf('async function _targetBalance('));
   assert.ok(fn.length > 400, '_followerBuy moved — this test is asserting nothing');
-  // The panel-picked wallet wins; a wallet deleted since arming falls back to
-  // the active one rather than silently buying nothing.
-  assert.match(fn, /t\.walletId && core\.walletList\(u\)\.some\(\(w\) => w\.id === t\.walletId\)/);
+  // The panel-picked SELECTION wins — '*', a subset (deleted wallets dropped),
+  // or one — and no selection falls back to the active wallet rather than
+  // silently buying nothing.
+  assert.match(fn, /t\.walletId === '\*'/);
+  assert.match(fn, /t\.walletIds\.filter\(\(id\) => wl\.some\(\(w\) => w\.id === id\)\)/);
+  assert.match(fn, /t\.walletId && wl\.some\(\(w\) => w\.id === t\.walletId\)/);
   // Per-target slippage REPLACES the user's normal bound, unset means normal —
   // the same contract as the CA snipe.
   assert.match(fn, /\{ slipBps: t\.slipBps \|\| undefined \}/);
@@ -430,6 +435,41 @@ test('the dev target stores wallet, slippage and TP/SL, and the budget defaults 
   assert.equal(t.maxEth, '0.5');
   assert.throws(() => core.addCopyTarget(CHAT, CA, 'robinhood', 0.05, null, 'launches', { walletId: 'nope' }), /no such wallet/);
   assert.ok(u.copy.targets.length >= 1);
+});
+
+test('the budget is priced per LAUNCH, so a multi-wallet target can never arm inert', () => {
+  // The defect this pins: _followerBuy fits the whole fan-out or skips it, so a
+  // budget covering ONE wallet but not the selection armed cleanly and then
+  // silently never fired — an armed watch that can never fire.
+  const u = user();
+  // 2 wallets × 0.05 = 0.1 per launch. A 0.05 budget is below one launch.
+  assert.throws(
+    () => core.addCopyTarget(CHAT, MINT, 'solana', 0.05, 0.05, 'launches', { walletIds: ['w1', 'w2'] }),
+    /budget must be ≥ 0\.1/,
+    'a budget that cannot fund one launch was accepted');
+  // The default scales too: ten LAUNCHES, not ten wallet-buys.
+  const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletIds: ['w1', 'w2'] });
+  assert.equal(t.maxEth, '1', 'the default budget funds fewer than ten launches');
+  // …and whatever arms must actually be spendable by the fire-time check.
+  const wl = core.walletList(u).length;
+  assert.ok(Number(t.maxEth) >= Number(t.buyEth) * (t.walletIds || [1]).length, 'the armed target cannot afford its own first launch');
+  assert.ok(wl >= 2);
+  // The panel's budget row refuses the same way, at the row.
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev', ca: MINT, amount: 0.05, walletIds: ['w1', 'w2'] });
+  assert.throws(() => core.updateSnipeDraft(CHAT, { budget: 0.05 }), /budget must be ≥ 0\.1/);
+});
+
+test('a dev snipe on several wallets says PER LAUNCH, not one-shot', () => {
+  // The cadence belongs to the feature: a CA snipe fires once, a dev snipe
+  // fires on every launch. Keying the sentence on '*'-vs-subset put the
+  // one-shot wording on the recurring watch.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const arm = SRC.slice(SRC.indexOf("if (ca === 'arm')"), SRC.indexOf("if (ca === 'cancel')") > SRC.indexOf("if (ca === 'arm')") ? SRC.indexOf("if (ca === 'cancel')") : SRC.indexOf("if (k === 'snww'"));
+  assert.match(arm, /walletScopeLine\(chatId, tgt, tgt\.buyEth, chG\.native, 'dev\.armed_wallets'\)/, 'the dev arm lost its recurring wording');
+  const i18n = require('./i18n');
+  assert.match(i18n.t('en', 'dev.armed_wallets', { scope: '3 wallets', amt: '0.05', native: 'SOL', total: '0.15' }), /per launch/i);
+  assert.match(i18n.t('en', 'snipe.panel.armed_wallets', { scope: '3 wallets', amt: '0.05', native: 'SOL', total: '0.15' }), /in total/i);
 });
 
 // ── the dev-wallet target, on the panel ──────────────────────────────────────
@@ -535,6 +575,157 @@ test('an all-wallet target buys on EVERY wallet from one probe, and settles once
   assert.equal(probes, 1, 'the contract was probed once per wallet');
   assert.equal(core.snipeTargetById(u, t.id).status, 'done');
   assert.ok(notes.some((n) => /2\/2 wallets/.test(n)), 'the fill does not say how many wallets filled');
+});
+
+test('the picker is a MULTI-SELECT: toggles compose a subset, and the subset fires', async () => {
+  // "bisa pilih multi wallet, all on atau all off, sama kaya beli atau sell."
+  const u = user();
+  core.newSnipeDraft(CHAT);
+  // The picker carries toggles plus ✅ All on / ⬜ All off.
+  const pick = tg._test.snwWalletScreen(CHAT).kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(pick.includes('snwwt:w1') && pick.includes('snwwt:w2'), 'the per-wallet toggles are gone');
+  assert.ok(pick.includes('snww:*'), '✅ All on is gone');
+  assert.ok(pick.includes('snw:waln'), '⬜ All off is gone');
+  // A subset survives the round trip to the target and fires on EXACTLY it.
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA, amount: 0.05, walletIds: ['w1', 'w2'] });
+  const t = core.armSnipeDraft(CHAT);
+  assert.deepEqual(t.walletIds, ['w1', 'w2']);
+  // …and the armed confirmation states the multiplied total (0.05 × 2 = 0.1),
+  // in the ONE-SHOT cadence: a CA snipe fires once.
+  const armed = tg._test.snipeArmedText(CHAT, t).replace(/<[^>]+>/g, '');
+  assert.match(armed, /2 wallets[\s\S]*0\.1/);
+  assert.match(armed, /in total/i, 'a one-shot CA snipe is described as recurring');
+  assert.ok(!/per launch|every time it fires/i.test(armed), 'a one-shot CA snipe claims a recurring spend');
+  const wids = [];
+  const real = { can: core.canTradeNow, buy: core.buy };
+  core.canTradeNow = async () => true;
+  core.buy = async (cid, ca2, amt, chain, wid) => { wids.push(wid); return { chain, native: 'ETH', ca: ca2, hash: '0x' + wids.length, spentEth: 0.05, gotTokens: 10, sym: 'P' }; };
+  watchers.setNotifier(() => {});
+  try { await watchers._test.caSnipeCycle(); } finally { core.canTradeNow = real.can; core.buy = real.buy; watchers.setNotifier(() => {}); }
+  assert.deepEqual(wids.sort(), ['w1', 'w2'], 'the subset did not fire on exactly the picked wallets');
+  assert.equal(core.snipeTargetById(u, t.id).status, 'done');
+  // An empty selection is refused at ⚡, where the fix is one row away.
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA2, amount: 0.05, walletIds: [] });
+  assert.throws(() => core.armSnipeDraft(CHAT), /no wallet selected/i);
+});
+
+test('a multi-wallet dev snipe buys on each wallet and records one exit LEG per wallet', async () => {
+  const u = user();
+  u.copy = { on: true, targets: [] };
+  const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletIds: ['w1', 'w2'] });
+  assert.deepEqual(t.walletIds, ['w1', 'w2']);
+  const wids = [];
+  const solana = require('./solana');
+  const realBuy = core.buy, realSpl = solana.splBalance;
+  core.buy = async (cid, token, amt, chain, wid) => { wids.push(wid); return { chain, native: 'SOL', ca: token, hash: 'sig' + wids.length, spentEth: Number(amt), gotTokens: 100, gotRaw: '1000', sym: 'P' }; };
+  solana.splBalance = async () => ({ raw: 5000n });   // the dev's own bag — the exit baseline
+  watchers.setNotifier(() => {});
+  try { await watchers._test._followerBuy(u, t, MINT, 'solana'); }
+  finally { core.buy = realBuy; solana.splBalance = realSpl; watchers.setNotifier(() => {}); }
+  assert.deepEqual(wids.sort(), ['w1', 'w2'], 'not every selected wallet bought');
+  // The budget was charged for the WHOLE fan-out: 2 × 0.05.
+  assert.ok(Math.abs(Number(t.spentEth) - 0.1) < 1e-9, `spentEth ${t.spentEth} — the fan-out was not charged whole`);
+  const h = t.holding[core.copyTokenKey('solana', MINT)];
+  assert.ok(h, 'the position was not mirrored');
+  assert.equal((h.legs || []).length, 2, 'the exit mirror did not record one leg per wallet');
+  assert.deepEqual(h.legs.map((l) => l.wid).sort(), ['w1', 'w2']);
+  for (const l of h.legs) assert.equal(l.own, '1000', 'a leg lost its own fill amount');
+});
+
+test('an inert dev target SAYS so instead of skipping launches in silence', () => {
+  // A copy target has no status to settle, so a selection whose wallets were
+  // all deleted would sit on the Copy screen reading as live and buy nothing,
+  // for ever — the inert-watch failure this repo refuses.
+  const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+  const fn = W.slice(W.indexOf('async function _followerBuy('), W.indexOf('async function _targetBalance('));
+  const gate = fn.slice(fn.indexOf('if (!wids.length)'), fn.indexOf('if (!wids.length)') + 700);
+  assert.match(gate, /_notify\(/, 'an inert dev target is still skipped silently');
+  assert.match(gate, /devnowallet/, 'the notice is not muted per target — it would repeat every launch');
+});
+
+test("a '*' CA target with no wallets right now is re-armed, never disarmed", () => {
+  // '*' resolves at FIRE time — the documented promise is that a wallet added
+  // after arming still snipes, so an empty list is transient. A named
+  // selection whose wallets are all gone cannot come back: that one settles.
+  const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+  const fn = W.slice(W.indexOf('async function _fireCaSnipe('), W.indexOf('const chainName ='));
+  const gate = fn.slice(fn.indexOf('if (!wids.length)'), fn.indexOf('if (!wids.length)') + 800);
+  assert.match(gate, /if \(t\.walletId === '\*'\) \{\s*\n\s*core\.rearmSnipeTarget/, "a '*' target is permanently disarmed by a transient empty wallet list");
+  assert.match(gate, /core\.settleSnipeTarget\(u, t\.id, \{ ok: false, err: 'no wallet' \}\)/, 'a dead named selection is left polling for ever');
+});
+
+test('a broadcast leg sell is never retried, and the ledger keeps untouched legs', () => {
+  const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+  const loop = W.slice(W.indexOf('let pending = resolved.map('), W.indexOf('if (neverRecorded)'));
+  // The buy path's rule, applied to the exit: a broadcast may still land, and a
+  // retry would sell the same slice twice.
+  assert.match(loop, /if \(err && err\.broadcast\)/, 'a broadcast sell is retried — it may sell the slice twice');
+  assert.ok(!/failedLegs\.push[\s\S]{0,200}broadcast/.test(loop) || /err\.broadcast[\s\S]{0,400}continue;/.test(loop));
+  // Each leg leaves the ledger only for its OWN sell; the rest stay on, so a
+  // crash mid-loop strands nothing that was never attempted.
+  assert.match(loop, /core\.copyHoldingSet\(t, token, \{ \.\.\.h, bal: String\(base\), own: pending\[0\]\.own, wid: pending\[0\]\.wid, legs: pending \}\)/);
+});
+
+test('the exit mirror sells EVERY leg, each from its own wallet', async () => {
+  // The reason multi-wallet dev snipe is honest at all: when the dev dumps,
+  // both wallets exit — selling one and stranding the other would be the
+  // stop-loss-the-user-believes-exists, per wallet.
+  const u = user();
+  u.copy = { on: true, targets: [] };
+  const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletIds: ['w1', 'w2'] });
+  t.holding[core.copyTokenKey('solana', MINT)] = {
+    bal: '10000', own: '1000', wid: 'w1', tries: 0,
+    legs: [{ wid: 'w1', own: '1000' }, { wid: 'w2', own: '900' }],
+  };
+  const sold = [];
+  const solana = require('./solana');
+  const realSell = core.sell, realAcross = core.tokenBalancesAcross, realSpl = solana.splBalance;
+  core.sell = async (cid, token, pct, chain, wid, opts) => { sold.push({ wid, exact: opts.exactTokens }); return { sym: 'P', native: 'SOL', hash: 'sig', proceedsEth: 0.04 }; };
+  core.tokenBalancesAcross = async () => [
+    { id: 'w1', index: 1, label: 'a', raw: 1000n },
+    { id: 'w2', index: 2, label: 'b', raw: 900n },
+  ];
+  // The dev dumped: its own balance reads far below the recorded baseline.
+  solana.splBalance = async () => ({ raw: 0n });
+  watchers.setNotifier(() => {});
+  try { await watchers.copyExitCycle(); }
+  finally { core.sell = realSell; core.tokenBalancesAcross = realAcross; solana.splBalance = realSpl; watchers.setNotifier(() => {}); }
+  assert.deepEqual(sold.map((s) => s.wid).sort(), ['w1', 'w2'], 'a leg was stranded');
+  assert.deepEqual(sold.map((s) => s.exact).sort(), ['1000', '900'].sort(), 'a leg sold the wrong amount');
+  assert.ok(!t.holding[core.copyTokenKey('solana', MINT)], 'the position stayed on the ledger after a full exit');
+});
+
+test('a mixed record never claims "Nothing was sold" right after selling', async () => {
+  // A fan-out that FILLED on w1 and only broadcast on w2 records legs
+  // [{w1, own}, {w2, own:''}]. The per-leg loop sells w1 and announces it, then
+  // reaches w2's unrecorded fill — and the old wording asserted "Nothing was
+  // sold." one message later, about a position that had just been sold.
+  const u = user();
+  u.copy = { on: true, targets: [] };
+  const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletIds: ['w1', 'w2'] });
+  t.holding[core.copyTokenKey('solana', MINT)] = {
+    bal: '10000', own: '1000', wid: 'w1', tries: 0,
+    legs: [{ wid: 'w1', own: '1000' }, { wid: 'w2', own: '' }],
+  };
+  const solana = require('./solana');
+  const notes = [];
+  const realSell = core.sell, realAcross = core.tokenBalancesAcross, realSpl = solana.splBalance;
+  let sells = 0;
+  core.sell = async () => { sells++; return { sym: 'P', native: 'SOL', hash: 'sig', proceedsEth: 0.04 }; };
+  core.tokenBalancesAcross = async () => [
+    { id: 'w1', index: 1, label: 'a', raw: 1000n },
+    { id: 'w2', index: 2, label: 'b', raw: 900n },
+  ];
+  solana.splBalance = async () => ({ raw: 0n });   // the dev dumped
+  watchers.setNotifier((cid, text) => { notes.push(text.replace(/<[^>]+>/g, '')); });
+  try { await watchers.copyExitCycle(); }
+  finally { core.sell = realSell; core.tokenBalancesAcross = realAcross; solana.splBalance = realSpl; watchers.setNotifier(() => {}); }
+  assert.equal(sells, 1, 'the recorded leg did not sell');
+  const joined = notes.join('\n');
+  assert.match(joined, /you exited/i, 'the sold leg was not reported');
+  assert.ok(!/Nothing was sold/i.test(joined), `a sale was followed by "Nothing was sold":\n${joined}`);
+  assert.match(joined, /that wallet was not sold/i, 'the unrecorded leg was not reported at all');
 });
 
 test('one broke wallet does not stop the others; every wallet empty disarms', async () => {
