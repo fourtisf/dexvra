@@ -393,7 +393,9 @@ const S = {
     en: '<i>Send: contract, amount, and optionally a slippage %. A launch fills through a one-block-old pool, so a wider bound than your normal one is usually what gets you in.</i>',
     id: '<i>Kirim: kontrak, jumlah, dan opsional slippage %. Launch itu isi lewat pool yang baru satu blok, jadi biasanya butuh slippage lebih lebar dari biasanya.</i>',
   },
-  'snipe.ca.add_btn': { en: '➕ Arm a contract', id: '➕ Pasang kontrak' },
+  // The panel (snipe.panel.open_btn) sits above this on the same screen, so
+  // this label says what makes the second way in DIFFERENT: you type one line.
+  'snipe.ca.add_btn': { en: '⌨️ One-line arm — type it', id: '⌨️ Arm satu baris — langsung ketik' },
   'snipe.ca.launch_btn': { en: '🎯 Launch snipe', id: '🎯 Snipe launch' },
   // Chain FIRST — the Sol-Trading-Bot panel this mirrors starts at "Exchange".
   // Binding the target to whatever chain happened to be active meant a Solana
@@ -420,6 +422,95 @@ const S = {
   'snipe.ca.bad_tpsl': { en: '❌ TP/SL must look like <code>100/50</code> (take profit % / stop loss %), stop loss below 100.', id: '❌ TP/SL harus seperti <code>100/50</code> (take profit % / stop loss %), stop loss di bawah 100.' },
   'snipe.ca.bad_ttl': { en: '❌ Expiry must be 1–168 hours.', id: '❌ Expiry harus 1–168 jam.' },
   'snipe.ca.exits': { en: '\nThen: <b>{parts}</b> — placed automatically at the fill price.', id: '\nLalu: <b>{parts}</b> — terpasang otomatis di harga fill.' },
+
+  // ------------------------------------------------------- snipe setup panel
+  // The Sol-Trading-Bot-style panel over the SAME target store as the one-line
+  // arm. Every row is a button, every value is picked — and only settings the
+  // engine actually honours get a row: a row the backend ignores would be the
+  // stop-loss-the-user-believes-exists, as a whole screen.
+  'snipe.panel.title': { en: '🎛 <b>Snipe Setup</b> — {chain}', id: '🎛 <b>Setup Snipe</b> — {chain}' },
+  'snipe.panel.blurb': {
+    en: 'Every setting on one panel. Tap a row, pick a value — ⚡ arms it.',
+    id: 'Semua setelan di satu panel. Tap barisnya, pilih nilainya — ⚡ untuk pasang.',
+  },
+  'snipe.panel.required': { en: '<b>— REQUIRED —</b>', id: '<b>— WAJIB —</b>' },
+  'snipe.panel.optional': { en: '<b>— OPTIONAL —</b>', id: '<b>— OPSIONAL —</b>' },
+  // Row labels. Trading jargon stays in English per the convention at the top
+  // of this file — "Chain", "Wallet", "Slippage" are the words these users use.
+  'snipe.panel.chain': { en: 'Chain', id: 'Chain' },
+  'snipe.panel.target': { en: 'Target contract', id: 'Kontrak target' },
+  'snipe.panel.wallet': { en: 'Wallet', id: 'Wallet' },
+  'snipe.panel.amount': { en: 'Amount', id: 'Jumlah' },
+  'snipe.panel.slip': { en: 'Slippage', id: 'Slippage' },
+  'snipe.panel.tpsl': { en: 'TP / SL', id: 'TP / SL' },
+  'snipe.panel.ttl': { en: 'Expiry', id: 'Masa aktif' },
+  'snipe.panel.waiting': { en: 'waiting for the contract — tap to set it', id: 'menunggu kontrak — tap untuk isi' },
+  'snipe.panel.pick': { en: 'pick how much to spend', id: 'pilih jumlah belanjanya' },
+  'snipe.panel.off': { en: 'off', id: 'nonaktif' },
+  'snipe.panel.foot': {
+    en: '<i>Nothing is spent until the pool opens. TP/SL become real sell orders at the fill price, on the wallet that sniped.</i>',
+    id: '<i>Tidak ada dana keluar sampai pool-nya buka. TP/SL jadi order jual sungguhan di harga fill, di wallet yang dipakai snipe.</i>',
+  },
+  'snipe.panel.open_btn': { en: '🎛 New snipe — full settings', id: '🎛 Snipe baru — setelan lengkap' },
+  'snipe.panel.arm_btn': { en: '⚡ ARM SNIPE', id: '⚡ PASANG SNIPE' },
+  'snipe.panel.oneline_btn': { en: '⌨️ One line', id: '⌨️ Satu baris' },
+  'snipe.panel.discard_btn': { en: '🗑 Discard', id: '🗑 Buang' },
+  'snipe.panel.set_btn': { en: 'Set target', id: 'Isi target' },
+  'snipe.panel.pick_btn': { en: 'Pick amount', id: 'Pilih jumlah' },
+  'snipe.panel.custom_btn': { en: '✏️ Custom', id: '✏️ Isi sendiri' },
+  // Sub-screens, one per row.
+  'snipe.panel.wal_pick': {
+    en: '💳 <b>Wallet</b>\n\nWhich wallet should this snipe buy with?',
+    id: '💳 <b>Wallet</b>\n\nSnipe ini beli pakai wallet yang mana?',
+  },
+  'snipe.panel.amt_pick': {
+    en: '💵 <b>Amount</b>\n\nHow much {native} should this snipe spend when it fires?\n\n<i>Keep it small — a launch is high-risk by definition.</i>',
+    id: '💵 <b>Jumlah</b>\n\nBerapa {native} yang dipakai waktu snipe ini kebeli?\n\n<i>Jangan kegedean — namanya juga launch, risikonya tinggi.</i>',
+  },
+  'snipe.panel.slip_pick': {
+    en: '📉 <b>Slippage</b>\n\nA launch fills through a one-block-old pool — a wider bound than your normal one is usually what gets you in.',
+    id: '📉 <b>Slippage</b>\n\nLaunch keisi lewat pool yang umurnya baru satu blok — biasanya butuh slippage lebih lebar dari biasanya supaya tembus.',
+  },
+  'snipe.panel.tpsl_pick': {
+    en: '📊 <b>TP / SL</b>\n\nPlaced automatically the moment the snipe fills, at the realised entry — not the card price.',
+    id: '📊 <b>TP / SL</b>\n\nTerpasang otomatis begitu snipe-nya kebeli, di harga masuk yang sebenarnya — bukan harga di kartu.',
+  },
+  'snipe.panel.ttl_pick': {
+    en: '🕒 <b>Expiry</b>\n\nIf the token never becomes tradeable, the snipe disarms itself after this long.',
+    id: '🕒 <b>Masa aktif</b>\n\nKalau token-nya tidak pernah bisa dibeli, snipe ini lepas sendiri setelah selang waktu ini.',
+  },
+  'snipe.panel.ca_prompt': {
+    en: '🎯 <b>Target contract</b> on {chain}\n\nPaste the contract address to snipe, e.g. <code>{ex}</code>\n\n<i>Power move: paste a full line — <b>&lt;contract&gt; &lt;amount&gt; [slip%] [tp/sl] [expiry h]</b> — and every panel row fills at once.</i>',
+    id: '🎯 <b>Kontrak target</b> di {chain}\n\nPaste alamat kontrak yang mau di-snipe, contoh <code>{ex}</code>\n\n<i>Jalur cepat: paste satu baris penuh — <b>&lt;kontrak&gt; &lt;jumlah&gt; [slip%] [tp/sl] [expiry jam]</b> — semua baris panel langsung terisi.</i>',
+  },
+  'snipe.panel.amt_prompt': {
+    en: '💵 Send the amount to spend, in {native} (e.g. <code>0.1</code>) or USD (<code>$10</code>).',
+    id: '💵 Kirim jumlah yang mau dipakai, dalam {native} (contoh <code>0.1</code>) atau USD (<code>$10</code>).',
+  },
+  'snipe.panel.slip_prompt': {
+    en: '📉 Send a slippage percent, 0–50. <code>0</code> = your normal setting.',
+    id: '📉 Kirim persen slippage, 0–50. <code>0</code> = ikut setelan biasa kamu.',
+  },
+  'snipe.panel.tpsl_prompt': {
+    en: '📊 Send <b>tp/sl</b> in percent, e.g. <code>100/50</code> → take profit at +100%, stop loss at −50%. <code>off</code> disables both.',
+    id: '📊 Kirim <b>tp/sl</b> dalam persen, contoh <code>100/50</code> → take profit di +100%, stop loss di −50%. <code>off</code> untuk matikan dua-duanya.',
+  },
+  'snipe.panel.ttl_prompt': {
+    en: '🕒 Send how many hours to keep it armed, 1–168.',
+    id: '🕒 Kirim mau berapa jam tetap terpasang, 1–168.',
+  },
+  'snipe.panel.which_chain': {
+    en: '🌐 That address fits more than one enabled chain — tap <b>Chain</b> on the panel first, then paste it again.',
+    id: '🌐 Alamat itu cocok di lebih dari satu chain yang aktif — tap <b>Chain</b> di panel dulu, lalu paste lagi.',
+  },
+  'snipe.panel.switched': {
+    en: 'Chain switched to {chain} to match the address you pasted.',
+    id: 'Chain dipindah ke {chain} menyesuaikan alamat yang kamu paste.',
+  },
+  'snipe.panel.ca_dropped': {
+    en: 'The saved target address does not exist on the chain you just picked, so it was cleared — set it again.',
+    id: 'Alamat target yang tersimpan tidak berlaku di chain yang barusan dipilih, jadi dihapus — isi lagi ya.',
+  },
 
   // ---------------------------------------------------------------- errors
   // One clear sentence per failure class, each ending in what to actually do.

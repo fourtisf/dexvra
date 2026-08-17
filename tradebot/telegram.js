@@ -1515,7 +1515,10 @@ function caSnipeScreen(chatId) {
   }
   L.push(T(chatId, 'snipe.ca.how', { native: esc(ch.native) }));
 
-  const kbRows = [[btn(T(chatId, 'snipe.ca.add_btn'), 'csnadd')]];
+  // Two ways in, panel first ("ada setingan lengkap, buat semudah mungkin"):
+  // the 🎛 panel is every setting as a tappable row; ⌨️ is the same target in
+  // one typed line for whoever is racing a launch. Both end at addSnipeTarget.
+  const kbRows = [[btn(T(chatId, 'snipe.panel.open_btn'), 'snw:open')], [btn(T(chatId, 'snipe.ca.add_btn'), 'csnadd')]];
   // One row per armed target, so removing one is a single tap and never a typed
   // id. Bounded: past eight rows a keyboard stops being a keyboard.
   for (const t of armed.slice(0, 8)) {
@@ -1524,6 +1527,156 @@ function caSnipeScreen(chatId) {
   }
   kbRows.push([btn(T(chatId, 'snipe.ca.launch_btn'), 'snipe'), btn('« Menu', 'menu')]);
   return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
+}
+
+/*
+ * 🎛 Snipe Setup — the Sol-Trading-Bot-style panel over the SAME target store
+ * as the one-line arm ("saya ingin fitur snipe sama seperti sol trading bot ada
+ * setingan lengkap buat semudah mungkin", 2026-08-17).
+ *
+ * Every row is a button and every value is picked, not typed; the draft lives
+ * in core (persisted), so a half-configured panel survives a restart the way
+ * the reference bot's "Waiting for setup" does. Only settings the engine
+ * honours get a row — an Anti-MEV or Max-block row the backend ignores would
+ * be the stop-loss-the-user-believes-exists, as a whole screen.
+ */
+const SNW_SLIP_PRESETS = [10, 25, 50];
+const SNW_TPSL_PRESETS = [[50, 25], [100, 50], [200, 50]];
+const SNW_TTL_PRESETS = [6, 12, 24, 48, 168];
+
+/** `W2 nama` — the label the wallet screens already use, bounded for a button. */
+function snwWalletLabel(u, walletId) {
+  const wl = core.walletList(u);
+  const i = wl.findIndex((w) => w.id === walletId);
+  if (i < 0) return null;
+  const name = String(wl[i].name || '').slice(0, 16);
+  return `W${i + 1}${name ? ' ' + name : ''}`;
+}
+
+function snipeSetupScreen(chatId, note) {
+  const u = core.ensureUser(chatId);
+  // Rendering may mint the draft: every path that can show the panel must show
+  // the SAME panel, and a "no draft yet" special case would be a second screen.
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain, native: '' };
+  const wLab = snwWalletLabel(u, d.walletId);
+  const tpslOn = d.tpPct > 0 || d.slPct > 0;
+  const tpslLab = tpslOn
+    ? [d.tpPct > 0 ? `TP +${d.tpPct}%` : '', d.slPct > 0 ? `SL −${d.slPct}%` : ''].filter(Boolean).join(' · ')
+    : T(chatId, 'snipe.panel.off');
+  const slipLab = d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default');
+  // ✅/⏳ per required row — the reference panel's STATUS column, inline.
+  const need = (ok) => (ok ? '✅' : '⏳');
+  const L = [
+    T(chatId, 'snipe.panel.title', { chain: `${ch.emoji} ${esc(ch.name)}` }), '',
+    T(chatId, 'snipe.panel.blurb'), '',
+  ];
+  if (note) L.push(`⚠️ <i>${esc(note)}</i>`, '');
+  L.push(
+    T(chatId, 'snipe.panel.required'),
+    `${need(true)} 🌐 ${T(chatId, 'snipe.panel.chain')}: <b>${ch.emoji} ${esc(ch.name)}</b>`,
+    `${need(!!d.ca)} 🎯 ${T(chatId, 'snipe.panel.target')}: ${d.ca ? `<code>${esc(d.ca)}</code>` : `<i>${T(chatId, 'snipe.panel.waiting')}</i>`}`,
+    `${need(!!wLab)} 💳 ${T(chatId, 'snipe.panel.wallet')}: <b>${esc(wLab || '—')}</b>`,
+    `${need(!!d.amount)} 💵 ${T(chatId, 'snipe.panel.amount')}: ${d.amount ? `<b>${esc(d.amount)} ${esc(ch.native)}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`,
+    '',
+    T(chatId, 'snipe.panel.optional'),
+    `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
+    `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
+    `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
+    '',
+    T(chatId, 'snipe.panel.foot'),
+  );
+  // Label + value, two buttons a row — the reference's two-column table. Both
+  // open the same editor, so there is no wrong half to tap.
+  const kbRows = [
+    [btn(`🌐 ${T(chatId, 'snipe.panel.chain')}`, 'snw:chain'), btn(`${ch.emoji} ${ch.name}`, 'snw:chain')],
+    [btn(`🎯 ${T(chatId, 'snipe.panel.target')}`, 'snw:ca'), btn(d.ca ? `✅ ${short(d.ca)}` : `⏳ ${T(chatId, 'snipe.panel.set_btn')}`, 'snw:ca')],
+    [btn(`💳 ${T(chatId, 'snipe.panel.wallet')}`, 'snw:wal'), btn(wLab ? `✅ ${wLab}` : '⏳', 'snw:wal')],
+    [btn(`💵 ${T(chatId, 'snipe.panel.amount')}`, 'snw:amt'), btn(d.amount ? `✅ ${d.amount} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:amt')],
+    [btn(`📉 ${T(chatId, 'snipe.panel.slip')}`, 'snw:slip'), btn(d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default'), 'snw:slip')],
+    [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
+    [btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')],
+    [btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')],
+    [btn(T(chatId, 'snipe.panel.oneline_btn'), 'csnadd'), btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')],
+    [btn('« Back', 'csn')],
+  ];
+  return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
+}
+// The per-row editors. Each edits the panel message in place and returns to it.
+function snwChainScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const en = core.chains.enabledChains();
+  const kbR = [];
+  for (let i = 0; i < en.length; i += 2) kbR.push(en.slice(i, i + 2).map((c) => btn(`${c.key === d.chain ? '✓ ' : ''}${c.emoji} ${c.name}`, `snwch:${c.key}`)));
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.ca.pick_chain'), kb: { inline_keyboard: kbR } };
+}
+function snwWalletScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const kbR = core.walletList(u).map((w, i) => {
+    const name = String(w.name || '').slice(0, 16);
+    return [btn(`${w.id === d.walletId ? '✓ ' : ''}W${i + 1}${name ? ' ' + name : ''} · ${short(w.address)}`, `snww:${w.id}`)];
+  });
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.panel.wal_pick'), kb: { inline_keyboard: kbR } };
+}
+function snwAmountScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const ch = core.chainOf(d.chain) || { native: '' };
+  // The chain's own quick-buy presets — 0.01 of one coin is not 0.01 of another.
+  const QUICK = core.buyPresets(u, d.chain).map(String);
+  const kbR = [];
+  for (let i = 0; i < QUICK.length; i += 3) {
+    kbR.push(QUICK.slice(i, i + 3).map((p) => btn(`${d.amount === p ? '✓ ' : ''}${p} ${ch.native}`, `snwa:${p}`)));
+  }
+  kbR.push([btn(T(chatId, 'snipe.panel.custom_btn'), 'snw:amtc')]);
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.panel.amt_pick', { native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
+}
+function snwSlipScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const kbR = [[btn(`${!(d.slipPct > 0) ? '✓ ' : ''}${T(chatId, 'snipe.ca.slip_default')}`, 'snws:0'),
+    ...SNW_SLIP_PRESETS.map((p) => btn(`${d.slipPct === p ? '✓ ' : ''}${p}%`, `snws:${p}`))]];
+  kbR.push([btn(T(chatId, 'snipe.panel.custom_btn'), 'snw:slipc')]);
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.panel.slip_pick'), kb: { inline_keyboard: kbR } };
+}
+function snwTpslScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const on = d.tpPct > 0 || d.slPct > 0;
+  const kbR = [[btn(`${on ? '' : '✓ '}${T(chatId, 'snipe.panel.off')}`, 'snwt:off'),
+    ...SNW_TPSL_PRESETS.map(([tp, sl]) => btn(`${d.tpPct === tp && d.slPct === sl ? '✓ ' : ''}+${tp}% / −${sl}%`, `snwt:${tp}/${sl}`))]];
+  kbR.push([btn(T(chatId, 'snipe.panel.custom_btn'), 'snw:tpslc')]);
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.panel.tpsl_pick'), kb: { inline_keyboard: kbR } };
+}
+function snwTtlScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const kbR = [SNW_TTL_PRESETS.map((h) => btn(`${d.ttlH === h ? '✓ ' : ''}${h}h`, `snwx:${h}`))];
+  kbR.push([btn(T(chatId, 'snipe.panel.custom_btn'), 'snw:ttlc')]);
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.panel.ttl_pick'), kb: { inline_keyboard: kbR } };
+}
+/** The armed confirmation, shared by the panel's ⚡ and the one-line arm — one
+ *  message shape however the target was configured. */
+function snipeArmedText(chatId, tgt) {
+  const ch = core.chainOf(tgt.chain) || { emoji: '', name: tgt.chain, native: '' };
+  const exitParts = [tgt.tpPct > 0 ? `TP +${tgt.tpPct}%` : '', tgt.slPct > 0 ? `SL −${tgt.slPct}%` : ''].filter(Boolean).join(' · ');
+  return T(chatId, 'snipe.ca.armed', {
+    chain: `${ch.emoji} ${esc(ch.name)}`,
+    ca: esc(tgt.ca),
+    amt: esc(tgt.amount),
+    native: esc(ch.native),
+    slip: tgt.slipBps > 0 ? `${tgt.slipBps / 100}%` : T(chatId, 'snipe.ca.slip_default'),
+    exits: exitParts ? T(chatId, 'snipe.ca.exits', { parts: exitParts }) : '',
+    hours: Math.round((tgt.expiresAt - tgt.createdAt) / 3600000),
+  });
 }
 
 function snipeScreen(chatId) {
@@ -2748,6 +2901,8 @@ async function onMessageImpl(m) {
   if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/snipe') { const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
+  // The Sol-Trading-Bot-style sniper home: armed list + the 🎛 setup panel.
+  if (text === '/sniper') { const s = caSnipeScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/orders') { const s = ordersScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/alerts') { const s = alertsScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/copy') { const s = copyScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -2929,6 +3084,67 @@ async function onCallback(q) {
   if (data.startsWith('csnx:')) {
     core.removeSnipeTarget(chatId, data.slice(5));
     const s = caSnipeScreen(chatId);
+    return edit(chatId, mid, s.text, s.kb);
+  }
+  // ── 🎛 Snipe Setup panel (snw:* = navigate, snwch/snww/snwa/snws/snwt/snwx = set a value)
+  if (k === 'snw') {
+    if (ca === 'cancel') { core.clearSnipeDraft(chatId); const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'chain') { const s = snwChainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'wal') { const s = snwWalletScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'amt') { const s = snwAmountScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'slip') { const s = snwSlipScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'tpsl') { const s = snwTpslScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'ttl') { const s = snwTtlScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'ca') {
+      const u = core.ensureUser(chatId);
+      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+      const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain };
+      setPending(chatId, { action: 'snw_ca' });
+      const ex = core.chains.isSvm(d.chain) ? 'Ge87Etsj…' : '0xabc…';
+      return edit(chatId, mid, T(chatId, 'snipe.panel.ca_prompt', { chain: `${ch.emoji} ${esc(ch.name)}`, ex }), rows([btn('« Back', 'snw:open')]));
+    }
+    if (ca === 'amtc') { const u = core.ensureUser(chatId); const d = core.snipeDraft(u) || core.newSnipeDraft(chatId); const ch = core.chainOf(d.chain) || { native: '' }; setPending(chatId, { action: 'snw_amt' }); return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) })); }
+    if (ca === 'slipc') { setPending(chatId, { action: 'snw_slip' }); return send(chatId, T(chatId, 'snipe.panel.slip_prompt')); }
+    if (ca === 'tpslc') { setPending(chatId, { action: 'snw_tpsl' }); return send(chatId, T(chatId, 'snipe.panel.tpsl_prompt')); }
+    if (ca === 'ttlc') { setPending(chatId, { action: 'snw_ttl' }); return send(chatId, T(chatId, 'snipe.panel.ttl_prompt')); }
+    if (ca === 'arm') {
+      // No toast on failure — the panel says what is missing, IN the panel,
+      // where the row to fix is one tap away. A toast disappears; the row stays.
+      try {
+        const tgt = core.armSnipeDraft(chatId);
+        await edit(chatId, mid, snipeArmedText(chatId, tgt));
+        const s = caSnipeScreen(chatId);
+        return send(chatId, s.text, s.kb);
+      } catch (e) {
+        const s = snipeSetupScreen(chatId, String((e && e.message) || e));
+        return edit(chatId, mid, s.text, s.kb);
+      }
+    }
+    // 'open' and anything unrecognised: (re)draw the panel.
+    const s = snipeSetupScreen(chatId);
+    return edit(chatId, mid, s.text, s.kb);
+  }
+  if (k === 'snwch' || k === 'snww' || k === 'snwa' || k === 'snws' || k === 'snwx' || k === 'snwt') {
+    let note = null;
+    try {
+      if (k === 'snwch') {
+        const u = core.ensureUser(chatId);
+        const had = (core.snipeDraft(u) || {}).ca;
+        const d = core.updateSnipeDraft(chatId, { chain: ca });
+        // Say when the chain switch dropped the target, or the ⏳ that reappears
+        // reads as the bot losing the address on its own.
+        if (had && !d.ca) note = T(chatId, 'snipe.panel.ca_dropped').replace(/<[^>]+>/g, '');
+      }
+      else if (k === 'snww') core.updateSnipeDraft(chatId, { walletId: ca });
+      else if (k === 'snwa') core.updateSnipeDraft(chatId, { amount: ca });
+      else if (k === 'snws') core.updateSnipeDraft(chatId, { slipPct: ca });
+      else if (k === 'snwx') core.updateSnipeDraft(chatId, { ttlH: ca });
+      else {
+        const m = /^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/.exec(ca || '');
+        core.updateSnipeDraft(chatId, m ? { tpPct: Number(m[1]), slPct: Number(m[2]) } : { tpPct: 0, slPct: 0 });
+      }
+    } catch (e) { note = String((e && e.message) || e); }
+    const s = snipeSetupScreen(chatId, note);
     return edit(chatId, mid, s.text, s.kb);
   }
   if (data === 'rstog') { const u = core.ensureUser(chatId); try { core.setReceiptStyle(chatId, core.perWalletReceipts(u) ? 'combined' : 'per_wallet'); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -3161,6 +3377,48 @@ async function onCallback(q) {
   if (k === 'oc') { const ok = watchers.cancelOrder(chatId, ca); await answer(q.id, ok ? 'Cancelled' : 'Not found'); const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
 }
 
+/**
+ * One line sets the whole snipe: <ca> <amount> [slip%] [tp/sl] [expiry h].
+ *
+ * Shared by the ⌨️ one-line arm and the 🎛 panel's Target step, so the two ways
+ * in cannot drift into two grammars. Returns { err, vars } (a T() key) or the
+ * parsed fields — with `amount` undefined when the line stopped at the address,
+ * which the panel accepts and the one-line arm does not.
+ *
+ * isAddrFor(address, chainKey) — ADDRESS FIRST. Passing the chain first
+ * type-checks fine and is always false, which once rejected every single arm
+ * attempt with "not a valid contract address".
+ *
+ * tp/sl is ONE token with a slash — two bare numbers after the slippage would
+ * be ambiguous with a fat-fingered second amount.
+ */
+function parseSnipeLine(text, chainKey) {
+  const ch = core.chainOf(chainKey) || { name: chainKey, native: '' };
+  const parts = String(text).trim().split(/\s+/);
+  const ca = parts[0];
+  if (!ca || !isAddrFor(ca, chainKey)) return { err: 'snipe.ca.bad_addr', vars: { chain: esc(ch.name) } };
+  const out = { ca, amount: undefined, slipPct: 0, tpPct: 0, slPct: 0, ttlH: 0 };
+  if (parts[1] !== undefined) {
+    out.amount = Number(parts[1]);
+    if (!(out.amount > 0)) return { err: 'snipe.ca.bad_amount', vars: { native: esc(ch.native) } };
+  }
+  if (parts[2] !== undefined) {
+    out.slipPct = Number(String(parts[2]).replace('%', ''));
+    if (!Number.isFinite(out.slipPct) || out.slipPct < 0 || out.slipPct > 50) return { err: 'snipe.ca.bad_slip' };
+  }
+  if (parts[3] !== undefined) {
+    const m = /^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/.exec(String(parts[3]));
+    if (!m) return { err: 'snipe.ca.bad_tpsl' };
+    out.tpPct = Number(m[1]); out.slPct = Number(m[2]);
+    if (!(out.tpPct >= 0) || !(out.slPct >= 0) || out.slPct >= 100) return { err: 'snipe.ca.bad_tpsl' };
+  }
+  if (parts[4] !== undefined) {
+    out.ttlH = Number(parts[4]);
+    if (!Number.isFinite(out.ttlH) || out.ttlH < 1 || out.ttlH > 168) return { err: 'snipe.ca.bad_ttl' };
+  }
+  return out;
+}
+
 async function resolvePending(chatId, p, text, m) {
   const t = text.trim();
   try {
@@ -3228,48 +3486,87 @@ async function resolvePending(chatId, p, text, m) {
       return send(chatId, `✅ Limit buy set: ${amount} ${ch.native} of $${esc(meta.sym)} when price ≤ $${usdPrice}.\n${speedNote({ type: 'limitbuy' })}`, rows([btn('📋 Orders', 'orders')]));
     }
     if (p.action === 'ca_snipe') {
-      // ONE line: address, amount, and optionally a slippage percent. Three
-      // prompts would be three round trips for a feature whose whole point is
-      // being ready before a pool opens.
-      const parts = String(t).trim().split(/\s+/);
-      const ca = parts[0], amount = Number(parts[1]);
-      const slipPct = parts[2] !== undefined ? Number(String(parts[2]).replace('%', '')) : 0;
+      // ONE line: address, amount, and optionally slippage / tp,sl / expiry.
+      // Three prompts would be three round trips for a feature whose whole
+      // point is being ready before a pool opens. The grammar lives in
+      // parseSnipeLine, shared with the 🎛 panel's Target step.
       const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
-      // isAddrFor(address, chainKey) — ADDRESS FIRST. Passing the chain first
-      // type-checks fine and is always false, which would have rejected every
-      // single arm attempt with "not a valid contract address".
-      if (!ca || !isAddrFor(ca, ch.key)) return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc(ch.name) }));
-      if (!(amount > 0)) return send(chatId, T(chatId, 'snipe.ca.bad_amount', { native: esc(ch.native) }));
-      if (parts[2] !== undefined && (!Number.isFinite(slipPct) || slipPct < 0 || slipPct > 50)) return send(chatId, T(chatId, 'snipe.ca.bad_slip'));
-      // Optional 4th token: "tp/sl" — the Sol-Trading-Bot panel's TP/SL and
-      // Expiry, as two more words on the same line. The slash form is
-      // deliberate: two bare numbers after the slippage would be ambiguous with
-      // a fat-fingered second amount.
-      let tpPct = 0, slPct = 0, ttlH = 0;
-      if (parts[3] !== undefined) {
-        const m = /^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/.exec(String(parts[3]));
-        if (!m) return send(chatId, T(chatId, 'snipe.ca.bad_tpsl'));
-        tpPct = Number(m[1]); slPct = Number(m[2]);
-        if (!(tpPct >= 0) || !(slPct >= 0) || slPct >= 100) return send(chatId, T(chatId, 'snipe.ca.bad_tpsl'));
-      }
-      if (parts[4] !== undefined) {
-        ttlH = Number(parts[4]);
-        if (!Number.isFinite(ttlH) || ttlH < 1 || ttlH > 168) return send(chatId, T(chatId, 'snipe.ca.bad_ttl'));
-      }
+      const r = parseSnipeLine(t, ch.key);
+      if (r.err) return send(chatId, T(chatId, r.err, r.vars));
+      // The one-line arm REQUIRES the amount — an address alone arms nothing
+      // here; only the panel, whose Amount row stays ⏳, accepts one.
+      if (!(r.amount > 0)) return send(chatId, T(chatId, 'snipe.ca.bad_amount', { native: esc(ch.native) }));
       try {
-        const tgt = core.addSnipeTarget(chatId, { ca, chain: ch.key, amount, slipBps: Math.round(slipPct * 100), tpPct, slPct, ttlMs: ttlH > 0 ? ttlH * 3600000 : undefined });
+        const tgt = core.addSnipeTarget(chatId, { ca: r.ca, chain: ch.key, amount: r.amount, slipBps: Math.round(r.slipPct * 100), tpPct: r.tpPct, slPct: r.slPct, ttlMs: r.ttlH > 0 ? r.ttlH * 3600000 : undefined });
         const s = caSnipeScreen(chatId);
-        const exitParts = [tgt.tpPct > 0 ? `TP +${tgt.tpPct}%` : '', tgt.slPct > 0 ? `SL −${tgt.slPct}%` : ''].filter(Boolean).join(' · ');
-        return send(chatId, T(chatId, 'snipe.ca.armed', {
-          chain: `${ch.emoji} ${esc(ch.name)}`,
-          ca: esc(tgt.ca),
-          amt: esc(tgt.amount),
-          native: esc(ch.native),
-          slip: tgt.slipBps > 0 ? `${tgt.slipBps / 100}%` : T(chatId, 'snipe.ca.slip_default'),
-          exits: exitParts ? T(chatId, 'snipe.ca.exits', { parts: exitParts }) : '',
-          hours: Math.round((tgt.expiresAt - tgt.createdAt) / 3600000),
-        }), s.kb);
+        return send(chatId, snipeArmedText(chatId, tgt), s.kb);
       } catch (e) { return send(chatId, `⚠️ ${esc((e && e.message) || 'could not arm that')}`); }
+    }
+    // ── 🎛 Snipe Setup panel — the typed halves of each row editor.
+    if (p.action === 'snw_ca') {
+      const u = core.ensureUser(chatId);
+      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+      const first = String(t).trim().split(/\s+/)[0] || '';
+      let chainKey = d.chain, switched = null;
+      if (!isAddrFor(first, chainKey)) {
+        // The paste knows its chain better than the row does — a base58 mint
+        // under an EVM row is the wrong-chain bounce the chain-first rule
+        // exists to prevent. Switch when the shape is unambiguous; ask when
+        // several enabled chains fit; refuse when none does.
+        const fits = core.chains.enabledChains().filter((c) => isAddrFor(first, c.key));
+        if (fits.length === 1) { chainKey = fits[0].key; switched = fits[0]; }
+        else if (fits.length > 1) return send(chatId, T(chatId, 'snipe.panel.which_chain'));
+        else return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc((core.chainOf(d.chain) || { name: d.chain }).name) }));
+      }
+      const r = parseSnipeLine(t, chainKey);
+      if (r.err) return send(chatId, T(chatId, r.err, r.vars));
+      try {
+        const patch = { chain: chainKey, ca: r.ca };
+        if (r.amount > 0) patch.amount = r.amount;
+        if (r.slipPct > 0) patch.slipPct = r.slipPct;
+        if (r.tpPct > 0 || r.slPct > 0) { patch.tpPct = r.tpPct; patch.slPct = r.slPct; }
+        if (r.ttlH > 0) patch.ttlH = r.ttlH;
+        core.updateSnipeDraft(chatId, patch);
+      } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+      const s = snipeSetupScreen(chatId, switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null);
+      return send(chatId, s.text, s.kb);
+    }
+    if (p.action === 'snw_amt') {
+      const u = core.ensureUser(chatId);
+      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+      const ch = core.chainOf(d.chain) || { native: '' };
+      // parseAmt, not Number(): it reads "0,05" the way the buy fields do and
+      // converts a $usd amount at the live rate — the panel must not be the one
+      // place a decimal comma is silently invalid.
+      const pa = parseAmt(t, ch.native);
+      if (!pa) return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) }));
+      if (pa.err) return send(chatId, '❌ ' + esc(pa.err));
+      try { core.updateSnipeDraft(chatId, { amount: pa.amt }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+      const s = snipeSetupScreen(chatId);
+      return send(chatId, s.text, s.kb);
+    }
+    if (p.action === 'snw_slip') {
+      const n = Number(String(t).replace('%', '').replace(',', '.'));
+      try { core.updateSnipeDraft(chatId, { slipPct: n }); } catch (e) { return send(chatId, T(chatId, 'snipe.ca.bad_slip')); }
+      const s = snipeSetupScreen(chatId);
+      return send(chatId, s.text, s.kb);
+    }
+    if (p.action === 'snw_tpsl') {
+      const raw = String(t).trim().toLowerCase();
+      let tp = 0, sl = 0;
+      if (raw !== 'off' && raw !== '0' && raw !== '0/0') {
+        const m = /^\+?(\d+(?:[.,]\d+)?)\s*[\/\s]\s*[−-]?(\d+(?:[.,]\d+)?)%?$/.exec(raw.replace(/%/g, ''));
+        if (!m) return send(chatId, T(chatId, 'snipe.ca.bad_tpsl'));
+        tp = Number(m[1].replace(',', '.')); sl = Number(m[2].replace(',', '.'));
+      }
+      try { core.updateSnipeDraft(chatId, { tpPct: tp, slPct: sl }); } catch (e) { return send(chatId, T(chatId, 'snipe.ca.bad_tpsl')); }
+      const s = snipeSetupScreen(chatId);
+      return send(chatId, s.text, s.kb);
+    }
+    if (p.action === 'snw_ttl') {
+      try { core.updateSnipeDraft(chatId, { ttlH: Number(String(t).replace(',', '.')) }); } catch (e) { return send(chatId, T(chatId, 'snipe.ca.bad_ttl')); }
+      const s = snipeSetupScreen(chatId);
+      return send(chatId, s.text, s.kb);
     }
     if (p.action === 'ae_val') {
       const parts = String(t).trim().split(/\s+/);
@@ -4219,6 +4516,7 @@ async function registerCommands() {
     { command: 'buy',       description: 'Buy a token: /buy <address> <amount or $usd>' },
     { command: 'sell',      description: 'Sell a token: /sell <address> <percent>' },
     { command: 'snipe',     description: 'Auto-buy new launches' },
+    { command: 'sniper',    description: 'Snipe one contract — full settings panel' },
     { command: 'copy',      description: 'Copy another wallet\'s buys' },
     { command: 'orders',    description: 'Auto-sell orders (take-profit / stop-loss)' },
     { command: 'dca',       description: 'Scheduled recurring buys' },
@@ -4375,5 +4673,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

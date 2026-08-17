@@ -1106,8 +1106,43 @@ so the Copy screen carries a 📍 cross-link to the CA snipe: a user sent by tha
 word to the wrong screen reported the whole feature as missing while it was
 deployed and working.
 
+### The 🎛 Snipe Setup panel — the Sol-Trading-Bot panel, over the same store
+
+"saya ingin fitur snipe sama seperti sol trading bot ada setingan lengkap buat
+semudah mugkin" (2026-08-17). The one-line arm stayed; what was missing was the
+tap-driven panel the reference bot has: every setting as a label+value button
+row — chain, target CA, wallet, amount, slippage, TP/SL, expiry — with the
+reference's ✅/⏳ STATUS column inline and ⚡ ARM at the bottom. `/sniper` (and
+the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line second.
+
+- **The draft is persisted per user** (`u.snipeDraft`), so a half-configured
+  panel survives a restart the way the reference's "Waiting for setup" does.
+  It NEVER arms by itself — only ⚡ does, and it goes THROUGH `addSnipeTarget`
+  (`armSnipeDraft` is the one caller), so the panel and the one-line arm cannot
+  drift into two ideas of a valid target. The one-line grammar itself lives in
+  `parseSnipeLine`, shared by both ways in — pasting a full
+  `<ca> <amount> [slip%] [tp/sl] [h]` line into the panel's Target step fills
+  every row at once.
+- **The amount has NO default** — the "buy ngasal" rule again: a draft with a
+  default amount is an amount set by nobody, reused silently at arm time.
+- **A refused arm keeps the draft** ("already armed", cap reached), so the user
+  fixes one row instead of retyping seven. A chain switch DROPS a target
+  address that cannot exist on the new chain, with a note saying so — keeping
+  it would be the wrong-chain bounce one screen later; and a draft whose chain
+  was disabled under it is refused at ⚡, never silently swapped to the active
+  chain (`addSnipeTarget`'s fallback is right for a typed line only).
+- **A pasted address that does not fit the panel's chain switches it** when the
+  shape is unambiguous (a base58 mint under an EVM row), says so, and asks
+  instead when several enabled chains fit.
+- **Only settings the engine honours get a row.** No Anti-MEV, no Max block:
+  a row the backend ignores would be the stop-loss-the-user-believes-exists,
+  as a whole screen.
+- ⏳ is the "not set yet" marker, so no row may use it as its icon — Expiry's
+  is 🕒, or a fully configured panel still reads as waiting.
+
 ```bash
 cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC
+cd tradebot && node --test snipePanel.test.js    # 20 tests, no network
 ```
 
 **Config a fix depends on:** nothing. Every knob has a working default.
