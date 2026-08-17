@@ -370,19 +370,22 @@ test('an impossible stop-loss is refused at ARM time, not discovered at fill', (
   assert.strictEqual(t.slPct, undefined);
 });
 
-test('the fill turns TP/SL into real orders at the REALISED entry', () => {
+test('the fill turns TP/SL into real orders at the REALISED entry, per wallet', () => {
   const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
-  const fill = W.slice(W.indexOf('CA snipe filled') - 1600, W.indexOf('CA snipe filled') + 400);
+  const fill = W.slice(W.indexOf('CA snipe filled') - 3000, W.indexOf('CA snipe filled') + 400);
   // Entry from the trade itself — spent ÷ received — never the card price; a
-  // snipe exists precisely because those differ at launch.
+  // snipe exists precisely because those differ at launch. With walletId '*'
+  // there is one fill PER WALLET, and each gets its own entry and its own
+  // orders — five wallets fill five different ways.
+  assert.match(fill, /for \(const \{ wid, r \} of fills\)/);
   assert.match(fill, /const entry = Number\(r\.spentEth\) \/ \(Number\(r\.gotTokens\) \|\| 1\);/);
   assert.match(fill, /targetPriceEth: entry \* \(1 \+ t\.tpPct \/ 100\)/);
   assert.match(fill, /targetPriceEth: entry \* \(1 - t\.slPct \/ 100\)/);
   // The BUY succeeded even if the exits could not be placed (order cap): that
   // must be SAID, or the user believes a stop-loss exists that does not.
   assert.match(fill, /Couldn't place the auto-exit/);
-  // And both orders bind to the wallet that sniped, not whatever is active now.
-  assert.strictEqual((fill.match(/, t\.walletId\)/g) || []).length, 2);
+  // And each order binds to the wallet that sniped, not whatever is active now.
+  assert.strictEqual((fill.match(/, wid\)/g) || []).length, 2);
 });
 
 test('arming asks WHICH CHAIN first, and the answer travels with the pending step', () => {
@@ -402,10 +405,12 @@ test('arming asks WHICH CHAIN first, and the answer travels with the pending ste
   assert.match(pick, /isSvm\(ch\.key\) \? 'Ge87Etsj…' : '0xabc…'/);
   // Dev snipe follows the same rule, offering ONLY the launchpad chains — so
   // the "switch chain with 🌐, then try again" dead end cannot come back. The
-  // picked chain rides the wizard's Step-1 pending ('dev_addr').
+  // picked chain lands on the DRAFT (with kind 'dev') and the panel's dev
+  // target step takes over — one flow, not a second wizard.
   const dev = TGs.slice(TGs.indexOf("if (data === 'cpaddd')"), TGs.indexOf("if (k === 'cprm')"));
   assert.match(dev, /filter\(\(c\) => core\.canDevSnipe\(c\.key\)\)/);
-  assert.match(dev, /setPending\(chatId, \{ action: 'dev_addr', chain: ch\.key \}\)/);
+  assert.match(dev, /updateSnipeDraft\(chatId, \{ chain: ch\.key, kind: 'dev' \}\)/);
+  assert.match(dev, /setPending\(chatId, \{ action: 'snw_dev' \}\)/);
   // And the parse step spends the PICKED chain, not whatever is active by the
   // time the user finishes typing.
   const parse = TGs.slice(TGs.indexOf("if (p.action === 'copy_add')"), TGs.indexOf("if (p.action === 'alert_price')"));

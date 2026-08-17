@@ -1563,6 +1563,7 @@ function caSnipeScreen(chatId) {
 const SNW_SLIP_PRESETS = [10, 25, 50];
 const SNW_TPSL_PRESETS = [[50, 25], [100, 50], [200, 50]];
 const SNW_TTL_PRESETS = [6, 12, 24, 48, 168];
+const trimNum = (n) => String(Number(Number(n).toFixed(6)));
 
 /** `W2 nama` — the label the wallet screens already use, bounded for a button. */
 function snwWalletLabel(u, walletId) {
@@ -1578,13 +1579,20 @@ function snipeSetupScreen(chatId, note) {
   // Rendering may mint the draft: every path that can show the panel must show
   // the SAME panel, and a "no draft yet" special case would be a second screen.
   const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const dev = (d.kind === 'dev');
   const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain, native: '' };
-  const wLab = snwWalletLabel(u, d.walletId);
+  const all = d.walletId === '*';
+  const wl = core.walletList(u);
+  const wLab = all ? T(chatId, 'snipe.panel.wallet_all', { n: wl.length }) : snwWalletLabel(u, d.walletId);
   const tpslOn = d.tpPct > 0 || d.slPct > 0;
   const tpslLab = tpslOn
     ? [d.tpPct > 0 ? `TP +${d.tpPct}%` : '', d.slPct > 0 ? `SL −${d.slPct}%` : ''].filter(Boolean).join(' · ')
     : T(chatId, 'snipe.panel.off');
   const slipLab = d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default');
+  // The amount is PER WALLET; with All selected the total is the honest number
+  // to put next to it — real money must never hide behind a multiplier.
+  const amtLine = d.amount ? `${esc(d.amount)} ${esc(ch.native)}${!dev && all && wl.length > 1 ? ` × ${wl.length} = ${esc(String(Number((Number(d.amount) * wl.length).toFixed(6))))} ${esc(ch.native)}` : ''}` : null;
+  const tKind = dev ? '🧑‍💻' : '📍';
   // ✅/⏳ per required row — the reference panel's STATUS column, inline.
   const need = (ok) => (ok ? '✅' : '⏳');
   const L = [
@@ -1595,31 +1603,49 @@ function snipeSetupScreen(chatId, note) {
   L.push(
     T(chatId, 'snipe.panel.required'),
     `${need(true)} 🌐 ${T(chatId, 'snipe.panel.chain')}: <b>${ch.emoji} ${esc(ch.name)}</b>`,
-    `${need(!!d.ca)} 🎯 ${T(chatId, 'snipe.panel.target')}: ${d.ca ? `<code>${esc(d.ca)}</code>` : `<i>${T(chatId, 'snipe.panel.waiting')}</i>`}`,
-    `${need(!!wLab)} 💳 ${T(chatId, 'snipe.panel.wallet')}: <b>${esc(wLab || '—')}</b>`,
-    `${need(!!d.amount)} 💵 ${T(chatId, 'snipe.panel.amount')}: ${d.amount ? `<b>${esc(d.amount)} ${esc(ch.native)}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`,
-    '',
-    T(chatId, 'snipe.panel.optional'),
-    `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
-    `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
-    `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
-    '',
-    T(chatId, 'snipe.panel.foot'),
+    `${need(!!d.ca)} 🎯 ${T(chatId, 'snipe.panel.target')}: ${d.ca ? `${tKind} <code>${esc(d.ca)}</code>` : `<i>${T(chatId, 'snipe.panel.waiting')}</i>`}`,
   );
+  if (!dev) L.push(`${need(!!wLab)} 💳 ${T(chatId, 'snipe.panel.wallet')}: <b>${esc(wLab || '—')}</b>`);
+  L.push(`${need(!!d.amount)} 💵 ${T(chatId, dev ? 'snipe.panel.amount_dev' : 'snipe.panel.amount')}: ${amtLine ? `<b>${amtLine}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`);
+  if (dev) {
+    // A dev target has its own required row (budget) and NO optional section:
+    // slippage/TP-SL/expiry are not honoured on the dev path, and a row the
+    // backend ignores would be the stop-loss-the-user-believes-exists.
+    L.push(`${need(!!d.budget)} 💰 ${T(chatId, 'snipe.panel.budget')}: ${d.budget ? `<b>${esc(d.budget)} ${esc(ch.native)}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`);
+    L.push('', T(chatId, 'snipe.panel.dev_foot'));
+  } else {
+    L.push(
+      '',
+      T(chatId, 'snipe.panel.optional'),
+      `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
+      `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
+      `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
+      '',
+      T(chatId, 'snipe.panel.foot'),
+    );
+  }
   // Label + value, two buttons a row — the reference's two-column table. Both
   // open the same editor, so there is no wrong half to tap.
   const kbRows = [
     [btn(`🌐 ${T(chatId, 'snipe.panel.chain')}`, 'snw:chain'), btn(`${ch.emoji} ${ch.name}`, 'snw:chain')],
-    [btn(`🎯 ${T(chatId, 'snipe.panel.target')}`, 'snw:ca'), btn(d.ca ? `✅ ${short(d.ca)}` : `⏳ ${T(chatId, 'snipe.panel.set_btn')}`, 'snw:ca')],
-    [btn(`💳 ${T(chatId, 'snipe.panel.wallet')}`, 'snw:wal'), btn(wLab ? `✅ ${wLab}` : '⏳', 'snw:wal')],
-    [btn(`💵 ${T(chatId, 'snipe.panel.amount')}`, 'snw:amt'), btn(d.amount ? `✅ ${d.amount} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:amt')],
-    [btn(`📉 ${T(chatId, 'snipe.panel.slip')}`, 'snw:slip'), btn(d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default'), 'snw:slip')],
-    [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
-    [btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')],
-    [btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')],
-    [btn(T(chatId, 'snipe.panel.oneline_btn'), 'csnadd'), btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')],
-    [btn('« Back', 'csn')],
+    [btn(`🎯 ${T(chatId, 'snipe.panel.target')}`, 'snw:ca'), btn(d.ca ? `✅ ${tKind} ${short(d.ca)}` : `⏳ ${T(chatId, 'snipe.panel.set_btn')}`, 'snw:ca')],
   ];
+  if (!dev) kbRows.push([btn(`💳 ${T(chatId, 'snipe.panel.wallet')}`, 'snw:wal'), btn(wLab ? `✅ ${wLab}` : '⏳', 'snw:wal')]);
+  kbRows.push([btn(`💵 ${T(chatId, dev ? 'snipe.panel.amount_dev' : 'snipe.panel.amount')}`, 'snw:amt'), btn(d.amount ? `✅ ${d.amount} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:amt')]);
+  if (dev) {
+    kbRows.push([btn(`💰 ${T(chatId, 'snipe.panel.budget')}`, 'snw:bud'), btn(d.budget ? `✅ ${d.budget} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:bud')]);
+  } else {
+    kbRows.push(
+      [btn(`📉 ${T(chatId, 'snipe.panel.slip')}`, 'snw:slip'), btn(d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default'), 'snw:slip')],
+      [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
+      [btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')],
+    );
+  }
+  kbRows.push([btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')]);
+  kbRows.push(dev
+    ? [btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')]
+    : [btn(T(chatId, 'snipe.panel.oneline_btn'), 'csnadd'), btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')]);
+  kbRows.push([btn('« Back', 'csn')]);
   return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
 }
 // The per-row editors. Each edits the panel message in place and returns to it.
@@ -1635,9 +1661,14 @@ function snwChainScreen(chatId) {
 function snwWalletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
-  const kbR = core.walletList(u).map((w, i) => {
+  const wl = core.walletList(u);
+  const kbR = [];
+  // All wallets FIRST — "harus ada fitur all wallet". The amount is per
+  // wallet, and the button says so; the armed message states the total.
+  if (wl.length > 1) kbR.push([btn(`${d.walletId === '*' ? '✓ ' : ''}${T(chatId, 'snipe.panel.wallet_all_btn', { n: wl.length })}`, 'snww:*')]);
+  wl.forEach((w, i) => {
     const name = String(w.name || '').slice(0, 16);
-    return [btn(`${w.id === d.walletId ? '✓ ' : ''}W${i + 1}${name ? ' ' + name : ''} · ${short(w.address)}`, `snww:${w.id}`)];
+    kbR.push([btn(`${w.id === d.walletId ? '✓ ' : ''}W${i + 1}${name ? ' ' + name : ''} · ${short(w.address)}`, `snww:${w.id}`)]);
   });
   kbR.push([btn('« Back', 'snw:open')]);
   return { text: T(chatId, 'snipe.panel.wal_pick'), kb: { inline_keyboard: kbR } };
@@ -1655,6 +1686,18 @@ function snwAmountScreen(chatId) {
   kbR.push([btn(T(chatId, 'snipe.panel.custom_btn'), 'snw:amtc')]);
   kbR.push([btn('« Back', 'snw:open')]);
   return { text: T(chatId, 'snipe.panel.amt_pick', { native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
+}
+function snwBudgetScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+  const ch = core.chainOf(d.chain) || { native: '' };
+  const amt = Number(d.amount) || 0;
+  const kbR = [];
+  // Multiples of the amount just picked, labelled with the launch count they
+  // buy — the number the user actually thinks in.
+  if (amt > 0) kbR.push([3, 5, 10].map((m) => btn(`${d.budget === trimNum(amt * m) ? '✓ ' : ''}${trimNum(amt * m)} ${ch.native} (${m}×)`, `snwb:${trimNum(amt * m)}`)));
+  kbR.push([btn('« Back', 'snw:open')]);
+  return { text: T(chatId, 'snipe.panel.bud_pick', { amt: amt > 0 ? `${trimNum(amt)} ${esc(ch.native)}` : '—', native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
 }
 function snwSlipScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -1688,7 +1731,7 @@ function snwTtlScreen(chatId) {
 function snipeArmedText(chatId, tgt) {
   const ch = core.chainOf(tgt.chain) || { emoji: '', name: tgt.chain, native: '' };
   const exitParts = [tgt.tpPct > 0 ? `TP +${tgt.tpPct}%` : '', tgt.slPct > 0 ? `SL −${tgt.slPct}%` : ''].filter(Boolean).join(' · ');
-  return T(chatId, 'snipe.ca.armed', {
+  let out = T(chatId, 'snipe.ca.armed', {
     chain: `${ch.emoji} ${esc(ch.name)}`,
     ca: esc(tgt.ca),
     amt: esc(tgt.amount),
@@ -1697,6 +1740,13 @@ function snipeArmedText(chatId, tgt) {
     exits: exitParts ? T(chatId, 'snipe.ca.exits', { parts: exitParts }) : '',
     hours: Math.round((tgt.expiresAt - tgt.createdAt) / 3600000),
   });
+  // All-wallet: the multiplied total is real money and must be ON the
+  // confirmation, not discovered on the receipts.
+  if (tgt.walletId === '*') {
+    const n = core.walletList(core.ensureUser(chatId)).length;
+    out += '\n' + T(chatId, 'snipe.panel.armed_all', { n, amt: esc(tgt.amount), native: esc(ch.native), total: esc(trimNum(Number(tgt.amount) * n)) });
+  }
+  return out;
 }
 
 function snipeScreen(chatId) {
@@ -1899,59 +1949,6 @@ function copyScreen(chatId) {
   if (!core.canDevSnipe(ach.key)) body += `\n<i>🎯 Dev snipe is available on Robinhood Chain &amp; Solana — switch chain (🌐) to add one.</i>`;
   return { text: body, kb: { inline_keyboard: kbRows } };
 }
-/*
- * The dev-snipe WIZARD — one question per message ("aturan hapus aja, jadiin 1
- * aja, jangan pisah2: bot minta dev wallet, pas udah dikasih tanyain mau snipe
- * berapa, dll", 2026-08-17). The old prompt asked for wallet, per-buy AND
- * budget in one typed line and read as a rulebook; now Step 1 asks only for
- * the wallet, and amount and budget follow, each with tappable choices. The
- * old full line still lands in one go for whoever has it ready.
- */
-const trimNum = (n) => String(Number(Number(n).toFixed(6)));
-function devAmountScreen(chatId, chain, addr) {
-  const u = core.ensureUser(chatId);
-  const ch = core.chainOf(chain) || { native: '' };
-  const QUICK = core.buyPresets(u, chain).map(String);
-  const kbR = [];
-  for (let i = 0; i < QUICK.length; i += 3) kbR.push(QUICK.slice(i, i + 3).map((p) => btn(`${p} ${ch.native}`, `dvamt:${p}`)));
-  return { text: T(chatId, 'dev.step2', { addr: esc(short(addr)), native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
-}
-/** Step 2 → Step 3: the per-launch amount landed (tap or typed); ask the budget. */
-async function devAskBudget(chatId, pp, amtRaw) {
-  const ch = core.chainOf(pp.chain) || activeChain(chatId);
-  const amt = Number(String(amtRaw).replace(',', '.'));
-  if (!(amt > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(ch.native) }));
-  setPending(chatId, { action: 'dev_budget', chain: pp.chain, address: pp.address, perBuy: trimNum(amt) });
-  // Budget choices as MULTIPLES of what was just picked, labelled with the
-  // launch count they buy — the number the user actually thinks in.
-  const kbR = [[3, 5, 10].map((m) => btn(`${trimNum(amt * m)} ${ch.native} (${m}×)`, `dvbud:${trimNum(amt * m)}`))];
-  return send(chatId, T(chatId, 'dev.step3', { amt: `${trimNum(amt)} ${esc(ch.native)}`, native: esc(ch.native) }), { inline_keyboard: kbR });
-}
-/** Step 3 → armed. The pending step is cleared only on SUCCESS, so a refused
- *  budget (below the per-buy) is fixed by typing a new number, not by
- *  restarting the wizard. */
-async function devArm(chatId, pp, budRaw) {
-  const ch = core.chainOf(pp.chain) || activeChain(chatId);
-  const budget = Number(String(budRaw).replace(',', '.'));
-  if (!(budget > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(ch.native) }));
-  try {
-    const tgt = core.addCopyTarget(chatId, pp.address, ch.key, pp.perBuy, trimNum(budget), 'launches');
-    pending.delete(chatId);
-    const u = core.ensureUser(chatId);
-    const on = !!(u.copy && u.copy.on);
-    // The master switch gates the whole feature. Arming a watch that silently
-    // does nothing is the stop-loss-the-user-believes-exists — so an OFF
-    // switch is said out loud, with the one-tap fix on the message itself.
-    const kb = on
-      ? rows([btn('👥 Copy & Snipe', 'copy')])
-      : { inline_keyboard: [[btn(T(chatId, 'dev.on_btn'), 'cptog')], [btn('👥 Copy & Snipe', 'copy')]] };
-    return send(chatId, T(chatId, 'dev.armed', {
-      addr: esc(short(tgt.address)), chain: `${ch.emoji} ${esc(ch.name)}`,
-      perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(ch.native),
-    }) + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off'), kb);
-  } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
-}
-
 function referralScreen(chatId) {
   const u = core.ensureUser(chatId);
   const link = `https://t.me/${BOT_USERNAME}?start=${u.refCode}`;
@@ -2824,6 +2821,18 @@ function _shouldAnswerInGroup(msg, chatId) {
 
 // ------------------------------------------------------------ router
 async function handleUpdate(up) {
+  // "respon sangat lambat" must be MEASURABLE, not argued from reading code.
+  // `age` is how old the update already was when we first saw it (high age =
+  // the delay happened BEFORE the bot: long-poll gap, restart backlog,
+  // Telegram itself); `handle` is our own time. Only slow ones are logged.
+  // NEVER log message text here — the import-wallet step is a private key in a
+  // plain message; the callback data and the pending step name are bot-made.
+  const _t0 = Date.now();
+  const _age = up.message && up.message.date ? Math.max(0, _t0 - up.message.date * 1000) : null;
+  const _chat0 = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
+  const _p0 = _chat0 && pending.get(_chat0.id);
+  const _what0 = up.callback_query ? `cb:${String(up.callback_query.data || '?').slice(0, 48)}` : up.message ? `msg:${(_p0 && _p0.action) || 'command'}` : 'update';
+  try {
   try {
     const chat = (up.message && up.message.chat) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat);
     if (chat && chat.type !== 'private') {
@@ -2869,6 +2878,12 @@ async function handleUpdate(up) {
     try {
       if (chat && chat.type === 'private') await send(chat.id, T(chat.id, e && e.offline ? 'err.glitch_net' : 'err.glitch'));
     } catch (_) { /* ignore */ }
+  }
+  } finally {
+    const _took = Date.now() - _t0;
+    if (_took > 1500 || (_age != null && _age > 5000)) {
+      console.log(`[ui] slow ${_what0} handle=${_took}ms${_age != null ? ` age=${Math.round(_age / 1000)}s` : ''}`);
+    }
   }
 }
 
@@ -3169,7 +3184,7 @@ async function onCallback(q) {
     if (ca === 'cancel') { core.clearSnipeDraft(chatId); const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'chain') { const s = snwChainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'wal') { const s = snwWalletScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-    if (ca === 'amt') { const s = snwAmountScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'amt') { setPending(chatId, { action: 'snw_amt' }); const s = snwAmountScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'slip') { const s = snwSlipScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'tpsl') { const s = snwTpslScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'ttl') { const s = snwTtlScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -3185,6 +3200,7 @@ async function onCallback(q) {
     }
     if (ca === 'cat') {
       const u = core.ensureUser(chatId);
+      try { core.updateSnipeDraft(chatId, { kind: 'ca' }); } catch (_) {}
       const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
       const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain };
       setPending(chatId, { action: 'snw_ca' });
@@ -3193,12 +3209,21 @@ async function onCallback(q) {
     }
     if (ca === 'cad') {
       const u = core.ensureUser(chatId);
+      try { core.updateSnipeDraft(chatId, { kind: 'dev' }); } catch (_) {}
       const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
       const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain };
-      // Into the dev-snipe wizard, on the PANEL'S chain — Step 1 asks for the
-      // wallet, and the wizard asks the rest one question at a time.
-      setPending(chatId, { action: 'dev_addr', chain: d.chain });
-      return edit(chatId, mid, T(chatId, 'dev.step1', { chain: `${ch.emoji} ${esc(ch.name)}` }));
+      setPending(chatId, { action: 'snw_dev' });
+      return edit(chatId, mid, T(chatId, 'snipe.panel.dev_prompt', { chain: `${ch.emoji} ${esc(ch.name)}` }), rows([btn('« Back', 'snw:open')]));
+    }
+    if (ca === 'bud') {
+      const u = core.ensureUser(chatId);
+      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+      // A budget is multiples of the amount — no amount yet means the amount
+      // question comes first, not a picker with nothing on it.
+      if (!(Number(d.amount) > 0)) { setPending(chatId, { action: 'snw_amt' }); const s = snwAmountScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+      setPending(chatId, { action: 'snw_bud' });
+      const s = snwBudgetScreen(chatId);
+      return edit(chatId, mid, s.text, s.kb);
     }
     if (ca === 'amtc') { const u = core.ensureUser(chatId); const d = core.snipeDraft(u) || core.newSnipeDraft(chatId); const ch = core.chainOf(d.chain) || { native: '' }; setPending(chatId, { action: 'snw_amt' }); return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) })); }
     if (ca === 'slipc') { setPending(chatId, { action: 'snw_slip' }); return send(chatId, T(chatId, 'snipe.panel.slip_prompt')); }
@@ -3209,7 +3234,21 @@ async function onCallback(q) {
       // where the row to fix is one tap away. A toast disappears; the row stays.
       try {
         const tgt = core.armSnipeDraft(chatId);
-        await edit(chatId, mid, snipeArmedText(chatId, tgt));
+        if (tgt.mode === 'launches') {
+          // A dev target. The master switch gates the whole feature — arming a
+          // watch that silently does nothing is the stop-loss-the-user-
+          // believes-exists, so an OFF switch is said with its one-tap fix.
+          const chG = core.chainOf(tgt.chain) || activeChain(chatId);
+          const u2 = core.ensureUser(chatId);
+          const on = !!(u2.copy && u2.copy.on);
+          await edit(chatId, mid, T(chatId, 'dev.armed', {
+            addr: esc(short(tgt.address)), chain: `${chG.emoji} ${esc(chG.name)}`,
+            perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(chG.native),
+          }) + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off'),
+          on ? undefined : { inline_keyboard: [[btn(T(chatId, 'dev.on_btn'), 'cptog')]] });
+        } else {
+          await edit(chatId, mid, snipeArmedText(chatId, tgt));
+        }
         const s = caSnipeScreen(chatId);
         return send(chatId, s.text, s.kb);
       } catch (e) {
@@ -3221,7 +3260,7 @@ async function onCallback(q) {
     const s = snipeSetupScreen(chatId);
     return edit(chatId, mid, s.text, s.kb);
   }
-  if (k === 'snwch' || k === 'snww' || k === 'snwa' || k === 'snws' || k === 'snwx' || k === 'snwt') {
+  if (k === 'snwch' || k === 'snww' || k === 'snwa' || k === 'snwb' || k === 'snws' || k === 'snwx' || k === 'snwt') {
     let note = null;
     try {
       if (k === 'snwch') {
@@ -3233,7 +3272,17 @@ async function onCallback(q) {
         if (had && !d.ca) note = T(chatId, 'snipe.panel.ca_dropped').replace(/<[^>]+>/g, '');
       }
       else if (k === 'snww') core.updateSnipeDraft(chatId, { walletId: ca });
-      else if (k === 'snwa') core.updateSnipeDraft(chatId, { amount: ca });
+      else if (k === 'snwa') {
+        const d = core.updateSnipeDraft(chatId, { amount: ca });
+        // Flow FORWARD: a dev target's next missing row is the budget — ask it
+        // now instead of sending the user back to find the ⏳ themselves.
+        if (d.kind === 'dev' && !d.budget) {
+          setPending(chatId, { action: 'snw_bud' });
+          const s = snwBudgetScreen(chatId);
+          return edit(chatId, mid, s.text, s.kb);
+        }
+      }
+      else if (k === 'snwb') core.updateSnipeDraft(chatId, { budget: ca });
       else if (k === 'snws') core.updateSnipeDraft(chatId, { slipPct: ca });
       else if (k === 'snwx') core.updateSnipeDraft(chatId, { ttlH: ca });
       else {
@@ -3451,20 +3500,12 @@ async function onCallback(q) {
   if (k === 'cpdch') {
     const ch = core.chainOf(ca);
     if (!ch || !core.canDevSnipe(ch.key)) return;
-    // ONE question per message. The old prompt asked for wallet, per-buy AND
-    // budget in a single typed line — reported as "membingungkan". Step 1 asks
-    // only for the wallet; the wizard asks the rest, one screen each.
-    setPending(chatId, { action: 'dev_addr', chain: ch.key });
-    return edit(chatId, mid, T(chatId, 'dev.step1', { chain: `${ch.emoji} ${esc(ch.name)}` }));
-  }
-  // Dev-snipe wizard quick-picks. The state rides the pending step; a tap on a
-  // message whose step has expired says so instead of arming half a config.
-  if (k === 'dvamt' || k === 'dvbud') {
-    const pp = pending.get(chatId);
-    const want = k === 'dvamt' ? 'dev_amt' : 'dev_budget';
-    if (!pp || pp.action !== want || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, T(chatId, 'dev.expired'));
-    if (k === 'dvamt') return devAskBudget(chatId, pp, ca);
-    return devArm(chatId, pp, ca);
+    // ONE flow, not a second wizard: the dev entry points converge on the
+    // panel's dev-target path ("jadiin 1 aja") — chain and kind land on the
+    // draft, the address is asked for, and the panel asks the rest forward.
+    try { core.updateSnipeDraft(chatId, { chain: ch.key, kind: 'dev' }); } catch (_) {}
+    setPending(chatId, { action: 'snw_dev' });
+    return edit(chatId, mid, T(chatId, 'snipe.panel.dev_prompt', { chain: `${ch.emoji} ${esc(ch.name)}` }), rows([btn('« Back', 'snw:open')]));
   }
   if (k === 'cprm') { core.removeCopyTarget(chatId, ca); const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'ospd') {
@@ -3660,7 +3701,20 @@ async function resolvePending(chatId, p, text, m) {
       const pa = parseAmt(t, ch.native);
       if (!pa) return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) }));
       if (pa.err) return send(chatId, '❌ ' + esc(pa.err));
-      try { core.updateSnipeDraft(chatId, { amount: pa.amt }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+      let d2;
+      try { d2 = core.updateSnipeDraft(chatId, { amount: pa.amt }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+      // Flow FORWARD: a dev target's next missing row is the budget.
+      if (d2.kind === 'dev' && !d2.budget) {
+        setPending(chatId, { action: 'snw_bud' });
+        const s = snwBudgetScreen(chatId);
+        return send(chatId, s.text, s.kb);
+      }
+      const s = snipeSetupScreen(chatId);
+      return send(chatId, s.text, s.kb);
+    }
+    if (p.action === 'snw_bud') {
+      const n = Number(String(t).replace('%', '').replace(',', '.'));
+      try { core.updateSnipeDraft(chatId, { budget: n }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
       const s = snipeSetupScreen(chatId);
       return send(chatId, s.text, s.kb);
     }
@@ -3721,26 +3775,52 @@ async function resolvePending(chatId, p, text, m) {
       try { const e = core.addWhitelist(chatId, t, ch.key); const s = securityScreen(chatId); return send(chatId, `✅ Whitelisted <code>${esc(e.address)}</code> on ${ch.emoji} ${esc(ch.name)}. Withdrawals on this chain are now restricted to your whitelist.`, s.kb); }
       catch (e2) { return send(chatId, '❌ ' + esc(e2.message)); }
     }
-    // ── dev-snipe wizard: Step 1 (wallet) → Step 2 (per-buy) → Step 3 (budget).
-    if (p.action === 'dev_addr') {
-      const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
-      const parts = t.split(/\s+/).filter(Boolean);
+    // ── the panel's dev-wallet target: address (+ optional one-line tail).
+    if (p.action === 'snw_dev') {
+      const u = core.ensureUser(chatId);
+      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+      const parts = String(t).trim().split(/\s+/).filter(Boolean);
       const addr = parts[0] || '';
-      if (!isAddrFor(addr, ch.key)) return send(chatId, T(chatId, 'dev.bad_addr', { chain: esc(ch.name) }));
-      // The old one-line still lands in one go: extra words on the line are the
-      // later steps, answered early.
-      if (parts.length >= 3) {
-        const amt = Number(String(parts[1]).replace(',', '.'));
-        if (!(amt > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(ch.native) }));
-        return devArm(chatId, { chain: ch.key, address: addr, perBuy: trimNum(amt) }, parts[2]);
+      let chainKey = d.chain, switched = null;
+      if (!isAddrFor(addr, chainKey)) {
+        // Same rule as the CA paste: the paste knows its chain better than the
+        // row — switch when the shape is unambiguous, ask when it is not.
+        const fits = core.chains.enabledChains().filter((c) => isAddrFor(addr, c.key));
+        if (fits.length === 1) { chainKey = fits[0].key; switched = fits[0]; }
+        else if (fits.length > 1) return send(chatId, T(chatId, 'snipe.panel.which_chain'));
+        else return send(chatId, T(chatId, 'dev.bad_addr', { chain: esc((core.chainOf(d.chain) || { name: d.chain }).name) }));
       }
-      if (parts.length === 2) return devAskBudget(chatId, { chain: ch.key, address: addr }, parts[1]);
-      setPending(chatId, { action: 'dev_amt', chain: ch.key, address: addr });
-      const s = devAmountScreen(chatId, ch.key, addr);
+      const chN = core.chainOf(chainKey) || { native: '' };
+      const patch = { chain: chainKey, kind: 'dev', ca: addr };
+      // The old one-line (`<wallet> <perBuy> <budget>`) still lands in one go:
+      // extra words on the line are the later questions, answered early.
+      if (parts[1] !== undefined) {
+        const a = Number(String(parts[1]).replace(',', '.'));
+        if (!(a > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(chN.native) }));
+        patch.amount = a;
+      }
+      if (parts[2] !== undefined) {
+        const b = Number(String(parts[2]).replace(',', '.'));
+        if (!(b > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(chN.native) }));
+        patch.budget = b;
+      }
+      try { core.updateSnipeDraft(chatId, patch); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+      const d2 = core.snipeDraft(u);
+      const swNote = switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null;
+      // Flow FORWARD: the next missing required row is asked for immediately.
+      if (!d2.amount) {
+        setPending(chatId, { action: 'snw_amt' });
+        const s = snwAmountScreen(chatId);
+        return send(chatId, (swNote ? swNote + '\n\n' : '') + T(chatId, 'snipe.panel.target_saved') + '\n\n' + s.text, s.kb);
+      }
+      if (!d2.budget) {
+        setPending(chatId, { action: 'snw_bud' });
+        const s = snwBudgetScreen(chatId);
+        return send(chatId, (swNote ? swNote + '\n\n' : '') + T(chatId, 'snipe.panel.target_saved') + '\n\n' + s.text, s.kb);
+      }
+      const s = snipeSetupScreen(chatId, swNote);
       return send(chatId, s.text, s.kb);
     }
-    if (p.action === 'dev_amt') return devAskBudget(chatId, p, t);
-    if (p.action === 'dev_budget') return devArm(chatId, p, t);
     if (p.action === 'copy_add') {
       const parts = t.split(/\s+/).filter(Boolean);
       if (parts.length < 3) return send(chatId, 'Format: <code>&lt;wallet&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>, e.g. <code>0xAbc… 0.02 0.2</code>');
@@ -4812,5 +4892,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

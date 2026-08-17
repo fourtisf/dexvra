@@ -29,6 +29,7 @@ process.env.ENABLED_CHAINS = 'robinhood,solana';
 
 const core = require('./core');
 const tg = require('./telegram');
+const watchers = require('./watchers');
 
 const CA = '0x39dBED3a2bd333467115dE45665cC57F813C4571';
 const CA2 = '0x' + 'b'.repeat(40);
@@ -277,6 +278,7 @@ test('the ⚡ handler goes through core.armSnipeDraft and never around it', () =
   const block = SRC.slice(SRC.indexOf("if (k === 'snw')"), SRC.indexOf("if (data === 'rstog')"));
   assert.match(block, /core\.armSnipeDraft\(chatId\)/, '⚡ no longer arms through the draft');
   assert.ok(!block.includes('addSnipeTarget'), 'the panel grew a second arming site around armSnipeDraft');
+  assert.ok(!block.includes('addCopyTarget'), 'the panel arms dev targets around armSnipeDraft');
   // No toast on failure: the panel re-renders with the reason IN it, where the
   // row to fix is one tap away. A toast disappears; the row stays.
   assert.match(block, /snipeSetupScreen\(chatId, String\(\(e && e\.message\) \|\| e\)\)/);
@@ -358,59 +360,153 @@ test("the panel's Target offers BOTH kinds — token contract and dev wallet", (
   const block = SRC.slice(SRC.indexOf("if (k === 'snw')"), SRC.indexOf("if (data === 'rstog')"));
   assert.match(block, /'snw:cat'/, 'the token-contract choice is gone from the Target step');
   assert.match(block, /'snw:cad'/, 'the dev-wallet choice is gone from the Target step');
-  // The dev choice drops into the wizard ON THE PANEL'S CHAIN — not whatever
-  // chain happens to be active.
-  assert.match(block, /setPending\(chatId, \{ action: 'dev_addr', chain: d\.chain \}\)/);
+  // The dev choice lands ON THE DRAFT (kind 'dev') and the panel takes over.
+  assert.match(block, /updateSnipeDraft\(chatId, \{ kind: 'dev' \}\)/);
+  assert.match(block, /setPending\(chatId, \{ action: 'snw_dev' \}\)/);
 });
 
-// ── the dev-snipe wizard ─────────────────────────────────────────────────────
+test('switching target kind clears the address — a CA is not a dev wallet', () => {
+  const u = user();
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA });
+  // Shape-valid both ways, semantically wrong both ways: keeping it would arm
+  // a watch that can never fire — the inert-watch failure mode.
+  const d = core.updateSnipeDraft(CHAT, { kind: 'dev' });
+  assert.strictEqual(d.ca, null, 'a token CA survived becoming a "dev wallet"');
+  core.updateSnipeDraft(CHAT, { ca: CA2 });
+  assert.strictEqual(core.updateSnipeDraft(CHAT, { kind: 'ca' }).ca, null);
+  assert.ok(core.snipeDraft(u));
+});
 
-test('dev snipe asks ONE question at a time, and nothing arms before the last', async () => {
+test('a dev panel hides rows the engine ignores and shows the budget', () => {
+  user();
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
+  const s = tg._test.snipeSetupScreen(CHAT);
+  const flat = s.kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(flat.includes('snw:bud'), 'no budget row on the dev panel');
+  // Slippage/TP-SL/expiry/wallet are not honoured on the dev path — a row the
+  // backend ignores is the stop-loss-the-user-believes-exists, as a row.
+  for (const cb of ['snw:slip', 'snw:tpsl', 'snw:ttl', 'snw:wal']) {
+    assert.ok(!flat.includes(cb), `the dev panel shows ${cb}, which the dev path ignores`);
+  }
+});
+
+// ── the dev-wallet target, on the panel ──────────────────────────────────────
+
+test('the dev target asks ONE question at a time, and nothing arms before ⚡', async () => {
   // "aturan hapus aja, jadiin 1 aja, jangan pisah2: bot minta dev wallet, pas
   // udah dikasih tanyain mau snipe berapa, dll." The old prompt wanted wallet,
   // per-buy AND budget in one typed line.
   const u = user();
-  u.copy = { on: true, targets: [] };
-  const out1 = await typed({ action: 'dev_addr', chain: 'solana' }, MINT);
-  assert.match(out1.replace(/<[^>]+>/g, ''), /Step 2|Langkah 2/i, 'the wallet alone did not lead to the amount question');
-  assert.equal(u.copy.targets.length, 0, 'the address alone armed something');
-  const out2 = await typed({ action: 'dev_amt', chain: 'solana', address: MINT }, '0.05');
-  assert.match(out2.replace(/<[^>]+>/g, ''), /Step 3|Langkah 3/i, 'the amount did not lead to the budget question');
-  assert.equal(u.copy.targets.length, 0, 'the amount alone armed something');
-  await typed({ action: 'dev_budget', chain: 'solana', address: MINT, perBuy: '0.05' }, '0.5');
-  assert.equal(u.copy.targets.length, 1, 'the finished wizard armed nothing');
-  const tgt = u.copy.targets[0];
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
+  const out1 = await typed('snw_dev', MINT);
+  assert.match(out1.replace(/<[^>]+>/g, ''), /Amount|Jumlah/i, 'the wallet alone did not lead to the amount question');
+  const out2 = await typed('snw_amt', '0.05');
+  assert.match(out2.replace(/<[^>]+>/g, ''), /Budget/i, 'the amount did not lead to the budget question');
+  await typed('snw_bud', '0.5');
+  assert.equal(((u.copy && u.copy.targets) || []).length, 0, 'the panel armed before ⚡');
+  const tgt = core.armSnipeDraft(CHAT);
   assert.equal(tgt.mode, 'launches');
   assert.equal(tgt.chain, 'solana');
+  assert.equal(tgt.address, MINT);
   assert.equal(tgt.buyEth, '0.05');
   assert.equal(tgt.maxEth, '0.5');
+  assert.strictEqual(core.snipeDraft(u), null, 'an armed dev draft lingered');
 });
 
-test('the old one-line dev arm still lands in one go', async () => {
+test('the old one-line dev arm fills every row in one go', async () => {
   const u = user();
-  u.copy = { on: true, targets: [] };
-  const out = await typed({ action: 'dev_addr', chain: 'solana' }, `${MINT} 0.05 0.5`);
-  assert.equal(u.copy.targets.length, 1, 'the full line no longer arms');
-  assert.match(out.replace(/<[^>]+>/g, ''), /armed|terpasang/i);
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
+  await typed('snw_dev', `${MINT} 0.05 0.5`);
+  const d = core.snipeDraft(u);
+  assert.equal(d.ca, MINT);
+  assert.equal(d.amount, '0.05');
+  assert.equal(d.budget, '0.5');
+  assert.ok(core.armSnipeDraft(CHAT), 'a fully pasted line could not arm');
 });
 
-test('a wizard step refuses bad input with a reason and arms nothing', async () => {
+test('a refused dev step keeps the draft where it was', async () => {
   const u = user();
-  u.copy = { on: true, targets: [] };
-  assert.match((await typed({ action: 'dev_addr', chain: 'solana' }, 'not-an-address')).replace(/<[^>]+>/g, ''), /not a valid|bukan alamat/i);
-  assert.match((await typed({ action: 'dev_amt', chain: 'solana', address: MINT }, 'abc')).replace(/<[^>]+>/g, ''), /amount|jumlah/i);
-  // A budget below the per-buy is refused by the SAME rule the store enforces.
-  assert.match((await typed({ action: 'dev_budget', chain: 'solana', address: MINT, perBuy: '0.05' }, '0.01')).replace(/<[^>]+>/g, ''), /budget/i);
-  assert.equal(u.copy.targets.length, 0, 'a refused step still armed something');
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
+  assert.match((await typed('snw_dev', 'not-an-address')).replace(/<[^>]+>/g, ''), /not a valid|bukan alamat/i);
+  assert.strictEqual(core.snipeDraft(u).ca, null);
+  core.updateSnipeDraft(CHAT, { ca: MINT, amount: 0.05 });
+  // A budget below the per-launch amount is refused by the SAME rule the store
+  // enforces — at the row, instead of being discovered at ⚡.
+  assert.match((await typed('snw_bud', '0.01')).replace(/<[^>]+>/g, ''), /budget/i);
+  assert.strictEqual(core.snipeDraft(u).budget, null);
+  assert.throws(() => core.armSnipeDraft(CHAT), /no budget/i);
 });
 
-test('an OFF master switch is said on the armed message, with the one-tap fix', async () => {
+test('an OFF master switch is said at ⚡, with the one-tap fix', () => {
   // Arming a watch that silently does nothing is the stop-loss-the-user-
-  // believes-exists — dev snipe only runs while copy.on is true.
+  // believes-exists — dev snipe only runs while copy.on is true, so the arm
+  // handler says so with the 🟢 button on the same message.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const block = SRC.slice(SRC.indexOf("if (k === 'snw')"), SRC.indexOf("if (data === 'rstog')"));
+  assert.match(block, /dev\.master_off/, 'an inert dev arm reads as a live one');
+  assert.match(block, /dev\.on_btn'\), 'cptog'/, 'the OFF note lost its one-tap fix');
+});
+
+// ── all wallets ──────────────────────────────────────────────────────────────
+
+test('the wallet row offers 👥 All, arms as "*", and the total is stated', () => {
   const u = user();
-  u.copy = { on: false, targets: [] };
-  const out = await typed({ action: 'dev_addr', chain: 'solana' }, `${MINT} 0.05 0.5`);
-  assert.match(out.replace(/<[^>]+>/g, ''), /OFF/i, 'an inert arm reads as a live one');
+  core.newSnipeDraft(CHAT);
+  const kb = tg._test.snwWalletScreen(CHAT).kb.inline_keyboard;
+  assert.ok(kb.flat().some((b) => b.callback_data === 'snww:*'), 'no All-wallets choice on the picker');
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA, amount: 0.05, walletId: '*' });
+  const t = core.armSnipeDraft(CHAT);
+  assert.equal(t.walletId, '*');
+  // The armed confirmation states the multiplied total — real money must never
+  // hide behind a multiplier. user() has 2 wallets: 0.05 × 2 = 0.1.
+  const txt = tg._test.snipeArmedText(CHAT, t).replace(/<[^>]+>/g, '');
+  assert.match(txt, /0\.1/, 'the multiplied total is not on the confirmation');
+  assert.ok(core.snipeTargetById(u, t.id), 'the target was not stored');
+});
+
+test('an all-wallet target buys on EVERY wallet from one probe, and settles once', async () => {
+  const u = user();
+  const t = core.addSnipeTarget(CHAT, { ca: CA, chain: 'robinhood', amount: 0.05, walletId: '*' });
+  let probes = 0;
+  const wids = [];
+  const real = { can: core.canTradeNow, buy: core.buy };
+  core.canTradeNow = async () => { probes++; return true; };
+  core.buy = async (cid, ca2, amt, chain, wid) => { wids.push(wid); return { chain, native: 'ETH', ca: ca2, hash: '0x' + wids.length, spentEth: 0.05, gotTokens: 10, sym: 'P' }; };
+  const notes = [];
+  watchers.setNotifier((chatId, text) => { notes.push(text); });
+  try { await watchers._test.caSnipeCycle(); } finally { core.canTradeNow = real.can; core.buy = real.buy; watchers.setNotifier(() => {}); }
+  assert.deepEqual(wids.sort(), ['w1', 'w2'], 'not every wallet bought');
+  assert.equal(probes, 1, 'the contract was probed once per wallet');
+  assert.equal(core.snipeTargetById(u, t.id).status, 'done');
+  assert.ok(notes.some((n) => /2\/2 wallets/.test(n)), 'the fill does not say how many wallets filled');
+});
+
+test('one broke wallet does not stop the others; every wallet empty disarms', async () => {
+  const u = user();
+  const t = core.addSnipeTarget(CHAT, { ca: CA, chain: 'robinhood', amount: 0.05, walletId: '*' });
+  const real = { can: core.canTradeNow, buy: core.buy };
+  core.canTradeNow = async () => true;
+  const notes = [];
+  watchers.setNotifier((chatId, text) => { notes.push(text); });
+  core.buy = async (cid, ca2, amt, chain, wid) => {
+    if (wid === 'w1') throw new Error('insufficient funds for gas');
+    return { chain, native: 'ETH', ca: ca2, hash: '0xok', spentEth: 0.05, gotTokens: 10, sym: 'P' };
+  };
+  try {
+    await watchers._test.caSnipeCycle();
+    assert.equal(core.snipeTargetById(u, t.id).status, 'done');
+    assert.ok(notes.some((n) => /1\/2 wallets/.test(n)), 'a partial fill reads as a full one');
+    // Every wallet empty → disarmed, the same rule the single-wallet path keeps.
+    const t2 = core.addSnipeTarget(CHAT, { ca: CA2, chain: 'robinhood', amount: 0.05, walletId: '*' });
+    core.buy = async () => { throw new Error('insufficient funds for gas'); };
+    await watchers._test.caSnipeCycle();
+    assert.equal(core.snipeTargetById(u, t2.id).status, 'failed');
+  } finally { core.canTradeNow = real.can; core.buy = real.buy; watchers.setNotifier(() => {}); }
 });
 
 test('the typed TP/SL editor accepts 100/50 and off, refuses an impossible SL', async () => {

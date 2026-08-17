@@ -1157,10 +1157,33 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   with a one-tap 🟢 fix — an inert watch reading as live is the
   stop-loss-the-user-believes-exists.
 - **The panel's 🎯 Target is a CHOICE of two kinds** ("dmn target dev
-  walletnya"): 📍 token contract, or 🧑‍💻 dev wallet — the latter drops into
-  the wizard on the panel's chain. A wallet and a CA share the same address
-  shape on every chain, so no paste can be auto-classified into one or the
-  other; the user says which they mean.
+  walletnya"): 📍 token contract, or 🧑‍💻 dev wallet. A wallet and a CA share
+  the same address shape on every chain, so no paste can be auto-classified
+  into one or the other; the user says which they mean. The dev kind lives ON
+  the panel (`draft.kind`): its required rows become Chain · Dev wallet ·
+  Amount/launch · 💰 Budget, and the rows the dev path does not honour
+  (wallet, slippage, TP/SL, expiry) are HIDDEN, not greyed — a row the backend
+  ignores is the stop-loss-the-user-believes-exists. Switching kinds clears
+  the address (shape-valid both ways, semantically wrong both ways), and ⚡
+  arms a dev target through `addCopyTarget` ('launches'), discriminated by
+  `mode === 'launches'` on the return.
+- **👥 All wallets** ("harus ada fitur all wallet"): the wallet row accepts
+  `walletId: '*'`, resolved at FIRE time so a wallet added after arming still
+  snipes. The amount is PER WALLET — the picker row and the armed confirmation
+  both state the multiplied total. `_fireCaSnipe` buys the wallets in
+  parallel, probes the contract ONCE, and aggregates: any fill → done (TP/SL
+  placed per filled wallet at ITS OWN realised entry, orders bound to that
+  wallet); any broadcast → done (never re-arm, it may still land); EVERY
+  wallet empty → disarmed; anything else → re-armed for the next tick. One
+  broke wallet must never stop the others, and a partial fill says `k/N
+  wallets` on the message.
+- **"respon sangat lambat" is measured, not argued.** `handleUpdate` logs
+  `[ui] slow cb:… handle=…ms age=…s` for any update that took >1.5s to handle
+  or was already >5s old on arrival — high `age` means the delay happened
+  BEFORE the bot (long-poll gap, restart backlog, Telegram); high `handle`
+  with low age is ours. The path label comes from callback data or the pending
+  action, NEVER from message text — the import-wallet step is a private key in
+  a plain message.
 
 ```bash
 cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC
