@@ -385,6 +385,32 @@ test('the fill turns TP/SL into real orders at the REALISED entry', () => {
   assert.strictEqual((fill.match(/, t\.walletId\)/g) || []).length, 2);
 });
 
+test('arming asks WHICH CHAIN first, and the answer travels with the pending step', () => {
+  // "snipenya dari awal salah aturan, disuruh pilih chain mana dulu". The old
+  // flow bound the target to whatever chain happened to be active — a Solana
+  // mint pasted while Ethereum was active bounced as "not a valid contract
+  // address", with the fix two screens away on 🌐.
+  const TGs = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const add = TGs.slice(TGs.indexOf("if (data === 'csnadd')"), TGs.indexOf("if (data.startsWith('csnx:'))"));
+  // ➕ renders a picker; the pending step is set only AFTER a chain is tapped.
+  assert.match(add, /csnch:\$\{c\.key\}/);
+  const pick = add.slice(add.indexOf("if (k === 'csnch')"));
+  assert.match(pick, /setPending\(chatId, \{ action: 'ca_snipe', chain: ch\.key \}\)/);
+  assert.ok(!add.slice(0, add.indexOf("if (k === 'csnch')")).includes('setPending'), 'csnadd still binds the target to the active chain before any chain was picked');
+  // The example address in the prompt is chain-shaped — a Solana user shown
+  // `0xabc…` copies the shape they were shown.
+  assert.match(pick, /isSvm\(ch\.key\) \? 'Ge87Etsj…' : '0xabc…'/);
+  // Dev snipe follows the same rule, offering ONLY the launchpad chains — so
+  // the "switch chain with 🌐, then try again" dead end cannot come back.
+  const dev = TGs.slice(TGs.indexOf("if (data === 'cpaddd')"), TGs.indexOf("if (k === 'cprm')"));
+  assert.match(dev, /filter\(\(c\) => core\.canDevSnipe\(c\.key\)\)/);
+  assert.match(dev, /setPending\(chatId, \{ action: 'copy_add', mode: 'launches', chain: ch\.key \}\)/);
+  // And the parse step spends the PICKED chain, not whatever is active by the
+  // time the user finishes typing.
+  const parse = TGs.slice(TGs.indexOf("if (p.action === 'copy_add')"), TGs.indexOf("if (p.action === 'alert_price')"));
+  assert.match(parse, /const ch = \(p\.chain && core\.chainOf\(p\.chain\)\) \|\| activeChain\(chatId\)/);
+});
+
 test('the copy screen links THROUGH to the CA snipe', () => {
   // Three features answer to the word "snipe" and two of them live on the Copy
   // screen's buttons. A user sent there by that word found no way to the CA
