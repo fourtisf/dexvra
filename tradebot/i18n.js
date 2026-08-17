@@ -495,9 +495,15 @@ const S = {
     en: '💰 <b>Budget</b>\n\nTotal spend cap for this developer — I stop buying its launches once it is spent (per launch: <b>{amt}</b>). Tap one, or type your own in {native}.',
     id: '💰 <b>Budget</b>\n\nBatas total belanja untuk developer ini — saya berhenti beli launch-nya begitu habis (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri dalam {native}.',
   },
+  // ONE question, nothing else ("untuk ini cukup berikan pertanyaan dev wallet
+  // aja"). The what-happens-next explanation lives on the panel's dev footer,
+  // and the amount/budget questions follow on their own screens — restating
+  // them here was the old rulebook prompt creeping back. The one-line shortcut
+  // still WORKS for whoever knows it; advertising it here is what read as a
+  // rule to follow.
   'snipe.panel.dev_prompt': {
-    en: "🧑‍💻 <b>Dev wallet</b> on {chain}\n\nPaste the <b>developer's wallet address</b> to follow — every NEW token it launches is bought automatically, until the budget runs out.\n\n<i>Shortcut: <b>&lt;wallet&gt; &lt;perLaunch&gt; &lt;budget&gt;</b> on one line fills everything at once.</i>",
-    id: '🧑‍💻 <b>Wallet developer</b> di {chain}\n\nPaste <b>alamat wallet developer</b> yang mau diikuti — tiap token BARU yang dia launch langsung dibeli otomatis, sampai budget-nya habis.\n\n<i>Jalur cepat: <b>&lt;wallet&gt; &lt;perLaunch&gt; &lt;budget&gt;</b> satu baris, semuanya langsung terisi.</i>',
+    en: "🧑‍💻 <b>Dev wallet</b> on {chain}\n\nPaste the <b>developer's wallet address</b>:",
+    id: '🧑‍💻 <b>Wallet developer</b> di {chain}\n\nPaste <b>alamat wallet developer</b>-nya:',
   },
   'snipe.panel.dev_foot': {
     en: "<i>Buys use your ACTIVE wallet and your normal slippage. Only this developer's own launches are bought — never its ordinary trades. Honeypots are skipped; the budget caps your risk.</i>",
