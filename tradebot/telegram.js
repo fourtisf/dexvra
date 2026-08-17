@@ -1533,7 +1533,10 @@ function caSnipeScreen(chatId) {
     for (const t of armed) {
       const c = core.chainOf(t.chain) || { emoji: '', name: t.chain, native: '' };
       const left = t.expiresAt ? Math.max(0, Math.round((t.expiresAt - now) / 3600000)) : null;
-      L.push(`${c.emoji} <code>${short(t.ca)}</code> · <b>${esc(t.amount)} ${esc(c.native)}</b>`
+      // ×N, or this row understates the spend by the whole multiplier the
+      // armed message was careful to state.
+      const nW = core.copyFanOut(u, t);
+      L.push(`${c.emoji} <code>${short(t.ca)}</code> · <b>${esc(t.amount)} ${esc(c.native)}</b>${nW > 1 ? ` <b>× ${nW}</b>` : ''}`
         + (t.slipBps > 0 ? ` · ${t.slipBps / 100}%` : '')
         + (t.tpPct > 0 || t.slPct > 0 ? ` · ${[t.tpPct > 0 ? `TP +${t.tpPct}%` : '', t.slPct > 0 ? `SL −${t.slPct}%` : ''].filter(Boolean).join('/')}` : '')
         + (left != null ? ` · <i>${left}h left</i>` : ''));
@@ -1608,17 +1611,24 @@ function snipeSetupScreen(chatId, note) {
   const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
   const dev = (d.kind === 'dev');
   const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain, native: '' };
-  const all = d.walletId === '*';
   const wl = core.walletList(u);
-  const wLab = all ? T(chatId, 'snipe.panel.wallet_all', { n: wl.length }) : snwWalletLabel(u, d.walletId);
+  // The wallet SELECTION: '*' (all, resolved at fire time), or a set of ids —
+  // deleted wallets dropped from the count so the multiplier stays honest.
+  const selArr = d.walletIds === '*' ? null : (Array.isArray(d.walletIds) ? d.walletIds.filter((id) => wl.some((w) => w.id === id)) : []);
+  const selCount = selArr === null ? wl.length : selArr.length;
+  const wLab = selArr === null
+    ? T(chatId, 'snipe.panel.wallet_all', { n: wl.length })
+    : selArr.length === 0 ? null
+      : selArr.length === 1 ? snwWalletLabel(u, selArr[0])
+        : T(chatId, 'snipe.panel.wallet_n', { k: selArr.length, n: wl.length });
   const tpslOn = d.tpPct > 0 || d.slPct > 0;
   const tpslLab = tpslOn
     ? [d.tpPct > 0 ? `TP +${d.tpPct}%` : '', d.slPct > 0 ? `SL −${d.slPct}%` : ''].filter(Boolean).join(' · ')
     : T(chatId, 'snipe.panel.off');
   const slipLab = d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default');
-  // The amount is PER WALLET; with All selected the total is the honest number
-  // to put next to it — real money must never hide behind a multiplier.
-  const amtLine = d.amount ? `${esc(d.amount)} ${esc(ch.native)}${!dev && all && wl.length > 1 ? ` × ${wl.length} = ${esc(String(Number((Number(d.amount) * wl.length).toFixed(6))))} ${esc(ch.native)}` : ''}` : null;
+  // The amount is PER WALLET; with several selected the total is the honest
+  // number to put next to it — real money must never hide behind a multiplier.
+  const amtLine = d.amount ? `${esc(d.amount)} ${esc(ch.native)}${selCount > 1 ? ` × ${selCount} = ${esc(trimNum(Number(d.amount) * selCount))} ${esc(ch.native)}` : ''}` : null;
   const tKind = dev ? '🧑‍💻' : '📍';
   // ✅/⏳ per required row — the reference panel's STATUS column, inline.
   const need = (ok) => (ok ? '✅' : '⏳');
@@ -1641,7 +1651,7 @@ function snipeSetupScreen(chatId, note) {
   // stop-loss-the-user-believes-exists.
   const budLab = d.budget
     ? `${esc(d.budget)} ${esc(ch.native)}`
-    : (d.amount ? `${esc(trimNum(Number(d.amount) * 10))} ${esc(ch.native)} (10×)` : T(chatId, 'snipe.panel.bud_auto'));
+    : (d.amount ? `${esc(trimNum(Number(d.amount) * selCount * 10))} ${esc(ch.native)} (10×)` : T(chatId, 'snipe.panel.bud_auto'));
   L.push(
     '',
     T(chatId, 'snipe.panel.optional'),
@@ -1662,7 +1672,7 @@ function snipeSetupScreen(chatId, note) {
     [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
   ];
   if (dev) {
-    kbRows.push([btn(`💰 ${T(chatId, 'snipe.panel.budget')}`, 'snw:bud'), btn(d.budget ? `✅ ${d.budget} ${ch.native}` : (d.amount ? `${trimNum(Number(d.amount) * 10)} ${ch.native} (10×)` : '10×'), 'snw:bud')]);
+    kbRows.push([btn(`💰 ${T(chatId, 'snipe.panel.budget')}`, 'snw:bud'), btn(d.budget ? `✅ ${d.budget} ${ch.native}` : (d.amount ? `${trimNum(Number(d.amount) * selCount * 10)} ${ch.native} (10×)` : '10×'), 'snw:bud')]);
   } else {
     kbRows.push([btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')]);
   }
@@ -1687,18 +1697,23 @@ function snwWalletScreen(chatId) {
   const u = core.ensureUser(chatId);
   const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
   const wl = core.walletList(u);
+  // MULTI-SELECT, the same model as the buy/sell wallet picker ("bisa pilih
+  // multi wallet, all on atau all off, sama kaya beli"): tap a wallet to
+  // toggle it; ✅/⬜ set the lot. '*' keeps its meaning — EVERY wallet,
+  // resolved at fire time, so a wallet added after arming still snipes. The
+  // dev path honours the selection too: each fill records its own exit-mirror
+  // leg, so every wallet's slice is sold from the wallet that bought it.
+  const sel = d.walletIds === '*' ? new Set(wl.map((w) => w.id)) : new Set(Array.isArray(d.walletIds) ? d.walletIds : []);
   const kbR = [];
-  // All wallets FIRST — "harus ada fitur all wallet". The amount is per
-  // wallet, and the button says so; the armed message states the total.
-  // NOT offered on the dev path: the exit-mirror ledger pins ONE wallet per
-  // position (holding[token].wid), so an all-wallet dev snipe would sell only
-  // one wallet's bag and strand the rest — a row the engine cannot honour.
-  if (wl.length > 1 && d.kind !== 'dev') kbR.push([btn(`${d.walletId === '*' ? '✓ ' : ''}${T(chatId, 'snipe.panel.wallet_all_btn', { n: wl.length })}`, 'snww:*')]);
+  if (wl.length > 1) kbR.push([
+    btn(T(chatId, 'snipe.panel.wallet_all_btn', { n: wl.length }), 'snww:*'),
+    btn(T(chatId, 'snipe.panel.wallet_none_btn'), 'snw:waln'),
+  ]);
   wl.forEach((w, i) => {
     const name = String(w.name || '').slice(0, 16);
-    kbR.push([btn(`${w.id === d.walletId ? '✓ ' : ''}W${i + 1}${name ? ' ' + name : ''} · ${short(w.address)}`, `snww:${w.id}`)]);
+    kbR.push([btn(`${sel.has(w.id) ? '✅' : '⬜️'} W${i + 1}${name ? ' ' + name : ''} · ${short(w.address)}`, `snwwt:${w.id}`)]);
   });
-  kbR.push([btn('« Back', 'snw:open')]);
+  kbR.push([btn(T(chatId, 'snipe.panel.done_btn'), 'snw:open')]);
   return { text: T(chatId, 'snipe.panel.wal_pick'), kb: { inline_keyboard: kbR } };
 }
 function snwAmountScreen(chatId) {
@@ -1719,13 +1734,14 @@ function snwBudgetScreen(chatId) {
   const u = core.ensureUser(chatId);
   const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
   const ch = core.chainOf(d.chain) || { native: '' };
-  const amt = Number(d.amount) || 0;
+  // Multiples of ONE LAUNCH, not of the per-wallet amount: with 5 wallets
+  // selected a launch costs 5× the amount, and a "3×" pick priced off the
+  // amount alone would arm a budget the fire-time check can never fit.
+  const per = (Number(d.amount) || 0) * core.copyFanOut(u, { walletIds: d.walletIds });
   const kbR = [];
-  // Multiples of the amount just picked, labelled with the launch count they
-  // buy — the number the user actually thinks in.
-  if (amt > 0) kbR.push([3, 5, 10].map((m) => btn(`${d.budget === trimNum(amt * m) ? '✓ ' : ''}${trimNum(amt * m)} ${ch.native} (${m}×)`, `snwb:${trimNum(amt * m)}`)));
+  if (per > 0) kbR.push([3, 5, 10].map((m) => btn(`${d.budget === trimNum(per * m) ? '✓ ' : ''}${trimNum(per * m)} ${ch.native} (${m}×)`, `snwb:${trimNum(per * m)}`)));
   kbR.push([btn('« Back', 'snw:open')]);
-  return { text: T(chatId, 'snipe.panel.bud_pick', { amt: amt > 0 ? `${trimNum(amt)} ${esc(ch.native)}` : '—', native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
+  return { text: T(chatId, 'snipe.panel.bud_pick', { amt: per > 0 ? `${trimNum(per)} ${esc(ch.native)}` : '—', native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
 }
 function snwSlipScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -1768,13 +1784,22 @@ function snipeArmedText(chatId, tgt) {
     exits: exitParts ? T(chatId, 'snipe.ca.exits', { parts: exitParts }) : '',
     hours: Math.round((tgt.expiresAt - tgt.createdAt) / 3600000),
   });
-  // All-wallet: the multiplied total is real money and must be ON the
-  // confirmation, not discovered on the receipts.
-  if (tgt.walletId === '*') {
-    const n = core.walletList(core.ensureUser(chatId)).length;
-    out += '\n' + T(chatId, 'snipe.panel.armed_all', { n, amt: esc(tgt.amount), native: esc(ch.native), total: esc(trimNum(Number(tgt.amount) * n)) });
-  }
-  return out;
+  // Multi-wallet: the multiplied total is real money and must be ON the
+  // confirmation, not discovered on the receipts. A CA snipe fires ONCE, so it
+  // gets the one-shot sentence (see walletScopeLine).
+  return out + walletScopeLine(chatId, tgt, tgt.amount, ch.native, 'snipe.panel.armed_wallets');
+}
+/** "👥 On every wallet (6) — 0.1 SOL each, …" — the wallet scope and the
+ *  multiplied total, in the cadence of the feature that is arming. Empty when
+ *  only one wallet is involved, because there is no multiplier to state. */
+function walletScopeLine(chatId, tgt, amount, native, key) {
+  const all = tgt.walletId === '*';
+  const n = all ? core.walletList(core.ensureUser(chatId)).length : (Array.isArray(tgt.walletIds) ? tgt.walletIds.length : 1);
+  if (!(n > 1)) return '';
+  return '\n' + T(chatId, key, {
+    scope: T(chatId, all ? 'snipe.panel.scope_all' : 'snipe.panel.scope_n', { n }),
+    n, amt: esc(amount), native: esc(native), total: esc(trimNum(Number(amount) * n)),
+  });
 }
 
 function snipeScreen(chatId) {
@@ -1953,7 +1978,11 @@ function copyScreen(chatId) {
       const badge = (t.mode === 'launches') ? '🎯 dev snipe' : '👥 copy trades';
       const spent = Number(t.spentEth).toFixed(3), max = esc(t.maxEth);
       const held = Object.keys(t.holding || {}).length;
-      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy · used ${spent}/${max} ${ch.native || ''}\n` +
+      // ×N on the per-buy figure: a 3-wallet target spends 3× this on every
+      // launch, and a row that hides the multiplier is the one screen where a
+      // user checks what the bot is committed to spending.
+      const nW = core.copyFanOut(u, t);
+      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy${nW > 1 ? ` × <b>${nW}</b> wallets` : ''} · used ${spent}/${max} ${ch.native || ''}\n` +
         `    🔻 Exit mirror: <b>${t.copySell ? '🟢 ON' : '⚪ OFF'}</b>${held ? ` · watching <b>${held}</b> position${held > 1 ? 's' : ''}` : ''}\n`;
       kbRows.push([
         btn(t.copySell ? '🔻 Exit mirror OFF' : '🔻 Exit mirror ON', `cpsell:${t.id}`),
@@ -3212,6 +3241,7 @@ async function onCallback(q) {
     if (ca === 'cancel') { core.clearSnipeDraft(chatId); const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'chain') { const s = snwChainScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'wal') { const s = snwWalletScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    if (ca === 'waln') { try { core.updateSnipeDraft(chatId, { walletIds: [] }); } catch (_) {} const s = snwWalletScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'amt') { setPending(chatId, { action: 'snw_amt' }); const s = snwAmountScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'slip') { const s = snwSlipScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'tpsl') { const s = snwTpslScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -3269,10 +3299,14 @@ async function onCallback(q) {
           const chG = core.chainOf(tgt.chain) || activeChain(chatId);
           const u2 = core.ensureUser(chatId);
           const on = !!(u2.copy && u2.copy.on);
+          // The wallet fan-out is real money per LAUNCH — on the consent
+          // message, never discovered on the receipts. A dev snipe RECURS, so
+          // it takes the recurring sentence whatever the selection shape is.
+          const multi = walletScopeLine(chatId, tgt, tgt.buyEth, chG.native, 'dev.armed_wallets');
           await edit(chatId, mid, T(chatId, 'dev.armed', {
             addr: esc(short(tgt.address)), chain: `${chG.emoji} ${esc(chG.name)}`,
             perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(chG.native),
-          }) + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off'),
+          }) + multi + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off'),
           on ? undefined : { inline_keyboard: [[btn(T(chatId, 'dev.on_btn'), 'cptog')]] });
         } else {
           await edit(chatId, mid, snipeArmedText(chatId, tgt));
@@ -3288,7 +3322,34 @@ async function onCallback(q) {
     const s = snipeSetupScreen(chatId);
     return edit(chatId, mid, s.text, s.kb);
   }
-  if (k === 'snwch' || k === 'snww' || k === 'snwa' || k === 'snwb' || k === 'snws' || k === 'snwx' || k === 'snwt') {
+  // Wallet picker taps re-render the PICKER, not the panel — toggling five
+  // wallets must not cost five round trips through the whole panel. ✔ Done
+  // ('snw:open') is the way back.
+  if (k === 'snww' || k === 'snwwt') {
+    try {
+      if (k === 'snww') {
+        // '✅ All on' ('*': every wallet, resolved at fire time). A legacy
+        // single-id callback from an old message lands here too.
+        core.updateSnipeDraft(chatId, ca === '*' ? { walletIds: '*' } : { walletIds: [ca] });
+      } else {
+        const u = core.ensureUser(chatId);
+        const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+        const wl = core.walletList(u);
+        // STALE IDS ARE DROPPED HERE, not carried into the patch. A draft that
+        // still names a deleted wallet (removeWallet does not prune drafts, and
+        // the pre-multi migration mints one unvalidated) would otherwise make
+        // updateSnipeDraft throw on EVERY toggle — including toggles of
+        // perfectly good wallets — and the catch below would swallow it into a
+        // picker that redraws unchanged: a dead button with no error.
+        const cur = (d.walletIds === '*' ? wl.map((w) => w.id) : (Array.isArray(d.walletIds) ? d.walletIds : []))
+          .filter((id) => wl.some((w) => w.id === id));
+        core.updateSnipeDraft(chatId, { walletIds: cur.includes(ca) ? cur.filter((id) => id !== ca) : [...cur, ca] });
+      }
+    } catch (_) {}
+    const s = snwWalletScreen(chatId);
+    return edit(chatId, mid, s.text, s.kb);
+  }
+  if (k === 'snwch' || k === 'snwa' || k === 'snwb' || k === 'snws' || k === 'snwx' || k === 'snwt') {
     let note = null;
     try {
       if (k === 'snwch') {
@@ -3299,7 +3360,6 @@ async function onCallback(q) {
         // reads as the bot losing the address on its own.
         if (had && !d.ca) note = T(chatId, 'snipe.panel.ca_dropped').replace(/<[^>]+>/g, '');
       }
-      else if (k === 'snww') core.updateSnipeDraft(chatId, { walletId: ca });
       else if (k === 'snwa') core.updateSnipeDraft(chatId, { amount: ca });
       else if (k === 'snwb') core.updateSnipeDraft(chatId, { budget: ca });
       else if (k === 'snws') core.updateSnipeDraft(chatId, { slipPct: ca });

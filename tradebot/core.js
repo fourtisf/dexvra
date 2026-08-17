@@ -527,6 +527,12 @@ function ensureUser(chatId, referredBy) {
     // The Snipe Setup panel's draft. Absent means "no panel open" — that is a
     // state, not a hole, so nothing is minted here; only garbage is normalized.
     if (u.snipeDraft !== undefined && u.snipeDraft !== null && typeof u.snipeDraft !== 'object') { u.snipeDraft = null; ch = true; }
+    // Drafts written before the wallet row became a SET carry a single
+    // walletId — migrate it so a panel opened across the deploy keeps its pick.
+    if (u.snipeDraft && u.snipeDraft.walletIds === undefined) {
+      u.snipeDraft.walletIds = u.snipeDraft.walletId === '*' ? '*' : (u.snipeDraft.walletId ? [u.snipeDraft.walletId] : []);
+      delete u.snipeDraft.walletId; ch = true;
+    }
     if (u.lang !== 'id' && u.lang !== 'en') { u.lang = 'en'; ch = true; }                  // UI language
     if (!u.security || typeof u.security !== 'object') { u.security = { withdrawLock: false, whitelist: [], wdTimes: [] }; ch = true; }
     if (typeof u.security.withdrawLock !== 'boolean') { u.security.withdrawLock = false; ch = true; }
@@ -773,6 +779,18 @@ const MAX_COPY_TARGETS = Math.max(1, Number(process.env.MAX_COPY_TARGETS || 5));
  * is the one a sniper wants anyway.
  */
 function canDevSnipe(chain) { return !!chainOf(chain) && isEnabled(chain); }
+/** How many wallets one fire of this selection buys on. '*' is resolved
+ *  against the CURRENT wallet list (it is resolved again at fire time, so this
+ *  is an estimate for pricing a budget, never a promise). */
+function copyFanOut(u, sel) {
+  if (!sel) return 1;
+  if (sel.walletId === '*' || sel.walletIds === '*') return Math.max(1, walletList(u).length);
+  if (Array.isArray(sel.walletIds) && sel.walletIds.length) return sel.walletIds.length;
+  return 1;
+}
+/** A native amount written the way the UI writes it — no float tails in an
+ *  error message the user is asked to act on. */
+const trimAmt = (n) => String(Number(Number(n).toFixed(6)));
 // mode: 'trades' = mirror the wallet's swap-BUYS (classic copy-trade);
 //       'launches' = buy tokens the wallet CREATES on a launchpad (dev-wallet snipe).
 function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode, opts = {}) {
@@ -795,24 +813,47 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode, opts = {}) 
   if (u.copy.targets.some((t) => norm(t.address) === norm(address) && t.chain === chain && (t.mode || 'trades') === mode)) throw new Error(mode === 'launches' ? 'already sniping that dev on this chain' : 'already copying that wallet on this chain');
   const be = Number(buyEth);
   if (!(be > 0)) throw new Error('per-buy amount must be > 0');
+  // Per-target execution settings, all honoured by _followerBuy: the wallet
+  // SELECTION the buys (and their exit-mirror legs) are pinned to — one id,
+  // a subset, or '*' for every wallet at fire time — the slippage bound, and
+  // TP/SL that become real orders at each fill. Same bounds as addSnipeTarget.
+  //
+  // RESOLVED BEFORE THE BUDGET, because the budget is measured in LAUNCHES and
+  // a launch costs buyEth × the selection size.
+  let walletId = null, walletIds;
+  if (Array.isArray(opts.walletIds) && opts.walletIds.length) {
+    walletIds = [...new Set(opts.walletIds.map(String))];
+    for (const id of walletIds) if (!walletById(u, id)) throw new Error('no such wallet');
+    walletId = walletIds[0];
+    if (walletIds.length === 1) walletIds = undefined;
+  } else if (opts.walletId === '*') {
+    walletId = '*';
+  } else if (opts.walletId) {
+    if (!walletById(u, opts.walletId)) throw new Error('no such wallet');
+    walletId = opts.walletId;
+  }
+  // THE BUDGET IS PRICED PER LAUNCH, NOT PER WALLET.
+  //
+  // `_followerBuy` fits the whole fan-out or skips it, so a budget that covers
+  // one wallet but not the selection arms cleanly and then silently never
+  // fires — an armed watch that can never fire, which is exactly the
+  // inert-watch failure this file refuses everywhere else. The floor and the
+  // "ten buys" default are both scaled by the selection, so "budget" means the
+  // same thing on one wallet and on five.
+  const perLaunch = be * copyFanOut(u, { walletId, walletIds });
   // The budget is a CAP, not a question ("fitur yang tadi hapus aja"): omitted,
-  // it defaults to ten buys — an uncapped auto-buyer is the "buy ngasal" class
-  // of hazard, so the cap survives even when nobody is asked for one. The
-  // armed message states the concrete number either way.
-  const me = (maxEth == null || maxEth === '') ? be * 10 : Number(maxEth);
-  if (!(me >= be)) throw new Error('total budget must be ≥ the per-buy amount');
-  // Per-target execution settings, all honoured by _followerBuy: the wallet the
-  // buy (and its exit mirror) is pinned to, the slippage bound, and TP/SL that
-  // become real orders at the fill — same bounds as addSnipeTarget.
-  const walletId = opts.walletId ? (walletById(u, opts.walletId) ? opts.walletId : null) : null;
-  if (opts.walletId && !walletId) throw new Error('no such wallet');
+  // it defaults to ten LAUNCHES — an uncapped auto-buyer is the "buy ngasal"
+  // class of hazard, so the cap survives even when nobody is asked for one.
+  // The armed message states the concrete number either way.
+  const me = (maxEth == null || maxEth === '') ? perLaunch * 10 : Number(maxEth);
+  if (!(me >= perLaunch)) throw new Error(perLaunch > be ? `total budget must be ≥ ${trimAmt(perLaunch)} — one launch buys on ${copyFanOut(u, { walletId, walletIds })} wallets` : 'total budget must be ≥ the per-buy amount');
   const tp = Number(opts.tpPct) || 0, sl = Number(opts.slPct) || 0;
   if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
   if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
   const t = {
     id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode,
     buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, holding: {}, copySell: true,
-    walletId: walletId || undefined,
+    walletId: walletId || undefined, walletIds,
     slipBps: Math.max(0, Math.min(5000, Math.round(Number(opts.slipBps) || 0))) || undefined,
     tpPct: tp || undefined, slPct: sl || undefined,
     cursor: 0, cursorSig: '', createdAt: Date.now(),
@@ -848,7 +889,7 @@ function armedSnipeTargets(u, now = Date.now()) {
   return snipeTargets(u).filter((t) => t.status === 'armed' && (!t.expiresAt || t.expiresAt > now));
 }
 
-function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs, tpPct, slPct } = {}) {
+function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, walletIds, ttlMs, tpPct, slPct } = {}) {
   const u = ensureUser(chatId);
   const chainKey = chain && chainOf(chain) && isEnabled(chain) ? chain : userChain(u);
   const svm = isSvm(chainKey);
@@ -873,13 +914,24 @@ function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs, t
   if (armedSnipeTargets(u).some((t) => t.chain === chainKey && (svm ? t.ca : String(t.ca).toLowerCase()) === key)) {
     throw new Error('that contract is already armed on this chain');
   }
-  // '*' = snipe on EVERY wallet, resolved at fire time. The amount is per
-  // wallet — the armed confirmation states the multiplied total.
+  // The wallet selection: '*' = EVERY wallet resolved at fire time, walletIds =
+  // a chosen SUBSET, walletId = one. The amount is per wallet — the armed
+  // confirmation states the multiplied total.
+  let ids;
+  if (Array.isArray(walletIds) && walletIds.length) {
+    ids = [...new Set(walletIds.map(String))];
+    for (const id of ids) if (!walletById(u, id)) throw new Error('no such wallet');
+    // One id collapses to the plain single-wallet shape; several keep the list
+    // AND pin walletId to the first, so older readers see a real wallet.
+    walletId = ids[0];
+    if (ids.length === 1) ids = undefined;
+  }
   const w = (walletId && walletId !== '*') ? walletById(u, walletId) : activeWallet(u);
   if (!w) throw new Error('no wallet');
   const t = {
     id: 'sn' + crypto.randomBytes(4).toString('hex'),
     ca, chain: chainKey, amount: String(amt), tpPct: tp || undefined, slPct: sl || undefined,
+    walletIds: ids,
     // 0 means "use my normal slippage" — stored as 0 rather than copying the
     // current value, so a later change to the global setting still reaches a
     // target the user never customised.
@@ -980,7 +1032,10 @@ function newSnipeDraft(chatId) {
     // token a developer wallet launches (a copy target in 'launches' mode).
     // One panel serves both — "dmn target dev walletnya".
     kind: 'ca',
-    chain: userChain(u), ca: null, walletId: w ? w.id : null,
+    // The wallet selection is a SET ("bisa pilih multi wallet, all on atau all
+    // off, sama kaya beli"): an array of wallet ids, or '*' for every wallet
+    // resolved at fire time. Same model as the buy/sell wallet picker.
+    chain: userChain(u), ca: null, walletIds: w ? [w.id] : [],
     amount: null, budget: null, slipPct: 0, tpPct: 0, slPct: 0, ttlH: SNIPE_DRAFT_TTL_H,
     createdAt: Date.now(),
   };
@@ -1008,9 +1063,6 @@ function updateSnipeDraft(chatId, patch = {}) {
     // arm a watch that can never fire, the inert-watch failure mode.
     if ((d.kind || 'ca') !== patch.kind) d.ca = null;
     d.kind = patch.kind;
-    // The dev path pins ONE wallet (the exit-mirror ledger records one wid per
-    // position) — '*' from a previous CA draft falls back to the active wallet.
-    if (d.kind === 'dev' && d.walletId === '*') { const w = activeWallet(u); d.walletId = w ? w.id : null; }
   }
   if (patch.ca !== undefined) {
     if (patch.ca === null) d.ca = null;
@@ -1021,11 +1073,22 @@ function updateSnipeDraft(chatId, patch = {}) {
     }
   }
   if (patch.walletId !== undefined) {
-    // '*' = every wallet, resolved at FIRE time so a wallet added after arming
-    // still snipes. The amount is PER WALLET; the panel and the armed message
-    // both say so.
+    // Legacy single-wallet patch, kept so older callers and the one-line paths
+    // stay valid — it maps onto the selection set.
     if (patch.walletId !== '*' && !walletById(u, patch.walletId)) throw new Error('no such wallet');
-    d.walletId = patch.walletId;
+    d.walletIds = patch.walletId === '*' ? '*' : [patch.walletId];
+  }
+  if (patch.walletIds !== undefined) {
+    // The selection SET: '*' (every wallet, resolved at fire time — a wallet
+    // added after arming still snipes), or an array of wallet ids. An EMPTY
+    // array is a valid mid-edit state (the user just tapped "all off"); arming
+    // is where at-least-one is enforced.
+    if (patch.walletIds === '*') d.walletIds = '*';
+    else {
+      const ids = [...new Set((Array.isArray(patch.walletIds) ? patch.walletIds : []).map(String))];
+      for (const id of ids) if (!walletById(u, id)) throw new Error('no such wallet');
+      d.walletIds = ids;
+    }
   }
   if (patch.amount !== undefined) {
     if (patch.amount === null) d.amount = null;
@@ -1041,8 +1104,11 @@ function updateSnipeDraft(chatId, patch = {}) {
       const b = Number(patch.budget);
       if (!(b > 0)) throw new Error('budget must be > 0');
       // The same rule addCopyTarget enforces, checked here so the panel refuses
-      // at the row instead of at ⚡ — same message, one wording.
-      if (d.amount && b < Number(d.amount)) throw new Error('total budget must be ≥ the per-buy amount');
+      // at the row instead of at ⚡ — same message, one wording. Priced per
+      // LAUNCH: a budget that covers one wallet but not the selection would arm
+      // a target the fire-time check can never fit.
+      const per = Number(d.amount) * copyFanOut(u, { walletIds: d.walletIds });
+      if (d.amount && b < per) throw new Error(per > Number(d.amount) ? `total budget must be ≥ ${trimAmt(per)} — one launch buys on ${copyFanOut(u, { walletIds: d.walletIds })} wallets` : 'total budget must be ≥ the per-buy amount');
       d.budget = String(b);
     }
   }
@@ -1083,6 +1149,14 @@ function armSnipeDraft(chatId) {
   if (!chainOf(d.chain) || !isEnabled(d.chain)) throw new Error('that chain is disabled — pick another on the panel');
   if (!d.ca) throw new Error('no target yet — set the target first');
   if (!(Number(d.amount) > 0)) throw new Error('no amount yet — pick how much to spend first');
+  // The wallet SELECTION: '*' rides through as-is (resolved at fire time), a
+  // set of ids rides as walletIds, one id as the plain walletId — and an empty
+  // set is refused HERE, where the fix is one row away, not at fire time.
+  const sel = d.walletIds === '*' ? '*' : [...new Set((Array.isArray(d.walletIds) ? d.walletIds : []).filter((id) => walletById(u, id)))];
+  if (sel !== '*' && sel.length === 0) throw new Error('no wallet selected — pick at least one on the panel');
+  const walletOpts = sel === '*'
+    ? { walletId: '*' }
+    : sel.length === 1 ? { walletId: sel[0] } : { walletIds: sel };
   // A dev-wallet target is a copy target in 'launches' mode — the SAME store
   // the wizard and /copy write, so the panel cannot grow a second idea of what
   // a dev snipe is. The caller tells them apart by `mode === 'launches'`.
@@ -1090,15 +1164,15 @@ function armSnipeDraft(chatId) {
   if ((d.kind || 'ca') === 'dev') {
     // Budget unset = ten buys (addCopyTarget's default) — a cap without a
     // question. Every other panel row rides the target and is honoured by
-    // _followerBuy: wallet, slippage, TP/SL.
+    // _followerBuy: wallet selection, slippage, TP/SL.
     t = addCopyTarget(chatId, d.ca, d.chain, d.amount, Number(d.budget) > 0 ? d.budget : null, 'launches', {
-      walletId: d.walletId && d.walletId !== '*' ? d.walletId : undefined,
+      ...walletOpts,
       slipBps: Math.round((Number(d.slipPct) || 0) * 100),
       tpPct: d.tpPct, slPct: d.slPct,
     });
   } else {
     t = addSnipeTarget(chatId, {
-      ca: d.ca, chain: d.chain, amount: d.amount, walletId: d.walletId || undefined,
+      ca: d.ca, chain: d.chain, amount: d.amount, ...walletOpts,
       slipBps: Math.round((Number(d.slipPct) || 0) * 100),
       tpPct: d.tpPct, slPct: d.slPct,
       ttlMs: Number(d.ttlH) > 0 ? Number(d.ttlH) * 3600000 : undefined,
@@ -1129,7 +1203,7 @@ function setCopySell(chatId, targetId, on) {
  *  target held at that moment. That number is the baseline the exit watcher
  *  measures against: the position is only ours to mirror out of if it was ours
  *  to mirror into. */
-function copyHoldingAdd(t, token, targetBalRaw, walletId, boughtRaw) {
+function copyHoldingAdd(t, token, targetBalRaw, walletId, boughtRaw, legs) {
   t.holding = t.holding || {};
   // `wid` pins the exit to the wallet that actually opened the position. Without
   // it the sell goes to whatever wallet happens to be ACTIVE at exit time, and a
@@ -1143,7 +1217,16 @@ function copyHoldingAdd(t, token, targetBalRaw, walletId, boughtRaw) {
   // sold and never how much.
   let own = '';
   try { if (boughtRaw != null) { const v = BigInt(boughtRaw); if (v > 0n) own = v.toString(); } } catch (_) { own = ''; }
-  t.holding[copyTokenKey(t.chain, token)] = { bal: String(targetBalRaw == null ? '' : targetBalRaw), own, at: Date.now(), wid: walletId || null, tries: 0 };
+  const rec = { bal: String(targetBalRaw == null ? '' : targetBalRaw), own, at: Date.now(), wid: walletId || null, tries: 0 };
+  // A multi-wallet fill records one LEG per wallet — {wid, own} — because the
+  // exit must sell each wallet's slice from that wallet; a single wid would
+  // sell one bag and strand the rest. The top-level wid/own mirror the first
+  // leg so a reader that predates legs still sees a real position.
+  if (Array.isArray(legs) && legs.length) {
+    rec.legs = legs.map((l) => ({ wid: l.wid || null, own: String(l.own || '') }));
+    rec.wid = rec.legs[0].wid; rec.own = rec.legs[0].own;
+  }
+  t.holding[copyTokenKey(t.chain, token)] = rec;
   saveStoreNow();   // written through: a crash here would lose the exit baseline
 }
 /** Put a position BACK on the ledger after an exit attempt failed, so the next
@@ -1157,6 +1240,20 @@ function copyHoldingRetry(t, token, rec) {
   t.holding[k] = { ...(rec || {}), tries, lastTryAt: Date.now() };
   saveStoreNow();
   return tries;
+}
+/** Narrow a tracked position to the legs that have NOT been attempted yet,
+ *  without touching the retry accounting.
+ *
+ *  The exit loop sells one leg at a time and each leg must be off the ledger
+ *  for the duration of its own sell (a crash mid-sell must not let the next
+ *  cycle sell it again) — while the legs behind it stay ON, because nothing was
+ *  broadcast for those and dropping them would strand real money. Written
+ *  through for the same reason the rest of this ledger is. */
+function copyHoldingSet(t, token, rec) {
+  const k = copyTokenKey(t.chain, token);
+  t.holding = t.holding || {};
+  t.holding[k] = rec;
+  saveStoreNow();
 }
 function copyHoldingDrop(t, token) {
   if (!t.holding) return;
@@ -3438,10 +3535,10 @@ module.exports = {
   buyPresets, setSlippage, setBuyPresets, setAutoBuy, userGasBoost, setGasBoost, DEFAULT_BUY_PRESETS, defaultPresetsFor, PRESETS_MIN, PRESETS_MAX, setSnipeChain, setSnipeAmount,
   setConfirmBuy, setExpert, setReceiptStyle, perWalletReceipts, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
-  addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
+  addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingSet, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets,
   claimSnipeTarget, settleSnipeTarget, rearmSnipeTarget, expireSnipeTarget, MAX_SNIPE_TARGETS, SNIPE_TTL_MS,
-  snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H,
+  snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H, copyFanOut,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
