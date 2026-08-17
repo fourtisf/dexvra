@@ -330,6 +330,53 @@ warning and `fonts:check` print the exact `apt-get` line for whatever is actuall
 missing. "1 script(s) uncovered" is a diagnostic; a package name is an
 instruction, and it cannot be recalled wrongly if it is computed.
 
+## A Top 3 that was not the top of the Top 5
+
+Two banners, one minute apart, from the same admin panel:
+
+```
+Top 5 (14:25)  BEHEMOTH +3981% · PATE +1538% · 牛来 +118% · SESTRI +35.3% · BOYZ +31.1%
+Top 3 (14:26)  PATE +1538% · NYAN +25.3% · DOOM +18.7%
+```
+
+A Top 3 must be the first three of a Top 5. This one shared **one** token with
+it, and the two it added rank *below* two the Top 5 already had.
+
+**It was not the market moving.** PATE carried the identical `+1538%` on both, so
+both readings are from the same moment. What changed is the **POOL**: the board
+filter is `t.source === "live"` — whatever the website had a fresh price for at
+that instant — and `sendPreview` re-sampled it on every template switch, at
+`limit: countOf(id)`. Four tokens went stale between the two calls and left the
+ranking without a word.
+
+- **One sample per sitting, sliced per template.** Taken at `MAX_SLOTS` so it
+  serves any layout the admin clicks next; any two previews are then prefixes of
+  each other *by construction*, which no amount of re-fetching can give you.
+  `SAMPLE_TTL_MS` (3 min) stops a 14:25 sample being posted at 15:40.
+- ⚠️ **The session must keep the WHOLE sample, not the slice just rendered.** The
+  old tail wrote `coins: stripLogos(coins)`, so a Top 3 preview left a
+  three-token session and no wider layout could reuse it — that alone would have
+  made the fix inert, and silently: every preview would simply have gone on
+  re-sampling.
+- **🔄 Refresh needed its own action.** It shared the template-pick callback,
+  which now reuses the sample — so the button would have stopped refreshing while
+  still saying it did. That is a worse bug than the one being fixed, because it
+  is invisible.
+- **`pool` was measured, returned, and never printed.** When the live rows
+  collapsed, the card showed three tokens and looked entirely normal. It is on
+  the preview now with the sample age, plus a warning when the pool is barely
+  wider than the layout — a "top 5" drawn from six live tokens is a list, not a
+  ranking.
+- Posting already published `sess.coins` rather than a fresh reading, so the
+  channel got the card the admin approved. That half was right and a test now
+  pins it.
+
+```bash
+cd bot && node scripts/run-tests.js test/gainersSample.test.js   # 10 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

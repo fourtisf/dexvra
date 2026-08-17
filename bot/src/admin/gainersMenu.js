@@ -140,7 +140,10 @@ const bgKb = () =>
 function previewKb(template) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("📤 Post to channel", "gn_post")],
-    [Markup.button.callback("✏️ Swap a token", "gn_swap"), Markup.button.callback("🔄 Refresh data", `gn_t:${template}`)],
+    // Refresh has its OWN action. It used to reuse gn_t:, which is now the
+    // template picker and deliberately REUSES the sample — so this button would
+    // have quietly stopped refreshing anything while still saying it did.
+    [Markup.button.callback("✏️ Swap a token", "gn_swap"), Markup.button.callback("🔄 Refresh data", `gn_r:${template}`)],
     [Markup.button.callback("🖼 Another layout", "gn"), Markup.button.callback("❌ Cancel", "gn_cancel")],
   ]);
 }
@@ -162,23 +165,64 @@ function posKb(n) {
 const stripLogos = (coins) => coins.map(({ logo, img, ...rest }) => rest);
 
 /**
+ * How long one live sample serves the previews built from it.
+ *
+ * TWO BANNERS, ONE MINUTE APART, DISAGREEING ABOUT WHO THE TOP GAINERS ARE.
+ * Reported 2026-08-17: the Top 5 read BEHEMOTH +3981%, PATE +1538%, 牛来 +118%,
+ * SESTRI +35.3%, BOYZ +31.1%; the Top 3 posted a minute later read PATE +1538%,
+ * NYAN +25.3%, DOOM +18.7% — and NYAN and DOOM are BELOW two tokens the Top 5
+ * had. A Top 3 must be the first three of a Top 5 or one of them is wrong.
+ *
+ * It was not the market moving. PATE carried the identical +1538% on both, so
+ * the numbers were from the same moment. What changed is the POOL: the board
+ * filter is `t.source === "live"`, i.e. whatever the website had a fresh price
+ * for at that instant, and every preview re-sampled it independently. Four
+ * tokens went stale between the two calls and silently left the ranking.
+ *
+ * So a sample is taken ONCE and every template is a slice of it. Any two
+ * previews from one sitting are prefixes of each other by construction, which is
+ * a property no amount of re-fetching can give you.
+ */
+const SAMPLE_TTL_MS = 3 * 60 * 1000;
+
+/**
  * Render a preview and send it with the edit keyboard.
- * `fresh` fetches live gainers; otherwise the session's (possibly edited) list is
- * re-rendered, which is what makes a slot swap visible without losing the others.
+ *
+ * `fresh: false` re-renders the session's (possibly hand-edited) list, which is
+ * what makes a slot swap visible without losing the others. `fresh: "force"`
+ * deliberately takes a new sample. The default REUSES a sample younger than
+ * SAMPLE_TTL_MS so switching template does not re-roll the ranking.
  */
 async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   const cfg = cfgStore.get();
   const id = gb.pickTemplate(template, { pool: cfg.pool });
+  const need = gb.countOf(id);
+  const sess = ctx.session.gn;
   let coins;
   let source = "session";
   let notes = [];
-  if (fresh) {
-    const res = await gainers.topGainers({ limit: gb.countOf(id), minGainPct: cfg.minGainPct, minLiqUsd: cfg.minLiqUsd });
-    coins = res.coins;
+  let pool = sess && sess.pool;
+  let sampledAt = sess && sess.at;
+  // A sample is reusable when it is recent AND long enough for this template —
+  // a Top 3 sample cannot serve a Top 5, and padding it would invent a ranking.
+  const reusable = fresh !== "force" && sess && Array.isArray(sess.coins)
+    && sess.coins.length >= need && sess.at && Date.now() - sess.at < SAMPLE_TTL_MS;
+  if (fresh === false || reusable) {
+    coins = ((sess && sess.coins) || []).slice(0, need);
+    if (reusable && fresh !== false) source = sess.source || "board";
+    await gainers.loadLogos(coins);
+  } else {
+    // MAX_SLOTS, not `need`: one sample has to serve every template the admin
+    // may click next. Sampling `need` is what let a Top 3 preview take its own
+    // reading of a moving pool. Logos are loaded for the SLICE only, below, so
+    // the wider sample costs no extra downloads on the first render.
+    const res = await gainers.topGainers({ limit: gainers.MAX_SLOTS, minGainPct: cfg.minGainPct, minLiqUsd: cfg.minLiqUsd, logos: false });
     source = res.source;
     notes = res.notes;
-  } else {
-    coins = (ctx.session.gn && ctx.session.gn.coins ? ctx.session.gn.coins : []).slice(0, gb.countOf(id));
+    pool = res.pool;
+    sampledAt = Date.now();
+    ctx.session.gn = { template: id, coins: stripLogos(res.coins), source, pool, at: sampledAt };
+    coins = res.coins.slice(0, need);
     await gainers.loadLogos(coins);
   }
   if (!coins.length) {
@@ -213,17 +257,42 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     { source: image },
     { caption: shown.text, ...(shown.entities && shown.entities.length ? { caption_entities: shown.entities } : {}) },
   );
-  const short = coins.length < gb.countOf(id) ? `\n⚠️ Only <b>${coins.length}</b> live gainer(s) passed the filters — the layout adapted to fit.` : "";
+  const short = coins.length < need ? `\n⚠️ Only <b>${coins.length}</b> live gainer(s) passed the filters — the layout adapted to fit.` : "";
+  // THE POOL, ON THE SCREEN. topGainers has always measured and returned it, and
+  // nothing ever printed it — so when the board's live rows collapsed from many
+  // to three, the card showed three tokens and looked entirely normal. This is
+  // the one number that explains a ranking that changed for no visible reason.
+  const age = sampledAt ? Math.round((Date.now() - sampledAt) / 1000) : null;
+  const poolLine = Number.isFinite(pool)
+    ? `\n🎣 Live pool: <b>${pool}</b> token(s)${age != null ? ` · sampled ${age}s ago` : ""}`
+      // A "top 5" chosen from a pool of six is a list, not a ranking. Said here
+      // because the reader of the channel post cannot know it and the admin can.
+      + (pool > 0 && pool <= need + 1 ? `\n⚠️ <i>The pool is barely wider than the layout — this is close to "every live token", not a top ${need}.</i>` : "")
+    : "";
   await ctx.reply(
     `👀 <b>Preview — ${escapeHtml(gb.labelOf(id))}</b>\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
+      poolLine +
       short +
       (notes.length ? `\n<i>${escapeHtml(notes.join(" "))}</i>` : "") +
       (note ? `\n${note}` : "") +
       `\n\nPosting sends it to <code>${escapeHtml(cfgStore.targetChannel(cfg))}</code>.`,
     { parse_mode: "HTML", disable_web_page_preview: true, ...previewKb(id) },
   );
-  ctx.session.gn = { template: id, coins: stripLogos(coins) };
+  // Record the template WITHOUT narrowing the sample.
+  //
+  // This used to write `coins: stripLogos(coins)` — the SLICE — so a Top 3
+  // preview left a three-token session and the next template had nothing wide
+  // enough to reuse. That alone would have made the whole sample-once fix inert,
+  // and silently: every preview would simply have gone on re-sampling.
+  //
+  // `coins` is a prefix of the stored sample, so writing it back keeps any
+  // hand-edited slot while leaving the tail intact for a wider layout.
+  const prev = ctx.session.gn || {};
+  const kept = Array.isArray(prev.coins) && prev.coins.length > coins.length
+    ? [...stripLogos(coins), ...prev.coins.slice(coins.length)]
+    : stripLogos(coins);
+  ctx.session.gn = { ...prev, template: id, coins: kept, source, pool, at: sampledAt };
   return id;
 }
 
@@ -271,10 +340,20 @@ function register(bot, deps) {
   bot.action("gn_bg", cb((ctx) => edit(ctx, bgText(), bgKb())));
 
   // ── preview / publish ──
+  // Picking a layout RE-SLICES the sample already taken. Re-sampling here is
+  // what let a Top 3 and a Top 5 previewed a minute apart disagree about who the
+  // top gainers were.
   bot.action(/^gn_t:(.+)$/, cb(async (ctx) => {
     const arg = ctx.match[1];
-    await ctx.reply(`⏳ Fetching live gainers…`, HTML).catch(() => {});
+    await ctx.reply(`⏳ Building the preview…`, HTML).catch(() => {});
     await sendPreview(ctx, arg === "random" ? "random" : arg, { fresh: true });
+  }));
+
+  // …and 🔄 Refresh takes a NEW one, because that is what it says it does.
+  bot.action(/^gn_r:(.+)$/, cb(async (ctx) => {
+    const arg = ctx.match[1];
+    await ctx.reply(`⏳ Fetching live gainers…`, HTML).catch(() => {});
+    await sendPreview(ctx, arg === "random" ? "random" : arg, { fresh: "force" });
   }));
 
   bot.action("gn_cancel", cb(async (ctx) => {
