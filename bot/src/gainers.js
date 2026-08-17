@@ -75,12 +75,60 @@ function normSymbol(s) {
 }
 
 /** The @handle out of any x.com / twitter.com URL, or null. */
+const NOT_A_HANDLE = /^(i|home|intent|share|search|hashtag|communities|none|null|na|n\/a|tbа|tba|soon)$/i;
 function xHandle(url) {
-  const m = /(?:x\.com|twitter\.com)\/(@?[A-Za-z0-9_]{1,30})/i.exec(String(url || ""));
-  if (!m) return null;
-  const h = m[1].replace(/^@/, "");
-  // Not handles: x.com/i/status/…, /home, /intent/tweet, /share
-  return /^(i|home|intent|share|search|hashtag|communities)$/i.test(h) ? null : h;
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  let h = null;
+  const m = /(?:x\.com|twitter\.com)\/(@?[A-Za-z0-9_]{1,30})/i.exec(raw);
+  if (m) h = m[1];
+  // A BARE HANDLE IS ALSO A HANDLE. The listing form takes free text, so a
+  // project that typed "@velvet_capital" instead of the full URL had its X
+  // dropped and reached the leaderboard with no attribution at all — the one
+  // thing a gainer wants from being on the board.
+  else if (/^@?[A-Za-z0-9_]{1,30}$/.test(raw)) h = raw;
+  if (!h) return null;
+  h = h.replace(/^@/, "");
+  // Not handles: x.com/i/status/…, /home, /intent/tweet, /share — and the
+  // placeholder words a listing form collects instead of a blank.
+  return NOT_A_HANDLE.test(h) ? null : h;
+}
+
+/**
+ * Fill in the X handle the BOARD does not carry.
+ *
+ * The two sources are not equivalent: `listingCoins` reads `row.twitter` — what
+ * the project typed on its listing form — while `boardCoin` reads
+ * `t.links.twitter` from the website's own row. When the site has no link the
+ * board coin has no handle, so the caption printed "#巨兽BEHEMOTH +4336%" with
+ * nothing to click, on a token whose socials the bot already had on file.
+ *
+ * Only for coins that are MISSING one: the board's own value always wins, and
+ * this must never rewrite an attribution the site is asserting. One request, and
+ * only when it can change something. Never throws — a missing handle is a
+ * cosmetic gap, not a reason to lose the banner.
+ */
+async function enrichHandles(coins) {
+  if (!coins.some((c) => c && !c.x)) return coins;
+  try {
+    const rows = (await api.getListings()) || [];
+    const byKey = new Map();
+    for (const r of rows) {
+      if (r && r.chain && r.address) byKey.set(`${r.chain}|${String(r.address).toLowerCase()}`, r);
+    }
+    for (const c of coins) {
+      if (!c || c.x) continue;
+      const r = byKey.get(`${c.chain}|${String(c.address).toLowerCase()}`);
+      if (!r) continue;
+      const h = xHandle(r.twitter);
+      if (!h) continue;
+      c.x = h;
+      c.links = { ...(c.links || {}), twitter: (c.links && c.links.twitter) || r.twitter };
+    }
+  } catch (e) {
+    log.debug(`[gainers] handle enrich skipped: ${e.message}`);
+  }
+  return coins;
 }
 
 const tokenUrl = (chain, address) => `${SITE_URL}/token/${chain}/${address}`;
@@ -325,6 +373,9 @@ async function topGainers({ limit = 5, minGainPct = 0, minLiqUsd = 0, minMcapUsd
   if (!coins.length && !notes.length) {
     notes.push(minGainPct > 0 ? `No token is up ≥ +${minGainPct}% in the last 24h.` : "No token is up in the last 24h.");
   }
+  // After the ranking is settled, so at most MAX_SLOTS coins are looked up and
+  // never the whole pool.
+  if (coins.length) await enrichHandles(coins);
   if (coins.length && logos) await loadLogos(coins);
   return { coins, source: used, pool, notes };
 }
@@ -537,5 +588,5 @@ module.exports = {
   captionPayload,
   summary,
   // exposed for tests
-  _internals: { normSymbol, xHandle, logoCandidates, parseTokenRef, candidateChains, boardCoin, mapLimit },
+  _internals: { normSymbol, xHandle, enrichHandles, logoCandidates, parseTokenRef, candidateChains, boardCoin, mapLimit },
 };

@@ -415,8 +415,45 @@ liquidity.
   floor would empty the board for good), but storing something other than what was
   asked for and calling it ✅ is the NaN defect moved to the edges.
 
+### The winner's NAME is not a ranking signal
+
+`$巨兽BEHEMOTH` was drawn at 44px against 31px for the two cards beside it, and a
+project asked why. The comment defending the scale-up says *"≥1.4× on the
+**figure**"* — and the code applied it to the ticker too. All three columns are
+the same width (`colW` is one value); only the height differs. So a bigger name
+buys no legibility and costs the card set its typographic consistency.
+
+`tickSize` is one value now. `pctSize` keeps the 68/44 split, because that part of
+the reasoning stands. Rank is still carried six ways — elevation, the
+`#1 · Top gainer` chip, the gold ring, the medal, the larger avatar, and the
+figure. A name is an IDENTITY; three identities at three sizes reads as three
+different designs.
+
+### The board lost the X handle the bot already had
+
+The caption read `#巨兽BEHEMOTH +4336%` with nothing to click. `boardCoin` reads
+`t.links.twitter` (the website's row) while `listingCoins` reads `row.twitter`
+(what the project typed on its listing form) — **not equivalent**, and the board
+is preferred, so a token the site has no link for lost its credit entirely.
+
+- **`enrichHandles()` fills only what is MISSING**, from the listing store, after
+  the ranking has cut the pool to ≤ `MAX_SLOTS`. The board's own value always
+  wins; this must never rewrite an attribution the site is asserting.
+- **One request, and only when it can change something.** A failing lookup loses
+  the handle, never the banner.
+- **A bare handle is a handle.** The listing form is free text, so `xHandle` now
+  accepts `@velvet_capital` and `velvet_capital`, not just a URL — while still
+  rejecting the words a form collects instead of a blank (`none`, `TBA`, `n/a`).
+  Widening that parser must not put `@TBA` on a public post.
+- ⚠️ **A bare `@handle` in Telegram is a TELEGRAM username** — tapping it opens
+  Telegram's user search, not X. The caption builds an explicit
+  `[@handle](https://x.com/handle)`. `sanitizeVar` deliberately leaves `_` alone;
+  escaping it would 404 every handle ending in one.
+- The **tweet** text keeps a plain `@handle`: X has no link labels, and
+  `[@x](url)` would publish its brackets verbatim.
+
 ```bash
-cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js   # 27 tests, no network
+cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js test/gainersIdentity.test.js   # 38 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an

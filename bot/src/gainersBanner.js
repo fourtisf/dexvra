@@ -1160,9 +1160,18 @@ function layoutPodium(ctx, S, spec, coins) {
     metalRing(ctx, cx, lcy, d, rank, S);
     medal(ctx, cx + d * 0.42, lcy + d * 0.38, (winner ? 21 : 18) * S, rank, S);
 
-    // Winner's type must OUTRANK the sides (≥1.4× on the figure), or the three
-    // metric blocks read as equals and the podium is carried only by elevation.
-    const tickSize = winner ? 44 : 31;
+    // Winner's FIGURE must outrank the sides (≥1.4×), or the three metric blocks
+    // read as equals and the podium is carried only by elevation.
+    //
+    // THE TICKER IS NOT PART OF THAT. It used to scale with the figure — 44
+    // against 31 — and a project asked why its name was drawn smaller than the
+    // one above it. Fair: all three columns are the SAME WIDTH (colW is one
+    // value), only the height differs, so a bigger name buys no legibility and
+    // costs the card set its typographic consistency. Rank is already carried by
+    // the elevation, the "#1 · Top gainer" chip, the gold ring, the medal, the
+    // larger avatar and the figure itself — six signals. The name is an IDENTITY,
+    // and three identities at three sizes just reads as three different designs.
+    const tickSize = 31;
     const pctSize = winner ? 68 : 44;
     ctx.save();
     ctx.textAlign = "center";
