@@ -2861,9 +2861,26 @@ async function onCallback(q) {
   if (data === 'extog') { const u = core.ensureUser(chatId); try { core.setExpert(chatId, !u.settings.expert); } catch (_) {} const s = settingsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'csn') { const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'csnadd') {
-    const ch = activeChain(chatId);
+    // Chain FIRST ("snipenya dari awal salah aturan, disuruh pilih chain mana
+    // dulu"). The old flow bound the target to whatever chain happened to be
+    // active, so a Solana mint pasted while Ethereum was active bounced as
+    // "not a valid contract address" — with the fix two screens away on 🌐.
+    // Sent as its own message so the armed list above stays visible.
+    const act = activeChain(chatId);
+    const en = core.chains.enabledChains();
+    const kbR = [];
+    for (let i = 0; i < en.length; i += 2) kbR.push(en.slice(i, i + 2).map((c) => btn(`${c.key === act.key ? '✓ ' : ''}${c.emoji} ${c.name}`, `csnch:${c.key}`)));
+    return send(chatId, T(chatId, 'snipe.ca.pick_chain'), { inline_keyboard: kbR });
+  }
+  if (k === 'csnch') {
+    const ch = core.chainOf(ca);
+    if (!ch) return;
     setPending(chatId, { action: 'ca_snipe', chain: ch.key });
-    return send(chatId, T(chatId, 'snipe.ca.prompt', { chain: `${ch.emoji} ${esc(ch.name)}`, native: esc(ch.native) }));
+    // The example address is chain-shaped: a user copies the shape they see.
+    const ex = core.chains.isSvm(ch.key) ? 'Ge87Etsj…' : '0xabc…';
+    // Edit the picker into the prompt — choosing is a step, not a message
+    // worth keeping.
+    return edit(chatId, mid, T(chatId, 'snipe.ca.prompt', { chain: `${ch.emoji} ${esc(ch.name)}`, native: esc(ch.native), ex }));
   }
   if (data.startsWith('csnx:')) {
     core.removeSnipeTarget(chatId, data.slice(5));
@@ -3059,11 +3076,21 @@ async function onCallback(q) {
   if (data === 'cptog') { const u = core.ensureUser(chatId); try { core.setCopyOn(chatId, !(u.copy && u.copy.on)); } catch (_) {} const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'cpadd') { setPending(chatId, { action: 'copy_add', mode: 'trades' }); const ch = activeChain(chatId); const ex = core.chains.isSvm(ch.key) ? '4Nd1m… 0.05 0.5' : '0xAbc… 0.02 0.2'; return send(chatId, `👥 <b>Copy a wallet's trades</b> on ${ch.emoji} ${esc(ch.name)} (your active chain)\n\nSend: <code>&lt;wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\nEvery <b>buy</b> the wallet makes is mirrored with <b>perBuy</b> ${ch.native} from your wallet, until <b>totalBudget</b> is used up.`); }
   if (data === 'cpaddd') {
-    const ch = activeChain(chatId);
-    if (!core.canDevSnipe(ch.key)) return send(chatId, `🎯 Dev snipe works on <b>Robinhood Chain</b> and <b>Solana</b> (the launchpad chains). Switch chain with 🌐, then try again.`, rows([btn('🌐 Switch chain', 'chain'), btn('« Copy', 'copy')]));
-    setPending(chatId, { action: 'copy_add', mode: 'launches' });
+    // Chain first, same rule as the CA snipe — and only the launchpad chains
+    // are offered, so the old "switch chain with 🌐, then try again" dead end
+    // (a message that sent the user away instead of asking) is gone.
+    const act = activeChain(chatId);
+    const pads = core.chains.enabledChains().filter((c) => core.canDevSnipe(c.key));
+    if (!pads.length) return send(chatId, `🎯 Dev snipe needs a launchpad chain (<b>Robinhood Chain</b> or <b>Solana</b>) enabled on this bot.`);
+    const kbR = pads.map((c) => [btn(`${c.key === act.key ? '✓ ' : ''}${c.emoji} ${c.name}`, `cpdch:${c.key}`)]);
+    return send(chatId, `🎯 <b>Snipe a dev wallet</b>\n\nWhich chain does the developer launch on?`, { inline_keyboard: kbR });
+  }
+  if (k === 'cpdch') {
+    const ch = core.chainOf(ca);
+    if (!ch || !core.canDevSnipe(ch.key)) return;
+    setPending(chatId, { action: 'copy_add', mode: 'launches', chain: ch.key });
     const ex = core.chains.isSvm(ch.key) ? 'DevWa11et… 0.05 0.5' : '0xDev… 0.02 0.2';
-    return send(chatId, `🎯 <b>Snipe a dev wallet</b> on ${ch.emoji} ${esc(ch.name)}\n\nFollow a developer/creator wallet. The moment it <b>launches a new token</b> on the launchpad, the bot auto-buys the launch with your per-buy amount — until the budget is used up.\n\nSend: <code>&lt;dev_wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\n<i>Only that wallet's OWN new launches are bought (matched by on-chain creator), never its ordinary trades. Honeypots are skipped; budget caps your risk.</i>`);
+    return edit(chatId, mid, `🎯 <b>Snipe a dev wallet</b> on ${ch.emoji} ${esc(ch.name)}\n\nFollow a developer/creator wallet. The moment it <b>launches a new token</b> on the launchpad, the bot auto-buys the launch with your per-buy amount — until the budget is used up.\n\nSend: <code>&lt;dev_wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\n<i>Only that wallet's OWN new launches are bought (matched by on-chain creator), never its ordinary trades. Honeypots are skipped; budget caps your risk.</i>`);
   }
   if (k === 'cprm') { core.removeCopyTarget(chatId, ca); const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'ospd') {
@@ -3222,7 +3249,10 @@ async function resolvePending(chatId, p, text, m) {
     if (p.action === 'copy_add') {
       const parts = t.split(/\s+/).filter(Boolean);
       if (parts.length < 3) return send(chatId, 'Format: <code>&lt;wallet&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>, e.g. <code>0xAbc… 0.02 0.2</code>');
-      const ch = activeChain(chatId);
+      // The chain the user PICKED in the prompt step, when there was one —
+      // falling back to the active chain here would silently re-bind a dev
+      // snipe to a different chain than the prompt named.
+      const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
       const mode = p.mode === 'launches' ? 'launches' : 'trades';
       try {
         const tgt = core.addCopyTarget(chatId, parts[0], ch.key, parts[1], parts[2], mode);

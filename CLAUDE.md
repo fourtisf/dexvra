@@ -1087,8 +1087,21 @@ SL ≥ 100% is refused at arm time (it can never fire), and if the buy lands but
 the order cap blocks the exits, the receipt SAYS so — a stop-loss the user
 believes exists is worse than none.
 
+**Arming asks WHICH CHAIN first** — the panel this mirrors starts at
+"Exchange". The old flow bound the target to whatever chain happened to be
+active, so a Solana mint pasted while Ethereum was active bounced as "not a
+valid contract address" with the fix two screens away on 🌐; the owner's report
+was "snipenya dari awal salah aturan, disuruh pilih chain mana dulu". The
+picked chain rides the pending step (`p.chain`), the prompt's example address
+is chain-shaped (a user copies the shape they are shown), and dev snipe offers
+ONLY the launchpad chains — which also deleted its "switch chain with 🌐, then
+try again" dead end. The word "snipe" answers to three features on two screens,
+so the Copy screen carries a 📍 cross-link to the CA snipe: a user sent by that
+word to the wrong screen reported the whole feature as missing while it was
+deployed and working.
+
 ```bash
-cd tradebot && node --test snipeTarget.test.js   # 27 tests, no RPC
+cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC
 ```
 
 **Config a fix depends on:** nothing. Every knob has a working default.
