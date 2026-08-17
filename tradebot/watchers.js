@@ -244,16 +244,36 @@ async function _followerBuy(u, t, token, chainKey) {
   let held = true;   // did the spend hold? false only when the buy clearly didn't spend and we rolled back
   const ch = core.chainOf(chainKey) || { emoji: '', name: chainKey, native: 'ETH' };
   // Pin the wallet, so the exit sells from the same one (see copyHoldingAdd).
-  const wid = (core.activeWallet(u) || {}).id || undefined;
+  // A wallet picked on the panel (t.walletId) wins; a wallet deleted since
+  // arming falls back to the active one rather than silently buying nothing.
+  const wid = (t.walletId && core.walletList(u).some((w) => w.id === t.walletId) ? t.walletId : (core.activeWallet(u) || {}).id) || undefined;
   try {
-    const r = await core.buy(u.chatId, token, t.buyEth, chainKey, wid);
+    // Per-target slippage, same contract as the CA snipe: the bound the user
+    // set for THIS launch replaces their normal one; unset means normal.
+    const r = await core.buy(u.chatId, token, t.buyEth, chainKey, wid, { slipBps: t.slipBps || undefined });
     // A dev snipe is exit-mirrored too, and it is the case that needs it most:
     // the dev dumping their own launch is the single most informative sell a
     // followed wallet can make. Leaving launches off the ledger meant the one
     // mode built entirely around trusting a wallet was the one mode that never
     // watched it leave.
     core.copyHoldingAdd(t, token, await _targetBalance(chainKey, t.address, token), wid, r.gotRaw);
-    _notify(u.chatId, `🎯 <b>Dev snipe</b> — $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nDev <code>${short(t.address)}</code> just launched it · bought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, undefined, 'copy');
+    // The target's TP/SL become REAL orders at the fill, at the REALISED entry
+    // (spent ÷ received), bound to the wallet that bought — the same contract
+    // as the CA snipe's fill. A placement failure is SAID on the message: a
+    // stop-loss the user believes exists is worse than none.
+    let exits = '';
+    if (t.tpPct > 0 || t.slPct > 0) {
+      const entry = Number(r.spentEth) / (Number(r.gotTokens) || 1);
+      if (entry > 0) {
+        try {
+          const parts = [];
+          if (t.tpPct > 0) { addOrder(u.chatId, { type: 'tp', ca: token, sym: r.sym, chain: chainKey, targetPriceEth: entry * (1 + t.tpPct / 100), sellPct: 100, auto: true }, wid); parts.push(`TP +${t.tpPct}%`); }
+          if (t.slPct > 0) { addOrder(u.chatId, { type: 'sl', ca: token, sym: r.sym, chain: chainKey, targetPriceEth: entry * (1 - t.slPct / 100), sellPct: 100, auto: true }, wid); parts.push(`SL −${t.slPct}%`); }
+          if (parts.length) exits = `\nAuto-exit armed: <b>${parts.join(' · ')}</b>`;
+        } catch (e) { exits = `\n⚠️ <i>Couldn't place the auto-exit (${esc(String(e.message || e).slice(0, 80))}) — set TP/SL by hand from the Monitor.</i>`; }
+      }
+    }
+    _notify(u.chatId, `🎯 <b>Dev snipe</b> — $${esc(r.sym)} on ${ch.emoji} ${esc(ch.name)}\nDev <code>${short(t.address)}</code> just launched it · bought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}${exits}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, undefined, 'copy');
   } catch (err) {
     if (!err || !err.broadcast) { t.spentEth = Math.max(0, Number(t.spentEth) - Number(t.buyEth)); delete t.bought[key]; core.saveStoreNow(); held = false; }
     else core.copyHoldingAdd(t, token, await _targetBalance(chainKey, t.address, token), wid);   // budget held → track it, but the FILL is unknown

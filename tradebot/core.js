@@ -775,7 +775,7 @@ const MAX_COPY_TARGETS = Math.max(1, Number(process.env.MAX_COPY_TARGETS || 5));
 function canDevSnipe(chain) { return !!chainOf(chain) && isEnabled(chain); }
 // mode: 'trades' = mirror the wallet's swap-BUYS (classic copy-trade);
 //       'launches' = buy tokens the wallet CREATES on a launchpad (dev-wallet snipe).
-function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
+function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode, opts = {}) {
   const u = ensureUser(chatId);
   address = String(address || '').trim();
   mode = (mode === 'launches') ? 'launches' : 'trades';
@@ -793,10 +793,30 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode) {
   // Allow following the SAME wallet in BOTH modes (mirror its trades AND snipe its
   // launches), so the dup check keys on address+chain+mode.
   if (u.copy.targets.some((t) => norm(t.address) === norm(address) && t.chain === chain && (t.mode || 'trades') === mode)) throw new Error(mode === 'launches' ? 'already sniping that dev on this chain' : 'already copying that wallet on this chain');
-  const be = Number(buyEth), me = Number(maxEth);
+  const be = Number(buyEth);
   if (!(be > 0)) throw new Error('per-buy amount must be > 0');
+  // The budget is a CAP, not a question ("fitur yang tadi hapus aja"): omitted,
+  // it defaults to ten buys — an uncapped auto-buyer is the "buy ngasal" class
+  // of hazard, so the cap survives even when nobody is asked for one. The
+  // armed message states the concrete number either way.
+  const me = (maxEth == null || maxEth === '') ? be * 10 : Number(maxEth);
   if (!(me >= be)) throw new Error('total budget must be ≥ the per-buy amount');
-  const t = { id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode, buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, holding: {}, copySell: true, cursor: 0, cursorSig: '', createdAt: Date.now() };
+  // Per-target execution settings, all honoured by _followerBuy: the wallet the
+  // buy (and its exit mirror) is pinned to, the slippage bound, and TP/SL that
+  // become real orders at the fill — same bounds as addSnipeTarget.
+  const walletId = opts.walletId ? (walletById(u, opts.walletId) ? opts.walletId : null) : null;
+  if (opts.walletId && !walletId) throw new Error('no such wallet');
+  const tp = Number(opts.tpPct) || 0, sl = Number(opts.slPct) || 0;
+  if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
+  if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
+  const t = {
+    id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode,
+    buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, holding: {}, copySell: true,
+    walletId: walletId || undefined,
+    slipBps: Math.max(0, Math.min(5000, Math.round(Number(opts.slipBps) || 0))) || undefined,
+    tpPct: tp || undefined, slPct: sl || undefined,
+    cursor: 0, cursorSig: '', createdAt: Date.now(),
+  };
   u.copy.targets.push(t);
   saveStore();
   return t;
@@ -988,6 +1008,9 @@ function updateSnipeDraft(chatId, patch = {}) {
     // arm a watch that can never fire, the inert-watch failure mode.
     if ((d.kind || 'ca') !== patch.kind) d.ca = null;
     d.kind = patch.kind;
+    // The dev path pins ONE wallet (the exit-mirror ledger records one wid per
+    // position) — '*' from a previous CA draft falls back to the active wallet.
+    if (d.kind === 'dev' && d.walletId === '*') { const w = activeWallet(u); d.walletId = w ? w.id : null; }
   }
   if (patch.ca !== undefined) {
     if (patch.ca === null) d.ca = null;
@@ -1065,8 +1088,14 @@ function armSnipeDraft(chatId) {
   // a dev snipe is. The caller tells them apart by `mode === 'launches'`.
   let t;
   if ((d.kind || 'ca') === 'dev') {
-    if (!(Number(d.budget) > 0)) throw new Error('no budget yet — pick the total budget first');
-    t = addCopyTarget(chatId, d.ca, d.chain, d.amount, d.budget, 'launches');
+    // Budget unset = ten buys (addCopyTarget's default) — a cap without a
+    // question. Every other panel row rides the target and is honoured by
+    // _followerBuy: wallet, slippage, TP/SL.
+    t = addCopyTarget(chatId, d.ca, d.chain, d.amount, Number(d.budget) > 0 ? d.budget : null, 'launches', {
+      walletId: d.walletId && d.walletId !== '*' ? d.walletId : undefined,
+      slipBps: Math.round((Number(d.slipPct) || 0) * 100),
+      tpPct: d.tpPct, slPct: d.slPct,
+    });
   } else {
     t = addSnipeTarget(chatId, {
       ca: d.ca, chain: d.chain, amount: d.amount, walletId: d.walletId || undefined,
