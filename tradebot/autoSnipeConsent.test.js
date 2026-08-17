@@ -61,19 +61,32 @@ test('auto-snipe fires ONLY on its own explicit per-chain flag', () => {
 
 // ── consent: arming is announced, with the blast radius ─────────────────────
 
-test('turning a chain ON states what it will buy and what it will spend', () => {
+test('arming always passes through an explicit amount choice, then states the blast radius', () => {
+  // The flow was reordered on the owner's report ("intinya pertama disuruh
+  // pilih chain dulu"): the chain tap no longer toggles ON — it opens Step 2,
+  // the amount screen, and only picking an amount arms. That closes the other
+  // half of the "buy ngasal" incident too: arming can no longer silently
+  // reuse an amount set weeks earlier on a different screen.
   const h = TG.slice(TG.indexOf("if (k === 'sntog')"), TG.indexOf("if (k === 'snamtq')"));
-  assert.match(h, /Auto-Snipe is now ARMED/);
-  assert.match(h, /every new launch/);
+  // The chain tap itself never arms — OFF stays a one-tap stop (it is the 🛑
+  // button on every purchase message), ON routes to the amount step.
+  assert.ok(!/setSnipeChain\([^)]*true\)/.test(h), 'the sntog tap arms a chain directly again');
+  assert.match(h, /core\.setSnipeChain\(chatId, ca, false\)/);
+  assert.match(h, /snipeAmountScreen\(chatId, ca\)/);
+  // ONE arming site, and both amount paths (preset tap, ✏️ custom) go
+  // through it — two sites would drift into two warnings.
+  const arm = TG.slice(TG.indexOf('async function armAutoSnipe('), TG.indexOf('async function armAutoSnipe(') + 1600);
+  assert.match(arm, /Auto-Snipe is now ARMED/);
+  assert.match(arm, /every new launch/);
   // The SPEND is on the warning — 0.05 SOL per launch is a very different
-  // decision from 0.01, and the amount lives on a different screen.
-  assert.match(h, /u\.snipe\.ethAmount/);
+  // decision from 0.01 — and it is the amount JUST chosen, not a stored one.
+  assert.match(arm, /u\.snipe\.ethAmount/);
   // Only on ARM. A warning on disarm too would teach users the message is
-  // furniture.
-  assert.match(h, /if \(armedNow\)/);
-  // It reads the flag the setter RETURNS, not the stale pre-toggle copy.
-  assert.match(h, /const chains = core\.setSnipeChain\(chatId, ca, /);
-  assert.match(h, /armedNow = !!chains\[ca\]/);
+  // furniture. And it reads the flag the setter RETURNS, not a stale copy.
+  assert.match(arm, /if \(armedNow\)/);
+  assert.match(arm, /const chains = core\.setSnipeChain\(chatId, chainKey, true\); armedNow = !!chains\[chainKey\]/);
+  const callers = (TG.match(/return armAutoSnipe\(/g) || []).length;
+  assert.strictEqual(callers, 2, `${callers} callers of armAutoSnipe — expected the preset tap and the custom-amount reply`);
 });
 
 // ── attribution: a message that spends money names its trigger ──────────────

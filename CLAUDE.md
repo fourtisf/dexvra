@@ -704,10 +704,16 @@ pins those boundaries.
 
 The report still named a real defect, in three parts, all fixed:
 
-- **Arming is ANNOUNCED.** The /snipe chain toggle flips a feature that buys
-  every new launch on the chain with real money, and it used to flip silently.
-  Arming now states the blast radius and the per-launch spend; disarming stays
-  silent — a warning on OFF would teach users the message is furniture.
+- **Arming is ANNOUNCED — and it is not a toggle any more.** The /snipe chain
+  tap used to flip a feature that buys every new launch on the chain with real
+  money, silently, reusing an amount set weeks earlier on another screen. The
+  flow is chain FIRST now ("intinya pertama disuruh pilih chain dulu"): tapping
+  an OFF chain opens Step 2, the amount screen, and only picking an amount arms
+  — `armAutoSnipe()` is the ONE arming site, and the warning states the blast
+  radius and the spend it was JUST given. OFF stays a one-tap stop (it is the
+  🛑 button on every purchase message) and stays silent — a warning on OFF
+  would teach users the message is furniture. A toggle also meant a second tap
+  on an old 🛑 button silently re-armed; now it opens the amount step instead.
 - **A message that spends money names its trigger.** All three auto-snipe
   purchase sites say "Auto-Snipe bought" plus "buys EVERY new launch on this
   chain while armed — this was not a CA or dev-wallet target"; the CA-target
