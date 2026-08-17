@@ -399,8 +399,24 @@ not a migration accident.
   in the home screen's filter summary, so an admin can see why a token they
   expected is missing.
 
+⚠️ **`500k` set it to $1M, and the bot said ✅.** `Number("500k")` is NaN, and
+`clampNum()` answers a non-finite value with the **default** — so the value asked
+for was never stored, the setting was silently reset, and the reply reported
+success. A ✅ carrying a number nobody asked for is worse than an error, because
+nothing prompts a second look. The same two lines governed Min gain % and Min
+liquidity.
+
+- **`parseCap()` lives beside `fmtCap()` as its inverse** and returns `null`, never
+  a number, on anything it cannot read. A parser that cannot fail is a parser that
+  lies for its caller. Accepts `500k`, `1.5M`, `2b`, `1,000,000`, `$500k`.
+- **One branch serves all three settings**, so a fourth cannot inherit the old
+  shape, and an unreadable value throws — *"Nothing was changed."*
+- **A clamped value is reported as clamped.** The bounds are real (a ten-trillion
+  floor would empty the board for good), but storing something other than what was
+  asked for and calling it ✅ is the NaN defect moved to the edges.
+
 ```bash
-cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js   # 21 tests, no network
+cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js   # 27 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an

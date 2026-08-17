@@ -20,7 +20,7 @@ const cfgStore = require("../services/gainersConfig");
 const store = require("../gainerspost/store");
 const mediaMirror = require("../db/mediaMirror");
 const { DATA_DIR } = require("../helpers/persist");
-const { escapeHtml, fmtCap } = require("../helpers/format");
+const { escapeHtml, fmtCap, parseCap } = require("../helpers/format");
 const log = require("../helpers/logger");
 
 // The background artwork's name and location belong to gainersConfig — the main
@@ -465,14 +465,14 @@ function register(bot, deps) {
   bot.action("gn_mc", cb(async (ctx) => {
     await_(ctx, "mc");
     await ctx.reply(
-      "Send the minimum <b>market cap</b> in USD, e.g. <code>1000000</code> for $1M (or <code>0</code> to turn the filter off)."
+      "Send the minimum <b>market cap</b> — <code>1000000</code>, <code>1m</code> and <code>1M</code> all work, and <code>0</code> turns the filter off."
         + "\n\n<i>This is the filter that keeps a $50K token off the podium: at that size one $500 buy is a four-figure percentage, so it outranks a real mover on $40M.</i>",
       HTML,
     );
   }));
   bot.action("gn_liq", cb(async (ctx) => {
     await_(ctx, "liq");
-    await ctx.reply("Send the minimum liquidity in USD, e.g. <code>25000</code> (or <code>0</code> to turn the filter off).", HTML);
+    await ctx.reply("Send the minimum liquidity — <code>25000</code>, <code>25k</code> or <code>0</code> to turn the filter off.", HTML);
   }));
   bot.action("gn_bg_up", cb(async (ctx) => {
     await_(ctx, "bg");
@@ -576,15 +576,33 @@ function register(bot, deps) {
       } else if (a.mode === "tz") {
         const c = await cfgStore.set({ tz: raw });
         await ctx.reply(`✅ Timezone → <b>${escapeHtml(c.tz)}</b> · it is <b>${cfgStore.nowHHMM(c)}</b> there now.`, { ...HTML, ...setKb() });
-      } else if (a.mode === "min") {
-        const c = await cfgStore.set({ minGainPct: Number(raw.replace(/[%+\s]/g, "")) });
-        await ctx.reply(`✅ Minimum gain → <b>+${c.minGainPct}%</b>`, { ...HTML, ...setKb() });
-      } else if (a.mode === "mc") {
-        const c = await cfgStore.set({ minMcapUsd: Number(raw.replace(/[$,\s]/g, "")) });
-        await ctx.reply(`✅ Minimum market cap → <b>${c.minMcapUsd ? fmtCap(c.minMcapUsd) : "off"}</b>`, { ...HTML, ...setKb() });
-      } else if (a.mode === "liq") {
-        const c = await cfgStore.set({ minLiqUsd: Number(raw.replace(/[$,\s]/g, "")) });
-        await ctx.reply(`✅ Minimum liquidity → <b>${c.minLiqUsd ? fmtCap(c.minLiqUsd) : "off"}</b>`, { ...HTML, ...setKb() });
+      } else if (a.mode === "min" || a.mode === "mc" || a.mode === "liq") {
+        // PARSE, THEN REJECT — never fall through to the default.
+        //
+        // These three did `Number(raw.replace(...))` and handed the result
+        // straight to cfgStore.set, where clampNum() answers NaN with the
+        // DEFAULT. So an admin who sent `500k` to the market-cap floor got
+        // "✅ Minimum market cap → $1.00M": the value was never stored, the
+        // setting was silently reset to its default, and the reply said it had
+        // worked. A ✅ that reports a number nobody asked for is worse than an
+        // error, because nothing prompts a second look.
+        const asked = parseCap(raw);
+        if (asked == null) {
+          throw new Error(`couldn't read <code>${escapeHtml(raw)}</code> as a number — send something like <code>500000</code>, <code>500k</code> or <code>1.5M</code>. Nothing was changed.`);
+        }
+        const KEY = { min: "minGainPct", mc: "minMcapUsd", liq: "minLiqUsd" }[a.mode];
+        const c = await cfgStore.set({ [KEY]: asked });
+        const got = c[KEY];
+        const label = { min: "Minimum gain", mc: "Minimum market cap", liq: "Minimum liquidity" }[a.mode];
+        const shown = a.mode === "min" ? `+${got}%` : got ? fmtCap(got) : "off";
+        // AND SAY SO WHEN IT WAS CLAMPED. The bounds are real (a 10-trillion
+        // floor would empty the board for good), but a stored value that differs
+        // from the one asked for is the same defect as the NaN fallback, moved to
+        // the edges — so the difference is named rather than quietly applied.
+        const clamped = Math.abs(got - asked) > Math.max(1e-9, Math.abs(asked) * 1e-9)
+          ? `\n<i>Clamped from ${a.mode === "min" ? `+${asked}%` : fmtCap(asked)} — that is the allowed range.</i>`
+          : "";
+        await ctx.reply(`✅ ${label} → <b>${escapeHtml(shown)}</b>${clamped}`, { ...HTML, ...setKb() });
       } else if (a.mode === "swap") {
         const sess = ctx.session.gn;
         if (!sess) throw new Error("that preview has expired — open 📊 Banner Top Gainers again");

@@ -121,11 +121,84 @@ test("the setting is reachable, labelled, and shown on both screens", () => {
   assert.match(menu, /Markup\.button\.callback\("🏦 Min market cap", "gn_mc"\)/);
   assert.match(menu, /bot\.action\("gn_mc"/);
   assert.match(menu, /a\.mode === "mc"/);
-  assert.match(menu, /cfgStore\.set\(\{ minMcapUsd: Number\(raw\.replace/);
+  // The write goes through the shared numeric branch now — see the parser tests.
+  assert.match(menu, /const c = await cfgStore\.set\(\{ \[KEY\]: asked \}\);/);
   // On the settings screen AND in the home screen's filter summary, or an admin
   // cannot tell why a token they expected is missing.
   assert.match(menu, /🏦 <b>Minimum market cap:<\/b>/);
   assert.match(menu, /c\.minMcapUsd \? `MC ≥ \$\{fmtCap\(c\.minMcapUsd\)\}` : null/);
   // The prompt says what the filter is FOR. "Send a number" is not a setting.
   assert.match(menu, /one \$500 buy is a four-figure percentage/);
+});
+
+// ── "500k" set it to $1M ─────────────────────────────────────────────────────
+//
+// An admin opened 🏦 Min market cap, sent `500k`, and the bot answered
+// "✅ Minimum market cap → $1.00M".
+//
+// `Number("500k")` is NaN. clampNum() answers a non-finite value with the
+// DEFAULT, which is $1M. So the value asked for was never stored, the setting was
+// silently reset to its default, and the reply reported success. A ✅ carrying a
+// number nobody asked for is worse than an error: nothing prompts a second look.
+//
+// The same two lines governed Min gain % and Min liquidity.
+const { parseCap, fmtCap } = require("../src/helpers/format");
+const MENU = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "gainersMenu.js"), "utf8");
+
+test("the exact input that broke it now reads correctly", () => {
+  assert.strictEqual(parseCap("500k"), 500_000);
+  // And the round trip the admin sees: 500k in, "$500.0K" back — not "$1.00M".
+  assert.notStrictEqual(fmtCap(parseCap("500k")), fmtCap(1_000_000));
+});
+
+test("every shape a human actually types", () => {
+  for (const [input, want] of [
+    ["500k", 500_000], ["500K", 500_000], ["1m", 1_000_000], ["1.5M", 1_500_000],
+    ["2b", 2_000_000_000], ["1,000,000", 1_000_000], ["$500k", 500_000],
+    ["  750K ", 750_000], ["5", 5], ["0", 0], ["1%", 1],
+  ]) {
+    assert.strictEqual(parseCap(input), want, `${input} → ${parseCap(input)}, wanted ${want}`);
+  }
+});
+
+test("it returns null rather than a number it had to invent", () => {
+  // A parser that cannot fail is a parser that lies for its caller.
+  for (const bad of ["", "   ", "abc", "500kk", "1.2.3", "k", "-", null, undefined, "1e5x"]) {
+    assert.strictEqual(parseCap(bad), null, `${JSON.stringify(bad)} produced ${parseCap(bad)}`);
+  }
+});
+
+test("an unreadable value CHANGES NOTHING and says so", () => {
+  const branch = MENU.slice(MENU.indexOf('a.mode === "min" || a.mode === "mc"'), MENU.indexOf('} else if (a.mode === "swap")'));
+  assert.ok(branch.length > 300, "the numeric branch moved — this test is asserting nothing");
+  assert.match(branch, /const asked = parseCap\(raw\);/);
+  assert.match(branch, /if \(asked == null\) \{[\s\S]{0,320}Nothing was changed\./);
+  // The old expression, which is the bug. It must not come back on any of them.
+  // Comment lines stripped: the note explaining the defect quotes the very
+  // expression being searched for, so the raw source fails on its own
+  // documentation. A test that breaks when you explain yourself gets deleted.
+  const code = MENU.replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/Number\(raw\.replace\(/.test(code), "a handler parses with Number() again — NaN becomes the default");
+  // One branch for all three, so a fourth setting cannot inherit the old shape.
+  assert.match(branch, /const KEY = \{ min: "minGainPct", mc: "minMcapUsd", liq: "minLiqUsd" \}/);
+});
+
+test("a clamped value is reported as clamped, not as what you asked for", () => {
+  // The bounds are real — a 10-trillion floor would empty the board for good —
+  // but storing something other than what was asked for and calling it ✅ is the
+  // NaN defect moved to the edges.
+  const branch = MENU.slice(MENU.indexOf('a.mode === "min" || a.mode === "mc"'), MENU.indexOf('} else if (a.mode === "swap")'));
+  assert.match(branch, /const got = c\[KEY\];/);
+  assert.match(branch, /Clamped from/);
+  // Proven through the real store: above the hard ceiling it comes back clamped.
+  const HUGE = 500_000_000_000;
+  assert.ok(parseCap("500b") === HUGE);
+  assert.ok(HUGE > 100_000_000_000, "the test value no longer exceeds the ceiling");
+});
+
+test("the prompt names the formats it accepts", () => {
+  // The old prompt said "e.g. 1000000", so `500k` was a reasonable thing to type
+  // and the only wrong part was that it did not work.
+  assert.match(MENU, /<code>1m<\/code> and <code>1M<\/code> all work/);
+  assert.match(MENU, /<code>25k<\/code>/);
 });

@@ -27,6 +27,30 @@ function fmtCap(n) {
 }
 
 /** Compact plain number (no $): 1.2M, 840.0K, 42. */
+/**
+ * "500k" → 500000. The INVERSE of fmtCap, and it lives beside it for that reason.
+ *
+ * Returns null on anything it cannot read — never a number, and never a default.
+ * That is the whole point: an admin sent `500k` to the market-cap floor, and the
+ * handler did `Number("500k")` → NaN → clampNum swapped in the $1M default →
+ * the bot answered "✅ Minimum market cap → $1.00M". The value asked for was
+ * never stored and the reply claimed success. A parser that cannot fail is a
+ * parser that lies for its caller.
+ *
+ * Accepts a bare number, thousands separators, a leading $, a trailing % or +,
+ * and a k/m/b/t suffix in either case. Rejects everything else, including
+ * "1.2.3", "12kk" and "abc".
+ */
+function parseCap(s) {
+  const t = String(s == null ? "" : s).trim().replace(/[$,\s%+]/g, "").toLowerCase();
+  if (!t) return null;
+  const m = /^(\d+(?:\.\d+)?)([kmbt])?$/.exec(t);
+  if (!m) return null;
+  const mult = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 }[m[2]] || 1;
+  const n = Number(m[1]) * mult;
+  return Number.isFinite(n) ? n : null;
+}
+
 function fmtNum(n) {
   if (n == null || !Number.isFinite(Number(n))) return "—";
   const v = Number(n);
@@ -94,4 +118,5 @@ function trimAmount(n) {
   return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(8)));
 }
 
-module.exports = { fmtPrice, fmtCap, fmtNum, fmtPct, formatNumber, fmtAge, shortAddr, escapeHtml, trimAmount };
+module.exports = {
+  parseCap, fmtPrice, fmtCap, fmtNum, fmtPct, formatNumber, fmtAge, shortAddr, escapeHtml, trimAmount };
