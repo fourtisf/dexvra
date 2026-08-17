@@ -472,7 +472,24 @@ const S = {
     id: '<i>Tidak ada dana keluar sampai pool-nya buka. TP/SL jadi order jual sungguhan di harga fill, di wallet yang dipakai snipe.</i>',
   },
   'snipe.panel.open_btn': { en: '🎛 New snipe — full settings', id: '🎛 Snipe baru — setelan lengkap' },
-  'snipe.panel.arm_btn': { en: '⚡ ARM SNIPE', id: '⚡ PASANG SNIPE' },
+  // The arm button and what replaces the panel once its draft is spent. The
+  // confirmation itself is a NEW message (see the 'arm' handler): an in-place
+  // edit of the panel is invisible the moment the user has scrolled, which is
+  // how arming a snipe read as "nothing happened".
+  'snipe.panel.arm_btn': { en: '⚡ ARM SNIPE — start watching', id: '⚡ PASANG SNIPE — mulai pantau' },
+  'snipe.panel.spent': {
+    en: '🎛 <b>Snipe Setup</b> — armed ✅\n<i>The confirmation is below.</i>',
+    id: '🎛 <b>Setup Snipe</b> — terpasang ✅\n<i>Konfirmasinya ada di bawah.</i>',
+  },
+  'snipe.panel.home_btn': { en: '🎯 Sniper', id: '🎯 Sniper' },
+  'snipe.panel.ready': {
+    en: '✅ <b>Ready.</b> Nothing is armed yet — tap <b>⚡ ARM SNIPE</b> below to start watching.',
+    id: '✅ <b>Siap.</b> Belum terpasang — tap <b>⚡ PASANG SNIPE</b> di bawah untuk mulai memantau.',
+  },
+  'snipe.panel.not_ready': {
+    en: '⏳ Fill the rows marked ⏳ above, then tap <b>⚡ ARM SNIPE</b>.',
+    id: '⏳ Isi dulu baris bertanda ⏳ di atas, lalu tap <b>⚡ PASANG SNIPE</b>.',
+  },
   'snipe.panel.oneline_btn': { en: '⌨️ One line', id: '⌨️ Satu baris' },
   'snipe.panel.discard_btn': { en: '🗑 Discard', id: '🗑 Buang' },
   'snipe.panel.set_btn': { en: 'Set target', id: 'Isi target' },

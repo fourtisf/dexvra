@@ -1661,6 +1661,12 @@ function snipeSetupScreen(chatId, note) {
     '',
     T(chatId, dev ? 'snipe.panel.dev_foot' : 'snipe.panel.foot'),
   );
+  // READY, said out loud. Every required row can read ✅ and the screen still
+  // never states that the thing is not armed yet — "dmn ada teks snipe atau
+  // confirm??" is what a panel that looks finished but has not fired asks of
+  // its reader. Nothing here spends until ⚡ is tapped, so say both halves.
+  const ready = !!d.ca && !!d.amount && selCount > 0;
+  L.push('', T(chatId, ready ? 'snipe.panel.ready' : 'snipe.panel.not_ready'));
   // Label + value, two buttons a row — the reference's two-column table. Both
   // open the same editor, so there is no wrong half to tap.
   const kbRows = [
@@ -3292,6 +3298,16 @@ async function onCallback(q) {
       // where the row to fix is one tap away. A toast disappears; the row stays.
       try {
         const tgt = core.armSnipeDraft(chatId);
+        // THE CONFIRMATION IS A NEW MESSAGE, NOT AN EDIT OF THE PANEL.
+        //
+        // "dmn ada teks snipe atau confirm??" — it was there, written into the
+        // panel message in place. An in-place edit notifies nobody and, after
+        // any scrolling, happens off screen: the newest message in the chat was
+        // the sniper home, so arming a snipe with real money on it looked like
+        // nothing happened. Same lesson the raid card already cost us. The
+        // panel is retired where it stands (its buttons must not be re-tappable
+        // once its draft is spent) and the confirmation lands at the BOTTOM.
+        let text, kb;
         if (tgt.mode === 'launches') {
           // A dev target. The master switch gates the whole feature — arming a
           // watch that silently does nothing is the stop-loss-the-user-
@@ -3303,16 +3319,20 @@ async function onCallback(q) {
           // message, never discovered on the receipts. A dev snipe RECURS, so
           // it takes the recurring sentence whatever the selection shape is.
           const multi = walletScopeLine(chatId, tgt, tgt.buyEth, chG.native, 'dev.armed_wallets');
-          await edit(chatId, mid, T(chatId, 'dev.armed', {
+          text = T(chatId, 'dev.armed', {
             addr: esc(short(tgt.address)), chain: `${chG.emoji} ${esc(chG.name)}`,
             perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(chG.native),
-          }) + multi + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off'),
-          on ? undefined : { inline_keyboard: [[btn(T(chatId, 'dev.on_btn'), 'cptog')]] });
+          }) + multi + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off');
+          kb = { inline_keyboard: [
+            ...(on ? [] : [[btn(T(chatId, 'dev.on_btn'), 'cptog')]]),
+            [btn(T(chatId, 'snipe.panel.home_btn'), 'csn'), btn('👥 Copy & Snipe', 'copy')],
+          ] };
         } else {
-          await edit(chatId, mid, snipeArmedText(chatId, tgt));
+          text = snipeArmedText(chatId, tgt);
+          kb = { inline_keyboard: [[btn(T(chatId, 'snipe.panel.home_btn'), 'csn'), btn('« Menu', 'menu')]] };
         }
-        const s = caSnipeScreen(chatId);
-        return send(chatId, s.text, s.kb);
+        await edit(chatId, mid, T(chatId, 'snipe.panel.spent'));
+        return send(chatId, text, kb);
       } catch (e) {
         const s = snipeSetupScreen(chatId, String((e && e.message) || e));
         return edit(chatId, mid, s.text, s.kb);
