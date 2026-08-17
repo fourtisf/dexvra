@@ -1139,6 +1139,14 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   as a whole screen.
 - ⏳ is the "not set yet" marker, so no row may use it as its icon — Expiry's
   is 🕒, or a fully configured panel still reads as waiting.
+- **🎯 Snipe and /snipe open the sniper HOME** (panel first, armed targets
+  listed), not the mass-mode screen. The panel shipped behind /sniper first,
+  the menu's 🎯 Snipe still led to mass mode, and the owner — hunting for the
+  panel there — armed a 0.1 SOL buy-every-launch believing it was the sniper
+  ("masih sama aja, setinganya bukan yang saya inginkan"). Mass mode is a
+  labelled 🌊 choice whose button carries its live armed state, and the home
+  prints a ⚠️ line whenever it is on — a feature that spends on every launch
+  must be visible from the sniper's front door.
 
 ```bash
 cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC
