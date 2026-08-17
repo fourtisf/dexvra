@@ -349,6 +349,20 @@ test('the panel flows FORWARD: a saved target asks for the amount next', async (
   assert.match(out2.replace(/<[^>]+>/g, ''), /Snipe Setup|Setup Snipe/i);
 });
 
+test("the panel's Target offers BOTH kinds — token contract and dev wallet", () => {
+  // "dmn target dev walletnya": the reference panel's Targeted mode covers a
+  // dev wallet as well as a token address; ours hid dev snipe behind another
+  // screen. A wallet and a CA share the same address shape on every chain, so
+  // the user says which they mean — no paste can be auto-classified.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const block = SRC.slice(SRC.indexOf("if (k === 'snw')"), SRC.indexOf("if (data === 'rstog')"));
+  assert.match(block, /'snw:cat'/, 'the token-contract choice is gone from the Target step');
+  assert.match(block, /'snw:cad'/, 'the dev-wallet choice is gone from the Target step');
+  // The dev choice drops into the wizard ON THE PANEL'S CHAIN — not whatever
+  // chain happens to be active.
+  assert.match(block, /setPending\(chatId, \{ action: 'dev_addr', chain: d\.chain \}\)/);
+});
+
 // ── the dev-snipe wizard ─────────────────────────────────────────────────────
 
 test('dev snipe asks ONE question at a time, and nothing arms before the last', async () => {
