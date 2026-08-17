@@ -165,7 +165,10 @@ test('the wallet copy is translated, not hardcoded English', () => {
   // A large share of this bot's users trade in Indonesian (see i18n.js). The
   // wallet screen was one of the biggest remaining blocks of English literals.
   const i18n = require('./i18n');
-  for (const key of ['wal.title', 'wal.total', 'wal.total_all', 'wal.on_chain', 'wal.on_chain_unread',
+  // 'wal.total' is exempt: it is now "💰 Total: {usd}" and "Total" is the same
+  // word in both languages — demanding a difference would manufacture a fake
+  // translation just to satisfy this loop.
+  for (const key of ['wal.title', 'wal.total_all', 'wal.on_chain', 'wal.on_chain_unread',
     'wal.split', 'wal.active_head', 'wal.others_head', 'wal.empty_on', 'wal.unread_on', 'wal.no_gas',
     'wal.gas_elsewhere', 'wal.hint', 'wal.first_steps']) {
     assert.ok(i18n._strings[key], `${key} missing`);

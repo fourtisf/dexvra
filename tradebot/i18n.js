@@ -81,9 +81,17 @@ const S = {
   // (once as a summary, once in the list) and both 42- and 44-character
   // addresses for every wallet, which on a phone buried the balances.
   'wal.title': { en: '💼 <b>Your wallets</b>', id: '💼 <b>Wallet kamu</b>' },
+  // THE HEADER IS ONE NUMBER. It used to be four lines carrying three different
+  // figures — "$508.02 here", "$1,843.99 across 5 of 10 wallets, every chain",
+  // "$1,706.20 in coins · $137.79 in tokens" — two of which merely re-added the
+  // third, and "5 of 10 wallets" read as "only 5 of your 10 wallets were
+  // counted" when it meant "you have used 5 of 10 slots". Reported, fairly, as
+  // "sangat membingungkan". Now: Total first (the headline), the active chain's
+  // share under it with an explicit label, and the wallet-slot cap moved to the
+  // ➕ Generate button where capacity is actually decided.
   'wal.total': {
-    en: '{usd} across {n} of {cap} wallets',
-    id: '{usd} di {n} dari {cap} wallet',
+    en: '💰 Total: <b>{usd}</b>',
+    id: '💰 Total: <b>{usd}</b>',
   },
   // The two lines that exist because one number wearing a chain badge is not an
   // answer. Switched to Solana with the money on Robinhood Chain, the screen
@@ -91,20 +99,25 @@ const S = {
   // Solana. `wal.on_chain` is the chain you picked; `wal.total_all` says out
   // loud that the other figure spans every chain.
   'wal.on_chain': {
-    en: '{emoji} {chain} — {usd} here',
-    id: '{emoji} {chain} — {usd} di sini',
+    en: '{emoji} On {chain}: <b>{usd}</b>',
+    id: '{emoji} Di {chain}: <b>{usd}</b>',
   },
   // …and never "$0.00 here" for a chain we simply could not reach. That is the
   // line that sends someone to check whether their deposit arrived.
   'wal.on_chain_unread': {
-    en: "{emoji} {chain} — <i>couldn't read your balance here just now</i>",
-    id: '{emoji} {chain} — <i>saldo di sini belum bisa dibaca sekarang</i>',
+    en: "{emoji} On {chain}: <i>couldn't read it just now</i>",
+    id: '{emoji} Di {chain}: <i>belum bisa dibaca sekarang</i>',
   },
+  // No wallet count here. The list below IS the count, and every extra number
+  // on the header line re-creates the confusion this rewrite removes.
   'wal.total_all': {
-    en: '<i>{usd} across {n} of {cap} wallets, every chain</i>',
-    id: '<i>{usd} di {n} dari {cap} wallet, semua chain</i>',
+    en: '💰 Total: <b>{usd}</b> — every wallet, every chain',
+    id: '💰 Total: <b>{usd}</b> — semua wallet, semua chain',
   },
-  'wal.split': { en: '{coins} in coins · {tokens} in tokens', id: '{coins} berupa coin · {tokens} berupa token' },
+  // ONE number, not two that re-add the total. "…in coins · …in tokens" was the
+  // line that tipped the header into confusion: it restated the Total as a sum
+  // the reader is invited to check. The coins half is implied.
+  'wal.split': { en: '<i>incl. {tokens} in tokens</i>', id: '<i>termasuk {tokens} berupa token</i>' },
   'wal.active_head': { en: '<b>Active wallet</b>', id: '<b>Wallet aktif</b>' },
   'wal.others_head': { en: '<b>Your other wallets</b>', id: '<b>Wallet kamu yang lain</b>' },
   // The per-wallet breakdown's unread marker. Counted, not vague: "some chains"

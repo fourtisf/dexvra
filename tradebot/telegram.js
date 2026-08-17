@@ -772,7 +772,7 @@ async function walletScreen(chatId) {
     if (list.length > 1) row.push(btn('🗑', 'rmw:' + w.id));
     kbRows.push(row);
   });
-  if (list.length < core.WALLET_CAP) kbRows.push([btn('➕ Generate wallet', 'neww'), btn('📩 Import', 'imp')]);
+  if (list.length < core.WALLET_CAP) kbRows.push([btn(`➕ Generate wallet (${list.length}/${core.WALLET_CAP})`, 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
   // "…in tokens" is a number with no answer to "which ones?" unless this button
   // exists: /portfolio is scoped to the ACTIVE chain, so a bag on any other
@@ -787,20 +787,27 @@ async function walletScreen(chatId) {
   // clutter from the other side — so that case collapses back to the old
   // single line, chain badge and all.
   const oneChainOnly = !acUnread && Math.abs(activeChainUsd - grandUsd) < 0.005;
+  // TOTAL FIRST — it is the headline, and it is the only bold dollar figure in
+  // the header so nothing competes with it. The active chain's share sits under
+  // it with an explicit "On <chain>:" label; two labelled scopes cannot be
+  // misread as the screen disagreeing with itself, which is what "…$508.02
+  // here" stacked against "…every chain" was. The wallet-slot cap ("5 of 10")
+  // is gone from this line — it read as "only 5 of your 10 wallets were
+  // counted" — and lives on the ➕ Generate button, where capacity is decided.
   const totals = oneChainOnly
     ? `${T(chatId, 'wal.title')} · ${ch.emoji} ${esc(ch.name)}\n`
-      + `${T(chatId, 'wal.total', { usd: `<b>${usdX(grandUsd)}</b>`, n: list.length, cap: core.WALLET_CAP })}\n`
+      + `${T(chatId, 'wal.total', { usd: usdX(grandUsd) })}\n`
     : `${T(chatId, 'wal.title')}\n`
+      + `${T(chatId, 'wal.total_all', { usd: usdX(grandUsd) })}\n`
       + `${T(chatId, acUnread ? 'wal.on_chain_unread' : 'wal.on_chain', {
-        emoji: ch.emoji, chain: `<b>${esc(ch.name)}</b>`, usd: `<b>${usdX(activeChainUsd)}</b>` })}\n`
-      + `${T(chatId, 'wal.total_all', { usd: usdX(grandUsd), n: list.length, cap: core.WALLET_CAP })}\n`;
+        emoji: ch.emoji, chain: esc(ch.name), usd: usdX(activeChainUsd) })}\n`;
   // The coins/tokens split earns its line only when both halves are worth
   // reading. "$1,322.22 in coins · $0.33 in tokens" spends a line restating the
   // total; 🪙 My tokens is still offered, because a route to detail is not the
   // same as a claim about the balance.
   const showSplit = grandToken > 0.05 && grandToken > grandUsd * 0.01 && grandNative > grandUsd * 0.01;
   const head = totals
-    + (showSplit ? `<i>${T(chatId, 'wal.split', { coins: usdX(grandNative), tokens: usdX(grandToken) })}</i>\n` : '')
+    + (showSplit ? `${T(chatId, 'wal.split', { tokens: usdX(grandToken) })}\n` : '')
     + `\n${T(chatId, 'wal.active_head')}\n`
     + `✅ <b>${activeLabel}</b> · <b>${usdX(walletUsd[awIdx])}</b>${orders ? ` · ${T(chatId, 'wal.orders', { n: orders })}` : ''}\n`
     + chainBlock

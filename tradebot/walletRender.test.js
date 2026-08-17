@@ -162,10 +162,13 @@ test('picking a chain with nothing on it does not print the all-chains total und
   WALLETS = [W('w1')];
   BAL = [[E(0.66), 0n, 0n, 0n]];   // $1,320 — all of it on Robinhood Chain
   const txt = plain((await t.walletScreen(1)).text);
-  assert.match(txt, /🟣 Solana — \$0\.00 here/, 'the chain the user picked has no figure of its own');
-  assert.match(txt, /\$1,320\.00 across 1 of 10 wallets, every chain/);
+  // Header rework ("sangat membingungkan"): Total leads, the chain share sits
+  // under it with an explicit label, and the slot cap is off the line entirely.
+  assert.match(txt, /🟣 On Solana: \$0\.00/, 'the chain the user picked has no figure of its own');
+  assert.match(txt, /💰 Total: \$1,320\.00 — every wallet, every chain/);
   // The killer: the grand total must not be the line under the chain badge.
   assert.ok(!/🟣 Solana\n\$1,320\.00/.test(txt), 'the all-chains total is still sitting under the chain badge');
+  assert.ok(!/of 10 wallets/.test(txt), 'the slot cap is back on the total line — it reads as "only N counted"');
 });
 
 test('the chain you are trading on is never listed among the empty ones', async () => {
@@ -215,8 +218,9 @@ test('one chain in play means one number, not the same number twice', async () =
   WALLETS = [W('w1')];
   BAL = [[E(1), 0n, 0n, 0n]];
   const txt = plain((await t.walletScreen(1)).text);
-  assert.match(txt, /💼 Your wallets · 🚀 Robinhood Chain\n\$2,000\.00 across 1 of 10 wallets\n/);
+  assert.match(txt, /💼 Your wallets · 🚀 Robinhood Chain\n💰 Total: \$2,000\.00\n/);
   assert.ok(!/every chain/.test(txt), 'a second, identical total line was added');
+  assert.ok(!/On Robinhood Chain:/.test(txt), 'the chain share line restates the only number there is');
 });
 
 test('a chain we could not reach never reads as $0.00 on it', async () => {
@@ -226,8 +230,8 @@ test('a chain we could not reach never reads as $0.00 on it', async () => {
   WALLETS = [W('w1')];
   BAL = [[E(1), 0n, 0n, 'fail']];
   const txt = plain((await t.walletScreen(1)).text);
-  assert.match(txt, /🟣 Solana — couldn't read your balance here just now/);
-  assert.ok(!/Solana — \$0\.00 here/.test(txt), 'an unreadable balance was rendered as zero');
+  assert.match(txt, /🟣 On Solana: couldn't read it just now/);
+  assert.ok(!/On Solana: \$0\.00/.test(txt), 'an unreadable balance was rendered as zero');
 });
 
 test('a trivial token bag does not spend a line restating the total', async () => {
@@ -248,7 +252,11 @@ test('a token bag worth reading still gets the split line', async () => {
   WALLETS[0].positions = { a: pos('robinhood', '0xBAG', 'HOPPY', 100000, 18) };
   PRICE = { '0xBAG': 0.000005 };   // $1,000 against $2,000 of ETH
   BAL = [[E(1), 0n, 0n, 0n]];
-  assert.match(plain((await t.walletScreen(1)).text), /\$2,000\.00 in coins · \$1,000\.00 in tokens/);
+  // ONE number now: "…in coins · …in tokens" restated the Total as a sum the
+  // reader was invited to check — the exact line reported as confusing.
+  const txt246 = plain((await t.walletScreen(1)).text);
+  assert.match(txt246, /incl\. \$1,000\.00 in tokens/);
+  assert.ok(!/in coins ·/.test(txt246), 'the two-number split is back');
 });
 
 test('the screen fits in a Telegram message at the wallet cap', async () => {
