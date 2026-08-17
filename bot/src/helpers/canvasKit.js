@@ -480,10 +480,87 @@ function coverage() {
   return { available: true, cjk: COVER.cjk, emoji: COVER.emoji, faces: COVER.faces.slice(), scripts };
 }
 
+/**
+ * THE CHARACTERS THIS BOX WOULD DRAW AS BOXES — checked on the actual string,
+ * right before it is drawn.
+ *
+ * `coverage()` samples nine scripts, and that sample is exactly as blind as the
+ * next token's name is unusual: with a full Noto install it reported everything
+ * green while Armenian, Bengali, Tamil and Georgian all still rendered as boxes.
+ * A list of scripts somebody thought of is not a guarantee; the string in hand
+ * is the only thing worth asking about.
+ *
+ * HOW: a Private Use codepoint is in no real font, so its advance width IS this
+ * face's notdef box. Any character that measures exactly the same has fallen to
+ * the same box. It is a heuristic — a real glyph could coincidentally share that
+ * advance — so it drives a WARNING and never a rendering decision. Cached per
+ * codepoint; the cost on a ticker is a handful of measureText calls, once.
+ */
+const _tofuCache = new Map();
+function unrenderable(text) {
+  const s = String(text || "");
+  if (!s) return [];
+  const CVl = canvasLib();
+  if (!CVl) return [];
+  let ctx;
+  const out = [];
+  for (const ch of s) {                       // by CODEPOINT: surrogate pairs are one glyph
+    const cp = ch.codePointAt(0);
+    if (cp < 0x0100) continue;                // Latin-1 is covered by every face we ship
+    if (/\s/.test(ch)) continue;
+    if (_tofuCache.has(cp)) { if (_tofuCache.get(cp)) out.push(ch); continue; }
+    if (!ctx) {
+      ctx = CVl.createCanvas(8, 8).getContext("2d");
+      ctx.font = `40px ${F.r}`;
+    }
+    const bad = ctx.measureText(ch).width === ctx.measureText("").width;
+    _tofuCache.set(cp, bad);
+    if (bad) out.push(ch);
+  }
+  return out;
+}
+
+/**
+ * Say so BEFORE the artwork ships, not after somebody screenshots it.
+ *
+ * 牛来 went to 12,607 subscribers as "$???" on the listing card AND as "??" on
+ * the pump alert, and the only reason anyone found out is that the owner
+ * happened to look. Nothing threw: a font without the glyph draws a box and the
+ * render succeeds.
+ *
+ * It lives HERE, not in a renderer, because there are four of them and the pump
+ * overlay is a different module entirely — a guard each renderer has to
+ * remember is a guard the fifth one will not have. `bannerFonts.test.js`
+ * enumerates the entry points and fails if one stops calling it.
+ *
+ * It WARNS and renders anyway. A banner with two boxes in it still beats no
+ * banner: the project is owed its listing, and a render that refused would turn
+ * a blemish into an outage. What must not happen again is it going out unseen.
+ */
+function warnBoxes(where, coin) {
+  try {
+    const bad = [...new Set([...unrenderable(coin && coin.symbol), ...unrenderable(coin && coin.name)])];
+    if (!bad.length) return bad;
+    // log.alert de-duplicates, so one token drawn on the listing card, the pump
+    // alert and a rank-up does not post the same line three times — and it
+    // reaches the ops channel, where a person is.
+    log.alert(
+      "🔤 <b>Banner glyphs missing</b>\n"
+      + `<b>${String((coin && coin.symbol) || "?").slice(0, 24)}</b> on the <i>${where}</i> artwork — `
+      + `${bad.length} character(s) drew as boxes: <code>${bad.join(" ")}</code>\n`
+      + "It still went out. Install the font that covers them, then <code>npm run fonts:check</code>."
+    );
+    return bad;
+  } catch (_) { return []; }   /* a diagnostic must never be why a banner fails */
+}
+
 module.exports = {
   canvasLib,
   available: () => !!canvasLib(),
   coverage,
+  unrenderable,
+  warnBoxes,
+  _tofuCache,   // test seam: coverage depends on the box, so a test must be able to clear it
   F,
   MINT,
   CYAN,

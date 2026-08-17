@@ -281,6 +281,29 @@ added.
   artwork has been off-brand on its most prominent line for as long as the brand
   fonts have existed. `regFb()` is the guard the comment always implied.
 
+### So it cannot happen again quietly
+
+The chain fixes the cause. What stops the NEXT one is that a banner can no
+longer ship boxes unnoticed:
+
+- **`unrenderable(text)` asks about the STRING, not about a list of scripts.** A
+  Private Use codepoint is in no font, so its advance width IS this face's notdef
+  box; any character measuring the same has fallen to the same box. That caught
+  Armenian, Bengali, Tamil and Georgian on a box where `coverage()` reported all
+  nine sampled scripts green — the same silence as `$???`, one script family over.
+  A heuristic (a real glyph could share that advance), so it drives a WARNING and
+  never a rendering decision. Cached per codepoint, ASCII skipped.
+- **`warnBoxes()` lives in `canvasKit`, and every renderer entry calls it** — the
+  listing/trending card, the rank-up card, and `bannerTemplate.compose()`, which
+  is the one function every overlay goes through, the pump alert included. A
+  guard each renderer had to remember is one the fifth renderer will not have;
+  `bannerFonts.test.js` fails if an entry stops calling it or grows its own copy.
+- **It warns and renders anyway.** A banner with two boxes still beats no banner
+  — the project is owed its listing, and a render that refused would turn a
+  blemish into an outage. What must not happen again is it going out unseen.
+- It posts through `log.alert`, which de-duplicates: one token drawn on the card,
+  the pump alert and a rank-up is one line in the ops channel, not three.
+
 ```bash
 cd bot && npm run fonts:check     # which scripts THIS box can draw, plus a sample PNG
 ```

@@ -10,6 +10,7 @@ const log = require("./helpers/logger");
 // module and the Top-Gainers banners cannot drift apart visually.
 const {
   canvasLib,
+  warnBoxes,
   F,
   MINT,
   CYAN,
@@ -330,6 +331,7 @@ function brandBar(ctx, X0) {
 async function render(coin, logoBuffer, opts) {
   const cv = canvasLib();
   if (!cv) return null;
+  warnBoxes(opts && opts.pill === "TRENDING NOW" ? "trending" : "listing", coin);
   try {
     const canvas = cv.createCanvas(W, H);
     const ctx = canvas.getContext("2d");
@@ -683,6 +685,7 @@ function rankMedallion(ctx, cx, cy, r, rank) {
 async function renderRankUpBanner(coin, logoBuffer, opts = {}) {
   const cv = canvasLib();
   if (!cv) return null;
+  warnBoxes("rank-up", coin);
   const rank = Number(opts.rank) || 1;
   const change = Number(opts.change) || 0;
   try {

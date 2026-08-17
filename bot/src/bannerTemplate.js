@@ -14,6 +14,10 @@ const { loadJSONSync, saveJSON, DATA_DIR } = require("./helpers/persist");
 const { toSendBuffer } = require("./helpers/encodeImage");
 const mediaMirror = require("./db/mediaMirror");
 const log = require("./helpers/logger");
+// The glyph guard. compose() is the ONE choke point every template overlay goes
+// through — the pump alert reaches it via composeOntoClip — so the check lives
+// here rather than at each caller.
+const { warnBoxes } = require("./helpers/canvasKit");
 
 const CONFIG_FILE = "bannerTemplate.json";
 // Kinds with a bundled/uploadable STILL artwork (drives selfCheck + artwork API).
@@ -418,6 +422,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
   // badge) on a CLEAR canvas — used to composite that data onto an animated GIF/video
   // template. Otherwise this draws the still artwork background + the same overlay.
   const transparent = !!(opts && opts.transparent);
+  warnBoxes(kind, { symbol, name });
   // Loud diagnostics: a null here silently downgrades channel posts to the raw
   // token logo, which reads as "the banner is broken" (live incident 2026-07).
   if (!transparent && !hasTemplate(kind)) {

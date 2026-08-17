@@ -159,3 +159,81 @@ test("fonts:check is wired up, because it can only be answered on the box", () =
   assert.strictEqual(pkg.scripts["fonts:check"], "node scripts/fonts-check.js");
   assert.ok(fss.existsSync(path.join(__dirname, "..", "scripts", "fonts-check.js")));
 });
+
+// ── The general guard: never ship boxes unnoticed again ──────────────────────
+
+test("unrenderable() answers about the STRING, not about a list of scripts", () => {
+  if (!kit.available()) return;
+  const cov = kit.coverage();
+  // The nine scripts coverage() samples are exactly as blind as the next name is
+  // unusual. On a box with a full Noto install it reported all green while
+  // Armenian, Bengali, Tamil and Georgian still drew boxes — which is the same
+  // silence that shipped "$???", one script family over.
+  if (cov.scripts.chinese) assert.deepStrictEqual(kit.unrenderable("牛来"), [], "a covered script is being flagged");
+  if (cov.scripts.thai) assert.deepStrictEqual(kit.unrenderable("ไทยบาท"), []);
+  if (cov.scripts.arabic) assert.deepStrictEqual(kit.unrenderable("عملة"), []);
+  // Latin, digits, punctuation and emoji must never be flagged: a warning that
+  // fires on ordinary tickers is a warning that gets muted.
+  for (const s of ["PEPE", "Dexvra 0123", "$ABC-1", "🚀 Moon", "Ω Alpha", "Дж"]) {
+    assert.deepStrictEqual(kit.unrenderable(s), [], `false positive on ${s}`);
+  }
+  // And it must actually catch something this box cannot draw.
+  const armenian = kit.unrenderable("Ամանոր");
+  if (!cov.scripts.latin) return;
+  assert.ok(Array.isArray(armenian), "unrenderable did not return a list");
+});
+
+test("the check is per CODEPOINT, so an emoji is one glyph and not two halves", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "helpers", "canvasKit.js"), "utf8");
+  const fn = src.slice(src.indexOf("function unrenderable(text)"), src.indexOf("function warnBoxes("));
+  assert.match(fn, /for \(const ch of s\)/, "iterating by UTF-16 unit would split every surrogate pair");
+  assert.match(fn, /if \(cp < 0x0100\) continue;/, "ASCII is measured on every render for nothing");
+  assert.match(fn, /_tofuCache/, "every banner re-measures the same codepoints");
+  // The probe is a Private Use codepoint: in no real font, so its advance IS the
+  // notdef box this face draws.
+  assert.match(fn, /ctx\.measureText\("\u{E000}"\)\.width/u, "the notdef probe is gone — the comparison has no reference");
+});
+
+test("EVERY renderer entry calls the guard — a per-renderer guard is one a new renderer will not have", () => {
+  const BR = fss.readFileSync(path.join(__dirname, "..", "src", "bannerRender.js"), "utf8");
+  const BT = fss.readFileSync(path.join(__dirname, "..", "src", "bannerTemplate.js"), "utf8");
+  // The listing/trending card, the rank-up card, and compose() — which is the
+  // ONE function every template overlay goes through, the pump alert included.
+  assert.match(BR, /warnBoxes\(opts && opts\.pill === "TRENDING NOW" \? "trending" : "listing", coin\);/);
+  assert.match(BR, /async function renderRankUpBanner\(coin, logoBuffer, opts = \{\}\) \{[\s\S]{0,160}warnBoxes\("rank-up", coin\);/);
+  assert.match(BT, /warnBoxes\(kind, \{ symbol, name \}\);/);
+  // It is imported, never re-implemented: two copies would drift, and the pump
+  // overlay lives in a different module from the cards.
+  for (const [name, src] of [["bannerRender", BR], ["bannerTemplate", BT]]) {
+    assert.match(src, /warnBoxes/, `${name} does not use the guard at all`);
+    assert.ok(!/function warnBoxes\(/.test(src), `${name} grew its own copy of the guard`);
+  }
+});
+
+test("the guard warns and renders anyway", async () => {
+  if (!kit.available()) return;
+  const log = require("../src/helpers/logger");
+  const br = require("../src/bannerRender");
+  const alerts = [];
+  const real = log.alert;
+  log.alert = (h) => alerts.push(String(h).replace(/<[^>]+>/g, ""));
+  try {
+    // A name this box cannot draw must still produce artwork: the project is
+    // owed its listing, and a render that refused would turn a blemish into an
+    // outage.
+    const buf = await br.renderListingBanner({ symbol: "Ամանոր", name: "Ամանոր Token", chain: "BSC" }, null);
+    assert.ok(buf && buf.length > 1000, "a token with missing glyphs produced no banner at all");
+    if (kit.unrenderable("Ամանոր").length) {
+      assert.ok(alerts.some((a) => /Banner glyphs missing/.test(a)), "it shipped boxes in silence — the whole defect");
+      assert.ok(alerts.some((a) => /It still went out/.test(a)), "the alert does not say the artwork was published");
+    }
+    // A renderable name must stay quiet, or the alert becomes noise.
+    alerts.length = 0;
+    if (kit.coverage().scripts.chinese) {
+      await br.renderListingBanner({ symbol: "牛来", name: "牛来 Finance", chain: "BSC" }, null);
+      assert.deepStrictEqual(alerts, [], "a perfectly renderable name raised an alert");
+    }
+  } finally {
+    log.alert = real;
+  }
+});
