@@ -63,11 +63,39 @@ const CJK_CANDIDATES = [
   "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
   "/System/Library/Fonts/PingFang.ttc",
 ];
+// EMOJI SHIPS IN ITS OWN PACKAGE. `fonts-noto-color-emoji` is pulled in by
+// neither fonts-noto-cjk nor fonts-noto-core, so a box with every text script
+// covered still draws 🚀 as a box — which is exactly what the production server
+// reported while this dev box (where the package happened to be present) said
+// emoji was fine. The paths differ by distro, hence the list.
 const EMOJI_CANDIDATES = [
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoColorEmoji.ttf"),
-  "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+  "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",          // Debian/Ubuntu
+  "/usr/share/fonts/truetype/NotoColorEmoji.ttf",
   "/usr/share/fonts/truetype/noto-color-emoji/NotoColorEmoji.ttf",
+  "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",      // Fedora/RHEL
+  "/usr/share/fonts/noto-color-emoji/NotoColorEmoji.ttf",
+  "/usr/share/fonts/NotoColorEmoji.ttf",
+  "/System/Library/Fonts/Apple Color Emoji.ttc",                // macOS dev boxes
 ];
+/**
+ * Which apt package fixes which script.
+ *
+ * "1 script(s) above are still uncovered" is a diagnostic; "run apt-get install
+ * fonts-noto-color-emoji" is an instruction. The difference matters because the
+ * incomplete install line was MY mistake — I told the operator to install
+ * fonts-noto-cjk and fonts-noto-core and left the emoji package out, and neither
+ * of those two pulls it in. The mapping lives in code so the answer cannot be
+ * given from memory again.
+ */
+const PKG_FOR = {
+  chinese: "fonts-noto-cjk", japanese: "fonts-noto-cjk", korean: "fonts-noto-cjk",
+  thai: "fonts-noto-core", arabic: "fonts-noto-core", hebrew: "fonts-noto-core",
+  devanagari: "fonts-noto-core", greek: "fonts-noto-core", cyrillic: "fonts-noto-core",
+  emoji: "fonts-noto-color-emoji",
+};
+/** The packages that would cover a given set of missing scripts, deduplicated. */
+const packagesFor = (scripts) => [...new Set(scripts.map((s) => PKG_FOR[s]).filter(Boolean))];
 // Everything else a ticker might be written in. These ship in fonts-noto-core,
 // which is NOT a prerequisite — the chain simply gains whichever of them exist.
 // Listed here rather than added later so that installing the package is the
@@ -179,8 +207,12 @@ function canvasLib() {
     // is how this was found in the first place.
     const gaps = Object.entries(coverage().scripts).filter(([, ok]) => !ok).map(([k]) => k);
     if (gaps.length) {
+      // The PACKAGE, computed from what is actually missing. Naming the fix from
+      // memory is how the emoji package got left out of the install line.
+      const pkgs = packagesFor(gaps);
       log.warn(`[banner] no font covers ${gaps.join(", ")} — a token named in one of those draws boxes on every card. `
-        + "Install fonts-noto-cjk and fonts-noto-core, or drop the faces into bot/assets/fonts/. Check with: npm run fonts:check");
+        + (pkgs.length ? `Install: apt-get install -y ${pkgs.join(" ")}. ` : "")
+        + "Check with: npm run fonts:check");
     }
   } catch (e) {
     log.warn(`[banner] canvas unavailable, using static/logo fallback: ${e.message}`);
@@ -558,6 +590,7 @@ module.exports = {
   canvasLib,
   available: () => !!canvasLib(),
   coverage,
+  packagesFor,
   unrenderable,
   warnBoxes,
   _tofuCache,   // test seam: coverage depends on the box, so a test must be able to clear it

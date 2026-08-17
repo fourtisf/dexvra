@@ -312,10 +312,23 @@ Whether a glyph renders is a property of the fonts on the server, not of the
 code — same as `raid:check` and `launchpads:check` — so it has to be measured on
 the box.
 
-**Config a fix depends on:** the CJK font itself. `apt-get install -y
-fonts-noto-cjk` covers Chinese/Japanese/Korean; `fonts-noto-core` adds Thai,
-Arabic, Devanagari and Hebrew. Until one is installed the chain has nothing to
-fall back to and the boot log says so.
+**Config a fix depends on:** the fonts. **Three packages, and the third is the
+one that gets forgotten** —
+
+```bash
+apt-get install -y fonts-noto-cjk fonts-noto-core fonts-noto-color-emoji
+```
+
+`fonts-noto-cjk` covers Chinese/Japanese/Korean, `fonts-noto-core` adds Thai,
+Arabic, Devanagari and Hebrew, and **emoji lives in its own package that neither
+of the other two pulls in**. An install line written from memory left it out, the
+operator ran exactly what was asked, and the box came back with every text script
+green and `✗ Emoji` — on a market where 🚀 in a ticker is routine.
+
+So the mapping is in code (`PKG_FOR` / `packagesFor()`), and both the boot
+warning and `fonts:check` print the exact `apt-get` line for whatever is actually
+missing. "1 script(s) uncovered" is a diagnostic; a package name is an
+instruction, and it cannot be recalled wrongly if it is computed.
 
 ## Two bot processes, one config
 

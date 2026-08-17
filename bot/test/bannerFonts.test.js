@@ -237,3 +237,35 @@ test("the guard warns and renders anyway", async () => {
     log.alert = real;
   }
 });
+
+test("the fix is a PACKAGE NAME, computed — not one recalled from memory", () => {
+  // The install line handed to the operator was fonts-noto-cjk + fonts-noto-core,
+  // and emoji lives in fonts-noto-color-emoji, which NEITHER of those pulls in.
+  // So the operator did exactly what was asked and still had a gap — reported
+  // back as "✗ Emoji". Naming the fix from memory is the mistake; the mapping is
+  // in code so it cannot be made again.
+  assert.deepStrictEqual(kit.packagesFor(["emoji"]), ["fonts-noto-color-emoji"]);
+  assert.deepStrictEqual(kit.packagesFor(["chinese", "japanese", "korean"]), ["fonts-noto-cjk"]);
+  assert.deepStrictEqual(kit.packagesFor(["thai", "arabic"]), ["fonts-noto-core"]);
+  // Deduplicated, and every sampled script maps to something: a gap the mapping
+  // does not know about prints a count again, which is what this replaced.
+  const all = kit.packagesFor(["chinese", "korean", "thai", "emoji"]);
+  assert.deepStrictEqual(all, ["fonts-noto-cjk", "fonts-noto-core", "fonts-noto-color-emoji"]);
+  if (!kit.available()) return;
+  for (const s of Object.keys(kit.coverage().scripts)) {
+    if (s === "latin") continue;   // no package needed; it is the control sample
+    assert.ok(kit.packagesFor([s]).length === 1, `${s} is sampled but maps to no package`);
+  }
+});
+
+test("the emoji face is looked for where each distro actually puts it", () => {
+  const src = fss.readFileSync(path.join(__dirname, "..", "src", "helpers", "canvasKit.js"), "utf8");
+  const list = src.slice(src.indexOf("const EMOJI_CANDIDATES = ["), src.indexOf("const PKG_FOR"));
+  // Debian/Ubuntu is where the production box is, and it was the ONE path that
+  // happened to be right — a single-path list would have been luck, not design.
+  assert.match(list, /\/usr\/share\/fonts\/truetype\/noto\/NotoColorEmoji\.ttf/);
+  assert.match(list, /google-noto-emoji/, "Fedora/RHEL layout is not searched");
+  assert.ok((list.match(/NotoColorEmoji|Apple Color Emoji/g) || []).length >= 5, "the candidate list is too narrow to be a list");
+  assert.ok(list.indexOf('"..", "assets", "fonts"') < list.indexOf("/usr/share/fonts"),
+    "a system font outranks one the operator deliberately placed");
+});

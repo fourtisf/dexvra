@@ -76,16 +76,27 @@ try {
   console.log(`\n  ${Y}could not write the sample image: ${e.message}${X}`);
 }
 
-if (!cov.cjk) {
+// THE PACKAGE, not a count.
+//
+// This printed "1 script(s) above are still uncovered" on the production box,
+// which is a diagnostic and not an instruction — and the script it meant was
+// emoji, whose font lives in fonts-noto-color-emoji, a package that NEITHER
+// fonts-noto-cjk NOR fonts-noto-core pulls in. The install line given from
+// memory left it out, so the operator did everything asked and still had a gap.
+// The mapping is in canvasKit now, so the answer is computed rather than recalled.
+const gaps = Object.entries(cov.scripts).filter(([, ok]) => !ok).map(([k]) => k);
+if (!gaps.length) {
+  console.log(`\n${G}Every script sampled here renders.${X}`);
+} else {
+  const pkgs = kit.packagesFor(gaps);
   // Say what the USER loses, not which file is absent — the rule the upstream
   // probes already follow.
-  console.log(`\n${R}Chinese, Japanese and Korean token names will render as boxes on every banner.${X}`);
-  console.log('Fix it with either:');
-  console.log('  apt-get install -y fonts-noto-cjk');
-  console.log('  …or drop NotoSansCJK-Bold.ttc into bot/assets/fonts/ and restart.');
-} else if (missing) {
-  console.log(`\n${Y}${missing} script(s) above are still uncovered. A token named in one of them will draw boxes.${X}`);
-} else {
-  console.log(`\n${G}Every script sampled here renders.${X}`);
+  console.log(`\n${R}Names using ${gaps.join(', ')} draw boxes on every banner they appear on.${X}`);
+  if (pkgs.length) {
+    console.log('\nFix it on this box:');
+    console.log(`  ${G}apt-get install -y ${pkgs.join(' ')}${X}`);
+    console.log(`  ${D}then: cd bot && pm2 restart ecosystem.config.js --update-env && npm run fonts:check${X}`);
+  }
+  console.log(`\n  ${D}…or drop the face into bot/assets/fonts/ — that path is tried first, so it always wins.${X}`);
 }
 console.log('');
