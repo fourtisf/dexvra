@@ -381,7 +381,9 @@ const S = {
   // "Buy THIS contract the moment it can be bought." The launch snipe buys
   // every new token on a chain and the dev snipe buys whatever a followed
   // wallet launches; neither can express having the address in advance.
-  'snipe.ca.title': { en: '📍 <b>Snipe a contract</b>', id: '📍 <b>Snipe satu kontrak</b>' },
+  // The sniper HOME — where 🎯 Snipe and /snipe land. Targeted (the panel) is
+  // the front door; mass mode and dev snipe are labelled choices below.
+  'snipe.ca.title': { en: '🎯 <b>Sniper</b>', id: '🎯 <b>Sniper</b> — snipe token incaranmu' },
   'snipe.ca.blurb': {
     en: 'Arm an address before its pool opens. The bot checks it every few seconds and buys the instant a swap can actually be filled — on any enabled chain, Solana included.',
     id: 'Pasang alamat sebelum pool-nya dibuka. Bot cek tiap beberapa detik dan langsung beli begitu swap benar-benar bisa jalan — di semua chain yang aktif, termasuk Solana.',
@@ -396,7 +398,16 @@ const S = {
   // The panel (snipe.panel.open_btn) sits above this on the same screen, so
   // this label says what makes the second way in DIFFERENT: you type one line.
   'snipe.ca.add_btn': { en: '⌨️ One-line arm — type it', id: '⌨️ Arm satu baris — langsung ketik' },
-  'snipe.ca.launch_btn': { en: '🎯 Launch snipe', id: '🎯 Snipe launch' },
+  // Mass mode is the old chain-wide auto-snipe. Its button carries the LIVE
+  // armed state ({what} = "Solana · 0.1 SOL" or "2 chains") — what the bot is
+  // doing with real money belongs on the button itself.
+  'snipe.ca.launch_btn': { en: '🌊 Mass mode — buy every new launch', id: '🌊 Mode massal — beli semua launch baru' },
+  'snipe.ca.mass_armed': { en: '🌊 Mass mode · 🟢 ON — {what}', id: '🌊 Mode massal · 🟢 AKTIF — {what}' },
+  'snipe.ca.mass_note': {
+    en: '⚠️ <b>Mass mode is ON</b> — buying every new launch on {list}, <b>{amt}</b> each. Tap 🌊 below to stop or change it.',
+    id: '⚠️ <b>Mode massal AKTIF</b> — beli semua launch baru di {list}, <b>{amt}</b> per launch. Tap 🌊 di bawah untuk stop atau ubah.',
+  },
+  'snipe.ca.dev_btn': { en: '🧑‍💻 Dev snipe — follow a developer', id: '🧑‍💻 Dev snipe — ikuti developer' },
   // Chain FIRST — the Sol-Trading-Bot panel this mirrors starts at "Exchange".
   // Binding the target to whatever chain happened to be active meant a Solana
   // mint pasted while Ethereum was active bounced as "not a valid contract

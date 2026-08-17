@@ -1490,6 +1490,16 @@ function caSnipeScreen(chatId) {
   const recent = core.snipeTargets(u).filter((t) => t.status !== 'armed').slice(-4).reverse();
   const ch = activeChain(chatId);
   const L = [T(chatId, 'snipe.ca.title'), '', T(chatId, 'snipe.ca.blurb'), ''];
+  // Mass mode's armed state, ON THE HOME. The user who reported "buy ngasal"
+  // had this armed and could not see it from where they were; a feature that
+  // spends money on every launch must be visible from the sniper's front door.
+  const massOn = core.chains.enabledChains().filter((c) => (u.snipe.chains || {})[c.key]);
+  if (massOn.length) {
+    L.push(T(chatId, 'snipe.ca.mass_note', {
+      list: massOn.map((c) => `${c.emoji} ${esc(c.name)}`).join(', '),
+      amt: esc(u.snipe.ethAmount),
+    }), '');
+  }
 
   if (armed.length) {
     L.push(T(chatId, 'snipe.ca.armed_head', { n: armed.length }));
@@ -1525,7 +1535,15 @@ function caSnipeScreen(chatId) {
     const c = core.chainOf(t.chain) || { emoji: '' };
     kbRows.push([btn(`🗑 ${c.emoji} ${short(t.ca)}`, `csnx:${t.id}`)]);
   }
-  kbRows.push([btn(T(chatId, 'snipe.ca.launch_btn'), 'snipe'), btn('« Menu', 'menu')]);
+  // Mass mode is a labelled CHOICE, never the front door — and its button
+  // carries the live armed state, so what the bot is doing with real money is
+  // on the button itself, not two screens away.
+  const massBtn = massOn.length
+    ? T(chatId, 'snipe.ca.mass_armed', { what: massOn.length === 1 ? `${massOn[0].name} · ${u.snipe.ethAmount} ${massOn[0].native}` : `${massOn.length} chains` })
+    : T(chatId, 'snipe.ca.launch_btn');
+  kbRows.push([btn(massBtn, 'snmass')]);
+  kbRows.push([btn(T(chatId, 'snipe.ca.dev_btn'), 'copy')]);
+  kbRows.push([btn('« Menu', 'menu')]);
   return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
 }
 
@@ -1714,7 +1732,7 @@ function snipeScreen(chatId) {
     `sntog:${c.key}`)]));
   kbRows.push([btn('📍 Snipe one contract', 'csn')]);
   kbRows.push([btn('🎯 Snipe a specific developer', 'copy')]);
-  kbRows.push([btn('« Back', 'menu')]);
+  kbRows.push([btn('« Back', 'snipe')]);
   return { text, kb: { inline_keyboard: kbRows } };
 }
 // Step 2 of arming auto-snipe: the chain is chosen, now the spend. Rendered as
@@ -1738,7 +1756,7 @@ function snipeAmountScreen(chatId, chainKey) {
     kbRows.push(QUICK.slice(i, i + 2).map((p) => btn(`${cur === p ? '✓ ' : ''}${p} ${c.native}`, `snarm:${chainKey}:${p}`)));
   }
   kbRows.push([btn('✏️ Type my own amount', `snarmc:${chainKey}`)]);
-  kbRows.push([btn('« Back', 'snipe')]);
+  kbRows.push([btn('« Back', 'snmass')]);
   return { text, kb: { inline_keyboard: kbRows } };
 }
 // The ONE site that arms auto-snipe. Amount and chain are committed together,
@@ -2900,9 +2918,9 @@ async function onMessageImpl(m) {
   if (text === '/tokens' || text === '/bags') { const s = await tokensScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
-  if (text === '/snipe') { const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
-  // The Sol-Trading-Bot-style sniper home: armed list + the 🎛 setup panel.
-  if (text === '/sniper') { const s = caSnipeScreen(chatId); return send(chatId, s.text, s.kb); }
+  // Both commands open the Sol-Trading-Bot-style sniper home: the 🎛 setup
+  // panel first, armed targets listed, mass mode behind its own 🌊 button.
+  if (text === '/snipe' || text === '/sniper') { const s = caSnipeScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/orders') { const s = ordersScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/alerts') { const s = alertsScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/copy') { const s = copyScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -3035,7 +3053,12 @@ async function onCallback(q) {
   if (data === 'toks') { const s = await tokensScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'monlist') { const s = await monitorListScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'hist') { const s = historyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'snipe') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  // 🎯 Snipe is the sniper HOME (panel + targets) — the reference bot's shape.
+  // The user's word "snipe" means "snipe THIS token", and the menu button used
+  // to answer it with the buy-everything screen ("masih sama aja, setinganya
+  // bukan yang saya inginkan"). Mass mode is a labelled choice inside, 'snmass'.
+  if (data === 'snipe') { const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'snmass') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'orders') { const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'dcas') { const s = dcaScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'dcac') { watchers.cancelDca(chatId, ca); const s = dcaScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -4452,7 +4475,7 @@ function helpText(chatId) {
     `📊 <b>Portfolio</b> — what you hold and your profit/loss\n` +
     `🧾 <b>History</b> — your past trades\n\n` +
     `<b>Automation</b>\n` +
-    `🎯 <b>Snipe</b> — auto-buy every new launch\n` +
+    `🎯 <b>Snipe</b> — full settings panel: snipe a contract, mass mode, dev snipe\n` +
     `👥 <b>Copy &amp; Dev Snipe</b> — mirror a wallet's buys, or auto-buy a dev's new launches\n` +
     `📋 <b>Orders</b> — auto-sell at a price target (TP/SL/trailing/limit)\n` +
     `🔁 <b>DCA</b> — scheduled recurring buys · 🔔 <b>Alerts</b> — price notifications\n\n` +
@@ -4515,8 +4538,8 @@ async function registerCommands() {
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
     { command: 'buy',       description: 'Buy a token: /buy <address> <amount or $usd>' },
     { command: 'sell',      description: 'Sell a token: /sell <address> <percent>' },
-    { command: 'snipe',     description: 'Auto-buy new launches' },
-    { command: 'sniper',    description: 'Snipe one contract — full settings panel' },
+    { command: 'snipe',     description: 'Sniper — full settings panel' },
+    { command: 'sniper',    description: 'Sniper — full settings panel' },
     { command: 'copy',      description: 'Copy another wallet\'s buys' },
     { command: 'orders',    description: 'Auto-sell orders (take-profit / stop-loss)' },
     { command: 'dca',       description: 'Scheduled recurring buys' },

@@ -230,6 +230,35 @@ test('the sniper home offers the panel FIRST, the one-line arm second', () => {
   assert.equal(kb[1][0].callback_data, 'csnadd');
 });
 
+test('🎯 Snipe and /snipe open the sniper HOME, not the buy-everything screen', () => {
+  // "masih sama aja, setinganya bukan yang saya inginkan": the panel shipped,
+  // but the menu's 🎯 Snipe still opened the mass-mode screen — and the user,
+  // hunting for the sniper there, armed a 0.1 SOL buy-every-launch instead.
+  // The word "snipe" means "snipe THIS token"; mass mode is a labelled choice.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  assert.match(SRC, /if \(data === 'snipe'\) \{ const s = caSnipeScreen\(chatId\)/, "the menu's 🎯 Snipe reverted to mass mode");
+  assert.match(SRC, /if \(data === 'snmass'\) \{ const s = snipeScreen\(chatId\)/, 'mass mode lost its own route');
+  assert.match(SRC, /text === '\/snipe' \|\| text === '\/sniper'\) \{ const s = caSnipeScreen/, '/snipe reverted to mass mode');
+});
+
+test('the home SAYS when mass mode is armed — money state is never two screens away', () => {
+  const u = user();
+  u.snipe.chains = { solana: true };
+  u.snipe.ethAmount = '0.1';
+  const s = tg._test.caSnipeScreen(CHAT);
+  assert.match(s.text.replace(/<[^>]+>/g, ''), /0\.1/, 'the per-launch spend is not on the home');
+  const buttons = s.kb.inline_keyboard.flat();
+  const mass = buttons.find((b) => b.callback_data === 'snmass');
+  assert.ok(mass, 'no way from the home to mass mode');
+  assert.match(mass.text, /🟢/, 'an armed mass mode looks the same as an idle one');
+  assert.match(mass.text, /0\.1/, 'the armed button hides the spend');
+  assert.ok(buttons.some((b) => b.callback_data === 'copy'), 'no way from the home to dev snipe');
+  // …and idle reads idle, or the green dot means nothing.
+  u.snipe.chains = {};
+  const idle = tg._test.caSnipeScreen(CHAT).kb.inline_keyboard.flat().find((b) => b.callback_data === 'snmass');
+  assert.ok(!/🟢/.test(idle.text), 'an idle mass mode still shows the armed dot');
+});
+
 test('the amount editor offers the CHAIN\'s presets, not another coin\'s', () => {
   user();
   core.newSnipeDraft(CHAT);
