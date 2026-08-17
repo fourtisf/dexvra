@@ -1632,41 +1632,39 @@ function snipeSetupScreen(chatId, note) {
     `${need(true)} 🌐 ${T(chatId, 'snipe.panel.chain')}: <b>${ch.emoji} ${esc(ch.name)}</b>`,
     `${need(!!d.ca)} 🎯 ${T(chatId, 'snipe.panel.target')}: ${d.ca ? `${tKind} <code>${esc(d.ca)}</code>` : `<i>${T(chatId, 'snipe.panel.waiting')}</i>`}`,
   );
-  if (!dev) L.push(`${need(!!wLab)} 💳 ${T(chatId, 'snipe.panel.wallet')}: <b>${esc(wLab || '—')}</b>`);
+  L.push(`${need(!!wLab)} 💳 ${T(chatId, 'snipe.panel.wallet')}: <b>${esc(wLab || '—')}</b>`);
   L.push(`${need(!!d.amount)} 💵 ${T(chatId, dev ? 'snipe.panel.amount_dev' : 'snipe.panel.amount')}: ${amtLine ? `<b>${amtLine}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`);
-  if (dev) {
-    // A dev target has its own required row (budget) and NO optional section:
-    // slippage/TP-SL/expiry are not honoured on the dev path, and a row the
-    // backend ignores would be the stop-loss-the-user-believes-exists.
-    L.push(`${need(!!d.budget)} 💰 ${T(chatId, 'snipe.panel.budget')}: ${d.budget ? `<b>${esc(d.budget)} ${esc(ch.native)}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`);
-    L.push('', T(chatId, 'snipe.panel.dev_foot'));
-  } else {
-    L.push(
-      '',
-      T(chatId, 'snipe.panel.optional'),
-      `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
-      `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
-      `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
-      '',
-      T(chatId, 'snipe.panel.foot'),
-    );
-  }
+  // The budget is a CAP with a default, not a question ("fitur yang tadi hapus
+  // aja"): unset means ten launches, and the concrete number is shown here and
+  // on the armed message. Expiry stays hidden on the dev path — a copy target
+  // does not expire, and a row the backend ignores would be the
+  // stop-loss-the-user-believes-exists.
+  const budLab = d.budget
+    ? `${esc(d.budget)} ${esc(ch.native)}`
+    : (d.amount ? `${esc(trimNum(Number(d.amount) * 10))} ${esc(ch.native)} (10×)` : T(chatId, 'snipe.panel.bud_auto'));
+  L.push(
+    '',
+    T(chatId, 'snipe.panel.optional'),
+    `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
+    `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
+    dev ? `▫️ 💰 ${T(chatId, 'snipe.panel.budget')}: <b>${budLab}</b>` : `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
+    '',
+    T(chatId, dev ? 'snipe.panel.dev_foot' : 'snipe.panel.foot'),
+  );
   // Label + value, two buttons a row — the reference's two-column table. Both
   // open the same editor, so there is no wrong half to tap.
   const kbRows = [
     [btn(`🌐 ${T(chatId, 'snipe.panel.chain')}`, 'snw:chain'), btn(`${ch.emoji} ${ch.name}`, 'snw:chain')],
     [btn(`🎯 ${T(chatId, 'snipe.panel.target')}`, 'snw:ca'), btn(d.ca ? `✅ ${tKind} ${short(d.ca)}` : `⏳ ${T(chatId, 'snipe.panel.set_btn')}`, 'snw:ca')],
+    [btn(`💳 ${T(chatId, 'snipe.panel.wallet')}`, 'snw:wal'), btn(wLab ? `✅ ${wLab}` : '⏳', 'snw:wal')],
+    [btn(`💵 ${T(chatId, dev ? 'snipe.panel.amount_dev' : 'snipe.panel.amount')}`, 'snw:amt'), btn(d.amount ? `✅ ${d.amount} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:amt')],
+    [btn(`📉 ${T(chatId, 'snipe.panel.slip')}`, 'snw:slip'), btn(d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default'), 'snw:slip')],
+    [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
   ];
-  if (!dev) kbRows.push([btn(`💳 ${T(chatId, 'snipe.panel.wallet')}`, 'snw:wal'), btn(wLab ? `✅ ${wLab}` : '⏳', 'snw:wal')]);
-  kbRows.push([btn(`💵 ${T(chatId, dev ? 'snipe.panel.amount_dev' : 'snipe.panel.amount')}`, 'snw:amt'), btn(d.amount ? `✅ ${d.amount} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:amt')]);
   if (dev) {
-    kbRows.push([btn(`💰 ${T(chatId, 'snipe.panel.budget')}`, 'snw:bud'), btn(d.budget ? `✅ ${d.budget} ${ch.native}` : `⏳ ${T(chatId, 'snipe.panel.pick_btn')}`, 'snw:bud')]);
+    kbRows.push([btn(`💰 ${T(chatId, 'snipe.panel.budget')}`, 'snw:bud'), btn(d.budget ? `✅ ${d.budget} ${ch.native}` : (d.amount ? `${trimNum(Number(d.amount) * 10)} ${ch.native} (10×)` : '10×'), 'snw:bud')]);
   } else {
-    kbRows.push(
-      [btn(`📉 ${T(chatId, 'snipe.panel.slip')}`, 'snw:slip'), btn(d.slipPct > 0 ? `${d.slipPct}%` : T(chatId, 'snipe.ca.slip_default'), 'snw:slip')],
-      [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
-      [btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')],
-    );
+    kbRows.push([btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')]);
   }
   kbRows.push([btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')]);
   kbRows.push(dev
@@ -1692,7 +1690,10 @@ function snwWalletScreen(chatId) {
   const kbR = [];
   // All wallets FIRST — "harus ada fitur all wallet". The amount is per
   // wallet, and the button says so; the armed message states the total.
-  if (wl.length > 1) kbR.push([btn(`${d.walletId === '*' ? '✓ ' : ''}${T(chatId, 'snipe.panel.wallet_all_btn', { n: wl.length })}`, 'snww:*')]);
+  // NOT offered on the dev path: the exit-mirror ledger pins ONE wallet per
+  // position (holding[token].wid), so an all-wallet dev snipe would sell only
+  // one wallet's bag and strand the rest — a row the engine cannot honour.
+  if (wl.length > 1 && d.kind !== 'dev') kbR.push([btn(`${d.walletId === '*' ? '✓ ' : ''}${T(chatId, 'snipe.panel.wallet_all_btn', { n: wl.length })}`, 'snww:*')]);
   wl.forEach((w, i) => {
     const name = String(w.name || '').slice(0, 16);
     kbR.push([btn(`${w.id === d.walletId ? '✓ ' : ''}W${i + 1}${name ? ' ' + name : ''} · ${short(w.address)}`, `snww:${w.id}`)]);
@@ -3299,16 +3300,7 @@ async function onCallback(q) {
         if (had && !d.ca) note = T(chatId, 'snipe.panel.ca_dropped').replace(/<[^>]+>/g, '');
       }
       else if (k === 'snww') core.updateSnipeDraft(chatId, { walletId: ca });
-      else if (k === 'snwa') {
-        const d = core.updateSnipeDraft(chatId, { amount: ca });
-        // Flow FORWARD: a dev target's next missing row is the budget — ask it
-        // now instead of sending the user back to find the ⏳ themselves.
-        if (d.kind === 'dev' && !d.budget) {
-          setPending(chatId, { action: 'snw_bud' });
-          const s = snwBudgetScreen(chatId);
-          return edit(chatId, mid, s.text, s.kb);
-        }
-      }
+      else if (k === 'snwa') core.updateSnipeDraft(chatId, { amount: ca });
       else if (k === 'snwb') core.updateSnipeDraft(chatId, { budget: ca });
       else if (k === 'snws') core.updateSnipeDraft(chatId, { slipPct: ca });
       else if (k === 'snwx') core.updateSnipeDraft(chatId, { ttlH: ca });
@@ -3728,14 +3720,7 @@ async function resolvePending(chatId, p, text, m) {
       const pa = parseAmt(t, ch.native);
       if (!pa) return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) }));
       if (pa.err) return send(chatId, '❌ ' + esc(pa.err));
-      let d2;
-      try { d2 = core.updateSnipeDraft(chatId, { amount: pa.amt }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
-      // Flow FORWARD: a dev target's next missing row is the budget.
-      if (d2.kind === 'dev' && !d2.budget) {
-        setPending(chatId, { action: 'snw_bud' });
-        const s = snwBudgetScreen(chatId);
-        return send(chatId, s.text, s.kb);
-      }
+      try { core.updateSnipeDraft(chatId, { amount: pa.amt }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
       const s = snipeSetupScreen(chatId);
       return send(chatId, s.text, s.kb);
     }
@@ -3832,17 +3817,14 @@ async function resolvePending(chatId, p, text, m) {
         patch.budget = b;
       }
       try { core.updateSnipeDraft(chatId, patch); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
-      const d2 = core.snipeDraft(u);
       const swNote = switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null;
-      // Flow FORWARD: the next missing required row is asked for immediately.
-      if (!d2.amount) {
+      // A plain paste ALWAYS asks the amount next — even when a previous draft
+      // had one ("pas udah drop wallet harusnya ada custom amount"): the spend
+      // is confirmed per target, the buy-ngasal rule at the wizard level. A
+      // line that already carried the amount goes straight to the panel.
+      if (parts[1] === undefined) {
         setPending(chatId, { action: 'snw_amt' });
         const s = snwAmountScreen(chatId);
-        return send(chatId, (swNote ? swNote + '\n\n' : '') + T(chatId, 'snipe.panel.target_saved') + '\n\n' + s.text, s.kb);
-      }
-      if (!d2.budget) {
-        setPending(chatId, { action: 'snw_bud' });
-        const s = snwBudgetScreen(chatId);
         return send(chatId, (swNote ? swNote + '\n\n' : '') + T(chatId, 'snipe.panel.target_saved') + '\n\n' + s.text, s.kb);
       }
       const s = snipeSetupScreen(chatId, swNote);

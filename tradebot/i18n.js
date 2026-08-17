@@ -492,9 +492,10 @@ const S = {
     id: '👥 Di <b>semua wallet ({n})</b> — {amt} {native} per wallet, total sampai <b>{total} {native}</b> kalau semuanya keisi.',
   },
   'snipe.panel.bud_pick': {
-    en: '💰 <b>Budget</b>\n\nTotal spend cap for this developer — I stop buying its launches once it is spent (per launch: <b>{amt}</b>). Tap one, or type your own in {native}.',
-    id: '💰 <b>Budget</b>\n\nBatas total belanja untuk developer ini — saya berhenti beli launch-nya begitu habis (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri dalam {native}.',
+    en: '💰 <b>Budget</b> — optional\n\nThe max TOTAL to spend on this developer; I stop buying its launches once it is reached. Left unset it is <b>10×</b> the per-launch amount (per launch: <b>{amt}</b>). Tap one, or type your own in {native}.',
+    id: '💰 <b>Budget</b> — opsional\n\nBatas TOTAL belanja untuk developer ini; saya berhenti beli launch-nya begitu tercapai. Kalau tidak diisi, otomatis <b>10×</b> jumlah per launch (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri dalam {native}.',
   },
+  'snipe.panel.bud_auto': { en: '10× the amount (auto)', id: '10× jumlah (otomatis)' },
   // ONE question, nothing else ("untuk ini cukup berikan pertanyaan dev wallet
   // aja"). The what-happens-next explanation lives on the panel's dev footer,
   // and the amount/budget questions follow on their own screens — restating
@@ -506,8 +507,8 @@ const S = {
     id: '🧑‍💻 <b>Wallet developer</b> di {chain}\n\nPaste <b>alamat wallet developer</b>-nya:',
   },
   'snipe.panel.dev_foot': {
-    en: "<i>Buys use your ACTIVE wallet and your normal slippage. Only this developer's own launches are bought — never its ordinary trades. Honeypots are skipped; the budget caps your risk.</i>",
-    id: '<i>Buy pakai wallet AKTIF kamu dan slippage biasa. Hanya launch milik developer ini yang dibeli — bukan trade biasanya. Honeypot otomatis dilewati; budget membatasi risiko kamu.</i>',
+    en: "<i>Buys use the wallet and slippage on this panel; TP/SL become real sell orders at each fill. Only this developer's own launches are bought — never its ordinary trades. Honeypots are skipped; the budget caps your risk.</i>",
+    id: '<i>Buy pakai wallet dan slippage di panel ini; TP/SL jadi order jual sungguhan di tiap fill. Hanya launch milik developer ini yang dibeli — bukan trade biasanya. Honeypot otomatis dilewati; budget membatasi risiko kamu.</i>',
   },
   'snipe.panel.amt_pick': {
     en: '💵 <b>Amount</b>\n\nHow much {native} should this snipe spend when it fires?\n\n<i>Keep it small — a launch is high-risk by definition.</i>',

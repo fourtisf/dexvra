@@ -378,42 +378,91 @@ test('switching target kind clears the address — a CA is not a dev wallet', ()
   assert.ok(core.snipeDraft(u));
 });
 
-test('a dev panel hides rows the engine ignores and shows the budget', () => {
+test('the dev panel carries every setting the engine honours, and only those', () => {
+  // "berapa banyak wallet serta slippage … auto sale tp dimana fiturnya":
+  // wallet, slippage and TP/SL are honoured by _followerBuy now, so they get
+  // rows. Expiry is not (a copy target does not expire) and stays hidden — a
+  // row the backend ignores is the stop-loss-the-user-believes-exists.
   user();
   core.newSnipeDraft(CHAT);
   core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
   const s = tg._test.snipeSetupScreen(CHAT);
   const flat = s.kb.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(flat.includes('snw:bud'), 'no budget row on the dev panel');
-  // Slippage/TP-SL/expiry/wallet are not honoured on the dev path — a row the
-  // backend ignores is the stop-loss-the-user-believes-exists, as a row.
-  for (const cb of ['snw:slip', 'snw:tpsl', 'snw:ttl', 'snw:wal']) {
-    assert.ok(!flat.includes(cb), `the dev panel shows ${cb}, which the dev path ignores`);
+  for (const cb of ['snw:wal', 'snw:slip', 'snw:tpsl', 'snw:bud']) {
+    assert.ok(flat.includes(cb), `the dev panel lost ${cb}`);
   }
+  assert.ok(!flat.includes('snw:ttl'), 'the dev panel shows an expiry the dev path ignores');
+  // …and the wallet picker offers ONE wallet, never 👥 All: the exit-mirror
+  // ledger pins one wid per position, so an all-wallet dev snipe would sell
+  // one wallet's bag and strand the rest.
+  const pick = tg._test.snwWalletScreen(CHAT).kb.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(!pick.includes('snww:*'), 'the dev wallet picker offers All, which the exit mirror cannot honour');
+});
+
+test('the engine honours the dev rows: wallet, slippage, TP/SL at the fill', () => {
+  const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+  const fn = W.slice(W.indexOf('async function _followerBuy('), W.indexOf('async function _targetBalance('));
+  assert.ok(fn.length > 400, '_followerBuy moved — this test is asserting nothing');
+  // The panel-picked wallet wins; a wallet deleted since arming falls back to
+  // the active one rather than silently buying nothing.
+  assert.match(fn, /t\.walletId && core\.walletList\(u\)\.some\(\(w\) => w\.id === t\.walletId\)/);
+  // Per-target slippage REPLACES the user's normal bound, unset means normal —
+  // the same contract as the CA snipe.
+  assert.match(fn, /\{ slipBps: t\.slipBps \|\| undefined \}/);
+  // TP/SL become real orders at the fill, at the realised entry, bound to the
+  // wallet that bought — and a placement failure is said out loud.
+  assert.match(fn, /const entry = Number\(r\.spentEth\) \/ \(Number\(r\.gotTokens\) \|\| 1\);/);
+  assert.match(fn, /targetPriceEth: entry \* \(1 \+ t\.tpPct \/ 100\)/);
+  assert.match(fn, /targetPriceEth: entry \* \(1 - t\.slPct \/ 100\)/);
+  assert.match(fn, /Couldn't place the auto-exit/);
+  assert.strictEqual((fn.match(/\}, wid\)/g) || []).length, 2, 'a dev TP/SL order binds to the wrong wallet');
+});
+
+test('the dev target stores wallet, slippage and TP/SL, and the budget defaults to 10×', () => {
+  const u = user();
+  const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletId: 'w2', slipBps: 2500, tpPct: 100, slPct: 50 });
+  assert.equal(t.walletId, 'w2');
+  assert.equal(t.slipBps, 2500);
+  assert.equal(t.tpPct, 100);
+  assert.equal(t.slPct, 50);
+  // No budget question ("fitur yang tadi hapus aja") — but never uncapped: ten
+  // buys by default, stated on the armed message.
+  assert.equal(t.maxEth, '0.5');
+  assert.throws(() => core.addCopyTarget(CHAT, CA, 'robinhood', 0.05, null, 'launches', { walletId: 'nope' }), /no such wallet/);
+  assert.ok(u.copy.targets.length >= 1);
 });
 
 // ── the dev-wallet target, on the panel ──────────────────────────────────────
 
-test('the dev target asks ONE question at a time, and nothing arms before ⚡', async () => {
-  // "aturan hapus aja, jadiin 1 aja, jangan pisah2: bot minta dev wallet, pas
-  // udah dikasih tanyain mau snipe berapa, dll." The old prompt wanted wallet,
-  // per-buy AND budget in one typed line.
+test('the dev flow is wallet → amount → ⚡, and nothing arms before ⚡', async () => {
+  // "aturan hapus aja, jadiin 1 aja … pas udah drop wallet harusnya ada custom
+  // amount." Two questions total: the wallet, then the amount — the budget is
+  // a default (10×), not a question.
   const u = user();
   core.newSnipeDraft(CHAT);
   core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
   const out1 = await typed('snw_dev', MINT);
   assert.match(out1.replace(/<[^>]+>/g, ''), /Amount|Jumlah/i, 'the wallet alone did not lead to the amount question');
   const out2 = await typed('snw_amt', '0.05');
-  assert.match(out2.replace(/<[^>]+>/g, ''), /Budget/i, 'the amount did not lead to the budget question');
-  await typed('snw_bud', '0.5');
+  assert.match(out2.replace(/<[^>]+>/g, ''), /Snipe Setup|Setup Snipe/i, 'the amount did not return to the panel');
   assert.equal(((u.copy && u.copy.targets) || []).length, 0, 'the panel armed before ⚡');
   const tgt = core.armSnipeDraft(CHAT);
   assert.equal(tgt.mode, 'launches');
   assert.equal(tgt.chain, 'solana');
   assert.equal(tgt.address, MINT);
   assert.equal(tgt.buyEth, '0.05');
-  assert.equal(tgt.maxEth, '0.5');
+  assert.equal(tgt.maxEth, '0.5', 'the unset budget did not default to 10×');
   assert.strictEqual(core.snipeDraft(u), null, 'an armed dev draft lingered');
+});
+
+test('a re-pasted dev wallet re-asks the amount even when one is already set', async () => {
+  // The spend is confirmed PER TARGET — a stale amount silently reused is the
+  // "buy ngasal" incident at the wizard level.
+  user();
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev', amount: 0.1 });
+  const out = await typed('snw_dev', MINT);
+  assert.match(out.replace(/<[^>]+>/g, ''), /Amount|Jumlah/i, 'a stale amount was silently reused');
 });
 
 test('the old one-line dev arm fills every row in one go', async () => {
@@ -439,7 +488,9 @@ test('a refused dev step keeps the draft where it was', async () => {
   // enforces — at the row, instead of being discovered at ⚡.
   assert.match((await typed('snw_bud', '0.01')).replace(/<[^>]+>/g, ''), /budget/i);
   assert.strictEqual(core.snipeDraft(u).budget, null);
-  assert.throws(() => core.armSnipeDraft(CHAT), /no budget/i);
+  // …and the unset budget is no blocker: ⚡ arms with the 10× default.
+  const tgt = core.armSnipeDraft(CHAT);
+  assert.equal(tgt.maxEth, '0.5');
 });
 
 test('an OFF master switch is said at ⚡, with the one-tap fix', () => {

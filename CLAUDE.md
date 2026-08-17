@@ -1160,13 +1160,27 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   walletnya"): 📍 token contract, or 🧑‍💻 dev wallet. A wallet and a CA share
   the same address shape on every chain, so no paste can be auto-classified
   into one or the other; the user says which they mean. The dev kind lives ON
-  the panel (`draft.kind`): its required rows become Chain · Dev wallet ·
-  Amount/launch · 💰 Budget, and the rows the dev path does not honour
-  (wallet, slippage, TP/SL, expiry) are HIDDEN, not greyed — a row the backend
-  ignores is the stop-loss-the-user-believes-exists. Switching kinds clears
-  the address (shape-valid both ways, semantically wrong both ways), and ⚡
-  arms a dev target through `addCopyTarget` ('launches'), discriminated by
-  `mode === 'launches'` on the return.
+  the panel (`draft.kind`); switching kinds clears the address (shape-valid
+  both ways, semantically wrong both ways), and ⚡ arms a dev target through
+  `addCopyTarget` ('launches'), discriminated by `mode === 'launches'` on the
+  return.
+- **The dev rows are honoured BEFORE they are shown.** "berapa banyak wallet
+  serta slippage … auto sale tp dimana fiturnya" — `_followerBuy` now honours
+  a per-target wallet (`t.walletId`, exit mirror pinned to it; a deleted
+  wallet falls back to active), per-target slippage (replaces the user's
+  normal bound, same contract as the CA snipe) and TP/SL that become real
+  orders at each fill, at the realised entry, on the buying wallet — so the
+  dev panel carries Wallet · Slippage · TP/SL rows. Expiry stays hidden (a
+  copy target does not expire) and the wallet picker offers ONE wallet, never
+  👥 All: the exit-mirror ledger records one `wid` per position, so an
+  all-wallet dev snipe would sell one wallet's bag and strand the rest.
+- **The dev budget is a CAP with a default, not a question** ("fitur yang tadi
+  hapus aja"): unset, `addCopyTarget` defaults it to 10× the per-launch amount
+  — an uncapped auto-buyer is the "buy ngasal" hazard class, so the cap
+  survives the question's removal, and the panel row + armed message state the
+  concrete number. The dev flow is two questions total (wallet → amount), and
+  a re-pasted dev wallet re-asks the amount even when a stale one is set — the
+  spend is confirmed per target.
 - **👥 All wallets** ("harus ada fitur all wallet"): the wallet row accepts
   `walletId: '*'`, resolved at FIRE time so a wallet added after arming still
   snipes. The amount is PER WALLET — the picker row and the armed confirmation
