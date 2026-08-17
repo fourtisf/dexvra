@@ -223,6 +223,20 @@ test('one chain in play means one number, not the same number twice', async () =
   assert.ok(!/On Robinhood Chain:/.test(txt), 'the chain share line restates the only number there is');
 });
 
+test('the chain header carries the coin amount, and the total names its coins', async () => {
+  // "harus ada jumlah solananya brp dan total itu total dalam token apa aja":
+  // the On-<chain> line shows the native amount beside the USD, and the Total
+  // is decomposed into coins grouped by symbol.
+  ACTIVE = 'solana';
+  const L = (n) => BigInt(Math.round(n * 1e9));   // lamports — Solana is 9 decimals
+  WALLETS = [W('w1'), W('w2')];
+  BAL = [[E(1), 0n, 0n, L(1.9402)], [0n, 0n, 0n, L(1.4475)]];
+  const txt = plain((await t.walletScreen(1)).text);
+  // 3.3877 SOL × $200 = $677.54, summed over BOTH wallets.
+  assert.match(txt, /On Solana: \$677\.54 · 3\.3877 SOL/, 'the SOL amount is not on the chain header');
+  assert.match(txt, /Coins: 1 ETH · 3\.3877 SOL/, 'the Total does not name the coins behind it');
+});
+
 test('a chain we could not reach never reads as $0.00 on it', async () => {
   // "$0.00 here" is the sentence that sends someone to check whether their
   // deposit arrived. An RPC timeout must not produce it.
