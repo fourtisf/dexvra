@@ -47,7 +47,8 @@ function user() {
   return u;
 }
 
-/** Drive the real Telegram text handler with a pending panel step. */
+/** Drive the real Telegram text handler with a pending step — a bare action
+ *  name, or a full pending object for mid-wizard steps. */
 async function typed(action, text) {
   const sent = [];
   const realFetch = global.fetch;
@@ -55,7 +56,7 @@ async function typed(action, text) {
     try { const b = JSON.parse(opt.body); if (/sendMessage/.test(String(url))) sent.push(b.text); } catch (_) {}
     return { json: async () => ({ ok: true, result: { message_id: 1 } }) };
   };
-  try { await tg._test.resolvePending(CHAT, { action }, text, {}); }
+  try { await tg._test.resolvePending(CHAT, typeof action === 'string' ? { action } : action, text, {}); }
   finally { global.fetch = realFetch; }
   return sent.join('\n');
 }
@@ -252,7 +253,7 @@ test('the home SAYS when mass mode is armed — money state is never two screens
   assert.ok(mass, 'no way from the home to mass mode');
   assert.match(mass.text, /🟢/, 'an armed mass mode looks the same as an idle one');
   assert.match(mass.text, /0\.1/, 'the armed button hides the spend');
-  assert.ok(buttons.some((b) => b.callback_data === 'copy'), 'no way from the home to dev snipe');
+  assert.ok(buttons.some((b) => b.callback_data === 'cpaddd'), 'no way from the home into the dev-snipe wizard');
   // …and idle reads idle, or the green dot means nothing.
   u.snipe.chains = {};
   const idle = tg._test.caSnipeScreen(CHAT).kb.inline_keyboard.flat().find((b) => b.callback_data === 'snmass');
@@ -331,6 +332,71 @@ test('a bad paste is refused with a reason and the draft is untouched', async ()
   const out2 = await typed('snw_ca', `${CA} 0.05 90`);
   assert.match(out2.replace(/<[^>]+>/g, ''), /Slippage/i);
   assert.strictEqual(core.snipeDraft(u).ca, null, 'a line refused for slippage still stored its address');
+});
+
+test('the panel flows FORWARD: a saved target asks for the amount next', async () => {
+  // "jadiin 1 aja, jangan pisah2": after a required row lands, the next
+  // missing one is asked immediately — the user is never dumped back at the
+  // panel to find the next ⏳ themselves.
+  user();
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood' });
+  const out = await typed('snw_ca', CA);
+  assert.match(out.replace(/<[^>]+>/g, ''), /Amount|Jumlah/i, 'after the target the user was dumped back at the panel');
+  // …but with the amount already set, the paste returns to the panel, ready to ⚡.
+  core.updateSnipeDraft(CHAT, { amount: 0.05 });
+  const out2 = await typed('snw_ca', CA2);
+  assert.match(out2.replace(/<[^>]+>/g, ''), /Snipe Setup|Setup Snipe/i);
+});
+
+// ── the dev-snipe wizard ─────────────────────────────────────────────────────
+
+test('dev snipe asks ONE question at a time, and nothing arms before the last', async () => {
+  // "aturan hapus aja, jadiin 1 aja, jangan pisah2: bot minta dev wallet, pas
+  // udah dikasih tanyain mau snipe berapa, dll." The old prompt wanted wallet,
+  // per-buy AND budget in one typed line.
+  const u = user();
+  u.copy = { on: true, targets: [] };
+  const out1 = await typed({ action: 'dev_addr', chain: 'solana' }, MINT);
+  assert.match(out1.replace(/<[^>]+>/g, ''), /Step 2|Langkah 2/i, 'the wallet alone did not lead to the amount question');
+  assert.equal(u.copy.targets.length, 0, 'the address alone armed something');
+  const out2 = await typed({ action: 'dev_amt', chain: 'solana', address: MINT }, '0.05');
+  assert.match(out2.replace(/<[^>]+>/g, ''), /Step 3|Langkah 3/i, 'the amount did not lead to the budget question');
+  assert.equal(u.copy.targets.length, 0, 'the amount alone armed something');
+  await typed({ action: 'dev_budget', chain: 'solana', address: MINT, perBuy: '0.05' }, '0.5');
+  assert.equal(u.copy.targets.length, 1, 'the finished wizard armed nothing');
+  const tgt = u.copy.targets[0];
+  assert.equal(tgt.mode, 'launches');
+  assert.equal(tgt.chain, 'solana');
+  assert.equal(tgt.buyEth, '0.05');
+  assert.equal(tgt.maxEth, '0.5');
+});
+
+test('the old one-line dev arm still lands in one go', async () => {
+  const u = user();
+  u.copy = { on: true, targets: [] };
+  const out = await typed({ action: 'dev_addr', chain: 'solana' }, `${MINT} 0.05 0.5`);
+  assert.equal(u.copy.targets.length, 1, 'the full line no longer arms');
+  assert.match(out.replace(/<[^>]+>/g, ''), /armed|terpasang/i);
+});
+
+test('a wizard step refuses bad input with a reason and arms nothing', async () => {
+  const u = user();
+  u.copy = { on: true, targets: [] };
+  assert.match((await typed({ action: 'dev_addr', chain: 'solana' }, 'not-an-address')).replace(/<[^>]+>/g, ''), /not a valid|bukan alamat/i);
+  assert.match((await typed({ action: 'dev_amt', chain: 'solana', address: MINT }, 'abc')).replace(/<[^>]+>/g, ''), /amount|jumlah/i);
+  // A budget below the per-buy is refused by the SAME rule the store enforces.
+  assert.match((await typed({ action: 'dev_budget', chain: 'solana', address: MINT, perBuy: '0.05' }, '0.01')).replace(/<[^>]+>/g, ''), /budget/i);
+  assert.equal(u.copy.targets.length, 0, 'a refused step still armed something');
+});
+
+test('an OFF master switch is said on the armed message, with the one-tap fix', async () => {
+  // Arming a watch that silently does nothing is the stop-loss-the-user-
+  // believes-exists — dev snipe only runs while copy.on is true.
+  const u = user();
+  u.copy = { on: false, targets: [] };
+  const out = await typed({ action: 'dev_addr', chain: 'solana' }, `${MINT} 0.05 0.5`);
+  assert.match(out.replace(/<[^>]+>/g, ''), /OFF/i, 'an inert arm reads as a live one');
 });
 
 test('the typed TP/SL editor accepts 100/50 and off, refuses an impossible SL', async () => {

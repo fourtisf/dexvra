@@ -401,10 +401,11 @@ test('arming asks WHICH CHAIN first, and the answer travels with the pending ste
   // `0xabc…` copies the shape they were shown.
   assert.match(pick, /isSvm\(ch\.key\) \? 'Ge87Etsj…' : '0xabc…'/);
   // Dev snipe follows the same rule, offering ONLY the launchpad chains — so
-  // the "switch chain with 🌐, then try again" dead end cannot come back.
+  // the "switch chain with 🌐, then try again" dead end cannot come back. The
+  // picked chain rides the wizard's Step-1 pending ('dev_addr').
   const dev = TGs.slice(TGs.indexOf("if (data === 'cpaddd')"), TGs.indexOf("if (k === 'cprm')"));
   assert.match(dev, /filter\(\(c\) => core\.canDevSnipe\(c\.key\)\)/);
-  assert.match(dev, /setPending\(chatId, \{ action: 'copy_add', mode: 'launches', chain: ch\.key \}\)/);
+  assert.match(dev, /setPending\(chatId, \{ action: 'dev_addr', chain: ch\.key \}\)/);
   // And the parse step spends the PICKED chain, not whatever is active by the
   // time the user finishes typing.
   const parse = TGs.slice(TGs.indexOf("if (p.action === 'copy_add')"), TGs.indexOf("if (p.action === 'alert_price')"));

@@ -1542,7 +1542,9 @@ function caSnipeScreen(chatId) {
     ? T(chatId, 'snipe.ca.mass_armed', { what: massOn.length === 1 ? `${massOn[0].name} · ${u.snipe.ethAmount} ${massOn[0].native}` : `${massOn.length} chains` })
     : T(chatId, 'snipe.ca.launch_btn');
   kbRows.push([btn(massBtn, 'snmass')]);
-  kbRows.push([btn(T(chatId, 'snipe.ca.dev_btn'), 'copy')]);
+  // Straight into the dev-snipe wizard's chain pick — not a stop at the Copy
+  // screen first. Managing/removing followed wallets stays on 👥 Copy.
+  kbRows.push([btn(T(chatId, 'snipe.ca.dev_btn'), 'cpaddd')]);
   kbRows.push([btn('« Menu', 'menu')]);
   return { text: L.join('\n'), kb: { inline_keyboard: kbRows } };
 }
@@ -1897,6 +1899,59 @@ function copyScreen(chatId) {
   if (!core.canDevSnipe(ach.key)) body += `\n<i>🎯 Dev snipe is available on Robinhood Chain &amp; Solana — switch chain (🌐) to add one.</i>`;
   return { text: body, kb: { inline_keyboard: kbRows } };
 }
+/*
+ * The dev-snipe WIZARD — one question per message ("aturan hapus aja, jadiin 1
+ * aja, jangan pisah2: bot minta dev wallet, pas udah dikasih tanyain mau snipe
+ * berapa, dll", 2026-08-17). The old prompt asked for wallet, per-buy AND
+ * budget in one typed line and read as a rulebook; now Step 1 asks only for
+ * the wallet, and amount and budget follow, each with tappable choices. The
+ * old full line still lands in one go for whoever has it ready.
+ */
+const trimNum = (n) => String(Number(Number(n).toFixed(6)));
+function devAmountScreen(chatId, chain, addr) {
+  const u = core.ensureUser(chatId);
+  const ch = core.chainOf(chain) || { native: '' };
+  const QUICK = core.buyPresets(u, chain).map(String);
+  const kbR = [];
+  for (let i = 0; i < QUICK.length; i += 3) kbR.push(QUICK.slice(i, i + 3).map((p) => btn(`${p} ${ch.native}`, `dvamt:${p}`)));
+  return { text: T(chatId, 'dev.step2', { addr: esc(short(addr)), native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
+}
+/** Step 2 → Step 3: the per-launch amount landed (tap or typed); ask the budget. */
+async function devAskBudget(chatId, pp, amtRaw) {
+  const ch = core.chainOf(pp.chain) || activeChain(chatId);
+  const amt = Number(String(amtRaw).replace(',', '.'));
+  if (!(amt > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(ch.native) }));
+  setPending(chatId, { action: 'dev_budget', chain: pp.chain, address: pp.address, perBuy: trimNum(amt) });
+  // Budget choices as MULTIPLES of what was just picked, labelled with the
+  // launch count they buy — the number the user actually thinks in.
+  const kbR = [[3, 5, 10].map((m) => btn(`${trimNum(amt * m)} ${ch.native} (${m}×)`, `dvbud:${trimNum(amt * m)}`))];
+  return send(chatId, T(chatId, 'dev.step3', { amt: `${trimNum(amt)} ${esc(ch.native)}`, native: esc(ch.native) }), { inline_keyboard: kbR });
+}
+/** Step 3 → armed. The pending step is cleared only on SUCCESS, so a refused
+ *  budget (below the per-buy) is fixed by typing a new number, not by
+ *  restarting the wizard. */
+async function devArm(chatId, pp, budRaw) {
+  const ch = core.chainOf(pp.chain) || activeChain(chatId);
+  const budget = Number(String(budRaw).replace(',', '.'));
+  if (!(budget > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(ch.native) }));
+  try {
+    const tgt = core.addCopyTarget(chatId, pp.address, ch.key, pp.perBuy, trimNum(budget), 'launches');
+    pending.delete(chatId);
+    const u = core.ensureUser(chatId);
+    const on = !!(u.copy && u.copy.on);
+    // The master switch gates the whole feature. Arming a watch that silently
+    // does nothing is the stop-loss-the-user-believes-exists — so an OFF
+    // switch is said out loud, with the one-tap fix on the message itself.
+    const kb = on
+      ? rows([btn('👥 Copy & Snipe', 'copy')])
+      : { inline_keyboard: [[btn(T(chatId, 'dev.on_btn'), 'cptog')], [btn('👥 Copy & Snipe', 'copy')]] };
+    return send(chatId, T(chatId, 'dev.armed', {
+      addr: esc(short(tgt.address)), chain: `${ch.emoji} ${esc(ch.name)}`,
+      perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(ch.native),
+    }) + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off'), kb);
+  } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+}
+
 function referralScreen(chatId) {
   const u = core.ensureUser(chatId);
   const link = `https://t.me/${BOT_USERNAME}?start=${u.refCode}`;
@@ -3377,9 +3432,20 @@ async function onCallback(q) {
   if (k === 'cpdch') {
     const ch = core.chainOf(ca);
     if (!ch || !core.canDevSnipe(ch.key)) return;
-    setPending(chatId, { action: 'copy_add', mode: 'launches', chain: ch.key });
-    const ex = core.chains.isSvm(ch.key) ? 'DevWa11et… 0.05 0.5' : '0xDev… 0.02 0.2';
-    return edit(chatId, mid, `🎯 <b>Snipe a dev wallet</b> on ${ch.emoji} ${esc(ch.name)}\n\nFollow a developer/creator wallet. The moment it <b>launches a new token</b> on the launchpad, the bot auto-buys the launch with your per-buy amount — until the budget is used up.\n\nSend: <code>&lt;dev_wallet_address&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>\ne.g. <code>${ex}</code>\n\n<i>Only that wallet's OWN new launches are bought (matched by on-chain creator), never its ordinary trades. Honeypots are skipped; budget caps your risk.</i>`);
+    // ONE question per message. The old prompt asked for wallet, per-buy AND
+    // budget in a single typed line — reported as "membingungkan". Step 1 asks
+    // only for the wallet; the wizard asks the rest, one screen each.
+    setPending(chatId, { action: 'dev_addr', chain: ch.key });
+    return edit(chatId, mid, T(chatId, 'dev.step1', { chain: `${ch.emoji} ${esc(ch.name)}` }));
+  }
+  // Dev-snipe wizard quick-picks. The state rides the pending step; a tap on a
+  // message whose step has expired says so instead of arming half a config.
+  if (k === 'dvamt' || k === 'dvbud') {
+    const pp = pending.get(chatId);
+    const want = k === 'dvamt' ? 'dev_amt' : 'dev_budget';
+    if (!pp || pp.action !== want || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, T(chatId, 'dev.expired'));
+    if (k === 'dvamt') return devAskBudget(chatId, pp, ca);
+    return devArm(chatId, pp, ca);
   }
   if (k === 'cprm') { core.removeCopyTarget(chatId, ca); const s = copyScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'ospd') {
@@ -3551,7 +3617,18 @@ async function resolvePending(chatId, p, text, m) {
         if (r.ttlH > 0) patch.ttlH = r.ttlH;
         core.updateSnipeDraft(chatId, patch);
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
-      const s = snipeSetupScreen(chatId, switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null);
+      const swNote = switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null;
+      // Flow FORWARD ("jangan pisah2"): the next missing required row is asked
+      // for immediately — target, then amount — instead of dropping the user
+      // back at the panel to find the next ⏳ themselves. The amount screen's
+      // picks return to the panel, so the panel stays the single source of
+      // truth about what is set.
+      const d2 = core.snipeDraft(core.ensureUser(chatId));
+      if (d2 && !d2.amount) {
+        const s = snwAmountScreen(chatId);
+        return send(chatId, (swNote ? swNote + '\n\n' : '') + T(chatId, 'snipe.panel.target_saved') + '\n\n' + s.text, s.kb);
+      }
+      const s = snipeSetupScreen(chatId, swNote);
       return send(chatId, s.text, s.kb);
     }
     if (p.action === 'snw_amt') {
@@ -3625,6 +3702,26 @@ async function resolvePending(chatId, p, text, m) {
       try { const e = core.addWhitelist(chatId, t, ch.key); const s = securityScreen(chatId); return send(chatId, `✅ Whitelisted <code>${esc(e.address)}</code> on ${ch.emoji} ${esc(ch.name)}. Withdrawals on this chain are now restricted to your whitelist.`, s.kb); }
       catch (e2) { return send(chatId, '❌ ' + esc(e2.message)); }
     }
+    // ── dev-snipe wizard: Step 1 (wallet) → Step 2 (per-buy) → Step 3 (budget).
+    if (p.action === 'dev_addr') {
+      const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
+      const parts = t.split(/\s+/).filter(Boolean);
+      const addr = parts[0] || '';
+      if (!isAddrFor(addr, ch.key)) return send(chatId, T(chatId, 'dev.bad_addr', { chain: esc(ch.name) }));
+      // The old one-line still lands in one go: extra words on the line are the
+      // later steps, answered early.
+      if (parts.length >= 3) {
+        const amt = Number(String(parts[1]).replace(',', '.'));
+        if (!(amt > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(ch.native) }));
+        return devArm(chatId, { chain: ch.key, address: addr, perBuy: trimNum(amt) }, parts[2]);
+      }
+      if (parts.length === 2) return devAskBudget(chatId, { chain: ch.key, address: addr }, parts[1]);
+      setPending(chatId, { action: 'dev_amt', chain: ch.key, address: addr });
+      const s = devAmountScreen(chatId, ch.key, addr);
+      return send(chatId, s.text, s.kb);
+    }
+    if (p.action === 'dev_amt') return devAskBudget(chatId, p, t);
+    if (p.action === 'dev_budget') return devArm(chatId, p, t);
     if (p.action === 'copy_add') {
       const parts = t.split(/\s+/).filter(Boolean);
       if (parts.length < 3) return send(chatId, 'Format: <code>&lt;wallet&gt; &lt;perBuy&gt; &lt;totalBudget&gt;</code>, e.g. <code>0xAbc… 0.02 0.2</code>');

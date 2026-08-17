@@ -1147,6 +1147,15 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   labelled 🌊 choice whose button carries its live armed state, and the home
   prints a ⚠️ line whenever it is on — a feature that spends on every launch
   must be visible from the sniper's front door.
+- **One question per message, flowing FORWARD.** "aturan hapus aja, jadiin 1
+  aja, jangan pisah2": the dev snipe used to demand `<wallet> <perBuy>
+  <budget>` in one typed line — it is a three-step wizard now (wallet → amount
+  → budget, quick-picks at each step, the old full line still lands in one
+  go), and the panel's Target step asks for the amount immediately after a
+  bare address instead of dropping the user back at the panel. A dev snipe
+  armed while the copy/dev master switch is OFF says so on the armed message
+  with a one-tap 🟢 fix — an inert watch reading as live is the
+  stop-loss-the-user-believes-exists.
 
 ```bash
 cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC

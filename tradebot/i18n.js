@@ -522,6 +522,37 @@ const S = {
     en: 'The saved target address does not exist on the chain you just picked, so it was cleared — set it again.',
     id: 'Alamat target yang tersimpan tidak berlaku di chain yang barusan dipilih, jadi dihapus — isi lagi ya.',
   },
+  'snipe.panel.target_saved': { en: '✅ Target saved.', id: '✅ Target tersimpan.' },
+
+  // ------------------------------------------------------- dev-snipe wizard
+  // One question per message ("aturan hapus aja, jadiin 1 aja, jangan pisah2:
+  // bot minta dev wallet, pas udah dikasih tanyain mau snipe berapa, dll").
+  // The old prompt asked for wallet, per-buy AND budget in one typed line.
+  'dev.step1': {
+    en: "🧑‍💻 <b>Dev snipe</b> on {chain}\n\n<b>Step 1 of 3</b> — paste the <b>developer's wallet address</b> to follow.\n\n<i>The moment that wallet launches a new token, I buy it automatically. Only its own launches — never its ordinary trades. Honeypots are skipped.</i>",
+    id: '🧑‍💻 <b>Dev snipe</b> di {chain}\n\n<b>Langkah 1 dari 3</b> — paste <b>alamat wallet developer</b> yang mau diikuti.\n\n<i>Begitu wallet itu launch token baru, langsung saya beli otomatis. Hanya launch-nya sendiri — bukan trade biasanya. Honeypot otomatis dilewati.</i>',
+  },
+  'dev.step2': {
+    en: '✅ Watching <code>{addr}</code>\n\n<b>Step 2 of 3</b> — how much <b>{native}</b> per launch? Tap one, or type your own.',
+    id: '✅ Mengawasi <code>{addr}</code>\n\n<b>Langkah 2 dari 3</b> — berapa <b>{native}</b> per launch? Tap salah satu, atau ketik sendiri.',
+  },
+  'dev.step3': {
+    en: '<b>Step 3 of 3</b> — total budget, in {native}. I stop buying this dev once it is spent (per launch: <b>{amt}</b>). Tap one, or type your own.',
+    id: '<b>Langkah 3 dari 3</b> — total budget, dalam {native}. Saya berhenti beli dev ini begitu budget-nya habis (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri.',
+  },
+  'dev.bad_addr': { en: '❌ That is not a valid {chain} wallet address — paste it again.', id: '❌ Itu bukan alamat wallet {chain} yang valid — paste ulang ya.' },
+  'dev.bad_amt': { en: '❌ Send a positive amount in {native}, e.g. <code>0.05</code>.', id: '❌ Kirim jumlah positif dalam {native}, contoh <code>0.05</code>.' },
+  'dev.expired': { en: '⌛ That step expired — start again from 🧑‍💻 Dev snipe.', id: '⌛ Langkah itu kedaluwarsa — mulai lagi dari 🧑‍💻 Dev snipe.' },
+  'dev.armed': {
+    en: '✅ <b>Dev snipe armed</b> 🧑‍💻\nWatching <code>{addr}</code> on {chain} — every new token it launches, I buy <b>{perBuy} {native}</b>, until <b>{budget} {native}</b> is spent.',
+    id: '✅ <b>Dev snipe terpasang</b> 🧑‍💻\nMengawasi <code>{addr}</code> di {chain} — tiap token baru yang dia launch, saya beli <b>{perBuy} {native}</b>, sampai total <b>{budget} {native}</b> terpakai.',
+  },
+  'dev.live': { en: 'The master switch is ON — it is live now.', id: 'Master switch sudah ON — langsung aktif sekarang.' },
+  // An OFF master switch after arming is the stop-loss-the-user-believes-
+  // exists: the watch does nothing until it is on, so it is said out loud,
+  // with the one-tap fix on the same message.
+  'dev.master_off': { en: '⚠️ The copy/dev master switch is OFF — tap below to go live.', id: '⚠️ Master switch copy/dev masih OFF — tap di bawah biar langsung aktif.' },
+  'dev.on_btn': { en: '🟢 Turn ON now', id: '🟢 Aktifkan sekarang' },
 
   // ---------------------------------------------------------------- errors
   // One clear sentence per failure class, each ending in what to actually do.
