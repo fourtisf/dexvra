@@ -176,3 +176,65 @@ test("the tweet text uses a plain mention — X has no link labels", () => {
   assert.match(fn, /if \(c\.x\) line \+= ` @\$\{c\.x\}`;/);
   assert.ok(!/https:\/\/x\.com/.test(fn), "the tweet embeds a link label X cannot render");
 });
+
+// ── "masih sama aja" — the report that turns a shrug into an answer ──────────
+//
+// The caption came back with no @handles after the fallback shipped, and the only
+// thing anyone could say was "it did not work". Three tokens with no X on file, a
+// listing lookup that failed, and a chain key that did not match all look
+// IDENTICAL from Telegram — and the first cut swallowed the difference in a
+// log.debug nobody prints.
+
+test("enrichHandles reports which of the three it was", async () => {
+  const real = api.getListings;
+  api.getListings = async () => [
+    { chain: "bsc", address: "0xAAA", twitter: "https://x.com/filled_ok" },
+    { chain: "bsc", address: "0xBBB", twitter: "" },            // listed, no X
+  ];
+  try {
+    const coins = [
+      { symbol: "FILLED", chain: "bsc", address: "0xaaa", x: null, links: {} },
+      { symbol: "NOX", chain: "bsc", address: "0xbbb", x: null, links: {} },
+      { symbol: "STRANGER", chain: "solana", address: "So1", x: null, links: {} },
+      { symbol: "HAS", chain: "bsc", address: "0xDDD", x: "already", links: {} },
+    ];
+    const r = await enrichHandles(coins);
+    assert.deepStrictEqual(r.filled, ["FILLED"]);
+    assert.deepStrictEqual(r.noHandle, ["NOX"], "a listed token with a blank X is not distinguished");
+    assert.deepStrictEqual(r.notListed, ["STRANGER"], "a board-only token is not distinguished");
+    assert.strictEqual(r.failed, null);
+    // A coin that already had one is not reported at all — it is not a gap.
+    for (const k of ["filled", "noHandle", "notListed"]) assert.ok(!r[k].includes("HAS"));
+  } finally { api.getListings = real; }
+});
+
+test("a failed lookup is named as a failure, not as an empty result", async () => {
+  const real = api.getListings;
+  api.getListings = async () => { throw new Error("internal API 502"); };
+  try {
+    const r = await enrichHandles([{ symbol: "A", chain: "bsc", address: "0x1", x: null }]);
+    assert.match(r.failed, /502/);
+    // …and NOT counted as "no X on file", which would blame the project for an
+    // outage on our side.
+    assert.deepStrictEqual(r.noHandle, []);
+    assert.deepStrictEqual(r.notListed, []);
+  } finally { api.getListings = real; }
+});
+
+test("the outcome is logged at INFO — a level nobody prints is no line at all", () => {
+  assert.match(GSRC, /log\.info\(`\[gainers\] handles · \$\{bits\.join\(" · "\)\}`\)/);
+  assert.ok(!/log\.debug\(`\[gainers\] handle enrich/.test(GSRC), "it is back to a level that never shows");
+});
+
+test("the preview card explains a missing handle, for the shown tokens only", () => {
+  const MENU = fss.readFileSync(path.join(__dirname, "..", "src", "admin", "gainersMenu.js"), "utf8");
+  assert.match(MENU, /No X on file:/);
+  assert.match(MENU, /Not in the listing store:/);
+  assert.match(MENU, /Listing lookup failed/);
+  // The sample is wider than the layout, so naming a token that is not on this
+  // card would send the admin looking for something that is not there.
+  assert.match(MENU, /const shownSyms = new Set\(coins\.map\(\(c\) => c\.symbol\)\);/);
+  assert.match(MENU, /hOn = \(list\) => \(list \|\| \[\]\)\.filter\(\(sym\) => shownSyms\.has\(sym\)\)/);
+  // It survives a layout switch that does not re-sample.
+  assert.match(MENU, /let handles = sess && sess\.handles;/);
+});

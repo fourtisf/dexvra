@@ -209,6 +209,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   let notes = [];
   let pool = sess && sess.pool;
   let sampledAt = sess && sess.at;
+  let handles = sess && sess.handles;
   // A sample is reusable when it is recent AND long enough for this template —
   // a Top 3 sample cannot serve a Top 5, and padding it would invent a ranking.
   const reusable = fresh !== "force" && sess && Array.isArray(sess.coins)
@@ -226,8 +227,9 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     source = res.source;
     notes = res.notes;
     pool = res.pool;
+    handles = res.handles || null;
     sampledAt = Date.now();
-    ctx.session.gn = { template: id, coins: stripLogos(res.coins), source, pool, at: sampledAt };
+    ctx.session.gn = { template: id, coins: stripLogos(res.coins), source, pool, at: sampledAt, handles };
     coins = res.coins.slice(0, need);
     await gainers.loadLogos(coins);
   }
@@ -275,10 +277,25 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
       // because the reader of the channel post cannot know it and the admin can.
       + (pool > 0 && pool <= need + 1 ? `\n⚠️ <i>The pool is barely wider than the layout — this is close to "every live token", not a top ${need}.</i>` : "")
     : "";
+  // WHY THERE IS NO @handle.
+  //
+  // The caption came back with none, and "it did not work" was the only thing
+  // anyone could say: three tokens with no X on file, a listing lookup that
+  // failed, and a chain key that did not match all look identical from Telegram.
+  // Only the tokens ON THIS CARD are named — the sample is wider than the layout.
+  const shownSyms = new Set(coins.map((c) => c.symbol));
+  const hx = handles || {};
+  const hOn = (list) => (list || []).filter((sym) => shownSyms.has(sym));
+  const xLine = [
+    hx.failed ? `\n⚠️ <i>Listing lookup failed (${escapeHtml(String(hx.failed))}) — handles could not be filled in.</i>` : "",
+    hOn(hx.noHandle).length ? `\n🔗 <i>No X on file: ${escapeHtml(hOn(hx.noHandle).map((s) => `$${s}`).join(", "))} — the project never gave one, so the caption credits nobody.</i>` : "",
+    hOn(hx.notListed).length ? `\n🔗 <i>Not in the listing store: ${escapeHtml(hOn(hx.notListed).map((s) => `$${s}`).join(", "))} — on the site board but never listed through the bot.</i>` : "",
+  ].join("");
   await ctx.reply(
     `👀 <b>Preview — ${escapeHtml(gb.labelOf(id))}</b>\n` +
       `📡 Data: <b>${escapeHtml(source)}</b> · ${escapeHtml(coins.map((c) => `$${c.symbol}`).join(", "))}` +
       poolLine +
+      xLine +
       short +
       (notes.length ? `\n<i>${escapeHtml(notes.join(" "))}</i>` : "") +
       (note ? `\n${note}` : "") +
@@ -298,7 +315,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
   const kept = Array.isArray(prev.coins) && prev.coins.length > coins.length
     ? [...stripLogos(coins), ...prev.coins.slice(coins.length)]
     : stripLogos(coins);
-  ctx.session.gn = { ...prev, template: id, coins: kept, source, pool, at: sampledAt };
+  ctx.session.gn = { ...prev, template: id, coins: kept, source, pool, at: sampledAt, handles };
   return id;
 }
 

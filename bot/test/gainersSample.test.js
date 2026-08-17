@@ -89,7 +89,9 @@ test("the session keeps the WHOLE sample, not the slice just rendered", () => {
   assert.ok(!/ctx\.session\.gn = \{ template: id, coins: stripLogos\(coins\) \};/.test(SRC),
     "the session is narrowed to the slice again");
   // The stored sample carries what the card needs to be honest about it.
-  assert.match(PREVIEW, /ctx\.session\.gn = \{ \.\.\.prev, template: id, coins: kept, source, pool, at: sampledAt \};/);
+  // `handles` rides along so the "why is there no @handle" line survives a
+  // layout switch that does not re-sample.
+  assert.match(PREVIEW, /ctx\.session\.gn = \{ \.\.\.prev, template: id, coins: kept, source, pool, at: sampledAt, handles \};/);
 });
 
 test("a hand-swapped slot survives a layout change", () => {
@@ -116,7 +118,7 @@ test("the live pool is PRINTED — it was measured and thrown away", () => {
 
 test("topGainers still reports the pool for it to print", () => {
   const gsrc = fss.readFileSync(path.join(__dirname, "..", "src", "gainers.js"), "utf8");
-  assert.match(gsrc, /return \{ coins, source: used, pool, notes \};/);
+  assert.match(gsrc, /return \{ coins, source: used, pool, notes, handles \};/);
   // The filter that shrank without warning, named where it happens.
   assert.match(gsrc, /board\.tokens\.filter\(\(t\) => t && t\.source === "live"\)/);
 });

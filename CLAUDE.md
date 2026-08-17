@@ -441,6 +441,13 @@ is preferred, so a token the site has no link for lost its credit entirely.
   wins; this must never rewrite an attribution the site is asserting.
 - **One request, and only when it can change something.** A failing lookup loses
   the handle, never the banner.
+- ⚠️ **It REPORTS what it did.** The first cut swallowed the outcome in a
+  `log.debug`, so when the caption still came back with no handles the only thing
+  anyone could say was *"it did not work"* — three tokens with no X on file, a
+  failed listing lookup, and a chain key that did not match all look identical
+  from Telegram. `{ filled, noHandle, notListed, failed }` reaches the preview
+  card and an INFO log line. A level nobody prints is the same as no line at all,
+  and an outage on our side must never be reported as "the project gave no X".
 - **A bare handle is a handle.** The listing form is free text, so `xHandle` now
   accepts `@velvet_capital` and `velvet_capital`, not just a URL — while still
   rejecting the words a form collects instead of a blank (`none`, `TBA`, `n/a`).
@@ -453,7 +460,7 @@ is preferred, so a token the site has no link for lost its credit entirely.
   `[@x](url)` would publish its brackets verbatim.
 
 ```bash
-cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js test/gainersIdentity.test.js   # 38 tests, no network
+cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js test/gainersIdentity.test.js   # 42 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an

@@ -107,28 +107,46 @@ function xHandle(url) {
  * this must never rewrite an attribution the site is asserting. One request, and
  * only when it can change something. Never throws — a missing handle is a
  * cosmetic gap, not a reason to lose the banner.
+ *
+ * AND IT REPORTS WHAT IT DID. The first cut swallowed the answer in a log.debug,
+ * so when the caption came back with no @handles the only honest thing anyone
+ * could say was "it did not work" — three tokens with no X on file, a listing
+ * lookup that failed, and a chain key that did not match all look identical from
+ * Telegram. `{ filled, noHandle, notListed, failed }` is the difference between a
+ * shrug and an answer.
  */
 async function enrichHandles(coins) {
-  if (!coins.some((c) => c && !c.x)) return coins;
+  const out = { filled: [], noHandle: [], notListed: [], failed: null };
+  const missing = coins.filter((c) => c && !c.x);
+  if (!missing.length) return out;
   try {
     const rows = (await api.getListings()) || [];
     const byKey = new Map();
     for (const r of rows) {
       if (r && r.chain && r.address) byKey.set(`${r.chain}|${String(r.address).toLowerCase()}`, r);
     }
-    for (const c of coins) {
-      if (!c || c.x) continue;
+    for (const c of missing) {
       const r = byKey.get(`${c.chain}|${String(c.address).toLowerCase()}`);
-      if (!r) continue;
+      if (!r) { out.notListed.push(c.symbol); continue; }
       const h = xHandle(r.twitter);
-      if (!h) continue;
+      if (!h) { out.noHandle.push(c.symbol); continue; }
       c.x = h;
       c.links = { ...(c.links || {}), twitter: (c.links && c.links.twitter) || r.twitter };
+      out.filled.push(c.symbol);
     }
   } catch (e) {
-    log.debug(`[gainers] handle enrich skipped: ${e.message}`);
+    out.failed = e.message;
   }
-  return coins;
+  // INFO, not debug: this is the line that answers "why is there no @handle",
+  // and a level nobody prints is the same as no line at all.
+  const bits = [
+    out.filled.length ? `filled ${out.filled.length}` : null,
+    out.noHandle.length ? `no X on file: ${out.noHandle.join(", ")}` : null,
+    out.notListed.length ? `not in the listing store: ${out.notListed.join(", ")}` : null,
+    out.failed ? `lookup FAILED (${out.failed})` : null,
+  ].filter(Boolean);
+  if (bits.length) log.info(`[gainers] handles · ${bits.join(" · ")}`);
+  return out;
 }
 
 const tokenUrl = (chain, address) => `${SITE_URL}/token/${chain}/${address}`;
@@ -375,9 +393,9 @@ async function topGainers({ limit = 5, minGainPct = 0, minLiqUsd = 0, minMcapUsd
   }
   // After the ranking is settled, so at most MAX_SLOTS coins are looked up and
   // never the whole pool.
-  if (coins.length) await enrichHandles(coins);
+  const handles = coins.length ? await enrichHandles(coins) : null;
   if (coins.length && logos) await loadLogos(coins);
-  return { coins, source: used, pool, notes };
+  return { coins, source: used, pool, notes, handles };
 }
 
 // ── slot override (swap one token by link / contract address) ────────────────
