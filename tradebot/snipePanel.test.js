@@ -273,6 +273,35 @@ test('the amount editor offers the CHAIN\'s presets, not another coin\'s', () =>
   assert.ok(!/0\.01 SOL/.test(labels), 'the ETH-denominated ladder leaked onto Solana');
 });
 
+test('the armed confirmation is a NEW message, not an edit of the panel', () => {
+  // "dmn ada teks snipe atau confirm??" — it was there, written into the panel
+  // message in place. An in-place edit notifies nobody and lands off screen the
+  // moment the user has scrolled, so arming a snipe that spends real money
+  // looked like nothing happened at all. Same lesson the raid card cost us.
+  const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const arm = SRC.slice(SRC.indexOf("if (ca === 'arm')"), SRC.indexOf('// \'open\' and anything unrecognised'));
+  assert.ok(arm.length > 200, 'the arm handler moved — this test is asserting nothing');
+  // The panel is retired where it stands (its buttons must not survive a spent
+  // draft) and the confirmation is SENT.
+  assert.match(arm, /await edit\(chatId, mid, T\(chatId, 'snipe\.panel\.spent'\)\)/, 'the stale panel is left tappable');
+  assert.match(arm, /return send\(chatId, text, kb\)/, 'the confirmation is edited in place again — it will not be seen');
+  // …and the confirmation itself still carries the money facts of both kinds.
+  assert.match(arm, /dev\.armed_wallets/);
+  assert.match(arm, /snipeArmedText\(chatId, tgt\)/);
+});
+
+test('the panel says it is not armed until ⚡ is tapped', () => {
+  const u = user();
+  core.newSnipeDraft(CHAT);
+  const empty = tg._test.snipeSetupScreen(CHAT).text.replace(/<[^>]+>/g, '');
+  assert.match(empty, /Fill the rows|Isi dulu/i, 'an unfinished panel gives no next step');
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA, amount: 0.05 });
+  const done = tg._test.snipeSetupScreen(CHAT).text.replace(/<[^>]+>/g, '');
+  assert.match(done, /Ready|Siap/i, 'a finished panel never says it is ready');
+  assert.match(done, /Nothing is armed yet|Belum terpasang/i, 'a finished panel reads as already armed');
+  assert.equal(core.armedSnipeTargets(u).length, 0);
+});
+
 test('the ⚡ handler goes through core.armSnipeDraft and never around it', () => {
   const SRC = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
   const block = SRC.slice(SRC.indexOf("if (k === 'snw')"), SRC.indexOf("if (data === 'rstog')"));
