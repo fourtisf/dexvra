@@ -260,11 +260,15 @@ async function listingCoins() {
 
 // ── selection ───────────────────────────────────────────────────────────────
 /** Sane, positive, liquid-enough movers, biggest gain first. */
-function rank(coins, { limit = MAX_SLOTS, minGainPct = 0, minLiqUsd = 0 } = {}) {
+function rank(coins, { limit = MAX_SLOTS, minGainPct = 0, minLiqUsd = 0, minMcapUsd = 0 } = {}) {
   return coins
     .filter((c) => c && c.symbol && c.address)
     .filter((c) => c.pct != null && c.pct >= minGainPct && Math.abs(c.pct) <= SANE_PCT)
     .filter((c) => !minLiqUsd || (c.liq || 0) >= minLiqUsd)
+    // A token whose cap we could not read cannot be SHOWN to clear the floor,
+    // so it is left off — same rule as an unreadable 24h change. `|| 0` is what
+    // makes that true, and it is the same shape as the liquidity filter above.
+    .filter((c) => !minMcapUsd || (c.mcap || 0) >= minMcapUsd)
     .sort((a, b) => b.pct - a.pct)
     .slice(0, Math.max(1, Math.min(MAX_SLOTS, limit)));
 }
@@ -276,12 +280,13 @@ function rank(coins, { limit = MAX_SLOTS, minGainPct = 0, minLiqUsd = 0 } = {}) 
  * @param {number} opts.limit       how many slots the template needs (≤ 10)
  * @param {number} opts.minGainPct  floor; 0 keeps every token that is up at all
  * @param {number} opts.minLiqUsd   liquidity floor (0 = off)
+ * @param {number} opts.minMcapUsd  market-cap floor (0 = off); defaults ON at $1M in config
  * @param {string} opts.source      "auto" | "board" | "listings"
  * @param {boolean} opts.logos      download logos (false for a fast data-only check)
  * @returns {Promise<{coins:Array, source:string, pool:number, notes:string[]}>}
  *          `coins` may be SHORTER than `limit`, or empty — never padded.
  */
-async function topGainers({ limit = 5, minGainPct = 0, minLiqUsd = 0, source = "auto", logos = true } = {}) {
+async function topGainers({ limit = 5, minGainPct = 0, minLiqUsd = 0, minMcapUsd = 0, source = "auto", logos = true } = {}) {
   const notes = [];
   let coins = [];
   let used = "none";
@@ -295,7 +300,7 @@ async function topGainers({ limit = 5, minGainPct = 0, minLiqUsd = 0, source = "
       if (!board.live || !live.length) {
         notes.push("Site board has no LIVE rows right now (its market provider is down or nothing is listed).");
       }
-      coins = rank(live.map(boardCoin), { limit, minGainPct, minLiqUsd });
+      coins = rank(live.map(boardCoin), { limit, minGainPct, minLiqUsd, minMcapUsd });
       if (coins.length) used = "board";
     } catch (e) {
       notes.push(`Site board unreachable (${e.message}) — priced the listings directly instead.`);
@@ -309,7 +314,7 @@ async function topGainers({ limit = 5, minGainPct = 0, minLiqUsd = 0, source = "
       pool = Math.max(pool, c.length);
       if (!scanned) notes.push("No approved listings in the store yet.");
       else if (!c.length) notes.push(`Priced ${scanned} listing(s) — none returned a live 24h change.`);
-      coins = rank(c, { limit, minGainPct, minLiqUsd });
+      coins = rank(c, { limit, minGainPct, minLiqUsd, minMcapUsd });
       if (coins.length) used = "listings";
     } catch (e) {
       notes.push(`Listings API failed (${e.message}).`);
@@ -516,6 +521,10 @@ function summary(res) {
 module.exports = {
   MAX_SLOTS,
   topGainers,
+  // Test seam. The filters decide what a PUBLIC leaderboard claims, and
+  // asserting them through topGainers means asserting them through the
+  // network. This is a pure function of its arguments; let it be called.
+  _rank: rank,
   resolveToken,
   loadLogos,
   rank,

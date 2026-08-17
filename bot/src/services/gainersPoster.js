@@ -68,7 +68,7 @@ async function postNow({ template = null, by = "schedule" } = {}) {
   const res = await gainers.topGainers({
     limit: gb.countOf(id),
     minGainPct: cfg.minGainPct,
-    minLiqUsd: cfg.minLiqUsd,
+    minLiqUsd: cfg.minLiqUsd, minMcapUsd: cfg.minMcapUsd,
   });
   if (!res.coins.length) return { ok: false, reason: res.notes.join(" ") || "no live gainers" };
 

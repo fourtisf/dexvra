@@ -36,7 +36,11 @@ const mark = (b) => (b ? ON : OFF);
 function homeText() {
   const c = cfgStore.get();
   const tplName = c.template === "random" ? `🎲 random${c.pool.length ? ` (${c.pool.length} in rotation)` : " (all)"}` : gb.labelOf(c.template);
-  const filters = [`≥ +${c.minGainPct}%`, c.minLiqUsd ? `liq ≥ ${fmtCap(c.minLiqUsd)}` : null].filter(Boolean).join(" · ");
+  const filters = [
+    `≥ +${c.minGainPct}%`,
+    c.minMcapUsd ? `MC ≥ ${fmtCap(c.minMcapUsd)}` : null,
+    c.minLiqUsd ? `liq ≥ ${fmtCap(c.minLiqUsd)}` : null,
+  ].filter(Boolean).join(" · ");
   const lines = [
     "📊 <b>Banner Top Gainers</b>",
     "",
@@ -80,6 +84,7 @@ function setText() {
     `📌 <b>Pin the post:</b> ${c.pin ? "yes" : "no"}`,
     "",
     `🎯 <b>Minimum gain:</b> +${c.minGainPct}%`,
+    `🏦 <b>Minimum market cap:</b> ${c.minMcapUsd ? fmtCap(c.minMcapUsd) : "off"}`,
     `💧 <b>Minimum liquidity:</b> ${c.minLiqUsd ? fmtCap(c.minLiqUsd) : "off"}`,
     `🗓 <b>Date line on the banner:</b> ${c.showDate ? "yes" : "no"}`,
     `🏦 <b>Market cap in the caption:</b> ${c.showMcap ? "yes" : "no"}`,
@@ -95,7 +100,8 @@ function setKb() {
     [Markup.button.callback("📢 Channel", "gn_ch"), Markup.button.callback("🖼 Default layout", "gn_tpl")],
     [Markup.button.callback(`⏰ Daily ${c.daily ? "ON → turn OFF" : "OFF → turn ON"}`, "gn_daily")],
     [Markup.button.callback("🕘 Post time", "gn_time"), Markup.button.callback("🌍 Timezone", "gn_tz")],
-    [Markup.button.callback("🎯 Min gain %", "gn_min"), Markup.button.callback("💧 Min liquidity", "gn_liq")],
+    [Markup.button.callback("🎯 Min gain %", "gn_min"), Markup.button.callback("🏦 Min market cap", "gn_mc")],
+    [Markup.button.callback("💧 Min liquidity", "gn_liq")],
     [
       Markup.button.callback(`${mark(c.showDate)} Date line`, "gn_date"),
       Markup.button.callback(`${mark(c.showMcap)} MC in caption`, "gn_mcap"),
@@ -216,7 +222,7 @@ async function sendPreview(ctx, template, { fresh = true, note = "" } = {}) {
     // may click next. Sampling `need` is what let a Top 3 preview take its own
     // reading of a moving pool. Logos are loaded for the SLICE only, below, so
     // the wider sample costs no extra downloads on the first render.
-    const res = await gainers.topGainers({ limit: gainers.MAX_SLOTS, minGainPct: cfg.minGainPct, minLiqUsd: cfg.minLiqUsd, logos: false });
+    const res = await gainers.topGainers({ limit: gainers.MAX_SLOTS, minGainPct: cfg.minGainPct, minLiqUsd: cfg.minLiqUsd, minMcapUsd: cfg.minMcapUsd, logos: false });
     source = res.source;
     notes = res.notes;
     pool = res.pool;
@@ -456,6 +462,14 @@ function register(bot, deps) {
     await_(ctx, "min");
     await ctx.reply("Send the minimum 24h gain in percent, e.g. <code>5</code>. Tokens below it are left off the banner.", HTML);
   }));
+  bot.action("gn_mc", cb(async (ctx) => {
+    await_(ctx, "mc");
+    await ctx.reply(
+      "Send the minimum <b>market cap</b> in USD, e.g. <code>1000000</code> for $1M (or <code>0</code> to turn the filter off)."
+        + "\n\n<i>This is the filter that keeps a $50K token off the podium: at that size one $500 buy is a four-figure percentage, so it outranks a real mover on $40M.</i>",
+      HTML,
+    );
+  }));
   bot.action("gn_liq", cb(async (ctx) => {
     await_(ctx, "liq");
     await ctx.reply("Send the minimum liquidity in USD, e.g. <code>25000</code> (or <code>0</code> to turn the filter off).", HTML);
@@ -514,7 +528,7 @@ function register(bot, deps) {
   bot.action("gn_data", cb(async (ctx) => {
     const status = await ctx.reply("📡 Checking the live sources…", HTML);
     const cfg = cfgStore.get();
-    const res = await gainers.topGainers({ limit: gainers.MAX_SLOTS, minGainPct: cfg.minGainPct, minLiqUsd: cfg.minLiqUsd, logos: false });
+    const res = await gainers.topGainers({ limit: gainers.MAX_SLOTS, minGainPct: cfg.minGainPct, minLiqUsd: cfg.minLiqUsd, minMcapUsd: cfg.minMcapUsd, logos: false });
     const body = res.coins.length
       ? res.coins
           .map((c, i) => `${i + 1}. <b>$${escapeHtml(c.symbol)}</b> ${gainers.pctLabel(c.pct)} · ${escapeHtml(gainers.chainLabel(c.chain))}${c.mcap ? ` · ${fmtCap(c.mcap)}` : ""}`)
@@ -565,6 +579,9 @@ function register(bot, deps) {
       } else if (a.mode === "min") {
         const c = await cfgStore.set({ minGainPct: Number(raw.replace(/[%+\s]/g, "")) });
         await ctx.reply(`✅ Minimum gain → <b>+${c.minGainPct}%</b>`, { ...HTML, ...setKb() });
+      } else if (a.mode === "mc") {
+        const c = await cfgStore.set({ minMcapUsd: Number(raw.replace(/[$,\s]/g, "")) });
+        await ctx.reply(`✅ Minimum market cap → <b>${c.minMcapUsd ? fmtCap(c.minMcapUsd) : "off"}</b>`, { ...HTML, ...setKb() });
       } else if (a.mode === "liq") {
         const c = await cfgStore.set({ minLiqUsd: Number(raw.replace(/[$,\s]/g, "")) });
         await ctx.reply(`✅ Minimum liquidity → <b>${c.minLiqUsd ? fmtCap(c.minLiqUsd) : "off"}</b>`, { ...HTML, ...setKb() });

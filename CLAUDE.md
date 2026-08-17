@@ -371,11 +371,40 @@ ranking without a word.
   channel got the card the admin approved. That half was right and a test now
   pins it.
 
+### And the podium was ranking noise
+
+Same board: `$PATE` took #2 with **+1562%** on a market cap of **$52.6K**, above a
+token up 126% on $40.89M. At that size one $500 buy is a four-figure percentage.
+The sort was correct and the statement was false — a gain is only interesting next
+to something worth gaining on.
+
+There were two floors (gain, liquidity) and no market-cap floor at all.
+`minMcapUsd` is the third, and **it ships ON at $1M** — unlike `minLiqUsd`,
+because zero is what produced that banner. An existing install has no stored
+value, so the default applies and **the daily post changes**: that is intended,
+not a migration accident.
+
+- **A token whose cap could not be read is left OFF.** The filter is a claim
+  ("cap ≥ $1M"); a token with no cap cannot be shown to satisfy it. Same rule as
+  an unreadable 24h change, same `|| 0` shape as the liquidity filter beside it.
+- **Fewer real gainers beats padding.** Two tokens clearing $1M render as two, and
+  the card says "Only N passed the filters" — it never reaches back down for the
+  $52K one.
+- **Applied before the slice**, or a "top 3" is three of whatever survived out of
+  the first three rather than the best three that qualify.
+- ⚠️ **The DAILY POSTER passes it too.** Wiring only the preview would show the
+  admin a filtered board and publish an unfiltered one, which is worse than no
+  filter. A test counts the call sites.
+- Editable from ⚙️ Settings → 🏦 Min market cap, shown on the settings screen and
+  in the home screen's filter summary, so an admin can see why a token they
+  expected is missing.
+
 ```bash
-cd bot && node scripts/run-tests.js test/gainersSample.test.js   # 10 tests, no network
+cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js   # 21 tests, no network
 ```
 
-**Config a fix depends on:** nothing.
+**Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an
+operator who wants the old unfiltered board sets it to `0`.
 
 ## Two bot processes, one config
 

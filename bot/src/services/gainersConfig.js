@@ -29,6 +29,16 @@ const DEFAULTS = {
   pool: [], // random rotation; [] → every template
   minGainPct: 1, // a "+0.02%" gainer is not a gainer
   minLiqUsd: 0, // liquidity floor (0 = off)
+  // MARKET-CAP FLOOR, and it defaults ON at $1M.
+  //
+  // A live board, 2026-08-17: $PATE took #2 with +1562% on a market cap of
+  // $52.6K. At that size a single $500 buy is a four-figure percentage, so the
+  // leaderboard was ranking noise above a token up 126% on $40.89M. A gain is
+  // only interesting next to something worth gaining on.
+  //
+  // Unlike minLiqUsd this ships non-zero: it changes what an existing install
+  // posts, deliberately, because zero is what produced the reported banner.
+  minMcapUsd: 1_000_000, // market-cap floor (0 = off)
   showDate: true,
   showMcap: false, // market cap in the CAPTION (the artwork always shows it)
   pin: false,
@@ -37,6 +47,7 @@ const DEFAULTS = {
 const HARD = {
   minGainPct: [0, 1000],
   minLiqUsd: [0, 100_000_000],
+  minMcapUsd: [0, 100_000_000_000],
 };
 
 const clampNum = (v, [lo, hi], fb) => {
@@ -62,6 +73,7 @@ function get() {
   if (Array.isArray(c.pool)) g.pool = [...new Set(c.pool.filter((t) => ids.includes(t)))];
   g.minGainPct = clampNum(c.minGainPct, HARD.minGainPct, DEFAULTS.minGainPct);
   g.minLiqUsd = clampNum(c.minLiqUsd, HARD.minLiqUsd, DEFAULTS.minLiqUsd);
+  g.minMcapUsd = clampNum(c.minMcapUsd, HARD.minMcapUsd, DEFAULTS.minMcapUsd);
   return g;
 }
 
@@ -109,6 +121,7 @@ async function set(patch = {}) {
   if (Array.isArray(patch.pool)) next.pool = [...new Set(patch.pool.filter((x) => templateIds().includes(x)))];
   if (patch.minGainPct != null) next.minGainPct = clampNum(patch.minGainPct, HARD.minGainPct, DEFAULTS.minGainPct);
   if (patch.minLiqUsd != null) next.minLiqUsd = clampNum(patch.minLiqUsd, HARD.minLiqUsd, DEFAULTS.minLiqUsd);
+  if (patch.minMcapUsd != null) next.minMcapUsd = clampNum(patch.minMcapUsd, HARD.minMcapUsd, DEFAULTS.minMcapUsd);
   await saveJSON(FILE, next);
   return get();
 }
