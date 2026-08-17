@@ -89,6 +89,20 @@ test('arming always passes through an explicit amount choice, then states the bl
   assert.strictEqual(callers, 2, `${callers} callers of armAutoSnipe — expected the preset tap and the custom-amount reply`);
 });
 
+test('the snipe screen says the action on the button, and the amount has ONE home', () => {
+  const scr = TG.slice(TG.indexOf('function snipeScreen('), TG.indexOf('function snipeAmountScreen('));
+  // "⚪ OFF" read as a broken switch ("bener-bener dibuat bingung"). The
+  // button names what the tap does, and an armed row carries the live spend —
+  // what the bot is doing with real money, on the button itself.
+  assert.match(scr, /tap to snipe/);
+  assert.match(scr, /tap to stop/);
+  assert.ok(/\$\{amt\} \$\{c\.native\} — tap to stop/.test(scr), 'the armed row no longer shows the per-launch spend');
+  // And no second amount editor on this screen: the amount is asked at arming
+  // (Step 2), and a ✏️ row here meant "✓ 0.05" and "0.1" could be on screen
+  // at the same time — the bot disagreeing with itself.
+  assert.ok(!scr.includes("'snamt'"), 'the snipe screen grew back a second amount editor');
+});
+
 // ── attribution: a message that spends money names its trigger ──────────────
 
 test('every auto-snipe purchase names the feature and its blast radius', () => {

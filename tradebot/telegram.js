@@ -1533,27 +1533,32 @@ function snipeScreen(chatId) {
   const onList = enabled.filter((c) => chains[c.key]);
   const amt = esc(u.snipe.ethAmount);
   const live = onList.length > 0;
-  const onStr = live ? onList.map((c) => `${c.emoji} ${esc(c.name)}`).join(', ') : '—';
-  const SEP = '━━━━━━━━━━━━━━━━';
-  const statusLine = live
-    ? `<b>Status: 🟢 Active</b>\nSniping on <b>${onStr}</b> · <b>${amt}</b> per launch from your active wallet.`
-    : `<b>Status: ⚪ Inactive</b>\nEnable at least one chain below to begin.`;
+  // Friendly means SHORT ("setingan snipe bener-bener dibuat bingung, tidak
+  // friendly"): one line of what it does, the live status, a two-step how-to,
+  // one warning. The amount lives in ONE place — Step 2 of arming. The old
+  // ✏️ editor row kept a second copy of it on this screen, so "✓ 0.05" on
+  // the amount step and "0.1" here could be on screen at the same time,
+  // reading as the bot disagreeing with itself.
+  const status = live
+    ? onList.map((c) => `🟢 Sniping <b>${c.emoji} ${esc(c.name)}</b> — <b>${amt} ${esc(c.native)}</b> per launch`).join('\n')
+    : `⚪ Not sniping yet.`;
   const text =
     `🎯 <b>Auto-Snipe</b>\n\n` +
-    `Automatically buys every brand-new token the moment it launches, on the chains you enable — no manual monitoring required.\n\n` +
-    `<b>Step 1 — Pick a chain</b>\n` +
-    `Tap a chain below. You'll be asked the amount per launch next, and sniping starts.\n\n` +
-    SEP + `\n${statusLine}\n` + SEP + `\n\n` +
-    `⚠️ <b>Buys every new launch</b> on the enabled chains. Brand-new tokens carry high risk, so keep the amount small. Honeypots are filtered automatically; always do your own research.\n\n` +
-    `<i>Already have the contract? <b>📍 Snipe one contract</b> arms a single address and buys the instant it becomes tradeable. To follow one developer's launches instead, use 👥 Copy &amp; Dev Snipe — now on every supported chain.</i>`;
+    `I buy <b>every brand-new launch</b> on the chains you turn on — automatically, the second trading opens.\n\n` +
+    `${status}\n\n` +
+    `1️⃣ Tap a chain\n` +
+    `2️⃣ Pick how much to spend per launch\n` +
+    `That's it. Tap the chain again anytime to stop.\n\n` +
+    `⚠️ <i>New launches are high-risk — keep the amount small. Honeypots are filtered out automatically.</i>\n\n` +
+    `<i>Already have the contract? Use 📍. Following one developer? Use 🎯.</i>`;
   const kbRows = [];
-  // Chain FIRST — the flow used to lead with the amount presets, and the
-  // owner's read was that the whole panel started on the wrong question
-  // ("intinya pertama disuruh pilih chain dulu"). The amount is Step 2 now,
-  // asked inside the arming tap; the ✏️ row below only EDITS the stored
-  // amount for chains that are already armed.
-  enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
-  kbRows.push([btn(`✏️ Amount per launch: ${amt}`, 'snamt')]);
+  // The button says the ACTION, not a state — "⚪ OFF" read as a broken
+  // switch; "tap to snipe" says what the tap will do. An armed row carries
+  // the live spend, so what the bot is doing with real money is on the
+  // button itself, not two screens away.
+  enabled.forEach((c) => kbRows.push([btn(
+    chains[c.key] ? `🟢 ${c.emoji} ${c.name} · ${amt} ${c.native} — tap to stop` : `${c.emoji} ${c.name} — tap to snipe`,
+    `sntog:${c.key}`)]));
   kbRows.push([btn('📍 Snipe one contract', 'csn')]);
   kbRows.push([btn('🎯 Snipe a specific developer', 'copy')]);
   kbRows.push([btn('« Back', 'menu')]);
@@ -1570,12 +1575,16 @@ function snipeAmountScreen(chatId, chainKey) {
   const QUICK = ['0.01', '0.05', '0.1', '0.5'];
   const text =
     `🎯 <b>Auto-Snipe on ${c.emoji} ${esc(c.name)}</b>\n\n` +
-    `<b>Step 2 — Amount per launch</b>\n` +
-    `Every new launch on ${esc(c.name)} will be bought with this amount of <b>${esc(c.native)}</b>. Pick one to arm, or ✏️ to type your own.\n\n` +
+    `2️⃣ <b>How much per launch?</b>\n` +
+    `Pick an amount — sniping starts as soon as you do.\n\n` +
     `<i>Keep it small — this buys EVERY launch, good and bad alike.</i>`;
   const kbRows = [];
-  kbRows.push(QUICK.map((p) => btn(`${cur === p ? '✓ ' : ''}${p}`, `snarm:${chainKey}:${p}`)));
-  kbRows.push([btn('✏️ Custom amount', `snarmc:${chainKey}`)]);
+  // Two per row so "0.05 SOL" never truncates to a bare number on a phone —
+  // the unit is the part that makes the button mean something.
+  for (let i = 0; i < QUICK.length; i += 2) {
+    kbRows.push(QUICK.slice(i, i + 2).map((p) => btn(`${cur === p ? '✓ ' : ''}${p} ${c.native}`, `snarm:${chainKey}:${p}`)));
+  }
+  kbRows.push([btn('✏️ Type my own amount', `snarmc:${chainKey}`)]);
   kbRows.push([btn('« Back', 'snipe')]);
   return { text, kb: { inline_keyboard: kbRows } };
 }
