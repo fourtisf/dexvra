@@ -1156,6 +1156,11 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   armed while the copy/dev master switch is OFF says so on the armed message
   with a one-tap 🟢 fix — an inert watch reading as live is the
   stop-loss-the-user-believes-exists.
+- **The panel's 🎯 Target is a CHOICE of two kinds** ("dmn target dev
+  walletnya"): 📍 token contract, or 🧑‍💻 dev wallet — the latter drops into
+  the wizard on the panel's chain. A wallet and a CA share the same address
+  shape on every chain, so no paste can be auto-classified into one or the
+  other; the user says which they mean.
 
 ```bash
 cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC

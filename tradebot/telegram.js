@@ -3174,12 +3174,31 @@ async function onCallback(q) {
     if (ca === 'tpsl') { const s = snwTpslScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'ttl') { const s = snwTtlScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     if (ca === 'ca') {
+      // The Target is a CHOICE of two kinds ("dmn target dev walletnya") — a
+      // token contract, or a developer wallet whose every launch is bought.
+      // A wallet and a CA share the same address shape on every chain, so no
+      // paste can be auto-classified; the user says which they mean.
+      return edit(chatId, mid, T(chatId, 'snipe.panel.target_kind'), rows(
+        [btn(T(chatId, 'snipe.panel.kind_ca'), 'snw:cat'), btn(T(chatId, 'snipe.panel.kind_dev'), 'snw:cad')],
+        [btn('« Back', 'snw:open')],
+      ));
+    }
+    if (ca === 'cat') {
       const u = core.ensureUser(chatId);
       const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
       const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain };
       setPending(chatId, { action: 'snw_ca' });
       const ex = core.chains.isSvm(d.chain) ? 'Ge87Etsj…' : '0xabc…';
       return edit(chatId, mid, T(chatId, 'snipe.panel.ca_prompt', { chain: `${ch.emoji} ${esc(ch.name)}`, ex }), rows([btn('« Back', 'snw:open')]));
+    }
+    if (ca === 'cad') {
+      const u = core.ensureUser(chatId);
+      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
+      const ch = core.chainOf(d.chain) || { emoji: '', name: d.chain };
+      // Into the dev-snipe wizard, on the PANEL'S chain — Step 1 asks for the
+      // wallet, and the wizard asks the rest one question at a time.
+      setPending(chatId, { action: 'dev_addr', chain: d.chain });
+      return edit(chatId, mid, T(chatId, 'dev.step1', { chain: `${ch.emoji} ${esc(ch.name)}` }));
     }
     if (ca === 'amtc') { const u = core.ensureUser(chatId); const d = core.snipeDraft(u) || core.newSnipeDraft(chatId); const ch = core.chainOf(d.chain) || { native: '' }; setPending(chatId, { action: 'snw_amt' }); return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) })); }
     if (ca === 'slipc') { setPending(chatId, { action: 'snw_slip' }); return send(chatId, T(chatId, 'snipe.panel.slip_prompt')); }

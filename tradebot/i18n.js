@@ -523,6 +523,15 @@ const S = {
     id: 'Alamat target yang tersimpan tidak berlaku di chain yang barusan dipilih, jadi dihapus — isi lagi ya.',
   },
   'snipe.panel.target_saved': { en: '✅ Target saved.', id: '✅ Target tersimpan.' },
+  // The Target step's two kinds. A dev wallet and a token CA share the same
+  // address shape, so the user says which they mean — no paste can be
+  // auto-classified into one or the other.
+  'snipe.panel.target_kind': {
+    en: '🎯 <b>Target</b>\n\nWhat should the snipe watch?\n\n📍 <b>Token contract</b> — buy THIS token the moment its pool opens.\n🧑‍💻 <b>Dev wallet</b> — buy every NEW token that developer launches, until a budget runs out.',
+    id: '🎯 <b>Target</b>\n\nSnipe-nya mau mengawasi apa?\n\n📍 <b>Kontrak token</b> — beli token INI begitu pool-nya buka.\n🧑‍💻 <b>Wallet developer</b> — beli tiap token BARU yang di-launch developer itu, sampai budget-nya habis.',
+  },
+  'snipe.panel.kind_ca': { en: '📍 Token contract', id: '📍 Kontrak token' },
+  'snipe.panel.kind_dev': { en: '🧑‍💻 Dev wallet', id: '🧑‍💻 Wallet developer' },
 
   // ------------------------------------------------------- dev-snipe wizard
   // One question per message ("aturan hapus aja, jadiin 1 aja, jangan pisah2:
