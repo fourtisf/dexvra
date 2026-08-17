@@ -72,11 +72,29 @@ const EMOJI_CANDIDATES = [
 // which is NOT a prerequisite — the chain simply gains whichever of them exist.
 // Listed here rather than added later so that installing the package is the
 // whole fix, with no deploy: the same contract the launchpad hosts have.
+//
+// BOLD FIRST, then Regular. The faces these sit beside are the 700/800 display
+// weights, and a heavy Latin title with a regular-weight Thai word next to it
+// reads as two different titles — the same defect as swapping the whole face on
+// a mixed name, one level down. The repo's own assets/ outranks the system on
+// every entry, so dropping a file in is always the last word.
+const asset = (f) => path.join(__dirname, "..", "..", "assets", "fonts", f);
+const sysNoto = (f) => [`/usr/share/fonts/truetype/noto/${f}`, `/usr/share/fonts/opentype/noto/${f}`];
+const script = (family, bold, reg, extra = []) => [family, [
+  asset(bold), asset(reg), ...sysNoto(bold), ...sysNoto(reg), ...extra,
+]];
 const EXTRA_CANDIDATES = [
-  ["DexCover Thai", ["/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf", path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansThai-Regular.ttf")]],
-  ["DexCover Arabic", ["/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf", path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansArabic-Regular.ttf")]],
-  ["DexCover Deva", ["/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"]],
-  ["DexCover Hebrew", ["/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"]],
+  script("DexCover Thai", "NotoSansThai-Bold.ttf", "NotoSansThai-Regular.ttf",
+    ["/usr/share/fonts/truetype/tlwg/Loma-Bold.ttf", "/usr/share/fonts/truetype/noto/NotoLoopedThai-Bold.ttf"]),
+  // Arabic is CURSIVE and right-to-left: the letters change shape by position and
+  // join up. That is the shaper's job, not the font list's — canvas runs
+  // HarfBuzz, so all this has to get right is handing it a face that has the
+  // glyphs. Naskh is the fallback because it is the style Arabic readers expect
+  // for a name, and DejaVu last because it has the coverage without the polish.
+  script("DexCover Arabic", "NotoSansArabic-Bold.ttf", "NotoSansArabic-Regular.ttf",
+    ["/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]),
+  script("DexCover Deva", "NotoSansDevanagari-Bold.ttf", "NotoSansDevanagari-Regular.ttf"),
+  script("DexCover Hebrew", "NotoSansHebrew-Bold.ttf", "NotoSansHebrew-Regular.ttf"),
 ];
 /** Which coverage faces registered, in chain order — for the boot line, for
  *  fonts:check, and so a reader can see the chain rather than infer it. */
@@ -149,9 +167,21 @@ function canvasLib() {
     if (COVER.emoji) COVER.faces.push({ family: "DexCover Emoji", path: COVER.emoji });
     const tail = COVER.faces.map((f) => `"${f.family}"`).join(", ");
     if (tail) for (const k of Object.keys(F)) F[k] = `${F[k]}, ${tail}`;
-    // Said once, at load, because the alternative is finding out from a customer
-    // screenshot — which is exactly how this was found.
-    if (!COVER.cjk) log.warn("[banner] no CJK font found — Chinese/Japanese/Korean names will render as boxes. Install fonts-noto-cjk, or drop NotoSansCJK-Bold.ttc into bot/assets/fonts/. Run: npm run fonts:check");
+    // EVERY uncovered script, not just CJK.
+    //
+    // The first cut of this warned about Chinese alone, which would have let the
+    // next Thai or Arabic ticker reach the channel as boxes in exactly the same
+    // silence — a warning that covers one instance of a general failure is how
+    // the general failure survives being fixed.
+    //
+    // Measured, not inferred: a face can be registered and still lack the glyph.
+    // Said once, at load, because the alternative is a customer screenshot, which
+    // is how this was found in the first place.
+    const gaps = Object.entries(coverage().scripts).filter(([, ok]) => !ok).map(([k]) => k);
+    if (gaps.length) {
+      log.warn(`[banner] no font covers ${gaps.join(", ")} — a token named in one of those draws boxes on every card. `
+        + "Install fonts-noto-cjk and fonts-noto-core, or drop the faces into bot/assets/fonts/. Check with: npm run fonts:check");
+    }
   } catch (e) {
     log.warn(`[banner] canvas unavailable, using static/logo fallback: ${e.message}`);
     CV = undefined;
@@ -444,7 +474,10 @@ function coverage() {
   ]) {
     scripts[name] = name === "latin" ? true : w(F.r, sample) !== w(bare, sample);
   }
-  return { available: true, cjk: COVER.cjk, emoji: COVER.emoji, scripts };
+  // `faces` is the chain itself, in order. Printing the resolved FILE per script
+  // is what turns "thai ✗" from a puzzle into an instruction: it says whether the
+  // font is absent or merely somewhere this list does not look.
+  return { available: true, cjk: COVER.cjk, emoji: COVER.emoji, faces: COVER.faces.slice(), scripts };
 }
 
 module.exports = {

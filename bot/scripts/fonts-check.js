@@ -29,8 +29,16 @@ if (!cov.available) {
 }
 
 console.log('\nFont coverage for banner rendering\n');
-console.log(`  ${D}CJK face  ${X} ${cov.cjk ? G + cov.cjk + X : R + 'none' + X}`);
-console.log(`  ${D}Emoji face${X} ${cov.emoji ? G + cov.emoji + X : Y + 'none' + X}\n`);
+// The chain, in the order canvas walks it. A script that shows ✗ below is either
+// a face this list never found or a face that is present and lacks the glyph —
+// and only seeing the resolved paths tells the two apart.
+if (cov.faces && cov.faces.length) {
+  console.log(`  ${D}fallback chain, in order:${X}`);
+  for (const f of cov.faces) console.log(`    ${G}${f.family.replace('DexCover ', '').padEnd(7)}${X} ${D}${f.path}${X}`);
+} else {
+  console.log(`  ${R}no coverage faces registered at all — every non-Latin name draws boxes${X}`);
+}
+console.log('');
 
 const LABEL = {
   latin: 'Latin        (Ab)', greek: 'Greek        (Ωπ)', cyrillic: 'Cyrillic     (Дж)',

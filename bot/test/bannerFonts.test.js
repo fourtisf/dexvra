@@ -93,11 +93,51 @@ test("extra scripts need a package, never a deploy", () => {
     "emoji is ahead of the text faces in the chain");
 });
 
-test("a missing CJK font is SAID, not discovered from a customer screenshot", () => {
-  assert.match(SRC, /no CJK font found/);
-  // Names what the USER loses and what to run — not which file is absent.
-  assert.match(SRC, /render as boxes/);
-  assert.match(SRC, /fonts-noto-cjk/);
+test("BOLD is preferred — a regular-weight Thai word beside a heavy Latin one is two titles", () => {
+  // These faces sit next to the 700/800 display weights. Taking whichever
+  // variant the distro happened to install first is the same defect as swapping
+  // the face on a mixed name, one level down.
+  assert.match(SRC, /const script = \(family, bold, reg, extra = \[\]\) => \[family, \[\s*asset\(bold\), asset\(reg\), \.\.\.sysNoto\(bold\), \.\.\.sysNoto\(reg\)/);
+  assert.match(SRC, /script\("DexCover Thai", "NotoSansThai-Bold\.ttf", "NotoSansThai-Regular\.ttf"/);
+  assert.match(SRC, /script\("DexCover Arabic", "NotoSansArabic-Bold\.ttf", "NotoSansArabic-Regular\.ttf"/);
+  if (!kit.available()) return;
+  for (const f of kit.coverage().faces || []) {
+    if (/Regular/.test(f.path) && fss.existsSync(f.path.replace("Regular", "Bold"))) {
+      assert.fail(`${f.family} took the Regular weight while a Bold sits beside it: ${f.path}`);
+    }
+  }
+});
+
+test("the missing-font warning names EVERY uncovered script, not just Chinese", () => {
+  // The first cut warned about CJK alone, which would have let the next Thai or
+  // Arabic ticker reach the channel as boxes in exactly the same silence. A
+  // warning that covers one instance of a general failure is how the general
+  // failure survives being fixed.
+  const load = SRC.slice(SRC.indexOf("const gaps ="), SRC.indexOf("} catch (e) {"));
+  assert.match(load, /Object\.entries\(coverage\(\)\.scripts\)\.filter\(\(\[, ok\]\) => !ok\)/);
+  assert.match(load, /no font covers \$\{gaps\.join\(", "\)\}/);
+  assert.match(load, /draws boxes on every card/);
+  assert.ok(!/no CJK font found/.test(SRC), "the CJK-only warning is back");
+});
+
+test("the check prints the resolved chain, so ✗ is an instruction not a puzzle", () => {
+  // "thai ✗" is either a face this list never looked for or a face that is
+  // installed and lacks the glyph. Only the resolved paths separate the two.
+  if (!kit.available()) return;
+  const cov = kit.coverage();
+  assert.ok(Array.isArray(cov.faces), "coverage() no longer reports the chain");
+  for (const f of cov.faces) {
+    assert.ok(f.family && f.path, "a chain entry has no family or no path");
+    assert.ok(fss.existsSync(f.path), `${f.family} points at a file that is not there: ${f.path}`);
+  }
+});
+
+test("a missing font is SAID, not discovered from a customer screenshot", () => {
+  // What the USER loses and what to run — not which file happens to be absent.
+  // "lite-api ENOTFOUND" does not tell an operator whether to act; "a token
+  // named in one of those draws boxes on every card" does.
+  assert.match(SRC, /a token named in one of those draws boxes/);
+  assert.match(SRC, /fonts-noto-cjk and fonts-noto-core/);
   assert.match(SRC, /npm run fonts:check/);
 });
 

@@ -256,9 +256,25 @@ added.
   system paths — same contract as the launchpad hosts. Installing a font package
   is the whole fix, with no deploy; `EXTRA_CANDIDATES` (Thai, Arabic, Devanagari,
   Hebrew) is listed up front for exactly that reason.
+- **BOLD before Regular, per script.** These faces sit beside the 700/800 display
+  weights; a regular-weight Thai word next to a heavy Latin one reads as two
+  titles — the mixed-face defect one level down.
 - **Emoji goes LAST in the chain.** A colour-emoji face claims some text
   codepoints, and a ticker's letters must not resolve to it ahead of a real text
   font.
+- ⚠️ **The boot warning names EVERY uncovered script, not just CJK.** The first
+  cut warned about Chinese alone, which would have let the next Thai ticker reach
+  the channel as boxes in the same silence. A warning that covers one instance of
+  a general failure is how the general failure survives being fixed.
+- **Shaping is the shaper's job.** Canvas runs HarfBuzz, so Arabic joins and runs
+  right-to-left and Thai stacks its marks with no code here — all the font list
+  has to get right is handing it a face that HAS the glyphs. Verified by
+  rendering real listing cards: `$牛来`, `$ไทยบาท` (`เพื่อญาติ Finance`, stacked
+  vowels intact) and `$عملة` (`عملة رقمية Token`, bidi correct).
+- Thai ascends ~25% higher than Latin at the same size (54px vs 43px at 52px
+  type) because of its stacked vowel marks. The card has headroom above `symY`
+  and does not clip — but a tighter layout would, and `fitText` only shrinks for
+  WIDTH.
 - ⚠️ **`reg()` assigns unconditionally, and the two Liberation "fallback" calls
   ran after their Sora counterparts** — so Liberation Sans silently won `x` (the
   800 display weight, i.e. the big token title on every card) and `m`. The
