@@ -26,3 +26,6 @@ public/uploads/
 *.bak
 data.bak-*/
 /FETCH_HEAD
+
+# fonts:check writes a sample render here — a diagnostic, not an asset
+bot/fonts-check.png

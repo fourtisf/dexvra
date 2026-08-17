@@ -31,6 +31,57 @@ const F = {
   m6: "sans-serif", // JetBrains Mono 600
 };
 
+/**
+ * THE COVERAGE FONT — the one that draws what the brand faces cannot.
+ *
+ * A token listed as 牛来 ($牛来) went out to 12,607 subscribers as "$???" on the
+ * listing card and again on the pump alert. Sora, Space Grotesk, JetBrains Mono
+ * and Liberation Sans are all Latin faces: not one of them has a single Han
+ * glyph, so every Chinese, Japanese, Korean, Thai or Arabic ticker this bot has
+ * ever drawn came out as question marks — silently, because a missing glyph
+ * renders rather than throwing.
+ *
+ * The fix is a FALLBACK CHAIN, not a second font for Chinese. Canvas resolves a
+ * comma-separated family list PER GLYPH, so "牛来 Finance" keeps Sora for the
+ * Latin word and reaches the coverage face only for the Han characters. Swapping
+ * the whole face on a mixed name would put the brand type on one half of a title
+ * and a system face on the other.
+ *
+ * DISCOVERED, never one hardcoded path — same rule as the launchpad hosts. The
+ * repo's own assets win (an operator can drop any font in and it is used), then
+ * the standard system locations. `fonts-noto-cjk` puts a .ttc there, which
+ * @napi-rs/canvas registers happily.
+ */
+const CJK_CANDIDATES = [
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJK-Bold.ttc"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJK-Regular.ttc"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Bold.otf"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Regular.otf"),
+  "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+  "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+  "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+  "/System/Library/Fonts/PingFang.ttc",
+];
+const EMOJI_CANDIDATES = [
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoColorEmoji.ttf"),
+  "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+  "/usr/share/fonts/truetype/noto-color-emoji/NotoColorEmoji.ttf",
+];
+// Everything else a ticker might be written in. These ship in fonts-noto-core,
+// which is NOT a prerequisite — the chain simply gains whichever of them exist.
+// Listed here rather than added later so that installing the package is the
+// whole fix, with no deploy: the same contract the launchpad hosts have.
+const EXTRA_CANDIDATES = [
+  ["DexCover Thai", ["/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf", path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansThai-Regular.ttf")]],
+  ["DexCover Arabic", ["/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf", path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansArabic-Regular.ttf")]],
+  ["DexCover Deva", ["/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"]],
+  ["DexCover Hebrew", ["/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf"]],
+];
+/** Which coverage faces registered, in chain order — for the boot line, for
+ *  fonts:check, and so a reader can see the chain rather than infer it. */
+const COVER = { cjk: null, emoji: null, faces: [] };
+
 function canvasLib() {
   if (CV === undefined) return null;
   if (CV) return CV;
@@ -56,15 +107,51 @@ function canvasLib() {
     reg("JetBrainsMono-800.ttf", "JetBrains Mono 800", "m8");
     reg("JetBrainsMono-700.ttf", "JetBrains Mono 700", "m7");
     reg("JetBrainsMono-600.ttf", "JetBrains Mono 600", "m6");
-    // fallbacks so the module still renders if the premium fonts are missing
-    reg("LiberationSans-Bold.ttf", "DexBold", "x");
+    // FALLBACKS — and only fallbacks.
+    //
+    // These called the same reg() as the brand faces, and reg() assigns
+    // unconditionally. Both ran AFTER their Sora counterparts, so Liberation Sans
+    // silently won the two keys it touched: `x` is the 800 display weight — the
+    // big token title on every card — and it has been Liberation, not Sora, for
+    // as long as the brand fonts have been in the repo. Nothing failed; the
+    // artwork was just quietly off-brand on its most prominent line.
+    //
+    // The guards immediately below (`if (F.b === "sans-serif")`) are the intent
+    // these two calls did not carry.
+    const regFb = (file, fam, key) => { if (F[key] === "sans-serif") reg(file, fam, key); };
+    regFb("LiberationSans-Bold.ttf", "DexBold", "x");
     if (F.b === "sans-serif") F.b = F.x;
     if (F.s === "sans-serif") F.s = F.x;
-    reg("LiberationSans-Regular.ttf", "DexReg", "m");
+    regFb("LiberationSans-Regular.ttf", "DexReg", "m");
     if (F.r === "sans-serif") F.r = F.m;
     for (const [k, fb] of [["d7", "x"], ["d6", "b"], ["d5", "m"], ["m8", "x"], ["m7", "b"], ["m6", "s"]]) {
       if (F[k] === "sans-serif") F[k] = F[fb];
     }
+    // The coverage faces, appended to EVERY family so no call site has to know
+    // this exists — a renderer that had to opt in is a renderer that will forget
+    // to on the one card that needed it. First path that registers wins.
+    const first = (list, fam) => {
+      for (const p of list) {
+        try { if (fss.existsSync(p) && CV.GlobalFonts.registerFromPath(p, fam)) return p; } catch (_) { /* unreadable font is not a reason to fail boot */ }
+      }
+      return null;
+    };
+    COVER.cjk = first(CJK_CANDIDATES, "DexCover CJK");
+    COVER.emoji = first(EMOJI_CANDIDATES, "DexCover Emoji");
+    COVER.faces = [];
+    if (COVER.cjk) COVER.faces.push({ family: "DexCover CJK", path: COVER.cjk });
+    // Scripts before emoji: a colour-emoji face claims some text codepoints, and
+    // a ticker's letters must not be resolved by it ahead of a real text font.
+    for (const [family, paths] of EXTRA_CANDIDATES) {
+      const p = first(paths, family);
+      if (p) COVER.faces.push({ family, path: p });
+    }
+    if (COVER.emoji) COVER.faces.push({ family: "DexCover Emoji", path: COVER.emoji });
+    const tail = COVER.faces.map((f) => `"${f.family}"`).join(", ");
+    if (tail) for (const k of Object.keys(F)) F[k] = `${F[k]}, ${tail}`;
+    // Said once, at load, because the alternative is finding out from a customer
+    // screenshot — which is exactly how this was found.
+    if (!COVER.cjk) log.warn("[banner] no CJK font found — Chinese/Japanese/Korean names will render as boxes. Install fonts-noto-cjk, or drop NotoSansCJK-Bold.ttc into bot/assets/fonts/. Run: npm run fonts:check");
   } catch (e) {
     log.warn(`[banner] canvas unavailable, using static/logo fallback: ${e.message}`);
     CV = undefined;
@@ -332,9 +419,38 @@ function trackedCenter(ctx, cx, cy, text, tracking) {
   return total;
 }
 
+/**
+ * Which scripts this process can actually draw, measured rather than assumed.
+ *
+ * A glyph the font lacks does not throw — it draws a box, or a question mark,
+ * and ships. So the only honest answer comes from rendering a sample and
+ * comparing it against the same sample in a face that definitely cannot draw it:
+ * equal widths mean both fell back to notdef. `npm run fonts:check` prints this,
+ * and it is the one thing that would have caught "$???" before 12,607 people did.
+ */
+function coverage() {
+  const CVl = canvasLib();
+  if (!CVl) return { available: false, cjk: null, emoji: null, scripts: {} };
+  const c = CVl.createCanvas(64, 64), ctx = c.getContext("2d");
+  const w = (family, s) => { ctx.font = `40px ${family}`; return +ctx.measureText(s).width.toFixed(2); };
+  // Liberation Sans alone is the control: a pure Latin face, so anything it
+  // measures identically to the full chain is a glyph the chain also lacks.
+  const bare = F.r.split(",")[0].trim();
+  const scripts = {};
+  for (const [name, sample] of [
+    ["latin", "Ab"], ["greek", "Ωπ"], ["cyrillic", "Дж"],
+    ["chinese", "牛来"], ["japanese", "あア"], ["korean", "한글"],
+    ["thai", "ไทย"], ["arabic", "عربي"], ["emoji", "🚀"],
+  ]) {
+    scripts[name] = name === "latin" ? true : w(F.r, sample) !== w(bare, sample);
+  }
+  return { available: true, cjk: COVER.cjk, emoji: COVER.emoji, scripts };
+}
+
 module.exports = {
   canvasLib,
   available: () => !!canvasLib(),
+  coverage,
   F,
   MINT,
   CYAN,

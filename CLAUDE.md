@@ -232,6 +232,52 @@ The one thing an operator has to do is hit **♻️ Reset default** on the
 `review_card` template if they have ever edited it, or the "🚀 Still bonding"
 line will not appear on the listing review card.
 
+## The banner drew "$???" to 12,607 subscribers
+
+A token listed as **牛来 ($牛来)** went out on the listing card as `$???` and again
+on the pump alert as `??`. Nothing failed and nothing logged: **a font that lacks
+a glyph does not throw** — it draws a box, or a question mark, and ships.
+
+Every brand face in this repo is Latin-only — Sora, Space Grotesk, JetBrains
+Mono, Liberation Sans — so every Chinese, Japanese, Korean, Thai or Arabic ticker
+the bot has ever drawn came out the same way, silently, since the fonts were
+added.
+
+- **A FALLBACK CHAIN, not a second font for Chinese.** Canvas resolves a
+  comma-separated family list **per glyph**, so `牛来 Finance` keeps the brand
+  face for the Latin word and reaches the coverage face only for the Han
+  characters. Swapping the whole face on a mixed name puts brand type on one half
+  of a title and a system face on the other. Verified by measurement: with the
+  chain, `牛来` measures exactly what the CJK face alone measures and `AB`
+  measures exactly what Sora alone measures.
+- **The chain is appended to EVERY entry in `F`**, so no renderer opts in. One
+  that had to would forget on the card that needed it.
+- **Discovered across a candidate LIST**, repo `assets/fonts/` first, then the
+  system paths — same contract as the launchpad hosts. Installing a font package
+  is the whole fix, with no deploy; `EXTRA_CANDIDATES` (Thai, Arabic, Devanagari,
+  Hebrew) is listed up front for exactly that reason.
+- **Emoji goes LAST in the chain.** A colour-emoji face claims some text
+  codepoints, and a ticker's letters must not resolve to it ahead of a real text
+  font.
+- ⚠️ **`reg()` assigns unconditionally, and the two Liberation "fallback" calls
+  ran after their Sora counterparts** — so Liberation Sans silently won `x` (the
+  800 display weight, i.e. the big token title on every card) and `m`. The
+  artwork has been off-brand on its most prominent line for as long as the brand
+  fonts have existed. `regFb()` is the guard the comment always implied.
+
+```bash
+cd bot && npm run fonts:check     # which scripts THIS box can draw, plus a sample PNG
+```
+
+Whether a glyph renders is a property of the fonts on the server, not of the
+code — same as `raid:check` and `launchpads:check` — so it has to be measured on
+the box.
+
+**Config a fix depends on:** the CJK font itself. `apt-get install -y
+fonts-noto-cjk` covers Chinese/Japanese/Korean; `fonts-noto-core` adds Thai,
+Arabic, Devanagari and Hebrew. Until one is installed the chain has nothing to
+fall back to and the boot log says so.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

@@ -10,6 +10,7 @@
     "x:check": "node scripts/x-check.js",
     "poolstrade:check": "node scripts/poolstrade-check.js",
     "launchpads:check": "node scripts/launchpads-check.js",
+    "fonts:check": "node scripts/fonts-check.js",
     "buybot:check": "node scripts/buybot-check.js",
     "group:ca": "node scripts/group-ca.js",
     "raid:check": "node scripts/raid-check.js",

@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+'use strict';
+/*
+ * fonts:check — which scripts THIS box can actually draw on a banner.
+ *
+ * A token listed as 牛来 ($牛来) went to 12,607 subscribers as "$???", twice:
+ * once on the listing card and again on the pump alert. Nothing failed and
+ * nothing logged, because a missing glyph does not throw — it draws a box or a
+ * question mark and ships.
+ *
+ * Whether a glyph can be drawn is a property of the FONTS ON THIS MACHINE, not
+ * of the code, exactly like `raid:check` and `launchpads:check` before it. So it
+ * has to be measured on the box, and this is the command that does it.
+ *
+ * It also writes a real PNG, because a width comparison proves a font was
+ * matched and a human eye is what confirms the result is legible.
+ */
+const path = require('node:path');
+const fs = require('node:fs');
+const kit = require('../src/helpers/canvasKit');
+
+const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
+
+const cov = kit.coverage();
+if (!cov.available) {
+  console.log(`${R}✗ @napi-rs/canvas is not loadable on this box — every banner is falling back to a static image.${X}`);
+  console.log('  Nothing below can be measured until that is fixed.');
+  process.exit(1);
+}
+
+console.log('\nFont coverage for banner rendering\n');
+console.log(`  ${D}CJK face  ${X} ${cov.cjk ? G + cov.cjk + X : R + 'none' + X}`);
+console.log(`  ${D}Emoji face${X} ${cov.emoji ? G + cov.emoji + X : Y + 'none' + X}\n`);
+
+const LABEL = {
+  latin: 'Latin        (Ab)', greek: 'Greek        (Ωπ)', cyrillic: 'Cyrillic     (Дж)',
+  chinese: 'Chinese      (牛来)', japanese: 'Japanese     (あア)', korean: 'Korean       (한글)',
+  thai: 'Thai         (ไทย)', arabic: 'Arabic       (عربي)', emoji: 'Emoji        (🚀)',
+};
+let missing = 0;
+for (const [k, ok] of Object.entries(cov.scripts)) {
+  if (!ok) missing++;
+  console.log(`  ${ok ? G + '✓' : R + '✗'}${X} ${LABEL[k] || k}`);
+}
+
+// A PICTURE, not just a table. The widths above prove a font was matched; only
+// looking at it proves the result is readable at banner size.
+try {
+  const CV = kit.canvasLib();
+  const c = CV.createCanvas(900, 420), ctx = c.getContext('2d');
+  ctx.fillStyle = '#0B1620'; ctx.fillRect(0, 0, 900, 420);
+  ctx.fillStyle = '#F4F9F8';
+  let y = 60;
+  for (const [k, sample] of [
+    ['brand face', 'Dexvra 0123'], ['chinese', '牛来 ($牛来)'], ['japanese', 'あア 日本語'],
+    ['korean', '한글 토큰'], ['cyrillic', 'Дж Токен'], ['thai', 'ไทย'], ['arabic', 'عربي'], ['emoji', '🚀 📈 💎'],
+  ]) {
+    ctx.font = `28px ${kit.F.r}`;
+    ctx.fillStyle = '#7E9AA6'; ctx.fillText(k, 40, y);
+    ctx.font = `44px ${kit.F.x}`;
+    ctx.fillStyle = '#F4F9F8'; ctx.fillText(sample, 260, y);
+    y += 46;
+  }
+  const out = path.join(__dirname, '..', 'fonts-check.png');
+  fs.writeFileSync(out, c.toBuffer('image/png'));
+  console.log(`\n  ${D}sample written to${X} ${out}`);
+} catch (e) {
+  console.log(`\n  ${Y}could not write the sample image: ${e.message}${X}`);
+}
+
+if (!cov.cjk) {
+  // Say what the USER loses, not which file is absent — the rule the upstream
+  // probes already follow.
+  console.log(`\n${R}Chinese, Japanese and Korean token names will render as boxes on every banner.${X}`);
+  console.log('Fix it with either:');
+  console.log('  apt-get install -y fonts-noto-cjk');
+  console.log('  …or drop NotoSansCJK-Bold.ttc into bot/assets/fonts/ and restart.');
+} else if (missing) {
+  console.log(`\n${Y}${missing} script(s) above are still uncovered. A token named in one of them will draw boxes.${X}`);
+} else {
+  console.log(`\n${G}Every script sampled here renders.${X}`);
+}
+console.log('');
