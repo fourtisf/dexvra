@@ -741,7 +741,31 @@ async function walletScreen(chatId) {
       // into a line that SAYS how many and what they hold: this codebase's rule
       // is that a card dropping wallets reads as a card that lost them. Every
       // rolled-up wallet still has its own button below.
-      if (others.length < OTHERS_MAX_CHARS) others += `▫️ <b>${esc(label)}</b> · ${usdX(walletUsd[i])}${orders}\n`;
+      if (others.length < OTHERS_MAX_CHARS) {
+        // WHAT the wallet holds, not just what it is worth. "Wallet 2 · $671.62"
+        // answers none of the questions a person opens this screen with — which
+        // chain the money sits on, whether it is coins or bags, whether it can
+        // pay its own gas. The matrix already read every wallet × every chain
+        // for the totals above, so the breakdown costs nothing extra.
+        //
+        // CLEAN over complete: only chains that HOLD something get a segment
+        // (the active wallet's block already established that zeros are noise),
+        // token bags collapse to one 🪙 figure, and a wallet whose reads all
+        // failed says so instead of rendering as empty — "empty" and "we could
+        // not look" stay different facts, same rule as the block above.
+        const bits = [];
+        let unread = 0;
+        (matrix[i] || []).forEach((b, ci) => {
+          if (b == null) { unread++; return; }
+          const amt = Number(fmtNat(b, allChains[ci].key));
+          if (!(amt > 0)) return;
+          bits.push(`${allChains[ci].emoji} ${+amt.toFixed(4)} ${allChains[ci].native}`);
+        });
+        if ((tokenUsdArr[i] || 0) > 0.05) bits.push(`🪙 ${usdX(tokenUsdArr[i])}`);
+        if (unread) bits.push(T(chatId, 'wal.row_unread', { n: unread }));
+        others += `▫️ <b>${esc(label)}</b> · ${usdX(walletUsd[i])}${orders}\n`
+          + (bits.length ? `└ ${bits.join(' · ')}\n` : '');
+      }
       else { rolledUp++; rolledUpUsd += walletUsd[i]; }
     }
     const row = [btn(`${active ? '✓ ' : '⚪ '}${label}`.slice(0, 26), active ? 'wal' : 'sw:' + w.id), btn('✏️', 'rnw:' + w.id), btn('📥', 'qrw:' + w.id)];

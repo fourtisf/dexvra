@@ -229,3 +229,46 @@ test('the screen admits what it cannot see', () => {
   assert.match(i18n._strings['tok.note'].en, /sent in from another wallet is not tracked/);
   assert.match(i18n._strings['tok.note'].id, /kiriman dari wallet lain/);
 });
+
+// ── each OTHER wallet shows what it holds, not just what it is worth ────────
+//
+// "copy writing so bad untuk tampilan wallet berikan yang detail masing2 …
+// tapi tidak spam, clean" — the rows under "Your other wallets" read
+// "Wallet 2 · $671.62", which answers none of the questions the screen is
+// opened with: which chain the money sits on, coins or bags, can it pay gas.
+// The matrix already read every wallet × every chain for the totals, so the
+// breakdown costs nothing extra.
+const SRC2 = require('node:fs').readFileSync(require('node:path').join(__dirname, 'telegram.js'), 'utf8');
+const OTHERS = SRC2.slice(SRC2.indexOf('// WHAT the wallet holds'), SRC2.indexOf('else { rolledUp++;'));
+
+test('other wallets carry a one-line per-chain breakdown', () => {
+  assert.ok(OTHERS.length > 300, 'the breakdown block moved — this test is asserting nothing');
+  // Built from the SAME matrix as the totals — a second read would be a second
+  // chance to disagree with the number above it.
+  assert.match(OTHERS, /\(matrix\[i\] \|\| \[\]\)\.forEach/);
+  assert.match(OTHERS, /bits\.push\(`\$\{allChains\[ci\]\.emoji\} \$\{\+amt\.toFixed\(4\)\} \$\{allChains\[ci\]\.native\}`\)/);
+  // Clean: zero chains get NO segment (the active block already established
+  // zeros are noise), and an empty wallet gets no breakdown line at all.
+  assert.match(OTHERS, /if \(!\(amt > 0\)\) return;/);
+  assert.match(OTHERS, /bits\.length \? `└ \$\{bits\.join\(' · '\)\}\\n` : ''/);
+});
+
+test('bags collapse to one figure and unread chains are counted, not hidden', () => {
+  // A wallet whose reads all failed must not render as empty — "empty" and "we
+  // could not look" are different facts, the rule the active block already keeps.
+  assert.match(OTHERS, /if \(b == null\) \{ unread\+\+; return; \}/);
+  assert.match(OTHERS, /if \(unread\) bits\.push\(T\(chatId, 'wal\.row_unread', \{ n: unread \}\)\)/);
+  assert.match(OTHERS, /tokenUsdArr\[i\] \|\| 0\) > 0\.05/);
+  const i18n = require('./i18n');
+  for (const lang of i18n.LANGS) {
+    assert.match(i18n.t(lang, 'wal.row_unread', { n: 2 }), /2/, `${lang} drops the count`);
+  }
+});
+
+test('the breakdown respects the character budget — rolled-up wallets stay rolled up', () => {
+  // The whole block sits inside the `others.length < OTHERS_MAX_CHARS` branch,
+  // so a 99-wallet account still fits under Telegram's 4096 and the overflow
+  // still rolls into the "…and N more" line instead of silently truncating.
+  const branch = SRC2.slice(SRC2.indexOf('if (others.length < OTHERS_MAX_CHARS) {'), SRC2.indexOf('else { rolledUp++;'));
+  assert.ok(branch.includes('└'), 'the breakdown escaped the budgeted branch');
+});
