@@ -385,6 +385,21 @@ test('the fill turns TP/SL into real orders at the REALISED entry', () => {
   assert.strictEqual((fill.match(/, t\.walletId\)/g) || []).length, 2);
 });
 
+test('the copy screen links THROUGH to the CA snipe', () => {
+  // Three features answer to the word "snipe" and two of them live on the Copy
+  // screen's buttons. A user sent there by that word found no way to the CA
+  // snipe and reported the feature as missing ("cuman seperti ini") — the
+  // change WAS deployed; the path to it was not on the screen they were on.
+  const TGs = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const scr = TGs.slice(TGs.indexOf('function copyScreen('), TGs.indexOf('function referralScreen('));
+  assert.match(scr, /btn\('📍 Snipe one contract', 'csn'\)/);
+  // And it must sit OUTSIDE the target-cap gate — navigation that vanishes
+  // when the follow list is full is the same dead end one state later.
+  const gated = scr.slice(scr.indexOf('list.length < core.MAX_COPY_TARGETS'), scr.indexOf('kbRows.push([btn(\'« Menu\''));
+  const gateBlockEnd = gated.indexOf('}');
+  assert.ok(!gated.slice(0, gateBlockEnd).includes("'csn'"), 'the CA-snipe cross-link is inside the copy-target cap gate');
+});
+
 test('the one-line parser accepts the panel fields and rejects the ambiguous', () => {
   const TGs = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
   const branch = TGs.slice(TGs.indexOf("if (p.action === 'ca_snipe')"), TGs.indexOf("if (p.action === 'ae_val')"));

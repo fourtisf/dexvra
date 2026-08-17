@@ -1671,6 +1671,11 @@ function copyScreen(chatId) {
     // Dev snipe is only offered when the active chain is a launchpad chain.
     if (core.canDevSnipe(ach.key)) kbRows.push([btn('🎯 Snipe a dev wallet', 'cpaddd')]);
   }
+  // Cross-link, not a mode: this screen's own button says "Snipe", so anyone
+  // hunting for the CA snipe lands here — and used to be stuck ("cuman seperti
+  // ini"). Outside the target-cap gate above, because navigation must not
+  // disappear when the follow list is full.
+  kbRows.push([btn('📍 Snipe one contract', 'csn')]);
   kbRows.push([btn('« Menu', 'menu')]);
   body += `\n<i>Both modes skip honeypots and are capped by your budget. Turn the master switch ON to start. ⚠️ High risk — DYOR.</i>`;
   body += `\n<i>The exit mirror only ever sells what copy bought from that wallet, and only positions opened after you enabled it — it will not reach back into bags you already held.</i>`;
