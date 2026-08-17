@@ -238,3 +238,38 @@ test("the preview card explains a missing handle, for the shown tokens only", ()
   // It survives a layout switch that does not re-sample.
   assert.match(MENU, /let handles = sess && sess\.handles;/);
 });
+
+// ── the Top 2 Duel ──────────────────────────────────────────────────────────
+
+test("duel2 fills the gap in the layout ladder", () => {
+  const gb = require("../src/gainersBanner");
+  // The menu offered 1, 3, 4, 5, 8, 10 — the one head-to-head shape a two-token
+  // day needs was the one missing.
+  assert.ok(gb.isTemplate("duel2"));
+  assert.strictEqual(gb.countOf("duel2"), 2);
+  assert.deepStrictEqual(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 8, 10],
+    "the template ladder is out of order — the menu is built from this list");
+});
+
+test("the duel keeps the podium's identity rule from day one", () => {
+  // One ticker size; only the FIGURE scales (≥1.4×), and rank is carried by the
+  // ring, the medal, the chip and the card height — not by the name.
+  const fn = BANNER.slice(BANNER.indexOf("function layoutDuel("), BANNER.indexOf("function layoutHero("));
+  assert.ok(fn.length > 400, "layoutDuel moved — this test is asserting nothing");
+  assert.match(fn, /ctx\.font = `700 \$\{34 \* S\}px/, "the duel ticker scales by rank");
+  assert.ok(!/winner \? \d+ : \d+\) \* S\}px \$\{F\.d7\}/.test(fn), "the winner's name is bigger again");
+  assert.match(fn, /\(winner \? 84 : 56\) \* S/, "the figure no longer scales");
+  assert.ok(84 / 56 >= 1.4);
+  for (const re of [/metalRing\(/, /medal\(/, /"#1 · Top gainer"/, /"#2 · Runner-up"/]) assert.match(fn, re);
+});
+
+test("a one-token day still renders as a duel of one, never a crash", async () => {
+  const gb = require("../src/gainersBanner");
+  if (!gb.available()) return;
+  const one = await gb.render({ template: "duel2", coins: [
+    { symbol: "SOLO", name: "Only Mover", pct: 42, pctLabel: "▲ 42%", chain: "bsc", mcap: 2_000_000, address: "0x1" },
+  ], dateText: "" });
+  assert.ok(one && one.length > 10_000, "one qualifying token broke the duel");
+  const none = await gb.render({ template: "duel2", coins: [], dateText: "" }).catch(() => null);
+  assert.ok(none === null || Buffer.isBuffer(none), "an empty board threw instead of degrading");
+});

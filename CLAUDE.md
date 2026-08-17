@@ -415,6 +415,15 @@ liquidity.
   floor would empty the board for good), but storing something other than what was
   asked for and calling it ✅ is the NaN defect moved to the edges.
 
+### Top 2 Duel
+
+The layout ladder ran 1 · 3 · 4 · 5 · 8 · 10 — the head-to-head shape a
+two-token day needs was the one missing. `duel2` fills it: winner gold and
+slightly taller, runner-up silver, identity row horizontal because two columns
+are wide enough to read that way. It inherits the identity rule below from day
+one (one ticker size, figure scales ≥1.4×), and a test pins the ladder order —
+the admin menu is built from `TEMPLATE_IDS`.
+
 ### The winner's NAME is not a ranking signal
 
 `$巨兽BEHEMOTH` was drawn at 44px against 31px for the two cards beside it, and a
@@ -460,7 +469,7 @@ is preferred, so a token the site has no link for lost its credit entirely.
   `[@x](url)` would publish its brackets verbatim.
 
 ```bash
-cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js test/gainersIdentity.test.js   # 42 tests, no network
+cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilters.test.js test/gainersIdentity.test.js   # 45 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an

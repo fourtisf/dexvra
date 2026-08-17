@@ -71,6 +71,15 @@ const TEMPLATES = {
     accent: SITE.mint,
     title: () => "Top Gainer",
   },
+  duel2: {
+    id: "duel2",
+    label: "⚔️ Top 2 Duel",
+    blurb: "Two premium cards head-to-head — the day's winner against its runner-up.",
+    n: 2,
+    layout: "duel",
+    accent: SITE.gold,
+    title: (n) => (n >= 2 ? "Top 2 Gainers" : "Top Gainer"),
+  },
   podium: {
     id: "podium",
     label: "🏆 Top 3 Podium",
@@ -1221,6 +1230,86 @@ function layoutPodium(ctx, S, spec, coins) {
 
 /** hero1 — the biggest mover as a product-launch card: kicker, giant figures,
  *  stat tiles, a big trend area, and an editorial "01" watermark. */
+/** duel — two wide cards head-to-head; the winner carries the gold ring and a
+ *  slightly taller card, the runner-up silver. Both tickers are ONE size: the
+ *  podium's lesson — a name is an identity, not a ranking signal — applies
+ *  before a third card exists to prove it on. The figure is what scales. */
+function layoutDuel(ctx, S, spec, coins) {
+  const slots = coins.slice(0, 2);
+  if (!slots.length) return;
+  const gapX = 28 * S;
+  const colW = ((REF_W - 2 * PAD) * S - gapX * (slots.length - 1)) / slots.length;
+  const bottom = BAND_BOTTOM * S;
+
+  slots.forEach((c, idx) => {
+    const rank = idx + 1;
+    const rc = rankColor(rank);
+    const winner = rank === 1;
+    const h = winner ? BAND_H * S : (BAND_H - 34) * S;
+    const x = PAD * S + idx * (colW + gapX);
+    const y = bottom - h;
+    surface(ctx, x, y, colW, h, 24 * S, { S, accent: rc, lift: winner ? 1.5 : 1 });
+
+    // identity row: avatar LEFT, name beside it — a two-column card is wide
+    // enough to read horizontally, and stacking (the podium's shape) would
+    // leave its midfield hollow at this width.
+    const d = (winner ? 108 : 100) * S;
+    const lx = x + 54 * S + d / 2;
+    const ly = y + 64 * S + d / 2;
+    if (winner) radial(ctx, lx, ly, d * 1.3, SITE.gold, 0.12);
+    avatar(ctx, c.img, lx, ly, d, c.symbol, S);
+    metalRing(ctx, lx, ly, d, rank, S);
+    medal(ctx, lx + d * 0.42, ly + d * 0.38, (winner ? 20 : 18) * S, rank, S);
+
+    chip(ctx, x + colW - 40 * S, y + 44 * S, winner ? "#1 · Top gainer" : "#2 · Runner-up", 12.5 * S, S, {
+      align: "right",
+      color: rc,
+      border: hexA(rc, 0.4),
+      bg: hexA(rc, 0.1),
+    });
+
+    const tx = lx + d / 2 + 30 * S;
+    const textW = x + colW - 44 * S - tx;
+    ctx.save();
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = SITE.text;
+    ctx.font = `700 ${34 * S}px ${F.d7}`;
+    ctx.letterSpacing = `${(-0.7 * S).toFixed(1)}px`;
+    ctx.fillText(fitText(ctx, `$${c.symbol}`, textW, { weight: 700, size: 34 * S, min: 18 * S, family: F.d7 }), tx, ly - 2 * S);
+    ctx.letterSpacing = "0px";
+    ctx.fillStyle = SITE.muted;
+    ctx.fillText(fitText(ctx, c.name || "", textW, { weight: 500, size: 16 * S, min: 11 * S, family: F.d5 }), tx, ly + 26 * S);
+    ctx.restore();
+
+    // the hero figure — winner's outranks the runner-up's ≥1.4×, same contract
+    // as the podium, or two equal cards are just a list drawn expensively.
+    bigPct(ctx, x + 54 * S, y + h - 168 * S, c.pctLabel, (winner ? 84 : 56) * S, S);
+
+    // trend strip in its own clipped band above the footer
+    ctx.save();
+    roundRect(ctx, x, y, colW, h, 24 * S);
+    ctx.clip();
+    sparkline(ctx, x + 54 * S, y + h - 148 * S, colW - 108 * S, 44 * S, c.symbol, c.pct, S, { alpha: 0.75 });
+    ctx.restore();
+
+    // footer stats split by a hairline — same grammar as the podium's
+    ctx.fillStyle = SITE.line;
+    ctx.fillRect(x + 30 * S, y + h - 84 * S, colW - 60 * S, 1);
+    const stat = (label, value, sx, align) => {
+      microLabel(ctx, sx, y + h - 54 * S, label, { size: 10 * S, track: 0.2, align, color: SITE.faint });
+      ctx.save();
+      ctx.font = `700 ${17 * S}px ${F.m7}`;
+      ctx.fillStyle = SITE.text;
+      ctx.textAlign = align;
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(value, sx, y + h - 28 * S);
+      ctx.restore();
+    };
+    stat("Chain", chainName(c.chain) || "—", x + 30 * S, "left");
+    if (c.mcap) stat("Mkt cap", fmtCap(c.mcap), x + colW - 30 * S, "right");
+  });
+}
+
 function layoutHero(ctx, S, spec, coins) {
   const c = coins[0];
   if (!c) return;
@@ -1311,6 +1400,7 @@ function layoutHero(ctx, S, spec, coins) {
 }
 
 const LAYOUTS = {
+  duel: layoutDuel,
   hero: layoutHero,
   podium: layoutPodium,
   cards: layoutCards,
