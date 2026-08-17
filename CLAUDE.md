@@ -1079,8 +1079,16 @@ chains cannot drift into three ideas of what a dev snipe does.
 developer is not the same as wanting every launch on the chain, and that early
 return is what kept dev snipe off EVM even after the chain check was relaxed.
 
+**TP/SL and expiry ride ON the CA target** ("setingan sama kaya sol trading
+bot"): `<ca> <amount> [slip%] [tp/sl] [expiry h]`, one line. The exits become
+real orders only at the FILL, priced off the realised entry (spent ÷ received)
+— never the card price, because a snipe exists precisely where those differ. An
+SL ≥ 100% is refused at arm time (it can never fire), and if the buy lands but
+the order cap blocks the exits, the receipt SAYS so — a stop-loss the user
+believes exists is worse than none.
+
 ```bash
-cd tradebot && node --test snipeTarget.test.js   # 17 tests, no RPC
+cd tradebot && node --test snipeTarget.test.js   # 27 tests, no RPC
 ```
 
 **Config a fix depends on:** nothing. Every knob has a working default.

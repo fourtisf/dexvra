@@ -396,17 +396,20 @@ const S = {
   'snipe.ca.add_btn': { en: '➕ Arm a contract', id: '➕ Pasang kontrak' },
   'snipe.ca.launch_btn': { en: '🎯 Launch snipe', id: '🎯 Snipe launch' },
   'snipe.ca.prompt': {
-    en: '📍 <b>Snipe a contract</b> on {chain}\n\nSend <b>&lt;contract&gt; &lt;amount&gt;</b> and optionally <b>&lt;slippage%&gt;</b>:\n<code>0xabc… 0.05 25</code> → buy 0.05 {native} at 25% slippage\n<code>0xabc… 0.05</code> → buy 0.05 {native} at your normal slippage\n\n<i>Switch chain first if the launch is elsewhere. Nothing is spent until the pool opens.</i>',
-    id: '📍 <b>Snipe satu kontrak</b> di {chain}\n\nKirim <b>&lt;kontrak&gt; &lt;jumlah&gt;</b> dan opsional <b>&lt;slippage%&gt;</b>:\n<code>0xabc… 0.05 25</code> → beli 0.05 {native} dengan slippage 25%\n<code>0xabc… 0.05</code> → beli 0.05 {native} dengan slippage biasa\n\n<i>Ganti chain dulu kalau launch-nya di chain lain. Tidak ada dana keluar sampai pool-nya buka.</i>',
+    en: '📍 <b>Snipe a contract</b> on {chain}\n\nOne line sets the whole snipe — like a config panel, without the taps:\n<b>&lt;contract&gt; &lt;amount&gt; [slip%] [tp%/sl%] [expiry h]</b>\n\n<code>0xabc… 0.05</code> → buy 0.05 {native}, your normal slippage\n<code>0xabc… 0.05 25</code> → …at 25% slippage\n<code>0xabc… 0.05 25 100/50</code> → …then take profit at <b>+100%</b>, stop loss at <b>−50%</b>, placed automatically the moment the snipe fills\n<code>0xabc… 0.05 25 100/50 12</code> → …and give up after <b>12h</b> if it never launches\n\n<i>Switch chain first if the launch is elsewhere. Nothing is spent until the pool opens.</i>',
+    id: '📍 <b>Snipe satu kontrak</b> di {chain}\n\nSatu baris untuk seluruh setelan snipe — seperti panel config, tanpa banyak tap:\n<b>&lt;kontrak&gt; &lt;jumlah&gt; [slip%] [tp%/sl%] [expiry jam]</b>\n\n<code>0xabc… 0.05</code> → beli 0.05 {native}, slippage biasa\n<code>0xabc… 0.05 25</code> → …slippage 25%\n<code>0xabc… 0.05 25 100/50</code> → …lalu take profit di <b>+100%</b>, stop loss di <b>−50%</b>, terpasang otomatis begitu snipe-nya kebeli\n<code>0xabc… 0.05 25 100/50 12</code> → …dan hangus setelah <b>12 jam</b> kalau tidak pernah launch\n\n<i>Ganti chain dulu kalau launch-nya di chain lain. Tidak ada dana keluar sampai pool-nya buka.</i>',
   },
   'snipe.ca.armed': {
-    en: '✅ <b>Armed</b> · {chain}\n<code>{ca}</code>\n\nBuys <b>{amt} {native}</b> at <b>{slip}</b> slippage the moment it becomes tradeable.\nExpires in <b>{hours}h</b> if it never launches.',
-    id: '✅ <b>Terpasang</b> · {chain}\n<code>{ca}</code>\n\nBeli <b>{amt} {native}</b> dengan slippage <b>{slip}</b> begitu bisa ditradingkan.\nHangus dalam <b>{hours} jam</b> kalau tidak pernah launch.',
+    en: '✅ <b>Armed</b> · {chain}\n<code>{ca}</code>\n\nBuys <b>{amt} {native}</b> at <b>{slip}</b> slippage the moment it becomes tradeable.{exits}\nExpires in <b>{hours}h</b> if it never launches.',
+    id: '✅ <b>Terpasang</b> · {chain}\n<code>{ca}</code>\n\nBeli <b>{amt} {native}</b> dengan slippage <b>{slip}</b> begitu bisa ditradingkan.{exits}\nHangus dalam <b>{hours} jam</b> kalau tidak pernah launch.',
   },
   'snipe.ca.slip_default': { en: 'your normal', id: 'slippage biasa' },
   'snipe.ca.bad_addr': { en: "❌ That is not a valid <b>{chain}</b> contract address. Send it again, or switch chain first.", id: '❌ Itu bukan alamat kontrak <b>{chain}</b> yang valid. Kirim ulang, atau ganti chain dulu.' },
   'snipe.ca.bad_amount': { en: '❌ Send an amount in <b>{native}</b> after the address, e.g. <code>0.05</code>.', id: '❌ Kirim jumlah dalam <b>{native}</b> setelah alamat, misalnya <code>0.05</code>.' },
   'snipe.ca.bad_slip': { en: '❌ Slippage must be between <b>0</b> and <b>50</b> percent.', id: '❌ Slippage harus antara <b>0</b> dan <b>50</b> persen.' },
+  'snipe.ca.bad_tpsl': { en: '❌ TP/SL must look like <code>100/50</code> (take profit % / stop loss %), stop loss below 100.', id: '❌ TP/SL harus seperti <code>100/50</code> (take profit % / stop loss %), stop loss di bawah 100.' },
+  'snipe.ca.bad_ttl': { en: '❌ Expiry must be 1–168 hours.', id: '❌ Expiry harus 1–168 jam.' },
+  'snipe.ca.exits': { en: '\nThen: <b>{parts}</b> — placed automatically at the fill price.', id: '\nLalu: <b>{parts}</b> — terpasang otomatis di harga fill.' },
 
   // ---------------------------------------------------------------- errors
   // One clear sentence per failure class, each ending in what to actually do.

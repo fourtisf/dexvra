@@ -825,7 +825,7 @@ function armedSnipeTargets(u, now = Date.now()) {
   return snipeTargets(u).filter((t) => t.status === 'armed' && (!t.expiresAt || t.expiresAt > now));
 }
 
-function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs } = {}) {
+function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs, tpPct, slPct } = {}) {
   const u = ensureUser(chatId);
   const chainKey = chain && chainOf(chain) && isEnabled(chain) ? chain : userChain(u);
   const svm = isSvm(chainKey);
@@ -834,6 +834,13 @@ function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs } 
   else if (!/^0x[0-9a-fA-F]{40}$/.test(ca)) throw new Error('invalid contract address');
   const amt = Number(amount);
   if (!(amt > 0)) throw new Error('amount must be > 0');
+  // TP/SL ride ON the target and become real orders only when the snipe FILLS —
+  // an order on a token you do not hold yet has nothing to trigger against.
+  // SL is a percentage of a price, so ≥100 can never fire; TP is capped so a
+  // typo ("tp 10000") cannot park an order nothing will ever reach.
+  const tp = Number(tpPct) || 0, sl = Number(slPct) || 0;
+  if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
+  if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
   u.snipeTargets = snipeTargets(u);
   // Only ARMED targets count against the cap. A finished snipe is history, and
   // making somebody delete their own receipts to arm the next one is the kind of
@@ -847,7 +854,7 @@ function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs } 
   if (!w) throw new Error('no wallet');
   const t = {
     id: 'sn' + crypto.randomBytes(4).toString('hex'),
-    ca, chain: chainKey, amount: String(amt),
+    ca, chain: chainKey, amount: String(amt), tpPct: tp || undefined, slPct: sl || undefined,
     // 0 means "use my normal slippage" — stored as 0 rather than copying the
     // current value, so a later change to the global setting still reaches a
     // target the user never customised.

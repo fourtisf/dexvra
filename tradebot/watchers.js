@@ -1560,7 +1560,24 @@ async function _fireCaSnipe(u, t) {
     const r = await core.buy(u.chatId, t.ca, t.amount, t.chain, t.walletId, { slipBps: t.slipBps || undefined });
     core.settleSnipeTarget(u, t.id, { ok: true, hash: r.hash });
     _caSnipeStats.fired++; _caSnipeStats.lastFiredAt = Date.now();
-    _notify(u.chatId, `🎯 <b>CA snipe filled: $${esc(r.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>This was YOUR armed target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${t.ca}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'snipe');
+    // The target's TP/SL become REAL orders at the moment there is a bag to
+    // sell — measured off the realised entry (spent ÷ received), because the
+    // whole point of a snipe is that the card price and the fill differ.
+    let exits = '';
+    const entry = Number(r.spentEth) / (Number(r.gotTokens) || 1);
+    if (entry > 0 && (t.tpPct > 0 || t.slPct > 0)) {
+      try {
+        const parts = [];
+        if (t.tpPct > 0) { addOrder(u.chatId, { type: 'tp', ca: t.ca, sym: r.sym, chain: t.chain, targetPriceEth: entry * (1 + t.tpPct / 100), sellPct: 100, auto: true }, t.walletId); parts.push(`TP +${t.tpPct}%`); }
+        if (t.slPct > 0) { addOrder(u.chatId, { type: 'sl', ca: t.ca, sym: r.sym, chain: t.chain, targetPriceEth: entry * (1 - t.slPct / 100), sellPct: 100, auto: true }, t.walletId); parts.push(`SL −${t.slPct}%`); }
+        exits = parts.length ? `\nAuto-exit armed: <b>${parts.join(' · ')}</b>` : '';
+      } catch (e) {
+        // Order cap reached is the realistic failure. The BUY succeeded — say
+        // the exits did not, or the user believes a stop-loss exists.
+        exits = `\n⚠️ <i>Couldn't place the auto-exit (${esc(String(e.message || e).slice(0, 80))}) — set TP/SL by hand from the Monitor.</i>`;
+      }
+    }
+    _notify(u.chatId, `🎯 <b>CA snipe filled: $${esc(r.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>This was YOUR armed target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}${exits}\n<code>${t.ca}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'snipe');
   } catch (err) {
     const msg = String((err && err.message) || err);
     _caSnipeStats.lastErr = msg.slice(0, 180); _caSnipeStats.lastErrAt = Date.now();

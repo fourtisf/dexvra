@@ -343,3 +343,57 @@ test('a pair that exists but holds nothing is not tradeable', () => {
   assert.match(fn, /pick\.wethBal != null && pick\.wethBal > 0n/, 'an empty pair counts as tradeable');
   assert.match(fn, /return false;\s*\}\s*$/m, 'the probe can throw into the watcher');
 });
+
+// ── "setingan sama kaya sol trading bot": TP/SL + expiry per target ──────────
+//
+// The reference panel arms a snipe with Snipe amount, Expiry time and TP/SL in
+// one place. Ours is the same set on one LINE — <ca> <amount> [slip%] [tp/sl]
+// [expiry h] — because a snipe's whole point is being ready before the pool
+// opens, and five taps of config is five chances to still be typing.
+
+test('a target carries its own TP/SL and expiry', () => {
+  const u = user();
+  const t = core.addSnipeTarget(u.chatId, { ca: MINT, chain: 'solana', amount: 0.05, tpPct: 100, slPct: 50, ttlMs: 12 * 3600000 });
+  assert.strictEqual(t.tpPct, 100);
+  assert.strictEqual(t.slPct, 50);
+  assert.ok(Math.abs((t.expiresAt - t.createdAt) - 12 * 3600000) < 2000, 'the per-target expiry was ignored');
+});
+
+test('an impossible stop-loss is refused at ARM time, not discovered at fill', () => {
+  const u = user();
+  // SL is a percentage of a price: ≥100 can never fire.
+  assert.throws(() => core.addSnipeTarget(u.chatId, { ca: MINT, chain: 'solana', amount: 0.05, slPct: 100 }), /below 100/);
+  assert.throws(() => core.addSnipeTarget(u.chatId, { ca: MINT, chain: 'solana', amount: 0.05, tpPct: 200000 }), /0–100000/);
+  // Omitted entirely → stored as undefined, not 0-that-looks-set.
+  const t = core.addSnipeTarget(u.chatId, { ca: MINT, chain: 'solana', amount: 0.05 });
+  assert.strictEqual(t.tpPct, undefined);
+  assert.strictEqual(t.slPct, undefined);
+});
+
+test('the fill turns TP/SL into real orders at the REALISED entry', () => {
+  const W = fs.readFileSync(path.join(__dirname, 'watchers.js'), 'utf8');
+  const fill = W.slice(W.indexOf('CA snipe filled') - 1600, W.indexOf('CA snipe filled') + 400);
+  // Entry from the trade itself — spent ÷ received — never the card price; a
+  // snipe exists precisely because those differ at launch.
+  assert.match(fill, /const entry = Number\(r\.spentEth\) \/ \(Number\(r\.gotTokens\) \|\| 1\);/);
+  assert.match(fill, /targetPriceEth: entry \* \(1 \+ t\.tpPct \/ 100\)/);
+  assert.match(fill, /targetPriceEth: entry \* \(1 - t\.slPct \/ 100\)/);
+  // The BUY succeeded even if the exits could not be placed (order cap): that
+  // must be SAID, or the user believes a stop-loss exists that does not.
+  assert.match(fill, /Couldn't place the auto-exit/);
+  // And both orders bind to the wallet that sniped, not whatever is active now.
+  assert.strictEqual((fill.match(/, t\.walletId\)/g) || []).length, 2);
+});
+
+test('the one-line parser accepts the panel fields and rejects the ambiguous', () => {
+  const TGs = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const branch = TGs.slice(TGs.indexOf("if (p.action === 'ca_snipe')"), TGs.indexOf("if (p.action === 'ae_val')"));
+  // tp/sl is ONE token with a slash — two bare numbers after the slippage would
+  // be ambiguous with a fat-fingered second amount.
+  assert.match(branch, /\^\(\\d\+\(\?:\\\.\\d\+\)\?\)\\\/\(\\d\+\(\?:\\\.\\d\+\)\?\)\$/);
+  assert.match(branch, /slPct >= 100\) return send\(chatId, T\(chatId, 'snipe\.ca\.bad_tpsl'\)\)/);
+  assert.match(branch, /ttlH < 1 \|\| ttlH > 168/);
+  // The confirmation names the exits it armed — a config the bot accepted
+  // silently is the auto-snipe lesson over again.
+  assert.match(branch, /snipe\.ca\.exits/);
+});

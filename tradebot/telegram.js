@@ -1498,6 +1498,7 @@ function caSnipeScreen(chatId) {
       const left = t.expiresAt ? Math.max(0, Math.round((t.expiresAt - now) / 3600000)) : null;
       L.push(`${c.emoji} <code>${short(t.ca)}</code> · <b>${esc(t.amount)} ${esc(c.native)}</b>`
         + (t.slipBps > 0 ? ` · ${t.slipBps / 100}%` : '')
+        + (t.tpPct > 0 || t.slPct > 0 ? ` · ${[t.tpPct > 0 ? `TP +${t.tpPct}%` : '', t.slPct > 0 ? `SL −${t.slPct}%` : ''].filter(Boolean).join('/')}` : '')
         + (left != null ? ` · <i>${left}h left</i>` : ''));
     }
     L.push('');
@@ -3149,15 +3150,32 @@ async function resolvePending(chatId, p, text, m) {
       if (!ca || !isAddrFor(ca, ch.key)) return send(chatId, T(chatId, 'snipe.ca.bad_addr', { chain: esc(ch.name) }));
       if (!(amount > 0)) return send(chatId, T(chatId, 'snipe.ca.bad_amount', { native: esc(ch.native) }));
       if (parts[2] !== undefined && (!Number.isFinite(slipPct) || slipPct < 0 || slipPct > 50)) return send(chatId, T(chatId, 'snipe.ca.bad_slip'));
+      // Optional 4th token: "tp/sl" — the Sol-Trading-Bot panel's TP/SL and
+      // Expiry, as two more words on the same line. The slash form is
+      // deliberate: two bare numbers after the slippage would be ambiguous with
+      // a fat-fingered second amount.
+      let tpPct = 0, slPct = 0, ttlH = 0;
+      if (parts[3] !== undefined) {
+        const m = /^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/.exec(String(parts[3]));
+        if (!m) return send(chatId, T(chatId, 'snipe.ca.bad_tpsl'));
+        tpPct = Number(m[1]); slPct = Number(m[2]);
+        if (!(tpPct >= 0) || !(slPct >= 0) || slPct >= 100) return send(chatId, T(chatId, 'snipe.ca.bad_tpsl'));
+      }
+      if (parts[4] !== undefined) {
+        ttlH = Number(parts[4]);
+        if (!Number.isFinite(ttlH) || ttlH < 1 || ttlH > 168) return send(chatId, T(chatId, 'snipe.ca.bad_ttl'));
+      }
       try {
-        const tgt = core.addSnipeTarget(chatId, { ca, chain: ch.key, amount, slipBps: Math.round(slipPct * 100) });
+        const tgt = core.addSnipeTarget(chatId, { ca, chain: ch.key, amount, slipBps: Math.round(slipPct * 100), tpPct, slPct, ttlMs: ttlH > 0 ? ttlH * 3600000 : undefined });
         const s = caSnipeScreen(chatId);
+        const exitParts = [tgt.tpPct > 0 ? `TP +${tgt.tpPct}%` : '', tgt.slPct > 0 ? `SL −${tgt.slPct}%` : ''].filter(Boolean).join(' · ');
         return send(chatId, T(chatId, 'snipe.ca.armed', {
           chain: `${ch.emoji} ${esc(ch.name)}`,
           ca: esc(tgt.ca),
           amt: esc(tgt.amount),
           native: esc(ch.native),
           slip: tgt.slipBps > 0 ? `${tgt.slipBps / 100}%` : T(chatId, 'snipe.ca.slip_default'),
+          exits: exitParts ? T(chatId, 'snipe.ca.exits', { parts: exitParts }) : '',
           hours: Math.round((tgt.expiresAt - tgt.createdAt) / 3600000),
         }), s.kb);
       } catch (e) { return send(chatId, `⚠️ ${esc((e && e.message) || 'could not arm that')}`); }
