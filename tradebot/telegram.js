@@ -1541,25 +1541,60 @@ function snipeScreen(chatId) {
   const text =
     `🎯 <b>Auto-Snipe</b>\n\n` +
     `Automatically buys every brand-new token the moment it launches, on the chains you enable — no manual monitoring required.\n\n` +
-    `<b>Step 1 — Amount per launch</b>\n` +
-    `Currently <b>${amt}</b> (each chain's native coin). Tap a preset below, or ✏️ to type your own.\n\n` +
-    `<b>Step 2 — Turn on a chain</b>\n` +
-    `Tap a chain to start or stop sniping on it. Done.\n\n` +
+    `<b>Step 1 — Pick a chain</b>\n` +
+    `Tap a chain below. You'll be asked the amount per launch next, and sniping starts.\n\n` +
     SEP + `\n${statusLine}\n` + SEP + `\n\n` +
     `⚠️ <b>Buys every new launch</b> on the enabled chains. Brand-new tokens carry high risk, so keep the amount small. Honeypots are filtered automatically; always do your own research.\n\n` +
     `<i>Already have the contract? <b>📍 Snipe one contract</b> arms a single address and buys the instant it becomes tradeable. To follow one developer's launches instead, use 👥 Copy &amp; Dev Snipe — now on every supported chain.</i>`;
-  const cur = String(u.snipe.ethAmount);
-  const QUICK = ['0.01', '0.05', '0.1', '0.5'];
   const kbRows = [];
-  // Step 1 — one-tap amount presets (no typing). ✓ marks the current amount.
-  kbRows.push(QUICK.map((p) => btn(`${cur === p ? '✓ ' : ''}${p}`, `snamtq:${p}`)));
-  kbRows.push([btn('✏️ Custom amount', 'snamt')]);
-  // Step 2 — one tap per chain to start/stop sniping there.
+  // Chain FIRST — the flow used to lead with the amount presets, and the
+  // owner's read was that the whole panel started on the wrong question
+  // ("intinya pertama disuruh pilih chain dulu"). The amount is Step 2 now,
+  // asked inside the arming tap; the ✏️ row below only EDITS the stored
+  // amount for chains that are already armed.
   enabled.forEach((c) => kbRows.push([btn(`${c.emoji} ${c.name}  ·  ${chains[c.key] ? '🟢 ON' : '⚪ OFF'}`, `sntog:${c.key}`)]));
+  kbRows.push([btn(`✏️ Amount per launch: ${amt}`, 'snamt')]);
   kbRows.push([btn('📍 Snipe one contract', 'csn')]);
   kbRows.push([btn('🎯 Snipe a specific developer', 'copy')]);
   kbRows.push([btn('« Back', 'menu')]);
   return { text, kb: { inline_keyboard: kbRows } };
+}
+// Step 2 of arming auto-snipe: the chain is chosen, now the spend. Rendered as
+// its own screen so arming ALWAYS passes through an explicit amount choice —
+// the "buy ngasal" incident was an amount set once, weeks earlier, on a
+// different screen, silently reused.
+function snipeAmountScreen(chatId, chainKey) {
+  const u = core.ensureUser(chatId);
+  const c = core.chainOf(chainKey);
+  const cur = String(u.snipe.ethAmount);
+  const QUICK = ['0.01', '0.05', '0.1', '0.5'];
+  const text =
+    `🎯 <b>Auto-Snipe on ${c.emoji} ${esc(c.name)}</b>\n\n` +
+    `<b>Step 2 — Amount per launch</b>\n` +
+    `Every new launch on ${esc(c.name)} will be bought with this amount of <b>${esc(c.native)}</b>. Pick one to arm, or ✏️ to type your own.\n\n` +
+    `<i>Keep it small — this buys EVERY launch, good and bad alike.</i>`;
+  const kbRows = [];
+  kbRows.push(QUICK.map((p) => btn(`${cur === p ? '✓ ' : ''}${p}`, `snarm:${chainKey}:${p}`)));
+  kbRows.push([btn('✏️ Custom amount', `snarmc:${chainKey}`)]);
+  kbRows.push([btn('« Back', 'snipe')]);
+  return { text, kb: { inline_keyboard: kbRows } };
+}
+// The ONE site that arms auto-snipe. Amount and chain are committed together,
+// so arming can never silently reuse an amount set weeks earlier on another
+// screen — the half of the "buy ngasal" incident that consent alone did not
+// fix. ARMING IS SAID OUT LOUD: the warning states the blast radius and the
+// spend it was just given; disarming stays silent because OFF needs no warning.
+async function armAutoSnipe(chatId, chainKey, amt, mid) {
+  try { core.setSnipeAmount(chatId, amt); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
+  let armedNow = false;
+  try { const chains = core.setSnipeChain(chatId, chainKey, true); armedNow = !!chains[chainKey]; } catch (_) {}
+  const u = core.ensureUser(chatId);
+  const s = snipeScreen(chatId);
+  if (mid) await edit(chatId, mid, s.text, s.kb); else await send(chatId, s.text, s.kb);
+  if (armedNow) {
+    const chG = core.chainOf(chainKey);
+    await send(chatId, `⚠️ <b>Auto-Snipe is now ARMED on ${chG ? esc(chG.name) : esc(chainKey)}.</b>\nThe bot will buy <b>every new launch</b> it sees on this chain — no target list, no confirmation per buy — spending <b>${esc(String(u.snipe.ethAmount))} ${chG ? chG.native : ''}</b> each time until you turn it off here or run out of balance.\n<i>This is separate from CA snipe and dev-wallet snipe, which only ever buy their own targets.</i>`);
+  }
 }
 // Execution speed, in the user's terms. "gasMult 3, slipAddBps 1500" is the
 // implementation; what a trader needs to know is what it buys them and what it
@@ -3000,22 +3035,28 @@ async function onCallback(q) {
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (k === 'sntog') {
+    // OFF is immediate — this is also the 🛑 button on every auto-snipe
+    // purchase message, and a stop must never grow a second step. Arming is
+    // NOT a toggle any more: it routes through the amount screen, so a second
+    // tap on an old 🛑 button opens Step 2 instead of silently re-arming
+    // (which is what a toggle did).
     const u = core.ensureUser(chatId);
-    let armedNow = false;
-    try { const chains = core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); armedNow = !!chains[ca]; } catch (_) {}
-    const s = snipeScreen(chatId);
-    await edit(chatId, mid, s.text, s.kb);
-    // ARMING IS SAID OUT LOUD. This toggle flips a feature that buys EVERY new
-    // launch on the chain with real money, and it used to flip silently — a user
-    // armed Solana while exploring, forgot, and later watched the bot "buy by
-    // itself" from a panel that belongs to a different feature entirely. The
-    // message states the blast radius and the spend per launch, ONCE, at the
-    // moment of arming; disarming stays silent because OFF needs no warning.
-    if (armedNow) {
-      const chG = core.chainOf(ca);
-      await send(chatId, `⚠️ <b>Auto-Snipe is now ARMED on ${chG ? esc(chG.name) : esc(ca)}.</b>\nThe bot will buy <b>every new launch</b> it sees on this chain — no target list, no confirmation per buy — spending <b>${esc(String(u.snipe.ethAmount))} ${chG ? chG.native : ''}</b> each time until you turn it off here or run out of balance.\n<i>This is separate from CA snipe and dev-wallet snipe, which only ever buy their own targets.</i>`);
+    if (u.snipe.chains && u.snipe.chains[ca]) {
+      try { core.setSnipeChain(chatId, ca, false); } catch (_) {}
+      const s = snipeScreen(chatId);
+      return edit(chatId, mid, s.text, s.kb);
     }
-    return;
+    const s = snipeAmountScreen(chatId, ca);
+    return edit(chatId, mid, s.text, s.kb);
+  }
+  if (k === 'snarm') {
+    if (!core.chainOf(ca)) return;
+    return armAutoSnipe(chatId, ca, arg, mid);
+  }
+  if (k === 'snarmc') {
+    if (!core.chainOf(ca)) return;
+    setPending(chatId, { action: 'snipe_amt', chain: ca });
+    return send(chatId, `💵 <b>Amount per launch</b>\n\nSend the amount of <b>${esc(core.chainOf(ca).native)}</b> to spend on each new launch, e.g. <code>0.01</code>. Sniping arms the moment I have it.`);
   }
   if (k === 'snamtq') { try { core.setSnipeAmount(chatId, ca); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '💵 <b>Amount per snipe</b>\n\nEnter the amount to spend on each new launch, in the chain\'s native coin (for example <code>0.01</code>). This exact amount is used for every snipe. A small amount is recommended.'); }
@@ -3126,7 +3167,16 @@ async function resolvePending(chatId, p, text, m) {
     if (p.action === 'slip_val') { const n = core.setSlippage(chatId, t); const s = settingsScreen(chatId); return send(chatId, `✅ Slippage set to <b>${n > 0 ? n + '%' : 'default (5%)'}</b>.`, s.kb); }
     if (p.action === 'bp_val') { const arr = core.setBuyPresets(chatId, t, p.chain); const cn = core.chainOf(p.chain); return send(chatId, `✅ Quick-buy for <b>${cn ? esc(cn.name) : 'this chain'}</b>: <b>${arr.join(' · ')}${cn ? ' ' + cn.native : ''}</b>.`, settingsScreen(chatId).kb); }
     if (p.action === 'ab_amt') { const r = core.setAutoBuy(chatId, undefined, t); return send(chatId, `✅ Auto-buy amount: <b>${esc(r.autoBuyAmount)}</b>.`, settingsScreen(chatId).kb); }
-    if (p.action === 'snipe_amt') { if (!(Number(t) > 0)) return send(chatId, 'Send a positive number.'); core.setSnipeAmount(chatId, t); const s = snipeScreen(chatId); return send(chatId, s.text, s.kb); }
+    if (p.action === 'snipe_amt') {
+      if (!(Number(t) > 0)) return send(chatId, 'Send a positive number.');
+      // With a chain on the pending step this is Step 2 of ARMING (the ✏️
+      // Custom path) — the amount lands and the chain arms in one move.
+      // Without one it is the plain amount editor on the snipe screen.
+      if (p.chain) return armAutoSnipe(chatId, p.chain, t);
+      core.setSnipeAmount(chatId, t);
+      const s = snipeScreen(chatId);
+      return send(chatId, s.text, s.kb);
+    }
     if (p.action === 'wd_addr') { const wch = activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ That doesn't look like a valid ${esc(wch.name)} address. Please check it and tap 📤 Withdraw again.`); setPending(chatId, { action: 'wd_amt', to: t }); return send(chatId, `💸 <b>How much do you want to send to</b>\n<code>${short(t)}</code>?\n\nType an amount, or type <code>max</code> to send everything (a little is kept back for network fees).`); }
     if (p.action === 'wd_amt') {
       if (!(String(t).toLowerCase() === 'max' || Number(t) > 0)) return send(chatId, 'Send a positive amount, or <code>max</code>.');
