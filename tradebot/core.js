@@ -524,6 +524,9 @@ function ensureUser(chatId, referredBy) {
     // buying twice, and the whole point of claiming before the buy is that a
     // missed snipe is the cheaper of the two mistakes.
     for (const t of u.snipeTargets) if (t && t.status === 'firing') { t.status = 'failed'; t.lastErr = 'interrupted by a restart — re-arm it if the launch has not happened'; ch = true; }
+    // The Snipe Setup panel's draft. Absent means "no panel open" — that is a
+    // state, not a hole, so nothing is minted here; only garbage is normalized.
+    if (u.snipeDraft !== undefined && u.snipeDraft !== null && typeof u.snipeDraft !== 'object') { u.snipeDraft = null; ch = true; }
     if (u.lang !== 'id' && u.lang !== 'en') { u.lang = 'en'; ch = true; }                  // UI language
     if (!u.security || typeof u.security !== 'object') { u.security = { withdrawLock: false, whitelist: [], wdTimes: [] }; ch = true; }
     if (typeof u.security.withdrawLock !== 'boolean') { u.security.withdrawLock = false; ch = true; }
@@ -921,6 +924,123 @@ function expireSnipeTarget(u, id) {
   if (!t || t.status !== 'armed') return;
   t.status = 'expired';
   saveStoreNow();
+}
+
+// ------------------------------------------------------------ snipe setup panel
+/*
+ * The tap-driven Snipe Setup panel — "sama seperti sol trading bot, ada
+ * setingan lengkap, buat semudah mungkin" (2026-08-17).
+ *
+ * A DRAFT is the panel's state: one per user, persisted, so a half-configured
+ * snipe survives a restart the way the reference panel's "Waiting for setup"
+ * does. The draft owns per-field BOUNDS only; arming goes through
+ * addSnipeTarget, the single owner of what a valid target is, so the panel and
+ * the one-line arm cannot drift into two ideas of one — the same reason three
+ * snipe callers share canTradeNow().
+ *
+ * The amount has NO default on purpose. The "buy ngasal" incident was an amount
+ * set weeks earlier on another screen, silently reused — so the panel makes the
+ * spend an explicit choice every time, exactly like auto-snipe's Step 2.
+ */
+const SNIPE_DRAFT_TTL_H = Math.max(1, Math.min(168, Math.round(SNIPE_TTL_MS / 3600000)));
+
+function _snipeAddrOk(ca, chainKey) {
+  return isSvm(chainKey) ? solana.isSolAddress(String(ca || '')) : /^0x[0-9a-fA-F]{40}$/.test(String(ca || ''));
+}
+function snipeDraft(u) {
+  return (u && u.snipeDraft && typeof u.snipeDraft === 'object') ? u.snipeDraft : null;
+}
+function newSnipeDraft(chatId) {
+  const u = ensureUser(chatId);
+  const w = activeWallet(u);
+  u.snipeDraft = {
+    chain: userChain(u), ca: null, walletId: w ? w.id : null,
+    amount: null, slipPct: 0, tpPct: 0, slPct: 0, ttlH: SNIPE_DRAFT_TTL_H,
+    createdAt: Date.now(),
+  };
+  saveStore();
+  return u.snipeDraft;
+}
+/** Patch one or more rows. Throws (and changes nothing else) on a value outside
+ *  the same bounds addSnipeTarget enforces, so the panel can never display a
+ *  setting the arm step would then refuse. */
+function updateSnipeDraft(chatId, patch = {}) {
+  const u = ensureUser(chatId);
+  const d = snipeDraft(u) || newSnipeDraft(chatId);
+  if (patch.chain !== undefined) {
+    if (!chainOf(patch.chain) || !isEnabled(patch.chain)) throw new Error('chain not enabled');
+    d.chain = patch.chain;
+    // A CA that cannot exist on the new chain is DROPPED, never silently kept:
+    // an EVM address left "armed" under a Solana row is the wrong-chain bounce
+    // the chain-first rule exists to prevent, one screen later.
+    if (d.ca && !_snipeAddrOk(d.ca, d.chain)) d.ca = null;
+  }
+  if (patch.ca !== undefined) {
+    if (patch.ca === null) d.ca = null;
+    else {
+      const ca = String(patch.ca).trim();
+      if (!_snipeAddrOk(ca, d.chain)) throw new Error(isSvm(d.chain) ? 'invalid Solana token mint' : 'invalid contract address');
+      d.ca = ca;
+    }
+  }
+  if (patch.walletId !== undefined) {
+    if (!walletById(u, patch.walletId)) throw new Error('no such wallet');
+    d.walletId = patch.walletId;
+  }
+  if (patch.amount !== undefined) {
+    if (patch.amount === null) d.amount = null;
+    else {
+      const a = Number(patch.amount);
+      if (!(a > 0)) throw new Error('amount must be > 0');
+      d.amount = String(a);
+    }
+  }
+  if (patch.slipPct !== undefined) {
+    const s = Number(patch.slipPct);
+    if (!Number.isFinite(s) || s < 0 || s > 50) throw new Error('slippage must be 0–50%');
+    d.slipPct = s;
+  }
+  if (patch.tpPct !== undefined || patch.slPct !== undefined) {
+    const tp = patch.tpPct !== undefined ? (Number(patch.tpPct) || 0) : (Number(d.tpPct) || 0);
+    const sl = patch.slPct !== undefined ? (Number(patch.slPct) || 0) : (Number(d.slPct) || 0);
+    if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
+    if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
+    d.tpPct = tp; d.slPct = sl;
+  }
+  if (patch.ttlH !== undefined) {
+    const h = Number(patch.ttlH);
+    if (!Number.isFinite(h) || h < 1 || h > 168) throw new Error('expiry must be 1–168 hours');
+    d.ttlH = h;
+  }
+  saveStore();
+  return d;
+}
+function clearSnipeDraft(chatId) {
+  const u = ensureUser(chatId);
+  if (u.snipeDraft) { u.snipeDraft = null; saveStore(); }
+}
+/** Arm the draft — THROUGH addSnipeTarget, never around it. The draft is
+ *  cleared only on SUCCESS: a refused arm ("already armed", cap reached) leaves
+ *  the panel intact so the user fixes one row instead of retyping seven. */
+function armSnipeDraft(chatId) {
+  const u = ensureUser(chatId);
+  const d = snipeDraft(u);
+  if (!d) throw new Error('nothing to arm — open the setup panel first');
+  // addSnipeTarget falls back to the ACTIVE chain when handed a disabled one —
+  // right for a typed line, silently wrong-chain for a panel whose chain row is
+  // the first thing on the screen. Refuse instead.
+  if (!chainOf(d.chain) || !isEnabled(d.chain)) throw new Error('that chain is disabled — pick another on the panel');
+  if (!d.ca) throw new Error('no target yet — set the contract address first');
+  if (!(Number(d.amount) > 0)) throw new Error('no amount yet — pick how much to spend first');
+  const t = addSnipeTarget(chatId, {
+    ca: d.ca, chain: d.chain, amount: d.amount, walletId: d.walletId || undefined,
+    slipBps: Math.round((Number(d.slipPct) || 0) * 100),
+    tpPct: d.tpPct, slPct: d.slPct,
+    ttlMs: Number(d.ttlH) > 0 ? Number(d.ttlH) * 3600000 : undefined,
+  });
+  u.snipeDraft = null;
+  saveStoreNow();
+  return t;
 }
 
 function removeCopyTarget(chatId, id) {
@@ -3255,6 +3375,7 @@ module.exports = {
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
   canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets,
   claimSnipeTarget, settleSnipeTarget, rearmSnipeTarget, expireSnipeTarget, MAX_SNIPE_TARGETS, SNIPE_TTL_MS,
+  snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H,
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,

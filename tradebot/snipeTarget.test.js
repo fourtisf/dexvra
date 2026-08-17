@@ -426,15 +426,25 @@ test('the copy screen links THROUGH to the CA snipe', () => {
   assert.ok(!gated.slice(0, gateBlockEnd).includes("'csn'"), 'the CA-snipe cross-link is inside the copy-target cap gate');
 });
 
-test('the one-line parser accepts the panel fields and rejects the ambiguous', () => {
+test('the one-line grammar lives in ONE parser, used by both ways in', () => {
   const TGs = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
-  const branch = TGs.slice(TGs.indexOf("if (p.action === 'ca_snipe')"), TGs.indexOf("if (p.action === 'ae_val')"));
+  const fn = TGs.slice(TGs.indexOf('function parseSnipeLine('), TGs.indexOf('async function resolvePending('));
+  assert.ok(fn.length > 0, 'parseSnipeLine is gone');
   // tp/sl is ONE token with a slash — two bare numbers after the slippage would
   // be ambiguous with a fat-fingered second amount.
-  assert.match(branch, /\^\(\\d\+\(\?:\\\.\\d\+\)\?\)\\\/\(\\d\+\(\?:\\\.\\d\+\)\?\)\$/);
-  assert.match(branch, /slPct >= 100\) return send\(chatId, T\(chatId, 'snipe\.ca\.bad_tpsl'\)\)/);
-  assert.match(branch, /ttlH < 1 \|\| ttlH > 168/);
+  assert.match(fn, /\^\(\\d\+\(\?:\\\.\\d\+\)\?\)\\\/\(\\d\+\(\?:\\\.\\d\+\)\?\)\$/);
+  assert.match(fn, /slPct >= 100\) return \{ err: 'snipe\.ca\.bad_tpsl' \}/);
+  assert.match(fn, /ttlH < 1 \|\| out\.ttlH > 168/);
+  // The 🎛 panel's Target paste and the ⌨️ one-line arm both go through it, so
+  // the two ways in cannot drift into two grammars.
+  const one = TGs.slice(TGs.indexOf("if (p.action === 'ca_snipe')"), TGs.indexOf("if (p.action === 'snw_ca')"));
+  assert.match(one, /parseSnipeLine\(t, ch\.key\)/, 'the one-line arm grew its own parser');
+  const panel = TGs.slice(TGs.indexOf("if (p.action === 'snw_ca')"), TGs.indexOf("if (p.action === 'snw_amt')"));
+  assert.match(panel, /parseSnipeLine\(t, chainKey\)/, "the panel's Target step grew its own parser");
   // The confirmation names the exits it armed — a config the bot accepted
-  // silently is the auto-snipe lesson over again.
-  assert.match(branch, /snipe\.ca\.exits/);
+  // silently is the auto-snipe lesson over again. ONE renderer serves both
+  // arms, so the two confirmations cannot disagree about what was configured.
+  const armed = TGs.slice(TGs.indexOf('function snipeArmedText('), TGs.indexOf('function snipeScreen('));
+  assert.match(armed, /snipe\.ca\.exits/);
+  assert.ok((TGs.match(/snipeArmedText\(chatId, tgt\)/g) || []).length >= 2, 'one of the two arms grew its own confirmation');
 });
