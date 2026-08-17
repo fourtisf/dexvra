@@ -1183,7 +1183,16 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   BEFORE the bot (long-poll gap, restart backlog, Telegram); high `handle`
   with low age is ours. The path label comes from callback data or the pending
   action, NEVER from message text — the import-wallet step is a private key in
-  a plain message.
+  a plain message. The first thing the measurement's reasoning found: the
+  WALLET dashboard (the screen `/start` ends on) awaited wallets × chains
+  balance reads at 6s-per-read against public RPCs, and THEN priced the token
+  bags — a single throttled endpoint held the screen for its full timeout,
+  twice over. The reads now cap at 2.5s (the ≤10-min last-known cache absorbs
+  the misses — that is what it is for) and the two waves run concurrently.
+  The header also answers the two questions it was asked ("harus ada jumlah
+  solananya brp dan total itu dalam token apa aja"): the On-<chain> line
+  carries the native amount beside the USD, and a `Coins:` line decomposes the
+  Total by symbol; the token share keeps its `incl. … in tokens` line.
 
 ```bash
 cd tradebot && node --test snipeTarget.test.js   # 29 tests, no RPC

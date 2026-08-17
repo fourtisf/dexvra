@@ -98,9 +98,11 @@ const S = {
   // said "🟣 Solana" and "$1,322.54" on consecutive lines and there was $0 of
   // Solana. `wal.on_chain` is the chain you picked; `wal.total_all` says out
   // loud that the other figure spans every chain.
+  // …with the NATIVE amount beside the USD ("harus ada jumlah solananya brp"):
+  // the coin count is the number a depositor checks against their own wallet.
   'wal.on_chain': {
-    en: '{emoji} On {chain}: <b>{usd}</b>',
-    id: '{emoji} Di {chain}: <b>{usd}</b>',
+    en: '{emoji} On {chain}: <b>{usd}</b> · <b>{amt} {native}</b>',
+    id: '{emoji} Di {chain}: <b>{usd}</b> · <b>{amt} {native}</b>',
   },
   // …and never "$0.00 here" for a chain we simply could not reach. That is the
   // line that sends someone to check whether their deposit arrived.
@@ -118,6 +120,9 @@ const S = {
   // line that tipped the header into confusion: it restated the Total as a sum
   // the reader is invited to check. The coins half is implied.
   'wal.split': { en: '<i>incl. {tokens} in tokens</i>', id: '<i>termasuk {tokens} berupa token</i>' },
+  // "total itu total dalam token apa aja" — the coins behind the Total, grouped
+  // by symbol. The token share is the wal.split line; per-token detail is 🪙.
+  'wal.assets': { en: '<i>Coins: {list}</i>', id: '<i>Koin: {list}</i>' },
   'wal.active_head': { en: '<b>Active wallet</b>', id: '<b>Wallet aktif</b>' },
   'wal.others_head': { en: '<b>Your other wallets</b>', id: '<b>Wallet kamu yang lain</b>' },
   // The per-wallet breakdown's unread marker. Counted, not vague: "some chains"

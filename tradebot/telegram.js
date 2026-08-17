@@ -590,8 +590,18 @@ async function walletScreen(chatId) {
     const prov = core.providerFor(c.key);
     try { return await prov.getBalance(addr); } catch (_) { return prov.getBalance(addr); }
   };
-  const rawMatrix = await Promise.all(list.map((w) =>
-    Promise.all(allChains.map((c) => withTmo(readNative(w, c).catch(() => null), 6000, null)))));
+  // 2.5s per read, not 6 ("mengapa bot masih lama merespon??"). This wave is
+  // wallets × chains requests to mostly public RPCs and the SCREEN waits for
+  // the slowest one, so a single throttled endpoint held the whole dashboard
+  // for its full timeout on every open. A read that misses the window falls
+  // back to the ≤10-min last-known cache below — exactly what that cache is
+  // for — and a chain that is genuinely down reads "couldn't reach" either way.
+  const rawMatrixP = Promise.all(list.map((w) =>
+    Promise.all(allChains.map((c) => withTmo(readNative(w, c).catch(() => null), 2500, null)))));
+  // Token pricing needs nothing from the balance matrix; the two waves used to
+  // run in SERIES, so every /wallet paid both latencies end to end.
+  const tokenBagsP = walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  const [rawMatrix, tokenBags] = await Promise.all([rawMatrixP, tokenBagsP]);
   // Resolve each cell: a successful read (incl. a real 0) updates the last-known cache; a
   // FAILED read (null, e.g. RPC timeout) falls back to the last-known balance (≤10 min) so
   // the grand total stays stable and accurate instead of silently undercounting.
@@ -610,9 +620,8 @@ async function walletScreen(chatId) {
     return sum + Number(fmtNat(b, allChains[i].key)) * nativeUsd(allChains[i].native);
   }, 0);
   const nativeUsdArr = matrix.map(usdOfRow);
-  // Include TOKEN holdings so each wallet's total is the full portfolio value, not just
-  // native coin (why "Wallet 4" reads $292 native but ~$1.3k with its bags).
-  const tokenBags = await walletTokenUsd(list, new Set(allChains.map((c) => c.key)));
+  // TOKEN holdings (fetched above, concurrently) so each wallet's total is the
+  // full portfolio value, not just native coin.
   const tokenUsdArr = bagsToUsd(tokenBags);
   const walletUsd = nativeUsdArr.map((v, i) => v + (tokenUsdArr[i] || 0));
   const grandUsd = walletUsd.reduce((a, b) => a + b, 0);
@@ -794,19 +803,37 @@ async function walletScreen(chatId) {
   // here" stacked against "…every chain" was. The wallet-slot cap ("5 of 10")
   // is gone from this line — it read as "only 5 of your 10 wallets were
   // counted" — and lives on the ➕ Generate button, where capacity is decided.
+  // "harus ada jumlah solananya brp": the chain header carries the NATIVE
+  // amount beside the USD — the coin count is the number a depositor checks
+  // against their own wallet, and USD alone made them do the division.
+  const acNativeTotal = list.reduce((s, _w, wi) => s + (acNativeAmt(wi) || 0), 0);
   const totals = oneChainOnly
     ? `${T(chatId, 'wal.title')} · ${ch.emoji} ${esc(ch.name)}\n`
       + `${T(chatId, 'wal.total', { usd: usdX(grandUsd) })}\n`
     : `${T(chatId, 'wal.title')}\n`
       + `${T(chatId, 'wal.total_all', { usd: usdX(grandUsd) })}\n`
       + `${T(chatId, acUnread ? 'wal.on_chain_unread' : 'wal.on_chain', {
-        emoji: ch.emoji, chain: esc(ch.name), usd: usdX(activeChainUsd) })}\n`;
+        emoji: ch.emoji, chain: esc(ch.name), usd: usdX(activeChainUsd),
+        amt: String(+acNativeTotal.toFixed(4)), native: esc(ch.native) })}\n`;
+  // "…dan total itu total dalam token apa aja": the Total is decomposed into
+  // the COINS behind it, grouped by symbol (ETH held on four chains is one ETH
+  // figure — same value wherever it sits); the token share keeps its own line
+  // below, and 🪙 My tokens has the per-token detail.
+  const bySym = new Map();
+  matrix.forEach((row) => row.forEach((b, ci) => {
+    if (b == null) return;
+    const amt = Number(fmtNat(b, allChains[ci].key));
+    if (amt > 0) bySym.set(allChains[ci].native, (bySym.get(allChains[ci].native) || 0) + amt);
+  }));
+  const coinBits = [...bySym.entries()].map(([sym, amt]) => `<b>${+amt.toFixed(4)} ${sym}</b>`);
+  const assetsLine = coinBits.length ? T(chatId, 'wal.assets', { list: coinBits.join(' · ') }) + '\n' : '';
   // The coins/tokens split earns its line only when both halves are worth
   // reading. "$1,322.22 in coins · $0.33 in tokens" spends a line restating the
   // total; 🪙 My tokens is still offered, because a route to detail is not the
   // same as a claim about the balance.
   const showSplit = grandToken > 0.05 && grandToken > grandUsd * 0.01 && grandNative > grandUsd * 0.01;
   const head = totals
+    + assetsLine
     + (showSplit ? `${T(chatId, 'wal.split', { tokens: usdX(grandToken) })}\n` : '')
     + `\n${T(chatId, 'wal.active_head')}\n`
     + `✅ <b>${activeLabel}</b> · <b>${usdX(walletUsd[awIdx])}</b>${orders ? ` · ${T(chatId, 'wal.orders', { n: orders })}` : ''}\n`
