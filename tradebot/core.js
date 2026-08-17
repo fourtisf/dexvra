@@ -853,7 +853,9 @@ function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs, t
   if (armedSnipeTargets(u).some((t) => t.chain === chainKey && (svm ? t.ca : String(t.ca).toLowerCase()) === key)) {
     throw new Error('that contract is already armed on this chain');
   }
-  const w = walletId ? walletById(u, walletId) : activeWallet(u);
+  // '*' = snipe on EVERY wallet, resolved at fire time. The amount is per
+  // wallet — the armed confirmation states the multiplied total.
+  const w = (walletId && walletId !== '*') ? walletById(u, walletId) : activeWallet(u);
   if (!w) throw new Error('no wallet');
   const t = {
     id: 'sn' + crypto.randomBytes(4).toString('hex'),
@@ -862,7 +864,7 @@ function addSnipeTarget(chatId, { ca, chain, amount, slipBps, walletId, ttlMs, t
     // current value, so a later change to the global setting still reaches a
     // target the user never customised.
     slipBps: Math.max(0, Math.min(5000, Math.round(Number(slipBps) || 0))),
-    walletId: w.id,
+    walletId: walletId === '*' ? '*' : w.id,
     status: 'armed', createdAt: Date.now(),
     expiresAt: Date.now() + Math.max(60000, Number(ttlMs) || SNIPE_TTL_MS),
     checks: 0, firedAt: null, hash: null, lastErr: null, lastErrAt: null,
@@ -954,8 +956,12 @@ function newSnipeDraft(chatId) {
   const u = ensureUser(chatId);
   const w = activeWallet(u);
   u.snipeDraft = {
+    // kind 'ca' = buy THIS contract when its pool opens; 'dev' = buy every new
+    // token a developer wallet launches (a copy target in 'launches' mode).
+    // One panel serves both — "dmn target dev walletnya".
+    kind: 'ca',
     chain: userChain(u), ca: null, walletId: w ? w.id : null,
-    amount: null, slipPct: 0, tpPct: 0, slPct: 0, ttlH: SNIPE_DRAFT_TTL_H,
+    amount: null, budget: null, slipPct: 0, tpPct: 0, slPct: 0, ttlH: SNIPE_DRAFT_TTL_H,
     createdAt: Date.now(),
   };
   saveStore();
@@ -975,6 +981,14 @@ function updateSnipeDraft(chatId, patch = {}) {
     // the chain-first rule exists to prevent, one screen later.
     if (d.ca && !_snipeAddrOk(d.ca, d.chain)) d.ca = null;
   }
+  if (patch.kind !== undefined) {
+    if (patch.kind !== 'ca' && patch.kind !== 'dev') throw new Error('unknown target kind');
+    // Switching kinds CLEARS the address: a token CA reinterpreted as a dev
+    // wallet (or the reverse) is shape-valid and semantically wrong — it would
+    // arm a watch that can never fire, the inert-watch failure mode.
+    if ((d.kind || 'ca') !== patch.kind) d.ca = null;
+    d.kind = patch.kind;
+  }
   if (patch.ca !== undefined) {
     if (patch.ca === null) d.ca = null;
     else {
@@ -984,7 +998,10 @@ function updateSnipeDraft(chatId, patch = {}) {
     }
   }
   if (patch.walletId !== undefined) {
-    if (!walletById(u, patch.walletId)) throw new Error('no such wallet');
+    // '*' = every wallet, resolved at FIRE time so a wallet added after arming
+    // still snipes. The amount is PER WALLET; the panel and the armed message
+    // both say so.
+    if (patch.walletId !== '*' && !walletById(u, patch.walletId)) throw new Error('no such wallet');
     d.walletId = patch.walletId;
   }
   if (patch.amount !== undefined) {
@@ -993,6 +1010,17 @@ function updateSnipeDraft(chatId, patch = {}) {
       const a = Number(patch.amount);
       if (!(a > 0)) throw new Error('amount must be > 0');
       d.amount = String(a);
+    }
+  }
+  if (patch.budget !== undefined) {
+    if (patch.budget === null) d.budget = null;
+    else {
+      const b = Number(patch.budget);
+      if (!(b > 0)) throw new Error('budget must be > 0');
+      // The same rule addCopyTarget enforces, checked here so the panel refuses
+      // at the row instead of at ⚡ — same message, one wording.
+      if (d.amount && b < Number(d.amount)) throw new Error('total budget must be ≥ the per-buy amount');
+      d.budget = String(b);
     }
   }
   if (patch.slipPct !== undefined) {
@@ -1030,14 +1058,23 @@ function armSnipeDraft(chatId) {
   // right for a typed line, silently wrong-chain for a panel whose chain row is
   // the first thing on the screen. Refuse instead.
   if (!chainOf(d.chain) || !isEnabled(d.chain)) throw new Error('that chain is disabled — pick another on the panel');
-  if (!d.ca) throw new Error('no target yet — set the contract address first');
+  if (!d.ca) throw new Error('no target yet — set the target first');
   if (!(Number(d.amount) > 0)) throw new Error('no amount yet — pick how much to spend first');
-  const t = addSnipeTarget(chatId, {
-    ca: d.ca, chain: d.chain, amount: d.amount, walletId: d.walletId || undefined,
-    slipBps: Math.round((Number(d.slipPct) || 0) * 100),
-    tpPct: d.tpPct, slPct: d.slPct,
-    ttlMs: Number(d.ttlH) > 0 ? Number(d.ttlH) * 3600000 : undefined,
-  });
+  // A dev-wallet target is a copy target in 'launches' mode — the SAME store
+  // the wizard and /copy write, so the panel cannot grow a second idea of what
+  // a dev snipe is. The caller tells them apart by `mode === 'launches'`.
+  let t;
+  if ((d.kind || 'ca') === 'dev') {
+    if (!(Number(d.budget) > 0)) throw new Error('no budget yet — pick the total budget first');
+    t = addCopyTarget(chatId, d.ca, d.chain, d.amount, d.budget, 'launches');
+  } else {
+    t = addSnipeTarget(chatId, {
+      ca: d.ca, chain: d.chain, amount: d.amount, walletId: d.walletId || undefined,
+      slipBps: Math.round((Number(d.slipPct) || 0) * 100),
+      tpPct: d.tpPct, slPct: d.slPct,
+      ttlMs: Number(d.ttlH) > 0 ? Number(d.ttlH) * 3600000 : undefined,
+    });
+  }
   u.snipeDraft = null;
   saveStoreNow();
   return t;

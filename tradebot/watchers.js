@@ -1556,51 +1556,82 @@ async function _fireCaSnipe(u, t) {
       }
     }
   } catch (_) { /* an unreadable safety check is not a veto */ }
-  try {
-    const r = await core.buy(u.chatId, t.ca, t.amount, t.chain, t.walletId, { slipBps: t.slipBps || undefined });
-    core.settleSnipeTarget(u, t.id, { ok: true, hash: r.hash });
+  // walletId '*' = every wallet, resolved at FIRE time so a wallet added after
+  // arming still snipes. The amount is PER WALLET — the armed message said so.
+  // Wallets buy in parallel: they are separate trades from separate addresses,
+  // and serialising them would hand the first block to whoever is first in the
+  // list (the same rule the per-contract fan-out above follows).
+  const wids = t.walletId === '*' ? core.walletList(u).map((w) => w.id) : [t.walletId];
+  const fills = [], fails = [];
+  await mapLimit(wids, CA_SNIPE_CONCURRENCY, async (wid) => {
+    try {
+      const r = await core.buy(u.chatId, t.ca, t.amount, t.chain, wid, { slipBps: t.slipBps || undefined });
+      fills.push({ wid, r });
+    } catch (err) { fails.push({ wid, err }); }
+  });
+
+  if (fills.length) {
+    core.settleSnipeTarget(u, t.id, { ok: true, hash: fills[0].r.hash });
     _caSnipeStats.fired++; _caSnipeStats.lastFiredAt = Date.now();
     // The target's TP/SL become REAL orders at the moment there is a bag to
-    // sell — measured off the realised entry (spent ÷ received), because the
-    // whole point of a snipe is that the card price and the fill differ.
+    // sell — PER FILLED WALLET, each measured off ITS OWN realised entry
+    // (spent ÷ received), because the whole point of a snipe is that the card
+    // price and the fill differ, and five wallets fill five different ways.
+    // Each order binds to the wallet that sniped, never whatever is active.
     let exits = '';
-    const entry = Number(r.spentEth) / (Number(r.gotTokens) || 1);
-    if (entry > 0 && (t.tpPct > 0 || t.slPct > 0)) {
-      try {
-        const parts = [];
-        if (t.tpPct > 0) { addOrder(u.chatId, { type: 'tp', ca: t.ca, sym: r.sym, chain: t.chain, targetPriceEth: entry * (1 + t.tpPct / 100), sellPct: 100, auto: true }, t.walletId); parts.push(`TP +${t.tpPct}%`); }
-        if (t.slPct > 0) { addOrder(u.chatId, { type: 'sl', ca: t.ca, sym: r.sym, chain: t.chain, targetPriceEth: entry * (1 - t.slPct / 100), sellPct: 100, auto: true }, t.walletId); parts.push(`SL −${t.slPct}%`); }
-        exits = parts.length ? `\nAuto-exit armed: <b>${parts.join(' · ')}</b>` : '';
-      } catch (e) {
-        // Order cap reached is the realistic failure. The BUY succeeded — say
-        // the exits did not, or the user believes a stop-loss exists.
-        exits = `\n⚠️ <i>Couldn't place the auto-exit (${esc(String(e.message || e).slice(0, 80))}) — set TP/SL by hand from the Monitor.</i>`;
+    if (t.tpPct > 0 || t.slPct > 0) {
+      const parts = [];
+      let exitErr = null;
+      for (const { wid, r } of fills) {
+        const entry = Number(r.spentEth) / (Number(r.gotTokens) || 1);
+        if (!(entry > 0)) continue;
+        try {
+          if (t.tpPct > 0) { addOrder(u.chatId, { type: 'tp', ca: t.ca, sym: r.sym, chain: t.chain, targetPriceEth: entry * (1 + t.tpPct / 100), sellPct: 100, auto: true }, wid); if (!parts.includes(`TP +${t.tpPct}%`)) parts.push(`TP +${t.tpPct}%`); }
+          if (t.slPct > 0) { addOrder(u.chatId, { type: 'sl', ca: t.ca, sym: r.sym, chain: t.chain, targetPriceEth: entry * (1 - t.slPct / 100), sellPct: 100, auto: true }, wid); if (!parts.includes(`SL −${t.slPct}%`)) parts.push(`SL −${t.slPct}%`); }
+        } catch (e) {
+          // Order cap reached is the realistic failure. The BUY succeeded — say
+          // the exits did not, or the user believes a stop-loss exists.
+          exitErr = e;
+        }
       }
+      if (parts.length) exits = `\nAuto-exit armed: <b>${parts.join(' · ')}</b>${fills.length > 1 ? ` · ${fills.length} wallets` : ''}`;
+      if (exitErr) exits += `\n⚠️ <i>Couldn't place the auto-exit (${esc(String(exitErr.message || exitErr).slice(0, 80))}) — set TP/SL by hand from the Monitor.</i>`;
     }
-    _notify(u.chatId, `🎯 <b>CA snipe filled: $${esc(r.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>This was YOUR armed target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}${exits}\n<code>${t.ca}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'snipe');
-  } catch (err) {
-    const msg = String((err && err.message) || err);
-    _caSnipeStats.lastErr = msg.slice(0, 180); _caSnipeStats.lastErrAt = Date.now();
-    // A BROADCAST buy is not a failure we may retry: the transaction may still
-    // land, and re-arming would risk a second one. Anything that clearly did not
-    // spend goes back on the shelf, because a launch that reverted the first
-    // block is exactly the launch worth trying again a second later.
-    if (err && err.broadcast) {
-      core.settleSnipeTarget(u, t.id, { ok: true, hash: err.sig || null, err: 'broadcast but not confirmed' });
-      _notify(u.chatId, `🎯 <b>Snipe broadcast</b> on ${ch.emoji} ${esc(ch.name)}\n<code>${t.ca}</code>\nIt was sent but not confirmed yet — check your wallet before buying again.`, undefined, 'snipe');
-      return;
-    }
-    if (/insufficient funds|no wallet|balance/i.test(msg)) {
-      core.settleSnipeTarget(u, t.id, { ok: false, err: msg });
-      _notify(u.chatId, `⚠️ <b>Snipe failed</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\n${esc(msg)}\nThe target was disarmed — top up and re-arm it.`, undefined, 'snipe');
-      return;
-    }
-    core.rearmSnipeTarget(u, t.id, msg);
-    const now = Date.now(), key = u.chatId + ':casnipe:' + t.id;
-    if (now - (_snipeFailAt.get(key) || 0) > 300000) {
-      _snipeFailAt.set(key, now);
-      _notify(u.chatId, `⚠️ <b>Snipe attempt failed</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\n${esc(msg)}\nStill armed — retrying. (muted 5 min)`, undefined, 'snipe');
-    }
+    const r0 = fills[0].r;
+    // Single-wallet keeps its exact original wording; multi adds the count and
+    // sums the fills — a total is the only honest number for five wallets.
+    const totTok = fills.reduce((s, f) => s + (Number(f.r.gotTokens) || 0), 0);
+    const spentStr = fills.length > 1 ? String(Number(fills.reduce((s, f) => s + (Number(f.r.spentEth) || 0), 0).toFixed(6))) : String(r0.spentEth);
+    const wtag = wids.length > 1 ? ` · ${fills.length}/${wids.length} wallets` : '';
+    const failTag = (wids.length > 1 && fails.length) ? `\n⚠️ ${fails.length} wallet(s) did not fill: ${esc(String((fails[0].err && fails[0].err.message) || fails[0].err).slice(0, 80))}` : '';
+    _notify(u.chatId, `🎯 <b>CA snipe filled: $${esc(r0.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}${wtag}\n<i>This was YOUR armed target.</i>\nBought ${fmt(totTok)} for ${spentStr} ${r0.native}${exits}${failTag}\n<code>${t.ca}</code>\n${txLink(t.chain, r0.hash)}`, undefined, 'snipe');
+    return;
+  }
+
+  // No wallet filled. Classified exactly as the single-wallet path always was —
+  // BROADCAST dominates (it may still land; re-arming risks a second buy), then
+  // every-wallet-empty disarms, anything else re-arms for the next tick because
+  // a launch that reverted in its first block is exactly the one worth retrying.
+  const msgs = fails.map((f) => String((f.err && f.err.message) || f.err));
+  _caSnipeStats.lastErr = (msgs[0] || '').slice(0, 180); _caSnipeStats.lastErrAt = Date.now();
+  const b = fails.find((f) => f.err && f.err.broadcast);
+  if (b) {
+    core.settleSnipeTarget(u, t.id, { ok: true, hash: b.err.sig || null, err: 'broadcast but not confirmed' });
+    _notify(u.chatId, `🎯 <b>Snipe broadcast</b> on ${ch.emoji} ${esc(ch.name)}\n<code>${t.ca}</code>\nIt was sent but not confirmed yet — check your wallet before buying again.`, undefined, 'snipe');
+    return;
+  }
+  const skint = (m) => /insufficient funds|no wallet|balance/i.test(m);
+  if (msgs.length && msgs.every(skint)) {
+    core.settleSnipeTarget(u, t.id, { ok: false, err: msgs[0] });
+    _notify(u.chatId, `⚠️ <b>Snipe failed</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\n${esc(msgs[0])}\nThe target was disarmed — top up and re-arm it.`, undefined, 'snipe');
+    return;
+  }
+  const msg = msgs.find((m) => !skint(m)) || msgs[0] || 'buy failed';
+  core.rearmSnipeTarget(u, t.id, msg);
+  const now = Date.now(), key = u.chatId + ':casnipe:' + t.id;
+  if (now - (_snipeFailAt.get(key) || 0) > 300000) {
+    _snipeFailAt.set(key, now);
+    _notify(u.chatId, `⚠️ <b>Snipe attempt failed</b> · ${esc(ch.name)}\n<code>${t.ca}</code>\n${esc(msg)}\nStill armed — retrying. (muted 5 min)`, undefined, 'snipe');
   }
 }
 

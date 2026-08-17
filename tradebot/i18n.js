@@ -449,9 +449,13 @@ const S = {
   // Row labels. Trading jargon stays in English per the convention at the top
   // of this file — "Chain", "Wallet", "Slippage" are the words these users use.
   'snipe.panel.chain': { en: 'Chain', id: 'Chain' },
-  'snipe.panel.target': { en: 'Target contract', id: 'Kontrak target' },
+  // Just "Target" — a label reading "Target contract" told dev-wallet snipers
+  // this feature was not for them ("dmn target dev walletnya").
+  'snipe.panel.target': { en: 'Target', id: 'Target' },
   'snipe.panel.wallet': { en: 'Wallet', id: 'Wallet' },
   'snipe.panel.amount': { en: 'Amount', id: 'Jumlah' },
+  'snipe.panel.amount_dev': { en: 'Amount / launch', id: 'Jumlah / launch' },
+  'snipe.panel.budget': { en: 'Budget', id: 'Budget total' },
   'snipe.panel.slip': { en: 'Slippage', id: 'Slippage' },
   'snipe.panel.tpsl': { en: 'TP / SL', id: 'TP / SL' },
   'snipe.panel.ttl': { en: 'Expiry', id: 'Masa aktif' },
@@ -471,8 +475,28 @@ const S = {
   'snipe.panel.custom_btn': { en: '✏️ Custom', id: '✏️ Isi sendiri' },
   // Sub-screens, one per row.
   'snipe.panel.wal_pick': {
-    en: '💳 <b>Wallet</b>\n\nWhich wallet should this snipe buy with?',
-    id: '💳 <b>Wallet</b>\n\nSnipe ini beli pakai wallet yang mana?',
+    en: '💳 <b>Wallet</b>\n\nWhich wallet should this snipe buy with?\n\n<i>👥 All wallets fires the buy on every wallet at once — the amount is PER wallet.</i>',
+    id: '💳 <b>Wallet</b>\n\nSnipe ini beli pakai wallet yang mana?\n\n<i>👥 Semua wallet berarti buy jalan di semua wallet sekaligus — jumlahnya PER wallet.</i>',
+  },
+  'snipe.panel.wallet_all': { en: '👥 All ({n})', id: '👥 Semua ({n})' },
+  'snipe.panel.wallet_all_btn': { en: '👥 All wallets ({n}) — amount is per wallet', id: '👥 Semua wallet ({n}) — jumlahnya per wallet' },
+  // Appended to the armed confirmation when the target fires on every wallet:
+  // the multiplied total is real money and belongs on the consent message.
+  'snipe.panel.armed_all': {
+    en: '👥 On <b>every wallet ({n})</b> — {amt} {native} each, up to <b>{total} {native}</b> total if all fill.',
+    id: '👥 Di <b>semua wallet ({n})</b> — {amt} {native} per wallet, total sampai <b>{total} {native}</b> kalau semuanya keisi.',
+  },
+  'snipe.panel.bud_pick': {
+    en: '💰 <b>Budget</b>\n\nTotal spend cap for this developer — I stop buying its launches once it is spent (per launch: <b>{amt}</b>). Tap one, or type your own in {native}.',
+    id: '💰 <b>Budget</b>\n\nBatas total belanja untuk developer ini — saya berhenti beli launch-nya begitu habis (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri dalam {native}.',
+  },
+  'snipe.panel.dev_prompt': {
+    en: "🧑‍💻 <b>Dev wallet</b> on {chain}\n\nPaste the <b>developer's wallet address</b> to follow — every NEW token it launches is bought automatically, until the budget runs out.\n\n<i>Shortcut: <b>&lt;wallet&gt; &lt;perLaunch&gt; &lt;budget&gt;</b> on one line fills everything at once.</i>",
+    id: '🧑‍💻 <b>Wallet developer</b> di {chain}\n\nPaste <b>alamat wallet developer</b> yang mau diikuti — tiap token BARU yang dia launch langsung dibeli otomatis, sampai budget-nya habis.\n\n<i>Jalur cepat: <b>&lt;wallet&gt; &lt;perLaunch&gt; &lt;budget&gt;</b> satu baris, semuanya langsung terisi.</i>',
+  },
+  'snipe.panel.dev_foot': {
+    en: "<i>Buys use your ACTIVE wallet and your normal slippage. Only this developer's own launches are bought — never its ordinary trades. Honeypots are skipped; the budget caps your risk.</i>",
+    id: '<i>Buy pakai wallet AKTIF kamu dan slippage biasa. Hanya launch milik developer ini yang dibeli — bukan trade biasanya. Honeypot otomatis dilewati; budget membatasi risiko kamu.</i>',
   },
   'snipe.panel.amt_pick': {
     en: '💵 <b>Amount</b>\n\nHow much {native} should this snipe spend when it fires?\n\n<i>Keep it small — a launch is high-risk by definition.</i>',
@@ -533,25 +557,11 @@ const S = {
   'snipe.panel.kind_ca': { en: '📍 Token contract', id: '📍 Kontrak token' },
   'snipe.panel.kind_dev': { en: '🧑‍💻 Dev wallet', id: '🧑‍💻 Wallet developer' },
 
-  // ------------------------------------------------------- dev-snipe wizard
-  // One question per message ("aturan hapus aja, jadiin 1 aja, jangan pisah2:
-  // bot minta dev wallet, pas udah dikasih tanyain mau snipe berapa, dll").
-  // The old prompt asked for wallet, per-buy AND budget in one typed line.
-  'dev.step1': {
-    en: "🧑‍💻 <b>Dev snipe</b> on {chain}\n\n<b>Step 1 of 3</b> — paste the <b>developer's wallet address</b> to follow.\n\n<i>The moment that wallet launches a new token, I buy it automatically. Only its own launches — never its ordinary trades. Honeypots are skipped.</i>",
-    id: '🧑‍💻 <b>Dev snipe</b> di {chain}\n\n<b>Langkah 1 dari 3</b> — paste <b>alamat wallet developer</b> yang mau diikuti.\n\n<i>Begitu wallet itu launch token baru, langsung saya beli otomatis. Hanya launch-nya sendiri — bukan trade biasanya. Honeypot otomatis dilewati.</i>',
-  },
-  'dev.step2': {
-    en: '✅ Watching <code>{addr}</code>\n\n<b>Step 2 of 3</b> — how much <b>{native}</b> per launch? Tap one, or type your own.',
-    id: '✅ Mengawasi <code>{addr}</code>\n\n<b>Langkah 2 dari 3</b> — berapa <b>{native}</b> per launch? Tap salah satu, atau ketik sendiri.',
-  },
-  'dev.step3': {
-    en: '<b>Step 3 of 3</b> — total budget, in {native}. I stop buying this dev once it is spent (per launch: <b>{amt}</b>). Tap one, or type your own.',
-    id: '<b>Langkah 3 dari 3</b> — total budget, dalam {native}. Saya berhenti beli dev ini begitu budget-nya habis (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri.',
-  },
+  // ------------------------------------------------------- dev-snipe messages
+  // The dev target lives ON the panel (kind 'dev'); these are its own error
+  // and confirmation strings.
   'dev.bad_addr': { en: '❌ That is not a valid {chain} wallet address — paste it again.', id: '❌ Itu bukan alamat wallet {chain} yang valid — paste ulang ya.' },
   'dev.bad_amt': { en: '❌ Send a positive amount in {native}, e.g. <code>0.05</code>.', id: '❌ Kirim jumlah positif dalam {native}, contoh <code>0.05</code>.' },
-  'dev.expired': { en: '⌛ That step expired — start again from 🧑‍💻 Dev snipe.', id: '⌛ Langkah itu kedaluwarsa — mulai lagi dari 🧑‍💻 Dev snipe.' },
   'dev.armed': {
     en: '✅ <b>Dev snipe armed</b> 🧑‍💻\nWatching <code>{addr}</code> on {chain} — every new token it launches, I buy <b>{perBuy} {native}</b>, until <b>{budget} {native}</b> is spent.',
     id: '✅ <b>Dev snipe terpasang</b> 🧑‍💻\nMengawasi <code>{addr}</code> di {chain} — tiap token baru yang dia launch, saya beli <b>{perBuy} {native}</b>, sampai total <b>{budget} {native}</b> terpakai.',
