@@ -24,6 +24,17 @@ const launchpads = require('./launchpads');   // the other pads a Solana token c
 const upstreams = require('./upstreams');   // are the third parties answering? (one list, shared with the preflight)
 const report = require('./report');         // ops channel — never secrets
 
+/**
+ * Every AUTO-SNIPE purchase names its blast radius and carries the off switch.
+ *
+ * A user turned the copy-trading master switch ON — a different feature — and
+ * watched the bot buy two launches "by itself". Auto-snipe had been armed on
+ * Solana earlier and forgotten, and the receipt just said "Sniped", which does
+ * not say WHICH of three snipe features fired or how to stop it. A message that
+ * spends money has to answer both, on the message.
+ */
+const _autoSnipeKb = (chainKey) => ({ inline_keyboard: [[{ text: '🛑 Stop auto-snipe on this chain', callback_data: `sntog:${chainKey}` }]] });
+
 let _notify = () => {};
 function setNotifier(fn) { if (typeof fn === 'function') _notify = fn; }
 const SNIPE_CHAIN = 'robinhood';
@@ -153,7 +164,7 @@ async function snipeCycle() {
         } catch (_) { return; }
         try {
           const r = await core.buy(u.chatId, ca, u.snipe.ethAmount, SNIPE_CHAIN);
-          _notify(u.chatId, `🎯 <b>Sniped $${esc(sym)}</b>\nBought ${fmt(r.gotTokens)} $${esc(r.sym)} for ${r.spentEth} ${r.native}\n<code>${ca}</code>\n${txLink(SNIPE_CHAIN, r.hash)}`, undefined, 'snipe');
+          _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(sym)}</b>\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} $${esc(r.sym)} for ${r.spentEth} ${r.native}\n<code>${ca}</code>\n${txLink(SNIPE_CHAIN, r.hash)}`, _autoSnipeKb(SNIPE_CHAIN), 'snipe');
         } catch (err) {
           const now = Date.now();
           if (now - (_snipeFailAt.get(u.chatId) || 0) > 300000) {   // ≤ 1 failure DM / 5 min / user
@@ -381,7 +392,7 @@ async function _dexSnipeChain(ch) {
       } catch (_) { return; }
       try {
         const r = await core.buy(u.chatId, token, u.snipe.ethAmount, ch.key);
-        _notify(u.chatId, `🎯 <b>Sniped $${esc(r.sym)}</b> on ${ch.emoji} ${esc(ch.name)}\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(ch.key, r.hash)}`, undefined, 'snipe');
+        _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(r.sym)}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(ch.key, r.hash)}`, _autoSnipeKb(ch.key), 'snipe');
       } catch (err) {
         const now = Date.now(), key = u.chatId + ':' + ch.key;
         if (now - (_snipeFailAt.get(key) || 0) > 300000) { _snipeFailAt.set(key, now); _notify(u.chatId, `⚠️ A snipe on ${esc(ch.name)} failed: ${esc(err.message || String(err))} (muted 5 min)`, undefined, 'snipe'); }
@@ -1402,7 +1413,7 @@ async function solSnipeCycle() {
       } catch (_) { return; }
       try {
         const r = await core.buy(u.chatId, c.mint, u.snipe.ethAmount, 'solana');
-        _notify(u.chatId, `🎯 <b>Sniped $${esc(r.sym || c.symbol)}</b> on 🟣 Solana\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${c.mint}</code>\n${txLink('solana', r.hash)}`, undefined, 'snipe');
+        _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(r.sym || c.symbol)}</b> on 🟣 Solana\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${c.mint}</code>\n${txLink('solana', r.hash)}`, _autoSnipeKb('solana'), 'snipe');
       } catch (err) {
         const msg = String((err && err.message) || err);
         if (/no route|no liquidity|not tradable/i.test(msg)) return;   // not yet on Jupiter → retry while fresh
@@ -1549,7 +1560,7 @@ async function _fireCaSnipe(u, t) {
     const r = await core.buy(u.chatId, t.ca, t.amount, t.chain, t.walletId, { slipBps: t.slipBps || undefined });
     core.settleSnipeTarget(u, t.id, { ok: true, hash: r.hash });
     _caSnipeStats.fired++; _caSnipeStats.lastFiredAt = Date.now();
-    _notify(u.chatId, `🎯 <b>Sniped $${esc(r.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${t.ca}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'snipe');
+    _notify(u.chatId, `🎯 <b>CA snipe filled: $${esc(r.sym || '')}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>This was YOUR armed target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${t.ca}</code>\n${txLink(t.chain, r.hash)}`, undefined, 'snipe');
   } catch (err) {
     const msg = String((err && err.message) || err);
     _caSnipeStats.lastErr = msg.slice(0, 180); _caSnipeStats.lastErrAt = Date.now();

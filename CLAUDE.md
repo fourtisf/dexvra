@@ -693,6 +693,39 @@ token's own balance line.
 cd bot && node scripts/run-tests.js test/whaleAlert.test.js test/buyMonitor.test.js
 ```
 
+## "Buy ngasal" — auto-snipe fired from a switch armed weeks of screens away
+
+A user turned the COPY-TRADING master switch ON — no wallets followed, no CA
+targets — and the bot bought two fresh launches at 0.0495 SOL each. What fired
+was **Auto-Snipe** (`u.snipe.chains.solana` + `ethAmount 0.05` — the default is
+0.01, so it had been armed through /snipe at some point and forgotten). The copy
+switch is a different feature and touches none of it; `autoSnipeConsent.test.js`
+pins those boundaries.
+
+The report still named a real defect, in three parts, all fixed:
+
+- **Arming is ANNOUNCED.** The /snipe chain toggle flips a feature that buys
+  every new launch on the chain with real money, and it used to flip silently.
+  Arming now states the blast radius and the per-launch spend; disarming stays
+  silent — a warning on OFF would teach users the message is furniture.
+- **A message that spends money names its trigger.** All three auto-snipe
+  purchase sites say "Auto-Snipe bought" plus "buys EVERY new launch on this
+  chain while armed — this was not a CA or dev-wallet target"; the CA-target
+  fill says "This was YOUR armed target". Three snipe features must be
+  distinguishable from the message alone, or an unexpected buy cannot be traced
+  to its switch.
+- **The off switch is ON the purchase message** (`_autoSnipeKb` → the same
+  `sntog` callback as the settings screen, so the button and the screen cannot
+  disagree about what "off" means). The user should never have to hunt for the
+  right screen while the bot keeps buying.
+
+```bash
+cd tradebot && node --test autoSnipeConsent.test.js   # 7 tests, no network
+```
+
+**Config a fix depends on:** nothing — but if the bot "buys by itself", check
+/snipe first: an armed chain there is the only thing that buys without a target.
+
 ## Trade speed — the code paid round trips it did not owe
 
 Three real serialisations on the Solana buy path, all found by reading the code

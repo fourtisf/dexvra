@@ -2945,7 +2945,24 @@ async function onCallback(q) {
   if (data === 'expy') { try { await send(chatId, exportKeyMsg(chatId)); } catch (e) { await send(chatId, '❌ ' + esc(e.message)); } return; }
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
   if (data === 'neww') { try { const nw = core.addWallet(chatId); report.onWallet(core.getUser(chatId), 'generated', nw.address, nw.index, core.allUsers().length); await send(chatId, `✅ <b>New wallet created</b> — Wallet ${nw.index}\n<code>${nw.address}</code>\n\nIt's now your <b>active</b> wallet. Deposit to start trading.`, rows([btn('💼 Wallet', 'wal'), btn('👛 Wallets', 'wallets')])); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
-  if (k === 'sntog') { const u = core.ensureUser(chatId); try { core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'sntog') {
+    const u = core.ensureUser(chatId);
+    let armedNow = false;
+    try { const chains = core.setSnipeChain(chatId, ca, !(u.snipe.chains && u.snipe.chains[ca])); armedNow = !!chains[ca]; } catch (_) {}
+    const s = snipeScreen(chatId);
+    await edit(chatId, mid, s.text, s.kb);
+    // ARMING IS SAID OUT LOUD. This toggle flips a feature that buys EVERY new
+    // launch on the chain with real money, and it used to flip silently — a user
+    // armed Solana while exploring, forgot, and later watched the bot "buy by
+    // itself" from a panel that belongs to a different feature entirely. The
+    // message states the blast radius and the spend per launch, ONCE, at the
+    // moment of arming; disarming stays silent because OFF needs no warning.
+    if (armedNow) {
+      const chG = core.chainOf(ca);
+      await send(chatId, `⚠️ <b>Auto-Snipe is now ARMED on ${chG ? esc(chG.name) : esc(ca)}.</b>\nThe bot will buy <b>every new launch</b> it sees on this chain — no target list, no confirmation per buy — spending <b>${esc(String(u.snipe.ethAmount))} ${chG ? chG.native : ''}</b> each time until you turn it off here or run out of balance.\n<i>This is separate from CA snipe and dev-wallet snipe, which only ever buy their own targets.</i>`);
+    }
+    return;
+  }
   if (k === 'snamtq') { try { core.setSnipeAmount(chatId, ca); } catch (_) {} const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snamt') { setPending(chatId, { action: 'snipe_amt' }); return send(chatId, '💵 <b>Amount per snipe</b>\n\nEnter the amount to spend on each new launch, in the chain\'s native coin (for example <code>0.01</code>). This exact amount is used for every snipe. A small amount is recommended.'); }
 
