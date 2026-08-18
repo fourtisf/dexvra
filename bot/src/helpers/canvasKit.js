@@ -51,12 +51,25 @@ const F = {
  * repo's own assets win (an operator can drop any font in and it is used), then
  * the standard system locations. `fonts-noto-cjk` puts a .ttc there, which
  * @napi-rs/canvas registers happily.
+ *
+ * AND THE FACE IS BUNDLED AND GIT-TRACKED (2026-08-18). It was not, and that is
+ * why "$老昊" went out as "$??" months after this chain was built: the fix
+ * shipped as an INSTRUCTION — `apt-get install fonts-noto-cjk` — and an
+ * instruction is one forgotten SSH session away from being no fix at all. The
+ * server deploys with `git pull`, so a tracked file is the only kind of fix that
+ * cannot be skipped, and the failure it prevents is silent: a paid listing
+ * publishes with boxes in it and nothing anywhere errors. `BUNDLED` below is
+ * what ships; the system paths stay because a box that has a better face should
+ * still be able to offer it, and because an operator dropping a file into
+ * assets/fonts must keep winning over both.
  */
 const CJK_CANDIDATES = [
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJK-Bold.ttc"),
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJK-Regular.ttc"),
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Bold.otf"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Bold.ttf"),      // ← the BUNDLED face
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Regular.otf"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Regular.ttf"),
   "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
   "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -96,10 +109,31 @@ const PKG_FOR = {
 };
 /** The packages that would cover a given set of missing scripts, deduplicated. */
 const packagesFor = (scripts) => [...new Set(scripts.map((s) => PKG_FOR[s]).filter(Boolean))];
-// Everything else a ticker might be written in. These ship in fonts-noto-core,
-// which is NOT a prerequisite — the chain simply gains whichever of them exist.
-// Listed here rather than added later so that installing the package is the
-// whole fix, with no deploy: the same contract the launchpad hosts have.
+/**
+ * The coverage faces this REPO ships, so a deploy is the whole fix.
+ *
+ * Emoji is deliberately not here: NotoColorEmoji is a ~10MB colour-bitmap face
+ * whose whole job is already done by a package every distro has, and it is the
+ * one script where "install it" has actually been carried out. Every TEXT face a
+ * ticker can be written in ships, because those are the ones that reached the
+ * channel as boxes.
+ *
+ * If one of these is absent the checkout is incomplete — which is a completely
+ * different instruction from "install a package", and printing the wrong one
+ * sends an operator to apt for a problem `git pull` fixes.
+ */
+const BUNDLED = [
+  "NotoSansSC-Bold.ttf",          // Chinese + Japanese kana
+  "NotoSansKR-Bold.ttf",          // Korean hangul — SC has none, measured
+  "NotoSansThai-Bold.ttf",
+  "NotoSansArabic-Bold.ttf",
+  "NotoSansDevanagari-Bold.ttf",
+  "NotoSansHebrew-Bold.ttf",
+];
+// Everything else a ticker might be written in. Every one of these is BUNDLED
+// (see `BUNDLED`), so the chain has them on a bare box; fonts-noto-core is now a
+// second source rather than a prerequisite, and an operator's own file in
+// assets/ still outranks both.
 //
 // BOLD FIRST, then Regular. The faces these sit beside are the 700/800 display
 // weights, and a heavy Latin title with a regular-weight Thai word next to it
@@ -112,6 +146,14 @@ const script = (family, bold, reg, extra = []) => [family, [
   asset(bold), asset(reg), ...sysNoto(bold), ...sysNoto(reg), ...extra,
 ]];
 const EXTRA_CANDIDATES = [
+  // KOREAN IS ITS OWN FACE, and it must sit AFTER the Han one.
+  //
+  // The bundled CJK face is Noto Sans SC: Han + kana, and no hangul — measured,
+  // not assumed (`한글` came back uncovered with it registered). A Korean face
+  // carries hanja of its own, so putting it first would draw a Chinese token in
+  // Korean glyph shapes; behind the Han face it is reached only for hangul,
+  // which is exactly the per-glyph resolution this whole chain is built on.
+  script("DexCover Korean", "NotoSansKR-Bold.ttf", "NotoSansKR-Regular.ttf"),
   script("DexCover Thai", "NotoSansThai-Bold.ttf", "NotoSansThai-Regular.ttf",
     ["/usr/share/fonts/truetype/tlwg/Loma-Bold.ttf", "/usr/share/fonts/truetype/noto/NotoLoopedThai-Bold.ttf"]),
   // Arabic is CURSIVE and right-to-left: the letters change shape by position and
@@ -210,7 +252,13 @@ function canvasLib() {
       // The PACKAGE, computed from what is actually missing. Naming the fix from
       // memory is how the emoji package got left out of the install line.
       const pkgs = packagesFor(gaps);
+      // A missing BUNDLED face is an incomplete checkout, not a missing package.
+      // Both fix the glyphs; only one of them is what actually happened, and
+      // sending an operator to apt for a file `git pull` restores is how twenty
+      // minutes go missing.
+      const lost = BUNDLED.filter((f) => !fss.existsSync(asset(f)));
       log.warn(`[banner] no font covers ${gaps.join(", ")} — a token named in one of those draws boxes on every card. `
+        + (lost.length ? `bot/assets/fonts is missing ${lost.join(", ")} — this checkout is incomplete, run git pull. ` : "")
         + (pkgs.length ? `Install: apt-get install -y ${pkgs.join(" ")}. ` : "")
         + "Check with: npm run fonts:check");
     }
@@ -553,6 +601,74 @@ function unrenderable(text) {
 }
 
 /**
+ * THE FONTS A RENDERER ACTUALLY USED — recorded by running it.
+ *
+ * `coverage()` answers "does this BOX have the glyphs?", and on 2026-08-18 it
+ * answered ✓ for all nine scripts on a server whose animated banner was drawing
+ * `$老昊` as `$□□`. Both statements were true at once: the fonts were installed,
+ * and `bannerTemplate` was drawing with three private Latin-only families that
+ * could not reach them. A check that green-lights a broken banner is worse than
+ * no check, because it ends the investigation.
+ *
+ * So the honest question is not which fonts are installed but which fonts each
+ * SURFACE draws with — and the only way to know that is to run it and read the
+ * font strings back off the context. This wraps the 2D `font` setter for the
+ * duration of one call. It is used by `npm run fonts:check` and by
+ * `bannerFonts.test.js`, from ONE implementation: two copies of "can this
+ * renderer draw Chinese?" would drift, and this whole area is a history of two
+ * things that were supposed to agree and did not.
+ */
+async function recordFonts(fn) {
+  const CVl = canvasLib();
+  if (!CVl) return [];
+  const proto = Object.getPrototypeOf(CVl.createCanvas(4, 4).getContext("2d"));
+  const desc = Object.getOwnPropertyDescriptor(proto, "font");
+  if (!desc || !desc.set) return [];      // a canvas build we cannot observe must not fail the caller
+  const seen = [];
+  Object.defineProperty(proto, "font", {
+    ...desc,
+    set(v) { seen.push(String(v)); desc.set.call(this, v); },
+  });
+  try { await fn(); } finally { Object.defineProperty(proto, "font", desc); }
+  return seen;
+}
+
+/** `800 96px "Sora XBold", "DexCover CJK"` → `800 96px "Sora XBold"`.
+ *  The control for the measurement below: same size and weight, first family
+ *  only, so an identical width proves the tail added nothing. */
+function firstFamilyOnly(font) {
+  const m = String(font).match(/^(.*?\dpx\s+)(.+)$/);
+  if (!m) return null;
+  return m[1] + m[2].split(",")[0].trim();
+}
+
+/**
+ * Does this font string reach PAST its first family to draw `sample`?
+ *
+ * Same measurement `coverage()` makes, pointed at a font string a renderer
+ * really used rather than at `F.r` — and that difference is the entire bug: the
+ * guard was measuring a stack the renderer did not draw with.
+ *
+ * Every renderer here leads with a Latin brand face, so for a non-Latin sample
+ * this is exactly "would this surface draw glyphs or boxes". Asked about LATIN
+ * it answers false, correctly and uselessly: the brand face draws it and the
+ * tail is never consulted. Only ask it about a script the first family lacks.
+ *
+ * ⚠️ `F.x` is `"sans-serif"` until `canvasLib()` has run — registration is lazy.
+ * Build the font string INSIDE the call, or after a renderer has loaded the lib,
+ * or this compares "sans-serif" against itself and reports every surface broken.
+ */
+function reachesCoverage(font, sample) {
+  const CVl = canvasLib();
+  if (!CVl) return null;
+  const bare = firstFamilyOnly(font);
+  if (!bare) return null;
+  const ctx = CVl.createCanvas(8, 8).getContext("2d");
+  const w = (f) => { ctx.font = f; return +ctx.measureText(sample).width.toFixed(2); };
+  return w(font) !== w(bare);
+}
+
+/**
  * Say so BEFORE the artwork ships, not after somebody screenshots it.
  *
  * 牛来 went to 12,607 subscribers as "$???" on the listing card AND as "??" on
@@ -591,6 +707,11 @@ module.exports = {
   available: () => !!canvasLib(),
   coverage,
   packagesFor,
+  recordFonts,
+  reachesCoverage,
+  firstFamilyOnly,
+  BUNDLED,
+  FONTS_DIR: path.join(__dirname, "..", "..", "assets", "fonts"),
   unrenderable,
   warnBoxes,
   _tofuCache,   // test seam: coverage depends on the box, so a test must be able to clear it

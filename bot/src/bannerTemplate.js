@@ -17,7 +17,7 @@ const log = require("./helpers/logger");
 // The glyph guard. compose() is the ONE choke point every template overlay goes
 // through — the pump alert reaches it via composeOntoClip — so the check lives
 // here rather than at each caller.
-const { warnBoxes } = require("./helpers/canvasKit");
+const { warnBoxes, canvasLib, F } = require("./helpers/canvasKit");
 
 const CONFIG_FILE = "bannerTemplate.json";
 // Kinds with a bundled/uploadable STILL artwork (drives selfCheck + artwork API).
@@ -381,27 +381,29 @@ function resolvePath(kind) {
 const hasTemplate = (kind) => !!resolvePath(kind);
 const hasUploaded = (kind) => exists(uploadedPath(kind));
 
-let CV = null; // lazy canvas (shared native lib with bannerRender)
-function canvasLib() {
-  if (CV === undefined) return null;
-  if (CV) return CV;
-  try {
-    CV = require("@napi-rs/canvas");
-    const FONTS = path.join(__dirname, "..", "assets", "fonts");
-    const reg = (f, fam) => {
-      const p = path.join(FONTS, f);
-      if (fss.existsSync(p)) CV.GlobalFonts.registerFromPath(p, fam);
-    };
-    reg("Sora-800.ttf", "TplBold");
-    reg("Sora-600.ttf", "TplSemi");
-    reg("Sora-500.ttf", "TplReg");
-  } catch (e) {
-    log.warn(`[bannerTpl] canvas unavailable: ${e.message}`);
-    CV = undefined;
-    return null;
-  }
-  return CV;
-}
+// THE FONTS ARE canvasKit's, AND THAT IS THE WHOLE POINT.
+//
+// This module used to register Sora-800/600/500 under three private family
+// names — TplBold / TplSemi / TplReg — and draw with `TplBold, sans-serif`.
+// Those three files are Latin-only, so this renderer never reached the coverage
+// chain at all: it was outside it, not last in it.
+//
+// That is why "$老昊" still shipped as "$□□" on the GIF overlay AFTER the
+// fallback chain was built. Measured, with a CJK face registered process-wide:
+//
+//     "800 100px TplBold, sans-serif"   老昊 → 150   (notdef boxes)
+//     "800 100px " + F.x                老昊 → 200   (real glyphs)
+//
+// Worse, it was SILENT. warnBoxes()/unrenderable() measure against F.r, so the
+// guard was asking about a font stack this file did not use and answered "no
+// missing glyphs" over a card that was drawing them — the one failure this
+// whole area exists to make impossible. A guard is only honest while every
+// renderer draws through the stack the guard measures.
+//
+// So there is ONE registration in this repo, in canvasKit, and compose() draws
+// with F.x / F.s / F.m — the same Sora faces as before (Latin output is
+// byte-identical), now carrying the CJK/Korean/Thai/Arabic/Devanagari/Hebrew
+// tail every other renderer already had.
 
 // Blend a hex colour toward white by `amt` (0..1) — used to give a coloured
 // $ticker a subtle lighter-top gradient instead of a flat fill.
@@ -545,7 +547,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       const ticker = `$${String(symbol).replace(/^\$+/, "").toUpperCase()}`;
       const fsz = Number(cfg.tickerFontSize) || 96;
       ctx.textBaseline = "middle";
-      ctx.font = `800 ${fsz}px TplBold, sans-serif`;
+      ctx.font = `800 ${fsz}px ${F.x}`;
       const tw = ctx.measureText(ticker).width;
       const tx = cfg.tickerX === "center" ? (W - tw) / 2 : Number(cfg.tickerX) || 0;
       const ty = cfg.tickerY === "center" ? H / 2 : Number(cfg.tickerY) || 0;
@@ -578,7 +580,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         ctx.shadowColor = "rgba(0,0,0,.6)";
         ctx.shadowBlur = 6;
         ctx.shadowOffsetY = 2;
-        ctx.font = `500 ${cfg.nameFontSize}px TplReg, sans-serif`;
+        ctx.font = `500 ${cfg.nameFontSize}px ${F.m}`;
         ctx.fillStyle = cfg.nameColor;
         // Measure the string that is actually DRAWN. Measuring the full name and
         // drawing a 32-char slice put a long centred name off-centre by exactly
@@ -612,7 +614,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       const padX = fsz * 0.62; // snug, balanced padding — box hugs the text
       const gap = Math.round(fsz * 0.5);
       const cy = Number(cfg.metaY) || H - 152;
-      ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
+      ctx.font = `600 ${fsz}px ${F.s}`;
       const vals = [
         cfg.showChain === false ? null : chain,
         cfg.showPrice === false ? null : price && price !== "TBA" ? price : null,
@@ -663,7 +665,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         const pfs = Number(cfg.pctFontSize) || 172;
         const centered = cfg.pctX === "center";
         const py = Number(cfg.pctY) || 545;
-        ctx.font = `800 ${pfs}px TplBold, sans-serif`;
+        ctx.font = `800 ${pfs}px ${F.x}`;
         ctx.textBaseline = "middle";
         const triW = pfs * 0.6; // up-triangle bounding box
         const triH = pfs * 0.54;
@@ -713,7 +715,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
         const rfs = Number(cfg.priceFontSize) || 78;
         const rx = cfg.priceX === "center" ? W / 2 : Number(cfg.priceX) || 262;
         const ry = Number(cfg.priceY) || 762;
-        ctx.font = `700 ${rfs}px TplBold, TplSemi, sans-serif`;
+        ctx.font = `700 ${rfs}px ${F.x}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         const arrowW = rfs * 0.9; // width the vector "→" occupies
@@ -764,7 +766,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
       if (mcap) {
         const label = `MCAP ${mcap}`;
         const fsz = Number(cfg.metaFontSize) || 44;
-        ctx.font = `600 ${fsz}px TplSemi, TplReg, sans-serif`;
+        ctx.font = `600 ${fsz}px ${F.s}`;
         const chipH = fsz * 1.9;
         const r = Math.min(chipH / 2, fsz * 0.55);
         const padX = fsz * 0.7;
@@ -796,7 +798,7 @@ async function compose(kind, logoBuffer, { symbol, name, chain, price, mcap, bad
     // (listing) or the slot duration (trending) instead of sitting empty.
     if (badge && cfg.showBadge !== false && cfg.slotShape !== "rect") {
       const bfs = Number(cfg.badgeFontSize) || 30;
-      ctx.font = `600 ${bfs}px TplSemi, TplReg, sans-serif`;
+      ctx.font = `600 ${bfs}px ${F.s}`;
       ctx.letterSpacing = "4px";
       const btext = String(badge).toUpperCase().slice(0, 24);
       const bw = ctx.measureText(btext).width;

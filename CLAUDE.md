@@ -251,11 +251,13 @@ added.
   chain, `牛来` measures exactly what the CJK face alone measures and `AB`
   measures exactly what Sora alone measures.
 - **The chain is appended to EVERY entry in `F`**, so no renderer opts in. One
-  that had to would forget on the card that needed it.
+  that had to would forget on the card that needed it — and one that draws with
+  families of its own is not covered at all, which is exactly what the animated
+  overlay turned out to be doing (see below).
 - **Discovered across a candidate LIST**, repo `assets/fonts/` first, then the
-  system paths — same contract as the launchpad hosts. Installing a font package
-  is the whole fix, with no deploy; `EXTRA_CANDIDATES` (Thai, Arabic, Devanagari,
-  Hebrew) is listed up front for exactly that reason.
+  system paths — same contract as the launchpad hosts. The faces are BUNDLED, so
+  a deploy carries them; a font package is a second source, and an operator's own
+  file in `assets/` outranks both.
 - **BOLD before Regular, per script.** These faces sit beside the 700/800 display
   weights; a regular-weight Thai word next to a heavy Latin one reads as two
   titles — the mixed-face defect one level down.
@@ -312,23 +314,145 @@ Whether a glyph renders is a property of the fonts on the server, not of the
 code — same as `raid:check` and `launchpads:check` — so it has to be measured on
 the box.
 
-**Config a fix depends on:** the fonts. **Three packages, and the third is the
-one that gets forgotten** —
-
-```bash
-apt-get install -y fonts-noto-cjk fonts-noto-core fonts-noto-color-emoji
-```
-
-`fonts-noto-cjk` covers Chinese/Japanese/Korean, `fonts-noto-core` adds Thai,
-Arabic, Devanagari and Hebrew, and **emoji lives in its own package that neither
-of the other two pulls in**. An install line written from memory left it out, the
-operator ran exactly what was asked, and the box came back with every text script
-green and `✗ Emoji` — on a market where 🚀 in a ticker is routine.
+**Config a fix depends on:** emoji, and nothing else — every TEXT face is
+bundled now, see the next section. `fonts-noto-color-emoji` is still worth
+installing (🚀 in a ticker is routine), and **it is its own package that neither
+`fonts-noto-cjk` nor `fonts-noto-core` pulls in**: an install line written from
+memory left it out, the operator ran exactly what was asked, and the box came
+back with every text script green and `✗ Emoji`.
 
 So the mapping is in code (`PKG_FOR` / `packagesFor()`), and both the boot
 warning and `fonts:check` print the exact `apt-get` line for whatever is actually
 missing. "1 script(s) uncovered" is a diagnostic; a package name is an
 instruction, and it cannot be recalled wrongly if it is computed.
+
+### It shipped as an INSTRUCTION, and the instruction never ran
+
+Six days later, a listing went out on X as `$??` over `??` — the same token
+class (`老昊`), the same boxes, this time on the **animated banner**, which is
+the artwork most of the channel actually sees. Everything above was deployed.
+Two causes, and the second is the one that matters.
+
+**1. `apt-get install` is not a fix, it is a request.** The chain looked in
+`assets/fonts/` first and then at the system paths, and the box had neither: the
+package was never installed, and nothing about that is visible from Telegram —
+the boot warning goes to pm2's log, and a banner with boxes in it renders
+successfully. So the six coverage faces are **bundled and git-tracked** now
+(`BUNDLED` in `canvasKit.js`, ~17MB, SIL OFL). The server deploys with
+`git pull`; a tracked file is the only kind of fix that cannot be skipped. The
+system paths stay, and an operator's own file in `assets/` still outranks both.
+- **Noto Sans SC has no hangul** — measured, not assumed — so Korean is a second
+  file, registered AFTER the Han face. Ahead of it, a Chinese token would be
+  drawn in Korean glyph shapes.
+- **Emoji is deliberately NOT bundled**: a ~10MB colour-bitmap face for the one
+  script whose package is reliably present. It stays the `apt-get` line above.
+- A missing bundled face and a missing package are **different instructions**.
+  The warning and `fonts:check` now say *"this checkout is incomplete, run git
+  pull"* for the first, because sending an operator to apt for a file `git pull`
+  restores is how twenty minutes go missing.
+
+**2. ⚠️ The overlay renderer was OUTSIDE the chain, not last in it.**
+`bannerTemplate.js` — the one function every animated overlay goes through,
+the pump alert included — registered Sora-800/600/500 under three private
+families of its own (`TplBold` / `TplSemi` / `TplReg`) and drew with
+`TplBold, sans-serif`. Latin-only. **So even with the font installed, the GIF
+would still have shipped boxes**, which is exactly what the first version of
+this fix would have delivered: measured, with a CJK face registered
+process-wide, `老昊` is 150px in `TplBold` (notdef boxes) and 200px in `F.x`.
+
+And it was SILENT, which is the general lesson: `warnBoxes()`/`unrenderable()`
+measure against `F.r`, so **the guard was asking about a font stack that
+renderer did not use** and answered "no missing glyphs" over a card that was
+drawing them. A guard is only honest while every renderer draws through the
+stack the guard measures. One registration, in `canvasKit`; `compose()` draws
+with `F.x` / `F.s` / `F.m`, and the Latin output is byte-identical across all
+four kinds (verified by hashing the PNGs before and after).
+
+- `bannerFonts.test.js` gained the guard that would have caught it, and it
+  **runs the renderers** rather than reading them: it wraps the 2D context's
+  `font` setter, calls `compose()` and `renderListingBanner()`, and asserts every
+  font string they actually set carries every coverage family. A source scan
+  passed on the broken revision — the two new renderer tests fail on it, and the
+  two bundling tests fail if the fonts are moved out of `assets/`.
+- Verified by LOOKING at the output, not only by measuring: the real GIF→MP4
+  path (`composeOntoClip` + ffmpeg) renders `$老昊` / `老昊 Finance` on the real
+  artwork, and the still cards render `$한글토큰` and `$ไทยบาท` (stacked vowels
+  intact, no clipping).
+- `tradebot/pnlImage.js` needed nothing: it draws through this same module,
+  which is the whole reason that rule exists.
+
+```bash
+cd bot && npm run fonts:check                                    # now green on a bare box
+cd bot && node scripts/run-tests.js test/bannerFonts.test.js     # 28 tests
+```
+
+**Config a fix depends on:** nothing. `git pull` + restart carries the glyphs.
+
+### "bagaimana agar masalah ini tidak terjadi lgi" — a green check that was not
+
+Asked with a screenshot of the production box: nine green ticks, *"Every script
+sampled here renders."* The same terminal, on a server whose animated banner had
+been publishing `$老昊` as `$□□`.
+
+**Read that output again, because it says what went wrong.** The chain it
+printed resolved to `/usr/share/fonts/...` — the SYSTEM paths — and carried no
+`Korean` line at all. Both are only possible on code that predates this fix: the
+bundled faces are tried FIRST, so a checkout carrying them can never resolve to
+`/usr/share`, and `DexCover Korean` does not exist in the old file. The deploy
+ran `git pull` on `main`, and the fix was on a branch. So the green was the apt
+packages the operator had just installed — cause 1, fixed by hand — sitting over
+cause 2, still live.
+
+That is the shape to design against, and it is the third time this feature has
+produced it: **the reassuring reading is available, and it is wrong.**
+
+- **`coverage()` answers "does this BOX have the glyphs?"** That question stopped
+  being the one that mattered the moment a renderer could be outside the chain.
+  It reported ✓ for all nine scripts while the overlay drew boxes, and both
+  statements were true.
+- **So `fonts:check` now RUNS every surface** — `src/bannerSurfaces.js` is the
+  list, and `kit.recordFonts()` wraps the 2D context's `font` setter and reads
+  back what each renderer actually set. Per surface, per script, measured. The
+  broken revision reports:
+
+      ✗ animated GIF/MP4 overlay — listing clip, pump alert
+        bannerTemplate.js drew with: 800 96px TplBold, sans-serif
+
+  and **exits non-zero**, so green means "the banners are safe" rather than "the
+  box has fonts". The font string is printed because it is the diagnosis: a stack
+  with no `DexCover` family in it is a CODE fix, not an apt one.
+- **The list is the guard.** A renderer nobody probes is exactly how this got six
+  days; `bannerFonts.test.js` fails the build if a module calling `warnBoxes()` is
+  missing from `SURFACES`, and if a listed module does not exist.
+- **A surface that throws, or that draws no text at all, is an ERROR — never a
+  quiet ✓.** An empty recording measured nothing, and reporting that as a pass is
+  this whole section's defect in miniature.
+- **The check prints the build stamp** (`build ad43311+dirty`). Every round of
+  this has begun with someone reading a check as a statement about the fix they
+  just deployed. One line settles it, and it is the same `+dirty` rule as step 5.
+- `tradebot/pnlImage.js` is deliberately NOT probed: its input is a computed PnL
+  snapshot, not a coin, and the card refuses to draw when anything is unknown —
+  so a fabricated one renders nothing and would report a false red on a healthy
+  renderer. It is covered by the hardcoded-family scan and by `pnlCard.test.js`.
+
+So the three layers, and each one closes a hole the others cannot:
+
+| layer | stops |
+| --- | --- |
+| the faces are git-tracked | a deploy that carries the code but not the glyphs |
+| `bannerFonts.test.js` runs the renderers | a renderer drifting back outside the chain |
+| `fonts:check` probes the surfaces + prints the sha | a green check over a broken banner, and a check read off a stale checkout |
+
+```bash
+cd bot && npm run fonts:check     # per BOX and per SURFACE; non-zero if any banner would ship boxes
+```
+
+⚠️ **And the deploy itself is the remaining hole, because it is not code.** The
+server only ever pulls `main` (see the release flow at the top), so a fix sitting
+on a `claude/*` branch is not deployed however many times `git pull` runs — and
+from Telegram that is indistinguishable from a fix that did not work. `npm run
+fonts:check` printing the sha is the cheapest tell; `git log --oneline -1` on the
+box against the branch is the direct one.
 
 ## A Top 3 that was not the top of the Top 5
 

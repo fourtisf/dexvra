@@ -269,3 +269,210 @@ test("the emoji face is looked for where each distro actually puts it", () => {
   assert.ok(list.indexOf('"..", "assets", "fonts"') < list.indexOf("/usr/share/fonts"),
     "a system font outranks one the operator deliberately placed");
 });
+
+// ── The renderer must draw with the chain the GUARD measures ─────────────────
+//
+// "$老昊" shipped as "$□□" on the GIF banner MONTHS after the chain above was
+// built, and every test in this file passed while it did. The chain was only
+// ever appended to `F`, and bannerTemplate.js — the one function every animated
+// overlay goes through, the pump alert included — did not use `F`: it registered
+// Sora-800/600/500 under three private families of its own and drew with
+// `TplBold, sans-serif`. Latin-only, so outside the chain rather than last in it.
+//
+// The silence is the part worth naming. warnBoxes()/unrenderable() measure
+// against F.r, so the guard was answering "no missing glyphs" about a font stack
+// that renderer did not use — the exact failure this file exists to prevent,
+// asked of the wrong fonts.
+//
+// So the assertions below EXECUTE the renderers and read back the font strings
+// they actually set. A source scan would have passed on the broken revision too.
+
+test("the fonts are BUNDLED — a deploy is the whole fix, not an SSH session", () => {
+  // The first fix shipped as an instruction (`apt-get install fonts-noto-cjk`),
+  // and an instruction is one forgotten step from being no fix at all: the box
+  // never got the package, so a paid listing published with boxes in it and
+  // nothing anywhere errored. The server deploys with `git pull`, so the only
+  // kind of fix that cannot be skipped is a tracked file.
+  for (const f of kit.BUNDLED) {
+    const p = path.join(kit.FONTS_DIR, f);
+    assert.ok(fss.existsSync(p), `${f} is not in bot/assets/fonts — the deploy no longer carries the glyphs`);
+    assert.ok(fss.statSync(p).size > 20000, `${f} is too small to be a real font file`);
+  }
+  // …and the chain must actually LOOK for what the repo ships. A bundled file
+  // no candidate names is a 10MB file that does nothing.
+  for (const f of kit.BUNDLED) assert.ok(SRC.includes(f), `${f} ships but no candidate list names it`);
+});
+
+test("the bundled face is what gets used, and every TEXT script renders on a bare box", () => {
+  if (!kit.available()) return;
+  const cov = kit.coverage();
+  // Not "if a font happens to be installed" any more — the repo carries them, so
+  // this is now a property of the CHECKOUT and can be asserted anywhere.
+  assert.ok(cov.cjk && cov.cjk.startsWith(kit.FONTS_DIR),
+    `the CJK face came from ${cov.cjk} — the repo's own assets must win, or a box's font decides our typography`);
+  for (const s of ["chinese", "japanese", "korean", "thai", "arabic"]) {
+    assert.strictEqual(cov.scripts[s], true, `${s} draws boxes on a checkout that ships a face for it`);
+  }
+  // Emoji is deliberately NOT bundled (a ~10MB colour-bitmap face for the one
+  // script where the package is reliably installed), so it is not asserted here
+  // — the boot warning and fonts:check still name it.
+});
+
+test("Korean is its own face and sits AFTER the Han one", () => {
+  // Noto Sans SC has Han and kana and NO hangul — measured, not assumed. And a
+  // Korean face carries hanja of its own, so ahead of the Han face it would draw
+  // a Chinese token in Korean glyph shapes.
+  assert.match(SRC, /script\("DexCover Korean", "NotoSansKR-Bold\.ttf", "NotoSansKR-Regular\.ttf"\)/);
+  if (!kit.available()) return;
+  const fams = (kit.coverage().faces || []).map((f) => f.family);
+  if (!fams.includes("DexCover Korean") || !fams.includes("DexCover CJK")) return;
+  assert.ok(fams.indexOf("DexCover CJK") < fams.indexOf("DexCover Korean"),
+    "the Korean face outranks the Han face — Chinese would be drawn in Korean shapes");
+});
+
+test("EVERY renderer draws through the shared chain — measured by running them", async () => {
+  if (!kit.available()) return;
+  const cov = kit.coverage();
+  const tail = (cov.faces || []).map((f) => `"${f.family}"`);
+  const CV = kit.canvasLib();
+  const proto = Object.getPrototypeOf(CV.createCanvas(4, 4).getContext("2d"));
+  const desc = Object.getOwnPropertyDescriptor(proto, "font");
+  const seen = [];
+  Object.defineProperty(proto, "font", {
+    ...desc,
+    set(v) { seen.push(String(v)); desc.set.call(this, v); },
+  });
+  try {
+    const coin = { symbol: "牛来", name: "牛来 Finance", chain: "BSC", price: 0.002111, mcap: 2111501 };
+    // compose() is the ONE choke point for the animated GIF/MP4 overlay — the
+    // surface that shipped the boxes — and the still cards are the other entry.
+    await require("../src/bannerTemplate").compose("listing", null, coin, { transparent: true });
+    await require("../src/bannerRender").renderListingBanner(coin, null);
+  } finally {
+    Object.defineProperty(proto, "font", desc);
+  }
+  // A probe that recorded nothing proves nothing.
+  assert.ok(seen.length > 3, "no renderer set a font at all — this test is not measuring anything");
+  if (!tail.length) return;
+  for (const font of new Set(seen)) {
+    for (const fam of tail) {
+      assert.ok(font.includes(fam),
+        `a renderer drew with \`${font}\`, which cannot reach ${fam} — a Chinese name in it draws boxes, and warnBoxes (which measures F.r) would not notice`);
+    }
+  }
+});
+
+test("no renderer registers fonts of its own — one chain, one owner", () => {
+  // bannerTemplate had `GlobalFonts.registerFromPath(Sora-800, "TplBold")`, and
+  // that private family is how it ended up outside the chain. canvasKit is the
+  // only module allowed to register a face.
+  for (const f of ["bannerTemplate.js", "bannerRender.js", "gainersBanner.js"]) {
+    const src = fss.readFileSync(path.join(__dirname, "..", "src", f), "utf8");
+    assert.ok(!/GlobalFonts\.registerFromPath/.test(src), `${f} registers its own fonts again`);
+    // Every font it sets must come from F, never a literal family name.
+    for (const line of src.match(/\.font = `[^`]*`/g) || []) {
+      assert.match(line, /\bF\.[a-z][a-z0-9]*/, `${f} draws with a hardcoded family: ${line}`);
+    }
+  }
+});
+
+// ── "fonts:check was green and the banner was broken" ────────────────────────
+//
+// The check answered the question it was asked — does this BOX have the glyphs
+// — and that question had stopped being the one that mattered. src/bannerSurfaces.js
+// asks the other one, per surface, by running it. These tests pin the mechanism,
+// because a probe that silently stops measuring is the failure it exists to catch.
+
+test("the surface list covers every renderer that calls the guard", () => {
+  // A renderer nobody probes is exactly how the overlay shipped boxes for six
+  // days. warnBoxes() is the marker: a module that draws token text calls it.
+  const { SURFACES } = require("../src/bannerSurfaces");
+  const listed = new Set(SURFACES.map((s) => s.module));
+  const dir = path.join(__dirname, "..", "src");
+  for (const f of fss.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+    const src = fss.readFileSync(path.join(dir, f), "utf8");
+    // The call, not the word: these files discuss warnBoxes in their comments.
+    if (!/\bwarnBoxes\([^)]/.test(src.replace(/^\s*(\/\/|\*).*$/gm, ""))) continue;
+    assert.ok(listed.has(f), `${f} draws token text but no surface in bannerSurfaces.js probes it`);
+  }
+  // …and every listed surface must name a module that exists, or the list drifts
+  // into fiction the first time a file is renamed.
+  for (const s of SURFACES) {
+    assert.ok(fss.existsSync(path.join(dir, s.module)), `${s.key} points at a module that is not there: ${s.module}`);
+  }
+});
+
+test("the probe MEASURES a surface rather than believing it", async () => {
+  if (!kit.available()) return;
+  kit.canvasLib();                       // F is "sans-serif" until this has run
+  const surfaces = require("../src/bannerSurfaces");
+  const draw = (font) => () => {
+    const ctx = kit.canvasLib().createCanvas(64, 64).getContext("2d");
+    ctx.font = font;
+    ctx.fillText("老昊", 4, 40);
+  };
+  // A renderer inside the chain.
+  const good = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: draw(`800 40px ${kit.F.x}`) });
+  // …and one with a private Latin-only family, which is what bannerTemplate was.
+  const bad = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: draw('800 40px "Sora XBold", sans-serif') });
+  if (kit.coverage().scripts.chinese) {
+    assert.strictEqual(good.scripts.chinese, true, "a renderer drawing through F was reported as broken");
+    assert.strictEqual(bad.scripts.chinese, false, "a Latin-only stack was reported as able to draw Chinese — the probe measures nothing");
+    assert.deepStrictEqual(surfaces.brokenSurfaces([good]), []);
+    assert.strictEqual(surfaces.brokenSurfaces([bad]).length, 1, "a broken surface does not reach the exit code");
+  }
+});
+
+test("a surface that cannot render is an ERROR, never silent coverage", async () => {
+  if (!kit.available()) return;
+  const surfaces = require("../src/bannerSurfaces");
+  const threw = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: () => { throw new Error("boom"); } });
+  assert.match(threw.error || "", /boom/);
+  assert.ok(surfaces.brokenSurfaces([threw]).length === 1, "a renderer that throws passes the check");
+  // Drawing nothing is not passing either: an empty recording measured nothing,
+  // and reporting that as ✓ is the green-over-broken defect in miniature.
+  const silent = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: () => {} });
+  assert.match(silent.error || "", /no text/);
+});
+
+test("every REAL surface draws every script the repo ships a face for", async () => {
+  if (!kit.available()) return;
+  kit.canvasLib();
+  const surfaces = require("../src/bannerSurfaces");
+  const results = await surfaces.probeAll();
+  assert.strictEqual(results.length, surfaces.SURFACES.length);
+  const broken = surfaces.brokenSurfaces(results).map((r) => `${r.what}: ${r.error || Object.entries(r.scripts).filter(([, ok]) => !ok).map(([k]) => k).join(", ")}`);
+  assert.deepStrictEqual(broken, [], `these surfaces would publish boxes:\n  ${broken.join("\n  ")}`);
+});
+
+test("fonts:check follows the SURFACES for its exit code, not the box", () => {
+  // The script is prose an operator acts on, and prose that never executes is
+  // how a wrong instruction survives a release. The exit-code wiring is what
+  // makes a green run mean "the banners are safe", so it is asserted here; the
+  // measurement itself is executed by the tests above.
+  const src = fss.readFileSync(path.join(__dirname, "..", "scripts", "fonts-check.js"), "utf8");
+  assert.match(src, /require\('\.\.\/src\/bannerSurfaces'\)/, "the check no longer measures the renderers at all");
+  assert.match(src, /brokenSurfaces/);
+  assert.match(src, /process\.exit\(1\);\s*\/\/ green must mean/);
+  // And it prints WHICH COMMIT it measured: the most common reason a fix "did
+  // not work" here is that it never reached the box.
+  assert.match(src, /build'\)\.stamp\(\)/, "a green check on a stale checkout is indistinguishable from a green check on the fix");
+});
+
+test("no renderer hardcodes a family — including the one in tradebot", () => {
+  const files = [
+    path.join(__dirname, "..", "src", "bannerTemplate.js"),
+    path.join(__dirname, "..", "src", "bannerRender.js"),
+    path.join(__dirname, "..", "src", "gainersBanner.js"),
+    // Different package, same chain, same rule: pnlImage draws with K.F.*, and
+    // that is the whole reason it needed no fix when the overlay did.
+    path.join(__dirname, "..", "..", "tradebot", "pnlImage.js"),
+  ];
+  for (const f of files) {
+    if (!fss.existsSync(f)) continue;
+    const src = fss.readFileSync(f, "utf8");
+    for (const line of src.match(/\.font = `[^`]*`/g) || []) {
+      assert.match(line, /\bK?\.?F\.[a-z][a-z0-9]*/, `${path.basename(f)} draws with a hardcoded family: ${line}`);
+    }
+  }
+});
