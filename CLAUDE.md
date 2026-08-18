@@ -1326,9 +1326,10 @@ panel, and the brand strip with the referral QR along the foot.
   in a glowing ring, `$TICKER` with a `4.25X ↑` badge, "Held for", the percent
   at 138px, INVESTED / PAYOUT, and a brand strip with the referral QR.
 - **NO LOGO IS THE DESIGN, not a degraded card.** A token this bot snipes at
-  launch has no art at any index yet, so the fallback — the Dexvra gem wearing
-  the ticker's monogram — has to look deliberate, because it is what most cards
-  will be. `core.tokenLogoUrl` asks the two indexes this repo already asks
+  launch has no art at any index yet, so the fallback — the DEXVRA MARK itself
+  (drawBrandMark, the owner's call: "kalo project ga punya logo pake logo
+  dexvra sendiri"), with the ticker set small beneath — has to look deliberate,
+  because it is what most cards will be. `core.tokenLogoUrl` asks the two indexes this repo already asks
   (DexScreener's `info.imageUrl`, GeckoTerminal's `image_url`) and caches the
   MISSES too; the logo and the QR are fetched together, bounded, and either may
   fail without touching the card.

@@ -191,8 +191,21 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   // The ghost tape: a price line only this token draws — seeded by its
   // symbol so it is unique per card and stable per token, RISING on a win
   // and falling on a loss. Texture, not data: it stays under 0.2 alpha.
+  // The panel's geometry, needed HERE because the tape must clip around it
+  // and again below where the panel is drawn — one owner, two readers.
+  const PANEL = { x: ART + 18, y: 366, w: W - 40 - (ART + 18), h: 156 };
   ctx.save();
+  // Contained: inside the frame's inner rounded-rect (an element cut off by
+  // the canvas edge reads as escaping the card), above the strip, and with
+  // the stats panel PUNCHED OUT — the seeded path kept landing exactly on
+  // the money rows, which reads as a collision and not a design.
+  K.roundRect(ctx, 16, 16, W - 32, H - 32, 20);
+  ctx.clip();
   ctx.beginPath(); ctx.rect(0, 0, W, H - BAR); ctx.clip();
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  ctx.rect(PANEL.x - 8, PANEL.y - 8, PANEL.w + 16, PANEL.h + 16);
+  ctx.clip('evenodd');
   const rnd = lcg(seedOf(p.sym || p.ca || 'dexvra'));
   const tapePts = [];
   for (let i = 0; i <= 9; i++) {
@@ -210,7 +223,12 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   }
   ctx.lineTo(tapePts[9][0], tapePts[9][1]);
   ctx.save();
-  ctx.strokeStyle = K.hexA(ACC, 0.16);
+  const tapeStroke = ctx.createLinearGradient(0, 0, W, 0);
+  tapeStroke.addColorStop(0, K.hexA(ACC, 0));
+  tapeStroke.addColorStop(0.08, K.hexA(ACC, 0.16));
+  tapeStroke.addColorStop(0.9, K.hexA(ACC, 0.16));
+  tapeStroke.addColorStop(1, K.hexA(ACC, 0));
+  ctx.strokeStyle = tapeStroke;
   ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
   ctx.shadowColor = K.hexA(ACC, 0.35);
@@ -263,7 +281,7 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   ctx.strokeStyle = K.hexA(ACC, 0.5);
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(cx, cy, R + 36, -0.9, 1.4); ctx.stroke();
-  ctx.strokeStyle = K.hexA(K.CYAN, 0.28);
+  ctx.strokeStyle = win || flat ? K.hexA(K.CYAN, 0.28) : K.hexA(K.SITE.violet, 0.3);
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(cx, cy, R + 58, 1.9, 3.7); ctx.stroke();
   ctx.restore();
@@ -293,23 +311,24 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   if (logo) {
     circleImage(ctx, logo, cx, cy, R - 12);
   } else {
-    // NO LOGO IS THE COMMON CASE for a launch this bot snipes, so the fallback
-    // is the design and not an apology: the brand gem, with the ticker's
-    // monogram set on it.
-    // ⚠️ drawGem's (x,y) is the TOP-LEFT of a 48-unit box, not the centre — the
-    // first cut passed the centre and the gem landed half a diameter down and
-    // right, straight through the monogram.
-    const GS = 104;
-    try { K.drawGem(ctx, cx - GS / 2, cy - 52 - GS * 0.51, GS); } catch (_) {}
+    // NO LOGO IS THE COMMON CASE for a launch this bot snipes, so the
+    // fallback is the design and not an apology — and it is the DEXVRA MARK
+    // ITSELF, the owner's call ("kalo project ga punya logo pake logo dexvra
+    // sendiri"): the real badge from drawBrandMark, large, with the ticker
+    // set small beneath it.
+    // ⚠️ drawBrandMark's (x,y) is the TOP-LEFT of a 48-unit box, not the
+    // centre — the same contract that already cost drawGem half a diameter.
+    const MS = 168;
+    try { K.drawBrandMark(ctx, cx - MS / 2, cy - 22 - MS / 2, MS); } catch (_) {}
     const mono = String(p.sym || '?').replace(/[^A-Za-z0-9]/g, '').toUpperCase() || '?';
     ctx.textAlign = 'center';
     ctx.fillStyle = K.INK;
-    let mt = K.fitText(ctx, mono, R * 1.35, { weight: 800, size: 66, min: 28, family: K.F.x });
-    if (mt.endsWith('…')) mt = K.fitText(ctx, mono[0], R * 1.35, { weight: 800, size: 66, min: 28, family: K.F.x });
+    let mt = K.fitText(ctx, mono, 200, { weight: 800, size: 32, min: 20, family: K.F.x });
+    if (mt.endsWith('…')) mt = K.fitText(ctx, mono[0], 200, { weight: 800, size: 32, min: 20, family: K.F.x });
     ctx.save();
     ctx.shadowColor = K.hexA('#000000', 0.6);
-    ctx.shadowBlur = 18;
-    ctx.fillText(mt, cx, cy + 74);
+    ctx.shadowBlur = 14;
+    ctx.fillText(mt, cx, cy + 108);
     ctx.restore();
   }
   // Gloss — a specular wash across the upper-left, over logo and gem alike, so
@@ -449,7 +468,7 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   pg.addColorStop(0, ACC);
   pg.addColorStop(1, ACC2);
   ctx.fillStyle = pg;
-  const pTxt = K.fitText(ctx, pctTxt, W - RX - 62, { weight: 800, size: 132, min: 56, family: K.F.x });
+  const pTxt = K.fitText(ctx, pctTxt, W - RX - 92, { weight: 800, size: 132, min: 56, family: K.F.x });
   ctx.fillText(pTxt, RX, 336);
   ctx.restore();
 
@@ -465,7 +484,7 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
     ['INVESTED', short(s.ethIn, native, pd), rate > 0 ? usdShort(s.ethIn * rate, abbr) : ''],
     [s.status === 'closed' ? 'PAYOUT' : 'VALUE NOW', short(outAmt, native, pd), rate > 0 ? usdShort(outAmt * rate, abbr) : ''],
   ];
-  const px0 = RX - 26, pw = W - 40 - px0, py0 = 366, ph = 156;
+  const px0 = PANEL.x, pw = PANEL.w, py0 = PANEL.y, ph = PANEL.h;
   ctx.save();
   K.roundRect(ctx, px0, py0, pw, ph, 20);
   ctx.fillStyle = K.hexA('#FFFFFF', 0.045);
