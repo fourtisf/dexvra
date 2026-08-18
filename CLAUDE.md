@@ -1318,9 +1318,9 @@ book · 📊 PnL on the main menu.
 
 A PnL card is a thing traders SHARE, and nobody posts a screenshot of a wall of
 numbers. `pnlImage.js` renders the same figures — from the same `pnlStats()` —
-as a 1200×675 PNG: the multiple huge (it is what a trader says out loud), the
-percent under it, three tiles (invested · taken out / holding now · profit), and
-the qualifying facts along the foot.
+as a 1200×675 PNG: the token's coin on the left, the PROFIT/LOSS word and the
+percent huge (it is what a trader says out loud), INVESTED / PAYOUT in a glass
+panel, and the brand strip with the referral QR along the foot.
 
 - **The layout is the one traders share**: the token's own artwork on the left
   in a glowing ring, `$TICKER` with a `4.25X ↑` badge, "Held for", the percent
@@ -1340,6 +1340,24 @@ the qualifying facts along the foot.
 - ⚠️ **`drawGem`'s (x,y) is the TOP-LEFT of a 48-unit box, not the centre.**
   Passing the centre puts the gem half a diameter down and right — through the
   monogram it was drawn beside. Caught by looking at the render, not by a test.
+- ⚠️ **Never zero-pad a native amount.** To an Indonesian reader — much of this
+  bot's audience — `1.200 SOL` IS 1,200 SOL: the dot is their thousands
+  separator, so `toFixed(3)` put a three-orders-of-magnitude misreading on the
+  card's headline surface. `short()` trims, and the panel's two rows share ONE
+  decimal count (`0.80 / 4.10`) and ONE USD voice (`$240 / $1,020`, or both
+  abbreviated) — two formats in one column reads as two data sources.
+- **Everything that can grow is FITTED.** The meta line crossed the frame
+  stroke on the one status long enough to reach it ("Still holding"); the
+  medallion cut `BEHEMOTH99` to a mid-word `BEHE`; the 44px badge outweighed a
+  ticker `fitText` had shrunk to 33px. The line is fitted, the medallion
+  shrinks the whole ticker (and drops to one letter below the floor, never a
+  cut), and the badge scales with the ticker's FITTED size, read back off
+  `ctx.font`.
+- **The QR is fetched at the size it is drawn, and drawn 1:1** with smoothing
+  off — resampling is what blurs a QR's modules into an unscannable smudge.
+- These came from a three-lens review of the actual renders (typography,
+  composition, premium) — the card is judged by LOOKING at PNGs, the rule the
+  drawGem bug already taught. Render fixtures before shipping a layout change.
 - **The picture is an UPGRADE and failure is free.** The native binary lives in
   `bot/node_modules`; if it is missing, or a draw throws, or the upload fails,
   `render()` returns null and the caller sends the text card it already had. A
@@ -1355,7 +1373,7 @@ the qualifying facts along the foot.
   A photo cannot be edited into a text message either — the 📊 button SENDS.
 
 ```bash
-cd tradebot && node --test pnlCard.test.js   # 18 tests, no network
+cd tradebot && node --test pnlCard.test.js   # 19 tests, no network
 ```
 
 **Config a fix depends on:** nothing for the text card. The PICTURE needs
