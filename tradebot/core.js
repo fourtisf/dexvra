@@ -1673,6 +1673,56 @@ async function dsPairsX(ca) {
 }
 const dsPairs = async (ca) => (await dsPairsX(ca)).pairs;
 
+/**
+ * The token's own artwork, for the PnL card.
+ *
+ * DexScreener carries it on the pair (`info.imageUrl`) and GeckoTerminal on the
+ * token — the same two indexes the rest of this file already asks, so no new
+ * upstream and no new failure mode. Best-effort by design: a card with a
+ * monogram where the logo would be is a card; a card that waited on an image
+ * host is not.
+ *
+ * Cached per contract INCLUDING the misses (as null), because the common case
+ * for a fresh launch is that no index has art for it yet and re-asking on every
+ * render would spend a round trip to learn that again.
+ */
+const _logoCache = new Map();
+const LOGO_TTL_MS = 6 * 3600 * 1000;
+async function tokenLogoUrl(ca, chainKey) {
+  const key = (isSvm(chainKey) ? String(ca) : String(ca).toLowerCase()) + '@' + chainKey;
+  const hit = _logoCache.get(key);
+  if (hit && Date.now() - hit.at < LOGO_TTL_MS) return hit.url;
+  let url = null;
+  try {
+    const slug = DS_CHAIN_KEY[chainKey];   // the map this file already keeps — a second copy would drift
+    if (slug) {
+      const pairs = (await dsPairsX(ca)).pairs.filter((p) => p && p.chainId === slug);
+      for (const p of pairs) {
+        const u = p.info && p.info.imageUrl;
+        if (u && /^https?:\/\//.test(u)) { url = u; break; }
+      }
+    }
+    if (!url) {
+      // GeckoTerminal covers what DexScreener does not — Robinhood Chain, and
+      // a token whose only pool is too new for DS to carry art for.
+      const net = GT_NETWORK_LOGO[chainKey];
+      if (net) {
+        const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${_idQ(ca)}`, { signal: AbortSignal.timeout(5000), headers: { accept: 'application/json' } });
+        if (r.ok) {
+          const j = await r.json();
+          const u = j && j.data && j.data.attributes && j.data.attributes.image_url;
+          // GeckoTerminal answers the string "missing" rather than omitting it.
+          if (u && /^https?:\/\//.test(u) && !/missing/i.test(u)) url = u;
+        }
+      }
+    }
+  } catch (_) { url = null; }
+  if (_logoCache.size >= 500) _logoCache.delete(_logoCache.keys().next().value);
+  _logoCache.set(key, { at: Date.now(), url });
+  return url;
+}
+const GT_NETWORK_LOGO = { robinhood: 'robinhood', ethereum: 'eth', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum_nova', solana: 'solana' };
+
 // Solana mints are base58 and CASE-SIGNIFICANT — lowercasing one destroys it.
 const _idQ = (ca) => (/^0x[a-fA-F0-9]{40}$/.test(String(ca)) ? String(ca).toLowerCase() : String(ca));
 
@@ -3654,7 +3704,7 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
-  buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, DB,
+  buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
   // Test-only seams — see the notes at each definition.
   _deps,
   _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),

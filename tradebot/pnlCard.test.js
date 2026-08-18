@@ -241,18 +241,18 @@ test('a token this bot never traded is "no trades", not a zero trade', async () 
 
 const img = require('./pnlImage');
 
-test('the image refuses to state what it cannot know', () => {
+test('the image refuses to state what it cannot know', async () => {
   // A branded card is a CLAIM. "we could not read your balance just now" is a
   // sentence; there is no way to draw it as a 4.25× without lying, so those
   // fall back to the text card, which says so in words.
   const unpriced = P({ open: true, tokens: 5, priced: false, balUnknown: true, ethIn: 1, costEth: 1, unrealizedEth: null });
-  assert.strictEqual(img.render(unpriced, { native: 'SOL' }), null, 'an unknown was drawn as a number');
-  assert.strictEqual(img.render(P({ traded: false, ethIn: 0 }), { native: 'SOL' }), null, 'a never-traded token got a PnL card');
+  assert.strictEqual(await img.render(unpriced, { native: 'SOL' }), null, 'an unknown was drawn as a number');
+  assert.strictEqual(await img.render(P({ traded: false, ethIn: 0 }), { native: 'SOL' }), null, 'a never-traded token got a PnL card');
   // Nothing invested = no multiple to draw.
-  assert.strictEqual(img.render(P({ ethIn: 0, ethOut: 0 }), { native: 'SOL' }), null);
+  assert.strictEqual(await img.render(P({ ethIn: 0, ethOut: 0 }), { native: 'SOL' }), null);
 });
 
-test('a card is drawn for a win, a loss and a bag still held', (t) => {
+test('a card is drawn for a win, a loss and a bag still held', async (t) => {
   if (!img.available()) return t.skip('canvas not installed in this checkout');
   const cases = {
     win: P({ ethIn: 1.2, ethOut: 5.1, realizedEth: 3.9 }),
@@ -260,12 +260,24 @@ test('a card is drawn for a win, a loss and a bag still held', (t) => {
     held: P({ open: true, tokens: 1000, priceEth: 0.003, valueEth: 3, ethIn: 2, costEth: 2, unrealizedEth: 1, entryEth: 0.002 }),
   };
   for (const [k, p] of Object.entries(cases)) {
-    const buf = img.render(p, { native: 'SOL', rate: 200, chainName: 'Solana' });
+    const buf = await img.render(p, { native: 'SOL', rate: 200, chainName: 'Solana' });
     assert.ok(Buffer.isBuffer(buf) && buf.length > 5000, `${k} produced no card`);
     // A PNG, and one Telegram will accept as a photo.
     assert.equal(buf.slice(1, 4).toString('ascii'), 'PNG');
     assert.ok(buf.length < 10 * 1024 * 1024, `${k} is too large to send`);
   }
+});
+
+test('no logo and no QR is the DESIGN, not a degraded card', async (t) => {
+  if (!img.available()) return t.skip('canvas not installed in this checkout');
+  // A token this bot snipes at launch has no art at any index yet, and a card
+  // that looked broken without one would be broken most of the time it matters.
+  const buf = await img.render(P({ ethIn: 1, ethOut: 2.5, realizedEth: 1.5 }), { native: 'SOL', rate: 200, chainName: 'Solana' });
+  assert.ok(Buffer.isBuffer(buf) && buf.length > 5000, 'the card needs a logo to draw at all');
+  // …and an unreachable image host must not take the card with it.
+  const withDead = await img.render(P({ ethIn: 1, ethOut: 2.5, realizedEth: 1.5 }),
+    { native: 'SOL', rate: 200, logoUrl: 'http://127.0.0.1:9/nope.png', refLink: 'https://t.me/x?start=y', qrApi: 'http://127.0.0.1:9' });
+  assert.ok(Buffer.isBuffer(withDead) && withDead.length > 5000, 'a dead image host took the whole card down');
 });
 
 test('the image is optional — a box without canvas still answers', () => {
