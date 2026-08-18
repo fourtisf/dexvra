@@ -1941,6 +1941,7 @@ async function sendPnlCard(chatId, ca, chainKey) {
         logoUrl: logoUrl || '',
         refLink: BOT_USERNAME && u.refCode ? `https://t.me/${BOT_USERNAME}?start=${u.refCode}` : '',
         qrApi: QR_API,
+        botUser: BOT_USERNAME || '',
       });
     } catch (e) { console.error('[pnl] render failed:', (e && e.message) || e); }
     // The caption carries the exact figures the card rounds — a shareable
