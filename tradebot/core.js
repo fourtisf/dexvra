@@ -3522,6 +3522,118 @@ function realizedEth(wal, chainKey) {
   return r;
 }
 
+/**
+ * Everything needed to answer "how did I do on THIS token" — sold or not.
+ *
+ * /portfolio and portfolioAll answer it for the ACTIVE chain's whole book. This
+ * answers it for one contract on whichever chain it lives on, across every
+ * wallet, and — the part the book cannot do — it still answers after the bag is
+ * gone: a position record survives being sold to zero (it is what carries the
+ * lifetime ethIn/ethOut), so a closed trade is history, not a hole.
+ *
+ * THE MONEY VIEW IS THE HEADLINE. `pnlEth = (ethOut + value held) − ethIn`:
+ * what came back minus what went in. It is the number a user can check against
+ * their own wallet, it is exactly profit once the bag is closed, and it needs no
+ * basis accounting to be true. `realizedEth` (booked on each sell) and
+ * `unrealizedEth` are reported beside it, because a half-sold bag makes the two
+ * views differ and hiding that is how "3.99x" ends up next to "PnL +0.0000".
+ *
+ * A PRICE WE COULD NOT READ IS NOT A PRICE OF ZERO — the /portfolio rule, kept
+ * here for the same reason: `priced:false` leaves the live value UNKNOWN rather
+ * than reporting a 100% loss on a network blip.
+ */
+async function tokenPnl(chatId, ca, chainKey) {
+  const u = ensureUser(chatId); if (!u) return null;
+  chainKey = (chainKey && chainOf(chainKey)) ? chainKey : userChain(u);
+  const key = posKey(chainKey, ca);
+  const list = walletList(u);
+  // Lifetime totals, summed over every wallet that ever held it.
+  const agg = { ethIn: 0, ethOut: 0, costEth: 0, realizedEth: 0, sym: '', name: '', dec: null, wallets: 0 };
+  for (const wal of list) {
+    const p = (wal.positions || {})[key];
+    if (!p) continue;
+    agg.wallets++;
+    agg.ethIn += Number(p.ethIn) || 0;
+    agg.ethOut += Number(p.ethOut) || 0;
+    agg.costEth += (p.costEth != null) ? (Number(p.costEth) || 0) : Math.max(0, (Number(p.ethIn) || 0) - (Number(p.ethOut) || 0));
+    agg.realizedEth += Number(p.realizedEth) || 0;
+    if (!agg.sym && p.sym) agg.sym = p.sym;
+    if (!agg.name && p.name) agg.name = p.name;
+    if (agg.dec == null && p.dec != null) agg.dec = p.dec;
+  }
+  const traded = agg.wallets > 0;
+  // The symbol/decimals still have to be right for a token this bot never
+  // traded — the answer there is "no trades", and it should still name the token.
+  let meta = null;
+  if (!traded || agg.dec == null || !agg.sym) meta = await tokenMeta(ca, chainKey).catch(() => null);
+  const dec = (agg.dec != null) ? agg.dec : (meta ? meta.decimals : (isSvm(chainKey) ? 9 : 18));
+  const sym = agg.sym || (meta && meta.sym) || '';
+  const name = agg.name || (meta && meta.name) || '';
+  // Live balance per wallet — what is still held decides open vs closed, and a
+  // token moved to another wallet by hand must not read as sold.
+  //
+  // ⚠️ A BALANCE WE COULD NOT READ IS NOT A BALANCE OF ZERO — the /portfolio
+  // price rule, one field over, and it bites harder here: a failed read makes a
+  // held bag look SOLD, so the card would state "🏁 CLOSED" and −100% about a
+  // position the user is still fully exposed to. `tokenBalanceOrNull` exists
+  // for exactly this (it is what stopped the monitor unpinning live bags on a
+  // dead RPC); one unreadable wallet marks the whole answer unknown rather than
+  // quietly under-counting the bag.
+  const holders = [];
+  let tokens = 0;
+  let balUnknown = false;
+  await Promise.all(list.map(async (wal, i) => {
+    const raw = await module.exports.tokenBalanceOrNull(ca, walletAddress(wal, chainKey), chainKey);
+    if (raw == null) { balUnknown = true; return; }
+    const bal = Number(ethers.formatUnits(raw, dec));
+    if (bal > 1e-9) holders.push({ index: i + 1, label: walletLabel(wal, i + 1), tokens: bal });
+  }));
+  holders.sort((a, b) => b.tokens - a.tokens);
+  tokens = holders.reduce((t, h) => t + h.tokens, 0);
+  // Unknown reads keep the position OPEN-but-unpriced rather than closed: the
+  // renderer then says "couldn't read it just now" and suppresses every figure
+  // derived from it, which is the honest answer. A position with no trades and
+  // no readable balance is simply "no trades".
+  const open = tokens > 1e-9 || (balUnknown && traded);
+  const snap = (open && !balUnknown) ? await module.exports.tokenSnapshot(ca, chainKey).catch(() => null) : null;
+  const priceEth = (snap && snap.priceEth > 0) ? snap.priceEth : 0;
+  // An unreadable BALANCE is as disqualifying as an unreadable price: both leave
+  // the live value unknown, and the card must not derive a total from either.
+  const priced = !open || (!balUnknown && priceEth > 0);
+  const valueEth = open && priced ? tokens * priceEth : 0;
+  // The trade log is capped per wallet (50), so these are "what we still have on
+  // file", never a claim of completeness — the renderer says so.
+  let buys = 0, sells = 0, firstAt = null, lastAt = null;
+  const caL = isSvm(chainKey) ? String(ca) : String(ca).toLowerCase();
+  for (const wal of list) {
+    for (const h of (wal.history || [])) {
+      if (!h || h.chain !== chainKey) continue;
+      const hc = isSvm(chainKey) ? String(h.ca || '') : String(h.ca || '').toLowerCase();
+      if (hc !== caL) continue;
+      if (h.side === 'sell') sells++; else buys++;
+      if (h.ts && (!firstAt || h.ts < firstAt)) firstAt = h.ts;
+      if (h.ts && (!lastAt || h.ts > lastAt)) lastAt = h.ts;
+    }
+  }
+  const backEth = agg.ethOut + valueEth;                  // proceeds + what is still held
+  const pnlEth = traded ? backEth - agg.ethIn : 0;
+  return {
+    ca, chain: chainKey, sym, name, dec, traded,
+    open, tokens, holders, priced, priceEth, valueEth, balUnknown,
+    ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth,
+    realizedEth: agg.realizedEth,
+    // Only meaningful while something is held, and only when we could price it.
+    unrealizedEth: !open ? 0 : (priced ? valueEth - agg.costEth : null),
+    pnlEth: (open && !priced) ? null : pnlEth,            // unknown price → unknown total
+    multiple: (agg.ethIn > 0 && !(open && !priced)) ? backEth / agg.ethIn : null,
+    // The entry of the bag STILL HELD — cost ÷ tokens, the same two figures the
+    // Monitor's P/L line is built from, so the percentage is checkable against
+    // the card that states it. A closed bag has no entry left to state.
+    entryEth: (open && tokens > 1e-9 && agg.costEth > 0) ? agg.costEth / tokens : null,
+    trades: { buys, sells, firstAt, lastAt, capped: true },
+  };
+}
+
 module.exports = {
   gasBufferWei,
   CFG, chains, chainOf, userChain, providerFor, FACTORY_ABI, CURVE_ABI, ERC20_ABI,
@@ -3542,7 +3654,7 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
-  buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, DB,
+  buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, DB,
   // Test-only seams — see the notes at each definition.
   _deps,
   _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),
