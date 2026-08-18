@@ -1227,6 +1227,25 @@ the 📍 home screen) opens it; the panel is the first button, ⌨️ one-line s
   wallet empty → disarmed; anything else → re-armed for the next tick. One
   broke wallet must never stop the others, and a partial fill says `k/N
   wallets` on the message.
+- **A wallet toggle must not pay for a market scan.** "pilih wallet tidak
+  working... harus cpt": the card's multi-wallet picker redrew the WHOLE card
+  per tap — the price/liquidity/safety scan, a meta read and a balance PAIR per
+  wallet, ~22 network calls to change one bit, seconds each on ten wallets. A
+  toggle changes which wallets are lit and nothing a network read would tell
+  us, so it redraws from `_cardReuse` (the last FULL render, `CARD_REUSE_MS`,
+  20s, `0` disables). ONLY the toggle path passes `reuse` — a fresh open, a
+  chain switch and 🔄 Refresh always read live, a stale price being acceptable
+  only when the user did not ask to look again — and only a live pass seeds the
+  cache, so reuse cannot chain off reuse. A trade drops the entry
+  (`invalidateCard` in `doBuy`/`doSell` and at `startMonitor`): the bag is the
+  one number checked right after a fill.
+- ⚠️ **The poll loop does not await `handleUpdate`, so a run of taps is
+  CONCURRENT.** Both pickers redraw one message, and whichever render finished
+  last painted it — not necessarily the newest tap, so the wallet just lit went
+  dark a second later. That is indistinguishable from a toggle that does not
+  work, and is how it was reported. `redrawTicket(chatId, mid)` gives each tap a
+  ticket and a stale render is DROPPED rather than painted. Any handler that
+  redraws one message from concurrent taps needs it.
 - **"respon sangat lambat" is measured, not argued.** `handleUpdate` logs
   `[ui] slow cb:… handle=…ms age=…s` for any update that took >1.5s to handle
   or was already >5s old on arrival — high `age` means the delay happened

@@ -40,6 +40,51 @@ const _balCache = new Map();
 // screen can include TOKEN holdings in each wallet's total without re-pricing every render.
 const _priceCache = new Map();
 
+/**
+ * The last FULL token-card render, per chat+chain+token.
+ *
+ * A wallet toggle on the card redraws it, and a full render is ~20 network
+ * calls: the price/liquidity/safety scan, a token-meta read, and a balance PAIR
+ * for every wallet the user has. None of it is what a toggle changed — the
+ * market did not move and no trade happened, only which wallets are lit — so
+ * ten wallets turned a one-bit change into seconds of RPC, on the one screen
+ * where a run of taps is normal ("pilih wallet tidak working... harus cpt").
+ *
+ * Only the toggle path passes `reuse`. A fresh open, a chain switch and 🔄
+ * Refresh always read live: a stale price is acceptable only when the user did
+ * not ask to look again.
+ */
+const _cardReuse = new Map();
+const CARD_REUSE_MS = Math.max(0, Number(process.env.CARD_REUSE_MS || 20000));
+/**
+ * Last tap wins.
+ *
+ * The poll loop does not await handleUpdate, so a run of taps on one card is a
+ * run of CONCURRENT handlers all editing the same message. Whichever render
+ * finishes last paints the card — and that is not necessarily the newest tap,
+ * so the wallet just lit goes dark again a second later. Indistinguishable from
+ * a toggle that does not work, which is exactly how it was reported.
+ */
+/** Drop a token's cached render — called whenever a trade moves the balances
+ *  the card states. Without it a toggle within the reuse window would redraw
+ *  the pre-trade bag, which is the one number a user checks right after a buy. */
+function invalidateCard(chatId, ca, chainKey) {
+  if (!ca) return;
+  const suffix = ':' + String(ca).toLowerCase();
+  const prefix = chatId + ':';
+  for (const k of _cardReuse.keys()) {
+    if (k.startsWith(prefix) && k.endsWith(suffix)) _cardReuse.delete(k);
+  }
+}
+const _redrawSeq = new Map();
+function redrawTicket(chatId, mid) {
+  const key = chatId + ':' + mid;
+  const n = (_redrawSeq.get(key) || 0) + 1;
+  _redrawSeq.set(key, n);
+  if (_redrawSeq.size > 2000) { const first = _redrawSeq.keys().next().value; _redrawSeq.delete(first); }
+  return () => _redrawSeq.get(key) === n;
+}
+
 // ------------------------------------------------------------ telegram api
 /**
  * One Telegram API call, with the ONE retry Telegram actually asks for.
@@ -1014,8 +1059,13 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // awaiting it afterwards simply added its latency to the card. On the one
   // screen a user stares at after pasting an address, two independent waits in
   // series is the difference between "fast" and "did it hear me".
-  const metaP = core.tokenMeta(ca, chainKey).catch(() => null);
-  const info = await tokeninfo.enrich(ca, chainKey).catch(() => null);
+  // Redraw from the last full render when the caller says nothing it depends on
+  // can have changed (a wallet toggle) — see _cardReuse.
+  const rKey = chatId + ':' + chainKey + ':' + String(ca).toLowerCase();
+  const rHit = (opts && opts.reuse && CARD_REUSE_MS > 0) ? _cardReuse.get(rKey) : null;
+  const reuse = (rHit && Date.now() - rHit.at < CARD_REUSE_MS) ? rHit : null;
+  const metaP = reuse ? Promise.resolve(reuse.meta) : core.tokenMeta(ca, chainKey).catch(() => null);
+  const info = reuse ? reuse.info : await tokeninfo.enrich(ca, chainKey).catch(() => null);
   if (!info) {
     // "Switch chain" was the ONLY thing this card ever said, and on a curve chain it is
     // usually the wrong advice: the token is right here, but the launchpad factory could
@@ -1068,7 +1118,13 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // card to the wallet that actually HOLDS the token so Buy/Sell act on the right one —
   // this is what fixes "Sell failed: token balance is 0" when the bag sits on another
   // wallet than the active one. Explicitly-opened cards keep their wallet.
-  const across = await core.tokenAcrossWallets(chatId, ca, chainKey, meta.decimals);
+  const across = reuse ? reuse.across : await core.tokenAcrossWallets(chatId, ca, chainKey, meta.decimals);
+  // Only a LIVE render seeds the cache, so reuse can never chain off reuse and
+  // hold a price past its window.
+  if (!reuse && CARD_REUSE_MS > 0) {
+    _cardReuse.set(rKey, { at: Date.now(), info, meta, across });
+    if (_cardReuse.size > 500) { const f = _cardReuse.keys().next().value; _cardReuse.delete(f); }
+  }
   const w = explicit || (across.holderId && core.walletById(u, across.holderId)) || core.activeWallet(u);
   const wi = list.findIndex((x) => x.id === w.id) + 1;   // 1-based wallet index, encoded in every action
   const myRow = across.rows.find((r) => r.id === w.id);
@@ -2366,6 +2422,7 @@ async function _postWalletReceipt(chatId, { side, ca, chainKey, target, r, e, se
 }
 
 async function doBuy(chatId, ca, amt, chain, walletId) {
+  invalidateCard(chatId, ca, chain);   // the bag is about to move — no toggle may redraw the old one
   const u = core.ensureUser(chatId);
   const chG = core.chainOf(chain) || core.chainOf(core.userChain(u));
   const key = chatId + ':' + (chain || core.userChain(u)) + ':' + String(ca).toLowerCase();
@@ -2716,6 +2773,7 @@ async function sellWithRetry(chatId, ca, pct, chain, wid, onStep, onSent) {
   throw lastErr;
 }
 async function doSell(chatId, ca, pct, chain, walletId) {
+  invalidateCard(chatId, ca, chain);   // the bag is about to move — no toggle may redraw the old one
   const expert = core.ensureUser(chatId).settings.expert;
   const targets = tradeTargets(chatId, walletId);
   try {
@@ -3442,7 +3500,9 @@ async function onCallback(q) {
         }
       }
     }
+    const isLatestM = redrawTicket(chatId, mid);
     const np = await monitorPayload(chatId, mca, chainK, wid);
+    if (!isLatestM()) return;   // same last-tap-wins rule as the card picker
     return edit(chatId, mid, np.text, np.kb);
   }
   if (k === 'wex1' || k === 'wex0' || k === 'wtc' || k === 'wtcA' || k === 'wtcN') {
@@ -3474,7 +3534,15 @@ async function onCallback(q) {
         }
       }
     }
-    const c = await tokenCard(chatId, mca, chainK, wid, { multi: k !== 'wex0' });
+    // A toggle changes which wallets are lit and nothing else, so it redraws
+    // from the last full render instead of paying the scan again; opening or
+    // closing the panel is the same card, so it reuses too. Only 🔄 Refresh and
+    // a fresh open read live.
+    const isLatest = redrawTicket(chatId, mid);
+    const c = await tokenCard(chatId, mca, chainK, wid, { multi: k !== 'wex0', reuse: true });
+    // A newer tap already redrew this card; painting an older selection over it
+    // is the "toggle does not work" report.
+    if (!isLatest()) return;
     return edit(chatId, mid, c.text, c.kb);
   }
   if (k === 'wtg') { const parts = data.split(':'); const wobj = core.walletList(core.ensureUser(chatId))[Number(parts[2]) - 1]; if (wobj) { try { core.toggleTradeWallet(chatId, wobj.id); } catch (_) {} } const s = await walletPickScreen(chatId, parts[3], parts[1]); return edit(chatId, mid, s.text, s.kb); }
@@ -4471,6 +4539,10 @@ const MON_FATAL_TG = /message to edit not found|message can't be edited|MESSAGE_
 // pinned monitors for one position — each with its own loop editing its own copy.
 const _monitorStarting = new Map();
 function startMonitor(chatId, ca, chainKey, wid, opts) {
+  // A monitor opens right after a FILL, so this is also the moment the bag on
+  // any cached card became wrong. Invalidating at the start of doBuy/doSell
+  // covers a toggle DURING the trade; this covers one just after it.
+  invalidateCard(chatId, ca, chainKey);
   const tkey = monKey(chatId, ca);
   const running = _monitorStarting.get(tkey);
   // Chain onto the in-flight start rather than racing it: the second caller then
