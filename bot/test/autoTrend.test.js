@@ -22,7 +22,7 @@ test("autotrend: defaults + rails (max 18h, valid ranges, capped per-chain targe
   // max can't drop below min; target and gap stay within rails.
   c = await autoTrend.set({ minHours: 10, maxHours: 4 });
   assert.ok(c.maxHours >= c.minHours, "max kept >= min");
-  c = await autoTrend.set({ perChain: 9999 });
+  c = await autoTrend.set({ perChainMin: 9999 });
   assert.strictEqual(c.perChain, autoTrend.HARD.perChainMax, "per-chain target capped");
   // An unknown network would be topped up forever with nothing eligible.
   c = await autoTrend.set({ chains: ["solana", "not-a-chain", "BSC"] });
@@ -51,7 +51,7 @@ test("every chain is topped up against its OWN count, not one shared pool", asyn
   // target let the network with the most listings win every shuffle: the live
   // board showed 5 Solana tokens, one BSC, one Ethereum, one Base — and no
   // Robinhood at all. Five listings per chain must produce five per chain.
-  await autoTrend.set({ enabled: true, perChain: 5, minHours: 3, maxHours: 18 });
+  await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5, minHours: 3, maxHours: 18 });
   const now = Date.now();
   const rows = [];
   for (const chain of ["solana", "bsc", "ethereum", "base", "robinhood"]) {
@@ -74,7 +74,7 @@ test("every chain is topped up against its OWN count, not one shared pool", asyn
 });
 
 test("a chain already at its count is left alone; a short one is topped up", async () => {
-  await autoTrend.set({ enabled: true, perChain: 2 });
+  await autoTrend.set({ enabled: true, perChainMin: 2, perChainMax: 2 });
   const now = Date.now();
   api.getListings = async () => [
     // solana: two already featured → nothing needed
@@ -102,7 +102,7 @@ test("a chain already at its count is left alone; a short one is topped up", asy
 test("only the configured chains are filled", async () => {
   // Tron has no listings and nobody sells trending there; topping it up every
   // cycle would just log a failure forever.
-  await autoTrend.set({ enabled: true, perChain: 3, chains: ["solana", "robinhood"] });
+  await autoTrend.set({ enabled: true, perChainMin: 3, perChainMax: 3, chains: ["solana", "robinhood"] });
   api.getListings = async () => [
     { status: "approved", chain: "solana", address: "s1", trendingRank: null },
     { status: "approved", chain: "robinhood", address: "r1", trendingRank: null },
@@ -120,7 +120,7 @@ test("a chain that CANNOT be filled says so — silence looks identical to 'not 
   // Robinhood with two listings can never reach five, and no number of cycles
   // will change that. Without this line the operator waits for a loop that has
   // already done everything it can.
-  await autoTrend.set({ enabled: true, perChain: 5 });
+  await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5 });
   api.getListings = async () => [{ status: "approved", chain: "robinhood", address: "r1", trendingRank: null }];
   api.bookTrending = async () => ({});
   const warns = [];
@@ -147,7 +147,7 @@ test("a chain that CANNOT be filled says so — silence looks identical to 'not 
 test("the shortfall warning does not repeat every cycle", async () => {
   // It is a standing condition on a loop that runs every few minutes. Saying it
   // each time is how a real warning becomes wallpaper.
-  await autoTrend.set({ enabled: true, perChain: 5 });
+  await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5 });
   api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
   api.bookTrending = async () => ({});
   const warns = [];
@@ -360,7 +360,7 @@ test("every listed token is eligible — no package is skipped", async () => {
   // The operator's rule, in their words: every listed token can get trending,
   // free or paid. An earlier version held Xpress back from the free fill to
   // protect an upsell; it left chains visibly stuck and was not what was wanted.
-  await autoTrend.set({ enabled: true, perChain: 5 });
+  await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5 });
   const realGet = api.getListings;
   api.getListings = async () => [
     { status: "approved", chain: "solana", address: "x1", sym: "X1", tier: "XPRESS", trendingRank: null },
@@ -527,13 +527,13 @@ test("only the top N are promoted, and they are the top N", async () => {
   const calls = [];
   api.bookTrending = async (_c, address) => (calls.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, perChain: 2, chains: ["solana"] });
+    await autoTrend.set({ enabled: true, perChainMin: 2, perChainMax: 2, chains: ["solana"] });
     await autoTrend.runOnce({ rng: () => 0.5 });
     assert.deepStrictEqual(calls, ["s2", "s4"], `promoted ${calls.join(",")}`);
   } finally {
     market.fetchMarket = realFetch;
     api.getListings = realGet;
-    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, perChain: 5 });
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, perChainMin: 5, perChainMax: 5 });
   }
 });
 
@@ -612,7 +612,7 @@ test("a token that is DOWN is never auto-promoted onto a top-gainers board", asy
   const calls = [];
   api.bookTrending = async (_c, address) => (calls.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, perChain: 5, chains: ["bsc"], minGainPct: 0 });
+    await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5, chains: ["bsc"], minGainPct: 0 });
     await autoTrend.runOnce({ rng: () => 0.5 });
     assert.deepStrictEqual(calls, ["up1", "up2"], `promoted ${calls.join(",")}`);
   } finally {
@@ -636,7 +636,7 @@ test("an unpriced token is exempt from the floor — otherwise Robinhood never f
   const calls = [];
   api.bookTrending = async (_c, address) => (calls.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, perChain: 5, chains: ["robinhood"], minGainPct: 0 });
+    await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5, chains: ["robinhood"], minGainPct: 0 });
     await autoTrend.runOnce({ rng: () => 0.5 });
     assert.strictEqual(calls.length, 2, "both unpriced tokens are still promotable");
   } finally {
@@ -696,7 +696,7 @@ test("the shortfall warning survives a restart — it is the reason it spammed",
   // de-duplication lived in process memory, so every pm2 restart re-armed them
   // — and a deploy afternoon is a dozen restarts.
   const ops = require("../src/helpers/opsThrottle");
-  await autoTrend.set({ enabled: true, perChain: 5 });
+  await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5 });
   api.getListings = async () => [{ status: "approved", chain: "bsc", address: "b1", trendingRank: null }];
   api.bookTrending = async () => ({});
   const warns = [];
@@ -729,4 +729,79 @@ test("the advice is daily, not hourly — it is a standing condition, not an inc
   const src = fss.readFileSync(require.resolve("../src/services/autoTrend"), "utf8");
   assert.match(src, /AUTOTREND_SHORT_WARN_HOURS \|\| 24/, "default is once a day");
   assert.match(src, /log\.debug\(line\);/, "…and pm2 logs still get it every cycle");
+});
+
+// ── The per-chain target is a RANGE, rolled ─────────────────────────────────
+//
+// "min 5 max 8 harus random per chain": one fixed number made every chain
+// publish exactly the same count for ever — five rows, five rows, five rows —
+// which reads as a generated list rather than a board.
+
+test("a chain below the floor is topped up to a target ROLLED inside the range", async () => {
+  const realGet = api.getListings;
+  const calls = [];
+  api.getListings = async () =>
+    Array.from({ length: 12 }, (_, i) => ({ status: "approved", chain: "solana", address: `s${i}`, sym: `S${i}`, trendingRank: null }));
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["solana"], perChainMin: 5, perChainMax: 8 });
+    // rng at the bottom of the range → 5; at the top → 8. Both are legal
+    // targets, and that IS the feature: two chains on one board land on
+    // different counts.
+    await autoTrend.runOnce({ rng: () => 0 });
+    assert.strictEqual(calls.length, 5, `rolled the floor: ${calls.length}`);
+    calls.length = 0;
+    await autoTrend.runOnce({ rng: () => 0.999 });
+    assert.strictEqual(calls.length, 8, `rolled the ceiling: ${calls.length}`);
+  } finally {
+    api.getListings = realGet;
+    await autoTrend.reset();
+  }
+});
+
+test("a chain at or above the FLOOR is left alone — that is what keeps the counts different", async () => {
+  // Topping every chain up to a freshly rolled target on every cycle would
+  // converge on the maximum: nothing ever takes a slot away, so a chain would
+  // ratchet up to the highest number it ever rolled and stay there.
+  const realGet = api.getListings;
+  const now = Date.now();
+  const calls = [];
+  api.getListings = async () => [
+    ...Array.from({ length: 6 }, (_, i) => ({ status: "approved", chain: "solana", address: `f${i}`, trendingRank: i + 1, trendExp: now + 3.6e6 })),
+    { status: "approved", chain: "solana", address: "spare", trendingRank: null },
+  ];
+  api.bookTrending = async (_c, address) => (calls.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["solana"], perChainMin: 5, perChainMax: 8 });
+    await autoTrend.runOnce({ rng: () => 0.999 }); // would roll 8 if it rolled at all
+    assert.deepStrictEqual(calls, [], "6 ≥ the floor of 5, so nothing should have been promoted");
+  } finally {
+    api.getListings = realGet;
+    await autoTrend.reset();
+  }
+});
+
+test("the range cannot be inverted, and a legacy single target becomes the FLOOR", async () => {
+  const { loadJSONSync, saveJSON } = require("../src/helpers/persist");
+  void loadJSONSync;
+  // max under min is a range nothing can satisfy; the floor wins because it is
+  // the number set to keep the board from looking empty.
+  let c = await autoTrend.set({ perChainMin: 7, perChainMax: 3 });
+  assert.strictEqual(c.perChainMax, 7, "an inverted range must not survive");
+
+  // An install that predates the range has `perChain` stored — a STORED value
+  // beats a shipped default, so it becomes the floor rather than vanishing.
+  await saveJSON("autoTrend.json", { enabled: true, perChain: 4 });
+  c = autoTrend.get();
+  assert.strictEqual(c.perChainMin, 4, "the operator's stored target was thrown away");
+  assert.ok(c.perChainMax >= 4);
+  await autoTrend.reset();
+
+  // ⚠️ Number(null) is 0 — a finite zero that clamps to the FLOOR instead of
+  // falling back to the default. A fresh install came out with a per-chain
+  // minimum of zero, i.e. a board that never fills itself, and nothing errored.
+  await saveJSON("autoTrend.json", { enabled: true });
+  c = autoTrend.get();
+  assert.strictEqual(c.perChainMin, autoTrend.DEFAULTS.perChainMin, "a config with no target must use the DEFAULT, not zero");
+  await autoTrend.reset();
 });

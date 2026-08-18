@@ -27,7 +27,18 @@ const DEFAULTS = {
   // and left BSC, Ethereum and Base with one each — and Robinhood with none at
   // all. The board GROUPS by chain, so a chain with nothing featured renders as
   // nothing, and the operator sees a Solana board with three footnotes.
-  perChain: 5,
+  // A RANGE, and the target is rolled per chain. One fixed number made every
+  // chain publish exactly the same count, for ever — five rows, five rows, five
+  // rows — which reads as a generated list rather than a board. The operator's
+  // call: "min 5 max 8 harus random per chain".
+  //
+  // The FLOOR is what triggers a top-up; the target rolled for that top-up is
+  // anywhere in [min, max]. Re-rolling on every cycle regardless would converge
+  // on max and delete the randomness — nothing ever takes a slot away, only
+  // expiry lowers a count, so a chain would ratchet up to the highest number it
+  // ever rolled and stay there.
+  perChainMin: 5,
+  perChainMax: 8,
   // A "top gainers" board that carries a token down 99.94% at a $1,648 market
   // cap is not a top-gainers board. Ranking alone could not prevent that: with
   // five slots and five candidates, sorting still promotes the worst of them.
@@ -85,8 +96,9 @@ const HARD = {
   hoursMax: 18,
   gapMin: 5,
   gapMax: 1440,
-  perChainMin: 0,   // 0 = leave this chain to paid slots only
-  perChainMax: 20,
+  // Bounds on the SETTING (not the setting itself, which is perChainMin/Max).
+  perChainFloor: 0, // 0 = leave this chain to paid slots only
+  perChainCeil: 20,
   fillMinMcapMin: 100_000,
   fillMinMcapMax: 5_000_000_000,
   fillMinLiqMin: 0,
@@ -118,7 +130,28 @@ function get() {
   g.minGapMin = clampInt(c.minGapMin, HARD.gapMin, HARD.gapMax, DEFAULTS.minGapMin);
   g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, HARD.gapMax, DEFAULTS.maxGapMin);
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
-  g.perChain = clampInt(c.perChain, HARD.perChainMin, HARD.perChainMax, DEFAULTS.perChain);
+  // MIGRATION: an install that predates the range has `perChain` stored, and a
+  // stored value beats a shipped default — so it becomes the FLOOR rather than
+  // being silently replaced. The ceiling then defaults to the shipped 8, or to
+  // the floor if the operator had deliberately set a higher number.
+  // ⚠️ `undefined`, never `null`: clampInt does Number(v), and Number(null) is 0
+  // — a finite 0, which clamps to the FLOOR instead of falling back to the
+  // default. A fresh install came out with a per-chain floor of zero, i.e. a
+  // board that never fills itself, and nothing errored. Same trap the launchpad
+  // env reader hit with Number('').
+  const legacy = Number.isFinite(Number(c.perChain)) ? Number(c.perChain) : undefined;
+  g.perChainMin = clampInt(
+    c.perChainMin != null ? c.perChainMin : legacy,   // both absent → undefined → the default
+    HARD.perChainFloor, HARD.perChainCeil, DEFAULTS.perChainMin,
+  );
+  g.perChainMax = clampInt(
+    c.perChainMax != null ? c.perChainMax : Math.max(g.perChainMin, DEFAULTS.perChainMax),
+    HARD.perChainFloor, HARD.perChainCeil, DEFAULTS.perChainMax,
+  );
+  // A max under the min is a range that can never be satisfied; the floor wins,
+  // because it is the number the operator set to keep the board from looking
+  // empty.
+  if (g.perChainMax < g.perChainMin) g.perChainMax = g.perChainMin;
   g.minGainPct = clampInt(c.minGainPct, ...HARD.minGainPct, DEFAULTS.minGainPct);
   g.fillFromMarket = c.fillFromMarket !== false;
   g.fillMinMcap = clampInt(c.fillMinMcap, HARD.fillMinMcapMin, HARD.fillMinMcapMax, DEFAULTS.fillMinMcap);
@@ -157,7 +190,7 @@ async function set(patch = {}) {
   // that reverts on the next read — the toggle would report ON and the loop
   // would keep the old value.
   if (typeof patch.fillFromMarket === "boolean") next.fillFromMarket = patch.fillFromMarket;
-  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChain", "minGainPct", "fillMinMcap", "fillMinLiq", "fillMaxPerCycle", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
+  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChainMin", "perChainMax", "minGainPct", "fillMinMcap", "fillMinLiq", "fillMaxPerCycle", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
     if (patch[k] != null) next[k] = patch[k];
   }
   if (Array.isArray(patch.chains)) next.chains = patch.chains;
@@ -441,10 +474,17 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
 
   // Each chain is topped up against ITS OWN count. Doing this globally meant the
   // network with the most listings won every shuffle and the rest of the board
-  // stayed empty — see DEFAULTS.perChain.
+  // stayed empty — see DEFAULTS.perChainMin.
+  // Each chain is topped up to ITS OWN rolled target. A chain still AT or above
+  // the floor is left alone — that is what keeps the counts different from each
+  // other instead of every chain sitting on the same number.
+  const rollTarget = () => cfg.perChainMin + Math.floor(rng() * (cfg.perChainMax - cfg.perChainMin + 1));
   const plan = chain
     ? [{ id: chain, need: count, forced: true }]
-    : cfg.chains.map((id) => ({ id, need: cfg.perChain - listings.filter((r) => isFeatured(r) && on(r, id)).length, forced: false }));
+    : cfg.chains.map((id) => {
+        const have = listings.filter((r) => isFeatured(r) && on(r, id)).length;
+        return { id, need: have >= cfg.perChainMin ? 0 : rollTarget() - have, forced: false };
+      });
 
   let promoted = 0;
   // ONE public post per run, across every chain — not one per chain. A cold

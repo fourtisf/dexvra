@@ -1133,6 +1133,13 @@ function pthKb() {
 // the operator can move the bar without a redeploy; a project that ran
 // /setwhale in its own group still overrides it there.
 const usdLabel = (n) => "$" + Number(n).toLocaleString("en-US");
+/** "5–8", or just "5" when the operator pinned both ends to one number. */
+const tgtRange = (c) => (c.perChainMax > c.perChainMin ? `${c.perChainMin}–${c.perChainMax}` : `${c.perChainMin}`);
+/** The middle of the range — for anything that estimates throughput, where the
+ *  two ends would give two different answers to one question. */
+const avgTarget = (c) => (c.perChainMin + c.perChainMax) / 2;
+/** How many cycles the market filler needs to close a full-width gap. */
+const fillCycles = (c) => Math.max(1, Math.ceil(c.perChainMax / Math.max(1, c.fillMaxPerCycle)));
 function wthText() {
   const w = whaleConfig.get();
   const d = whaleConfig.defaults();
@@ -1483,7 +1490,7 @@ function atBoardLines(c, counts = _atCounts) {
     const spare = (counts[id] && counts[id].eligible) || 0;
     let mark = "✅";
     let note = "";
-    if (n < c.perChain) {
+    if (n < c.perChainMin) {
       if (spare > 0) {
         mark = "⏳";
         note = ` · ${spare} ready to promote`;
@@ -1492,7 +1499,9 @@ function atBoardLines(c, counts = _atCounts) {
         note = ` · <i>no listings left on this chain</i>`;
       }
     }
-    rows.push(`${mark} ${glyph} <b>${label}</b> — ${n}/${c.perChain}${note}`);
+    // "5/5–8", not "5/5": the target is a RANGE rolled per chain, and printing
+    // one end of it would make a chain sitting at 7 look over target.
+    rows.push(`${mark} ${glyph} <b>${label}</b> — ${n}/${tgtRange(c)}${note}`);
   }
   return rows.join("\n");
 }
@@ -1502,7 +1511,7 @@ function atBoardLines(c, counts = _atCounts) {
  *  make that impossible — a daily cap below the churn, or a gap so wide the day
  *  runs out. Silence there looks exactly like a broken announcer. */
 function atThroughputNote(c) {
-  const churn = Math.round((c.perChain * c.chains.length * 24) / ((c.minHours + c.maxHours) / 2));
+  const churn = Math.round((avgTarget(c) * c.chains.length * 24) / ((c.minHours + c.maxHours) / 2));
   const byGap = Math.floor((24 * 60) / Math.max(1, c.announceGapMin));
   const ceiling = Math.min(c.announcePerDay, byGap);
   if (ceiling >= churn) return `\n<i>≈${churn} promotions a day, and up to ${ceiling} can post — every one gets through.</i>`;
@@ -1515,7 +1524,7 @@ function atThroughputNote(c) {
 
 function atText() {
   const c = autoTrend.get();
-  const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChain);
+  const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChainMin);
   const blocked = short.filter((id) => !((_atCounts[id] && _atCounts[id].eligible) || 0));
   return (
     `🤖 <b>Auto Trending</b> — ${c.enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
@@ -1523,7 +1532,7 @@ function atText() {
     `movers among listed tokens, any package — for a random ${c.minHours}–${c.maxHours}h, every ` +
     `${c.minGapMin}–${c.maxGapMin} min. Only tokens up <b>${c.minGainPct}%</b> or more are picked, so a ` +
     `top-gainers board never carries a token that is down. Paid tiers still sort above auto ones.\n\n` +
-    `📊 <b>Board right now</b> — target <b>${c.perChain}</b> per chain\n` +
+    `📊 <b>Board right now</b> — target <b>${tgtRange(c)}</b> per chain, rolled at random\n` +
     atBoardLines(c) +
     `\n\n` +
     (short.length === 0
@@ -1552,9 +1561,9 @@ function atText() {
         // is only how fast the gap is closed, so it is stated as a speed and
         // then worked out loud against the live target.
         `<i>🧲 <b>${c.fillMaxPerCycle} new listings per chain per cycle</b> — a speed, not a limit on the board. ` +
-        `The board still holds <b>${c.perChain}</b> per chain (🎯 above); a chain that is ${c.perChain} short ` +
-        `reaches it in ${Math.max(1, Math.ceil(c.perChain / Math.max(1, c.fillMaxPerCycle)))} cycle(s), ` +
-        `i.e. about ${c.minGapMin}–${Math.max(1, Math.ceil(c.perChain / Math.max(1, c.fillMaxPerCycle))) * c.maxGapMin} min.</i>`
+        `The board still holds <b>${tgtRange(c)}</b> per chain (🎯 above); a chain that is ${c.perChainMax} short ` +
+        `reaches it in ${fillCycles(c)} cycle(s), ` +
+        `i.e. about ${c.minGapMin}–${fillCycles(c) * c.maxGapMin} min.</i>`
       : ` — a chain with no spare listings stays short until somebody lists tokens on it.`) +
     `\n\n` +
     `⚡ <b>Run now</b> — tap a chain to place its best 24h mover there immediately, even while this is off.`
@@ -1569,7 +1578,8 @@ function atKb() {
   // one that becomes "Mi…".
   return Markup.inlineKeyboard([
     [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
-    [cb("➖", "attgt:-1"), cb(`🎯 ${c.perChain} per chain`, "atnop"), cb("➕", "attgt:1")],
+    [cb("➖", "attgt:-1"), cb(`🎯 min ${c.perChainMin}/chain`, "atnop"), cb("➕", "attgt:1")],
+    [cb("➖", "attgx:-1"), cb(`🎯 max ${c.perChainMax}/chain`, "atnop"), cb("➕", "attgx:1")],
     [cb("➖", "atgain:-5"), cb(`📈 min +${c.minGainPct}% 24h`, "atnop"), cb("➕", "atgain:5")],
     [cb(`🧲 Fill from market: ${c.fillFromMarket ? "ON" : "OFF"}`, "atfill")],
     ...(c.fillFromMarket
@@ -1753,7 +1763,7 @@ function atChainRows(cb, counts = _atCounts) {
     const n = (counts[id] && counts[id].featured) || 0;
     // "5/5" answers the question the button sits next to. A bare "(5)" does not
     // — and a fraction on a chain with no target would invent one.
-    const label = withTarget ? `${n}/${c.perChain}` : n ? `(${n})` : "";
+    const label = withTarget ? `${n}/${tgtRange(c)}` : n ? `(${n})` : "";
     return cb(`⚡ ${trendingBoard.displayEmoji(m.logo)} ${m.label}${label ? " " + label : ""}`, `atrun:${id}`);
   };
   // The auto-filled chains first, in the order they are configured — those are
@@ -3319,7 +3329,8 @@ function build() {
   bot.action(/^athmax:(-?\d+)$/, atStep("maxHours", "Max hours"));
   bot.action(/^atgmin:(-?\d+)$/, atStep("minGapMin", "Min gap"));
   bot.action(/^atgmax:(-?\d+)$/, atStep("maxGapMin", "Max gap"));
-  bot.action(/^attgt:(-?\d+)$/, atStep("perChain", "Per-chain target"));
+  bot.action(/^attgt:(-?\d+)$/, atStep("perChainMin", "Per-chain minimum"));
+  bot.action(/^attgx:(-?\d+)$/, atStep("perChainMax", "Per-chain maximum"));
   bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
   bot.action(/^atagap:(-?\d+)$/, atStep("announceGapMin", "Announce gap"));
   bot.action(/^atgain:(-?\d+)$/, atStep("minGainPct", "Min 24h gain"));

@@ -501,6 +501,38 @@ through the GramJS premium account (`node scripts/gramjs-login.js`, and that
 account must actually have Telegram Premium). 💎 Premium status names which of
 those is missing.
 
+## The per-chain trending target is a RANGE, rolled
+
+"min 5 max 8 harus random per chain". One fixed `perChain: 5` made every chain
+publish exactly the same count for ever — five rows, five rows, five rows —
+which reads as a generated list rather than a board.
+
+- **The FLOOR triggers a top-up; the TARGET for that top-up is rolled** in
+  [`perChainMin`, `perChainMax`]. A chain at or above the floor is left alone.
+- ⚠️ **Re-rolling on every cycle regardless would converge on the maximum.**
+  Nothing ever takes a slot away — only expiry lowers a count — so a chain would
+  ratchet up to the highest number it ever rolled and stay there, and the
+  randomness would be gone within a day. Leaving a chain alone above the floor
+  is what keeps two chains on one board sitting at different counts.
+- **A stored `perChain` becomes the FLOOR**, never dropped: a stored value beats
+  a shipped default, and an operator who set 3 deliberately must not wake up to
+  8. The ceiling then defaults to the shipped 8, or to the floor if that is
+  higher.
+- ⚠️ **`Number(null)` is 0, and 0 is FINITE**, so `clampInt(null, 0, 20, 5)`
+  answers 0 rather than 5 — a fresh install came out with a per-chain floor of
+  zero, i.e. a board that never fills itself, and nothing errored. The absent
+  case is `undefined`. Third time this repo has been bitten by a falsy-but-valid
+  number (`Number('')` in the launchpad env reader, `NaN` in `clampNum`).
+- **An inverted range (max < min) resolves to the floor**, because the floor is
+  the number set to keep the board from looking empty.
+- **Every count on the panel is printed against the RANGE** (`7/5–8`), or a
+  chain sitting at 7 reads as over target; a pinned range (min = max) prints as
+  one number.
+
+```bash
+cd bot && node scripts/run-tests.js test/autoTrend.test.js test/autoTrendPanel.test.js   # 53 tests
+```
+
 ## A board that could only ever be as full as the chain was listed
 
 `ETHEREUM - Trending` published three rows and `BASE - Trending` two, against a

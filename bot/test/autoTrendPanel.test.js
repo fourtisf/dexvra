@@ -32,7 +32,7 @@ async function panel(counts = COUNTS, cfg = {}) {
   // fillFromMarket is stated EXPLICITLY, not inherited: it is persisted, so one
   // test turning it off used to leak into every test after it — and the symptom
   // (a panel reading "cannot be filled") looks exactly like a real regression.
-  await autoTrend.set({ enabled: true, perChain: 5, fillFromMarket: true, ...cfg });
+  await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 8, fillFromMarket: true, ...cfg });
   admin._test.setAtCounts(counts);
   return { text: plain(admin._test.atText()), kb: rows(admin._test.atKb()) };
 }
@@ -55,7 +55,7 @@ test("no button label is long enough for Telegram to truncate", () => {
 test("every stepper says what it changes, on its own row", async () => {
   const { kb } = await panel();
   const flat = kb.map((r) => r.join(" "));
-  for (const setting of ["🎯 5 per chain", "⏱ Min 3h", "⏱ Max 18h", "🔁 Every 20m", "🔁 to 120m"]) {
+  for (const setting of ["🎯 min 5/chain", "🎯 max 8/chain", "⏱ Min 3h", "⏱ Max 18h", "🔁 Every 20m", "🔁 to 120m"]) {
     const row = kb.find((r) => r.includes(setting));
     assert.ok(row, `no row for "${setting}" — labels: ${flat.join(" / ")}`);
     assert.deepStrictEqual(row, ["➖", setting, "➕"], `"${setting}" must sit between its own two steppers`);
@@ -65,10 +65,12 @@ test("every stepper says what it changes, on its own row", async () => {
 test("the panel shows the BOARD, not just the settings", async () => {
   // The operator's question is "is it working", and the config cannot answer it.
   const { text } = await panel();
-  assert.match(text, /📊 Board right now — target 5 per chain/);
-  assert.match(text, /✅ .*Solana — 5\/5/, text);
-  assert.match(text, /⏳ .*BSC — 1\/5 · 4 ready to promote/, text);
-  assert.match(text, /🔴 .*Robinhood — 0\/5 · no listings left on this chain/, text);
+  // The target is a RANGE rolled per chain, so every count is printed against
+  // the range: "7/5–8" must not read as over target.
+  assert.match(text, /📊 Board right now — target 5–8 per chain, rolled at random/);
+  assert.match(text, /✅ .*Solana — 5\/5–8/, text);
+  assert.match(text, /⏳ .*BSC — 1\/5–8 · 4 ready to promote/, text);
+  assert.match(text, /🔴 .*Robinhood — 0\/5–8 · no listings left on this chain/, text);
 });
 
 test("a chain that cannot be filled is distinguished from one that just has not been yet", async () => {
@@ -109,7 +111,7 @@ test("the Run now buttons lead with the chains the panel is about", async () => 
   const cfg = autoTrend.get();
   for (let i = 0; i < cfg.chains.length; i++) {
     assert.ok(runs[i], `missing a Run now button for ${cfg.chains[i]}`);
-    assert.match(runs[i], /\d\/5$/, `an auto-filled chain must show its progress: ${runs[i]}`);
+    assert.match(runs[i], /\d\/5–8$/, `an auto-filled chain must show its progress against the RANGE: ${runs[i]}`);
   }
 });
 
@@ -138,12 +140,12 @@ test("the board can be re-read without reopening the menu", async () => {
 });
 
 test("changing the per-chain target moves every number on the panel together", async () => {
-  const { text, kb } = await panel(COUNTS, { perChain: 6 });
-  assert.match(text, /target 6 per chain/);
+  const { text, kb } = await panel(COUNTS, { perChainMin: 6, perChainMax: 6 });
+  assert.match(text, /target 6 per chain/, "a pinned range prints as one number, not '6–6'");
   assert.match(text, /Solana — 5\/6/, "at 5 it is no longer at target");
-  assert.ok(kb.flat().includes("🎯 6 per chain"));
+  assert.ok(kb.flat().includes("🎯 min 6/chain"));
   assert.ok(kb.flat().some((t) => t.includes("Solana 5/6")), kb.flat().join(" | "));
-  await autoTrend.set({ perChain: 5 });
+  await autoTrend.set({ perChainMin: 5, perChainMax: 8 });
 });
 
 test("the panel says how tokens are chosen, because that is the product claim", async () => {
@@ -167,7 +169,7 @@ test("a chain with genuinely nothing listed still reads as nothing listed", asyn
     base: { featured: 5, eligible: 1, blocked: 0 },
     robinhood: { featured: 0, eligible: 0, blocked: 0 },
   });
-  assert.match(text, /🔴 .*Robinhood — 0\/5 · no listings left on this chain/, text);
+  assert.match(text, /🔴 .*Robinhood — 0\/5–8 · no listings left on this chain/, text);
   assert.match(text, /biggest tokens|needs more tokens listed there/, text);
   assert.ok(!text.includes("Xpress"), "nothing here is blocked by a tier rule");
 });
@@ -176,15 +178,15 @@ test("the panel says whether the settings can actually deliver the policy", asyn
   // "every trending token gets its post" is the policy, and two numbers can
   // quietly make it impossible — a daily cap below the churn, or a gap so wide
   // the day runs out. Both look exactly like a broken announcer from outside.
-  const ok = await panel(COUNTS, { announce: true, perChain: 5, announcePerDay: 100, announceGapMin: 15 });
+  const ok = await panel(COUNTS, { announce: true, perChainMin: 5, announcePerDay: 100, announceGapMin: 15 });
   assert.match(ok.text, /every one gets through/, ok.text);
 
-  const capped = await panel(COUNTS, { announce: true, perChain: 5, announcePerDay: 10, announceGapMin: 15 });
+  const capped = await panel(COUNTS, { announce: true, perChainMin: 5, announcePerDay: 10, announceGapMin: 15 });
   assert.match(capped.text, /⚠️.*only 10 can post/s, capped.text);
   assert.match(capped.text, /the 10\/day cap is the limit/, "it must name WHICH number is the bottleneck");
   assert.match(capped.text, /their slots expire first/, "…and what that costs");
 
-  const slow = await panel(COUNTS, { announce: true, perChain: 5, announcePerDay: 200, announceGapMin: 120 });
+  const slow = await panel(COUNTS, { announce: true, perChainMin: 5, announcePerDay: 200, announceGapMin: 120 });
   assert.match(slow.text, /the 120 min gap is the limit/, slow.text);
   await autoTrend.set({ announcePerDay: 100, announceGapMin: 15 });
 });
@@ -206,7 +208,7 @@ test("the fill number reads as a SPEED, not as a cap on the board", async () => 
   // No — the board holds `perChain`; the fill number is only how fast a gap is
   // closed. A label that has to be explained is the same defect as a status
   // line that has to be explained.
-  const { text, kb } = await panel(COUNTS, { perChain: 5, fillMaxPerCycle: 3 });
+  const { text, kb } = await panel(COUNTS, { perChainMin: 5, perChainMax: 5, fillMaxPerCycle: 3 });
   assert.match(text, /per chain per cycle/, "the unit is missing, so the number reads as a total");
   assert.match(text, /a speed, not a limit on the board/);
   assert.match(text, /board still holds <?b?>?5/, "it must restate what the board actually holds");
