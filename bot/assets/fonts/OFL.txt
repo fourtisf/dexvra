@@ -1,5 +1,10 @@
 Copyright (c) 2020, The Sora Project Authors (https://github.com/SoraFonts/Sora)
 Copyright (c) Red Hat, Inc. (Liberation Sans)
+Copyright (c) 2022, The Noto Project Authors (https://github.com/notofonts)
+  — Noto Sans SC / KR / Thai / Arabic / Devanagari / Hebrew, Bold, from Google Fonts.
+    These are the COVERAGE faces: they draw the Chinese, Japanese, Korean, Thai,
+    Arabic, Devanagari and Hebrew characters the Latin brand faces above have no
+    glyph for. Bundled rather than apt-installed on purpose — see canvasKit.js.
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

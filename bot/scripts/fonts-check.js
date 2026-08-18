@@ -92,6 +92,15 @@ if (!gaps.length) {
   // Say what the USER loses, not which file is absent — the rule the upstream
   // probes already follow.
   console.log(`\n${R}Names using ${gaps.join(', ')} draw boxes on every banner they appear on.${X}`);
+  // A MISSING BUNDLED FACE IS A DIFFERENT PROBLEM, and it gets a different
+  // sentence. Every text face ships in bot/assets/fonts and arrives with the
+  // deploy, so one that is absent means the checkout is incomplete — apt would
+  // paper over it and leave the repo still wrong.
+  const lost = (kit.BUNDLED || []).filter((f) => !fs.existsSync(path.join(kit.FONTS_DIR, f)));
+  if (lost.length) {
+    console.log(`\n${Y}bot/assets/fonts is missing ${lost.join(', ')} — these are git-tracked and ship with the deploy.${X}`);
+    console.log(`  ${G}cd /opt/dexvra && git pull origin main${X}   ${D}(this checkout is incomplete)${X}`);
+  }
   if (pkgs.length) {
     console.log('\nFix it on this box:');
     console.log(`  ${G}apt-get install -y ${pkgs.join(' ')}${X}`);

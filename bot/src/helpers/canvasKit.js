@@ -51,12 +51,25 @@ const F = {
  * repo's own assets win (an operator can drop any font in and it is used), then
  * the standard system locations. `fonts-noto-cjk` puts a .ttc there, which
  * @napi-rs/canvas registers happily.
+ *
+ * AND THE FACE IS BUNDLED AND GIT-TRACKED (2026-08-18). It was not, and that is
+ * why "$老昊" went out as "$??" months after this chain was built: the fix
+ * shipped as an INSTRUCTION — `apt-get install fonts-noto-cjk` — and an
+ * instruction is one forgotten SSH session away from being no fix at all. The
+ * server deploys with `git pull`, so a tracked file is the only kind of fix that
+ * cannot be skipped, and the failure it prevents is silent: a paid listing
+ * publishes with boxes in it and nothing anywhere errors. `BUNDLED` below is
+ * what ships; the system paths stay because a box that has a better face should
+ * still be able to offer it, and because an operator dropping a file into
+ * assets/fonts must keep winning over both.
  */
 const CJK_CANDIDATES = [
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJK-Bold.ttc"),
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJK-Regular.ttc"),
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Bold.otf"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Bold.ttf"),      // ← the BUNDLED face
   path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Regular.otf"),
+  path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansSC-Regular.ttf"),
   "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
   "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -96,10 +109,31 @@ const PKG_FOR = {
 };
 /** The packages that would cover a given set of missing scripts, deduplicated. */
 const packagesFor = (scripts) => [...new Set(scripts.map((s) => PKG_FOR[s]).filter(Boolean))];
-// Everything else a ticker might be written in. These ship in fonts-noto-core,
-// which is NOT a prerequisite — the chain simply gains whichever of them exist.
-// Listed here rather than added later so that installing the package is the
-// whole fix, with no deploy: the same contract the launchpad hosts have.
+/**
+ * The coverage faces this REPO ships, so a deploy is the whole fix.
+ *
+ * Emoji is deliberately not here: NotoColorEmoji is a ~10MB colour-bitmap face
+ * whose whole job is already done by a package every distro has, and it is the
+ * one script where "install it" has actually been carried out. Every TEXT face a
+ * ticker can be written in ships, because those are the ones that reached the
+ * channel as boxes.
+ *
+ * If one of these is absent the checkout is incomplete — which is a completely
+ * different instruction from "install a package", and printing the wrong one
+ * sends an operator to apt for a problem `git pull` fixes.
+ */
+const BUNDLED = [
+  "NotoSansSC-Bold.ttf",          // Chinese + Japanese kana
+  "NotoSansKR-Bold.ttf",          // Korean hangul — SC has none, measured
+  "NotoSansThai-Bold.ttf",
+  "NotoSansArabic-Bold.ttf",
+  "NotoSansDevanagari-Bold.ttf",
+  "NotoSansHebrew-Bold.ttf",
+];
+// Everything else a ticker might be written in. Every one of these is BUNDLED
+// (see `BUNDLED`), so the chain has them on a bare box; fonts-noto-core is now a
+// second source rather than a prerequisite, and an operator's own file in
+// assets/ still outranks both.
 //
 // BOLD FIRST, then Regular. The faces these sit beside are the 700/800 display
 // weights, and a heavy Latin title with a regular-weight Thai word next to it
@@ -112,6 +146,14 @@ const script = (family, bold, reg, extra = []) => [family, [
   asset(bold), asset(reg), ...sysNoto(bold), ...sysNoto(reg), ...extra,
 ]];
 const EXTRA_CANDIDATES = [
+  // KOREAN IS ITS OWN FACE, and it must sit AFTER the Han one.
+  //
+  // The bundled CJK face is Noto Sans SC: Han + kana, and no hangul — measured,
+  // not assumed (`한글` came back uncovered with it registered). A Korean face
+  // carries hanja of its own, so putting it first would draw a Chinese token in
+  // Korean glyph shapes; behind the Han face it is reached only for hangul,
+  // which is exactly the per-glyph resolution this whole chain is built on.
+  script("DexCover Korean", "NotoSansKR-Bold.ttf", "NotoSansKR-Regular.ttf"),
   script("DexCover Thai", "NotoSansThai-Bold.ttf", "NotoSansThai-Regular.ttf",
     ["/usr/share/fonts/truetype/tlwg/Loma-Bold.ttf", "/usr/share/fonts/truetype/noto/NotoLoopedThai-Bold.ttf"]),
   // Arabic is CURSIVE and right-to-left: the letters change shape by position and
@@ -210,7 +252,13 @@ function canvasLib() {
       // The PACKAGE, computed from what is actually missing. Naming the fix from
       // memory is how the emoji package got left out of the install line.
       const pkgs = packagesFor(gaps);
+      // A missing BUNDLED face is an incomplete checkout, not a missing package.
+      // Both fix the glyphs; only one of them is what actually happened, and
+      // sending an operator to apt for a file `git pull` restores is how twenty
+      // minutes go missing.
+      const lost = BUNDLED.filter((f) => !fss.existsSync(asset(f)));
       log.warn(`[banner] no font covers ${gaps.join(", ")} — a token named in one of those draws boxes on every card. `
+        + (lost.length ? `bot/assets/fonts is missing ${lost.join(", ")} — this checkout is incomplete, run git pull. ` : "")
         + (pkgs.length ? `Install: apt-get install -y ${pkgs.join(" ")}. ` : "")
         + "Check with: npm run fonts:check");
     }
@@ -591,6 +639,8 @@ module.exports = {
   available: () => !!canvasLib(),
   coverage,
   packagesFor,
+  BUNDLED,
+  FONTS_DIR: path.join(__dirname, "..", "..", "assets", "fonts"),
   unrenderable,
   warnBoxes,
   _tofuCache,   // test seam: coverage depends on the box, so a test must be able to clear it

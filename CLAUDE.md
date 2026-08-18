@@ -251,11 +251,13 @@ added.
   chain, `牛来` measures exactly what the CJK face alone measures and `AB`
   measures exactly what Sora alone measures.
 - **The chain is appended to EVERY entry in `F`**, so no renderer opts in. One
-  that had to would forget on the card that needed it.
+  that had to would forget on the card that needed it — and one that draws with
+  families of its own is not covered at all, which is exactly what the animated
+  overlay turned out to be doing (see below).
 - **Discovered across a candidate LIST**, repo `assets/fonts/` first, then the
-  system paths — same contract as the launchpad hosts. Installing a font package
-  is the whole fix, with no deploy; `EXTRA_CANDIDATES` (Thai, Arabic, Devanagari,
-  Hebrew) is listed up front for exactly that reason.
+  system paths — same contract as the launchpad hosts. The faces are BUNDLED, so
+  a deploy carries them; a font package is a second source, and an operator's own
+  file in `assets/` outranks both.
 - **BOLD before Regular, per script.** These faces sit beside the 700/800 display
   weights; a regular-weight Thai word next to a heavy Latin one reads as two
   titles — the mixed-face defect one level down.
@@ -312,23 +314,79 @@ Whether a glyph renders is a property of the fonts on the server, not of the
 code — same as `raid:check` and `launchpads:check` — so it has to be measured on
 the box.
 
-**Config a fix depends on:** the fonts. **Three packages, and the third is the
-one that gets forgotten** —
-
-```bash
-apt-get install -y fonts-noto-cjk fonts-noto-core fonts-noto-color-emoji
-```
-
-`fonts-noto-cjk` covers Chinese/Japanese/Korean, `fonts-noto-core` adds Thai,
-Arabic, Devanagari and Hebrew, and **emoji lives in its own package that neither
-of the other two pulls in**. An install line written from memory left it out, the
-operator ran exactly what was asked, and the box came back with every text script
-green and `✗ Emoji` — on a market where 🚀 in a ticker is routine.
+**Config a fix depends on:** emoji, and nothing else — every TEXT face is
+bundled now, see the next section. `fonts-noto-color-emoji` is still worth
+installing (🚀 in a ticker is routine), and **it is its own package that neither
+`fonts-noto-cjk` nor `fonts-noto-core` pulls in**: an install line written from
+memory left it out, the operator ran exactly what was asked, and the box came
+back with every text script green and `✗ Emoji`.
 
 So the mapping is in code (`PKG_FOR` / `packagesFor()`), and both the boot
 warning and `fonts:check` print the exact `apt-get` line for whatever is actually
 missing. "1 script(s) uncovered" is a diagnostic; a package name is an
 instruction, and it cannot be recalled wrongly if it is computed.
+
+### It shipped as an INSTRUCTION, and the instruction never ran
+
+Six days later, a listing went out on X as `$??` over `??` — the same token
+class (`老昊`), the same boxes, this time on the **animated banner**, which is
+the artwork most of the channel actually sees. Everything above was deployed.
+Two causes, and the second is the one that matters.
+
+**1. `apt-get install` is not a fix, it is a request.** The chain looked in
+`assets/fonts/` first and then at the system paths, and the box had neither: the
+package was never installed, and nothing about that is visible from Telegram —
+the boot warning goes to pm2's log, and a banner with boxes in it renders
+successfully. So the six coverage faces are **bundled and git-tracked** now
+(`BUNDLED` in `canvasKit.js`, ~17MB, SIL OFL). The server deploys with
+`git pull`; a tracked file is the only kind of fix that cannot be skipped. The
+system paths stay, and an operator's own file in `assets/` still outranks both.
+- **Noto Sans SC has no hangul** — measured, not assumed — so Korean is a second
+  file, registered AFTER the Han face. Ahead of it, a Chinese token would be
+  drawn in Korean glyph shapes.
+- **Emoji is deliberately NOT bundled**: a ~10MB colour-bitmap face for the one
+  script whose package is reliably present. It stays the `apt-get` line above.
+- A missing bundled face and a missing package are **different instructions**.
+  The warning and `fonts:check` now say *"this checkout is incomplete, run git
+  pull"* for the first, because sending an operator to apt for a file `git pull`
+  restores is how twenty minutes go missing.
+
+**2. ⚠️ The overlay renderer was OUTSIDE the chain, not last in it.**
+`bannerTemplate.js` — the one function every animated overlay goes through,
+the pump alert included — registered Sora-800/600/500 under three private
+families of its own (`TplBold` / `TplSemi` / `TplReg`) and drew with
+`TplBold, sans-serif`. Latin-only. **So even with the font installed, the GIF
+would still have shipped boxes**, which is exactly what the first version of
+this fix would have delivered: measured, with a CJK face registered
+process-wide, `老昊` is 150px in `TplBold` (notdef boxes) and 200px in `F.x`.
+
+And it was SILENT, which is the general lesson: `warnBoxes()`/`unrenderable()`
+measure against `F.r`, so **the guard was asking about a font stack that
+renderer did not use** and answered "no missing glyphs" over a card that was
+drawing them. A guard is only honest while every renderer draws through the
+stack the guard measures. One registration, in `canvasKit`; `compose()` draws
+with `F.x` / `F.s` / `F.m`, and the Latin output is byte-identical across all
+four kinds (verified by hashing the PNGs before and after).
+
+- `bannerFonts.test.js` gained the guard that would have caught it, and it
+  **runs the renderers** rather than reading them: it wraps the 2D context's
+  `font` setter, calls `compose()` and `renderListingBanner()`, and asserts every
+  font string they actually set carries every coverage family. A source scan
+  passed on the broken revision — the two new renderer tests fail on it, and the
+  two bundling tests fail if the fonts are moved out of `assets/`.
+- Verified by LOOKING at the output, not only by measuring: the real GIF→MP4
+  path (`composeOntoClip` + ffmpeg) renders `$老昊` / `老昊 Finance` on the real
+  artwork, and the still cards render `$한글토큰` and `$ไทยบาท` (stacked vowels
+  intact, no clipping).
+- `tradebot/pnlImage.js` needed nothing: it draws through this same module,
+  which is the whole reason that rule exists.
+
+```bash
+cd bot && npm run fonts:check                                    # now green on a bare box
+cd bot && node scripts/run-tests.js test/bannerFonts.test.js     # 22 tests
+```
+
+**Config a fix depends on:** nothing. `git pull` + restart carries the glyphs.
 
 ## A Top 3 that was not the top of the Top 5
 
