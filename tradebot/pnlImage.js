@@ -313,23 +313,13 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   } else {
     // NO LOGO IS THE COMMON CASE for a launch this bot snipes, so the
     // fallback is the design and not an apology — and it is the DEXVRA MARK
-    // ITSELF, the owner's call ("kalo project ga punya logo pake logo dexvra
-    // sendiri"): the real badge from drawBrandMark, large, with the ticker
-    // set small beneath it.
+    // ITSELF, alone and centred, the owner's call ("kalo project ga punya
+    // logo pake logo dexvra sendiri", then "name ticker di logo hapus aja").
+    // The token's identity lives in the $TICKER headline, not on the coin.
     // ⚠️ drawBrandMark's (x,y) is the TOP-LEFT of a 48-unit box, not the
     // centre — the same contract that already cost drawGem half a diameter.
-    const MS = 168;
-    try { K.drawBrandMark(ctx, cx - MS / 2, cy - 22 - MS / 2, MS); } catch (_) {}
-    const mono = String(p.sym || '?').replace(/[^A-Za-z0-9]/g, '').toUpperCase() || '?';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = K.INK;
-    let mt = K.fitText(ctx, mono, 200, { weight: 800, size: 32, min: 20, family: K.F.x });
-    if (mt.endsWith('…')) mt = K.fitText(ctx, mono[0], 200, { weight: 800, size: 32, min: 20, family: K.F.x });
-    ctx.save();
-    ctx.shadowColor = K.hexA('#000000', 0.6);
-    ctx.shadowBlur = 14;
-    ctx.fillText(mt, cx, cy + 108);
-    ctx.restore();
+    const MS = 176;
+    try { K.drawBrandMark(ctx, cx - MS / 2, cy - MS / 2, MS); } catch (_) {}
   }
   // Gloss — a specular wash across the upper-left, over logo and gem alike, so
   // either reads as one struck coin rather than a picture in a circle.
