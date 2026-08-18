@@ -1531,8 +1531,8 @@ function atText() {
       : blocked.length
         ? c.fillFromMarket
           ? `🧲 <i>${blocked.length} chain(s) have no spare listings — the next cycle lists that chain's ` +
-            `biggest tokens (market cap ≥ ${fmtCap(c.fillMinMcap)}) to fill them, up to ` +
-            `${c.fillMaxPerCycle} per chain.</i>`
+            `biggest tokens (market cap ≥ ${fmtCap(c.fillMinMcap)}) to fill them, ` +
+            `${c.fillMaxPerCycle} per chain <b>each cycle</b> until it is at target.</i>`
           : `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings, and ` +
             `<b>🧲 Fill from market</b> is off. Turn it on, or list tokens there yourself.</i>`
         : `⏳ <i>${short.length} chain(s) below target; the next cycle tops them up. ` +
@@ -1546,9 +1546,15 @@ function atText() {
     `🧲 <b>Fill from market:</b> <b>${c.fillFromMarket ? "🟢 ON" : "🔴 OFF"}</b>` +
     (c.fillFromMarket
       ? ` — when a chain runs out of listings to promote, its biggest tokens (cap ≥ ` +
-        `${fmtCap(c.fillMinMcap)}, liquidity ≥ ${fmtCap(c.fillMinLiq)}) are listed automatically, ` +
-        `max <b>${c.fillMaxPerCycle}</b> per chain per cycle.\n` +
-        `<i>This is what stopped Ethereum publishing 3 rows and Base 2 against a target of ${c.perChain}.</i>`
+        `${fmtCap(c.fillMinMcap)}, liquidity ≥ ${fmtCap(c.fillMinLiq)}) are listed automatically.\n` +
+        // ⚠️ A RATE, NOT A CAP, and the first thing it was asked was "so max 3
+        // projects per chain?". The target above is what the board holds; this
+        // is only how fast the gap is closed, so it is stated as a speed and
+        // then worked out loud against the live target.
+        `<i>🧲 <b>${c.fillMaxPerCycle} new listings per chain per cycle</b> — a speed, not a limit on the board. ` +
+        `The board still holds <b>${c.perChain}</b> per chain (🎯 above); a chain that is ${c.perChain} short ` +
+        `reaches it in ${Math.max(1, Math.ceil(c.perChain / Math.max(1, c.fillMaxPerCycle)))} cycle(s), ` +
+        `i.e. about ${c.minGapMin}–${Math.max(1, Math.ceil(c.perChain / Math.max(1, c.fillMaxPerCycle))) * c.maxGapMin} min.</i>`
       : ` — a chain with no spare listings stays short until somebody lists tokens on it.`) +
     `\n\n` +
     `⚡ <b>Run now</b> — tap a chain to place its best 24h mover there immediately, even while this is off.`
@@ -1569,7 +1575,7 @@ function atKb() {
     ...(c.fillFromMarket
       ? [
           [cb("➖", "atfmc:-1000000"), cb(`🏦 big = ${fmtCap(c.fillMinMcap)}+`, "atnop"), cb("➕", "atfmc:1000000")],
-          [cb("➖", "atfmax:-1"), cb(`🧲 max ${c.fillMaxPerCycle}/chain`, "atnop"), cb("➕", "atfmax:1")],
+          [cb("➖", "atfmax:-1"), cb(`🧲 ${c.fillMaxPerCycle}/chain/cycle`, "atnop"), cb("➕", "atfmax:1")],
         ]
       : []),
     [cb("➖", "athmin:-1"), cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➕", "athmin:1")],

@@ -551,8 +551,15 @@ been doing it for weeks.
 - **It lists with the `trending` package**, so the chain that was short is full
   on the same pass — anything else leaves the board short for another cycle, up
   to two hours, which is the state being fixed.
+- ⚠️ **`fillMaxPerCycle` is a SPEED, not a cap on the board**, and the very first
+  question it drew was *"jadi maksud anda max 3 project per chain?"* — because
+  the button read `🧲 max 3/chain`. The board holds `perChain` (🎯); this is only
+  how fast a gap closes. The label carries the unit now (`🧲 3/chain/cycle`) and
+  the panel does the arithmetic out loud — *"a chain that is 5 short reaches it
+  in 2 cycles, about 20–240 min"* — rather than leaving the reader to work out
+  which of the two numbers governs what.
 - 🧲 **Fill from market is a visible toggle on the Auto Trending panel**, with
-  the big-coin floor (`fillMinMcap`, $5M) and the per-cycle cap beside it.
+  the big-coin floor (`fillMinMcap`, $5M) and the per-cycle rate beside it.
   Turning it OFF is a `show_alert`, because it means a chain with no spare
   listings goes back to publishing a short board silently.
 - ⚠️ **A boolean that `set()` does not persist is a toggle that reverts.**

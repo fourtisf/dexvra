@@ -200,3 +200,21 @@ test("the announce rails are reachable in a sane number of taps", async () => {
   assert.match(src, /"atapd:-10"/, "the daily cap steps by 10");
   assert.match(src, /bot\.action\(\/\^atagap:\(-\?\\d\+\)\$\/, atStep\("announceGapMin"/, "and the gap stepper is wired");
 });
+
+test("the fill number reads as a SPEED, not as a cap on the board", async () => {
+  // First question it was asked: "jadi maksud anda max 3 project per chain?".
+  // No — the board holds `perChain`; the fill number is only how fast a gap is
+  // closed. A label that has to be explained is the same defect as a status
+  // line that has to be explained.
+  const { text, kb } = await panel(COUNTS, { perChain: 5, fillMaxPerCycle: 3 });
+  assert.match(text, /per chain per cycle/, "the unit is missing, so the number reads as a total");
+  assert.match(text, /a speed, not a limit on the board/);
+  assert.match(text, /board still holds <?b?>?5/, "it must restate what the board actually holds");
+  assert.match(text, /2 cycle\(s\)/, "it does the arithmetic instead of leaving it to the reader");
+  // …and the same number on the blocked-chains line, which is where an operator
+  // reads it first.
+  assert.ok(!/up to 3 per chain\.|to 3 per chain<\/i>/.test(text), `the shorter form is back: ${text}`);
+  const label = kb.flat().find((t) => t.includes("/chain/"));
+  assert.ok(label, `the button must carry the unit too: ${kb.flat().join(" | ")}`);
+  assert.ok(!/max/.test(label), `"max N/chain" is the reading that caused the question: ${label}`);
+});
