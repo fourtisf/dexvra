@@ -202,3 +202,63 @@ test("a non-emoji GramJS failure still falls back to the Bot API", async () => {
   await poster.runOnce(tg);
   assert.ok(calls.some((c) => c.via === "bot" && c.op === "send"), "the board still gets published");
 });
+
+// ── What runOnce REPORTS ────────────────────────────────────────────────────
+//
+// The board looks identical in the channel whether its custom emoji rendered or
+// silently fell back to the plain chars — nobody without Telegram Premium can
+// tell, and the operator asking "did my emoji take?" is usually one of them. So
+// the publish reports what it did, and @dexvraadminbot's 🔄 Refresh board now
+// prints that answer in the chat instead of leaving it in pm2's log.
+
+test("a premium publish reports the mode and the emoji COUNT", async () => {
+  const { tg } = harness();
+  withGramjs({
+    available: () => true,
+    sendToChannel: async () => ({ message_id: 501 }),
+    editChannelMessage: async () => true,
+    pinChannelMessage: async () => true,
+    isPremiumEmojiError: () => false,
+  });
+  const r = await poster.runOnce(tg);
+  assert.strictEqual(r.mode, "premium");
+  assert.strictEqual(r.transport, "gramjs");
+  assert.ok(r.premium > 0, `the board ships premium badges, so the count must be > 0: ${JSON.stringify(r)}`);
+  assert.ok(["posted", "edited"].includes(r.how), `unexpected how: ${r.how}`);
+
+  // A second run with nothing changed must say so rather than claim a publish.
+  const again = await poster.runOnce(tg);
+  assert.strictEqual(again.how, "unchanged");
+});
+
+test("a PLAIN publish names why — the three causes have three different fixes", async () => {
+  const { tg } = harness();
+  withGramjs({ available: () => false, isPremiumEmojiError: () => false });
+  const r = await poster.runOnce(tg);
+  assert.strictEqual(r.mode, "plain");
+  assert.match(r.why || "", /not connected/, "an operator reading this must learn what to fix");
+  assert.strictEqual(r.premium, 0, "nothing animated went out, so the count must not claim otherwise");
+});
+
+test("Telegram refusing the emoji is reported as plain, with the refusal carried", async () => {
+  const { tg } = harness();
+  withGramjs({
+    available: () => true,
+    sendToChannel: async () => ({ message_id: 601 }),
+    editChannelMessage: async () => true,
+    pinChannelMessage: async () => true,
+    isPremiumEmojiError: () => true,
+    recordEmojiRefusal: () => {},
+  });
+  // First send throws the premium refusal, the degrade path re-sends plain.
+  let first = true;
+  withGramjs({
+    sendToChannel: async () => {
+      if (first) { first = false; throw new Error("EMOJI_INVALID"); }
+      return { message_id: 602 };
+    },
+  });
+  const r = await poster.runOnce(tg);
+  assert.strictEqual(r.mode, "plain");
+  assert.match(r.why || "", /EMOJI_INVALID/, "the refusal Telegram gave is the diagnosis — it must not be swallowed");
+});

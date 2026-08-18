@@ -159,3 +159,39 @@ test("a request the main bot never picked up expires instead of firing late", as
   assert.strictEqual(sent.length, 0, "an unexpected public post an hour later is worse than none");
   assert.strictEqual(store.get(job.id).status, "expired");
 });
+
+// ── The board refresh rides this table, and must not look like a POST ────────
+test("board_refresh is a hidden JOB, not an entry in the Force-post menu", () => {
+  const fp = require("../src/admin/forcePost");
+  assert.ok(!fp.kindIds().includes("board_refresh"),
+    "it would appear under a confirm screen reading 'Real, public post — subscribers will see it', which is false: it edits the board that is already pinned");
+  assert.ok(fp.KINDS.board_refresh, "…but it is still a kind the runner can execute by id");
+  assert.strictEqual(fp.KINDS.board_refresh.noRow, true, "a refresh needs no sample token — that would be a listings API call per tap");
+});
+
+test("the board refresh runs the REAL poster, in the process that owns the board", async () => {
+  const fp = require("../src/admin/forcePost");
+  const post = require("../src/channels/post");
+  const poster = require("../src/services/trendingPoster");
+
+  const realRun = poster.runOnce;
+  const realTg = post.telegram;
+  try {
+    // No Telegram attached (the admin bot's own process) must be an explicit
+    // error, never a silent "ok" that leaves the operator believing it ran.
+    post.telegram = () => null;
+    await assert.rejects(() => fp.forcePost("board_refresh", { by: "test" }), /dexvra-bot/);
+
+    post.telegram = () => ({ marker: "the main bot's Telegram" });
+    let got = null;
+    poster.runOnce = async (tg) => { got = tg; return { how: "edited", mode: "premium", premium: 9, messageId: 42 }; };
+    const [res] = await fp.forcePost("board_refresh", { by: "test" });
+    assert.strictEqual(got && got.marker, "the main bot's Telegram", "the poster must be handed the attached Telegram");
+    assert.strictEqual(res.ok, true);
+    assert.deepStrictEqual(res.board, { how: "edited", mode: "premium", premium: 9, messageId: 42 },
+      "the outcome is carried through the job file verbatim — it is the whole answer the operator gets");
+  } finally {
+    poster.runOnce = realRun;
+    post.telegram = realTg;
+  }
+});

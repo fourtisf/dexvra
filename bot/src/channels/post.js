@@ -225,5 +225,9 @@ async function sendMedia(channel, media, payload, { replyTo, pin } = {}) {
   }
 }
 
-module.exports = { attach, sendText, sendPhoto, sendMedia, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg };
+// The attached Telegram, for the one caller that needs the instance rather than
+// a send helper: the board refresh runs trendingPoster.runOnce(tg) in this
+// process on behalf of @dexvraadminbot, which has no Telegram of its own that
+// owns the board message.
+module.exports = { attach, sendText, sendPhoto, sendMedia, ensurePinned, mirrorToGroup, CHANNELS, GROUP_CHAT, isAttached: () => !!tg, telegram: () => tg };
 module.exports._fitCaption = fitCaption; // exposed for tests

@@ -196,7 +196,38 @@ async function deliver(channel, media, payload, { pin = false } = {}) {
   return { channel, ok: !!msg, messageId: msg && msg.message_id, url: msg ? tmeLink(channel, msg.message_id) : null };
 }
 
-const kindIds = () => Object.keys(KINDS);
+// ── Not a POST: refresh the pinned trending board in place ──────────────────
+//
+// It lives in this table because the table is already the adminbot→main-bot job
+// channel (forcepost/store + forcePostRunner): only the main process owns the
+// board message and the GramJS session. It is HIDDEN from the Force-post menu,
+// whose every other entry publishes a new public post — this one edits the board
+// that is already there, and a confirm screen warning "subscribers will see it"
+// would be false.
+//
+// WHY IT EXISTS: the board refreshes on a 5-minute interval, so an operator who
+// had just set a rank badge saw nothing change and had no way to tell a slow
+// interval from a setting that never took. That was reported as
+// "sudah di set sesuai yang saya mau tapi bot tidak memakai emoji premium".
+KINDS.board_refresh = {
+  label: "🔄 Trending board — refresh now",
+  hidden: true,
+  noRow: true,
+  channels: () => [CHANNELS.trending],
+  async send() {
+    const poster = require("../services/trendingPoster");
+    const tg = post.telegram();
+    if (!tg) throw new Error("the main bot has no Telegram attached yet — is dexvra-bot running?");
+    const r = (await poster.runOnce(tg)) || { how: "unknown" };
+    // Carried through the job file to the admin chat verbatim: `how` says
+    // whether the channel changed, `mode` whether it went out animated.
+    return [{ channel: CHANNELS.trending, ok: r.how !== "failed" && r.how !== "empty", board: r }];
+  },
+};
+
+/** The kinds the Force-post menu offers. `hidden` ones are still runnable by id
+ *  — they are jobs this table carries, not posts an operator browses to. */
+const kindIds = () => Object.keys(KINDS).filter((k) => !KINDS[k].hidden);
 const labelOf = (kind) => (KINDS[kind] ? KINDS[kind].label : kind);
 const channelsOf = (kind) => (KINDS[kind] ? KINDS[kind].channels() : []);
 
@@ -206,8 +237,11 @@ const channelsOf = (kind) => (KINDS[kind] ? KINDS[kind].channels() : []);
 async function forcePost(kind, { by = "admin" } = {}) {
   const k = KINDS[kind];
   if (!k) throw new Error(`unknown post kind "${kind}"`);
-  const row = await sampleRow({ preferFeatured: kind === "trending" || kind === "rankup" });
-  log.info(`[forcepost] ${kind} → ${channelsOf(kind).join(", ")} using ${row.sym || row.symbol || "?"} (by ${by})`);
+  // A kind that publishes nothing about a TOKEN needs no sample token, and
+  // fetching one would be a listings API call per refresh for a value nobody
+  // reads.
+  const row = k.noRow ? null : await sampleRow({ preferFeatured: kind === "trending" || kind === "rankup" });
+  log.info(`[forcepost] ${kind} → ${channelsOf(kind).join(", ")}${row ? ` using ${row.sym || row.symbol || "?"}` : ""} (by ${by})`);
   const results = await k.send(row);
   for (const r of results) {
     if (r.ok) log.info(`[forcepost] ${kind} posted → ${r.url}`);

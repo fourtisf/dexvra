@@ -1185,9 +1185,25 @@ function emojiFragment(msg) {
   // spliced straight into the channel post's markup.
   return (raw.trim().split(/\s+/)[0] || "").replace(/[[\]()`*]/g, "");
 }
-const TB_PREMIUM = "💎"; // this slot renders as a real (animated) premium emoji
-// Per-slot marker: 💎 premium · ✅ your own plain emoji · ▫️ built-in default.
-const tbMark = (premium, custom) => (premium ? TB_PREMIUM : custom ? TB_SET : TB_DEFAULT);
+const TB_PREMIUM = "💎"; // YOUR premium emoji — animated, and yours
+const TB_PREMIUM_STOCK = "🔹"; // premium, but the one that ships built in
+
+// Per-slot marker, and it must answer TWO questions at once: will this slot
+// animate, and is it MINE?
+//
+// It used to answer only the first — `premium ? 💎 : custom ? ✅ : ▫️` — so a
+// slot carrying the built-in premium badge and a slot carrying the operator's
+// own premium badge both rendered 💎, identically. Ranks 1–9 and the major
+// chains ship premium, so the panel showed a wall of 💎 whether or not a single
+// setting had been saved, and "sudah di set tapi bot tidak memakai" was
+// unanswerable from the one screen built to answer it. Same defect as the green
+// fonts:check over a broken banner: the reassuring reading was available and it
+// was not a statement about the thing being asked.
+const tbMark = (premium, custom) =>
+  premium ? (custom ? TB_PREMIUM : TB_PREMIUM_STOCK) : custom ? TB_SET : TB_DEFAULT;
+const TB_LEGEND =
+  `<i>${TB_PREMIUM} = YOUR premium emoji (animated) · ${TB_PREMIUM_STOCK} = built-in premium · ` +
+  `${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>`;
 function tbText() {
   const n = trendingBoard.RANK_SLOTS;
   const badges = trendingBoard
@@ -1214,11 +1230,13 @@ function tbText() {
     `${trendingBoard.displayEmoji(trendingBoard.newEmoji())} — shown beside any token whose trending slot ` +
     `started in the last <b>${trendingBoard.newHours()}h</b>, with a one-line legend under the board.\n\n` +
     `<b>Rank badges 1–${n}:</b>\n${badges}\n\n` +
-    `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n` +
+    `${TB_LEGEND}\n` +
     `${premLine}\n` +
     `<i>Note: premium emoji only animate for Telegram Premium viewers — everyone else sees the fallback emoji. That's normal.</i>\n\n` +
     `Tap a rank to change its badge, or <b>🔗 Chain logos</b> to set each chain's emoji. ` +
-    `Send a <b>premium</b> emoji to make that slot premium. Applies on the next board refresh.`
+    `Send a <b>premium</b> emoji to make that slot premium.\n\n` +
+    `The board republishes on its own every few minutes; <b>🔄 Refresh board now</b> does it immediately ` +
+    `and reports whether your emoji actually went out animated or fell back to plain.`
   );
 }
 function tbKb() {
@@ -1245,16 +1263,44 @@ function tbKb() {
     cb(`⏱ ${trendingBoard.newHours()}h window`, "tbnh"),
   ]);
   rows.push([cb("🔗 Chain logos", "tbc")]);
-  rows.push([cb("💎 Premium status", "tbdiag")]);
+  rows.push([cb("🔄 Refresh board now", "tbref"), cb("💎 Premium status", "tbdiag")]);
   rows.push([cb("↩️ Restore premium defaults", "tbrst"), cb("⬅ Back", "home")]);
   return Markup.inlineKeyboard(rows);
+}
+// What the MAIN bot reported after a forced board refresh. The whole point is
+// that "the board went out animated" and "the board went out plain" are
+// indistinguishable in the channel to anyone without Telegram Premium — so an
+// operator who just set a badge has to be TOLD which one happened.
+function tbRefreshText(job) {
+  const r = (job && job.results && job.results[0] && job.results[0].board) || null;
+  if (!r) return `⚠️ <b>No answer from the main bot</b>\n\n<code>${escapeHtml((job && job.error) || "unknown")}</code>`;
+  const head = `🔄 <b>Trending board</b>\n`;
+  if (r.how === "failed") return `${head}\n❌ The refresh FAILED.\n<code>${escapeHtml(r.why || "")}</code>`;
+  if (r.how === "empty")
+    return `${head}\nℹ️ No token is trending right now, so there is no board to publish. Sell a trending slot (or force one) and refresh again.`;
+  const where = r.messageId ? ` → <code>#${r.messageId}</code>` : "";
+  if (r.mode === "premium")
+    return (
+      `${head}\n✅ <b>Published with your premium emoji</b> — ${r.premium} custom emoji went out ` +
+      `animated via the premium account${where}.\n\n` +
+      (r.how === "unchanged"
+        ? `<i>Telegram reported the board as already identical — your emoji were already live.</i>`
+        : `<i>Open the channel: the pinned board carries them now.</i>`) +
+      `\n\n<i>Only Telegram Premium viewers see them animated — everyone else sees the fallback emoji. That is normal.</i>`
+    );
+  // PLAIN is the answer this button exists for.
+  return (
+    `${head}\n⚠️ <b>Published, but PLAIN</b>${where} — the custom emoji did NOT go out.\n\n` +
+    `Reason: <b>${escapeHtml(r.why || "unknown")}</b>\n\n` +
+    `Your saved emoji are fine; the problem is the transport. Tap <b>💎 Premium status</b> for the exact fix.`
+  );
 }
 function tbChainsText() {
   return (
     `🔗 <b>Chain logos</b>\n\n` +
     `The emoji shown before each chain's header on the trending board ` +
     `(e.g. <code>🔶 BSC - Trending</code>).\n\n` +
-    `<i>${TB_PREMIUM} = premium (animated) · ${TB_SET} = your plain emoji · ${TB_DEFAULT} = built-in default</i>\n\n` +
+    `${TB_LEGEND}\n\n` +
     `Solana / BSC / Ethereum / Base / Tron / Plasma / Sui ship a premium logo built in. ` +
     `Tap a chain, then send the emoji you want to change it. ⬅ Back to the board.`
   );
@@ -3439,6 +3485,32 @@ function build() {
     await edit(ctx, fpResultText(job.kind, job), fpResultKb());
   });
 
+  bot.action("tbref", async (ctx) => {
+    ctx.answerCbQuery("Refreshing…").catch(() => {});
+    if (!guard(ctx)) return;
+    const who = ctx.from.username ? `@${ctx.from.username}` : String(ctx.from.id);
+    let job;
+    try {
+      // The MAIN bot owns the board message and the premium session, so this is
+      // a job for it — the same channel the force-post screen uses.
+      job = await fpStore.request("board_refresh", { by: who });
+    } catch (e) {
+      log.warn(`[adminbot] board refresh by ${who}: ${e.message}`);
+      return edit(ctx, `⚠️ <b>Couldn't queue it</b>\n\n<code>${escapeHtml(e.message)}</code>`, tbKb());
+    }
+    log.info(`[adminbot] trending board refresh queued by ${who} (${job.id})`);
+    await edit(ctx, "⏳ Asking the main bot to refresh the board…", Markup.inlineKeyboard([]));
+    const done = await waitForJob(job.id);
+    if (!done || done.status === "pending" || done.status === "running") {
+      return edit(
+        ctx,
+        `⏳ <b>Still working…</b>\n\nThe main bot hasn't reported back. Check that <code>dexvra-bot</code> is running (<code>pm2 ls</code>).`,
+        Markup.inlineKeyboard([[Markup.button.callback("🔄 Try again", "tbref"), Markup.button.callback("⬅ Back", "tb")]]),
+      );
+    }
+    await edit(ctx, tbRefreshText(done), Markup.inlineKeyboard([[Markup.button.callback("💎 Premium status", "tbdiag"), Markup.button.callback("⬅ Back", "tb")]]));
+  });
+
   // ── Trending board (chain logos + rank badges 1–10) ──
   bot.action("tb", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -4430,7 +4502,7 @@ module.exports = {
 // Exposed for tests: the group-menu keyboard builder + its paging constant.
 module.exports._menu = { groupKb, mainKb, groupNames, slugOf, nameFromSlug, GROUP_PAGE };
 // Exposed for tests: the trending-board editor + the premium-emoji report.
-module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, emojiFragment, premiumReportText };
+module.exports._board = { tbText, tbKb, tbChainsText, tbChainsKb, tbMark, tbRefreshText, emojiFragment, premiumReportText };
 // Exposed for tests: the resilient Telegram file downloader (retry + clear errors).
 module.exports._net = { fetchTelegramFileBuffer };
 // Exposed for tests: the template controls card and its broken-placeholder guard.

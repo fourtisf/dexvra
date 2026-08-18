@@ -41,27 +41,45 @@ test("a typed link can never become a rank badge or chain logo", async () => {
   await tb.reset();
 });
 
-test("editor markers: 💎 premium · ✅ your plain emoji · ▫️ default", async () => {
+test("editor markers say whether a slot is YOURS, not only whether it is premium", async () => {
+  // This used to render 💎 for BOTH the built-in premium badge and the
+  // operator's own, so a panel on which nothing had ever been saved looked
+  // exactly like one where every slot was set. "Sudah di set sesuai yang saya
+  // mau tapi bot tidak memakai emoji premium" was reported from a screenshot of
+  // ranks 1–9 all showing 💎 — which proved nothing either way.
   await tb.reset();
-  assert.strictEqual(_board.tbMark(true, true), "💎");
-  assert.strictEqual(_board.tbMark(true, false), "💎", "a premium built-in still reads as premium");
+  assert.strictEqual(_board.tbMark(true, true), "💎", "your own premium emoji");
+  assert.strictEqual(_board.tbMark(true, false), "🔹", "premium, but the built-in one — NOT what you saved");
+  assert.notStrictEqual(_board.tbMark(true, true), _board.tbMark(true, false), "the two premium states are indistinguishable again");
   assert.strictEqual(_board.tbMark(false, true), "✅");
   assert.strictEqual(_board.tbMark(false, false), "▫️");
-  // Ranks 1–9 ship premium, so the keyboard shows 💎 without any admin setup.
+  // Ranks 1–9 ship premium, so a fresh panel is all built-ins.
   const labels = flat(_board.tbKb()).map((b) => b.text);
-  assert.ok(labels.filter((t) => t.startsWith("💎")).length >= 9, `expected ≥9 premium rank buttons, got: ${labels.join(" | ")}`);
+  assert.ok(labels.filter((t) => t.startsWith("🔹")).length >= 9, `expected ≥9 built-in premium ranks, got: ${labels.join(" | ")}`);
+  assert.ok(!labels.some((t) => t.startsWith("💎 1")), "nothing is saved yet, so no slot may claim to be yours");
   assert.ok(labels.some((t) => t.includes("Premium status")), "the diagnostic is one tap away");
+  // Saving your OWN premium emoji is what turns the marker to 💎 — the one
+  // thing the operator needs to be able to see.
+  await tb.setRankEmoji(1, "[🦄](emoji/5445284980978621387)");
+  assert.ok(flat(_board.tbKb()).some((b) => b.text.startsWith("💎 1")), "a saved premium emoji does not read as yours");
   // A plain override flips that slot to ✅.
-  await tb.setRankEmoji(1, "🦄");
-  assert.ok(flat(_board.tbKb()).some((b) => b.text.startsWith("✅ 1")), "plain override → ✅");
+  await tb.setRankEmoji(2, "🦄");
+  assert.ok(flat(_board.tbKb()).some((b) => b.text.startsWith("✅ 2")), "plain override → ✅");
   await tb.reset();
+});
+
+test("the legend explains all FOUR markers, or the panel is a puzzle", () => {
+  const txt = _board.tbText();
+  for (const m of ["💎", "🔹", "✅", "▫️"]) assert.ok(txt.includes(m), `${m} is used but never explained`);
+  assert.ok(/YOUR premium/i.test(txt), "the legend does not distinguish yours from the built-in one");
+  assert.ok(_board.tbChainsKb, "chain screen still reachable");
 });
 
 test("editor: chain keyboard marks the premium logos", async () => {
   await tb.reset();
   const btns = flat(_board.tbChainsKb());
   const bsc = btns.find((b) => b.text.includes("BSC"));
-  assert.ok(bsc.text.startsWith("💎"), `BSC ships a premium logo: ${bsc.text}`);
+  assert.ok(bsc.text.startsWith("🔹"), `BSC ships a BUILT-IN premium logo (🔹, not 💎 — nothing was saved): ${bsc.text}`);
   assert.ok(bsc.text.includes(pe.CHAIN_EMOJI.bsc.char), "the button shows the plain fallback, not raw markup");
   assert.ok(!bsc.text.includes("emoji/"), "never leak markup into a button label");
   const rh = btns.find((b) => b.text.includes("Robinhood"));
@@ -129,4 +147,42 @@ test("premium report: healthy account reads as ready", async () => {
 test("premium report: session present but the main bot hasn't posted yet", async () => {
   const txt = await reportWith(withStatus(null));
   assert.ok(txt.includes("not used yet"), `explains the gap instead of crying failure: ${txt}`);
+});
+
+// ── "sudah di set tapi bot tidak memakai emoji premium terbaru" ──────────────
+//
+// The board republishes on a 5-minute interval, so after saving a badge the
+// operator saw nothing change and had no way to tell a slow interval from a
+// setting that never took — or from a premium account Telegram was refusing.
+// 🔄 Refresh board now asks the MAIN bot to publish immediately and reports
+// which of those three happened, in the chat, at the moment they ask.
+
+test("the refresh card says whether the emoji actually went out ANIMATED", () => {
+  const card = (board) => _board.tbRefreshText({ results: [{ board }] });
+
+  const premium = card({ how: "edited", mode: "premium", premium: 14, messageId: 7 });
+  assert.match(premium, /✅/);
+  assert.match(premium, /14 custom emoji/, "the operator is told how many went out");
+
+  // The answer this button exists for: published, but the emoji did NOT render.
+  // It must not read as a success, and it must name the CAUSE — "the board is
+  // not premium" has three unrelated causes and three different fixes.
+  const plain = card({ how: "edited", mode: "plain", premium: 0, messageId: 7, why: "the premium account is not connected" });
+  assert.match(plain, /⚠️/);
+  assert.ok(!/✅/.test(plain), "a plain publish must never render as a success");
+  assert.match(plain, /not connected/, "the reason is missing");
+  assert.match(plain, /Premium status/, "no route to the fix");
+  assert.match(plain, /Your saved emoji are fine/, "it must not send the operator back to re-set the emoji");
+
+  // Nothing trending → there is no board. Not an error, and not a success.
+  assert.match(card({ how: "empty" }), /No token is trending/);
+  assert.match(card({ how: "failed", why: "boom" }), /FAILED/);
+  // A job the main bot never answered is its own state, not a silent ✅.
+  assert.match(_board.tbRefreshText({ error: "timeout" }), /No answer from the main bot/);
+});
+
+test("the refresh button is ON the board screen, beside the diagnostic", () => {
+  const labels = flat(_board.tbKb()).map((b) => b.text);
+  assert.ok(labels.some((t) => /Refresh board now/.test(t)), `no way to publish on demand: ${labels.join(" | ")}`);
+  assert.match(_board.tbText(), /Refresh board now/, "the screen does not mention what the button does");
 });

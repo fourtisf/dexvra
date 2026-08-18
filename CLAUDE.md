@@ -454,6 +454,53 @@ from Telegram that is indistinguishable from a fix that did not work. `npm run
 fonts:check` printing the sha is the cheapest tell; `git log --oneline -1` on the
 box against the branch is the direct one.
 
+## "Sudah di set tapi bot tidak memakai emoji premium terbaru"
+
+Reported with a screenshot of the 🔥 Trending board panel: ranks 1–9 all showing
+💎, `🟢 account connected`, `18/33 slots premium` — and a channel board that had
+not changed. Nothing in the store or the render path was wrong (`load()` reads
+`trendingBoard.json` on every call, both processes share `DATA_DIR`, and
+`pe.promote()` returns an already-premium fragment untouched, so a saved id is
+never overwritten by the built-in one). **Two things were missing, and both are
+the same defect: the panel could not answer the question it exists to answer.**
+
+- ⚠️ **💎 meant "this slot is premium", not "this is YOURS".** `tbMark` was
+  `premium ? 💎 : custom ? ✅ : ▫️`, and ranks 1–9 plus the major chains ship
+  premium BUILT IN — so a panel on which nothing had ever been saved looked
+  exactly like one where every slot was set. The screenshot proves nothing
+  either way, which is why it was sent. There are four states now: 💎 yours and
+  premium · 🔹 built-in premium · ✅ your plain emoji · ▫️ built-in default. A
+  test asserts the two premium marks can never collapse back into one.
+- **The board republishes on a 5-minute interval and nothing could hurry it.**
+  So "saved" and "live" were separated by up to five minutes of silence, and a
+  setting that never took, a slow interval and a premium account Telegram was
+  refusing were indistinguishable for that whole window. **🔄 Refresh board now**
+  publishes immediately — and REPORTS, in the chat:
+  - `✅ Published with your premium emoji — 14 custom emoji went out animated`
+  - `⚠️ Published, but PLAIN — the premium account is not connected` (or the
+    verbatim `EMOJI_INVALID` Telegram answered with), plus *"your saved emoji
+    are fine; the problem is the transport"* and a tap to 💎 Premium status.
+  A plain publish must never render as a ✅: in the channel the two are
+  identical to anyone without Telegram Premium, which is most people looking.
+- **It is a JOB, not a post.** Only the main process owns the board message and
+  the GramJS session, so the refresh rides the existing `forcepost/store` +
+  `forcePostRunner` channel (`board_refresh`, `noRow`). It is **hidden from the
+  Force-post menu**, whose every other entry publishes something new — a confirm
+  screen reading *"Real, public post — subscribers will see it"* would be false
+  for an edit of the board that is already pinned.
+- `trendingPoster.runOnce()` returns `{how, transport, mode, premium, why}`
+  rather than nothing. The log line already said this; a value nobody can read
+  from Telegram is the same as no line at all.
+
+```bash
+cd bot && node scripts/run-tests.js test/adminBoard.test.js test/trendingPremium.test.js test/forcePost.test.js   # 35 tests
+```
+
+**Config a fix depends on:** nothing in this repo — but the emoji only ANIMATE
+through the GramJS premium account (`node scripts/gramjs-login.js`, and that
+account must actually have Telegram Premium). 💎 Premium status names which of
+those is missing.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

@@ -231,20 +231,26 @@ async function postVia(tg, transport, payload, markup, mode) {
     const nPrem = (payload.entities || []).filter((e) => e.type === "custom_emoji").length;
     log.info(`[trendposter] board ${how} via ${transport} — ${mode}, ${nPrem} premium emoji → #${state.messageId}`);
     await ensurePinned(tg, transport);
+    // Returned so a caller can SAY what happened. @dexvraadminbot's "🔄 Refresh
+    // board now" reports this back in the chat: an operator who has just set a
+    // badge should not have to read pm2 logs to learn whether the board went out
+    // premium or degraded to plain — those two look identical in the channel to
+    // anyone without Telegram Premium.
+    return { how, transport, mode, premium: nPrem, messageId: state.messageId };
   };
 
   if (state.messageId && state.transport === transport) {
     try {
       await editIt();
-      return settle("edited");
+      return await settle("edited");
     } catch (e) {
-      if (/not modified/i.test(e.message || "")) return settle("unchanged");
+      if (/not modified/i.test(e.message || "")) return await settle("unchanged");
       if (transport === "gramjs" && gramjs.isPremiumEmojiError(e)) throw e; // caller degrades in place
       log.debug(`[trendposter] ${transport} edit failed (${e.message}) — posting fresh`);
     }
   }
   await sendFresh(); // throws with state.messageId untouched, so no phantom id
-  return settle("posted");
+  return await settle("posted");
 }
 
 // One refresh cycle. Exported so the premium / degrade paths are testable
@@ -252,7 +258,7 @@ async function postVia(tg, transport, payload, markup, mode) {
 async function runOnce(tg) {
   try {
     const markup = await buildText();
-    if (!markup) return;
+    if (!markup) return { how: "empty", mode: null, premium: 0 };
     const parsed = premium.parse(markup);
     // Custom emoji from a BOT render only in private/group/supergroup chats,
     // and only when the bot's OWNER has Telegram Premium (Bot API formatting
@@ -266,13 +272,13 @@ async function runOnce(tg) {
     const mode = premiumUsable ? "premium" : "plain";
     // Re-render when the TEXT changed OR when the board can render in a different
     // MODE than last time (premium account just came online / just went away).
-    if (markup === state.lastText && mode === state.lastMode) return;
+    if (markup === state.lastText && mode === state.lastMode)
+      return { how: "unchanged", mode, premium: parsed.entities.length - botEntities.length, messageId: state.messageId };
 
     // Prefer the GramJS premium account — the ONLY way custom emoji render.
     if (premiumUsable) {
       try {
-        await postVia(tg, "gramjs", { text: parsed.text, entities: parsed.entities }, markup, "premium");
-        return;
+        return await postVia(tg, "gramjs", { text: parsed.text, entities: parsed.entities }, markup, "premium");
       } catch (e) {
         if (gramjs.isPremiumEmojiError(e)) {
           // Telegram refused the emoji themselves — the account almost certainly
@@ -285,8 +291,7 @@ async function runOnce(tg) {
             `[trendposter] Telegram REFUSED the premium emoji (${e.message}) — is the GramJS account actually Telegram Premium? Board renders UNICODE; retrying in ${Math.round(PREMIUM_RETRY_MS / 60000)}min. Diagnose with /premium in @dexvraadminbot.`,
           );
           try {
-            await postVia(tg, "gramjs", { text: parsed.text, entities: botEntities }, markup, "plain");
-            return;
+            return { ...(await postVia(tg, "gramjs", { text: parsed.text, entities: botEntities }, markup, "plain")), why: e.message };
           } catch (e2) {
             log.warn(`[trendposter] gramjs unicode post also failed → bot-api fallback: ${e2.message}`);
           }
@@ -300,13 +305,23 @@ async function runOnce(tg) {
         "[trendposter] board has premium emoji but the premium account is NOT connected — posting UNICODE. Run: node scripts/gramjs-login.js (diagnose with /premium in @dexvraadminbot)",
       );
     }
-    await postVia(tg, "bot", { text: parsed.text, entities: botEntities }, markup, "plain");
+    return {
+      ...(await postVia(tg, "bot", { text: parsed.text, entities: botEntities }, markup, "plain")),
+      // WHY it is plain, in the caller's terms. "The board is not premium" has
+      // three unrelated causes and they need three different answers.
+      why: hasPremiumEmoji
+        ? gramjs.available()
+          ? "the premium account is cooling down after a refusal"
+          : "the premium account is not connected"
+        : "no slot on the board carries a premium emoji",
+    };
   } catch (e) {
     // A cycle that dies here publishes NOTHING, and at debug level that is
     // invisible — "the board just never changes" with no trace in pm2 logs.
     // Throttled so a persistent outage doesn't flood the log channel.
     warnOnce("cycle-failed", `[trendposter] refresh cycle FAILED: ${e.message}`);
     log.debug(`[trendposter] ${e.stack || e.message}`);
+    return { how: "failed", mode: null, premium: 0, why: e.message };
   }
 }
 
