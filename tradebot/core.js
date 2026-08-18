@@ -1572,6 +1572,11 @@ async function tokenSupplyUi(ca, chainKey, dec) {
   const key = `${chainKey}:${ca}`;
   const hit = _supplyCache.get(key);
   if (hit && Date.now() - hit.ts < SUPPLY_TTL_MS) return hit.v;
+  // ⚠️ An EVM call that does not KNOW the decimals never asked the chain, so
+  // its null is not an answer — caching it would poison the entry for ten
+  // minutes and blank the share on every later caller that does know them.
+  // (The receipt can race the meta read; the monitor always has `dec`.)
+  if (!isSvm(chainKey) && !Number.isFinite(dec)) return null;
   let v = null;
   try {
     if (isSvm(chainKey)) {

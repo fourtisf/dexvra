@@ -105,9 +105,27 @@ test('the share of supply prints only when the supply is known', () => {
   // says "<" instead of rounding a real position to nothing.
   assert.equal(pnl.share(12.3456), '12.35%');
   assert.equal(pnl.share(0.034), '0.034%');
-  assert.equal(pnl.share(0.0001), '<0.01%');
+  assert.equal(pnl.share(0.0001), '&lt;0.01%');
   assert.equal(pnl.share(null), '');
   assert.equal(pnl.share(0), '');
+});
+
+test('the card is valid HTML for Telegram — no bare < outside a tag', () => {
+  // A raw '<' that does not open a supported tag makes Telegram reject the
+  // WHOLE message (400 "can't parse entities"), and a 400 is an answer, not a
+  // transport error — queuedSend does not retry it, so the card is simply
+  // gone. `share()` returned a literal '<0.01%' and would have deleted the
+  // receipt, the monitor card and the PnL card for any ordinary buy on a
+  // large-supply token. Strip every real tag, then nothing may be left.
+  const TAG = /<\/?(?:b|i|u|s|code|pre|a|tg-spoiler|blockquote)(?:\s[^>]*)?>/g;
+  for (const p of [
+    P({ open: true, tokens: 500, priced: true, priceEth: 0.001, valueEth: 0.5, ethIn: 1, costEth: 1, unrealizedEth: -0.5, supplyPct: 0.0001 }),
+    P({ open: true, tokens: 5, priced: true, priceEth: 1, valueEth: 5, ethIn: 1, costEth: 1, unrealizedEth: 4, supplyPct: 12.5 }),
+    P({ ethIn: 1, ethOut: 3, realizedEth: 2 }),
+  ]) {
+    const out = pnl.pnlText(p, { native: 'SOL', rate: 200, chainLabel: 'Solana' });
+    assert.ok(!out.replace(TAG, '').includes('<'), 'a bare < survived — Telegram would 400 the whole card');
+  }
 });
 
 test('a token never traded here says so, and does not invent a zero', () => {
