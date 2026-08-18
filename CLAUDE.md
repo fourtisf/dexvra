@@ -1321,7 +1321,12 @@ ten body lines, one emoji each — so the body carries no emoji now (the verdict
 dot and the status glyph are the colour), status and trade tally share a line,
 invested and taken-out share a line, and the name subtitle only prints when it
 differs from the ticker (an unnamed launch has both set to the short CA, and
-printing it twice was the first line of the report). **And a holding must say
+printing it twice was the first line of the report). ⚠️ **Removing the emoji
+removed the only thing separating the lines**, and the next report was the
+opposite complaint — "harus ada spasinya tulisan" about five dense lines. The
+body is GROUPED with blank lines now: what the position is, what it cost and
+holds, then the detail. Density is a layout problem, and stripping ornament
+without replacing the structure it was accidentally providing just moves it. **And a holding must say
 what share of the token it is** ("harus ada berapa % dari supply"):
 
 - **`core.tokenSupplyUi(ca, chainKey, dec)`** is the one reader — cached 10

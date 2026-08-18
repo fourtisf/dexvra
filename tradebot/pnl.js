@@ -212,6 +212,12 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   if (counts.length) trBits.push(`${counts.join(' · ')} on file`);
   if (tr.firstAt) trBits.push(`held ${since(Date.now() - tr.firstAt)}`);
   L.push(`${head}${trBits.length ? ` · <i>${trBits.join(' · ')}</i>` : ''}`);
+  // Blank lines BETWEEN the groups. Dropping the per-line emoji fixed the
+  // spam and created the opposite defect in the same breath — five dense
+  // lines with nothing separating them ("harus ada spasinya tulisan"). The
+  // grouping is what the reader is actually asking of the card: what the
+  // position IS, what it COST and holds, and the detail under that.
+  L.push('');
   L.push(`Invested <b>${amt(s.ethIn)} ${native}</b>${dollars(s.ethIn)}`
     + (s.ethOut > 0 ? ` → taken out <b>${amt(s.ethOut)} ${native}</b>${dollars(s.ethOut)}` : ''));
   if (p.open) {
@@ -222,22 +228,26 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   }
   // Realized vs unrealized, but only where the split says something the money
   // view does not: on a bag that was partly sold, or one still open.
+  // The detail group: the split, the prices, and which wallets hold it. Opened
+  // by one blank line, and each piece still drops independently.
+  const detail = [];
   if (s.status !== 'closed' && (s.realized !== 0 || s.unrealized != null)) {
     const parts = [];
     if (s.realized !== 0) parts.push(`booked <b>${sgn(s.realized)} ${native}</b>`);
     if (s.unrealized != null) parts.push(`open <b>${sgn(s.unrealized)} ${native}</b>`);
-    if (parts.length) L.push(parts.join(' · '));
+    if (parts.length) detail.push(parts.join(' · '));
   }
   if (s.entryEth != null || s.priceEth > 0) {
     const bits = [];
     if (s.entryEth != null) bits.push(`entry <b>${px(s.entryEth)}</b>`);
     if (s.priceEth > 0) bits.push(`now <b>${px(s.priceEth)}</b>`);
-    L.push(`${bits.join(' → ')} ${native}/token`);
+    detail.push(`${bits.join(' → ')} ${native}/token`);
   }
   if (p.holders && p.holders.length) {
     const shown = p.holders.slice(0, 4).map((h) => `${h.label} ${qty(h.tokens)}`).join(' · ');
-    L.push(`<i>${shown}${p.holders.length > 4 ? ` +${p.holders.length - 4} more` : ''}</i>`);
+    detail.push(`<i>${shown}${p.holders.length > 4 ? ` +${p.holders.length - 4} more` : ''}</i>`);
   }
+  if (detail.length) L.push('', ...detail);
   if (chainLabel) L.push('', `<i>${chainLabel}${explorerUrl ? '' : ''}</i>`);
   return L.join('\n');
 }
