@@ -375,3 +375,104 @@ test("no renderer registers fonts of its own — one chain, one owner", () => {
     }
   }
 });
+
+// ── "fonts:check was green and the banner was broken" ────────────────────────
+//
+// The check answered the question it was asked — does this BOX have the glyphs
+// — and that question had stopped being the one that mattered. src/bannerSurfaces.js
+// asks the other one, per surface, by running it. These tests pin the mechanism,
+// because a probe that silently stops measuring is the failure it exists to catch.
+
+test("the surface list covers every renderer that calls the guard", () => {
+  // A renderer nobody probes is exactly how the overlay shipped boxes for six
+  // days. warnBoxes() is the marker: a module that draws token text calls it.
+  const { SURFACES } = require("../src/bannerSurfaces");
+  const listed = new Set(SURFACES.map((s) => s.module));
+  const dir = path.join(__dirname, "..", "src");
+  for (const f of fss.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+    const src = fss.readFileSync(path.join(dir, f), "utf8");
+    // The call, not the word: these files discuss warnBoxes in their comments.
+    if (!/\bwarnBoxes\([^)]/.test(src.replace(/^\s*(\/\/|\*).*$/gm, ""))) continue;
+    assert.ok(listed.has(f), `${f} draws token text but no surface in bannerSurfaces.js probes it`);
+  }
+  // …and every listed surface must name a module that exists, or the list drifts
+  // into fiction the first time a file is renamed.
+  for (const s of SURFACES) {
+    assert.ok(fss.existsSync(path.join(dir, s.module)), `${s.key} points at a module that is not there: ${s.module}`);
+  }
+});
+
+test("the probe MEASURES a surface rather than believing it", async () => {
+  if (!kit.available()) return;
+  kit.canvasLib();                       // F is "sans-serif" until this has run
+  const surfaces = require("../src/bannerSurfaces");
+  const draw = (font) => () => {
+    const ctx = kit.canvasLib().createCanvas(64, 64).getContext("2d");
+    ctx.font = font;
+    ctx.fillText("老昊", 4, 40);
+  };
+  // A renderer inside the chain.
+  const good = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: draw(`800 40px ${kit.F.x}`) });
+  // …and one with a private Latin-only family, which is what bannerTemplate was.
+  const bad = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: draw('800 40px "Sora XBold", sans-serif') });
+  if (kit.coverage().scripts.chinese) {
+    assert.strictEqual(good.scripts.chinese, true, "a renderer drawing through F was reported as broken");
+    assert.strictEqual(bad.scripts.chinese, false, "a Latin-only stack was reported as able to draw Chinese — the probe measures nothing");
+    assert.deepStrictEqual(surfaces.brokenSurfaces([good]), []);
+    assert.strictEqual(surfaces.brokenSurfaces([bad]).length, 1, "a broken surface does not reach the exit code");
+  }
+});
+
+test("a surface that cannot render is an ERROR, never silent coverage", async () => {
+  if (!kit.available()) return;
+  const surfaces = require("../src/bannerSurfaces");
+  const threw = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: () => { throw new Error("boom"); } });
+  assert.match(threw.error || "", /boom/);
+  assert.ok(surfaces.brokenSurfaces([threw]).length === 1, "a renderer that throws passes the check");
+  // Drawing nothing is not passing either: an empty recording measured nothing,
+  // and reporting that as ✓ is the green-over-broken defect in miniature.
+  const silent = await surfaces.probeSurface({ key: "t", what: "t", module: "x", run: () => {} });
+  assert.match(silent.error || "", /no text/);
+});
+
+test("every REAL surface draws every script the repo ships a face for", async () => {
+  if (!kit.available()) return;
+  kit.canvasLib();
+  const surfaces = require("../src/bannerSurfaces");
+  const results = await surfaces.probeAll();
+  assert.strictEqual(results.length, surfaces.SURFACES.length);
+  const broken = surfaces.brokenSurfaces(results).map((r) => `${r.what}: ${r.error || Object.entries(r.scripts).filter(([, ok]) => !ok).map(([k]) => k).join(", ")}`);
+  assert.deepStrictEqual(broken, [], `these surfaces would publish boxes:\n  ${broken.join("\n  ")}`);
+});
+
+test("fonts:check follows the SURFACES for its exit code, not the box", () => {
+  // The script is prose an operator acts on, and prose that never executes is
+  // how a wrong instruction survives a release. The exit-code wiring is what
+  // makes a green run mean "the banners are safe", so it is asserted here; the
+  // measurement itself is executed by the tests above.
+  const src = fss.readFileSync(path.join(__dirname, "..", "scripts", "fonts-check.js"), "utf8");
+  assert.match(src, /require\('\.\.\/src\/bannerSurfaces'\)/, "the check no longer measures the renderers at all");
+  assert.match(src, /brokenSurfaces/);
+  assert.match(src, /process\.exit\(1\);\s*\/\/ green must mean/);
+  // And it prints WHICH COMMIT it measured: the most common reason a fix "did
+  // not work" here is that it never reached the box.
+  assert.match(src, /build'\)\.stamp\(\)/, "a green check on a stale checkout is indistinguishable from a green check on the fix");
+});
+
+test("no renderer hardcodes a family — including the one in tradebot", () => {
+  const files = [
+    path.join(__dirname, "..", "src", "bannerTemplate.js"),
+    path.join(__dirname, "..", "src", "bannerRender.js"),
+    path.join(__dirname, "..", "src", "gainersBanner.js"),
+    // Different package, same chain, same rule: pnlImage draws with K.F.*, and
+    // that is the whole reason it needed no fix when the overlay did.
+    path.join(__dirname, "..", "..", "tradebot", "pnlImage.js"),
+  ];
+  for (const f of files) {
+    if (!fss.existsSync(f)) continue;
+    const src = fss.readFileSync(f, "utf8");
+    for (const line of src.match(/\.font = `[^`]*`/g) || []) {
+      assert.match(line, /\bK?\.?F\.[a-z][a-z0-9]*/, `${path.basename(f)} draws with a hardcoded family: ${line}`);
+    }
+  }
+});

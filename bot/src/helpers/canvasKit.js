@@ -601,6 +601,74 @@ function unrenderable(text) {
 }
 
 /**
+ * THE FONTS A RENDERER ACTUALLY USED — recorded by running it.
+ *
+ * `coverage()` answers "does this BOX have the glyphs?", and on 2026-08-18 it
+ * answered ✓ for all nine scripts on a server whose animated banner was drawing
+ * `$老昊` as `$□□`. Both statements were true at once: the fonts were installed,
+ * and `bannerTemplate` was drawing with three private Latin-only families that
+ * could not reach them. A check that green-lights a broken banner is worse than
+ * no check, because it ends the investigation.
+ *
+ * So the honest question is not which fonts are installed but which fonts each
+ * SURFACE draws with — and the only way to know that is to run it and read the
+ * font strings back off the context. This wraps the 2D `font` setter for the
+ * duration of one call. It is used by `npm run fonts:check` and by
+ * `bannerFonts.test.js`, from ONE implementation: two copies of "can this
+ * renderer draw Chinese?" would drift, and this whole area is a history of two
+ * things that were supposed to agree and did not.
+ */
+async function recordFonts(fn) {
+  const CVl = canvasLib();
+  if (!CVl) return [];
+  const proto = Object.getPrototypeOf(CVl.createCanvas(4, 4).getContext("2d"));
+  const desc = Object.getOwnPropertyDescriptor(proto, "font");
+  if (!desc || !desc.set) return [];      // a canvas build we cannot observe must not fail the caller
+  const seen = [];
+  Object.defineProperty(proto, "font", {
+    ...desc,
+    set(v) { seen.push(String(v)); desc.set.call(this, v); },
+  });
+  try { await fn(); } finally { Object.defineProperty(proto, "font", desc); }
+  return seen;
+}
+
+/** `800 96px "Sora XBold", "DexCover CJK"` → `800 96px "Sora XBold"`.
+ *  The control for the measurement below: same size and weight, first family
+ *  only, so an identical width proves the tail added nothing. */
+function firstFamilyOnly(font) {
+  const m = String(font).match(/^(.*?\dpx\s+)(.+)$/);
+  if (!m) return null;
+  return m[1] + m[2].split(",")[0].trim();
+}
+
+/**
+ * Does this font string reach PAST its first family to draw `sample`?
+ *
+ * Same measurement `coverage()` makes, pointed at a font string a renderer
+ * really used rather than at `F.r` — and that difference is the entire bug: the
+ * guard was measuring a stack the renderer did not draw with.
+ *
+ * Every renderer here leads with a Latin brand face, so for a non-Latin sample
+ * this is exactly "would this surface draw glyphs or boxes". Asked about LATIN
+ * it answers false, correctly and uselessly: the brand face draws it and the
+ * tail is never consulted. Only ask it about a script the first family lacks.
+ *
+ * ⚠️ `F.x` is `"sans-serif"` until `canvasLib()` has run — registration is lazy.
+ * Build the font string INSIDE the call, or after a renderer has loaded the lib,
+ * or this compares "sans-serif" against itself and reports every surface broken.
+ */
+function reachesCoverage(font, sample) {
+  const CVl = canvasLib();
+  if (!CVl) return null;
+  const bare = firstFamilyOnly(font);
+  if (!bare) return null;
+  const ctx = CVl.createCanvas(8, 8).getContext("2d");
+  const w = (f) => { ctx.font = f; return +ctx.measureText(sample).width.toFixed(2); };
+  return w(font) !== w(bare);
+}
+
+/**
  * Say so BEFORE the artwork ships, not after somebody screenshots it.
  *
  * 牛来 went to 12,607 subscribers as "$???" on the listing card AND as "??" on
@@ -639,6 +707,9 @@ module.exports = {
   available: () => !!canvasLib(),
   coverage,
   packagesFor,
+  recordFonts,
+  reachesCoverage,
+  firstFamilyOnly,
   BUNDLED,
   FONTS_DIR: path.join(__dirname, "..", "..", "assets", "fonts"),
   unrenderable,
