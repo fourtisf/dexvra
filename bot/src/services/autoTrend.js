@@ -35,6 +35,17 @@ const DEFAULTS = {
   // tokens are exempt — Robinhood has no indexer, and judging them by a number
   // nobody can read would mean never filling that chain at all.
   minGainPct: 0,
+  // ── When a chain has nothing left to promote ──
+  // Auto-trend promotes what is LISTED, so a chain with three listings caps out
+  // at three rows however often it runs. Ethereum published 3 and Base 2
+  // against a target of 5, every cycle, and the only trace was a log line
+  // telling the operator to "list more tokens on those chains" — which they
+  // cannot do from Telegram. ON, because a board that stays short is the state
+  // being fixed; the floors below are what keep it from listing noise.
+  fillFromMarket: true,
+  fillMinMcap: 5_000_000, // a "big coin" floor — below this it is a find, not a filler
+  fillMinLiq: 100_000,
+  fillMaxPerCycle: 3, // per CHAIN per cycle: a shortfall is filled over a few passes, not in one burst
   // The networks auto-trending keeps alive. Everything else is paid-only: a
   // chain nobody has listed on cannot be filled, and pretending otherwise just
   // logs a failure every cycle.
@@ -76,6 +87,12 @@ const HARD = {
   gapMax: 1440,
   perChainMin: 0,   // 0 = leave this chain to paid slots only
   perChainMax: 20,
+  fillMinMcapMin: 100_000,
+  fillMinMcapMax: 5_000_000_000,
+  fillMinLiqMin: 0,
+  fillMinLiqMax: 50_000_000,
+  fillMaxPerCycleMin: 0,   // 0 = never fill from the market
+  fillMaxPerCycleMax: 10,
   minGainPct: [-100, 500],
   // The old ceiling was 24/day, which is BELOW the ~57 promotions a day that 5
   // chains × 5 slots actually produce — so "announce everything" was
@@ -103,6 +120,10 @@ function get() {
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
   g.perChain = clampInt(c.perChain, HARD.perChainMin, HARD.perChainMax, DEFAULTS.perChain);
   g.minGainPct = clampInt(c.minGainPct, ...HARD.minGainPct, DEFAULTS.minGainPct);
+  g.fillFromMarket = c.fillFromMarket !== false;
+  g.fillMinMcap = clampInt(c.fillMinMcap, HARD.fillMinMcapMin, HARD.fillMinMcapMax, DEFAULTS.fillMinMcap);
+  g.fillMinLiq = clampInt(c.fillMinLiq, HARD.fillMinLiqMin, HARD.fillMinLiqMax, DEFAULTS.fillMinLiq);
+  g.fillMaxPerCycle = clampInt(c.fillMaxPerCycle, HARD.fillMaxPerCycleMin, HARD.fillMaxPerCycleMax, DEFAULTS.fillMaxPerCycle);
   // An unknown chain id would be topped up forever with nothing eligible, so the
   // list is filtered against the real chain table rather than trusted.
   if (Array.isArray(c.chains)) {
@@ -132,7 +153,11 @@ async function set(patch = {}) {
   const next = { ...get() };
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (typeof patch.announce === "boolean") next.announce = patch.announce;
-  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChain", "minGainPct", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
+  // A boolean that only ever reached `get()` and never the FILE is a setting
+  // that reverts on the next read — the toggle would report ON and the loop
+  // would keep the old value.
+  if (typeof patch.fillFromMarket === "boolean") next.fillFromMarket = patch.fillFromMarket;
+  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChain", "minGainPct", "fillMinMcap", "fillMinLiq", "fillMaxPerCycle", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
     if (patch[k] != null) next[k] = patch[k];
   }
   if (Array.isArray(patch.chains)) next.chains = patch.chains;
@@ -397,7 +422,10 @@ async function byGain(rows, rng = Math.random) {
  * token shows nothing at all, and waiting for the random cycle to happen to
  * pick that chain is not a plan.
  */
-async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
+// `deps` is a test seam only: the board filler reaches the network and the site
+// API, and a test that had to stub those globally would be pinning the wiring
+// rather than the behaviour.
+async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} } = {}) {
   const cfg = get();
   if (!cfg.enabled && !chain) return 0; // a forced per-chain run is deliberate
   let listings;
@@ -423,6 +451,12 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
   // start tops up five networks at once, and five cards in a row is a firehose.
   let announcedThisRun = false;
   const short = [];
+  // The same shortfall, as data. It used to exist only as English inside
+  // `short`, which is why nothing could act on it.
+  const gaps = new Map();
+  const gap = (id, n) => {
+    if (n > 0) gaps.set(id, Math.max(gaps.get(id) || 0, n));
+  };
 
   for (const step of plan) {
     if (step.need <= 0) continue;
@@ -434,10 +468,10 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
     );
     if (!eligible.length) {
       if (step.forced) log.info(`[autotrend] forced run on ${step.id}: nothing eligible (every listed token there is already featured?)`);
-      else short.push(`${step.id} (needs ${step.need}, none eligible)`);
+      else { short.push(`${step.id} (needs ${step.need}, none eligible)`); gap(step.id, step.need); }
       continue;
     }
-    if (eligible.length < step.need) short.push(`${step.id} (needs ${step.need}, only ${eligible.length} eligible)`);
+    if (eligible.length < step.need) { short.push(`${step.id} (needs ${step.need}, only ${eligible.length} eligible)`); gap(step.id, step.need - eligible.length); }
     // TOP GAINERS, not a shuffle. A trending board is a claim about what is
     // moving; filling it at random made that claim false, and put a token down
     // 80% next to one up 40% with nothing to tell them apart.
@@ -447,10 +481,12 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
     const worthy = step.forced ? ranked : ranked.filter((r) => r._change === null || r._change >= cfg.minGainPct);
     if (!worthy.length) {
       short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s), none up ${cfg.minGainPct}% or more)`);
+      gap(step.id, step.need);
       continue;
     }
     if (worthy.length < step.need) {
       short.push(`${step.id} (needs ${step.need}, only ${worthy.length} up ${cfg.minGainPct}% or more)`);
+      gap(step.id, step.need - worthy.length);
     }
     for (const r of worthy.slice(0, step.need)) {
       // Random duration in [minHours, maxHours] — different per token, so the
@@ -488,6 +524,39 @@ async function runOnce({ rng = Math.random, chain = null, count = 1 } = {}) {
   // de-duplication both live in process memory, so every pm2 restart re-armed
   // both. A deploy afternoon put five identical warnings in the channel inside
   // ninety minutes. pm2 logs still get the line every cycle at debug level.
+  // ── The gap the promotion pass could not close ───────────────────────────
+  //
+  // Promoting can only ever reach as far as what is LISTED on a chain, so a
+  // chain with three listings publishes three rows for ever. This is where that
+  // stops being a note in a log an operator does not read and becomes an
+  // action: list the chain's biggest tokens, exactly as many as are missing.
+  //
+  // Bounded three ways on purpose — a floor on market cap, a floor on
+  // liquidity, and a cap per chain per cycle — because the failure mode of an
+  // unbounded filler is a public board full of tokens nobody chose.
+  const filled = [];
+  if (cfg.fillFromMarket && cfg.fillMaxPerCycle > 0 && gaps.size) {
+    const fill = (deps && deps.fillChain) || require("./trendFill").fillChain;
+    for (const [id, need] of gaps) {
+      try {
+        const r = await fill(id, Math.min(need, cfg.fillMaxPerCycle), { cfg, now });
+        if (r && r.listed.length) {
+          filled.push(`${id}: ${r.listed.map((x) => x.sym).join(", ")}`);
+          log.info(`[autotrend] filled ${id} with ${r.listed.length} big-cap listing(s) — the board was ${need} short`);
+        } else if (r && r.why) {
+          // A fill that could not happen is its own fact, and it is the one an
+          // operator needs: "GT is rate-limited" and "every big token here is
+          // already listed" have different answers.
+          log.debug(`[autotrend] could not fill ${id}: ${r.why}`);
+          short.push(`${id} (could not fill: ${r.why})`);
+        }
+      } catch (e) {
+        log.warn(`[autotrend] fill ${id} failed: ${e.message}`);
+      }
+    }
+  }
+  if (filled.length) log.info(`[autotrend] board topped up from the market → ${filled.join(" · ")}`);
+
   if (short.length) {
     const line = `[autotrend] board below target on ${short.join(", ")} — list more tokens on those chains, or lower the per-chain target`;
     log.debug(line);

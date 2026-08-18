@@ -29,7 +29,10 @@ const COUNTS = {
   sui: { featured: 0, eligible: 0 }, // nothing at all
 };
 async function panel(counts = COUNTS, cfg = {}) {
-  await autoTrend.set({ enabled: true, perChain: 5, ...cfg });
+  // fillFromMarket is stated EXPLICITLY, not inherited: it is persisted, so one
+  // test turning it off used to leak into every test after it — and the symptom
+  // (a panel reading "cannot be filled") looks exactly like a real regression.
+  await autoTrend.set({ enabled: true, perChain: 5, fillFromMarket: true, ...cfg });
   admin._test.setAtCounts(counts);
   return { text: plain(admin._test.atText()), kb: rows(admin._test.atKb()) };
 }
@@ -72,9 +75,18 @@ test("a chain that cannot be filled is distinguished from one that just has not 
   // Identical on screen before this: both simply absent from the board. One
   // needs patience, the other needs listings, and the operator cannot act
   // correctly without knowing which.
+  //
+  // With 🧲 Fill from market ON (the default) "needs listings" is no longer a
+  // dead end — the next cycle lists that chain's biggest tokens — so the panel
+  // must say THAT instead of asking the operator for something the bot now
+  // does. With it OFF the old sentence is still the true one.
   const { text } = await panel();
-  assert.match(text, /cannot be filled — they have no spare listings/);
-  assert.match(text, /needs more tokens listed there, not another cycle/);
+  assert.match(text, /have no spare listings/);
+  assert.match(text, /biggest tokens/, "the panel does not say the shortfall gets filled");
+
+  const off = await panel(COUNTS, { fillFromMarket: false });
+  assert.match(off.text, /cannot be filled — they have no spare listings/);
+  assert.match(off.text, /Fill from market.*is off|list tokens there yourself/s);
 
   // Every configured chain short but with spare listings — nothing is blocked,
   // so the panel must promise a cycle rather than ask for more listings.
@@ -156,7 +168,7 @@ test("a chain with genuinely nothing listed still reads as nothing listed", asyn
     robinhood: { featured: 0, eligible: 0, blocked: 0 },
   });
   assert.match(text, /🔴 .*Robinhood — 0\/5 · no listings left on this chain/, text);
-  assert.match(text, /needs more tokens listed there/, text);
+  assert.match(text, /biggest tokens|needs more tokens listed there/, text);
   assert.ok(!text.includes("Xpress"), "nothing here is blocked by a tier rule");
 });
 

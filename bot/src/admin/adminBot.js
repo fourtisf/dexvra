@@ -8,7 +8,7 @@ const fss = require("node:fs");
 const path = require("node:path");
 const { isAdminUser, ADMIN_BOT_TOKEN, CHANNELS } = require("../config/constants");
 const { getMediaFileId, payloadArgs } = require("../helpers/message");
-const { escapeHtml, fmtPrice } = require("../helpers/format");
+const { escapeHtml, fmtPrice, fmtCap } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
@@ -1529,8 +1529,12 @@ function atText() {
     (short.length === 0
       ? `✅ <i>Every chain is at target. Nothing to do until a slot expires.</i>`
       : blocked.length
-        ? `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings. ` +
-          `That needs more tokens listed there, not another cycle.</i>`
+        ? c.fillFromMarket
+          ? `🧲 <i>${blocked.length} chain(s) have no spare listings — the next cycle lists that chain's ` +
+            `biggest tokens (market cap ≥ ${fmtCap(c.fillMinMcap)}) to fill them, up to ` +
+            `${c.fillMaxPerCycle} per chain.</i>`
+          : `ℹ️ <i>${blocked.length} chain(s) cannot be filled — they have no spare listings, and ` +
+            `<b>🧲 Fill from market</b> is off. Turn it on, or list tokens there yourself.</i>`
         : `⏳ <i>${short.length} chain(s) below target; the next cycle tops them up. ` +
           `Tap a chain below to do it now.</i>`) +
     `\n\n` +
@@ -1539,6 +1543,14 @@ function atText() {
     (c.announce ? ` — every promotion is posted, one per <b>${c.announceGapMin} min</b>` : "") +
     (c.announce ? atThroughputNote(c) : "") +
     `\n<i>Auto posts use the SAME card as a paid Trending purchase — never pinned, never @dexvraio.</i>\n\n` +
+    `🧲 <b>Fill from market:</b> <b>${c.fillFromMarket ? "🟢 ON" : "🔴 OFF"}</b>` +
+    (c.fillFromMarket
+      ? ` — when a chain runs out of listings to promote, its biggest tokens (cap ≥ ` +
+        `${fmtCap(c.fillMinMcap)}, liquidity ≥ ${fmtCap(c.fillMinLiq)}) are listed automatically, ` +
+        `max <b>${c.fillMaxPerCycle}</b> per chain per cycle.\n` +
+        `<i>This is what stopped Ethereum publishing 3 rows and Base 2 against a target of ${c.perChain}.</i>`
+      : ` — a chain with no spare listings stays short until somebody lists tokens on it.`) +
+    `\n\n` +
     `⚡ <b>Run now</b> — tap a chain to place its best 24h mover there immediately, even while this is off.`
   );
 }
@@ -1553,6 +1565,13 @@ function atKb() {
     [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "aten")],
     [cb("➖", "attgt:-1"), cb(`🎯 ${c.perChain} per chain`, "atnop"), cb("➕", "attgt:1")],
     [cb("➖", "atgain:-5"), cb(`📈 min +${c.minGainPct}% 24h`, "atnop"), cb("➕", "atgain:5")],
+    [cb(`🧲 Fill from market: ${c.fillFromMarket ? "ON" : "OFF"}`, "atfill")],
+    ...(c.fillFromMarket
+      ? [
+          [cb("➖", "atfmc:-1000000"), cb(`🏦 big = ${fmtCap(c.fillMinMcap)}+`, "atnop"), cb("➕", "atfmc:1000000")],
+          [cb("➖", "atfmax:-1"), cb(`🧲 max ${c.fillMaxPerCycle}/chain`, "atnop"), cb("➕", "atfmax:1")],
+        ]
+      : []),
     [cb("➖", "athmin:-1"), cb(`⏱ Min ${c.minHours}h`, "atnop"), cb("➕", "athmin:1")],
     [cb("➖", "athmax:-1"), cb(`⏱ Max ${c.maxHours}h`, "atnop"), cb("➕", "athmax:1")],
     [cb("➖", "atgmin:-10"), cb(`🔁 Every ${c.minGapMin}m`, "atnop"), cb("➕", "atgmin:10")],
@@ -3249,6 +3268,23 @@ function build() {
     _atPending = autoTrend.pendingCount();
     await edit(ctx, atText(), atKb());
   });
+  bot.action("atfill", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ fillFromMarket: !autoTrend.get().fillFromMarket });
+    // A `show_alert`, not a toast: turning it OFF means a chain with no spare
+    // listings goes back to publishing a short board silently, and that is the
+    // state this feature exists to end.
+    await ctx
+      .answerCbQuery(
+        c.fillFromMarket
+          ? "Fill from market ON — short chains get their biggest tokens listed."
+          : "OFF — a chain with no spare listings will publish a SHORT board again.",
+        { show_alert: !c.fillFromMarket },
+      )
+      .catch(() => {});
+    await edit(ctx, atText(), atKb());
+  });
   bot.action("atnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons — no-op
   // The board readout is a snapshot taken when the panel opened. Re-reading it
   // is the one thing the operator wants after a Run now, or after waiting out a
@@ -3281,6 +3317,8 @@ function build() {
   bot.action(/^atapd:(-?\d+)$/, atStep("announcePerDay", "Announce/day"));
   bot.action(/^atagap:(-?\d+)$/, atStep("announceGapMin", "Announce gap"));
   bot.action(/^atgain:(-?\d+)$/, atStep("minGainPct", "Min 24h gain"));
+  bot.action(/^atfmc:(-?\d+)$/, atStep("fillMinMcap", "Big-coin floor"));
+  bot.action(/^atfmax:(-?\d+)$/, atStep("fillMaxPerCycle", "Fill per chain"));
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();

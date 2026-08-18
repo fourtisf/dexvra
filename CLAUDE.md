@@ -501,6 +501,78 @@ through the GramJS premium account (`node scripts/gramjs-login.js`, and that
 account must actually have Telegram Premium). 💎 Premium status names which of
 those is missing.
 
+## A board that could only ever be as full as the chain was listed
+
+`ETHEREUM - Trending` published three rows and `BASE - Trending` two, against a
+per-chain target of five, reported as *"trending base dan ethereum sangat sedikit
+tidak sesuai minimum yang di set"*.
+
+**Nothing was broken.** Auto-trend promotes what is LISTED on a chain, and those
+two chains had three and two listings in total. It even said so, every cycle:
+
+```
+[autotrend] board below target on ethereum (needs 2, none eligible), base (needs 3, none eligible)
+            — list more tokens on those chains, or lower the per-chain target
+```
+
+…to an operator who cannot list a token from Telegram. **A diagnosis with no
+hands attached is a bug report the code files against its owner**, and it had
+been doing it for weeks.
+
+- **`trendFill.fillChain(chain, need)` is the bridge**, and it runs only where
+  the promotion pass gave up: the shortfall is now DATA (`gaps`), not only a
+  sentence inside `short`. It lists exactly the gap, capped at
+  `fillMaxPerCycle` (3) per chain per cycle.
+- **`bigCoins.topByMcap()` is the source, and it is deliberately not the
+  auto-lister's feed.** That one hunts projects crossing ~$1M for the first time
+  and refuses anything over `maxMcapHard` — by design it can never surface PEPE
+  or BRETT. Filling a board asks the opposite question, so this ranks the
+  chain's biggest tokens instead. Same GT client as everything else
+  (`group/gtPairs`, background priority, one shared 429 cooldown): a second
+  client would have its own idea of the quota and the buy bot would pay for it.
+- ⚠️ **The deepest pool on a chain is usually the MONEY, not a project.** GT
+  ranks pools, so the top of any chain is WETH, USDC, wstETH, cbBTC. A board
+  whose Ethereum section reads `WETH · USDC · USDT` is worse than one with three
+  rows, so `NOT_A_PROJECT` filters them by symbol plus a name prefix for the
+  wrapper families (`Wrapped…`, `Staked…`). No substring match on "USD" — that
+  would eat every stablecoin-themed memecoin there is.
+- **One token, many pools → judged by its DEEPEST.** A real token seen through a
+  thin pool reads as illiquid and gets filtered out.
+- **`ok:false` and an empty list are different facts.** A 429 must not read as
+  "this chain has no big tokens", or the board stays short and the log says
+  nothing — the `pumpfunNewX` rule, one service over. `fillChain` reports which
+  it was, and "every big token here is already listed" is a third answer again.
+- **`autoLister.createFromInfo()` is the one owner of "turn a priced token into
+  a listing".** The scan loop owns the discovery BUDGET (per-run, per-day, the
+  package rotation, the cooldown memo); the filler has a completely different
+  reason to list something and must not grow a second idea of what an auto
+  listing is. Both write `everListed`, so a token listed once and deleted never
+  comes back free through either door.
+- **It lists with the `trending` package**, so the chain that was short is full
+  on the same pass — anything else leaves the board short for another cycle, up
+  to two hours, which is the state being fixed.
+- 🧲 **Fill from market is a visible toggle on the Auto Trending panel**, with
+  the big-coin floor (`fillMinMcap`, $5M) and the per-cycle cap beside it.
+  Turning it OFF is a `show_alert`, because it means a chain with no spare
+  listings goes back to publishing a short board silently.
+- ⚠️ **A boolean that `set()` does not persist is a toggle that reverts.**
+  `fillFromMarket` reached `get()`'s normaliser but not the write list at first,
+  so the panel reported ON and the loop kept the old value — caught by the panel
+  test, and the same shape as every other setting-that-never-arrived in this
+  file.
+- ⚠️ **A persisted setting LEAKS BETWEEN TESTS.** One test turning the toggle
+  off left every later test reading a panel that said "cannot be filled", which
+  looks exactly like a regression in the code under test. The panel helper now
+  states it explicitly instead of inheriting it.
+
+```bash
+cd bot && node scripts/run-tests.js test/trendFill.test.js test/autoTrendPanel.test.js   # 25 tests, no network
+```
+
+**Config a fix depends on:** nothing — but the filler only runs on chains
+GeckoTerminal has a network id for, and it publishes real listings on the site,
+so an operator who wants the old behaviour turns 🧲 Fill from market off.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

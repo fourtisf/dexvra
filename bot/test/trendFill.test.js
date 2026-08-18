@@ -1,0 +1,239 @@
+// "trending base dan ethereum sangat sedikit, tidak sesuai minimum yang di set"
+//
+// The board published 3 Ethereum rows and 2 Base rows against a per-chain target
+// of 5 — because auto-trend promotes what is LISTED on a chain, and those chains
+// had 3 and 2 listings in total. It had been saying so every cycle ("list more
+// tokens on those chains"), to an operator who cannot list a token from
+// Telegram. These pin the bridge that closes it: when a chain runs out of things
+// to promote, its biggest tokens get listed.
+const path = require("node:path");
+const os = require("node:os");
+const fss = require("node:fs");
+process.env.BOT_DATA_DIR = fss.mkdtempSync(path.join(os.tmpdir(), "dexvra-tf-"));
+
+const test = require("node:test");
+const assert = require("node:assert");
+
+const bigCoins = require("../src/services/bigCoins");
+const trendFill = require("../src/services/trendFill");
+const autoTrend = require("../src/services/autoTrend");
+
+// ── The market source ───────────────────────────────────────────────────────
+
+const pool = (sym, name, addr, { mcap, liq = 500_000, vol = 1_000_000 } = {}) => ({
+  attributes: {
+    market_cap_usd: mcap == null ? null : String(mcap),
+    fdv_usd: String(mcap == null ? 0 : mcap),
+    reserve_in_usd: String(liq),
+    volume_usd: { h24: String(vol) },
+    price_change_percentage: { h24: "-4.16" },
+    base_token_price_usd: "0.42",
+  },
+  relationships: { base_token: { data: { id: `eth_${addr}` } } },
+  _tok: { id: `eth_${addr}`, type: "token", attributes: { address: addr, name, symbol: sym, image_url: "https://img/x.png" } },
+});
+const gtBody = (pools) => ({ data: pools, included: pools.map((p) => p._tok) });
+
+function stubGt(pagesOrFn) {
+  const gt = require("../src/group/gtPairs");
+  const real = gt.gtGet;
+  gt.gtGet = typeof pagesOrFn === "function" ? pagesOrFn : async (_p, params) => {
+    const page = Number((params && params.page) || 1);
+    const body = pagesOrFn[page - 1];
+    return body ? { ok: true, status: 200, body } : { ok: true, status: 200, body: { data: [], included: [] } };
+  };
+  return () => { gt.gtGet = real; };
+}
+
+test("the biggest tokens come back cap-first, and the money is not one of them", async () => {
+  const restore = stubGt([
+    gtBody([
+      // The pool's other side wearing a $60B cap: a trending board whose
+      // Ethereum section reads WETH · USDC is worse than one with three rows.
+      pool("WETH", "Wrapped Ether", "0xweth", { mcap: 60_000_000_000 }),
+      pool("USDC", "USD Coin", "0xusdc", { mcap: 40_000_000_000 }),
+      pool("wstETH", "Wrapped liquid staked Ether", "0xwsteth", { mcap: 20_000_000_000 }),
+      pool("PEPE", "Pepe", "0xpepe", { mcap: 4_000_000_000 }),
+      pool("SHIB", "Shiba Inu", "0xshib", { mcap: 8_000_000_000 }),
+      pool("TURBO", "Turbo", "0xturbo", { mcap: 300_000_000 }),
+    ]),
+  ]);
+  try {
+    const r = await bigCoins.topByMcap("ethereum", { minMcap: 1_000_000, minLiq: 1000 });
+    assert.strictEqual(r.ok, true);
+    assert.deepStrictEqual(r.items.map((t) => t.symbol), ["SHIB", "PEPE", "TURBO"], "cap order, and no wrappers or stables");
+    assert.strictEqual(r.items[0].logoUrl, "https://img/x.png", "the artwork GT already gave us is not thrown away");
+  } finally {
+    restore();
+  }
+});
+
+test("one token in five pools is judged by its DEEPEST one", async () => {
+  const restore = stubGt([
+    gtBody([
+      pool("BRETT", "Brett", "0xbrett", { mcap: 500_000_000, liq: 12_000 }),
+      pool("BRETT", "Brett", "0xbrett", { mcap: 500_000_000, liq: 3_000_000 }),
+    ]),
+  ]);
+  try {
+    const r = await bigCoins.topByMcap("base", { minMcap: 1_000_000, minLiq: 1_000_000 });
+    assert.strictEqual(r.items.length, 1, "the same token must not be listed twice");
+    assert.strictEqual(r.items[0].liq, 3_000_000, "a thin pool made a real token look illiquid");
+  } finally {
+    restore();
+  }
+});
+
+test("'GT did not answer' and 'this chain has nothing big' are DIFFERENT answers", async () => {
+  // Collapsing them into [] is how a rate limit reads as an empty chain and the
+  // board stays short with nobody the wiser.
+  let restore = stubGt(async () => ({ ok: false, status: 0, reason: "cooldown" }));
+  try {
+    const down = await bigCoins.topByMcap("ethereum", {});
+    assert.strictEqual(down.ok, false);
+    assert.match(down.why, /cooldown/);
+    assert.deepStrictEqual(down.items, []);
+  } finally {
+    restore();
+  }
+  restore = stubGt([gtBody([pool("SMOL", "Smol", "0xsmol", { mcap: 12_000 })])]);
+  try {
+    const quiet = await bigCoins.topByMcap("ethereum", { minMcap: 5_000_000 });
+    assert.strictEqual(quiet.ok, true, "GT answered — that is a different fact from being unreachable");
+    assert.deepStrictEqual(quiet.items, []);
+  } finally {
+    restore();
+  }
+});
+
+test("a chain GeckoTerminal cannot be asked about says so, rather than reporting nothing", async () => {
+  const r = await bigCoins.topByMcap("no-such-chain", {});
+  assert.strictEqual(r.ok, false);
+  assert.match(r.why, /no GeckoTerminal network id/);
+});
+
+// ── The fill ────────────────────────────────────────────────────────────────
+
+const deps = (over = {}) => ({
+  topByMcap: async () => ({
+    ok: true,
+    why: null,
+    items: [
+      { chain: "base", address: "0xbrett", symbol: "BRETT", name: "Brett", mcap: 500_000_000, liq: 3e6, vol24: 1e6, change24h: -4 },
+      { chain: "base", address: "0xtoshi", symbol: "TOSHI", name: "Toshi", mcap: 400_000_000, liq: 2e6, vol24: 1e6, change24h: -1 },
+      { chain: "base", address: "0xdegen", symbol: "DEGEN", name: "Degen", mcap: 300_000_000, liq: 1e6, vol24: 1e6, change24h: 3 },
+    ],
+  }),
+  getListings: async () => [],
+  wasEverListed: () => false,
+  fetchTokenInfo: async () => null,
+  createFromInfo: async (chain, address, info) => ({ listing: { id: 1 }, input: { sym: info.symbol, tier: "GOLD" } }),
+  ...over,
+});
+
+test("it lists EXACTLY the shortfall, biggest first", async () => {
+  const r = await trendFill.fillChain("base", 2, { deps: deps() });
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["BRETT", "TOSHI"]);
+  assert.strictEqual(r.why, null, "it filled the gap, so there is nothing to explain");
+});
+
+test("a token already on the site is never listed twice", async () => {
+  const r = await trendFill.fillChain("base", 2, {
+    deps: deps({ getListings: async () => [{ chain: "base", address: "0xBRETT" }] }),
+  });
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["TOSHI", "DEGEN"], "address comparison must be case-insensitive");
+});
+
+test("a token that was listed once and removed does not come back free", async () => {
+  const r = await trendFill.fillChain("base", 3, {
+    deps: deps({ wasEverListed: (_c, a) => a === "0xtoshi" }),
+  });
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["BRETT", "DEGEN"]);
+});
+
+test("the site refusing ONE token does not end the fill", async () => {
+  const r = await trendFill.fillChain("base", 2, {
+    deps: deps({
+      createFromInfo: async (_c, address, info) => {
+        if (address === "0xbrett") throw new Error("duplicate");
+        return { listing: { id: 2 }, input: { sym: info.symbol, tier: "GOLD" } };
+      },
+    }),
+  });
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["TOSHI", "DEGEN"]);
+});
+
+test("what it could NOT do is reported, never returned as a quiet zero", async () => {
+  const unreadable = await trendFill.fillChain("base", 2, {
+    deps: deps({ topByMcap: async () => ({ ok: false, why: "rate limited", items: [] }) }),
+  });
+  assert.deepStrictEqual(unreadable.listed, []);
+  assert.match(unreadable.why, /could not read the market/, "a rate limit must not read as an empty chain");
+
+  const allKnown = await trendFill.fillChain("base", 2, {
+    deps: deps({ getListings: async () => [{ chain: "base", address: "0xbrett" }, { chain: "base", address: "0xtoshi" }, { chain: "base", address: "0xdegen" }] }),
+  });
+  assert.match(allKnown.why, /already listed/);
+
+  const noApi = await trendFill.fillChain("base", 2, {
+    deps: deps({ getListings: async () => { throw new Error("502"); } }),
+  });
+  // Without the site's list we cannot tell new from listed, and a duplicate is
+  // worse than a cycle spent short.
+  assert.deepStrictEqual(noApi.listed, []);
+  assert.match(noApi.why, /site API unreachable/);
+});
+
+test("the token's real identity is used when the enrichment answers, and the fill survives when it does not", async () => {
+  let seen = null;
+  await trendFill.fillChain("base", 1, {
+    deps: deps({
+      fetchTokenInfo: async () => ({ name: "Brett (Based)", symbol: "BRETT", logoUrl: "https://cdn/brett.png", twitter: "https://x.com/brett" }),
+      createFromInfo: async (_c, _a, info) => { seen = info; return { listing: {}, input: { sym: info.symbol, tier: "GOLD" } }; },
+    }),
+  });
+  assert.strictEqual(seen.name, "Brett (Based)");
+  assert.strictEqual(seen.twitter, "https://x.com/brett");
+
+  // …and a failed lookup must cost the socials, never the listing: GT already
+  // gave us a name, a symbol and a cap.
+  const r = await trendFill.fillChain("base", 1, {
+    deps: deps({ fetchTokenInfo: async () => { throw new Error("dexscreener down"); } }),
+  });
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["BRETT"]);
+});
+
+test("nothing is listed when nothing is missing", async () => {
+  const r = await trendFill.fillChain("base", 0, { deps: deps() });
+  assert.deepStrictEqual(r.listed, []);
+});
+
+// ── The wiring: auto-trend must ASK for the fill, and bound it ───────────────
+
+test("a chain with nothing left to promote is filled, and the request is the real shortfall", async () => {
+  const calls = [];
+  const api = require("../src/api/dexvra");
+  const realGet = api.getListings;
+  // Base has ONE featured token and nothing spare — the reported state.
+  api.getListings = async () => [
+    { status: "approved", chain: "base", address: "0x1", sym: "ONE", trendingRank: 1, trendExp: Date.now() + 3.6e6 },
+  ];
+  try {
+    await autoTrend.set({ enabled: true, perChain: 5, chains: ["base"], fillFromMarket: true, fillMaxPerCycle: 3 });
+    await autoTrend.runOnce({
+      rng: () => 0.5,
+      deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { chain, need, listed: [], tried: 0, why: "test" }; } },
+    });
+    assert.deepStrictEqual(calls, [["base", 3]], "the fill must be asked for the gap, capped at fillMaxPerCycle");
+
+    // …and OFF means OFF: a chain stays short rather than being filled behind
+    // the operator's back.
+    calls.length = 0;
+    await autoTrend.set({ fillFromMarket: false });
+    await autoTrend.runOnce({ rng: () => 0.5, deps: { fillChain: async (c, n) => { calls.push([c, n]); return { listed: [] }; } } });
+    assert.deepStrictEqual(calls, []);
+  } finally {
+    api.getListings = realGet;
+    await autoTrend.reset();
+  }
+});

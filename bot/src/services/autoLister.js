@@ -494,6 +494,28 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
 }
 
 /**
+ * TURN A PRICED TOKEN INTO A LISTING ON THE SITE — the one place that does it.
+ *
+ * The scan loop below owns the discovery BUDGET (per-run caps, per-day caps,
+ * the package rotation, the cooldown memo); this owns the act itself, so the
+ * board filler (`trendFill.js`, which has a completely different reason to list
+ * something) cannot grow a second idea of what an auto listing is. It also
+ * records `everListed`, which is the memo that stops a token that was listed
+ * once — and later deleted, or paid for — being handed back free by either
+ * caller.
+ *
+ * Throws what the site threw: the caller decides whether one refusal ends its
+ * run, and the two callers answer that differently.
+ */
+async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free' } = {}) {
+  const input = listingInput(chain, address, info, cfg, now, pkgKey);
+  const listing = await api.createListing(input);
+  if (!listing) return null;
+  await rememberListed({ chain, address }, now);
+  return { listing, input };
+}
+
+/**
  * One scan. Returns how many tokens were listed. Never throws — a hiccup must
  * not take down the service loop. `deps` is injectable so tests don't touch the
  * network.
@@ -603,18 +625,20 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     // Whose turn it is. Read fresh from `state` each time so several listings in
     // ONE scan still alternate instead of all taking the same package.
     const { key: pkgKey } = nextPkg(cfg, state);
-    const input = listingInput(c.chain, c.address, info, cfg, now, pkgKey);
-    let listing;
+    let made;
     try {
-      listing = await api.createListing(input);
+      made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey });
     } catch (e) {
-      log.warn(`[autolist] createListing ${input.sym} (${c.chain}): ${e.message}`);
+      log.warn(`[autolist] createListing ${sanitizeTicker(info.symbol)} (${c.chain}): ${e.message}`);
       continue;
     }
-    if (!listing) continue;
+    if (!made) continue;
+    const { input } = made;
 
     state.listed[key] = { at: now, sym: input.sym, mcap: Math.round(info.mcap), trigger, pkg: pkgKey, tier: input.tier };
-    state.everListed[key] = state.everListed[key] || now;
+    // `everListed` is written by createFromInfo — re-read so this scan's own
+    // later iterations see it, rather than writing a second, older value here.
+    state.everListed = loadState().everListed;
     // Advanced HERE, not at the top of the loop: a token rejected by its trigger
     // or refused by the site must not consume a turn, or the mix drifts toward
     // whichever package happens to follow the rejections.
@@ -936,6 +960,10 @@ module.exports = {
   reset,
   resetState,
   rememberListed,
+  /** Has this token EVER been auto-listed? The filler must not re-list one the
+   *  operator deleted, same rule the scan already follows. */
+  wasEverListed: (chain, address) => !!loadState().everListed[keyOf(chain, address)],
+  createFromInfo,
   start,
   runOnce,
   dryRun,
