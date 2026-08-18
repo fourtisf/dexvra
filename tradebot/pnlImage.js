@@ -136,7 +136,7 @@ function circleImage(ctx, img, cx, cy, r) {
  * canvas, or a total we could not compute — an image is a claim, and an image
  * of an unknown is a claim nobody can qualify).
  */
-async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '', refLink = '', qrApi = '' } = {}) {
+async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '', refLink = '', qrApi = '', botUser = '' } = {}) {
   const K = kit();
   if (!K) return null;
   const s = pnl.pnlStats(p);
@@ -375,10 +375,10 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   // Held for — and the state, because a card that says nothing about whether
   // this is over reads as though it is.
   ctx.fillStyle = K.MUTE;
-  const held = (p.trades && p.trades.firstAt) ? `Held ${heldFor(Date.now() - p.trades.firstAt)}` : '';
+  const held = (p.trades && p.trades.firstAt) ? `Hold ${heldFor(Date.now() - p.trades.firstAt)}` : '';
   const state = s.status === 'closed' ? 'Closed' : s.status === 'partial' ? 'Partly sold' : 'Still holding';
   const meta = [chainName, held, state].filter(Boolean).join('  ·  ');
-  // Fitted, never clipped: "Solana · Held for: 1d 2h 0m · Still holding" is
+  // Fitted, never clipped: "Solana · Hold 1d 2h · Still holding" is
   // already wider than the column, and a longer chain name would cross the
   // frame stroke — which reads as a cropped card.
   ctx.fillText(K.fitText(ctx, meta, W - 62 - RX, { weight: 600, size: 24, min: 17, family: K.F.m6 }), RX, 180);
@@ -469,6 +469,14 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   ctx.fillStyle = K.INK;
   ctx.font = `800 36px ${K.F.d7}`;
   ctx.fillText('DEXVRA', 130, H - BAR + 60);
+  const wmW = ctx.measureText('DEXVRA').width;   // measured in the wordmark's OWN font
+  if (botUser) {
+    // The bot's own @username, beside the wordmark — a shared card must say
+    // WHERE to go. It is the handle getMe() answered with, never a literal.
+    ctx.fillStyle = K.SITE.mint;
+    ctx.font = `600 20px ${K.F.m6}`;
+    ctx.fillText('@' + botUser, 130 + wmW + 18, H - BAR + 60);
+  }
   ctx.fillStyle = K.MUTE;
   ctx.font = `600 17px ${K.F.m6}`;
   ctx.fillText('TRADE  ·  SNIPE  ·  COPY', 132, H - BAR + 88);
