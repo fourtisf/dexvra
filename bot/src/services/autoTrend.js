@@ -472,10 +472,9 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   const isFeatured = (r) => r.status === "approved" && r.trendingRank != null && (!r.trendExp || r.trendExp > now);
   const on = (r, id) => String(r.chain).toLowerCase() === String(id).toLowerCase();
 
-  // Each chain is topped up against ITS OWN count. Doing this globally meant the
-  // network with the most listings won every shuffle and the rest of the board
-  // stayed empty — see DEFAULTS.perChainMin.
-  // Each chain is topped up to ITS OWN rolled target. A chain still AT or above
+  // Each chain is topped up against ITS OWN count — doing this globally meant
+  // the network with the most listings won every shuffle and the rest of the
+  // board stayed empty (see DEFAULTS.perChainMin) — and to ITS OWN rolled target. A chain still AT or above
   // the floor is left alone — that is what keeps the counts different from each
   // other instead of every chain sitting on the same number.
   const rollTarget = () => cfg.perChainMin + Math.floor(rng() * (cfg.perChainMax - cfg.perChainMin + 1));
@@ -494,6 +493,24 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   // The same shortfall, as data. It used to exist only as English inside
   // `short`, which is why nothing could act on it.
   const gaps = new Map();
+  /**
+   * ⚠️ ONLY a LISTING shortage belongs here.
+   *
+   * The board can end up short for two completely different reasons, and only
+   * one of them is fixed by listing something:
+   *
+   *   • the chain has no spare listings left  → nothing to promote → FILL
+   *   • the chain has plenty, but they are all DOWN → the `minGainPct` floor
+   *     did its job, and the board is short ON PURPOSE
+   *
+   * Feeding the second case to the filler turns a red market into a listing
+   * spree: with `min +5% 24h` set, every chain looks "short" on any red day, so
+   * the bot would list `fillMaxPerCycle` fresh tokens per chain per cycle —
+   * every cycle, all day — while the tokens already listed there sit unused
+   * because they are down 2%. The gain floor and the filler would be fighting
+   * each other, and the filler would win because its listings book their slot
+   * directly.
+   */
   const gap = (id, n) => {
     if (n > 0) gaps.set(id, Math.max(gaps.get(id) || 0, n));
   };
@@ -520,13 +537,12 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // price could not be read, and those stay eligible on purpose.
     const worthy = step.forced ? ranked : ranked.filter((r) => r._change === null || r._change >= cfg.minGainPct);
     if (!worthy.length) {
+      // No gap(): this chain HAS listings, they are simply down. See gap().
       short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s), none up ${cfg.minGainPct}% or more)`);
-      gap(step.id, step.need);
       continue;
     }
     if (worthy.length < step.need) {
       short.push(`${step.id} (needs ${step.need}, only ${worthy.length} up ${cfg.minGainPct}% or more)`);
-      gap(step.id, step.need - worthy.length);
     }
     for (const r of worthy.slice(0, step.need)) {
       // Random duration in [minHours, maxHours] — different per token, so the

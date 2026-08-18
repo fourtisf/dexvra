@@ -237,3 +237,36 @@ test("a chain with nothing left to promote is filled, and the request is the rea
     await autoTrend.reset();
   }
 });
+
+test("a RED day is not a listing spree — the gain floor must not trigger the filler", async () => {
+  // The board goes short for two unrelated reasons and only one is fixed by
+  // listing something: a chain with nothing left to promote, versus a chain
+  // whose listings are all simply DOWN. With `min +5% 24h` set, the second
+  // happens to every chain on any red day — and feeding it to the filler would
+  // list fillMaxPerCycle fresh tokens per chain, every cycle, all day, while
+  // the tokens already listed there sat unused because they were down 2%.
+  const calls = [];
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  // Base has FIVE spare listings — plenty to promote — and every one is down.
+  api.getListings = async () =>
+    ["b1", "b2", "b3", "b4", "b5"].map((address) => ({ status: "approved", chain: "base", address, sym: address, trendingRank: null }));
+  market.fetchMarket = async () => ({ change24h: -3 });
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 5, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 6 });
+    await autoTrend.runOnce({
+      rng: () => 0.5,
+      deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { listed: [] }; } },
+    });
+    assert.deepStrictEqual(calls, [], "the chain has five listings — being down is the gain filter working, not a shortage");
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});

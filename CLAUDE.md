@@ -603,6 +603,16 @@ been doing it for weeks.
   off left every later test reading a panel that said "cannot be filled", which
   looks exactly like a regression in the code under test. The panel helper now
   states it explicitly instead of inheriting it.
+- ⚠️ **ONLY a listing shortage may ask for a fill — never the gain floor.** The
+  board goes short for two unrelated reasons: the chain has nothing left to
+  promote (→ list something), or it has plenty and they are all DOWN (→ the
+  `minGainPct` floor working as designed). The first cut fed both to the filler,
+  so with `min +5% 24h` set, every chain looks short on any red day and the bot
+  would list `fillMaxPerCycle` fresh tokens per chain per cycle, all day, while
+  the tokens already listed there sat unused for being down 2%. The gain floor
+  and the filler would be fighting each other — and the filler wins, because its
+  listings book their slot directly. Found by reading the operator's settings
+  screenshot, not by a failing test; `trendFill.test.js` pins it now.
 
 ```bash
 cd bot && node scripts/run-tests.js test/trendFill.test.js test/autoTrendPanel.test.js   # 25 tests, no network
