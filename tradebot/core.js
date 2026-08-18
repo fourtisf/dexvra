@@ -1561,6 +1561,32 @@ async function tokenBalanceOrNull(ca, addr, chainKey) {
     return await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).balanceOf(addr);
   } catch (_) { return null; }
 }
+// Total supply in UI units, cached — a holding is only a statement once the
+// reader knows what SHARE of the token it is ("harus ada berapa % dari
+// supply"). Returns null when it cannot be read: an unknown supply must never
+// render as "0% of supply", and on an EVM chain with unknown decimals a
+// guessed 18 would print a share off by orders of magnitude — worse than none.
+const _supplyCache = new Map();   // chain:ca → { v, ts }
+const SUPPLY_TTL_MS = 10 * 60 * 1000;
+async function tokenSupplyUi(ca, chainKey, dec) {
+  const key = `${chainKey}:${ca}`;
+  const hit = _supplyCache.get(key);
+  if (hit && Date.now() - hit.ts < SUPPLY_TTL_MS) return hit.v;
+  let v = null;
+  try {
+    if (isSvm(chainKey)) {
+      const s = await providerFor(chainKey).getTokenSupply(new (require('@solana/web3.js').PublicKey)(ca));
+      v = s.value.uiAmount != null ? Number(s.value.uiAmount) : Number(s.value.amount) / 10 ** s.value.decimals;
+    } else if (Number.isFinite(dec)) {
+      const raw = await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).totalSupply();
+      v = Number(ethers.formatUnits(raw, dec));
+    }
+  } catch (_) { v = null; }
+  if (!(v > 0)) v = null;
+  if (_supplyCache.size >= 500) _supplyCache.delete(_supplyCache.keys().next().value);
+  _supplyCache.set(key, { v, ts: Date.now() });
+  return v;
+}
 // Maestro-style: this token's balance (+ native) across EVERY one of the user's
 // wallets, read LIVE on-chain (so tokens acquired outside the bot — e.g. a token
 // you launched on the site — still show up). Best-effort: a failed read is 0, never
@@ -3645,6 +3671,10 @@ async function tokenPnl(chatId, ca, chainKey) {
   // derived from it, which is the honest answer. A position with no trades and
   // no readable balance is simply "no trades".
   const open = tokens > 1e-9 || (balUnknown && traded);
+  // The share of supply this bag is. Best-effort and cached; null (never 0)
+  // when the supply cannot be read, and the renderers print nothing then.
+  const supplyUi = (open && !balUnknown && tokens > 1e-9)
+    ? await module.exports.tokenSupplyUi(ca, chainKey, dec).catch(() => null) : null;
   const snap = (open && !balUnknown) ? await module.exports.tokenSnapshot(ca, chainKey).catch(() => null) : null;
   const priceEth = (snap && snap.priceEth > 0) ? snap.priceEth : 0;
   // An unreadable BALANCE is as disqualifying as an unreadable price: both leave
@@ -3670,6 +3700,7 @@ async function tokenPnl(chatId, ca, chainKey) {
   return {
     ca, chain: chainKey, sym, name, dec, traded,
     open, tokens, holders, priced, priceEth, valueEth, balUnknown,
+    supplyPct: (supplyUi > 0 && tokens > 0) ? (tokens / supplyUi) * 100 : null,
     ethIn: agg.ethIn, ethOut: agg.ethOut, costEth: agg.costEth,
     realizedEth: agg.realizedEth,
     // Only meaningful while something is held, and only when we could price it.
@@ -3702,7 +3733,7 @@ module.exports = {
   claimSnipeTarget, settleSnipeTarget, rearmSnipeTarget, expireSnipeTarget, MAX_SNIPE_TARGETS, SNIPE_TTL_MS,
   snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H, copyFanOut,
   feePayoutEnabled, payFromFeeWallet,
-  resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
+  resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenSupplyUi, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
   // Test-only seams — see the notes at each definition.

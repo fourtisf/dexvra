@@ -94,6 +94,22 @@ test('an unreadable price is UNKNOWN — never a 100% loss', () => {
   assert.ok(!/%/.test(txt.split('Invested')[0].replace(/Couldn't[^\n]*/, '')), 'a percentage was printed against an unknown value');
 });
 
+test('the share of supply prints only when the supply is known', () => {
+  // "harus ada berapa % dari supply". null supply = no phrase — never "0.00%".
+  const held = P({ open: true, tokens: 500, priced: true, priceEth: 0.001, valueEth: 0.5, ethIn: 1, costEth: 1, unrealizedEth: -0.5, supplyPct: 0.05 });
+  const txt = plain(pnl.pnlText(held, { native: 'SOL', rate: 0 }));
+  assert.match(txt, /0\.050% of supply/);
+  const noSup = P({ open: true, tokens: 500, priced: true, priceEth: 0.001, valueEth: 0.5, ethIn: 1, costEth: 1, unrealizedEth: -0.5 });
+  assert.ok(!/of supply/.test(plain(pnl.pnlText(noSup, { native: 'SOL', rate: 0 }))), 'an unknown supply rendered as a share');
+  // The formatter's edges: precision scales down, and below it the string
+  // says "<" instead of rounding a real position to nothing.
+  assert.equal(pnl.share(12.3456), '12.35%');
+  assert.equal(pnl.share(0.034), '0.034%');
+  assert.equal(pnl.share(0.0001), '<0.01%');
+  assert.equal(pnl.share(null), '');
+  assert.equal(pnl.share(0), '');
+});
+
 test('a token never traded here says so, and does not invent a zero', () => {
   const txt = plain(pnl.pnlText(P({ traded: false, ethIn: 0 }), { native: 'SOL', rate: 200 }));
   assert.match(txt, /No trades on file/);

@@ -317,6 +317,17 @@ test('P/L is omitted when it is not known, never printed as zero', () => {
   assert.ok(!/%/.test(receipt.walletReceipt(T, { ...base, amount: 1, pnl: 1 })), 'a zero basis produced a percentage');
 });
 
+test("the fill's share of supply is on the receipt — and only when it is known", () => {
+  // "harus ada berapa % dari supply" — the ok line carries the share when the
+  // supply could be read, and nothing at all when it could not: an unknown
+  // supply printed as "0% of supply" would be a stated fact that is false.
+  const base = { side: 'buy', ok: true, sym: 'T', ca: 'x', wallet: 'w', tokens: 100, amount: 1, native: 'ETH', rate: 0, mcUsd: 0 };
+  assert.match(receipt.walletReceipt(T, { ...base, supplyPct: 2 }), /2\.00%<\/b> of supply/);
+  assert.match(receipt.walletReceipt(T, { ...base, side: 'sell', supplyPct: 0.0004 }), /<0\.01%<\/b> of supply/);
+  assert.ok(!/of supply/.test(receipt.walletReceipt(T, { ...base, supplyPct: null })), 'an unknown supply rendered as a share');
+  assert.ok(!/\{sup\}/.test(receipt.walletReceipt(T, base)), 'the {sup} slot leaked into the copy');
+});
+
 test('the renderer adds no escaping — the caller owns that', () => {
   // Same contract as i18n.js. If this module escaped too, the <b> tags the
   // callers pass in would render as literal markup.
