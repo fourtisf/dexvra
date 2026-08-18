@@ -151,7 +151,7 @@ function bar(mult) {
  * the native→USD price (0 = no feed: the card then states native only, never a
  * confident $0).
  */
-function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '' } = {}) {
+function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '' } = {}) {
   const s = pnlStats(p);
   const L = [];
   const tag = p.sym ? `$${p.sym}` : (p.name || 'this token');
@@ -160,13 +160,12 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   if (s.status === 'none') {
     // Never traded here. Not an error, not a zero — and if the wallet holds
     // some anyway (sent in from outside), say that rather than "0".
-    L.push(`📊 <b>PnL · ${tag}</b>`, '');
+    L.push(`📊 <b>PnL · ${tag}</b>${chainLabel ? ` · ${chainLabel}` : ''}`, '');
     L.push('<i>No trades on file for this token in this bot.</i>');
     if (p.open) {
       L.push('', `You hold <b>${qty(s.tokens)}</b> ${tag}${s.priceEth > 0 && rate > 0 ? ` · worth <b>${usd(s.tokens * s.priceEth * rate)}</b>` : ''}.`);
       L.push('<i>Bought outside this bot, or sent in from another wallet — there is no cost basis to measure against.</i>');
     }
-    if (chainLabel) L.push('', `<i>${chainLabel}</i>`);
     return L.join('\n');
   }
 
@@ -178,7 +177,11 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   // The name rides under the title only when it SAYS something the ticker
   // does not — an unnamed launch has sym and name both set to the short CA,
   // and printing it twice was the first line of the "spam" report.
-  L.push(`${face} <b>PnL · ${tag}</b>${p.name && p.sym && p.name !== p.sym ? `\n<i>${p.name}</i>` : ''}`);
+  // The chain is part of the token's IDENTITY — the same address can exist on
+  // two of them — so it belongs beside the ticker, the way the book's header
+  // already carries it. Pushed as a footer it was a word floating under a
+  // blank line with nothing to attach to, which is how it read.
+  L.push(`${face} <b>PnL · ${tag}</b>${chainLabel ? ` · ${chainLabel}` : ''}${p.name && p.sym && p.name !== p.sym ? `\n<i>${p.name}</i>` : ''}`);
   L.push('');
   // THE HEADLINE, and nothing competing with it.
   if (s.unknown) {
@@ -202,7 +205,7 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   const tr = p.trades || {};
   // "on file" qualifies the COUNTS — the trade log is capped per wallet, so
   // they are what we still have and never a claim of completeness. It must
-  // sit BESIDE them: appended after the duration it read as "held 2d 4h on
+  // sit BESIDE them: appended after the duration it read as "hold 2d 4h on
   // file", which is not a sentence. The money figures come from the
   // position's lifetime totals, which are not capped.
   const counts = [];
@@ -210,7 +213,7 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   if (tr.sells) counts.push(`${tr.sells} sell${tr.sells > 1 ? 's' : ''}`);
   const trBits = [];
   if (counts.length) trBits.push(`${counts.join(' · ')} on file`);
-  if (tr.firstAt) trBits.push(`held ${since(Date.now() - tr.firstAt)}`);
+  if (tr.firstAt) trBits.push(`hold ${since(Date.now() - tr.firstAt)}`);
   L.push(`${head}${trBits.length ? ` · <i>${trBits.join(' · ')}</i>` : ''}`);
   // Blank lines BETWEEN the groups. Dropping the per-line emoji fixed the
   // spam and created the opposite defect in the same breath — five dense
@@ -248,7 +251,6 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
     detail.push(`<i>${shown}${p.holders.length > 4 ? ` +${p.holders.length - 4} more` : ''}</i>`);
   }
   if (detail.length) L.push('', ...detail);
-  if (chainLabel) L.push('', `<i>${chainLabel}${explorerUrl ? '' : ''}</i>`);
   return L.join('\n');
 }
 
