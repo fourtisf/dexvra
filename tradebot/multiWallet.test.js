@@ -56,7 +56,10 @@ test("the panel is a toggle — open it, close it, same message", () => {
   assert.match(tg, /\$\{multiOpen \? 'wex0' : 'wex1'\}/, "one button, two directions");
   const h = tg.slice(tg.indexOf("if (k === 'wex1'"));
   const body = h.slice(0, h.indexOf("\n  }"));
-  assert.match(body, /const c = await tokenCard\(chatId, mca, chainK, wid, \{ multi: k !== 'wex0' \}\);/);
+  // Same card, same message: `multi` flips with the direction of the tap. The
+  // render also reuses the last full scan — a toggle changes which wallets are
+  // lit and nothing a network read would tell us (see walletToggle.test.js).
+  assert.match(body, /const c = await tokenCard\(chatId, mca, chainK, wid, \{ multi: k !== 'wex0', reuse: true \}\);/);
   assert.match(body, /return edit\(chatId, mid, c\.text, c\.kb\);/, "edit, never send — a run of taps must not fill the chat");
 });
 
