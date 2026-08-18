@@ -1330,7 +1330,17 @@ what share of the token it is** ("harus ada berapa % dari supply"):
   off by orders of magnitude.
 - **`pnl.share()` is the one formatter** — pnl card, monitor and receipts all
   import it, so three surfaces cannot drift into three formats. Below display
-  precision it prints `<0.01%`, never a rounded-to-zero share.
+  precision it says so rather than rounding a real position to nothing.
+- ⚠️ **That "below precision" string was `<0.01%`, and a bare `<` is not a
+  tag.** With `parse_mode: HTML` Telegram rejects the WHOLE message — 400
+  "can't parse entities" — and a 400 is an ANSWER, so `queuedSend` does not
+  retry it. The receipt, the monitor card and the PnL card would each have
+  simply vanished for any ordinary buy on a large-supply token (0.01% of 1B is
+  100k tokens), and the one owner meant it shipped to all three at once. It is
+  `&lt;0.01%` now. The "callers pass pre-escaped values" contract covers
+  caller-supplied text (`sym`, `name`); a literal this module GENERATES is this
+  module's to make safe, and a test strips every real tag and fails on anything
+  `<` left behind.
 - It rides the PnL holding line (`supplyPct` on `tokenPnl`), the monitor's
   "You hold" line, and the per-wallet receipt's ok line (through i18n —
   "of supply" has an Indonesian spelling too). Every read is bounded so the

@@ -323,7 +323,7 @@ test("the fill's share of supply is on the receipt — and only when it is known
   // supply printed as "0% of supply" would be a stated fact that is false.
   const base = { side: 'buy', ok: true, sym: 'T', ca: 'x', wallet: 'w', tokens: 100, amount: 1, native: 'ETH', rate: 0, mcUsd: 0 };
   assert.match(receipt.walletReceipt(T, { ...base, supplyPct: 2 }), /2\.00%<\/b> of supply/);
-  assert.match(receipt.walletReceipt(T, { ...base, side: 'sell', supplyPct: 0.0004 }), /<0\.01%<\/b> of supply/);
+  assert.match(receipt.walletReceipt(T, { ...base, side: 'sell', supplyPct: 0.0004 }), /&lt;0\.01%<\/b> of supply/);
   assert.ok(!/of supply/.test(receipt.walletReceipt(T, { ...base, supplyPct: null })), 'an unknown supply rendered as a share');
   assert.ok(!/\{sup\}/.test(receipt.walletReceipt(T, base)), 'the {sup} slot leaked into the copy');
 });

@@ -82,7 +82,15 @@ function share(v) {
   if (!(n > 0)) return '';
   if (n >= 1) return n.toFixed(2) + '%';
   if (n >= 0.01) return n.toFixed(3) + '%';
-  return '<0.01%';
+  // ⚠️ '&lt;', never a raw '<'. This module EMITS HTML (its own <b> tags), and
+  // a bare '<' that does not open a supported tag makes Telegram reject the
+  // entire message — 400 "can't parse entities" — which queuedSend does not
+  // retry, because a 400 is an answer and not a transport error. That would
+  // have silently deleted the receipt, the monitor card and the PnL card for
+  // any ordinary buy on a large-supply token, which is most of them. The
+  // "callers pass pre-escaped values" contract is about caller-supplied text
+  // (sym, name); a literal this file generates is this file's to make safe.
+  return '&lt;0.01%';
 }
 /** "3d 4h", "12m" — how long the money has been in this trade. */
 function since(ms) {
@@ -192,21 +200,25 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
   // and the status glyph carry the colour; the body is text, and related
   // figures share a line instead of taking one each.
   const tr = p.trades || {};
+  // "on file" qualifies the COUNTS — the trade log is capped per wallet, so
+  // they are what we still have and never a claim of completeness. It must
+  // sit BESIDE them: appended after the duration it read as "held 2d 4h on
+  // file", which is not a sentence. The money figures come from the
+  // position's lifetime totals, which are not capped.
+  const counts = [];
+  if (tr.buys) counts.push(`${tr.buys} buy${tr.buys > 1 ? 's' : ''}`);
+  if (tr.sells) counts.push(`${tr.sells} sell${tr.sells > 1 ? 's' : ''}`);
   const trBits = [];
-  if (tr.buys) trBits.push(`${tr.buys} buy${tr.buys > 1 ? 's' : ''}`);
-  if (tr.sells) trBits.push(`${tr.sells} sell${tr.sells > 1 ? 's' : ''}`);
+  if (counts.length) trBits.push(`${counts.join(' · ')} on file`);
   if (tr.firstAt) trBits.push(`held ${since(Date.now() - tr.firstAt)}`);
-  // "on file" — the trade log is capped per wallet, so this is what we still
-  // have, never a claim that it is every trade. The money figures come from
-  // the position's lifetime totals, which are not capped.
-  L.push(`${head}${trBits.length ? ` · <i>${trBits.join(' · ')} on file</i>` : ''}`);
+  L.push(`${head}${trBits.length ? ` · <i>${trBits.join(' · ')}</i>` : ''}`);
   L.push(`Invested <b>${amt(s.ethIn)} ${native}</b>${dollars(s.ethIn)}`
     + (s.ethOut > 0 ? ` → taken out <b>${amt(s.ethOut)} ${native}</b>${dollars(s.ethOut)}` : ''));
   if (p.open) {
     const sup = share(p.supplyPct);
     L.push(`Still holding <b>${qty(s.tokens)}</b> ${tag}`
       + (sup ? ` · <b>${sup}</b> of supply` : '')
-      + (s.unknown ? ' · <i>price unavailable</i>' : `  ·  <b>${amt(s.value)} ${native}</b>${dollars(s.value)}`));
+      + (s.unknown ? ' · <i>price unavailable</i>' : ` · <b>${amt(s.value)} ${native}</b>${dollars(s.value)}`));
   }
   // Realized vs unrealized, but only where the split says something the money
   // view does not: on a bag that was partly sold, or one still open.
