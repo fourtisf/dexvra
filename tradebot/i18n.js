@@ -619,6 +619,18 @@ const S = {
   'dev.master_off': { en: '⚠️ The copy/dev master switch is OFF — tap below to go live.', id: '⚠️ Master switch copy/dev masih OFF — tap di bawah biar langsung aktif.' },
   'dev.on_btn': { en: '🟢 Turn ON now', id: '🟢 Aktifkan sekarang' },
 
+  // ---------------------------------------------------------------- PnL
+  // "how did I do on this token" — the one question /portfolio cannot answer,
+  // because a bag that has been SOLD leaves that screen entirely.
+  'pnl.ask': {
+    en: '📊 <b>PnL for a token</b>\n\nPaste the <b>contract address</b> — I will show what you put in, what came back, and what is still open. Sold or still held.',
+    id: '📊 <b>PnL satu token</b>\n\nPaste <b>alamat kontraknya</b> — saya tampilkan modal masuk, hasil keluar, dan yang masih terbuka. Sudah dijual atau masih dipegang.',
+  },
+  'pnl.bad_ca': {
+    en: "❌ That doesn't look like a contract address. Paste the token's contract, e.g. from the buy card.",
+    id: '❌ Itu sepertinya bukan alamat kontrak. Paste kontrak tokennya, misalnya dari kartu buy.',
+  },
+
   // ---------------------------------------------------------------- errors
   // One clear sentence per failure class, each ending in what to actually do.
   // The raw on-chain / RPC text is still logged server-side for the operator.

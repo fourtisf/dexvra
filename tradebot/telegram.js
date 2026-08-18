@@ -20,6 +20,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const goplus = require('./goplus');
 const i18n = require('./i18n');       // EN/ID copy — see i18n.js for why this exists
 const receipt = require('./receipt'); // one wallet, one receipt — pure renderer, no I/O
+const pnl = require('./pnl');         // the PnL card — pure renderer, no I/O
 const safety = require('./safety');   // chain-aware token safety (GoPlus on EVM, RugCheck on Solana)
 const tokeninfo = require('./tokeninfo');
 const solana = require('./solana');   // base58 address validation + SVM helpers
@@ -566,7 +567,8 @@ function mainMenu() {
   return rows(
     [btn('💼 Wallets', 'wal'), btn('📊 Portfolio', 'pos'), btn('🧾 History', 'hist')],
     [btn('🌐 Chain', 'chain'), btn('🎯 Snipe', 'snipe'), btn('📋 Orders', 'orders')],
-    [btn('🔔 Alerts', 'alerts'), btn('👥 Copy', 'copy'), btn('🎁 Referrals', 'ref')],
+    [btn('📊 PnL', 'pnl'), btn('🔔 Alerts', 'alerts'), btn('👥 Copy', 'copy')],
+    [btn('🎁 Referrals', 'ref'), btn('🧾 History', 'hist'), btn('🔁 DCA', 'dcas')],
     [btn('⚙️ Settings', 'set'), btn('❔ Help', 'help')],
   );
 }
@@ -1394,7 +1396,8 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
     if (bal > 1e-9) other.push(btn(`📤 Send $${esc(sym)}`, `wt:${chainKey}:${wi}:${ca}`));
     ikb.push(other);
   }
-  ikb.push([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), { text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }]);
+  ikb.push([{ text: '📈 Chart', url: chartUrl(chainKey, ca) }, btn('📍 Monitor', `monn:${chainKey}:${wi}:${ca}`), btn('📊 PnL', `pnlt:${chainKey}:${ca}`)]);
+  ikb.push([{ text: '🔎 Explorer', url: expTokenUrl(chainKey, ca) }]);
   ikb.push(lastRow);
   return { text, kb: { inline_keyboard: ikb } };
 }
@@ -1863,6 +1866,78 @@ function walletScopeLine(chatId, tgt, amount, native, key) {
     n, amt: esc(amount), native: esc(native), total: esc(trimNum(Number(amount) * n)),
   });
 }
+
+/**
+ * The PnL card for ONE token — held, sold, or half of each.
+ *
+ * The chain comes from the CALLER (a pasted address is chain-detected first),
+ * never from whatever chain happens to be active: a Solana mint answered
+ * against Ethereum reads as "no trades on file", which is a false statement
+ * about the user's own money and the exact bounce the snipe flow already had
+ * to be rescued from.
+ */
+async function pnlCardScreen(chatId, ca, chainKey) {
+  const ch = core.chainOf(chainKey) || activeChain(chatId);
+  const p = await core.tokenPnl(chatId, ca, ch.key);
+  if (!p) return { text: '📊 <b>PnL</b>\n\nNothing to report yet.', kb: rows([btn('« Menu', 'menu')]) };
+  const text = pnl.pnlText(
+    { ...p, sym: esc(p.sym || ''), name: esc(p.name || '') },
+    { native: ch.native, rate: nativeUsd(ch.native), chainLabel: `${ch.emoji} ${esc(ch.name)}` },
+  );
+  const wi = walletIndex(chatId);
+  const kb = { inline_keyboard: [
+    [btn('🔄 Refresh', `pnlt:${ch.key}:${ca}`), btn('🔎 Open card', `tok:${ch.key}:${wi}:${ca}`)],
+    [{ text: '📈 Chart', url: chartUrl(ch.key, ca) }, btn('📊 All PnL', 'pnl')],
+    [btn('« Menu', 'menu')],
+  ] };
+  return { text, kb };
+}
+/**
+ * The book: every token this chain has a position in, won or lost.
+ *
+ * Closed trades stay on it. A PnL screen that only lists what you still hold
+ * answers "what am I exposed to" — which /portfolio already does — and cannot
+ * answer "did I make money", which is the question this command was asked for.
+ */
+async function pnlBookScreen(chatId) {
+  const u = core.ensureUser(chatId);
+  const chainKey = core.userChain(u);
+  const ch = core.chainOf(chainKey);
+  // Every CA with a position on this chain, across every wallet — the same
+  // union portfolioAll builds, but kept here because that one drops closed rows
+  // from its value ranking and this screen is mostly closed rows.
+  const seen = new Map();
+  for (const wal of core.walletList(u)) {
+    for (const key of Object.keys(wal.positions || {})) {
+      const pos = wal.positions[key];
+      if (!pos || pos.chain !== chainKey) continue;
+      const k = core.chains.isSvm(chainKey) ? String(pos.ca) : String(pos.ca).toLowerCase();
+      if (!seen.has(k)) seen.set(k, pos.ca);
+    }
+  }
+  // Bounded and CONCURRENT: each row is a balance read per wallet plus a price,
+  // and a book of thirty tokens read serially is the wallet-dashboard mistake
+  // over again.
+  const cas = [...seen.values()].slice(0, PNL_BOOK_MAX);
+  const rows0 = (await Promise.all(cas.map((ca) => core.tokenPnl(chatId, ca, chainKey).catch(() => null)))).filter(Boolean);
+  const text = pnl.pnlBook(
+    rows0.map((r) => ({ ...r, sym: esc(r.sym || ''), name: esc(r.name || '') })),
+    { native: ch.native, rate: nativeUsd(ch.native), chainLabel: `${ch.emoji} ${esc(ch.name)}` },
+  );
+  const kbRows = [];
+  // One button per token, best first, so the card for any of them is one tap.
+  const top = rows0.slice().sort((a, b) => (Number(b.pnlEth) || 0) - (Number(a.pnlEth) || 0)).slice(0, 6);
+  for (let i = 0; i < top.length; i += 2) {
+    kbRows.push(top.slice(i, i + 2).map((r) => btn(`📊 $${(r.sym || short(r.ca)).slice(0, 10)}`, `pnlt:${chainKey}:${r.ca}`)));
+  }
+  kbRows.push([btn('🔎 Paste a contract', 'pnlask'), btn('🔄 Refresh', 'pnl')]);
+  kbRows.push([btn('📊 Portfolio', 'pos'), btn('🧾 History', 'hist'), btn('« Menu', 'menu')]);
+  return { text, kb: { inline_keyboard: kbRows } };
+}
+// A book is a balance read per wallet PER TOKEN plus a price each; past this
+// many the screen costs more than it says. The rest are still reachable by
+// pasting the contract.
+const PNL_BOOK_MAX = Math.max(1, Number(process.env.PNL_BOOK_MAX || 24));
 
 function snipeScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -3106,6 +3181,19 @@ async function onMessageImpl(m) {
   if (text === '/wallet') { const w = await walletScreen(chatId); return send(chatId, w.text, w.kb); }
   if (text === '/chain') { const s = chainScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/portfolio' || text === '/positions') { const s = await portfolioScreen(chatId); return send(chatId, s.text, s.kb); }
+  if (text === '/pnl' || text.startsWith('/pnl ')) {
+    const arg = text.split(/\s+/)[1];
+    if (arg && isCa(arg)) {
+      // The chain is DETECTED from the address, never assumed from the active
+      // chain — see pnlCardScreen.
+      const det = await detectChain(chatId, arg);
+      const s = await pnlCardScreen(chatId, arg, det.chain || core.userChain(core.ensureUser(chatId)));
+      return send(chatId, s.text, s.kb);
+    }
+    if (arg) return send(chatId, T(chatId, 'pnl.bad_ca'));
+    const s = await pnlBookScreen(chatId);
+    return send(chatId, s.text, s.kb);
+  }
   if (text === '/tokens' || text === '/bags') { const s = await tokensScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/monitor' || text === '/track') { const s = await monitorListScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/history') { const s = historyScreen(chatId); return send(chatId, s.text, s.kb); }
@@ -3250,6 +3338,15 @@ async function onCallback(q) {
   // bukan yang saya inginkan"). Mass mode is a labelled choice inside, 'snmass'.
   if (data === 'snipe') { const s = caSnipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'snmass') { const s = snipeScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'pnl') { const s = await pnlBookScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+  if (data === 'pnlask') { setPending(chatId, { action: 'pnl_ca' }); return send(chatId, T(chatId, 'pnl.ask')); }
+  if (k === 'pnlt') {
+    // `pnlt:<chain>:<ca>` — the chain rides the button, so a card opened from
+    // the book stays on the chain the book was built for.
+    const parts = data.split(':');
+    const s = await pnlCardScreen(chatId, parts[2], parts[1]);
+    return edit(chatId, mid, s.text, s.kb);
+  }
   if (data === 'orders') { const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'dcas') { const s = dcaScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'dcac') { watchers.cancelDca(chatId, ca); const s = dcaScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -3936,6 +4033,13 @@ async function resolvePending(chatId, p, text, m) {
       catch (e2) { return send(chatId, '❌ ' + esc(e2.message)); }
     }
     // ── the panel's dev-wallet target: address (+ optional one-line tail).
+    if (p.action === 'pnl_ca') {
+      const raw = String(t).trim().split(/\s+/)[0];
+      if (!isCa(raw)) return send(chatId, T(chatId, 'pnl.bad_ca'));
+      const det = await detectChain(chatId, raw);
+      const s = await pnlCardScreen(chatId, raw, det.chain || core.userChain(core.ensureUser(chatId)));
+      return send(chatId, s.text, s.kb);
+    }
     if (p.action === 'snw_dev') {
       const u = core.ensureUser(chatId);
       const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
@@ -4889,6 +4993,7 @@ async function registerCommands() {
     { command: 'start',     description: 'Open the bot — wallet & main menu' },
     { command: 'wallet',    description: 'Wallets: balance, deposit, withdraw, import' },
     { command: 'portfolio', description: 'Your holdings & profit/loss' },
+    { command: 'pnl',       description: 'Profit/loss per token — sold or still held' },
     { command: 'tokens', description: 'Every token you hold, and on which chain' },
     { command: 'monitor',   description: 'Live position tracker — pins & refreshes itself' },
     { command: 'history',   description: 'Your past trades' },

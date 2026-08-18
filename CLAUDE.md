@@ -1270,6 +1270,56 @@ cd tradebot && node --test snipePanel.test.js    # 20 tests, no network
 
 **Config a fix depends on:** nothing. Every knob has a working default.
 
+## "Did I make money on this one?" — the question /portfolio cannot answer
+
+A position record survives being sold to zero (it carries the lifetime
+`ethIn`/`ethOut`), but every screen that could read it dropped closed rows:
+/portfolio lists what you are EXPOSED to, so the moment a trade ended well it
+left the bot's memory as far as the user could see. `/pnl` is the other
+question — what a token MADE — and it answers it for a bag still held, one
+already sold, and the half-of-each in between.
+
+- **`core.tokenPnl(chatId, ca, chain)` is the one reader**, across every wallet,
+  on the chain the ADDRESS says — a pasted mint answered against the active EVM
+  chain would report "no trades on file", a false statement about the user's own
+  money and the same wrong-chain bounce the snipe flow had to be rescued from.
+- **The money view is the headline**: `back − in`, where back is proceeds plus
+  what is still held. It needs no basis accounting to be true and is checkable
+  against the wallet. `realizedEth` and `unrealizedEth` sit under it as the
+  breakdown — a half-sold bag makes the two views differ, and hiding that is how
+  a card prints "3.99x" directly above "PnL +0.0000".
+- ⚠️ **A BALANCE we could not read is not a balance of ZERO.** The first cut
+  used `.catch(() => 0n)`, so one RPC blip rendered a bag the user still fully
+  holds as **🏁 CLOSED, −100%** — the /portfolio price lesson one field over, and
+  worse here because this is the card people screenshot. `tokenBalanceOrNull`
+  (the function that stopped the monitor unpinning live bags) is the read, one
+  unreadable wallet marks the whole answer unknown, and the card names WHICH
+  read failed: "couldn't read your balance" and "couldn't price it" send the user
+  to different places.
+- **Three states, and the middle one is why this exists**: HOLDING · PARTLY SOLD
+  · CLOSED. Calling a partly-sold bag either of the other two misstates the
+  exposure.
+- **A token never traded here gets "no trades on file"**, not a zero trade — and
+  if the wallet holds some anyway (sent in, or bought elsewhere), it says so and
+  says there is no cost basis to measure against.
+- **The book leaves an unpriced row OUT of the total** and says how many it left
+  out; summing an unknown as zero is the same lie one level up. Bounded by
+  `PNL_BOOK_MAX` (24) and read CONCURRENTLY — a book of thirty tokens read
+  serially is the wallet-dashboard mistake over again.
+- `pnl.js` is a PURE renderer (no I/O, no `core`), the `receipt.js` contract, so
+  the tests call the arithmetic instead of reading telegram.js with a regex.
+  That is what caught `−-0.75000` (the sign printed twice) before it shipped.
+
+Ways in: `/pnl` (the book) · `/pnl <ca>` · 📊 PnL on the token card — so a
+pasted contract is one tap from its own card — · 🔎 Paste a contract from the
+book · 📊 PnL on the main menu.
+
+```bash
+cd tradebot && node --test pnlCard.test.js   # 14 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
