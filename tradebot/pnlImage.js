@@ -72,6 +72,11 @@ const usdShort = (v, abbr) => {
   if (n >= 1) return '$' + Math.round(n).toLocaleString('en-US');
   return '$' + n.toFixed(4);
 };
+/** Deterministic PRNG + seed — the background's ghost tape is unique per
+ *  token but STABLE: the same card rendered twice must be the same picture. */
+function lcg(seed) { let s = (seed >>> 0) || 1; return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296; }
+function seedOf(str) { let h = 2166136261; for (const ch of String(str)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
 /** "0d 0h 13m", the way a trading bot states a hold. */
 function heldFor(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -180,6 +185,45 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   K.radial(ctx, ART * 0.52, (H - BAR) * 0.46, 430, ACC, win ? 0.22 : 0.17);
   K.radial(ctx, W * 0.88, 80, 400, K.CYAN, 0.10);
   K.radial(ctx, W * 0.60, H - BAR, 300, ACC2, 0.06);
+  // The third hue of the mesh — a violet floor glow, so the ground is a
+  // colour field and not two spotlights on black.
+  K.radial(ctx, W * 0.32, H * 0.94, 420, K.SITE.violet, 0.09);
+  // The ghost tape: a price line only this token draws — seeded by its
+  // symbol so it is unique per card and stable per token, RISING on a win
+  // and falling on a loss. Texture, not data: it stays under 0.2 alpha.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, H - BAR); ctx.clip();
+  const rnd = lcg(seedOf(p.sym || p.ca || 'dexvra'));
+  const tapePts = [];
+  for (let i = 0; i <= 9; i++) {
+    const tx = (W / 9) * i;
+    const ty = win || flat
+      ? H * 0.80 - H * 0.44 * (i / 9) - (flat ? H * 0.12 : 0)
+      : H * 0.34 + H * 0.44 * (i / 9);
+    tapePts.push([tx, ty + (rnd() - 0.5) * 96]);
+  }
+  ctx.beginPath();
+  ctx.moveTo(tapePts[0][0], tapePts[0][1]);
+  for (let i = 1; i < tapePts.length; i++) {
+    const [ax, ay2] = tapePts[i - 1], [bx2, by2] = tapePts[i];
+    ctx.quadraticCurveTo(ax, ay2, (ax + bx2) / 2, (ay2 + by2) / 2);
+  }
+  ctx.lineTo(tapePts[9][0], tapePts[9][1]);
+  ctx.save();
+  ctx.strokeStyle = K.hexA(ACC, 0.16);
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = K.hexA(ACC, 0.35);
+  ctx.shadowBlur = 16;
+  ctx.stroke();
+  ctx.restore();
+  ctx.lineTo(W, H - BAR); ctx.lineTo(0, H - BAR); ctx.closePath();
+  const tf = ctx.createLinearGradient(0, H * 0.30, 0, H - BAR);
+  tf.addColorStop(0, K.hexA(ACC, 0.07));
+  tf.addColorStop(1, K.hexA(ACC, 0));
+  ctx.fillStyle = tf;
+  ctx.fill();
+  ctx.restore();
   ctx.fillStyle = K.hexA('#FFFFFF', 0.05);
   for (let gx = 46; gx < W - 20; gx += 46)
     for (let gy = 44; gy < H - BAR - 10; gy += 46) {
@@ -196,6 +240,13 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   ctx.fillStyle = beam;
   ctx.fillRect(-90, -220, 360, H + 520);
   ctx.restore();
+  // Grain — ~1400 seeded specks. A flat digital gradient bands; grain is
+  // what makes it read as material instead of a fill.
+  const gr = lcg(0xD3C5A);
+  for (let i = 0; i < 1400; i++) {
+    ctx.fillStyle = K.hexA('#FFFFFF', gr() < 0.12 ? 0.06 : 0.025);
+    ctx.fillRect(Math.floor(gr() * W), Math.floor(gr() * H), 1, 1);
+  }
   // Vignette — the edges fall away so the coin and the number come forward.
   const vg = ctx.createRadialGradient(W * 0.45, H * 0.42, H * 0.42, W * 0.45, H * 0.42, W * 0.74);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
@@ -473,9 +524,11 @@ async function render(p, { native = 'ETH', rate = 0, chainName = '', logoUrl = '
   if (botUser) {
     // The bot's own @username, beside the wordmark — a shared card must say
     // WHERE to go. It is the handle getMe() answered with, never a literal.
+    // Optically CENTRED on the wordmark's caps (36px caps centre ≈ baseline
+    // −13; 21px caps centre ≈ baseline −8), not hung off its baseline.
     ctx.fillStyle = K.SITE.mint;
-    ctx.font = `600 20px ${K.F.m6}`;
-    ctx.fillText('@' + botUser, 130 + wmW + 18, H - BAR + 60);
+    ctx.font = `600 21px ${K.F.m6}`;
+    ctx.fillText('@' + botUser, 130 + wmW + 20, H - BAR + 55);
   }
   ctx.fillStyle = K.MUTE;
   ctx.font = `600 17px ${K.F.m6}`;
