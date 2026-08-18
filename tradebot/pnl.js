@@ -74,6 +74,16 @@ function px(v) {
   if (n >= 1) return n.toFixed(4);
   return n.toPrecision(3);
 }
+/** A holding as a share of total supply. Empty on null/0 — an UNKNOWN supply
+ *  must never print as "0.00% of supply"; below display precision it says so
+ *  rather than rounding a real position to nothing. */
+function share(v) {
+  const n = Number(v) || 0;
+  if (!(n > 0)) return '';
+  if (n >= 1) return n.toFixed(2) + '%';
+  if (n >= 0.01) return n.toFixed(3) + '%';
+  return '<0.01%';
+}
 /** "3d 4h", "12m" — how long the money has been in this trade. */
 function since(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -157,7 +167,10 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
       : '📈 <b>HOLDING</b>';
   const face = s.unknown ? '⚪️' : s.win ? '🟢' : (s.pnl === 0 ? '⚪️' : '🔴');
 
-  L.push(`${face} <b>PnL · ${tag}</b>${p.name && p.sym ? `\n<i>${p.name}</i>` : ''}`);
+  // The name rides under the title only when it SAYS something the ticker
+  // does not — an unnamed launch has sym and name both set to the short CA,
+  // and printing it twice was the first line of the "spam" report.
+  L.push(`${face} <b>PnL · ${tag}</b>${p.name && p.sym && p.name !== p.sym ? `\n<i>${p.name}</i>` : ''}`);
   L.push('');
   // THE HEADLINE, and nothing competing with it.
   if (s.unknown) {
@@ -171,14 +184,29 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
     const pctStr = s.pct == null ? '—' : `${s.pct > 0 ? '+' : s.pct < 0 ? '−' : ''}${Math.abs(s.pct).toFixed(2)}%`;
     L.push(`<b>${pctStr}</b>${s.mult ? `  ·  <b>${s.mult.toFixed(2)}×</b>` : ''}`);
     if (s.mult) L.push(`<code>${bar(s.mult)}</code>`);
-    L.push(`💰 <b>${sgn(s.pnl)} ${native}</b>${dollars(s.pnl)}`);
+    L.push(`<b>${sgn(s.pnl)} ${native}</b>${dollars(s.pnl)}`);
   }
   L.push('');
-  L.push(`${head}`);
-  L.push(`💸 Invested: <b>${amt(s.ethIn)} ${native}</b>${dollars(s.ethIn)}`);
-  if (s.ethOut > 0) L.push(`💵 Taken out: <b>${amt(s.ethOut)} ${native}</b>${dollars(s.ethOut)}`);
+  // ONE emoji per card body was still too many — "copy writing template kaya
+  // terlalu spam" was a card of ten one-emoji-per-line rows. The verdict dot
+  // and the status glyph carry the colour; the body is text, and related
+  // figures share a line instead of taking one each.
+  const tr = p.trades || {};
+  const trBits = [];
+  if (tr.buys) trBits.push(`${tr.buys} buy${tr.buys > 1 ? 's' : ''}`);
+  if (tr.sells) trBits.push(`${tr.sells} sell${tr.sells > 1 ? 's' : ''}`);
+  if (tr.firstAt) trBits.push(`held ${since(Date.now() - tr.firstAt)}`);
+  // "on file" — the trade log is capped per wallet, so this is what we still
+  // have, never a claim that it is every trade. The money figures come from
+  // the position's lifetime totals, which are not capped.
+  L.push(`${head}${trBits.length ? ` · <i>${trBits.join(' · ')} on file</i>` : ''}`);
+  L.push(`Invested <b>${amt(s.ethIn)} ${native}</b>${dollars(s.ethIn)}`
+    + (s.ethOut > 0 ? ` → taken out <b>${amt(s.ethOut)} ${native}</b>${dollars(s.ethOut)}` : ''));
   if (p.open) {
-    L.push(`🪙 Still holding: <b>${qty(s.tokens)}</b> ${tag}` + (s.unknown ? ' · <i>price unavailable</i>' : `  ·  <b>${amt(s.value)} ${native}</b>${dollars(s.value)}`));
+    const sup = share(p.supplyPct);
+    L.push(`Still holding <b>${qty(s.tokens)}</b> ${tag}`
+      + (sup ? ` · <b>${sup}</b> of supply` : '')
+      + (s.unknown ? ' · <i>price unavailable</i>' : `  ·  <b>${amt(s.value)} ${native}</b>${dollars(s.value)}`));
   }
   // Realized vs unrealized, but only where the split says something the money
   // view does not: on a bag that was partly sold, or one still open.
@@ -186,27 +214,18 @@ function pnlText(p, { native = 'ETH', rate = 0, chainLabel = '', explorerUrl = '
     const parts = [];
     if (s.realized !== 0) parts.push(`booked <b>${sgn(s.realized)} ${native}</b>`);
     if (s.unrealized != null) parts.push(`open <b>${sgn(s.unrealized)} ${native}</b>`);
-    if (parts.length) L.push(`📚 ${parts.join(' · ')}`);
+    if (parts.length) L.push(parts.join(' · '));
   }
   if (s.entryEth != null || s.priceEth > 0) {
     const bits = [];
     if (s.entryEth != null) bits.push(`entry <b>${px(s.entryEth)}</b>`);
     if (s.priceEth > 0) bits.push(`now <b>${px(s.priceEth)}</b>`);
-    L.push(`🌊 ${bits.join(' · ')} ${native}/token`);
+    L.push(`${bits.join(' → ')} ${native}/token`);
   }
   if (p.holders && p.holders.length) {
     const shown = p.holders.slice(0, 4).map((h) => `${h.label} ${qty(h.tokens)}`).join(' · ');
-    L.push(`💳 ${shown}${p.holders.length > 4 ? ` <i>+${p.holders.length - 4} more</i>` : ''}`);
+    L.push(`<i>${shown}${p.holders.length > 4 ? ` +${p.holders.length - 4} more` : ''}</i>`);
   }
-  const tr = p.trades || {};
-  const trBits = [];
-  if (tr.buys) trBits.push(`${tr.buys} buy${tr.buys > 1 ? 's' : ''}`);
-  if (tr.sells) trBits.push(`${tr.sells} sell${tr.sells > 1 ? 's' : ''}`);
-  if (tr.firstAt) trBits.push(`held ${since(Date.now() - tr.firstAt)}`);
-  // "on file" — the trade log is capped per wallet, so this is what we still
-  // have, never a claim that it is every trade. The money figures above come
-  // from the position's lifetime totals, which are not capped.
-  if (trBits.length) L.push(`🧾 <i>${trBits.join(' · ')} on file</i>`);
   if (chainLabel) L.push('', `<i>${chainLabel}${explorerUrl ? '' : ''}</i>`);
   return L.join('\n');
 }
@@ -254,4 +273,4 @@ function pnlBook(rows, { native = 'ETH', rate = 0, chainLabel = '' } = {}) {
   return L.join('\n');
 }
 
-module.exports = { pnlStats, pnlText, pnlBook, amt, sgn, usd, qty, px, since, bar };
+module.exports = { pnlStats, pnlText, pnlBook, amt, sgn, usd, qty, px, since, bar, share };

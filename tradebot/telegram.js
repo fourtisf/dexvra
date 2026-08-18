@@ -2517,6 +2517,17 @@ async function _postWalletReceipt(chatId, { side, ca, chainKey, target, r, e, se
     // 'wallet.receipt.nobag'. The engine says so with this one message, and
     // i18n.errorKey is not involved because there is nothing to explain.
     const noBag = !!e && /token balance is 0/i.test(String((e && (e.message || e)) || ''));
+    // The fill's share of total supply — a cached read, BOUNDED so it can
+    // never hold a receipt, and null (no line) when the supply is unknown.
+    // On an EVM chain with no decimals on file it stays null: a guessed 18
+    // would state a share off by orders of magnitude.
+    const tokTot = side === 'sell' ? Number(r && r.soldTokens) : Number(r && r.gotTokens);
+    // `r.dec` is set by every successful trade result, so the EVM share does
+    // not depend on the meta race the receipt is already only WAITING on.
+    const supUi = tokTot > 0
+      ? await withTmo(core.tokenSupplyUi(ca, chainKey,
+        (r && Number.isFinite(r.dec)) ? r.dec : (meta ? meta.decimals : null)).catch(() => null), 1200, null)
+      : null;
     const text = receipt.walletReceipt((k, v) => T(chatId, k, v), {
       side,
       ok: !e,
@@ -2530,7 +2541,8 @@ async function _postWalletReceipt(chatId, { side, ca, chainKey, target, r, e, se
       // On a sell the bot's cut is a separate transfer, so `netEth` is what the
       // user actually kept and `proceedsEth` is not. Same choice the combined
       // receipt makes.
-      tokens: side === 'sell' ? Number(r && r.soldTokens) : Number(r && r.gotTokens),
+      tokens: tokTot,
+      supplyPct: supUi > 0 && tokTot > 0 ? (tokTot / supUi) * 100 : null,
       amount: side === 'sell' ? Number(r && (r.netEth != null ? r.netEth : r.proceedsEth)) : Number(r && r.spentEth),
       native: esc(native),
       rate,
@@ -4473,7 +4485,11 @@ async function monitorPayload(chatId, ca, chainKey, wid) {
     // Say when the bag is the one the BUY recorded rather than one read from the
     // chain just now — otherwise a failing RPC renders identically to a live
     // read, and tokens sent out with 📤 would show as a bag the user still has.
-    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} ${symTxt}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
+    // The bag's share of supply, from the same cached read the receipts use.
+    // Bounded, and absent (never 0%) when the supply cannot be read.
+    const supUi = await withTmo(core.tokenSupplyUi(ca, chainKey, dec).catch(() => null), 1200, null);
+    const supTxt = pnl.share(supUi > 0 ? (balNow / supUi) * 100 : null);
+    L.push(`🎒 <b>You hold:</b> ${fmt(balNow)} ${symTxt}${supTxt ? ` · <b>${supTxt}</b> of supply` : ''}${multi ? ` <i>across ${holders.length} wallets</i>` : ''}${balStale ? ' <i>(last known — chain unreachable)</i>' : ''}`);
     L.push(`💵 <b>Invested:</b> ${cost.toFixed(5)} ${nat}${inUsd(cost)}`);
     L.push(`💰 <b>Now worth:</b> ${px > 0 ? val.toFixed(5) + ' ' + nat + inUsd(val) : '—'}`);
     if (px > 0 && cost > 0) {

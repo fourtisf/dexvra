@@ -352,12 +352,19 @@ const S = {
   // through", not "which direction". A red dot on a completed exit would read
   // as a failure.
   'wallet.receipt.buy.ok': {
-    en: '🟢 <b>Buy</b> of {qty} {sym} succeeded · 💳 <b>{wallet}</b>',
-    id: '🟢 <b>Beli</b> {qty} {sym} berhasil · 💳 <b>{wallet}</b>',
+    en: '🟢 <b>Buy</b> of {qty} {sym}{sup} succeeded · 💳 <b>{wallet}</b>',
+    id: '🟢 <b>Beli</b> {qty} {sym}{sup} berhasil · 💳 <b>{wallet}</b>',
   },
   'wallet.receipt.sell.ok': {
-    en: '🟢 <b>Sell</b> of {qty} {sym} succeeded · 💳 <b>{wallet}</b>',
-    id: '🟢 <b>Jual</b> {qty} {sym} berhasil · 💳 <b>{wallet}</b>',
+    en: '🟢 <b>Sell</b> of {qty} {sym}{sup} succeeded · 💳 <b>{wallet}</b>',
+    id: '🟢 <b>Jual</b> {qty} {sym}{sup} berhasil · 💳 <b>{wallet}</b>',
+  },
+  // The share of total supply this fill is ("harus ada berapa % dari
+  // supply"). Rendered ONLY when the supply could actually be read — an
+  // unknown supply printed as 0% would be a stated fact that is false.
+  'wallet.receipt.supply': {
+    en: ' (<b>{pct}</b> of supply)',
+    id: ' (<b>{pct}</b> dari supply)',
   },
   'wallet.receipt.buy.fail': { en: '❌ <b>Buy failed</b> · 💳 <b>{wallet}</b>', id: '❌ <b>Buy gagal</b> · 💳 <b>{wallet}</b>' },
   'wallet.receipt.sell.fail': { en: '❌ <b>Sell failed</b> · 💳 <b>{wallet}</b>', id: '❌ <b>Sell gagal</b> · 💳 <b>{wallet}</b>' },

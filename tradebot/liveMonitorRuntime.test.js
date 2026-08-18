@@ -61,6 +61,11 @@ let balance = 10n ** 18n;
 const _bal = () => (typeof balance === "function" ? balance() : balance);
 core.tokenSnapshot = async () => (typeof snapshot === "function" ? snapshot() : snapshot);
 core.tokenBalanceOrNull = async () => _bal();
+// The supply read is a network edge too — unstubbed it hangs under mocked
+// timers (withTmo's timeout never fires) and every test here dies with
+// "Promise resolution is still pending". null = supply unknown, the default.
+let supplyUi = null;
+core.tokenSupplyUi = async () => (typeof supplyUi === "function" ? supplyUi() : supplyUi);
 core.tokenBalancesAcross = async (chatId) => {
   const u = core.DB.users[chatId] || {};
   return (u.wallets || []).map((w, i) => ({ id: w.id, index: i + 1, label: w.name || `Wallet ${i + 1}`, raw: _bal() }));
@@ -87,6 +92,7 @@ function reset(chatId) {
   reply = () => ({ ok: true, result: { message_id: 1 } });
   snapshot = { sym: "TEST", priceEth: 2, mcapEth: 1000 };
   balance = 10n ** 18n;
+  supplyUi = null;
   for (const k of [...T._monitors.keys()]) T.stopMonitor(Number(k.split(":")[0]), Number(k.split(":")[1]));
   T._monitors.clear();
   T._monitorByToken.clear();
@@ -335,6 +341,28 @@ test("a monitor with no price still renders and still refreshes", async (t) => {
   assert.match(txt, /You hold:/, "the bag is still shown");
   assert.match(txt, /Now worth:.*—/, "the value it cannot know is blank, not zero");
   assert.strictEqual(T._monitors.size, 1);
+});
+
+test("the bag's share of supply is on the card — and an unknown supply is silence, not 0%", async (t) => {
+  reset(118);
+  await fakeClock(t);
+  // Two wallets holding 1.0 each of a 100-token supply → 2.00% of supply.
+  supplyUi = 100;
+  assert.strictEqual(await T.startMonitor(118, CA, CHAIN, "wA"), true);
+  await advance(t, 1);
+  const txt = calls("editMessageText").at(-1).body.text;
+  assert.match(txt, /2\.00%<\/b> of supply/, "the share the user asked for is missing");
+});
+
+test("an unknown supply is silence, not 0%", async (t) => {
+  // "0.00% of supply" under an unreadable supply would be a stated fact that
+  // is false — the phrase must not appear at all.
+  reset(119);
+  await fakeClock(t);
+  assert.strictEqual(await T.startMonitor(119, CA, CHAIN, "wA"), true);
+  await advance(t, 1);
+  const txt = calls("editMessageText").at(-1).body.text;
+  assert.ok(!/of supply/.test(txt), "an unknown supply was rendered as a share");
 });
 
 // ── the gaps the source-level audit could not see ───────────────────────────

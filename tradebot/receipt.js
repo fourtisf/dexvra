@@ -51,6 +51,8 @@
  * trade in the units the user thinks in. Sub-unit amounts keep more decimals,
  * because 0.00 is not an amount.
  */
+const { share } = require('./pnl');   // one owner for the supply-share format
+
 function qty(n) {
   const v = Number(n);
   if (!Number.isFinite(v) || v === 0) return '0';
@@ -213,9 +215,14 @@ function walletReceipt(t, d) {
   // 🟢 is SUCCESS, not direction — the same green dot on a buy and on a sell,
   // because the question this line answers is "did it go through". Using red
   // for a sell would put a failure colour on a completed exit.
+  // `share()` has ONE owner (pnl.js) so this line, the PnL card and the
+  // monitor cannot drift into three formats for the same ratio. The fragment
+  // itself goes through t() — "of supply" has an Indonesian spelling too.
+  const sup = share(d.supplyPct);
   L.push(t(d.side === 'sell' ? 'wallet.receipt.sell.ok' : 'wallet.receipt.buy.ok', {
     qty: qty(d.tokens),
     sym: d.sym ? `$${d.sym}` : '',
+    sup: sup ? t('wallet.receipt.supply', { pct: sup }) : '',
     wallet: d.wallet,
   }));
   L.push('');

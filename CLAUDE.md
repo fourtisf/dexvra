@@ -1314,6 +1314,28 @@ Ways in: `/pnl` (the book) · `/pnl <ca>` · 📊 PnL on the token card — so a
 pasted contract is one tap from its own card — · 🔎 Paste a contract from the
 book · 📊 PnL on the main menu.
 
+### "terlalu spam", and the share of supply (2026-08-18)
+
+The first live card came back with two notes. **The template read as spam** —
+ten body lines, one emoji each — so the body carries no emoji now (the verdict
+dot and the status glyph are the colour), status and trade tally share a line,
+invested and taken-out share a line, and the name subtitle only prints when it
+differs from the ticker (an unnamed launch has both set to the short CA, and
+printing it twice was the first line of the report). **And a holding must say
+what share of the token it is** ("harus ada berapa % dari supply"):
+
+- **`core.tokenSupplyUi(ca, chainKey, dec)`** is the one reader — cached 10
+  min, `null` (never 0) when unreadable, and on an EVM chain with unknown
+  decimals it answers null rather than guessing 18, which would state a share
+  off by orders of magnitude.
+- **`pnl.share()` is the one formatter** — pnl card, monitor and receipts all
+  import it, so three surfaces cannot drift into three formats. Below display
+  precision it prints `<0.01%`, never a rounded-to-zero share.
+- It rides the PnL holding line (`supplyPct` on `tokenPnl`), the monitor's
+  "You hold" line, and the per-wallet receipt's ok line (through i18n —
+  "of supply" has an Indonesian spelling too). Every read is bounded so the
+  share can never hold a receipt or a card.
+
 ### The card is a PICTURE, and it draws through canvasKit
 
 A PnL card is a thing traders SHARE, and nobody posts a screenshot of a wall of
