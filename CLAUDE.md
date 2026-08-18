@@ -1322,11 +1322,24 @@ as a 1200×675 PNG: the multiple huge (it is what a trader says out loud), the
 percent under it, three tiles (invested · taken out / holding now · profit), and
 the qualifying facts along the foot.
 
+- **The layout is the one traders share**: the token's own artwork on the left
+  in a glowing ring, `$TICKER` with a `4.25X ↑` badge, "Held for", the percent
+  at 138px, INVESTED / PAYOUT, and a brand strip with the referral QR.
+- **NO LOGO IS THE DESIGN, not a degraded card.** A token this bot snipes at
+  launch has no art at any index yet, so the fallback — the Dexvra gem wearing
+  the ticker's monogram — has to look deliberate, because it is what most cards
+  will be. `core.tokenLogoUrl` asks the two indexes this repo already asks
+  (DexScreener's `info.imageUrl`, GeckoTerminal's `image_url`) and caches the
+  MISSES too; the logo and the QR are fetched together, bounded, and either may
+  fail without touching the card.
 - **It draws through `bot/src/helpers/canvasKit`** — the module that already
   owns the brand palette, the primitives, the FONT FALLBACK CHAIN and
   `warnBoxes()`. A second copy of the font logic in `tradebot/` would be the
   `$???` outage waiting on a second process. The card imports the colours; it
   does not retype the hex.
+- ⚠️ **`drawGem`'s (x,y) is the TOP-LEFT of a 48-unit box, not the centre.**
+  Passing the centre puts the gem half a diameter down and right — through the
+  monogram it was drawn beside. Caught by looking at the render, not by a test.
 - **The picture is an UPGRADE and failure is free.** The native binary lives in
   `bot/node_modules`; if it is missing, or a draw throws, or the upload fails,
   `render()` returns null and the caller sends the text card it already had. A

@@ -1930,9 +1930,17 @@ async function sendPnlCard(chatId, ca, chainKey) {
     // canvas is four characters of nonsense.
     let buf = null;
     try {
-      buf = pnlImage.render(s.p, {
-        native: s.ch.native, rate: nativeUsd(s.ch.native),
-        chainName: s.ch.name, chainEmoji: s.ch.emoji,
+      const u = core.ensureUser(chatId);
+      // The token's own art and the user's referral QR. BOTH are bounded and
+      // BOTH may fail: the card falls back to the brand gem wearing the
+      // ticker, and to a plain dexvra.io line. A picture that waited on an
+      // image host would be the wallet-dashboard mistake on a share card.
+      const logoUrl = await withTmo(core.tokenLogoUrl(ca, s.ch.key).catch(() => null), 2500, null);
+      buf = await pnlImage.render(s.p, {
+        native: s.ch.native, rate: nativeUsd(s.ch.native), chainName: s.ch.name,
+        logoUrl: logoUrl || '',
+        refLink: BOT_USERNAME && u.refCode ? `https://t.me/${BOT_USERNAME}?start=${u.refCode}` : '',
+        qrApi: QR_API,
       });
     } catch (e) { console.error('[pnl] render failed:', (e && e.message) || e); }
     // The caption carries the exact figures the card rounds — a shareable
