@@ -21,6 +21,7 @@ const goplus = require('./goplus');
 const i18n = require('./i18n');       // EN/ID copy — see i18n.js for why this exists
 const receipt = require('./receipt'); // one wallet, one receipt — pure renderer, no I/O
 const pnl = require('./pnl');         // the PnL card — pure renderer, no I/O
+const pnlImage = require('./pnlImage'); // …and the same card as a shareable PNG (optional)
 const safety = require('./safety');   // chain-aware token safety (GoPlus on EVM, RugCheck on Solana)
 const tokeninfo = require('./tokeninfo');
 const solana = require('./solana');   // base58 address validation + SVM helpers
@@ -211,6 +212,27 @@ function answer(id, text) { return tg('answerCallbackQuery', { callback_query_id
 // every `answer(q.id, <text>)` call site; callbackAck.test.js enforces it.
 const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell', 'ospd', 'mw', 'mwa', 'mwn']);
 function del(chatId, mid) { return tg('deleteMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); }
+/**
+ * Send a PNG we rendered ourselves.
+ *
+ * `sendPhoto` below posts JSON, so its `photo` can only be a URL or a file_id —
+ * bytes need multipart, the same shape the store backup already uses. Returns
+ * false on any failure so the caller can fall back to the text card: a picture
+ * is an upgrade and must never be the reason a user cannot see their PnL.
+ */
+async function sendPhotoBuffer(chatId, buf, caption, kb) {
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', String(chatId));
+    if (caption) { fd.append('caption', caption); fd.append('parse_mode', 'HTML'); }
+    if (kb) fd.append('reply_markup', JSON.stringify(kb));
+    fd.append('photo', new Blob([buf], { type: 'image/png' }), 'pnl.png');
+    const r = await fetch(`${API}/sendPhoto`, { method: 'POST', body: fd, signal: AbortSignal.timeout(60000) });
+    const j = await r.json().catch(() => null);
+    if (!j || j.ok !== true) { console.error('[pnl] sendPhoto failed:', (j && j.description) || r.status); return false; }
+    return true;
+  } catch (e) { console.error('[pnl] sendPhoto failed:', (e && e.message) || e); return false; }
+}
 function sendPhoto(chatId, photo, caption, kb) { return tg('sendPhoto', { chat_id: chatId, photo, ...(caption ? { caption, parse_mode: 'HTML' } : {}), ...(kb ? { reply_markup: kb } : {}) }); }
 // Deposit QR image (Telegram fetches the URL server-side; the address is public, so no
 // secret leaves the bot). Configurable / disable-able via QR_API. Returns '' if disabled.
@@ -1890,7 +1912,34 @@ async function pnlCardScreen(chatId, ca, chainKey) {
     [{ text: '📈 Chart', url: chartUrl(ch.key, ca) }, btn('📊 All PnL', 'pnl')],
     [btn('« Menu', 'menu')],
   ] };
-  return { text, kb };
+  return { text, kb, p, ch };
+}
+/**
+ * The PnL card as a PICTURE where one can be drawn, and as the text card where
+ * it cannot.
+ *
+ * A photo cannot be EDITED into a text message, so this always SENDS. Every
+ * failure — no canvas on the box, a figure the image refuses to state (an
+ * unreadable balance is not a number to put on a branded card), a Telegram
+ * upload error — falls through to the text the user would have had anyway.
+ */
+async function sendPnlCard(chatId, ca, chainKey) {
+  const s = await pnlCardScreen(chatId, ca, chainKey);
+  if (s.p && pnlImage.available()) {
+    // RAW values, not the escaped ones: this draws glyphs, and `&amp;` on a
+    // canvas is four characters of nonsense.
+    let buf = null;
+    try {
+      buf = pnlImage.render(s.p, {
+        native: s.ch.native, rate: nativeUsd(s.ch.native),
+        chainName: s.ch.name, chainEmoji: s.ch.emoji,
+      });
+    } catch (e) { console.error('[pnl] render failed:', (e && e.message) || e); }
+    // The caption carries the exact figures the card rounds — a shareable
+    // picture and a checkable number are different jobs.
+    if (buf && await sendPhotoBuffer(chatId, buf, s.text.slice(0, 1024), s.kb)) return;
+  }
+  return send(chatId, s.text, s.kb);
 }
 /**
  * The book: every token this chain has a position in, won or lost.
@@ -3187,8 +3236,7 @@ async function onMessageImpl(m) {
       // The chain is DETECTED from the address, never assumed from the active
       // chain — see pnlCardScreen.
       const det = await detectChain(chatId, arg);
-      const s = await pnlCardScreen(chatId, arg, det.chain || core.userChain(core.ensureUser(chatId)));
-      return send(chatId, s.text, s.kb);
+      return sendPnlCard(chatId, arg, det.chain || core.userChain(core.ensureUser(chatId)));
     }
     if (arg) return send(chatId, T(chatId, 'pnl.bad_ca'));
     const s = await pnlBookScreen(chatId);
@@ -3344,8 +3392,7 @@ async function onCallback(q) {
     // `pnlt:<chain>:<ca>` — the chain rides the button, so a card opened from
     // the book stays on the chain the book was built for.
     const parts = data.split(':');
-    const s = await pnlCardScreen(chatId, parts[2], parts[1]);
-    return edit(chatId, mid, s.text, s.kb);
+    return sendPnlCard(chatId, parts[2], parts[1]);
   }
   if (data === 'orders') { const s = ordersScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'dcas') { const s = dcaScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
@@ -4037,8 +4084,7 @@ async function resolvePending(chatId, p, text, m) {
       const raw = String(t).trim().split(/\s+/)[0];
       if (!isCa(raw)) return send(chatId, T(chatId, 'pnl.bad_ca'));
       const det = await detectChain(chatId, raw);
-      const s = await pnlCardScreen(chatId, raw, det.chain || core.userChain(core.ensureUser(chatId)));
-      return send(chatId, s.text, s.kb);
+      return sendPnlCard(chatId, raw, det.chain || core.userChain(core.ensureUser(chatId)));
     }
     if (p.action === 'snw_dev') {
       const u = core.ensureUser(chatId);

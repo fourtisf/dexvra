@@ -234,6 +234,67 @@ test('a token this bot never traded is "no trades", not a zero trade', async () 
   } finally { core.tokenBalanceOrNull = realBal; core.tokenMeta = realMeta; }
 });
 
+// ── the picture ──────────────────────────────────────────────────────────────
+// The image is an UPGRADE: where it cannot be drawn the text card is sent
+// instead, so every one of these is about it refusing honestly rather than
+// drawing something it cannot stand behind.
+
+const img = require('./pnlImage');
+
+test('the image refuses to state what it cannot know', () => {
+  // A branded card is a CLAIM. "we could not read your balance just now" is a
+  // sentence; there is no way to draw it as a 4.25× without lying, so those
+  // fall back to the text card, which says so in words.
+  const unpriced = P({ open: true, tokens: 5, priced: false, balUnknown: true, ethIn: 1, costEth: 1, unrealizedEth: null });
+  assert.strictEqual(img.render(unpriced, { native: 'SOL' }), null, 'an unknown was drawn as a number');
+  assert.strictEqual(img.render(P({ traded: false, ethIn: 0 }), { native: 'SOL' }), null, 'a never-traded token got a PnL card');
+  // Nothing invested = no multiple to draw.
+  assert.strictEqual(img.render(P({ ethIn: 0, ethOut: 0 }), { native: 'SOL' }), null);
+});
+
+test('a card is drawn for a win, a loss and a bag still held', (t) => {
+  if (!img.available()) return t.skip('canvas not installed in this checkout');
+  const cases = {
+    win: P({ ethIn: 1.2, ethOut: 5.1, realizedEth: 3.9 }),
+    loss: P({ ethIn: 2, ethOut: 0.42, realizedEth: -1.58 }),
+    held: P({ open: true, tokens: 1000, priceEth: 0.003, valueEth: 3, ethIn: 2, costEth: 2, unrealizedEth: 1, entryEth: 0.002 }),
+  };
+  for (const [k, p] of Object.entries(cases)) {
+    const buf = img.render(p, { native: 'SOL', rate: 200, chainName: 'Solana' });
+    assert.ok(Buffer.isBuffer(buf) && buf.length > 5000, `${k} produced no card`);
+    // A PNG, and one Telegram will accept as a photo.
+    assert.equal(buf.slice(1, 4).toString('ascii'), 'PNG');
+    assert.ok(buf.length < 10 * 1024 * 1024, `${k} is too large to send`);
+  }
+});
+
+test('the image is optional — a box without canvas still answers', () => {
+  // `available()` is the only thing callers may branch on, and the caller sends
+  // the text card when it is false. Pinned because a require() that throws at
+  // load time would take the whole bot down instead of the picture.
+  assert.equal(typeof img.available(), 'boolean');
+  const TG = fs.readFileSync(path.join(__dirname, 'telegram.js'), 'utf8');
+  const fn = TG.slice(TG.indexOf('async function sendPnlCard('), TG.indexOf('async function pnlBookScreen('));
+  assert.match(fn, /pnlImage\.available\(\)/);
+  assert.match(fn, /return send\(chatId, s\.text, s\.kb\)/, 'there is no text fallback');
+  // A failed upload must fall through too, not leave the user with nothing.
+  assert.match(fn, /if \(buf && await sendPhotoBuffer\(/);
+  assert.match(fn, /catch \(e\) \{ console\.error\('\[pnl\] render failed/, 'a throwing draw takes the reply with it');
+});
+
+test('the card draws through canvasKit, so the font guard is not re-implemented', () => {
+  // A token called 牛来 went out as "$???" because a face without the glyph draws
+  // a box instead of throwing. warnBoxes() is the guard, it lives in canvasKit,
+  // and every renderer in this repo is required to call it — a second copy of
+  // the font logic in tradebot would be that outage waiting on a second process.
+  const SRC = fs.readFileSync(path.join(__dirname, 'pnlImage.js'), 'utf8');
+  assert.match(SRC, /canvasKit/, 'the card grew its own canvas plumbing');
+  assert.match(SRC, /K\.warnBoxes\('pnl card'/, 'the missing-glyph guard is not called');
+  assert.ok(!/registerFont|GlobalFonts/.test(SRC), 'the card registers its own fonts — canvasKit owns that');
+  // …and the brand comes from the kit too, not from hex codes typed again here.
+  assert.ok(!/#4EE6A8|#38D8F0/.test(SRC), 'brand colours were copied instead of imported');
+});
+
 // ── reachability ─────────────────────────────────────────────────────────────
 
 test('a user can actually reach it: command, menu, paste and the token card', () => {

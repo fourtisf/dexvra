@@ -1314,11 +1314,41 @@ Ways in: `/pnl` (the book) · `/pnl <ca>` · 📊 PnL on the token card — so a
 pasted contract is one tap from its own card — · 🔎 Paste a contract from the
 book · 📊 PnL on the main menu.
 
+### The card is a PICTURE, and it draws through canvasKit
+
+A PnL card is a thing traders SHARE, and nobody posts a screenshot of a wall of
+numbers. `pnlImage.js` renders the same figures — from the same `pnlStats()` —
+as a 1200×675 PNG: the multiple huge (it is what a trader says out loud), the
+percent under it, three tiles (invested · taken out / holding now · profit), and
+the qualifying facts along the foot.
+
+- **It draws through `bot/src/helpers/canvasKit`** — the module that already
+  owns the brand palette, the primitives, the FONT FALLBACK CHAIN and
+  `warnBoxes()`. A second copy of the font logic in `tradebot/` would be the
+  `$???` outage waiting on a second process. The card imports the colours; it
+  does not retype the hex.
+- **The picture is an UPGRADE and failure is free.** The native binary lives in
+  `bot/node_modules`; if it is missing, or a draw throws, or the upload fails,
+  `render()` returns null and the caller sends the text card it already had. A
+  picture may never be why a user cannot see their PnL.
+- **An image cannot say "we could not read it just now".** A branded card is a
+  CLAIM, so anything unknown — an unreadable balance, a never-traded token,
+  nothing invested — refuses to draw and falls back to the words.
+- **A tile's label may not contradict its sign.** It reads LOSS on a loss, not
+  PROFIT showing −1.58 — the buy card's two ideas of "whale", in miniature —
+  and `· OPEN` while the bag is still held, because that money is not banked.
+- Bytes need MULTIPART: `sendPhoto` posts JSON and can only carry a URL or a
+  file_id, so `sendPhotoBuffer` uploads the PNG the way the store backup does.
+  A photo cannot be edited into a text message either — the 📊 button SENDS.
+
 ```bash
-cd tradebot && node --test pnlCard.test.js   # 14 tests, no network
+cd tradebot && node --test pnlCard.test.js   # 18 tests, no network
 ```
 
-**Config a fix depends on:** nothing.
+**Config a fix depends on:** nothing for the text card. The PICTURE needs
+`@napi-rs/canvas` present in `bot/node_modules` (it is, wherever the banner bot
+runs) — `cd /opt/dexvra/bot && npm install` if a box ever lacks it. Until then
+`/pnl` answers in text, which is the designed fallback and not a failure.
 
 ## Conventions
 
