@@ -528,6 +528,19 @@ which reads as a generated list rather than a board.
 - **Every count on the panel is printed against the RANGE** (`7/5–8`), or a
   chain sitting at 7 reads as over target; a pinned range (min = max) prints as
   one number.
+- ⚠️ **The MINIMUM outranks `minGainPct`.** With `min +5% 24h` on a flat market,
+  Ethereum published 3 rows and Base 2 against a floor of 5: every spare listing
+  on those chains was down a percent or two, so nothing was promoted and the
+  board just stayed short. The tell was that ⚡ Run now filled it instantly —
+  that path ignores the floor. So the gain floor now governs the DISCRETIONARY
+  part only (minimum → rolled target); up to the minimum the best available go
+  on regardless. `ranked` is sorted by 24h change, so "regardless" still means
+  the least-bad ones.
+- **…but not at any price.** `FLOOR_FILL_MAX_DROP` (15%) keeps the incident that
+  produced the gain floor impossible — the board once carried a token at
+  −99.94% on a $1,648 cap. Filling a slot with something in free-fall is worse
+  than a short board, which is the one direction this trade-off does not go.
+  Unpriced tokens stay exempt, or Robinhood would never fill at all.
 
 ```bash
 cd bot && node scripts/run-tests.js test/autoTrend.test.js test/autoTrendPanel.test.js   # 53 tests

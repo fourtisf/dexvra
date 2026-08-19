@@ -15,6 +15,15 @@ const ops = require("../helpers/opsThrottle");
 const log = require("../helpers/logger");
 
 const FILE = "autoTrend.json";
+/**
+ * How far down a token may be and still be promoted to reach the per-chain
+ * MINIMUM (percent, 24h). Not a setting: it exists only to keep one incident
+ * impossible — a board carrying $Z at −99.94% on a $1,648 cap — while letting
+ * the ordinary case through, which is a chain whose spares are down a percent
+ * or two on a flat day. Above the minimum, the operator's own `minGainPct` is
+ * what decides, and this is not consulted.
+ */
+const FLOOR_FILL_MAX_DROP = 15;
 const DEFAULTS = {
   enabled: false,
   minHours: 3,
@@ -482,7 +491,15 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     ? [{ id: chain, need: count, forced: true }]
     : cfg.chains.map((id) => {
         const have = listings.filter((r) => isFeatured(r) && on(r, id)).length;
-        return { id, need: have >= cfg.perChainMin ? 0 : rollTarget() - have, forced: false };
+        return {
+          id,
+          need: have >= cfg.perChainMin ? 0 : rollTarget() - have,
+          // How many of those are needed just to REACH the minimum. The gain
+          // floor is allowed to leave the rolled part unfilled; it is not
+          // allowed to leave the board under the number the operator set.
+          needFloor: Math.max(0, cfg.perChainMin - have),
+          forced: false,
+        };
       });
 
   let promoted = 0;
@@ -536,15 +553,50 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // Losers are not promoted. `change` is attached by byGain; null means the
     // price could not be read, and those stay eligible on purpose.
     const worthy = step.forced ? ranked : ranked.filter((r) => r._change === null || r._change >= cfg.minGainPct);
-    if (!worthy.length) {
-      // No gap(): this chain HAS listings, they are simply down. See gap().
+    // ⚠️ THE MINIMUM OUTRANKS THE GAIN FLOOR.
+    //
+    // `min +5% 24h` with a flat market left ETHEREUM publishing 3 rows and BASE
+    // 2 against a floor of 5 — every spare listing on those chains was down a
+    // percent or two, so nothing was promoted and the board simply stayed
+    // short. The operator had to tap ⚡ Run now by hand (which ignores the
+    // floor) to get a token on the board, which is the tell.
+    //
+    // So the floor applies to the DISCRETIONARY part of the target only. Up to
+    // `perChainMin` the best available candidates go on regardless — `ranked` is
+    // already sorted by 24h change, so "regardless" still means the best ones —
+    // because a board under the number the operator set is a worse product than
+    // a board carrying a token that is down 2%. Above the minimum, the floor is
+    // honoured and the chain is simply left where it is.
+    const picks = worthy.slice(0, step.need);
+    if (!step.forced && picks.length < step.needFloor) {
+      const chosen = new Set(picks);
+      // …but NOT at any price. The board once carried a token at −99.94% on a
+      // $1,648 market cap, and "the board must be full" must not bring that
+      // back: a slot filled by a token in free-fall is worse than a short
+      // board, which is the one direction this trade-off does not go. Unpriced
+      // tokens stay exempt (Robinhood has no indexer — judging them by a number
+      // nobody can read would mean never filling that chain at all).
+      const extra = ranked
+        .filter((r) => !chosen.has(r) && (r._change === null || r._change >= -FLOOR_FILL_MAX_DROP))
+        .slice(0, step.needFloor - picks.length);
+      if (extra.length) {
+        log.info(
+          `[autotrend] ${step.id}: promoting ${extra.length} below the +${cfg.minGainPct}% floor to reach the minimum of ${cfg.perChainMin} ` +
+            `(${extra.map((r) => `${r.sym || "?"} ${r._change === null ? "unpriced" : `${r._change.toFixed(1)}%`}`).join(", ")})`,
+        );
+      }
+      picks.push(...extra);
+    }
+    if (!picks.length) {
+      // No gap(): this chain HAS listings, they are simply down and it is
+      // already at or above the minimum. See gap().
       short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s), none up ${cfg.minGainPct}% or more)`);
       continue;
     }
-    if (worthy.length < step.need) {
-      short.push(`${step.id} (needs ${step.need}, only ${worthy.length} up ${cfg.minGainPct}% or more)`);
+    if (picks.length < step.need) {
+      short.push(`${step.id} (needs ${step.need}, only ${picks.length} up ${cfg.minGainPct}% or more)`);
     }
-    for (const r of worthy.slice(0, step.need)) {
+    for (const r of picks) {
       // Random duration in [minHours, maxHours] — different per token, so the
       // slots expire at staggered (random) times and refill naturally.
       const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));

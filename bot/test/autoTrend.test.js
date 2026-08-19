@@ -599,10 +599,15 @@ test("the price probe is bounded — this runs on a timer", async () => {
   }
 });
 
-test("a token that is DOWN is never auto-promoted onto a top-gainers board", async () => {
+test("a token in FREE-FALL is never auto-promoted, even to reach the minimum", async () => {
   // The board carried $Z at -99.94% with a $1,648 market cap. Ranking alone
   // could not stop that: five slots, five candidates, and sorting still
   // promotes the worst of them. A floor is what makes the board's claim true.
+  //
+  // The floor now YIELDS below the per-chain minimum (a board short of the
+  // number the operator set is the thing they keep reporting) — but only down
+  // to FLOOR_FILL_MAX_DROP. So -8% goes on to fill the minimum and -99.94%
+  // never does, which is exactly the line the incident drew.
   const realFetch = market.fetchMarket;
   const realGet = api.getListings;
   const gains = { up1: 40, down1: -8, down2: -99.94, up2: 3 };
@@ -614,7 +619,8 @@ test("a token that is DOWN is never auto-promoted onto a top-gainers board", asy
   try {
     await autoTrend.set({ enabled: true, perChainMin: 5, perChainMax: 5, chains: ["bsc"], minGainPct: 0 });
     await autoTrend.runOnce({ rng: () => 0.5 });
-    assert.deepStrictEqual(calls, ["up1", "up2"], `promoted ${calls.join(",")}`);
+    assert.deepStrictEqual(calls, ["up1", "up2", "down1"], `promoted ${calls.join(",")}`);
+    assert.ok(!calls.includes("down2"), "-99.94% must never reach the board, full or not");
   } finally {
     market.fetchMarket = realFetch;
     api.getListings = realGet;

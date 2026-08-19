@@ -270,3 +270,71 @@ test("a RED day is not a listing spree — the gain floor must not trigger the f
     await autoTrend.reset();
   }
 });
+
+// ── The MINIMUM outranks the gain floor ─────────────────────────────────────
+//
+// "trending untuk token base dan eth sangat sedikit dari minimal", with a panel
+// showing Ethereum 3/5–8 and Base 3/5–8 and `min +5% 24h` set. Every spare
+// listing on those chains was down a percent or two, so nothing was promoted and
+// the board simply stayed short — the operator had to tap ⚡ Run now (which
+// ignores the floor) to get a token on, which is what gave it away.
+
+test("below the minimum, the best candidates go on even when they are DOWN", async () => {
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  const now = Date.now();
+  const gains = { e1: -0.4, e2: -2.3, e3: -0.1, e4: -9 };
+  const promoted = [];
+  // Ethereum: 3 featured, four spares, all red. Floor is 5.
+  api.getListings = async () => [
+    ...["f1", "f2", "f3"].map((address, i) => ({ status: "approved", chain: "ethereum", address, trendingRank: i + 1, trendExp: now + 3.6e6 })),
+    ...Object.keys(gains).map((address) => ({ status: "approved", chain: "ethereum", address, sym: address, trendingRank: null })),
+  ];
+  market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
+  api.bookTrending = async (_c, address) => (promoted.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["ethereum"], perChainMin: 5, perChainMax: 8, minGainPct: 5, fillFromMarket: true });
+    await autoTrend.runOnce({ rng: () => 0.999, deps: { fillChain: async () => ({ listed: [] }) } });
+    // Exactly TWO — enough to reach the floor of 5, and no more: the rolled
+    // target above the minimum is still the gain floor's to refuse.
+    assert.strictEqual(promoted.length, 2, `reached the floor and stopped: ${promoted.join(",")}`);
+    // …and it takes the BEST of the losers, not a random two.
+    assert.deepStrictEqual(promoted.sort(), ["e1", "e3"], "the least-bad candidates are the ones that go on");
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});
+
+test("at or above the minimum the gain floor still refuses — it only yields to the floor", async () => {
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  const now = Date.now();
+  const promoted = [];
+  // FIVE featured already (at the floor), spares all down: the board is where
+  // the operator said it must be, so a token down 2% has not earned a slot.
+  api.getListings = async () => [
+    ...["f1", "f2", "f3", "f4", "f5"].map((address, i) => ({ status: "approved", chain: "ethereum", address, trendingRank: i + 1, trendExp: now + 3.6e6 })),
+    { status: "approved", chain: "ethereum", address: "spare", sym: "SPARE", trendingRank: null },
+  ];
+  market.fetchMarket = async () => ({ change24h: -2 });
+  api.bookTrending = async (_c, address) => (promoted.push(address), {});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["ethereum"], perChainMin: 5, perChainMax: 8, minGainPct: 5 });
+    await autoTrend.runOnce({ rng: () => 0.999, deps: { fillChain: async () => ({ listed: [] }) } });
+    assert.deepStrictEqual(promoted, [], "at the floor, a losing token must not be promoted to pad the board");
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});

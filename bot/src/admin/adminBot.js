@@ -1530,8 +1530,10 @@ function atText() {
     `🤖 <b>Auto Trending</b> — ${c.enabled ? "🟢 ON" : "🔴 OFF"}\n\n` +
     `Fills the Trending board between paid slots with the <b>top gainers</b> — the biggest 24h ` +
     `movers among listed tokens, any package — for a random ${c.minHours}–${c.maxHours}h, every ` +
-    `${c.minGapMin}–${c.maxGapMin} min. Only tokens up <b>${c.minGainPct}%</b> or more are picked, so a ` +
-    `top-gainers board never carries a token that is down. Paid tiers still sort above auto ones.\n\n` +
+    `${c.minGapMin}–${c.maxGapMin} min. Above the per-chain minimum only tokens up <b>${c.minGainPct}%</b> ` +
+    `or more are picked; <b>below the minimum the best available go on even if they are down</b>, because a ` +
+    `board short of the number you set is worse than a flat token — never one down more than 15%. ` +
+    `Paid tiers still sort above auto ones.\n\n` +
     `📊 <b>Board right now</b> — target <b>${tgtRange(c)}</b> per chain, rolled at random\n` +
     atBoardLines(c) +
     `\n\n` +
