@@ -83,6 +83,44 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
     }
   }
 
+  // ── "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" ───────────────────
+  //
+  // Rows on the public board carry a market cap and no percentage. The board
+  // itself must not explain that — it is read by 10,593 subscribers and an
+  // operator diagnostic on it would be chrome — so the answer lives here, and
+  // it is MEASURED with the very call the board makes, on this box, rather than
+  // reasoned about from the code.
+  //
+  // Behind a flag because it prices every featured token at GT's politeness
+  // pace: ~30 rows is most of a minute, and the count check above is what an
+  // operator usually came for.
+  if (process.argv.includes('--rows')) {
+    const market = require('../src/marketdata');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    console.log(`\n  ${D}24h reading per featured row (the same call the board makes)${X}`);
+    const featured = rows.filter(isFeatured);
+    let missing = 0;
+    for (const r of featured) {
+      const m = await market.fetchMarket(r.chain, r.address).catch(() => null);
+      await sleep(300);
+      const pct = m && Number.isFinite(m.change24h) ? m.change24h : null;
+      const cap = m && Number.isFinite(m.mcap) ? m.mcap : null;
+      if (pct != null) continue;
+      missing++;
+      // Two different facts, and the board renders them identically.
+      const why = !m
+        ? 'not indexed anywhere — no GeckoTerminal pool and no DexScreener pair'
+        : cap == null
+          ? 'indexed, but with no price or cap either — nothing to publish'
+          : `indexed with a cap, but no 24h reading — its pools have not traded in 24h, or the reading was absurd (>${market.SANE_CHANGE_PCT}%) and refused`;
+      console.log(`  ${Y}·${X} ${String(r.sym || r.address).padEnd(12)} ${D}${r.chain}${X}  ${why}`);
+    }
+    if (!missing) console.log(`  ${G}✓${X} every featured row has a 24h reading`);
+    else console.log(`  ${D}${missing}/${featured.length} row(s) publish without a percentage. A blank is deliberate — an\n  unreadable change is not a 0%, and printing one on a public board would be a\n  claim nobody measured.${X}`);
+  } else {
+    console.log(`  ${D}A row with no % on the board? npm run trending:check -- --rows says which and why.${X}`);
+  }
+
   if (!short.length) {
     console.log(`\n${G}Every chain is at or above its minimum.${X}\n`);
     return;

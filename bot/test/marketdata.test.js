@@ -94,3 +94,70 @@ test("GT price present but mcap missing → DS fills only the gap", async () => 
     restore();
   }
 });
+
+// ── A missing PERCENTAGE is missing data too ────────────────────────────────
+//
+// "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" — rows on the public
+// trending board carrying a market cap and no percentage. `fetchMarket` skipped
+// DexScreener whenever GT had price+cap+liquidity, and `change24h` was not part
+// of that test — so a GT answer with no 24h reading ended the lookup even where
+// a second source had one. The board prints this field; it counts as part of
+// "GT already has EVERYTHING".
+test("a GT answer with no 24h change still consults DexScreener", async () => {
+  let askedDs = false;
+  const restore = stubFetch((url) => {
+    if (url.includes("geckoterminal")) {
+      // Everything the old early-return wanted — price, cap, liquidity — and no
+      // percentage, which is exactly the state that reached the board.
+      return JSON.stringify({
+        data: {
+          attributes: { price_usd: "1.5", market_cap_usd: "9265672", fdv_usd: "9265672" },
+          relationships: { top_pools: { data: [{ id: "p1" }] } },
+        },
+        included: [{ id: "p1", attributes: { address: "p1", reserve_in_usd: "800000" } }],
+      });
+    }
+    if (url.includes("dexscreener")) {
+      askedDs = true;
+      return dsBody([
+        { chainId: "ethereum", priceUsd: "1.5", marketCap: 9265672, liquidity: { usd: 800000 },
+          pairAddress: "p1", priceChange: { h24: "6.4" }, baseToken: { symbol: "MOON" } },
+      ]);
+    }
+    return null;
+  });
+  try {
+    const m = await market.fetchMarket("ethereum", "0x" + "b".repeat(40));
+    assert.strictEqual(askedDs, true, "the lookup stopped at GT and the row published with no percentage");
+    assert.strictEqual(m.change24h, 6.4);
+    assert.strictEqual(m.mcap, 9265672, "the cap still comes from the source that had it");
+  } finally {
+    restore();
+  }
+});
+
+test("a GT answer that HAS everything still short-circuits — one field must not cost a request per poll", async () => {
+  let askedDs = false;
+  const restore = stubFetch((url) => {
+    if (url.includes("geckoterminal"))
+      return JSON.stringify({
+        data: {
+          attributes: { price_usd: "1.5", market_cap_usd: "9265672" },
+          relationships: { top_pools: { data: [{ id: "p1" }] } },
+        },
+        included: [{ id: "p1", attributes: { address: "p1", reserve_in_usd: "800000", price_change_percentage: { h24: "3.1" } } }],
+      });
+    if (url.includes("dexscreener")) {
+      askedDs = true;
+      return dsBody([]);
+    }
+    return null;
+  });
+  try {
+    const m = await market.fetchMarket("ethereum", "0x" + "c".repeat(40));
+    assert.strictEqual(m.change24h, 3.1);
+    assert.strictEqual(askedDs, false, "nine background pipelines call this on timers");
+  } finally {
+    restore();
+  }
+});

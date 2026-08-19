@@ -100,3 +100,63 @@ test("the board itself refuses to print a six-digit percentage", () => {
   assert.strictEqual(pctStr(-99.9), "-99.90%");
   assert.strictEqual(pctStr(4999), "+4999.00%");
 });
+
+// ── "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA" ─────────────────────────
+//
+// Rows on the public board with a market cap and no percentage. One cause was
+// here: the 24h change was read from the DEEPEST pool and from nowhere else, so
+// a token whose main pool had not traded in 24h (GT sends `h24: null`) lost its
+// percentage even when a sibling pool of the same token had a good reading.
+
+const pool = (id, reserve, h24) => ({
+  id,
+  attributes: {
+    address: id,
+    reserve_in_usd: String(reserve),
+    ...(h24 === undefined ? {} : { price_change_percentage: { h24: h24 === null ? null : String(h24) } }),
+  },
+});
+const withPools = (pools) => ({
+  data: { relationships: { top_pools: { data: pools.map((p) => ({ id: p.id })) } } },
+  included: pools,
+});
+
+test("the deepest pool's own reading is used whenever it has one", () => {
+  const deep = pool("deep", 5_000_000, 12.5);
+  const j = withPools([deep, pool("thin", 4_000, 900)]);
+  // Not the thin pool's 900%: price, cap and change all belong to the deep one.
+  assert.strictEqual(market._changeFromPools(j, deep), 12.5);
+});
+
+test("a deepest pool that has NOT traded in 24h borrows the reading from a real sibling", () => {
+  const deep = pool("deep", 5_000_000, null);
+  const sib = pool("sib", 900_000, -7.25);
+  assert.strictEqual(market._changeFromPools(withPools([deep, sib]), deep), -7.25);
+
+  // Absent object and explicit null are the same fact — GT sends both.
+  const bare = pool("bare", 5_000_000, undefined);
+  assert.strictEqual(market._changeFromPools(withPools([bare, sib]), bare), -7.25);
+});
+
+test("…but never from a DUST pool — that is the number the deepest-pool rule exists to refuse", () => {
+  const deep = pool("deep", 5_000_000, null);
+  // 0.4% of the deepest pool's liquidity: a percentage about the pool, not the
+  // token. Below the floor it is not borrowed, and a blank is the honest answer.
+  const dust = pool("dust", 20_000, 4_300);
+  assert.strictEqual(market._changeFromPools(withPools([deep, dust]), deep), null);
+
+  // At the floor it counts: a tenth of the deepest pool is still a real market.
+  const tenth = pool("tenth", 500_000, 3.5);
+  assert.strictEqual(market._changeFromPools(withPools([deep, tenth]), deep), 3.5);
+});
+
+test("the DEEPEST qualifying sibling wins, not whichever GT listed first", () => {
+  const deep = pool("deep", 5_000_000, null);
+  const j = withPools([deep, pool("small", 600_000, 99), pool("big", 2_000_000, 4)]);
+  assert.strictEqual(market._changeFromPools(j, deep), 4);
+});
+
+test("no pools at all is not a reading of zero", () => {
+  assert.strictEqual(market._changeFromPools({ data: {}, included: [] }, null), null);
+  assert.strictEqual(market._changeFromPools(withPools([pool("only", 1_000_000, null)]), null), null);
+});

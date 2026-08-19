@@ -682,6 +682,44 @@ cd bot && npm run trending:check    # per chain: featured / minimum / spares / w
 **Config a fix depends on:** nothing. `TREND_SHORT_GRACE_MS` and
 `TREND_SHORT_REPEAT_MS` exist for an operator who finds 45 min too twitchy.
 
+### A row with a market cap and no percentage
+
+"ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" — on the pinned board,
+`$MOONCOIN | 9,265,672$` with no percentage, and `$BINGBONG` with neither.
+
+Blank is deliberate and stays: **an unreadable change is not a 0%**, and a fake
+zero on a board 10,593 people read is a claim nobody measured. What was wrong is
+that the reading was given up on too early, in two places:
+
+- **The change came from the DEEPEST pool and nowhere else.** GT sends
+  `price_change_percentage.h24: null` for a pool that has not traded in the
+  window — a different fact from the pool not existing — so a token whose main
+  pool was quiet lost its percentage even when a sibling pool of the same token
+  had a good one. `changeFromPools()` borrows it from the deepest sibling that
+  HAS one, above `CHANGE_POOL_MIN_SHARE` (a tenth of the deepest pool's
+  liquidity). Price, cap and liquidity still come from the deepest pool alone —
+  only the CHANGE falls back, and never to a dust pool, because a four-figure
+  percentage off a $20k pool is the thing `deepestPool` exists to refuse.
+- **`fetchMarket` skipped DexScreener whenever GT had price+cap+liquidity**, and
+  `change24h` was not part of that test — so a GT answer with no reading ended
+  the lookup even where a second source had one. It counts as part of
+  "everything" now. It costs nothing where it cannot help: DexScreener does not
+  index the GT-primary chains, so `fetchDS` returns before making a request.
+
+**The board may not explain itself** — an operator diagnostic on a public
+channel post is chrome. So the answer is a flag on the check, and it is
+MEASURED with the very call the board makes rather than reasoned about:
+
+```bash
+cd bot && npm run trending:check -- --rows
+```
+
+It separates the two facts the board renders identically: *not indexed anywhere*
+(no GT pool, no DS pair — a pre-migration or dead token) versus *indexed with a
+cap but no 24h reading* (quiet pools, or a reading past `SANE_CHANGE_PCT` that
+was refused). It is behind a flag because it prices every featured row at GT's
+politeness pace — most of a minute for a full board.
+
 ### ⚡ Run now "not work" — the answer expires, the panel does not
 
 "di klik fiturnya not work". The button spun and nothing came back, on a panel

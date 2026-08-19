@@ -103,6 +103,45 @@ function deepestPool(j) {
   );
 }
 
+/** A pool's own 24h reading, or null. GT sends the object with a null h24 for a
+ *  pool that has not traded in the window, which is a different thing from the
+ *  pool not existing. */
+const poolChange = (pool) =>
+  pool && pool.attributes && pool.attributes.price_change_percentage
+    ? snum(pool.attributes.price_change_percentage.h24)
+    : null;
+
+/** How thin a sibling pool may be before its percentage stops being about the
+ *  token and starts being about the pool. A tenth of the deepest pool's
+ *  liquidity is still a real market; a dust pool is where a 4-figure percentage
+ *  comes from, which is the thing `deepestPool` exists to avoid. */
+const CHANGE_POOL_MIN_SHARE = 0.1;
+
+/**
+ * The 24h change to publish, given the deepest pool.
+ *
+ * ⚠️ "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN" — rows on the public board with a
+ * market cap and no percentage. One cause is here: the change was read from the
+ * DEEPEST pool and from nowhere else, so a token whose main pool has not traded
+ * in 24h (GT sends h24: null) lost its percentage even when a sibling pool of
+ * the same token had a perfectly good reading.
+ *
+ * Price, cap and liquidity still come from the deepest pool — those are claims
+ * about the market, and the deepest pool is the honest one. Only the CHANGE
+ * falls back, and only to a pool with real liquidity behind it.
+ */
+function changeFromPools(j, deepest) {
+  const own = poolChange(deepest);
+  if (own != null) return own;
+  const ids = new Set((j.data?.relationships?.top_pools?.data || []).map((p) => p.id));
+  const floor = (num(deepest && deepest.attributes && deepest.attributes.reserve_in_usd) || 0) * CHANGE_POOL_MIN_SHARE;
+  const alt = (j.included || [])
+    .filter((p) => p && ids.has(p.id) && p.attributes && p !== deepest)
+    .filter((p) => poolChange(p) != null && (num(p.attributes.reserve_in_usd) || 0) >= floor)
+    .sort((a, b) => (num(b.attributes.reserve_in_usd) || 0) - (num(a.attributes.reserve_in_usd) || 0))[0];
+  return alt ? poolChange(alt) : null;
+}
+
 async function fetchGT(chain, address) {
   const net = chainOf(chain) && chainOf(chain).geckoNetwork;
   if (!net) return null;
@@ -123,10 +162,7 @@ async function fetchGT(chain, address) {
     const poolAddress =
       (pool && pool.attributes && pool.attributes.address) ||
       (poolId ? poolId.split("_").slice(1).join("_") || null : null);
-    const rawChange =
-      pool && pool.attributes && pool.attributes.price_change_percentage
-        ? snum(pool.attributes.price_change_percentage.h24)
-        : null;
+    const rawChange = changeFromPools(j, pool);
     // Publish nothing rather than nonsense: the board prints this straight.
     let change24h = rawChange;
     if (rawChange != null && Math.abs(rawChange) > SANE_CHANGE_PCT) {
@@ -295,7 +331,13 @@ async function fetchMarket(chain, address) {
   // Only skip DexScreener when GT already has EVERYTHING. GT often returns a
   // price+mcap but no liquidity (reserve_in_usd null) for GT-primary chains
   // (Robinhood/Plasma) — without this, "Liquidity: —" stuck forever.
-  if (gt && gt.priceUsd && gt.mcap && gt.liq) return gt;
+  //
+  // `change24h` counts as part of EVERYTHING, for the same reason: the trending
+  // board prints it, and a row with a cap and no percentage reads as broken to
+  // 10,593 subscribers. It costs nothing where it cannot help — DexScreener
+  // does not index the GT-primary chains at all, so `fetchDS` returns before
+  // any request is made.
+  if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null) return gt;
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
   const ds = await fetchDS(chain, address);
   let out;
@@ -346,6 +388,8 @@ function pickTrusted(gt, ds, chain, address) {
 
 module.exports = {
   _deepestPool: deepestPool,
+  _changeFromPools: changeFromPools,
+  CHANGE_POOL_MIN_SHARE,
   _pickTrusted: pickTrusted,
   SANE_CHANGE_PCT,
   MCAP_DISAGREE_FACTOR, fetchMarket, fetchTokenDescription };
