@@ -338,3 +338,33 @@ test("at or above the minimum the gain floor still refuses — it only yields to
     await autoTrend.reset();
   }
 });
+
+test("a cycle that ends with a chain short RECORDS it — the operator is not the detector", async () => {
+  // Three rounds of "trending sangat sedikit" were found by the operator
+  // counting rows in the channel. The cycle now judges the board it just left
+  // behind and pages when a chain stays under its minimum.
+  const api = require("../src/api/dexvra");
+  const { loadJSONSync } = require("../src/helpers/persist");
+  const realGet = api.getListings;
+  const now = Date.now();
+  // Base: one featured, nothing spare, and the fill could not help.
+  api.getListings = async () => [
+    { status: "approved", chain: "base", address: "b1", trendingRank: 1, trendExp: now + 3.6e6 },
+  ];
+  try {
+    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 5, fillFromMarket: true });
+    await autoTrend.runOnce({
+      rng: () => 0.5,
+      deps: { fillChain: async () => ({ listed: [], why: "every big token on base is already listed" }) },
+    });
+    const st = loadJSONSync("autoTrendState.json", {});
+    assert.ok(st.boardWatch && st.boardWatch.base, `the shortfall was not recorded: ${JSON.stringify(st.boardWatch)}`);
+    assert.ok(st.boardWatch.base.since > 0, "no clock on it, so 'for how long' can never be answered");
+    // The reason the FILLER gave is what reaches the operator — "short" alone
+    // sends them back into the three-round investigation.
+    assert.strictEqual(st.boardWatch.base.why, "fill_failed", JSON.stringify(st.boardWatch.base));
+  } finally {
+    api.getListings = realGet;
+    await autoTrend.reset();
+  }
+});

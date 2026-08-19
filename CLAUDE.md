@@ -635,6 +635,53 @@ cd bot && node scripts/run-tests.js test/trendFill.test.js test/autoTrendPanel.t
 GeckoTerminal has a network id for, and it publishes real listings on the site,
 so an operator who wants the old behaviour turns 🧲 Fill from market off.
 
+## "Bagaimana agar masalah ini tidak terjadi lagi? Trending minimal harus 5"
+
+Asked after the third report of one symptom — a chain publishing fewer rows than
+the operator's minimum — with a different cause underneath each time:
+
+| round | cause | fix |
+| --- | --- | --- |
+| 1 | the chain had no listings left to promote | the market filler |
+| 2 | the filler fired on a red day and would have listed dozens | gate it on listing scarcity |
+| 3 | `min +5% 24h` refused every spare, so the board sat under the floor | the minimum outranks the gain floor |
+
+Three fixes, and in all three **the operator was the detector**: they counted
+rows in the channel and asked. Nothing in the bot ever said *"Ethereum has been
+under 5 for two hours"* — the closest thing was one advisory line at noise level
+aimed at somebody reading pm2 logs.
+
+So a fourth cause will turn up, and what is watched now is the **SYMPTOM**, not
+the causes: the promise the operator set is that every configured chain carries
+at least `perChainMin`.
+
+- **`trendingWatch.js` is the state machine** and it is PURE — the cycle hands it
+  a per-chain snapshot, it returns the alerts to send. A test can walk a board
+  through days of cycles in milliseconds.
+- **Alert on the TRANSITION, after a grace period** (`TREND_SHORT_GRACE_MS`,
+  45 min). A chain short for one cycle while a slot rolls over is not an
+  incident, and an alert every cycle is a channel nobody reads by the second
+  hour — `upstreams.js` had to learn the same thing.
+- **A RECOVERY is an alert too**, or a fixed board and a forgotten one look
+  identical. A chain that recovers before anyone was told says nothing at all.
+- **It repeats** (`TREND_SHORT_REPEAT_MS`, 12h) while the chain stays short: one
+  message on day one is scrolled past by day three.
+- **The message names WHICH of the causes it is** — spare listings that cannot be
+  promoted, a fill that failed with the filler's own reason, or no listings at
+  all with the switch that fixes it. "Short" alone sends the reader back into the
+  same three-round investigation.
+- **`trending:check` asks the same question on demand**, per chain, and exits
+  non-zero — because "wait up to two hours for the next cycle and read pm2" is
+  not an answer to somebody looking at a short board right now. It prints the
+  build stamp for the same reason `fonts:check` does.
+
+```bash
+cd bot && npm run trending:check    # per chain: featured / minimum / spares / why
+```
+
+**Config a fix depends on:** nothing. `TREND_SHORT_GRACE_MS` and
+`TREND_SHORT_REPEAT_MS` exist for an operator who finds 45 min too twitchy.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

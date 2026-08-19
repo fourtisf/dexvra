@@ -2,7 +2,7 @@
   "name": "dexvra-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Dexvra Telegram bot \u2014 Listing / Xpress / Trending / Banner packages with on-chain payment and auto-posting to channels + X.",
+  "description": "Dexvra Telegram bot — Listing / Xpress / Trending / Banner packages with on-chain payment and auto-posting to channels + X.",
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
@@ -19,7 +19,8 @@
     "backup:check": "node scripts/backup-check.js",
     "rpc:check": "node scripts/rpc-check.js",
     "treasury": "node scripts/treasury.js",
-    "test": "node scripts/run-tests.js"
+    "test": "node scripts/run-tests.js",
+    "trending:check": "node scripts/trending-check.js"
   },
   "engines": {
     "node": ">=18"
@@ -46,5 +47,5 @@
       "uuid": "9.0.1"
     }
   },
-  "comment_overrides": "Pin rpc-websockets' uuid to a CommonJS build. @solana/web3.js \u2192 rpc-websockets pulls uuid@14 (ESM-only), which crashes require() on Node < 22.12 with ERR_REQUIRE_ESM. uuid@9.0.1 exposes a CJS require entry; the v4 API used by rpc-websockets is unchanged."
+  "comment_overrides": "Pin rpc-websockets' uuid to a CommonJS build. @solana/web3.js → rpc-websockets pulls uuid@14 (ESM-only), which crashes require() on Node < 22.12 with ERR_REQUIRE_ESM. uuid@9.0.1 exposes a CJS require entry; the v4 API used by rpc-websockets is unchanged."
 }

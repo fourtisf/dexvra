@@ -232,6 +232,8 @@ function loadState() {
     day: s.day || null,
     lastAt: Number(s.lastAt) || 0,
     pending: Array.isArray(s.pending) ? s.pending : [],
+    // Per-chain "how long has this been under its minimum" — see trendingWatch.
+    boardWatch: s.boardWatch && typeof s.boardWatch === "object" ? s.boardWatch : {},
   };
 }
 const saveState = (st) => saveJSON(STATE_FILE, st).catch(() => {});
@@ -643,6 +645,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   // liquidity, and a cap per chain per cycle — because the failure mode of an
   // unbounded filler is a public board full of tokens nobody chose.
   const filled = [];
+  const fillWhyByChain = new Map();
   if (cfg.fillFromMarket && cfg.fillMaxPerCycle > 0 && gaps.size) {
     const fill = (deps && deps.fillChain) || require("./trendFill").fillChain;
     for (const [id, need] of gaps) {
@@ -652,6 +655,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
           filled.push(`${id}: ${r.listed.map((x) => x.sym).join(", ")}`);
           log.info(`[autotrend] filled ${id} with ${r.listed.length} big-cap listing(s) — the board was ${need} short`);
         } else if (r && r.why) {
+          fillWhyByChain.set(id, r.why);
           // A fill that could not happen is its own fact, and it is the one an
           // operator needs: "GT is rate-limited" and "every big token here is
           // already listed" have different answers.
@@ -664,6 +668,35 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     }
   }
   if (filled.length) log.info(`[autotrend] board topped up from the market → ${filled.join(" · ")}`);
+
+  // ── Did the board actually end up where the operator set it? ──────────────
+  //
+  // Everything above is a CAUSE. This watches the promise: every configured
+  // chain carries at least `perChainMin`. Three rounds of "trending sangat
+  // sedikit" were reported by the operator counting rows in the channel,
+  // because nothing here ever said it out loud — see trendingWatch.js.
+  if (!chain) {
+    try {
+      const watch = require("./trendingWatch");
+      const st = loadState();
+      const after = await api.getListings().catch(() => listings);
+      const snapshot = cfg.chains.map((id) => ({
+        id,
+        featured: after.filter((r) => isFeatured(r) && on(r, id)).length,
+        floor: cfg.perChainMin,
+        eligible: after.filter((r) => r.status === "approved" && !isFeatured(r) && on(r, id)).length,
+        fillWhy: fillWhyByChain.get(id) || null,
+        gainFloor: cfg.minGainPct,
+      }));
+      const { state: nextWatch, alerts } = watch.evaluate(snapshot, st.boardWatch, { now: Date.now() });
+      st.boardWatch = nextWatch;
+      await saveState(st);
+      for (const a of alerts) log.alert(a.text);
+    } catch (e) {
+      // A diagnostic must never be why a cycle fails.
+      log.debug(`[autotrend] board watch: ${e.message}`);
+    }
+  }
 
   if (short.length) {
     const line = `[autotrend] board below target on ${short.join(", ")} — list more tokens on those chains, or lower the per-chain target`;
