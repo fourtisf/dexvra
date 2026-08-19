@@ -434,13 +434,21 @@ async function byGain(rows, rng = Math.random) {
   const scored = [];
   for (const r of probe) {
     let change = null;
+    let priced = false;
     try {
       const m = await market.fetchMarket(r.chain, r.address);
       if (m && Number.isFinite(m.change24h)) change = m.change24h;
+      // "NO 24h READING" AND "NO MARKET AT ALL" ARE DIFFERENT FACTS, and the
+      // board renders them identically — which is how `$BINGBONG` reached a
+      // pinned public board as a bare ticker with no percentage and no market
+      // cap beside it. A quiet pool still has a price to publish; a token with
+      // no pool anywhere has nothing, and a row for it is decoration.
+      if (m && Number.isFinite(m.priceUsd)) priced = true;
     } catch {
       /* unpriced — handled below */
     }
     r._change = change;   // carried so the caller can apply a floor without re-fetching
+    r._priced = priced;
     scored.push({ r, change });
     await sleep(PROBE_GAP_MS);
   }
@@ -554,7 +562,14 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     const ranked = await byGain(eligible, rng);
     // Losers are not promoted. `change` is attached by byGain; null means the
     // price could not be read, and those stay eligible on purpose.
-    const worthy = step.forced ? ranked : ranked.filter((r) => r._change === null || r._change >= cfg.minGainPct);
+    // A token with no market ANYWHERE (no price, not merely no 24h reading) is
+    // only a candidate where nothing else on the chain is priced either — see
+    // the floor fill below, which states the reasoning in full.
+    const anyPriced = ranked.some((r) => r._priced);
+    const hasMarket = (r) => !anyPriced || r._priced !== false;
+    const worthy = step.forced
+      ? ranked
+      : ranked.filter((r) => (r._change === null || r._change >= cfg.minGainPct) && hasMarket(r));
     // ⚠️ THE MINIMUM OUTRANKS THE GAIN FLOOR.
     //
     // `min +5% 24h` with a flat market left ETHEREUM publishing 3 rows and BASE
@@ -578,9 +593,20 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       // board, which is the one direction this trade-off does not go. Unpriced
       // tokens stay exempt (Robinhood has no indexer — judging them by a number
       // nobody can read would mean never filling that chain at all).
-      const extra = ranked
-        .filter((r) => !chosen.has(r) && (r._change === null || r._change >= -FLOOR_FILL_MAX_DROP))
-        .slice(0, step.needFloor - picks.length);
+      // The unpriced exemption is deliberate and NARROWER than it looks. Its
+      // stated reason is "a chain no indexer covers would never fill" — so it
+      // applies to a token whose 24h READING is missing, not to one with no
+      // market at all. A token GT and DexScreener both have nothing for
+      // publishes as a bare ticker: no percentage, no cap, nothing. That row
+      // was on the board, and it is what got reported.
+      //
+      // `_priced === false` is only trusted where something else on this chain
+      // IS priced. Where nothing is, the old reason still holds and the
+      // unpriced go on — a short board on a chain no indexer covers helps
+      // nobody.
+      const fillable = (r) =>
+        !chosen.has(r) && (r._change === null || r._change >= -FLOOR_FILL_MAX_DROP) && hasMarket(r);
+      const extra = ranked.filter(fillable).slice(0, step.needFloor - picks.length);
       if (extra.length) {
         log.info(
           `[autotrend] ${step.id}: promoting ${extra.length} below the +${cfg.minGainPct}% floor to reach the minimum of ${cfg.perChainMin} ` +

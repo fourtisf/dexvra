@@ -165,6 +165,11 @@ async function fetchGT(chain, address) {
     const rawChange = changeFromPools(j, pool);
     // Publish nothing rather than nonsense: the board prints this straight.
     let change24h = rawChange;
+    // WHY there is no reading, for the operator — the board renders "no pool
+    // traded in 24h" and "the reading was 12,400% and we refused it" the same
+    // way, and only one of those is a broken pool. Never rendered publicly;
+    // `trending:check --rows` is the only reader.
+    let changeWhy = rawChange == null ? (deepestPool(j) ? "pools have no 24h reading (no trades in the window)" : "GT lists no pool for this token") : null;
     if (rawChange != null && Math.abs(rawChange) > SANE_CHANGE_PCT) {
       // Once per token per hour, not once per poll. A pool with a broken
       // opening tick stays broken, and this runs on the board's refresh
@@ -175,6 +180,7 @@ async function fetchGT(chain, address) {
         log.noise(`[market] GT ${chain}/${address}: ignoring absurd 24h change ${rawChange}% (pool data is broken)`);
       }
       change24h = null;
+      changeWhy = `the pool reported ${Math.round(rawChange).toLocaleString("en-US")}% — refused as broken (over ${SANE_CHANGE_PCT}%)`;
     }
     const img = attr.image_url;
     const liq = pool && pool.attributes ? num(pool.attributes.reserve_in_usd) : null;
@@ -184,6 +190,7 @@ async function fetchGT(chain, address) {
       liq,
       poolAddress,
       change24h,
+      changeWhy,
       name: attr.name || null,
       symbol: attr.symbol || null,
       logoUrl: img && img !== "missing.png" ? img : null,
@@ -357,6 +364,7 @@ async function fetchMarket(chain, address) {
       liq: trusted.liq ?? gt.liq ?? ds.liq,
       poolAddress: trusted.poolAddress || gt.poolAddress || ds.poolAddress,
       change24h: trusted.change24h ?? gt.change24h ?? ds.change24h,
+      changeWhy: gt.changeWhy || null,
       name: gt.name || ds.name,
       symbol: gt.symbol || ds.symbol,
       logoUrl: gt.logoUrl || ds.logoUrl,

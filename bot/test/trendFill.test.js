@@ -396,6 +396,74 @@ test("a chain ABOVE its minimum whose spares are falling is left alone", async (
   }
 });
 
+test("a token with NO MARKET is not auto-promoted while the chain has priced spares", async () => {
+  // "$BINGBONG" and "$BISKIT" reached the pinned board as bare tickers — no
+  // percentage, no market cap, nothing. GT and DexScreener both have nothing
+  // for them, so there was never anything to print. The unpriced exemption in
+  // the floor fill is for a CHAIN no indexer covers, not for a token with no
+  // market on a chain that is indexed fine.
+  const calls = [];
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [
+    { status: "approved", chain: "robinhood", address: "dead1", sym: "BINGBONG", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "dead2", sym: "BISKIT", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "live1", sym: "WTH", trendingRank: null },
+  ];
+  // Two have no market at all; one is priced but DOWN, which the floor fill
+  // still takes — a real market beats no market even at −8%.
+  market.fetchMarket = async (_c, address) =>
+    address === "live1" ? { priceUsd: 0.4, mcap: 2_576_172, change24h: -8 } : null;
+  const booked = [];
+  api.bookTrending = async (_c, address) => {
+    booked.push(address);
+    return {};
+  };
+  try {
+    await autoTrend.set({ enabled: true, chains: ["robinhood"], perChainMin: 1, perChainMax: 1, minGainPct: 5, fillFromMarket: false });
+    await autoTrend.runOnce({ rng: () => 0.5, deps: { fillChain: async (c, n) => { calls.push([c, n]); return { listed: [] }; } } });
+    assert.deepStrictEqual(booked, ["live1"], "a bare ticker with no price and no cap took a public board slot");
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});
+
+test("…but on a chain NOTHING can price, the unpriced still go on", async () => {
+  // The exemption's original reason, unchanged: judging a chain no indexer
+  // covers by a number nobody can read means never filling it at all.
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [
+    { status: "approved", chain: "robinhood", address: "d1", sym: "ONE", trendingRank: null },
+    { status: "approved", chain: "robinhood", address: "d2", sym: "TWO", trendingRank: null },
+  ];
+  market.fetchMarket = async () => null;
+  const booked = [];
+  api.bookTrending = async (_c, address) => {
+    booked.push(address);
+    return {};
+  };
+  try {
+    await autoTrend.set({ enabled: true, chains: ["robinhood"], perChainMin: 1, perChainMax: 1, minGainPct: 5, fillFromMarket: false });
+    await autoTrend.runOnce({ rng: () => 0.5, deps: { fillChain: async () => ({ listed: [] }) } });
+    assert.strictEqual(booked.length, 1, "a chain no indexer covers must still fill");
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});
+
 // ── The MINIMUM outranks the gain floor ─────────────────────────────────────
 //
 // "trending untuk token base dan eth sangat sedikit dari minimal", with a panel

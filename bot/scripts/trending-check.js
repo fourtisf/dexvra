@@ -108,11 +108,15 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       if (pct != null) continue;
       missing++;
       // Two different facts, and the board renders them identically.
+      // Not "one of these two things" — the reason is RECORDED where it is
+      // known, because "the pool has not traded" and "the pool reported
+      // 12,400% and we refused it" need different answers and my own first
+      // version of this line offered them as a guess between the two.
       const why = !m
-        ? 'not indexed anywhere — no GeckoTerminal pool and no DexScreener pair'
+        ? 'no market anywhere — no GeckoTerminal pool and no DexScreener pair. Nothing can price it, so the row publishes as a bare ticker.'
         : cap == null
           ? 'indexed, but with no price or cap either — nothing to publish'
-          : `indexed with a cap, but no 24h reading — its pools have not traded in 24h, or the reading was absurd (>${market.SANE_CHANGE_PCT}%) and refused`;
+          : `has a cap, no 24h reading${m.changeWhy ? ` — ${m.changeWhy}` : ''}`;
       console.log(`  ${Y}·${X} ${String(r.sym || r.address).padEnd(12)} ${D}${r.chain}${X}  ${why}`);
     }
     if (!missing) console.log(`  ${G}✓${X} every featured row has a 24h reading`);

@@ -706,6 +706,23 @@ that the reading was given up on too early, in two places:
   "everything" now. It costs nothing where it cannot help: DexScreener does not
   index the GT-primary chains, so `fetchDS` returns before making a request.
 
+**And the check's first run named a third state, which was a real defect.**
+`$BINGBONG` and `$BISKIT` came back *"no market anywhere"* — no GT pool, no DS
+pair — so they were on a pinned public board as bare tickers with no percentage
+AND no market cap. Nothing could ever have printed there.
+
+- **"No 24h reading" and "no market at all" are different facts**, and the board
+  renders them identically. `byGain` records `_priced` alongside `_change` so
+  the promoter can tell them apart.
+- ⚠️ **The unpriced exemption is narrower than it looks.** Its stated reason is
+  that a chain no indexer covers would never fill — so it belongs to a token
+  whose READING is missing, not to one with no market. A token with no price is
+  now only promoted where **nothing else on that chain is priced either**, which
+  is exactly the case the exemption was written for. Both doors honour it: the
+  gain-floor pass and the floor fill.
+- A priced token down 8% still beats an unpriced one: a real market at a bad
+  number is a trending row, and a bare ticker is decoration.
+
 **The board may not explain itself** — an operator diagnostic on a public
 channel post is chrome. So the answer is a flag on the check, and it is
 MEASURED with the very call the board makes rather than reasoned about:
@@ -714,11 +731,14 @@ MEASURED with the very call the board makes rather than reasoned about:
 cd bot && npm run trending:check -- --rows
 ```
 
-It separates the two facts the board renders identically: *not indexed anywhere*
-(no GT pool, no DS pair — a pre-migration or dead token) versus *indexed with a
-cap but no 24h reading* (quiet pools, or a reading past `SANE_CHANGE_PCT` that
-was refused). It is behind a flag because it prices every featured row at GT's
-politeness pace — most of a minute for a full board.
+It separates the facts the board renders identically: *no market anywhere* (no
+GT pool, no DS pair) versus *a cap with no 24h reading*. ⚠️ And the second one
+does not GUESS between its two causes — the first cut of that line offered the
+operator *"its pools have not traded, or the reading was absurd and refused"*,
+which are different problems the code knows the difference between.
+`changeWhy` records which, including the percentage it refused. It is behind a
+flag because it prices every featured row at GT's politeness pace — most of a
+minute for a full board.
 
 ### ⚡ Run now "not work" — the answer expires, the panel does not
 

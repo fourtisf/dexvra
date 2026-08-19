@@ -160,3 +160,43 @@ test("no pools at all is not a reading of zero", () => {
   assert.strictEqual(market._changeFromPools({ data: {}, included: [] }, null), null);
   assert.strictEqual(market._changeFromPools(withPools([pool("only", 1_000_000, null)]), null), null);
 });
+
+test("WHY a reading is missing is recorded — the two causes need different answers", () => {
+  // "its pools have not traded in 24h, OR the reading was absurd and refused"
+  // was offered to the operator as a guess between two states the code knows
+  // the difference between. A diagnostic that guesses is one more thing to
+  // check by hand.
+  const gt = require("../src/marketdata");
+  const restore = stubFetch((url) => {
+    if (!url.includes("geckoterminal")) return null;
+    return gtToken({ price_usd: "1", market_cap_usd: "9000000" }, [
+      { id: "p1", attributes: { address: "p1", reserve_in_usd: "500000", price_change_percentage: { h24: "120000" } } },
+    ]);
+  });
+  return gt
+    .fetchMarket("solana", "AbsurdMint1111")
+    .then((m) => {
+      assert.strictEqual(m.change24h, null, "an absurd reading is still refused");
+      assert.match(m.changeWhy, /refused as broken/);
+      assert.match(m.changeWhy, /120,000%/, "the number it refused is the diagnosis");
+    })
+    .finally(restore);
+});
+
+test("a quiet pool reports itself as quiet, not as broken", () => {
+  const gt = require("../src/marketdata");
+  const restore = stubFetch((url) => {
+    if (!url.includes("geckoterminal")) return null;
+    return gtToken({ price_usd: "1", market_cap_usd: "9000000" }, [
+      { id: "p1", attributes: { address: "p1", reserve_in_usd: "500000", price_change_percentage: { h24: null } } },
+    ]);
+  });
+  return gt
+    .fetchMarket("solana", "QuietMint11111")
+    .then((m) => {
+      assert.strictEqual(m.change24h, null);
+      assert.match(m.changeWhy, /no trades in the window/);
+      assert.ok(!/refused/.test(m.changeWhy));
+    })
+    .finally(restore);
+});
