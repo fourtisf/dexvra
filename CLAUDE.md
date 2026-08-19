@@ -682,6 +682,36 @@ cd bot && npm run trending:check    # per chain: featured / minimum / spares / w
 **Config a fix depends on:** nothing. `TREND_SHORT_GRACE_MS` and
 `TREND_SHORT_REPEAT_MS` exist for an operator who finds 45 min too twitchy.
 
+### The fourth cause: a spare in FREE-FALL is not a spare
+
+Predicted in the table above ("a fourth cause will turn up") and it turned up on
+the first clean run of the check, 19 Aug: `Base 4/5 · 2 spare listing(s)`, and it
+would have stayed there for ever.
+
+Both spares were below −15%, so the floor fill skipped them — correct, that is
+`FLOOR_FILL_MAX_DROP` doing its job. But `gap()` was gated on the chain having no
+spare listings AT ALL, so the market filler was never asked either. Nothing in
+the loop could move it: the promoter refuses those two on every cycle for the
+same reason, and **a refusal is not a state that resolves itself**.
+
+- **The gate is "can this chain fill the minimum from its OWN listings?"** — and
+  a token this pass may never promote cannot. `gap()` is now also raised when
+  the floor fill comes up short, for the FLOOR shortfall only. Above the minimum
+  `minGainPct` still decides, which is what keeps the red-day listing spree
+  (round 2) impossible.
+- ⚠️ **The free-fall bound governs BOTH DOORS onto the board.** The filler had no
+  such bound, so it would have listed a big-cap down 40% into the slot the
+  promoter had just refused a token down 20% for — the rule made decorative by
+  the code meant to help it. `autoTrend.FLOOR_FILL_MAX_DROP` is the one owner and
+  is passed into `fillChain`; a chain where every big-cap is falling now says so
+  rather than reading as "already listed".
+- **An unreadable 24h change is not a fall**, on either door. Robinhood has no
+  indexer, and judging it by a number nobody can read means never filling it.
+- **The filler's own reason outranks the spare COUNT in `diagnose()`.** A chain
+  can have both — unusable spares and a fill that then failed — and answering
+  "2 spare listings here" over the top of "GT is rate-limited" sends the operator
+  off to list tokens by hand for something that clears itself in ten minutes.
+
 ### …and its first live run accused the server of its own bug
 
 ```

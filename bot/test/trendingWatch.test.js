@@ -57,12 +57,21 @@ test("a RECOVERY is an alert too", () => {
 test("the three causes get three different answers — that is what took three rounds", () => {
   const spares = watch.diagnose({ featured: 3, floor: 5, eligible: 4 });
   assert.strictEqual(spares.code, "spares_unusable");
-  assert.match(spares.text, /down more than 15%/, "must not read as 'no listings'");
-  assert.match(spares.text, /next cycle has not run yet/, "between cycles that is the other true reading");
+  assert.match(spares.text, /−15%/, "must not read as 'no listings'");
+  assert.match(spares.text, /next cycle/, "with the filler on, that state resolves itself");
 
   const failed = watch.diagnose({ featured: 3, floor: 5, eligible: 0, fillWhy: "rate limited" });
   assert.strictEqual(failed.code, "fill_failed");
   assert.match(failed.text, /rate limited/, "the filler's own reason is the diagnosis");
+
+  // A chain can have BOTH: spares that are all in free-fall, and a fill that
+  // then failed. The filler's reason is the specific one — answering "there are
+  // 2 spares here" over the top of "GT is rate-limited" sends the operator off
+  // to list tokens by hand for a problem that clears itself in ten minutes.
+  const both = watch.diagnose({ featured: 4, floor: 5, eligible: 2, fillWhy: "rate limited" });
+  assert.strictEqual(both.code, "fill_failed");
+  assert.match(both.text, /rate limited/);
+  assert.match(both.text, /2 spare/, "…but the spares are still worth naming: they are why it needed a fill");
 
   const none = watch.diagnose({ featured: 0, floor: 5, eligible: 0 });
   assert.strictEqual(none.code, "no_listings");

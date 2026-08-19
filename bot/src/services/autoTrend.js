@@ -589,9 +589,29 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       }
       picks.push(...extra);
     }
+    // ⚠️ A SPARE IN FREE-FALL IS NOT A SPARE — the fourth cause.
+    //
+    // Live board, 19 Aug: Base sat at 4/5 with two spare listings and stayed
+    // there. Both were below −15%, so the floor fill above skipped them (right),
+    // and `gap()` was never called because the chain "has listings" (wrong) —
+    // so the market filler was never asked either. Nothing in the loop could
+    // move it, ever: the promoter refuses those two on every cycle for the same
+    // reason, and refusing is not a state that resolves itself.
+    //
+    // The gate `gap()` documents is "can this chain fill the minimum from its
+    // OWN listings?", and a token this pass may never promote cannot. It is
+    // only the FLOOR shortfall that is asked for — above the minimum the
+    // operator's `minGainPct` legitimately leaves the chain where it is, which
+    // is the red-day spree `gap()` exists to prevent and which this does not
+    // re-open.
+    if (!step.forced && picks.length < step.needFloor) {
+      short.push(`${step.id} (needs ${step.needFloor - picks.length} more to reach the minimum; every spare is below −${FLOOR_FILL_MAX_DROP}%)`);
+      gap(step.id, step.needFloor - picks.length);
+    }
     if (!picks.length) {
-      // No gap(): this chain HAS listings, they are simply down and it is
-      // already at or above the minimum. See gap().
+      // No gap() HERE: this chain is at or above the minimum and its spares are
+      // simply not up enough — the gain floor working as designed. Anything
+      // below the minimum was already gapped above. See gap().
       short.push(`${step.id} (needs ${step.need}; ${ranked.length} candidate(s), none up ${cfg.minGainPct}% or more)`);
       continue;
     }
@@ -650,7 +670,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     const fill = (deps && deps.fillChain) || require("./trendFill").fillChain;
     for (const [id, need] of gaps) {
       try {
-        const r = await fill(id, Math.min(need, cfg.fillMaxPerCycle), { cfg, now });
+        const r = await fill(id, Math.min(need, cfg.fillMaxPerCycle), { cfg, now, maxDropPct: FLOOR_FILL_MAX_DROP });
         if (r && r.listed.length) {
           filled.push(`${id}: ${r.listed.map((x) => x.sym).join(", ")}`);
           log.info(`[autotrend] filled ${id} with ${r.listed.length} big-cap listing(s) — the board was ${need} short`);
@@ -852,4 +872,9 @@ module.exports = {
   start,
   DEFAULTS,
   HARD,
+  // The free-fall bound, exported because BOTH doors onto the board have to
+  // honour it: promotion here, and the market fill in trendFill.js. One of them
+  // refusing a token at −20% while the other lists one is the same board saying
+  // two things.
+  FLOOR_FILL_MAX_DROP,
 };

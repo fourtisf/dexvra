@@ -40,7 +40,7 @@ const keyOf = (chain, address) => `${chain}:${String(address || '').toLowerCase(
  * than asked is the reported bug one level up: the board stays short and the
  * only trace is a number nobody compares.
  */
-async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {} } = {}) {
+async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, maxDropPct } = {}) {
   const out = { chain, need, listed: [], tried: 0, why: null };
   if (!(need > 0)) return out;
   if (!chainOf(chain)) {
@@ -84,8 +84,28 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {} } 
     return out;
   }
 
+  // ⚠️ THE FREE-FALL BOUND APPLIES TO THIS DOOR TOO.
+  //
+  // The promoter refuses to put a listed token below −15% on the board, because
+  // a slot filled by something in free-fall is worse than a short board. A
+  // filler that then LISTS a big-cap down 40% to fill the same slot makes that
+  // rule decorative — and on a red day it would do it on every chain, every
+  // cycle. `autoTrend` owns the number and passes it in; the lazy require is
+  // only for a direct caller, so there is still exactly one value.
+  const maxDrop = Number.isFinite(Number(maxDropPct))
+    ? Number(maxDropPct)
+    : require('./autoTrend').FLOOR_FILL_MAX_DROP;
+
+  let inFreeFall = 0;
   for (const c of res.items) {
     if (out.listed.length >= need) break;
+    // An UNREADABLE change is not a fall — same exemption the promoter makes,
+    // and for the same reason: Robinhood has no indexer, so judging by a number
+    // nobody can read would mean never filling that chain at all.
+    if (Number.isFinite(c.change24h) && c.change24h < -maxDrop) {
+      inFreeFall++;
+      continue;
+    }
     if (known.has(keyOf(c.chain, c.address))) continue;
     // Listed once and gone means the operator removed it, or somebody paid for
     // it and it lapsed. Either way it must not come back free — the rule the
@@ -135,7 +155,9 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {} } 
   if (out.listed.length < need && !out.why) {
     out.why =
       out.tried === 0
-        ? `every big token on ${chain} is already listed`
+        ? inFreeFall
+          ? `every big token on ${chain} that is not already listed is down more than ${maxDrop}% — a short board beats one in free-fall`
+          : `every big token on ${chain} is already listed`
         : `only ${out.listed.length}/${need} could be listed`;
   }
   return out;

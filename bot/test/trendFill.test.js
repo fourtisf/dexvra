@@ -203,6 +203,61 @@ test("the token's real identity is used when the enrichment answers, and the fil
   assert.deepStrictEqual(r.listed.map((x) => x.sym), ["BRETT"]);
 });
 
+test("a big-cap in FREE-FALL is not listed either — one bound, two doors", async () => {
+  // The promoter refuses to put a listed token below −15% on the board. A
+  // filler that lists a big-cap down 40% into the same slot makes that rule
+  // decorative, and on a red day it would do it on every chain, every cycle.
+  const r = await trendFill.fillChain("base", 2, {
+    maxDropPct: 15,
+    deps: deps({
+      topByMcap: async () => ({
+        ok: true,
+        why: null,
+        items: [
+          { chain: "base", address: "0xcrash", symbol: "CRASH", name: "Crash", mcap: 900_000_000, change24h: -41 },
+          { chain: "base", address: "0xedge", symbol: "EDGE", name: "Edge", mcap: 800_000_000, change24h: -15 },
+          { chain: "base", address: "0xdark", symbol: "DARK", name: "Dark", mcap: 700_000_000, change24h: null },
+        ],
+      }),
+    }),
+  });
+  // −15 is AT the bound, not past it; an unreadable change is not a fall (the
+  // exemption the promoter makes, for chains no indexer covers).
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["EDGE", "DARK"]);
+});
+
+test("a chain where every big-cap is falling says so, and does not read as 'already listed'", async () => {
+  const r = await trendFill.fillChain("base", 2, {
+    maxDropPct: 15,
+    deps: deps({
+      topByMcap: async () => ({
+        ok: true,
+        why: null,
+        items: [{ chain: "base", address: "0xcrash", symbol: "CRASH", name: "Crash", mcap: 9e8, change24h: -41 }],
+      }),
+    }),
+  });
+  assert.deepStrictEqual(r.listed, []);
+  assert.match(r.why, /down more than 15%/, "the reason an operator needs is WHICH refusal this was");
+});
+
+test("the bound has ONE owner — autoTrend's, not a second copy here", async () => {
+  const autoTrendMod = require("../src/services/autoTrend");
+  assert.strictEqual(typeof autoTrendMod.FLOOR_FILL_MAX_DROP, "number");
+  // No maxDropPct passed: the lazy fallback must reach that same number, or the
+  // two doors drift and the one nobody is looking at is the one that drifted.
+  const r = await trendFill.fillChain("base", 1, {
+    deps: deps({
+      topByMcap: async () => ({
+        ok: true,
+        why: null,
+        items: [{ chain: "base", address: "0xcrash", symbol: "CRASH", name: "Crash", mcap: 9e8, change24h: -(autoTrendMod.FLOOR_FILL_MAX_DROP + 1) }],
+      }),
+    }),
+  });
+  assert.deepStrictEqual(r.listed, []);
+});
+
 test("nothing is listed when nothing is missing", async () => {
   const r = await trendFill.fillChain("base", 0, { deps: deps() });
   assert.deepStrictEqual(r.listed, []);
@@ -263,6 +318,76 @@ test("a RED day is not a listing spree — the gain floor must not trigger the f
       deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { listed: [] }; } },
     });
     assert.deepStrictEqual(calls, [], "the chain has five listings — being down is the gain filter working, not a shortage");
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});
+
+test("a spare in FREE-FALL is not a spare — the chain is still asked to be filled", async () => {
+  // Live board, 19 Aug: Base 4/5 with two spare listings, and it stayed there.
+  // Both were below −15%, so the floor fill skipped them (right) and the filler
+  // was never asked because the chain "has listings" (wrong). Nothing in the
+  // loop could ever move it: the promoter refuses those two on every cycle for
+  // the same reason, and a refusal is not a state that resolves itself.
+  const calls = [];
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [
+    ...["f1", "f2", "f3", "f4"].map((address, i) => ({
+      status: "approved", chain: "base", address, sym: address, trendingRank: i + 1, trendExp: Date.now() + 3.6e6,
+    })),
+    { status: "approved", chain: "base", address: "s1", sym: "S1", trendingRank: null },
+    { status: "approved", chain: "base", address: "s2", sym: "S2", trendingRank: null },
+  ];
+  market.fetchMarket = async () => ({ change24h: -30 });
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 5, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 3 });
+    await autoTrend.runOnce({
+      rng: () => 0.5,
+      deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { listed: [] }; } },
+    });
+    // ONE — the FLOOR shortfall and no more. Above the minimum the gain floor
+    // is still the one that decides, which is what keeps a red day from
+    // becoming a listing spree.
+    assert.deepStrictEqual(calls, [["base", 1]]);
+  } finally {
+    api.getListings = realGet;
+    market.fetchMarket = realFetch;
+    api.bookTrending = realBook;
+    await autoTrend.reset();
+  }
+});
+
+test("a chain ABOVE its minimum whose spares are falling is left alone", async () => {
+  // The same shape one row up: 5/5 with two spares at −30%. The board has what
+  // the operator asked for, so the rolled target above it is the gain floor's
+  // to refuse — asking for a fill here is the red-day spree.
+  const calls = [];
+  const api = require("../src/api/dexvra");
+  const market = require("../src/marketdata");
+  const realGet = api.getListings;
+  const realFetch = market.fetchMarket;
+  const realBook = api.bookTrending;
+  api.getListings = async () => [
+    ...["f1", "f2", "f3", "f4", "f5"].map((address, i) => ({
+      status: "approved", chain: "base", address, sym: address, trendingRank: i + 1, trendExp: Date.now() + 3.6e6,
+    })),
+    { status: "approved", chain: "base", address: "s1", sym: "S1", trendingRank: null },
+    { status: "approved", chain: "base", address: "s2", sym: "S2", trendingRank: null },
+  ];
+  market.fetchMarket = async () => ({ change24h: -30 });
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 8, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 3 });
+    await autoTrend.runOnce({ rng: () => 0.999, deps: { fillChain: async (c, n) => { calls.push([c, n]); return { listed: [] }; } } });
+    assert.deepStrictEqual(calls, []);
   } finally {
     api.getListings = realGet;
     market.fetchMarket = realFetch;

@@ -46,24 +46,29 @@ const REPEAT_MS = Math.max(GRACE_MS, Number(process.env.TREND_SHORT_REPEAT_MS) |
  */
 function diagnose({ featured, floor, eligible = 0, fillWhy = null, gainFloor = 0 }) {
   if (featured >= floor) return null;
-  if (eligible > 0) {
-    // There ARE spare listings. Since the minimum outranks the gain floor, the
-    // only way this survives a cycle is that they are all in free-fall (below
-    // FLOOR_FILL_MAX_DROP), or the cycle has not run yet.
-    return {
-      code: 'spares_unusable',
-      // Two readings, and the honest line names both: the watch runs right after
-      // a cycle (so "nothing was promotable" is the answer), while the check
-      // script can run at any moment, including between cycles.
-      text:
-        `${eligible} spare listing(s) here, and none went on — either they are all down more than 15% ` +
-        `(the one thing never auto-promoted), or the next cycle has not run yet. ⚡ Run now settles it.`,
-    };
-  }
+  // The FILLER'S OWN REASON OUTRANKS THE COUNT. It is the most specific fact
+  // available, and it is only ever set on a chain the cycle actually tried to
+  // fix — reading `eligible` first would answer "there are spares here" over
+  // the top of "GT is rate-limited", which is the reading that sends somebody
+  // to list tokens by hand.
   if (fillWhy) {
     return {
       code: 'fill_failed',
-      text: `no spare listings, and the market fill could not help: ${fillWhy}`,
+      text:
+        `the market fill could not help: ${fillWhy}` +
+        (eligible > 0 ? ` (${eligible} spare listing(s) here, none of them promotable)` : ' (no spare listings here either)'),
+    };
+  }
+  if (eligible > 0) {
+    // Spare listings exist and none went on. Since the minimum outranks the
+    // gain floor, the only survivable readings are that they are all in
+    // free-fall — in which case the next cycle asks the filler to cover it —
+    // or that no cycle has run since the board went short.
+    return {
+      code: 'spares_unusable',
+      text:
+        `${eligible} spare listing(s) here, and none went on — they are below −15%, the one thing never ` +
+        `auto-promoted. The next cycle lists a big-cap to cover it while 🧲 Fill from market is ON. ⚡ Run now settles it.`,
     };
   }
   return {
