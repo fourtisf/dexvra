@@ -682,6 +682,45 @@ cd bot && npm run trending:check    # per chain: featured / minimum / spares / w
 **Config a fix depends on:** nothing. `TREND_SHORT_GRACE_MS` and
 `TREND_SHORT_REPEAT_MS` exist for an operator who finds 45 min too twitchy.
 
+### …and its first live run accused the server of its own bug
+
+```
+✗ could not read the listings API: INTERNAL_API_TOKEN is not set
+```
+
+On a box where it IS set — the bot was listing and trending normally at the
+time. `main.js` loads the env before requiring anything, and a standalone script
+gets none of that: `config/constants.js` freezes every value at require time, so
+the script read an empty environment and reported it as a fact about the server.
+**A diagnostic that reads a different configuration from the bot's is a
+diagnostic about nothing**, and the failure it invents points the operator at
+their own `.env`.
+
+- **`src/config/loadEnv.js` is the one owner**, and it already existed. Nine
+  scripts carried four different spellings of the same intent —
+  `require("dotenv").config()`, `{ path: bot/.env }`, `{ override: true }`, and
+  one `require(".../loadEnv")` with **no call**, which loads nothing and reads
+  exactly like it does. So which `.env` counted depended on which script you
+  ran, and three of the four never looked at the repo root at all. All of them
+  go through `loadEnv()` now.
+- ⚠️ **ORDER is the rule, not presence** — and the first cut of the guard test
+  got this wrong in the way that matters: it matched `loadEnv()` anywhere in the
+  file, and `trending-check.js` has a second, lazy call inside its error path.
+  Deleting the real call at the top left the guard GREEN. The assertion compares
+  the call's position against the first repo `require`.
+- **The failure names the files it READ.** "not set" over a list containing
+  `bot/.env` is a missing line in that file; "not set" over an empty list is a
+  script that read no `.env` at all. One line separates the two, and it is the
+  whole diagnosis.
+- `smoke.js` is the one exemption and it is ASSERTED, not declared: it
+  fabricates its own tokens so `npm run check` behaves identically on a laptop
+  and on the server, and `loadEnv`'s `override:true` would undo that. The test
+  fails if it stops setting them.
+
+```bash
+cd bot && node scripts/run-tests.js test/loadEnv.test.js
+```
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

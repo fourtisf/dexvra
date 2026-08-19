@@ -4,6 +4,10 @@
 // No Chromium/Playwright needed (uses @napi-rs/canvas, same as runtime).
 const fss = require("node:fs");
 const path = require("node:path");
+// .env before anything reaches code that reads it — `loadEnv()` is the one owner
+// of that (repo root, bot/, cwd).
+require("../src/config/loadEnv").loadEnv();
+
 const br = require("../src/bannerRender");
 
 const OUT = path.join(__dirname, "..", "assets");

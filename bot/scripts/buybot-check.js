@@ -23,7 +23,10 @@
 //   ❌ feed unavailable     the group is getting NO alerts at all. The status
 //                          printed tells you whether it is egress (no response),
 //                          a rate limit (429) or a bad pool (404).
-require("dotenv").config();
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 
 const { BUYBOT_POOL_MIN_MS: POOL_MIN_MS } = require("../src/config/constants");
 /** How many distinct pools this deployment polls. null when it cannot be read —

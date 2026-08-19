@@ -25,6 +25,11 @@
  * RUNS every surface and reads back the fonts it actually set, and the exit
  * code follows THAT.
  */
+// .env before anything reaches config/constants — `loadEnv()` is the one owner
+// of that (repo root, bot/, cwd). A diagnostic that reads a different
+// configuration from the bot's is a diagnostic about nothing.
+require("../src/config/loadEnv").loadEnv();
+
 const path = require('node:path');
 const fs = require('node:fs');
 const kit = require('../src/helpers/canvasKit');

@@ -9,7 +9,10 @@
 // This answers "can I connect?", NOT "is my state actually backed up?". For the
 // second — every store in sync / stale / never mirrored, and how many premium
 // emoji are at risk — run `npm run backup:check`.
-require("dotenv").config({ override: true });
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 const { MongoClient } = require("mongodb");
 
 const uri = process.argv[2] || process.env.MONGO_URI || "";

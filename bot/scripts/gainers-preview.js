@@ -7,6 +7,11 @@
 // Sample mode needs no network, no DB and no bot token — it is the fastest way
 // to see what a layout change did. --live goes through gainers.topGainers(), so
 // it also tells you whether the data side is healthy on this box.
+// .env before anything reaches config/constants — `loadEnv()` is the one owner
+// of that (repo root, bot/, cwd). A diagnostic that reads a different
+// configuration from the bot's is a diagnostic about nothing.
+require("../src/config/loadEnv").loadEnv();
+
 const fs = require("node:fs");
 const path = require("node:path");
 const gb = require("../src/gainersBanner");

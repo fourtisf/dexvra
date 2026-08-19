@@ -11,7 +11,12 @@ function authHeaders(extra) {
 }
 
 async function call(method, path, body) {
-  if (!INTERNAL_API_TOKEN) throw new Error("INTERNAL_API_TOKEN is not set — bot cannot write listings");
+  // Every call through here is authenticated, reads included, so the message
+  // must not claim a write: `trending:check` only READS and reported "bot
+  // cannot write listings", which sends the reader looking for the wrong thing.
+  if (!INTERNAL_API_TOKEN) {
+    throw new Error(`INTERNAL_API_TOKEN is not set — cannot ${method === "GET" ? "read from" : "write to"} the site's internal API`);
+  }
   const url = `${DEXVRA_API_BASE}${path}`;
   const res = await fetch(url, {
     method,

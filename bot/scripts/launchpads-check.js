@@ -15,7 +15,7 @@
 // The trade bot has its own copy of this against the SAME registry
 // (tradebot: npm run launchpads:check). Both are worth running: the two
 // processes can sit behind different egress if the operator ever splits them.
-require("../src/config/loadEnv");
+require("../src/config/loadEnv").loadEnv(); // NB: requiring it loads nothing — the call is the point.
 
 const lp = require("../../shared/launchpads");
 const launchpads = require("../src/launchpads");

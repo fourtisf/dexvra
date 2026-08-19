@@ -8,7 +8,10 @@
 // Requires API_ID + API_HASH in .env (create at https://my.telegram.org/apps —
 // log in with the SAME premium account). The account must be able to post in
 // every channel (@dexvraio / @dexvratrending / @dexvralisting).
-require("dotenv").config({ path: require("node:path").join(__dirname, "..", ".env") });
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 const readline = require("node:readline");
 const fs = require("node:fs/promises");
 const { API_ID, API_HASH, GRAMJS_SESSION_FILE } = require("../src/config/constants");

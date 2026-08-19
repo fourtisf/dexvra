@@ -14,7 +14,10 @@
 //     cd bot && npm run raid:timeline -- @yourproject
 //
 // Read-only: it fetches public timelines and nothing else.
-require("dotenv").config();
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 
 const xTimeline = require("../src/raid/xTimeline");
 const xGuestTimeline = require("../src/raid/xGuestTimeline");

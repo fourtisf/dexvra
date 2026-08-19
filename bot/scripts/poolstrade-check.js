@@ -25,7 +25,10 @@
 //                           and copy its URL into POOLS_TRADE_API +
 //                           POOLS_TRADE_LIST_PATH and its payload into
 //                           POOLS_TRADE_BODY.
-require("dotenv").config();
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 
 const poolstrade = require("../src/poolstrade");
 

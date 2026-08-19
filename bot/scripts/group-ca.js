@@ -19,7 +19,10 @@
 // pin) alone — the same thing 🗑 Remove CA does in the group, for the same
 // reason: swapping a contract is the ordinary use, and silently resetting
 // numbers an admin chose would only surface as a wrong-looking alert later.
-require("dotenv").config({ override: true });
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 
 const path = require("node:path");
 const fss = require("node:fs");

@@ -1,5 +1,9 @@
 // Preview the trending-up (rank-up) banner with sample data → /tmp.
 const fs = require("node:fs");
+// .env before anything reaches code that reads it — `loadEnv()` is the one owner
+// of that (repo root, bot/, cwd).
+require("../src/config/loadEnv").loadEnv();
+
 const bannerRender = require("../src/bannerRender");
 
 (async () => {

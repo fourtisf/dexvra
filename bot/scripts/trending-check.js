@@ -13,6 +13,20 @@
  * Exits non-zero when any configured chain is under its floor, so it is usable
  * straight after a deploy or from a cron.
  */
+// ⚠️ .env FIRST, before anything requires config/constants.
+//
+// The first live run of this script reported "INTERNAL_API_TOKEN is not set" on
+// a server where it IS set: `main.js` loads the env before requiring anything
+// and a standalone script gets none of that, so the check read as a broken
+// server rather than a broken script.
+//
+// `loadEnv()` is the one owner of "which .env does this process read" — repo
+// root, then bot/, then the cwd, with override. A bare
+// `require("dotenv").config()` here would be a fourth private idea of it, and
+// it would resolve against the CWD alone, which is the exact failure that
+// module was written for.
+require("../src/config/loadEnv").loadEnv();
+
 const autoTrend = require('../src/services/autoTrend');
 const watch = require('../src/services/trendingWatch');
 const api = require('../src/api/dexvra');
@@ -33,6 +47,16 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
     rows = (await api.getListings()) || [];
   } catch (e) {
     console.log(`${R}✗ could not read the listings API: ${e.message}${X}`);
+    if (/INTERNAL_API_TOKEN/.test(e.message)) {
+      // Naming the files that WERE read is the whole diagnosis: "not set" over a
+      // list containing bot/.env is a missing line in that file, and "not set"
+      // over an empty list is a script that read no .env at all — which is what
+      // this very check shipped doing.
+      const envFiles = require('../src/config/loadEnv').loadEnv();
+      console.log(`  ${D}.env read: ${envFiles.length ? envFiles.join(', ') : 'NONE — no .env at the repo root, in bot/, or in this directory'}`);
+      console.log(`  That value lives in .env on the server and nowhere in this repo. If the bot is`);
+      console.log(`  listing and trending normally it IS set — add it to one of the files above.${X}`);
+    }
     console.log('  Nothing below can be measured until that answers.\n');
     process.exit(1);
   }

@@ -9,7 +9,10 @@
 // Requires MONGO_URI in .env. Fail-loud: exits non-zero if Mongo is unreachable.
 // Includes the premium userbot session (session.txt) so a fresh container fully
 // auto-recovers — keep the Mongo DB private (it is auth material).
-require("dotenv").config({ path: require("node:path").join(__dirname, "..", ".env") });
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 const path = require("node:path");
 const fss = require("node:fs");
 const { DATA_DIR } = require("../src/config/constants");

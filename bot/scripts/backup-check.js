@@ -24,7 +24,10 @@
 // what is on disk has actually made it across.
 //
 // Read-only unless --fix is passed. Never deletes anything, on either side.
-require("dotenv").config();
+// One owner for "which .env does this process read" — repo root, then bot/, then
+// the cwd, with override. dotenv on its own resolves against the CWD alone, so
+// four scripts here quietly disagreed about which file counted.
+require("../src/config/loadEnv").loadEnv();
 
 const path = require("node:path");
 const fss = require("node:fs");
