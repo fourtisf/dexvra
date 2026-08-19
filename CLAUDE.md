@@ -682,6 +682,39 @@ cd bot && npm run trending:check    # per chain: featured / minimum / spares / w
 **Config a fix depends on:** nothing. `TREND_SHORT_GRACE_MS` and
 `TREND_SHORT_REPEAT_MS` exist for an operator who finds 45 min too twitchy.
 
+### ⚡ Run now "not work" — the answer expires, the panel does not
+
+"di klik fiturnya not work". The button spun and nothing came back, on a panel
+where every other button responds instantly.
+
+Nothing was wrong with the promotion. `byGain` prices up to **25 candidates
+serially**, with a 250 ms gap and an 8 s timeout each — that is ~6 s of sleeping
+before a single lookup, and on a chain with dozens of spares (Robinhood had 44)
+it runs well past Telegram's **~15 s callback deadline**. `answerCbQuery` then
+fails with *"query is too old"*, the `.catch` swallows it, and the operator is
+told nothing at all — while the promotion may well have succeeded.
+
+- **A callback answer is the one channel with a DEADLINE.** So it carries the
+  acknowledgement, which is bounded, and the RESULT goes on the panel, which is
+  a message edit and has none. `alscan` two handlers down already did exactly
+  this; `atrun` was the one that did not.
+- ⚠️ **A previous round deleted the early "working…" toast** on the rule that
+  only the FIRST `answerCbQuery` counts. The rule is true and the conclusion was
+  backwards: the fix is to move the RESULT off the answer, not to move the
+  acknowledgement later. Both bugs report identically from Telegram — "the
+  button does nothing" — which is how the second one was shipped as a fix for
+  the first.
+- **A slow button invites a second tap**, which would book two slots for one
+  request. `atRunBusy` answers the second with "a run is already going".
+- **`atref` had the same shape**, one `getListings()` deep. Answered first now.
+- The tests DRIVE the registered handler through real Telegraf updates and pin
+  the ORDER — that the tap is answered while the work is still running. A source
+  scan sees both calls and reads as fine; all four fail on the old handler.
+
+```bash
+cd bot && node scripts/run-tests.js test/autoTrendRunNow.test.js
+```
+
 ### The fourth cause: a spare in FREE-FALL is not a spare
 
 Predicted in the table above ("a fourth cause will turn up") and it turned up on

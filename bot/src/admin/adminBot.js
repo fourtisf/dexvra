@@ -1670,6 +1670,8 @@ const alTrendOn = (c) => c.pkgs.includes("trending");
 
 // One test scan at a time — see the alscan handler.
 let alScanBusy = false;
+// ⚡ Run now is slow enough to outlive the callback it answers — see the handler.
+let atRunBusy = false;
 
 const ago = (ms) => {
   const m = Math.max(0, Math.round(ms / 60000));
@@ -3265,26 +3267,43 @@ function build() {
   bot.action(/^atrun:([a-z0-9]+)$/, async (ctx) => {
     if (!guard(ctx)) return;
     const chain = ctx.match[1];
+    // ⚠️ A CALLBACK ANSWER EXPIRES; A MESSAGE EDIT DOES NOT.
+    //
+    // "di klik fiturnya not work" — the button spun and nothing came back. The
+    // work is what takes the time: `byGain` prices up to 25 candidates SERIALLY
+    // with a 250ms gap, which is ~6s of sleeping before a single lookup, and on
+    // a chain with dozens of spares (Robinhood had 44) it runs well past
+    // Telegram's ~15s callback deadline. `answerCbQuery` then fails with "query
+    // is too old", the .catch swallows it, and the operator is told nothing at
+    // all — while the promotion may well have succeeded.
+    //
+    // A previous round deleted the early "working…" toast on the rule that only
+    // the FIRST answerCbQuery counts. That rule is true; the conclusion was
+    // backwards. The answer is the one channel with a deadline, so it must
+    // carry the acknowledgement — which is bounded — and the RESULT belongs on
+    // the panel, which has no deadline. `alscan` beside this already does
+    // exactly that.
+    if (atRunBusy) {
+      ctx.answerCbQuery("⚡ A run is already going — hold on").catch(() => {});
+      return;
+    }
+    atRunBusy = true;
+    ctx.answerCbQuery(`⚡ Running on ${chain} — this can take a minute. The panel below will say what happened.`).catch(() => {});
     const res = await autoTrend.forceChain(chain).catch((e) => {
       log.warn(`[adminbot] forced auto-trend ${chain}: ${e.message}`);
       return { promoted: 0, syms: [], reason: e.message };
     });
+    atRunBusy = false;
     log.info(
       `[adminbot] forced auto-trend on ${chain} → ${res.promoted} promoted (${res.reason || res.syms.join(", ")}) ` +
         `by @${ctx.from.username || ctx.from.id}`,
     );
-    // EXACTLY ONE answerCbQuery: Telegram accepts the first per callback and
-    // drops the rest, so an early "working…" toast silently ate the result —
-    // which is what "the button does nothing" actually was.
-    await ctx
-      .answerCbQuery(
-        res.promoted ? `✅ Now trending on ${chain}: ${res.syms.join(", ")}` : `⚠️ ${res.reason}`,
-        { show_alert: true },
-      )
-      .catch(() => {});
     _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
     _atPending = autoTrend.pendingCount();
-    await edit(ctx, atText(), atKb());
+    const outcome = res.promoted
+      ? `⚡ <b>Ran on ${escapeHtml(chain)}</b> → now trending: <b>${escapeHtml(res.syms.join(", "))}</b>`
+      : `⚠️ <b>Nothing promoted on ${escapeHtml(chain)}</b>\n<code>${escapeHtml(String(res.reason || "no reason given").slice(0, 300))}</code>`;
+    await edit(ctx, `${atText()}\n\n${outcome}`, atKb());
   });
   bot.action("atfill", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -3309,9 +3328,12 @@ function build() {
   // cycle, and reopening the whole menu to get it is not obvious.
   bot.action("atref", async (ctx) => {
     if (!guard(ctx)) return;
+    // Answered BEFORE the read, same rule as ⚡ Run now above: this waits on the
+    // site's listings API, and a slow answer is one Telegram throws away. The
+    // refreshed panel below is the real report anyway.
+    ctx.answerCbQuery("Refreshing…").catch(() => {});
     _atCounts = await autoTrend.featuredByChain().catch(() => _atCounts);
     _atPending = autoTrend.pendingCount();
-    ctx.answerCbQuery("Board refreshed").catch(() => {});
     await edit(ctx, atText(), atKb());
   });
   bot.action("aten", async (ctx) => {
