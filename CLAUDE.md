@@ -809,13 +809,69 @@ cannot:
   imports the module now, the rule `autoTrend.js` already states at its own
   require.
 
+#### "bagaimana agar masalah ini tidak terjadi" — the operator was the detector, again
+
+Asked straight after the fix landed, and it is the right question: this is the
+**third** time a row on this board has been reported for having no percentage,
+and all three times it was reported by a person reading the pinned channel and
+counting. Nothing in the bot has ever said *"three rows went out as — this
+cycle"*. That is the same shape, on the same surface, as the three-round
+"trending minimal harus 5" saga one section up — and the answer there is the
+answer here: **watch the SYMPTOM, because the causes keep changing.**
+
+The promise is "every row on the board carries a percentage", and it is now
+watched by the same machinery that watches "every chain carries `perChainMin`":
+
+- **`trendingWatch.evaluateRows()` sits beside `evaluate()`, in the SAME
+  module.** Two copies of "is the board healthy" would eventually disagree,
+  which is what two pump.fun hosts in two processes already cost. It is PURE —
+  the poster hands it the render, it returns the alerts — so a test walks the
+  board through days of cycles in milliseconds.
+- **The poster MEASURES what it drew**, at the moment it draws it. `noReadCount`
+  was computed in `buildText` and thrown away; `lastRender()` is
+  `{at, rows, blank:[{chain,sym,why}]}` now. A value nobody can read is the same
+  as no value — the gainers banner measured its candidate `pool`, returned it,
+  printed it nowhere, and a collapsed ranking looked entirely normal.
+- ⚠️ **The watch runs BEFORE the `unchanged` early return.** The board is edited
+  in place and skipped when the text has not changed, which is exactly the state
+  a persistently blank board sits in — folding the watch in after that return
+  would freeze it on the boards that stay broken longest. A stuck symptom
+  reading as no symptom is the state that looks most like a healthy one, and
+  this file has paid for that one twice (`lastFeedOkAt`, `lastCheckedAt`).
+- **Transition only, after `TREND_SHORT_GRACE_MS`; a RECOVERY is an alert too;
+  it repeats.** A row can go blank for one cycle while a pool rolls over, and an
+  alert every cycle is a channel nobody reads by the second hour. The rules are
+  `upstreams.js`'s, borrowed a third time.
+- **The alert names the TOKENS and the recorded reason**, capped at six. "Some
+  rows have no percentage" sends the reader back into the same investigation;
+  `changeWhy` already knows whether the pool is quiet, is younger than a day, or
+  does not exist — three different answers.
+- ⚠️ **`trending:check --rows` now DRIVES `buildText()`** and reads
+  `lastRender()`, instead of calling `fetchMarket` itself. That second copy of
+  the board's question is precisely how `fonts:check` printed nine green ticks
+  over a banner publishing boxes: a guard is only honest while it measures the
+  stack the renderer actually uses. It **exits non-zero** on a board of dashes,
+  so green means "the board is safe" and not "the counts add up" — and a render
+  that produces NO rows is an error, never a quiet ✓.
+
+So the layers, each closing a hole the others cannot:
+
+| layer | stops |
+| --- | --- |
+| the candle recovery + the two promotion gates | a readable market publishing nothing |
+| `NO_READING` in the poster | a blank that is honest and *invisible* |
+| `boardPercent.test.js` drives the real renderers | the column drifting back to a dropped segment |
+| `evaluateRows` in the running bot | the operator being the detector |
+| `trending:check --rows` + the build stamp | a green check over a board full of dashes |
+
 ```bash
-cd bot && node scripts/run-tests.js test/boardPercent.test.js test/trendFill.test.js   # 43 tests, no network
+cd bot && node scripts/run-tests.js test/boardPercent.test.js test/trendFill.test.js   # 50 tests, no network
 cd bot && npm run trending:check -- --rows                                             # which rows show — and why
 ```
 
 **Config a fix depends on:** nothing. `GECKOTERMINAL_API_KEY` raises the shared
-GT quota the candle read draws on, as it does for everything else in this repo.
+GT quota the candle read draws on, as it does for everything else in this repo;
+`TREND_SHORT_GRACE_MS` / `TREND_SHORT_REPEAT_MS` govern this watch too.
 
 ### ⚡ Run now "not work" — the answer expires, the panel does not
 

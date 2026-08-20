@@ -116,6 +116,8 @@ async function buildText() {
   const lines = [`${board.titleEmoji()} **Dexvra Trending** — live featured slots`];
   let newCount = 0;
   let noReadCount = 0;
+  let rowCount = 0;
+  const blank = [];
   for (const chain of CHAIN_ORDER) {
     const arr = byChain[chain];
     if (!arr || !arr.length) continue;
@@ -128,6 +130,11 @@ async function buildText() {
         r,
         change: m && Number.isFinite(m.change24h) ? m.change24h : null,
         mcap: m && Number.isFinite(m.mcap) ? m.mcap : null,
+        // WHY there is no reading, carried from marketdata. Recorded, not
+        // rendered: the board may not explain itself to 10,593 subscribers,
+        // but the operator has now asked this question twice and the answer
+        // was thrown away both times.
+        why: (m && m.changeWhy) || (m ? null : "no market anywhere — no GeckoTerminal pool and no DexScreener pair"),
       });
     }
     // Rank by PACKAGE tier first (top-tier buyers on top), then by 24h performance.
@@ -146,13 +153,17 @@ async function buildText() {
       const tickerHref = tgUrl(e.r.telegram) || xUrl(e.r.twitter) || webUrl(e.r.website) || dexUrl;
       const link = `[$${sym}](${mkUrl(tickerHref)})`;
       const pct = pctStr(e.change) || NO_READING;
-      if (pct === NO_READING) noReadCount++;
+      if (pct === NO_READING) {
+        noReadCount++;
+        blank.push({ chain, sym: sym || String(e.r.address).slice(0, 8), why: e.why });
+      }
       const mc = mcapStr(e.mcap);
       const mcLink = mc ? `[${mc}](${mkUrl(dexUrl)})` : "";
       // {badge} {🌩} {+%} | $TICKER(→TG) | {mcap}$(→Dexvra) — parts drop cleanly
       // if missing. The 🌩 marks a slot that STARTED in the last few hours: the
       // board is edited in place, so without it the message looks identical at
       // 09:00 and 15:00 and a returning reader cannot see what just entered.
+      rowCount++;
       const isNew = board.isNewlyTrending(e.r, now);
       if (isNew) newCount++;
       const segs = [board.rankBadge(i + 1), isNew ? board.newEmoji() : "", pct, "|", link];
@@ -181,8 +192,26 @@ async function buildText() {
   if (noReadCount > 0) {
     lines.push(`${newCount > 0 ? "" : "\n"}${NO_READING} = no 24h reading for this pool yet`);
   }
+  // ⚠️ MEASURED AT THE MOMENT THE BOARD GOES OUT, from the very rows it drew.
+  //
+  // `noReadCount` was computed here and thrown away, which is the defect this
+  // repo keeps re-learning — the gainers banner measured its candidate `pool`,
+  // returned it, and printed it nowhere, so a collapsed ranking looked entirely
+  // normal. A value nobody can read is the same as no value.
+  //
+  // Recording it HERE rather than re-deriving it elsewhere is the `fonts:check`
+  // rule: a guard is only honest while it measures the stack the renderer
+  // actually used. `trending:check --rows` reads this, so it can never report a
+  // clean board while this function publishes dashes.
+  lastRender = { at: now, rows: rowCount, blank };
   return lines.join("\n");
 }
+
+// The last board this process RENDERED — not what it decided to send, and not a
+// second lookup of the same question. `{ at, rows, blank:[{chain,sym,why}] }`,
+// or null before the first render.
+let lastRender = null;
+const getLastRender = () => lastRender;
 
 // Remove a superseded board message so the channel never accumulates duplicate
 // boards (the visible symptom of a transport flip). Only the identity that POSTED
@@ -281,12 +310,46 @@ async function postVia(tg, transport, payload, markup, mode) {
   return await settle("posted");
 }
 
+/**
+ * Fold this render into the "every row carries a percentage" watch and post any
+ * alert. Never throws — a diagnostic must never be why a cycle fails, the rule
+ * autoTrend's board watch is written under.
+ *
+ * The state is persisted only when it CHANGES: a value written to the store
+ * every cycle for nobody is disk churn plus a field the next person has to work
+ * out is dead — the lesson `peakValueEth` left behind.
+ */
+async function watchRows() {
+  try {
+    const rec = getLastRender();
+    if (!rec) return;
+    const watch = require("./trendingWatch");
+    const { state: next, alerts } = watch.evaluateRows(rec, state.rowWatch || {});
+    if (JSON.stringify(next) !== JSON.stringify(state.rowWatch || {})) {
+      state.rowWatch = next;
+      await saveJSON(STATE_FILE, state);
+    }
+    for (const a of alerts) log.alert(a.text);
+  } catch (e) {
+    log.debug(`[trendposter] row watch: ${e.message}`);
+  }
+}
+
 // One refresh cycle. Exported so the premium / degrade paths are testable
 // without waiting on the interval. Never throws — a bad cycle just skips.
 async function runOnce(tg) {
   try {
     const markup = await buildText();
     if (!markup) return { how: "empty", mode: null, premium: 0 };
+    // ⚠️ BEFORE the unchanged/transport branches below, deliberately.
+    //
+    // The question "did the board that just rendered carry a percentage on
+    // every row" is answered by buildText, and it is just as true on a cycle
+    // that publishes nothing because the text did not change. Evaluating after
+    // the `unchanged` early return would freeze the watch on exactly the boards
+    // that sit blank the longest — a stuck symptom reading as no symptom, which
+    // is the state that looks most like a healthy one.
+    await watchRows();
     const parsed = premium.parse(markup);
     // Custom emoji from a BOT render only in private/group/supergroup chats,
     // and only when the bot's OWNER has Telegram Premium (Bot API formatting
@@ -365,9 +428,10 @@ function start(tg) {
   };
 }
 
-module.exports = { start, runOnce, buildText };
+module.exports = { start, runOnce, buildText, lastRender: getLastRender };
 // Exposed for tests: reset the in-memory post state between cases.
 module.exports._resetState = () => {
+  lastRender = null;
   state = { messageId: null, lastText: null, lastMode: null };
   premiumBlockedUntil = 0;
   pinnedThisRun = false;

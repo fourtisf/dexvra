@@ -94,47 +94,62 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   // Behind a flag because it prices every featured token at GT's politeness
   // pace: ~30 rows is most of a minute, and the count check above is what an
   // operator usually came for.
+  let blankRows = 0;
   if (process.argv.includes('--rows')) {
-    const market = require('../src/marketdata');
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    console.log(`\n  ${D}24h reading per featured row (the same call the board makes)${X}`);
-    const featured = rows.filter(isFeatured);
-    let missing = 0;
-    for (const r of featured) {
-      const m = await market.fetchMarket(r.chain, r.address).catch(() => null);
-      await sleep(300);
-      const pct = m && Number.isFinite(m.change24h) ? m.change24h : null;
-      const cap = m && Number.isFinite(m.mcap) ? m.mcap : null;
-      if (pct != null) continue;
-      missing++;
-      // Two different facts, and the board renders them identically.
-      // Not "one of these two things" — the reason is RECORDED where it is
-      // known, because "the pool has not traded" and "the pool reported
-      // 12,400% and we refused it" need different answers and my own first
-      // version of this line offered them as a guess between the two.
-      const why = !m
-        ? 'no market anywhere — no GeckoTerminal pool and no DexScreener pair. Nothing can price it, so the row publishes as a bare ticker.'
-        : cap == null
-          ? 'indexed, but with no price or cap either — nothing to publish'
-          : `has a cap, no 24h reading${m.changeWhy ? ` — ${m.changeWhy}` : ''}`;
-      console.log(`  ${Y}·${X} ${String(r.sym || r.address).padEnd(12)} ${D}${r.chain}${X}  ${why}`);
+    // ⚠️ THIS DRIVES THE REAL RENDERER. It used to ask `fetchMarket` itself,
+    // which is a SECOND copy of the board's question — and a check that
+    // measures a stack the renderer does not use is how `fonts:check` printed
+    // nine green ticks over a banner publishing boxes. `buildText()` is the one
+    // function the pinned board goes through; whatever it drew, this reports.
+    const poster = require('../src/services/trendingPoster');
+    console.log(`\n  ${D}What the board itself just rendered (buildText, the same call the poster makes)${X}`);
+    const text = await poster.buildText();
+    const rec = poster.lastRender();
+    // A surface that renders NOTHING is an error, never a quiet ✓ — an empty
+    // measurement measured nothing, and reporting that as a pass is the whole
+    // defect in miniature.
+    if (!text || !rec || !rec.rows) {
+      console.log(`  ${R}✗${X} the board rendered no rows at all — nothing is featured, or buildText failed`);
+      blankRows = -1;
+    } else {
+      blankRows = rec.blank.length;
+      for (const b of rec.blank) {
+        console.log(`  ${Y}·${X} ${String('$' + b.sym).padEnd(13)} ${D}${b.chain}${X}  ${b.why || 'no reason recorded'}`);
+      }
+      if (!blankRows) console.log(`  ${G}✓${X} all ${rec.rows} row(s) on the board carry a 24h percentage`);
+      else
+        console.log(
+          `  ${D}${blankRows}/${rec.rows} row(s) publish "—" instead of a percentage. That mark is deliberate:\n` +
+            `  an unreadable change is not a 0%, and printing one on a public board would be a\n` +
+            `  claim nobody measured. Auto-promotion and the market filler both refuse a token\n` +
+            `  with no reading, so a row here is a slot somebody PAID for — or a reading that\n` +
+            `  went away after the slot was booked, which resolves when it expires.${X}`,
+        );
     }
-    if (!missing) console.log(`  ${G}✓${X} every featured row has a 24h reading`);
-    else
-      console.log(
-        `  ${D}${missing}/${featured.length} row(s) publish "—" instead of a percentage. That mark is deliberate:\n` +
-          `  an unreadable change is not a 0%, and printing one on a public board would be a\n` +
-          `  claim nobody measured. Auto-promotion and the market filler both refuse a token\n` +
-          `  with no reading, so a row here is a slot somebody PAID for — or a reading that\n` +
-          `  went away after the slot was booked, which resolves when it expires.${X}`,
-      );
   } else {
     console.log(`  ${D}A row showing "—" instead of a %? npm run trending:check -- --rows says which and why.${X}`);
   }
 
-  if (!short.length) {
+  if (!short.length && blankRows <= 0) {
     console.log(`\n${G}Every chain is at or above its minimum.${X}\n`);
     return;
+  }
+  // A board full of dashes is a FAILING board, so green has to mean "the board
+  // is safe" rather than "the counts add up" — `fonts:check` had to learn the
+  // same thing after printing nine green ticks over a broken banner. Only ever
+  // when --rows was asked: without it nothing here measured the percentages,
+  // and a check must not fail on a question it did not put.
+  if (blankRows !== 0) {
+    console.log(
+      blankRows < 0
+        ? `\n${R}The board rendered nothing.${X}`
+        : `\n${R}${blankRows} row(s) on the board carry no percentage.${X}`,
+    );
+    console.log(`  ${D}The bot pages the ops channel when that lasts ${Math.round(watch.GRACE_MS / 60000)} min.${X}`);
+  }
+  if (!short.length) {
+    console.log('');
+    process.exit(1);
   }
   console.log(`\n${R}${short.length} chain(s) below the minimum of ${cfg.perChainMin}.${X}`);
   // The running bot says the same thing in the ops channel after

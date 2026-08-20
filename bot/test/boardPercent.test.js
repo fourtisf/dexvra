@@ -425,3 +425,139 @@ test("the board asks the market MODULE, so the source stays stubbable", async ()
   assert.ok(!/const\s*\{[^}]*fetchMarket[^}]*\}\s*=\s*require/.test(src), "destructured again");
   await tb.reset();
 });
+
+// ── 5. so it cannot happen again quietly ─────────────────────────────────────
+//
+// The four layers above fix the CAUSES. What stops the next one is that a board
+// publishing dashes can no longer go unnoticed — in all three rounds of this
+// the OPERATOR was the detector: they read the pinned channel, saw a row with
+// no number, and asked. Exactly the shape `trendingWatch.evaluate` already
+// exists for one symptom over.
+
+const watch = require("../src/services/trendingWatch");
+
+test("the board RECORDS every row it drew, with the reason a percentage is missing", async () => {
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "moon", sym: "MOONCOIN" },
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "pepe", sym: "PEPE" },
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "ghost", sym: "BISKIT" },
+  ];
+  await boardWith((a) =>
+    a === "pepe"
+      ? { mcap: 1e9, change24h: 1.23 }
+      : a === "moon"
+        ? { mcap: 12_220_809, change24h: null, changeWhy: "pools have no 24h reading (no trades in the window)" }
+        : null,
+  );
+  const rec = poster.lastRender();
+  assert.strictEqual(rec.rows, 3, "every row is counted, not just the blank ones");
+  assert.deepStrictEqual(rec.blank.map((b) => b.sym).sort(), ["BISKIT", "MOONCOIN"]);
+  const moon = rec.blank.find((b) => b.sym === "MOONCOIN");
+  assert.match(moon.why, /no trades in the window/, "the recorded reason survives to the operator");
+  const biskit = rec.blank.find((b) => b.sym === "BISKIT");
+  assert.match(biskit.why, /no market anywhere/, "…and 'no market at all' stays a different fact");
+});
+
+test("the watch alerts on the TRANSITION, after a grace period — not every cycle", () => {
+  const t0 = 1_700_000_000_000;
+  const opts = { graceMs: 45 * 60_000, repeatMs: 12 * 3600_000 };
+  const render = { rows: 27, blank: [{ chain: "robinhood", sym: "MOONCOIN", why: "pools have no 24h reading" }] };
+
+  // One cycle blank is a slot rolling over, not an incident.
+  let r = watch.evaluateRows(render, {}, { ...opts, now: t0 });
+  assert.deepStrictEqual(r.alerts, [], "no alert inside the grace period");
+  assert.strictEqual(r.state.since, t0, "…but the clock started");
+
+  r = watch.evaluateRows(render, r.state, { ...opts, now: t0 + 50 * 60_000 });
+  assert.strictEqual(r.alerts.length, 1, "past the grace period it is worth saying");
+  assert.match(r.alerts[0].text, /1<\/b> of 27 row/);
+  assert.match(r.alerts[0].text, /MOONCOIN/, "the message names the token");
+  assert.match(r.alerts[0].text, /no 24h reading/, "…and which of the causes it is");
+
+  // It does not repeat on the next cycle. A channel nobody reads by the second
+  // hour is the failure mode upstreams.js had to learn first.
+  const quiet = watch.evaluateRows(render, r.state, { ...opts, now: t0 + 55 * 60_000 });
+  assert.deepStrictEqual(quiet.alerts, []);
+  // …but it does repeat eventually: one message on day one is scrolled past by
+  // day three.
+  const again = watch.evaluateRows(render, r.state, { ...opts, now: t0 + 13 * 3600_000 });
+  assert.strictEqual(again.alerts.length, 1);
+});
+
+test("a RECOVERY is an alert too — a fixed board and a forgotten one look identical", () => {
+  const t0 = 1_700_000_000_000;
+  const opts = { graceMs: 45 * 60_000, repeatMs: 12 * 3600_000 };
+  const blank = { rows: 27, blank: [{ chain: "ethereum", sym: "RLUSD", why: "x" }] };
+  let r = watch.evaluateRows(blank, {}, { ...opts, now: t0 });
+  r = watch.evaluateRows(blank, r.state, { ...opts, now: t0 + 50 * 60_000 });
+  assert.strictEqual(r.alerts.length, 1, "complained");
+  const ok = watch.evaluateRows({ rows: 27, blank: [] }, r.state, { ...opts, now: t0 + 60 * 60_000 });
+  assert.strictEqual(ok.alerts.length, 1);
+  assert.match(ok.alerts[0].text, /carries a percentage again/);
+  assert.deepStrictEqual(ok.state, {}, "a healthy board keeps no state");
+});
+
+test("…but a board that fixed itself before anyone was told says nothing", () => {
+  const t0 = 1_700_000_000_000;
+  const opts = { graceMs: 45 * 60_000, repeatMs: 12 * 3600_000 };
+  const r = watch.evaluateRows({ rows: 9, blank: [{ chain: "base", sym: "X" }] }, {}, { ...opts, now: t0 });
+  const ok = watch.evaluateRows({ rows: 9, blank: [] }, r.state, { ...opts, now: t0 + 60_000 });
+  assert.deepStrictEqual(ok.alerts, [], "a recovery nobody was warned about is noise");
+});
+
+test("a long blank list is TRUNCATED — a 40-line alert is not read", () => {
+  const blank = Array.from({ length: 11 }, (_, i) => ({ chain: "solana", sym: `T${i}`, why: "quiet pool" }));
+  const t0 = 1_700_000_000_000;
+  const opts = { graceMs: 1, repeatMs: 12 * 3600_000 };
+  const r = watch.evaluateRows({ rows: 40, blank }, { since: t0 - 60_000 }, { ...opts, now: t0 });
+  assert.match(r.alerts[0].text, /and 5 more/);
+});
+
+test("the watch runs BEFORE the 'unchanged' early return, or a stuck board reads as no symptom", async () => {
+  // The board is edited in place and skipped when the text has not changed —
+  // which is precisely the state a persistently blank board sits in. Folding
+  // the watch in after that return would freeze it on the boards that stay
+  // broken longest: the state that looks most like a healthy one.
+  const realEval = watch.evaluateRows;
+  const realFetch = market.fetchMarket;
+  let evals = 0;
+  watch.evaluateRows = (...a) => (evals++, realEval(...a));
+  market.fetchMarket = async () => ({ mcap: 1e9, change24h: null });
+  api.getListings = async () => [
+    { status: "approved", trendingRank: 1, trendExp: 0, chain: "solana", address: "moon", sym: "MOONCOIN" },
+  ];
+  poster._resetState();
+  const tg = {
+    sendMessage: async () => ({ message_id: 7 }),
+    editMessageText: async () => ({}),
+    pinChatMessage: async () => ({}),
+    deleteMessage: async () => ({}),
+  };
+  try {
+    const first = await poster.runOnce(tg);
+    const second = await poster.runOnce(tg);
+    assert.strictEqual(second.how, "unchanged", `expected a skipped cycle, got ${second.how} (first: ${first.how})`);
+    assert.strictEqual(evals, 2, "the cycle that published nothing still measured the board");
+  } finally {
+    watch.evaluateRows = realEval;
+    market.fetchMarket = realFetch;
+    poster._resetState();
+  }
+});
+
+test("trending:check drives the RENDERER, never a second copy of its question", () => {
+  // `fonts:check` printed nine green ticks over a banner publishing boxes
+  // because it measured a font stack that renderer did not use. This check has
+  // exactly that shape available to it: it used to call fetchMarket itself, so
+  // any filter the poster applied was invisible to it.
+  const src = fss.readFileSync(require.resolve("../scripts/trending-check.js"), "utf8");
+  assert.match(src, /poster\.buildText\(\)/, "it must render the board it reports on");
+  assert.match(src, /poster\.lastRender\(\)/, "…and read what that render actually drew");
+  assert.ok(
+    !/market\.fetchMarket\(/.test(src),
+    "re-deriving the rows is how a green check over a broken board happens",
+  );
+  // Green has to mean "the board is safe", not "the counts add up".
+  assert.match(src, /blankRows/, "a board of dashes must fail the check");
+  assert.match(src, /process\.exit\(1\)/);
+});
