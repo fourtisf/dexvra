@@ -567,9 +567,29 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // the floor fill below, which states the reasoning in full.
     const anyPriced = ranked.some((r) => r._priced);
     const hasMarket = (r) => !anyPriced || r._priced !== false;
+    // ⚠️ A TRENDING ROW WITHOUT A PERCENTAGE IS THE THING THAT GOT REPORTED.
+    //
+    // "beberapa token di trending channel mengapa tidak ada kenaikan atau
+    // penurunan %" — $MOONCOIN and $RLUSD sat on the pinned board with a market
+    // cap and no number beside it. The board is a claim about what is MOVING;
+    // a row that cannot say how much is a row that cannot make the claim, and
+    // an unreadable change may never be rendered as a 0% to say it anyway.
+    //
+    // So a slot this bot books ITSELF must carry a reading. The exemption is
+    // the same one `hasMarket` makes and is exactly as narrow: only where
+    // NOTHING on the chain has a reading do the unreadable go on — otherwise a
+    // chain no indexer covers would never fill, which is the whole reason the
+    // unpriced exemption exists. The unprobed tail (`_change === undefined`) is
+    // treated as unreadable rather than as a maybe: promoting a token we never
+    // looked at is how a blank reaches the board with nobody having decided it
+    // should.
+    const anyReading = ranked.some((r) => Number.isFinite(r._change));
+    const hasReading = (r) => !anyReading || Number.isFinite(r._change);
     const worthy = step.forced
       ? ranked
-      : ranked.filter((r) => (r._change === null || r._change >= cfg.minGainPct) && hasMarket(r));
+      : ranked.filter(
+          (r) => (r._change === null || r._change >= cfg.minGainPct) && hasMarket(r) && hasReading(r),
+        );
     // ⚠️ THE MINIMUM OUTRANKS THE GAIN FLOOR.
     //
     // `min +5% 24h` with a flat market left ETHEREUM publishing 3 rows and BASE
@@ -604,8 +624,14 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       // IS priced. Where nothing is, the old reason still holds and the
       // unpriced go on — a short board on a chain no indexer covers helps
       // nobody.
+      // `hasReading` binds THIS door too. The free-fall bound taught the same
+      // lesson one field over: a rule the floor fill does not honour is a rule
+      // the floor fill deletes, because its picks book their slot directly.
       const fillable = (r) =>
-        !chosen.has(r) && (r._change === null || r._change >= -FLOOR_FILL_MAX_DROP) && hasMarket(r);
+        !chosen.has(r) &&
+        (r._change === null || r._change >= -FLOOR_FILL_MAX_DROP) &&
+        hasMarket(r) &&
+        hasReading(r);
       const extra = ranked.filter(fillable).slice(0, step.needFloor - picks.length);
       if (extra.length) {
         log.info(

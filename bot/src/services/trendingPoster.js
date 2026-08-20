@@ -5,7 +5,11 @@ const { TRENDING_POST_MS, CHANNELS, SITE_URL } = require("../config/constants");
 const api = require("../api/dexvra");
 const { chainOf, CHAIN_ORDER } = require("../config/chains");
 const { tierRank } = require("../config/packages");
-const { fetchMarket } = require("../marketdata");
+// Imported as a MODULE, not destructured: a captured binding cannot be swapped,
+// and the price source has to be stubbable for a test to pin what the board
+// renders when a reading is missing — which is the defect this file was fixed
+// for. Same reason autoTrend.js states at its own require.
+const market = require("../marketdata");
 const board = require("./trendingBoard");
 const gramjs = require("../gramjs");
 const premium = require("../premium");
@@ -50,6 +54,20 @@ const mcapStr = (n) => (Number.isFinite(n) && n > 0 ? `${Math.round(n).toLocaleS
 const SANE_PCT = 5000;
 const pctStr = (n) =>
   Number.isFinite(n) && Math.abs(n) <= SANE_PCT ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "";
+// What goes in the percentage column when there is no percentage to put there.
+//
+// "beberapa token di trending channel mengapa tidak ada kenaikan atau penurunan
+// %" — the segment simply DROPPED, so the row rendered as `1 | $MOONCOIN |
+// 12,220,809$` and read as broken to 10,593 subscribers. A blank was the honest
+// answer to "we could not read it" and it is still not a 0% — inventing one is
+// a claim nobody measured, which is the rule this board has always been built
+// on. What was wrong is that honest and INVISIBLE are different things.
+//
+// So the column is always filled, and a mark that is plainly not a number says
+// what a missing number means. Everything above this line — the candle
+// recovery in marketdata, the promoter's `hasReading`, the filler's — exists so
+// that only a slot somebody PAID for can still reach it.
+const NO_READING = "—";
 // Normalize a token's Telegram (handle / t.me / full url) into a t.me URL, or null.
 function tgUrl(tg) {
   if (!tg) return null;
@@ -97,13 +115,14 @@ async function buildText() {
   // operator can make it a premium, animated fire without a redeploy.
   const lines = [`${board.titleEmoji()} **Dexvra Trending** — live featured slots`];
   let newCount = 0;
+  let noReadCount = 0;
   for (const chain of CHAIN_ORDER) {
     const arr = byChain[chain];
     if (!arr || !arr.length) continue;
     // Pull live 24h change + market cap for each token (polite to GeckoTerminal).
     const enriched = [];
     for (const r of arr) {
-      const m = await fetchMarket(r.chain, r.address).catch(() => null);
+      const m = await market.fetchMarket(r.chain, r.address).catch(() => null);
       await sleep(300);
       enriched.push({
         r,
@@ -126,7 +145,8 @@ async function buildText() {
       // MARKET CAP → the Dexvra token page (its CA).
       const tickerHref = tgUrl(e.r.telegram) || xUrl(e.r.twitter) || webUrl(e.r.website) || dexUrl;
       const link = `[$${sym}](${mkUrl(tickerHref)})`;
-      const pct = pctStr(e.change);
+      const pct = pctStr(e.change) || NO_READING;
+      if (pct === NO_READING) noReadCount++;
       const mc = mcapStr(e.mcap);
       const mcLink = mc ? `[${mc}](${mkUrl(dexUrl)})` : "";
       // {badge} {🌩} {+%} | $TICKER(→TG) | {mcap}$(→Dexvra) — parts drop cleanly
@@ -152,6 +172,14 @@ async function buildText() {
   if (newCount > 0) {
     const h = board.newHours();
     lines.push(`\n${board.newEmoji()} = Newly Entered Trending (slot started in the last ${h} hour${h === 1 ? "" : "s"})`);
+  }
+  // Same rule as the newly-entered legend directly above: printed only when
+  // there is something on the board for it to explain. A mark nobody defined is
+  // noise; a definition for a mark that is not there sends the reader hunting.
+  // (No emoji literal in here — newTrendingMark.test.js reads this whole region
+  // and fails on a legend that hardcodes what it is supposed to quote.)
+  if (noReadCount > 0) {
+    lines.push(`${newCount > 0 ? "" : "\n"}${NO_READING} = no 24h reading for this pool yet`);
   }
   return lines.join("\n");
 }

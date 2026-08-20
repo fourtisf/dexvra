@@ -221,9 +221,34 @@ test("a big-cap in FREE-FALL is not listed either — one bound, two doors", asy
       }),
     }),
   });
-  // −15 is AT the bound, not past it; an unreadable change is not a fall (the
-  // exemption the promoter makes, for chains no indexer covers).
-  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["EDGE", "DARK"]);
+  // −15 is AT the bound, not past it, so EDGE is listed.
+  //
+  // DARK is refused for a DIFFERENT reason, and it did not used to be: an
+  // unreadable change is not a fall, but it is not a trending row either. A
+  // filled listing books its slot directly, so listing DARK puts a row with no
+  // percentage on the pinned board — which is what got reported. Base has two
+  // candidates with real readings, so the narrow exemption (below) does not
+  // apply here.
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["EDGE"]);
+});
+
+test("…but on a chain where NOTHING reads, the unreadable are still listed", async () => {
+  // The exemption the promoter makes, unchanged and exactly as narrow: a chain
+  // no indexer covers would otherwise never be filled at all.
+  const r = await trendFill.fillChain("base", 2, {
+    maxDropPct: 15,
+    deps: deps({
+      topByMcap: async () => ({
+        ok: true,
+        why: null,
+        items: [
+          { chain: "base", address: "0xdark", symbol: "DARK", name: "Dark", mcap: 700_000_000, change24h: null },
+          { chain: "base", address: "0xdim", symbol: "DIM", name: "Dim", mcap: 600_000_000, change24h: null },
+        ],
+      }),
+    }),
+  });
+  assert.deepStrictEqual(r.listed.map((x) => x.sym), ["DARK", "DIM"]);
 });
 
 test("a chain where every big-cap is falling says so, and does not read as 'already listed'", async () => {

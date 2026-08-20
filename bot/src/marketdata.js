@@ -142,6 +142,117 @@ function changeFromPools(j, deepest) {
   return alt ? poolChange(alt) : null;
 }
 
+// ── LAST RESORT: measure the 24h change ourselves, from the pool's own candles ─
+//
+// "beberapa token di trending channel mengapa tidak ada kenaikan atau penurunan
+// %" — rows on the PINNED board with a market cap and no percentage, reported
+// again after the sibling-pool fallback and the DexScreener pass had both been
+// added. Most of the leftovers were on ROBINHOOD, and that is the whole tell:
+// DexScreener does not index it (`GT_PRIMARY` in group/gtPairs), so GT's `h24`
+// is the ONLY reading in the entire fallback chain — when it is null there is
+// nothing behind it, and the row publishes bare.
+//
+// GeckoTerminal serves the same pool's OHLCV, and a 24h change IS "the price
+// now against the price 24 hours ago". Two real closes is a MEASUREMENT, not
+// the fabricated `+0.00%` this file has always refused to print — the same
+// number, taken the long way, and only for a token that would otherwise
+// publish a blank.
+//
+// Through `gtGet`, not a private fetch: it owns the Pro base, the API key, the
+// shared 429 cooldown and the queue. A fourth idea of how GT fails is exactly
+// what this repo keeps paying for.
+const CANDLE_TF = "hour";
+const CANDLE_LIMIT = 48; // 48 hourly closes always SPAN at least 24h; see below
+const DAY_SEC = 24 * 60 * 60;
+// A 24h change moves slowly and the board republishes every few minutes, so the
+// same unreadable token would otherwise buy this request on every cycle of
+// nine background pipelines. Misses are cached too — a pool with under 24h of
+// history does not grow it in ten minutes — but ONLY definitive ones: a
+// cooldown or a dead socket is not an answer about the pool, and caching it
+// would let a two-minute backoff blank the board for ten.
+const CANDLE_TTL_MS = 10 * 60 * 1000;
+const CANDLE_CACHE_MAX = 500;
+const _candles = new Map(); // "chain/pool" → { at, change, why }
+
+/**
+ * The 24h change of one pool, computed from its candles. `{ change, why }`,
+ * where `change` is null when it cannot be measured and `why` says so.
+ *
+ * The two closes are picked by TIMESTAMP, never by position in the list:
+ *   • `now`  = the newest candle's close (the pool's last trade)
+ *   • `then` = the newest candle at or before `now − 24h` (the last trade
+ *              before the boundary — i.e. the price 24 hours ago)
+ *
+ * A pool that has not traded at all in the window resolves BOTH to the same
+ * candle and measures 0.00% — which is the truth about it, and is arrived at
+ * rather than assumed. A pool with no candle before the boundary is younger
+ * than a day: its "24h change" would be measured from its opening tick, which
+ * is precisely where `+521366%` comes from, so it stays unmeasurable.
+ *
+ * ⚠️ `token` is the TOKEN'S OWN ADDRESS, and it is not optional. GT's OHLCV
+ * defaults to the pool's BASE side, which is our token only by luck — in a
+ * WETH/OURTOKEN pool it is WETH, and the board would have carried Ethereum's
+ * 24h change under a memecoin's ticker. Naming the address removes the guess.
+ */
+async function changeFromCandles(chain, pool, token, now = Date.now()) {
+  const net = chainOf(chain) && chainOf(chain).geckoNetwork;
+  if (!net || !pool || !token) return { change: null, why: null };
+  const key = `${chain}/${pool}/${token}`;
+  const hit = _candles.get(key);
+  if (hit && now - hit.at < CANDLE_TTL_MS) return { change: hit.change, why: hit.why };
+
+  const res = await gtGate.gtGet(`/networks/${net}/pools/${pool}/ohlcv/${CANDLE_TF}`, {
+    aggregate: 1,
+    limit: CANDLE_LIMIT,
+    currency: "usd",
+    token,
+  });
+  if (!res.ok) {
+    // "GT is rate limited" and "GT has no such pool" are different facts, and
+    // only the second one is about the pool — the same line this repo draws
+    // everywhere else: an HTTP status means the host was there and answered, a
+    // transport failure means it was not. So a 4xx is cached (asking again in
+    // ten minutes gets the identical 404, and `poolAddress` can legitimately be
+    // a DexScreener pair address GT does not know) while a cooldown, a 429, a
+    // 5xx or a dead socket is re-asked. Caching those would let a two-minute
+    // backoff blank the board for ten.
+    const out = { change: null, why: `could not read the pool's candles (${res.reason || `HTTP ${res.status}`})` };
+    const answered = res.status >= 400 && res.status < 500 && res.status !== 429;
+    if (answered) {
+      if (_candles.size > CANDLE_CACHE_MAX) _candles.clear();
+      _candles.set(key, { at: now, ...out });
+    }
+    return out;
+  }
+
+  const list = (res.body && res.body.data && res.body.data.attributes && res.body.data.attributes.ohlcv_list) || [];
+  // GT documents newest-first; sorting rather than trusting that costs nothing
+  // and is the difference between a percentage and its inverse.
+  const rows = list
+    .filter((c) => Array.isArray(c) && Number.isFinite(Number(c[0])) && num(c[4]))
+    .map((c) => ({ t: Number(c[0]), close: num(c[4]) }))
+    .sort((a, b) => b.t - a.t);
+
+  let out;
+  if (!rows.length) {
+    out = { change: null, why: "the pool has no candles at all" };
+  } else {
+    const cut = Math.floor(now / 1000) - DAY_SEC;
+    const then = rows.find((c) => c.t <= cut);
+    if (!then) {
+      out = { change: null, why: "the pool has under 24h of history — a change measured from its opening tick is the +521366% defect" };
+    } else {
+      const pct = (rows[0].close / then.close - 1) * 100;
+      out = Math.abs(pct) > SANE_CHANGE_PCT
+        ? { change: null, why: `the candles gave ${Math.round(pct).toLocaleString("en-US")}% — refused as broken (over ${SANE_CHANGE_PCT}%)` }
+        : { change: pct, why: null };
+    }
+  }
+  if (_candles.size > CANDLE_CACHE_MAX) _candles.clear();
+  _candles.set(key, { at: now, ...out });
+  return out;
+}
+
 async function fetchGT(chain, address) {
   const net = chainOf(chain) && chainOf(chain).geckoNetwork;
   if (!net) return null;
@@ -374,6 +485,25 @@ async function fetchMarket(chain, address) {
   // indexed token must not pay a launchpad round trip on every poll, and nine
   // background pipelines call this on timers.
   if (!out || !out.priceUsd || !out.mcap) out = await fillFromLaunchpad(chain, address, out);
+  // EVERY TRENDING ROW CARRIES A PERCENTAGE — the operator's rule, and this is
+  // the last place that can still make it true from published data. Only
+  // reached when every source above came back with no reading, so an indexed,
+  // healthy token never pays for the request.
+  if (out && out.change24h == null && out.poolAddress) {
+    const c = await changeFromCandles(chain, out.poolAddress, address);
+    if (Number.isFinite(c.change)) {
+      out.change24h = c.change;
+      out.changeWhy = null;
+      // Provenance, because the two are not the same claim: the indexer's h24
+      // is a published figure, this one we computed. Absent = as published.
+      out.changeFrom = "candles";
+    } else if (c.why) {
+      // Never discard the reason. `trending:check --rows` is the only reader,
+      // and "no trades in the window" and "the pool is younger than a day" send
+      // an operator to different places.
+      out.changeWhy = out.changeWhy ? `${out.changeWhy}; ${c.why}` : c.why;
+    }
+  }
   return out;
 }
 
@@ -397,6 +527,9 @@ function pickTrusted(gt, ds, chain, address) {
 module.exports = {
   _deepestPool: deepestPool,
   _changeFromPools: changeFromPools,
+  _changeFromCandles: changeFromCandles,
+  _resetCandleCache: () => _candles.clear(),
+  CANDLE_TTL_MS,
   CHANGE_POOL_MIN_SHARE,
   _pickTrusted: pickTrusted,
   SANE_CHANGE_PCT,

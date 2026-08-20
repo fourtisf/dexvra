@@ -96,7 +96,17 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
     ? Number(maxDropPct)
     : require('./autoTrend').FLOOR_FILL_MAX_DROP;
 
+  // ⚠️ AND THE PERCENTAGE RULE BINDS THIS DOOR TOO.
+  //
+  // A filled listing books its board slot directly (the `trending` package
+  // below), so a candidate with no 24h reading is a blank row put on the board
+  // by the very code meant to keep it healthy — the free-fall bound learnt this
+  // exact lesson one field over. The exemption is the promoter's, unchanged and
+  // just as narrow: only where NOTHING on this chain has a reading do the
+  // unreadable go on, or a chain no indexer covers could never be filled.
+  const anyReading = res.items.some((c) => Number.isFinite(c.change24h));
   let inFreeFall = 0;
+  let noReading = 0;
   for (const c of res.items) {
     if (out.listed.length >= need) break;
     // An UNREADABLE change is not a fall — same exemption the promoter makes,
@@ -104,6 +114,10 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
     // nobody can read would mean never filling that chain at all.
     if (Number.isFinite(c.change24h) && c.change24h < -maxDrop) {
       inFreeFall++;
+      continue;
+    }
+    if (anyReading && !Number.isFinite(c.change24h)) {
+      noReading++;
       continue;
     }
     if (known.has(keyOf(c.chain, c.address))) continue;
@@ -157,7 +171,9 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
       out.tried === 0
         ? inFreeFall
           ? `every big token on ${chain} that is not already listed is down more than ${maxDrop}% — a short board beats one in free-fall`
-          : `every big token on ${chain} is already listed`
+          : noReading
+            ? `every big token on ${chain} that is not already listed has no 24h reading — a trending row without a percentage is not a trending row`
+            : `every big token on ${chain} is already listed`
         : `only ${out.listed.length}/${need} could be listed`;
   }
   return out;

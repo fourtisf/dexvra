@@ -120,9 +120,16 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       console.log(`  ${Y}·${X} ${String(r.sym || r.address).padEnd(12)} ${D}${r.chain}${X}  ${why}`);
     }
     if (!missing) console.log(`  ${G}✓${X} every featured row has a 24h reading`);
-    else console.log(`  ${D}${missing}/${featured.length} row(s) publish without a percentage. A blank is deliberate — an\n  unreadable change is not a 0%, and printing one on a public board would be a\n  claim nobody measured.${X}`);
+    else
+      console.log(
+        `  ${D}${missing}/${featured.length} row(s) publish "—" instead of a percentage. That mark is deliberate:\n` +
+          `  an unreadable change is not a 0%, and printing one on a public board would be a\n` +
+          `  claim nobody measured. Auto-promotion and the market filler both refuse a token\n` +
+          `  with no reading, so a row here is a slot somebody PAID for — or a reading that\n` +
+          `  went away after the slot was booked, which resolves when it expires.${X}`,
+      );
   } else {
-    console.log(`  ${D}A row with no % on the board? npm run trending:check -- --rows says which and why.${X}`);
+    console.log(`  ${D}A row showing "—" instead of a %? npm run trending:check -- --rows says which and why.${X}`);
   }
 
   if (!short.length) {
