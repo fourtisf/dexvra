@@ -2327,10 +2327,18 @@ screen, three sections later. The flow that DID ask was reachable only by button
   removal screens) skips both pickers because it has nothing to ask; everything
   else asks. What must not come back is an entry that silently borrows the active
   chain.
-- **The two ways in differ ONLY in which wallets start ticked** — plain
-  `/withdraw` ticks the ACTIVE wallet (what it used to do outright, now visible
-  and editable), `/withdrawall` ticks every one. The mode rides the callback
-  (`wdac:<chain>:<one|all>`), so a picker cannot lose it to an expired pending.
+- ⚠️ **…and then there were TWO of them, which was worse.** The first cut shipped
+  `/withdraw` and `/withdrawall` differing ONLY in which wallets started ticked —
+  landing on the same screen, the one that already carries ✅ Select all and
+  ⬜ Clear. The second command bought exactly one tap and cost a second entry in
+  the "/" menu with its own description: *"2 command ini beda … padahal fungsinya
+  sama ini malah bikin bingung"*. **A second way in that does not do a second
+  thing is a question the user has to answer before they can start.** One command,
+  one button, one menu entry; the ACTIVE wallet is ticked (what a withdraw has
+  always meant) and everything else is one tap on this same screen. `/withdrawall`
+  and the `wdall` callback still ANSWER — they were live for a build and are in
+  somebody's scrollback — but they open the same screen rather than a second
+  feature.
 - ⚠️ **`/withdraw` was never registered in the blue "/" menu at all.** The
   operator typed `/wi` and got no autocomplete, which is its own reason to think
   the command does not exist — and it is how the uppercase bug above got found in

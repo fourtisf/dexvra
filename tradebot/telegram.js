@@ -896,12 +896,10 @@ async function walletScreen(chatId) {
     kbRows.push(row);
   });
   if (list.length < core.WALLET_CAP) kbRows.push([btn(`➕ Generate wallet (${list.length}/${core.WALLET_CAP})`, 'neww'), btn('📩 Import', 'imp')]);
+  // ONE withdraw button. It opens chain → wallets, and the wallet step is where
+  // "one or all of them" is answered — a second button for the same screen was
+  // the same confusion as the second command.
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw', 'wd')]);
-  // "bisa withdraw semua wallet tapi dipilih dulu chainnya apa" — the row above
-  // only ever spends the ACTIVE wallet on the ACTIVE chain, so emptying ten
-  // wallets was twenty screen switches. Only offered where there is more than
-  // one wallet to sweep.
-  if (list.length > 1) kbRows.push([btn('📤 Withdraw from MANY wallets', 'wdall')]);
   // "…in tokens" is a number with no answer to "which ones?" unless this button
   // exists: /portfolio is scoped to the ACTIVE chain, so a bag on any other
   // chain had no screen at all. Only offered when there is something to show.
@@ -1121,16 +1119,15 @@ async function walletsScreen(chatId) { return walletScreen(chatId); }
  * on — a withdraw picker writing to it would silently re-aim the user's trading
  * as a side effect of emptying a wallet.
  */
-function wdSweepChainScreen(chatId, mode) {
-  mode = mode === 'all' ? 'all' : 'one';
+function wdSweepChainScreen(chatId) {
   const list = core.chains.enabledChains();
   const rows2 = [];
   for (let i = 0; i < list.length; i += 2) {
-    rows2.push(list.slice(i, i + 2).map((c) => btn(`${c.emoji} ${c.name} · ${c.native}`.slice(0, 28), `wdac:${c.key}:${mode}`)));
+    rows2.push(list.slice(i, i + 2).map((c) => btn(`${c.emoji} ${c.name} · ${c.native}`.slice(0, 28), `wdac:${c.key}`)));
   }
   rows2.push([btn('✖ Cancel', 'wallets')]);
   return {
-    text: `📤 <b>Withdraw${mode === 'all' ? ' from several wallets' : ''}</b>\n\n<b>Which chain?</b> A withdrawal moves that chain's native coin, and each chain has its own address — so this is the first question, not the last.\n\n<i>You pick the wallets next${mode === 'all' ? '' : ' (your active one is ticked; tick more if you want)'}.</i>`,
+    text: `📤 <b>Withdraw</b>\n\n<b>Which chain?</b> A withdrawal moves that chain's native coin, and each chain has its own address — so this is the first question, not the last.\n\n<i>You pick the wallets next — one, several, or all of them.</i>`,
     kb: { inline_keyboard: rows2 },
   };
 }
@@ -3522,8 +3519,10 @@ async function onMessageImpl(m) {
   // 0x address on Robinhood Chain and no way to say otherwise without backing
   // out and hunting for 🌐. Chain first, same as the buttons and the same rule
   // the snipe panel had to be rescued into.
+  // ONE command. /withdrawall still answers — it was in the menu for a build and
+  // is muscle memory now — but it is the same screen, not a second feature.
   if (text === '/withdraw' || text === '/withdrawall') {
-    const sc = wdSweepChainScreen(chatId, text === '/withdrawall' ? 'all' : 'one');
+    const sc = wdSweepChainScreen(chatId);
     return send(chatId, sc.text, sc.kb);
   }
   if (text.startsWith('/send')) {
@@ -4062,18 +4061,23 @@ async function onCallback(q) {
     const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
   }
   // ---- multi-wallet sweep: chain → wallets → address → amount → confirm.
-  if (data === 'wdall' || data === 'wd') { const sc = wdSweepChainScreen(chatId, data === 'wdall' ? 'all' : 'one'); return edit(chatId, mid, sc.text, sc.kb); }
+  if (data === 'wd' || data === 'wdall') { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }   // wdall: old buttons still in a scrollback
   if (k === 'wdac') {
-    const mode = arg === 'all' ? 'all' : 'one';
-    if (!core.chains.isEnabled(ca)) { const sc = wdSweepChainScreen(chatId, mode); return edit(chatId, mid, sc.text, sc.kb); }
-    // The default selection is the only difference between the two ways in.
-    // "Withdraw from MANY" ticks everything — starting from empty would make the
-    // thing it exists for ten taps. Plain Withdraw ticks the ACTIVE wallet, which
-    // is what it used to do outright, and the picker still lets you add more.
+    if (!core.chains.isEnabled(ca)) { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
+    // ⚠️ THERE USED TO BE TWO COMMANDS HERE — `/withdraw` and `/withdrawall` —
+    // differing ONLY in which wallets started ticked. They landed on this same
+    // screen, which carries ✅ Select all and ⬜ Clear, so the second one bought
+    // exactly one tap and cost a second entry in the "/" menu with its own
+    // description. Reported as "2 command ini beda … padahal fungsinya sama ini
+    // malah bikin bingung", and that is the right reading: a second way in that
+    // does not do a second thing is a question the user has to answer before
+    // they can start.
+    //
+    // The ACTIVE wallet is ticked, which is what a plain withdraw has always
+    // meant; everything else is one tap on Select all.
     const u = core.ensureUser(chatId);
-    const all = core.walletList(u).map((w) => w.id);
     const act = core.activeWallet(u);
-    const ids = mode === 'all' ? all : (act ? [act.id] : all.slice(0, 1));
+    const ids = act ? [act.id] : core.walletList(u).slice(0, 1).map((w) => w.id);
     setPending(chatId, { action: 'wd_sweep_pick', chain: ca, ids });
     const sc = await wdSweepPickScreen(chatId, { chain: ca, ids });
     return edit(chatId, mid, sc.text, sc.kb);
@@ -5534,8 +5538,7 @@ async function registerCommands() {
     { command: 'orders',    description: 'Auto-sell orders (take-profit / stop-loss)' },
     { command: 'dca',       description: 'Scheduled recurring buys' },
     { command: 'alerts',    description: 'Price alerts' },
-    { command: 'withdraw',  description: 'Withdraw coins out — pick the chain first' },
-    { command: 'withdrawall', description: 'Withdraw from several wallets at once' },
+    { command: 'withdraw',  description: 'Withdraw coins out — one wallet or all of them' },
     { command: 'send',      description: 'Send tokens out: /send <token> <address> <amount>' },
     { command: 'referral',  description: 'Your referral link & earnings' },
     // ⚠️ These four were HANDLED but never registered, exactly as /withdraw was

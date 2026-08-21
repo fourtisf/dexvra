@@ -258,7 +258,7 @@ test("every withdrawal is bound to a chain — named by the button, or asked for
   assert.match(tg, /if \(k === 'wdw'\)/, "per-wallet, per-chain entry");
   assert.match(tg, /btn\(`📤 Withdraw \$\{ch\.native\}`\.slice\(0, 24\), `wdw:\$\{w\.id\}:\$\{ch\.key\}`\)/,
     "the per-wallet screen: emptying wallet 9 used to mean switching to it first");
-  assert.match(tg, /if \(data === 'wdall' \|\| data === 'wd'\) \{ const sc = wdSweepChainScreen/);
+  assert.match(tg, /if \(data === 'wd' \|\| data === 'wdall'\) \{ const sc = wdSweepChainScreen\(chatId\)/);
   assert.match(tg, /if \(text === '\/withdraw' \|\| text === '\/withdrawall'\)/);
 });
 
@@ -640,7 +640,7 @@ test("the sweep asks WHICH CHAIN first", { skip: !core || !tg }, () => {
   // A flow bound to whatever chain happens to be active is the wrong-chain dead
   // end the snipe panel had to be rescued from.
   for (const c of core.chains.enabledChains()) {
-    assert.ok(flat.some((b) => String(b.callback_data).startsWith("wdac:" + c.key + ":")), "a button for " + c.key);
+    assert.ok(flat.some((b) => b.callback_data === "wdac:" + c.key), "a button for " + c.key);
   }
   assert.match(s.text, /Which chain\?/);
 });
@@ -836,13 +836,13 @@ test("every way into a withdraw asks the chain first", { skip: !core || !tg }, (
   const t = code("telegram.js");
   // The old jump-to-active-chain entry is gone from both the button and /withdraw.
   assert.doesNotMatch(t, /if \(data === 'wd'\) \{ const wch = activeChain/);
-  assert.match(t, /if \(data === 'wdall' \|\| data === 'wd'\) \{ const sc = wdSweepChainScreen/);
+  assert.match(t, /if \(data === 'wd' \|\| data === 'wdall'\) \{ const sc = wdSweepChainScreen\(chatId\)/);
   assert.match(t, /if \(text === '\/withdraw' \|\| text === '\/withdrawall'\)/);
   // …and the label stops claiming a chain it no longer picks for you.
   assert.doesNotMatch(t, /📤 Withdraw \(active\)/);
 });
 
-test("both commands are in the blue / menu — typing /wi offered nothing before", { skip: !core || !tg }, async () => {
+test("/withdraw is in the blue / menu — typing /wi offered nothing before", { skip: !core || !tg }, async () => {
   const names = [];
   const realFetch = global.fetch;
   global.fetch = async (url, opt) => {
@@ -851,10 +851,10 @@ test("both commands are in the blue / menu — typing /wi offered nothing before
   };
   try { await tg._test.registerCommands(); } finally { global.fetch = realFetch; }
   assert.ok(names.includes("withdraw"), "/withdraw was never registered at all");
-  assert.ok(names.includes("withdrawall"));
+  assert.ok(!names.includes("withdrawall"), "one entry: it was the same screen, not a second feature");
 });
 
-test("the two entries differ ONLY in which wallets start ticked", { skip: !core || !tg }, async () => {
+test("ONE way in: the active wallet is ticked, and Select all is one tap", { skip: !core || !tg }, async () => {
   const CH2 = "770005";
   core.ensureUser(CH2);
   if (core.walletList(core.getUser(CH2)).length < 3) { core.addWallet(CH2); core.addWallet(CH2); }
@@ -869,25 +869,34 @@ test("the two entries differ ONLY in which wallets start ticked", { skip: !core 
   };
   const ticks = () => sent[sent.length - 1].kb.inline_keyboard.flat()
     .filter((b) => /^(✅|⬜) Wallet/.test(b.text)).map((b) => b.text[0]);
+  const tap = (d) => tg._test.onCallback({ id: "1", data: d, message: { message_id: 9, chat: { id: CH2 } }, from: { id: CH2 } });
   try {
-    // Plain: the ACTIVE wallet, which is what it used to do outright.
-    await tg._test.onCallback({ id: "1", data: "wdac:solana:one", message: { message_id: 9, chat: { id: CH2 } }, from: { id: CH2 } });
-    assert.deepEqual(ticks(), ["⬜", "✅", "⬜"], "only the active wallet");
-    // MANY: everything — starting from empty would make the thing it exists for N taps.
-    await tg._test.onCallback({ id: "1", data: "wdac:solana:all", message: { message_id: 9, chat: { id: CH2 } }, from: { id: CH2 } });
-    assert.deepEqual(ticks(), ["✅", "✅", "✅"], "all of them");
+    // ⚠️ /withdrawall used to be a second command that landed HERE and differed
+    // only in these ticks — one tap's worth of difference, sold as a separate
+    // feature with its own menu entry. "2 command ini beda … padahal fungsinya
+    // sama ini malah bikin bingung".
+    await tap("wdac:solana");
+    assert.deepEqual(ticks(), ["⬜", "✅", "⬜"], "the active wallet, which is what a withdraw has always meant");
+    await tap("wdaA");
+    assert.deepEqual(ticks(), ["✅", "✅", "✅"], "…and everything is one tap away, on this screen");
+    await tap("wdaN");
+    assert.deepEqual(ticks(), ["⬜", "⬜", "⬜"]);
   } finally { global.fetch = realFetch; }
 });
 
-test("a chain button carries its mode, and a disabled chain still cannot be picked", { skip: !core || !tg }, () => {
-  for (const mode of ["one", "all"]) {
-    const s = tg._test.wdSweepChainScreen(CHAT, mode);
-    for (const c of core.chains.enabledChains()) {
-      assert.ok(s.kb.inline_keyboard.flat().some((b) => b.callback_data === `wdac:${c.key}:${mode}`), c.key + " " + mode);
-    }
-  }
+test("there is exactly ONE withdraw entry — command, button and menu", { skip: !core || !tg }, () => {
   const t = code("telegram.js");
-  assert.match(t, /if \(!core\.chains\.isEnabled\(ca\)\) \{ const sc = wdSweepChainScreen\(chatId, mode\)/);
+  // A second way in that does not do a second thing is a question the user has
+  // to answer before they can start.
+  assert.doesNotMatch(t, /btn\('📤 Withdraw from MANY wallets'/, "one button");
+  assert.doesNotMatch(t, /command: 'withdrawall'/, "one menu entry");
+  // …but the old spellings still answer: they were live for a build, and a
+  // command that silently stops working is worse than one that is redundant.
+  assert.match(t, /text === '\/withdraw' \|\| text === '\/withdrawall'/);
+  assert.match(t, /data === 'wd' \|\| data === 'wdall'/);
+  // No mode anywhere.
+  assert.doesNotMatch(t, /wdac:\$\{c\.key\}:\$\{mode\}/);
+  assert.match(t, /if \(!core\.chains\.isEnabled\(ca\)\) \{ const sc = wdSweepChainScreen\(chatId\)/);
 });
 
 test("every user-facing command the bot handles is in the / menu", { skip: !core || !tg }, async () => {
@@ -916,7 +925,7 @@ test("every user-facing command the bot handles is in the / menu", { skip: !core
     if (fn) assert.match(src.slice(src.indexOf("function " + fn)).slice(0, 400), /admins\.includes/, "/" + c + " must be gated");
   }
   // ALIASES whose primary is registered — the menu is a list people scroll.
-  const alias = ["positions", "bags", "track", "refer", "lang", "bahasa"];
+  const alias = ["positions", "bags", "track", "refer", "lang", "bahasa", "withdrawall"];
   const missing = [...handled].filter((c) => !reg.has(c) && !adminOnly.includes(c) && !alias.includes(c));
   assert.deepEqual(missing, [], "handled but undiscoverable: " + missing.map((c) => "/" + c).join(" "));
 });
