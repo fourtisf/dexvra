@@ -49,6 +49,18 @@ check("solana filter reduces rows", chainRows > 0 && chainRows < 20, `rows=${cha
 check("…and the movers with it", (await page.locator(".mv-card").first().locator(".mv-row").count()) <= chainRows);
 check("…and Top Coins with it", (await page.locator(".tc-row:not(.tc-head)").count()) <= chainRows);
 check("every offered chain carries its count", (await page.locator(".chain-chip .chain-n").count()) >= 2);
+// "+N more" must DELIVER the N it promises. It once promised "+18 more" and
+// rendered four — the label counted the hidden list while the render ignored
+// it, and only clicking the button could tell.
+const morePromise = Number(((await page.locator(".chain-more").innerText()).match(/\d+/) ?? [0])[0]);
+const beforeMore = await page.locator(".chain-chip:not(.chain-more)").count();
+await page.click(".chain-more");
+await page.waitForTimeout(250);
+const afterMore = await page.locator(".chain-chip:not(.chain-more)").count();
+check("+N more delivers exactly N", afterMore - beforeMore === morePromise, `${beforeMore} → ${afterMore}, promised +${morePromise}`);
+check("…including the registry's empty chains, dimmed", (await page.locator(".chain-zero").count()) > 0);
+await page.click(".chain-more");
+await page.waitForTimeout(200);
 await page.click('.chain-row .chain-chip:has-text("All chains")');
 await page.waitForTimeout(300);
 

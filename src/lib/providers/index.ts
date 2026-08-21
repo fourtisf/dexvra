@@ -23,7 +23,11 @@ import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
 import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 
-const PRICE_TTL = 30_000;
+// 60s, not 30: at 173 listings a refresh is ~8 chunked GT requests, and the
+// bot suite shares this server's IP and GT quota (~30 req/min, its own docs).
+// The web app must be the polite tenant — `cached` serves stale on a failed
+// refresh, so a missed minute costs staleness, never a DEMO board.
+const PRICE_TTL = 60_000;
 const FNG_TTL = 10 * 60_000;
 
 const esc = (s: string) =>

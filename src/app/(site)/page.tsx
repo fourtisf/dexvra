@@ -10,6 +10,7 @@ import { MarketMovers } from "@/components/MarketMovers";
 import { StdBoard } from "@/components/TokenBoard";
 import { TopCoinsBoard } from "@/components/TopCoins";
 import { HOME_BOARD_ROWS, HOME_TRENDING_MAX, chainCounts, inChain, resolveChain } from "@/lib/home";
+import { chainOf } from "@/config/chains";
 import type { PeriodKey } from "@/lib/types";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
@@ -93,6 +94,11 @@ export default function HomePage() {
           period={period}
           sortable
           loading={!data}
+          emptyText={
+            active !== "all" && onChain.length === 0
+              ? `Nothing listed on ${chainOf(active)?.label ?? active} yet — be the first to list here.`
+              : undefined
+          }
           limit={HOME_BOARD_ROWS}
           expandTo={HOME_TRENDING_MAX}
           expandNoun="trending"

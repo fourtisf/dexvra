@@ -1260,6 +1260,11 @@ body{
   background:rgba(255,255,255,.06);border-radius:999px;padding:2px 6px;margin-left:1px}
 .chain-chip.active .chain-n{color:#03150B;background:var(--mint)}
 .chain-more{color:var(--faint);border-style:dashed}
+/* an empty chain is offered, dimmed — its 0 says before the tap why the board
+   will be empty, and hiding it entirely read as "only five chains supported" */
+.chain-zero{opacity:.55}
+.chain-zero:hover{opacity:.85}
+.chain-zero.active{opacity:1}
 
 /* ── Market Movers ─────────────────────────────────────────────────────────*/
 .movers{display:flex;flex-direction:column;gap:13px}

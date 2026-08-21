@@ -20,6 +20,7 @@ import {
   splitChains,
   topCoins,
 } from "./home.ts";
+import { CHAIN_IDS } from "../config/chains.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
@@ -97,7 +98,12 @@ test("equal counts break on the REGISTRY order, so the row cannot reshuffle betw
   assert.strictEqual(a[0].id, "solana", "registry order: Solana is first in CHAINS");
 });
 
-test("the row shows a handful and keeps the rest behind +N more", () => {
+test("the row shows a handful, and +N more reveals EVERY registered chain", () => {
+  // The first cut hid chains with no listings entirely, which read as "Dexvra
+  // only supports five chains" — the opposite of what the registry says. The
+  // empties ride behind +N more at count 0, in registry order, so the row
+  // still opens compact but the full chain list is one tap away (the Fourtis
+  // shape the operator asked for).
   const many = chainCounts(
     ["solana", "bsc", "ethereum", "base", "robinhood", "tron", "ton", "sui"].map((c, i) =>
       tok({ sym: `T${i}`, chain: c }),
@@ -105,16 +111,30 @@ test("the row shows a handful and keeps the rest behind +N more", () => {
   );
   const { shown, hidden } = splitChains(many);
   assert.strictEqual(shown.length, HOME_CHAIN_LIMIT);
-  assert.strictEqual(hidden.length, many.length - HOME_CHAIN_LIMIT);
+  assert.ok(shown.every((c) => c.count > 0), "what opens is the populated chains");
+  assert.strictEqual(
+    hidden.length,
+    many.length - HOME_CHAIN_LIMIT + (CHAIN_IDS.length - many.length),
+    "hidden = remaining populated + every registered empty chain",
+  );
+  const empties = hidden.filter((c) => c.count === 0);
+  assert.strictEqual(empties.length, CHAIN_IDS.length - many.length);
+  assert.ok(empties.every((c) => CHAIN_IDS.includes(c.id)), "empties come from the registry");
+  const order = empties.map((c) => c.id);
+  assert.deepStrictEqual(order, CHAIN_IDS.filter((id) => !many.some((m) => m.id === id)),
+    "…in registry order, so the reveal is stable");
   assert.ok(HOME_CHAIN_LIMIT < 8, "the point is fewer pills than the page used to open with");
 });
 
-test("a chain that vanishes from a later poll falls back to All chains", () => {
+test("any REGISTERED chain is a legal selection — empty included", () => {
   const counts = chainCounts([tok({ sym: "A", chain: "solana" })]);
   assert.strictEqual(resolveChain("solana", counts), "solana");
-  // Delisted mid-session: without this the picker unmounts and the board is
-  // stuck at zero rows with no control left on screen to reset it.
-  assert.strictEqual(resolveChain("tron", counts), "all");
+  // An empty chain's pill is always on the row now, so selecting it is not a
+  // dead end — the board shows the honest "nothing listed here yet".
+  assert.strictEqual(resolveChain("tron", counts), "tron");
+  // Only an id the registry has never heard of falls back — that pill cannot
+  // exist, so keeping the filter would strand the board with no control.
+  assert.strictEqual(resolveChain("dogechain", counts), "all");
   assert.strictEqual(resolveChain("all", counts), "all");
 });
 

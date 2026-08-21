@@ -1,4 +1,7 @@
-import { CHAINS } from "@/config/chains";
+// relative + extension, not the "@/" alias: the node:test runner resolves
+// this file too (geckoterminal.test.ts), and the alias is a Next-only thing —
+// the same rule every other node-tested module here already follows.
+import { CHAINS } from "../../config/chains.ts";
 import type { PeriodKey, TxSplit } from "@/lib/types";
 
 // GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
@@ -92,18 +95,27 @@ function mapMarket(token: GtToken, pool: GtPool | undefined, poolId: string | un
   };
 }
 
-/** Live market data for specific listed addresses on one chain, keyed by
- *  lowercased address. Throws on network/HTTP failure (caller falls back). */
-export async function fetchListedMarket(
-  chainId: string,
-  addresses: string[],
-): Promise<Map<string, LiveMarket>> {
-  const network = CHAINS[chainId]?.geckoNetwork;
-  const out = new Map<string, LiveMarket>();
-  if (!network || addresses.length === 0) return out;
+/** GT's tokens/multi endpoint answers at most 30 addresses per request. */
+export const GT_MULTI_MAX = 30;
 
+/** Politeness gap between chunk requests for one chain. The bot suite on the
+ *  SAME server IP is a heavy GT consumer with its own shared 429 cooldown, so
+ *  the web app must not burst. */
+const CHUNK_GAP_MS = 300;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchChunk(
+  chainId: string,
+  network: string,
+  chunk: string[],
+  out: Map<string, LiveMarket>,
+): Promise<void> {
+  // ⚠️ Addresses go to GT VERBATIM — base58 (Solana) is case-significant, and
+  // lowercasing one asks GT about an address that does not exist. Only OUR map
+  // keys are lowercased; those are ours and merely have to be consistent.
   const res = await fetch(
-    `${BASE}/networks/${network}/tokens/multi/${addresses.slice(0, 30).join(",")}?include=top_pools`,
+    `${BASE}/networks/${network}/tokens/multi/${chunk.join(",")}?include=top_pools`,
     { headers: HEADERS, signal: AbortSignal.timeout(9000), cache: "no-store" },
   );
   if (!res.ok) throw new Error(`GeckoTerminal ${res.status} (${chainId})`);
@@ -114,5 +126,44 @@ export async function fetchListedMarket(
     const market = mapMarket(token, topId ? poolsById.get(topId) : undefined, topId);
     if (market) out.set(token.attributes.address.toLowerCase(), market);
   }
+}
+
+/** Live market data for specific listed addresses on one chain, keyed by
+ *  lowercased address.
+ *
+ *  ⚠️ EVERY address is asked for, in chunks of GT_MULTI_MAX. This used to be
+ *  `addresses.slice(0, 30)` — written against a 14-token seed and shipped to a
+ *  store of 173 listings, where it silently dropped tokens 31+ on every chain:
+ *  83 Solana listings meant 53 of them could never price, rendering +0.0%
+ *  forever with nothing anywhere saying why. A cap that is not reported is a
+ *  bug that looks like a market.
+ *
+ *  A chunk that fails is SKIPPED — its tokens keep their fallback figures this
+ *  cycle — but if NO chunk answered the whole chain throws, because "GT is
+ *  down" and "these tokens have no market" are different facts and the caller
+ *  treats them differently. */
+export async function fetchListedMarket(
+  chainId: string,
+  addresses: string[],
+): Promise<Map<string, LiveMarket>> {
+  const network = CHAINS[chainId]?.geckoNetwork;
+  const out = new Map<string, LiveMarket>();
+  if (!network || addresses.length === 0) return out;
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < addresses.length; i += GT_MULTI_MAX) chunks.push(addresses.slice(i, i + GT_MULTI_MAX));
+
+  let failed = 0;
+  let lastErr: unknown;
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) await sleep(CHUNK_GAP_MS);
+    try {
+      await fetchChunk(chainId, network, chunks[i], out);
+    } catch (err) {
+      failed++;
+      lastErr = err;
+    }
+  }
+  if (failed === chunks.length) throw lastErr instanceof Error ? lastErr : new Error(`GeckoTerminal failed (${chainId})`);
   return out;
 }

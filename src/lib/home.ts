@@ -61,20 +61,31 @@ export function chainCounts(tokens: readonly BoardToken[]): ChainCount[] {
     .sort((a, b) => b.count - a.count || rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
 }
 
-/** The chain row, split into what is shown and what "+N more" reveals. */
+/** The chain row, split into what is shown and what "+N more" reveals.
+ *
+ *  The row leads with the chains that HAVE listings; "+N more" then reveals
+ *  EVERY registered chain, the empty ones included, each carrying its count —
+ *  a `0` states before the tap why the board will be empty. Hiding the empty
+ *  chains entirely (the first cut) read as "Dexvra only supports five chains",
+ *  which is the opposite of what the registry says; a tapped empty chain lands
+ *  on an honest "nothing listed here yet", which is an invitation, not a
+ *  failure. */
 export function splitChains(
   counts: readonly ChainCount[],
   limit = HOME_CHAIN_LIMIT,
 ): { shown: ChainCount[]; hidden: ChainCount[] } {
-  return { shown: counts.slice(0, limit), hidden: counts.slice(limit) };
+  const populated = new Set(counts.map((c) => c.id));
+  const empty = CHAIN_IDS.filter((id) => !populated.has(id)).map((id) => ({ id, count: 0 }));
+  return { shown: counts.slice(0, limit), hidden: [...counts.slice(limit), ...empty] };
 }
 
-/** A chain filter that survives the chain vanishing from a later poll.
- *  Without this the picker unmounts and the board is stuck filtering to zero
- *  rows with no control left on screen to reset it. */
-export function resolveChain(chain: string, counts: readonly ChainCount[]): string {
+/** A chain filter that survives its chain losing every listing mid-session.
+ *  Any REGISTERED chain is a legal selection — its pill is always on the row
+ *  now, so the board shows the honest empty state with the control still on
+ *  screen. Only an id the registry has never heard of falls back to "all". */
+export function resolveChain(chain: string, _counts: readonly ChainCount[]): string {
   if (chain === "all") return "all";
-  return counts.some((c) => c.id === chain) ? chain : "all";
+  return CHAIN_IDS.includes(chain) ? chain : "all";
 }
 
 export const inChain = (chain: string) => (t: BoardToken) => chain === "all" || t.chain === chain;

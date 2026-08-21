@@ -34,9 +34,14 @@ export function ChainFilter({
 }) {
   const [expanded, setExpanded] = useState(false);
   const { shown, hidden } = splitChains(counts);
+  // ⚠️ The expanded row is shown + hidden — hidden now carries the registry's
+  // EMPTY chains too, which `counts` never has. Rendering `counts` here made
+  // the button promise "+18 more" and deliver four: the label counted the
+  // hidden list while the render ignored it. Caught by clicking it.
+  const all = [...shown, ...hidden];
   // A chain picked from behind "+N more" must not disappear when the row
   // collapses — the active pill would vanish while still filtering the board.
-  const visible = expanded || hidden.some((c) => c.id === value) ? counts : shown;
+  const visible = expanded || hidden.some((c) => c.id === value) ? all : shown;
 
   if (counts.length < 2) return null;
 
@@ -58,12 +63,14 @@ export function ChainFilter({
       {visible.map((c) => (
         <button
           key={c.id}
-          className={`chain-chip ${value === c.id ? "active" : ""}`}
+          className={`chain-chip ${value === c.id ? "active" : ""} ${c.count === 0 ? "chain-zero" : ""}`}
           onClick={() => onChange(c.id)}
           aria-pressed={value === c.id}
         >
           <ChainLogo chain={c.id} size={15} />
           {chainOf(c.id)?.label ?? c.id}
+          {/* the 0 stays visible — it says BEFORE the tap why the board will
+              be empty, and an empty chain is an invitation, not a dead end */}
           <span className="chain-n">{c.count}</span>
         </button>
       ))}
