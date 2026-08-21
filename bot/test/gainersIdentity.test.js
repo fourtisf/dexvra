@@ -376,3 +376,16 @@ test("the shared ranked panel keeps ONE row-ticker size — for all three mixed 
   const sizes = [...fn.matchAll(/fitText\(ctx, `\$\$\{c\.symbol\}`[^)]*size: ([\d.]+) \* S/g)].map((m) => m[1]);
   assert.deepStrictEqual(sizes, ["18.5"], "one call site, one size — tier6 and crown7 both draw through it");
 });
+
+test("the footer tagline is EXACTLY the brand label's size — the operator's stated rule", () => {
+  // "aturan find the next moonshot ukuran fontnya sama kaya dexvra yang di
+  // samping" (2026-08-21). The tagline drifted once already — 16px mixed-case
+  // display beside a 12px microlabel — so the rule is pinned, not trusted.
+  const fn = BANNER.slice(BANNER.indexOf("function footer("), BANNER.indexOf("// ── board panels"));
+  const sizes = [...fn.matchAll(/microLabel\(ctx[^)]*?"(?:Dexvra · Discovery|Find the next Moonshot)"[^)]*?size: ([\d.]+) \* S/g)].map((m) => m[1]);
+  assert.strictEqual(sizes.length, 2, "both footer labels draw through microLabel — one moved off it");
+  assert.strictEqual(sizes[0], sizes[1], `the tagline is ${sizes[1]}px against the brand's ${sizes[0]}px`);
+  // …and on one baseline: two different y-expressions is the old defect back.
+  const ys = [...fn.matchAll(/microLabel\(ctx, [^,]+, (midY [^,]+),/g)].map((m) => m[1]);
+  assert.strictEqual(new Set(ys).size, 1, "the two labels sit on different baselines: " + ys.join(" vs "));
+});
