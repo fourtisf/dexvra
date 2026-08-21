@@ -48,7 +48,6 @@ const {
   fitText,
 } = require("./helpers/canvasKit");
 const { fmtCap, fmtPrice, fmtPct } = require("./helpers/format");
-const { chainOf } = require("./config/chains");
 const log = require("./helpers/logger");
 
 const REF_W = 1600;
@@ -679,9 +678,13 @@ function sparkline(ctx, x, y, w, h, sym, pct, S, { alpha = 1 } = {}) {
   ctx.restore();
 }
 
-const chainName = (id) => String(chainOf(id) ? chainOf(id).label : id || "").toUpperCase();
-const CHAIN_TICKER = { solana: "SOL", ethereum: "ETH", bsc: "BSC", base: "BASE", robinhood: "HOOD", tron: "TRON", ton: "TON", sui: "SUI", plasma: "XPL", polygon: "POL", arbitrum: "ARB", optimism: "OP", avalanche: "AVAX", berachain: "BERA", sonic: "S", hyperevm: "HYPE", abstract: "ABS", apechain: "APE", blast: "BLAST", sei: "SEI", aptos: "APT", unichain: "UNI" };
-const chainShort = (id) => CHAIN_TICKER[id] || chainName(id).slice(0, 5);
+// The chain chips/stats were REMOVED from every banner surface on the
+// operator's call ("chain ini hapus aja tidak ada teks chain", 2026-08-21,
+// looking at the first live grid10): the caption under the post already names
+// the chain and links the token, so on the artwork the tag was noise beside
+// the name. The caption's chain label lives in gainers.js — this file no
+// longer draws one anywhere; do not add a per-row chip back without that call
+// being reversed.
 
 // ── page chrome ─────────────────────────────────────────────────────────────
 /** Deterministic film grain, tiled — keeps the near-black gradients from
@@ -1065,15 +1068,15 @@ function footer(ctx, S) {
   // one centreline for the whole strip, centred between rule and frame
   const midY = (y + frameBottom) / 2;
 
+  // ONE voice, ONE baseline. The tagline used to be 16px mixed-case display
+  // set on a `middle` baseline beside a 12px tracked uppercase microlabel on an
+  // `alphabetic` one — a different size, case, face and vertical line in a
+  // chrome strip whose whole job is uniformity ("teks find the next moonshot
+  // fontnya benerin ukuran dan penyesuaian yang pas", 2026-08-21, off a live
+  // rail8). Both halves are the microlabel voice now, split by tone: brand
+  // faint, tagline muted — same baseline, same size, same tracking.
   const bw0 = microLabel(ctx, x, midY + 4.5 * S, "Dexvra · Discovery", { size: 12 * S, color: SITE.faint, track: 0.2 });
-  ctx.save();
-  ctx.font = `500 ${16 * S}px ${F.d5}`;
-  ctx.fillStyle = SITE.muted;
-  ctx.textBaseline = "middle";
-  // Tied to the brand cluster (fixed 24px gap) so the footer reads as one
-  // left group + the CTA, not two strays and a hole.
-  ctx.fillText("Find the next Moonshot", x + bw0 + 24 * S, midY + 1 * S);
-  ctx.restore();
+  microLabel(ctx, x + bw0 + 24 * S, midY + 4.5 * S, "Find the next Moonshot", { size: 12 * S, color: SITE.muted, track: 0.2 });
 
   // CTA — the site's primary button: mint→cyan gradient, dark ink, top inset
   // light. Sized to clear the frame with visible air on both sides, glow kept
@@ -1208,7 +1211,6 @@ function layoutList(ctx, S, spec, coins) {
         ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 14.5 * S, min: 11 * S, family: F.d5 }), tx, cy + 22 * S);
         ctx.restore();
         // chain chip beside the ticker, like the site's tier tag
-        chip(ctx, tx + symW + 12 * S, cy - 9 * S, chainShort(c.chain), 10 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
 
         // the gain bar: a faint full-length track, the real value over it
         const zoneW = barR - barL;
@@ -1294,7 +1296,7 @@ function layoutRail(ctx, S, spec, coins) {
     ctx.fillText(fitText(ctx, c.name || "", cw - 48 * S, { weight: 500, size: 11.5 * S, min: 9.5 * S, family: F.d5 }), cx, ly + d / 2 + 50 * S);
     ctx.restore();
     bigPct(ctx, cx, y + ch - 52 * S, c.pctLabel, 27 * S, S, { align: "center" });
-    microLabel(ctx, cx, y + ch - 22 * S, `${chainShort(c.chain)}${c.mcap ? `  ·  MC ${fmtCap(c.mcap)}` : ""}`, { size: 9.5 * S, track: 0.14, color: SITE.muted, align: "center" });
+    microLabel(ctx, cx, y + ch - 22 * S, `${c.mcap ? `MC ${fmtCap(c.mcap)}` : c.price ? fmtPrice(c.price) : ""}`, { size: 9.5 * S, track: 0.14, color: SITE.muted, align: "center" });
   });
 }
 
@@ -1348,11 +1350,9 @@ function layoutGridDense(ctx, S, spec, coins) {
         ctx.fillText(sym, tx, cy + 1 * S);
         const symW = ctx.measureText(sym).width;
         ctx.fillStyle = SITE.faint;
-        const nm = fitText(ctx, c.name || "", tw - symW - 90 * S, { weight: 500, size: 12.5 * S, min: 9.5 * S, family: F.d5 });
+        const nm = fitText(ctx, c.name || "", tw - symW - 30 * S, { weight: 500, size: 12.5 * S, min: 9.5 * S, family: F.d5 });
         ctx.fillText(nm, tx + symW + 12 * S, cy + 1.5 * S);
-        const nmW = ctx.measureText(nm).width;
         ctx.restore();
-        chip(ctx, tx + symW + 12 * S + nmW + 10 * S, cy - 8 * S, chainShort(c.chain), 8 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
         if (c.mcap) {
           ctx.save();
           ctx.font = `700 ${14 * S}px ${F.m7}`;
@@ -1415,7 +1415,6 @@ function rankedPanel(ctx, S, spec, coins, { x, y, w, h, rank0, cap = 128 }) {
         ctx.fillStyle = SITE.muted;
         ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 11.5 * S, min: 9.5 * S, family: F.d5 }), tx, cy + 15.5 * S);
         ctx.restore();
-        chip(ctx, tx + symW + 9 * S, cy - 8.5 * S, chainShort(c.chain), 8.5 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
         if (c.mcap) {
           ctx.save();
           ctx.font = `700 ${14.5 * S}px ${F.m7}`;
@@ -1483,7 +1482,7 @@ function layoutTiers(ctx, S, spec, coins) {
     ctx.clip();
     sparkline(ctx, x + cardW - 176 * S, y + topH - 96 * S, 148 * S, 40 * S, c.symbol, c.pct, S, { alpha: 0.8 });
     ctx.restore();
-    microLabel(ctx, x + 34 * S, y + topH - 26 * S, `${chainShort(c.chain)}${c.mcap ? `  ·  MC ${fmtCap(c.mcap)}` : ""}`, { size: 10.5 * S, track: 0.14, color: SITE.muted });
+    microLabel(ctx, x + 34 * S, y + topH - 26 * S, `${c.mcap ? `MC ${fmtCap(c.mcap)}` : c.price ? fmtPrice(c.price) : ""}`, { size: 10.5 * S, track: 0.14, color: SITE.muted });
   });
 
   rankedPanel(ctx, S, spec, coins.slice(3), { x: PAD * S, y: botY, w: innerW, h: botH, rank0: 4, cap: 96 });
@@ -1530,7 +1529,7 @@ function layoutCrown(ctx, S, spec, coins) {
   ctx.fillText(fitText(ctx, c1.name || "", tw, { weight: 500, size: 15 * S, min: 11 * S, family: F.d5 }), tx, ly + 22 * S);
   ctx.restore();
   chip(ctx, tx + symW + 14 * S, ly - 15 * S, "#1 · Top gainer", 11.5 * S, S, { color: rc, border: hexA(rc, 0.4), bg: hexA(rc, 0.1) });
-  microLabel(ctx, tx, ly + 48 * S, `${chainShort(c1.chain)}${c1.mcap ? `  ·  MC ${fmtCap(c1.mcap)}` : ""}`, { size: 10.5 * S, track: 0.14, color: SITE.muted });
+  microLabel(ctx, tx, ly + 48 * S, `${c1.mcap ? `MC ${fmtCap(c1.mcap)}` : c1.price ? fmtPrice(c1.price) : ""}`, { size: 10.5 * S, track: 0.14, color: SITE.muted });
   // the figure owns the band's right end, its trend sweeping under it
   ctx.save();
   roundRect(ctx, x, y, innerW, bandH, 24 * S);
@@ -1593,7 +1592,6 @@ function layoutMosaic(ctx, S, spec, coins) {
     ctx.fillStyle = SITE.muted;
     ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 12 * S, min: 9.5 * S, family: F.d5 }), tx, ly + 19 * S);
     ctx.restore();
-    chip(ctx, tx + symW + 9 * S, ly - 10 * S, chainShort(c.chain), 8.5 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
     bigPct(ctx, x + 24 * S, y + tileH - 26 * S, c.pctLabel, 30 * S, S);
     if (c.mcap) {
       ctx.save();
@@ -1692,9 +1690,8 @@ function layoutSpotlight(ctx, S, spec, coins) {
     ctx.fillText(value, sx, hy + hh - 26 * S);
     ctx.restore();
   };
-  stat("Chain", chainShort(c1.chain), hx + 30 * S, "left");
+  if (c1.price) stat("Price", fmtPrice(c1.price), hx + 30 * S, "left");
   if (c1.mcap) stat("Mkt cap", fmtCap(c1.mcap), hx + heroW - 30 * S, "right");
-  else if (c1.price) stat("Price", fmtPrice(c1.price), hx + heroW - 30 * S, "right");
 
   // ── the chasing pack, ranks 2..n, one board panel ──
   const rest = coins.slice(1);
@@ -1749,7 +1746,6 @@ function layoutSpotlight(ctx, S, spec, coins) {
         ctx.fillStyle = SITE.muted;
         ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 11.5 * S, min: 9.5 * S, family: F.d5 }), tx, cy + 15.5 * S);
         ctx.restore();
-        chip(ctx, tx + symW + 9 * S, cy - 8.5 * S, chainShort(c.chain), 8.5 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
 
         if (c.mcap) {
           ctx.save();
@@ -1806,7 +1802,6 @@ function layoutCards(ctx, S, spec, coins) {
     ctx.fillStyle = SITE.muted;
     ctx.fillText(fitText(ctx, c.name || "", cw - 52 * S, { weight: 500, size: 13.5 * S, min: 10.5 * S, family: F.d5 }), cx, ly + d / 2 + 64 * S);
     ctx.restore();
-    chip(ctx, cx, ly + d / 2 + 92 * S, chainShort(c.chain), 9.5 * S, S, { align: "center", color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
 
     // the move — the card's headline — with the trend beneath it
     bigPct(ctx, cx, y + ch - 138 * S, c.pctLabel, 40 * S, S, { align: "center" });
@@ -1821,7 +1816,7 @@ function layoutCards(ctx, S, spec, coins) {
     ctx.fillRect(x + 26 * S, y + ch - 62 * S, cw - 52 * S, 1);
     // muted, not faint: this line carries DATA, and at social-feed scale the
     // faint tone fell below comfortable legibility.
-    microLabel(ctx, cx, y + ch - 30 * S, `${c.price ? `${fmtPrice(c.price)}  ·  ` : ""}${c.mcap ? `MC ${fmtCap(c.mcap)}` : chainName(c.chain)}`, {
+    microLabel(ctx, cx, y + ch - 30 * S, `${c.price ? `${fmtPrice(c.price)}  ·  ` : ""}${c.mcap ? `MC ${fmtCap(c.mcap)}` : ""}`, {
       size: 11 * S,
       track: 0.14,
       color: SITE.muted,
@@ -1958,9 +1953,8 @@ function layoutPodium(ctx, S, spec, coins) {
       ctx.fillText(value, sx, y + h - 26 * S);
       ctx.restore();
     };
-    stat("Chain", chainShort(c.chain), x + 30 * S, "left");
+    if (c.price) stat("Price", fmtPrice(c.price), x + 30 * S, "left");
     if (c.mcap) stat("Mkt cap", fmtCap(c.mcap), x + colW - 30 * S, "right");
-    else if (c.price) stat("Price", fmtPrice(c.price), x + colW - 30 * S, "right");
   });
 }
 
@@ -2059,7 +2053,7 @@ function layoutDuel(ctx, S, spec, coins) {
       ctx.fillText(value, sx, y + h - 28 * S);
       ctx.restore();
     };
-    stat("Chain", chainName(c.chain) || "—", x + 30 * S, "left");
+    if (c.price) stat("Price", fmtPrice(c.price), x + 30 * S, "left");
     if (c.mcap) stat("Mkt cap", fmtCap(c.mcap), x + colW - 30 * S, "right");
   });
 
@@ -2153,7 +2147,6 @@ function layoutHero(ctx, S, spec, coins) {
 
   // stat tiles — a centred row, same tile grammar as before
   const tiles = [
-    { l: "Chain", v: chainName(c.chain) || "—" },
     ...(c.price ? [{ l: "Price", v: fmtPrice(c.price) }] : []),
     ...(c.mcap ? [{ l: "Market cap", v: fmtCap(c.mcap) }] : []),
   ].slice(0, 3);

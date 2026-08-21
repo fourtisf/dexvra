@@ -1145,6 +1145,22 @@ would make eleven banners from eleven brands. Every colour is a SITE token.
   entry in its table — a typo would silently fall back to the shared default,
   which is precisely the state this exists to end.
 
+### Two calls off the first LIVE renders
+
+- **No chain text on the artwork.** "chain ini hapus aja tidak ada teks chain"
+  — the chips and the Chain stats left every banner surface. The caption under
+  the post already names the chain and links the token; on the artwork the tag
+  was noise beside the name. Footers that led with Chain lead with Price now,
+  so no column goes empty. The caption's chain label lives in `gainers.js` and
+  is untouched; a note in `gainersBanner.js` marks the removal so the next
+  person doesn't quietly add a chip back.
+- **The footer tagline joins the microlabel voice.** "Find the next Moonshot"
+  was 16px mixed-case display on a `middle` baseline beside a 12px tracked
+  uppercase microlabel on an `alphabetic` one — different size, case, face and
+  vertical line in a chrome strip whose whole job is uniformity. Both halves
+  are one microLabel call each now: same baseline, same size, same tracking,
+  split by tone (brand faint, tagline muted).
+
 ### Every layout is tellable apart at a glance — the 2026-08-21 rebuild
 
 "saya ingin banner lama berbeda semua dengan banner baru" — the moods pass had
