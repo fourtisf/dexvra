@@ -134,4 +134,76 @@ function evaluate(chains, prev = {}, { now = Date.now(), graceMs = GRACE_MS, rep
   return { state, alerts };
 }
 
-module.exports = { evaluate, diagnose, GRACE_MS, REPEAT_MS };
+/**
+ * IS THE BOARD PUBLISHING ROWS WITH NO PERCENTAGE — and for how long?
+ *
+ * The second symptom on the same surface, and it arrived the same way the first
+ * one did: the operator read the pinned channel, saw `$MOONCOIN | 12,220,809$`
+ * with nothing beside it, and asked. TWICE, with two different causes
+ * underneath:
+ *
+ *   1. the change was read from the deepest pool alone, so a quiet main pool
+ *      lost the percentage a sibling had        → borrow from the sibling
+ *   2. Robinhood has no second indexer, so GT's null `h24` was the end of the
+ *      fallback chain                           → measure it from the candles
+ *
+ * Two fixes, one symptom, and nothing in the bot ever said "three rows went out
+ * as — this cycle". A third cause will turn up; what is watched is the PROMISE:
+ * every row on the board carries a percentage.
+ *
+ * Board-level, not per-chain: the complaint is about the board, and one alert
+ * naming the tokens beats five naming the chains. The rules are `evaluate`'s,
+ * for the reasons stated at the top of this file.
+ *
+ * @param {{rows:number, blank:Array<{chain,sym,why}>}} render  what the poster
+ *        actually drew this cycle — never a second lookup of the same question
+ * @param {object} prev  state.rowWatch from the store
+ */
+function evaluateRows(render, prev = {}, { now = Date.now(), graceMs = GRACE_MS, repeatMs = REPEAT_MS } = {}) {
+  const blank = (render && render.blank) || [];
+  const rows = (render && render.rows) || 0;
+  const was = prev && prev.since ? prev : null;
+  if (!blank.length) {
+    // Only announce a recovery if we complained — a board that fixed itself
+    // before anyone was told says nothing at all.
+    const alerts = was && was.alertedAt
+      ? [{ kind: 'rows_ok', text: `✅ <b>Every trending row carries a percentage again</b> — ${rows} row(s) on the board.` }]
+      : [];
+    return { state: {}, alerts };
+  }
+  const since = (was && was.since) || now;
+  const shortFor = now - since;
+  const entry = { since, count: blank.length };
+  // A row can go blank for one cycle while a pool rolls over. An alert every
+  // cycle is a channel nobody reads by the second hour — upstreams.js first,
+  // then evaluate() above, now this.
+  if (shortFor < graceMs) return { state: entry, alerts: [] };
+  const alertedAt = was && was.alertedAt;
+  if (alertedAt && now - alertedAt < repeatMs) return { state: { ...entry, alertedAt }, alerts: [] };
+
+  // Name the TOKENS and the recorded reason. "Some rows have no percentage"
+  // sends the reader back into the same two-round investigation; `changeWhy`
+  // already knows whether the pool has not traded, is younger than a day, or
+  // does not exist — three different answers.
+  const SHOWN = 6;
+  const lines = blank
+    .slice(0, SHOWN)
+    .map((b) => `· <b>${b.chain}</b> $${b.sym}${b.why ? ` — ${b.why}` : ''}`);
+  if (blank.length > SHOWN) lines.push(`· …and ${blank.length - SHOWN} more`);
+  return {
+    state: { ...entry, alertedAt: now },
+    alerts: [
+      {
+        kind: 'rows_blank',
+        text:
+          `⚠️ <b>Trending board publishing without a percentage</b>\n` +
+          `<b>${blank.length}</b> of ${rows} row(s) went out as "—" — for ${Math.round(shortFor / 60_000)} min.\n` +
+          `${lines.join('\n')}\n` +
+          `Auto-promotion and the market filler both refuse a token with no reading, so these are PAID slots — ` +
+          `or readings that went away after the slot was booked. <code>npm run trending:check -- --rows</code>`,
+      },
+    ],
+  };
+}
+
+module.exports = { evaluate, evaluateRows, diagnose, GRACE_MS, REPEAT_MS };

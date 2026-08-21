@@ -740,6 +740,139 @@ which are different problems the code knows the difference between.
 flag because it prices every featured row at GT's politeness pace — most of a
 minute for a full board.
 
+### …and it was reported again, so the blank itself was the defect
+
+Same screenshot, one round later: `$MOONCOIN | 12,220,809$`, `$RLUSD |
+53,093,333$` and a bare `$BISKIT` — *"beberapa token di trending channel mengapa
+tidak ada kenaikan atau penurunan %, trending token harus memilikinya"*.
+
+The rule above still holds and is not weakened anywhere below: **an unreadable
+change is not a 0%**, and nothing here prints one. What was wrong is that
+*honest* and *invisible* are different things — dropping the segment left a row
+that reads as broken to 10,593 people, and the recovery had stopped one source
+short of where it could go. Four layers, and each closes a hole the others
+cannot:
+
+| layer | stops |
+| --- | --- |
+| `changeFromCandles` in `marketdata.js` | a readable market publishing nothing |
+| `hasReading` in `autoTrend.js` | the bot booking a slot for a token with no reading |
+| the same rule in `trendFill.js` | the filler *listing* one into that slot |
+| `NO_READING` in `trendingPoster.js` | a row that says nothing at all |
+
+- **The change is MEASURED from the pool's own candles when nothing publishes
+  one.** A 24h change *is* "the price now against the price 24 hours ago", and
+  two real closes from GT's OHLCV is that number taken the long way — a
+  measurement, not the fabricated zero this board has always refused. It is the
+  last resort: only a token that would otherwise publish a blank pays for the
+  request.
+- **Most of the leftovers were ROBINHOOD, and that is the whole tell.**
+  DexScreener does not index it (`GT_PRIMARY` in `group/gtPairs`), so GT's `h24`
+  is the *only* reading in the entire fallback chain — sibling pools and the
+  DexScreener pass, the two fixes from the round above, have nothing to work
+  with there. A fallback chain reads more reassuring than it is; that lesson is
+  already in this file under the raid's two keyless sources.
+- **The two closes are picked by TIMESTAMP, never by position.** A sparse pool's
+  candles do not line up on 24 neat hours. ⚠️ And a pool that has not traded at
+  all in the window resolves BOTH ends to the same candle and measures
+  **0.00%** — which is the truth about it, *arrived at* rather than assumed.
+  That is the entire difference between this and the printed zero the rule
+  forbids.
+- ⚠️ **The candles are asked for OUR token, not the pool's base side.** GT's
+  OHLCV defaults to `base`, which is our token only by luck — in a
+  WETH/OURTOKEN pool it is WETH, and the board would have published Ethereum's
+  24h change under a memecoin's ticker. That is a *wrong* number rather than a
+  missing one, which is the worse of the two. The token address is named.
+- ⚠️ **A pool younger than a day stays unmeasurable.** Measuring from its
+  opening tick is exactly where `+521366%` came from, so no candle before the
+  boundary means no reading — the sanity bound applies to a computed change as
+  it does to a published one.
+- ⚠️ **Only a DEFINITIVE answer is cached.** "GT is rate limited" is not a fact
+  about the pool, and caching it would let a two-minute backoff blank the board
+  for ten. A miss that *is* about the pool (under 24h of history) is cached, or
+  every unreadable token buys a request on every cycle of nine background
+  pipelines.
+- **A slot the bot books ITSELF must carry a reading**, through both doors —
+  the promoter's gain-floor pass and its floor fill, and the market filler,
+  which books its slot directly and would otherwise make the rule decorative
+  (the free-fall bound learnt this one field over). The exemption is the one
+  `hasMarket` already makes and is exactly as narrow: only where **nothing** on
+  the chain has a reading do the unreadable go on, or a chain no indexer covers
+  would never fill.
+- **The percentage column is never left EMPTY.** It carries `—` with a legend,
+  printed only when a row needs it — the same conditional as the 🌩 mark beside
+  it. Everything above exists so that the only row which can still reach it is a
+  slot somebody **paid** for, which is never dropped: a customer who bought
+  trending gets their row.
+- ⚠️ **`trendingPoster` destructured `fetchMarket`**, so no test could pin what
+  the board renders for a missing reading — the exact defect being fixed. It
+  imports the module now, the rule `autoTrend.js` already states at its own
+  require.
+
+#### "bagaimana agar masalah ini tidak terjadi" — the operator was the detector, again
+
+Asked straight after the fix landed, and it is the right question: this is the
+**third** time a row on this board has been reported for having no percentage,
+and all three times it was reported by a person reading the pinned channel and
+counting. Nothing in the bot has ever said *"three rows went out as — this
+cycle"*. That is the same shape, on the same surface, as the three-round
+"trending minimal harus 5" saga one section up — and the answer there is the
+answer here: **watch the SYMPTOM, because the causes keep changing.**
+
+The promise is "every row on the board carries a percentage", and it is now
+watched by the same machinery that watches "every chain carries `perChainMin`":
+
+- **`trendingWatch.evaluateRows()` sits beside `evaluate()`, in the SAME
+  module.** Two copies of "is the board healthy" would eventually disagree,
+  which is what two pump.fun hosts in two processes already cost. It is PURE —
+  the poster hands it the render, it returns the alerts — so a test walks the
+  board through days of cycles in milliseconds.
+- **The poster MEASURES what it drew**, at the moment it draws it. `noReadCount`
+  was computed in `buildText` and thrown away; `lastRender()` is
+  `{at, rows, blank:[{chain,sym,why}]}` now. A value nobody can read is the same
+  as no value — the gainers banner measured its candidate `pool`, returned it,
+  printed it nowhere, and a collapsed ranking looked entirely normal.
+- ⚠️ **The watch runs BEFORE the `unchanged` early return.** The board is edited
+  in place and skipped when the text has not changed, which is exactly the state
+  a persistently blank board sits in — folding the watch in after that return
+  would freeze it on the boards that stay broken longest. A stuck symptom
+  reading as no symptom is the state that looks most like a healthy one, and
+  this file has paid for that one twice (`lastFeedOkAt`, `lastCheckedAt`).
+- **Transition only, after `TREND_SHORT_GRACE_MS`; a RECOVERY is an alert too;
+  it repeats.** A row can go blank for one cycle while a pool rolls over, and an
+  alert every cycle is a channel nobody reads by the second hour. The rules are
+  `upstreams.js`'s, borrowed a third time.
+- **The alert names the TOKENS and the recorded reason**, capped at six. "Some
+  rows have no percentage" sends the reader back into the same investigation;
+  `changeWhy` already knows whether the pool is quiet, is younger than a day, or
+  does not exist — three different answers.
+- ⚠️ **`trending:check --rows` now DRIVES `buildText()`** and reads
+  `lastRender()`, instead of calling `fetchMarket` itself. That second copy of
+  the board's question is precisely how `fonts:check` printed nine green ticks
+  over a banner publishing boxes: a guard is only honest while it measures the
+  stack the renderer actually uses. It **exits non-zero** on a board of dashes,
+  so green means "the board is safe" and not "the counts add up" — and a render
+  that produces NO rows is an error, never a quiet ✓.
+
+So the layers, each closing a hole the others cannot:
+
+| layer | stops |
+| --- | --- |
+| the candle recovery + the two promotion gates | a readable market publishing nothing |
+| `NO_READING` in the poster | a blank that is honest and *invisible* |
+| `boardPercent.test.js` drives the real renderers | the column drifting back to a dropped segment |
+| `evaluateRows` in the running bot | the operator being the detector |
+| `trending:check --rows` + the build stamp | a green check over a board full of dashes |
+
+```bash
+cd bot && node scripts/run-tests.js test/boardPercent.test.js test/trendFill.test.js   # 50 tests, no network
+cd bot && npm run trending:check -- --rows                                             # which rows show — and why
+```
+
+**Config a fix depends on:** nothing. `GECKOTERMINAL_API_KEY` raises the shared
+GT quota the candle read draws on, as it does for everything else in this repo;
+`TREND_SHORT_GRACE_MS` / `TREND_SHORT_REPEAT_MS` govern this watch too.
+
 ### ⚡ Run now "not work" — the answer expires, the panel does not
 
 "di klik fiturnya not work". The button spun and nothing came back, on a panel
