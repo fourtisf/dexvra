@@ -419,9 +419,39 @@ function _newWallet(secret) {
   const mnemonic = [12, 15, 18, 21, 24].includes(words.length) ? words.join(' ')
     : (!secret && w.mnemonic && w.mnemonic.phrase) ? w.mnemonic.phrase : null;
   const sol = solana.newWallet(mnemonic || w.privateKey);   // { kind, address, plain }
+  // THE PHRASE USED TO BE COMPUTED HERE AND THROWN AWAY. Every wallet this bot
+  // generates is born from one — `Wallet.createRandom()` has a mnemonic, and it
+  // is the thing that derives the Solana key on Phantom's own path — but only
+  // `w.privateKey` was persisted. So the bot handed out two unrelated-looking
+  // keys for a wallet that had a single phrase behind it, and the phrase was
+  // unrecoverable the moment the function returned: a private key cannot be run
+  // backwards into the mnemonic it came from.
+  //
+  // ⚠️ It is STRICTLY MORE DANGEROUS to hold than the keys are. A private key
+  // controls one address; a phrase derives an unbounded number of them across
+  // many chains, so for an IMPORTED phrase this stores something that may also
+  // control wallets this bot has never seen. That is the owner's explicit call
+  // (2026-08-21), taken with the trade-off stated. It is why the export screen
+  // says so out loud, and why nothing prints a phrase without a confirmation.
   return { id: _walletId(), name: '', address: w.address, enc: encrypt(w.privateKey),
     solAddress: sol.address, solEnc: encrypt(sol.plain),
+    ...(mnemonic ? { mnemEnc: encrypt(mnemonic) } : {}),
     createdAt: Date.now(), positions: {}, orders: [], history: [] };
+}
+/**
+ * The wallet's seed phrase, or NULL when it has none.
+ *
+ * Null is the ordinary answer, not an error: every wallet created before this
+ * existed has no stored phrase and never will, and a wallet imported from a bare
+ * private key never had one at all. A caller must render the absence as "this
+ * wallet has two keys and no phrase" — never as a failure, and never by
+ * inventing a phrase from the key, which is not a thing that can be done.
+ */
+function exportMnemonic(chatId, walletId) {
+  const u = getUser(chatId); if (!u) throw new Error('no wallet');
+  const w = _resolveWallet(u, walletId);
+  if (!w.mnemEnc) return null;
+  try { return decrypt(w.mnemEnc); } catch (_) { return null; }
 }
 // Backfill a Solana keypair onto a pre-Solana wallet (derived from its EVM key), so
 // every stored wallet gains a fixed Solana address on first use. Idempotent.
@@ -780,7 +810,9 @@ async function removeWallet(chatId, walletId, opts) {
   u.oldWallets = Array.isArray(u.oldWallets) ? u.oldWallets : [];
   // Archive BOTH keys: a Phantom-path (mnemonic-derived) Solana key can't be rebuilt
   // from the EVM key alone, so keep solEnc/solAddress or it would be irrecoverable.
-  u.oldWallets.push({ address: w.address, enc: w.enc, solAddress: w.solAddress, solEnc: w.solEnc, at: Date.now() });
+  // mnemEnc rides along: archiving the keys but dropping the phrase would make
+  // "export before you delete" quietly hand back less than the wallet had.
+  u.oldWallets.push({ address: w.address, enc: w.enc, solAddress: w.solAddress, solEnc: w.solEnc, mnemEnc: w.mnemEnc, at: Date.now() });
   if (u.oldWallets.length > 20) u.oldWallets = u.oldWallets.slice(-20);
   u.wallets = u.wallets.filter((x) => x.id !== w.id);
   if (u.activeWalletId === w.id) u.activeWalletId = u.wallets[0].id;
@@ -3957,7 +3989,7 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenSupplyUi, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
-  walletFunds, solWithdrawPlan, evmWithdrawPlan,
+  walletFunds, solWithdrawPlan, evmWithdrawPlan, exportMnemonic,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
   // Test-only seams — see the notes at each definition.
   _deps,

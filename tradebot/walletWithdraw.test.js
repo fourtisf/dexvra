@@ -355,7 +355,12 @@ test("DRIVEN: export hands over both keys, and they are the wallet's own", { ski
   assert.ok(out.includes(core.walletAddress(u.wallets[1], "solana")), "the Solana address");
   assert.ok(out.includes(core.exportKey(CHAT, wid)), "the EVM key");
   assert.ok(out.includes(core.exportKey(CHAT, wid, "solana")), "the Solana key");
-  assert.match(out, /save both/);
+  // The closing line depends on whether the wallet has a phrase, but either way
+  // it has to say the two keys are ONE wallet — that is the misreading the
+  // original report was built on.
+  const phrase = core.exportMnemonic(CHAT, wid);
+  assert.match(out, phrase ? /the same wallet, one side each/ : /save both/);
+  if (phrase) assert.ok(out.includes(phrase), "and the phrase leads");
 });
 
 test("DRIVEN: the withdraw flow carries the wallet and chain it was opened on", { skip: !core || !tg }, async () => {
@@ -533,4 +538,86 @@ test("one unaddressable chain does not take the whole survey down", { skip: !cor
   const sol = funds.find((f) => f.svm);
   assert.equal(sol.ok, false, "the chain it could not address is unread, not empty");
   assert.equal(sol.holds, false);
+});
+
+// ---------------------------------------------------------------- seed phrase
+//
+// "kalo gitu kirimnya harus seed pharse bukan hanya privatekey" (2026-08-21).
+// Right, and it named a real gap: every wallet this bot generates is born from a
+// mnemonic — it is what derives the Solana key on Phantom's own path — and the
+// phrase was computed, used, and thrown away. Two keys went out for a wallet
+// that had one phrase behind it, and a private key cannot be run backwards into
+// the mnemonic it came from.
+
+const bip39 = (() => { try { return require("bip39"); } catch { return null; } })();
+const edhd = (() => { try { return require("ed25519-hd-key"); } catch { return null; } })();
+const web3 = (() => { try { return require("@solana/web3.js"); } catch { return null; } })();
+const ethersLib = (() => { try { return require("ethers"); } catch { return null; } })();
+
+const SEED_CHAT = "770003";
+function freshUser(id) { core.ensureUser(id); return core.getUser(id); }
+
+test("a generated wallet keeps its phrase, and it is THE phrase Phantom would use", { skip: !core || !bip39 || !edhd || !web3 }, () => {
+  const u = freshUser(SEED_CHAT);
+  const w = u.wallets[0];
+  const phrase = core.exportMnemonic(SEED_CHAT, w.id);
+  assert.ok(phrase && phrase.split(/\s+/).length >= 12, "a generated wallet has a phrase now");
+  assert.ok(bip39.validateMnemonic(phrase), "and it is a valid BIP39 mnemonic");
+  // The claim on the export screen is "restores this whole wallet, both sides,
+  // in one import". Proven against the real derivations rather than asserted:
+  // Phantom's m/44'/501'/0'/0' and MetaMask's BIP44 account 0.
+  const seed = bip39.mnemonicToSeedSync(phrase);
+  const { key } = edhd.derivePath("m/44'/501'/0'/0'", seed.toString("hex"));
+  assert.equal(web3.Keypair.fromSeed(Uint8Array.from(key)).publicKey.toBase58(),
+    core.walletAddress(w, "solana"), "Phantom lands on the bot's Solana address");
+  if (ethersLib) assert.equal(ethersLib.Wallet.fromPhrase(phrase).address, w.address, "and MetaMask on its EVM one");
+});
+
+test("an imported phrase round-trips exactly", { skip: !core }, () => {
+  const P = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const nw = core.addWallet(SEED_CHAT, P);
+  assert.equal(core.exportMnemonic(SEED_CHAT, nw.id), P, "byte-for-byte what was pasted");
+});
+
+test("a wallet with no phrase answers null — never a guess, never an error", { skip: !core || !ethersLib }, () => {
+  // Two ways to have none, and both are ordinary: imported from a bare private
+  // key (never had one), or created before the bot kept them.
+  const bare = core.addWallet(SEED_CHAT, ethersLib.Wallet.createRandom().privateKey);
+  assert.equal(core.exportMnemonic(SEED_CHAT, bare.id), null);
+  const u = core.getUser(SEED_CHAT);
+  const legacy = { ...JSON.parse(JSON.stringify(u.wallets[0])), id: "legacyw" };
+  delete legacy.mnemEnc;
+  u.wallets.push(legacy);
+  assert.equal(core.exportMnemonic(SEED_CHAT, "legacyw"), null, "a legacy record must not throw");
+});
+
+test("the export leads with the phrase, and SAYS SO when there isn't one", { skip: !core || !tg || !ethersLib }, () => {
+  const u = core.getUser(SEED_CHAT);
+  const withPhrase = tg._test.exportKeyMsg(SEED_CHAT, u.wallets[0].id);
+  assert.match(withPhrase, /Seed phrase/);
+  assert.ok(withPhrase.includes(core.exportMnemonic(SEED_CHAT, u.wallets[0].id)), "the real phrase is in it");
+  assert.match(withPhrase, /more powerful than the keys below/, "the phrase is the bigger secret and is labelled as one");
+  // …and the two keys are still there: not every app takes a phrase.
+  assert.match(withPhrase, /EVM private key/);
+  assert.match(withPhrase, /Solana private key/);
+  // The absence is STATED. A blank there reads as a bot that forgot to print it,
+  // and sends people hunting for a phrase that does not exist.
+  const none = tg._test.exportKeyMsg(SEED_CHAT, "legacyw");
+  assert.doesNotMatch(none, /Seed phrase/);
+  assert.match(none, /no seed phrase/);
+  assert.match(none, /Two imports, one per side/);
+});
+
+test("removing a wallet archives the phrase with the keys", { skip: !core }, () => {
+  // Archiving the keys but dropping the phrase would make "export before you
+  // delete" quietly hand back less than the wallet had.
+  const c = code("core.js");
+  assert.match(c, /u\.oldWallets\.push\(\{ address: w\.address, enc: w\.enc, solAddress: w\.solAddress, solEnc: w\.solEnc, mnemEnc: w\.mnemEnc, at: Date\.now\(\) \}\)/);
+});
+
+test("both export confirmations name the phrase before showing it", { skip: !core }, () => {
+  const t = code("telegram.js");
+  assert.equal((t.match(/seed phrase<\/b> \(if it has one\)/g) || []).length, 2,
+    "the per-wallet screen and the active-wallet screen");
+  assert.match(t, /the phrase gives away all of it at once/);
 });

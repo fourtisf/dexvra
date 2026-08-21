@@ -2232,6 +2232,50 @@ printing once.
 with `solana` in it — the two-keypair half of all of this only exists where an
 operator has added it.
 
+## "Kirimnya harus seed phrase bukan hanya privatekey"
+
+Asked after the removal screen shipped, looking at a card offering two private
+keys for one wallet. It is the right question, and the answer was a real gap.
+
+**Every wallet this bot generates is born from a mnemonic** —
+`ethers.Wallet.createRandom()` has one, and it is what derives the Solana key on
+Phantom's own `m/44'/501'/0'/0'` — and `_newWallet` **computed it, used it, and
+threw it away**, persisting only `encrypt(w.privateKey)`. So the bot handed out
+two unrelated-looking keys for a wallet that had a single phrase behind it, and a
+private key cannot be run backwards into the mnemonic it came from.
+
+- **`mnemEnc` is stored for every new wallet — generated AND imported.** That is
+  the owner's explicit call, taken with the trade-off stated: ⚠️ a phrase is
+  strictly more dangerous to hold than a key. A key controls one address; a phrase
+  derives an unbounded number across many chains, so for an IMPORTED phrase this
+  stores something that may also control wallets this bot has never seen. Both
+  confirm screens say so, and nothing prints a phrase without one.
+- ⚠️ **It cannot be applied retroactively, and the copy must not imply it can.**
+  Every wallet made before this has no phrase and never will. Neither does one
+  imported from a bare private key. `exportMnemonic` answers **null** for both —
+  the ordinary case, never an error — and the export SAYS *"this wallet has no
+  seed phrase"* rather than leaving a blank, because a blank reads as a bot that
+  forgot to print it and sends people hunting for something that does not exist.
+- **The phrase leads, the two keys stay.** One import restores both sides; not
+  every app takes a phrase, so the keys remain underneath with a line saying they
+  are one wallet, one side each — the misreading the whole report was built on.
+- **`mnemEnc` is archived on removal** with `enc`/`solEnc`. Archiving the keys
+  and dropping the phrase would make "export before you delete" quietly hand back
+  less than the wallet had.
+- **The claim on the card is PROVEN, not asserted.** `walletWithdraw.test.js`
+  derives Phantom's `m/44'/501'/0'/0'` and MetaMask's BIP44 account 0 from the
+  exported phrase and compares them against the bot's own two addresses. A
+  wallet whose Solana side came from the EVM-key path
+  (`sha512('robinfun:solana:v1' + key)`) has no phrase precisely because that
+  derivation is not reproducible by any standard wallet — which is why the two
+  cases must never share a message.
+
+```bash
+cd tradebot && node --test walletWithdraw.test.js   # 42 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

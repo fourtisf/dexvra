@@ -1102,7 +1102,7 @@ async function removeWalletScreen(chatId, walletId) {
       // a user blocked by an ETH balance is owed the same explanation.
       body += `<i>One wallet here is <b>two keypairs</b> — an EVM key and a Solana key — under one name. They are different private keys, but they are removed together, so anything on either side has to be dealt with first.</i>\n\n`;
     }
-    body += `Empty it below, or remove it anyway and I'll hand you both keys.`;
+    body += `Empty it below, or remove it anyway and I'll hand you its keys first.`;
   } else if (!surveyed) {
     body += `⚠️ I couldn't check any chain's balance just now, so I can't tell you whether this wallet is empty. <b>🔑 Export the keys first</b>, then remove it — or try again in a moment.`;
   } else {
@@ -3858,7 +3858,7 @@ async function onCallback(q) {
     return edit(chatId, mid,
       `⚠️ <b>Remove Wallet ${i} ${surveyed ? 'with funds still in it' : 'without checking it'}?</b>\n\n${lines}\n\n`
       + `Removing it takes the wallet off your list <b>with whatever is inside</b>. `
-      + `I'll show you <b>both private keys</b> in the next message so the funds stay yours — `
+      + `I'll show you its <b>seed phrase and both private keys</b> in the next message so the funds stay yours — `
       + `save them before they scroll away, because that is the only copy you will be handed.`,
       rows([btn('📤 Withdraw first', 'rmw:' + ca)], [btn(surveyed ? '⚠️ Yes, remove with funds inside' : '⚠️ Yes, remove without checking', 'rmwfy:' + ca)], [btn('✖ Cancel', 'wallets')]));
   }
@@ -3898,7 +3898,7 @@ async function onCallback(q) {
     const i = core.walletList(u).findIndex((x) => x.id === ca) + 1;
     return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)} · <b>Wallet ${i}</b>\n<code>${esc(core.walletAddress(w, wch.key))}</code>\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send to.`);
   }
-  if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis shows <b>both</b> of this wallet's private keys — the EVM one and the Solana one. Anyone holding either can drain that side. Never share them. Continue?`, rows([btn('Yes, show keys', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
+  if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis shows this wallet's <b>seed phrase</b> (if it has one) and <b>both</b> of its private keys — the EVM one and the Solana one. Anyone holding any of them can drain that wallet; the phrase gives away all of it at once. Never share them. Continue?`, rows([btn('Yes, show it', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
   if (k === 'expwy') { try { await send(chatId, exportKeyMsg(chatId, ca)); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
   if (data === 'wd') { const wch = activeChain(chatId); setPending(chatId, { action: 'wd_addr', chain: wch.key }); return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)}${wdWalletLine(chatId)}\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send your funds to.`); }
   if (data === 'exp') return askExport(chatId);
@@ -4396,9 +4396,26 @@ function exportKeyMsg(chatId, walletId) {
   }
   // A failed read must never pass for "this wallet only had one key".
   if (parts.every((x) => x.startsWith('⚠️'))) throw new Error('could not read this wallet\'s keys — nothing was exported.');
-  let out = `🔑 <b>Private keys — ${esc(label)}</b> <i>(delete this message after saving)</i>\n\n`;
+
+  // The phrase leads, because it is the one thing that restores BOTH sides in a
+  // single import — the two keys below need two imports into two different apps.
+  // Its ABSENCE is the ordinary case and is stated rather than left blank: every
+  // wallet made before the phrase was kept has none, and a wallet imported from a
+  // bare private key never had one. Silence there reads as a bot that forgot to
+  // print it, which sends people looking for a phrase that does not exist.
+  let phrase = null;
+  try { phrase = core.exportMnemonic(chatId, w.id); } catch (_) { phrase = null; }
+  let out = `🔑 <b>${phrase ? 'Seed phrase &amp; private keys' : 'Private keys'} — ${esc(label)}</b> <i>(delete this message after saving)</i>\n\n`;
+  if (phrase) {
+    out += `<b>Seed phrase</b> — restores this whole wallet, both sides, in one import:\n<code>${esc(phrase)}</code>\n\n`
+      + `<i>⚠️ This is more powerful than the keys below: anyone holding it can derive every address of this wallet on every chain.</i>\n\n`;
+  }
   out += parts.join('\n\n');
-  if (sol) out += `\n\n<i>These are two different keys for one wallet — save both.</i>`;
+  if (sol) {
+    out += phrase
+      ? `\n\n<i>The two keys above are the same wallet, one side each — use them if your app takes keys rather than a phrase.</i>`
+      : `\n\n<i>These are two different keys for one wallet — save both. This wallet has <b>no seed phrase</b>: it predates the bot keeping them, or it was imported from a private key. Two imports, one per side, is the only way to restore it.</i>`;
+  }
   return out;
 }
 // ---- live position monitor (Maestro-style) ------------------------------
@@ -5085,7 +5102,7 @@ async function resumeMonitors() {
 }
 
 function askExport(chatId) {
-  return send(chatId, `🔑 <b>Export private keys</b>\n\nThis shows <b>both</b> keys of your active wallet — the EVM one and the Solana one. Anyone holding either can drain that side. Never share them.\n\nAre you sure?`, rows([btn('Yes, show my keys', 'expy'), btn('Cancel', 'menu')]));
+  return send(chatId, `🔑 <b>Export wallet secrets</b>\n\nThis shows your active wallet's <b>seed phrase</b> (if it has one) and <b>both</b> of its private keys — the EVM one and the Solana one. Anyone holding any of them can drain that wallet; the phrase gives away all of it at once. Never share them.\n\nAre you sure?`, rows([btn('Yes, show it', 'expy'), btn('Cancel', 'menu')]));
 }
 function adminScreen(chatId) {
   if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
