@@ -182,7 +182,7 @@ test("removeWallet surveys every chain, and the guard reads the same survey as t
 test("`ok:false` is not a zero — an unreadable chain never blocks removal", { skip: !core }, () => {
   const c = code("core.js");
   const wf = c.slice(c.indexOf("async function walletFunds(chatId"), c.indexOf("async function removeWallet(chatId"));
-  assert.match(wf, /holds: ok && bal > dust/, "we could not look ≠ it is empty");
+  assert.match(wf, /holds: ok && bal > \(ch\.kind === 'svm'/, "we could not look ≠ it is empty");
 });
 
 test("the removal screen offers a withdraw per holding chain, and explains the pair of keys", { skip: !core }, () => {
@@ -240,7 +240,7 @@ test("a withdrawal spends the wallet and chain it was OPENED on, not the active 
   const tg = code("telegram.js");
   // Each step carries them forward. Re-deriving the chain at every step is how a
   // Solana withdrawal opened from an EVM screen bounced as an invalid address.
-  assert.match(tg, /if \(p\.action === 'wd_addr'\) \{ const wch = \(p\.chain && core\.chainOf\(p\.chain\)\) \|\| activeChain\(chatId\)/);
+  assert.match(tg, /if \(p\.action === 'wd_addr'\) \{ const wch = \(p\.chain && core\.chains\.isEnabled\(p\.chain\) && core\.chainOf\(p\.chain\)\) \|\| activeChain\(chatId\)/);
   assert.match(tg, /setPending\(chatId, \{ action: 'wd_amt', to: t, chain: wch\.key, walletId: p\.walletId \}\)/);
   assert.match(tg, /setPending\(chatId, \{ action: 'wd_confirm', to: p\.to, amt: t, chain: ch\.key, walletId: p\.walletId \}\)/);
   assert.match(tg, /core\.withdraw\(chatId, pp\.to, pp\.amt, pp\.chain, pp\.walletId\)/,
@@ -388,4 +388,149 @@ test("DRIVEN: the withdraw flow carries the wallet and chain it was opened on", 
     assert.deepEqual(spent, { to: DEST, amt: "max", chain: "solana", walletId: wid });
     assert.match(sent[sent.length - 1], /balance is now zero/, "a sweep says the wallet is empty — that is the errand");
   } finally { core.withdraw = realWd; global.fetch = realFetch; }
+});
+
+
+// ---------------------------------------------------------------- audit round
+
+test("the fee is measured against the message sendSol actually builds", { skip: !core }, () => {
+  // The sweep lands on the balance EXACTLY, so the measured fee and the signed
+  // fee have to be the fee of the SAME message. They are today because both
+  // build a bare SystemProgram.transfer — add a compute-budget/priority-fee
+  // instruction to one and not the other and `max` silently goes back to
+  // leaving a rent-paying remainder, which is the original bug.
+  const s = code("solana.js");
+  const fn = s.slice(s.indexOf("async function sendSol("), s.indexOf("async function sendSplToken("));
+  const adds = fn.match(/\.add\(/g) || [];
+  assert.equal(adds.length, 1, "sendSol must build exactly one instruction");
+  assert.match(fn, /new Transaction\(\)\.add\(SystemProgram\.transfer\(/);
+  assert.doesNotMatch(fn, /ComputeBudgetProgram/,
+    "a priority fee here has to be priced in transferFee too — see solWithdrawPlan");
+  const probe = s.slice(s.indexOf("async function transferFee("), s.indexOf("async function sendSol("));
+  assert.match(probe, /new Transaction\(\)\.add\(SystemProgram\.transfer\(/, "same shape, or the price is of a different message");
+});
+
+test("a failed getCode is NOT cached as 'this chain has no L1 fee'", { skip: !core }, () => {
+  const c = code("core.js");
+  const fn = c.slice(c.indexOf("async function _l1DataFee("), c.indexOf("async function v3SwapGas("));
+  // The bug: `.catch(() => '0x')` makes a transient RPC failure indistinguishable
+  // from a chain without the predeploy, and then caches it — so one blip
+  // disables L1 accounting on Base for the life of the process, silently, on the
+  // path where being short by the L1 fee means the withdrawal does not send.
+  assert.doesNotMatch(fn, /getCode\(OP_GAS_ORACLE\)\.catch/);
+  assert.match(fn, /catch \(_\) \{ return \{ fee: 0n, ok: false, oracle: null \}; \}/);
+  // Only a read that ANSWERED is cached.
+  const cacheAt = fn.indexOf("_hasL1Oracle.set(chainKey, has)");
+  const readAt = fn.indexOf("code = await prov.getCode");
+  assert.ok(readAt > -1 && cacheAt > readAt);
+  // …and a failed read reserves the conservative stand-in, never zero.
+  assert.match(c, /const l1Cost = l1\.ok \? l1\.fee : l2Cost;/);
+});
+
+test("a survey that did not happen is not an empty wallet", { skip: !core || !tg }, async () => {
+  const wid = twoWallets();
+  const real = core.walletFunds;
+  core.walletFunds = async () => { throw new Error("every RPC is down"); };
+  try {
+    const s = await tg._test.removeWalletScreen(CHAT, wid);
+    assert.match(s.text, /couldn't check any chain's balance/);
+    assert.doesNotMatch(s.text, /looks <b>empty of native<\/b>/,
+      "an unread wallet must never render as an empty one");
+    const flat = s.kb.inline_keyboard.flat();
+    assert.ok(!flat.some((b) => b.callback_data === "rmwok:" + wid),
+      "no one-tap remove on a balance nobody read");
+    assert.ok(flat.some((b) => b.callback_data === "rmwf:" + wid), "the informed path stays open");
+    assert.ok(flat.some((b) => /without checking/.test(b.text)));
+  } finally { core.walletFunds = real; }
+});
+
+test("…and the override still works when the survey is down (no bounce loop)", { skip: !core || !tg }, async () => {
+  // The screen's only forward button is `rmwf`, and `rmwf` used to send anything
+  // with no holdings back to the screen — so an unreadable wallet bounced
+  // between the two for ever and could never be removed.
+  const wid = twoWallets();
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage|editMessageText/.test(String(url))) sent.push({ text: b.text, kb: b.reply_markup }); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  const real = core.walletFunds;
+  core.walletFunds = async () => { throw new Error("every RPC is down"); };
+  try {
+    await tg._test.onCallback({ id: "1", data: "rmwf:" + wid, message: { message_id: 5, chat: { id: CHAT } }, from: { id: CHAT } });
+    const last = sent[sent.length - 1];
+    assert.match(last.text, /without checking it/, "it reaches the confirmation, not the screen it came from");
+    const flat = last.kb.inline_keyboard.flat();
+    assert.ok(flat.some((b) => b.callback_data === "rmwfy:" + wid), "and offers the tap that actually removes");
+  } finally { core.walletFunds = real; global.fetch = realFetch; }
+});
+
+test("a surveyed-and-empty wallet still goes back for the one-tap remove", { skip: !core || !tg }, async () => {
+  const wid = twoWallets();
+  const evm = core.getUser(CHAT).wallets[1].address;
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage|editMessageText/.test(String(url))) sent.push({ text: b.text, kb: b.reply_markup }); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  const undo = stubFunds([ETH_CLEAN(evm)]);
+  try {
+    await tg._test.onCallback({ id: "1", data: "rmwf:" + wid, message: { message_id: 5, chat: { id: CHAT } }, from: { id: CHAT } });
+    const flat = sent[sent.length - 1].kb.inline_keyboard.flat();
+    assert.ok(flat.some((b) => b.callback_data === "rmwok:" + wid));
+  } finally { undo(); global.fetch = realFetch; }
+});
+
+test("a wallet is not removed when Telegram refuses the keys message", { skip: !core || !tg }, async () => {
+  const wid = twoWallets();
+  const before = core.walletList(core.getUser(CHAT)).length;
+  const sent = [];
+  const realFetch = global.fetch;
+  // `send` RESOLVES with Telegram's answer on an error_code — it does not throw.
+  // A try/catch alone would have removed a funded wallet after silently failing
+  // to deliver the only copy of its keys.
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage/.test(String(url))) sent.push(b.text); } catch (_) {}
+    if (/sendMessage/.test(String(url)) && sent.length === 1) return { json: async () => ({ ok: false, error_code: 400, description: "can't parse entities" }) };
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  try {
+    await tg._test.onCallback({ id: "1", data: "rmwfy:" + wid, message: { message_id: 5, chat: { id: CHAT } }, from: { id: CHAT } });
+    assert.equal(core.walletList(core.getUser(CHAT)).length, before, "the wallet survives a failed key delivery");
+    const errs = sent.filter((t) => t.startsWith("❌"));
+    assert.equal(errs.length, 1, "one ❌, not a generic one stacked on a specific one");
+    // Escaped, because it is Telegram's text going back into an HTML message.
+    assert.match(errs[0], /parse entities/, "and it carries the reason");
+    assert.match(errs[0], /was <b>not<\/b> removed/);
+  } finally { global.fetch = realFetch; }
+});
+
+test("a disabled chain is not reachable from a callback", { skip: !core }, () => {
+  const tg = code("telegram.js");
+  // chainOf answers from the WHOLE table, so it alone would let a stale button
+  // open a withdrawal on a chain the operator turned off.
+  assert.match(tg, /const wch = \(core\.chains\.isEnabled\(arg\) && core\.chainOf\(arg\)\) \|\| activeChain\(chatId\)/);
+  assert.match(tg, /p\.chain && core\.chains\.isEnabled\(p\.chain\) && core\.chainOf\(p\.chain\)/);
+  assert.equal((tg.match(/core\.chains\.isEnabled\(p\.chain\)/g) || []).length, 2, "both pending steps");
+});
+
+test("one unaddressable chain does not take the whole survey down", { skip: !core }, async () => {
+  // Promise.all rejects on the first throw, and resolving a Solana address
+  // derives a keypair — so a wallet that could not be derived used to turn a
+  // per-chain `ok:false` into an exception out of walletFunds.
+  const c = code("core.js");
+  const wf = c.slice(c.indexOf("async function walletFunds(chatId"), c.indexOf("async function removeWallet(chatId"));
+  assert.match(wf, /catch \(_\) \{ return row\(ch, '', false, 0n\); \}/);
+  // Driven: a wallet with no key material at all still surveys, as unread rows.
+  const CH2 = "770002";
+  core.ensureUser(CH2);
+  const u = core.getUser(CH2);
+  u.wallets.push({ id: "broken", name: "", address: "0x" + "ab".repeat(20), positions: {}, orders: [] });   // no enc
+  const funds = await core.walletFunds(CH2, "broken");
+  assert.ok(funds.length > 0, "it answers rather than throwing");
+  const sol = funds.find((f) => f.svm);
+  assert.equal(sol.ok, false, "the chain it could not address is unread, not empty");
+  assert.equal(sol.holds, false);
 });

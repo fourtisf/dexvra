@@ -2178,9 +2178,55 @@ which nothing on any screen stated.
 - **A swept wallet's receipt says it is empty.** That is the errand the sweep is
   usually part of, not a footnote.
 
+### The audit round — four of these were in the FIX
+
+Asked "apakah anda yakin?? coba audit kode" straight after the above landed, and
+the answer was no. Every one of the defects found is this file's own recurring
+shape — **a failure rendered as a fact** — reintroduced by the code written to
+stop it.
+
+- ⚠️ **`getCode(ORACLE).catch(() => '0x')` cached a failed read as "this chain
+  has no L1 fee".** One transient 403 or timeout on the first EVM withdrawal
+  disabled L1 accounting on Base for the life of the process, silently, on the
+  exact path where being short by the L1 fee means the withdrawal does not send.
+  Only a read that ANSWERED is cached now, and `_l1DataFee` returns
+  `{fee, ok, oracle}` — a read that failed reserves the L2 cost as a stand-in,
+  never zero.
+- ⚠️ **A survey that did not happen rendered as an empty wallet.** The removal
+  screen swallowed a thrown `walletFunds` into `funds = []`, which took the
+  "empty of native on every chain I could read" branch and offered a one-tap
+  ✅ Remove. `surveyed` is now its own state with its own copy and its own
+  button.
+- ⚠️ **…and fixing that created a BOUNCE LOOP.** The unsurveyed screen's only
+  forward button is `rmwf`, and `rmwf` sent anything with no holdings back to
+  the screen — so an unreadable wallet ping-ponged between the two for ever and
+  could never be removed. Three states, not two: *held*, *surveyed and empty*,
+  *not surveyed*.
+- **`Promise.all` rejects on the first throw**, and resolving a Solana address
+  derives a keypair — so one wallet the derivation could not handle turned the
+  per-chain `ok:false` this function promises into an exception out of the whole
+  survey.
+- **A callback could name a DISABLED chain.** `chainOf` answers from the whole
+  table; `core.setChain` throws on `isEnabled`, and this path now checks it too.
+- **The keys-then-remove gate needed the reason, once.** A thrown `exportKeyMsg`
+  sent its own ❌ and then a second generic one on top of it.
+
+And one coupling that is not a bug yet, guarded so it cannot become one quietly:
+the sweep lands on the balance exactly, so `transferFee` and `sendSol` must price
+and sign **the same message**. They do because both build a bare
+`SystemProgram.transfer`; a test fails if either grows a second instruction,
+because a priority fee on one side alone puts `max` straight back into the
+rent-paying band.
+
 ```bash
-cd tradebot && node --test walletWithdraw.test.js   # 28 tests, no network
+cd tradebot && node --test walletWithdraw.test.js   # 36 tests, no network
 ```
+
+⚠️ **The OP-stack L1 fee read is the one thing not verified against a live
+node** — the sandbox this was written in cannot reach a Base RPC. The code fails
+safe (a read that does not answer reserves the L2 cost rather than zero), but
+the first real sweep on Base is worth watching, and `getL1Fee`'s answer is worth
+printing once.
 
 **Config a fix depends on:** nothing. Note that `ENABLED_CHAINS` does not ship
 with `solana` in it — the two-keypair half of all of this only exists where an

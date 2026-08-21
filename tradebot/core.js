@@ -717,19 +717,26 @@ async function _balanceResilient(chainKey, addr, tries = 3, timeoutMs = 6000) {
 async function walletFunds(chatId, walletId) {
   const u = ensureUser(chatId);
   const w = walletById(u, walletId); if (!w) throw new Error('wallet not found');
-  return Promise.all(chains.enabledChains().map(async (ch) => {
-    const svm = ch.kind === 'svm';
-    const addr = svm ? solAddressOf(w) : w.address;
+  const row = (ch, addr, ok, bal) => ({
+    chain: ch.key, name: ch.name, emoji: ch.emoji, native: ch.native, svm: ch.kind === 'svm', address: addr,
+    ok, bal,
     // Dust threshold in the chain's smallest unit: ~0.0002 ETH on EVM, 0.002 SOL on
     // Solana (a hair above the rent-exempt minimum, so an empty ATA-only wallet frees).
-    const dust = svm ? 2000000n : ethers.parseEther('0.0002');
+    holds: ok && bal > (ch.kind === 'svm' ? 2000000n : ethers.parseEther('0.0002')),
+    human: ch.kind === 'svm' ? solana.lamportsToSol(bal).toFixed(5) : Number(ethers.formatEther(bal)).toFixed(5),
+  });
+  // Every chain is its own answer. Resolving the Solana address derives and
+  // persists a keypair, and `Promise.all` REJECTS on the first throw — so one
+  // wallet the derivation cannot handle used to take the whole survey down and
+  // the caller got an exception instead of the per-chain `ok:false` this
+  // function promises. A chain that cannot even be addressed is exactly the
+  // "we could not look" case, not an exception.
+  return Promise.all(chains.enabledChains().map(async (ch) => {
+    let addr;
+    try { addr = ch.kind === 'svm' ? solAddressOf(w) : w.address; }
+    catch (_) { return row(ch, '', false, 0n); }
     const { ok, bal } = await _balanceResilient(ch.key, addr);
-    return {
-      chain: ch.key, name: ch.name, emoji: ch.emoji, native: ch.native, svm, address: addr,
-      ok, bal,
-      holds: ok && bal > dust,
-      human: svm ? solana.lamportsToSol(bal).toFixed(5) : Number(ethers.formatEther(bal)).toFixed(5),
-    };
+    return row(ch, addr, ok, bal);
   }));
 }
 
@@ -2470,25 +2477,33 @@ async function nativeTransferGas(chainKey, from, to, value) {
  * without the predeploy answers 0 forever after one `getCode`.
  */
 const OP_GAS_ORACLE = '0x420000000000000000000000000000000000000F';
-const _hasL1Oracle = new Map();   // chainKey → boolean
+const _hasL1Oracle = new Map();   // chainKey → boolean (ONLY ever set from a read that answered)
 async function _l1DataFee(chainKey, req) {
+  const prov = providerFor(chainKey);
+  let has = _hasL1Oracle.get(chainKey);
+  if (has === undefined) {
+    // ⚠️ `.catch(() => '0x')` HERE WOULD BE THE BUG THIS FILE KEEPS WRITING.
+    // "this chain has no oracle" and "the node did not answer" are different
+    // facts, and caching the second as the first disables L1 accounting on Base
+    // for the life of the process — after one transient 403 or timeout, silently,
+    // on the exact path where being short by the L1 fee means the withdrawal does
+    // not send. A failed read is not cached and is reported to the caller.
+    let code;
+    try { code = await prov.getCode(OP_GAS_ORACLE); }
+    catch (_) { return { fee: 0n, ok: false, oracle: null }; }
+    has = !!(code && code !== '0x');
+    _hasL1Oracle.set(chainKey, has);
+  }
+  if (!has) return { fee: 0n, ok: true, oracle: false };   // not an OP-stack chain: 0 is the true answer
   try {
-    const prov = providerFor(chainKey);
-    let has = _hasL1Oracle.get(chainKey);
-    if (has === undefined) {
-      const code = await prov.getCode(OP_GAS_ORACLE).catch(() => '0x');
-      has = !!(code && code !== '0x');
-      _hasL1Oracle.set(chainKey, has);
-    }
-    if (!has) return 0n;
     // The unsigned serialization under-counts by the signature bytes the oracle
     // would see; the caller's headroom covers that, and an over-estimate here
     // only ever means a slightly smaller sweep.
     const raw = ethers.Transaction.from(req).unsignedSerialized;
     const oracle = new ethers.Contract(OP_GAS_ORACLE, ['function getL1Fee(bytes) view returns (uint256)'], prov);
     const f = await oracle.getL1Fee(raw);
-    return f > 0n ? BigInt(f) : 0n;
-  } catch (_) { return 0n; }   // unknown L1 fee → 0 here, headroom above absorbs it
+    return { fee: f > 0n ? BigInt(f) : 0n, ok: true, oracle: true };
+  } catch (_) { return { fee: 0n, ok: false, oracle: true }; }
 }
 // Gas limit for a V3 swap / unwrap CONTRACT call. Same reason as
 // nativeTransferGas: a hardcoded limit ignores the Orbit L1-calldata component
@@ -3554,13 +3569,19 @@ async function withdraw(chatId, to, amount, chainKey, walletId) {
     // sweep that ignores it is short by exactly that much. Priced against a
     // representative transfer — the value it carries does not change the
     // calldata length, which is what the oracle charges for.
-    const l1Cost = await _l1DataFee(chainKey, {
+    const l1 = await _l1DataFee(chainKey, {
       type: fee.maxFeePerGas ? 2 : 0, chainId: chain.chainId, nonce: 0, to, data: '0x',
       value: bal > 0n ? bal : 1n, gasLimit,
       ...(fee.maxFeePerGas
         ? { maxFeePerGas: fee.maxFeePerGas, maxPriorityFeePerGas: fee.maxPriorityFeePerGas || 0n }
         : { gasPrice: fee.gasPrice }),
     });
+    // A read that FAILED must not reserve zero. Zero is the right answer only
+    // where the chain has no L1 fee at all; where we could not find out, or the
+    // oracle would not answer, the conservative stand-in is the L2 cost itself —
+    // over-reserving costs a sliver of a sweep, under-reserving costs the whole
+    // transaction.
+    const l1Cost = l1.ok ? l1.fee : l2Cost;
     // Headroom on top of the exact signed cost: the base fee can rise between
     // this read and inclusion, and `maxFeePerGas` only bounds what is CHARGED,
     // never what must be RESERVED. A withdrawal that reserves too much sends
