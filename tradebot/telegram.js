@@ -3351,9 +3351,35 @@ function onMessage(m) {
   // even for flows that delete the user's message first (e.g. importing a private key).
   return _replyCtx.run(m && m.message_id, () => onMessageImpl(m));
 }
+/**
+ * Normalise the COMMAND WORD of a message, and nothing else.
+ *
+ * Every command below is matched with `===` against a lowercase literal, and
+ * Telegram does not lowercase what the user typed — so `/WITHDRAW` and
+ * `/Withdraw` (which is what a phone keyboard's autocapitalise produces) fell
+ * through to "🤔 I didn't recognise that" on a bot whose entire command set is
+ * lowercase. In a group Telegram also appends the bot's own username —
+ * `/withdraw@DexvraTradeBot` — and that failed in exactly the same way, on every
+ * one of the 33 commands.
+ *
+ * ⚠️ ONLY THE FIRST WORD, and only when it starts with `/`. Lowercasing the whole
+ * message would be a much worse bug than the one being fixed: this same string is
+ * what a user pastes a contract address into, and a base58 Solana mint and a
+ * checksummed EVM address are BOTH case-sensitive. Everything after the first
+ * space — a /start deep link payload, a referral code, /send's arguments — is
+ * passed through untouched for the same reason.
+ */
+function normalizeCommand(text) {
+  if (!text.startsWith('/')) return text;
+  const sp = text.search(/\s/);
+  const head = sp === -1 ? text : text.slice(0, sp);
+  const rest = sp === -1 ? '' : text.slice(sp);
+  return head.toLowerCase().split('@')[0] + rest;
+}
+
 async function onMessageImpl(m) {
   const chatId = m.chat.id;
-  const text = (m.text || '').trim();
+  const text = normalizeCommand((m.text || '').trim());
   if (!text) return;
 
   let p = pending.get(chatId);
@@ -5623,5 +5649,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, normalizeCommand, onMessage, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

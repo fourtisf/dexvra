@@ -2341,6 +2341,37 @@ cd tradebot && node --test walletWithdraw.test.js   # 51 tests, no network
 **Config a fix depends on:** nothing. `MAX_WD_PER_HOUR` still bounds sweeps —
 one sweep, one slot.
 
+## "/WITHDRAW" — 33 commands were one shift key from not existing
+
+> 🤔 I didn't recognise that.
+
+Reported with a screenshot of `/WITHDRAW` typed into a bot that had just shipped
+the withdraw work. Nothing was wrong with the feature: every command in
+`telegram.js` is matched with `===` against a lowercase literal, and **Telegram
+does not lowercase what the user typed**. A phone keyboard capitalises the first
+letter of a message by default, so `/Withdraw` — the thing most people actually
+send — never matched either, and neither did any of the other 32.
+
+- **In a group it is worse and invisible.** Telegram appends the bot's own
+  username when several bots are present (`/withdraw@DexvraTradeBot`), which
+  failed identically. Nothing in the file had ever stripped it.
+- **`normalizeCommand` runs ONCE, at the entry point.** A fix applied
+  command-by-command is one the 34th command forgets; a test pins the call-site
+  count at one.
+- ⚠️ **Only the FIRST WORD, and only when it starts with `/`.** Lowercasing the
+  whole message would be a far worse bug than the one being fixed: this same
+  string is what a contract address is pasted into, and a **base58 Solana mint
+  and a checksummed EVM address are both case-SENSITIVE**. Everything after the
+  first space is passed through verbatim for the same reason — the `/start`
+  deep-link payload (`ca_solana_<mint>`), a referral code, `/send`'s two
+  addresses.
+- The tests DRIVE `onMessage` for `/WITHDRAW`, `/Withdraw` and
+  `/withdraw@Bot` and assert the reply is the withdraw screen and not the
+  fallback. A source scan of the normaliser would pass on a version that is
+  never called.
+
+**Config a fix depends on:** nothing.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

@@ -762,3 +762,62 @@ test("a total of balances nobody read is not 0", { skip: !core || !tg }, async (
   assert.match(s.text, /\? SOL|balances couldn't be read/);
   assert.doesNotMatch(s.text, /holding <b>0 SOL<\/b>/);
 });
+
+// ---------------------------------------------------------------- command case
+//
+// "/WITHDRAW" → "🤔 I didn't recognise that." Every command in this file is
+// matched with === against a lowercase literal, Telegram does not lowercase what
+// the user typed, and a phone keyboard capitalises the first letter — so all 33
+// of them were one shift key away from not existing.
+
+test("a command is recognised whatever its case, and with the bot suffix", { skip: !core || !tg }, () => {
+  const n = tg._test.normalizeCommand;
+  for (const v of ["/WITHDRAW", "/Withdraw", "/withdraw", "/withdraw@DexvraTradeBot", "/WITHDRAW@DexvraTradeBot"]) {
+    assert.equal(n(v), "/withdraw", v);
+  }
+  // In a group Telegram appends the bot's own username; that failed identically.
+  assert.equal(n("/start@SomeBot ref_ABC"), "/start ref_ABC");
+});
+
+test("…and NOTHING but the first word is touched", { skip: !core || !tg }, () => {
+  const n = tg._test.normalizeCommand;
+  // ⚠️ Lowercasing the whole message would be a far worse bug than the one being
+  // fixed: this same string is what a contract address is pasted into, and a
+  // base58 Solana mint and a checksummed EVM address are both case-SENSITIVE.
+  const mint = "Ge87EtsjKpMbXyzABCdefGH";
+  const evm = "0xC29041CFa0788B63F367A02105A46b7c6627FA47";
+  assert.equal(n(mint), mint, "a pasted mint is not a command");
+  assert.equal(n(evm), evm, "nor a pasted EVM address");
+  assert.equal(n(`/start ca_solana_${mint}`), `/start ca_solana_${mint}`, "a deep-link payload survives verbatim");
+  assert.equal(n(`/START ca_solana_${mint}`), `/start ca_solana_${mint}`);
+  assert.equal(n(`/send ${mint} ${evm} max`), `/send ${mint} ${evm} max`, "arguments untouched");
+  assert.equal(n(`/pnl ${evm}`), `/pnl ${evm}`);
+});
+
+test("DRIVEN: /WITHDRAW reaches the withdraw flow, not the fallback", { skip: !core || !tg }, async () => {
+  const CHATC = "770004";
+  core.ensureUser(CHATC);
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage/.test(String(url))) sent.push(b.text); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  try {
+    for (const cmd of ["/WITHDRAW", "/Withdraw", "/withdraw@DexvraTradeBot"]) {
+      sent.length = 0;
+      await tg._test.onMessage({ message_id: 1, chat: { id: CHATC }, from: { id: CHATC }, text: cmd });
+      assert.ok(sent.length, cmd + " produced no reply");
+      assert.match(sent[0], /Withdraw/, cmd);
+      assert.doesNotMatch(sent[0], /didn't recognise/, cmd + " fell through to the fallback");
+    }
+  } finally { global.fetch = realFetch; }
+});
+
+test("the normalisation happens ONCE, at the entry point", { skip: !core }, () => {
+  const t = code("telegram.js");
+  // 33 commands matched by ===; a fix applied per-command is one the 34th
+  // forgets. It has to be the single read of the message.
+  assert.match(t, /const text = normalizeCommand\(\(m\.text \|\| ''\)\.trim\(\)\);/);
+  assert.equal((t.match(/normalizeCommand\(/g) || []).length, 2, "the definition and one call site");
+});
