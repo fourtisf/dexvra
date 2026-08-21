@@ -251,6 +251,19 @@ test("the homepage renders the movers, the trending board and Top Coins", () => 
     assert.match(page, new RegExp(`<${c}`), `${c} is on the page`);
 });
 
+test("the market area reads Trending, then the movers, then Top Coins", () => {
+  // The ORDER is the operator's call, not an implementation detail: Trending
+  // is the paid inventory and leads, the movers read under it, Top Coins
+  // closes. Pinned because a reorder is a one-line edit nothing else would
+  // notice, and one chain filter above all three governs whichever comes
+  // first.
+  const page = read("src/app/(site)/page.tsx");
+  const at = (c: string) => page.indexOf(`<${c}`);
+  assert.ok(at("ChainFilter") < at("StdBoard"), "the one chain filter sits above the market area");
+  assert.ok(at("StdBoard") < at("MarketMovers"), "Trending leads");
+  assert.ok(at("MarketMovers") < at("TopCoinsBoard"), "Top Coins is last");
+});
+
 test("no component builds its own chain list — chains.ts stays the one owner", () => {
   // "Adding a chain = adding one entry here. Nothing else in the app may
   // hardcode a chain id." The home filter derives its row from the DATA, which

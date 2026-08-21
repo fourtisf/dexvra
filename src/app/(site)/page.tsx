@@ -17,8 +17,9 @@ const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
 /**
  * The market area reads top-down as three different questions:
  *
+ *   Trending        what is being pushed right now — the paid inventory, and
+ *                   the reason this site exists, so it leads
  *   Market Movers   what moved — gainers, losers, what just listed
- *   Trending        what is being pushed right now (the paid inventory)
  *   Top Coins       what is actually big here
  *
  * ONE chain filter governs all three. Repeating a chain row per section is
@@ -52,11 +53,6 @@ export default function HomePage() {
 
       <ChainFilter counts={counts} value={active} onChange={setChain} total={tokens.length} />
 
-      {/* A search is a lookup, not a ranking. "Top Gainers matching PLUM" is
-          not a top-gainers list, and leaving it market-wide would put two
-          different datasets on one screen under one query. */}
-      {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} />}
-
       <div className="sec-block">
         <div className="sec-head">
           <div className="sec-title">
@@ -89,8 +85,8 @@ export default function HomePage() {
           </button>
         </div>
 
-        {/* Capped so Top Coins under it is reachable without a long scroll —
-            with the total and a doorway printed, never a silent cut. */}
+        {/* Capped so the two sections under it are reachable without a long
+            scroll — with the total and a doorway printed, never a silent cut. */}
         <StdBoard
           tokens={list}
           period={period}
@@ -100,6 +96,11 @@ export default function HomePage() {
           viewAllHref="/trending"
         />
       </div>
+
+      {/* A search is a lookup, not a ranking. "Top Gainers matching PLUM" is
+          not a top-gainers list, and leaving it market-wide would put two
+          different datasets on one screen under one query. */}
+      {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} />}
 
       <div className="sec-block">
         <TopCoinsBoard tokens={list} period={period} />
