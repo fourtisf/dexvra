@@ -46,6 +46,9 @@ const core = {
   chains: { enabledChains: () => CH, isSvm: (k) => k === 'solana' },
   providerFor: (k) => ({ getBalance: async (a) => bal(a, k) }),
   ethBalance: async (a, k) => bal(a, k),
+  // The screen reads balances through this now: 0n and "we could not read it"
+  // are different facts, and on Solana `ethBalance` could not tell them apart.
+  ethBalanceOrNull: async (a, k) => { try { return bal(a, k); } catch (_) { return null; } },
   tokenSnapshot: async (ca) => ({ priceEth: PRICE[ca] || 0 }),
 };
 function bal(addr, k) {

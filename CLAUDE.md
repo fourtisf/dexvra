@@ -2276,6 +2276,71 @@ cd tradebot && node --test walletWithdraw.test.js   # 42 tests, no network
 
 **Config a fix depends on:** nothing.
 
+## "Bisa withdraw semua wallet tapi dipilih dulu chainnya apa"
+
+📤 Withdraw (active) only ever spent the ACTIVE wallet on the ACTIVE chain, so
+emptying ten wallets was twenty screen switches. `withdrawMany` is the same
+withdrawal over a SELECTION: **chain → wallets → address → amount → confirm.**
+
+- **Chain FIRST.** The rule the snipe panel had to be rescued into — a flow bound
+  to whatever chain happened to be active is how a Solana address pasted on an
+  EVM screen bounces as "not a valid address" with the fix two screens away.
+- ⚠️ **The rate limit is charged ONCE for the whole sweep.** `MAX_WD_PER_HOUR`
+  defaults to 10 and a full account is 10 wallets, so charging per wallet would
+  let one sweep spend the entire hour's budget and then stop halfway with "rate
+  limit reached" — funds out of some wallets and not others, from a confirmation
+  the user gave once. A half-done irreversible action is worse than a refused
+  one. The limit bounds how fast a compromised session can move money to a NEW
+  destination; this is one destination, confirmed once. `withdraw(…, false)` is
+  the un-guarded worker and `withdrawMany` is its only caller.
+- **The destination is validated before ANY wallet moves**, so a typo or a locked
+  vault costs nothing and moves nothing — and the failure says *"Nothing was
+  sent."*
+- ⚠️ **The amount is PER WALLET and the confirmation does the arithmetic out
+  loud** — `0.1` across ten wallets is one ETH. Same rule as the dev-snipe fan-out
+  budget, and the same way to get it wrong.
+- **An empty wallet is ⚪️, never ❌.** Asked to sweep a wallet holding nothing,
+  doing nothing is the right answer; a red cross beside eight untouched wallets
+  sends the reader hunting for a fault. `empty` is set only by a SWEEP — asking
+  for a fixed amount a wallet does not have is a real failure worth seeing.
+- ⚠️ **The selection lives in the PENDING STEP, never in `core.tradeSelection`.**
+  That one is persisted and drives which wallets every future Buy and Sell act
+  on; a withdraw picker writing to it would silently re-aim the user's trading as
+  a side effect of emptying a wallet.
+- **One progress message, edited with the result** — ten wallets is ten
+  notifications for one action, and the user is looking at the screen already.
+  The `redrawTicket` rule applies to the picker: the poll loop does not await
+  `handleUpdate`, so a run of taps is concurrent and the last render wins, not
+  the last tap.
+
+### ⚠️ `solBalance` answered 0 for a dead RPC, and the removal guard believed it
+
+Found while building the picker, and it is a defect in the shipped removal
+screen, not in the new one. `solana.solBalance` catches its own errors and
+returns `0n`, so on Solana **an unreadable balance and an empty wallet were the
+same value**. `_balanceResilient`'s retry loop could therefore only ever detect
+the 6-second TIMEOUT there: a node answering with a 429 or a 403 came back
+`{ok: true, bal: 0n}`, `walletFunds` reported the chain as empty, and the removal
+screen offered a one-tap ✅ Remove over a wallet holding 2.15 SOL.
+
+- **`solBalanceOrNull` is the fix**, the shape `splBalanceOrNull` beside it
+  already had, and `core.ethBalanceOrNull` is what every screen reads.
+- ⚠️ **The screens read it through CORE.** The first cut had `readNative` reach
+  into the `solana` module directly — a layering break, and the tell was
+  immediate: `walletRender.test.js` stubs `core`, so the read went around its own
+  stub and four render tests failed for a reason that had nothing to do with
+  what they cover.
+- **The sweep picker prints `?`, and does not total what it could not read.**
+  Summing unread balances into "holding 0 SOL" would put the lie back one line
+  above the `?` that exists to avoid it.
+
+```bash
+cd tradebot && node --test walletWithdraw.test.js   # 51 tests, no network
+```
+
+**Config a fix depends on:** nothing. `MAX_WD_PER_HOUR` still bounds sweeps —
+one sweep, one slot.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

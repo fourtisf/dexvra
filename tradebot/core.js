@@ -710,13 +710,19 @@ function switchWallet(chatId, walletId) {
 async function _balanceResilient(chainKey, addr, tries = 3, timeoutMs = 6000) {
   for (let i = 0; i < tries; i++) {
     try {
+      // ⚠️ solBalanceOrNull, NOT solBalance. The latter answers 0n for a dead
+      // RPC, a 429 and an empty wallet alike, so the only failure this loop
+      // could ever detect on Solana was the 6s TIMEOUT — a node that answered
+      // with an error came back as `{ok:true, bal:0}` and the removal guard
+      // read a funded wallet as empty. The retry above was decorative there.
       const read = isSvm(chainKey)
-        ? solana.solBalance(providerFor(chainKey), addr)   // lamports (never throws, but keep the race for the timeout)
+        ? solana.solBalanceOrNull(providerFor(chainKey), addr)
         : providerFor(chainKey).getBalance(addr);
       const bal = await Promise.race([
         read,
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs)),
       ]);
+      if (bal == null) continue;   // the read failed — retry, then report ok:false
       return { ok: true, bal };
     } catch (_) { /* retry */ }
   }
@@ -1623,8 +1629,21 @@ function gasBufferWei(chainKey) {
 }
 
 async function ethBalance(addr, chainKey) {
-  if (isSvm(chainKey)) return solana.solBalance(providerFor(chainKey), addr);
-  try { return await providerFor(chainKey).getBalance(addr); } catch (_) { return 0n; }
+  const v = await ethBalanceOrNull(addr, chainKey);
+  return v == null ? 0n : v;
+}
+/**
+ * The native balance, or NULL when it could not be read.
+ *
+ * `ethBalance` answers 0n for a dead RPC and an empty wallet alike, and every
+ * screen that decides something on the answer needs those apart — the wallet
+ * dashboard prints "couldn't read it just now", the sweep picker prints `?`, and
+ * the removal guard must not offer a one-tap ✅ Remove over a balance nobody
+ * read. Same contract as `tokenBalanceOrNull` two functions down.
+ */
+async function ethBalanceOrNull(addr, chainKey) {
+  if (isSvm(chainKey)) return solana.solBalanceOrNull(providerFor(chainKey), addr);
+  try { return await providerFor(chainKey).getBalance(addr); } catch (_) { return null; }
 }
 // Raw token balance (BigInt) held by `addr`. On Solana `ca` is an SPL mint and `addr`
 // the owner; splBalance sums the owner's token accounts. Raw units — decimals differ
@@ -2960,13 +2979,17 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
 function solWithdrawPlan(bal, fee, rentMin, amount) {
   const sol = (l) => solana.lamportsToSol(l);
   const isMax = String(amount).toLowerCase() === 'max';
-  if (bal <= 0n) return { error: 'this wallet has no SOL to withdraw' };
+  // `empty` is not a failure: asked to sweep a wallet that holds nothing, doing
+  // nothing is the right answer. It matters on a MULTI-wallet sweep, where a red
+  // cross beside eight untouched wallets sends people hunting for a fault —
+  // the ⚪️-not-❌ rule the trade receipts already follow.
+  if (bal <= 0n) return { error: 'this wallet has no SOL to withdraw', empty: true };
   // A sweep lands on the balance EXACTLY. Zero is a legal place to leave an
   // account (it is purged, and reappears on the next deposit); the 10,000-lamport
   // "fee reserve" this replaced was not.
   const lamports = isMax ? bal - fee : solana.solToLamports(amount);
   if (lamports <= 0n) {
-    return { error: isMax
+    return { empty: isMax, error: isMax
       ? `this wallet holds ${sol(bal)} SOL, which is below the ${sol(fee)} SOL network fee — there is nothing left to send.`
       : 'nothing to withdraw (after fees)' };
   }
@@ -3005,10 +3028,11 @@ function solWithdrawPlan(bal, fee, rentMin, amount) {
  * remainder is checked and REFUSED WITH THE TWO AMOUNTS THAT WOULD WORK. The old
  * code sent it and let the simulator produce the sentence above.
  */
-async function _withdrawSol(u, to, amount, chainKey, walletId) {
+async function _withdrawSol(u, to, amount, chainKey, walletId, guarded) {
+  guarded = guarded !== false;
   to = String(to || '').trim();
   if (!solana.isSolAddress(to)) throw new Error('invalid Solana destination address');
-  _guardWithdraw(u, to, chainKey);   // vault lock / whitelist / rate limit
+  if (guarded) _guardWithdraw(u, to, chainKey);   // vault lock / whitelist / rate limit
   const wal = _resolveWallet(u, walletId);
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);
@@ -3019,8 +3043,8 @@ async function _withdrawSol(u, to, amount, chainKey, walletId) {
     ]);
     const fee = await solana.transferFee(conn, kp.publicKey, to, bal);
     const plan = solWithdrawPlan(bal, fee, rentMin, amount);
-    if (plan.error) throw new Error(plan.error);
-    _noteWithdraw(u);
+    if (plan.error) { const e = new Error(plan.error); e.empty = !!plan.empty; throw e; }
+    if (guarded) _noteWithdraw(u);
     const sig = await solana.sendSol(conn, kp, to, plan.lamports);
     return { hash: sig, sentEth: solana.lamportsToSol(plan.lamports), native: 'SOL', swept: plan.isMax };
   });
@@ -3554,7 +3578,9 @@ function evmWithdrawPlan(bal, gasCost, amount, nativeSym) {
   const isMax = String(amount).toLowerCase() === 'max';
   const value = isMax ? bal - gasCost : ethers.parseEther(String(amount));
   if (value <= 0n) {
-    return { error: `this wallet holds ${eth(bal)} ${nativeSym}, which does not cover the ≈${eth(gasCost)} ${nativeSym} of gas this transfer needs — there is nothing left to send.` };
+    // Only a SWEEP counts as empty. Asking for a fixed amount a wallet does not
+    // have is a real failure the user needs to see, not an untouched wallet.
+    return { empty: isMax, error: `this wallet holds ${eth(bal)} ${nativeSym}, which does not cover the ≈${eth(gasCost)} ${nativeSym} of gas this transfer needs — there is nothing left to send.` };
   }
   if (value + gasCost > bal) {
     return { error: `amount exceeds balance after gas — you can send at most ${eth(bal - gasCost)} ${nativeSym} (type "max").` };
@@ -3562,15 +3588,16 @@ function evmWithdrawPlan(bal, gasCost, amount, nativeSym) {
   return { value, isMax };
 }
 
-async function withdraw(chatId, to, amount, chainKey, walletId) {
+async function withdraw(chatId, to, amount, chainKey, walletId, guarded) {
+  guarded = guarded !== false;   // only withdrawMany passes false, having guarded once itself
   const u = getUser(chatId); if (!u) throw new Error('no wallet');
   chainKey = chainKey || userChain(u);
   // Branch svm BEFORE the 0x check — a base58 Solana destination isn't a 0x address.
-  if (isSvm(chainKey)) return _withdrawSol(u, to, amount, chainKey, walletId);
+  if (isSvm(chainKey)) return _withdrawSol(u, to, amount, chainKey, walletId, guarded);
   to = String(to || '').trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(to)) throw new Error('invalid destination address');
   if (/^0x0{40}$/i.test(to)) throw new Error('refusing to send to the zero address');
-  _guardWithdraw(u, to, chainKey);   // vault lock / whitelist / rate limit
+  if (guarded) _guardWithdraw(u, to, chainKey);   // vault lock / whitelist / rate limit
   const wal = _resolveWallet(u, walletId);
   const chain = chainOf(chainKey) || {};
   const nativeSym = chain.native || 'ETH';
@@ -3621,19 +3648,71 @@ async function withdraw(chatId, to, amount, chainKey, walletId) {
     // at all — the asymmetry decides the direction to round.
     const gasCost = l2Cost + l2Cost / 2n + l1Cost + l1Cost / 4n;
     const plan = evmWithdrawPlan(bal, gasCost, amount, nativeSym);
-    if (plan.error) throw new Error(plan.error);
+    if (plan.error) { const e = new Error(plan.error); e.empty = !!plan.empty; throw e; }
     const value = plan.value;
     // rawSend, NOT wallet.sendTransaction — same Robinhood-node quirk as
     // _chargeFee: the ethers send path fails there, which would have made
     // native withdrawals on Robinhood Chain fail too.
     const hash = await rawSend(wallet, chainKey, to, '0x', gasLimit, value, undefined, { fee });
-    _noteWithdraw(u);
+    if (guarded) _noteWithdraw(u);
     const rc = await waitHash(hash, chainKey);
     // A reverted withdraw (e.g. a contract recipient that rejects the transfer)
     // must NOT be reported as sent — funds stayed put.
     if (rc && rc.status === 0) throw new Error('the withdraw reverted on-chain — the recipient may reject direct transfers. Funds were NOT sent. Tx: ' + hash);
     return { hash, sentEth: Number(ethers.formatEther(value)), native: nativeSym, swept: plan.isMax };
   });
+}
+
+/**
+ * Sweep several wallets on ONE chain to ONE address — "withdraw all wallets",
+ * with the chain picked first.
+ *
+ * ⚠️ THE RATE LIMIT IS CHECKED AND CHARGED ONCE, for the whole sweep. It has to
+ * be. `MAX_WD_PER_HOUR` defaults to 10 and a full account is 10 wallets, so
+ * charging per wallet would let a single sweep spend the entire hour's budget
+ * and, on the eleventh wallet, stop halfway with "rate limit reached" — funds
+ * moved out of some wallets and not others, from one confirmation the user gave
+ * once. A half-done irreversible action is worse than a refused one. The limit
+ * exists to bound how fast a compromised session can move money to a NEW
+ * destination, and this is one destination, confirmed once.
+ *
+ * Wallets run CONCURRENTLY — each holds its own `withWalletLock`, so there is no
+ * contention — and every one gets its own row in the result. A wallet that held
+ * nothing is `empty`, never `error`: asked to sweep an empty wallet, doing
+ * nothing is the right answer, and a red cross beside it sends the reader
+ * hunting for a fault that is not there.
+ *
+ * Nothing here throws for a per-wallet failure. The caller renders the rows.
+ */
+async function withdrawMany(chatId, to, amount, chainKey, walletIds) {
+  const u = getUser(chatId); if (!u) throw new Error('no wallet');
+  chainKey = chainKey || userChain(u);
+  if (!isEnabled(chainKey)) throw new Error('chain not enabled');
+  const list = walletList(u);
+  const wanted = (Array.isArray(walletIds) && walletIds.length ? walletIds : list.map((w) => w.id))
+    .filter((id) => list.some((w) => w.id === id));
+  if (!wanted.length) throw new Error('no wallets selected');
+  // Validate the destination and the security posture BEFORE any wallet moves,
+  // so a bad address or a locked vault costs nothing and moves nothing.
+  const dest = String(to || '').trim();
+  if (isSvm(chainKey)) { if (!solana.isSolAddress(dest)) throw new Error('invalid Solana destination address'); }
+  else {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(dest)) throw new Error('invalid destination address');
+    if (/^0x0{40}$/i.test(dest)) throw new Error('refusing to send to the zero address');
+  }
+  _guardWithdraw(u, dest, chainKey);
+  _noteWithdraw(u);
+  return Promise.all(wanted.map(async (id) => {
+    const w = walletById(u, id);
+    const index = list.findIndex((x) => x.id === id) + 1;
+    const row = { walletId: id, index, label: walletLabel(w, index) };
+    try {
+      const r = await withdraw(chatId, dest, amount, chainKey, id, false);
+      return { ...row, ok: true, sentEth: r.sentEth, native: r.native, hash: r.hash, swept: r.swept };
+    } catch (e) {
+      return { ...row, ok: false, empty: !!(e && e.empty), error: (e && e.message) || String(e) };
+    }
+  }));
 }
 
 // Withdraw a HELD TOKEN (ERC20 on EVM, SPL on Solana) to an external address. Same
@@ -3990,7 +4069,8 @@ module.exports = {
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenSupplyUi, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
   walletFunds, solWithdrawPlan, evmWithdrawPlan, exportMnemonic,
-  buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
+  ethBalanceOrNull,
+  buy, sell, withdraw, withdrawMany, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
   // Test-only seams — see the notes at each definition.
   _deps,
   _clearReadCaches, _launchpadFailClear: () => _launchpadFail.clear(),

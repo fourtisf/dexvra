@@ -38,6 +38,23 @@ let BOT_USERNAME = '';
 // single flaky/slow RPC (a timed-out read) can't silently drop a chain from the wallet
 // totals — the total stays stable instead of jumping down then back on refresh.
 const _balCache = new Map();
+// One owner of "what does this wallet hold natively on this chain". The wallet
+// dashboard and the multi-wallet withdraw picker both read it; two private
+// copies is how two screens end up disagreeing about the same number.
+// STRICT on purpose: it throws rather than answering 0, so a caller can tell an
+// unread balance from an empty wallet.
+const readNative = async (w, c) => {
+  // ⚠️ ethBalanceOrNull, NOT ethBalance. On svm the latter resolves 0n for a
+  // dead RPC, so an unreadable balance rendered as an empty wallet on every
+  // screen that shows one — the dashboard, the sweep picker, and the removal
+  // guard's one-tap ✅ Remove. The comment here used to claim "svm errors
+  // already bubble"; they did not, and had not since the read was written.
+  // Throwing on null keeps this function's existing contract: callers already
+  // wrap it in `.catch(() => null)` and render the miss.
+  const v = await core.ethBalanceOrNull(wAddr(w, c.key), c.key);
+  if (v == null) throw new Error('balance unreadable');
+  return v;
+};
 // Short-lived token price cache `${chain}:${caLower}` → { priceEth, at } so the wallet
 // screen can include TOKEN holdings in each wallet's total without re-pricing every render.
 const _priceCache = new Map();
@@ -210,7 +227,7 @@ function answer(id, text) { return tg('answerCallbackQuery', { callback_query_id
 // Callback keys whose handler answers the query with its OWN text. These must
 // NOT be pre-acked — see the comment at the top of onCallback. Keep in sync with
 // every `answer(q.id, <text>)` call site; callbackAck.test.js enforces it.
-const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell', 'ospd', 'mw', 'mwa', 'mwn']);
+const ANSWERS_ITSELF = new Set(['oc', 'al', 'wtc', 'setlang', 'gasset', 'monn', 'monx', 'cpsell', 'ospd', 'mw', 'mwa', 'mwn', 'wdaGo']);
 function del(chatId, mid) { return tg('deleteMessage', { chat_id: chatId, message_id: mid }).catch(() => {}); }
 /**
  * Send a PNG we rendered ourselves.
@@ -666,12 +683,6 @@ async function walletScreen(chatId) {
   // STRICT reads: core.ethBalance swallows EVM RPC errors into 0n, which made a
   // dead RPC render as "0 ETH" (looked like an untracked deposit). Read the
   // provider directly with one retry; a chain that still fails is null → '—'.
-  const readNative = async (w, c) => {
-    const addr = wAddr(w, c.key);
-    if (core.chains.isSvm(c.key)) return core.ethBalance(addr, c.key);   // svm errors already bubble
-    const prov = core.providerFor(c.key);
-    try { return await prov.getBalance(addr); } catch (_) { return prov.getBalance(addr); }
-  };
   // 2.5s per read, not 6 ("mengapa bot masih lama merespon??"). This wave is
   // wallets × chains requests to mostly public RPCs and the SCREEN waits for
   // the slowest one, so a single throttled endpoint held the whole dashboard
@@ -865,6 +876,11 @@ async function walletScreen(chatId) {
   });
   if (list.length < core.WALLET_CAP) kbRows.push([btn(`➕ Generate wallet (${list.length}/${core.WALLET_CAP})`, 'neww'), btn('📩 Import', 'imp')]);
   kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
+  // "bisa withdraw semua wallet tapi dipilih dulu chainnya apa" — the row above
+  // only ever spends the ACTIVE wallet on the ACTIVE chain, so emptying ten
+  // wallets was twenty screen switches. Only offered where there is more than
+  // one wallet to sweep.
+  if (list.length > 1) kbRows.push([btn('📤 Withdraw from MANY wallets', 'wdall')]);
   // "…in tokens" is a number with no answer to "which ones?" unless this button
   // exists: /portfolio is scoped to the ACTIVE chain, so a bag on any other
   // chain had no screen at all. Only offered when there is something to show.
@@ -1068,6 +1084,91 @@ async function walletsScreen(chatId) { return walletScreen(chatId); }
  * chain says so rather than rendering as a zero — it does not block removal, but
  * "we could not look" and "it is empty" stay different facts.
  */
+/**
+ * "harus ada command withdraw di sini dan bisa withdraw semua wallet tapi
+ * dipilih dulu chainnya apa" (2026-08-21).
+ *
+ * 📤 Withdraw (active) only ever spent the ACTIVE wallet on the ACTIVE chain, so
+ * emptying ten wallets meant twenty screen switches. This is the same withdrawal
+ * over a SELECTION, and it asks WHICH CHAIN FIRST — the rule the snipe panel had
+ * to be rescued into: a flow bound to whatever chain happened to be active is how
+ * a Solana address pasted on an EVM screen bounces as "not a valid address" with
+ * the fix two screens away.
+ *
+ * ⚠️ The selection lives in the PENDING STEP, never in `core.tradeSelection`.
+ * That one is persisted and drives which wallets every future Buy and Sell act
+ * on — a withdraw picker writing to it would silently re-aim the user's trading
+ * as a side effect of emptying a wallet.
+ */
+function wdSweepChainScreen(chatId) {
+  const list = core.chains.enabledChains();
+  const rows2 = [];
+  for (let i = 0; i < list.length; i += 2) {
+    rows2.push(list.slice(i, i + 2).map((c) => btn(`${c.emoji} ${c.name} · ${c.native}`.slice(0, 28), 'wdac:' + c.key)));
+  }
+  rows2.push([btn('✖ Cancel', 'wallets')]);
+  return {
+    text: `📤 <b>Withdraw from several wallets</b>\n\n<b>Which chain?</b> A withdrawal moves that chain's native coin, and each chain has its own address — so this is the first question, not the last.\n\n<i>You pick the wallets next.</i>`,
+    kb: { inline_keyboard: rows2 },
+  };
+}
+
+/** The wallet multi-select for a sweep, showing each wallet's balance ON THAT
+ *  CHAIN — picking blind is how you sweep nine empty wallets and miss the one
+ *  that had the money. An unreadable balance renders `?`, never `0`. */
+async function wdSweepPickScreen(chatId, p) {
+  const u = core.ensureUser(chatId);
+  const ch = core.chainOf(p.chain);
+  const list = core.walletList(u);
+  const picked = new Set(p.ids || []);
+  // Concurrent and bounded: ten serial reads against a throttled public RPC is
+  // the wallet-dashboard mistake, and this screen is tapped repeatedly.
+  const bals = await Promise.all(list.map((w) =>
+    withTmo(readNative(w, ch).catch(() => null), 2500, null)));
+  const kbRows = [];
+  let selTotal = 0, unread = 0, selRead = 0;
+  list.forEach((w, i) => {
+    const b = bals[i];
+    if (b == null) unread++;
+    const amt = b == null ? '?' : +Number(fmtNat(b, p.chain)).toFixed(4);
+    if (b != null && picked.has(w.id)) { selTotal += Number(fmtNat(b, p.chain)); selRead++; }
+    kbRows.push([btn(`${picked.has(w.id) ? '✅' : '⬜'} ${core.walletLabel(w, i + 1)} · ${amt} ${ch.native}`.slice(0, 40), `wdat:${i + 1}`)]);
+  });
+  kbRows.push([btn(picked.size === list.length ? '✅ All selected' : '☑️ Select all', 'wdaA'), btn('⬜ Clear', 'wdaN')]);
+  kbRows.push([btn(picked.size ? `➡️ Next (${picked.size} wallet${picked.size > 1 ? 's' : ''})` : '➡️ Next', 'wdaGo'), btn('🌐 Chain', 'wdall')]);
+  kbRows.push([btn('✖ Cancel', 'wallets')]);
+  let text = `📤 <b>Withdraw</b> · ${ch.emoji} <b>${esc(ch.name)}</b>\n\n<b>Which wallets?</b> Tap to select — they all send to the SAME address.\n\n`;
+  // ⚠️ A total of the balances we could NOT read is 0, and printing "holding 0
+  // SOL" over a selection whose every balance failed is the same lie the `?`
+  // above exists to avoid — one line up from itself.
+  text += !picked.size ? `<i>Nothing selected yet.</i>`
+    : selRead === 0 ? `Selected: <b>${picked.size}</b> · <i>balances couldn't be read just now</i>`
+    : `Selected: <b>${picked.size}</b> · holding <b>${+selTotal.toFixed(5)} ${esc(ch.native)}</b>${selRead < picked.size ? ` <i>(${picked.size - selRead} unread)</i>` : ''}`;
+  if (unread) text += `\n\n⚠️ <code>?</code> means the balance couldn't be read just now — that's a node problem, not a zero. Those wallets can still be swept.`;
+  return { text, kb: { inline_keyboard: kbRows } };
+}
+
+/** What a finished sweep looks like. ⚪️ for a wallet that held nothing — it did
+ *  exactly the right thing when asked to sweep an empty wallet, and ❌ there
+ *  sends people hunting for a fault. */
+function wdSweepResultText(chatId, chainKey, to, rows) {
+  const ch = core.chainOf(chainKey) || {};
+  const sent = rows.filter((r) => r.ok);
+  const empty = rows.filter((r) => !r.ok && r.empty);
+  const failed = rows.filter((r) => !r.ok && !r.empty);
+  const total = sent.reduce((a, r) => a + Number(r.sentEth || 0), 0);
+  const L = [`📤 <b>Withdrawal — ${ch.emoji || ''} ${esc(ch.name || chainKey)}</b>`, `to <code>${esc(to)}</code>`, ''];
+  for (const r of rows) {
+    if (r.ok) L.push(`🟢 <b>${esc(r.label)}</b> — ${r.sentEth} ${esc(r.native)} · ${txLink(chainKey, r.hash)}`);
+    else if (r.empty) L.push(`⚪️ <b>${esc(r.label)}</b> — nothing to send`);
+    else L.push(`❌ <b>${esc(r.label)}</b> — ${esc(r.error)}`);
+  }
+  L.push('');
+  L.push(`<b>Sent ${+total.toFixed(6)} ${esc(ch.native || '')}</b> from ${sent.length}/${rows.length} wallet${rows.length > 1 ? 's' : ''}`
+    + (empty.length ? ` · ${empty.length} empty` : '') + (failed.length ? ` · ${failed.length} failed` : ''));
+  return L.join('\n');
+}
+
 async function removeWalletScreen(chatId, walletId) {
   const u = core.ensureUser(chatId);
   const w = core.walletById(u, walletId);
@@ -3478,6 +3579,26 @@ async function onCallback(q) {
     return doBuy(chatId, pp.ca, pp.amt, pp.chain, pp.walletId);
   }
   if (data === 'wdcancel') { pending.delete(chatId); return send(chatId, 'Withdrawal cancelled.', mainMenu()); }
+  if (data === 'wdaok') {
+    const pp = pending.get(chatId); pending.delete(chatId);
+    if (!pp || pp.action !== 'wd_sweep_confirm' || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, 'Confirmation expired. Start again from 👛 Wallets.');
+    const wch = core.chainOf(pp.chain) || {};
+    // One progress message, EDITED with the result. A wallet-per-message sweep
+    // of ten wallets is ten notifications for one action; the user is looking at
+    // this screen already, having just tapped confirm.
+    const prog = await send(chatId, `⏳ <b>Withdrawing</b> from ${pp.ids.length} wallet${pp.ids.length > 1 ? 's' : ''} on ${wch.emoji || ''} ${esc(wch.name || pp.chain)}…`);
+    const pid = prog && prog.result && prog.result.message_id;
+    try {
+      const rows2 = await core.withdrawMany(chatId, pp.to, pp.amt, pp.chain, pp.ids);
+      const txt = wdSweepResultText(chatId, pp.chain, pp.to, rows2);
+      return pid ? edit(chatId, pid, txt) : send(chatId, txt);
+    } catch (e) {
+      // A throw here is a whole-sweep refusal (locked vault, whitelist, rate
+      // limit, bad address) — nothing moved, and saying so is the point.
+      const txt = '❌ ' + esc(e.message || String(e)) + '\n\n<i>Nothing was sent.</i>';
+      return pid ? edit(chatId, pid, txt) : send(chatId, txt);
+    }
+  }
   if (data === 'wdok') {
     const pp = pending.get(chatId); pending.delete(chatId);
     if (!pp || pp.action !== 'wd_confirm' || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, 'Confirmation expired. Start again with /withdraw.');
@@ -3884,6 +4005,43 @@ async function onCallback(q) {
     catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); }
     const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
   }
+  // ---- multi-wallet sweep: chain → wallets → address → amount → confirm.
+  if (data === 'wdall') { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
+  if (k === 'wdac') {
+    if (!core.chains.isEnabled(ca)) { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
+    // Default the selection to EVERY wallet: "withdraw all wallets" is the thing
+    // being asked for, and starting from empty makes the common case ten taps.
+    const ids = core.walletList(core.ensureUser(chatId)).map((w) => w.id);
+    setPending(chatId, { action: 'wd_sweep_pick', chain: ca, ids });
+    const sc = await wdSweepPickScreen(chatId, { chain: ca, ids });
+    return edit(chatId, mid, sc.text, sc.kb);
+  }
+  if (k === 'wdat' || data === 'wdaA' || data === 'wdaN') {
+    const pp = pending.get(chatId);
+    if (!pp || pp.action !== 'wd_sweep_pick') { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
+    const list = core.walletList(core.ensureUser(chatId));
+    let ids = new Set(pp.ids || []);
+    if (data === 'wdaA') ids = new Set(list.map((w) => w.id));
+    else if (data === 'wdaN') ids = new Set();
+    else { const wobj = list[Number(ca) - 1]; if (wobj) { if (ids.has(wobj.id)) ids.delete(wobj.id); else ids.add(wobj.id); } }
+    pp.ids = [...ids]; setPending(chatId, pp);
+    // The poll loop does not await handleUpdate, so a run of taps is CONCURRENT
+    // and whichever render finished last paints the message — not necessarily
+    // the newest tap. Same ticket the card's wallet picker needs.
+    const isLatest = redrawTicket(chatId, mid);
+    const sc = await wdSweepPickScreen(chatId, pp);
+    if (!isLatest()) return;
+    return edit(chatId, mid, sc.text, sc.kb);
+  }
+  if (data === 'wdaGo') {
+    const pp = pending.get(chatId);
+    if (!pp || pp.action !== 'wd_sweep_pick') { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
+    if (!(pp.ids || []).length) return answer(q.id, 'Pick at least one wallet first.');
+    const wch = core.chainOf(pp.chain);
+    setPending(chatId, { action: 'wd_sweep_addr', chain: pp.chain, ids: pp.ids });
+    return send(chatId, `📤 <b>Withdraw</b> · ${wch.emoji} ${esc(wch.name)} · <b>${pp.ids.length} wallet${pp.ids.length > 1 ? 's' : ''}</b>\n\nPaste the ${core.chains.isSvm(pp.chain) ? 'base58' : '0x'} address they should all send to.`);
+  }
+
   // Withdraw from a NAMED wallet on a NAMED chain. `wd` (the active wallet) is
   // the same flow with both left blank.
   if (k === 'wdw') {
@@ -4115,6 +4273,32 @@ async function resolvePending(chatId, p, text, m) {
       return send(chatId, `⚠️ <b>Confirm withdrawal</b> · ${ch.emoji} ${esc(ch.name)}${who}\n\nSend <b>${isMax ? 'every ' + esc(ch.native) + ' in this wallet' : esc(t) + ' ' + esc(ch.native)}</b> to:\n<code>${esc(p.to)}</code>\n\nThis is <b>irreversible</b>. Double-check the address.${strand}`, rows([btn('✅ Yes, send', 'wdok'), btn('✖ Cancel', 'wdcancel')]));
     }
     if (p.action === 'wd_confirm') { setPending(chatId, p); return send(chatId, 'Please tap ✅ Yes or ✖ Cancel above, or /cancel.'); }
+    if (p.action === 'wd_sweep_pick') { setPending(chatId, p); return send(chatId, 'Pick the wallets with the buttons above, then tap ➡️ Next.'); }
+    if (p.action === 'wd_sweep_addr') {
+      const wch = core.chainOf(p.chain);
+      if (!isAddrFor(t, wch.key)) return send(chatId, `❌ That doesn't look like a valid ${esc(wch.name)} address. Please check it and paste again.`);
+      setPending(chatId, { action: 'wd_sweep_amt', chain: p.chain, ids: p.ids, to: t });
+      return send(chatId, `💸 <b>How much from EACH of the ${p.ids.length} wallet${p.ids.length > 1 ? 's' : ''}?</b>\n\nType an amount in ${esc(wch.native)} — it is taken from <b>every</b> selected wallet — or <code>max</code> to empty them all.`);
+    }
+    if (p.action === 'wd_sweep_amt') {
+      const isMax = String(t).toLowerCase() === 'max';
+      if (!(isMax || Number(t) > 0)) return send(chatId, 'Send a positive amount, or <code>max</code>.');
+      const wch = core.chainOf(p.chain);
+      const n = p.ids.length;
+      setPending(chatId, { action: 'wd_sweep_confirm', chain: p.chain, ids: p.ids, to: p.to, amt: t });
+      // ⚠️ The amount is PER WALLET, and the confirmation does the arithmetic out
+      // loud. "0.1" across ten wallets is one ETH, and a user who read it as a
+      // total finds that out only afterwards — irreversibly.
+      const what = isMax
+        ? `every ${esc(wch.native)} in <b>all ${n} wallet${n > 1 ? 's' : ''}</b>`
+        : `<b>${esc(t)} ${esc(wch.native)} from EACH</b> of ${n} wallet${n > 1 ? 's' : ''} — <b>${+(Number(t) * n).toFixed(6)} ${esc(wch.native)}</b> in total`;
+      const strand = isMax && core.chains.isSvm(p.chain)
+        ? `\n\n<i>This empties those wallets completely. Any that still hold tokens should send those first — a wallet with no ${esc(wch.native)} can't pay the fee to move them.</i>`
+        : '';
+      return send(chatId, `⚠️ <b>Confirm withdrawal</b> · ${wch.emoji} ${esc(wch.name)}\n\nSend ${what}\n\nto <code>${esc(p.to)}</code>\n\nThis is <b>irreversible</b>. Double-check the address.${strand}`,
+        rows([btn('✅ Yes, send', 'wdaok'), btn('✖ Cancel', 'wdcancel')]));
+    }
+    if (p.action === 'wd_sweep_confirm') { setPending(chatId, p); return send(chatId, 'Please tap ✅ Yes or ✖ Cancel above, or /cancel.'); }
     if (p.action === 'wtok_addr') { const wch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ Not a valid ${esc(wch.name)} address. Start again from the token card.`); setPending(chatId, { action: 'wtok_amt', ca: p.ca, chain: p.chain, walletId: p.walletId, to: t }); return send(chatId, `Amount of the token to send to <code>${short(t)}</code> — a number, or <code>max</code>:`); }
     if (p.action === 'wtok_amt') {
       if (!(String(t).toLowerCase() === 'max' || Number(t) > 0)) return send(chatId, 'Send a positive amount, or <code>max</code>.');
@@ -5439,5 +5623,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

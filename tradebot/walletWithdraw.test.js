@@ -39,6 +39,8 @@ try {
 } catch {
   /* deps not installed in this checkout */
 }
+let solanaMod = null;
+try { solanaMod = require("./solana"); } catch { /* deps not installed */ }
 
 // The numbers the chain actually enforces, so the arithmetic below is checked
 // against Solana's rule and not against a restatement of the code's.
@@ -620,4 +622,143 @@ test("both export confirmations name the phrase before showing it", { skip: !cor
   assert.equal((t.match(/seed phrase<\/b> \(if it has one\)/g) || []).length, 2,
     "the per-wallet screen and the active-wallet screen");
   assert.match(t, /the phrase gives away all of it at once/);
+});
+
+// ---------------------------------------------------------------- multi-wallet sweep
+//
+// "harus ada command withdraw di sini dan bisa withdraw semua wallet tapi
+// dipilih dulu chainnya apa" (2026-08-21). 📤 Withdraw (active) only ever spent
+// the active wallet on the active chain, so emptying ten wallets was twenty
+// screen switches.
+
+test("the sweep asks WHICH CHAIN first", { skip: !core || !tg }, () => {
+  const s = tg._test.wdSweepChainScreen(CHAT);
+  const flat = s.kb.inline_keyboard.flat();
+  // A flow bound to whatever chain happens to be active is the wrong-chain dead
+  // end the snipe panel had to be rescued from.
+  for (const c of core.chains.enabledChains()) {
+    assert.ok(flat.some((b) => b.callback_data === "wdac:" + c.key), "a button for " + c.key);
+  }
+  assert.match(s.text, /Which chain\?/);
+});
+
+test("the picker defaults to EVERY wallet — 'all wallets' is the ask", { skip: !core || !tg }, async () => {
+  const u = core.ensureUser(CHAT);
+  const ids = core.walletList(u).map((w) => w.id);
+  const s = await tg._test.wdSweepPickScreen(CHAT, { chain: "solana", ids });
+  const flat = s.kb.inline_keyboard.flat();
+  assert.equal(flat.filter((b) => b.text.startsWith("✅ Wallet")).length, ids.length, "all ticked");
+  assert.ok(flat.some((b) => b.callback_data === "wdaA"), "select all");
+  assert.ok(flat.some((b) => b.callback_data === "wdaN"), "clear");
+  assert.ok(flat.some((b) => b.callback_data === "wdaGo"));
+});
+
+test("the sweep selection NEVER touches the trade selection", { skip: !core }, () => {
+  const t = code("telegram.js");
+  const h = t.slice(t.indexOf("if (k === 'wdat' || data === 'wdaA'"), t.indexOf("if (data === 'wdaGo')"));
+  // core.tradeSelection is persisted and drives which wallets every future Buy
+  // and Sell act on. A withdraw picker writing to it would silently re-aim the
+  // user's trading as a side effect of emptying a wallet.
+  assert.doesNotMatch(h, /toggleTradeWallet|setTradeAll|tradeSelection/);
+  assert.match(h, /pp\.ids = \[\.\.\.ids\]; setPending\(chatId, pp\)/, "the selection lives in the pending step");
+  // Concurrent taps redraw one message; last tap must win.
+  assert.match(h, /const isLatest = redrawTicket\(chatId, mid\)/);
+  assert.match(h, /if \(!isLatest\(\)\) return;/);
+});
+
+test("the confirmation does the per-wallet arithmetic out loud", { skip: !core || !tg }, async () => {
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage/.test(String(url))) sent.push(b.text); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  try {
+    const DEST = "E9MRKqAUH5RA4dqFUkcW3Hair1GxeWtUVQzdXgWw1RPV";
+    await tg._test.resolvePending(CHAT, { action: "wd_sweep_amt", chain: "solana", ids: ["a", "b", "c"], to: DEST }, "0.1", null);
+    const t = sent[sent.length - 1];
+    // "0.1" across three wallets is 0.3, and a user who read it as a total finds
+    // out afterwards — irreversibly.
+    assert.match(t, /from EACH/);
+    assert.match(t, /0\.3 SOL<\/b> in total/);
+    sent.length = 0;
+    await tg._test.resolvePending(CHAT, { action: "wd_sweep_amt", chain: "solana", ids: ["a", "b"], to: DEST }, "max", null);
+    const m = sent[sent.length - 1];
+    assert.match(m, /every SOL in <b>all 2 wallets<\/b>/);
+    assert.match(m, /can't pay the fee to move them/, "a Solana sweep lands on zero");
+  } finally { global.fetch = realFetch; }
+});
+
+test("a sweep is ONE withdrawal against the rate limit, not N", { skip: !core }, () => {
+  const c = code("core.js");
+  const fn = c.slice(c.indexOf("async function withdrawMany("), c.indexOf("async function withdrawToken("));
+  // MAX_WD_PER_HOUR defaults to 10 and a full account is 10 wallets, so charging
+  // per wallet would let one sweep spend the whole hour and stop halfway with
+  // "rate limit reached" — funds out of some wallets and not others, from one
+  // confirmation. A half-done irreversible action is worse than a refused one.
+  assert.equal((fn.match(/_guardWithdraw\(/g) || []).length, 1);
+  assert.equal((fn.match(/_noteWithdraw\(/g) || []).length, 1);
+  // …and the per-wallet calls must therefore NOT re-guard.
+  assert.match(fn, /withdraw\(chatId, dest, amount, chainKey, id, false\)/);
+  // The destination is validated before anything moves.
+  assert.ok(fn.indexOf("invalid destination address") < fn.indexOf("_guardWithdraw("));
+});
+
+test("an empty wallet in a sweep is ⚪️, never ❌", { skip: !core || !tg }, () => {
+  const rows = [
+    { walletId: "a", index: 1, label: "Wallet 1", ok: true, sentEth: 2.157125, native: "SOL", hash: "sig" },
+    { walletId: "b", index: 2, label: "Wallet 2", ok: false, empty: true, error: "this wallet has no SOL to withdraw" },
+    { walletId: "c", index: 3, label: "Wallet 3", ok: false, empty: false, error: "node rejected the transaction" },
+  ];
+  const t = tg._test.wdSweepResultText(CHAT, "solana", "E9MRKqAUH5RA4dqFUkcW3Hair1GxeWtUVQzdXgWw1RPV", rows);
+  assert.match(t, /🟢 <b>Wallet 1<\/b>/);
+  // Asked to sweep an empty wallet, doing nothing is the right answer — a red
+  // cross there sends the reader hunting for a fault that is not present.
+  assert.match(t, /⚪️ <b>Wallet 2<\/b> — nothing to send/);
+  assert.match(t, /❌ <b>Wallet 3<\/b> — node rejected/);
+  assert.match(t, /Sent 2\.157125 SOL<\/b> from 1\/3 wallets · 1 empty · 1 failed/);
+});
+
+test("a whole-sweep refusal says nothing was sent", { skip: !core }, () => {
+  const t = code("telegram.js");
+  const h = t.slice(t.indexOf("if (data === 'wdaok')"));
+  const body = h.slice(0, h.indexOf("\n  if (data === 'wdok')"));
+  assert.match(body, /Nothing was sent/, "a locked vault or a bad address moved no money and must say so");
+  assert.match(body, /core\.withdrawMany\(chatId, pp\.to, pp\.amt, pp\.chain, pp\.ids\)/);
+});
+
+test("an unreadable SOLANA balance is not a zero — on any screen", { skip: !core }, () => {
+  // solBalance answers 0n for a dead RPC, a 429 and an empty wallet alike. The
+  // removal guard is where it mattered: an unreadable Solana balance rendered as
+  // "empty of native on every chain I could read", under a one-tap ✅ Remove, on
+  // a wallet holding 2.15 SOL. _balanceResilient could only ever catch the 6s
+  // TIMEOUT there — a node that answered with an error came back ok:true, 0.
+  assert.equal(typeof solanaMod.solBalanceOrNull, "function");
+  const c = code("core.js");
+  const fn = c.slice(c.indexOf("async function _balanceResilient("), c.indexOf("async function walletFunds("));
+  assert.match(fn, /solana\.solBalanceOrNull\(providerFor\(chainKey\), addr\)/);
+  assert.match(fn, /if \(bal == null\) continue;/);
+  assert.doesNotMatch(fn, /solana\.solBalance\(/, "the swallowing read is gone from the survey");
+  // …and the screens read it through CORE, not by reaching into the solana
+  // module: every other chain read on that screen goes through core, and going
+  // around it is how a stubbed render test ends up bypassing its own stub.
+  assert.match(c, /async function ethBalanceOrNull\(addr, chainKey\)/);
+  assert.match(c, /if \(isSvm\(chainKey\)\) return solana\.solBalanceOrNull\(providerFor\(chainKey\), addr\);/);
+  const t = code("telegram.js");
+  const rnStart = t.indexOf("const readNative = async (w, c) =>");
+  const rn = t.slice(rnStart, t.indexOf("\n};", rnStart));   // the function ONLY — tg() below legitimately uses solana.netErr
+  assert.match(rn, /core\.ethBalanceOrNull\(wAddr\(w, c\.key\), c\.key\)/);
+  assert.match(rn, /throw new Error\('balance unreadable'\)/, "so the picker renders ? rather than 0");
+  assert.doesNotMatch(rn, /solana\./, "no layering break");
+});
+
+test("a total of balances nobody read is not 0", { skip: !core || !tg }, async () => {
+  // The `?` beside each wallet exists so an unread balance is not shown as
+  // empty. Summing those same unread balances into "holding 0 SOL" one line
+  // above would put the lie back, in bold.
+  const u = core.ensureUser(CHAT);
+  const ids = core.walletList(u).map((w) => w.id);
+  const s = await tg._test.wdSweepPickScreen(CHAT, { chain: "solana", ids });
+  assert.match(s.text, /\? SOL|balances couldn't be read/);
+  assert.doesNotMatch(s.text, /holding <b>0 SOL<\/b>/);
 });

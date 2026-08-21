@@ -227,7 +227,21 @@ function getConnection(rpc) {
   return _conns[url];
 }
 async function solBalance(conn, address) {
-  try { return BigInt(await conn.getBalance(new PublicKey(address), 'confirmed')); } catch (_) { return 0n; }
+  const v = await solBalanceOrNull(conn, address);
+  return v == null ? 0n : v;
+}
+/**
+ * The same read, but a FAILED one is distinguishable from a genuine zero.
+ *
+ * `solBalance` answers 0n for a dead RPC, a 429 and an empty wallet alike — and
+ * every caller that has to decide something on the answer needs those apart.
+ * The wallet-removal guard is the one that made it matter: an unreadable Solana
+ * balance rendered as "empty of native on every chain I could read", under a
+ * one-tap ✅ Remove, on a wallet holding 2.15 SOL. Same rule and same shape as
+ * `splBalanceOrNull` one function down.
+ */
+async function solBalanceOrNull(conn, address) {
+  try { return BigInt(await conn.getBalance(new PublicKey(address), 'confirmed')); } catch (_) { return null; }
 }
 // SPL balance of `mint` held by `owner`. Sums all token accounts (usually one ATA).
 async function splBalance(conn, owner, mint) {
@@ -806,7 +820,7 @@ module.exports = {
   solToLamports, lamportsToSol, fmtUnits, toRaw,
   quoteUrl, quotePath, swapBody, parseQuote, feeLamports, netErr,
   jupBase: () => _jupBase,   // which host actually answered — for the preflight
-  getConnection, solBalance, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
+  getConnection, solBalance, solBalanceOrNull, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
   rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
   _statusQ,   // test-only: proves the batch queue is emptied, not just drained
