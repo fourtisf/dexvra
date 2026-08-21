@@ -247,7 +247,7 @@ test("duel2 fills the gap in the layout ladder", () => {
   // day needs was the one missing.
   assert.ok(gb.isTemplate("duel2"));
   assert.strictEqual(gb.countOf("duel2"), 2);
-  assert.deepStrictEqual(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 8, 10],
+  assert.deepStrictEqual(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 8, 10, 10],
     "the template ladder is out of order — the menu is built from this list");
 });
 
@@ -272,4 +272,48 @@ test("a one-token day still renders as a duel of one, never a crash", async () =
   assert.ok(one && one.length > 10_000, "one qualifying token broke the duel");
   const none = await gb.render({ template: "duel2", coins: [], dateText: "" }).catch(() => null);
   assert.ok(none === null || Buffer.isBuffer(none), "an empty board threw instead of degrading");
+});
+
+// ── the Top 10 Spotlight ────────────────────────────────────────────────────
+
+test("spot10 joins the ladder without breaking it", () => {
+  const gb = require("../src/gainersBanner");
+  assert.ok(gb.isTemplate("spot10"));
+  assert.strictEqual(gb.countOf("spot10"), 10);
+  // Non-decreasing, so the admin menu still reads as a ladder — the count array
+  // is pinned in the duel2 test above.
+  assert.strictEqual(gb.TEMPLATE_IDS[gb.TEMPLATE_IDS.length - 1], "spot10");
+});
+
+test("the spotlight's ROWS keep one ticker size — the identity rule, scoped as the podium scoped it", () => {
+  const fn = BANNER.slice(BANNER.indexOf("function layoutSpotlight("), BANNER.indexOf("/** cards4"));
+  assert.ok(fn.length > 400, "layoutSpotlight moved — this test is asserting nothing");
+  // Every row ticker goes through ONE fitText with one size; only the champion
+  // card (a different component class, four rows tall) is bigger.
+  const rowTickers = [...fn.matchAll(/fitText\(ctx, `\$\$\{c\.symbol\}`[^)]*size: ([\d.]+) \* S/g)].map((m) => m[1]);
+  assert.strictEqual(rowTickers.length, 1, "one row-ticker call site — a second is a second size waiting to drift");
+  assert.strictEqual(rowTickers[0], "18.5");
+});
+
+test("a thin day renders on the layout designed for that count", () => {
+  const fn = BANNER.slice(BANNER.indexOf("function layoutSpotlight("), BANNER.indexOf("/** cards4"));
+  // A champion card beside a board carrying one floating row reads as a
+  // rendering fault, not a short day — and the ladder already owns the right
+  // shape for 1, 2 and 3.
+  assert.match(fn, /if \(n === 1\) return layoutHero\(ctx, S, spec, coins\);/);
+  assert.match(fn, /if \(n === 2\) return layoutDuel\(ctx, S, spec, coins\);/);
+  assert.match(fn, /if \(n === 3\) return layoutPodium\(ctx, S, spec, coins\);/);
+  // …and from four up, the pack's rows are capped rather than stretched.
+  assert.match(fn, /Math\.min\(height \/ rest\.length, 128 \* S\)/);
+});
+
+test("spot10 renders every count from 1 to 10 without failing", async () => {
+  const gb = require("../src/gainersBanner");
+  if (!gb.available()) return; // no canvas on this box — the render tests skip the same way
+  const coin = (i) => ({ chain: "solana", symbol: "TOK" + i, name: "Token " + i, pct: 100 - i * 7, price: 0.01, mcap: 1_000_000 * (11 - i) });
+  for (let n = 1; n <= 10; n++) {
+    const coins = Array.from({ length: n }, (_, i) => coin(i + 1));
+    const buf = await gb.render({ template: "spot10", coins, dateText: "" });
+    assert.ok(buf && buf.length > 10_000, `n=${n} produced no banner`);
+  }
 });

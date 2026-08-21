@@ -125,6 +125,15 @@ const TEMPLATES = {
     accent: SITE.violet,
     title: (n) => `Top ${n} Gainers`,
   },
+  spot10: {
+    id: "spot10",
+    label: "💠 Top 10 Spotlight",
+    blurb: "The champion as a full hero card, the chasing nine on one board — the premium Top-10.",
+    n: 10,
+    layout: "spotlight",
+    accent: SITE.gold,
+    title: (n) => (n > 1 ? `Top ${n} Gainers` : "Top Gainer"),
+  },
 };
 const TEMPLATE_IDS = Object.keys(TEMPLATES);
 const DEFAULT_TEMPLATE = "list5";
@@ -1081,6 +1090,165 @@ function layoutColumns(ctx, S, spec, coins, { rowsPerCol, big }) {
   }
 }
 
+/** spot10 — the premium Top-10: the champion as a full hero card on the left
+ *  (the podium/duel card grammar — gold ring, radial seat, the move as the
+ *  headline figure, sparkline strip, hairline-split stats), and ranks 2–10 as
+ *  ONE board panel beside it. grid10 answers "show me all ten"; this answers
+ *  "crown the winner AND show me all ten" — the composition every exchange's
+ *  weekly-winners poster uses, and the reason it reads premium rather than
+ *  tabular.
+ *
+ *  IDENTITY RULE, scoped the way the podium scoped it: every ROW ticker is one
+ *  size, because the nine rows are one component at one width. The hero's
+ *  bigger name is not a ranking signal inside that set — it is a different
+ *  component class four rows tall, the same relationship list5's title has to
+ *  its rows. What must stay equal is equals; the hero is not an equal.
+ */
+function layoutSpotlight(ctx, S, spec, coins) {
+  const n = coins.length;
+  if (!n) return;
+  // A thin day renders on the layout DESIGNED for that count, not on this one
+  // drawn mostly empty: one coin is the hero card, two are the duel, three are
+  // the podium. A champion card beside a board carrying a single floating row
+  // reads as a rendering fault, not a short day — and the ladder already owns
+  // the right shape for each of those counts. Spotlight proper starts at four.
+  if (n === 1) return layoutHero(ctx, S, spec, coins);
+  if (n === 2) return layoutDuel(ctx, S, spec, coins);
+  if (n === 3) return layoutPodium(ctx, S, spec, coins);
+
+  const gapX = 28 * S;
+  const innerW = (REF_W - 2 * PAD) * S;
+  const heroW = innerW * 0.36;
+  const panelW = innerW - heroW - gapX;
+  const hx = PAD * S;
+  const hy = BAND_TOP * S;
+  const hh = BAND_H * S;
+
+  // ── the champion ──
+  const c1 = coins[0];
+  const rc = rankColor(1);
+  surface(ctx, hx, hy, heroW, hh, 24 * S, { S, accent: rc, lift: 1.5 });
+  const hcx = hx + heroW / 2;
+  chip(ctx, hcx, hy + 42 * S, "#1 · Top gainer", 12.5 * S, S, {
+    align: "center", color: rc, border: hexA(rc, 0.4), bg: hexA(rc, 0.1),
+  });
+  const d = 118 * S;
+  const lcy = hy + hh * 0.285;
+  radial(ctx, hcx, lcy, d * 1.35, SITE.gold, 0.13);
+  avatar(ctx, c1.img, hcx, lcy, d, c1.symbol, S);
+  metalRing(ctx, hcx, lcy, d, 1, S);
+  medal(ctx, hcx + d * 0.42, lcy + d * 0.38, 21 * S, 1, S);
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = SITE.text;
+  const tickerY = lcy + d / 2 + 46 * S;
+  ctx.font = `700 ${32 * S}px ${F.d7}`;
+  ctx.letterSpacing = `${(-0.64 * S).toFixed(1)}px`;
+  ctx.fillText(fitText(ctx, `$${c1.symbol}`, heroW - 56 * S, { weight: 700, size: 32 * S, min: 18 * S, family: F.d7 }), hcx, tickerY);
+  ctx.letterSpacing = "0px";
+  ctx.fillStyle = SITE.muted;
+  ctx.fillText(fitText(ctx, c1.name || "", heroW - 60 * S, { weight: 500, size: 15.5 * S, min: 11 * S, family: F.d5 }), hcx, tickerY + 27 * S);
+  ctx.restore();
+
+  // the hero figure — positioned off the name (the podium's collision lesson)
+  bigPct(ctx, hcx, tickerY + 27 * S + 88 * S, c1.pctLabel, 62 * S, S, { align: "center" });
+
+  // trend strip in its own clipped band above the stats
+  ctx.save();
+  roundRect(ctx, hx, hy, heroW, hh, 24 * S);
+  ctx.clip();
+  sparkline(ctx, hcx - (heroW - 120 * S) / 2, hy + hh - 84 * S - 54 * S, heroW - 120 * S, 40 * S, c1.symbol, c1.pct, S, { alpha: 0.8 });
+  ctx.restore();
+
+  // footer stats split by a hairline — the podium/duel grammar
+  ctx.fillStyle = SITE.line;
+  ctx.fillRect(hx + 30 * S, hy + hh - 84 * S, heroW - 60 * S, 1);
+  const stat = (label, value, sx, align) => {
+    microLabel(ctx, sx, hy + hh - 54 * S, label, { size: 10 * S, track: 0.2, align, color: SITE.faint });
+    ctx.save();
+    ctx.font = `700 ${17 * S}px ${F.m7}`;
+    ctx.fillStyle = SITE.text;
+    ctx.textAlign = align === "right" ? "right" : "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(value, sx, hy + hh - 26 * S);
+    ctx.restore();
+  };
+  stat("Chain", chainShort(c1.chain), hx + 30 * S, "left");
+  if (c1.mcap) stat("Mkt cap", fmtCap(c1.mcap), hx + heroW - 30 * S, "right");
+  else if (c1.price) stat("Price", fmtPrice(c1.price), hx + heroW - 30 * S, "right");
+
+  // ── the chasing pack, ranks 2..n, one board panel ──
+  const rest = coins.slice(1);
+  const px = hx + heroW + gapX;
+  const cChg = px + panelW - 22 * S;
+  const cMcap = px + panelW - 158 * S;
+  boardPanel(
+    ctx,
+    S,
+    {
+      x: px,
+      y: hy,
+      w: panelW,
+      h: hh,
+      accent: spec.accent,
+      head: [
+        { x: px + 46 * S, label: "#", align: "right" },
+        { x: px + 70 * S, label: "Token" },
+        { x: cMcap, label: "MCap", align: "right" },
+        { x: cChg, label: "24h", align: "right" },
+      ],
+    },
+    ({ top, height }) => {
+      // Nine rows is this panel's design case; fewer must not stretch into
+      // billboards. Cap the row and centre the run — the leaderboard just ends.
+      // (128 only ever bites at three rows: the n≤3 counts were delegated above,
+      // and from five rows up height/rows is already below it.)
+      const rowH = Math.min(height / rest.length, 128 * S);
+      const y0 = top + (height - rowH * rest.length) / 2;
+      rest.forEach((c, i) => {
+        const rank = i + 2;
+        const y = y0 + i * rowH;
+        const cy = y + rowH / 2;
+        rowBase(ctx, S, { x: px, w: panelW, y, h: rowH, first: i === 0, leader: false, accent: spec.accent });
+
+        if (rank <= 3) medal(ctx, px + 34 * S, cy, 12.5 * S, rank, S);
+        else rankNum(ctx, px + 46 * S, cy, rank, 14.5 * S);
+        const d2 = Math.min(40 * S, rowH * 0.62);
+        avatar(ctx, c.img, px + 70 * S + d2 / 2, cy, d2, c.symbol, S);
+        metalRing(ctx, px + 70 * S + d2 / 2, cy, d2, rank, S);
+
+        // Same information architecture as the other boards — ticker + chain
+        // chip, name muted underneath — so the panels read as one system.
+        const tx = px + 70 * S + d2 + 14 * S;
+        const tw = cMcap - 84 * S - tx;
+        ctx.save();
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = SITE.text;
+        const symTxt = fitText(ctx, `$${c.symbol}`, tw - 54 * S, { weight: 700, size: 18.5 * S, min: 12 * S, family: F.d7 });
+        ctx.fillText(symTxt, tx, cy - 3 * S);
+        const symW = ctx.measureText(symTxt).width;
+        ctx.fillStyle = SITE.muted;
+        ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 11.5 * S, min: 9.5 * S, family: F.d5 }), tx, cy + 15.5 * S);
+        ctx.restore();
+        chip(ctx, tx + symW + 9 * S, cy - 8.5 * S, chainShort(c.chain), 8.5 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
+
+        if (c.mcap) {
+          ctx.save();
+          ctx.font = `700 ${14.5 * S}px ${F.m7}`;
+          ctx.fillStyle = SITE.muted;
+          ctx.textAlign = "right";
+          ctx.textBaseline = "middle";
+          ctx.fillText(fmtCap(c.mcap), cMcap, cy + 1 * S);
+          ctx.restore();
+        }
+        pctChip(ctx, cChg, cy, c.pctLabel, 14.5 * S, S, { align: "r" });
+      });
+    },
+  );
+}
+
 /** cards4 — four product cards; each card's headline is the MOVE, with the
  *  site's sparkline under it and an editorial faint rank numeral. */
 function layoutCards(ctx, S, spec, coins) {
@@ -1402,6 +1570,7 @@ function layoutHero(ctx, S, spec, coins) {
 const LAYOUTS = {
   duel: layoutDuel,
   hero: layoutHero,
+  spotlight: layoutSpotlight,
   podium: layoutPodium,
   cards: layoutCards,
   list: layoutList,

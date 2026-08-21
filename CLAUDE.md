@@ -1069,6 +1069,34 @@ are wide enough to read that way. It inherits the identity rule below from day
 one (one ticker size, figure scales ≥1.4×), and a test pins the ladder order —
 the admin menu is built from `TEMPLATE_IDS`.
 
+### Top 10 Spotlight
+
+"saya ingin banner variasi baru lebih premium elegan dari top 1 sampai 10"
+(2026-08-21). `grid10` answers *"show me all ten"* with two symmetric compact
+panels; `spot10` answers *"crown the winner AND show me all ten"* — the
+champion as a full hero card on the left (the podium/duel card grammar: gold
+ring, radial seat, the move as the headline figure, sparkline strip,
+hairline-split stats) and ranks 2–10 as ONE board panel beside it. The
+composition every exchange's weekly-winners poster uses, which is why it reads
+premium rather than tabular.
+
+- **The identity rule, scoped the way the podium scoped it.** Every ROW ticker
+  is one size (a test pins the call-site count at one); the champion's bigger
+  name is not a ranking signal inside that set — it is a different component
+  class four rows tall, the relationship `list5`'s title has to its rows.
+- **A thin day renders on the layout DESIGNED for that count**: one coin
+  delegates to `hero1`'s layout, two to the duel, three to the podium. A
+  champion card beside a board carrying a single floating row reads as a
+  rendering fault, not a short day — and the ladder already owns the right
+  shape for each of those counts. Spotlight proper starts at four, and the
+  pack's rows are CAPPED (128) rather than stretched into billboards.
+- **The ladder test now pins `[1,2,3,4,5,8,10,10]`** — `spot10` sits last, so
+  the menu still reads as a ladder. The admin menu, the random rotation and the
+  preview script pick it up from `TEMPLATE_IDS` with no wiring of their own.
+- Judged by LOOKING at the renders (n=10, 5, 2, 1), the `drawGem` rule — the
+  n=2 delegation exists because the first render of that case was measured
+  fine and looked hollow.
+
 ### The winner's NAME is not a ranking signal
 
 `$巨兽BEHEMOTH` was drawn at 44px against 31px for the two cards beside it, and a
