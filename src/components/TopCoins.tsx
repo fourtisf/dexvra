@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtCap, fmtPrice } from "@/lib/format";
-import { HOME_BOARD_ROWS, topCoins, type CoinSort } from "@/lib/home";
+import { HOME_BOARD_ROWS, changeReading, topCoins, type CoinSort } from "@/lib/home";
 import { scoreTier } from "@/lib/score";
 import { useApp } from "./AppState";
 import { SkeletonRows } from "./TokenBoard";
@@ -96,8 +96,8 @@ export function TopCoinsBoard({
           <div className="empty">No token here has a readable market cap right now.</div>
         ) : (
           rows.map((t, i) => {
-            const h1 = t.chg["1h"];
-            const hp = t.chg[period];
+            const h1 = changeReading(t, "1h");
+            const hp = changeReading(t, period);
             const st = scoreTier(t.score);
             return (
               <div className="tc-row" key={t.key} onClick={() => openDetail(t)}>
@@ -113,13 +113,11 @@ export function TopCoinsBoard({
                   </div>
                 </div>
                 <div className="c-num tc-px">{fmtPrice(t.priceUsd)}</div>
-                <div className={`c-num tc-chg tc-h1 ${h1 >= 0 ? "up" : "dn"}`}>
-                  {h1 >= 0 ? "+" : ""}
-                  {h1.toFixed(2)}%
+                <div className={`c-num tc-chg tc-h1 ${(h1 ?? 0) >= 0 ? "up" : "dn"}`}>
+                  {h1 == null ? "—" : `${h1 >= 0 ? "+" : ""}${h1.toFixed(2)}%`}
                 </div>
-                <div className={`c-num tc-chg ${hp >= 0 ? "up" : "dn"}`}>
-                  {hp >= 0 ? "+" : ""}
-                  {hp.toFixed(2)}%
+                <div className={`c-num tc-chg ${(hp ?? 0) >= 0 ? "up" : "dn"}`}>
+                  {hp == null ? "—" : `${hp >= 0 ? "+" : ""}${hp.toFixed(2)}%`}
                 </div>
                 <div className="c-num tc-cap tc-mono">{fmtCap(t.mcap)}</div>
                 <div className="c-num tc-dxs">

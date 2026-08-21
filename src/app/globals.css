@@ -1320,6 +1320,9 @@ body{
 .mv-pct.up{color:var(--mint);background:rgba(61,245,159,.11)}
 .mv-pct.dn{color:var(--red);background:rgba(255,92,122,.11)}
 .mv-empty{margin:auto;padding:20px 14px;text-align:center;font-size:12px;color:var(--faint);line-height:1.55}
+/* "no reading yet" — a dash, never a fabricated 0.0%. Muted on purpose: the
+   absence of a number is the information. */
+.mv-pct.none,.chg.none{color:var(--faint);background:rgba(255,255,255,.04);font-weight:700}
 
 /* ── the trending board's footer ───────────────────────────────────────────
    A cut list says it is cut. Ten rows with nothing under them reads as "that

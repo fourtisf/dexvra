@@ -22,6 +22,7 @@ import { fmtCap } from "@/lib/format";
 import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
 import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
+import { fetchIndexedMarket } from "./indexedMarket";
 
 // 60s, not 30: at 173 listings a refresh is ~8 chunked GT requests, and the
 // bot suite shares this server's IP and GT quota (~30 req/min, its own docs).
@@ -69,7 +70,7 @@ function expireTrending(rows: ListingRow[]): ListingRow[] {
  *  Throws only when NO provider for the chain answered, which keeps the
  *  caller's "everything is down → seed data" fallback intact. */
 async function fetchChainMarket(chain: string, addrs: string[]): Promise<Map<string, LiveMarket>> {
-  if (chain !== POOLS_TRADE_CHAIN) return fetchListedMarket(chain, addrs);
+  if (chain !== POOLS_TRADE_CHAIN) return fetchIndexedMarket(chain, addrs);
 
   const [gt, launch] = await Promise.allSettled([
     fetchListedMarket(chain, addrs),

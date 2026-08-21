@@ -10,6 +10,7 @@ import {
   HOME_BOARD_ROWS,
   HOME_CHAIN_LIMIT,
   HOME_TRENDING_MAX,
+  changeReading,
   expander,
   capped,
   chainCounts,
@@ -519,4 +520,35 @@ test("every class a page still renders has a style — .board-loading kept its c
   ].filter((f) => read(f).includes("board-loading"));
   if (users.length > 0)
     assert.match(CSS, /\.board-loading\{/, `still styled — rendered by ${users.join(", ")}`);
+});
+
+// ── the change a renderer may print ─────────────────────────────────────────
+
+test("a fallback row's zero is a dash, never a fabricated ▲0.0%", () => {
+  // A bot-listed launch an hour old carries chg 0 because nothing was measured
+  // — not because anything was measured flat. "▲ 0.0%" on that row is the bot
+  // repo's forbidden fabricated zero, on the web surface; the operator
+  // reported it from production within a day ("new listing masa 0% semua").
+  const fresh = tok({ sym: "NEW", chg: 0 });
+  fresh.source = "seed";
+  assert.strictEqual(changeReading(fresh, "24h"), null, "no reading → dash");
+
+  const liveFlat = tok({ sym: "FLAT", chg: 0 });
+  liveFlat.source = "live";
+  assert.strictEqual(changeReading(liveFlat, "24h"), 0, "a MEASURED flat still prints");
+
+  const demo = tok({ sym: "DEMO", chg: 12.5 });
+  demo.source = "seed";
+  assert.strictEqual(changeReading(demo, "24h"), 12.5, "captured nonzero prints — the demo board is built from these");
+});
+
+test("all three surfaces render the reading through the one helper", () => {
+  // Three private copies of "may I print this zero?" is how the trending
+  // board's fabricated-percentage saga went three rounds.
+  for (const f of [
+    "src/components/MarketMovers.tsx",
+    "src/components/TokenBoard.tsx",
+    "src/components/TopCoins.tsx",
+  ])
+    assert.match(read(f), /changeReading\(/, `${f} uses changeReading`);
 });

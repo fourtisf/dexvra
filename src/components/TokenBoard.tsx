@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { capped, expander } from "@/lib/home";
+import { capped, changeReading, expander } from "@/lib/home";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
@@ -144,8 +144,12 @@ function StdRow({
 }) {
   const { openDetail } = useApp();
   const price = override?.price ?? t.priceUsd;
-  const chg = t.chg[period] + (override?.chgDelta ?? 0);
+  const reading = changeReading(t, period);
+  const chg = (reading ?? 0) + (override?.chgDelta ?? 0);
   const up = chg >= 0;
+  // a fallback row whose demo flicker has nudged it counts as a reading —
+  // the flicker only runs in seed mode, where the whole board is the demo
+  const hasReading = reading != null || override?.chgDelta != null;
   const dec = period === "5m" ? 2 : 1;
   const { buys, sells } = t.txns[period];
   const rank = i < 3 ? <Medal n={i + 1} /> : i + 1;
@@ -173,10 +177,16 @@ function StdRow({
       </div>
       <div className="c-num price">{fmtPrice(price)}</div>
       <div className="c-num">
-        <span className={`chg ${up ? "up" : "dn"}`}>
-          {up ? "+" : ""}
-          {chg.toFixed(dec)}%
-        </span>
+        {hasReading ? (
+          <span className={`chg ${up ? "up" : "dn"}`}>
+            {up ? "+" : ""}
+            {chg.toFixed(dec)}%
+          </span>
+        ) : (
+          <span className="chg none" title="No market reading yet — too new for the indexers">
+            —
+          </span>
+        )}
       </div>
       <div className="c-num c-mcap mono-dim">{fmtCap(t.mcap)}</div>
       <div className="c-num c-liq mono-dim">{fmtCap(t.liq)}</div>

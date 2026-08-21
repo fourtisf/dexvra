@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap } from "@/lib/format";
-import { freshness, movers, type MoverKind } from "@/lib/home";
+import { changeReading, freshness, movers, type MoverKind } from "@/lib/home";
 import { useApp } from "./AppState";
 import { Coin } from "./Coin";
 import { Spark } from "./Spark";
@@ -79,8 +79,8 @@ function MvSkeleton() {
 
 function MoverRow({ t, i, frame, kind }: { t: BoardToken; i: number; frame: PeriodKey; kind: MoverKind }) {
   const { openDetail } = useApp();
-  const chg = t.chg[frame];
-  const up = chg >= 0;
+  const chg = changeReading(t, frame);
+  const up = (chg ?? 0) >= 0;
   return (
     <button className="mv-row" onClick={() => openDetail(t)} title={`${t.symbol} — ${t.name}`}>
       <span className="mv-rank">{i + 1}</span>
@@ -94,9 +94,15 @@ function MoverRow({ t, i, frame, kind }: { t: BoardToken; i: number; frame: Peri
       ) : (
         <Spark points={t.trend} up={up} />
       )}
-      <span className={`mv-pct ${up ? "up" : "dn"}`}>
-        {up ? "▲" : "▼"} {Math.abs(chg).toFixed(1)}%
-      </span>
+      {chg == null ? (
+        <span className="mv-pct none" title="No market reading yet — too new for the indexers">
+          —
+        </span>
+      ) : (
+        <span className={`mv-pct ${up ? "up" : "dn"}`}>
+          {up ? "▲" : "▼"} {Math.abs(chg).toFixed(1)}%
+        </span>
+      )}
     </button>
   );
 }

@@ -214,3 +214,22 @@ export function expander(total: number, base: number, max: number) {
     showsAll: total - open <= 0,
   };
 }
+
+/**
+ * The change a renderer may PRINT for a token on a frame — or null.
+ *
+ * A fallback row (source "seed") carries chg 0 not because anything was
+ * measured flat but because nothing was measured at all, and "▲ 0.0%" on a
+ * one-hour-old listing is a fabricated reading — the bot repo's "an unreadable
+ * change is not a 0%" rule, on the web surface. Null tells the renderer to
+ * draw a dash.
+ *
+ * A LIVE token at exactly 0 keeps its zero: that is a measured flat, and
+ * refusing to print it would hide a real reading. A seed token with a nonzero
+ * captured change also prints — the demo board is built from those.
+ */
+export function changeReading(t: BoardToken, frame: PeriodKey): number | null {
+  const v = t.chg[frame];
+  if (v === 0 && t.source !== "live") return null;
+  return v;
+}
