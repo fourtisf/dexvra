@@ -249,14 +249,17 @@ test("a withdrawal spends the wallet and chain it was OPENED on, not the active 
     "the confirmed wallet is the wallet spent");
 });
 
-test("every entry into the withdraw flow names a chain, and 📤 is reachable per wallet", { skip: !core }, () => {
+test("every withdrawal is bound to a chain — named by the button, or asked for", { skip: !core }, () => {
   const tg = code("telegram.js");
+  // Two shapes, and between them there is no third: a button that already knows
+  // the wallet AND the chain (the deposit and removal screens) skips both
+  // pickers; everything else ASKS. What must not exist again is an entry that
+  // silently borrows whatever chain happens to be active.
   assert.match(tg, /if \(k === 'wdw'\)/, "per-wallet, per-chain entry");
-  assert.match(tg, /if \(data === 'wd'\) \{ const wch = activeChain\(chatId\); setPending\(chatId, \{ action: 'wd_addr', chain: wch\.key \}\)/);
-  assert.match(tg, /if \(text === '\/withdraw'\) \{ const wch = activeChain\(chatId\)/);
-  // The per-wallet screen: emptying wallet 9 used to mean switching to it first,
-  // with the switch on the same screen as the button that needed it.
-  assert.match(tg, /btn\(`📤 Withdraw \$\{ch\.native\}`\.slice\(0, 24\), `wdw:\$\{w\.id\}:\$\{ch\.key\}`\)/);
+  assert.match(tg, /btn\(`📤 Withdraw \$\{ch\.native\}`\.slice\(0, 24\), `wdw:\$\{w\.id\}:\$\{ch\.key\}`\)/,
+    "the per-wallet screen: emptying wallet 9 used to mean switching to it first");
+  assert.match(tg, /if \(data === 'wdall' \|\| data === 'wd'\) \{ const sc = wdSweepChainScreen/);
+  assert.match(tg, /if \(text === '\/withdraw' \|\| text === '\/withdrawall'\)/);
 });
 
 test("a swept wallet's receipt says it is empty — that is the errand, not a footnote", { skip: !core }, () => {
@@ -637,7 +640,7 @@ test("the sweep asks WHICH CHAIN first", { skip: !core || !tg }, () => {
   // A flow bound to whatever chain happens to be active is the wrong-chain dead
   // end the snipe panel had to be rescued from.
   for (const c of core.chains.enabledChains()) {
-    assert.ok(flat.some((b) => b.callback_data === "wdac:" + c.key), "a button for " + c.key);
+    assert.ok(flat.some((b) => String(b.callback_data).startsWith("wdac:" + c.key + ":")), "a button for " + c.key);
   }
   assert.match(s.text, /Which chain\?/);
 });
@@ -820,4 +823,69 @@ test("the normalisation happens ONCE, at the entry point", { skip: !core }, () =
   // forgets. It has to be the single read of the message.
   assert.match(t, /const text = normalizeCommand\(\(m\.text \|\| ''\)\.trim\(\)\);/);
   assert.equal((t.match(/normalizeCommand\(/g) || []).length, 2, "the definition and one call site");
+});
+
+// ---------------------------------------------------------------- chain first, always
+//
+// "harus ada opsi pilih chain dlu dan harus ada command pakai /". /withdraw
+// jumped straight to "paste the 0x address" on whatever chain happened to be
+// active — a user wanting to move SOL got a Robinhood prompt and no way to say
+// otherwise — and the flow that DID ask the chain was reachable only by button.
+
+test("every way into a withdraw asks the chain first", { skip: !core || !tg }, () => {
+  const t = code("telegram.js");
+  // The old jump-to-active-chain entry is gone from both the button and /withdraw.
+  assert.doesNotMatch(t, /if \(data === 'wd'\) \{ const wch = activeChain/);
+  assert.match(t, /if \(data === 'wdall' \|\| data === 'wd'\) \{ const sc = wdSweepChainScreen/);
+  assert.match(t, /if \(text === '\/withdraw' \|\| text === '\/withdrawall'\)/);
+  // …and the label stops claiming a chain it no longer picks for you.
+  assert.doesNotMatch(t, /📤 Withdraw \(active\)/);
+});
+
+test("both commands are in the blue / menu — typing /wi offered nothing before", { skip: !core || !tg }, async () => {
+  const names = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/setMyCommands/.test(String(url))) (b.commands || []).forEach((c) => names.push(c.command)); } catch (_) {}
+    return { json: async () => ({ ok: true, result: true }) };
+  };
+  try { await tg._test.registerCommands(); } finally { global.fetch = realFetch; }
+  assert.ok(names.includes("withdraw"), "/withdraw was never registered at all");
+  assert.ok(names.includes("withdrawall"));
+});
+
+test("the two entries differ ONLY in which wallets start ticked", { skip: !core || !tg }, async () => {
+  const CH2 = "770005";
+  core.ensureUser(CH2);
+  if (core.walletList(core.getUser(CH2)).length < 3) { core.addWallet(CH2); core.addWallet(CH2); }
+  const u = core.getUser(CH2);
+  const wall = core.walletList(u);
+  core.switchWallet(CH2, wall[1].id);   // active = Wallet 2
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage|editMessageText/.test(String(url))) sent.push({ t: b.text, kb: b.reply_markup }); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  const ticks = () => sent[sent.length - 1].kb.inline_keyboard.flat()
+    .filter((b) => /^(✅|⬜) Wallet/.test(b.text)).map((b) => b.text[0]);
+  try {
+    // Plain: the ACTIVE wallet, which is what it used to do outright.
+    await tg._test.onCallback({ id: "1", data: "wdac:solana:one", message: { message_id: 9, chat: { id: CH2 } }, from: { id: CH2 } });
+    assert.deepEqual(ticks(), ["⬜", "✅", "⬜"], "only the active wallet");
+    // MANY: everything — starting from empty would make the thing it exists for N taps.
+    await tg._test.onCallback({ id: "1", data: "wdac:solana:all", message: { message_id: 9, chat: { id: CH2 } }, from: { id: CH2 } });
+    assert.deepEqual(ticks(), ["✅", "✅", "✅"], "all of them");
+  } finally { global.fetch = realFetch; }
+});
+
+test("a chain button carries its mode, and a disabled chain still cannot be picked", { skip: !core || !tg }, () => {
+  for (const mode of ["one", "all"]) {
+    const s = tg._test.wdSweepChainScreen(CHAT, mode);
+    for (const c of core.chains.enabledChains()) {
+      assert.ok(s.kb.inline_keyboard.flat().some((b) => b.callback_data === `wdac:${c.key}:${mode}`), c.key + " " + mode);
+    }
+  }
+  const t = code("telegram.js");
+  assert.match(t, /if \(!core\.chains\.isEnabled\(ca\)\) \{ const sc = wdSweepChainScreen\(chatId, mode\)/);
 });

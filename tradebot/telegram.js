@@ -875,7 +875,7 @@ async function walletScreen(chatId) {
     kbRows.push(row);
   });
   if (list.length < core.WALLET_CAP) kbRows.push([btn(`➕ Generate wallet (${list.length}/${core.WALLET_CAP})`, 'neww'), btn('📩 Import', 'imp')]);
-  kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw (active)', 'wd')]);
+  kbRows.push([btn('🔑 Export (active)', 'exp'), btn('📤 Withdraw', 'wd')]);
   // "bisa withdraw semua wallet tapi dipilih dulu chainnya apa" — the row above
   // only ever spends the ACTIVE wallet on the ACTIVE chain, so emptying ten
   // wallets was twenty screen switches. Only offered where there is more than
@@ -1100,15 +1100,16 @@ async function walletsScreen(chatId) { return walletScreen(chatId); }
  * on — a withdraw picker writing to it would silently re-aim the user's trading
  * as a side effect of emptying a wallet.
  */
-function wdSweepChainScreen(chatId) {
+function wdSweepChainScreen(chatId, mode) {
+  mode = mode === 'all' ? 'all' : 'one';
   const list = core.chains.enabledChains();
   const rows2 = [];
   for (let i = 0; i < list.length; i += 2) {
-    rows2.push(list.slice(i, i + 2).map((c) => btn(`${c.emoji} ${c.name} · ${c.native}`.slice(0, 28), 'wdac:' + c.key)));
+    rows2.push(list.slice(i, i + 2).map((c) => btn(`${c.emoji} ${c.name} · ${c.native}`.slice(0, 28), `wdac:${c.key}:${mode}`)));
   }
   rows2.push([btn('✖ Cancel', 'wallets')]);
   return {
-    text: `📤 <b>Withdraw from several wallets</b>\n\n<b>Which chain?</b> A withdrawal moves that chain's native coin, and each chain has its own address — so this is the first question, not the last.\n\n<i>You pick the wallets next.</i>`,
+    text: `📤 <b>Withdraw${mode === 'all' ? ' from several wallets' : ''}</b>\n\n<b>Which chain?</b> A withdrawal moves that chain's native coin, and each chain has its own address — so this is the first question, not the last.\n\n<i>You pick the wallets next${mode === 'all' ? '' : ' (your active one is ticked; tick more if you want)'}.</i>`,
     kb: { inline_keyboard: rows2 },
   };
 }
@@ -3495,7 +3496,15 @@ async function onMessageImpl(m) {
   if (text === '/referral' || text === '/refer') { const s = referralScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/settings') { const s = settingsScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/language' || text === '/lang' || text === '/bahasa') { const s = langScreen(chatId); return send(chatId, s.text, s.kb); }
-  if (text === '/withdraw') { const wch = activeChain(chatId); setPending(chatId, { action: 'wd_addr', chain: wch.key }); return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)}${wdWalletLine(chatId)}\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send your funds to.`); }
+  // ⚠️ /withdraw used to jump STRAIGHT to "paste the address" on whatever chain
+  // happened to be active — so a user who wanted to move SOL got a prompt for a
+  // 0x address on Robinhood Chain and no way to say otherwise without backing
+  // out and hunting for 🌐. Chain first, same as the buttons and the same rule
+  // the snipe panel had to be rescued into.
+  if (text === '/withdraw' || text === '/withdrawall') {
+    const sc = wdSweepChainScreen(chatId, text === '/withdrawall' ? 'all' : 'one');
+    return send(chatId, sc.text, sc.kb);
+  }
   if (text.startsWith('/send')) {
     const [, ca, to, amt] = text.split(/\s+/);
     if (!isCa(ca) || !to || !amt) return send(chatId, 'Usage: <code>/send &lt;token&gt; &lt;destination&gt; &lt;amount|max&gt;</code> — sends a held token out. Or open the token card and tap 📤 Send.');
@@ -4032,12 +4041,18 @@ async function onCallback(q) {
     const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
   }
   // ---- multi-wallet sweep: chain → wallets → address → amount → confirm.
-  if (data === 'wdall') { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
+  if (data === 'wdall' || data === 'wd') { const sc = wdSweepChainScreen(chatId, data === 'wdall' ? 'all' : 'one'); return edit(chatId, mid, sc.text, sc.kb); }
   if (k === 'wdac') {
-    if (!core.chains.isEnabled(ca)) { const sc = wdSweepChainScreen(chatId); return edit(chatId, mid, sc.text, sc.kb); }
-    // Default the selection to EVERY wallet: "withdraw all wallets" is the thing
-    // being asked for, and starting from empty makes the common case ten taps.
-    const ids = core.walletList(core.ensureUser(chatId)).map((w) => w.id);
+    const mode = arg === 'all' ? 'all' : 'one';
+    if (!core.chains.isEnabled(ca)) { const sc = wdSweepChainScreen(chatId, mode); return edit(chatId, mid, sc.text, sc.kb); }
+    // The default selection is the only difference between the two ways in.
+    // "Withdraw from MANY" ticks everything — starting from empty would make the
+    // thing it exists for ten taps. Plain Withdraw ticks the ACTIVE wallet, which
+    // is what it used to do outright, and the picker still lets you add more.
+    const u = core.ensureUser(chatId);
+    const all = core.walletList(u).map((w) => w.id);
+    const act = core.activeWallet(u);
+    const ids = mode === 'all' ? all : (act ? [act.id] : all.slice(0, 1));
     setPending(chatId, { action: 'wd_sweep_pick', chain: ca, ids });
     const sc = await wdSweepPickScreen(chatId, { chain: ca, ids });
     return edit(chatId, mid, sc.text, sc.kb);
@@ -4084,7 +4099,6 @@ async function onCallback(q) {
   }
   if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis shows this wallet's <b>seed phrase</b> (if it has one) and <b>both</b> of its private keys — the EVM one and the Solana one. Anyone holding any of them can drain that wallet; the phrase gives away all of it at once. Never share them. Continue?`, rows([btn('Yes, show it', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
   if (k === 'expwy') { try { await send(chatId, exportKeyMsg(chatId, ca)); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
-  if (data === 'wd') { const wch = activeChain(chatId); setPending(chatId, { action: 'wd_addr', chain: wch.key }); return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)}${wdWalletLine(chatId)}\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send your funds to.`); }
   if (data === 'exp') return askExport(chatId);
   if (data === 'expy') { try { await send(chatId, exportKeyMsg(chatId)); } catch (e) { await send(chatId, '❌ ' + esc(e.message)); } return; }
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
@@ -5497,6 +5511,8 @@ async function registerCommands() {
     { command: 'orders',    description: 'Auto-sell orders (take-profit / stop-loss)' },
     { command: 'dca',       description: 'Scheduled recurring buys' },
     { command: 'alerts',    description: 'Price alerts' },
+    { command: 'withdraw',  description: 'Withdraw coins out — pick the chain first' },
+    { command: 'withdrawall', description: 'Withdraw from several wallets at once' },
     { command: 'send',      description: 'Send tokens out: /send <token> <address> <amount>' },
     { command: 'referral',  description: 'Your referral link & earnings' },
     { command: 'help',      description: 'How the bot works' },
@@ -5649,5 +5665,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, normalizeCommand, onMessage, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, normalizeCommand, onMessage, registerCommands, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

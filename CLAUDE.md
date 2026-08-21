@@ -2313,6 +2313,31 @@ withdrawal over a SELECTION: **chain → wallets → address → amount → conf
   `handleUpdate`, so a run of taps is concurrent and the last render wins, not
   the last tap.
 
+### "Harus ada opsi pilih chain dlu dan harus ada command pakai /"
+
+`/withdraw` jumped STRAIGHT to "paste the 0x address" on whatever chain happened
+to be active. A user who wanted to move SOL got a Robinhood prompt for a 0x
+address and no way to say otherwise without backing out and hunting for 🌐 — the
+wrong-chain dead end the snipe flow had to be rescued from, on a different
+screen, three sections later. The flow that DID ask was reachable only by button.
+
+- **Every entry asks the chain now**, `/withdraw` and 📤 alike, through the one
+  `wdSweepChainScreen`. Two shapes exist and there is no third: a button that
+  already knows the wallet AND the chain (the per-wallet 📤 on the deposit and
+  removal screens) skips both pickers because it has nothing to ask; everything
+  else asks. What must not come back is an entry that silently borrows the active
+  chain.
+- **The two ways in differ ONLY in which wallets start ticked** — plain
+  `/withdraw` ticks the ACTIVE wallet (what it used to do outright, now visible
+  and editable), `/withdrawall` ticks every one. The mode rides the callback
+  (`wdac:<chain>:<one|all>`), so a picker cannot lose it to an expired pending.
+- ⚠️ **`/withdraw` was never registered in the blue "/" menu at all.** The
+  operator typed `/wi` and got no autocomplete, which is its own reason to think
+  the command does not exist — and it is how the uppercase bug above got found in
+  the first place. Both are in `registerCommands` now.
+- The label stopped claiming a chain it no longer picks: `📤 Withdraw (active)`
+  → `📤 Withdraw`.
+
 ### ⚠️ `solBalance` answered 0 for a dead RPC, and the removal guard believed it
 
 Found while building the picker, and it is a defect in the shipped removal
