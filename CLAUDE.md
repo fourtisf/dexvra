@@ -1125,15 +1125,25 @@ rather than a fourth private idea of a card:
 different layout each day still read as the same poster recoloured. `MOODS` is
 the fix: each template names a bloom mood — geometry and palette per banner
 (`dawn`, `clash`, `stage`, `quad`, `boardroom`, `strata`, `regal`, `beams`,
-`nebula`, `terminal`, `laurel`) — and ONLY the blooms vary. The scrim, dot
-grid, vignette, frame and keyline stay shared, because those ARE the design
-system and varying them would make eleven banners from eleven brands. Every
-colour is a SITE token.
+`nebula`, `terminal`, `laurel`). The scrim, dot grid, vignette, frame and
+keyline stay shared, because those ARE the design system and varying them
+would make eleven banners from eleven brands. Every colour is a SITE token.
 
+- ⚠️ **Bloom positions alone were re-read as "the same background"** ("saya
+  ingin semua banner backgroundnya berbeda-beda tidak sama", one day after the
+  moods shipped) — light placement is mood, not identity. So every mood also
+  carries a **PATTERN**: visible geometry of its own — sunburst rays (dawn),
+  opposing diagonal beams (clash), stage cones (stage), 45° stripes (quad), a
+  mint horizon (boardroom), strata bands, a gold halo (regal), vertical beams,
+  a deterministic starfield (nebula), CRT scanlines (terminal), concentric
+  rings (laurel). Deterministic — no `Math.random`, a re-render must be
+  byte-stable — and painted UNDER the vignette so it recedes like everything
+  else. ⚠️ The dawn rays' apex sits ABOVE the frame: on-canvas, nine wedges
+  stack into one hot spike behind the keyline.
 - ⚠️ **Uniqueness is pinned, not trusted**: a test fails if two templates share
-  a mood, if one has no mood, or if a mood NAME has no entry in `MOODS` — a
-  typo would silently fall back to the shared default, which is precisely the
-  state this exists to end.
+  a mood or a pattern, if one has neither, or if a mood/pattern NAME has no
+  entry in its table — a typo would silently fall back to the shared default,
+  which is precisely the state this exists to end.
 
 ### Every layout is tellable apart at a glance — the 2026-08-21 rebuild
 
@@ -1161,6 +1171,9 @@ ladder share a silhouette:
   the figure) — the cards are 70px shorter since the plinths took that height,
   and at strip weight the curve sliced straight through the side cards'
   figures. Found by LOOKING at the render, the `drawGem` rule, again.
+- **The plinths are FULL card width** — the first cut inset them 14px and they
+  read as buttons under the cards, not pedestals under statues. Same rule, next
+  render.
 - **`list5`'s bar is HONEST**: length ∝ `pct / max(pct)`, never eased, and the
   widest bar always belongs to rank 1 because gainers.js sorts by the same
   number. A drawn value follows the same rule as a printed one.

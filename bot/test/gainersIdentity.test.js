@@ -342,6 +342,12 @@ test("every template carries its OWN backdrop mood — 'backgroundnya juga beda-
   // with nothing anywhere saying so.
   assert.match(BANNER, /const MOODS = \{/);
   for (const m of moods) assert.ok(BANNER.includes(`\n  ${m}: {`), `mood "${m}" is not defined in MOODS`);
+  // …and every mood carries its own PATTERN — bloom positions alone were
+  // re-read as "the same background", which is the report this exists to end.
+  const patterns = [...BANNER.matchAll(/pattern: "([a-z][A-Za-z]*)"/g)].map((m) => m[1]);
+  assert.strictEqual(patterns.length, moods.length, "a mood with no pattern falls back to a bare field");
+  assert.strictEqual(new Set(patterns).size, patterns.length, "two moods share a pattern: " + patterns.join(", "));
+  for (const pt of patterns) assert.ok(new RegExp(`\\n  ${pt}\\(ctx, W, H, S\\)`).test(BANNER), `pattern "${pt}" has no painter in PATTERNS`);
 });
 
 test("the three new layouts delegate thin days like the spotlight does", () => {

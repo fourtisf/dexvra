@@ -730,30 +730,168 @@ function grain(cv, ctx, W, H, S) {
  *
  *  Blooms are [x/W, y/H, r/W, token, alpha]; beams are [x/W, w/W, token, alpha].
  */
+/** Each mood = blooms + a PATTERN — visible geometry of its own, because bloom
+ *  positions alone were re-read as "the same background" ("saya ingin semua
+ *  banner backgroundnya berbeda-beda tidak sama", after the first moods pass).
+ *  Light positions are mood; a sunburst versus stage cones versus CRT
+ *  scanlines is unmistakably a different field. Every pattern is deterministic
+ *  (no Math.random — a re-render must be byte-stable) and painted UNDER the
+ *  vignette so it recedes at the corners like everything else. */
 const MOODS = {
-  // hero1 — dawn: one huge mint sunrise crowning the single champion
-  dawn: { blooms: [[0.5, -0.3, 0.85, "mint", 0.24], [0.5, 1.15, 0.55, "cyan", 0.1]] },
-  // duel2 — clash: gold in the winner's corner, cyan in the challenger's
-  clash: { blooms: [[0.12, 0.06, 0.5, "gold", 0.15], [0.88, 0.1, 0.5, "cyan", 0.16], [0.5, 1.1, 0.5, "violetDeep", 0.1]] },
-  // podium — stage: a warm gold wash from above centre, violet wings
-  stage: { blooms: [[0.5, -0.18, 0.62, "gold", 0.16], [0.06, 0.75, 0.4, "violetDeep", 0.12], [0.94, 0.75, 0.4, "violetDeep", 0.12]] },
-  // cards4 — quad: cyan and violet on the diagonal, one bloom per card pair
-  quad: { blooms: [[0.16, 0.12, 0.5, "cyan", 0.16], [0.86, 0.92, 0.55, "violet", 0.14], [0.9, 0.05, 0.35, "mint", 0.09]] },
-  // list5 — boardroom: the site's own page aurora, kept as-was
-  boardroom: { blooms: [[0.5, -0.22, 0.72, "mint", 0.2], [0.94, 1.04, 0.5, "cyan", 0.13], [-0.08, 0.55, 0.4, "violetDeep", 0.1]] },
-  // tier6 — strata: gold band over the podium tier, cyan under the board tier
-  strata: { blooms: [[0.28, 0.16, 0.55, "gold", 0.13], [0.75, 0.95, 0.6, "cyan", 0.15], [1.02, 0.3, 0.35, "violetDeep", 0.1]] },
-  // crown7 — regal: a wide gold arc over the champion band, deep violet floor
-  regal: { blooms: [[0.5, -0.14, 0.8, "gold", 0.15], [0.5, 1.2, 0.7, "violetDeep", 0.16], [0.04, 0.4, 0.3, "mint", 0.08]] },
-  // rail8 — beams: cool cyan verticals seated behind the two panels
-  beams: { blooms: [[0.5, -0.25, 0.6, "cyan", 0.14], [0.5, 1.15, 0.55, "mint", 0.09]], beams: [[0.27, 0.2, "cyan", 0.05], [0.73, 0.2, "violet", 0.05]] },
-  // mosaic9 — nebula: violet-led field with mint pinpricks, the busiest mood
-  // for the busiest grid
-  nebula: { blooms: [[0.2, 0.05, 0.5, "violet", 0.16], [0.85, 0.85, 0.55, "violetDeep", 0.18], [0.7, 0.1, 0.3, "mint", 0.1], [0.1, 0.9, 0.3, "cyan", 0.1]] },
-  // grid10 — terminal: the coldest field, cyan over steel-violet, data first
-  terminal: { blooms: [[0.5, -0.28, 0.7, "cyan", 0.16], [0.05, 1.05, 0.45, "violetDeep", 0.14], [0.95, 1.05, 0.45, "violetDeep", 0.14]] },
-  // spot10 — laurel: gold seated under the hero column, mint under the board
-  laurel: { blooms: [[0.16, 0.3, 0.5, "gold", 0.14], [0.75, -0.15, 0.6, "mint", 0.16], [0.85, 1.1, 0.45, "cyan", 0.11]] },
+  // hero1 — dawn: a mint sunrise with RAYS radiating from the champion's crown
+  dawn: { blooms: [[0.5, -0.3, 0.85, "mint", 0.28], [0.5, 1.15, 0.55, "cyan", 0.12]], pattern: "rays" },
+  // duel2 — clash: gold and cyan corners, opposing DIAGONAL BEAMS meeting mid
+  clash: { blooms: [[0.12, 0.06, 0.5, "gold", 0.19], [0.88, 0.1, 0.5, "cyan", 0.2], [0.5, 1.1, 0.5, "violetDeep", 0.12]], pattern: "clashBeams" },
+  // podium — stage: SPOTLIGHT CONES falling from above onto the three cards
+  stage: { blooms: [[0.5, -0.18, 0.62, "gold", 0.19], [0.06, 0.75, 0.4, "violetDeep", 0.14], [0.94, 0.75, 0.4, "violetDeep", 0.14]], pattern: "cones" },
+  // cards4 — quad: cyan/violet diagonal with 45° STRIPES across the field
+  quad: { blooms: [[0.16, 0.12, 0.5, "cyan", 0.19], [0.86, 0.92, 0.55, "violet", 0.17], [0.9, 0.05, 0.35, "mint", 0.11]], pattern: "stripes" },
+  // list5 — boardroom: the site aurora over a mint HORIZON band
+  boardroom: { blooms: [[0.5, -0.22, 0.72, "mint", 0.23], [0.94, 1.04, 0.5, "cyan", 0.15], [-0.08, 0.55, 0.4, "violetDeep", 0.12]], pattern: "horizon" },
+  // tier6 — strata: literal horizontal STRATA BANDS, gold tier over cyan tier
+  strata: { blooms: [[0.28, 0.16, 0.55, "gold", 0.16], [0.75, 0.95, 0.6, "cyan", 0.18], [1.02, 0.3, 0.35, "violetDeep", 0.12]], pattern: "strataBands" },
+  // crown7 — regal: a gold HALO arcing over the champion band
+  regal: { blooms: [[0.5, -0.14, 0.8, "gold", 0.18], [0.5, 1.2, 0.7, "violetDeep", 0.19], [0.04, 0.4, 0.3, "mint", 0.1]], pattern: "halo" },
+  // rail8 — beams: vertical light BEAMS seated behind the two strips
+  beams: { blooms: [[0.5, -0.25, 0.6, "cyan", 0.17], [0.5, 1.15, 0.55, "mint", 0.11]], beams: [[0.27, 0.2, "cyan", 0.08], [0.73, 0.2, "violet", 0.08]], pattern: "beamsV" },
+  // mosaic9 — nebula: violet field under a deterministic STARFIELD
+  nebula: { blooms: [[0.2, 0.05, 0.5, "violet", 0.19], [0.85, 0.85, 0.55, "violetDeep", 0.21], [0.7, 0.1, 0.3, "mint", 0.12], [0.1, 0.9, 0.3, "cyan", 0.12]], pattern: "stars" },
+  // grid10 — terminal: the coldest field, under CRT SCANLINES
+  terminal: { blooms: [[0.5, -0.28, 0.7, "cyan", 0.19], [0.05, 1.05, 0.45, "violetDeep", 0.16], [0.95, 1.05, 0.45, "violetDeep", 0.16]], pattern: "scanlines" },
+  // spot10 — laurel: concentric RINGS radiating from the champion's column
+  laurel: { blooms: [[0.16, 0.3, 0.5, "gold", 0.17], [0.75, -0.15, 0.6, "mint", 0.19], [0.85, 1.1, 0.45, "cyan", 0.13]], pattern: "rings" },
+};
+
+/** The pattern painters. All deterministic, all SITE-token colours, all quiet
+ *  enough that panels stay legible over them — the pattern is the field's
+ *  signature, never a competitor to the data. */
+const PATTERNS = {
+  rays(ctx, W, H, S) {
+    ctx.save();
+    // apex ABOVE the frame — with it on-canvas the nine wedges stack into one
+    // hot spike behind the keyline (seen on the first render)
+    ctx.translate(W / 2, -H * 0.08);
+    for (let i = 0; i < 9; i++) {
+      const a = -Math.PI / 2 - 0.9 + i * 0.225;
+      ctx.save();
+      ctx.rotate(a + Math.PI / 2);
+      const g = ctx.createLinearGradient(0, 0, 0, H * 1.1);
+      g.addColorStop(0, hexA(SITE.mint, 0.055));
+      g.addColorStop(1, hexA(SITE.mint, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(-26 * S, 0, 52 * S, H * 1.1);
+      ctx.restore();
+    }
+    ctx.restore();
+  },
+  clashBeams(ctx, W, H, S) {
+    const beam = (x0, rot, tok) => {
+      ctx.save();
+      ctx.translate(x0, -H * 0.15);
+      ctx.rotate(rot);
+      const g = ctx.createLinearGradient(0, 0, 240 * S, 0);
+      g.addColorStop(0, hexA(SITE[tok], 0));
+      g.addColorStop(0.5, hexA(SITE[tok], 0.07));
+      g.addColorStop(1, hexA(SITE[tok], 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 240 * S, H * 1.7);
+      ctx.restore();
+    };
+    beam(W * 0.02, 0.32, "gold");
+    beam(W * 0.2, 0.32, "gold");
+    beam(W * 0.62, -0.32, "cyan");
+    beam(W * 0.82, -0.32, "cyan");
+  },
+  cones(ctx, W, H, S) {
+    for (const fx of [0.19, 0.5, 0.81]) {
+      const cx = W * fx;
+      const g = ctx.createLinearGradient(0, 0, 0, H * 0.95);
+      g.addColorStop(0, hexA(SITE.gold, fx === 0.5 ? 0.11 : 0.07));
+      g.addColorStop(1, hexA(SITE.gold, 0));
+      ctx.beginPath();
+      ctx.moveTo(cx - 30 * S, 0);
+      ctx.lineTo(cx + 30 * S, 0);
+      ctx.lineTo(cx + W * 0.13, H * 0.95);
+      ctx.lineTo(cx - W * 0.13, H * 0.95);
+      ctx.closePath();
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+  },
+  stripes(ctx, W, H, S) {
+    ctx.save();
+    ctx.rotate(-Math.PI / 4);
+    for (let x = -H; x < W + H; x += 150 * S) {
+      ctx.fillStyle = "rgba(255,255,255,.022)";
+      ctx.fillRect(x, -W, 56 * S, W * 2 + H * 2);
+    }
+    ctx.restore();
+  },
+  horizon(ctx, W, H, S) {
+    const y = H * 0.305;
+    const g = ctx.createLinearGradient(0, y - 60 * S, 0, y + 60 * S);
+    g.addColorStop(0, hexA(SITE.mint, 0));
+    g.addColorStop(0.5, hexA(SITE.mint, 0.08));
+    g.addColorStop(1, hexA(SITE.mint, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, y - 60 * S, W, 120 * S);
+    ctx.fillStyle = hexA(SITE.mint, 0.24);
+    ctx.fillRect(0, y, W, Math.max(1, 1.2 * S));
+  },
+  strataBands(ctx, W, H, S) {
+    void S;
+    for (const [y0, y1, tok, a] of [[0.285, 0.3, "gold", 0.16], [0.3, 0.62, "gold", 0.035], [0.66, 0.675, "cyan", 0.16], [0.675, 0.9, "cyan", 0.035]]) {
+      ctx.fillStyle = hexA(SITE[tok], a);
+      ctx.fillRect(0, H * y0, W, H * (y1 - y0));
+    }
+  },
+  halo(ctx, W, H, S) {
+    ctx.save();
+    for (const [r, a, lw] of [[0.34, 0.12, 30], [0.4, 0.07, 18], [0.46, 0.04, 10]]) {
+      ctx.beginPath();
+      ctx.arc(W / 2, H * 0.02, W * r, 0.15, Math.PI - 0.15);
+      ctx.lineWidth = lw * S;
+      ctx.strokeStyle = hexA(SITE.gold, a);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+  beamsV(ctx, W, H, S) {
+    void S;
+    // the mood's own beams already paint the verticals; add faint counter-rails
+    for (const fx of [0.06, 0.5, 0.94]) {
+      ctx.fillStyle = "rgba(255,255,255,.035)";
+      ctx.fillRect(W * fx - 1, 0, 2, H);
+    }
+  },
+  stars(ctx, W, H, S) {
+    for (let i = 0; i < 46; i++) {
+      const h = (i * 2654435761) >>> 0;
+      const x = ((h % 997) / 997) * W;
+      const y = (((h >> 10) % 883) / 883) * H;
+      const r = (0.8 + ((h >> 20) % 5) * 0.42) * S;
+      const tok = i % 4 === 0 ? SITE.mint : i % 7 === 0 ? SITE.cyan : SITE.violet;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = hexA(tok, 0.1 + ((h >> 8) % 4) * 0.045);
+      ctx.fill();
+    }
+  },
+  scanlines(ctx, W, H, S) {
+    ctx.fillStyle = "rgba(150,215,238,.028)";
+    for (let y = 0; y < H; y += 6 * S) ctx.fillRect(0, y, W, Math.max(1, 1.1 * S));
+  },
+  rings(ctx, W, H, S) {
+    const cx = W * 0.16;
+    const cy = H * 0.55;
+    for (let i = 1; i <= 5; i++) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, i * 130 * S, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1, 1.4 * S);
+      ctx.strokeStyle = hexA(SITE.gold, 0.09 - i * 0.012);
+      ctx.stroke();
+    }
+  },
 };
 
 /** The site's page: #090C12 under the template's own bloom mood, a whisper
@@ -781,6 +919,11 @@ function backdrop(cv, ctx, S, spec, bg) {
       g.addColorStop(1, hexA(SITE[tok] || SITE.cyan, 0));
       ctx.fillStyle = g;
       ctx.fillRect(W * (bx - bw / 2), 0, W * bw, H);
+    }
+    if (mood.pattern && PATTERNS[mood.pattern]) {
+      ctx.save();
+      PATTERNS[mood.pattern](ctx, W, H, S);
+      ctx.restore();
     }
     // one diagonal catch-light across the whole card
     ctx.save();
@@ -1713,26 +1856,35 @@ function layoutPodium(ctx, S, spec, coins) {
     const y = bottom - plinthH - h;
     const cx = x + colW / 2;
 
-    // plinth first, so the card's shadow falls onto it
+    // plinth first, so the card's shadow falls onto it. FULL card width — the
+    // inset version read as a button under the card, not a pedestal under a
+    // statue (found by looking at the render).
     const m = medalOf(rank);
-    roundRect(ctx, x + 14 * S, bottom - plinthH, colW - 28 * S, plinthH, 10 * S);
-    ctx.fillStyle = "rgba(13,17,25,.9)";
+    roundRect(ctx, x, bottom - plinthH, colW, plinthH, 10 * S);
+    ctx.fillStyle = "rgba(13,17,25,.92)";
     ctx.fill();
-    roundRect(ctx, x + 14 * S, bottom - plinthH, colW - 28 * S, plinthH, 10 * S);
+    roundRect(ctx, x, bottom - plinthH, colW, plinthH, 10 * S);
     ctx.lineWidth = Math.max(1, 1.2 * S);
-    ctx.strokeStyle = hexA(rc, 0.4);
+    ctx.strokeStyle = hexA(rc, 0.45);
     ctx.stroke();
     ctx.save();
-    roundRect(ctx, x + 14 * S, bottom - plinthH, colW - 28 * S, plinthH, 10 * S);
+    roundRect(ctx, x, bottom - plinthH, colW, plinthH, 10 * S);
     ctx.clip();
-    ctx.fillStyle = hexA(rc, 0.5);
-    ctx.fillRect(x + 14 * S, bottom - plinthH, colW - 28 * S, Math.max(1.5, 2 * S));
-    ctx.font = `800 ${Math.round(plinthH * 0.66)}px ${F.m8}`;
+    ctx.fillStyle = hexA(rc, 0.55);
+    ctx.fillRect(x, bottom - plinthH, colW, Math.max(1.5, 2 * S));
+    // faint metal wash so the pedestal carries its rank's temperature
+    const pg = ctx.createLinearGradient(x, bottom - plinthH, x, bottom);
+    pg.addColorStop(0, hexA(rc, 0.1));
+    pg.addColorStop(1, hexA(rc, 0.02));
+    ctx.fillStyle = pg;
+    ctx.fillRect(x, bottom - plinthH, colW, plinthH);
+    ctx.font = `800 ${Math.round(plinthH * 0.64)}px ${F.m8}`;
     ctx.fillStyle = metalGrad(ctx, cx, bottom - plinthH / 2, plinthH / 2, m);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(rank), cx, bottom - plinthH / 2 + 1 * S);
     ctx.restore();
+    if (rank === 1) sparkle(ctx, cx + 46 * S, bottom - plinthH + 14 * S, 7 * S, m.light);
 
     surface(ctx, x, y, colW, h, 24 * S, { S, accent: rc, lift: winner ? 1.5 : 1 });
 
@@ -1839,6 +1991,18 @@ function layoutDuel(ctx, S, spec, coins) {
     const x = PAD * S + (idx === 0 ? 0 : widths[0] + gapX);
     const y = bottom - h;
     surface(ctx, x, y, colW, h, 24 * S, { S, accent: rc, lift: winner ? 1.5 : 1 });
+    // rank-coloured keyline along the card's top edge — the site's tier accent,
+    // and the crispest way the two cards state gold-vs-silver at a glance
+    ctx.save();
+    roundRect(ctx, x, y, colW, h, 24 * S);
+    ctx.clip();
+    const kl = ctx.createLinearGradient(x, 0, x + colW, 0);
+    kl.addColorStop(0, hexA(rc, 0));
+    kl.addColorStop(0.5, hexA(rc, 0.75));
+    kl.addColorStop(1, hexA(rc, 0));
+    ctx.fillStyle = kl;
+    ctx.fillRect(x, y, colW, Math.max(2, 2.4 * S));
+    ctx.restore();
 
     // identity row: avatar LEFT, name beside it — a two-column card is wide
     // enough to read horizontally, and stacking (the podium's shape) would
@@ -1902,7 +2066,7 @@ function layoutDuel(ctx, S, spec, coins) {
   // the VS medallion on the seam — only when there IS a duel
   if (slots.length > 1) {
     const sx = PAD * S + widths[0] + gapX / 2;
-    const sy = bottom - BAND_H * S * 0.6;
+    const sy = bottom - BAND_H * S * 0.56;
     const r = 33 * S;
     ctx.save();
     ctx.beginPath();
@@ -1956,7 +2120,7 @@ function layoutHero(ctx, S, spec, coins) {
   ctx.fillText("0", x + 36 * S, y + 262 * S);
   ctx.textAlign = "right";
   ctx.fillText("1", x + w - 36 * S, y + 262 * S);
-  sparkline(ctx, x + 60 * S, y + h * 0.5, w - 120 * S, h * 0.4, c.symbol, c.pct, S, { alpha: 0.16 });
+  sparkline(ctx, x + 60 * S, y + h * 0.5, w - 120 * S, h * 0.4, c.symbol, c.pct, S, { alpha: 0.28 });
   ctx.restore();
 
   chip(ctx, cx, y + 44 * S, "#1 · Top gainer", 13 * S, S, {
@@ -1966,8 +2130,8 @@ function layoutHero(ctx, S, spec, coins) {
     bg: hexA(SITE.gold, 0.12),
   });
 
-  const d = 124 * S;
-  const lcy = y + 70 * S + d / 2;
+  const d = 134 * S;
+  const lcy = y + 64 * S + d / 2;
   radial(ctx, cx, lcy, d * 1.2, SITE.gold, 0.15);
   avatar(ctx, c.img, cx, lcy, d, c.symbol, S);
   metalRing(ctx, cx, lcy, d, 1, S);
@@ -1977,15 +2141,15 @@ function layoutHero(ctx, S, spec, coins) {
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = SITE.text;
-  ctx.font = `700 ${54 * S}px ${F.d7}`;
-  ctx.letterSpacing = `${(-1.1 * S).toFixed(1)}px`;
-  ctx.fillText(fitText(ctx, `$${c.symbol}`, w - 320 * S, { weight: 700, size: 54 * S, min: 26 * S, family: F.d7 }), cx, lcy + d / 2 + 56 * S);
+  ctx.font = `700 ${58 * S}px ${F.d7}`;
+  ctx.letterSpacing = `${(-1.2 * S).toFixed(1)}px`;
+  ctx.fillText(fitText(ctx, `$${c.symbol}`, w - 320 * S, { weight: 700, size: 58 * S, min: 26 * S, family: F.d7 }), cx, lcy + d / 2 + 58 * S);
   ctx.letterSpacing = "0px";
   ctx.fillStyle = SITE.muted;
-  ctx.fillText(fitText(ctx, c.name || "", w - 360 * S, { weight: 500, size: 19 * S, min: 12 * S, family: F.d5 }), cx, lcy + d / 2 + 88 * S);
+  ctx.fillText(fitText(ctx, c.name || "", w - 360 * S, { weight: 500, size: 19 * S, min: 12 * S, family: F.d5 }), cx, lcy + d / 2 + 90 * S);
   ctx.restore();
 
-  bigPct(ctx, cx, y + 372 * S, c.pctLabel, 100 * S, S, { align: "center" });
+  bigPct(ctx, cx, y + 384 * S, c.pctLabel, 102 * S, S, { align: "center" });
 
   // stat tiles — a centred row, same tile grammar as before
   const tiles = [
