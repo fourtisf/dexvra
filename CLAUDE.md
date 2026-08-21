@@ -2348,6 +2348,26 @@ screen, three sections later. The flow that DID ask was reachable only by button
   The test asserts each admin command is gated inside its handler rather than
   taking "admin-only" on trust.
 
+### "Mengapa ada bacaan paste base 88 ini kan sol wallet"
+
+The withdraw prompt said *"Paste the base58 address"*, and it was read back as
+**"base 88"**. `base58` is the name of an ENCODING — not a thing anybody sees,
+and no help whatsoever in deciding whether what you just pasted is the right
+thing. "0x address" works on EVM for the exact opposite reason: the user can
+literally see the `0x`.
+
+- **`destHint(chainKey)` is the one owner**, because five prompts spelled this
+  out independently — the sweep, the per-wallet 📤, the token send, the
+  whitelist, and the key export. Solana gets the CHAIN'S NAME plus where the
+  address comes from ("the one Phantom, Solflare or your exchange shows"); EVM
+  keeps `0x address`, where the prefix is the hint.
+- ⚠️ **No example address, ever, on a withdraw prompt.** This repo has already
+  paid for a placeholder pasted verbatim into a live shell; here the same mistake
+  is an irreversible transfer to a stranger. The shape is described in WORDS.
+- A test strips comments and fails on `base58` anywhere in user-facing text —
+  in a comment it is a useful fact for whoever edits the file next, and on a
+  screen it is noise.
+
 ### ⚠️ `solBalance` answered 0 for a dead RPC, and the removal guard believed it
 
 Found while building the picker, and it is a defect in the shipped removal

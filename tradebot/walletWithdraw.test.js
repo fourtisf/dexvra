@@ -920,3 +920,58 @@ test("every user-facing command the bot handles is in the / menu", { skip: !core
   const missing = [...handled].filter((c) => !reg.has(c) && !adminOnly.includes(c) && !alias.includes(c));
   assert.deepEqual(missing, [], "handled but undiscoverable: " + missing.map((c) => "/" + c).join(" "));
 });
+
+// ---------------------------------------------------------------- plain language
+//
+// "mengapa ada bacaan paste base 88 ini kan sol wallet" — the withdraw prompt
+// said "paste the base58 address", and it was read back as "base 88". `base58`
+// is the name of an ENCODING: not a thing anybody sees, and no help at all in
+// deciding whether what you just pasted is the right thing.
+
+test("no user-facing string says base58", { skip: !core }, () => {
+  const src = read("telegram.js");
+  // Strip comments — "base58" is fine and useful in them; it is a fact about the
+  // encoding, aimed at whoever edits this next.
+  const speech = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/.*$/gm, "");
+  assert.doesNotMatch(speech, /base58/i, "jargon reached a user-facing string again");
+});
+
+test("destHint is the one owner, and never offers an example address", { skip: !core || !tg }, () => {
+  const sol = tg._test.destHint("solana");
+  const evm = tg._test.destHint("ethereum");
+  assert.match(sol.what, /Solana address/);
+  assert.match(sol.note, /does not start with/, "the shape, in words");
+  // "0x address" works on EVM for the opposite reason to base58: the user can
+  // literally see the 0x.
+  assert.match(evm.what, /0x address/);
+  assert.equal(evm.note, "", "no note needed where the prefix is the hint");
+  // ⚠️ NO SAMPLE ADDRESS on a withdraw prompt. This repo has already paid for a
+  // placeholder pasted literally; here the same mistake is an irreversible
+  // transfer to a stranger.
+  for (const v of [sol.what, sol.note, evm.what, evm.note]) {
+    assert.doesNotMatch(v, /[1-9A-HJ-NP-Za-km-z]{32,}/, "looks like a pasteable address");
+    assert.doesNotMatch(v, /0x[0-9a-fA-F]{40}/, "looks like a pasteable address");
+  }
+  const src = code("telegram.js");
+  // Five prompts used to spell this out independently; they all read the helper.
+  assert.ok((src.match(/destHint\(/g) || []).length >= 5, "every prompt goes through it");
+});
+
+test("DRIVEN: the Solana prompt names the chain, the EVM one names the prefix", { skip: !core || !tg }, async () => {
+  const CH3 = "770006";
+  core.ensureUser(CH3);
+  const sent = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/sendMessage/.test(String(url))) sent.push(b.text); } catch (_) {}
+    return { json: async () => ({ ok: true, result: { message_id: sent.length + 1 } }) };
+  };
+  const cb = (d) => tg._test.onCallback({ id: "1", data: d, message: { message_id: 5, chat: { id: CH3 } }, from: { id: CH3 } });
+  try {
+    await cb("wdac:solana:all"); sent.length = 0; await cb("wdaGo");
+    assert.match(sent[0], /Paste the <b>Solana address<\/b>/);
+    assert.doesNotMatch(sent[0], /base58/);
+    await cb("wdac:ethereum:all"); sent.length = 0; await cb("wdaGo");
+    assert.match(sent[0], /Paste the <b>0x address<\/b>/);
+  } finally { global.fetch = realFetch; }
+});

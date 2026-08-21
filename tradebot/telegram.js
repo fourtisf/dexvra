@@ -320,6 +320,27 @@ const fmtNat = (raw, chainKey) => { try { return Number(ethers.formatUnits(BigIn
 const wAddr = (w, chainKey) => core.walletAddress(w, chainKey);
 // A valid destination FOR a specific chain (base58 on Solana, 0x on EVM).
 const isAddrFor = (s, chainKey) => core.chains.isSvm(chainKey) ? solana.isSolAddress(s) : isEvmCa(s);
+/**
+ * How to ASK a user for a destination address on a chain — the one owner, so
+ * five prompts cannot describe the same thing five ways.
+ *
+ * ⚠️ These prompts used to say "paste the base58 address", and it was read back
+ * as *"mengapa ada bacaan paste base 88 ini kan sol wallet"*. `base58` is the
+ * name of an ENCODING; it is not a thing anybody sees, and it tells the user
+ * nothing about whether what they just pasted is the right thing. "0x address"
+ * works on EVM for the opposite reason — the user can literally SEE the `0x`.
+ * The Solana equivalent is the chain's own name plus where the address comes
+ * from.
+ *
+ * ⚠️ And NO EXAMPLE ADDRESS, ever, on a withdraw prompt. This repo has already
+ * paid for a placeholder pasted literally into a live shell; here the same
+ * mistake is an irreversible transfer to a stranger.
+ */
+function destHint(chainKey) {
+  return core.chains.isSvm(chainKey)
+    ? { what: '<b>Solana address</b>', note: '<i>The one Phantom, Solflare or your exchange shows for SOL — it does not start with <code>0x</code>.</i>' }
+    : { what: '<b>0x address</b>', note: '' };
+}
 const taxStr = (t) => (t == null ? '?' : (Math.round(t * 10) / 10) + '%');
 function fmtAge(ms) { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h'; return Math.floor(s / 86400) + 'd'; }
 function setPending(chatId, obj) { obj.ts = Date.now(); pending.set(chatId, obj); }
@@ -3879,7 +3900,7 @@ async function onCallback(q) {
   if (data === 'aex') { setPending(chatId, { action: 'ae_val' }); return send(chatId, '🎯 <b>Auto-exit after every buy</b>\n\nSend <b>&lt;take-profit%&gt; &lt;stop-loss%&gt;</b> (0 = off), e.g.\n<code>100 50</code> → sell 100% at +100% (2x) or −50%.\n<code>0 0</code> → turn auto-exit off.\n\n<i>Orders are placed on the buying wallet, one-shot, relative to your entry price.</i>'); }
   if (data === 'usec') { const s = securityScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (data === 'usectog') { const cur = core.getSecurity(chatId).withdrawLock; try { core.setWithdrawLock(chatId, !cur); } catch (_) {} const s = securityScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (data === 'uwladd') { const ch = activeChain(chatId); setPending(chatId, { action: 'wl_add', chain: ch.key }); return send(chatId, `➕ <b>Whitelist a withdraw address</b> on ${ch.emoji} ${esc(ch.name)}\n\nSend the ${core.chains.isSvm(ch.key) ? 'base58' : '0x'} address. Once you have any whitelisted address on a chain, withdrawals on that chain are <b>only</b> allowed to whitelisted addresses.`); }
+  if (data === 'uwladd') { const ch = activeChain(chatId); setPending(chatId, { action: 'wl_add', chain: ch.key }); const dh = destHint(ch.key); return send(chatId, `➕ <b>Whitelist a withdraw address</b> on ${ch.emoji} ${esc(ch.name)}\n\nSend the ${dh.what}.${dh.note ? '\n' + dh.note : ''}\n\nOnce you have any whitelisted address on a chain, withdrawals on that chain are <b>only</b> allowed to whitelisted addresses.`); }
   if (k === 'uwlrm') { try { core.removeWhitelist(chatId, ca); } catch (_) {} const s = securityScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'sec') { const parts = data.split(':'); const s = await safetyScreen(chatId, parts[2], parts[1]); return edit(chatId, mid, s.text, s.kb); }
   // Multi-wallet trade picker: wsel opens it; wtg toggles one wallet; wtgA all; wtgN clear.
@@ -4080,7 +4101,8 @@ async function onCallback(q) {
     if (!(pp.ids || []).length) return answer(q.id, 'Pick at least one wallet first.');
     const wch = core.chainOf(pp.chain);
     setPending(chatId, { action: 'wd_sweep_addr', chain: pp.chain, ids: pp.ids });
-    return send(chatId, `📤 <b>Withdraw</b> · ${wch.emoji} ${esc(wch.name)} · <b>${pp.ids.length} wallet${pp.ids.length > 1 ? 's' : ''}</b>\n\nPaste the ${core.chains.isSvm(pp.chain) ? 'base58' : '0x'} address they should all send to.`);
+    const dh = destHint(pp.chain);
+    return send(chatId, `📤 <b>Withdraw</b> · ${wch.emoji} ${esc(wch.name)} · <b>${pp.ids.length} wallet${pp.ids.length > 1 ? 's' : ''}</b>\n\nPaste the ${dh.what} they should all send to.${dh.note ? '\n\n' + dh.note : ''}`);
   }
 
   // Withdraw from a NAMED wallet on a NAMED chain. `wd` (the active wallet) is
@@ -4095,7 +4117,8 @@ async function onCallback(q) {
     const wch = (core.chains.isEnabled(arg) && core.chainOf(arg)) || activeChain(chatId);
     setPending(chatId, { action: 'wd_addr', walletId: ca, chain: wch.key });
     const i = core.walletList(u).findIndex((x) => x.id === ca) + 1;
-    return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)} · <b>Wallet ${i}</b>\n<code>${esc(core.walletAddress(w, wch.key))}</code>\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send to.`);
+    const dh = destHint(wch.key);
+    return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)} · <b>Wallet ${i}</b>\n<code>${esc(core.walletAddress(w, wch.key))}</code>\n\nPaste the ${dh.what} you want to send to.${dh.note ? '\n\n' + dh.note : ''}`);
   }
   if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis shows this wallet's <b>seed phrase</b> (if it has one) and <b>both</b> of its private keys — the EVM one and the Solana one. Anyone holding any of them can drain that wallet; the phrase gives away all of it at once. Never share them. Continue?`, rows([btn('Yes, show it', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
   if (k === 'expwy') { try { await send(chatId, exportKeyMsg(chatId, ca)); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
@@ -4163,7 +4186,7 @@ async function onCallback(q) {
     if (k === 'trl') { setPending(chatId, { action: 'trail_pct', ca: tca, chain: ch, walletId: wid }); return send(chatId, `📉 <b>Trailing stop</b> — send the trail <b>percent</b> (1–99), e.g. <code>20</code>.\n\n<i>The bot tracks the peak price from now and sells 100% if it falls that % below the peak. A rising price only ratchets the peak up.</i>`); }
     if (k === 'lb') { setPending(chatId, { action: 'lb_price', ca: tca, chain: ch, walletId: wid }); return send(chatId, `⏳ <b>Limit buy — buy automatically when the price drops</b>\n\nSend the <b>target price</b> and the <b>amount to spend</b>, separated by a space:\n• <code>0.002 0.05</code> — buy 0.05 when the price reaches $0.002\n• <code>$1.5k 0.1</code> — shorthand works here too\n\n<i>k = thousand, m = million, b = billion.</i>`); }
     if (k === 'alt') { setPending(chatId, { action: 'alert_price', ca: tca, chain: ch }); return send(chatId, `🔔 <b>Price alert</b> — send the target <b>USD price</b> and I'll ping you when <code>${short(tca)}</code> crosses it.\n\n<code>0.0025</code>  ·  <code>$2k</code>  ·  <code>101k</code>`); }
-    if (k === 'wt') { setPending(chatId, { action: 'wtok_addr', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch) || {}; return send(chatId, `📤 <b>Send token</b> <code>${short(tca)}</code> out of the bot\n\nPaste the <b>destination ${core.chains.isSvm(ch) ? 'Solana (base58)' : (cn.native || '') + ' (0x)'} address</b> to send to:`); }
+    if (k === 'wt') { setPending(chatId, { action: 'wtok_addr', ca: tca, chain: ch, walletId: wid }); const dh = destHint(ch); return send(chatId, `📤 <b>Send token</b> <code>${short(tca)}</code> out of the bot\n\nPaste the destination ${dh.what} to send to.${dh.note ? '\n\n' + dh.note : ''}`); }
     if (k === 'dca') { setPending(chatId, { action: 'dca_new', ca: tca, chain: ch, walletId: wid }); const cn = core.chainOf(ch) || {}; return send(chatId, `🔁 <b>DCA (scheduled buys)</b> for <code>${short(tca)}</code>\n\nSend <b>&lt;amount&gt; &lt;every_minutes&gt; &lt;rounds&gt;</b> in ${cn.native || ''}, e.g.\n<code>0.05 60 10</code> → buy 0.05 every 60 min, 10 times.\n\n<i>Runs on this wallet; each round is a normal buy (fee applies). Cancel anytime in 🔁 DCA.</i>`); }
   }
   if (k === 'wtokok') {
@@ -4615,7 +4638,7 @@ function exportKeyMsg(chatId, walletId) {
   try { parts.push(`Address (same on every EVM chain):\n<code>${esc(w.address)}</code>\n\nEVM private key:\n<code>${esc(core.exportKey(chatId, w.id))}</code>`); }
   catch (e) { parts.push(`⚠️ Couldn't read the EVM key: ${esc(e.message || String(e))}`); }
   if (sol) {
-    try { parts.push(`Solana address:\n<code>${esc(core.walletAddress(w, sol.key))}</code>\n\nSolana private key (base58 — import into Phantom/Solflare):\n<code>${esc(core.exportKey(chatId, w.id, sol.key))}</code>`); }
+    try { parts.push(`Solana address:\n<code>${esc(core.walletAddress(w, sol.key))}</code>\n\nSolana private key — paste this into Phantom or Solflare:\n<code>${esc(core.exportKey(chatId, w.id, sol.key))}</code>`); }
     catch (e) { parts.push(`⚠️ Couldn't read the Solana key: ${esc(e.message || String(e))}`); }
   }
   // A failed read must never pass for "this wallet only had one key".
@@ -5676,5 +5699,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, normalizeCommand, onMessage, registerCommands, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, destHint, onCallback, normalizeCommand, onMessage, registerCommands, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();
