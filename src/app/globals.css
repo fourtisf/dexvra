@@ -15,11 +15,19 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
 body{
+  /* The grain is the first layer, so it textures only the page GROUND — every
+     card paints its own surface over it. Baked into an inline SVG: no asset to
+     fetch, no request to fail. */
   background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.024'/%3E%3C/svg%3E"),
     radial-gradient(1100px 540px at 78% -16%, rgba(61,245,159,.09), transparent 58%),
     radial-gradient(900px 520px at -8% 12%, rgba(124,58,237,.08), transparent 55%),
     var(--bg);
   color:var(--text);font-family:var(--fb);font-size:14.5px;-webkit-font-smoothing:antialiased;
+  /* Every digit the same width, everywhere: a board that re-prices every 30s
+     must replace numbers IN PLACE — proportional figures make a whole column
+     shiver on each refresh. */
+  font-variant-numeric:tabular-nums;
 }
 a{color:inherit;text-decoration:none}
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
@@ -88,6 +96,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border-bottom:1px solid var(--line);
 }
+/* the brand gradient as a one-pixel horizon under the glass */
+.topbar::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,transparent 4%,rgba(61,245,159,.3) 30%,rgba(34,211,238,.24) 60%,transparent 96%)}
 .brand-top{display:none;align-items:center;gap:9px;flex:none;text-decoration:none;color:inherit}
 .brand-top .brand-mark{width:32px;height:32px;font-size:17px;border-radius:10px}
 /* Mobile ⋮ feature menu — the sidebar is hidden on phones, so this exposes the
@@ -169,7 +180,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 }
 
 /* ============ PROMO CAROUSEL ============ */
-.promo{position:relative;flex:none;height:208px;border-radius:22px;overflow:hidden;border:1px solid var(--line2);box-shadow:0 22px 52px rgba(0,0,0,.4)}
+.promo{position:relative;flex:none;height:208px;border-radius:22px;overflow:hidden;border:1px solid var(--line2);box-shadow:0 22px 52px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.06)}
 .promo-track{display:flex;height:100%;transition:transform .55s cubic-bezier(.3,.8,.3,1)}
 .slide{flex:0 0 100%;min-width:100%;height:100%;position:relative;display:flex;align-items:center;padding:24px 38px;overflow:hidden}
 .slide-copy{position:relative;z-index:6;max-width:62%}
@@ -284,7 +295,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   flex:1 0 305px;min-width:0;height:162px;scroll-snap-align:start;
   border:1px solid var(--line2);border-radius:18px;
   background:linear-gradient(180deg,rgba(255,255,255,.03),transparent 22%),var(--card);
-  box-shadow:0 14px 34px rgba(0,0,0,.3);padding:13px 15px;
+  box-shadow:0 14px 34px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.05);padding:13px 15px;
   display:flex;flex-direction:column;gap:10px;
 }
 .wcard-head{display:flex;align-items:center;gap:9px}
@@ -386,7 +397,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tab.active{background:linear-gradient(120deg,rgba(61,245,159,.18),rgba(34,211,238,.1));border-color:rgba(61,245,159,.55);color:#D9FFE9}
 
 /* ============ BOARD ============ */
-.board{border:1px solid var(--line2);border-radius:22px;overflow:hidden;overflow-x:auto;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 12%),var(--card);box-shadow:0 22px 52px rgba(0,0,0,.4)}
+.board{border:1px solid var(--line2);border-radius:22px;overflow:hidden;overflow-x:auto;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 12%),var(--card);box-shadow:0 22px 52px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05)}
 .board::-webkit-scrollbar{height:7px}
 .board::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:99px}
 .row{
@@ -403,7 +414,18 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .row:not(.head):hover{background:rgba(61,245,159,.05);box-shadow:inset 3px 0 0 var(--mint)}
 .c-num{text-align:right}
 .rank{font-family:var(--fm);font-weight:700;font-size:13px;color:var(--faint)}
-.rank .medal{font-size:15px}
+/* Drawn metal roundels — the .fcoin grammar (radial highlight, inner shine),
+   at rank size. Emoji medals were the one OS-supplied glyph left on the board:
+   Apple gold next to Windows gold is two different products. */
+.rank .medal{
+  width:23px;height:23px;border-radius:50%;display:inline-grid;place-items:center;
+  font-family:var(--fm);font-weight:800;font-size:10.5px;line-height:1;
+  border:1px solid rgba(255,255,255,.34);
+  box-shadow:inset 0 1.5px 0 rgba(255,255,255,.5), inset 0 -2px 3px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.35);
+}
+.medal-1{background:radial-gradient(circle at 32% 26%,#FFEDB0,#FFC53D 52%,#B57900);color:#241703}
+.medal-2{background:radial-gradient(circle at 32% 26%,#F2F6FC,#C7D0DC 52%,#8B96A6);color:#1C2430}
+.medal-3{background:radial-gradient(circle at 32% 26%,#F7CDA6,#D98A4C 52%,#8C4F1E);color:#2A1503}
 .tok{display:flex;align-items:center;gap:12px;min-width:0}
 .coin-wrap{position:relative;flex:none}
 .tok .coin{width:38px;height:38px;font-size:18px;border-width:2px}
@@ -421,7 +443,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tok .m-stats b{color:var(--muted);font-weight:800}
 .price{font-family:var(--fm);font-weight:800;font-size:13px;transition:color .3s}
 .mono-dim{font-family:var(--fm);font-weight:600;font-size:12.5px;color:var(--muted)}
-.chg{display:inline-flex;font-family:var(--fm);font-weight:800;font-size:11.5px;border-radius:9px;padding:6px 9px}
+.chg{display:inline-flex;justify-content:center;min-width:66px;font-family:var(--fm);font-weight:800;font-size:11.5px;border-radius:9px;padding:6px 9px}
 .chg.up{color:#063A1F;background:linear-gradient(120deg,#4DFFA6,#25E890)}
 .chg.dn{color:#fff;background:linear-gradient(120deg,#FF7291,#FF4D6D)}
 .tx-cell{font-family:var(--fm);text-align:right;line-height:1.35}
@@ -439,6 +461,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .star.on svg{fill:var(--gold)}
 .flash-up .price{color:var(--mint)}
 .flash-dn .price{color:var(--red)}
+.row.flash-up,.mv-row.flash-up{background:rgba(61,245,159,.05)}
+.row.flash-dn,.mv-row.flash-dn{background:rgba(255,92,122,.05)}
 .empty{padding:36px;text-align:center;color:var(--muted);font-size:14px}
 /* new pairs layout */
 .np .row{grid-template-columns:50px minmax(200px,1.7fr) 96px 118px 92px 108px 148px 44px}
@@ -639,7 +663,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   .calc-out{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){
-  .ticker-track,.dot-live,.orbit,.sat,.fcoin-main,.blip-tag,.sparkle,.nav .ldot{animation:none}
+  .ticker-track,.dot-live,.orbit,.sat,.fcoin-main,.blip-tag,.sparkle,.nav .ldot,
+  .sk::after,.live-pill{animation:none}
   .promo-track{transition:none}
   *{transition:none!important}
 }
@@ -665,8 +690,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 }
 .src-pill.live{color:#03150B;background:var(--mint)}
 .src-pill.demo{color:#2A1102;background:linear-gradient(120deg,#FFC46B,#FF7A4D)}
+/* Text-style loading — still used by the token page, trades, signals and
+   new-listings. The home surfaces moved to .sk skeletons; these keep the quiet
+   line + pulsing dot. */
 .board-loading{padding:36px;text-align:center;color:var(--muted);font-size:13px;font-family:var(--fm)}
-@keyframes shimmer{0%{opacity:.4}50%{opacity:.9}100%{opacity:.4}}
 .board-loading .dot-live{display:inline-block;margin-right:8px;vertical-align:middle}
 .nav a{-webkit-tap-highlight-color:transparent}
 .verified-badge{color:var(--mint);font-size:12px;margin-left:4px}
@@ -689,9 +716,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   --grad:linear-gradient(180deg,#FAFBFC 0%,#D6DAE1 100%);
 }
 
-/* premium background: quiet monochrome depth, no colored glows */
+/* premium background: quiet monochrome depth, no colored glows — plus a
+   whisper of grain on the page GROUND (cards paint their own surface over
+   it). Inline SVG: no asset to fetch, no request to fail. */
 body{
   background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E"),
     radial-gradient(1200px 620px at 50% -22%, rgba(255,255,255,.045), transparent 62%),
     radial-gradient(760px 460px at 96% 0%, rgba(61,220,151,.035), transparent 58%),
     var(--bg);
@@ -716,7 +746,8 @@ body{
 /* panels / cards / board → near-black glass with hairline edge */
 .panel,.wcard,.board{
   background:linear-gradient(180deg,rgba(255,255,255,.028),transparent 26%),var(--card);
-  box-shadow:0 24px 60px rgba(0,0,0,.55);
+  /* the hairline top highlight — the light source the metal roundels claim */
+  box-shadow:0 24px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
 }
 .board .row:not(.head):hover{
   background:rgba(255,255,255,.035);
@@ -1239,7 +1270,7 @@ body{
 .mv-card{position:relative;display:flex;flex-direction:column;min-width:0;overflow:hidden;
   border:1px solid var(--line2);border-radius:18px;
   background:linear-gradient(180deg,rgba(255,255,255,.03),transparent 22%),var(--card);
-  box-shadow:0 16px 40px rgba(0,0,0,.34)}
+  box-shadow:0 16px 40px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.05)}
 /* The accent RAIL is the identity of each card — a green card, a red card and
    a cyan card, told apart before a single number is read. */
 .mv-card::before{content:"";position:absolute;inset:0 0 auto;height:2.5px;background:var(--acc)}
@@ -1312,7 +1343,7 @@ body{
 /* ── Top Coins ─────────────────────────────────────────────────────────────*/
 .topcoins{display:flex;flex-direction:column;gap:11px}
 .tc-board{border:1px solid var(--line2);border-radius:18px;overflow:hidden;overflow-x:auto;
-  background:var(--card);box-shadow:0 14px 36px rgba(0,0,0,.3)}
+  background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 14%),var(--card);box-shadow:0 14px 36px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.05)}
 .tc-board::-webkit-scrollbar{height:7px}
 .tc-board::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:99px}
 .tc-row{display:grid;grid-template-columns:44px minmax(170px,1.6fr) 108px 84px 84px 118px 62px;
@@ -1362,3 +1393,51 @@ body{
   .mv-list{height:250px}
   .mv-stamp{display:none}
 }
+
+/* ============ PREMIUM PASS · skeletons + micro-interaction ================
+   Loading must LOOK like loading. Before the first /api/tokens answer, the
+   empty states are FALSE claims — "Nothing is up on this timeframe" about a
+   market nobody has read yet — which is this repo's failure-rendered-as-fact
+   shape, on the storefront. The shimmer replaces the claim, and the rows fade
+   down the list so the block reads as "arriving", not "broken". */
+.sk{position:relative;overflow:hidden;border-radius:7px;background:rgba(255,255,255,.055);flex:none}
+.sk::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 32%,rgba(255,255,255,.075) 50%,transparent 68%)}
+/* ⚠️ The animations are DECLARED under no-preference rather than killed by the
+   reduced-motion block: this section is appended after that block, so a
+   same-specificity kill there loses the cascade to these very rules — measured
+   with reducedMotion:"reduce", not assumed. */
+@media (prefers-reduced-motion:no-preference){
+  .sk::after{animation:skshimmer 1.6s linear infinite}
+}
+@keyframes skshimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.skr{display:flex;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid var(--line)}
+.skr:first-child{border-top:none}
+.sk-dot{width:14px;height:14px;border-radius:50%}
+.sk-coin{width:38px;height:38px;border-radius:50%}
+.sk-coin.sm{width:28px;height:28px}
+.sk-id{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.sk-line{height:11px}
+.sk-line.thin{height:8px;opacity:.7}
+.sk-cell{width:96px;height:12px;margin-left:auto}
+.sk-pill{width:66px;height:24px;border-radius:9px}
+.mv-skr{padding:9px}
+.mv-skr .sk-spark{width:34px;height:14px}
+.mv-skr .sk-pill{height:22px}
+
+/* Press feedback: a control that gives a millimetre under the finger. Buttons
+   only — a table row that shrinks on click reads as the page slipping. */
+.ttab:active,.tab:active,.chain-chip:active,.qtag:active,.tc-more:active,
+.board-expand:active,.btn-primary:active,.btn-wallet:active,.filter-btn:active,
+.mv-all:active,.pbtn:active{transform:scale(.97)}
+
+/* LIVE breathes — one slow exhale, not a blink. It is the only animated chrome
+   on the page, which is what keeps it meaning something. */
+@media (prefers-reduced-motion:no-preference){
+  .live-pill{animation:pillbreathe 2.6s ease-in-out infinite}
+}
+@keyframes pillbreathe{50%{box-shadow:0 0 14px 1px rgba(61,220,151,.4)}}
+
+/* the expander's chevron leans into the tap it invites */
+.board-expand:hover svg{transform:translateY(2px)}
+.board-expand.open:hover svg{transform:rotate(180deg) translateY(2px)}

@@ -58,6 +58,25 @@ const DECKS: Deck[] = [
   },
 ];
 
+function MvSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div className="mv-row mv-skr" key={i} style={{ opacity: 1 - i * 0.13 }}>
+          <span className="sk sk-dot" />
+          <span className="sk sk-coin sm" />
+          <span className="sk-id">
+            <span className="sk sk-line" style={{ width: "52%" }} />
+            <span className="sk sk-line thin" style={{ width: "74%" }} />
+          </span>
+          <span className="sk sk-spark" />
+          <span className="sk sk-pill" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MoverRow({ t, i, frame, kind }: { t: BoardToken; i: number; frame: PeriodKey; kind: MoverKind }) {
   const { openDetail } = useApp();
   const chg = t.chg[frame];
@@ -91,7 +110,17 @@ function MoverRow({ t, i, frame, kind }: { t: BoardToken; i: number; frame: Peri
  * that grows to its content pushes the trending board off the fold, and the
  * board is the inventory this site sells.
  */
-export function MarketMovers({ tokens, updatedAt }: { tokens: BoardToken[]; updatedAt?: number }) {
+export function MarketMovers({
+  tokens,
+  updatedAt,
+  loading = false,
+}: {
+  tokens: BoardToken[];
+  updatedAt?: number;
+  /** Before the first payload the empty copy below would be a FALSE claim —
+   *  "Nothing is up on this timeframe" about a market nobody has read yet. */
+  loading?: boolean;
+}) {
   const [frame, setFrame] = useState<PeriodKey>("24h");
   const lists = useMemo(
     () => DECKS.map((d) => ({ deck: d, rows: movers(tokens, d.kind, frame) })),
@@ -109,8 +138,10 @@ export function MarketMovers({ tokens, updatedAt }: { tokens: BoardToken[]; upda
           <h2>Market Movers</h2>
         </div>
         <span className="live-pill">● LIVE</span>
+        {/* "$0 traded" during load is a sum over a market nobody has read —
+            the same false claim as the empty cards, one line up. */}
         <span className="mv-stamp">
-          {freshness(updatedAt)} · <b>{fmtCap(vol)}</b> traded
+          {loading ? "…" : <>{freshness(updatedAt)} · <b>{fmtCap(vol)}</b> traded</>}
         </span>
         <div className="ttabs mv-frames">
           {FRAMES.map((f) => (
@@ -135,7 +166,9 @@ export function MarketMovers({ tokens, updatedAt }: { tokens: BoardToken[]; upda
               </Link>
             </header>
             <div className="mv-list">
-              {rows.length === 0 ? (
+              {loading ? (
+                <MvSkeleton />
+              ) : rows.length === 0 ? (
                 <p className="mv-empty">{deck.empty}</p>
               ) : (
                 rows.map((t, i) => (

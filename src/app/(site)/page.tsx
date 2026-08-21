@@ -103,10 +103,10 @@ export default function HomePage() {
       {/* A search is a lookup, not a ranking. "Top Gainers matching PLUM" is
           not a top-gainers list, and leaving it market-wide would put two
           different datasets on one screen under one query. */}
-      {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} />}
+      {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} loading={!data} />}
 
       <div className="sec-block">
-        <TopCoinsBoard tokens={list} period={period} />
+        <TopCoinsBoard tokens={list} period={period} loading={!data} />
       </div>
     </section>
   );

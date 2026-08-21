@@ -426,3 +426,77 @@ test("the board reports what the expander CANNOT reach, collapsed or open", () =
   const small = expander(14, 10, 15);
   assert.strictEqual(small.beyond, 0, "and never renders when nothing is left over");
 });
+
+// ── the premium pass ────────────────────────────────────────────────────────
+
+test("loading is never rendered as an empty market", () => {
+  // Before the first /api/tokens answer, the empty states are FALSE claims —
+  // "Nothing is up on this timeframe" about a market nobody has read yet.
+  // Every surface takes `loading` and shows a skeleton branch BEFORE its empty
+  // copy can render; the page threads `!data` into all three.
+  const page = read("src/app/(site)/page.tsx");
+  assert.match(page, /<MarketMovers[^>]*loading=\{!data\}/s);
+  assert.match(page, /<TopCoinsBoard[^>]*loading=\{!data\}/s);
+  assert.match(page, /loading=\{!data\}[\s\S]*?limit=\{HOME_BOARD_ROWS\}|limit=\{HOME_BOARD_ROWS\}[\s\S]*?loading=\{!data\}/);
+
+  const movers = read("src/components/MarketMovers.tsx");
+  assert.ok(movers.indexOf("<MvSkeleton") < movers.indexOf("mv-empty"),
+    "the skeleton branch is checked before the empty claim");
+  const tc = read("src/components/TopCoins.tsx");
+  // matched as JSX (`>Nothing…`), not as a bare string — the prop docblock
+  // QUOTES the empty copy above the render, and indexOf found the quote first.
+  assert.ok(tc.indexOf("<SkeletonRows") < tc.indexOf(">Nothing listed on this chain yet"),
+    "same in Top Coins");
+  const board = read("src/components/TokenBoard.tsx");
+  assert.match(board, /loading \? \(\s*<SkeletonRows/, "and the board itself");
+});
+
+test("skeleton rows are not .row — the e2e's board wait must mean REAL rows", () => {
+  // The smoke script waits on `.board .row:not(.head)`. A skeleton wearing
+  // .row would satisfy that wait and every count after it would race the
+  // first payload.
+  const board = read("src/components/TokenBoard.tsx");
+  const sk = board.slice(board.indexOf("export function SkeletonRows"), board.indexOf("function StdRow"));
+  assert.ok(!/className="row/.test(sk), "skeletons use .skr, never .row");
+});
+
+test("ranks are drawn, not the OS emoji-of-the-day", () => {
+  // The Pulse cards already state the rule for section glyphs; the medals were
+  // the one OS-supplied glyph left on the board — Apple gold next to Windows
+  // gold is two different products.
+  const board = read("src/components/TokenBoard.tsx");
+  assert.ok(!board.includes("🥇"), "no emoji medals in the renderer");
+  assert.match(board, /medal medal-\$\{n\}/, "the drawn roundel");
+  for (const m of ["medal-1", "medal-2", "medal-3"])
+    assert.match(CSS, new RegExp(`\\.${m}\\{background:radial-gradient`), `${m} is painted`);
+});
+
+test("every animation the pass added obeys prefers-reduced-motion", () => {
+  // ⚠️ Not via the kill list: this pass's rules are appended AFTER that block,
+  // so a same-specificity kill there LOSES the cascade — the shimmer kept
+  // animating under reducedMotion:"reduce" until this was measured. The
+  // animations are instead DECLARED only under no-preference, which no source
+  // order can undo.
+  const gates = [...CSS.matchAll(/@media \(prefers-reduced-motion:no-preference\)\{([\s\S]*?)\}\n/g)]
+    .map((m) => m[1]).join("\n");
+  assert.ok(gates.includes(".sk::after{animation:"), "the shimmer is gated");
+  assert.ok(gates.includes(".live-pill{animation:"), "the breathing pill is gated");
+  // and no base rule re-attaches them outside the gate
+  const ungated = CSS.replace(/@media \(prefers-reduced-motion:no-preference\)\{[\s\S]*?\}\n/g, "");
+  assert.ok(!/\.sk::after\{[^}]*animation:skshimmer/.test(ungated));
+  assert.ok(!/\.live-pill\{[^}]*animation:pillbreathe/.test(ungated));
+});
+
+test("every class a page still renders has a style — .board-loading kept its callers", () => {
+  // It was deleted once as "dead" alongside a genuinely dead keyframe, while
+  // the token page, trades, signals and new-listings still rendered it — four
+  // unstyled loading states, caught by grepping for callers, not by any test.
+  const users = [
+    "src/components/TokenTrades.tsx",
+    "src/app/(site)/token/[chain]/[address]/page.tsx",
+    "src/app/(site)/signals/page.tsx",
+    "src/app/(site)/new-listings/page.tsx",
+  ].filter((f) => read(f).includes("board-loading"));
+  if (users.length > 0)
+    assert.match(CSS, /\.board-loading\{/, `still styled — rendered by ${users.join(", ")}`);
+});

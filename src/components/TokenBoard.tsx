@@ -10,7 +10,33 @@ import { Coin } from "./Coin";
 import { TierTag } from "./TierTag";
 import { useApp } from "./AppState";
 
-const MEDALS = ["🥇", "🥈", "🥉"];
+/** Top-three ranks are DRAWN, not the OS emoji-of-the-day — the same rule the
+ *  Pulse cards state for their section glyphs. An Apple gold medal next to a
+ *  Windows one is two different products; a gradient roundel is ours on every
+ *  device. */
+const Medal = ({ n }: { n: number }) => <span className={`medal medal-${n}`}>{n}</span>;
+
+/** Shimmer placeholder rows. Loading must LOOK like loading: before the first
+ *  /api/tokens answer the empty states below would render as facts ("no tokens
+ *  match") about a market nobody has read yet. */
+export function SkeletonRows({ n = 8 }: { n?: number }) {
+  return (
+    <div aria-busy="true" aria-label="Loading">
+      {Array.from({ length: n }, (_, i) => (
+        <div className="skr" key={i} style={{ opacity: 1 - i * 0.09 }}>
+          <span className="sk sk-dot" />
+          <span className="sk sk-coin" />
+          <span className="sk-id">
+            <span className="sk sk-line" style={{ width: "38%" }} />
+            <span className="sk sk-line thin" style={{ width: "58%" }} />
+          </span>
+          <span className="sk sk-cell" />
+          <span className="sk sk-pill" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type SortKey = "price" | "chg" | "mcap" | "liq" | "vol" | "tx";
 
@@ -122,7 +148,7 @@ function StdRow({
   const up = chg >= 0;
   const dec = period === "5m" ? 2 : 1;
   const { buys, sells } = t.txns[period];
-  const rank = i < 3 ? <span className="medal">{MEDALS[i]}</span> : i + 1;
+  const rank = i < 3 ? <Medal n={i + 1} /> : i + 1;
 
   return (
     <div
@@ -328,10 +354,7 @@ export function StdBoard({
         onSort={onSort}
       />
       {loading ? (
-        <div className="board-loading">
-          <span className="dot-live" />
-          Loading live board…
-        </div>
+        <SkeletonRows n={8} />
       ) : shown.rows.length === 0 ? (
         <div className="empty">{emptyText}</div>
       ) : (
@@ -395,10 +418,7 @@ export function NpBoard({ tokens, loading = false }: { tokens: BoardToken[]; loa
         <div></div>
       </div>
       {loading ? (
-        <div className="board-loading">
-          <span className="dot-live" />
-          Loading new pairs…
-        </div>
+        <SkeletonRows n={6} />
       ) : tokens.length === 0 ? (
         <div className="empty">No fresh pairs right now — check back in a minute.</div>
       ) : (

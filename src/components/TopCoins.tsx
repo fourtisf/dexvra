@@ -6,6 +6,7 @@ import { fmtCap, fmtPrice } from "@/lib/format";
 import { HOME_BOARD_ROWS, topCoins, type CoinSort } from "@/lib/home";
 import { scoreTier } from "@/lib/score";
 import { useApp } from "./AppState";
+import { SkeletonRows } from "./TokenBoard";
 import { Coin } from "./Coin";
 import { TierTag } from "./TierTag";
 
@@ -30,7 +31,17 @@ const SORTS: { key: CoinSort; label: string }[] = [
  * there is no page that answers THIS question — sending someone to /trending
  * for a market-cap ranking would be a link that quietly changes the subject.
  */
-export function TopCoinsBoard({ tokens, period = "24h" }: { tokens: BoardToken[]; period?: PeriodKey }) {
+export function TopCoinsBoard({
+  tokens,
+  period = "24h",
+  loading = false,
+}: {
+  tokens: BoardToken[];
+  period?: PeriodKey;
+  /** "Nothing listed on this chain yet" is a claim about the market, and it
+   *  must never render before the market has been read once. */
+  loading?: boolean;
+}) {
   const { openDetail } = useApp();
   const [sort, setSort] = useState<CoinSort>("mcap");
   const [all, setAll] = useState(false);
@@ -77,7 +88,9 @@ export function TopCoinsBoard({ tokens, period = "24h" }: { tokens: BoardToken[]
           <div className="c-num tc-dxs">DXS</div>
         </div>
 
-        {tokens.length === 0 ? (
+        {loading ? (
+          <SkeletonRows n={6} />
+        ) : tokens.length === 0 ? (
           <div className="empty">Nothing listed on this chain yet.</div>
         ) : rows.length === 0 ? (
           <div className="empty">No token here has a readable market cap right now.</div>
@@ -123,7 +136,7 @@ export function TopCoinsBoard({ tokens, period = "24h" }: { tokens: BoardToken[]
       {/* A cap is never silent, and neither is an exclusion: a token we could
           not price is REPORTED rather than quietly missing from a ranking it
           belongs in. */}
-      {(hidden > 0 || unpriced > 0 || all) && (
+      {!loading && (hidden > 0 || unpriced > 0 || all) && (
         <div className="tc-foot">
           <span>
             Showing {rows.length} of {pool}
