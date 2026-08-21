@@ -1200,3 +1200,150 @@ body{
 /* Amber, not red: not-yet-listed is an invitation, not a failure. */
 .sdd-unlisted{flex:none;font-family:var(--fm);font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#F5B841;border:1px solid rgba(245,184,65,.42);background:rgba(245,184,65,.10);border-radius:999px;padding:5px 9px;white-space:nowrap}
 @media (max-width:520px){.sdd-unlisted{display:none}}
+
+/* ============ HOME MARKET AREA ============================================
+   Market Movers · the trending board · Top Coins, in that order, under ONE
+   chain filter.
+
+   These read as three different SURFACES on purpose. The board is the loud
+   one (medals, gradient pills, price flicker); the movers are three compact
+   scoreboards with their own accent rail; Top Coins is the calm ranking —
+   one row height, no flicker, everything in the mono voice. Three sections
+   in one card style is a page that says the same thing three times. */
+.sec-block{display:flex;flex-direction:column;gap:13px}
+/* The neutral section badge. `.flame` stays the trending board's alone — it is
+   the paid inventory and the only section that earns a hot gradient. */
+.sec-ic{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(135deg,rgba(61,245,159,.2),rgba(34,211,238,.09));
+  border:1px solid rgba(61,245,159,.3);color:var(--mint)}
+.tc-ic{background:linear-gradient(135deg,rgba(169,124,255,.22),rgba(34,211,238,.1));border-color:rgba(169,124,255,.34);color:var(--violet)}
+
+/* ── the one chain filter ───────────────────────────────────────────────────
+   One row, scrolled sideways rather than wrapped into three. The count is the
+   point: it says whether a filter is worth tapping BEFORE it empties the
+   board, and a chain sitting at 1 explains a short board by itself. */
+.chain-row{display:flex;gap:7px;overflow-x:auto;padding:1px 0 3px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chain-row::-webkit-scrollbar{display:none}
+.chain-row .chain-chip svg{flex:none}
+.chain-n{font-family:var(--fm);font-size:9.5px;font-weight:800;color:var(--faint);
+  background:rgba(255,255,255,.06);border-radius:999px;padding:2px 6px;margin-left:1px}
+.chain-chip.active .chain-n{color:#03150B;background:var(--mint)}
+.chain-more{color:var(--faint);border-style:dashed}
+
+/* ── Market Movers ─────────────────────────────────────────────────────────*/
+.movers{display:flex;flex-direction:column;gap:13px}
+.mv-stamp{font-family:var(--fm);font-size:10.5px;font-weight:700;color:var(--faint);white-space:nowrap}
+.mv-stamp b{color:var(--muted)}
+.mv-frames{margin-left:auto}
+.mv-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+.mv-card{position:relative;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+  border:1px solid var(--line2);border-radius:18px;
+  background:linear-gradient(180deg,rgba(255,255,255,.03),transparent 22%),var(--card);
+  box-shadow:0 16px 40px rgba(0,0,0,.34)}
+/* The accent RAIL is the identity of each card — a green card, a red card and
+   a cyan card, told apart before a single number is read. */
+.mv-card::before{content:"";position:absolute;inset:0 0 auto;height:2.5px;background:var(--acc)}
+.acc-mint{--acc:linear-gradient(90deg,#3DF59F,#22D3EE);--accs:#3DF59F;--accbg:rgba(61,245,159,.14);--accbd:rgba(61,245,159,.34)}
+.acc-red{--acc:linear-gradient(90deg,#FF5C7A,#FF9D4D);--accs:#FF5C7A;--accbg:rgba(255,92,122,.14);--accbd:rgba(255,92,122,.34)}
+.acc-cyan{--acc:linear-gradient(90deg,#22D3EE,#A97CFF);--accs:#22D3EE;--accbg:rgba(34,211,238,.14);--accbd:rgba(34,211,238,.34)}
+.mv-head{display:flex;align-items:center;gap:9px;padding:13px 14px 10px;border-bottom:1px solid var(--line)}
+.mv-badge{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;flex:none;
+  color:var(--accs);background:var(--accbg);border:1px solid var(--accbd)}
+.mv-head h3{font-family:var(--fd);font-weight:700;font-size:14px;white-space:nowrap}
+.mv-all{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-family:var(--fm);
+  font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+  white-space:nowrap;transition:color .15s}
+.mv-all:hover{color:var(--accs)}
+/* ⚠️ THIS is the scroll. Ten rows behind a fixed-height card, so three cards
+   fit one screen and the trending board under them stays reachable. A card
+   that grows to its content pushes the inventory this site sells off the
+   fold. */
+.mv-list{display:flex;flex-direction:column;padding:5px;gap:1px;
+  height:274px;overflow-y:auto;overscroll-behavior:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.16) transparent}
+.mv-list::-webkit-scrollbar{width:6px}
+.mv-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:99px}
+.mv-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.26)}
+.mv-row{display:grid;grid-template-columns:16px 28px minmax(0,1fr) auto auto;align-items:center;gap:9px;
+  padding:7px 9px;border-radius:11px;text-align:left;width:100%;transition:background .12s}
+.mv-row:hover{background:rgba(255,255,255,.05)}
+.mv-rank{font-family:var(--fm);font-size:10.5px;font-weight:800;color:var(--faint);text-align:center}
+/* the card is compact — the chain badge on a 28px coin is a smudge */
+.mv-row .cbadge{display:none}
+.mv-row .coin{border-width:1.5px}
+.mv-id{min-width:0;display:flex;flex-direction:column;gap:1px}
+.mv-sym{font-family:var(--fm);font-weight:800;font-size:12px;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mv-nm{font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spark{flex:none;opacity:.85}
+.spark-none{display:block;width:34px}
+.mv-age{font-family:var(--fm);font-size:10px;font-weight:800;color:var(--cyan);white-space:nowrap}
+/* A TINTED pill, deliberately not the board's saturated .chg gradient — two
+   surfaces on one page reading in one voice is what made them duplicates. */
+.mv-pct{font-family:var(--fm);font-size:11px;font-weight:800;border-radius:8px;padding:4px 7px;white-space:nowrap;min-width:64px;text-align:right}
+.mv-pct.up{color:var(--mint);background:rgba(61,245,159,.11)}
+.mv-pct.dn{color:var(--red);background:rgba(255,92,122,.11)}
+.mv-empty{margin:auto;padding:20px 14px;text-align:center;font-size:12px;color:var(--faint);line-height:1.55}
+
+/* ── the trending board's footer ───────────────────────────────────────────
+   A cut list says it is cut. Ten rows with nothing under them reads as "that
+   is everything Dexvra has", which is the opposite of what the page sells. */
+.board-foot{display:flex;align-items:center;gap:12px;padding:11px 20px;border-top:1px solid var(--line);
+  background:rgba(255,255,255,.02);font-family:var(--fm);font-size:10.5px;font-weight:700;color:var(--faint)}
+.board-all{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:var(--mint);
+  letter-spacing:.06em;text-transform:uppercase;font-size:10px;transition:gap .15s}
+.board-all:hover{gap:8px}
+
+/* ── Top Coins ─────────────────────────────────────────────────────────────*/
+.topcoins{display:flex;flex-direction:column;gap:11px}
+.tc-board{border:1px solid var(--line2);border-radius:18px;overflow:hidden;overflow-x:auto;
+  background:var(--card);box-shadow:0 14px 36px rgba(0,0,0,.3)}
+.tc-board::-webkit-scrollbar{height:7px}
+.tc-board::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:99px}
+.tc-row{display:grid;grid-template-columns:44px minmax(170px,1.6fr) 108px 84px 84px 118px 62px;
+  align-items:center;gap:8px;padding:10px 18px;border-top:1px solid var(--line);transition:background .12s}
+.tc-row.tc-head{border-top:none;padding:10px 18px;background:rgba(255,255,255,.03);
+  font-family:var(--fm);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.tc-row:not(.tc-head){cursor:pointer}
+.tc-row:not(.tc-head):hover{background:rgba(169,124,255,.06);box-shadow:inset 3px 0 0 var(--violet)}
+.tc-rank{font-family:var(--fm);font-weight:800;font-size:12px;color:var(--faint)}
+.tc-tok{display:flex;align-items:center;gap:10px;min-width:0}
+.tc-id{min-width:0}
+.tc-sym{font-family:var(--fd);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:6px;min-width:0}
+.tc-sym-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:14ch;flex:0 1 auto}
+.tc-sym .tier-chip{flex:0 0 auto}
+.tc-nm{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-px{font-family:var(--fm);font-weight:800;font-size:12.5px}
+/* Plain coloured text, not a pill: this is the calm surface and a wall of
+   filled pills is what the board above it already does. */
+.tc-chg{font-family:var(--fm);font-weight:800;font-size:12px}
+.tc-chg.up{color:var(--mint)}
+.tc-chg.dn{color:var(--red)}
+.tc-mono{font-family:var(--fm);font-weight:600;font-size:12px;color:var(--muted)}
+.tc-dxs{display:flex;justify-content:flex-end}
+.tc-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0 4px;
+  font-family:var(--fm);font-size:10.5px;font-weight:700;color:var(--faint)}
+.tc-foot b{color:var(--orange)}
+.tc-more{margin-left:auto;font-family:var(--fm);font-size:10px;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--violet);border:1px solid rgba(169,124,255,.4);
+  border-radius:999px;padding:6px 13px;transition:all .15s}
+.tc-more:hover{background:rgba(169,124,255,.12)}
+
+/* Narrow: the three cards become a swipeable rail rather than stacking into
+   three full-height blocks — .pulse-strip's grammar, same page, same gesture. */
+@media (max-width:1120px){
+  .mv-grid{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px;
+    scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+  .mv-grid::-webkit-scrollbar{height:6px}
+  .mv-grid::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:99px}
+  .mv-card{flex:0 0 min(340px,86%);scroll-snap-align:start}
+  .mv-frames{margin-left:0}
+}
+@media (max-width:1000px){.tc-row{grid-template-columns:40px minmax(150px,1.6fr) 100px 78px 78px 108px}.tc-dxs{display:none}}
+@media (max-width:760px){.tc-row{grid-template-columns:34px minmax(130px,1.6fr) 96px 76px 104px}.tc-h1{display:none}}
+@media (max-width:560px){
+  .tc-row{grid-template-columns:30px minmax(110px,1.6fr) 88px 74px;padding:10px 12px}
+  .tc-cap{display:none}
+  .mv-list{height:250px}
+  .mv-stamp{display:none}
+}

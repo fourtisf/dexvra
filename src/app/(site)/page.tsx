@@ -5,24 +5,44 @@ import { useApp } from "@/components/AppState";
 import { PromoCarousel } from "@/components/PromoCarousel";
 import { PulseStrip } from "@/components/PulseStrip";
 import { HomeBannerStrip } from "@/components/HomeBannerStrip";
+import { ChainFilter } from "@/components/ChainFilter";
+import { MarketMovers } from "@/components/MarketMovers";
 import { StdBoard } from "@/components/TokenBoard";
-import { ChainLogo } from "@/components/ChainLogo";
-import { CHAINS, CHAIN_IDS } from "@/config/chains";
+import { TopCoinsBoard } from "@/components/TopCoins";
+import { HOME_BOARD_ROWS, chainCounts, inChain, resolveChain } from "@/lib/home";
 import type { PeriodKey } from "@/lib/types";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
 
+/**
+ * The market area reads top-down as three different questions:
+ *
+ *   Market Movers   what moved — gainers, losers, what just listed
+ *   Trending        what is being pushed right now (the paid inventory)
+ *   Top Coins       what is actually big here
+ *
+ * ONE chain filter governs all three. Repeating a chain row per section is
+ * three controls that can disagree with each other, on a page whose first
+ * problem was already too much chrome above the first token.
+ */
 export default function HomePage() {
   const { data, homeQuery } = useApp();
   const [period, setPeriod] = useState<PeriodKey>("24h");
   const [chain, setChain] = useState("all");
 
-  const list = useMemo(() => {
-    const q = homeQuery.trim().toLowerCase();
-    return (data?.tokens ?? [])
-      .filter((t) => chain === "all" || t.chain === chain)
-      .filter((t) => !q || (t.symbol + t.name + t.address).toLowerCase().includes(q));
-  }, [data, chain, homeQuery]);
+  const tokens = data?.tokens ?? [];
+  const counts = useMemo(() => chainCounts(tokens), [tokens]);
+  // A chain that drops out of a later poll falls back to All, or the picker
+  // unmounts and the board is stuck at zero rows with nothing left to tap.
+  const active = resolveChain(chain, counts);
+
+  const onChain = useMemo(() => tokens.filter(inChain(active)), [tokens, active]);
+
+  const q = homeQuery.trim().toLowerCase();
+  const list = useMemo(
+    () => onChain.filter((t) => !q || (t.symbol + t.name + t.address).toLowerCase().includes(q)),
+    [onChain, q],
+  );
 
   return (
     <section className="view">
@@ -30,7 +50,14 @@ export default function HomePage() {
       <PulseStrip />
       <HomeBannerStrip />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+      <ChainFilter counts={counts} value={active} onChange={setChain} total={tokens.length} />
+
+      {/* A search is a lookup, not a ranking. "Top Gainers matching PLUM" is
+          not a top-gainers list, and leaving it market-wide would put two
+          different datasets on one screen under one query. */}
+      {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} />}
+
+      <div className="sec-block">
         <div className="sec-head">
           <div className="sec-title">
             <div className="flame">
@@ -41,7 +68,7 @@ export default function HomePage() {
             </div>
             <h2>Trending Listings</h2>
           </div>
-          <div className="ttabs">
+          <div className="ttabs trend-frames">
             {PERIODS.map((p) => (
               <button
                 key={p}
@@ -62,23 +89,20 @@ export default function HomePage() {
           </button>
         </div>
 
-        <div className="tabs">
-          <button className={`tab ${chain === "all" ? "active" : ""}`} onClick={() => setChain("all")}>
-            🌐 All chains
-          </button>
-          {CHAIN_IDS.map((id) => (
-            <button
-              key={id}
-              className={`tab ${chain === id ? "active" : ""}`}
-              onClick={() => setChain(id)}
-            >
-              <ChainLogo chain={id} size={15} />
-              {CHAINS[id].label}
-            </button>
-          ))}
-        </div>
+        {/* Capped so Top Coins under it is reachable without a long scroll —
+            with the total and a doorway printed, never a silent cut. */}
+        <StdBoard
+          tokens={list}
+          period={period}
+          sortable
+          loading={!data}
+          limit={HOME_BOARD_ROWS}
+          viewAllHref="/trending"
+        />
+      </div>
 
-        <StdBoard tokens={list} period={period} sortable loading={!data} />
+      <div className="sec-block">
+        <TopCoinsBoard tokens={list} period={period} />
       </div>
     </section>
   );

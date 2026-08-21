@@ -1,0 +1,170 @@
+// What the homepage SHOWS — the selection rules, kept pure and out of the
+// components so they can be tested by execution rather than by reading JSX.
+//
+// Every rule below is a claim the page makes to somebody deciding where to put
+// money, so each one is a statement that has to be true:
+//
+//   · a "Top Loser" that is UP is a false statement, not a thin day;
+//   · a market-cap ranking that includes a token whose cap could not be read
+//     puts it at the bottom claiming to be worth nothing;
+//   · a list that is cut to ten rows and does not say so reads as "that is all
+//     there is".
+//
+// The board pages (/trending, /new-listings) stay the full, uncapped views —
+// the home lists are a doorway to them, which is why every cap carries its
+// total and every section carries a way through.
+import { CHAIN_IDS } from "../config/chains.ts";
+import type { BoardToken, PeriodKey } from "./types.ts";
+
+/** Chains offered on the home filter before "+N more". Six fits one row on a
+ *  laptop; the rest are one tap away. The wall of 23 wrapped pills the page
+ *  used to open with is what "jangan terlalu banyak chain" was about. */
+export const HOME_CHAIN_LIMIT = 6;
+
+/** Rows the home board shows before "View all". */
+export const HOME_BOARD_ROWS = 10;
+
+/** Rows a mover card holds. The card is short and scrolls inside itself, so
+ *  this is how much there is to scroll — not how much fits on screen. */
+export const MOVER_ROWS = 10;
+
+export interface ChainCount {
+  id: string;
+  count: number;
+}
+
+/**
+ * The chains that actually have listings, most-populated first.
+ *
+ * ⚠️ The tie-break is the registry order, never the insertion order of a Map
+ * built from a freshly-fetched array. `/api/tokens` is re-polled every 30s and
+ * a plain count sort leaves equal-count chains in whatever order that poll
+ * happened to return — so the pill under the cursor moves as you reach for it.
+ * A filter row that reshuffles itself is indistinguishable from a misclick.
+ */
+export function chainCounts(tokens: readonly BoardToken[]): ChainCount[] {
+  const counts = new Map<string, number>();
+  for (const t of tokens) counts.set(t.chain, (counts.get(t.chain) ?? 0) + 1);
+  const rank = (id: string) => {
+    const i = CHAIN_IDS.indexOf(id);
+    return i === -1 ? CHAIN_IDS.length : i; // an unregistered chain sorts last
+  };
+  return [...counts.entries()]
+    .map(([id, count]) => ({ id, count }))
+    .sort((a, b) => b.count - a.count || rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
+}
+
+/** The chain row, split into what is shown and what "+N more" reveals. */
+export function splitChains(
+  counts: readonly ChainCount[],
+  limit = HOME_CHAIN_LIMIT,
+): { shown: ChainCount[]; hidden: ChainCount[] } {
+  return { shown: counts.slice(0, limit), hidden: counts.slice(limit) };
+}
+
+/** A chain filter that survives the chain vanishing from a later poll.
+ *  Without this the picker unmounts and the board is stuck filtering to zero
+ *  rows with no control left on screen to reset it. */
+export function resolveChain(chain: string, counts: readonly ChainCount[]): string {
+  if (chain === "all") return "all";
+  return counts.some((c) => c.id === chain) ? chain : "all";
+}
+
+export const inChain = (chain: string) => (t: BoardToken) => chain === "all" || t.chain === chain;
+
+export type MoverKind = "gainers" | "losers" | "fresh";
+
+/**
+ * A mover list.
+ *
+ * ⚠️ `gainers` keeps only tokens that are actually UP and `losers` only those
+ * actually DOWN. Sorting by change and slicing looks equivalent and is not: on
+ * a green day it fills "Top Losers" with the three least-green tokens, every
+ * one of them wearing a red-flavoured slot while printing a plus sign. An
+ * empty card saying "nothing is down on this timeframe" is the honest answer,
+ * and it is also the more useful one.
+ *
+ * A change of exactly zero belongs to neither list.
+ */
+export function movers(
+  tokens: readonly BoardToken[],
+  kind: MoverKind,
+  frame: PeriodKey,
+  limit = MOVER_ROWS,
+): BoardToken[] {
+  if (kind === "fresh") {
+    // "New" means newly LISTED on Dexvra, not a new pair on chain — the
+    // product is paid listings, and ageMinutes would rank a week-old pair
+    // that listed an hour ago below a launch nobody has paid for.
+    return [...tokens].sort((a, b) => a.listedMinutesAgo - b.listedMinutesAgo).slice(0, limit);
+  }
+  const up = kind === "gainers";
+  return tokens
+    .filter((t) => (up ? t.chg[frame] > 0 : t.chg[frame] < 0))
+    .sort((a, b) => (up ? b.chg[frame] - a.chg[frame] : a.chg[frame] - b.chg[frame]))
+    .slice(0, limit);
+}
+
+export type CoinSort = "mcap" | "vol" | "score";
+
+export interface TopCoins {
+  rows: BoardToken[];
+  /** How many were left out for having no readable market cap. */
+  unpriced: number;
+}
+
+/**
+ * The Top Coins ranking.
+ *
+ * ⚠️ A token whose market cap could not be read is LEFT OUT of a market-cap
+ * ranking, never coerced to 0. `mcap ?? 0` sorts it to the bottom of the list,
+ * where it reads as the smallest project on the board rather than as one we
+ * could not price — the same lie the trending board printed for months as a
+ * fabricated 0%. It is counted and the count is rendered, because a row that
+ * silently disappears is worse than one that says why.
+ *
+ * The volume and score rankings have no such exclusion: both figures are always
+ * present, and a genuinely idle token belongs at the bottom of a volume list.
+ */
+export function topCoins(
+  tokens: readonly BoardToken[],
+  sort: CoinSort,
+  period: PeriodKey = "24h",
+  limit = HOME_BOARD_ROWS,
+): TopCoins {
+  const priced = sort === "mcap" ? tokens.filter((t) => t.mcap != null) : [...tokens];
+  const val = (t: BoardToken): number =>
+    sort === "mcap" ? (t.mcap ?? 0) : sort === "vol" ? t.vol[period] : t.score;
+  const sorted = [...priced].sort((a, b) => val(b) - val(a) || a.symbol.localeCompare(b.symbol));
+  // ⚠️ `limit` of 0 means NO CAP — the same contract `capped()` states, because
+  // "Show all" passes 0. `slice(0, 0)` is the empty array, so the unconditional
+  // slice this replaces answered an expanded table with zero rows and the
+  // "nothing here has a readable market cap" empty state. Caught by clicking
+  // the button, not by reading the code.
+  const rows = limit > 0 ? sorted.slice(0, limit) : sorted;
+  return { rows, unpriced: sort === "mcap" ? tokens.length - priced.length : 0 };
+}
+
+export interface Capped<T> {
+  rows: T[];
+  total: number;
+  hidden: number;
+}
+
+/** Cut a list to `limit` and carry what was cut. Never a silent cap: the
+ *  caller renders "Showing N of M", so a short list reads as a short list and
+ *  a cut one reads as a doorway. */
+export function capped<T>(list: readonly T[], limit: number): Capped<T> {
+  const rows = limit > 0 ? list.slice(0, limit) : [...list];
+  return { rows, total: list.length, hidden: Math.max(0, list.length - rows.length) };
+}
+
+/** "12s ago" for the live stamp. `updatedAt` is a server clock and a client
+ *  whose clock is behind would otherwise render a negative age. */
+export function freshness(updatedAt: number | undefined, now = Date.now()): string {
+  if (!updatedAt) return "…";
+  const s = Math.max(0, Math.round((now - updatedAt) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}

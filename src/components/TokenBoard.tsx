@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { capped } from "@/lib/home";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
@@ -264,12 +266,19 @@ export function StdBoard({
   sortable = false,
   emptyText = "No tokens match — try another chain or clear your search.",
   loading = false,
+  limit = 0,
+  viewAllHref,
 }: {
   tokens: BoardToken[];
   period?: PeriodKey;
   sortable?: boolean;
   emptyText?: string;
   loading?: boolean;
+  /** Rows to show. 0 = every row — the full board pages stay full; the home
+   *  board caps so the sections under it stay reachable. Never a SILENT cap:
+   *  a capped board renders the footer below with the total and a way through. */
+  limit?: number;
+  viewAllHref?: string;
 }) {
   const { reducedMotion } = useApp();
   const [sortKey, setSortKey] = useState<SortKey>("chg");
@@ -282,7 +291,12 @@ export function StdBoard({
     );
   }, [tokens, sortable, sortKey, sortDir, period]);
 
-  const { flash, override } = useFlicker(sorted, reducedMotion);
+  const shown = useMemo(() => capped(sorted, limit), [sorted, limit]);
+
+  // The flicker is fed the VISIBLE rows. Given it to the full list, its random
+  // pick lands off-screen most of the time on a capped board and a live board
+  // reads as a frozen one.
+  const { flash, override } = useFlicker(shown.rows, reducedMotion);
 
   const onSort = (k: SortKey) => {
     if (sortKey === k) setSortDir((d) => (d === 1 ? -1 : 1));
@@ -306,10 +320,10 @@ export function StdBoard({
           <span className="dot-live" />
           Loading live board…
         </div>
-      ) : sorted.length === 0 ? (
+      ) : shown.rows.length === 0 ? (
         <div className="empty">{emptyText}</div>
       ) : (
-        sorted.map((t, i) => (
+        shown.rows.map((t, i) => (
           <StdRow
             key={t.key}
             t={t}
@@ -319,6 +333,21 @@ export function StdBoard({
             override={override[t.key]}
           />
         ))
+      )}
+      {shown.hidden > 0 && (
+        <div className="board-foot">
+          <span>
+            Showing {shown.rows.length} of {shown.total}
+          </span>
+          {viewAllHref && (
+            <Link className="board-all" href={viewAllHref}>
+              View all {shown.total}
+              <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M5 12h13M13 6l6 6-6 6" />
+              </svg>
+            </Link>
+          )}
+        </div>
       )}
     </div>
   );

@@ -35,20 +35,70 @@ check("demo pill shown (no egress)", await page.locator(".src-pill.demo").isVisi
 await page.screenshot({ path: SHOT("01-home"), fullPage: false });
 
 // period tab changes column header
-await page.click('.ttabs .ttab:has-text("1h")');
+await page.click('.trend-frames .ttab:has-text("1h")');
 const chgHead = await page.locator(".row.head .sortable").nth(1).innerText();
 check("period tab changes header to 1h %", chgHead.toLowerCase().includes("1h %"), chgHead.replace(/\n/g, " "));
 
-// chain filter
-await page.click('.tabs .tab:has-text("Solana")');
+// chain filter — ONE control for the whole market area (movers + board + Top
+// Coins), and it offers only chains that have listings, so there is no filter
+// that can only ever empty the board.
+await page.click('.chain-row .chain-chip:has-text("Solana")');
+await page.waitForTimeout(300);
 const chainRows = await page.locator(".board .row:not(.head)").count();
 check("solana filter reduces rows", chainRows > 0 && chainRows < 20, `rows=${chainRows}`);
-await page.click('.tabs .tab:has-text("All chains")');
+check("…and the movers with it", (await page.locator(".mv-card").first().locator(".mv-row").count()) <= chainRows);
+check("…and Top Coins with it", (await page.locator(".tc-row:not(.tc-head)").count()) <= chainRows);
+check("every offered chain carries its count", (await page.locator(".chain-chip .chain-n").count()) >= 2);
+await page.click('.chain-row .chain-chip:has-text("All chains")');
+await page.waitForTimeout(300);
 
-// sorting: click Price header → sorted desc by price
+// ---------- HOME MARKET AREA ----------
+// Movers · trending board · Top Coins. These are DRIVEN rather than read: the
+// one bug this section exists for — "Show all" passing limit 0 into a slice,
+// which returned the EMPTY array and rendered the "no readable market cap"
+// state over fourteen priced tokens — is invisible to any check that only
+// asserts the markup is present.
+check("three mover cards", (await page.locator(".mv-card").count()) === 3);
+check("the mover list SCROLLS rather than growing the card", await page.evaluate(() => {
+  const l = document.querySelector(".mv-list");
+  return l.scrollHeight > l.clientHeight && getComputedStyle(l).overflowY === "auto";
+}));
+// A Top Loser must be DOWN and a Top Gainer UP — on a one-sided market the
+// card is empty, never filled with the least-green token wearing a plus sign.
+const signs = await page.evaluate(() =>
+  [...document.querySelectorAll(".mv-card")].slice(0, 2).map((c) =>
+    [...c.querySelectorAll(".mv-pct")].map((p) => p.className.includes("up"))));
+check("every Top Gainer row is up", signs[0].every(Boolean), `${signs[0].length} rows`);
+check("every Top Loser row is down", signs[1].every((u) => !u), `${signs[1].length} rows`);
+
+check("the home board is capped and SAYS so", (await page.locator(".board-foot").innerText()).includes("Showing"));
+check("…with a way through to the full board", (await page.locator(".board-all").getAttribute("href")) === "/trending");
+
+// Top Coins: a third ranking, and it expands in place
+const byCap = await page.locator(".tc-row:not(.tc-head) .tc-sym-txt").first().innerText();
+await page.click('.tc-sorts .ttab:has-text("DXS Score")');
+await page.waitForTimeout(300);
+check("DXS Score ranks differently from Market Cap", (await page.locator(".tc-row:not(.tc-head) .tc-sym-txt").first().innerText()) !== byCap);
+await page.click('.tc-sorts .ttab:has-text("Market Cap")');
+await page.waitForTimeout(250);
+const capped10 = await page.locator(".tc-row:not(.tc-head)").count();
+await page.click(".tc-more");
+await page.waitForTimeout(300);
+const expanded = await page.locator(".tc-row:not(.tc-head)").count();
+check("Show all EXPANDS the table", expanded > capped10, `${capped10} → ${expanded}`);
+check("…and offers the way back", (await page.locator(".tc-more").innerText()).toLowerCase().includes("less"));
+await page.click(".tc-more");
+await page.waitForTimeout(250);
+await page.screenshot({ path: SHOT("01b-home-market"), fullPage: false });
+
+// sorting: click Price header → sorted desc by price.
+// Asserted against the DATA rather than against a remembered ticker: the old
+// form expected a "$1." leader and had been failing since the seed grew a
+// $2.34 token, which is the sort working correctly.
 await page.click('.row.head .sortable:has-text("Price")');
-const firstPrice = await page.locator(".board .row:not(.head)").first().locator(".price").innerText();
-check("sort by price puts $1+ token first", firstPrice.startsWith("$1."), firstPrice);
+const prices = (await page.locator(".board .row:not(.head) .price").allInnerTexts())
+  .map((t) => Number(t.replace(/[$,]/g, "")));
+check("sort by price puts the dearest token first", prices[0] === Math.max(...prices), prices.slice(0, 3).join(" "));
 
 // star does NOT open modal (stopPropagation)
 await page.locator(".board .row:not(.head)").first().locator(".star").click();
@@ -56,15 +106,20 @@ await page.waitForTimeout(400);
 check("star click doesn't open detail modal", (await page.locator(".modal-ov.on").count()) === 0);
 check("toast shows on star", (await page.locator(".toast.on").innerText()).includes("watchlist"));
 
-// row click opens detail modal
+// row click opens the token PAGE. It was a modal once; `openDetail` has been
+// `router.push(tokenHref(t))` for long enough that this check had drifted into
+// waiting 3s for a `.modal-ov` nothing renders any more, taking the whole
+// script down with it before it reached any later view.
 await page.locator(".board .row:not(.head)").first().click();
-await page.waitForSelector(".modal-ov.on", { timeout: 3000 });
-check("row click opens detail modal", await page.locator(".detail-head").isVisible());
-check("detail has CA box", await page.locator(".ca-box code").isVisible());
-const buyHref = await page.locator(".modal-ov.on a.btn-primary").getAttribute("href");
+await page.waitForURL(/\/token\//, { timeout: 8000 });
+await page.waitForSelector(".detail-head, .ca-box", { timeout: 8000 });
+check("row click opens the token page", /\/token\//.test(page.url()), page.url());
+check("token page has the CA box", await page.locator(".ca-box code").first().isVisible());
+const buyHref = await page.locator('a[href^="https://"]').first().getAttribute("href");
 check("buy is a deeplink", !!buyHref && buyHref.startsWith("https://"), buyHref ?? "");
-await page.screenshot({ path: SHOT("02-detail-modal") });
-await page.click(".modal-x");
+await page.screenshot({ path: SHOT("02-token-page") });
+await page.goto(BASE, { waitUntil: "networkidle" });
+await page.waitForSelector(".board .row:not(.head)");
 
 // ---------- WATCHLIST ----------
 await page.click('.nav a[href="/watchlist"]');
@@ -170,6 +225,10 @@ check("mobile: sidebar hidden", !(await mob.locator(".sidebar").isVisible()));
 check("mobile: topbar brand shown", await mob.locator(".brand-top").isVisible());
 const hasHScroll = await mob.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
 check("mobile: no horizontal scroll", !hasHScroll);
+check("mobile: the movers are a swipeable rail, not three stacked blocks", await mob.evaluate(() => {
+  const g = document.querySelector(".mv-grid");
+  return g.scrollWidth > g.clientWidth && getComputedStyle(g).overflowX === "auto";
+}));
 await mob.screenshot({ path: SHOT("08-mobile-home"), fullPage: false });
 
 // ---------- REDUCED MOTION ----------
