@@ -41,7 +41,10 @@ test("all three podium tickers are ONE size; only the figure scales", () => {
 test("rank is still carried — six ways, none of them the name", () => {
   const fn = BANNER.slice(BANNER.indexOf("function layoutPodium("), BANNER.indexOf("podium: layoutPodium"));
   for (const [what, re] of [
-    ["elevation", /const h = winner \? BAND_H \* S/],
+    // The 2026-08-21 rebuild put the cards on stepped PLINTHS: elevation is now
+    // card height AND standing height, and the plinth adds a seventh signal.
+    ["elevation", /const h = \(winner \? BAND_H : BAND_H - 40\) \* S - 70 \* S/],
+    ["the plinth", /const plinthH = \(rank === 1 \? 64 : rank === 2 \? 46 : 32\) \* S/],
     ["the top-gainer chip", /"#1 · Top gainer"/],
     ["the metal ring", /metalRing\(ctx, cx, lcy, d, rank, S\)/],
     ["the medal", /medal\(ctx, cx \+ d \* 0\.42/],

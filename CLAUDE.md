@@ -1135,6 +1135,36 @@ colour is a SITE token.
   typo would silently fall back to the shared default, which is precisely the
   state this exists to end.
 
+### Every layout is tellable apart at a glance — the 2026-08-21 rebuild
+
+"saya ingin banner lama berbeda semua dengan banner baru" — the moods pass had
+changed only the BACKDROPS, and the seven original layouts still shared one
+card grammar between them. Every one was rebuilt so no two banners in the
+ladder share a silhouette:
+
+| id | was | is now |
+| --- | --- | --- |
+| `hero1` | editorial split (text left, avatar at 0.70w) | the MONUMENT — symmetric about the centreline, ghost numerals flanking |
+| `duel2` | two equal cards | ASYMMETRIC 57/43 split with a VS medallion on the seam |
+| `podium` | three cards, winner taller | the cards STAND ON stepped PLINTHS carrying metal rank numerals |
+| `cards4` | 2×2 landscape grid | four PORTRAIT trading-cards in one row, centred columns |
+| `list5` | table with sparkline+price columns | GAIN-BAR leaderboard — bar length ∝ the real pct against the day's best |
+| `rail8` | two panels of four rows | a film RAIL: two strips of four portrait mini-frames |
+| `grid10` | two panels of five | one dense TERMINAL board, ten single-line rows |
+
+- **The lessons survived the rebuild, and the tests moved with the shapes.**
+  The podium still carries every rank signal (now seven — the plinth joined
+  the list), one ticker size per component set everywhere, figures scale
+  ≥1.4×, and the duel's pinned type sizes are unchanged inside the new
+  geometry.
+- ⚠️ **The podium's sparkline strip became an UNDERLAY** (alpha 0.3, behind
+  the figure) — the cards are 70px shorter since the plinths took that height,
+  and at strip weight the curve sliced straight through the side cards'
+  figures. Found by LOOKING at the render, the `drawGem` rule, again.
+- **`list5`'s bar is HONEST**: length ∝ `pct / max(pct)`, never eased, and the
+  widest bar always belongs to rank 1 because gainers.js sorts by the same
+  number. A drawn value follows the same rule as a printed one.
+
 ### The winner's NAME is not a ranking signal
 
 `$巨兽BEHEMOTH` was drawn at 44px against 31px for the two cards beside it, and a

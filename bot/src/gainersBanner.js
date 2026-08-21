@@ -1012,15 +1012,16 @@ function layoutList(ctx, S, spec, coins) {
   const x = PAD * S;
   const w = (REF_W - 2 * PAD) * S;
   const n = coins.length;
-  // column x-positions (right edges for numeric columns)
-  // Even rhythm across the data half: TREND / PRICE / MCAP / 24H roughly
-  // equidistant, so the table has no hollow band between the token cluster and
-  // the first data column.
+  // THE GAIN IS DRAWN, not only printed (2026-08-21 rebuild): each row carries
+  // a horizontal bar scaled to its 24h move against the day's best, so the
+  // board reads as a chart before a single number is read. The bar is HONEST —
+  // length ∝ the real pct, never eased — and the widest bar always belongs to
+  // rank 1 because gainers.js sorts by the same number.
   const cChg = x + w - 28 * S;
   const cMcap = x + w - 268 * S;
-  const cPrice = x + w - 490 * S;
-  const sparkR = x + w - 700 * S;
-  const sparkW = 190 * S;
+  const barL = x + 620 * S;
+  const barR = cMcap - 176 * S;
+  const maxPct = Math.max(...coins.map((c) => Math.abs(Number(c.pct) || 0)), 1e-9);
   boardPanel(
     ctx,
     S,
@@ -1033,8 +1034,7 @@ function layoutList(ctx, S, spec, coins) {
       head: [
         { x: x + 52 * S, label: "#", align: "right" },
         { x: x + 78 * S, label: "Token" },
-        { x: sparkR - sparkW / 2, label: "Trend", align: "center" },
-        { x: cPrice, label: "Price", align: "right" },
+        { x: (barL + barR) / 2, label: "24h gain", align: "center" },
         { x: cMcap, label: "Market cap", align: "right" },
         { x: cChg, label: "24h", align: "right" },
       ],
@@ -1054,7 +1054,7 @@ function layoutList(ctx, S, spec, coins) {
         metalRing(ctx, x + 78 * S + d / 2, cy, d, rank, S);
 
         const tx = x + 78 * S + d + 20 * S;
-        const tw = sparkR - sparkW - 40 * S - tx;
+        const tw = barL - 40 * S - tx;
         ctx.save();
         ctx.textBaseline = "alphabetic";
         ctx.fillStyle = SITE.text;
@@ -1067,18 +1067,40 @@ function layoutList(ctx, S, spec, coins) {
         // chain chip beside the ticker, like the site's tier tag
         chip(ctx, tx + symW + 12 * S, cy - 9 * S, chainShort(c.chain), 10 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
 
-        sparkline(ctx, sparkR - sparkW, cy - 17 * S, sparkW, 34 * S, c.symbol, c.pct, S, { alpha: 0.95 });
+        // the gain bar: a faint full-length track, the real value over it
+        const zoneW = barR - barL;
+        const bh = 14 * S;
+        const up = (Number(c.pct) || 0) >= 0;
+        roundRect(ctx, barL, cy - bh / 2, zoneW, bh, bh / 2);
+        ctx.fillStyle = "rgba(255,255,255,.05)";
+        ctx.fill();
+        const frac = Math.max(0.035, Math.min(1, Math.abs(Number(c.pct) || 0) / maxPct));
+        const bw = zoneW * frac;
+        roundRect(ctx, barL, cy - bh / 2, bw, bh, bh / 2);
+        const bg2 = ctx.createLinearGradient(barL, 0, barL + bw, 0);
+        bg2.addColorStop(0, up ? SITE.mintDeep : SITE.downTo);
+        bg2.addColorStop(1, up ? SITE.upFrom : SITE.downFrom);
+        ctx.save();
+        ctx.shadowColor = hexA(up ? SITE.mint : SITE.red, 0.35);
+        ctx.shadowBlur = 12 * S;
+        ctx.fillStyle = bg2;
+        ctx.fill();
+        ctx.restore();
+        // lit end-point, the sparkline's own grammar
+        ctx.beginPath();
+        ctx.arc(barL + bw, cy, 3.4 * S, 0, Math.PI * 2);
+        ctx.fillStyle = "#EAFFF5";
+        ctx.fill();
 
-        const mono = (val, cx, color, size = 19 * S) => {
+        const mono = (val, cxx, color, size = 19 * S) => {
           ctx.save();
           ctx.font = `700 ${size}px ${F.m7}`;
           ctx.fillStyle = color;
           ctx.textAlign = "right";
           ctx.textBaseline = "middle";
-          ctx.fillText(val, cx, cy + 1 * S);
+          ctx.fillText(val, cxx, cy + 1 * S);
           ctx.restore();
         };
-        mono(c.price ? fmtPrice(c.price) : "—", cPrice, c.price ? SITE.muted : SITE.faint);
         mono(c.mcap ? fmtCap(c.mcap) : "—", cMcap, c.mcap ? SITE.text : SITE.faint);
         pctChip(ctx, cChg, cy, c.pctLabel, 20 * S, S, { align: "r" });
       });
@@ -1086,89 +1108,123 @@ function layoutList(ctx, S, spec, coins) {
   );
 }
 
+
 /** rail8 / grid10 — two board panels side by side, rank order DOWN each panel. */
-function layoutColumns(ctx, S, spec, coins, { rowsPerCol, big }) {
+/** rail8 — a literal film RAIL: two strips of four portrait mini-cards. Every
+ *  mover is its own frame — avatar over ticker over figure — which no other
+ *  board shape does (the tables are rows, mosaic9's tiles are landscape).
+ *  2026-08-21 rebuild; the two-panels-of-four table it replaced was grid10 at
+ *  a different row count, which is exactly what "every banner distinct" ends. */
+function layoutRail(ctx, S, spec, coins) {
   const n = coins.length;
-  const twoCol = n > rowsPerCol;
-  const gapX = 24 * S;
-  const panelW = twoCol ? ((REF_W - 2 * PAD) * S - gapX) / 2 : (REF_W - 2 * PAD) * S;
-  const panels = twoCol ? 2 : 1;
-  const perPanel = Math.ceil(n / panels);
-
-  for (let p = 0; p < panels; p++) {
-    const px = PAD * S + p * (panelW + gapX);
-    const slice = coins.slice(p * perPanel, (p + 1) * perPanel);
-    if (!slice.length) continue;
-    const cChg = px + panelW - 22 * S;
-    const cMcap = px + panelW - (big ? 168 : 152) * S;
-    // rail8's tall rows earn a trend column; grid10's compact rows don't have
-    // the height for one to read cleanly.
-    const sparkW = big ? 104 * S : 0;
-    const sparkR = big ? cMcap - 96 * S : 0;
-    boardPanel(
-      ctx,
-      S,
-      {
-        x: px,
-        y: BAND_TOP * S,
-        w: panelW,
-        h: BAND_H * S,
-        accent: spec.accent,
-        head: [
-          { x: px + 46 * S, label: "#", align: "right" },
-          { x: px + 70 * S, label: "Token" },
-          ...(big ? [{ x: sparkR - sparkW / 2, label: "Trend", align: "center" }] : []),
-          { x: cMcap, label: "MCap", align: "right" },
-          { x: cChg, label: "24h", align: "right" },
-        ],
-      },
-      ({ top, height }) => {
-        const rowH = height / slice.length;
-        slice.forEach((c, i) => {
-          const rank = p * perPanel + i + 1;
-          const y = top + i * rowH;
-          const cy = y + rowH / 2;
-          rowBase(ctx, S, { x: px, w: panelW, y, h: rowH, first: i === 0, leader: rank === 1, accent: spec.accent });
-
-          if (rank <= 3) medal(ctx, px + 34 * S, cy, (big ? 14 : 13) * S, rank, S);
-          else rankNum(ctx, px + 46 * S, cy, rank, (big ? 16 : 15) * S);
-          const d = Math.min((big ? 52 : 44) * S, rowH * 0.6);
-          avatar(ctx, c.img, px + 70 * S + d / 2, cy, d, c.symbol, S);
-          metalRing(ctx, px + 70 * S + d / 2, cy, d, rank, S);
-
-          // Same information architecture as list5 — ticker + chain pill on the
-          // first line, project name muted underneath — so the three table
-          // layouts read as one system rather than three.
-          const tx = px + 70 * S + d + 16 * S;
-          const tw = (big ? sparkR - sparkW - 24 * S : cMcap - 84 * S) - tx;
-          const tickY = big ? cy - 2 * S : cy - 3 * S;
-          ctx.save();
-          ctx.textBaseline = "alphabetic";
-          ctx.fillStyle = SITE.text;
-          const symTxt = fitText(ctx, `$${c.symbol}`, tw - 58 * S, { weight: 700, size: (big ? 22 : 20) * S, min: 13 * S, family: F.d7 });
-          ctx.fillText(symTxt, tx, tickY);
-          const symW = ctx.measureText(symTxt).width;
-          ctx.fillStyle = SITE.muted;
-          ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: (big ? 13.5 : 12.5) * S, min: 10 * S, family: F.d5 }), tx, cy + 20 * S);
-          ctx.restore();
-          chip(ctx, tx + symW + 10 * S, tickY - 6 * S, chainShort(c.chain), (big ? 9.5 : 9) * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
-
-          if (big) sparkline(ctx, sparkR - sparkW, cy - 15 * S, sparkW, 30 * S, c.symbol, c.pct, S, { alpha: 0.95 });
-          if (c.mcap) {
-            ctx.save();
-            ctx.font = `700 ${(big ? 16 : 15) * S}px ${F.m7}`;
-            ctx.fillStyle = SITE.muted;
-            ctx.textAlign = "right";
-            ctx.textBaseline = "middle";
-            ctx.fillText(fmtCap(c.mcap), cMcap, cy + 1 * S);
-            ctx.restore();
-          }
-          pctChip(ctx, cChg, cy, c.pctLabel, (big ? 17 : 16) * S, S, { align: "r" });
-        });
-      },
-    );
-  }
+  if (!n) return;
+  if (n === 1) return layoutHero(ctx, S, spec, coins);
+  if (n === 2) return layoutDuel(ctx, S, spec, coins);
+  if (n === 3) return layoutPodium(ctx, S, spec, coins);
+  const cols = 4;
+  const rows = Math.ceil(n / cols);
+  const gap = 20 * S;
+  const innerW = (REF_W - 2 * PAD) * S;
+  const cw = (innerW - gap * (cols - 1)) / cols;
+  const ch = (BAND_H * S - gap * (rows - 1)) / rows;
+  coins.forEach((c, i) => {
+    const rank = i + 1;
+    const row = Math.floor(i / cols);
+    const inRow = row === rows - 1 ? n - row * cols : cols;
+    const rowW = inRow * cw + (inRow - 1) * gap;
+    const x = PAD * S + (innerW - rowW) / 2 + (i % cols) * (cw + gap);
+    const y = BAND_TOP * S + row * (ch + gap);
+    const cx = x + cw / 2;
+    surface(ctx, x, y, cw, ch, 18 * S, { S, accent: rank === 1 ? spec.accent : null });
+    if (rank > 3) rankNum(ctx, x + cw - 18 * S, y + 30 * S, rank, 14.5 * S);
+    const d = Math.min(62 * S, ch * 0.28);
+    const ly = y + 34 * S + d / 2;
+    avatar(ctx, c.img, cx, ly, d, c.symbol, S);
+    metalRing(ctx, cx, ly, d, rank, S);
+    if (rank <= 3) medal(ctx, cx + d * 0.42, ly + d * 0.38, 12.5 * S, rank, S);
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = SITE.text;
+    ctx.fillText(fitText(ctx, `$${c.symbol}`, cw - 44 * S, { weight: 700, size: 20 * S, min: 12.5 * S, family: F.d7 }), cx, ly + d / 2 + 30 * S);
+    ctx.fillStyle = SITE.muted;
+    ctx.fillText(fitText(ctx, c.name || "", cw - 48 * S, { weight: 500, size: 11.5 * S, min: 9.5 * S, family: F.d5 }), cx, ly + d / 2 + 50 * S);
+    ctx.restore();
+    bigPct(ctx, cx, y + ch - 52 * S, c.pctLabel, 27 * S, S, { align: "center" });
+    microLabel(ctx, cx, y + ch - 22 * S, `${chainShort(c.chain)}${c.mcap ? `  ·  MC ${fmtCap(c.mcap)}` : ""}`, { size: 9.5 * S, track: 0.14, color: SITE.muted, align: "center" });
+  });
 }
+
+/** grid10 — the dense TERMINAL readout: one full-width board, ten single-line
+ *  rows. Every other board sets the name under the ticker; this one runs the
+ *  whole identity on one baseline, which is what makes ten rows fit a single
+ *  panel — and makes the shape unmistakably its own. */
+function layoutGridDense(ctx, S, spec, coins) {
+  const n = coins.length;
+  if (!n) return;
+  const x = PAD * S;
+  const w = (REF_W - 2 * PAD) * S;
+  const cChg = x + w - 26 * S;
+  const cMcap = x + w - 170 * S;
+  boardPanel(
+    ctx,
+    S,
+    {
+      x,
+      y: BAND_TOP * S,
+      w,
+      h: BAND_H * S,
+      accent: spec.accent,
+      head: [
+        { x: x + 50 * S, label: "#", align: "right" },
+        { x: x + 74 * S, label: "Token" },
+        { x: cMcap, label: "MCap", align: "right" },
+        { x: cChg, label: "24h", align: "right" },
+      ],
+    },
+    ({ top, height }) => {
+      const rowH = height / n;
+      coins.forEach((c, i) => {
+        const rank = i + 1;
+        const y = top + i * rowH;
+        const cy = y + rowH / 2;
+        rowBase(ctx, S, { x, w, y, h: rowH, first: i === 0, leader: rank === 1, accent: spec.accent });
+        if (rank <= 3) medal(ctx, x + 36 * S, cy, 11.5 * S, rank, S);
+        else rankNum(ctx, x + 50 * S, cy, rank, 14 * S);
+        const d = Math.min(30 * S, rowH * 0.68);
+        avatar(ctx, c.img, x + 74 * S + d / 2, cy, d, c.symbol, S);
+        metalRing(ctx, x + 74 * S + d / 2, cy, d, rank, S);
+        // ONE BASELINE: ticker, then the name inline after it, then the chain
+        // chip — the row's whole identity on a single line.
+        const tx = x + 74 * S + d + 14 * S;
+        const tw = cMcap - 90 * S - tx;
+        ctx.save();
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = SITE.text;
+        const sym = fitText(ctx, `$${c.symbol}`, tw * 0.5, { weight: 700, size: 17.5 * S, min: 12 * S, family: F.d7 });
+        ctx.fillText(sym, tx, cy + 1 * S);
+        const symW = ctx.measureText(sym).width;
+        ctx.fillStyle = SITE.faint;
+        const nm = fitText(ctx, c.name || "", tw - symW - 90 * S, { weight: 500, size: 12.5 * S, min: 9.5 * S, family: F.d5 });
+        ctx.fillText(nm, tx + symW + 12 * S, cy + 1.5 * S);
+        const nmW = ctx.measureText(nm).width;
+        ctx.restore();
+        chip(ctx, tx + symW + 12 * S + nmW + 10 * S, cy - 8 * S, chainShort(c.chain), 8 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
+        if (c.mcap) {
+          ctx.save();
+          ctx.font = `700 ${14 * S}px ${F.m7}`;
+          ctx.fillStyle = SITE.muted;
+          ctx.textAlign = "right";
+          ctx.textBaseline = "middle";
+          ctx.fillText(fmtCap(c.mcap), cMcap, cy + 1 * S);
+          ctx.restore();
+        }
+        pctChip(ctx, cChg, cy, c.pctLabel, 13.5 * S, S, { align: "r" });
+      });
+    },
+  );
+}
+
 
 /** One board panel of ranked rows at ARBITRARY geometry — the shared engine
  *  under tier6's lower tier and crown7's two boards. layoutColumns owns the
@@ -1570,55 +1626,67 @@ function layoutSpotlight(ctx, S, spec, coins) {
 /** cards4 — four product cards; each card's headline is the MOVE, with the
  *  site's sparkline under it and an editorial faint rank numeral. */
 function layoutCards(ctx, S, spec, coins) {
+  // PORTRAIT, one row (2026-08-21 rebuild) — four trading-cards standing side
+  // by side, each a centred column: avatar, identity, the move, the trend, the
+  // facts. The 2×2 landscape grid it replaces sat too close to the board
+  // shapes; a row of standing cards shares a silhouette with nothing else in
+  // the ladder.
   const n = coins.length;
-  const cols = n <= 2 ? n : 2;
-  const rows = Math.ceil(n / cols);
+  const cols = Math.min(4, Math.max(1, n));
   const gap = 24 * S;
-  const cardW = ((REF_W - 2 * PAD) * S - gap * (cols - 1)) / cols;
-  const cardH = Math.min(250 * S, (BAND_H * S - gap * (rows - 1)) / rows);
-  const x0 = PAD * S;
-  const y0 = BAND_TOP * S + (BAND_H * S - (cardH * rows + gap * (rows - 1))) / 2;
-
-  coins.forEach((c, i) => {
+  const innerW = (REF_W - 2 * PAD) * S;
+  const cw = (innerW - gap * (cols - 1)) / cols;
+  const ch = BAND_H * S;
+  const rowW = cols * cw + (cols - 1) * gap;
+  coins.slice(0, 4).forEach((c, i) => {
     const rank = i + 1;
-    const x = x0 + (i % cols) * (cardW + gap);
-    const y = y0 + Math.floor(i / cols) * (cardH + gap);
-    surface(ctx, x, y, cardW, cardH, 22 * S, { S, accent: rank === 1 ? spec.accent : null });
+    const x = PAD * S + (innerW - rowW) / 2 + i * (cw + gap);
+    const y = BAND_TOP * S;
+    const cx = x + cw / 2;
+    surface(ctx, x, y, cw, ch, 22 * S, { S, accent: rank === 1 ? spec.accent : null });
 
-    // faint editorial rank numeral, top-right
-    // Medallion in the corner — the bold system's rank voice (the ghost
-    // numerals belonged to the flat pass and read as low-opacity smears here).
-    medal(ctx, x + cardW - 52 * S, y + 56 * S, 22 * S, rank, S);
+    // Medallion top-corner — the bold system's rank voice (the ghost numerals
+    // belonged to the flat pass and read as low-opacity smears here).
+    medal(ctx, x + cw - 42 * S, y + 44 * S, 17 * S, rank, S);
 
-    const padL = x + 30 * S;
-    const d = 58 * S;
-    avatar(ctx, c.img, padL + d / 2, y + 32 * S + d / 2, d, c.symbol, S);
-    metalRing(ctx, padL + d / 2, y + 32 * S + d / 2, d, rank, S);
-    const tx = padL + d + 18 * S;
-    const tw = cardW - 220 * S - (tx - x);
+    const d = 86 * S;
+    const ly = y + 62 * S + d / 2;
+    if (rank === 1) radial(ctx, cx, ly, d * 1.2, spec.accent, 0.12);
+    avatar(ctx, c.img, cx, ly, d, c.symbol, S);
+    metalRing(ctx, cx, ly, d, rank, S);
+
     ctx.save();
+    ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = SITE.text;
-    ctx.fillText(fitText(ctx, `$${c.symbol}`, tw, { weight: 700, size: 27 * S, min: 16 * S, family: F.d7 }), tx, y + 58 * S);
+    ctx.fillText(fitText(ctx, `$${c.symbol}`, cw - 48 * S, { weight: 700, size: 25 * S, min: 15 * S, family: F.d7 }), cx, ly + d / 2 + 40 * S);
     ctx.fillStyle = SITE.muted;
-    ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 14.5 * S, min: 11 * S, family: F.d5 }), tx, y + 82 * S);
+    ctx.fillText(fitText(ctx, c.name || "", cw - 52 * S, { weight: 500, size: 13.5 * S, min: 10.5 * S, family: F.d5 }), cx, ly + d / 2 + 64 * S);
+    ctx.restore();
+    chip(ctx, cx, ly + d / 2 + 92 * S, chainShort(c.chain), 9.5 * S, S, { align: "center", color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
+
+    // the move — the card's headline — with the trend beneath it
+    bigPct(ctx, cx, y + ch - 138 * S, c.pctLabel, 40 * S, S, { align: "center" });
+    ctx.save();
+    roundRect(ctx, x, y, cw, ch, 22 * S);
+    ctx.clip();
+    sparkline(ctx, x + 34 * S, y + ch - 118 * S, cw - 68 * S, 40 * S, c.symbol, c.pct, S, { alpha: 0.8 });
     ctx.restore();
 
-    // the move — the card's headline — with the trend under it
-    bigPct(ctx, padL, y + cardH - 68 * S, c.pctLabel, 46 * S, S);
-    sparkline(ctx, x + cardW - 210 * S, y + cardH - 106 * S, 176 * S, 52 * S, c.symbol, c.pct, S, { alpha: 0.9 });
-
-    // footer micro-stats
-    const fy = y + cardH - 26 * S;
+    // footer facts under a hairline
+    ctx.fillStyle = SITE.line;
+    ctx.fillRect(x + 26 * S, y + ch - 62 * S, cw - 52 * S, 1);
     // muted, not faint: this line carries DATA, and at social-feed scale the
     // faint tone fell below comfortable legibility.
-    microLabel(ctx, padL, fy, `${chainShort(c.chain)}${c.price ? `  ·  ${fmtPrice(c.price)}` : ""}${c.mcap ? `  ·  MC ${fmtCap(c.mcap)}` : ""}`, {
-      size: 11.5 * S,
+    microLabel(ctx, cx, y + ch - 30 * S, `${c.price ? `${fmtPrice(c.price)}  ·  ` : ""}${c.mcap ? `MC ${fmtCap(c.mcap)}` : chainName(c.chain)}`, {
+      size: 11 * S,
       track: 0.14,
       color: SITE.muted,
+      align: "center",
     });
   });
 }
+
 
 /** podium — three tall cards, winner raised; the % is each card's hero figure,
  *  a low-alpha trend area breathes across the card's lower half. */
@@ -1635,10 +1703,37 @@ function layoutPodium(ctx, S, spec, coins) {
     const rank = idx + 1;
     const rc = rankColor(rank);
     const winner = rank === 1;
-    const h = winner ? BAND_H * S : (BAND_H - 40) * S;
+    // The cards STAND ON PLINTHS now (2026-08-21 rebuild) — a literal stepped
+    // pedestal under each, tallest for gold, so the silhouette is a podium
+    // before a single glyph is read. Elevation is still the first rank signal:
+    // the winner's card is taller AND stands higher.
+    const plinthH = (rank === 1 ? 64 : rank === 2 ? 46 : 32) * S;
+    const h = (winner ? BAND_H : BAND_H - 40) * S - 70 * S;
     const x = PAD * S + col * (colW + gapX);
-    const y = bottom - h;
+    const y = bottom - plinthH - h;
     const cx = x + colW / 2;
+
+    // plinth first, so the card's shadow falls onto it
+    const m = medalOf(rank);
+    roundRect(ctx, x + 14 * S, bottom - plinthH, colW - 28 * S, plinthH, 10 * S);
+    ctx.fillStyle = "rgba(13,17,25,.9)";
+    ctx.fill();
+    roundRect(ctx, x + 14 * S, bottom - plinthH, colW - 28 * S, plinthH, 10 * S);
+    ctx.lineWidth = Math.max(1, 1.2 * S);
+    ctx.strokeStyle = hexA(rc, 0.4);
+    ctx.stroke();
+    ctx.save();
+    roundRect(ctx, x + 14 * S, bottom - plinthH, colW - 28 * S, plinthH, 10 * S);
+    ctx.clip();
+    ctx.fillStyle = hexA(rc, 0.5);
+    ctx.fillRect(x + 14 * S, bottom - plinthH, colW - 28 * S, Math.max(1.5, 2 * S));
+    ctx.font = `800 ${Math.round(plinthH * 0.66)}px ${F.m8}`;
+    ctx.fillStyle = metalGrad(ctx, cx, bottom - plinthH / 2, plinthH / 2, m);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(rank), cx, bottom - plinthH / 2 + 1 * S);
+    ctx.restore();
+
     surface(ctx, x, y, colW, h, 24 * S, { S, accent: rc, lift: winner ? 1.5 : 1 });
 
     chip(ctx, cx, y + 42 * S, winner ? "#1 · Top gainer" : `#${rank}`, 12.5 * S, S, {
@@ -1681,19 +1776,22 @@ function layoutPodium(ctx, S, spec, coins) {
     ctx.fillText(fitText(ctx, c.name || "", colW - 60 * S, { weight: 500, size: 16 * S, min: 11 * S, family: F.d5 }), cx, tickerY + 28 * S);
     ctx.restore();
 
-    // the hero figure — positioned OFF the name, so no fixed fraction can ever
-    // collide with the identity block above it. No "24H CHANGE" label here: the
-    // header kicker already says it, and a label was what collided last time.
-    bigPct(ctx, cx, tickerY + 28 * S + (winner ? 96 : 78) * S, c.pctLabel, pctSize * S, S, { align: "center" });
-
-    // a clean sparkline strip between the figure and the stat divider — its own
-    // band, clipped, so the curve can never slice through a glyph or the rule
-    const stripTop = y + h - 84 * S - 56 * S;
+    // the trend as an UNDERLAY, first, so the figure prints over it. The cards
+    // are 70px shorter since the plinths took that height, and the old discrete
+    // strip no longer has a band of its own — drawn at strip weight it sliced
+    // straight through the figure on the side cards (found by LOOKING at the
+    // render, the drawGem rule). At 0.3 alpha across the lower half it reads as
+    // the card's texture, exactly like the hero's midfield curve.
     ctx.save();
     roundRect(ctx, x, y, colW, h, 24 * S);
     ctx.clip();
-    sparkline(ctx, cx - (colW - 140 * S) / 2, stripTop, colW - 140 * S, 42 * S, c.symbol, c.pct, S, { alpha: 0.8 });
+    sparkline(ctx, x + 24 * S, y + h - 84 * S - 64 * S, colW - 48 * S, 52 * S, c.symbol, c.pct, S, { alpha: 0.3 });
     ctx.restore();
+
+    // the hero figure — positioned OFF the name, so no fixed fraction can ever
+    // collide with the identity block above it. No "24H CHANGE" label here: the
+    // header kicker already says it, and a label was what collided last time.
+    bigPct(ctx, cx, tickerY + 28 * S + (winner ? 88 : 70) * S, c.pctLabel, pctSize * S, S, { align: "center" });
 
     // footer stats split by a hairline
     ctx.fillStyle = SITE.line;
@@ -1724,15 +1822,21 @@ function layoutDuel(ctx, S, spec, coins) {
   const slots = coins.slice(0, 2);
   if (!slots.length) return;
   const gapX = 28 * S;
-  const colW = ((REF_W - 2 * PAD) * S - gapX * (slots.length - 1)) / slots.length;
+  const innerW = (REF_W - 2 * PAD) * S;
+  // ASYMMETRIC on purpose (2026-08-21 rebuild): equal halves read as a diptych,
+  // not a duel. The winner takes ~57% of the width, and a VS medallion sits on
+  // the seam — drawn after both cards so it rides above their shadows.
+  const wWide = slots.length > 1 ? innerW * 0.57 : innerW;
+  const widths = slots.length > 1 ? [wWide, innerW - wWide - gapX] : [innerW];
   const bottom = BAND_BOTTOM * S;
 
   slots.forEach((c, idx) => {
     const rank = idx + 1;
     const rc = rankColor(rank);
     const winner = rank === 1;
+    const colW = widths[idx];
     const h = winner ? BAND_H * S : (BAND_H - 34) * S;
-    const x = PAD * S + idx * (colW + gapX);
+    const x = PAD * S + (idx === 0 ? 0 : widths[0] + gapX);
     const y = bottom - h;
     surface(ctx, x, y, colW, h, 24 * S, { S, accent: rc, lift: winner ? 1.5 : 1 });
 
@@ -1794,6 +1898,36 @@ function layoutDuel(ctx, S, spec, coins) {
     stat("Chain", chainName(c.chain) || "—", x + 30 * S, "left");
     if (c.mcap) stat("Mkt cap", fmtCap(c.mcap), x + colW - 30 * S, "right");
   });
+
+  // the VS medallion on the seam — only when there IS a duel
+  if (slots.length > 1) {
+    const sx = PAD * S + widths[0] + gapX / 2;
+    const sy = bottom - BAND_H * S * 0.6;
+    const r = 33 * S;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#080F16";
+    ctx.shadowColor = "rgba(0,0,0,.6)";
+    ctx.shadowBlur = 18 * S;
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    const rg = ctx.createLinearGradient(sx - r, sy, sx + r, sy);
+    rg.addColorStop(0, SITE.gold);
+    rg.addColorStop(1, rankColor(2));
+    ctx.lineWidth = Math.max(2.5, 5 * S);
+    ctx.strokeStyle = rg;
+    ctx.stroke();
+    ctx.font = `800 ${24 * S}px ${F.m8}`;
+    ctx.fillStyle = SITE.text;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("VS", sx, sy + 1 * S);
+    ctx.restore();
+  }
 }
 
 function layoutHero(ctx, S, spec, coins) {
@@ -1803,55 +1937,68 @@ function layoutHero(ctx, S, spec, coins) {
   const w = (REF_W - 2 * PAD) * S;
   const y = BAND_TOP * S;
   const h = BAND_H * S;
-  surface(ctx, x, y, w, h, 26 * S, { S, accent: SITE.mint, lift: 1.5 });
+  const cx = x + w / 2;
+  surface(ctx, x, y, w, h, 26 * S, { S, accent: SITE.gold, lift: 1.5 });
 
-  // The avatar sits at ~0.70w so it bridges the text stack and the right edge
-  // instead of leaving a hollow centre; the editorial "01" lives at the far
-  // right where the avatar no longer buries it; the trend area rises through
-  // the card's midfield underneath both.
-  const heroD = 190 * S;
-  const heroX = x + w * 0.70;
-  const heroY = y + h * 0.40;
+  // THE MONUMENT — symmetric about the centreline. The first composition was
+  // an editorial split (text stack left, avatar at 0.70w, "01" watermark) and
+  // the 2026-08-21 pass rebuilt every layout to be tellable apart at a glance;
+  // a lone champion reads strongest as a shrine, not a magazine spread. The
+  // ghost numerals flank the monument, and the trend breathes across the
+  // card's lower half UNDER the stat tiles.
   ctx.save();
   roundRect(ctx, x, y, w, h, 26 * S);
   ctx.clip();
-  sparkline(ctx, x + w * 0.44, y + h * 0.30, w * 0.53, h * 0.62, c.symbol, c.pct, S, { alpha: 0.2 });
-  ctx.font = `800 ${290 * S}px ${F.m8}`;
-  ctx.fillStyle = "rgba(255,255,255,.04)";
-  ctx.textAlign = "right";
+  ctx.font = `800 ${252 * S}px ${F.m8}`;
+  ctx.fillStyle = "rgba(255,255,255,.035)";
   ctx.textBaseline = "alphabetic";
-  ctx.fillText("01", x + w - 26 * S, y + 300 * S);
+  ctx.textAlign = "left";
+  ctx.fillText("0", x + 36 * S, y + 262 * S);
+  ctx.textAlign = "right";
+  ctx.fillText("1", x + w - 36 * S, y + 262 * S);
+  sparkline(ctx, x + 60 * S, y + h * 0.5, w - 120 * S, h * 0.4, c.symbol, c.pct, S, { alpha: 0.16 });
   ctx.restore();
 
-  const px = x + 52 * S;
-  microLabel(ctx, px, y + 62 * S, "Biggest 24h mover", { size: 13 * S, color: SITE.mint, track: 0.26 });
+  chip(ctx, cx, y + 44 * S, "#1 · Top gainer", 13 * S, S, {
+    align: "center",
+    color: SITE.gold,
+    border: hexA(SITE.gold, 0.4),
+    bg: hexA(SITE.gold, 0.12),
+  });
 
-  const textW = w - 220 * S - heroD;
+  const d = 124 * S;
+  const lcy = y + 70 * S + d / 2;
+  radial(ctx, cx, lcy, d * 1.2, SITE.gold, 0.15);
+  avatar(ctx, c.img, cx, lcy, d, c.symbol, S);
+  metalRing(ctx, cx, lcy, d, 1, S);
+  medal(ctx, cx + d * 0.42, lcy + d * 0.38, 22 * S, 1, S);
 
   ctx.save();
+  ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = SITE.text;
-  ctx.font = `700 ${80 * S}px ${F.d7}`;
-  ctx.letterSpacing = `${(-1.6 * S).toFixed(1)}px`;
-  ctx.fillText(fitText(ctx, `$${c.symbol}`, textW, { weight: 700, size: 80 * S, min: 36 * S, family: F.d7 }), px, y + 152 * S);
+  ctx.font = `700 ${54 * S}px ${F.d7}`;
+  ctx.letterSpacing = `${(-1.1 * S).toFixed(1)}px`;
+  ctx.fillText(fitText(ctx, `$${c.symbol}`, w - 320 * S, { weight: 700, size: 54 * S, min: 26 * S, family: F.d7 }), cx, lcy + d / 2 + 56 * S);
   ctx.letterSpacing = "0px";
   ctx.fillStyle = SITE.muted;
-  ctx.fillText(fitText(ctx, c.name || "", textW, { weight: 500, size: 23 * S, min: 14 * S, family: F.d5 }), px, y + 190 * S);
+  ctx.fillText(fitText(ctx, c.name || "", w - 360 * S, { weight: 500, size: 19 * S, min: 12 * S, family: F.d5 }), cx, lcy + d / 2 + 88 * S);
   ctx.restore();
 
-  bigPct(ctx, px, y + 322 * S, c.pctLabel, 118 * S, S);
+  bigPct(ctx, cx, y + 372 * S, c.pctLabel, 100 * S, S, { align: "center" });
 
-  // stat tiles
+  // stat tiles — a centred row, same tile grammar as before
   const tiles = [
     { l: "Chain", v: chainName(c.chain) || "—" },
     ...(c.price ? [{ l: "Price", v: fmtPrice(c.price) }] : []),
     ...(c.mcap ? [{ l: "Market cap", v: fmtCap(c.mcap) }] : []),
   ].slice(0, 3);
-  const tileW = Math.min(206 * S, (textW - 32 * S) / Math.max(1, tiles.length));
-  const tileH = 86 * S;
+  const tileW = 206 * S;
+  const tileH = 84 * S;
+  const rowW = tiles.length * tileW + (tiles.length - 1) * 16 * S;
   tiles.forEach((t, i) => {
-    const tx = px + i * (tileW + 16 * S);
-    const ty = y + h - 44 * S - tileH;
+    const tx = cx - rowW / 2 + i * (tileW + 16 * S);
+    const ty = y + h - 40 * S - tileH;
     roundRect(ctx, tx, ty, tileW, tileH, 14 * S);
     // Opaque surface: a trend line showing through a stat chip reads as noise
     // inside the data, not depth.
@@ -1863,27 +2010,16 @@ function layoutHero(ctx, S, spec, coins) {
     ctx.lineWidth = Math.max(1, 1.1 * S);
     ctx.strokeStyle = SITE.line;
     ctx.stroke();
-    microLabel(ctx, tx + 18 * S, ty + 30 * S, t.l, { size: 10.5 * S, track: 0.2 });
+    microLabel(ctx, tx + 18 * S, ty + 29 * S, t.l, { size: 10.5 * S, track: 0.2 });
     ctx.save();
-    ctx.font = `700 ${21 * S}px ${F.m7}`;
+    ctx.font = `700 ${20 * S}px ${F.m7}`;
     ctx.fillStyle = SITE.text;
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(fitText(ctx, t.v, tileW - 36 * S, { weight: 700, size: 21 * S, min: 13 * S, family: F.m7 }), tx + 18 * S, ty + 62 * S);
+    ctx.fillText(fitText(ctx, t.v, tileW - 36 * S, { weight: 700, size: 20 * S, min: 13 * S, family: F.m7 }), tx + 18 * S, ty + 60 * S);
     ctx.restore();
   });
-
-  // hero avatar + gold #1 chip
-  radial(ctx, heroX, heroY, heroD * 0.95, SITE.mint, 0.16);
-  avatar(ctx, c.img, heroX, heroY, heroD, c.symbol, S);
-  metalRing(ctx, heroX, heroY, heroD, 1, S);
-  medal(ctx, heroX + heroD * 0.4, heroY + heroD * 0.38, 26 * S, 1, S);
-  chip(ctx, heroX, heroY + heroD / 2 + 34 * S, "#1 Gainer", 13 * S, S, {
-    align: "center",
-    color: SITE.gold,
-    border: hexA(SITE.gold, 0.4),
-    bg: hexA(SITE.gold, 0.12),
-  });
 }
+
 
 const LAYOUTS = {
   duel: layoutDuel,
@@ -1895,8 +2031,8 @@ const LAYOUTS = {
   podium: layoutPodium,
   cards: layoutCards,
   list: layoutList,
-  rail: (ctx, S, spec, coins) => layoutColumns(ctx, S, spec, coins, { rowsPerCol: 4, big: true }),
-  grid: (ctx, S, spec, coins) => layoutColumns(ctx, S, spec, coins, { rowsPerCol: 5, big: false }),
+  rail: layoutRail,
+  grid: layoutGridDense,
 };
 
 // ── render ──────────────────────────────────────────────────────────────────
