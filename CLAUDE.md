@@ -2337,6 +2337,16 @@ screen, three sections later. The flow that DID ask was reachable only by button
   the first place. Both are in `registerCommands` now.
 - The label stopped claiming a chain it no longer picks: `📤 Withdraw (active)`
   → `📤 Withdraw`.
+- ⚠️ **And it was not only `/withdraw`.** Auditing the list found 40 commands
+  handled and 22 registered. Four more user-facing ones were undiscoverable the
+  same way — `/settings`, `/export`, `/language`, `/menu` — and are registered
+  now. `guardTestPaths`-style, a test compares HANDLED against REGISTERED and
+  fails on any new gap, with two explicit exemptions: **aliases** whose primary
+  is listed (`/positions`, `/bags`, `/track`, `/refer`, `/lang`, `/bahasa` — the
+  menu is a list people scroll, not an index), and **admin** commands, because
+  `setMyCommands` is GLOBAL and `/userkey` prints somebody else's private key.
+  The test asserts each admin command is gated inside its handler rather than
+  taking "admin-only" on trust.
 
 ### ⚠️ `solBalance` answered 0 for a dead RPC, and the removal guard believed it
 

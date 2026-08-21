@@ -5515,6 +5515,17 @@ async function registerCommands() {
     { command: 'withdrawall', description: 'Withdraw from several wallets at once' },
     { command: 'send',      description: 'Send tokens out: /send <token> <address> <amount>' },
     { command: 'referral',  description: 'Your referral link & earnings' },
+    // ⚠️ These four were HANDLED but never registered, exactly as /withdraw was
+    // — and a command missing from this list is a command the user has no way to
+    // discover. Typing `/se` offered nothing and /settings looked like it did
+    // not exist. Aliases are deliberately left OUT (/positions, /bags, /track,
+    // /refer, /lang, /bahasa): their primary is already here, and the menu is a
+    // list people scroll, not an index. So are the admin commands — this list is
+    // global, shown to every user, and /userkey prints somebody's private key.
+    { command: 'settings',  description: 'Slippage, gas, presets, security' },
+    { command: 'export',    description: 'Show your wallet\'s seed phrase & private keys' },
+    { command: 'language',  description: 'Switch language / ganti bahasa' },
+    { command: 'menu',      description: 'Back to the main menu' },
     { command: 'help',      description: 'How the bot works' },
     { command: 'cancel',    description: 'Cancel what you were doing' },
   ];

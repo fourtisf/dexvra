@@ -889,3 +889,34 @@ test("a chain button carries its mode, and a disabled chain still cannot be pick
   const t = code("telegram.js");
   assert.match(t, /if \(!core\.chains\.isEnabled\(ca\)\) \{ const sc = wdSweepChainScreen\(chatId, mode\)/);
 });
+
+test("every user-facing command the bot handles is in the / menu", { skip: !core || !tg }, async () => {
+  // A command missing from this list is a command the user cannot discover —
+  // that is how /withdraw went unnoticed, and typing `/wi` offering nothing was
+  // its own reason to believe it did not exist.
+  const src = read("telegram.js");
+  const handled = new Set();
+  for (const m of src.matchAll(/text === '\/([a-z0-9_]+)'/g)) handled.add(m[1]);
+  for (const m of src.matchAll(/text\.startsWith\('\/([a-z0-9_]+)'\)/g)) handled.add(m[1]);
+  const names = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    try { const b = JSON.parse(opt.body); if (/setMyCommands/.test(String(url))) (b.commands || []).forEach((c) => names.push(c.command)); } catch (_) {}
+    return { json: async () => ({ ok: true, result: true }) };
+  };
+  try { await tg._test.registerCommands(); } finally { global.fetch = realFetch; }
+  const reg = new Set(names);
+  // ADMIN commands are deliberately absent: setMyCommands is GLOBAL, shown to
+  // every user, and /userkey prints somebody else's private key. Each one is
+  // gated inside its handler — asserted here so "it's admin-only" stays a fact
+  // about the code rather than a note in a list.
+  const adminOnly = ["admin", "backup", "health", "stats", "revenue", "userkey", "id", "whoami"];
+  for (const c of adminOnly) {
+    const fn = { stats: "adminStats", revenue: "adminRevenue", userkey: "adminUserKey" }[c];
+    if (fn) assert.match(src.slice(src.indexOf("function " + fn)).slice(0, 400), /admins\.includes/, "/" + c + " must be gated");
+  }
+  // ALIASES whose primary is registered — the menu is a list people scroll.
+  const alias = ["positions", "bags", "track", "refer", "lang", "bahasa"];
+  const missing = [...handled].filter((c) => !reg.has(c) && !adminOnly.includes(c) && !alias.includes(c));
+  assert.deepEqual(missing, [], "handled but undiscoverable: " + missing.map((c) => "/" + c).join(" "));
+});
