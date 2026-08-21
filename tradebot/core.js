@@ -692,27 +692,75 @@ async function _balanceResilient(chainKey, addr, tries = 3, timeoutMs = 6000) {
   }
   return { ok: false, bal: 0n };
 }
-// Remove a wallet. GUARD: keep at least one; refuse only when we can VERIFY it still
-// holds native on some chain (so we never nudge a user into abandoning visible funds).
-// A chain whose RPC we can't reach right now does NOT block removal: the encrypted key
-// is archived on removal and stays fully recoverable, so nothing is ever stranded — a
-// flaky public RPC (e.g. Ethereum) must not trap an otherwise-empty wallet forever.
-// ERC20 bags can't be auto-detected, hence the "export first" nudge in the confirm UI.
-async function removeWallet(chatId, walletId) {
+/**
+ * What one wallet ROW holds, chain by chain — the survey both the removal guard
+ * and the removal SCREEN read, so the refusal and the screen can never disagree
+ * about what is in there.
+ *
+ * A row is TWO KEYPAIRS: an EVM key (`enc`) and a Solana key (`solEnc`), with
+ * two unrelated addresses. That is exactly the thing the UI never said, and the
+ * first person to hit the guard asked the obvious question — "the private keys
+ * are different, so why does SOL stop me deleting the EVM wallet?". They are
+ * different, and they are also one row: removing it removes the pair. Answering
+ * that needs the per-chain breakdown, not a sentence naming whichever chain the
+ * loop happened to trip on first.
+ *
+ * Every chain is read CONCURRENTLY. The old loop was serial, so on a box with a
+ * throttled public RPC the confirm screen paid one full six-second timeout per
+ * chain before it could say anything at all.
+ *
+ * `ok:false` is "we could not look", never "it is empty" — the distinction this
+ * repo keeps having to relearn. An unreadable chain does not block removal (a
+ * flaky public RPC must not trap an otherwise-empty wallet for ever) but it IS
+ * reported, so a screen can say so instead of rendering it as a zero.
+ */
+async function walletFunds(chatId, walletId) {
   const u = ensureUser(chatId);
-  if (u.wallets.length <= 1) throw new Error('you must keep at least one wallet');
   const w = walletById(u, walletId); if (!w) throw new Error('wallet not found');
-  for (const ch of chains.enabledChains()) {
+  return Promise.all(chains.enabledChains().map(async (ch) => {
     const svm = ch.kind === 'svm';
     const addr = svm ? solAddressOf(w) : w.address;
     // Dust threshold in the chain's smallest unit: ~0.0002 ETH on EVM, 0.002 SOL on
     // Solana (a hair above the rent-exempt minimum, so an empty ATA-only wallet frees).
     const dust = svm ? 2000000n : ethers.parseEther('0.0002');
     const { ok, bal } = await _balanceResilient(ch.key, addr);
-    if (!ok) continue;   // couldn't verify → don't block (key is archived/recoverable)
-    if (bal > dust) {
-      const human = svm ? solana.lamportsToSol(bal).toFixed(5) : Number(ethers.formatEther(bal)).toFixed(5);
-      throw new Error(`this wallet still holds ${human} ${ch.native} on ${ch.name} — withdraw it (or export the key) first.`);
+    return {
+      chain: ch.key, name: ch.name, emoji: ch.emoji, native: ch.native, svm, address: addr,
+      ok, bal,
+      holds: ok && bal > dust,
+      human: svm ? solana.lamportsToSol(bal).toFixed(5) : Number(ethers.formatEther(bal)).toFixed(5),
+    };
+  }));
+}
+
+// Remove a wallet. GUARD: keep at least one; refuse only when we can VERIFY it still
+// holds native on some chain (so we never nudge a user into abandoning visible funds).
+// A chain whose RPC we can't reach right now does NOT block removal: the encrypted key
+// is archived on removal, so nothing is destroyed — a flaky public RPC (e.g. Ethereum)
+// must not trap an otherwise-empty wallet forever.
+// ERC20 bags can't be auto-detected, hence the "export first" nudge in the confirm UI.
+//
+// `opts.force` skips the balance refusal, and is reached ONLY from a second,
+// informed confirmation that names every amount. The refusal on its own was a
+// dead end: it told the user their wallet held SOL and offered no way to move it
+// — withdraw was active-wallet-and-active-chain only, so acting on the sentence
+// meant switching wallet, switching chain, and finding the button again. A
+// diagnosis with no hands attached is a bug report the code files against its
+// owner, and this one had been filing it since the guard was written.
+//
+// The refusal carries `err.holdings` — the survey above — so the screen can put
+// those hands on it: one withdraw button per chain that actually holds anything.
+async function removeWallet(chatId, walletId, opts) {
+  const u = ensureUser(chatId);
+  if (u.wallets.length <= 1) throw new Error('you must keep at least one wallet');
+  const w = walletById(u, walletId); if (!w) throw new Error('wallet not found');
+  if (!(opts && opts.force)) {
+    const funds = await walletFunds(chatId, walletId);
+    const holding = funds.filter((f) => f.holds);
+    if (holding.length) {
+      const e = new Error(`this wallet still holds ${holding.map((f) => `${f.human} ${f.native} on ${f.name}`).join(' and ')} — withdraw it (or export the key) first.`);
+      e.holdings = holding;
+      throw e;
     }
   }
   // Re-validate AFTER the async balance loop (the event loop yielded, so a
@@ -2406,6 +2454,42 @@ async function nativeTransferGas(chainKey, from, to, value) {
     return limit;
   } catch (_) { return 120000n; }   // covers Orbit L1 gas + a contract recipient's receive()
 }
+/**
+ * The L1 data fee an OP-stack chain will charge ON TOP of `gasLimit × gasPrice`.
+ *
+ * It exists because op-geth's balance pre-check is `value + gas × price + l1Cost`,
+ * and NOTHING in this file used to account for the third term. A max withdrawal
+ * that left behind exactly the L2 execution cost was therefore short by the L1
+ * fee and bounced with "insufficient funds for gas * price + value" — a message
+ * that names the two terms that were covered and not the one that was not.
+ *
+ * Arbitrum and Robinhood need nothing here: Nitro folds the L1 component into
+ * the gas UNITS, so `nativeTransferGas`'s estimate already carries it. This is
+ * the OP-stack shape only, and it DISCOVERS whether a chain has one rather than
+ * carrying a list — the rule `v4.js` follows for the PoolManager. A chain
+ * without the predeploy answers 0 forever after one `getCode`.
+ */
+const OP_GAS_ORACLE = '0x420000000000000000000000000000000000000F';
+const _hasL1Oracle = new Map();   // chainKey → boolean
+async function _l1DataFee(chainKey, req) {
+  try {
+    const prov = providerFor(chainKey);
+    let has = _hasL1Oracle.get(chainKey);
+    if (has === undefined) {
+      const code = await prov.getCode(OP_GAS_ORACLE).catch(() => '0x');
+      has = !!(code && code !== '0x');
+      _hasL1Oracle.set(chainKey, has);
+    }
+    if (!has) return 0n;
+    // The unsigned serialization under-counts by the signature bytes the oracle
+    // would see; the caller's headroom covers that, and an over-estimate here
+    // only ever means a slightly smaller sweep.
+    const raw = ethers.Transaction.from(req).unsignedSerialized;
+    const oracle = new ethers.Contract(OP_GAS_ORACLE, ['function getL1Fee(bytes) view returns (uint256)'], prov);
+    const f = await oracle.getL1Fee(raw);
+    return f > 0n ? BigInt(f) : 0n;
+  } catch (_) { return 0n; }   // unknown L1 fee → 0 here, headroom above absorbs it
+}
 // Gas limit for a V3 swap / unwrap CONTRACT call. Same reason as
 // nativeTransferGas: a hardcoded limit ignores the Orbit L1-calldata component
 // (folded into gas units on Nitro chains), so a fixed 500k could out-of-gas an
@@ -2811,7 +2895,69 @@ async function _sellSol(u, ca, pct, chainKey, walletId, opts) {
     return res;
   });
 }
-// Withdraw native SOL to a base58 address ('max' sweeps all but a tx-fee reserve).
+/**
+ * How much of a SOL balance a withdrawal may send — and, when it may not, the
+ * reason in a sentence the user can act on. PURE: bigints in, a decision out,
+ * no RPC, so the rule that made every `max` withdrawal impossible can be tested
+ * without a validator.
+ *
+ * The rule Solana enforces and this bot did not: after the transfer and its fee,
+ * the wallet must hold either NOTHING or at least `rentMin`. Anything in between
+ * is a "rent-paying" account and the transaction is rejected before it lands —
+ * with a simulation error that names neither the balance nor the floor.
+ *
+ * Which is why a refusal here always names the amounts that WOULD work. The old
+ * code sent the transaction and let the simulator do the explaining, and the
+ * explaining it did was "insufficient funds for rent".
+ */
+function solWithdrawPlan(bal, fee, rentMin, amount) {
+  const sol = (l) => solana.lamportsToSol(l);
+  const isMax = String(amount).toLowerCase() === 'max';
+  if (bal <= 0n) return { error: 'this wallet has no SOL to withdraw' };
+  // A sweep lands on the balance EXACTLY. Zero is a legal place to leave an
+  // account (it is purged, and reappears on the next deposit); the 10,000-lamport
+  // "fee reserve" this replaced was not.
+  const lamports = isMax ? bal - fee : solana.solToLamports(amount);
+  if (lamports <= 0n) {
+    return { error: isMax
+      ? `this wallet holds ${sol(bal)} SOL, which is below the ${sol(fee)} SOL network fee — there is nothing left to send.`
+      : 'nothing to withdraw (after fees)' };
+  }
+  if (lamports + fee > bal) {
+    return { error: `amount exceeds balance after the ${sol(fee)} SOL network fee — you can send at most ${sol(bal - fee)} SOL (type "max").` };
+  }
+  const left = bal - lamports - fee;
+  if (left > 0n && left < rentMin) {
+    const most = bal - fee - rentMin;
+    const alt = most > 0n ? `, or send at most ${sol(most)} SOL to keep it open` : '';
+    return { error: `Solana won't let a wallet keep less than ${sol(rentMin)} SOL — sending that much would leave ${sol(left)} SOL behind. Type "max" to empty the wallet${alt}.` };
+  }
+  return { lamports, isMax, left };
+}
+
+/**
+ * Withdraw native SOL to a base58 address. `max` sweeps the wallet to EXACTLY
+ * zero.
+ *
+ * THIS USED TO KEEP A 10,000-LAMPORT "FEE RESERVE" BEHIND, and that made every
+ * `max` withdrawal in the bot's history impossible — not unlucky, impossible.
+ * Solana refuses to leave an account holding more than nothing and less than the
+ * rent-exempt minimum (~890,880 lamports); the reserve was 10,000, so the sweep
+ * always landed in the one band the runtime rejects, and the user got
+ *
+ *     ❌ Simulation failed. Transaction results in an account (0) with
+ *        insufficient funds for rent
+ *
+ * which names neither the reserve nor the rule. Zero is a legal destination
+ * (the account is purged and reappears the moment somebody sends to it), so a
+ * sweep has to land on the balance exactly — hence a MEASURED fee rather than a
+ * guessed reserve, from `solana.transferFee`, against the very message that gets
+ * signed.
+ *
+ * An explicit amount can walk into the same band from the other side, so the
+ * remainder is checked and REFUSED WITH THE TWO AMOUNTS THAT WOULD WORK. The old
+ * code sent it and let the simulator produce the sentence above.
+ */
 async function _withdrawSol(u, to, amount, chainKey, walletId) {
   to = String(to || '').trim();
   if (!solana.isSolAddress(to)) throw new Error('invalid Solana destination address');
@@ -2820,16 +2966,16 @@ async function _withdrawSol(u, to, amount, chainKey, walletId) {
   return withWalletLock(wal.address, async () => {
     const signer = _signer(wal, chainKey);
     const conn = signer.connection, kp = signer.keypair;
-    const bal = await solana.solBalance(conn, signer.address);
-    const feeReserve = 10000n;   // ~2 signature fees of headroom (5000 lamports each)
-    let lamports;
-    if (String(amount).toLowerCase() === 'max') lamports = bal - feeReserve;
-    else lamports = solana.solToLamports(amount);
-    if (lamports <= 0n) throw new Error('nothing to withdraw (after fees)');
-    if (lamports + feeReserve > bal) throw new Error('amount exceeds balance after fees');
+    const [bal, rentMin] = await Promise.all([
+      solana.solBalance(conn, signer.address),
+      solana.rentExemptMin(conn),
+    ]);
+    const fee = await solana.transferFee(conn, kp.publicKey, to, bal);
+    const plan = solWithdrawPlan(bal, fee, rentMin, amount);
+    if (plan.error) throw new Error(plan.error);
     _noteWithdraw(u);
-    const sig = await solana.sendSol(conn, kp, to, lamports);
-    return { hash: sig, sentEth: solana.lamportsToSol(lamports), native: 'SOL' };
+    const sig = await solana.sendSol(conn, kp, to, plan.lamports);
+    return { hash: sig, sentEth: solana.lamportsToSol(plan.lamports), native: 'SOL', swept: plan.isMax };
   });
 }
 
@@ -3347,6 +3493,28 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
   });
 }
 
+/**
+ * The same decision on the EVM side, and pure for the same reason. `gasCost` is
+ * the RESERVE — what the caller has worked out this transfer can cost at the
+ * worst, including the L1 data fee on an OP-stack chain — not what it will be
+ * charged.
+ *
+ * A refusal names the largest amount that fits, because "amount exceeds balance
+ * after gas" leaves the user to guess at a number they cannot see.
+ */
+function evmWithdrawPlan(bal, gasCost, amount, nativeSym) {
+  const eth = (v) => Number(ethers.formatEther(v)).toFixed(6);
+  const isMax = String(amount).toLowerCase() === 'max';
+  const value = isMax ? bal - gasCost : ethers.parseEther(String(amount));
+  if (value <= 0n) {
+    return { error: `this wallet holds ${eth(bal)} ${nativeSym}, which does not cover the ≈${eth(gasCost)} ${nativeSym} of gas this transfer needs — there is nothing left to send.` };
+  }
+  if (value + gasCost > bal) {
+    return { error: `amount exceeds balance after gas — you can send at most ${eth(bal - gasCost)} ${nativeSym} (type "max").` };
+  }
+  return { value, isMax };
+}
+
 async function withdraw(chatId, to, amount, chainKey, walletId) {
   const u = getUser(chatId); if (!u) throw new Error('no wallet');
   chainKey = chainKey || userChain(u);
@@ -3357,33 +3525,61 @@ async function withdraw(chatId, to, amount, chainKey, walletId) {
   if (/^0x0{40}$/i.test(to)) throw new Error('refusing to send to the zero address');
   _guardWithdraw(u, to, chainKey);   // vault lock / whitelist / rate limit
   const wal = _resolveWallet(u, walletId);
+  const chain = chainOf(chainKey) || {};
+  const nativeSym = chain.native || 'ETH';
   return withWalletLock(wal.address, async () => {
-    chainKey = chainKey || userChain(u);
     const wallet = _signer(wal, chainKey);
     const bal = await ethBalance(wallet.address, chainKey);
-    const gas = await gasOverrides(chainKey);
-    let gp = gas.gasPrice;
-    if (!gp) { try { const fd = await providerFor(chainKey).getFeeData(); gp = fd.gasPrice || fd.maxFeePerGas; } catch (_) {} }
-    if (!gp || gp <= 0n) gp = ethers.parseUnits('0.1', 'gwei');
+    // ONE fee object, reserved against AND signed with.
+    //
+    // THIS USED TO RESERVE AGAINST A DIFFERENT NUMBER THAN IT SIGNED. The
+    // reserve read `gasOverrides().gasPrice` — which is undefined on every
+    // 1559 chain, i.e. everything but Robinhood — and fell through to
+    // `getFeeData().gasPrice` (≈ base + tip), while `rawSend` went on to sign
+    // `maxFeePerGas` = base×2 + a per-chain tip FLOOR. On Ethereum the 2×
+    // multiplier hid the gap; on Base, where the floor tip dwarfs a 0.005 gwei
+    // base, the reserve came out several times too small and the node refused
+    // the transaction outright. `opts.fee` exists precisely so the fee quoted
+    // during preflight is the fee that gets signed — the withdraw path was the
+    // one write that did not use it.
+    const fee = await gasOverrides(chainKey);
+    let perGas = fee.maxFeePerGas || fee.gasPrice || 0n;
+    if (perGas <= 0n) { try { const fd = await providerFor(chainKey).getFeeData(); perGas = fd.maxFeePerGas || fd.gasPrice || 0n; } catch (_) {} }
+    if (perGas <= 0n) perGas = ethers.parseUnits('0.1', 'gwei');
     // Estimate the REAL gas for this transfer — 21000 reverts on Orbit chains
     // (Robinhood) and to contract recipients (exchange deposit contracts, Safes).
     const gasLimit = await nativeTransferGas(chainKey, wallet.address, to, 1n);
-    const gasCost = gp * gasLimit * 2n;   // reserve 2× the estimated cost
-    let value;
-    if (String(amount).toLowerCase() === 'max') value = bal - gasCost;
-    else value = ethers.parseEther(String(amount));
-    if (value <= 0n) throw new Error('nothing to withdraw (after gas)');
-    if (value + gasCost > bal) throw new Error('amount exceeds balance after gas');
+    const l2Cost = perGas * gasLimit;
+    // The L1 data fee is a THIRD term in an OP-stack node's balance check, and a
+    // sweep that ignores it is short by exactly that much. Priced against a
+    // representative transfer — the value it carries does not change the
+    // calldata length, which is what the oracle charges for.
+    const l1Cost = await _l1DataFee(chainKey, {
+      type: fee.maxFeePerGas ? 2 : 0, chainId: chain.chainId, nonce: 0, to, data: '0x',
+      value: bal > 0n ? bal : 1n, gasLimit,
+      ...(fee.maxFeePerGas
+        ? { maxFeePerGas: fee.maxFeePerGas, maxPriorityFeePerGas: fee.maxPriorityFeePerGas || 0n }
+        : { gasPrice: fee.gasPrice }),
+    });
+    // Headroom on top of the exact signed cost: the base fee can rise between
+    // this read and inclusion, and `maxFeePerGas` only bounds what is CHARGED,
+    // never what must be RESERVED. A withdrawal that reserves too much sends
+    // slightly less than everything; one that reserves too little does not send
+    // at all — the asymmetry decides the direction to round.
+    const gasCost = l2Cost + l2Cost / 2n + l1Cost + l1Cost / 4n;
+    const plan = evmWithdrawPlan(bal, gasCost, amount, nativeSym);
+    if (plan.error) throw new Error(plan.error);
+    const value = plan.value;
     // rawSend, NOT wallet.sendTransaction — same Robinhood-node quirk as
     // _chargeFee: the ethers send path fails there, which would have made
     // native withdrawals on Robinhood Chain fail too.
-    const hash = await rawSend(wallet, chainKey, to, '0x', gasLimit, value);
+    const hash = await rawSend(wallet, chainKey, to, '0x', gasLimit, value, undefined, { fee });
     _noteWithdraw(u);
     const rc = await waitHash(hash, chainKey);
     // A reverted withdraw (e.g. a contract recipient that rejects the transfer)
     // must NOT be reported as sent — funds stayed put.
     if (rc && rc.status === 0) throw new Error('the withdraw reverted on-chain — the recipient may reject direct transfers. Funds were NOT sent. Tx: ' + hash);
-    return { hash, sentEth: Number(ethers.formatEther(value)), native: (chainOf(chainKey) || {}).native || 'ETH' };
+    return { hash, sentEth: Number(ethers.formatEther(value)), native: nativeSym, swept: plan.isMax };
   });
 }
 
@@ -3740,6 +3936,7 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenSupplyUi, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
+  walletFunds, solWithdrawPlan, evmWithdrawPlan,
   buy, sell, withdraw, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,
   // Test-only seams — see the notes at each definition.
   _deps,

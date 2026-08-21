@@ -2065,6 +2065,127 @@ cd tradebot && node --test pnlCard.test.js   # 19 tests, no network
 runs) — `cd /opt/dexvra/bot && npm install` if a box ever lacks it. Until then
 `/pnl` answers in text, which is the designed fallback and not a failure.
 
+## "Delete wallet EVM tidak bisa karena ada saldo Solana" — and the withdraw it sent you to do could never work
+
+Two screenshots, one report (2026-08-21). The first:
+
+```
+❌ this wallet still holds 2.15713 SOL on Solana — withdraw it (or export the key) first.
+```
+
+…from someone trying to delete what they thought of as an EVM wallet. The
+second, from following that instruction:
+
+```
+❌ Simulation failed.
+Message: Transaction simulation failed: Transaction results in an account (0)
+         with insufficient funds for rent.
+```
+
+**They are the same defect from both ends.** The guard sent the user to withdraw,
+and withdrawing did not work, so there was no sequence of taps that removed that
+wallet. The user's own reading — *"privatekey kan beda2"* — is right about the
+keys and was never anywhere on screen.
+
+### `max` on Solana had never worked, and the arithmetic says so
+
+Solana refuses to leave an account holding **more than nothing and less than the
+rent-exempt minimum** (~890,880 lamports). `_withdrawSol` kept a `feeReserve` of
+**10,000 lamports** behind, of which the fee spends 5,000 — so every sweep this
+bot has ever offered landed on ~5,000 lamports, i.e. squarely inside the one band
+the runtime rejects. Arithmetically certain, not unlucky, exactly like the
+`POS_RUG_DROP` false alarm one section up.
+
+- **A sweep lands on the balance EXACTLY.** Zero is a legal place to leave an
+  account (it is purged and reappears on the next deposit); a dust remainder is
+  not. So `max` is `bal − fee`, and the fee is **measured** against the message
+  that gets signed (`getFeeForMessage`), not assumed from a per-signature
+  constant. A guessed reserve is what produced this.
+- **The floor is READ from the chain** (`getMinimumBalanceForRentExemption(0)`),
+  cached per connection. It is a cluster parameter, not a constant in this repo.
+- **A partial amount can walk into the same band from the other side**, so the
+  remainder is checked and refused **with the two amounts that would work** —
+  `max`, or the largest amount that keeps the wallet rent-exempt. The old code
+  sent it and let the simulator do the explaining, and what it explained was
+  "insufficient funds for rent".
+- **A rent-paying account may still be swept clean** (shrinking one is allowed),
+  or someone sent 0.0005 SOL would be locked out of their own dust.
+- ⚠️ **A swept Solana wallet cannot pay the fee to move an SPL bag afterwards.**
+  Said on the confirm screen, before the tap. EVM keeps its gas reserve behind,
+  so this is Solana-only.
+
+### The EVM reserve was computed from a different fee than the one signed
+
+`withdraw()` reserved `getFeeData().gasPrice × gasLimit × 2` while `rawSend` went
+on to sign `gasOverrides().maxFeePerGas` = `base×2 + a per-chain tip FLOOR`. The
+read that produced the reserve — `gas.gasPrice` — **is undefined on every 1559
+chain**, i.e. everything but Robinhood. On Ethereum the 2× multiplier hid the gap;
+on Base, where a 0.005 gwei tip floor dwarfs the base fee, the reserve came out
+several times too small and the node refused the transaction outright.
+
+- **One fee object, reserved against and signed with.** `opts.fee` has existed on
+  `rawSend` for exactly this — *"the fee quoted during preflight is the fee
+  actually signed"* — and the withdraw path was the one write that did not use it.
+- ⚠️ **The L1 data fee is a THIRD term in an OP-stack node's balance check**
+  (`value + gas × price + l1Cost`) and nothing here accounted for it, so a sweep
+  that left exactly the L2 cost behind was short by the L1 fee. `_l1DataFee`
+  prices it off the GasPriceOracle predeploy and **discovers** whether a chain has
+  one (`getCode`) rather than carrying a list — the rule `v4.js` follows for the
+  PoolManager. Arbitrum and Robinhood need nothing: Nitro folds L1 into the gas
+  UNITS, which `nativeTransferGas` already estimates.
+- **Round toward reserving too much.** Over-reserving sends slightly less than
+  everything; under-reserving does not send at all.
+- `solWithdrawPlan` / `evmWithdrawPlan` are **pure** — bigints in, a decision out
+  — the `pnl.js` contract, so the rule that broke every sweep is tested without a
+  validator or an RPC.
+
+### A wallet ROW is two keypairs, and the UI never said so
+
+`enc` is an EVM key and `solEnc` a Solana key, under one label. Removing "the EVM
+wallet" removes the Solana one with it — which is why a SOL balance blocks it, and
+which nothing on any screen stated.
+
+- **`core.walletFunds()` is the one survey**, read by the guard *and* by the
+  screen, so a refusal and the screen it lands on can never disagree about what is
+  in there. Read CONCURRENTLY: the old guard was a serial `for` loop, so a
+  throttled public RPC cost one full six-second timeout per chain before anything
+  could be said.
+- **The refusal carries `err.holdings`, and the screen puts hands on it** — one
+  📤 button per chain that actually holds something. The old refusal named
+  whichever chain the loop tripped on first and offered nothing to tap; withdraw
+  was active-wallet-and-active-chain only, so acting on the sentence meant
+  switching wallet, switching chain, and finding the button again. *A diagnosis
+  with no hands attached is a bug report the code files against its owner*, and
+  this one had been filing it since the guard was written.
+- **`opts.force` exists, and is reached only from a second confirmation that
+  names every amount** — then hands over both keys BEFORE removing, so the funds
+  stay reachable. A failed export must not be followed by a removal.
+- ⚠️ **`exportKeyMsg` used to export whichever half matched the ACTIVE chain**
+  and print a note telling the user to switch 🌐 and come back for the other.
+  Anyone following the removal advice from an EVM screen got the EVM key, deleted
+  the wallet, and had nothing for the SOL on the other side of the same row. **A
+  note is not a safeguard when the next tap is destructive.** Both keys, always.
+- **`ok:false` is not a zero.** An unreadable chain does not block removal (the
+  key is archived, and a flaky public RPC must not trap an otherwise-empty
+  wallet), but it is REPORTED rather than rendered as an empty balance.
+- **A withdrawal spends the wallet and chain it was OPENED on.** `walletId` and
+  `chain` ride the pending step; re-deriving them from the active chain at each
+  step is how a Solana withdrawal opened from an EVM screen bounced as "not a
+  valid Ethereum address" — the same wrong-chain dead end the snipe flow had to be
+  rescued from. 📤 is now on the per-wallet deposit screen too: emptying Wallet 9
+  used to mean switching to it first, with the switch on the same screen as the
+  button that needed it.
+- **A swept wallet's receipt says it is empty.** That is the errand the sweep is
+  usually part of, not a footnote.
+
+```bash
+cd tradebot && node --test walletWithdraw.test.js   # 28 tests, no network
+```
+
+**Config a fix depends on:** nothing. Note that `ENABLED_CHAINS` does not ship
+with `solana` in it — the two-keypair half of all of this only exists where an
+operator has added it.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

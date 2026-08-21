@@ -557,6 +557,62 @@ async function swap(conn, keypair, { inputMint, outputMint, amountRaw, slippageB
 
 // ---------------------------------------------------------------- native SOL transfer
 
+// ---------------------------------------------------------------- native transfer cost
+
+/**
+ * The rent-exempt minimum for a plain (0-byte) system account, in lamports.
+ *
+ * IT IS NOT A CONSTANT AND MUST NOT BE GUESSED FROM ONE SIDE OF A WITHDRAWAL.
+ * Solana refuses any transaction that leaves an account holding MORE than zero
+ * and LESS than this — the account would be "rent-paying", a state the runtime
+ * stopped allowing new accounts to enter. Zero is fine (the account is simply
+ * purged and comes back the moment somebody sends to it); a dust remainder is
+ * not. That single rule is what made every `max` withdrawal this bot has ever
+ * offered fail with
+ *
+ *     Transaction results in an account (0) with insufficient funds for rent
+ *
+ * because the sweep deliberately kept a 10,000-lamport "fee reserve" behind —
+ * which is above the fee and far below this floor, i.e. in the one band the
+ * chain rejects. Cached per connection: it changes only with a cluster-wide
+ * rent parameter change, and a withdrawal must not pay a round trip for it.
+ */
+const _rentMin = new WeakMap();
+async function rentExemptMin(conn) {
+  const hit = _rentMin.get(conn);
+  if (hit != null) return hit;
+  try {
+    const v = BigInt(await conn.getMinimumBalanceForRentExemption(0));
+    if (v > 0n) { _rentMin.set(conn, v); return v; }
+  } catch (_) { /* fall through to the documented default */ }
+  return 890880n;   // 0-byte account at the standard rent parameters
+}
+
+/**
+ * The fee THIS transfer will be charged, measured against the message that will
+ * actually be signed rather than assumed from a per-signature constant.
+ *
+ * A sweep has to land on the balance exactly: one lamport short of the fee and
+ * the transaction is rejected for insufficient funds, one lamport over and the
+ * account is left rent-paying and rejected for that instead. Both failures are
+ * the same cryptic simulation error, so the number cannot be a guess. The 5,000
+ * fallback is the base fee for a single signature — right today, and only ever
+ * reached when the node will not answer `getFeeForMessage`.
+ */
+async function transferFee(conn, fromPubkey, toBase58, lamports, blockhash) {
+  try {
+    const tx = new Transaction().add(SystemProgram.transfer({
+      fromPubkey, toPubkey: new PublicKey(toBase58), lamports: BigInt(lamports > 0n ? lamports : 1n),
+    }));
+    tx.feePayer = fromPubkey;
+    tx.recentBlockhash = blockhash || (await conn.getLatestBlockhash('confirmed')).blockhash;
+    const r = await conn.getFeeForMessage(tx.compileMessage(), 'confirmed');
+    const f = r && r.value != null ? BigInt(r.value) : 0n;
+    if (f > 0n) return f;
+  } catch (_) { /* fall through */ }
+  return 5000n;
+}
+
 // Send `lamports` SOL from `keypair` to `toBase58`. Used for the bot fee and for
 // withdrawals.
 //
@@ -751,6 +807,7 @@ module.exports = {
   quoteUrl, quotePath, swapBody, parseQuote, feeLamports, netErr,
   jupBase: () => _jupBase,   // which host actually answered — for the preflight
   getConnection, solBalance, splDecimalsOrNull, splBalance, splBalanceOrNull, sendJupiterSwap, sendSplToken, confirmSignature,
+  rentExemptMin, transferFee,
   getQuote, getSwapTx, swap, sendSol, splDecimals, jupTokenMeta, splMeta, dexScreener, pumpfunNew,
   _statusQ,   // test-only: proves the batch queue is emptied, not just drained
 };

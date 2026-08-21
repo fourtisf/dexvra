@@ -307,6 +307,19 @@ const taxStr = (t) => (t == null ? '?' : (Math.round(t * 10) / 10) + '%');
 function fmtAge(ms) { const s = Math.max(0, Math.floor((Date.now() - ms) / 1000)); if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h'; return Math.floor(s / 86400) + 'd'; }
 function setPending(chatId, obj) { obj.ts = Date.now(); pending.set(chatId, obj); }
 function activeChain(chatId) { return core.chainOf(core.userChain(core.ensureUser(chatId))); }
+// Which wallet a withdrawal will spend from. Printed only when the user has
+// more than one — on a single-wallet account it is noise, and on a multi-wallet
+// one it is the fact a sweep most needs stated before it is irreversible.
+function wdWalletLine(chatId, walletId) {
+  try {
+    const u = core.ensureUser(chatId);
+    const list = core.walletList(u);
+    if (list.length < 2) return '';
+    const w = walletId ? core.walletById(u, walletId) : core.activeWallet(u);
+    if (!w) return '';
+    return ' · <b>' + esc(core.walletLabel(w, list.findIndex((x) => x.id === w.id) + 1)) + '</b>';
+  } catch (_) { return ''; }
+}
 // Cost basis of the tokens a position currently HOLDS (drained proportionally on
 // sells in core). Falls back to the legacy net-cash figure for old positions.
 const posCost = (pos) => (pos && pos.costEth != null) ? pos.costEth : Math.max(0, ((pos && pos.ethIn) || 0) - ((pos && pos.ethOut) || 0));
@@ -1023,13 +1036,79 @@ async function depositScreen(chatId, w) {
   const addr = wAddr(w, ch.key);
   const sameNote = core.chains.isSvm(ch.key) ? 'This is your Solana address (different from your EVM one).' : 'Shared across every EVM chain.';
   const caption = `📥 <b>Deposit ${ch.native}</b> · ${esc(label)}\n${ch.emoji} <b>${esc(ch.name)}</b>\n\n<code>${addr}</code>\n\nScan the QR or copy the address. ${sameNote} Switch with 🌐 to deposit elsewhere. Then paste a token contract to buy.`;
-  const kb = rows([btn('🔄 Refresh balance', 'wal'), btn('🌐 Chain', 'chain')], [btn('👛 Wallets', 'wallets'), btn('« Menu', 'menu')]);
+  const kb = rows(
+    // 📤 here spends THIS wallet on THIS chain. The list's "Withdraw (active)"
+    // spends the active one, so emptying any other wallet used to mean
+    // switching to it first — a step nothing on either screen mentioned.
+    [btn(`📤 Withdraw ${ch.native}`.slice(0, 24), `wdw:${w.id}:${ch.key}`), btn('🔄 Refresh balance', 'wal')],
+    [btn('🌐 Chain', 'chain'), btn('👛 Wallets', 'wallets'), btn('« Menu', 'menu')]);
   const url = qrUrl(addr);
   if (url) { const r = await sendPhoto(chatId, url, caption, kb).catch(() => null); if (r && r.ok) return r; }
   return send(chatId, caption, kb);   // QR disabled/failed → text address (still fully usable)
 }
 // 'Wallets' and 'Wallet' now open the SAME all-wallets dashboard.
 async function walletsScreen(chatId) { return walletScreen(chatId); }
+
+/**
+ * The remove-wallet confirmation, and the answer to the question the old one
+ * kept provoking.
+ *
+ * "saya ingin delete wallet evm tpi tidak bisa karena ada saldo solana … karena
+ * privatekey kan beda2" — the keys ARE different, and the row is still one row.
+ * A wallet here is an EVM keypair and a Solana keypair travelling together under
+ * one label, so removing "the EVM wallet" removes the Solana one with it, which
+ * is why a SOL balance blocks it. The old screen said none of that: it claimed
+ * the wallet "must be empty of native on every chain", the guard then named
+ * whichever chain it tripped on, and there was no way from either message to do
+ * anything about it — withdraw was active-wallet-and-active-chain only.
+ *
+ * So this screen MEASURES (core.walletFunds, one concurrent sweep shared with
+ * the guard, so the two can never disagree), prints both addresses, and puts a
+ * withdraw button on every chain that actually holds something. An unreadable
+ * chain says so rather than rendering as a zero — it does not block removal, but
+ * "we could not look" and "it is empty" stay different facts.
+ */
+async function removeWalletScreen(chatId, walletId) {
+  const u = core.ensureUser(chatId);
+  const w = core.walletById(u, walletId);
+  if (!w) return walletsScreen(chatId);
+  const i = core.walletList(u).findIndex((x) => x.id === walletId) + 1;
+  const label = core.walletLabel(w, i);
+  let funds = [];
+  try { funds = await core.walletFunds(chatId, walletId); } catch (_) {}
+  const holding = funds.filter((f) => f.holds);
+  const unread = funds.filter((f) => !f.ok);
+
+  const svmChain = core.chains.enabledChains().find((c) => core.chains.isSvm(c.key));
+  let body = `🗑 <b>Remove ${esc(label)}?</b>\n\n`
+    + `EVM address (all EVM chains):\n<code>${esc(w.address)}</code>\n`;
+  if (svmChain) body += `Solana address:\n<code>${esc(core.walletAddress(w, svmChain.key))}</code>\n`;
+  body += `\n`;
+
+  if (holding.length) {
+    body += `<b>This wallet still holds:</b>\n`
+      + holding.map((f) => `• <b>${esc(f.human)} ${esc(f.native)}</b> on ${f.emoji} ${esc(f.name)}`).join('\n')
+      + `\n\n`;
+    if (svmChain) {
+      // The sentence the whole report was about. It is printed whenever the row
+      // has two sides, not only when the blocking balance happens to be SOL —
+      // a user blocked by an ETH balance is owed the same explanation.
+      body += `<i>One wallet here is <b>two keypairs</b> — an EVM key and a Solana key — under one name. They are different private keys, but they are removed together, so anything on either side has to be dealt with first.</i>\n\n`;
+    }
+    body += `Empty it below, or remove it anyway and I'll hand you both keys.`;
+  } else {
+    body += `It looks <b>empty of native</b> on every chain I could read. I can't see ERC20 or SPL bags — <b>🔑 export the keys first</b> if it holds tokens. Any <b>pending orders</b> on this wallet are cancelled.`;
+  }
+  if (unread.length) body += `\n\n⚠️ Couldn't read ${unread.map((f) => esc(f.name)).join(', ')} just now — that's a node problem, not a zero. Removal isn't blocked by it.`;
+
+  const kb = [];
+  for (const f of holding) kb.push([btn(`📤 Withdraw ${f.native} · ${f.name}`.slice(0, 30), `wdw:${walletId}:${f.chain}`)]);
+  kb.push([btn('🔑 Export keys', 'expw:' + walletId)]);
+  kb.push(holding.length
+    ? [btn('🗑 Remove anyway', 'rmwf:' + walletId), btn('✖ Cancel', 'wallets')]
+    : [btn('✅ Remove', 'rmwok:' + walletId), btn('✖ Cancel', 'wallets')]);
+  return { text: body, kb: { inline_keyboard: kb } };
+}
 function chainScreen(chatId) {
   const cur = core.userChain(core.ensureUser(chatId));
   const list = core.chains.enabledChains();
@@ -3276,7 +3355,7 @@ async function onMessageImpl(m) {
   if (text === '/referral' || text === '/refer') { const s = referralScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/settings') { const s = settingsScreen(chatId); return send(chatId, s.text, s.kb); }
   if (text === '/language' || text === '/lang' || text === '/bahasa') { const s = langScreen(chatId); return send(chatId, s.text, s.kb); }
-  if (text === '/withdraw') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 <b>Withdraw</b>\n\nPaste the wallet address you want to send your funds to.'); }
+  if (text === '/withdraw') { const wch = activeChain(chatId); setPending(chatId, { action: 'wd_addr', chain: wch.key }); return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)}${wdWalletLine(chatId)}\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send your funds to.`); }
   if (text.startsWith('/send')) {
     const [, ca, to, amt] = text.split(/\s+/);
     if (!isCa(ca) || !to || !amt) return send(chatId, 'Usage: <code>/send &lt;token&gt; &lt;destination&gt; &lt;amount|max&gt;</code> — sends a held token out. Or open the token card and tap 📤 Send.');
@@ -3389,7 +3468,14 @@ async function onCallback(q) {
   if (data === 'wdok') {
     const pp = pending.get(chatId); pending.delete(chatId);
     if (!pp || pp.action !== 'wd_confirm' || Date.now() - (pp.ts || 0) > PENDING_TTL) return send(chatId, 'Confirmation expired. Start again with /withdraw.');
-    try { await send(chatId, T(chatId, 'common.sending')); const r = await core.withdraw(chatId, pp.to, pp.amt, pp.chain); return send(chatId, `✅ Sent <b>${r.sentEth} ${r.native}</b>\n${txLink(pp.chain, r.hash)}`); }
+    try {
+      await send(chatId, T(chatId, 'common.sending'));
+      const r = await core.withdraw(chatId, pp.to, pp.amt, pp.chain, pp.walletId);
+      // A swept wallet is EMPTY, and saying so is the difference between "the
+      // withdrawal worked" and "the withdrawal worked and you can now remove
+      // this wallet" — which is the errand most sweeps are part of.
+      return send(chatId, `✅ Sent <b>${r.sentEth} ${esc(r.native)}</b>\n${txLink(pp.chain, r.hash)}` + (r.swept ? `\n\n<i>This wallet's ${esc(r.native)} balance is now zero.</i>` : ''));
+    }
     catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
   }
   if (data === 'menu') return edit(chatId, mid, menuGreeting(chatId), mainMenu());
@@ -3723,16 +3809,70 @@ async function onCallback(q) {
   }
   if (data === 'wallets') { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
   if (k === 'sw') { try { core.switchWallet(chatId, ca); } catch (_) {} const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (k === 'rmw') {
+  if (k === 'rmw') { const s = await removeWalletScreen(chatId, ca); return edit(chatId, mid, s.text, s.kb); }
+  if (k === 'rmwok') {
+    try { await core.removeWallet(chatId, ca); }
+    catch (e) {
+      // A refusal that names a balance and offers no way to move it is a dead
+      // end — and the whole reason this screen was rebuilt. Land back on it
+      // WITH the withdraw buttons rather than on a bare ❌ the user has to
+      // navigate away from.
+      if (e && e.holdings) { const s = await removeWalletScreen(chatId, ca); return edit(chatId, mid, s.text, s.kb); }
+      await send(chatId, '❌ ' + esc(e.message || String(e)));
+    }
+    const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
+  }
+  // Second, informed confirmation for removing a wallet that still holds
+  // something. It names every amount and both addresses, because the row is two
+  // keypairs and removing it removes the pair.
+  if (k === 'rmwf') {
     const u = core.ensureUser(chatId); const w = core.walletById(u, ca);
     if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
     const i = core.walletList(u).findIndex((x) => x.id === ca) + 1;
-    return edit(chatId, mid, `🗑 <b>Remove Wallet ${i}?</b>\n<code>${w.address}</code>\n\nIt must be <b>empty of native</b> on every chain. I can't see ERC20 bags — <b>🔑 export the key first</b> if it holds tokens. Any <b>pending orders</b> on this wallet are cancelled. (The key is archived and stays recoverable, but export is the safe way.)`, rows([btn('✅ Remove', 'rmwok:' + ca), btn('✖ Cancel', 'wallets')]));
+    let holding = [];
+    try { holding = (await core.walletFunds(chatId, ca)).filter((f) => f.holds); } catch (_) {}
+    if (!holding.length) { const s = await removeWalletScreen(chatId, ca); return edit(chatId, mid, s.text, s.kb); }
+    const lines = holding.map((f) => `• <b>${esc(f.human)} ${esc(f.native)}</b> on ${f.emoji} ${esc(f.name)}`).join('\n');
+    return edit(chatId, mid,
+      `⚠️ <b>Remove Wallet ${i} with funds still in it?</b>\n\n${lines}\n\n`
+      + `Removing it takes the wallet off your list <b>with the money inside</b>. `
+      + `I'll show you <b>both private keys</b> in the next message so the funds stay yours — `
+      + `save them before they scroll away, because that is the only copy you will be handed.`,
+      rows([btn('📤 Withdraw first', 'rmw:' + ca)], [btn('⚠️ Yes, remove with funds inside', 'rmwfy:' + ca)], [btn('✖ Cancel', 'wallets')]));
   }
-  if (k === 'rmwok') { try { await core.removeWallet(chatId, ca); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-  if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis reveals full control of that wallet — anyone with the key can drain it. Never share it. Continue?`, rows([btn('Yes, show key', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
+  if (k === 'rmwfy') {
+    // Keys FIRST, removal second, and the removal is gated on the keys having
+    // actually ARRIVED.
+    //
+    // ⚠️ `send` resolves with Telegram's answer and does NOT throw on an
+    // error_code — "message is not modified", a blocked bot and a parse failure
+    // are all answers, and callers are expected to read `ok`. A try/catch alone
+    // would therefore have removed a funded wallet after silently failing to
+    // deliver the only copy of its keys.
+    let delivered = false;
+    try { const r = await send(chatId, exportKeyMsg(chatId, ca)); delivered = !!(r && r.ok); }
+    catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))).catch(() => {}); }
+    if (!delivered) {
+      await send(chatId, '❌ I could not send you the keys, so the wallet was <b>not</b> removed. Try 🔑 Export first.').catch(() => {});
+      const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
+    }
+    try { await core.removeWallet(chatId, ca, { force: true }); await send(chatId, '🗑 <b>Wallet removed.</b> Its keys are in the message above — the funds are still on-chain and still reachable with them.'); }
+    catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); }
+    const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb);
+  }
+  // Withdraw from a NAMED wallet on a NAMED chain. `wd` (the active wallet) is
+  // the same flow with both left blank.
+  if (k === 'wdw') {
+    const u = core.ensureUser(chatId); const w = core.walletById(u, ca);
+    if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
+    const wch = core.chainOf(arg) || activeChain(chatId);
+    setPending(chatId, { action: 'wd_addr', walletId: ca, chain: wch.key });
+    const i = core.walletList(u).findIndex((x) => x.id === ca) + 1;
+    return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)} · <b>Wallet ${i}</b>\n<code>${esc(core.walletAddress(w, wch.key))}</code>\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send to.`);
+  }
+  if (k === 'expw') { const u = core.ensureUser(chatId); const w = core.walletById(u, ca); if (!w) { const s = await walletsScreen(chatId); return edit(chatId, mid, s.text, s.kb); } const i = core.walletList(u).findIndex((x) => x.id === ca) + 1; return send(chatId, `🔑 <b>Export Wallet ${i}</b>\n<code>${short(w.address)}</code>\n\nThis shows <b>both</b> of this wallet's private keys — the EVM one and the Solana one. Anyone holding either can drain that side. Never share them. Continue?`, rows([btn('Yes, show keys', 'expwy:' + ca), btn('Cancel', 'wallets')])); }
   if (k === 'expwy') { try { await send(chatId, exportKeyMsg(chatId, ca)); } catch (e) { await send(chatId, '❌ ' + esc(e.message || String(e))); } return; }
-  if (data === 'wd') { setPending(chatId, { action: 'wd_addr' }); return send(chatId, '📤 <b>Withdraw</b>\n\nPaste the wallet address you want to send your funds to.'); }
+  if (data === 'wd') { const wch = activeChain(chatId); setPending(chatId, { action: 'wd_addr', chain: wch.key }); return send(chatId, `📤 <b>Withdraw ${esc(wch.native)}</b> · ${wch.emoji} ${esc(wch.name)}${wdWalletLine(chatId)}\n\nPaste the ${core.chains.isSvm(wch.key) ? 'base58' : '0x'} address you want to send your funds to.`); }
   if (data === 'exp') return askExport(chatId);
   if (data === 'expy') { try { await send(chatId, exportKeyMsg(chatId)); } catch (e) { await send(chatId, '❌ ' + esc(e.message)); } return; }
   if (data === 'imp') { setPending(chatId, { action: 'import_key' }); return send(chatId, `📩 <b>Import a wallet</b>\n\nPaste your <b>private key</b> (64 hex) or <b>seed phrase</b> (12–24 words). It's <b>added</b> to your wallets (up to ${core.WALLET_CAP}) and made active.\n\n⚠️ I'll <b>delete your message immediately</b> after importing. Never share the secret with anyone else.`); }
@@ -3925,12 +4065,26 @@ async function resolvePending(chatId, p, text, m) {
       const s = snipeScreen(chatId);
       return send(chatId, s.text, s.kb);
     }
-    if (p.action === 'wd_addr') { const wch = activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ That doesn't look like a valid ${esc(wch.name)} address. Please check it and tap 📤 Withdraw again.`); setPending(chatId, { action: 'wd_amt', to: t }); return send(chatId, `💸 <b>How much do you want to send to</b>\n<code>${short(t)}</code>?\n\nType an amount, or type <code>max</code> to send everything (a little is kept back for network fees).`); }
+    // The chain and the wallet ride the pending step from the button that opened
+    // it (📤 on the remove screen names both), and only fall back to the active
+    // ones for the plain 📤 Withdraw (active) entry. Re-deriving them from the
+    // active chain at each step is how a Solana withdrawal opened from an EVM
+    // screen used to bounce as "not a valid Ethereum address".
+    if (p.action === 'wd_addr') { const wch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ That doesn't look like a valid ${esc(wch.name)} address. Please check it and tap 📤 Withdraw again.`); setPending(chatId, { action: 'wd_amt', to: t, chain: wch.key, walletId: p.walletId }); return send(chatId, `💸 <b>How much do you want to send to</b>\n<code>${short(t)}</code>?\n\nType an amount in ${esc(wch.native)}, or <code>max</code> to empty the wallet (the network fee comes out of it).`); }
     if (p.action === 'wd_amt') {
       if (!(String(t).toLowerCase() === 'max' || Number(t) > 0)) return send(chatId, 'Send a positive amount, or <code>max</code>.');
-      const ch = activeChain(chatId);
-      setPending(chatId, { action: 'wd_confirm', to: p.to, amt: t, chain: ch.key });
-      return send(chatId, `⚠️ <b>Confirm withdrawal</b> · ${ch.emoji} ${esc(ch.name)}\n\nSend <b>${esc(t)} ${ch.native}</b> to:\n<code>${esc(p.to)}</code>\n\nThis is <b>irreversible</b>. Double-check the address.`, rows([btn('✅ Yes, send', 'wdok'), btn('✖ Cancel', 'wdcancel')]));
+      const ch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId);
+      setPending(chatId, { action: 'wd_confirm', to: p.to, amt: t, chain: ch.key, walletId: p.walletId });
+      const isMax = String(t).toLowerCase() === 'max';
+      const who = wdWalletLine(chatId, p.walletId);
+      // A Solana sweep lands the wallet on ZERO, which is the only remainder the
+      // chain accepts below the rent floor — and a wallet at zero cannot pay the
+      // fee to move an SPL bag afterwards. Say so before the tap, not after: on
+      // EVM the gas reserve stays behind and this does not apply.
+      const strand = isMax && core.chains.isSvm(ch.key)
+        ? `\n\n<i>This empties the wallet completely. If it still holds tokens, send those first — a wallet with no ${esc(ch.native)} can't pay the fee to move them.</i>`
+        : '';
+      return send(chatId, `⚠️ <b>Confirm withdrawal</b> · ${ch.emoji} ${esc(ch.name)}${who}\n\nSend <b>${isMax ? 'every ' + esc(ch.native) + ' in this wallet' : esc(t) + ' ' + esc(ch.native)}</b> to:\n<code>${esc(p.to)}</code>\n\nThis is <b>irreversible</b>. Double-check the address.${strand}`, rows([btn('✅ Yes, send', 'wdok'), btn('✖ Cancel', 'wdcancel')]));
     }
     if (p.action === 'wd_confirm') { setPending(chatId, p); return send(chatId, 'Please tap ✅ Yes or ✖ Cancel above, or /cancel.'); }
     if (p.action === 'wtok_addr') { const wch = (p.chain && core.chainOf(p.chain)) || activeChain(chatId); if (!isAddrFor(t, wch.key)) return send(chatId, `❌ Not a valid ${esc(wch.name)} address. Start again from the token card.`); setPending(chatId, { action: 'wtok_amt', ca: p.ca, chain: p.chain, walletId: p.walletId, to: t }); return send(chatId, `Amount of the token to send to <code>${short(t)}</code> — a number, or <code>max</code>:`); }
@@ -4195,17 +4349,28 @@ function exportKeyMsg(chatId, walletId) {
   if (!w) throw new Error('wallet not found');
   const i = core.walletList(u).findIndex((x) => x.id === w.id) + 1;
   const label = core.walletLabel(w, i);
-  const ck = core.userChain(u);
-  let out = `🔑 <b>Private key — ${esc(label)}</b> <i>(delete this message after saving)</i>\n\n`;
-  if (core.chains.isSvm(ck)) {
-    const pk = core.exportKey(chatId, w.id, ck);
-    out += `Solana address:\n<code>${esc(core.walletAddress(w, ck))}</code>\n\nPrivate key (base58 — import into Phantom/Solflare):\n<code>${esc(pk)}</code>`;
-  } else {
-    const pk = core.exportKey(chatId, w.id);
-    out += `Address (same on every EVM chain):\n<code>${esc(w.address)}</code>\n\nPrivate key:\n<code>${esc(pk)}</code>`;
-    const sol = core.chains.enabledChains().find((c) => core.chains.isSvm(c.key));
-    if (sol) out += `\n\n<i>Solana uses its own key — switch 🌐 to ${esc(sol.name)} and export again for that one.</i>`;
+  const sol = core.chains.enabledChains().find((c) => core.chains.isSvm(c.key));
+  // BOTH KEYS, ALWAYS — a wallet here is two keypairs, and "export the key
+  // first" is the instruction the remove screen gives before the row (and both
+  // of them) disappears.
+  //
+  // THIS USED TO EXPORT WHICHEVER HALF MATCHED THE ACTIVE CHAIN and print a note
+  // telling the user to switch 🌐 and come back for the other. Anyone who
+  // followed the removal advice from an EVM screen got the EVM key, deleted the
+  // wallet, and had nothing at all for the SOL sitting on the other side of the
+  // same row. A note is not a safeguard when the next tap is destructive.
+  const parts = [];
+  try { parts.push(`Address (same on every EVM chain):\n<code>${esc(w.address)}</code>\n\nEVM private key:\n<code>${esc(core.exportKey(chatId, w.id))}</code>`); }
+  catch (e) { parts.push(`⚠️ Couldn't read the EVM key: ${esc(e.message || String(e))}`); }
+  if (sol) {
+    try { parts.push(`Solana address:\n<code>${esc(core.walletAddress(w, sol.key))}</code>\n\nSolana private key (base58 — import into Phantom/Solflare):\n<code>${esc(core.exportKey(chatId, w.id, sol.key))}</code>`); }
+    catch (e) { parts.push(`⚠️ Couldn't read the Solana key: ${esc(e.message || String(e))}`); }
   }
+  // A failed read must never pass for "this wallet only had one key".
+  if (parts.every((x) => x.startsWith('⚠️'))) throw new Error('could not read this wallet\'s keys — nothing was exported.');
+  let out = `🔑 <b>Private keys — ${esc(label)}</b> <i>(delete this message after saving)</i>\n\n`;
+  out += parts.join('\n\n');
+  if (sol) out += `\n\n<i>These are two different keys for one wallet — save both.</i>`;
   return out;
 }
 // ---- live position monitor (Maestro-style) ------------------------------
@@ -4892,7 +5057,7 @@ async function resumeMonitors() {
 }
 
 function askExport(chatId) {
-  return send(chatId, `🔑 <b>Export private key</b>\n\nThis reveals full control of your bot wallet. Anyone with it can drain the wallet. Never share it.\n\nAre you sure?`, rows([btn('Yes, show my key', 'expy'), btn('Cancel', 'menu')]));
+  return send(chatId, `🔑 <b>Export private keys</b>\n\nThis shows <b>both</b> keys of your active wallet — the EVM one and the Solana one. Anyone holding either can drain that side. Never share them.\n\nAre you sure?`, rows([btn('Yes, show my keys', 'expy'), btn('Cancel', 'menu')]));
 }
 function adminScreen(chatId) {
   if (!core.CFG.admins.includes(String(chatId))) return send(chatId, 'Not authorized.');
@@ -5229,5 +5394,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, onCallback, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();
