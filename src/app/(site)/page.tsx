@@ -9,7 +9,7 @@ import { ChainFilter } from "@/components/ChainFilter";
 import { MarketMovers } from "@/components/MarketMovers";
 import { StdBoard } from "@/components/TokenBoard";
 import { TopCoinsBoard } from "@/components/TopCoins";
-import { HOME_BOARD_ROWS, chainCounts, inChain, resolveChain } from "@/lib/home";
+import { HOME_BOARD_ROWS, HOME_TRENDING_MAX, chainCounts, inChain, resolveChain } from "@/lib/home";
 import type { PeriodKey } from "@/lib/types";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
@@ -85,14 +85,17 @@ export default function HomePage() {
           </button>
         </div>
 
-        {/* Capped so the two sections under it are reachable without a long
-            scroll — with the total and a doorway printed, never a silent cut. */}
+        {/* Opens on ten so the two sections under it are reachable without a
+            long scroll, and grows to fifteen in place. Anything past fifteen
+            keeps its way through to the full board. */}
         <StdBoard
           tokens={list}
           period={period}
           sortable
           loading={!data}
           limit={HOME_BOARD_ROWS}
+          expandTo={HOME_TRENDING_MAX}
+          expandNoun="trending"
           viewAllHref="/trending"
         />
       </div>

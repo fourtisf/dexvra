@@ -71,8 +71,25 @@ const signs = await page.evaluate(() =>
 check("every Top Gainer row is up", signs[0].every(Boolean), `${signs[0].length} rows`);
 check("every Top Loser row is down", signs[1].every((u) => !u), `${signs[1].length} rows`);
 
-check("the home board is capped and SAYS so", (await page.locator(".board-foot").innerText()).includes("Showing"));
-check("…with a way through to the full board", (await page.locator(".board-all").getAttribute("href")) === "/trending");
+// The board opens on ten and grows in place. The bar must deliver EXACTLY the
+// number it names — a "Show all 40" that stops at 15 is a silent cap wearing a
+// label, which is the one failure this whole footer exists to prevent.
+const openRows = await page.locator(".board .row:not(.head)").count();
+check("the home board opens on ten rows", openRows === 10, `${openRows}`);
+const barLabel = (await page.locator(".board-expand").innerText()).replace(/\s+/g, " ").trim();
+check("the expander names a number", /show all \d+ trending/i.test(barLabel), barLabel);
+await page.click(".board-expand");
+await page.waitForTimeout(350);
+const grown = await page.locator(".board .row:not(.head)").count();
+check("the tap delivers exactly what it promised", grown === Number(barLabel.match(/\d+/)[0]), `${openRows} → ${grown}`);
+check("…and offers the way back", (await page.locator(".board-expand").innerText()).toLowerCase().includes("less"));
+// Anything past the expander's ceiling still needs the full board; with a
+// short seed there is nothing left over, so the line is correctly absent.
+const leftover = await page.locator(".board-foot").count();
+check("no 'showing N of M' line when the expander showed everything", leftover === 0, `${leftover}`);
+await page.click(".board-expand");
+await page.waitForTimeout(300);
+check("collapses back to ten", (await page.locator(".board .row:not(.head)").count()) === 10);
 
 // Top Coins: a third ranking, and it expands in place
 const byCap = await page.locator(".tc-row:not(.tc-head) .tc-sym-txt").first().innerText();

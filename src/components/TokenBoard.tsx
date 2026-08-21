@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { capped } from "@/lib/home";
+import { capped, expander } from "@/lib/home";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
@@ -267,6 +267,8 @@ export function StdBoard({
   emptyText = "No tokens match — try another chain or clear your search.",
   loading = false,
   limit = 0,
+  expandTo = 0,
+  expandNoun = "rows",
   viewAllHref,
 }: {
   tokens: BoardToken[];
@@ -278,11 +280,17 @@ export function StdBoard({
    *  board caps so the sections under it stay reachable. Never a SILENT cap:
    *  a capped board renders the footer below with the total and a way through. */
   limit?: number;
+  /** How far the expander grows the board IN PLACE. 0 = no expander, which is
+   *  what every full board page wants. */
+  expandTo?: number;
+  /** What the button calls the rows — "Show all 15 trending". */
+  expandNoun?: string;
   viewAllHref?: string;
 }) {
   const { reducedMotion } = useApp();
   const [sortKey, setSortKey] = useState<SortKey>("chg");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const [open, setOpen] = useState(false);
 
   const sorted = useMemo(() => {
     if (!sortable) return tokens;
@@ -291,7 +299,11 @@ export function StdBoard({
     );
   }, [tokens, sortable, sortKey, sortDir, period]);
 
-  const shown = useMemo(() => capped(sorted, limit), [sorted, limit]);
+  const exp = useMemo(() => expander(sorted.length, limit || sorted.length, expandTo), [sorted.length, limit, expandTo]);
+  const shown = useMemo(
+    () => capped(sorted, open ? exp.expanded : limit),
+    [sorted, limit, open, exp.expanded],
+  );
 
   // The flicker is fed the VISIBLE rows. Given it to the full list, its random
   // pick lands off-screen most of the time on a capped board and a live board
@@ -334,7 +346,21 @@ export function StdBoard({
           />
         ))
       )}
-      {shown.hidden > 0 && (
+      {/* The expander is a full-width bar, not a link in a corner: it is the
+          board's own last row, which is where the eye already is after ten of
+          them. It NAMES the number it will show — a button promising "all 40"
+          that stops at 15 is the silent cap with a label on it. */}
+      {exp.canExpand && (
+        <button className={`board-expand ${open ? "open" : ""}`} onClick={() => setOpen((v) => !v)}>
+          {open ? "Show less" : `Show ${exp.showsAll ? "all " : ""}${exp.reveal} ${expandNoun}`}
+          <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+      )}
+      {/* Rows the expander cannot reach — the full board is the only place they
+          exist, so the count and the way through stay, open or collapsed. */}
+      {(exp.canExpand ? exp.beyond > 0 : shown.hidden > 0) && (
         <div className="board-foot">
           <span>
             Showing {shown.rows.length} of {shown.total}

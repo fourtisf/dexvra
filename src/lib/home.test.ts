@@ -9,6 +9,8 @@ import { join } from "node:path";
 import {
   HOME_BOARD_ROWS,
   HOME_CHAIN_LIMIT,
+  HOME_TRENDING_MAX,
+  expander,
   capped,
   chainCounts,
   freshness,
@@ -365,4 +367,62 @@ test("Show all passes limit 0, and 0 means every row — not none", () => {
   assert.strictEqual(topCoins(list, "mcap", "24h", 10).rows.length, 10);
   // and the same contract on the other capper, so the two cannot disagree
   assert.strictEqual(capped(list, 0).rows.length, 14);
+});
+
+// ── the trending expander ───────────────────────────────────────────────────
+
+test("the board opens on ten and grows to fifteen in place", () => {
+  const e = expander(40, HOME_BOARD_ROWS, HOME_TRENDING_MAX);
+  assert.strictEqual(e.collapsed, 10);
+  assert.strictEqual(e.expanded, 15);
+  assert.strictEqual(e.canExpand, true);
+});
+
+test("the button names the number it can actually deliver", () => {
+  // "Show all 40" that stops at 15 is the silent cap wearing a label. The
+  // promise is the number of rows the tap will really put on screen.
+  assert.strictEqual(expander(40, 10, 15).reveal, 15);
+  assert.strictEqual(expander(12, 10, 15).reveal, 12, "a short board promises what it has");
+});
+
+test("rows past the expander keep their way through to the full board", () => {
+  assert.strictEqual(expander(40, 10, 15).beyond, 25, "…so the View all link stays");
+  assert.strictEqual(expander(14, 10, 15).beyond, 0, "nothing left over — no link needed");
+});
+
+test("a board with nothing to expand offers no expander", () => {
+  assert.strictEqual(expander(10, 10, 15).canExpand, false, "exactly full");
+  assert.strictEqual(expander(4, 10, 15).canExpand, false, "short");
+  assert.strictEqual(expander(0, 10, 15).canExpand, false, "empty");
+});
+
+test("expandTo of 0 means no expander — the full board pages stay full", () => {
+  const e = expander(40, 40, 0);
+  assert.strictEqual(e.canExpand, false);
+  assert.strictEqual(e.expanded, 40, "and it caps nothing");
+});
+
+test("the homepage board is wired to the expander, not only to the link", () => {
+  const page = read("src/app/(site)/page.tsx");
+  assert.match(page, /expandTo=\{HOME_TRENDING_MAX\}/);
+  assert.match(page, /expandNoun="trending"/);
+  assert.match(page, /limit=\{HOME_BOARD_ROWS\}/);
+});
+
+test('"all" is a claim, and it is only made when it is true', () => {
+  // 40 listings behind a bar reading "Show all 15" is the silent cap with a
+  // label on it — the reader taps, gets fifteen, and has no reason to think
+  // twenty-five more exist.
+  assert.strictEqual(expander(14, 10, 15).showsAll, true, "everything fits → 'Show all 14'");
+  assert.strictEqual(expander(40, 10, 15).showsAll, false, "…but 40 does not → 'Show 15'");
+  assert.strictEqual(expander(15, 10, 15).showsAll, true, "exactly at the ceiling");
+});
+
+test("the board reports what the expander CANNOT reach, collapsed or open", () => {
+  // Gated on the open state, a 40-listing board sat behind a bar offering
+  // fifteen and said nothing about the other twenty-five until you tapped.
+  const big = expander(40, 10, 15);
+  assert.ok(big.beyond > 0, "so the 'Showing N of M · View all' line renders in BOTH states");
+  const small = expander(14, 10, 15);
+  assert.strictEqual(small.beyond, 0, "and never renders when nothing is left over");
 });

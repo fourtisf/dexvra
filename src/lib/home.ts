@@ -21,8 +21,15 @@ import type { BoardToken, PeriodKey } from "./types.ts";
  *  used to open with is what "jangan terlalu banyak chain" was about. */
 export const HOME_CHAIN_LIMIT = 6;
 
-/** Rows the home board shows before "View all". */
+/** Rows the home board opens on, before the expander. */
 export const HOME_BOARD_ROWS = 10;
+
+/** …and the most it will ever grow to in place.
+ *
+ *  Past this the page stops being a doorway and becomes the /trending board
+ *  with worse chrome, so anything beyond 15 keeps its "View all" link — the
+ *  expander is a convenience, never a replacement for the full board. */
+export const HOME_TRENDING_MAX = 15;
 
 /** Rows a mover card holds. The card is short and scrolls inside itself, so
  *  this is how much there is to scroll — not how much fits on screen. */
@@ -167,4 +174,32 @@ export function freshness(updatedAt: number | undefined, now = Date.now()): stri
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   return `${Math.round(s / 3600)}h ago`;
+}
+
+/**
+ * What the board's footer says and does.
+ *
+ * `reveal` is what the button PROMISES — the row count it will actually show —
+ * so a board of 40 listings offers "Show all 15" and not "Show all 40" it
+ * cannot deliver. `beyond` is what even the expanded board leaves out, and it
+ * is what keeps the "View all" link honest: the cap moved, it did not vanish.
+ */
+export function expander(total: number, base: number, max: number) {
+  const open = Math.min(total, max > 0 ? max : total);
+  return {
+    /** rows to render when collapsed / expanded */
+    collapsed: Math.min(total, base),
+    expanded: open,
+    /** is there anything to expand at all? */
+    canExpand: open > Math.min(total, base),
+    /** the number the button names */
+    reveal: open,
+    /** still not shown once expanded — the full board is the only home for it */
+    beyond: Math.max(0, total - open),
+    /** ⚠️ Does the expander really show EVERYTHING? On 40 listings it does not,
+     *  and "Show all 15" would then be the silent cap with a label on it —
+     *  the exact thing the footer exists to prevent. The word "all" is a
+     *  claim, so it is only made when it is true. */
+    showsAll: total - open <= 0,
+  };
 }

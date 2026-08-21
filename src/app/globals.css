@@ -1294,6 +1294,21 @@ body{
   letter-spacing:.06em;text-transform:uppercase;font-size:10px;transition:gap .15s}
 .board-all:hover{gap:8px}
 
+/* The expander is the board's last ROW, full width — that is where the eye
+   already is after ten of them, and a link in a corner is a control people
+   scroll past. The chevron turns rather than swapping glyph, so the collapsed
+   and open states read as one control in two positions. */
+.board-expand{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;
+  padding:13px 20px;border-top:1px solid var(--line);background:rgba(255,255,255,.02);
+  font-family:var(--fm);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--mint);transition:background .15s,color .15s}
+.board-expand:hover{background:rgba(61,245,159,.07)}
+.board-expand svg{transition:transform .25s}
+.board-expand.open svg{transform:rotate(180deg)}
+/* …and when it sits above the "showing N of M" line, the two must not read as
+   two separate strips. */
+.board-expand+.board-foot{border-top:none}
+
 /* ── Top Coins ─────────────────────────────────────────────────────────────*/
 .topcoins{display:flex;flex-direction:column;gap:11px}
 .tc-board{border:1px solid var(--line2);border-radius:18px;overflow:hidden;overflow-x:auto;
