@@ -247,7 +247,7 @@ test("duel2 fills the gap in the layout ladder", () => {
   // day needs was the one missing.
   assert.ok(gb.isTemplate("duel2"));
   assert.strictEqual(gb.countOf("duel2"), 2);
-  assert.deepStrictEqual(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 8, 10, 10],
+  assert.deepStrictEqual(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10],
     "the template ladder is out of order — the menu is built from this list");
 });
 
@@ -316,4 +316,54 @@ test("spot10 renders every count from 1 to 10 without failing", async () => {
     const buf = await gb.render({ template: "spot10", coins, dateText: "" });
     assert.ok(buf && buf.length > 10_000, `n=${n} produced no banner`);
   }
+});
+
+
+// ── every count 1–10 has a banner, and every banner has its own backdrop ────
+
+test("the ladder is complete: one template for every count from 1 to 10", () => {
+  const gb = require("../src/gainersBanner");
+  const counts = new Set(gb.TEMPLATE_IDS.map((id) => gb.countOf(id)));
+  for (let n = 1; n <= 10; n++) assert.ok(counts.has(n), `no template for Top ${n}`);
+});
+
+test("every template carries its OWN backdrop mood — 'backgroundnya juga beda-beda'", () => {
+  const gb = require("../src/gainersBanner");
+  // The promise is that a channel posting a different layout each day does not
+  // read as the same poster recoloured. A mood shared by two templates breaks
+  // it silently, which is why uniqueness is pinned rather than trusted.
+  const moods = gb.TEMPLATE_IDS.map((id) => gb.specOf(id).mood);
+  assert.ok(moods.every(Boolean), "a template with no mood falls back to the shared default");
+  assert.strictEqual(new Set(moods).size, moods.length, "two templates share a mood: " + moods.join(", "));
+  // …and every named mood exists — a typo would ALSO fall back to the default,
+  // with nothing anywhere saying so.
+  assert.match(BANNER, /const MOODS = \{/);
+  for (const m of moods) assert.ok(BANNER.includes(`\n  ${m}: {`), `mood "${m}" is not defined in MOODS`);
+});
+
+test("the three new layouts delegate thin days like the spotlight does", () => {
+  for (const fname of ["layoutTiers", "layoutCrown", "layoutMosaic"]) {
+    const fn = BANNER.slice(BANNER.indexOf(`function ${fname}(`), BANNER.indexOf(`function ${fname}(`) + 2400);
+    assert.match(fn, /if \(n === 1\) return layoutHero/, fname);
+    assert.match(fn, /if \(n === 2\) return layoutDuel/, fname);
+    assert.match(fn, /if \(n === 3\) return layoutPodium/, fname);
+  }
+});
+
+test("tier6, crown7 and mosaic9 render every count from 1 to their size", async () => {
+  const gb = require("../src/gainersBanner");
+  if (!gb.available()) return;
+  const coin = (i) => ({ chain: "solana", symbol: "TOK" + i, name: "Token " + i, pct: 90 - i * 6, price: 0.01, mcap: 1_000_000 * (12 - i) });
+  for (const id of ["tier6", "crown7", "mosaic9"]) {
+    for (let n = 1; n <= gb.countOf(id); n++) {
+      const buf = await gb.render({ template: id, coins: Array.from({ length: n }, (_, i) => coin(i + 1)), dateText: "" });
+      assert.ok(buf && buf.length > 10_000, `${id} n=${n} produced no banner`);
+    }
+  }
+});
+
+test("the shared ranked panel keeps ONE row-ticker size — for all three mixed layouts at once", () => {
+  const fn = BANNER.slice(BANNER.indexOf("function rankedPanel("), BANNER.indexOf("function layoutTiers("));
+  const sizes = [...fn.matchAll(/fitText\(ctx, `\$\$\{c\.symbol\}`[^)]*size: ([\d.]+) \* S/g)].map((m) => m[1]);
+  assert.deepStrictEqual(sizes, ["18.5"], "one call site, one size — tier6 and crown7 both draw through it");
 });

@@ -68,6 +68,7 @@ const TEMPLATES = {
     blurb: "One hero card for the single biggest 24h mover.",
     n: 1,
     layout: "hero",
+    mood: "dawn",
     accent: SITE.mint,
     title: () => "Top Gainer",
   },
@@ -77,6 +78,7 @@ const TEMPLATES = {
     blurb: "Two premium cards head-to-head — the day's winner against its runner-up.",
     n: 2,
     layout: "duel",
+    mood: "clash",
     accent: SITE.gold,
     title: (n) => (n >= 2 ? "Top 2 Gainers" : "Top Gainer"),
   },
@@ -86,6 +88,7 @@ const TEMPLATES = {
     blurb: "Three tall cards, the winner raised — the classic winners' shot.",
     n: 3,
     layout: "podium",
+    mood: "stage",
     accent: SITE.gold,
     title: (n) => (n >= 3 ? "Top 3 Gainers" : `Top ${n} Gainer${n > 1 ? "s" : ""}`),
   },
@@ -95,6 +98,7 @@ const TEMPLATES = {
     blurb: "Four product cards, 2×2 — the move as each card's headline.",
     n: 4,
     layout: "cards",
+    mood: "quad",
     accent: SITE.cyan,
     title: (n) => `Top ${n} Gainers`,
   },
@@ -104,8 +108,29 @@ const TEMPLATES = {
     blurb: "The Dexvra board itself — one panel, real columns, sparklines.",
     n: 5,
     layout: "list",
+    mood: "boardroom",
     accent: SITE.mint,
     title: (n) => `Top ${n} Gainers`,
+  },
+  tier6: {
+    id: "tier6",
+    label: "🏛 Top 6 Tiers",
+    blurb: "The podium as three crowned cards, ranks 4–6 on a board beneath — two tiers, one poster.",
+    n: 6,
+    layout: "tiers",
+    mood: "strata",
+    accent: SITE.gold,
+    title: (n) => (n > 1 ? `Top ${n} Gainers` : "Top Gainer"),
+  },
+  crown7: {
+    id: "crown7",
+    label: "👑 Top 7 Crown",
+    blurb: "A full-width champion band over two boards of three — the day's winner literally on top.",
+    n: 7,
+    layout: "crown",
+    mood: "regal",
+    accent: SITE.gold,
+    title: (n) => (n > 1 ? `Top ${n} Gainers` : "Top Gainer"),
   },
   rail8: {
     id: "rail8",
@@ -113,8 +138,19 @@ const TEMPLATES = {
     blurb: "Two board panels of four — the Top-8 shape, Dexvra styling.",
     n: 8,
     layout: "rail",
+    mood: "beams",
     accent: SITE.cyan,
     title: (n) => `Top ${n} Gainers`,
+  },
+  mosaic9: {
+    id: "mosaic9",
+    label: "🧩 Top 9 Mosaic",
+    blurb: "Nine compact tiles, three by three — every mover as its own small card.",
+    n: 9,
+    layout: "mosaic",
+    mood: "nebula",
+    accent: SITE.violet,
+    title: (n) => (n > 1 ? `Top ${n} Gainers` : "Top Gainer"),
   },
   grid10: {
     id: "grid10",
@@ -122,6 +158,7 @@ const TEMPLATES = {
     blurb: "The full top ten, two compact board panels of five.",
     n: 10,
     layout: "grid",
+    mood: "terminal",
     accent: SITE.violet,
     title: (n) => `Top ${n} Gainers`,
   },
@@ -131,6 +168,7 @@ const TEMPLATES = {
     blurb: "The champion as a full hero card, the chasing nine on one board — the premium Top-10.",
     n: 10,
     layout: "spotlight",
+    mood: "laurel",
     accent: SITE.gold,
     title: (n) => (n > 1 ? `Top ${n} Gainers` : "Top Gainer"),
   },
@@ -680,9 +718,46 @@ function grain(cv, ctx, W, H, S) {
   }
 }
 
-/** The site's page: #090C12 under a mint bloom top-right and a violet bloom
- *  left (the two radial-gradients on `body`), a whisper grid, film grain, and
- *  a mint→cyan keyline across the very top. */
+/** Per-template backdrop MOODS — "backgroundnya juga beda-beda" (2026-08-21).
+ *
+ *  Every template used to sit on the identical aurora, so a channel posting a
+ *  different layout each day still read as the same poster recoloured. Each
+ *  mood repositions and recolours the bloom set — and only that: the scrim,
+ *  dot grid, vignette, frame and keyline stay shared, because THOSE are the
+ *  design system and varying them would make eleven banners from eleven
+ *  brands. Every colour is a SITE token; a mood may add soft vertical beams
+ *  where the composition has columns to seat.
+ *
+ *  Blooms are [x/W, y/H, r/W, token, alpha]; beams are [x/W, w/W, token, alpha].
+ */
+const MOODS = {
+  // hero1 — dawn: one huge mint sunrise crowning the single champion
+  dawn: { blooms: [[0.5, -0.3, 0.85, "mint", 0.24], [0.5, 1.15, 0.55, "cyan", 0.1]] },
+  // duel2 — clash: gold in the winner's corner, cyan in the challenger's
+  clash: { blooms: [[0.12, 0.06, 0.5, "gold", 0.15], [0.88, 0.1, 0.5, "cyan", 0.16], [0.5, 1.1, 0.5, "violetDeep", 0.1]] },
+  // podium — stage: a warm gold wash from above centre, violet wings
+  stage: { blooms: [[0.5, -0.18, 0.62, "gold", 0.16], [0.06, 0.75, 0.4, "violetDeep", 0.12], [0.94, 0.75, 0.4, "violetDeep", 0.12]] },
+  // cards4 — quad: cyan and violet on the diagonal, one bloom per card pair
+  quad: { blooms: [[0.16, 0.12, 0.5, "cyan", 0.16], [0.86, 0.92, 0.55, "violet", 0.14], [0.9, 0.05, 0.35, "mint", 0.09]] },
+  // list5 — boardroom: the site's own page aurora, kept as-was
+  boardroom: { blooms: [[0.5, -0.22, 0.72, "mint", 0.2], [0.94, 1.04, 0.5, "cyan", 0.13], [-0.08, 0.55, 0.4, "violetDeep", 0.1]] },
+  // tier6 — strata: gold band over the podium tier, cyan under the board tier
+  strata: { blooms: [[0.28, 0.16, 0.55, "gold", 0.13], [0.75, 0.95, 0.6, "cyan", 0.15], [1.02, 0.3, 0.35, "violetDeep", 0.1]] },
+  // crown7 — regal: a wide gold arc over the champion band, deep violet floor
+  regal: { blooms: [[0.5, -0.14, 0.8, "gold", 0.15], [0.5, 1.2, 0.7, "violetDeep", 0.16], [0.04, 0.4, 0.3, "mint", 0.08]] },
+  // rail8 — beams: cool cyan verticals seated behind the two panels
+  beams: { blooms: [[0.5, -0.25, 0.6, "cyan", 0.14], [0.5, 1.15, 0.55, "mint", 0.09]], beams: [[0.27, 0.2, "cyan", 0.05], [0.73, 0.2, "violet", 0.05]] },
+  // mosaic9 — nebula: violet-led field with mint pinpricks, the busiest mood
+  // for the busiest grid
+  nebula: { blooms: [[0.2, 0.05, 0.5, "violet", 0.16], [0.85, 0.85, 0.55, "violetDeep", 0.18], [0.7, 0.1, 0.3, "mint", 0.1], [0.1, 0.9, 0.3, "cyan", 0.1]] },
+  // grid10 — terminal: the coldest field, cyan over steel-violet, data first
+  terminal: { blooms: [[0.5, -0.28, 0.7, "cyan", 0.16], [0.05, 1.05, 0.45, "violetDeep", 0.14], [0.95, 1.05, 0.45, "violetDeep", 0.14]] },
+  // spot10 — laurel: gold seated under the hero column, mint under the board
+  laurel: { blooms: [[0.16, 0.3, 0.5, "gold", 0.14], [0.75, -0.15, 0.6, "mint", 0.16], [0.85, 1.1, 0.45, "cyan", 0.11]] },
+};
+
+/** The site's page: #090C12 under the template's own bloom mood, a whisper
+ *  grid, film grain, and a mint→cyan keyline across the very top. */
 function backdrop(cv, ctx, S, spec, bg) {
   const W = REF_W * S;
   const H = REF_H * S;
@@ -697,11 +772,16 @@ function backdrop(cv, ctx, S, spec, bg) {
   } else {
     ctx.fillStyle = SITE.bg;
     ctx.fillRect(0, 0, W, H);
-    // the bold aurora: a mint crown behind the title, cyan rising from the
-    // bottom, a violet whisper on the left so the field isn't monochrome
-    radial(ctx, W * 0.5, -H * 0.22, W * 0.72, SITE.mint, 0.2);
-    radial(ctx, W * 0.94, H * 1.04, W * 0.5, SITE.cyan, 0.13);
-    radial(ctx, -W * 0.08, H * 0.55, W * 0.4, SITE.violetDeep, 0.1);
+    const mood = MOODS[spec.mood] || MOODS.boardroom;
+    for (const [bx, by, br, tok, a] of mood.blooms) radial(ctx, W * bx, H * by, W * br, SITE[tok] || SITE.mint, a);
+    for (const [bx, bw, tok, a] of mood.beams || []) {
+      const g = ctx.createLinearGradient(W * (bx - bw / 2), 0, W * (bx + bw / 2), 0);
+      g.addColorStop(0, hexA(SITE[tok] || SITE.cyan, 0));
+      g.addColorStop(0.5, hexA(SITE[tok] || SITE.cyan, a));
+      g.addColorStop(1, hexA(SITE[tok] || SITE.cyan, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(W * (bx - bw / 2), 0, W * bw, H);
+    }
     // one diagonal catch-light across the whole card
     ctx.save();
     ctx.translate(W * 0.64, -H * 0.1);
@@ -1088,6 +1168,244 @@ function layoutColumns(ctx, S, spec, coins, { rowsPerCol, big }) {
       },
     );
   }
+}
+
+/** One board panel of ranked rows at ARBITRARY geometry — the shared engine
+ *  under tier6's lower tier and crown7's two boards. layoutColumns owns the
+ *  full-band table shapes; this owns a panel that shares its banner with other
+ *  components. Same row grammar as every other board, so the mixed layouts and
+ *  the pure tables read as one system. `rank0` is the first row's rank. */
+function rankedPanel(ctx, S, spec, coins, { x, y, w, h, rank0, cap = 128 }) {
+  if (!coins.length) return;
+  const cChg = x + w - 22 * S;
+  const cMcap = x + w - 158 * S;
+  boardPanel(
+    ctx,
+    S,
+    {
+      x, y, w, h,
+      accent: spec.accent,
+      head: [
+        { x: x + 46 * S, label: "#", align: "right" },
+        { x: x + 70 * S, label: "Token" },
+        { x: cMcap, label: "MCap", align: "right" },
+        { x: cChg, label: "24h", align: "right" },
+      ],
+    },
+    ({ top, height }) => {
+      const rowH = Math.min(height / coins.length, cap * S);
+      const y0 = top + (height - rowH * coins.length) / 2;
+      coins.forEach((c, i) => {
+        const rank = rank0 + i;
+        const ry = y0 + i * rowH;
+        const cy = ry + rowH / 2;
+        rowBase(ctx, S, { x, w, y: ry, h: rowH, first: i === 0, leader: false, accent: spec.accent });
+        if (rank <= 3) medal(ctx, x + 34 * S, cy, 12.5 * S, rank, S);
+        else rankNum(ctx, x + 46 * S, cy, rank, 14.5 * S);
+        const d = Math.min(40 * S, rowH * 0.62);
+        avatar(ctx, c.img, x + 70 * S + d / 2, cy, d, c.symbol, S);
+        metalRing(ctx, x + 70 * S + d / 2, cy, d, rank, S);
+        const tx = x + 70 * S + d + 14 * S;
+        const tw = cMcap - 84 * S - tx;
+        ctx.save();
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = SITE.text;
+        const symTxt = fitText(ctx, `$${c.symbol}`, tw - 54 * S, { weight: 700, size: 18.5 * S, min: 12 * S, family: F.d7 });
+        ctx.fillText(symTxt, tx, cy - 3 * S);
+        const symW = ctx.measureText(symTxt).width;
+        ctx.fillStyle = SITE.muted;
+        ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 11.5 * S, min: 9.5 * S, family: F.d5 }), tx, cy + 15.5 * S);
+        ctx.restore();
+        chip(ctx, tx + symW + 9 * S, cy - 8.5 * S, chainShort(c.chain), 8.5 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
+        if (c.mcap) {
+          ctx.save();
+          ctx.font = `700 ${14.5 * S}px ${F.m7}`;
+          ctx.fillStyle = SITE.muted;
+          ctx.textAlign = "right";
+          ctx.textBaseline = "middle";
+          ctx.fillText(fmtCap(c.mcap), cMcap, cy + 1 * S);
+          ctx.restore();
+        }
+        pctChip(ctx, cChg, cy, c.pctLabel, 14.5 * S, S, { align: "r" });
+      });
+    },
+  );
+}
+
+/** tier6 — two tiers: the podium as three crowned mini-cards above, ranks 4–6
+ *  as one board beneath. The podium tier keeps the podium's grammar (metal
+ *  ring, medal, rank chip, the figure as the card's headline); the lower tier
+ *  is the board grammar — the point of the composition is that the two read
+ *  as prize-winners OVER a leaderboard, not as six equal cells. */
+function layoutTiers(ctx, S, spec, coins) {
+  const n = coins.length;
+  if (!n) return;
+  if (n === 1) return layoutHero(ctx, S, spec, coins);
+  if (n === 2) return layoutDuel(ctx, S, spec, coins);
+  if (n === 3) return layoutPodium(ctx, S, spec, coins);
+
+  const gap = 24 * S;
+  const innerW = (REF_W - 2 * PAD) * S;
+  const topH = BAND_H * S * 0.56;
+  const botY = BAND_TOP * S + topH + gap;
+  const botH = BAND_BOTTOM * S - botY;
+
+  const podium = coins.slice(0, 3);
+  const cardW = (innerW - gap * 2) / 3;
+  podium.forEach((c, i) => {
+    const rank = i + 1;
+    const rc = rankColor(rank);
+    const winner = rank === 1;
+    const x = PAD * S + i * (cardW + gap);
+    const y = BAND_TOP * S;
+    surface(ctx, x, y, cardW, topH, 22 * S, { S, accent: rc, lift: winner ? 1.4 : 1 });
+    const d = (winner ? 76 : 68) * S;
+    const lx = x + 34 * S + d / 2;
+    const ly = y + 36 * S + d / 2;
+    if (winner) radial(ctx, lx, ly, d * 1.3, SITE.gold, 0.12);
+    avatar(ctx, c.img, lx, ly, d, c.symbol, S);
+    metalRing(ctx, lx, ly, d, rank, S);
+    medal(ctx, lx + d * 0.42, ly + d * 0.38, 15 * S, rank, S);
+    chip(ctx, x + cardW - 26 * S, y + 44 * S, `#${rank}`, 12 * S, S, { align: "right", color: rc, border: hexA(rc, 0.4), bg: hexA(rc, 0.1) });
+    // identity right of the avatar — ONE ticker size across the three cards
+    const tx = lx + d / 2 + 18 * S;
+    const tw = x + cardW - 30 * S - tx;
+    ctx.save();
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = SITE.text;
+    ctx.fillText(fitText(ctx, `$${c.symbol}`, tw, { weight: 700, size: 24 * S, min: 14 * S, family: F.d7 }), tx, ly - 2 * S);
+    ctx.fillStyle = SITE.muted;
+    ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 13 * S, min: 10 * S, family: F.d5 }), tx, ly + 22 * S);
+    ctx.restore();
+    // the figure is the card's headline; the winner's outranks the sides
+    bigPct(ctx, x + 34 * S, y + topH - 64 * S, c.pctLabel, (winner ? 44 : 34) * S, S);
+    ctx.save();
+    roundRect(ctx, x, y, cardW, topH, 22 * S);
+    ctx.clip();
+    sparkline(ctx, x + cardW - 176 * S, y + topH - 96 * S, 148 * S, 40 * S, c.symbol, c.pct, S, { alpha: 0.8 });
+    ctx.restore();
+    microLabel(ctx, x + 34 * S, y + topH - 26 * S, `${chainShort(c.chain)}${c.mcap ? `  ·  MC ${fmtCap(c.mcap)}` : ""}`, { size: 10.5 * S, track: 0.14, color: SITE.muted });
+  });
+
+  rankedPanel(ctx, S, spec, coins.slice(3), { x: PAD * S, y: botY, w: innerW, h: botH, rank0: 4, cap: 96 });
+}
+
+/** crown7 — the champion as a full-width BAND across the top (the hero card
+ *  turned landscape), ranks 2–7 as two boards of three beneath. The band is
+ *  what makes it read "the winner on top of everyone" rather than "a big row". */
+function layoutCrown(ctx, S, spec, coins) {
+  const n = coins.length;
+  if (!n) return;
+  if (n === 1) return layoutHero(ctx, S, spec, coins);
+  if (n === 2) return layoutDuel(ctx, S, spec, coins);
+  if (n === 3) return layoutPodium(ctx, S, spec, coins);
+
+  const gap = 24 * S;
+  const innerW = (REF_W - 2 * PAD) * S;
+  const bandH = 178 * S;
+  const x = PAD * S;
+  const y = BAND_TOP * S;
+
+  const c1 = coins[0];
+  const rc = rankColor(1);
+  surface(ctx, x, y, innerW, bandH, 24 * S, { S, accent: rc, lift: 1.4 });
+  const d = 108 * S;
+  const lx = x + 44 * S + d / 2;
+  const ly = y + bandH / 2;
+  radial(ctx, lx, ly, d * 1.3, SITE.gold, 0.12);
+  avatar(ctx, c1.img, lx, ly, d, c1.symbol, S);
+  metalRing(ctx, lx, ly, d, 1, S);
+  medal(ctx, lx + d * 0.42, ly + d * 0.38, 18 * S, 1, S);
+  const tx = lx + d / 2 + 26 * S;
+  const figW = 320 * S;
+  const tw = x + innerW - figW - 60 * S - tx;
+  ctx.save();
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = SITE.text;
+  ctx.font = `700 ${34 * S}px ${F.d7}`;
+  ctx.letterSpacing = `${(-0.68 * S).toFixed(1)}px`;
+  ctx.fillText(fitText(ctx, `$${c1.symbol}`, tw - 120 * S, { weight: 700, size: 34 * S, min: 18 * S, family: F.d7 }), tx, ly - 6 * S);
+  const symW = ctx.measureText(fitText(ctx, `$${c1.symbol}`, tw - 120 * S, { weight: 700, size: 34 * S, min: 18 * S, family: F.d7 })).width;
+  ctx.letterSpacing = "0px";
+  ctx.fillStyle = SITE.muted;
+  ctx.fillText(fitText(ctx, c1.name || "", tw, { weight: 500, size: 15 * S, min: 11 * S, family: F.d5 }), tx, ly + 22 * S);
+  ctx.restore();
+  chip(ctx, tx + symW + 14 * S, ly - 15 * S, "#1 · Top gainer", 11.5 * S, S, { color: rc, border: hexA(rc, 0.4), bg: hexA(rc, 0.1) });
+  microLabel(ctx, tx, ly + 48 * S, `${chainShort(c1.chain)}${c1.mcap ? `  ·  MC ${fmtCap(c1.mcap)}` : ""}`, { size: 10.5 * S, track: 0.14, color: SITE.muted });
+  // the figure owns the band's right end, its trend sweeping under it
+  ctx.save();
+  roundRect(ctx, x, y, innerW, bandH, 24 * S);
+  ctx.clip();
+  sparkline(ctx, x + innerW - figW - 30 * S, y + bandH - 62 * S, figW, 44 * S, c1.symbol, c1.pct, S, { alpha: 0.65 });
+  ctx.restore();
+  bigPct(ctx, x + innerW - 44 * S, ly + 18 * S, c1.pctLabel, 62 * S, S, { align: "right" });
+
+  // two boards of three under the band
+  const rest = coins.slice(1);
+  const py = y + bandH + gap;
+  const ph = BAND_BOTTOM * S - py;
+  const half = Math.ceil(rest.length / 2);
+  const pw = (innerW - gap) / 2;
+  rankedPanel(ctx, S, spec, rest.slice(0, half), { x, y: py, w: pw, h: ph, rank0: 2, cap: 110 });
+  if (rest.length > half) rankedPanel(ctx, S, spec, rest.slice(half), { x: x + pw + gap, y: py, w: pw, h: ph, rank0: 2 + half, cap: 110 });
+}
+
+/** mosaic9 — nine compact tiles, 3×3: every mover as its own small card. The
+ *  tile is the cards4 card COMPRESSED — identity row, the move as the only
+ *  figure, no sparkline (no height for one to read cleanly; grid10's rule). */
+function layoutMosaic(ctx, S, spec, coins) {
+  const n = coins.length;
+  if (!n) return;
+  if (n === 1) return layoutHero(ctx, S, spec, coins);
+  if (n === 2) return layoutDuel(ctx, S, spec, coins);
+  if (n === 3) return layoutPodium(ctx, S, spec, coins);
+
+  const cols = 3;
+  const rows = Math.ceil(n / cols);
+  const gap = 20 * S;
+  const innerW = (REF_W - 2 * PAD) * S;
+  const tileW = (innerW - gap * (cols - 1)) / cols;
+  const tileH = (BAND_H * S - gap * (rows - 1)) / rows;
+  // A last row shorter than the grid is CENTRED, so seven or eight coins read
+  // as a finished mosaic rather than a broken one.
+  coins.forEach((c, i) => {
+    const rank = i + 1;
+    const row = Math.floor(i / cols);
+    const inRow = row === rows - 1 ? n - row * cols : cols;
+    const rowW = inRow * tileW + (inRow - 1) * gap;
+    const x = PAD * S + (innerW - rowW) / 2 + (i % cols) * (tileW + gap);
+    const y = BAND_TOP * S + row * (tileH + gap);
+    surface(ctx, x, y, tileW, tileH, 18 * S, { S, accent: rank === 1 ? spec.accent : null });
+    const d = Math.min(52 * S, tileH * 0.42);
+    const lx = x + 24 * S + d / 2;
+    const ly = y + tileH * 0.36;
+    avatar(ctx, c.img, lx, ly, d, c.symbol, S);
+    metalRing(ctx, lx, ly, d, rank, S);
+    if (rank <= 3) medal(ctx, lx + d * 0.42, ly + d * 0.38, 12 * S, rank, S);
+    else rankNum(ctx, x + tileW - 24 * S, y + 34 * S, rank, 15 * S);
+    const tx = lx + d / 2 + 14 * S;
+    const tw = x + tileW - 26 * S - tx;
+    ctx.save();
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = SITE.text;
+    const symTxt = fitText(ctx, `$${c.symbol}`, tw - 52 * S, { weight: 700, size: 21 * S, min: 13 * S, family: F.d7 });
+    ctx.fillText(symTxt, tx, ly - 1 * S);
+    const symW = ctx.measureText(symTxt).width;
+    ctx.fillStyle = SITE.muted;
+    ctx.fillText(fitText(ctx, c.name || "", tw, { weight: 500, size: 12 * S, min: 9.5 * S, family: F.d5 }), tx, ly + 19 * S);
+    ctx.restore();
+    chip(ctx, tx + symW + 9 * S, ly - 10 * S, chainShort(c.chain), 8.5 * S, S, { color: SITE.cyan, border: hexA(SITE.cyan, 0.3), bg: hexA(SITE.cyan, 0.07) });
+    bigPct(ctx, x + 24 * S, y + tileH - 26 * S, c.pctLabel, 30 * S, S);
+    if (c.mcap) {
+      ctx.save();
+      ctx.font = `700 ${13 * S}px ${F.m7}`;
+      ctx.fillStyle = SITE.muted;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(fmtCap(c.mcap), x + tileW - 24 * S, y + tileH - 26 * S);
+      ctx.restore();
+    }
+  });
 }
 
 /** spot10 — the premium Top-10: the champion as a full hero card on the left
@@ -1571,6 +1889,9 @@ const LAYOUTS = {
   duel: layoutDuel,
   hero: layoutHero,
   spotlight: layoutSpotlight,
+  tiers: layoutTiers,
+  crown: layoutCrown,
+  mosaic: layoutMosaic,
   podium: layoutPodium,
   cards: layoutCards,
   list: layoutList,

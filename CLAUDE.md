@@ -1097,6 +1097,44 @@ premium rather than tabular.
   n=2 delegation exists because the first render of that case was measured
   fine and looked hollow.
 
+### The ladder is COMPLETE, and every banner has its own backdrop
+
+"buatkan versi berbeda top 1 sampai top 10 jadi 10 banner dan backgroundnya
+juga beda-beda" (2026-08-21). Two gaps, one promise:
+
+**Counts 6, 7 and 9 had no template**, so the ladder jumped 5 → 8 → 10. Three
+new layouts fill it, each a composition of the grammars already in the file
+rather than a fourth private idea of a card:
+
+| id | shape |
+| --- | --- |
+| `tier6` 🏛 | the podium as three crowned mini-cards ABOVE, ranks 4–6 as a board BENEATH — prize-winners over a leaderboard, not six equal cells |
+| `crown7` 👑 | the champion as a full-width BAND across the top (the hero card turned landscape), ranks 2–7 as two boards of three |
+| `mosaic9` 🧩 | nine compact tiles 3×3 — the cards4 card compressed; a short last row is CENTRED so seven coins read as a finished mosaic |
+
+- **`rankedPanel` is the one owner of "a board that shares its banner"** —
+  tier6's lower tier, crown7's two boards and spot10's pack all draw through
+  it, so a row-grammar change lands everywhere at once. One row-ticker size,
+  pinned by a test against the shared function (which covers all three layouts
+  in one assertion).
+- **Thin days delegate** exactly as `spot10` does: 1 → hero, 2 → duel, 3 →
+  podium; the mixed layouts start at four and their rows are capped, never
+  stretched.
+
+**Every template used to sit on the identical aurora**, so a channel posting a
+different layout each day still read as the same poster recoloured. `MOODS` is
+the fix: each template names a bloom mood — geometry and palette per banner
+(`dawn`, `clash`, `stage`, `quad`, `boardroom`, `strata`, `regal`, `beams`,
+`nebula`, `terminal`, `laurel`) — and ONLY the blooms vary. The scrim, dot
+grid, vignette, frame and keyline stay shared, because those ARE the design
+system and varying them would make eleven banners from eleven brands. Every
+colour is a SITE token.
+
+- ⚠️ **Uniqueness is pinned, not trusted**: a test fails if two templates share
+  a mood, if one has no mood, or if a mood NAME has no entry in `MOODS` — a
+  typo would silently fall back to the shared default, which is precisely the
+  state this exists to end.
+
 ### The winner's NAME is not a ranking signal
 
 `$巨兽BEHEMOTH` was drawn at 44px against 31px for the two cards beside it, and a
