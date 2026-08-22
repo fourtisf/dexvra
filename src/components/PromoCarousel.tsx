@@ -69,43 +69,31 @@ export function PromoCarousel() {
   return (
     <div className="promo" onMouseEnter={stop} onMouseLeave={start}>
       <div className="promo-track" style={{ transform: `translateX(-${idx * 100}%)` }}>
+        {/* Typography-led, deliberately. The emoji coins orbiting a badge, the
+            rocket watermark and the sparkles read as template clip-art — the
+            single loudest "cheap" signal on the page (operator: "design ulang
+            semuanya yang clean elegan premium"). What a slide keeps is a
+            field, a headline, one proof point and one action; the brand mark
+            appears once, as line GEOMETRY, not a sticker. */}
         <div className="slide s-moon">
-          <div className="mini-orbits" aria-hidden="true">
-            <div className="orbit oa">
-              <div className="sat top"><div className="fcoin c-gold sz36">⚔️</div></div>
-              <div className="sat bot"><div className="fcoin c-cyanc sz30">💎</div></div>
-            </div>
-            <div className="orbit ob">
-              <div className="sat top"><div className="fcoin c-green sz30">🐸</div></div>
-              <div className="sat bot"><div className="fcoin c-viol sz30">🌕</div></div>
-            </div>
-            <div className="fcoin fcoin-main" aria-label={BRAND_NAME}>
-              <svg viewBox="0 0 48 48" width="46" height="46" fill="none" aria-hidden="true">
-                <path d="M15 12 H33 L39 19 L24 37 L9 19 Z" fill="#053825" />
-                <g stroke="#0d6a45" strokeWidth="1.2" strokeOpacity="0.6" fill="none">
-                  <path d="M9 19 H39" /><path d="M20 19 H28" /><path d="M20 19 L24 37" />
-                  <path d="M28 19 L24 37" /><path d="M15 12 L20 19" /><path d="M33 12 L28 19" />
-                </g>
-              </svg>
-            </div>
-          </div>
+          <svg className="hero-mark" viewBox="0 0 220 160" aria-hidden="true">
+            <path className="dim" d="M60 30 H160 L196 66 L110 146 L24 66 Z" />
+            <path d="M24 66 H196 M60 30 L88 66 M160 30 L132 66 M88 66 H132 M88 66 L110 146 M132 66 L110 146" />
+          </svg>
           <span className="blip-tag">{promo.symbol} +{promo.multiplier}</span>
-          <span className="sparkle" style={{ right: "38%", top: "20%" }}>✦</span>
-          <span className="sparkle" style={{ right: "12%", bottom: "18%", animationDelay: "1.1s" }}>✦</span>
           <div className="slide-copy">
-            <span className="s-eyebrow"><span className="dot-live" />Live · Tracking {CHAIN_IDS.length} chains</span>
+            <span className="s-eyebrow"><span className="dot-live" />Live · {CHAIN_IDS.length} chains</span>
             <h2>
-              Find the next <span className="grad">Moonshot</span> first.
+              Find the next <span className="grad">moonshot</span> first.
             </h2>
-            <p>Fresh launches, whale flow, and bundle forensics — the signal hits {BRAND_NAME} before the crowd.</p>
-            <a className="btn-slide" href={BOT_URL} target="_blank" rel="noopener noreferrer">⚡ Express Listing</a>
+            <p>Fresh launches, whale flow and on-chain signal — on {BRAND_NAME} before the crowd.</p>
+            <a className="btn-slide" href={BOT_URL} target="_blank" rel="noopener noreferrer">Express Listing</a>
           </div>
         </div>
 
         <div className="slide s-boost">
-          <span className="wm">🚀</span>
           <div className="slide-copy">
-            <span className="s-eyebrow">📢 Boost your token</span>
+            <span className="s-eyebrow">Boost your token</span>
             <h2>Get featured across the {BRAND_NAME} network</h2>
             <p>Homepage spotlight, ticker priority, and reach on every {BRAND_NAME} tool.</p>
             <Link href="/advertise" className="boost-btn">Boost now →</Link>
@@ -117,9 +105,9 @@ export function PromoCarousel() {
             <path d="M0,108 L42,96 L84,102 L126,70 L168,54 L210,22 L260,6" fill="none" stroke="#02180B" strokeWidth="9" strokeLinecap="round" />
           </svg>
           <div className="slide-copy">
-            <span className="s-eyebrow">◆ Pumped on {BRAND_NAME}</span>
+            <span className="s-eyebrow">Pumped on {BRAND_NAME}</span>
             <div className="pump-inline">
-              <div className="coin" style={{ background: "radial-gradient(circle at 32% 26%,#FFE9A8,#FFC53D 45%,#B57900)" }}>{promo.emoji}</div>
+              <div className="coin" style={{ background: "rgba(255,255,255,.08)" }}>{promo.emoji}</div>
               <div className="pump-x">{promo.multiplier}</div>
               <span className="chip-since">↗ SINCE LISTING</span>
             </div>
