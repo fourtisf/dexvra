@@ -1700,6 +1700,11 @@ function alchText() {
   );
 }
 function alchKb() {
+  // `cb` is per-function in this file, not a module global — alKb, atKb and
+  // every other builder define their own. Leaving it out here compiled fine
+  // and threw at TAP time, inside bot.catch, so the button answered and did
+  // nothing: the exact "tombol tidak menjawab" the operator reported.
+  const cb = Markup.button.callback;
   const c = autoLister.get();
   const rows = [[cb(`${c.chains.length ? "▫️" : "🟢"} ALL chains`, "alchall")]];
   const btns = trendingBoard
