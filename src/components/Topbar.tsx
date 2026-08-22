@@ -110,8 +110,23 @@ export function Topbar() {
         <div className="brand-logo sm spin"><Logo size={32} /></div>
         <div className="brand-name">{BRAND_NAME}</div>
       </Link>
-      {/* Mobile-only ⋮ menu: the sidebar is hidden on phones, so this is the
-          only way to reach the feature pages there. */}
+      {/* Primary navigation — the sidebar is gone, the header is the one nav.
+          Watchlist keeps its href here: the smoke script drives it. */}
+      <nav className="nav topnav" aria-label="Primary">
+        {[
+          { href: "/", label: "Home" },
+          { href: "/trending", label: "Gainers" },
+          { href: "/new-listings", label: "New" },
+          { href: "/leaderboard", label: "Leaderboard" },
+          { href: "/watchlist", label: "Watchlist" },
+        ].map((l) => (
+          <Link key={l.href} href={l.href} className={pathname === l.href ? "active" : ""}>
+            {l.label}
+          </Link>
+        ))}
+      </nav>
+      {/* ⋮ holds every page the inline nav does not — at EVERY width now, not
+          only phones: it is the whole secondary navigation. */}
       <div className="topmenu">
         <button
           className="topmenu-btn"

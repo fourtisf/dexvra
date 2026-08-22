@@ -84,7 +84,7 @@ export function PromoCarousel() {
           <div className="slide-copy">
             <span className="s-eyebrow"><span className="dot-live" />Live · {CHAIN_IDS.length} chains</span>
             <h2>
-              Find the next <span className="grad">moonshot</span> first.
+              Find the next <em className="hero-serif">moonshot</em> first.
             </h2>
             <p>Fresh launches, whale flow and on-chain signal — on {BRAND_NAME} before the crowd.</p>
             <a className="btn-slide" href={BOT_URL} target="_blank" rel="noopener noreferrer">Express Listing</a>

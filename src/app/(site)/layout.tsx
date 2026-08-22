@@ -5,18 +5,19 @@ import { AppProvider } from "@/components/AppState";
 import { WalletModal } from "@/components/WalletModal";
 import { ListingModal } from "@/components/ListingModal";
 import { PwaRegister } from "@/components/PwaRegister";
-import { Sidebar } from "@/components/Sidebar";
 import { Ticker } from "@/components/Ticker";
 import { Toast } from "@/components/Toast";
 import { Topbar } from "@/components/Topbar";
 
-// Public site shell. Everything under (site)/ gets the sidebar/topbar chrome;
-// the admin panel (/panel) lives outside this group and never renders it.
+// Public site shell — top-navigation, one column. The sidebar was the old
+// identity's strongest structural signature; navigation lives in the header
+// now (primary links inline, everything else behind the ⋮ menu, which
+// Sidebar.tsx still feeds via NAV_GROUPS). The admin panel (/panel) lives
+// outside this group and never renders any of it.
 export default function SiteLayout({ children }: { children: ReactNode }) {
   return (
     <AppProvider>
       <div className="app">
-        <Sidebar />
         <div className="main">
           <Topbar />
           <Ticker />

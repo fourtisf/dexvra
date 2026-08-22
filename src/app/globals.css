@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Instrument+Serif:ital@1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap');
 
 :root{
   --bg:#090C12; --panel:#0D1119; --card:#101624;
@@ -1639,3 +1639,104 @@ body{
   .promo{height:236px}
   .slide h2{font-size:26px}
 }
+
+/* ============================================================
+   DEXVRA PRIVÉ — the new identity
+   ("saya ingin semua tampilan design berbeda dengan sebelumnya")
+
+   Not another refinement of the old face — a DIFFERENT one. The three
+   signatures of the previous identity were the left sidebar, the mint-on-
+   black palette, and the geometric mono voice. All three are replaced:
+
+     structure   top navigation, one centred column
+     palette     deep graphite-NAVY ground, CHAMPAGNE GOLD chrome —
+                 green and red now belong to market data ALONE
+     type        Archivo display, an Instrument Serif italic accent
+                 (the editorial flourish), Inter body, mono for figures
+
+   The mint survives in exactly two places: the logo mark and the LIVE
+   semantics — brand and truth, not decoration.
+   ============================================================ */
+:root{
+  --gold:#E3C27E; --gold-deep:#C9A45C;
+  --fd:'Archivo','Sora',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
+  --fs:'Instrument Serif',Georgia,serif;
+}
+
+/* ── structure: one column, the header is the navigation ─────────────────── */
+.app{grid-template-columns:1fr}
+.sidebar{display:none}
+.content{margin:0 auto}
+.brand-top{display:flex}
+.topmenu{display:block}
+.topbar{padding:13px 26px;gap:16px;background:rgba(10,13,20,.88)}
+.topbar::after{background:linear-gradient(90deg,transparent 4%,rgba(227,194,126,.35) 50%,transparent 96%)}
+.topnav{display:flex;flex-direction:row;align-items:center;gap:2px;flex:none}
+.topnav a{display:flex;align-items:center;padding:8px 13px;border-radius:9px;
+  color:var(--muted);font-weight:500;font-size:13.5px;letter-spacing:.01em;transition:color .15s,background .15s}
+.topnav a:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.topnav a.active{color:var(--gold);background:rgba(227,194,126,.08)}
+.topnav a.active::before{content:none}
+.search{max-width:420px}
+@media (max-width:1180px){.topnav a{padding:8px 9px;font-size:13px}}
+@media (max-width:980px){.topnav{display:none}}
+
+/* ── palette: navy ground, gold chrome ───────────────────────────────────── */
+body{
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
+    radial-gradient(1100px 500px at 50% -28%, rgba(120,150,255,.05), transparent 60%),
+    linear-gradient(180deg,#0B0E15 0%,#090B10 40%,#07080C 100%);
+}
+.wcard,.mv-card{background:linear-gradient(180deg,rgba(160,180,255,.03),transparent 30%),#0E1119;
+  border-color:rgba(190,205,255,.08)}
+.s-moon,.s-boost,.s-pump{background:
+  linear-gradient(180deg,rgba(160,180,255,.04),transparent 40%),
+  radial-gradient(720px 340px at 85% -30%, rgba(227,194,126,.09), transparent 62%),
+  #0D1018}
+.row.head,.tc-row.tc-head{border-bottom-color:rgba(190,205,255,.09)}
+.row,.tc-row,.skr{border-bottom-color:rgba(190,205,255,.05)}
+
+/* the chrome accents move to gold — data colors are untouched */
+.hero-mark path{stroke:rgba(227,194,126,.55)}
+.s-eyebrow{color:var(--gold)}
+.blip-tag{color:#241A05;background:var(--gold)}
+.chip-since{color:#241A05;background:var(--gold)}
+.promo-dots .pdot.active{background:var(--gold)}
+.chain-chip.active{background:rgba(227,194,126,.09);border-color:rgba(227,194,126,.4);color:#F4E7C8}
+.chain-chip.active .chain-n{background:var(--gold);color:#241A05}
+.ttab.active{background:rgba(227,194,126,.12);color:#F4E7C8}
+.search:focus-within{border-color:rgba(227,194,126,.45);box-shadow:0 0 0 3px rgba(227,194,126,.08)}
+.board-expand{color:var(--gold)}
+.board-expand:hover{color:#F0D9A8}
+.board-all,.mv-all:hover,.wcard-head .more{color:var(--gold)}
+.tc-more{color:var(--gold);border-color:rgba(227,194,126,.4)}
+.tc-more:hover{background:rgba(227,194,126,.1)}
+.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(227,194,126,.05),transparent 70%)}
+.row:not(.head):hover{background:linear-gradient(90deg,rgba(227,194,126,.05),transparent 70%)}
+.sec-ic{background:rgba(227,194,126,.08);border-color:rgba(227,194,126,.22);color:var(--gold)}
+.flame{background:rgba(227,194,126,.1);border-color:rgba(227,194,126,.25);color:var(--gold)}
+.badge-hot{background:rgba(227,194,126,.14);color:var(--gold)}
+.star:hover,.star.on{color:var(--gold)}
+.star.on svg{fill:var(--gold)}
+.nav .ldot{background:var(--gold);box-shadow:0 0 8px rgba(227,194,126,.6)}
+::selection{background:rgba(227,194,126,.3)}
+:focus-visible{outline-color:var(--gold)}
+
+/* the primary actions wear the gold */
+.btn-primary,.fasttrack,.btn-slide{
+  background:linear-gradient(180deg,#F0D9A8 0%,#E3C27E 45%,#C9A45C 100%)!important;
+  color:#241A05!important;
+  box-shadow:0 8px 22px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,248,230,.8)!important;
+}
+.btn-primary:hover,.fasttrack:hover,.btn-slide:hover{
+  box-shadow:0 12px 28px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,248,230,.9)!important;
+}
+
+/* ── type: the serif italic is the signature ─────────────────────────────── */
+.hero-serif{font-family:var(--fs);font-style:italic;font-weight:400;color:var(--gold);
+  font-size:1.12em;letter-spacing:0;padding-right:.04em}
+.sec-title h2,.page-head h2,.slide h2,.brand-name,.mv-head h3,.wcard-head h3{font-family:var(--fd)}
+
+/* LIVE stays mint — it is a truth light, not chrome */
+.live-pill,.src-pill.live{background:var(--mint);color:#04240F}
