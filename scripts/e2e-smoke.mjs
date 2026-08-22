@@ -27,7 +27,12 @@ await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForSelector(".board .row:not(.head)", { timeout: 15000 });
 check("home board rows render", (await page.locator(".board .row:not(.head)").count()) >= 10);
 check("ticker items render", (await page.locator(".tick-item").count()) >= 8);
-check("carousel present", await page.locator(".promo").isVisible());
+check("hero deck present (carousel retired)", await page.locator(".hero").isVisible());
+check("hero vital signs strip", (await page.locator(".hero-stats .hstat").count()) === 4);
+check("intelligence rail is sticky beside the market", await page.evaluate(() => {
+  const r = document.querySelector(".home-rail");
+  return !!r && getComputedStyle(r).position === "sticky";
+}));
 check("pulse heat cells", (await page.locator(".heat-cell").count()) === 3);
 check("fear&greed gauge", await page.locator(".fg-num").isVisible());
 check("wire items", (await page.locator(".wire-item").count()) >= 1);

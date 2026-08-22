@@ -4,7 +4,7 @@
 // count sort with no tie-break.
 import test from "node:test";
 import assert from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   HOME_BOARD_ROWS,
@@ -520,6 +520,54 @@ test("every class a page still renders has a style — .board-loading kept its c
   ].filter((f) => read(f).includes("board-loading"));
   if (users.length > 0)
     assert.match(CSS, /\.board-loading\{/, `still styled — rendered by ${users.join(", ")}`);
+});
+
+// ── the structure pass ──────────────────────────────────────────────────────
+//
+// "mksud saya design front end ui ux nya juga rubah" — the page's SHAPE
+// changed: a static command-deck hero instead of the rotating carousel, and a
+// two-column console with the intelligence rail sticky beside the tables.
+// These pin the three claims that shape makes.
+
+test("the hero is a static deck — nothing on the opening screen moves on its own", () => {
+  // The carousel's autoplay was the page's opening move: chrome animating
+  // itself, with two of its three messages off-screen at any moment. The deck
+  // shows everything at once, so the only timer allowed in the hero is none.
+  const hero = read("src/components/HomeHero.tsx");
+  assert.ok(!/setInterval|setTimeout/.test(hero), "no rotation, no delayed chrome");
+  const page = read("src/app/(site)/page.tsx");
+  assert.match(page, /<HomeHero/);
+  assert.ok(!page.includes("PromoCarousel"), "the carousel is gone from the page");
+  assert.ok(
+    !existsSync(join(process.cwd(), "src/components/PromoCarousel.tsx")),
+    "…and from the tree — a dead component is the next 'which hero is real?'",
+  );
+});
+
+test("the deck's vital signs render '…' before the first payload — never a zero", () => {
+  // A 0-listing, $0-volume deck about a market nobody has read yet is the
+  // false-empty-state rule, on the first pixels a visitor sees.
+  const hero = read("src/components/HomeHero.tsx");
+  assert.match(hero, /data \? data\.tokens\.length : "…"/, "listings wait for the payload");
+  assert.match(hero, /data \? fmtCap\(data\.trackedVol24h\) : "…"/, "volume waits for the payload");
+  assert.match(hero, /fng\?\.value \?\? "…"/, "fear & greed waits for its read");
+});
+
+test("the intelligence rail sits beside the market column, sticky, and collapses under it", () => {
+  const page = read("src/app/(site)/page.tsx");
+  const rail = page.indexOf('className="home-rail"');
+  assert.ok(rail > -1, "the rail exists");
+  assert.ok(page.indexOf("<PulseStrip") > rail, "Pulse · F&G · Signals live in the rail");
+  assert.ok(page.indexOf('className="home-main"') < page.indexOf("<ChainFilter"), "the market column wraps the tables");
+  assert.match(CSS, /\.home-grid\{display:grid;grid-template-columns:minmax\(0,1fr\) \d+px/, "two real columns");
+  assert.match(CSS, /\.home-rail\{position:sticky/, "the rail holds its place while the tables scroll");
+  // …and it must COLLAPSE: a fixed 312px rail on a phone is a third of the
+  // screen given to ambience, which is the inverted hierarchy.
+  assert.match(
+    CSS,
+    /@media \(max-width:\d+px\)\{\s*\.home-grid\{grid-template-columns:1fr\}/,
+    "one column on narrow screens",
+  );
 });
 
 // ── the change a renderer may print ─────────────────────────────────────────
