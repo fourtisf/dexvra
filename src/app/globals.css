@@ -1569,3 +1569,73 @@ h1,h2,h3,h4{font-weight:600;letter-spacing:-.02em}
 .wire-item b{font-weight:600}
 
 @media (max-width:600px){.promo{height:200px}}
+
+/* ============================================================
+   REFINED II — the BOLD half of the redesign
+   ("apa yang anda rubah saya tidak melihat apapun" — fair. The first pass
+   polished; this one changes what the eye lands on. Three moves:)
+
+   1. THE GROUND GOES QUIET — no colored glows behind the page; near-black
+      with grain only. Color now belongs to DATA alone.
+   2. THE HERO GOES EDITORIAL — display type at poster scale over a clean
+      field; the headline IS the artwork.
+   3. THE TABLES FLOAT — the board and Top Coins lose their card boxes and
+      sit directly on the page, rows separated by hairlines: the terminal
+      look, which is what a market page is. The mover CARDS stay cards —
+      the contrast is the hierarchy.
+   ============================================================ */
+
+/* 1 ── the quiet ground */
+body{
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E"),
+    radial-gradient(1100px 480px at 50% -30%, rgba(255,255,255,.035), transparent 60%),
+    #070809;
+}
+
+/* 2 ── the editorial hero */
+.promo{height:264px;border:none;border-radius:0 0 18px 18px;box-shadow:none;
+  background:transparent}
+.slide{padding:34px 46px;align-items:flex-end;padding-bottom:44px}
+.s-moon,.s-boost,.s-pump{background:
+  linear-gradient(180deg,rgba(255,255,255,.03),transparent 40%),
+  radial-gradient(720px 340px at 85% -30%, rgba(61,220,151,.1), transparent 62%),
+  #0B0C0E;border-radius:18px}
+.slide-copy{max-width:72%}
+.slide h2{font-size:clamp(30px,3.6vw,46px);font-weight:600;letter-spacing:-.03em;line-height:1.04;margin-bottom:12px}
+.slide p{font-size:13.5px;line-height:1.6;margin-bottom:18px;color:var(--muted)}
+.s-eyebrow{margin-bottom:14px;color:var(--mint)}
+.hero-mark{right:52px;width:280px;height:210px;opacity:.6}
+.blip-tag{top:30px;right:30px;left:auto}
+.promo-dots{left:46px;bottom:20px}
+.promo-nav{right:20px;bottom:16px}
+.grad{background:linear-gradient(120deg,#3DDC97,#8FE8C4);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* 3 ── the floating tables. A dark card on a dark page holding a dark table
+      was three nested boxes saying nothing; the rows ARE the surface now. */
+.board,.tc-board{background:transparent;border:none;box-shadow:none;border-radius:0}
+.row.head,.tc-row.tc-head{background:transparent;border-top:none;
+  border-bottom:1px solid rgba(255,255,255,.08);padding-top:6px;padding-bottom:12px}
+.row,.tc-row{border-top:none;border-bottom:1px solid rgba(255,255,255,.045);padding-top:15px;padding-bottom:15px}
+.row:not(.head):hover{background:linear-gradient(90deg,rgba(61,220,151,.05),transparent 70%);box-shadow:none}
+.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(255,255,255,.04),transparent 70%);box-shadow:none}
+.board-expand{border-top:none;background:transparent;padding-top:16px}
+.board-expand:hover{background:transparent;color:#7FE9BC}
+.board-expand+.board-foot,.board-foot{border-top:none;background:transparent;padding-left:0;padding-right:0}
+.tc-foot{padding:8px 0 0}
+.skr{border-top:none;border-bottom:1px solid rgba(255,255,255,.045)}
+
+/* section headers carry the editorial rhythm: more air above, title larger */
+.sec-block{margin-top:14px}
+.sec-title h2{font-size:22px}
+.movers{margin-top:14px}
+
+/* the pulse cards lighten to match the floating page */
+.wcard,.mv-card{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 30%),#0B0C0E}
+
+@media (max-width:860px){
+  .slide-copy{max-width:100%}
+  .hero-mark{display:none}
+  .promo{height:236px}
+  .slide h2{font-size:26px}
+}
