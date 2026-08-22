@@ -6,7 +6,7 @@
   --text:#F1F5FB; --muted:#9AA6BC; --faint:#66738C;
   --mint:#3DF59F; --mint-deep:#12D97C; --cyan:#22D3EE;
   --violet:#A97CFF; --violet-deep:#7C3AED;
-  --orange:#FF9D4D; --red:#FF5C7A; --acc:#FFD166;
+  --orange:#FF9D4D; --red:#FF5C7A; --amber:#FFD166;
   --grad:linear-gradient(120deg,#3DF59F 0%,#22D3EE 100%);
   /* Sora is the brand face the bot's channel artwork already draws with —
      one typeface across the site and every banner is one identity. */
@@ -23,7 +23,7 @@ body{
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.024'/%3E%3C/svg%3E"),
     radial-gradient(1100px 540px at 78% -16%, rgba(61,220,151,.09), transparent 58%),
-    radial-gradient(900px 520px at -8% 12%, rgba(124,58,237,.08), transparent 55%),
+    radial-gradient(900px 520px at -8% 12%, rgba(14,155,216,.08), transparent 55%),
     var(--bg);
   color:var(--text);font-family:var(--fb);font-size:14.5px;-webkit-font-smoothing:antialiased;
   /* Every digit the same width, everywhere: a board that re-prices every 30s
@@ -367,7 +367,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .age-chip{font-family:var(--fm);font-size:10.5px;font-weight:800;color:var(--cyan);border:1px solid rgba(34,211,238,.35);border-radius:9px;padding:4.5px 9px;white-space:nowrap;background:rgba(34,211,238,.07)}
 .star{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;color:var(--faint);transition:all .15s}
 .star svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linejoin:round}
-.star:hover{color:var(--acc);background:rgba(255,209,102,.12)}
+.star:hover{color:var(--acc);background:rgba(38,198,245,.12)}
 .star.on{color:var(--acc)}
 .star.on svg{fill:var(--acc)}
 .flash-up .price{color:var(--mint)}
@@ -429,7 +429,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .acct-row:last-child{border-bottom:none}
 .acct-row .av{margin-left:auto;font-family:var(--fm);font-weight:700;font-size:12.5px;color:var(--text)}
 .mini-listing{display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:13px;padding:11px 13px;background:rgba(255,255,255,.02)}
-.status-chip{margin-left:auto;font-family:var(--fm);font-size:9.5px;font-weight:800;letter-spacing:.08em;color:var(--acc);border:1px solid rgba(255,209,102,.4);border-radius:999px;padding:4px 10px;background:rgba(255,209,102,.08)}
+.status-chip{margin-left:auto;font-family:var(--fm);font-size:9.5px;font-weight:800;letter-spacing:.08em;color:var(--amber);border:1px solid rgba(255,209,102,.4);border-radius:999px;padding:4px 10px;background:rgba(255,209,102,.08)}
 .big-empty{display:flex;flex-direction:column;align-items:center;gap:10px;padding:38px 20px;text-align:center}
 .big-empty .em{font-size:40px}
 .big-empty p{color:var(--muted);font-size:13px;max-width:40ch}
@@ -617,7 +617,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   --text:#F5F6F8; --muted:#9BA1AC; --faint:#5B616C;
   --mint:#3DDC97; --mint-deep:#17B98A; --cyan:#4CC7D4;
   --violet:#B79CFF; --violet-deep:#6D4BD1;
-  --orange:#EDA765; --red:#F76A85; --acc:#E7C77A;
+  --orange:#EDA765; --red:#F76A85; --amber:#E7C77A;
   /* platinum sheen for primary actions — premium, not neon */
   --grad:linear-gradient(180deg,#FAFBFC 0%,#D6DAE1 100%);
 }
@@ -940,7 +940,7 @@ body{
 .astat{border:1px solid var(--line);border-radius:14px;padding:16px 18px;background:rgba(255,255,255,.02)}
 .astat .k{font-family:var(--fm);font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
 .astat .v{font-family:var(--fd);font-weight:700;font-size:26px;margin-top:6px}
-.astat.pend .v{color:var(--acc)}
+.astat.pend .v{color:var(--amber)}
 
 .asec{border:1px solid var(--line);border-radius:16px;background:var(--card);overflow:hidden}
 .asec-h{font-family:var(--fd);font-weight:700;font-size:15px;padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
@@ -963,7 +963,7 @@ body{
 .a-chain{font-family:var(--fm);font-size:11px;color:var(--muted)}
 .a-ca{font-family:var(--fm);font-size:10.5px;color:var(--faint)}
 .a-status{font-family:var(--fm);font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:2.5px 8px;border:1px solid currentColor}
-.a-status.approved{color:#3DDC97}.a-status.pending{color:var(--acc)}.a-status.rejected{color:var(--red)}
+.a-status.approved{color:#3DDC97}.a-status.pending{color:var(--amber)}.a-status.rejected{color:var(--red)}
 .a-input,.a-select{background:rgba(255,255,255,.03);border:1px solid var(--line2);border-radius:8px;color:var(--text);font-family:var(--fb);font-size:12.5px;padding:7px 9px;width:100%}
 .a-select{cursor:pointer}
 .a-check{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap}
@@ -1485,7 +1485,7 @@ body{
    semantics — brand and truth, not decoration.
    ============================================================ */
 :root{
-  --acc:#A06BFF; --acc-deep:#7C3AED;
+  --acc:#26C6F5; --acc-deep:#0E9BD8;
   --fd:'Archivo','Sora',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
   --fs:var(--fd);  /* serif retired with the Privé direction */
 }
@@ -1497,12 +1497,12 @@ body{
 .brand-top{display:flex}
 .topmenu{display:block}
 .topbar{padding:13px 26px;gap:16px;background:rgba(10,13,20,.88)}
-.topbar::after{background:linear-gradient(90deg,transparent 4%,rgba(160,107,255,.35) 50%,transparent 96%)}
+.topbar::after{background:linear-gradient(90deg,transparent 4%,rgba(38,198,245,.35) 50%,transparent 96%)}
 .topnav{display:flex;flex-direction:row;align-items:center;gap:2px;flex:none}
 .topnav a{display:flex;align-items:center;padding:8px 13px;border-radius:9px;
   color:var(--muted);font-weight:500;font-size:13.5px;letter-spacing:.01em;transition:color .15s,background .15s}
 .topnav a:hover{color:var(--text);background:rgba(255,255,255,.04)}
-.topnav a.active{color:var(--acc);background:rgba(160,107,255,.08)}
+.topnav a.active{color:var(--acc);background:rgba(38,198,245,.08)}
 .topnav a.active::before{content:none}
 .search{max-width:420px}
 @media (max-width:1180px){.topnav a{padding:8px 9px;font-size:13px}}
@@ -1512,40 +1512,40 @@ body{
 body{
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
-    radial-gradient(1100px 500px at 50% -28%, rgba(150,107,255,.05), transparent 60%),
+    radial-gradient(1100px 500px at 50% -28%, rgba(60,170,240,.05), transparent 60%),
     linear-gradient(180deg,#0B0E15 0%,#090B10 40%,#07080C 100%);
 }
-.wcard,.mv-card{background:linear-gradient(180deg,rgba(165,120,255,.03),transparent 30%),#0E0C15;
-  border-color:rgba(205,190,255,.08)}
-.row.head,.tc-row.tc-head{border-bottom-color:rgba(205,190,255,.09)}
-.row,.tc-row,.skr{border-bottom-color:rgba(205,190,255,.05)}
+.wcard,.mv-card{background:linear-gradient(180deg,rgba(130,185,255,.03),transparent 30%),#0C1017;
+  border-color:rgba(190,215,255,.08)}
+.row.head,.tc-row.tc-head{border-bottom-color:rgba(190,215,255,.09)}
+.row,.tc-row,.skr{border-bottom-color:rgba(190,215,255,.05)}
 
 /* the chrome accents move to gold — data colors are untouched */
-.hero-mark path{stroke:rgba(160,107,255,.55)}
+.hero-mark path{stroke:rgba(38,198,245,.55)}
 .s-eyebrow{color:var(--acc)}
-.chain-chip.active{background:rgba(160,107,255,.09);border-color:rgba(160,107,255,.4);color:#EFE6FF}
-.chain-chip.active .chain-n{background:var(--acc);color:#FFFFFF}
-.ttab.active{background:rgba(160,107,255,.12);color:#EFE6FF}
-.search:focus-within{border-color:rgba(160,107,255,.45);box-shadow:0 0 0 3px rgba(160,107,255,.08)}
+.chain-chip.active{background:rgba(38,198,245,.09);border-color:rgba(38,198,245,.4);color:#E3F7FF}
+.chain-chip.active .chain-n{background:var(--acc);color:#03222E}
+.ttab.active{background:rgba(38,198,245,.12);color:#E3F7FF}
+.search:focus-within{border-color:rgba(38,198,245,.45);box-shadow:0 0 0 3px rgba(38,198,245,.08)}
 .board-expand{color:var(--acc)}
-.board-expand:hover{color:#C9AFFF}
+.board-expand:hover{color:#8FE4FF}
 .board-all,.mv-all:hover,.wcard-head .more{color:var(--acc)}
-.tc-more{color:var(--acc);border-color:rgba(160,107,255,.4)}
-.tc-more:hover{background:rgba(160,107,255,.1)}
-.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(160,107,255,.05),transparent 70%)}
-.row:not(.head):hover{background:linear-gradient(90deg,rgba(160,107,255,.05),transparent 70%)}
-.sec-ic{background:rgba(160,107,255,.08);border-color:rgba(160,107,255,.22);color:var(--acc)}
-.flame{background:rgba(160,107,255,.1);border-color:rgba(160,107,255,.25);color:var(--acc)}
-.badge-hot{background:rgba(160,107,255,.14);color:var(--acc)}
+.tc-more{color:var(--acc);border-color:rgba(38,198,245,.4)}
+.tc-more:hover{background:rgba(38,198,245,.1)}
+.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(38,198,245,.05),transparent 70%)}
+.row:not(.head):hover{background:linear-gradient(90deg,rgba(38,198,245,.05),transparent 70%)}
+.sec-ic{background:rgba(38,198,245,.08);border-color:rgba(38,198,245,.22);color:var(--acc)}
+.flame{background:rgba(38,198,245,.1);border-color:rgba(38,198,245,.25);color:var(--acc)}
+.badge-hot{background:rgba(38,198,245,.14);color:var(--acc)}
 .star:hover,.star.on{color:var(--acc)}
 .star.on svg{fill:var(--acc)}
-.nav .ldot{background:var(--acc);box-shadow:0 0 8px rgba(160,107,255,.6)}
-::selection{background:rgba(160,107,255,.3)}
+.nav .ldot{background:var(--acc);box-shadow:0 0 8px rgba(38,198,245,.6)}
+::selection{background:rgba(38,198,245,.3)}
 :focus-visible{outline-color:var(--acc)}
 
 /* the primary actions wear the gold */
 .btn-primary,.fasttrack{
-  background:linear-gradient(180deg,#C9AFFF 0%,#A06BFF 45%,#7C3AED 100%)!important;
+  background:linear-gradient(180deg,#8FE4FF 0%,#26C6F5 45%,#0E9BD8 100%)!important;
   color:#FFFFFF!important;
   box-shadow:0 8px 22px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,248,230,.8)!important;
 }
@@ -1572,8 +1572,7 @@ body{
    intel cards across the top (Pulse · Fear & Greed · Signals — the
    Moon-Satellite row), the banner placements under them, then straight
    into the trending board behind its chain pills. Layout lives in
-   page.tsx; the MOONTOK VIOLET skin at the end of this file matches the
-   reference's palette. What survives of the old structure layer is only
+   page.tsx; the DEXVRA BLUE skin at the end of this file wears the brand. What survives of the old structure layer is only
    what was a straight bug fix: the phone row anatomy below.
    ============================================================ */
 
@@ -1632,7 +1631,7 @@ body{
    ============================================================ */
 
 /* ── the masthead ── */
-.page-head{align-items:flex-end;gap:14px;border-bottom:1px solid rgba(205,190,255,.09);padding-bottom:14px}
+.page-head{align-items:flex-end;gap:14px;border-bottom:1px solid rgba(190,215,255,.09);padding-bottom:14px}
 .ph-main{display:flex;flex-direction:column;gap:6px;margin-right:auto;min-width:0}
 .page-head h2{font-size:30px;font-weight:600;letter-spacing:-.03em;line-height:1.05}
 .page-sub{width:auto;margin-top:0}
@@ -1640,99 +1639,98 @@ body{
 .back-link:hover{color:var(--acc)}
 
 /* ── controls: quick-tags and focus rings join the accent ── */
-.qtag:hover{color:var(--acc);border-color:rgba(160,107,255,.45)}
-.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:rgba(160,107,255,.5);box-shadow:0 0 0 3px rgba(160,107,255,.1)}
+.qtag:hover{color:var(--acc);border-color:rgba(38,198,245,.45)}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:rgba(38,198,245,.5);box-shadow:0 0 0 3px rgba(38,198,245,.1)}
 
 /* ── surfaces: hairline floats, one gold keyline on the top edge ── */
-.panel{background:linear-gradient(180deg,rgba(165,120,255,.03),transparent 30%),#0E0C15;
-  border:1px solid rgba(205,190,255,.08);border-top-color:rgba(160,107,255,.3);
+.panel{background:linear-gradient(180deg,rgba(130,185,255,.03),transparent 30%),#0C1017;
+  border:1px solid rgba(190,215,255,.08);border-top-color:rgba(38,198,245,.3);
   border-radius:14px;box-shadow:0 18px 44px rgba(0,0,0,.35)}
-.modal{background:linear-gradient(180deg,rgba(165,120,255,.04),transparent 24%),#0E0C15;
-  border-color:rgba(205,190,255,.1);border-top-color:rgba(160,107,255,.35);border-radius:18px}
+.modal{background:linear-gradient(180deg,rgba(130,185,255,.04),transparent 24%),#0C1017;
+  border-color:rgba(190,215,255,.1);border-top-color:rgba(38,198,245,.35);border-radius:18px}
 .listing-card,.signal-row,.alert-item,.mini-listing,.soc-card,.pkg,.guide,.ds,.tier{
-  background:rgba(205,190,255,.025);border-color:rgba(205,190,255,.09);box-shadow:none}
-.listing-card:hover,.soc-card:hover,.guide:hover{border-color:rgba(160,107,255,.4);background:rgba(160,107,255,.04)}
+  background:rgba(190,215,255,.025);border-color:rgba(190,215,255,.09);box-shadow:none}
+.listing-card:hover,.soc-card:hover,.guide:hover{border-color:rgba(38,198,245,.4);background:rgba(38,198,245,.04)}
 .soc-card:hover .soc-ic,.soc-card:hover .soc-go{color:var(--acc)}
-.soc-card.primary{border-color:rgba(160,107,255,.3)}
+.soc-card.primary{border-color:rgba(38,198,245,.3)}
 .guide .gi{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1);color:var(--muted)}
-.tp-chart-wrap{border-color:rgba(205,190,255,.09);border-top-color:rgba(160,107,255,.3);border-radius:14px;box-shadow:none}
+.tp-chart-wrap{border-color:rgba(190,215,255,.09);border-top-color:rgba(38,198,245,.3);border-radius:14px;box-shadow:none}
 .big-empty .em{filter:grayscale(.6);opacity:.85}
 
 /* ── the token page's stats become a hairline ledger, the CA a dashed frame ── */
-.tp-stats .ds{background:transparent;border:none;border-bottom:1px solid rgba(205,190,255,.08);border-radius:0;padding:10px 2px}
-.ca-box{background:transparent;border:1px dashed rgba(205,190,255,.16);border-radius:10px}
-.copy-btn{color:var(--acc);border-color:rgba(160,107,255,.4)}
-.copy-btn:hover{background:rgba(160,107,255,.12)}
+.tp-stats .ds{background:transparent;border:none;border-bottom:1px solid rgba(190,215,255,.08);border-radius:0;padding:10px 2px}
+.ca-box{background:transparent;border:1px dashed rgba(190,215,255,.16);border-radius:10px}
+.copy-btn{color:var(--acc);border-color:rgba(38,198,245,.4)}
+.copy-btn:hover{background:rgba(38,198,245,.12)}
 
 /* ── the ticker joins the index: serif gold ranks, hairline frame ── */
-.ticker{background:transparent;border-bottom-color:rgba(205,190,255,.08)}
-.tick-item .rnk{color:rgba(160,107,255,.8);font-weight:700}
+.ticker{background:transparent;border-bottom-color:rgba(190,215,255,.08)}
+.tick-item .rnk{color:rgba(38,198,245,.8);font-weight:700}
 
 /* ── trending's featured rail reads as exhibits, its head as a microlabel ── */
 .feat-head{font-family:var(--fm);font-size:10.5px;font-weight:600;letter-spacing:.16em;
   text-transform:uppercase;color:var(--acc)}
-.feat-sub{border-color:rgba(205,190,255,.12);color:var(--faint)}
-.feat-card{background:rgba(205,190,255,.02);border-color:rgba(205,190,255,.09);border-left:3px solid var(--tc);border-radius:12px}
+.feat-sub{border-color:rgba(190,215,255,.12);color:var(--faint)}
+.feat-card{background:rgba(190,215,255,.02);border-color:rgba(190,215,255,.09);border-left:3px solid var(--tc);border-radius:12px}
 
 /* ── the listing flow drops its mint chrome; the money numbers go gold ── */
-.tier.sel{border-color:rgba(160,107,255,.55);background:rgba(160,107,255,.06);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.tier.sel{border-color:rgba(38,198,245,.55);background:rgba(38,198,245,.06);box-shadow:0 8px 24px rgba(0,0,0,.3)}
 .tier .tprice{color:var(--acc)}
 .tier li::before{color:var(--acc)}
 .pkg-price,.pt-price{color:var(--acc)}
 /* the ribbon chips (TOP TIER · BEST SELLER · START HERE) are OUR chrome, not
    tier data — they wear the gold; INSTANT keeps the Xpress cyan it names */
-.pkg-flag{background:var(--acc);color:#FFFFFF}
-.soc-tag{background:rgba(160,107,255,.14);color:var(--acc);border:1px solid rgba(160,107,255,.3)}
+.pkg-flag{background:var(--acc);color:#03222E}
+.soc-tag{background:rgba(38,198,245,.14);color:var(--acc);border:1px solid rgba(38,198,245,.3)}
 
 /* ============================================================
-   MOONTOK VIOLET — the skin the operator pointed at
-   ("saya ingin buat seperti moontok", with the screenshot)
+   MOONTOK ARRANGEMENT · DEXVRA BLUE — the reference's shape, the brand's color
+   ("saya ingin buat seperti moontok", then "warnanya brandnya ya dexvra biru")
 
-   Black ground with an electric-violet ambience, violet chrome on every
-   control, white-on-violet CTAs, per-chain heat bars in the accent.
+   Black ground with a blue ambience, the Dexvra diamond's cyan-blue as
+   the one chrome accent — pills, CTAs, heat bars, ticker ranks.
    Green/red stay the market's colors and LIVE stays mint — data and
    truth lights are never chrome. Not a pixel clone: Dexvra's own data
    surfaces (DXS score, movers, top coins) keep their seats.
    ============================================================ */
 
-/* the ground: near-black with the reference's violet glow up top */
+/* the ground: near-black with the brand-blue glow up top */
 body{
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
-    radial-gradient(1200px 540px at 50% -30%, rgba(140,80,255,.12), transparent 62%),
-    radial-gradient(900px 420px at 92% -10%, rgba(90,40,200,.08), transparent 60%),
-    linear-gradient(180deg,#0A0812 0%,#080710 45%,#070609 100%);
+    radial-gradient(1200px 540px at 50% -30%, rgba(40,170,240,.12), transparent 62%),
+    radial-gradient(900px 420px at 92% -10%, rgba(20,120,200,.08), transparent 60%),
+    linear-gradient(180deg,#070B12 0%,#060A0F 45%,#05080B 100%);
 }
-.topbar{background:rgba(12,9,20,.9)}
+.topbar{background:rgba(8,14,20,.9)}
 
-/* CTAs: white on the violet gradient — the reference's Connect button */
+/* CTAs: dark ink on the brand-blue gradient — the reference's button shape */
 .btn-primary,.fasttrack{
-  background:linear-gradient(180deg,#9E66FF 0%,#8442F5 55%,#6D28D9 100%)!important;
-  color:#fff!important;
-  box-shadow:0 8px 26px rgba(124,58,237,.4), inset 0 1px 0 rgba(255,255,255,.35)!important;
+  background:linear-gradient(180deg,#4FD4FF 0%,#1FAEE8 55%,#0B84C2 100%)!important;
+  color:#03222E!important;
+  box-shadow:0 8px 26px rgba(14,155,216,.4), inset 0 1px 0 rgba(255,255,255,.35)!important;
 }
 .btn-primary:hover,.fasttrack:hover{
-  box-shadow:0 12px 32px rgba(124,58,237,.55), inset 0 1px 0 rgba(255,255,255,.45)!important;
+  box-shadow:0 12px 32px rgba(14,155,216,.55), inset 0 1px 0 rgba(255,255,255,.45)!important;
 }
 
-/* active pills fill violet — every chip species, one voice */
-.chain-chip.active{background:rgba(160,107,255,.16);border-color:rgba(160,107,255,.55);color:#F1EAFF}
-.chain-chip.active .chain-n{background:var(--acc);color:#fff}
-.tab.active{background:rgba(160,107,255,.16);border-color:rgba(160,107,255,.55);color:#F1EAFF}
-.chip-chain.on{color:#F1EAFF;border-color:rgba(160,107,255,.55);background:rgba(160,107,255,.12)}
-.ttab.active{background:rgba(160,107,255,.2);color:#F1EAFF}
+/* active pills fill brand blue — every chip species, one voice */
+.chain-chip.active{background:rgba(38,198,245,.16);border-color:rgba(38,198,245,.55);color:#F1EAFF}
+.chain-chip.active .chain-n{background:var(--acc);color:#03222E}
+.tab.active{background:rgba(38,198,245,.16);border-color:rgba(38,198,245,.55);color:#F1EAFF}
+.chip-chain.on{color:#F1EAFF;border-color:rgba(38,198,245,.55);background:rgba(38,198,245,.12)}
+.ttab.active{background:rgba(38,198,245,.2);color:#F1EAFF}
 
-/* the heat cards read like the reference's satellite row: violet bars,
-   violet degree marks */
-.heat-bar i{background:linear-gradient(90deg,#A06BFF,#7C3AED)}
+/* the heat cards read like the reference's satellite row, in the brand blue */
+.heat-bar i{background:linear-gradient(90deg,#26C6F5,#0E9BD8)}
 .heat-temp .deg{color:var(--acc)}
 .wcard-head .more{color:var(--acc)}
 
 /* scattered mint chrome that predates every layer */
-.qtag:hover{color:var(--acc);border-color:rgba(160,107,255,.5)}
-.guide:hover{border-color:rgba(160,107,255,.45)}
-.soc-card:hover{border-color:rgba(160,107,255,.45)}
+.qtag:hover{color:var(--acc);border-color:rgba(38,198,245,.5)}
+.guide:hover{border-color:rgba(38,198,245,.45)}
+.soc-card:hover{border-color:rgba(38,198,245,.45)}
 .soc-card:hover .soc-ic,.soc-card:hover .soc-go{color:var(--acc)}
-.copy-btn{color:var(--acc);border-color:rgba(160,107,255,.45)}
-.copy-btn:hover{background:rgba(160,107,255,.14)}
+.copy-btn{color:var(--acc);border-color:rgba(38,198,245,.45)}
+.copy-btn:hover{background:rgba(38,198,245,.14)}
 .dot-live{background:var(--mint)}

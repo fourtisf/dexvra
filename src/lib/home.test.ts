@@ -546,16 +546,23 @@ test("the home opens on the intel cards, then banners, then the board", () => {
   assert.ok(!/setInterval/.test(page), "no rotation timer on the page");
 });
 
-test("the skin is the violet accent, and the serif identity is fully retired", () => {
-  // The gold + serif direction was rejected outright ("ini malah lebih jelek").
-  // The accent word class survives in markup (PageHead renders it), so it must
-  // now BE the two-tone accent — same face, no italic — or every masthead
-  // still wears the rejected identity.
+test("the skin is the BRAND BLUE accent, and the serif identity is fully retired", () => {
+  // Two rejections shaped this: the gold + serif direction ("ini malah lebih
+  // jelek"), then Moontok's violet corrected to the brand's own color
+  // ("warnanya brandnya ya dexvra biru"). The accent word class survives in
+  // markup (PageHead renders it), so it must be the two-tone accent — same
+  // face, no italic — or every masthead still wears a rejected identity.
   const serif = CSS.match(/\.hero-serif\{[^}]*\}/)?.[0] ?? "";
   assert.match(serif, /font-family:var\(--fd\)/, "the accent word uses the display face");
   assert.match(serif, /font-style:normal/, "…not the italic");
   assert.ok(!/--acc:#E3C27E/.test(CSS), "the champagne gold accent is gone");
-  assert.match(CSS, /--acc:#A06BFF/, "the violet accent is the one accent");
+  assert.ok(!/--acc:#A06BFF/.test(CSS), "…and Moontok's violet with it");
+  assert.match(CSS, /--acc:#26C6F5/, "the Dexvra cyan-blue is the one accent");
+  // the pending/attention AMBER is a status color that predates every skin —
+  // the accent rename collided with its token once, and blue pending chips
+  // inside amber borders is the mismatch this pin keeps dead
+  assert.match(CSS, /--amber:#FFD166/, "amber keeps its own token");
+  assert.match(CSS, /\.a-status\.pending\{color:var\(--amber\)\}/, "pending states stay amber");
 });
 
 test("every page opens on the masthead grammar — the emoji chip is retired site-wide", () => {
