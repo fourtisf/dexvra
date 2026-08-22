@@ -334,7 +334,7 @@ function tcColumns(): { cols: number[]; hides: string[][] } {
   return { cols, hides };
 }
 
-test("every breakpoint declares exactly as many columns as the row still has cells", () => {
+test("every tc template declares exactly as many columns as the row has cells — none hidden", () => {
   // The header is a flat list of cells and shares the grid with every row, so
   // counting it counts the row. The slice starts INSIDE the wrapper's tag, so
   // every `<div` it then finds is a cell.
@@ -344,13 +344,23 @@ test("every breakpoint declares exactly as many columns as the row still has cel
   assert.strictEqual(total, 7, "Coin, Price, 1h, period, Market Cap, DXS, and #");
 
   const { cols, hides } = tcColumns();
-  assert.ok(cols.length >= 4, "a base rule plus the narrow ones");
-  // Hiding is CUMULATIVE down the breakpoints, so column n = total - (hidden so far).
-  let hidden = 0;
-  cols.forEach((c, i) => {
-    if (i > 0) hidden += hides[i - 1]?.length ?? 0;
-    assert.strictEqual(c, total - hidden, `breakpoint ${i}: ${c} columns for ${total - hidden} cells`);
-  });
+  // Phones used to HIDE columns down a breakpoint ladder; the operator asked
+  // for the reference's pattern instead ("top coin dan trending harus bisa di
+  // scroll ke kanan"), so the ladder is GONE: every template carries the full
+  // set and the board scrolls sideways. A reintroduced hide would silently
+  // desync the phone template's column count again — that is what this pins.
+  assert.strictEqual(hides.length, 0, "no tc column hides anywhere — phones scroll instead");
+  assert.ok(cols.length >= 2, "the base rule plus the phone template");
+  for (const [i, c] of cols.entries())
+    assert.strictEqual(c, total, `template ${i}: ${c} columns for ${total} cells`);
+
+  // …and the strategy that replaced hiding is pinned with it: a sideways
+  // scroller whose identity column is STICKY, on both tables. Without the
+  // sticky cell, a swiped table is columns of numbers belonging to nobody.
+  assert.match(CSS, /\.tc-board\{[^}]*overflow-x:auto/, "Top Coins scrolls");
+  assert.match(CSS, /\.board\{overflow-x:auto/, "the trending board scrolls");
+  assert.match(CSS, /\.tc-row>\.tc-tok[^{]*\{position:sticky/, "Top Coins identity is sticky");
+  assert.match(CSS, /\.board \.row>\.tok[^{]*\{position:sticky/, "board identity is sticky");
 });
 
 test("the classes the narrow rules hide are classes the row actually renders", () => {
