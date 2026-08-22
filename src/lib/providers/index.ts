@@ -23,6 +23,7 @@ import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
 import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 import { fetchIndexedMarket } from "./indexedMarket";
+import { fillFromLastGood } from "./lastGood";
 
 // 60s, not 30: at 173 listings a refresh is ~8 chunked GT requests, and the
 // bot suite shares this server's IP and GT quota (~30 req/min, its own docs).
@@ -105,6 +106,18 @@ async function loadListedTokens(): Promise<BoardToken[]> {
 
   const live = new Map<string, Map<string, LiveMarket>>();
   for (const r of marketResults) if (r.status === "fulfilled") live.set(r.value.chain, r.value.map);
+
+  // A token the providers priced an hour ago and miss THIS cycle must not
+  // collapse to its captured-at-listing figures — that is how a priced row
+  // renders a dash for one bad chunk. Memory fills only what the cycle
+  // missed; a fresh reading always wins (see lastGood.ts).
+  for (const [chain, addrs] of Object.entries(byChain)) {
+    const map = live.get(chain) ?? new Map<string, LiveMarket>();
+    const filled = fillFromLastGood(chain, map, addrs);
+    if (filled.length > 0)
+      console.warn(`[market] ${chain}: served last-known reading for ${filled.length} token(s) the providers missed this cycle`);
+    if (!live.has(chain) && map.size > 0) live.set(chain, map);
+  }
 
   return fallback.map((t) => {
     const m = live.get(t.chain)?.get(t.address.toLowerCase());

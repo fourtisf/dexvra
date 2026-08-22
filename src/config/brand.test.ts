@@ -181,7 +181,11 @@ test("every channel entry is complete and reachable", async () => {
 
 test("the page is reachable — a page nobody can find is not a page", () => {
   assert.match(read("src/components/Sidebar.tsx"), /href: "\/community"/, "it is in the sidebar nav");
-  assert.match(read("src/app/(site)/layout.tsx"), /href="\/community"/, "and in the footer");
+  // The FOOTER link was removed at the operator's request (2026-08-22, "all
+  // channel … hapus aja ini") — the footer's socials are the real
+  // destinations and /community stays reachable through the ⋮ menu. This
+  // asserts the removal so it cannot quietly creep back as a "fix".
+  assert.ok(!/href="\/community"/.test(read("src/app/(site)/layout.tsx")), "the footer link stays removed");
 });
 
 test("the page warns about impersonation, because a listing site attracts it", () => {

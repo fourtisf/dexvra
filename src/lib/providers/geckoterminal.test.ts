@@ -105,3 +105,75 @@ test("a chain GT does not index, or an empty list, answers empty without a reque
     globalThis.fetch = realFetch;
   }
 });
+
+// ── the sibling-pool CHANGE borrow ──────────────────────────────────────────
+// GT sends `price_change_percentage.h24: null` for a pool that has not traded
+// in the window — a different fact from the pool not existing. Reading only
+// the top pool turned that null into a fabricated ▲0.0% even when a sibling
+// pool of the SAME token carried a real reading (the bot repo's
+// changeFromPools lesson, on the web surface).
+
+function gtPool(id: string, reserve: string, chg: Partial<Record<"m5" | "h1" | "h6" | "h24", string>>) {
+  return {
+    id,
+    attributes: {
+      address: id.split("_")[1],
+      reserve_in_usd: reserve,
+      pool_created_at: null,
+      price_change_percentage: chg,
+      volume_usd: {},
+      transactions: {},
+    },
+  };
+}
+
+function mockGtPayload(payload: unknown) {
+  globalThis.fetch = (async () => Response.json(payload)) as typeof fetch;
+}
+
+function poolsPayload(address: string, pools: ReturnType<typeof gtPool>[]) {
+  return {
+    data: [{
+      id: `solana_${address}`,
+      attributes: {
+        address, name: "T", symbol: "T", image_url: null,
+        price_usd: "1.5", market_cap_usd: "1000000", fdv_usd: null, total_reserve_in_usd: null,
+      },
+      relationships: { top_pools: { data: pools.map((p) => ({ id: p.id })) } },
+    }],
+    included: pools,
+  };
+}
+
+test("a quiet top pool borrows its change from the deepest sibling that has one", async () => {
+  try {
+    const a = addr(1);
+    mockGtPayload(poolsPayload(a, [
+      gtPool("solana_pMain", "100000", { h1: "2.0" }), // h24 missing — quiet in that window
+      gtPool("solana_pThin", "20000", { h24: "5.0" }),
+      gtPool("solana_pDeep", "60000", { h24: "12.5" }), // deepest sibling WITH a reading wins
+    ]));
+    const m = (await fetchListedMarket("solana", [a])).get(a.toLowerCase());
+    assert.strictEqual(m?.chg["24h"], 12.5, "borrowed from the deepest sibling that has it");
+    assert.strictEqual(m?.chg["1h"], 2.0, "a window the top pool HAS is never overridden");
+    assert.strictEqual(m?.liq, 100000, "liquidity still comes from the top pool alone");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("a dust sibling may never supply the change", async () => {
+  // A four-figure percentage off a $5k pool is the thing judging by the
+  // DEEPEST pool exists to refuse — below the share floor, 0 stands.
+  try {
+    const a = addr(2);
+    mockGtPayload(poolsPayload(a, [
+      gtPool("solana_pMain", "100000", {}),
+      gtPool("solana_pDust", "5000", { h24: "900" }), // 5% of top liq — under the 10% floor
+    ]));
+    const m = (await fetchListedMarket("solana", [a])).get(a.toLowerCase());
+    assert.strictEqual(m?.chg["24h"], 0, "the dust pool's reading was refused");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

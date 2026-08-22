@@ -31,7 +31,13 @@ const CONTRACTS = env("POOLS_TRADE_CONTRACTS", "uniswap-cca,uniswap-bonding-curv
   .map((s) => s.trim())
   .filter(Boolean);
 const PAGE_SIZE = Math.min(500, Math.max(1, Number(env("POOLS_TRADE_PAGE_SIZE", "100")) || 100));
-const MAX_PAGES = Math.min(20, Math.max(1, Number(env("POOLS_TRADE_MAX_PAGES", "3")) || 3));
+// 6, not the original 3: the feed is newest-first, so the window IS how old a
+// still-bonding listing may be and remain priceable. At 3 pages a 1–2 day old
+// listing on a busy launchpad had scrolled past the newest 300, GT had not
+// indexed its pool yet, Robinhood has no DexScreener — and a token trading
+// fine read as "no market anywhere", i.e. the New Listings dash. Each extra
+// page is one POST per refresh cycle, and only when a cursor continues.
+const MAX_PAGES = Math.min(20, Math.max(1, Number(env("POOLS_TRADE_MAX_PAGES", "6")) || 6));
 const TIMEOUT_MS = Math.max(2000, Number(env("POOLS_TRADE_TIMEOUT_MS", "9000")) || 9000);
 const SITE = env("POOLS_TRADE_SITE", "https://pools.trade").replace(/\/+$/, "");
 

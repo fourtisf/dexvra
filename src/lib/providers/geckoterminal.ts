@@ -58,15 +58,49 @@ interface GtPool {
 const poolAddrOf = (pool: GtPool | undefined, id: string | undefined): string | null =>
   pool?.attributes?.address ?? (id ? id.split("_").slice(1).join("_") || null : null);
 
-function mapMarket(token: GtToken, pool: GtPool | undefined, poolId: string | undefined): LiveMarket | null {
+/** A sibling pool may only supply a CHANGE reading if it holds at least this
+ *  share of the top pool's liquidity — a four-figure percentage off a dust
+ *  pool is the thing judging by the DEEPEST pool exists to refuse. */
+const CHANGE_POOL_MIN_SHARE = 0.1;
+
+/** Borrow one change window from the deepest sibling pool that HAS it.
+ *
+ *  GT sends `price_change_percentage.h24: null` for a pool that has not traded
+ *  in the window — a different fact from the pool not existing — so a token
+ *  whose main pool was quiet lost its percentage even when a sibling pool of
+ *  the same token had a good one, and the row rendered a fabricated flat. The
+ *  bot repo's `changeFromPools()` rule, on the web surface: only the CHANGE
+ *  falls back; price, cap and liquidity still come from the top pool alone. */
+function borrowChg(top: GtPool | undefined, siblings: GtPool[], k: "m5" | "h1" | "h6" | "h24"): number | null {
+  const topLiq = num(top?.attributes?.reserve_in_usd);
+  if (topLiq == null || topLiq <= 0) return null; // no depth to measure the floor against
+  const deep = [...siblings].sort(
+    (a, b) => (num(b.attributes?.reserve_in_usd) ?? 0) - (num(a.attributes?.reserve_in_usd) ?? 0),
+  );
+  for (const p of deep) {
+    if ((num(p.attributes?.reserve_in_usd) ?? 0) < topLiq * CHANGE_POOL_MIN_SHARE) break; // sorted — the rest are thinner
+    const v = num(p.attributes?.price_change_percentage?.[k]);
+    if (v != null) return v;
+  }
+  return null;
+}
+
+function mapMarket(
+  token: GtToken,
+  pool: GtPool | undefined,
+  poolId: string | undefined,
+  siblings: GtPool[] = [],
+): LiveMarket | null {
   const price = num(token.attributes.price_usd);
   if (price == null || price <= 0) return null;
   const pa = pool?.attributes;
+  const win = (k: "m5" | "h1" | "h6" | "h24") =>
+    num(pa?.price_change_percentage?.[k]) ?? borrowChg(pool, siblings, k) ?? 0;
   const chg = {
-    "5m": num(pa?.price_change_percentage?.m5) ?? 0,
-    "1h": num(pa?.price_change_percentage?.h1) ?? 0,
-    "6h": num(pa?.price_change_percentage?.h6) ?? 0,
-    "24h": num(pa?.price_change_percentage?.h24) ?? 0,
+    "5m": win("m5"),
+    "1h": win("h1"),
+    "6h": win("h6"),
+    "24h": win("h24"),
   } as Record<PeriodKey, number>;
   const vol = {
     "5m": num(pa?.volume_usd?.m5) ?? 0,
@@ -122,8 +156,13 @@ async function fetchChunk(
   const json = (await res.json()) as { data?: GtToken[]; included?: GtPool[] };
   const poolsById = new Map((json.included ?? []).map((p) => [p.id, p]));
   for (const token of json.data ?? []) {
-    const topId = token.relationships?.top_pools?.data?.[0]?.id;
-    const market = mapMarket(token, topId ? poolsById.get(topId) : undefined, topId);
+    const ids = (token.relationships?.top_pools?.data ?? []).map((d) => d.id);
+    const topId = ids[0];
+    const siblings = ids
+      .slice(1)
+      .map((id) => poolsById.get(id))
+      .filter((p): p is GtPool => p != null);
+    const market = mapMarket(token, topId ? poolsById.get(topId) : undefined, topId, siblings);
     if (market) out.set(token.attributes.address.toLowerCase(), market);
   }
 }
