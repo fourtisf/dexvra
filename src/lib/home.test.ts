@@ -522,52 +522,40 @@ test("every class a page still renders has a style — .board-loading kept its c
     assert.match(CSS, /\.board-loading\{/, `still styled — rendered by ${users.join(", ")}`);
 });
 
-// ── the structure pass ──────────────────────────────────────────────────────
+// ── the Moontok arrangement ─────────────────────────────────────────────────
 //
-// "mksud saya design front end ui ux nya juga rubah" — the page's SHAPE
-// changed: a static command-deck hero instead of the rotating carousel, and a
-// two-column console with the intelligence rail sticky beside the tables.
-// These pin the three claims that shape makes.
+// "saya ingin buat seperti moontok", said with a screenshot. The page opens
+// on the INSTRUMENTS: the intel cards across the top (Pulse · Fear & Greed ·
+// Signals — the reference's Moon-Satellite row), the banner placements, then
+// straight into the trending board. No rotating hero, no editorial deck, no
+// side rail — both earlier shapes were shown to the operator and rejected.
 
-test("the hero is a static deck — nothing on the opening screen moves on its own", () => {
-  // The carousel's autoplay was the page's opening move: chrome animating
-  // itself, with two of its three messages off-screen at any moment. The deck
-  // shows everything at once, so the only timer allowed in the hero is none.
-  const hero = read("src/components/HomeHero.tsx");
-  assert.ok(!/setInterval|setTimeout/.test(hero), "no rotation, no delayed chrome");
+test("the home opens on the intel cards, then banners, then the board", () => {
   const page = read("src/app/(site)/page.tsx");
-  assert.match(page, /<HomeHero/);
-  assert.ok(!page.includes("PromoCarousel"), "the carousel is gone from the page");
-  assert.ok(
-    !existsSync(join(process.cwd(), "src/components/PromoCarousel.tsx")),
-    "…and from the tree — a dead component is the next 'which hero is real?'",
-  );
+  const at = (m: string) => page.indexOf(m);
+  assert.ok(at("<PulseStrip") > -1, "the intel row leads");
+  assert.ok(at("<PulseStrip") < at("<HomeBannerStrip"), "banners under the instruments");
+  assert.ok(at("<HomeBannerStrip") < at("<ChainFilter"), "…then the market area");
+  // the rejected shapes must not creep back
+  for (const dead of ["PromoCarousel", "HomeHero", "home-rail", "home-grid"])
+    assert.ok(!page.includes(dead), `${dead} is retired`);
+  for (const f of ["src/components/PromoCarousel.tsx", "src/components/HomeHero.tsx"])
+    assert.ok(!existsSync(join(process.cwd(), f)), `${f} is out of the tree — a dead hero is the next "which one is real?"`);
+  // nothing on the opening screen moves on its own — the autoplay carousel
+  // stays dead whatever the skin does
+  assert.ok(!/setInterval/.test(page), "no rotation timer on the page");
 });
 
-test("the deck's vital signs render '…' before the first payload — never a zero", () => {
-  // A 0-listing, $0-volume deck about a market nobody has read yet is the
-  // false-empty-state rule, on the first pixels a visitor sees.
-  const hero = read("src/components/HomeHero.tsx");
-  assert.match(hero, /data \? data\.tokens\.length : "…"/, "listings wait for the payload");
-  assert.match(hero, /data \? fmtCap\(data\.trackedVol24h\) : "…"/, "volume waits for the payload");
-  assert.match(hero, /fng\?\.value \?\? "…"/, "fear & greed waits for its read");
-});
-
-test("the intelligence rail sits beside the market column, sticky, and collapses under it", () => {
-  const page = read("src/app/(site)/page.tsx");
-  const rail = page.indexOf('className="home-rail"');
-  assert.ok(rail > -1, "the rail exists");
-  assert.ok(page.indexOf("<PulseStrip") > rail, "Pulse · F&G · Signals live in the rail");
-  assert.ok(page.indexOf('className="home-main"') < page.indexOf("<ChainFilter"), "the market column wraps the tables");
-  assert.match(CSS, /\.home-grid\{display:grid;grid-template-columns:minmax\(0,1fr\) \d+px/, "two real columns");
-  assert.match(CSS, /\.home-rail\{position:sticky/, "the rail holds its place while the tables scroll");
-  // …and it must COLLAPSE: a fixed 312px rail on a phone is a third of the
-  // screen given to ambience, which is the inverted hierarchy.
-  assert.match(
-    CSS,
-    /@media \(max-width:\d+px\)\{\s*\.home-grid\{grid-template-columns:1fr\}/,
-    "one column on narrow screens",
-  );
+test("the skin is the violet accent, and the serif identity is fully retired", () => {
+  // The gold + serif direction was rejected outright ("ini malah lebih jelek").
+  // The accent word class survives in markup (PageHead renders it), so it must
+  // now BE the two-tone accent — same face, no italic — or every masthead
+  // still wears the rejected identity.
+  const serif = CSS.match(/\.hero-serif\{[^}]*\}/)?.[0] ?? "";
+  assert.match(serif, /font-family:var\(--fd\)/, "the accent word uses the display face");
+  assert.match(serif, /font-style:normal/, "…not the italic");
+  assert.ok(!/--acc:#E3C27E/.test(CSS), "the champagne gold accent is gone");
+  assert.match(CSS, /--acc:#A06BFF/, "the violet accent is the one accent");
 });
 
 test("every page opens on the masthead grammar — the emoji chip is retired site-wide", () => {

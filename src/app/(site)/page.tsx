@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
-import { HomeHero } from "@/components/HomeHero";
 import { PulseStrip } from "@/components/PulseStrip";
 import { HomeBannerStrip } from "@/components/HomeBannerStrip";
 import { ChainFilter } from "@/components/ChainFilter";
@@ -16,21 +15,20 @@ import type { PeriodKey } from "@/lib/types";
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
 
 /**
- * The page is a CONSOLE now, not a scroll of stacked strips: the command-deck
- * hero on top, then a two-column body — the market tables in the main column,
- * the intelligence rail (Pulse, Fear & Greed, Signals) sticky beside them so
- * the ambient readings stay on screen while the tables scroll.
+ * The Moontok arrangement ("saya ingin buat seperti moontok"): no editorial
+ * hero, no side rail — the page opens on the INSTRUMENTS and gets to the
+ * table fast.
  *
- * The main column reads top-down as three different questions:
- *
- *   Trending        what is being pushed right now — the paid inventory, and
- *                   the reason this site exists, so it leads
+ *   intel row       Pulse (per-chain heat) · Fear & Greed · Signals,
+ *                   three cards across the top — the Moon-Satellite row
+ *   banner row      the paid placements, full width
+ *   Trending        chain pills + timeframes over the board — the paid
+ *                   inventory, and the reason this site exists
  *   Market Movers   what moved — gainers, losers, what just listed
  *   Top Coins       what is actually big here
  *
- * ONE chain filter governs all three. Repeating a chain row per section is
- * three controls that can disagree with each other, on a page whose first
- * problem was already too much chrome above the first token.
+ * ONE chain filter governs the whole market area. Repeating a chain row per
+ * section is three controls that can disagree with each other.
  */
 export default function HomePage() {
   const { data, homeQuery } = useApp();
@@ -53,80 +51,70 @@ export default function HomePage() {
 
   return (
     <section className="view">
-      <HomeHero />
+      <PulseStrip />
       <HomeBannerStrip />
 
-      <div className="home-grid">
-        <div className="home-main">
-          <ChainFilter counts={counts} value={active} onChange={setChain} total={tokens.length} />
+      <ChainFilter counts={counts} value={active} onChange={setChain} total={tokens.length} />
 
-          <div className="sec-block">
-            <div className="sec-head">
-              <div className="sec-title">
-                <div className="flame">
-                  <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M23 6l-9.5 9.5-5-5L1 18" />
-                    <path d="M17 6h6v6" />
-                  </svg>
-                </div>
-                <h2>Trending Listings</h2>
-              </div>
-              <div className="ttabs trend-frames">
-                {PERIODS.map((p) => (
-                  <button
-                    key={p}
-                    className={`ttab ${p === period ? "active" : ""}`}
-                    onClick={() => setPeriod(p)}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-              {data && !data.live && <span className="src-pill demo">demo data</span>}
-              {data?.live && <span className="src-pill live">live</span>}
-              <button className="filter-btn">
-                <svg viewBox="0 0 24 24">
-                  <path d="M4 6h16M7 12h10M10 18h4" />
-                </svg>
-                Filter
-              </button>
+      <div className="sec-block">
+        <div className="sec-head">
+          <div className="sec-title">
+            <div className="flame">
+              <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M23 6l-9.5 9.5-5-5L1 18" />
+                <path d="M17 6h6v6" />
+              </svg>
             </div>
-
-            {/* Opens on ten so the two sections under it are reachable without a
-                long scroll, and grows to fifteen in place. Anything past fifteen
-                keeps its way through to the full board. */}
-            <StdBoard
-              tokens={list}
-              period={period}
-              sortable
-              loading={!data}
-              emptyText={
-                active !== "all" && onChain.length === 0
-                  ? `Nothing listed on ${chainOf(active)?.label ?? active} yet — be the first to list here.`
-                  : undefined
-              }
-              limit={HOME_BOARD_ROWS}
-              expandTo={HOME_TRENDING_MAX}
-              expandNoun="trending"
-              viewAllHref="/trending"
-            />
+            <h2>Trending Listings</h2>
           </div>
-
-          {/* A search is a lookup, not a ranking. "Top Gainers matching PLUM" is
-              not a top-gainers list, and leaving it market-wide would put two
-              different datasets on one screen under one query. */}
-          {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} loading={!data} />}
-
-          <div className="sec-block">
-            <TopCoinsBoard tokens={list} period={period} loading={!data} />
+          <div className="ttabs trend-frames">
+            {PERIODS.map((p) => (
+              <button
+                key={p}
+                className={`ttab ${p === period ? "active" : ""}`}
+                onClick={() => setPeriod(p)}
+              >
+                {p}
+              </button>
+            ))}
           </div>
+          {data && !data.live && <span className="src-pill demo">demo data</span>}
+          {data?.live && <span className="src-pill live">live</span>}
+          <button className="filter-btn">
+            <svg viewBox="0 0 24 24">
+              <path d="M4 6h16M7 12h10M10 18h4" />
+            </svg>
+            Filter
+          </button>
         </div>
 
-        {/* The intelligence rail. On a narrow screen the grid collapses and
-            the rail follows the tables — ambience never outranks the market. */}
-        <aside className="home-rail">
-          <PulseStrip />
-        </aside>
+        {/* Opens on ten so the two sections under it are reachable without a
+            long scroll, and grows to fifteen in place. Anything past fifteen
+            keeps its way through to the full board. */}
+        <StdBoard
+          tokens={list}
+          period={period}
+          sortable
+          loading={!data}
+          emptyText={
+            active !== "all" && onChain.length === 0
+              ? `Nothing listed on ${chainOf(active)?.label ?? active} yet — be the first to list here.`
+              : undefined
+          }
+          limit={HOME_BOARD_ROWS}
+          expandTo={HOME_TRENDING_MAX}
+          expandNoun="trending"
+          viewAllHref="/trending"
+        />
+      </div>
+
+      {/* A search is a lookup, not a ranking. "Top Gainers matching PLUM" is
+          not a top-gainers list, and leaving it market-wide would put two
+          different datasets on one screen under one query. */}
+      {!q && <MarketMovers tokens={onChain} updatedAt={data?.updatedAt} loading={!data} />}
+
+      <div className="sec-block">
+        <TopCoinsBoard tokens={list} period={period} loading={!data} />
       </div>
     </section>
   );

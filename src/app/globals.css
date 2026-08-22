@@ -6,7 +6,7 @@
   --text:#F1F5FB; --muted:#9AA6BC; --faint:#66738C;
   --mint:#3DF59F; --mint-deep:#12D97C; --cyan:#22D3EE;
   --violet:#A97CFF; --violet-deep:#7C3AED;
-  --orange:#FF9D4D; --red:#FF5C7A; --gold:#FFD166;
+  --orange:#FF9D4D; --red:#FF5C7A; --acc:#FFD166;
   --grad:linear-gradient(120deg,#3DF59F 0%,#22D3EE 100%);
   /* Sora is the brand face the bot's channel artwork already draws with —
      one typeface across the site and every banner is one identity. */
@@ -182,10 +182,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 }
 
 /* ============ HERO SHARED BITS ============
-   The rotating PROMO CAROUSEL lived here (slides, orbits, sparkles, dots) and
-   was retired by the structure pass — the hero is HomeHero.tsx now, styled in
-   the PRIVÉ STRUCTURE layer at the end of this file. What survives below is
-   only what other surfaces share. */
+   The rotating PROMO CAROUSEL lived here (slides, orbits, sparkles, dots),
+   then a command-deck hero replaced it, and BOTH are retired — the home now
+   opens Moontok-style on the intel cards (see MOONTOK ARRANGEMENT below).
+   What survives here is only what other surfaces share. */
 .s-eyebrow{font-family:var(--fm);font-size:9.5px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .coin{
   width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:21px;
@@ -367,9 +367,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .age-chip{font-family:var(--fm);font-size:10.5px;font-weight:800;color:var(--cyan);border:1px solid rgba(34,211,238,.35);border-radius:9px;padding:4.5px 9px;white-space:nowrap;background:rgba(34,211,238,.07)}
 .star{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;color:var(--faint);transition:all .15s}
 .star svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linejoin:round}
-.star:hover{color:var(--gold);background:rgba(255,209,102,.12)}
-.star.on{color:var(--gold)}
-.star.on svg{fill:var(--gold)}
+.star:hover{color:var(--acc);background:rgba(255,209,102,.12)}
+.star.on{color:var(--acc)}
+.star.on svg{fill:var(--acc)}
 .flash-up .price{color:var(--mint)}
 .flash-dn .price{color:var(--red)}
 .row.flash-up,.mv-row.flash-up{background:rgba(61,220,151,.05)}
@@ -399,7 +399,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .tier ul{list-style:none;display:flex;flex-direction:column;gap:5px}
 .tier li{font-size:11.5px;color:var(--muted);display:flex;gap:6px}
 .tier li::before{content:"✓";color:var(--mint);font-weight:800}
-.tier .pop{position:absolute;top:-9px;right:12px;font-family:var(--fm);font-size:8.5px;font-weight:800;letter-spacing:.1em;color:#03150B;background:var(--gold);border-radius:999px;padding:3.5px 9px}
+.tier .pop{position:absolute;top:-9px;right:12px;font-family:var(--fm);font-size:8.5px;font-weight:800;letter-spacing:.1em;color:#03150B;background:var(--acc);border-radius:999px;padding:3.5px 9px}
 .calc-out{border:1px solid rgba(61,220,151,.35);border-radius:16px;background:linear-gradient(140deg,rgba(61,220,151,.12),rgba(34,211,238,.05)),rgba(255,255,255,.02);padding:18px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;text-align:center}
 .co .v{font-family:var(--fm);font-weight:800;font-size:clamp(18px,2vw,26px);color:var(--mint)}
 .co .v.dim{color:var(--text)}
@@ -429,7 +429,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .acct-row:last-child{border-bottom:none}
 .acct-row .av{margin-left:auto;font-family:var(--fm);font-weight:700;font-size:12.5px;color:var(--text)}
 .mini-listing{display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:13px;padding:11px 13px;background:rgba(255,255,255,.02)}
-.status-chip{margin-left:auto;font-family:var(--fm);font-size:9.5px;font-weight:800;letter-spacing:.08em;color:var(--gold);border:1px solid rgba(255,209,102,.4);border-radius:999px;padding:4px 10px;background:rgba(255,209,102,.08)}
+.status-chip{margin-left:auto;font-family:var(--fm);font-size:9.5px;font-weight:800;letter-spacing:.08em;color:var(--acc);border:1px solid rgba(255,209,102,.4);border-radius:999px;padding:4px 10px;background:rgba(255,209,102,.08)}
 .big-empty{display:flex;flex-direction:column;align-items:center;gap:10px;padding:38px 20px;text-align:center}
 .big-empty .em{font-size:40px}
 .big-empty p{color:var(--muted);font-size:13px;max-width:40ch}
@@ -617,7 +617,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   --text:#F5F6F8; --muted:#9BA1AC; --faint:#5B616C;
   --mint:#3DDC97; --mint-deep:#17B98A; --cyan:#4CC7D4;
   --violet:#B79CFF; --violet-deep:#6D4BD1;
-  --orange:#EDA765; --red:#F76A85; --gold:#E7C77A;
+  --orange:#EDA765; --red:#F76A85; --acc:#E7C77A;
   /* platinum sheen for primary actions — premium, not neon */
   --grad:linear-gradient(180deg,#FAFBFC 0%,#D6DAE1 100%);
 }
@@ -940,7 +940,7 @@ body{
 .astat{border:1px solid var(--line);border-radius:14px;padding:16px 18px;background:rgba(255,255,255,.02)}
 .astat .k{font-family:var(--fm);font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
 .astat .v{font-family:var(--fd);font-weight:700;font-size:26px;margin-top:6px}
-.astat.pend .v{color:var(--gold)}
+.astat.pend .v{color:var(--acc)}
 
 .asec{border:1px solid var(--line);border-radius:16px;background:var(--card);overflow:hidden}
 .asec-h{font-family:var(--fd);font-weight:700;font-size:15px;padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
@@ -963,7 +963,7 @@ body{
 .a-chain{font-family:var(--fm);font-size:11px;color:var(--muted)}
 .a-ca{font-family:var(--fm);font-size:10.5px;color:var(--faint)}
 .a-status{font-family:var(--fm);font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:2.5px 8px;border:1px solid currentColor}
-.a-status.approved{color:#3DDC97}.a-status.pending{color:var(--gold)}.a-status.rejected{color:var(--red)}
+.a-status.approved{color:#3DDC97}.a-status.pending{color:var(--acc)}.a-status.rejected{color:var(--red)}
 .a-input,.a-select{background:rgba(255,255,255,.03);border:1px solid var(--line2);border-radius:8px;color:var(--text);font-family:var(--fb);font-size:12.5px;padding:7px 9px;width:100%}
 .a-select{cursor:pointer}
 .a-check{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap}
@@ -1442,7 +1442,7 @@ body{
     #070809;
 }
 
-/* 2 ── the editorial voice (the hero itself is built in PRIVÉ STRUCTURE) */
+/* 2 ── the editorial voice */
 .s-eyebrow{margin-bottom:14px;color:var(--mint)}
 
 /* 3 ── the floating tables. A dark card on a dark page holding a dark table
@@ -1485,9 +1485,9 @@ body{
    semantics — brand and truth, not decoration.
    ============================================================ */
 :root{
-  --gold:#E3C27E; --gold-deep:#C9A45C;
+  --acc:#A06BFF; --acc-deep:#7C3AED;
   --fd:'Archivo','Sora',-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
-  --fs:'Instrument Serif',Georgia,serif;
+  --fs:var(--fd);  /* serif retired with the Privé direction */
 }
 
 /* ── structure: one column, the header is the navigation ─────────────────── */
@@ -1497,12 +1497,12 @@ body{
 .brand-top{display:flex}
 .topmenu{display:block}
 .topbar{padding:13px 26px;gap:16px;background:rgba(10,13,20,.88)}
-.topbar::after{background:linear-gradient(90deg,transparent 4%,rgba(227,194,126,.35) 50%,transparent 96%)}
+.topbar::after{background:linear-gradient(90deg,transparent 4%,rgba(160,107,255,.35) 50%,transparent 96%)}
 .topnav{display:flex;flex-direction:row;align-items:center;gap:2px;flex:none}
 .topnav a{display:flex;align-items:center;padding:8px 13px;border-radius:9px;
   color:var(--muted);font-weight:500;font-size:13.5px;letter-spacing:.01em;transition:color .15s,background .15s}
 .topnav a:hover{color:var(--text);background:rgba(255,255,255,.04)}
-.topnav a.active{color:var(--gold);background:rgba(227,194,126,.08)}
+.topnav a.active{color:var(--acc);background:rgba(160,107,255,.08)}
 .topnav a.active::before{content:none}
 .search{max-width:420px}
 @media (max-width:1180px){.topnav a{padding:8px 9px;font-size:13px}}
@@ -1512,41 +1512,41 @@ body{
 body{
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
-    radial-gradient(1100px 500px at 50% -28%, rgba(120,150,255,.05), transparent 60%),
+    radial-gradient(1100px 500px at 50% -28%, rgba(150,107,255,.05), transparent 60%),
     linear-gradient(180deg,#0B0E15 0%,#090B10 40%,#07080C 100%);
 }
-.wcard,.mv-card{background:linear-gradient(180deg,rgba(160,180,255,.03),transparent 30%),#0E1119;
-  border-color:rgba(190,205,255,.08)}
-.row.head,.tc-row.tc-head{border-bottom-color:rgba(190,205,255,.09)}
-.row,.tc-row,.skr{border-bottom-color:rgba(190,205,255,.05)}
+.wcard,.mv-card{background:linear-gradient(180deg,rgba(165,120,255,.03),transparent 30%),#0E0C15;
+  border-color:rgba(205,190,255,.08)}
+.row.head,.tc-row.tc-head{border-bottom-color:rgba(205,190,255,.09)}
+.row,.tc-row,.skr{border-bottom-color:rgba(205,190,255,.05)}
 
 /* the chrome accents move to gold — data colors are untouched */
-.hero-mark path{stroke:rgba(227,194,126,.55)}
-.s-eyebrow{color:var(--gold)}
-.chain-chip.active{background:rgba(227,194,126,.09);border-color:rgba(227,194,126,.4);color:#F4E7C8}
-.chain-chip.active .chain-n{background:var(--gold);color:#241A05}
-.ttab.active{background:rgba(227,194,126,.12);color:#F4E7C8}
-.search:focus-within{border-color:rgba(227,194,126,.45);box-shadow:0 0 0 3px rgba(227,194,126,.08)}
-.board-expand{color:var(--gold)}
-.board-expand:hover{color:#F0D9A8}
-.board-all,.mv-all:hover,.wcard-head .more{color:var(--gold)}
-.tc-more{color:var(--gold);border-color:rgba(227,194,126,.4)}
-.tc-more:hover{background:rgba(227,194,126,.1)}
-.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(227,194,126,.05),transparent 70%)}
-.row:not(.head):hover{background:linear-gradient(90deg,rgba(227,194,126,.05),transparent 70%)}
-.sec-ic{background:rgba(227,194,126,.08);border-color:rgba(227,194,126,.22);color:var(--gold)}
-.flame{background:rgba(227,194,126,.1);border-color:rgba(227,194,126,.25);color:var(--gold)}
-.badge-hot{background:rgba(227,194,126,.14);color:var(--gold)}
-.star:hover,.star.on{color:var(--gold)}
-.star.on svg{fill:var(--gold)}
-.nav .ldot{background:var(--gold);box-shadow:0 0 8px rgba(227,194,126,.6)}
-::selection{background:rgba(227,194,126,.3)}
-:focus-visible{outline-color:var(--gold)}
+.hero-mark path{stroke:rgba(160,107,255,.55)}
+.s-eyebrow{color:var(--acc)}
+.chain-chip.active{background:rgba(160,107,255,.09);border-color:rgba(160,107,255,.4);color:#EFE6FF}
+.chain-chip.active .chain-n{background:var(--acc);color:#FFFFFF}
+.ttab.active{background:rgba(160,107,255,.12);color:#EFE6FF}
+.search:focus-within{border-color:rgba(160,107,255,.45);box-shadow:0 0 0 3px rgba(160,107,255,.08)}
+.board-expand{color:var(--acc)}
+.board-expand:hover{color:#C9AFFF}
+.board-all,.mv-all:hover,.wcard-head .more{color:var(--acc)}
+.tc-more{color:var(--acc);border-color:rgba(160,107,255,.4)}
+.tc-more:hover{background:rgba(160,107,255,.1)}
+.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(160,107,255,.05),transparent 70%)}
+.row:not(.head):hover{background:linear-gradient(90deg,rgba(160,107,255,.05),transparent 70%)}
+.sec-ic{background:rgba(160,107,255,.08);border-color:rgba(160,107,255,.22);color:var(--acc)}
+.flame{background:rgba(160,107,255,.1);border-color:rgba(160,107,255,.25);color:var(--acc)}
+.badge-hot{background:rgba(160,107,255,.14);color:var(--acc)}
+.star:hover,.star.on{color:var(--acc)}
+.star.on svg{fill:var(--acc)}
+.nav .ldot{background:var(--acc);box-shadow:0 0 8px rgba(160,107,255,.6)}
+::selection{background:rgba(160,107,255,.3)}
+:focus-visible{outline-color:var(--acc)}
 
 /* the primary actions wear the gold */
 .btn-primary,.fasttrack{
-  background:linear-gradient(180deg,#F0D9A8 0%,#E3C27E 45%,#C9A45C 100%)!important;
-  color:#241A05!important;
+  background:linear-gradient(180deg,#C9AFFF 0%,#A06BFF 45%,#7C3AED 100%)!important;
+  color:#FFFFFF!important;
   box-shadow:0 8px 22px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,248,230,.8)!important;
 }
 .btn-primary:hover,.fasttrack:hover{
@@ -1554,146 +1554,28 @@ body{
 }
 
 /* ── type: the serif italic is the signature ─────────────────────────────── */
-.hero-serif{font-family:var(--fs);font-style:italic;font-weight:400;color:var(--gold);
-  font-size:1.12em;letter-spacing:0;padding-right:.04em}
+/* the accent word: Moontok's two-tone wordmark grammar (Moon·Profile) —
+   same face, same weight, the ACCENT carries it. No serif, no italic. */
+.hero-serif{font-family:var(--fd);font-style:normal;font-weight:inherit;color:var(--acc);
+  font-size:1em;letter-spacing:inherit}
 .sec-title h2,.page-head h2,.brand-name,.mv-head h3,.wcard-head h3{font-family:var(--fd)}
 
 /* LIVE stays mint — it is a truth light, not chrome */
 .live-pill,.src-pill.live{background:var(--mint);color:#04240F}
 
 /* ============================================================
-   PRIVÉ STRUCTURE — the UX rebuild
-   ("mksud saya design front end ui ux nya juga rubah")
+   MOONTOK ARRANGEMENT — the home opens on the instruments
+   ("saya ingin buat seperti moontok", said with the screenshot)
 
-   The identity pass changed what the page WEARS; this changes what the
-   page IS. Three structural moves, no data or behaviour touched:
-
-   1. THE COMMAND DECK — the rotating carousel is gone. One static hero:
-      the pitch and both actions on the left, the editable showcase framed
-      on the right, the market's vital signs in one strip beneath. Nothing
-      on the opening screen moves on its own.
-   2. THE CONSOLE — the body becomes two columns: the market tables in the
-      main column, the intelligence rail (Pulse · Fear & Greed · Signals)
-      STICKY beside them, so the ambient readings stay on screen while the
-      tables scroll. Below 1180px the rail folds under the tables —
-      ambience never outranks the market.
-   3. THE INDEX — sections carry editorial numerals (01/02/03) instead of
-      icon chips, and the chain filter becomes a tab index on a hairline
-      instead of a row of pills.
+   The command-deck hero and the sticky side rail are RETIRED — that was
+   the editorial direction the operator rejected. The reference's shape:
+   intel cards across the top (Pulse · Fear & Greed · Signals — the
+   Moon-Satellite row), the banner placements under them, then straight
+   into the trending board behind its chain pills. Layout lives in
+   page.tsx; the MOONTOK VIOLET skin at the end of this file matches the
+   reference's palette. What survives of the old structure layer is only
+   what was a straight bug fix: the phone row anatomy below.
    ============================================================ */
-
-/* 1 ── the command deck */
-.hero{display:flex;flex-direction:column;padding:26px 6px 0}
-.hero-main{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:48px;align-items:center;padding-bottom:28px}
-.hero-copy h1{font-family:var(--fd);font-weight:600;font-size:clamp(30px,3.8vw,50px);
-  letter-spacing:-.03em;line-height:1.05;margin:4px 0 12px;max-width:16ch}
-.hero-copy p{font-size:13.5px;line-height:1.6;color:var(--muted);max-width:52ch}
-.hero-cta{display:flex;align-items:center;gap:22px;margin-top:22px;flex-wrap:wrap}
-.hero-cta .btn-primary{padding:13px 24px;font-size:14px;border-radius:12px}
-.hero-adv{font-family:var(--fm);font-size:10.5px;font-weight:600;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--muted);white-space:nowrap;transition:color .15s}
-.hero-adv:hover{color:var(--gold)}
-
-/* the showcase — the old "Pumped on Dexvra" slide as a standing exhibit,
-   with the ad slot folded into its footer instead of owning a whole slide */
-.hero-spot{position:relative;overflow:hidden;display:flex;flex-direction:column;gap:8px;
-  border:1px solid rgba(227,194,126,.22);border-radius:16px;padding:20px 22px 16px;
-  background:linear-gradient(180deg,rgba(227,194,126,.07),transparent 55%),
-    radial-gradient(340px 220px at 100% 0%, rgba(227,194,126,.08), transparent 65%),#0D1018;
-  box-shadow:0 24px 60px rgba(0,0,0,.45)}
-.spot-mark{right:-34px;bottom:-30px;width:190px;height:140px;opacity:.3}
-.spot-eyebrow{font-family:var(--fm);font-size:9px;font-weight:600;letter-spacing:.18em;
-  text-transform:uppercase;color:var(--gold)}
-.spot-row{display:flex;align-items:center;gap:14px;margin-top:2px}
-.spot-coin{width:46px;height:46px;font-size:22px;background:rgba(255,255,255,.07)}
-/* the serif italic at exhibit scale — the identity's signature carrying the number */
-.spot-x{font-family:var(--fs);font-style:italic;font-size:54px;line-height:1;color:var(--gold)}
-.spot-meta{font-family:var(--fm);font-size:11.5px;font-weight:600;color:var(--faint)}
-.spot-meta b{color:var(--text);font-weight:600}
-.spot-id{font-family:var(--fm);font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--muted)}
-.spot-id b{color:var(--gold)}
-.spot-slot{margin-top:8px;padding-top:12px;border-top:1px solid rgba(227,194,126,.14);
-  font-family:var(--fm);font-size:9.5px;font-weight:600;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--faint);transition:color .15s}
-.spot-slot:hover{color:var(--gold)}
-
-/* the vital signs — "…" until the first payload, never a fabricated zero */
-.hero-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:0;
-  border-top:1px solid rgba(190,205,255,.09);padding:16px 2px 2px}
-.hstat{display:flex;flex-direction:column;gap:4px}
-.hstat dt{font-family:var(--fm);font-size:9px;font-weight:600;letter-spacing:.16em;
-  text-transform:uppercase;color:var(--faint)}
-.hstat dd{font-family:var(--fm);font-size:19px;font-weight:600;color:var(--text);margin:0}
-
-/* 2 ── the console */
-.home-grid{display:grid;grid-template-columns:minmax(0,1fr) 312px;gap:26px;align-items:start}
-.home-main{display:flex;flex-direction:column;gap:16px;min-width:0}
-.home-rail{position:sticky;top:82px;min-width:0}
-
-/* the rail turns the pulse strip vertical — desktop only; when the grid
-   collapses the strip keeps its own horizontal grammar untouched */
-@media (min-width:1181px){
-  .home-rail .pulse-strip{flex-direction:column;overflow:visible;gap:14px;padding-bottom:0}
-  .home-rail .wcard{flex:none;width:100%;height:auto;min-height:150px}
-  .home-rail .heat{display:flex;flex-direction:column;gap:7px}
-  .home-rail .heat-cell{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;padding:8px 11px}
-  .home-rail .heat-chain{margin-bottom:0}
-  .home-rail .heat-temp{margin-bottom:0;font-size:16px}
-  .home-rail .heat-kv{grid-column:1/-1;margin-top:4px}
-  .home-rail .heat-bar{grid-column:1/-1;margin-top:5px}
-  .home-rail .fg svg{width:108px}
-}
-@media (max-width:1180px){
-  .home-grid{grid-template-columns:1fr}
-  .home-rail{position:static}
-}
-
-/* 3 ── the index */
-.home-main{counter-reset:sec}
-.home-main .sec-head{border-bottom:1px solid rgba(190,205,255,.07);padding-bottom:12px}
-.home-main .sec-ic,.home-main .flame{display:none}
-.home-main .sec-title::before{counter-increment:sec;content:"0" counter(sec);
-  font-family:var(--fs);font-style:italic;font-size:17px;line-height:1;
-  color:var(--gold);opacity:.9;min-width:24px}
-/* the chain filter joins the hairline grammar: tabs on a rule, not pills */
-.home-main .chain-row{gap:0;padding:0;border-bottom:1px solid rgba(190,205,255,.09)}
-.home-main .chain-chip{border:none;background:transparent;border-radius:0;position:relative;
-  padding:11px 14px;color:var(--muted);font-weight:500}
-.home-main .chain-chip:hover{color:var(--text);background:rgba(255,255,255,.025)}
-.home-main .chain-chip.active{background:transparent;color:#F4E7C8}
-.home-main .chain-chip.active::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;
-  height:2px;border-radius:2px;background:var(--gold)}
-.home-main .chain-more{border:none}
-.home-main .chain-zero{opacity:.45}
-/* ranks 4+ take the serif numeral on EVERY board — trending, leaderboard and
-   watchlist read in the home's voice; the top three keep their metal roundels
-   (.rank .medal pins its own face, so the serif cannot leak into them) */
-.board .rank{font-family:var(--fs);font-style:italic;font-size:16px;color:rgba(227,194,126,.5)}
-
-/* The board's column ladder keys on the VIEWPORT, but in the console it
-   lives beside the 312px rail — so at 1440px the full column set was
-   CLIPPING its Score column off the table's right edge. Inside the main
-   column the ladder shifts by the rail's footprint, and the drop order is
-   the home board's own: liquidity and volume go first, the DXS score —
-   the ranking a competitor cannot copy — stays to the last. Below 1181px
-   the rail folds and the standard ladder is right again. */
-@media (min-width:1181px) and (max-width:1820px){
-  .home-main .c-liq,.home-main .row.head .c-liq{display:none}
-  .home-main .c-vol,.home-main .row.head .c-vol{display:none}
-  .home-main .row{grid-template-columns:50px minmax(200px,1.7fr) 118px 92px 108px 148px 128px 44px}
-}
-@media (min-width:1181px) and (max-width:1520px){
-  .home-main .c-txns,.home-main .row.head .c-txns{display:none}
-  .home-main .row{grid-template-columns:44px minmax(170px,1.7fr) 112px 90px 104px 120px 40px}
-}
-
-/* the deck folds: one column, showcase after the pitch, stats 2×2 */
-@media (max-width:900px){
-  .hero{padding-top:12px}
-  .hero-main{grid-template-columns:1fr;gap:22px;padding-bottom:22px}
-  .hero-copy h1{font-size:31px}
-  .hero-stats{grid-template-columns:repeat(2,1fr);row-gap:16px}
-}
 
 /* ── phones: the row becomes the standard mobile anatomy ───────────────────
    rank · identity · price OVER change · star. The old five-track template
@@ -1750,66 +1632,107 @@ body{
    ============================================================ */
 
 /* ── the masthead ── */
-.page-head{align-items:flex-end;gap:14px;border-bottom:1px solid rgba(190,205,255,.09);padding-bottom:14px}
+.page-head{align-items:flex-end;gap:14px;border-bottom:1px solid rgba(205,190,255,.09);padding-bottom:14px}
 .ph-main{display:flex;flex-direction:column;gap:6px;margin-right:auto;min-width:0}
 .page-head h2{font-size:30px;font-weight:600;letter-spacing:-.03em;line-height:1.05}
 .page-sub{width:auto;margin-top:0}
 .page-ic{display:none}
-.back-link:hover{color:var(--gold)}
+.back-link:hover{color:var(--acc)}
 
-/* ── controls: the tab index replaces every pill wall.
-   Three chip species existed (.chain-chip, .tab, .chip-chain — advertise and
-   verified grew their own); all three fold into ONE treatment, or "semua"
-   would exempt exactly the pages that sell. ── */
-.chain-pick,.tabs{gap:0;border-bottom:1px solid rgba(190,205,255,.09)}
-.chain-pick{padding-bottom:0;margin-bottom:14px}
-.chain-pick .chain-chip,.tab,.chip-chain{border:none;background:transparent;border-radius:0;position:relative;
-  padding:11px 14px;color:var(--muted);font-weight:500}
-.chain-pick .chain-chip:hover,.tab:hover,.chip-chain:hover{color:var(--text);background:rgba(255,255,255,.025);transform:none}
-.chain-pick .chain-chip.active,.tab.active,.chip-chain.on{background:transparent;border:none;color:#F4E7C8;box-shadow:none}
-.chain-pick .chain-chip.active::after,.tab.active::after,.chip-chain.on::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;
-  height:2px;border-radius:2px;background:var(--gold)}
-.chip-chain.on .cc-native{color:var(--gold);border-color:rgba(227,194,126,.4)}
-.qtag:hover{color:var(--gold);border-color:rgba(227,194,126,.45)}
-.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:rgba(227,194,126,.5);box-shadow:0 0 0 3px rgba(227,194,126,.1)}
+/* ── controls: quick-tags and focus rings join the accent ── */
+.qtag:hover{color:var(--acc);border-color:rgba(160,107,255,.45)}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:rgba(160,107,255,.5);box-shadow:0 0 0 3px rgba(160,107,255,.1)}
 
 /* ── surfaces: hairline floats, one gold keyline on the top edge ── */
-.panel{background:linear-gradient(180deg,rgba(160,180,255,.03),transparent 30%),#0D1018;
-  border:1px solid rgba(190,205,255,.08);border-top-color:rgba(227,194,126,.3);
+.panel{background:linear-gradient(180deg,rgba(165,120,255,.03),transparent 30%),#0E0C15;
+  border:1px solid rgba(205,190,255,.08);border-top-color:rgba(160,107,255,.3);
   border-radius:14px;box-shadow:0 18px 44px rgba(0,0,0,.35)}
-.modal{background:linear-gradient(180deg,rgba(160,180,255,.04),transparent 24%),#0D1018;
-  border-color:rgba(190,205,255,.1);border-top-color:rgba(227,194,126,.35);border-radius:18px}
+.modal{background:linear-gradient(180deg,rgba(165,120,255,.04),transparent 24%),#0E0C15;
+  border-color:rgba(205,190,255,.1);border-top-color:rgba(160,107,255,.35);border-radius:18px}
 .listing-card,.signal-row,.alert-item,.mini-listing,.soc-card,.pkg,.guide,.ds,.tier{
-  background:rgba(190,205,255,.025);border-color:rgba(190,205,255,.09);box-shadow:none}
-.listing-card:hover,.soc-card:hover,.guide:hover{border-color:rgba(227,194,126,.4);background:rgba(227,194,126,.04)}
-.soc-card:hover .soc-ic,.soc-card:hover .soc-go{color:var(--gold)}
-.soc-card.primary{border-color:rgba(227,194,126,.3)}
+  background:rgba(205,190,255,.025);border-color:rgba(205,190,255,.09);box-shadow:none}
+.listing-card:hover,.soc-card:hover,.guide:hover{border-color:rgba(160,107,255,.4);background:rgba(160,107,255,.04)}
+.soc-card:hover .soc-ic,.soc-card:hover .soc-go{color:var(--acc)}
+.soc-card.primary{border-color:rgba(160,107,255,.3)}
 .guide .gi{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1);color:var(--muted)}
-.tp-chart-wrap{border-color:rgba(190,205,255,.09);border-top-color:rgba(227,194,126,.3);border-radius:14px;box-shadow:none}
+.tp-chart-wrap{border-color:rgba(205,190,255,.09);border-top-color:rgba(160,107,255,.3);border-radius:14px;box-shadow:none}
 .big-empty .em{filter:grayscale(.6);opacity:.85}
 
 /* ── the token page's stats become a hairline ledger, the CA a dashed frame ── */
-.tp-stats .ds{background:transparent;border:none;border-bottom:1px solid rgba(190,205,255,.08);border-radius:0;padding:10px 2px}
-.ca-box{background:transparent;border:1px dashed rgba(190,205,255,.16);border-radius:10px}
-.copy-btn{color:var(--gold);border-color:rgba(227,194,126,.4)}
-.copy-btn:hover{background:rgba(227,194,126,.12)}
+.tp-stats .ds{background:transparent;border:none;border-bottom:1px solid rgba(205,190,255,.08);border-radius:0;padding:10px 2px}
+.ca-box{background:transparent;border:1px dashed rgba(205,190,255,.16);border-radius:10px}
+.copy-btn{color:var(--acc);border-color:rgba(160,107,255,.4)}
+.copy-btn:hover{background:rgba(160,107,255,.12)}
 
 /* ── the ticker joins the index: serif gold ranks, hairline frame ── */
-.ticker{background:transparent;border-bottom-color:rgba(190,205,255,.08)}
-.tick-item .rnk{font-family:var(--fs);font-style:italic;font-size:13px;font-weight:400;color:rgba(227,194,126,.65)}
+.ticker{background:transparent;border-bottom-color:rgba(205,190,255,.08)}
+.tick-item .rnk{color:rgba(160,107,255,.8);font-weight:700}
 
 /* ── trending's featured rail reads as exhibits, its head as a microlabel ── */
 .feat-head{font-family:var(--fm);font-size:10.5px;font-weight:600;letter-spacing:.16em;
-  text-transform:uppercase;color:var(--gold)}
-.feat-sub{border-color:rgba(190,205,255,.12);color:var(--faint)}
-.feat-card{background:rgba(190,205,255,.02);border-color:rgba(190,205,255,.09);border-left:3px solid var(--tc);border-radius:12px}
+  text-transform:uppercase;color:var(--acc)}
+.feat-sub{border-color:rgba(205,190,255,.12);color:var(--faint)}
+.feat-card{background:rgba(205,190,255,.02);border-color:rgba(205,190,255,.09);border-left:3px solid var(--tc);border-radius:12px}
 
 /* ── the listing flow drops its mint chrome; the money numbers go gold ── */
-.tier.sel{border-color:rgba(227,194,126,.55);background:rgba(227,194,126,.06);box-shadow:0 8px 24px rgba(0,0,0,.3)}
-.tier .tprice{color:var(--gold)}
-.tier li::before{color:var(--gold)}
-.pkg-price,.pt-price{color:var(--gold)}
+.tier.sel{border-color:rgba(160,107,255,.55);background:rgba(160,107,255,.06);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.tier .tprice{color:var(--acc)}
+.tier li::before{color:var(--acc)}
+.pkg-price,.pt-price{color:var(--acc)}
 /* the ribbon chips (TOP TIER · BEST SELLER · START HERE) are OUR chrome, not
    tier data — they wear the gold; INSTANT keeps the Xpress cyan it names */
-.pkg-flag{background:var(--gold);color:#241A05}
-.soc-tag{background:rgba(227,194,126,.14);color:var(--gold);border:1px solid rgba(227,194,126,.3)}
+.pkg-flag{background:var(--acc);color:#FFFFFF}
+.soc-tag{background:rgba(160,107,255,.14);color:var(--acc);border:1px solid rgba(160,107,255,.3)}
+
+/* ============================================================
+   MOONTOK VIOLET — the skin the operator pointed at
+   ("saya ingin buat seperti moontok", with the screenshot)
+
+   Black ground with an electric-violet ambience, violet chrome on every
+   control, white-on-violet CTAs, per-chain heat bars in the accent.
+   Green/red stay the market's colors and LIVE stays mint — data and
+   truth lights are never chrome. Not a pixel clone: Dexvra's own data
+   surfaces (DXS score, movers, top coins) keep their seats.
+   ============================================================ */
+
+/* the ground: near-black with the reference's violet glow up top */
+body{
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
+    radial-gradient(1200px 540px at 50% -30%, rgba(140,80,255,.12), transparent 62%),
+    radial-gradient(900px 420px at 92% -10%, rgba(90,40,200,.08), transparent 60%),
+    linear-gradient(180deg,#0A0812 0%,#080710 45%,#070609 100%);
+}
+.topbar{background:rgba(12,9,20,.9)}
+
+/* CTAs: white on the violet gradient — the reference's Connect button */
+.btn-primary,.fasttrack{
+  background:linear-gradient(180deg,#9E66FF 0%,#8442F5 55%,#6D28D9 100%)!important;
+  color:#fff!important;
+  box-shadow:0 8px 26px rgba(124,58,237,.4), inset 0 1px 0 rgba(255,255,255,.35)!important;
+}
+.btn-primary:hover,.fasttrack:hover{
+  box-shadow:0 12px 32px rgba(124,58,237,.55), inset 0 1px 0 rgba(255,255,255,.45)!important;
+}
+
+/* active pills fill violet — every chip species, one voice */
+.chain-chip.active{background:rgba(160,107,255,.16);border-color:rgba(160,107,255,.55);color:#F1EAFF}
+.chain-chip.active .chain-n{background:var(--acc);color:#fff}
+.tab.active{background:rgba(160,107,255,.16);border-color:rgba(160,107,255,.55);color:#F1EAFF}
+.chip-chain.on{color:#F1EAFF;border-color:rgba(160,107,255,.55);background:rgba(160,107,255,.12)}
+.ttab.active{background:rgba(160,107,255,.2);color:#F1EAFF}
+
+/* the heat cards read like the reference's satellite row: violet bars,
+   violet degree marks */
+.heat-bar i{background:linear-gradient(90deg,#A06BFF,#7C3AED)}
+.heat-temp .deg{color:var(--acc)}
+.wcard-head .more{color:var(--acc)}
+
+/* scattered mint chrome that predates every layer */
+.qtag:hover{color:var(--acc);border-color:rgba(160,107,255,.5)}
+.guide:hover{border-color:rgba(160,107,255,.45)}
+.soc-card:hover{border-color:rgba(160,107,255,.45)}
+.soc-card:hover .soc-ic,.soc-card:hover .soc-go{color:var(--acc)}
+.copy-btn{color:var(--acc);border-color:rgba(160,107,255,.45)}
+.copy-btn:hover{background:rgba(160,107,255,.14)}
+.dot-live{background:var(--mint)}

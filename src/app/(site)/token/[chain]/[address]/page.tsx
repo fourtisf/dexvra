@@ -92,7 +92,7 @@ export default function TokenPage() {
         <div className="tp-actions">
           <button
             className={`btn-ghost2 ${watching ? "on" : ""}`}
-            style={{ color: watching ? "var(--gold)" : undefined }}
+            style={{ color: watching ? "var(--acc)" : undefined }}
             onClick={() => toggleWatch(t.key, t.symbol)}
           >
             {watching ? "★ Watching" : "☆ Watch"}
@@ -130,7 +130,7 @@ export default function TokenPage() {
               </svg>
               <div className="chart-note">
                 {network ? (
-                  <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--gold)" }}>
+                  <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc)" }}>
                     Open full chart on GeckoTerminal ↗
                   </a>
                 ) : (

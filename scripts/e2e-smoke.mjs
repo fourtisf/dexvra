@@ -27,11 +27,12 @@ await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForSelector(".board .row:not(.head)", { timeout: 15000 });
 check("home board rows render", (await page.locator(".board .row:not(.head)").count()) >= 10);
 check("ticker items render", (await page.locator(".tick-item").count()) >= 8);
-check("hero deck present (carousel retired)", await page.locator(".hero").isVisible());
-check("hero vital signs strip", (await page.locator(".hero-stats .hstat").count()) === 4);
-check("intelligence rail is sticky beside the market", await page.evaluate(() => {
-  const r = document.querySelector(".home-rail");
-  return !!r && getComputedStyle(r).position === "sticky";
+// the Moontok arrangement: the intel cards LEAD the page — above the board,
+// with the heat, gauge and news cards all present
+check("intel cards lead the page", await page.evaluate(() => {
+  const strip = document.querySelector(".pulse-strip");
+  const board = document.querySelector(".board");
+  return !!strip && !!board && strip.getBoundingClientRect().top < board.getBoundingClientRect().top;
 }));
 check("pulse heat cells", (await page.locator(".heat-cell").count()) === 3);
 check("fear&greed gauge", await page.locator(".fg-num").isVisible());
