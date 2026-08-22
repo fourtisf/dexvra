@@ -1734,3 +1734,91 @@ body{
 .copy-btn{color:var(--acc);border-color:rgba(38,198,245,.45)}
 .copy-btn:hover{background:rgba(38,198,245,.14)}
 .dot-live{background:var(--mint)}
+
+/* ============================================================
+   PREMIUM FINISH — depth, glass and light on the blue identity
+   ("coba anda buat lebih premium lagi", said over the LIVE site)
+
+   No layout moves and no new colors — the same arrangement and the same
+   brand blue, finished: the tables get a contained glass surface
+   instead of rows floating on bare ground, the cards get a lit top
+   edge, the active pills get their glow, and the ground gets the depth
+   the reference's space artwork provides without shipping artwork.
+   ============================================================ */
+
+/* the ground: a touch more aurora, plus a faint dot grid for depth —
+   static, so reduced-motion owes it nothing */
+body{
+  background:
+    radial-gradient(rgba(160,220,255,.045) 1px, transparent 1.2px) 0 0/28px 28px,
+    radial-gradient(1200px 560px at 50% -30%, rgba(40,170,240,.16), transparent 62%),
+    radial-gradient(900px 460px at 94% -12%, rgba(20,120,200,.1), transparent 60%),
+    radial-gradient(800px 420px at 4% 8%, rgba(38,198,245,.05), transparent 55%),
+    linear-gradient(180deg,#070B12 0%,#060A0F 45%,#05080B 100%);
+}
+
+/* the boards come back INTO a surface — rows floating on the bare page
+   read unfinished next to the reference's contained table */
+.board,.tc-board{
+  background:linear-gradient(180deg,rgba(130,185,255,.04),transparent 24%),rgba(11,15,21,.72);
+  border:1px solid rgba(190,215,255,.09);border-radius:16px;overflow:hidden;
+  box-shadow:0 24px 60px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.tc-board{overflow-x:auto}
+.row.head,.tc-row.tc-head{background:rgba(255,255,255,.02);padding-top:12px}
+.board-expand{border-top:1px solid rgba(190,215,255,.07);padding-left:20px;padding-right:20px}
+.board-expand+.board-foot,.board-foot{padding-left:20px;padding-right:20px}
+.board-foot{border-top:1px solid rgba(190,215,255,.07)}
+.board-expand+.board-foot{border-top:none}
+.tc-foot{padding:10px 6px 0}
+/* the hover row takes a light sweep and a keyline, not just a tint */
+.row:not(.head):hover{background:linear-gradient(90deg,rgba(38,198,245,.08),transparent 65%);box-shadow:inset 2px 0 0 var(--acc)}
+.tc-row:not(.tc-head):hover{background:linear-gradient(90deg,rgba(38,198,245,.06),transparent 65%);box-shadow:inset 2px 0 0 var(--acc)}
+
+/* the intel cards: lit top edge, deeper seat, a whisper more radius */
+.wcard,.mv-card{border-radius:16px;
+  background:linear-gradient(180deg,rgba(130,185,255,.05),transparent 30%),#0B0F16;
+  border-color:rgba(190,215,255,.1);
+  box-shadow:0 20px 48px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.06)}
+.wcard-head .ic{background:rgba(38,198,245,.08);border-color:rgba(38,198,245,.22);color:var(--acc)}
+.heat-cell{background:rgba(255,255,255,.025);border-color:rgba(190,215,255,.08)}
+
+/* the controls polish: glassy chips, a lit active pill with its glow */
+.chain-chip,.ttabs,.filter-btn,.btn-wallet,.btn-ghost2{border-color:rgba(190,215,255,.1)}
+.chain-chip.active{
+  background:linear-gradient(180deg,rgba(38,198,245,.24),rgba(38,198,245,.1));
+  border-color:rgba(38,198,245,.55);
+  box-shadow:0 0 20px rgba(38,198,245,.14), inset 0 1px 0 rgba(255,255,255,.14)}
+.ttab.active{background:linear-gradient(180deg,rgba(38,198,245,.26),rgba(38,198,245,.12));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.tab.active,.chip-chain.on{background:linear-gradient(180deg,rgba(38,198,245,.22),rgba(38,198,245,.09));
+  box-shadow:0 0 16px rgba(38,198,245,.12), inset 0 1px 0 rgba(255,255,255,.12)}
+
+/* the primary action gets the jewel treatment the logo already has */
+.btn-primary,.fasttrack{
+  background:linear-gradient(180deg,#7FE9FF 0%,#2BC9F2 48%,#0E9BD8 100%)!important;
+  box-shadow:0 10px 30px rgba(14,155,216,.4), inset 0 1.5px 0 rgba(255,255,255,.65), inset 0 -2px 4px rgba(3,50,70,.35)!important;
+}
+.btn-primary:hover,.fasttrack:hover{
+  box-shadow:0 14px 36px rgba(14,155,216,.55), inset 0 1.5px 0 rgba(255,255,255,.75), inset 0 -2px 4px rgba(3,50,70,.35)!important;
+}
+
+/* the ticker becomes a glass strip that fades at its edges */
+.ticker{background:rgba(9,13,19,.55);
+  -webkit-mask:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent);
+  mask:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent)}
+
+/* score + vote chips slim down — outlines whisper, numbers speak */
+.dscore{font-size:11.5px}
+.ichip,.dscore{border-color:rgba(255,255,255,.1)}
+
+/* the masthead icon chips glow faintly with the accent they carry */
+.sec-ic,.flame{background:rgba(38,198,245,.08);border-color:rgba(38,198,245,.24);color:var(--acc);
+  box-shadow:0 0 14px rgba(38,198,245,.1)}
+.sec-title h2{font-size:23px}
+
+/* panels and the modal share the lit edge */
+.panel,.modal{box-shadow:0 20px 48px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.05)}
+
+/* skeletons inherit the surface, so loading keeps the same shape */
+.skr{border-bottom-color:rgba(190,215,255,.05)}
