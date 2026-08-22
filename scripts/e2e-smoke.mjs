@@ -38,6 +38,14 @@ check("pulse heat cells", (await page.locator(".heat-cell").count()) === 3);
 check("fear&greed gauge", await page.locator(".fg-num").isVisible());
 check("wire items", (await page.locator(".wire-item").count()) >= 1);
 check("demo pill shown (no egress)", await page.locator(".src-pill.demo").isVisible());
+// The boards must be pannable BY A FINGER, which needs computed overflow-x:auto
+// — a later CSS layer once set a bare overflow:hidden on .board and the table
+// went dead to touch while board.scrollLeft still worked programmatically, so
+// every source-text pin stayed green. Only the computed style tells the truth.
+check("boards keep computed overflow-x:auto", await page.evaluate(() => {
+  const ox = (sel) => getComputedStyle(document.querySelector(sel)).overflowX;
+  return ox(".sec-block .board") === "auto" && ox(".tc-board") === "auto";
+}));
 await page.screenshot({ path: SHOT("01-home"), fullPage: false });
 
 // period tab changes column header

@@ -1776,13 +1776,19 @@ body{
 }
 
 /* the boards come back INTO a surface — rows floating on the bare page
-   read unfinished next to the reference's contained table */
+   read unfinished next to the reference's contained table.
+   ⚠️ overflow-x:auto must be RESTATED here: this layer is last in the
+   cascade, so a bare overflow:hidden silently overrode the base rule and
+   the phone block, and a finger could no longer pan the table AT ALL —
+   while board.scrollLeft still worked programmatically, which is exactly
+   how the first verification read green over a table dead to touch
+   ("harus bisa di geser ke kanan apakah anda ngerti?"). The e2e smoke now
+   asserts the COMPUTED overflow-x, not the source text. */
 .board,.tc-board{
   background:linear-gradient(180deg,rgba(130,185,255,.04),transparent 24%),rgba(11,15,21,.72);
-  border:1px solid rgba(190,215,255,.09);border-radius:16px;overflow:hidden;
+  border:1px solid rgba(190,215,255,.09);border-radius:16px;overflow:hidden;overflow-x:auto;
   box-shadow:0 24px 60px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
 }
-.tc-board{overflow-x:auto}
 .row.head,.tc-row.tc-head{background:rgba(255,255,255,.02);padding-top:12px}
 .board-expand{border-top:1px solid rgba(190,215,255,.07);padding-left:20px;padding-right:20px}
 .board-expand+.board-foot,.board-foot{padding-left:20px;padding-right:20px}
