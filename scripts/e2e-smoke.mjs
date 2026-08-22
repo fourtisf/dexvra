@@ -46,6 +46,27 @@ check("boards keep computed overflow-x:auto", await page.evaluate(() => {
   const ox = (sel) => getComputedStyle(document.querySelector(sel)).overflowX;
   return ox(".sec-block .board") === "auto" && ox(".tc-board") === "auto";
 }));
+// Every cell must LIVE inside its own track — at PHONE width, where the fixed
+// track templates apply. The Score cell holds two chips and is flex-end, so a
+// track narrower than its content overflows LEFT: the DXS chip was drawn over
+// the tail of the right-aligned Txns numbers, visible only mid-scroll on a
+// phone ("perbaiki tampilan dx scorenya"). This runs HERE, not in the MOBILE
+// section at the bottom — the script stops at the dead /new-pairs route before
+// reaching it, and a guard in dead code guards nothing.
+{
+  const m = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await m.goto(BASE, { waitUntil: "networkidle" });
+  await m.waitForSelector(".board .row:not(.head)");
+  check("phone: score chips fit their track, clear of the txns column", await m.evaluate(() => {
+    const row = document.querySelector(".sec-block .board .row:not(.head)");
+    const tx = row.querySelector(".c-txns").getBoundingClientRect();
+    const info = row.querySelector(".c-info");
+    const ds = info.querySelector(".dscore").getBoundingClientRect();
+    const chips = [...info.children].reduce((s, c) => s + c.getBoundingClientRect().width, 0);
+    return ds.left >= tx.right && chips <= info.getBoundingClientRect().width + 1;
+  }));
+  await m.close();
+}
 await page.screenshot({ path: SHOT("01-home"), fullPage: false });
 
 // period tab changes column header

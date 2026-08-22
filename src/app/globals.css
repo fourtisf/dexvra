@@ -1589,8 +1589,13 @@ body{
   .board .tok .m-stats{display:none}
   .board .row>.tok .ts{min-width:0;overflow:hidden}
   /* one line again, FIXED tracks — the width comes from the tracks and the
-     board scrolls; min-width keeps a short board spanning its panel */
-  .board:not(.np) .row{grid-template-columns:26px 168px 92px 78px 88px 88px 90px 104px 92px 34px;
+     board scrolls; min-width keeps a short board spanning its panel.
+     ⚠️ The SCORE track must fit BOTH its chips (DXS + 🛡 tax, ~106px
+     measured): the cell is justify-content:flex-end, so a track narrower
+     than its content overflows LEFT — the DXS chip was drawn over the
+     tail of the right-aligned Txns numbers ("perbaiki tampilan dx
+     scorenya"). */
+  .board:not(.np) .row{grid-template-columns:26px 168px 92px 78px 88px 88px 90px 104px 120px 34px;
     gap:6px;padding:11px 12px;width:max-content;min-width:100%}
   .board.np .row{grid-template-columns:26px 168px 72px 92px 78px 88px 102px 34px;
     gap:6px;padding:11px 12px;width:max-content;min-width:100%}
