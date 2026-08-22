@@ -570,6 +570,17 @@ test("the intelligence rail sits beside the market column, sticky, and collapses
   );
 });
 
+test("every page opens on the masthead grammar — the emoji chip is retired site-wide", () => {
+  // "maksud saya SEMUA tampilan dirubah": the inner pages kept opening with
+  // the old identity's emoji chip while the home moved on. PageHead is the
+  // one owner of the masthead, so the chip's death is pinned there — and in
+  // CSS, so a page that renders .page-ic by hand still shows nothing.
+  const ph = read("src/components/PageHead.tsx");
+  assert.ok(!ph.includes("page-ic"), "PageHead no longer renders the chip");
+  assert.match(ph, /hero-serif/, "the serif accent is the shared signature");
+  assert.match(CSS, /\.page-ic\{display:none\}/, "a stale chip anywhere renders nothing");
+});
+
 // ── the change a renderer may print ─────────────────────────────────────────
 
 test("a fallback row's zero is a dash, never a fabricated ▲0.0%", () => {

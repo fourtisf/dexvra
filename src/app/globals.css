@@ -1665,9 +1665,10 @@ body{
   height:2px;border-radius:2px;background:var(--gold)}
 .home-main .chain-more{border:none}
 .home-main .chain-zero{opacity:.45}
-/* ranks 4+ take the serif numeral; the top three keep their metal roundels
+/* ranks 4+ take the serif numeral on EVERY board — trending, leaderboard and
+   watchlist read in the home's voice; the top three keep their metal roundels
    (.rank .medal pins its own face, so the serif cannot leak into them) */
-.home-main .board .rank{font-family:var(--fs);font-style:italic;font-size:16px;color:rgba(227,194,126,.5)}
+.board .rank{font-family:var(--fs);font-style:italic;font-size:16px;color:rgba(227,194,126,.5)}
 
 /* The board's column ladder keys on the VIEWPORT, but in the console it
    lives beside the 312px rail — so at 1440px the full column set was
@@ -1730,3 +1731,85 @@ body{
   .board.np .row.head>.c-num{grid-column:3;grid-row:2;text-align:right}
   .board.np .row.head>:last-child{grid-column:4;grid-row:1/3}
 }
+
+/* ============================================================
+   PRIVÉ EVERYWHERE — every page joins the rebuild
+   ("maksud saya SEMUA tampilan dirubah")
+
+   The home got the new grammar and the inner pages were still wearing
+   the old one — emoji chips in mint boxes, walls of pills, glowing card
+   boxes, mint chrome on every control. One grammar on every page now:
+
+     masthead   the title's last word in the serif italic over a
+                hairline (PageHead.tsx), controls on the right —
+                the emoji chip is gone from every page at once
+     controls   hairline tab indexes, never pill walls; focus and
+                hover chrome is gold, green/red stay data-only
+     surfaces   hairline floats — panels carry one gold keyline on
+                their top edge as the family mark
+   ============================================================ */
+
+/* ── the masthead ── */
+.page-head{align-items:flex-end;gap:14px;border-bottom:1px solid rgba(190,205,255,.09);padding-bottom:14px}
+.ph-main{display:flex;flex-direction:column;gap:6px;margin-right:auto;min-width:0}
+.page-head h2{font-size:30px;font-weight:600;letter-spacing:-.03em;line-height:1.05}
+.page-sub{width:auto;margin-top:0}
+.page-ic{display:none}
+.back-link:hover{color:var(--gold)}
+
+/* ── controls: the tab index replaces every pill wall.
+   Three chip species existed (.chain-chip, .tab, .chip-chain — advertise and
+   verified grew their own); all three fold into ONE treatment, or "semua"
+   would exempt exactly the pages that sell. ── */
+.chain-pick,.tabs{gap:0;border-bottom:1px solid rgba(190,205,255,.09)}
+.chain-pick{padding-bottom:0;margin-bottom:14px}
+.chain-pick .chain-chip,.tab,.chip-chain{border:none;background:transparent;border-radius:0;position:relative;
+  padding:11px 14px;color:var(--muted);font-weight:500}
+.chain-pick .chain-chip:hover,.tab:hover,.chip-chain:hover{color:var(--text);background:rgba(255,255,255,.025);transform:none}
+.chain-pick .chain-chip.active,.tab.active,.chip-chain.on{background:transparent;border:none;color:#F4E7C8;box-shadow:none}
+.chain-pick .chain-chip.active::after,.tab.active::after,.chip-chain.on::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;
+  height:2px;border-radius:2px;background:var(--gold)}
+.chip-chain.on .cc-native{color:var(--gold);border-color:rgba(227,194,126,.4)}
+.qtag:hover{color:var(--gold);border-color:rgba(227,194,126,.45)}
+.fld input:focus,.fld select:focus,.fld textarea:focus{border-color:rgba(227,194,126,.5);box-shadow:0 0 0 3px rgba(227,194,126,.1)}
+
+/* ── surfaces: hairline floats, one gold keyline on the top edge ── */
+.panel{background:linear-gradient(180deg,rgba(160,180,255,.03),transparent 30%),#0D1018;
+  border:1px solid rgba(190,205,255,.08);border-top-color:rgba(227,194,126,.3);
+  border-radius:14px;box-shadow:0 18px 44px rgba(0,0,0,.35)}
+.modal{background:linear-gradient(180deg,rgba(160,180,255,.04),transparent 24%),#0D1018;
+  border-color:rgba(190,205,255,.1);border-top-color:rgba(227,194,126,.35);border-radius:18px}
+.listing-card,.signal-row,.alert-item,.mini-listing,.soc-card,.pkg,.guide,.ds,.tier{
+  background:rgba(190,205,255,.025);border-color:rgba(190,205,255,.09);box-shadow:none}
+.listing-card:hover,.soc-card:hover,.guide:hover{border-color:rgba(227,194,126,.4);background:rgba(227,194,126,.04)}
+.soc-card:hover .soc-ic,.soc-card:hover .soc-go{color:var(--gold)}
+.soc-card.primary{border-color:rgba(227,194,126,.3)}
+.guide .gi{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1);color:var(--muted)}
+.tp-chart-wrap{border-color:rgba(190,205,255,.09);border-top-color:rgba(227,194,126,.3);border-radius:14px;box-shadow:none}
+.big-empty .em{filter:grayscale(.6);opacity:.85}
+
+/* ── the token page's stats become a hairline ledger, the CA a dashed frame ── */
+.tp-stats .ds{background:transparent;border:none;border-bottom:1px solid rgba(190,205,255,.08);border-radius:0;padding:10px 2px}
+.ca-box{background:transparent;border:1px dashed rgba(190,205,255,.16);border-radius:10px}
+.copy-btn{color:var(--gold);border-color:rgba(227,194,126,.4)}
+.copy-btn:hover{background:rgba(227,194,126,.12)}
+
+/* ── the ticker joins the index: serif gold ranks, hairline frame ── */
+.ticker{background:transparent;border-bottom-color:rgba(190,205,255,.08)}
+.tick-item .rnk{font-family:var(--fs);font-style:italic;font-size:13px;font-weight:400;color:rgba(227,194,126,.65)}
+
+/* ── trending's featured rail reads as exhibits, its head as a microlabel ── */
+.feat-head{font-family:var(--fm);font-size:10.5px;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--gold)}
+.feat-sub{border-color:rgba(190,205,255,.12);color:var(--faint)}
+.feat-card{background:rgba(190,205,255,.02);border-color:rgba(190,205,255,.09);border-left:3px solid var(--tc);border-radius:12px}
+
+/* ── the listing flow drops its mint chrome; the money numbers go gold ── */
+.tier.sel{border-color:rgba(227,194,126,.55);background:rgba(227,194,126,.06);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.tier .tprice{color:var(--gold)}
+.tier li::before{color:var(--gold)}
+.pkg-price,.pt-price{color:var(--gold)}
+/* the ribbon chips (TOP TIER · BEST SELLER · START HERE) are OUR chrome, not
+   tier data — they wear the gold; INSTANT keeps the Xpress cyan it names */
+.pkg-flag{background:var(--gold);color:#241A05}
+.soc-tag{background:rgba(227,194,126,.14);color:var(--gold);border:1px solid rgba(227,194,126,.3)}

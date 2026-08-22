@@ -74,7 +74,11 @@ export default function TrendingPage() {
             onClick={() => setChain("all")}
             aria-pressed={chain === "all"}
           >
-            🌐 All chains
+            <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18" />
+            </svg>
+            All chains
           </button>
           {chains.map((id) => (
             <button
@@ -91,7 +95,9 @@ export default function TrendingPage() {
       )}
       {featured.length > 0 && (
         <div className="feat-trend">
-          <div className="feat-head">🔥 Trending Now <span className="feat-sub">Paid featured slots</span></div>
+          {/* no emoji glyph — the head joins the microlabel voice, like every
+              section marker since the rebuild */}
+          <div className="feat-head">Trending Now <span className="feat-sub">Paid featured slots</span></div>
           <div className="feat-rail">
             {featured.map((t) => {
               const up = t.chg["24h"] >= 0;

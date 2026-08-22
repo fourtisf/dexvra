@@ -130,7 +130,7 @@ export default function TokenPage() {
               </svg>
               <div className="chart-note">
                 {network ? (
-                  <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
+                  <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--gold)" }}>
                     Open full chart on GeckoTerminal ↗
                   </a>
                 ) : (
