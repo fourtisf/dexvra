@@ -1628,6 +1628,11 @@ function alText() {
     `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
     `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +
     `🔢 Max <b>${c.maxPerDay}</b>/day, <b>${c.maxPerRun}</b>/scan · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    `🌐 Chains: <b>${alChainScope(c)}</b>` +
+    (c.chains.length
+      ? ` <i>(the whole scan budget goes to ${c.chains.length === 1 ? "this chain" : "these chains"})</i>`
+      : "") +
+    `\n` +
     `📦 Packages: <b>${c.pkgs.map((k) => autoLister.pkgOf(k).label).join(" → ")}</b>` +
     // With more than one enabled the useful fact is not "which package" but
     // "which one is next" — that is the whole point of a rotation, and it is the
@@ -1667,6 +1672,45 @@ function alText() {
 /** Is "Listing & Trending" one of the enabled packages? Drives the rows that
  *  only make sense when a board slot is on the table. */
 const alTrendOn = (c) => c.pkgs.includes("trending");
+
+/** The chain scope, in the operator's words. Empty = the service's original
+ *  behaviour, so it reads ALL rather than an empty list. */
+function alChainScope(c) {
+  if (!c.chains.length) return "ALL";
+  const meta = new Map(trendingBoard.chainList().map((x) => [x.id, x.label]));
+  return c.chains.map((id) => meta.get(id) || id).join(" · ");
+}
+
+/** The chain picker — same multi-select grammar as the packages row: any
+ *  combination, and clearing the last one falls back to ALL rather than
+ *  refusing (an empty scope MEANS something here — every chain — unlike an
+ *  empty package list, which is a setting nobody chose). */
+function alchText() {
+  const c = autoLister.get();
+  return (
+    `🌐 <b>Auto Listing — chain scope</b>\n\n` +
+    `Which chains the auto-lister may list on. <b>ALL</b> is the default and ` +
+    `what it has always done; picking one or more chains focuses the WHOLE ` +
+    `scan budget there — e.g. pick Base and every scan's lookups go to Base ` +
+    `candidates instead of being spent on the market's loudest chain.\n\n` +
+    `Current: <b>${alChainScope(c)}</b>\n\n` +
+    `<i>Discovery still depends on the sources: a chain DexScreener barely ` +
+    `covers will stay thin however focused the scan is — the scan report on ` +
+    `the panel says what was actually seen.</i>`
+  );
+}
+function alchKb() {
+  const c = autoLister.get();
+  const rows = [[cb(`${c.chains.length ? "▫️" : "🟢"} ALL chains`, "alchall")]];
+  const btns = trendingBoard
+    .chainList()
+    .map((m) =>
+      cb(`${c.chains.includes(m.id) ? "🟢" : "▫️"} ${trendingBoard.displayEmoji(m.logo)} ${m.label}`, `alchn:${m.id}`),
+    );
+  for (let i = 0; i < btns.length; i += 3) rows.push(btns.slice(i, i + 3));
+  rows.push([cb("⬅ Back to Auto Listing", "al")]);
+  return Markup.inlineKeyboard(rows);
+}
 
 // One test scan at a time — see the alscan handler.
 let alScanBusy = false;
@@ -1740,6 +1784,7 @@ function alKb() {
     ...(alTrendOn(c)
       ? [[cb(`🔥 Slot ${c.trendHours}h`, "alnop"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
       : []),
+    [cb(`🌐 Chains: ${alChainScope(c)}`, "alch")],
     [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
     // Below its gate, not above it: @dexvraio only fires when channel posting is
     // already on, and a switch that reads as independent of the one under it is
@@ -3417,6 +3462,39 @@ function build() {
     ctx.answerCbQuery(`Max/day: ${c.maxPerDay}`).catch(() => {});
     await edit(ctx, alText(), alKb());
   });
+  bot.action("alch", async (ctx) => {
+    if (!guard(ctx)) return;
+    ctx.answerCbQuery().catch(() => {});
+    await edit(ctx, alchText(), alchKb());
+  });
+
+  bot.action(/^alchn:([a-z0-9]+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const id = ctx.match[1];
+    const on = autoLister.get().chains;
+    const next = on.includes(id) ? on.filter((k) => k !== id) : [...on, id];
+    const c = await autoLister.set({ chains: next });
+    log.info(`[adminbot] auto-listing chain scope → ${c.chains.length ? c.chains.join(", ") : "ALL"} by @${ctx.from.username || ctx.from.id}`);
+    ctx
+      .answerCbQuery(
+        // Dropping the last chain is not a refusal here — an empty scope MEANS
+        // every chain. Said out loud, because a tap that widens the blast
+        // radius back to the whole market must not pass as a toast.
+        c.chains.length ? `🌐 ${alChainScope(c)}` : "🌐 Scope cleared — back to ALL chains",
+        { show_alert: c.chains.length === 0 },
+      )
+      .catch(() => {});
+    await edit(ctx, alchText(), alchKb());
+  });
+
+  bot.action("alchall", async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoLister.set({ chains: [] });
+    log.info(`[adminbot] auto-listing chain scope → ALL by @${ctx.from.username || ctx.from.id}`);
+    ctx.answerCbQuery("🌐 ALL chains").catch(() => {});
+    await edit(ctx, alchText(), alchKb());
+  });
+
   bot.action(/^alpkg:(free|xpress|trending)$/, async (ctx) => {
     if (!guard(ctx)) return;
     const key = ctx.match[1];

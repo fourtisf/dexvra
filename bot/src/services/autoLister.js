@@ -86,6 +86,12 @@ const DEFAULTS = {
   // one per listing, in this order. Never empty (get() falls back to ["free"]).
   pkgs: ["free"],
   trendHours: 12, // only used by the "trending" package
+  // Which chains the scan may LIST ON. Empty = every supported chain — the
+  // behaviour this service has always had, and what a fresh install gets. A
+  // non-empty list focuses the whole discovery budget on those chains: the
+  // operator's ask was "kalau pilih Base, fokus ke Base" — a thin chain never
+  // fills while 90% of every scan's lookups go to Solana launches.
+  chains: [],
   postChannel: false, // list on the site only, until the operator says otherwise
   // …and, on the "trending" package only, the @dexvraio announcement too.
   // Defaults ON rather than OFF like the switches above, because it cannot fire
@@ -172,6 +178,11 @@ function get() {
   // "the package the next listing gets" are different answers once a rotation
   // exists, and one name for both is how they end up used interchangeably.
   g.trendHours = clampInt(c.trendHours, HARD.trendHours, DEFAULTS.trendHours);
+  // Unknown chain keys are DROPPED, not kept: a typo'd "bsc " stored verbatim
+  // would silently scope the scan to a chain that does not exist, which lists
+  // nothing forever and looks exactly like a quiet market.
+  const savedChains = Array.isArray(c.chains) ? c.chains : [];
+  g.chains = [...new Set(savedChains.map(String).filter((k) => chainOf(k)))];
   return g;
 }
 
@@ -266,6 +277,7 @@ const blank = (now) => ({
   listed: 0,
   known: 0, // already on the site / already listed / in the never-relist ledger
   cooled: 0, // skipped by the rejection memo
+  offChain: 0, // outside the operator's chain scope — costs no lookup
   reasons: {}, // rejection text (numbers stripped) → count
   capped: null, // "9/9" when the operator's own daily cap ended the scan
   blocker: null,
@@ -406,6 +418,9 @@ function stats(now = Date.now()) {
 }
 
 const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
+
+/** May the scan list on this chain under the current scope? Empty = all. */
+const chainAllowed = (cfg, chain) => cfg.chains.length === 0 || cfg.chains.includes(chain);
 
 /**
  * This token's own trigger market cap, stable for as long as the band is.
@@ -600,6 +615,13 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
       continue;
     }
     if (!chainOf(c.chain)) continue;
+    // The operator's chain scope. Skipped BEFORE any lookup is spent, which is
+    // the entire point of focusing: the whole pricing budget goes to the
+    // chosen chains instead of being burned on the market's loudest one.
+    if (!chainAllowed(cfg, c.chain)) {
+      report.offChain++;
+      continue;
+    }
     // Turned down recently and nowhere near qualifying. Costs no lookup, which
     // is the entire point: the budget goes to tokens we have not just judged.
     if (state.cool[key] > now) {
@@ -673,7 +695,8 @@ function scanLine(report) {
   const head =
     `${report.candidates} candidates · ${report.priced} priced · ${report.listed} listed` +
     (report.known ? ` · ${report.known} already known` : "") +
-    (report.cooled ? ` · ${report.cooled} on cool-off` : "");
+    (report.cooled ? ` · ${report.cooled} on cool-off` : "") +
+    (report.offChain ? ` · ${report.offChain} outside chain scope` : "");
   const why = Object.entries(report.reasons)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
@@ -741,6 +764,14 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
       continue;
     }
     if (!chainOf(c.chain)) continue;
+    // The scope IS honoured here, unlike the cool-off below: the cool-off is
+    // this service's bookkeeping, the scope is the operator's setting, and a
+    // test scan that prices chains the real scan will never list on reports a
+    // market that does not exist for this service.
+    if (!chainAllowed(cfg, c.chain)) {
+      report.offChain++;
+      continue;
+    }
     // The cool-off is NOT honoured here. A test scan is the operator asking what
     // the market looks like right now; answering from a memo would show them the
     // service's bookkeeping instead.
@@ -950,6 +981,7 @@ function start(tg, { rng = Math.random } = {}) {
 module.exports = {
   get,
   set,
+  chainAllowed,
   togglePkg,
   nextPkg,
   trendTier,
