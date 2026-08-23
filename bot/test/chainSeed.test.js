@@ -536,3 +536,81 @@ test("the CLI offers --all and --same, and defaults to the auto source", () => {
   assert.match(src, /flags\.includes\('--same'\)/, "--same must be read, not only printed");
   assert.strictEqual(seeder.DEFAULTS.source, "auto");
 });
+
+// ── The GeckoTerminal top-up may not hold the run ───────────────────────────
+
+test("under `auto` the GT top-up NEVER sleeps by default", async () => {
+  // At --target=100 DexScreener will essentially never fill a chain, so GT is
+  // asked on EVERY chain and is rate limited on every request. With --all that
+  // is 22 chains × several 120-second waits — hours, for a job whose whole
+  // point was not to wait.
+  const slept = [];
+  const { deps } = harness({
+    items: [coin(1)],
+    geckoImpl: () => ({ ok: true, why: "rate limited", nextPage: 2, pagesRead: 0, items: [] }),
+    cooldown: () => 120_000,
+    sleepImpl: async (ms) => slept.push(ms),
+  });
+  const r = await seeder.seedChain("solana", { target: 100, deps, gapMs: 0, spread: false });
+  assert.deepStrictEqual(slept, [], "the top-up takes what it can get and moves on");
+  assert.ok(r.topUp, "…and says the chain can be topped up");
+});
+
+test("a GT skip is a TOP-UP, never a warning — or the real warnings stop being read", async () => {
+  const { deps } = harness({
+    items: [coin(1)],
+    geckoImpl: () => ({ ok: true, why: "cooldown", nextPage: 1, pagesRead: 0, items: [] }),
+    cooldown: () => 120_000,
+  });
+  const r = await seeder.seedChain("solana", { target: 100, deps, gapMs: 0, spread: false });
+  // `truncated` is loud — yellow, and a non-zero exit. Firing it on every one
+  // of 22 chains would paint a working run red, and a warning that fires every
+  // time is one nobody sees when it finally matters.
+  assert.strictEqual(r.truncated, null);
+  assert.match(r.topUp, /cooldown/);
+  assert.strictEqual(r.ok, true);
+});
+
+test("--gt-wait restores the wait, and --source=gecko still waits", async () => {
+  let left = 120_000;
+  const slept = [];
+  const mk = () =>
+    harness({
+      items: [coin(1)],
+      geckoImpl: (chain, o, n) =>
+        n === 1
+          ? { ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [] }
+          : { ok: true, why: null, nextPage: null, pagesRead: 2, items: [coin(2)] },
+      topImpl: (chain, o, n) =>
+        n === 1
+          ? { ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [coin(1)] }
+          : { ok: true, why: null, nextPage: null, pagesRead: 2, items: [coin(2)] },
+      cooldown: () => left,
+      sleepImpl: async (ms) => {
+        slept.push(ms);
+        left = 0;
+      },
+    });
+
+  const a = mk();
+  await seeder.seedChain("solana", { target: 100, deps: a.deps, gapMs: 0, spread: false, gtWaitMs: 200_000 });
+  assert.ok(slept.length >= 1, "an operator who asks for the wait gets it");
+
+  slept.length = 0;
+  left = 120_000;
+  const b = mk();
+  await seeder.seedChain("solana", { target: 100, deps: b.deps, gapMs: 0, spread: false, source: "gecko" });
+  // There GT is the ONLY source, so waiting is the whole strategy rather than
+  // a bonus that can be skipped.
+  assert.ok(slept.length >= 1, "--source=gecko still waits it out");
+});
+
+test("the CLI reports a top-up as recoverable, not as a failure", () => {
+  const src = require("node:fs").readFileSync(require.resolve("../scripts/seed-chain.js"), "utf8");
+  assert.match(src, /can be topped up/);
+  assert.match(src, /--gt-wait/);
+  // Only an unreadable or truncated chain is worth a non-zero exit; a top-up
+  // is the expected state of every chain here and re-running continues it.
+  assert.match(src, /process\.exit\(unreadable \|\| truncated \? 1 : 0\)/);
+  assert.ok(!/toppable \? 1/.test(src), "a top-up must not fail the run");
+});

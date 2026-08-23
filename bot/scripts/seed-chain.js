@@ -78,6 +78,8 @@ Options
   --all           every chain the site supports that DexScreener indexes
   --same          pin every chain to --target instead of giving each its own
   --target-min=N  the floor of the per-chain spread (default 70% of --target)
+  --gt-wait=N     seconds the GeckoTerminal top-up may wait out a rate limit
+                  (default 0 — take what it answers now, re-run for the rest)
   --apply         actually create the listings (without it, nothing is written)
 
 The target is UP TO, not add-N: a chain already at the target lists nothing, so
@@ -113,6 +115,7 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     // The number typed is a CEILING; each chain gets its own inside it, so a
     // site does not read as generated. `--same` pins every chain to it.
     spread: !flags.includes('--same'),
+    gtWaitMs: num(flag('gt-wait'), 0) * 1000,
     targetMin: flag('target-min') ? num(flag('target-min'), undefined) : undefined,
   };
 
@@ -179,6 +182,7 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
 
   let unreadable = 0;
   let truncated = 0;
+  let toppable = 0;
   let created = 0;
   const started = Date.now();
   const progress = createProgress({ colors: { Y, D, X } });
@@ -211,6 +215,13 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     } else if (r.why) {
       console.log(`  ${D}${r.why}${X}`);
     }
+    // Expected, recoverable, and NOT a warning: GeckoTerminal is rate limited
+    // on nearly every request while the bot is on the same ceiling. Re-running
+    // lists nothing twice, so the way to finish is another pass, not a wait.
+    if (r.topUp) {
+      toppable++;
+      console.log(`  ${D}↻ can be topped up — GeckoTerminal was rate limited${X}`);
+    }
     for (const t of (apply ? r.listed : []).slice(0, 60)) {
       console.log(`  ${D}·${X} $${t.sym}  ${D}$${Math.round(t.mcap || 0).toLocaleString('en-US')}${X}`);
     }
@@ -219,6 +230,13 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   const took = mmss(Date.now() - started);
   if (apply) console.log(`\n${G}${created}${X} listing(s) created in ${took}. ${D}Nothing was announced.${X}`);
   else console.log(`\n${D}Done in ${took}. Re-run with --apply to create them.${X}`);
+  if (toppable) {
+    console.log(
+      `${D}${toppable} chain(s) can be topped up: GeckoTerminal is rate limited by the running bot's own` +
+        ` traffic, so this took what DexScreener could see and moved on rather than waiting 2 minutes per` +
+        ` chain. Re-run in a few minutes to add more — nothing is ever listed twice.${X}`,
+    );
+  }
   if (truncated) {
     console.log(
       `${Y}${truncated} chain(s) did not finish reading the market.${X} Re-running continues where it stopped — ` +

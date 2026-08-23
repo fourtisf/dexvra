@@ -237,7 +237,12 @@ async function gather(chain, o, { need, top, sleep, cooldownLeft, waited }) {
     if (!left) break;
     const wait = Math.min(left + 500, o.maxWaitMs - spentWaitMs);
     if (wait <= 0) {
-      truncated = `${truncated}, and the ${Math.round(o.maxWaitMs / 1000)}s wait budget is spent`;
+      // A ZERO budget is not a spent one, and the difference is the whole
+      // reason `auto` is usable: there it means "GeckoTerminal is a bonus, so
+      // do not hold twenty-two chains for two minutes each to collect it".
+      truncated = o.maxWaitMs
+        ? `${truncated}, and the ${Math.round(o.maxWaitMs / 1000)}s wait budget is spent`
+        : `${truncated} (not waited out — re-run to continue)`;
       break;
     }
     log.info(
@@ -291,7 +296,7 @@ async function seedChain(chain, opts = {}) {
 
   // The ceiling the operator typed becomes THIS chain's own number.
   o.target = o.spread === false ? o.target : targetFor(chain, o.target, o.targetMin);
-  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, source: o.source, why: null, ok: false };
+  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, topUp: null, source: o.source, why: null, ok: false };
   if (!chainOf(chain)) {
     out.why = `unknown chain ${chain}`;
     return out;
@@ -327,7 +332,20 @@ async function seedChain(chain, opts = {}) {
   if (o.source === 'auto') {
     const fresh = (list) => list.filter((c) => c && c.address && !known.has(keyOf(chain, c.address)));
     if (fresh(res.items).length < out.need) {
-      const g = await gather(chain, { ...o, source: 'gecko' }, {
+      // ⚠️ THE FALLBACK MAY NOT HOLD THE RUN.
+      //
+      // At `--target=100` DexScreener will essentially never fill a chain, so
+      // GeckoTerminal is asked on EVERY chain — and it is rate limited on
+      // every request, because the running bot is on that same ceiling. `--all`
+      // then means twenty-two chains × several 120-second waits, i.e. hours,
+      // for a job whose whole point was not to wait.
+      //
+      // So under `auto` the wait budget is ZERO by default: take whatever GT
+      // answers with right now, list it, and say the chain can be topped up.
+      // Re-running lists nothing twice, so progress accumulates ACROSS runs
+      // instead of blocking inside one. `--source=gecko` still waits — there GT
+      // is the only source and waiting is the whole strategy.
+      const g = await gather(chain, { ...o, source: 'gecko', maxWaitMs: o.gtWaitMs || 0 }, {
         need: out.need,
         top: topGecko,
         sleep,
@@ -342,11 +360,19 @@ async function seedChain(chain, opts = {}) {
         if (c && c.address && !have.has(String(c.address).toLowerCase())) res.items.push(c);
       }
       if (g.ok) res.ok = true;
-      // The truncation that matters is the one that left us short. GT's is
-      // reported over DS's, because GT is the source that was still trying.
-      res.truncated = g.truncated || res.truncated;
+      // ⚠️ A GT SKIP IS NOT A TRUNCATION under `auto`. `truncated` means "the
+      // read this run was relying on ended early", and it is loud: yellow, and
+      // a non-zero exit. GeckoTerminal being rate limited is the EXPECTED
+      // state on every chain here, so folding it in would paint twenty-two
+      // warnings over a run that worked — and a warning that fires every time
+      // is one the reader stops seeing, which is how the next real one gets
+      // missed. It rides `topUp` instead.
       res.why = g.why || res.why;
       out.source = g.items && g.items.length ? 'auto (dexscreener + gecko)' : 'auto (dexscreener)';
+      // A chain GT could not be asked about is not a finished chain. Named as
+      // its own fact so the run can end with "re-run to top these up" rather
+      // than with a shortfall that reads as "there is nothing there".
+      if (g.truncated) out.topUp = g.truncated;
     } else {
       out.source = 'auto (dexscreener)';
     }
