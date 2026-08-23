@@ -331,3 +331,48 @@ test("a chain read only in PART exits non-zero — it is not a settled chain", (
   const src = require("node:fs").readFileSync(require.resolve("../scripts/seed-chain.js"), "utf8");
   assert.match(src, /process\.exit\(unreadable \|\| truncated \? 1 : 0\)/);
 });
+
+test("a progress renderer that throws cannot break the run", async () => {
+  // The countdown is chrome. A broken terminal, a closed pipe, an EPIPE from a
+  // dropped SSH session — none of them may cost the listings, which is the
+  // same contract the banner renderers have with the posts they decorate.
+  const { deps } = harness({ items: [coin(1), coin(2)] });
+  const r = await seeder.seedChain("bsc", {
+    target: 2,
+    apply: true,
+    deps,
+    gapMs: 0,
+    onProgress() {
+      throw new Error("EPIPE");
+    },
+  });
+  assert.strictEqual(r.listed.length, 2);
+});
+
+test("progress reports a WAIT before sleeping, not after", async () => {
+  // Reported after the sleep it is describing, a countdown says "I waited two
+  // minutes" to somebody who has already decided the terminal is stuck.
+  const seenEvents = [];
+  let left = 120_000;
+  const { deps } = harness({
+    cooldown: () => left,
+    topImpl: (chain, o, n) =>
+      n === 1
+        ? { ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [coin(1)] }
+        : { ok: true, why: null, nextPage: null, pagesRead: 2, items: [coin(2)] },
+    sleepImpl: async () => {
+      seenEvents.push("slept");
+      left = 0;
+    },
+  });
+  await seeder.seedChain("bsc", {
+    target: 3,
+    apply: true,
+    deps,
+    gapMs: 0,
+    onProgress: (ev) => seenEvents.push(ev.kind),
+  });
+  assert.ok(seenEvents.indexOf("wait") < seenEvents.indexOf("slept"), "the wait is announced first");
+  assert.ok(seenEvents.indexOf("slept") < seenEvents.indexOf("resume"), "and resume lands after it");
+  assert.ok(seenEvents.includes("read"), "a page that arrived is reported too");
+});

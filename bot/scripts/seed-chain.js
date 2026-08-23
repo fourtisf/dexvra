@@ -38,6 +38,10 @@ if (!process.env.GT_MAX_RPM) process.env.GT_MAX_RPM = "10";
 
 const seeder = require('../src/services/chainSeed');
 const gt = require('../src/group/gtPairs');
+// A 120-second wait that prints nothing is indistinguishable from a hang, and
+// the first live run was reported as exactly that. The renderer is a leaf
+// module so its countdown can be driven by a test.
+const { createProgress, mmss } = require('../src/helpers/cliProgress');
 const { chainOf } = require('../src/config/chains');
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
@@ -123,8 +127,11 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   let unreadable = 0;
   let truncated = 0;
   let created = 0;
+  const started = Date.now();
+  const progress = createProgress({ colors: { Y, D, X } });
   for (const chain of chains) {
-    const r = await seeder.seedChain(chain, opts);
+    const r = await seeder.seedChain(chain, { ...opts, onProgress: progress.handle });
+    progress.clear();
     // ⚠️ "the market could not be read" and "there was nothing to add" are
     // different facts, and reporting the first as the second is how a rate
     // limit reads as "this chain is full".
@@ -155,8 +162,9 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     }
   }
 
-  if (apply) console.log(`\n${G}${created}${X} listing(s) created. ${D}Nothing was announced.${X}`);
-  else console.log(`\n${D}Re-run with --apply to create them.${X}`);
+  const took = mmss(Date.now() - started);
+  if (apply) console.log(`\n${G}${created}${X} listing(s) created in ${took}. ${D}Nothing was announced.${X}`);
+  else console.log(`\n${D}Done in ${took}. Re-run with --apply to create them.${X}`);
   if (truncated) {
     console.log(
       `${Y}${truncated} chain(s) did not finish reading the market.${X} Re-running continues where it stopped — ` +

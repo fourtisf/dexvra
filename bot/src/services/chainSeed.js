@@ -126,6 +126,18 @@ function plan({ chain, target, current, candidates, known, everListed }) {
  * a thin chain.
  */
 async function gather(chain, o, { need, top, sleep, cooldownLeft, waited }) {
+  // The service REPORTS; only the caller knows whether it is drawing to a
+  // terminal. A 120-second silence and a hang are indistinguishable from
+  // outside, and the first live run of the wait was reported as the latter —
+  // which is this file's own recurring shape, one layer up: a working state
+  // that looks exactly like a broken one.
+  const say = (ev) => {
+    try {
+      if (o.onProgress) o.onProgress({ chain, ...ev });
+    } catch {
+      /* a progress renderer must never be able to break the run */
+    }
+  };
   const wantPages = Math.min(o.pages, GT_MAX_PAGES);
   const limit = Math.max(need * 4, 60);
   const seen = new Map(); // address (lower) → item, so a resumed read dedups
@@ -154,6 +166,7 @@ async function gather(chain, o, { need, top, sleep, cooldownLeft, waited }) {
     }
     if (res.ok) ok = true;
     why = res.why || why;
+    if (res.pagesRead) say({ kind: 'read', pages: res.pagesRead, found: seen.size });
 
     // Read every page it was asked for — nothing left to resume.
     if (!res.why) {
@@ -179,7 +192,9 @@ async function gather(chain, o, { need, top, sleep, cooldownLeft, waited }) {
       `[chainseed] ${chain}: GeckoTerminal is rate limited — waiting ${Math.round(wait / 1000)}s, ` +
         `then resuming at page ${res.nextPage || page}`,
     );
+    say({ kind: 'wait', ms: wait, page: res.nextPage || page, found: seen.size });
     await sleep(wait);
+    say({ kind: 'resume', page: res.nextPage || page });
     spentWaitMs += wait;
     if (waited) waited.waitedMs = (waited.waitedMs || 0) + wait;
     // Resume where GT stopped. `nextPage` is the page that did NOT arrive; a
