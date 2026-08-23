@@ -114,9 +114,20 @@ const PER_CHAIN_VOCAB = {
  */
 const VOCAB = [
   'PEPE', 'DOGE', 'SHIB', 'INU', 'CAT', 'BONK', 'WIF', 'MOON', 'BABY', 'ELON',
-  'TRUMP', 'AI', 'MEME', 'FLOKI', 'CHAD', 'WOJAK', 'GROK', 'APE', 'FROG', 'BULL',
-  'GOLD', 'KING', 'ROCKET', 'SAFE', 'FINANCE', 'PROTOCOL', 'SWAP', 'DAO',
+  'TRUMP', 'FLOKI', 'CHAD', 'WOJAK', 'GROK', 'APE', 'FROG', 'BULL', 'MEME',
 ];
+/*
+ * ⚠️ DICTIONARY WORDS WERE REMOVED FROM THIS LIST, and the reason is on the
+ * board: the first `--apply` run listed `$SAFE`, `$AI`, `$SWAP`, `$DAO`,
+ * `$GOLD`, `$KING`, `$ROCKET` — one per term, across three chains, none with a
+ * logo anywhere. Searching a generic English word returns whatever junk was
+ * named after it, because that is what a scam names itself.
+ *
+ * What survives names something REAL — a memecoin lineage a copycat is imitating
+ * rather than a word a copycat picked. Copycats still come back on those terms;
+ * the logo requirement is what removes them, and it removes these too. This
+ * list is about not paying for the requests.
+ */
 
 /** The queries for a chain: env first, then quote tokens + the shared
  *  vocabulary, then a generic guess built from the chain's own native symbol —

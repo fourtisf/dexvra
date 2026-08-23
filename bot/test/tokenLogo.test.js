@@ -12,22 +12,48 @@ const deps = (over = {}) => ({
   dsInfo: async () => null,
   gtInfo: async () => null,
   padInfo: async () => null,
+  cgInfo: async () => null,
   isImage: async () => true,
   ...over,
 });
 
-test("it asks FOUR sources, in order of how much each knows about the token", async () => {
+test("it asks SIX sources, in order of how much each knows about the token", async () => {
   const order = [];
   const d = deps({
     dsInfo: async () => (order.push("ds"), null),
     gtInfo: async () => (order.push("gt"), null),
     padInfo: async () => (order.push("pad"), null),
+    cgInfo: async () => (order.push("cg"), null),
   });
   const hit = await resolveLogo("bsc", "0xabc", { deps: d });
-  assert.deepStrictEqual(order.sort(), ["ds", "gt", "pad"], "all three indexes are asked");
+  assert.deepStrictEqual(order.sort(), ["cg", "ds", "gt", "pad"], "every index is asked");
   // The CDN path is a CONVENTION we construct, so it is the last resort.
   assert.strictEqual(hit.source, "dexscreener-cdn");
   assert.strictEqual(hit.url, cdnGuess("bsc", "0xabc"));
+});
+
+test("CoinGecko and Trust Wallet are real sources, keyed their OWN way", () => {
+  const { trustWallet, CG_PLATFORM, TW_CHAIN } = require("../src/services/tokenLogo");
+  // ⚠️ Trust Wallet's path is the EIP-55 CHECKSUMMED address — a lowercase one
+  // 404s, and every address this repo stores is whatever the source gave us.
+  const tw = trustWallet("ethereum", "0x6982508145454ce325ddbe47a25d4ec3d2311933");
+  assert.match(tw, /0x6982508145454Ce325dDbE47a25d4ec3d2311933\/logo\.png$/);
+  assert.strictEqual(trustWallet("solana", "So111"), null, "EVM only — no path to build");
+  assert.strictEqual(trustWallet("ethereum", "not-an-address"), null);
+  // Three different spellings of one chain set. A chain missing from either
+  // table costs ONE source and must never throw.
+  assert.strictEqual(CG_PLATFORM.bsc, "binance-smart-chain");
+  assert.strictEqual(TW_CHAIN.bsc, "smartchain");
+  assert.strictEqual(trustWallet("notachain", "0x6982508145454ce325ddbe47a25d4ec3d2311933"), null);
+});
+
+test("⚠️ six empty answers is INFORMATION, not a gap in the search", async () => {
+  // "ga mungkin kalo project g punya logo" is right about projects, and the
+  // tokens it was said about were not projects: $SAFE, $BONK, $CAT, $WOJAK,
+  // $MEME — one per search TERM the seeder uses, across three chains, none
+  // with artwork on any index. A real project is on at least one within a day.
+  const d = deps({ isImage: async () => false });
+  assert.strictEqual(await resolveLogo("ethereum", "0xjunk", { deps: d }), null);
 });
 
 test("the project's own upload wins, and a later source is not even fetched", async () => {
