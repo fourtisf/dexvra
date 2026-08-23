@@ -12,6 +12,7 @@ import { BOT_URL } from "@/config/brand";
 import { shortAddr } from "@/lib/walletConnect";
 import { NAV_GROUPS } from "./Sidebar";
 import { usePathname, useRouter } from "next/navigation";
+import { logoSrc } from "@/lib/logo";
 
 /** What /api/token-preview hands back for a contract nobody has listed. */
 interface UnlistedHit {
@@ -197,9 +198,12 @@ export function Topbar() {
                 <div className="sdd-empty">Checking that contract…</div>
               ) : probe ? (
                 <button className="sdd-item" onMouseDown={(e) => { e.preventDefault(); goUnlisted(); }}>
-                  {probe.token.logoUrl ? (
+                  {logoSrc(probe.token.logoUrl) ? (
+                    // Through the proxy like every other logo on the site: a
+                    // hotlinked CDN load fails often enough that the search
+                    // preview would show a placeholder for a token we can see.
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img className="sdd-logo" src={probe.token.logoUrl} alt="" width={30} height={30} />
+                    <img className="sdd-logo" src={logoSrc(probe.token.logoUrl)} alt="" width={30} height={30} />
                   ) : (
                     <div className="sdd-logo sdd-logo-ph">{(probe.token.symbol ?? "?").slice(0, 2).toUpperCase()}</div>
                   )}

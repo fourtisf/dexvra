@@ -15,6 +15,17 @@ export interface ChainConfig {
    * null = DexScreener does not carry that chain (Robinhood).
    */
   dexscreener: string | null;
+  /**
+   * CoinGecko's asset-platform id — a THIRD spelling of the same set, used by
+   * the token-logo resolver (CoinGecko is curated, so it is the one source
+   * where a human has actually looked at the artwork).
+   *
+   * null = CoinGecko has no platform for that chain, which costs one logo
+   * source and never a failure. A WRONG id costs the same: the lookup 404s.
+   * The values here are the ones the bot's own resolver already runs on
+   * (bot/src/services/tokenLogo.js) — deliberately not a second guess at them.
+   */
+  coingecko: string | null;
   /** GoPlus numeric chain id for EVM security scans; null = non-EVM */
   goPlusChainId: string | null;
   /** Address explorer URL for a token address */
@@ -34,6 +45,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#14F195",
     geckoNetwork: "solana",
     dexscreener: "solana",
+    coingecko: "solana",
     goPlusChainId: null,
     explorer: (a) => `https://solscan.io/token/${a}`,
     buyUrl: (a) => `https://jup.ag/swap/SOL-${a}`,
@@ -45,6 +57,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#F0B90B",
     geckoNetwork: "bsc",
     dexscreener: "bsc",
+    coingecko: "binance-smart-chain",
     goPlusChainId: "56",
     explorer: (a) => `https://bscscan.com/token/${a}`,
     buyUrl: (a) => `https://pancakeswap.finance/swap?outputCurrency=${a}`,
@@ -56,6 +69,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#9AA5FF",
     geckoNetwork: "eth",
     dexscreener: "ethereum",
+    coingecko: "ethereum",
     goPlusChainId: "1",
     explorer: (a) => `https://etherscan.io/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=mainnet&outputCurrency=${a}`,
@@ -67,6 +81,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#3B82F6",
     geckoNetwork: "base",
     dexscreener: "base",
+    coingecko: "base",
     goPlusChainId: "8453",
     explorer: (a) => `https://basescan.org/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=base&outputCurrency=${a}`,
@@ -78,6 +93,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#CCFF00",
     geckoNetwork: "robinhood", // GT indexes Robinhood Chain → live price/mcap/liq + chart embed
     dexscreener: null,
+    coingecko: null,
     goPlusChainId: null,
     explorer: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/robinhood/tokens/${a}`,
@@ -89,6 +105,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#FF060A",
     geckoNetwork: "tron",
     dexscreener: "tron",
+    coingecko: "tron",
     goPlusChainId: null, // GoPlus token_security doesn't cover Tron; scanner falls back to basic info
     explorer: (a) => `https://tronscan.org/#/token20/${a}`,
     buyUrl: (a) => `https://sunswap.com/#/home?tokenAddress=${a}`,
@@ -100,6 +117,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#0098EA",
     geckoNetwork: "ton",
     dexscreener: "ton",
+    coingecko: "the-open-network",
     goPlusChainId: null,
     explorer: (a) => `https://tonviewer.com/${a}`,
     buyUrl: (a) => `https://app.ston.fi/swap?ft=TON&tt=${a}`,
@@ -111,6 +129,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#4DA2FF",
     geckoNetwork: "sui-network",
     dexscreener: "sui",
+    coingecko: "sui",
     goPlusChainId: null,
     explorer: (a) => `https://suivision.xyz/coin/${encodeURIComponent(a)}`,
     buyUrl: (a) => `https://app.cetus.zone/swap/?to=${encodeURIComponent(a)}`,
@@ -123,6 +142,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#00FF9C",
     geckoNetwork: "plasma",
     dexscreener: "plasma",
+    coingecko: null,
     goPlusChainId: null,
     explorer: (a) => `https://plasmascan.to/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/plasma/tokens/${a}`,
@@ -137,6 +157,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#8247E5",
     geckoNetwork: "polygon_pos",
     dexscreener: "polygon",
+    coingecko: "polygon-pos",
     goPlusChainId: "137",
     explorer: (a) => `https://polygonscan.com/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=polygon&outputCurrency=${a}`,
@@ -148,6 +169,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#28A0F0",
     geckoNetwork: "arbitrum",
     dexscreener: "arbitrum",
+    coingecko: "arbitrum-one",
     goPlusChainId: "42161",
     explorer: (a) => `https://arbiscan.io/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=${a}`,
@@ -159,6 +181,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#FF0420",
     geckoNetwork: "optimism",
     dexscreener: "optimism",
+    coingecko: "optimistic-ethereum",
     goPlusChainId: "10",
     explorer: (a) => `https://optimistic.etherscan.io/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=optimism&outputCurrency=${a}`,
@@ -170,6 +193,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#E84142",
     geckoNetwork: "avax",
     dexscreener: "avalanche",
+    coingecko: "avalanche",
     goPlusChainId: "43114",
     explorer: (a) => `https://snowtrace.io/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=avalanche&outputCurrency=${a}`,
@@ -181,6 +205,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#B8651B",
     geckoNetwork: "berachain",
     dexscreener: "berachain",
+    coingecko: "berachain",
     goPlusChainId: null,
     explorer: (a) => `https://berascan.com/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/berachain/tokens/${a}`,
@@ -192,6 +217,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#5AB8F0",
     geckoNetwork: "sonic",
     dexscreener: "sonic",
+    coingecko: "sonic",
     goPlusChainId: null,
     explorer: (a) => `https://sonicscan.org/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/sonic/tokens/${a}`,
@@ -203,6 +229,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#4FD1C5",
     geckoNetwork: "hyperevm",
     dexscreener: "hyperevm",
+    coingecko: null,
     goPlusChainId: null,
     explorer: (a) => `https://www.geckoterminal.com/hyperevm/tokens/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/hyperevm/tokens/${a}`,
@@ -214,6 +241,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#3CE68B",
     geckoNetwork: "abstract",
     dexscreener: "abstract",
+    coingecko: null,
     goPlusChainId: null,
     explorer: (a) => `https://abscan.org/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/abstract/tokens/${a}`,
@@ -225,6 +253,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#0054FA",
     geckoNetwork: "apechain",
     dexscreener: "apechain",
+    coingecko: null,
     goPlusChainId: null,
     explorer: (a) => `https://apescan.io/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/apechain/tokens/${a}`,
@@ -236,6 +265,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#FCFC03",
     geckoNetwork: "blast",
     dexscreener: "blast",
+    coingecko: "blast",
     goPlusChainId: "81457",
     explorer: (a) => `https://blastscan.io/token/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/blast/tokens/${a}`,
@@ -247,6 +277,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#9E1C1C",
     geckoNetwork: "sei-evm",
     dexscreener: "seiv2",
+    coingecko: "sei-v2",
     goPlusChainId: null,
     explorer: (a) => `https://seitrace.com/token/${a}?chain=pacific-1`,
     buyUrl: (a) => `https://www.geckoterminal.com/sei-evm/tokens/${a}`,
@@ -258,6 +289,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#8CA0B8",
     geckoNetwork: "aptos",
     dexscreener: "aptos",
+    coingecko: "aptos",
     goPlusChainId: null, // non-EVM → GoPlus token_security doesn't cover it
     explorer: (a) => `https://www.geckoterminal.com/aptos/tokens/${a}`,
     buyUrl: (a) => `https://www.geckoterminal.com/aptos/tokens/${a}`,
@@ -270,6 +302,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     color: "#F50DB4",
     geckoNetwork: "unichain",
     dexscreener: "unichain",
+    coingecko: "unichain",
     goPlusChainId: null,
     explorer: (a) => `https://uniscan.xyz/token/${a}`,
     buyUrl: (a) => `https://app.uniswap.org/swap?chain=unichain&outputCurrency=${a}`,

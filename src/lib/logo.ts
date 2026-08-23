@@ -9,6 +9,12 @@ export function logoSrc(url?: string | null): string | undefined {
   const u = String(url).trim();
   if (!u) return undefined;
   if (u.startsWith("/") || u.startsWith("data:")) return u; // same-origin / inline
-  if (/^https?:\/\//i.test(u)) return `/api/logo?u=${encodeURIComponent(u)}`;
+  // ⚠️ EVERY other scheme goes to the proxy, not just http(s). A launchpad's
+  // on-chain metadata gives `ipfs://<cid>`, and no <img> on earth loads that:
+  // returning it verbatim handed the browser a URL it could only fail on, so a
+  // token whose artwork we HAD still drew a monogram. The proxy turns it into a
+  // gateway URL and validates the result; anything it dislikes 400s, and <Coin>
+  // falls back to the monogram exactly as before.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) return `/api/logo?u=${encodeURIComponent(u)}`;
   return u;
 }

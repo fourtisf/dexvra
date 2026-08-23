@@ -817,6 +817,70 @@ body{
   .tp-chart{height:404px}
 }
 
+/* ============ CANDLESTICK CHART (token page) ============
+   Real OHLCV, drawn in the site's own type and colours. The panel it replaced
+   was either a GeckoTerminal iframe (another brand inside ours) or a curve
+   generated from the ticker's hash — see components/CandleChart.tsx. */
+.ck{display:flex;flex-direction:column;height:100%;min-width:0}
+.ck-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ck-title{display:flex;align-items:center;gap:9px;min-width:0}
+.ck-sym{font-family:var(--fd);font-weight:700;font-size:14px}
+.ck-chg{font-family:var(--fm);font-size:12px;font-weight:700}
+.ck-chg.up{color:var(--mint)}
+.ck-chg.dn{color:var(--red)}
+.ck-chg-tf{color:var(--faint);font-weight:500}
+.ck-live{width:7px;height:7px;border-radius:50%;background:var(--mint);animation:ckpulse 2.2s ease-out infinite;flex:none}
+@keyframes ckpulse{0%{box-shadow:0 0 0 0 rgba(61,220,151,.5)}70%{box-shadow:0 0 0 7px rgba(61,220,151,0)}100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}}
+.ck-tfs{display:flex;gap:2px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:9px;padding:3px}
+.ck-tf{font-family:var(--fm);font-size:11px;font-weight:700;color:var(--faint);padding:4px 9px;border-radius:6px;background:transparent;border:0;cursor:pointer;transition:color .15s,background .15s}
+.ck-tf:hover{color:var(--text)}
+.ck-tf.on{background:rgba(61,220,151,.13);color:var(--mint)}
+.ck-plot{position:relative;flex:1;min-height:0;cursor:crosshair;touch-action:pan-y}
+.ck-svg{display:block}
+.ck-grid{stroke:var(--line);stroke-width:1;shape-rendering:crispEdges}
+.ck-axis{font-family:var(--fm);font-size:10px;fill:var(--faint)}
+.ck-axis-dim{opacity:.75}
+/* ⚠️ NO text-anchor HERE. A CSS declaration beats an SVG presentation
+   attribute, so this rule silently overrode the per-label textAnchor the
+   renderer sets to keep the first and last stamps inside the plot — and the
+   left-most label shipped as "3:46" for 23:46, a WRONG time rather than a
+   clipped one. The anchor is the renderer's decision, per label. */
+.ck-axis-x{letter-spacing:.02em}
+/* One rule per direction, so a candle can never be drawn green with a red wick */
+.ck-c.up .ck-wick{stroke:var(--mint)}
+.ck-c.up .ck-body{fill:var(--mint)}
+.ck-c.dn .ck-wick{stroke:var(--red)}
+.ck-c.dn .ck-body{fill:var(--red)}
+.ck-wick{stroke-width:1;shape-rendering:crispEdges}
+.ck-vol{opacity:.3}
+.ck-vol.up{fill:var(--mint)}
+.ck-vol.dn{fill:var(--red)}
+.ck-lastline{stroke-dasharray:3 4;stroke-width:1;opacity:.65}
+.ck-lastline.up{stroke:var(--mint)}
+.ck-lastline.dn{stroke:var(--red)}
+.ck-lastbg.up{fill:var(--mint)}
+.ck-lastbg.dn{fill:var(--red)}
+.ck-lasttx{font-family:var(--fm);font-size:10px;font-weight:700;fill:#06121A}
+.ck-cross{stroke:var(--line2);stroke-width:1;stroke-dasharray:2 3}
+.ck-tip{position:absolute;top:8px;left:10px;right:10px;display:flex;gap:11px;flex-wrap:wrap;align-items:center;font-family:var(--fm);font-size:10.5px;color:var(--faint);pointer-events:none;background:rgba(9,12,18,.7);backdrop-filter:blur(7px);border:1px solid var(--line);border-radius:9px;padding:5px 9px}
+.ck-tip b{color:var(--text);font-weight:700}
+.ck-tip b.up{color:var(--mint)}
+.ck-tip b.dn{color:var(--red)}
+.ck-tip-t{color:var(--muted)}
+.ck-msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:22px;text-align:center;color:var(--muted);font-size:13px}
+.ck-empty-k{font-family:var(--fd);font-weight:700;font-size:15px;color:var(--text)}
+.ck-empty-p{font-size:12.5px;color:var(--muted);max-width:400px;line-height:1.5}
+.ck-empty-a{font-family:var(--fm);font-size:11.5px;color:var(--accs,var(--cyan));margin-top:2px}
+.ck-empty-a:hover{text-decoration:underline}
+@media (max-width:640px){
+  .ck-head{padding:8px 9px}
+  .ck-tip{gap:8px;font-size:10px}
+  /* On a 360px-tall phone chart a two-line readout covers the candles it is
+     describing. Close and volume are what a phone reader is after; open, high
+     and low are the desk-sized detail. */
+  .ck-tip-ohl{display:none}
+}
+
 /* ============ GENERAL TIDY-UPS ============ */
 .content{margin:0 auto}
 .board{overflow-x:auto}
@@ -1085,6 +1149,9 @@ body{
 .unlisted-facts{display:grid;gap:9px;width:100%;max-width:560px;text-align:left;margin-top:2px}
 .unlisted-facts .ca-box code{white-space:nowrap}
 .unlisted-cta{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:6px}
+/* The chart on the unlisted page is ours, not an embed — see UnlistedToken */
+.unlisted-chart{width:100%;max-width:820px;height:380px;margin-top:10px;border:1px solid var(--line2);border-radius:16px;overflow:hidden;background:#0a0c10;text-align:left}
+@media (max-width:640px){.unlisted-chart{height:300px}}
 @media (max-width:640px){
   .unlisted-h{font-size:21px}
   .unlisted-cta{flex-direction:column;align-items:stretch;width:100%;max-width:340px}

@@ -43,13 +43,26 @@ test("it shows the live price and market cap it can get for an UNLISTED token", 
   assert.match(COMPONENT, /fmtCap\(tok\.mcap\)/);
 });
 
-test("the page embeds no third-party chart", () => {
-  // It sat on "Loading chart settings…" for seconds and then planted a
-  // competitor's logo and wordmark across the bottom of a Dexvra page. The
-  // visitor arrived from a buy alert with the number they wanted already.
+test("the page charts the token WITHOUT embedding anybody else's chart", () => {
+  // The ban was on the EMBED, and it stands: a third-party iframe sat on
+  // "Loading chart settings…" for seconds and then planted a competitor's logo
+  // and wordmark across the bottom of a Dexvra page.
+  //
+  // A chart itself was never the problem, and "tokens must have a candlestick
+  // chart" is the ask this page answers with its own renderer over its own
+  // /api/ohlcv: our type, our colours, one JSON request, and nothing loaded at
+  // all for a contract no index has heard of.
   assert.ok(!/<iframe/.test(COMPONENT), "no iframe at all");
-  assert.ok(!/geckoterminal\.com|dexscreener\.com/.test(COMPONENT), "and no embed URL left behind");
-  assert.ok(!/unlisted-chart/.test(CSS), "its styles went with it");
+  assert.ok(!/embed=1|light_chart|grayscale=/.test(COMPONENT), "and no embed URL left behind");
+  assert.match(COMPONENT, /<CandleChart/, "the chart is ours");
+  assert.match(COMPONENT, /done && tok &&/, "and it is not mounted for a token no source found");
+  assert.match(CSS, /\.unlisted-chart\{/, "with styles of its own, not an embed's");
+});
+
+test("the chart on the unlisted page reads OUR endpoint, not a third party's", () => {
+  const CHART = read("src/components/CandleChart.tsx");
+  assert.match(CHART, /fetch\(`\/api\/ohlcv\?/);
+  assert.ok(!/<iframe/.test(CHART), "an embed must not creep back in through the component");
 });
 
 test("a contract the feed has never seen still renders the page", () => {

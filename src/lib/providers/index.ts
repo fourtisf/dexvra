@@ -24,6 +24,9 @@ import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 import { fetchIndexedMarket } from "./indexedMarket";
 import { fillFromLastGood } from "./lastGood";
+import { pickLogo } from "./tokenLogo";
+import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
+import { setResolvedLogo } from "@/lib/store";
 
 // 60s, not 30: at 173 listings a refresh is ~8 chunked GT requests, and the
 // bot suite shares this server's IP and GT quota (~30 req/min, its own docs).
@@ -119,14 +122,40 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     if (!live.has(chain) && map.size > 0) live.set(chain, map);
   }
 
-  return fallback.map((t) => {
+  // The listing row behind each board token, so the logo ladder reads the
+  // STORED value rather than the one `rowToBoardToken` already filled with the
+  // CDN convention — that guess outranking a real image_url is the whole bug
+  // (see pickLogo). Keyed rather than zipped by index: the mapping is 1:1 today
+  // and an index that silently drifts would hand one token another's artwork.
+  const rowOf = new Map(rows.map((r) => [`${r.chain}:${r.address.toLowerCase()}`, r]));
+  const needLogo: { chain: string; address: string }[] = [];
+
+  const tokens = fallback.map((t) => {
     const m = live.get(t.chain)?.get(t.address.toLowerCase());
-    if (!m) return t; // keep fallback figures for this listing
+    // A logo a provider asserted is worth remembering even though we did not
+    // have to resolve it: GT drops `image_url` on the odd cycle, and without
+    // this the row would flicker back to a monogram whenever it does.
+    if (m?.logoUrl) rememberLogo(t.chain, t.address, m.logoUrl);
+    const row = rowOf.get(`${t.chain}:${t.address.toLowerCase()}`);
+    const logo = pickLogo({
+      stored: row?.logoUrl,
+      live: m?.logoUrl,
+      resolved: knownLogo(t.chain, t.address),
+      chain: t.chain,
+      address: t.address,
+    });
+    // "convention" and "none" both mean nobody has actually given this token a
+    // logo — the row is drawing a monogram or a guess, and it is exactly what
+    // the resolver is for.
+    if ((logo.kind === "convention" || logo.kind === "none") && shouldLookUp(t.chain, t.address))
+      needLogo.push({ chain: t.chain, address: t.address });
+
+    if (!m) return { ...t, logoUrl: logo.url }; // keep fallback figures for this listing
     const score = dexvraScore({ chg: m.chg, liq: m.liq, taxPct: t.taxPct, txns: m.txns, holders: t.holders });
     const v = visualFor(t.symbol);
     return {
       ...t,
-      logoUrl: t.logoUrl ?? m.logoUrl, // admin-set logo wins; else live logo
+      logoUrl: logo.url,
       priceUsd: m.priceUsd,
       mcap: m.mcap ?? t.mcap,
       liq: m.liq ?? t.liq,
@@ -142,6 +171,18 @@ async function loadListedTokens(): Promise<BoardToken[]> {
       poolAddress: m.poolAddress,
     };
   });
+
+  // FIRE AND FORGET, deliberately. Resolving a logo means up to three
+  // rate-limited APIs and a verification fetch — a board render must never wait
+  // on that. The sweep is bounded and one-at-a-time (logoFill.ts); what it
+  // finds lands in the listing store, so the row is fixed for good rather than
+  // for this process's lifetime.
+  backfillLogos(needLogo, {
+    persist: setResolvedLogo,
+    log: (msg) => console.log(msg),
+  });
+
+  return tokens;
 }
 
 function buildHeat(tokens: BoardToken[]): ChainHeat[] {

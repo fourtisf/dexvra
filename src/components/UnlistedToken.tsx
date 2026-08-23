@@ -19,11 +19,13 @@ import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useApp } from "@/components/AppState";
+import { CandleChart } from "@/components/CandleChart";
 import { ChainLogo } from "@/components/ChainLogo";
 import { CHAINS } from "@/config/chains";
 import { BOT_URL } from "@/config/socials";
 import { BRAND_NAME } from "@/config/brand";
 import { fmtCap, fmtPrice } from "@/lib/format";
+import { logoSrc } from "@/lib/logo";
 
 interface Preview {
   name: string | null;
@@ -31,6 +33,9 @@ interface Preview {
   priceUsd: number | null;
   mcap: number | null;
   logoUrl: string | null;
+  /** May be a DexScreener PAIR address when that is the source that found the
+   *  token — /api/ohlcv treats it as a hint and re-resolves if GT disagrees. */
+  poolAddress: string | null;
 }
 
 export function UnlistedToken({ chain, address }: { chain: string; address: string }) {
@@ -70,10 +75,12 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
   return (
     <section className="view">
       <div className="panel unlisted">
-        {tok?.logoUrl ? (
+        {logoSrc(tok?.logoUrl) ? (
           // Unoptimized: the source is a third-party CDN we do not control and
-          // cannot add to next.config's remote allow-list one memecoin at a time.
-          <Image className="unlisted-logo" src={tok.logoUrl} alt="" width={72} height={72} unoptimized />
+          // cannot add to next.config's remote allow-list one memecoin at a time
+          // — and it goes through /api/logo for the same reason every other logo
+          // on the site does (hotlink blocks, CORS, ipfs:// URIs).
+          <Image className="unlisted-logo" src={logoSrc(tok?.logoUrl) as string} alt="" width={72} height={72} unoptimized />
         ) : (
           // An amber mark, not a "?" tile. A question mark reads as "we could
           // not load this", which is the wrong story: the token is fine, the
@@ -134,11 +141,24 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
           <Link className="btn-ghost2" href="/">Browse listed tokens</Link>
         </div>
 
-        {/* NO CHART. It was a third-party iframe that sat on "Loading chart
-            settings…" for seconds and then planted a competitor's logo and
-            wordmark across the bottom of a Dexvra page. The visitor came from a
-            buy alert and already has the number they wanted; the chart is one
-            tap away behind the CTA. The page is faster and reads as ours. */}
+        {/* A CHART, BUT NEVER AN EMBED. What was banned here was a third-party
+            iframe that sat on "Loading chart settings…" for seconds and then
+            planted a competitor's logo and wordmark across the bottom of a
+            Dexvra page — and that objection is to the EMBED, not to charting a
+            token. This is our own renderer over our own /api/ohlcv: our type,
+            our colours, one JSON request, and nothing loads at all for a
+            contract no index has heard of. */}
+        {done && tok && (
+          <div className="unlisted-chart">
+            <CandleChart
+              chain={chain}
+              address={address}
+              symbol={ticker ?? "Token"}
+              poolHint={tok.poolAddress}
+              gtUrl={c?.geckoNetwork ? `https://www.geckoterminal.com/${c.geckoNetwork}/tokens/${address}` : null}
+            />
+          </div>
+        )}
       </div>
     </section>
   );

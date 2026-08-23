@@ -1245,6 +1245,187 @@ cd bot && node scripts/run-tests.js test/gainersSample.test.js test/gainersFilte
 **Config a fix depends on:** nothing — but `minMcapUsd` is a live setting, so an
 operator who wants the old unfiltered board sets it to `0`.
 
+## "Beberapa token tidak punya logo" — and a guess that outranked the answer
+
+Reported with a screenshot of the board: `$BTCB`, `$SHIB`, `$TRUMP` drawing the
+site's `BT` / `SH` / `TP` monograms — the right fallback, and the wrong thing to
+have to draw for projects whose artwork sits on four public indexes.
+
+**The monogram was not the bug; the ladder above it was.** `rowToBoardToken`
+fills every row's `logoUrl` with `fallbackLogoUrl()` — the DexScreener CDN
+CONVENTION, a path we construct and that 404s for anything that CDN has never
+seen — and the board then merged live market data with
+`logoUrl: t.logoUrl ?? m.logoUrl`. On any chain with a DexScreener id that guess
+is never null, so **the `??` could never reach its second operand**: a made-up
+path permanently outranked the real `image_url` both GeckoTerminal and
+DexScreener were already handing us, and the row rendered a monogram with a good
+logo sitting one field away.
+
+- **`pickLogo()` is the one owner of "which logo does this row render".** Four
+  rungs, and the order is what the whole section is about: **stored** (an admin
+  set it, or the project uploaded it) → **live** (a market provider asserted it
+  this cycle) → **resolved** (our own resolver verified it) → **convention**
+  (the CDN path, unverified, LAST). A guess must always lose to an answer.
+- **`kind` is not decoration.** `"convention"` and `"none"` are how the pipeline
+  knows a row is still effectively logo-less and belongs in the resolver's
+  queue; without it "has a logoUrl" is true of every row and nothing can ever be
+  queued.
+- **A live logo is REMEMBERED even though it cost nothing.** GT drops
+  `image_url` on the odd cycle, and without that memory the row flickers back to
+  a monogram whenever it does.
+
+### The resolver, and why the site has one when the bot already does
+
+`bot/src/services/tokenLogo.js` is the richer resolver (seven sources — it can
+reach the launchpads and Trust Wallet) and it is **not** duplicated here in
+spirit: the site's is the same idea with the sources the site can reach. What
+the site adds is that it runs BY ITSELF. The bot's runs from
+`npm run listings:fix`, a script an operator has to remember — and this repo has
+already paid for that shape: *"apt-get install is not a fix, it is a request"*
+cost six days of banners publishing boxes. A row listed today gets its logo
+today, or the monogram comes back with the next listing.
+
+- **Four sources, ordered by how much each KNOWS about the token**: DexScreener
+  pair info → GeckoTerminal token → CoinGecko by contract (curated: a human has
+  looked at this one) → the DexScreener CDN convention.
+- ⚠️ **EVERY CANDIDATE IS FETCHED BEFORE IT IS BELIEVED.** The convention can
+  always be constructed and is very often a 404; storing one unverified turns
+  "no logo" into "broken image", which is worse — the monogram at least looks
+  deliberate. `isImage()` tries HEAD then GET (some CDNs answer HEAD with 405
+  while serving the file perfectly well) and refuses a 200 carrying HTML, which
+  is what a CDN returns when it does not want to admit a miss.
+- ⚠️ **`ok:true, url:null` and `ok:false` are DIFFERENT ANSWERS.** The first is
+  "every source answered and this project has no artwork" — the only state in
+  which the sweep may remember a miss. The second is "an upstream could not be
+  asked", and caching that as "no logo" is how one rate-limited minute leaves a
+  token monogrammed for good. `logoFill.ts` keeps them apart: a miss is
+  remembered for 12h, an undecided for 30 min — and the 30 min is a RATE LIMIT
+  ON US, not a claim about the token, or one dead upstream would eat every
+  sweep's budget for ever.
+- **CoinGecko is PACED** — one call at a time, 2.5s apart, `Retry-After` honoured
+  once. Its free tier is per IP and the bot suite is on the same box; the bot's
+  own resolver learnt this when a 429 on row one reported eighty-two rows as
+  undecided.
+- **The sweep is FIRE-AND-FORGET and bounded** (8 tokens per pass, one pass at a
+  time). A board render must never wait on three rate-limited APIs plus a
+  verification fetch; logos appear on the next refresh, a minute later.
+- **What it finds is PERSISTED** (`setResolvedLogo` → the listing store, mirrored
+  to Mongo), so a row is fixed for good rather than for one process's lifetime —
+  and the bot's board and channel posts get it too, since they read the same
+  store. ⚠️ It can only ever turn nothing into something: an admin-set logo is a
+  decision somebody made, and that asymmetry is what makes the write safe from a
+  background sweep nobody is watching. The rule is a PURE function
+  (`lib/logoWrite.ts`) because "never overwrites" is a mutation property and a
+  source scan cannot tell a guard from a comment about one.
+- **`coingecko` joined the chain registry.** Nothing outside `config/chains.ts`
+  may hardcode a chain id, and a new chain now has to decide rather than inherit
+  `undefined`. A wrong platform id costs one source (a 404) and never a failure.
+
+### …and the proxy was refusing logos we already had
+
+`/api/logo` exists because CDNs hotlink-block, and its allowlist is therefore
+part of "every token has a logo", not only of security: **a host missing from it
+is a real, working logo url rendered as a monogram** — refused by us, silently,
+with nothing in the UI to say so.
+
+- **`ipfs://` was handed to the browser verbatim.** No `<img>` anywhere loads
+  that scheme, so a token whose artwork we HAD still drew a monogram. `logoSrc`
+  now routes every non-relative scheme to the proxy, which rewrites `ipfs://` to
+  a gateway.
+- The allowlist carries where token artwork actually lives: the two indexes, the
+  curated ones, the wallets' asset repos, and the IPFS/Arweave gateways every
+  launchpad mints through (pump.fun's own is `pump.mypinata.cloud`).
+- ⚠️ **Redirects are followed BY HAND, and every hop is re-checked.**
+  `redirect: "follow"` hands the guard's whole job to the upstream: an allowed
+  host answering `302 http://169.254.169.254/…` would have this server fetch its
+  own cloud metadata and serve the bytes back.
+- An SVG is a DOCUMENT when opened directly and can carry script. Refusing SVGs
+  would drop real logos, so they are served inert instead (`nosniff` + a CSP
+  that lets the file reference nothing).
+
+```bash
+npm test    # tokenLogo / logoFill / logoWrite / logoPipeline — 60 tests, no network
+```
+
+**Config a fix depends on:** nothing. `CG_MIN_GAP_MS` widens the CoinGecko gap
+if that box ever needs it.
+
+## "Token harus punya chart candle bar" — the chart was a hash of the ticker
+
+The token page had two chart states and both had to go.
+
+With a pool address it embedded **GeckoTerminal in an iframe**: charts fine, and
+it is someone else's page inside ours — another brand's type and colours, its own
+spinner, and no way to read one number out of it for anything else on the page.
+
+Without one it drew `syntheticTrend(symbol, chg24h)` — **a curve generated from
+the ticker's hash** — full width, under the words "Price trend". On a 34px
+sparkline that is decoration. At 640×120 on the page a person opens to decide
+whether to buy, it is a claim about a market that nobody measured, and this repo
+refuses a printed `0.00%` for an unreadable change. A drawn price history is the
+same lie with more pixels.
+
+`/api/ohlcv` + `components/CandleChart.tsx` replace both: real candles, volume,
+five timeframes, a crosshair readout, in the site's own type and colour.
+
+- ⚠️ **The candles are asked for OUR TOKEN, not the pool's base side.** GT's
+  OHLCV defaults to `base`, which is our token only by luck — in a WETH/OURTOKEN
+  pool it is WETH, and the page would draw Ethereum's chart under a memecoin's
+  ticker. That is a WRONG number rather than a missing one, which is the worse
+  of the two. The bot's `changeFromCandles` names the address for the same
+  reason.
+- **A 404 is an answer about the pool; a 429 or a dead socket is not.** Only the
+  first is cached — caching the second would let a two-minute backoff blank every
+  chart on the site for the TTL.
+- **A caller's pool address is a HINT.** The token page passes the pool GT named,
+  but a preview built from DexScreener carries a PAIR address GT has never
+  indexed, so a 404 on the hint sends us to resolve the pool GT does know.
+- **`topPoolAddress` is the ONE owner of "which pool do we chart?"** — `/api/pool`
+  and `/api/ohlcv` both need it, and two copies would drift into two
+  plausible-looking pool addresses with nothing to say which is right. It picks
+  the DEEPEST pool, never whichever the upstream listed first: a token seen
+  through a thin pool reads as a different asset.
+- **"No pool indexed yet" and "we could not read it" stay different sentences.**
+  An empty grid gives the reader the same reaction to both.
+- **A poll that fails never blanks a chart that is already drawn.** The pool did
+  not stop existing because one request did not land.
+- **`normalizeCandles` is pure and sorts by timestamp**, drops zero/negative
+  prices (one zeroed close flattens every real candle beside it), keeps a zero
+  VOLUME (a quiet 5 minutes is a fact), refuses a future stamp, and widens a wick
+  to contain its own body rather than clamping the body — every reported number
+  stays visible.
+- **Every drawn number is measured over the window that is DRAWN.** The visible
+  window narrows to what fits (160 candles across a phone's 330px plot is a 1.6px
+  body — a smear), so the percentage is computed over the same candles, and it is
+  labelled `over 40h`: the page header carries a 24h figure directly above it.
+
+### It is judged by LOOKING at it, so there is a script that renders it
+
+Three defects got through the unit tests and a source scan, and all three were
+found in a PNG: a price label sitting under the last-price tag, a phone window
+smeared into unreadable bodies, and — the one worth remembering — a time stamp
+clipped to a **wrong time**, `3:46` for `23:46`.
+
+⚠️ **A CSS declaration beats an SVG presentation attribute.** The renderer sets
+`textAnchor` per label so the first and last stamps stay inside the plot;
+`.ck-axis-x{text-anchor:middle}` in the stylesheet silently overrode it. The
+stylesheet no longer states an anchor, and a test fails if one comes back.
+
+```bash
+npm run build && npm start &
+npm run chart:preview     # every chart state, rendered and checked; non-zero on failure
+```
+
+It stubs the upstreams IN THE BROWSER, so it runs on a box with no egress —
+including the empty and unreadable states, which are the two nobody remembers to
+look at. ⚠️ The context must block service workers: a SW-served request never
+reaches the stub, and the second page load would quietly chart whatever the real
+server said.
+
+**Config a fix depends on:** nothing. `GECKOTERMINAL_API_KEY` is not read by the
+web app; the chart shares the same free quota as the rest of the site, which is
+why each timeframe caches for its own interval and the client polls no faster.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

@@ -11,6 +11,7 @@ next-env.d.ts
 .DS_Store
 npm-debug.log*
 e2e-shots/
+chart-shots/
 
 # Admin listing store (runtime data, do not commit)
 data/

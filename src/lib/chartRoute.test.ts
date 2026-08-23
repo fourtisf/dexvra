@@ -1,0 +1,109 @@
+// /api/ohlcv and the panel it feeds. Source guards, because the route imports
+// "@/"-aliased Next modules the test runner cannot resolve — the numbers
+// themselves are driven for real in ohlcv.test.ts.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+const ROUTE = read("src/app/api/ohlcv/route.ts");
+const CHART = read("src/components/CandleChart.tsx");
+const PAGE = read("src/app/(site)/token/[chain]/[address]/page.tsx");
+const POOL = read("src/app/api/pool/route.ts");
+const GTPOOL = read("src/lib/providers/gtPool.ts");
+const CSS = read("src/app/globals.css");
+
+test("⚠️ the candles are asked for OUR token, not the pool's base side", () => {
+  // GT's OHLCV defaults to `base`, which is our token only by luck: in a
+  // WETH/OURTOKEN pool it is WETH, and the page would draw Ethereum's chart
+  // under a memecoin's ticker — a WRONG number, not a missing one.
+  assert.match(ROUTE, /token,/);
+  assert.match(ROUTE, /never the pool's base side/i, "and the reason is written down where the param is set");
+});
+
+test("a 404 is an answer about the pool; anything else means GT never looked", () => {
+  // Caching a 429 would let a two-minute backoff blank every chart on the site
+  // for the TTL — the bot's changeFromCandles lesson, one surface over.
+  assert.match(ROUTE, /if \(res\.status === 404\) return null;/);
+  assert.match(ROUTE, /class Unreadable extends Error/);
+  const handler = ROUTE.slice(ROUTE.indexOf("export async function GET"));
+  assert.match(handler, /catch/, "a transient failure answers without being cached");
+  assert.ok(!/cached\([^)]*Unreadable/.test(ROUTE));
+});
+
+test("a pool address from the caller is a HINT, and a 404 on it re-resolves", () => {
+  // The token page passes the pool GeckoTerminal named, but a preview built
+  // from DexScreener carries a PAIR address GT has never indexed.
+  assert.match(ROUTE, /A caller-supplied pool is a HINT/);
+  assert.match(ROUTE, /if \(candles == null\) \{[\s\S]{0,200}topPoolAddress\(network, address\)/, "a 404 sends us to the pool GT does know");
+});
+
+test("'no pool yet' and 'we could not read it' stay different answers", () => {
+  // An empty grid gives the reader the same reaction to both.
+  assert.match(ROUTE, /No pool indexed for this token yet/);
+  assert.match(ROUTE, /Couldn't read the chart just now/);
+  assert.match(CHART, /status === "error" \? "Chart unavailable right now" : "No candles yet"/);
+});
+
+test("the address and pool that go into an upstream path are bounded", () => {
+  assert.match(ROUTE, /safeAddress\(address\)/);
+  assert.match(ROUTE, /safeAddress\(hint\)/);
+  assert.match(GTPOOL, /a\.length <= 90 && !\/\[\^A-Za-z0-9:_-\]\/\.test\(a\)/);
+});
+
+test("one owner answers 'which pool do we chart?'", () => {
+  // Two copies of that lookup drift into two plausible-looking pool addresses
+  // with nothing to say which is right.
+  assert.match(POOL, /topPoolAddress/);
+  assert.match(ROUTE, /topPoolAddress/);
+  assert.ok(!/api\.geckoterminal\.com/.test(POOL), "the route no longer holds its own copy");
+});
+
+test("the pool we chart is the DEEPEST, not whichever GT listed first", () => {
+  // A token seen through a thin pool reads as a different asset.
+  assert.match(GTPOOL, /reduce\(\(best, p\) =>/);
+  assert.match(GTPOOL, /reserve_in_usd/);
+});
+
+// ── the panel ───────────────────────────────────────────────────────────────
+
+test("⚠️ the token page draws no fabricated price history", () => {
+  // syntheticTrend() is a curve generated from the ticker's hash. On a 34px
+  // sparkline it is decoration; at 640×120 under the words "Price trend" it is
+  // a claim about a market nobody measured.
+  assert.ok(!/pathFrom\(t\.trend/.test(PAGE), "the hash-generated area chart is gone");
+  assert.ok(!/<iframe/.test(PAGE), "and so is the third-party embed");
+  assert.match(PAGE, /<CandleChart/);
+});
+
+test("the chart is candles, with volume, on a timeframe the reader picks", () => {
+  assert.match(CHART, /ck-wick/);
+  assert.match(CHART, /ck-body/);
+  assert.match(CHART, /ck-vol/);
+  assert.match(CHART, /TIMEFRAMES\.map/);
+  assert.match(CHART, /role="tab"/);
+});
+
+test("a poll that fails never blanks a chart that is already drawn", () => {
+  assert.match(CHART, /if \(quiet && drawn > 0\) return;/);
+  assert.match(CHART, /pollMsFor\(tf\)/, "and it never polls faster than the answer can change");
+});
+
+test("every drawn number is measured over the window that is actually drawn", () => {
+  // A percentage taken over candles that were never drawn is a figure the
+  // reader cannot check against the chart it sits on.
+  assert.match(CHART, /const view = geo\?\.view \?\? \[\]/);
+  assert.match(CHART, /windowChangePct\(view\)/);
+  assert.match(CHART, /geo\.view\.map/);
+});
+
+test("⚠️ the time-axis anchor is the renderer's, and CSS does not override it", () => {
+  // A CSS declaration beats an SVG presentation attribute, so `text-anchor` in
+  // the stylesheet silently overrode the per-label anchor that keeps the end
+  // stamps inside the plot — and the left-most label shipped as "3:46" for
+  // 23:46, a WRONG time rather than a clipped one.
+  assert.match(CHART, /textAnchor=\{anchor\}/);
+  const ck = CSS.slice(CSS.indexOf("CANDLESTICK CHART"), CSS.indexOf("GENERAL TIDY-UPS"));
+  assert.ok(!/\.ck-axis-x\{[^}]*text-anchor/.test(ck), "no text-anchor in the chart's stylesheet");
+});

@@ -14,6 +14,7 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
   if (!r.telegram) r.telegram = s.telegram;
 }
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
+import { applyResolvedLogo } from "./logoWrite";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
 const MIRROR_KEY = "listings";
@@ -211,6 +212,33 @@ export async function updateListing(id: string, patch: Partial<ListingRow>): Pro
     return rows;
   });
   return found;
+}
+
+/**
+ * Remember a logo the site RESOLVED for a listing that had none.
+ *
+ * Keyed on chain + address rather than on the row id, because the caller is the
+ * board pipeline and it works in BoardTokens — and because the answer is a fact
+ * about the token, not about which row happens to carry it.
+ *
+ * ⚠️ NEVER OVERWRITES A LOGO THAT IS ALREADY THERE. An admin-set logo and a
+ * project's own upload are decisions somebody made; a resolved one is the site
+ * filling a blank. This function can only ever turn "nothing" into "something",
+ * which is also what makes it safe to call from a background sweep.
+ *
+ * Returns whether a row was actually written, so a sweep can report how much of
+ * its work became permanent instead of only living in this process's memory.
+ */
+export async function setResolvedLogo(chain: string, address: string, logoUrl: string): Promise<boolean> {
+  let wrote = false;
+  await mutate((rows) => {
+    // The RULE lives in lib/logoWrite as a pure function — "never overwrites" is
+    // a mutation property, and this file cannot be loaded by the test runner.
+    const out = applyResolvedLogo(rows, chain, address, logoUrl);
+    wrote = out.wrote;
+    return out.rows as StoredListing[];
+  });
+  return wrote;
 }
 
 export async function setStatus(id: string, status: ListingStatus): Promise<StoredListing | null> {
