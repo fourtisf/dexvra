@@ -217,11 +217,11 @@ test("queries are env-overridable per chain, and no chain is left unaskable", ()
   } finally {
     delete process.env.DS_SEED_QUERIES_BSC;
   }
-  assert.deepStrictEqual(ds.queriesFor("bsc"), ds.QUERIES.bsc, "the table is the fallback");
+  assert.deepStrictEqual(ds.queriesFor("bsc", { vocab: false }), ds.QUERIES.bsc, "the table is the fallback");
   // A chain with no table entry must still be seedable — silence there would
   // be a chain that simply never fills, which is the state this whole feature
   // exists to end.
-  const guessed = ds.queriesFor("tron");
+  const guessed = ds.queriesFor("tron", { vocab: false });
   assert.ok(guessed.length > 0 && guessed.includes("WTRX"), `generic guess was ${guessed}`);
 });
 
@@ -281,5 +281,42 @@ test("a base-side project is free data and is not re-priced", async () => {
     assert.ok(!priced.some((u) => u.toLowerCase().includes("bbbb")), `re-priced a token it already had: ${priced}`);
   } finally {
     f.restore();
+  }
+});
+
+// ── The vocabulary — "masih sama aja tidak bertambah" ───────────────────────
+
+test("queries go WIDER than quote tokens, or a listed chain finds only itself", () => {
+  // The first live --apply listed 82 tokens across 22 chains and BSC gained
+  // FIVE. Four quote-token queries return the same few dozen deep pairs, and
+  // on a chain that already has listings those are exactly the ones we have.
+  const q = ds.queriesFor("bsc");
+  assert.ok(q.length >= 20, `only ${q.length} queries — that is the same few pairs again`);
+  assert.deepStrictEqual(q.slice(0, 4), ds.QUERIES.bsc, "the chain's own quote tokens still lead");
+  for (const term of ds.VOCAB) assert.ok(q.includes(term), `${term} missing from the net`);
+  // …and the narrow set stays reachable, because it is the cheap read.
+  assert.deepStrictEqual(ds.queriesFor("bsc", { vocab: false }), ds.QUERIES.bsc);
+});
+
+test("it STOPS querying once there is plainly enough", async () => {
+  const many = Array.from({ length: 200 }, (_, i) => pair({ n: i + 1 }));
+  const f = stubFetch((url) => (url.includes("/search") ? { pairs: many } : []));
+  try {
+    await ds.topByMcap("bsc", { limit: 10, feeds: false });
+    const queries = f.seen.filter((u) => u.includes("/search"));
+    // A chain that filled from the first query must not spend thirty requests
+    // proving it — the vocabulary is a long tail, not a fixed cost.
+    assert.ok(queries.length < ds.queriesFor("bsc").length, `ran all ${queries.length} queries anyway`);
+  } finally {
+    f.restore();
+  }
+});
+
+test("an env override still replaces the whole list, vocabulary included", () => {
+  process.env.DS_SEED_QUERIES_BSC = "ONLY,THESE";
+  try {
+    assert.deepStrictEqual(ds.queriesFor("bsc"), ["ONLY", "THESE"]);
+  } finally {
+    delete process.env.DS_SEED_QUERIES_BSC;
   }
 });

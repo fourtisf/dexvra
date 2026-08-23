@@ -25,7 +25,12 @@ const COUNTS = {
   ethereum: { featured: 1, eligible: 0 }, // short, nothing left
   base: { featured: 1, eligible: 8 },
   robinhood: { featured: 0, eligible: 0 }, // empty and unfixable
-  tron: { featured: 0, eligible: 2 }, // not auto-trended, but has listings
+  // Tron JOINED the auto-trended set on 2026-08-23 ("chain sol bsc eth
+  // robinhood base dan tron"), so the "has listings but is not auto-trended"
+  // case moved to Polygon. The case itself still matters: such a chain stays
+  // one tap from a Run now, and deliberately without a fraction.
+  tron: { featured: 3, eligible: 5 },
+  polygon: { featured: 0, eligible: 2 }, // not auto-trended, but has listings
   sui: { featured: 0, eligible: 0 }, // nothing at all
 };
 async function panel(counts = COUNTS, cfg = {}) {
@@ -122,11 +127,11 @@ test("chains nobody has listed on are dropped, not printed as '0/5'", async () =
   const { kb } = await panel();
   const runs = kb.flat().filter((t) => t.startsWith("⚡"));
   assert.ok(!runs.some((t) => t.includes("Sui")), `Sui has nothing listed: ${runs.join(" | ")}`);
-  // Tron is not auto-trended but DOES have listings — still one tap away, and
-  // deliberately without a fraction.
-  const tron = runs.find((t) => t.includes("Tron"));
-  assert.ok(tron, `Tron has listings and must stay reachable: ${runs.join(" | ")}`);
-  assert.ok(!/\/\d/.test(tron), `a chain with no target must not show one: ${tron}`);
+  // Polygon is not auto-trended but DOES have listings — still one tap away,
+  // and deliberately without a fraction.
+  const spare = runs.find((t) => t.includes("Polygon"));
+  assert.ok(spare, `Polygon has listings and must stay reachable: ${runs.join(" | ")}`);
+  assert.ok(!/\/\d/.test(spare), `a chain with no target must not show one: ${spare}`);
 });
 
 test("the board can be re-read without reopening the menu", async () => {

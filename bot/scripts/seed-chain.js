@@ -40,6 +40,7 @@ const seeder = require('../src/services/chainSeed');
 const gt = require('../src/group/gtPairs');
 const { DS_CHAIN } = require('../src/dexscreener');
 const { CHAINS } = require('../src/config/chains');
+const autoTrend = require('../src/services/autoTrend');
 // A 120-second wait that prints nothing is indistinguishable from a hang, and
 // the first live run was reported as exactly that. The renderer is a leaf
 // module so its countdown can be driven by a test.
@@ -75,6 +76,7 @@ Options
   --min-liq=N     floor on liquidity   (default ${seeder.DEFAULTS.minLiq.toLocaleString('en-US')}, i.e. none)
   --source=       auto (default: DexScreener, then GeckoTerminal for whatever
                   it could not find), dexscreener, or gecko
+  --trending      the chains the trending board may use (npm run trending:chains)
   --all           every chain the site supports that DexScreener indexes
   --same          pin every chain to --target instead of giving each its own
   --target-min=N  the floor of the per-chain spread (default 70% of --target)
@@ -119,6 +121,15 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     targetMin: flag('target-min') ? num(flag('target-min'), undefined) : undefined,
   };
 
+  if (flags.includes('--trending')) {
+    // The chains the board may actually use. Seeding the other sixteen fills
+    // the site with rows that can never be promoted, which is what `--all`
+    // spent most of its listings on: TON and Arbitrum gained 15 and 14 while
+    // BSC gained five. Read from the LIVE config, never a second copy of the
+    // list, or the seeder and the board would disagree about which chains
+    // matter.
+    for (const c of autoTrend.get().chains || []) if (!chains.includes(c)) chains.push(c);
+  }
   if (flags.includes('--all')) {
     // Every chain the site supports that DexScreener also indexes. A chain
     // neither index can be asked about would report "no chain id" forever,
@@ -126,7 +137,7 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     for (const c of Object.keys(CHAINS)) if (DS_CHAIN[c] && !chains.includes(c)) chains.push(c);
   }
   if (!chains.length) {
-    console.error(`\n${R}✗${X} name at least one chain, or pass --all\n`);
+    console.error(`\n${R}✗${X} name at least one chain, or pass --trending / --all\n`);
     process.exit(2);
   }
   const bad = chains.filter((c) => !chainOf(c));

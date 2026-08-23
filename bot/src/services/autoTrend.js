@@ -69,7 +69,17 @@ const DEFAULTS = {
   // The networks auto-trending keeps alive. Everything else is paid-only: a
   // chain nobody has listed on cannot be filled, and pretending otherwise just
   // logs a failure every cycle.
-  chains: ["solana", "bsc", "ethereum", "base", "robinhood"],
+  // ⚠️ TRON was missing, and the operator named it: "yang untuk di show
+  // trending chain sol bsc eth robinhood base dan tron". A chain absent here is
+  // not merely un-promoted — it can never appear on the board at all, which
+  // from the channel is indistinguishable from a chain with nothing worth
+  // trending. Six now.
+  //
+  // ⚠️ A STORED VALUE BEATS THIS. `set()` persists `chains`, so any box where
+  // ⚙️ Auto-Trend settings has ever been touched keeps its own list and this
+  // change reaches it never. `npm run trending:chains` prints what is actually
+  // live and can write the default back.
+  chains: ["solana", "bsc", "ethereum", "base", "robinhood", "tron"],
   // ── Public announcement of an auto-promotion ──
   // A slot lasts 3–18h and the target is 8, so refills alone produce roughly
   // 8 ÷ 10.5h × 24 ≈ 18 promotions a day. Announcing every one would bury the

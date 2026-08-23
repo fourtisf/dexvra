@@ -80,15 +80,39 @@ const QUERIES = {
   avalanche: ['WAVAX', 'USDC', 'USDT'],
 };
 
-/** The queries for a chain: env first, then the table, then a generic guess
- *  built from the chain's own native symbol — never nothing, because a chain
- *  with no entry would otherwise be silently unseedable. */
-function queriesFor(chain) {
+/*
+ * …AND A SHARED VOCABULARY, because quote tokens alone are not an enumeration.
+ *
+ * The first live run listed 82 tokens across 22 chains and BSC gained five.
+ * Four quote-token queries return the same few dozen deep pairs on a chain, and
+ * on a chain with listings already those are exactly the ones we HAVE. The
+ * search endpoint matches names and symbols, so a wider vocabulary reaches
+ * different tokens rather than the same ones ranked differently.
+ *
+ * Deliberately generic and chain-agnostic — this is a net, not a curated list,
+ * and a term that matches nothing costs one request out of a 300/min budget.
+ * The `$1M` floor and the stables-and-wrappers filter still decide what is
+ * actually listable, so a silly term cannot put junk on the site.
+ */
+const VOCAB = [
+  'PEPE', 'DOGE', 'SHIB', 'INU', 'CAT', 'BONK', 'WIF', 'MOON', 'BABY', 'ELON',
+  'TRUMP', 'AI', 'MEME', 'FLOKI', 'CHAD', 'WOJAK', 'GROK', 'APE', 'FROG', 'BULL',
+  'GOLD', 'KING', 'ROCKET', 'SAFE', 'FINANCE', 'PROTOCOL', 'SWAP', 'DAO',
+];
+
+/** The queries for a chain: env first, then quote tokens + the shared
+ *  vocabulary, then a generic guess built from the chain's own native symbol —
+ *  never nothing, because a chain with no entry would be silently unseedable.
+ *
+ *  Quote tokens come FIRST: they return the chain's deepest pairs, which is
+ *  what a "biggest tokens" read is actually asking for. The vocabulary is the
+ *  long tail behind them, and `topByMcap` stops early once it has enough. */
+function queriesFor(chain, { vocab = true } = {}) {
   const env = String(process.env[`DS_SEED_QUERIES_${String(chain).toUpperCase()}`] || '').trim();
   if (env) return env.split(',').map((q) => q.trim()).filter(Boolean);
-  if (QUERIES[chain]) return QUERIES[chain];
   const native = (CHAINS[chain] && CHAINS[chain].native) || '';
-  return [...new Set([native && `W${native}`, native, 'USDT', 'USDC'].filter(Boolean))];
+  const quotes = QUERIES[chain] || [...new Set([native && `W${native}`, native, 'USDT', 'USDC'].filter(Boolean))];
+  return vocab ? [...quotes, ...VOCAB] : quotes;
 }
 
 async function getJson(url) {
@@ -155,7 +179,7 @@ function absorbPair(best, chain, p) {
  * of liquidity is a thing this repo has warned about since the auto-lister was
  * written), so the caller can still set a floor; it is simply not imposed.
  */
-async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, feeds = true, probe = null } = {}) {
+async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, feeds = true, vocab = true, probe = null } = {}) {
   const dsChain = DS_CHAIN[chain];
   // A chain DexScreener does not index cannot be asked at all, and saying so
   // is the difference between "nothing qualifies" and "we never looked".
@@ -176,7 +200,11 @@ async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, f
   // dropped the base, and the project sitting on the QUOTE side was thrown
   // away with it. The base side is free data when it is a project; the quote
   // side is an ADDRESS worth pricing.
-  for (const q of queriesFor(chain)) {
+  for (const q of queriesFor(chain, { vocab: vocab !== false })) {
+    // Stop once there is plainly enough to work with. The vocabulary is a long
+    // tail behind the quote tokens, and a chain that filled from the first few
+    // queries should not spend thirty requests proving it.
+    if (best.size + wanted.size >= limit * 3) break;
     const res = await getJson(`${SEARCH}?q=${encodeURIComponent(q)}`);
     if (!res.ok) {
       why = res.why;
@@ -263,4 +291,4 @@ async function feedAddresses(chain) {
   return out;
 }
 
-module.exports = { topByMcap, queriesFor, QUERIES, _itemOf: itemOf };
+module.exports = { topByMcap, queriesFor, QUERIES, VOCAB, _itemOf: itemOf };

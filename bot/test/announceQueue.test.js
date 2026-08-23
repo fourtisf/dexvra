@@ -116,7 +116,8 @@ test("a slot that ended before the queue reached it is not announced", async () 
 });
 
 test("a cold start queues every promotion — none is skipped", async () => {
-  // 25 slots filled at once used to produce ONE post and 24 silent promotions.
+  // Every slot filled at once used to produce ONE post and the rest as silent
+  // promotions.
   await autoTrend.resetState();
   await autoTrend.set({ enabled: true, announce: true, perChain: 5, announceGapMin: 15, announcePerDay: 100 });
   const rows = [];
@@ -128,17 +129,21 @@ test("a cold start queues every promotion — none is skipped", async () => {
   const posted = [];
   autoTrend._test.setAnnouncer(async (row) => (posted.push(row.address), { message_id: posted.length }));
 
+  // DERIVED from the live chain list, never a literal: the count moved from 25
+  // to 30 the day Tron joined the trending set, and a hardcoded 25 turns a
+  // configuration change into a red test that says nothing about the queue.
+  const expected = autoTrend.get().chains.length * 5;
   const promoted = await autoTrend.runOnce({ rng: () => 0.5 });
-  assert.strictEqual(promoted, 25);
-  // One posts immediately; the other 24 are waiting, not gone.
+  assert.strictEqual(promoted, expected);
+  // One posts immediately; the rest are waiting, not gone.
   assert.strictEqual(posted.length, 1, `posted now: ${posted.join(", ")}`);
-  assert.strictEqual(autoTrend.pendingCount(), 24, "every remaining promotion is queued");
+  assert.strictEqual(autoTrend.pendingCount(), expected - 1, "every remaining promotion is queued");
   autoTrend._test.setAnnouncer(null);
 });
 
 test("the queue holds a whole cold start", async () => {
-  // It was capped at 20, below the 25 a five-chain top-up produces, so the tail
-  // was discarded silently by the cap that was meant to bound it.
+  // It was capped at 20, below what a full cold start produces (chains × 5), so
+  // the tail was discarded silently by the cap that was meant to bound it.
   await autoTrend.resetState();
   for (let i = 0; i < 40; i++) await autoTrend.queueAnnounce({ chain: "bsc", address: `t${i}` }, 3);
   assert.strictEqual(autoTrend.pendingCount(), 40);
