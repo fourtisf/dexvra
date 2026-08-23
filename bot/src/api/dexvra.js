@@ -51,6 +51,18 @@ async function updateListing(id, patch) {
   return out?.listing || null;
 }
 
+/**
+ * Remove a listing the BOT created. Returns `{ deleted, chain, address, sym }`.
+ *
+ * The site REFUSES anything somebody paid for — a real tier, a live trending
+ * slot, or a row this bot did not create — and answers 409 with which rule
+ * stopped it. That guard lives there rather than here on purpose: a caller can
+ * be wrong about what it is holding, and the store cannot.
+ */
+async function deleteListing(id) {
+  return call("DELETE", `/api/internal/listings/${encodeURIComponent(id)}`);
+}
+
 /** Every stored listing (bot reads for pump/trending). */
 async function getListings() {
   const out = await call("GET", "/api/internal/listings");
@@ -115,6 +127,7 @@ async function ping() {
 }
 
 module.exports = {
+  deleteListing,
   createListing,
   updateListing,
   getListings,

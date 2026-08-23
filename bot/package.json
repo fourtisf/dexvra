@@ -22,7 +22,8 @@
     "test": "node scripts/run-tests.js",
     "trending:check": "node scripts/trending-check.js",
     "seed:chain": "node scripts/seed-chain.js",
-    "trending:chains": "node scripts/trending-chains.js"
+    "trending:chains": "node scripts/trending-chains.js",
+    "unseed:chain": "node scripts/unseed-chain.js"
   },
   "engines": {
     "node": ">=18"
