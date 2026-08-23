@@ -18,6 +18,13 @@ export function TierTag({
   showRank?: boolean;
   ageMinutes?: number | null;
 }) {
+  // ⚠️ FREE IS NOT A BADGE. Every tier here is something a project BOUGHT, and
+  // the chip exists to show that off for 48h. "Free" said the opposite on the
+  // rows that need it least — auto-listed inventory — and once seeding filled
+  // the board it was on most of it, labelling the site's own stock as the
+  // cheapest thing on the page. An auto listing should be indistinguishable
+  // from any other row; that is the whole point of listing it.
+  if (String(tier).toUpperCase() === "FREE") return null;
   if (ageMinutes != null && ageMinutes >= TIER_TAG_MAX_MIN) return null;
   const rank = tierRank(tier);
   return (

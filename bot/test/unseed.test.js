@@ -27,13 +27,31 @@ test("it is DRY RUN by default, and --apply is the only thing that removes", () 
   assert.match(s, /DRY RUN/);
 });
 
-test("there is NO --all — the blast radius of a typo is the whole site", () => {
-  // seed:chain has --all because over-listing is recoverable by removing rows.
-  // The inverse is not: a removed listing does not come back through the
-  // seeder at all, because `everListed` is written at creation and never
-  // cleared. So a chain has to be typed.
+test("there is NO --all, and the one chainless mode is scoped by WHAT, not WHERE", () => {
+  // seed:chain has --all because over-listing is recoverable — by removing
+  // rows. The inverse is not: `everListed` is written at creation and never
+  // cleared, so a removed token does not come back through the seeder at all.
+  // A bare "remove everything" therefore must not exist.
   assert.ok(!/--all/.test(code()), "unseed must never grow an --all");
-  assert.match(src(), /if \(!chains\.length/, "naming a chain is required");
+
+  // `--stablecoins` runs without a chain, and that is a different thing: it is
+  // bounded by what a row IS (`notAProject`) rather than by a flag meaning
+  // "everything". The leak it cleans up landed on every chain at once, so
+  // naming them one by one would be the same typo risk twenty-two times over.
+  assert.match(code(), /flags\.includes\('--stablecoins'\)/);
+  assert.match(code(), /!chains\.length && !money/, "every other mode still requires a named chain");
+  assert.match(code(), /removable\(r\) && \(!money \|\| isMoney\(r\)\)/, "the stablecoin sweep NARROWS, never widens");
+});
+
+test("the stablecoin sweep judges the row the way a reader sees it", () => {
+  // The site stores the SANITISED ticker — `$USDT`, ₮ already gone — which is
+  // the wrong string to have judged at the source and the right one for a
+  // cleanup: it is what a human reads on the board.
+  const { notAProject } = require("../src/services/bigCoins");
+  assert.ok(notAProject("USDT", "Tether"), "the row as stored");
+  assert.ok(notAProject("USD₮0", "Tether"), "and the row as the source spelled it");
+  assert.ok(!notAProject("PEPE", "Pepe"));
+  assert.match(src(), /const isMoney = \(r\) => notAProject\(r\.sym, r\.name\)/);
 });
 
 test("the removable filter refuses anything somebody paid for", () => {

@@ -61,9 +61,55 @@ const NOT_A_PROJECT = new Set([
 ]);
 const WRAPPER_NAME = /^(wrapped|staked|bridged|rebasing|liquid staked|restaked)\b/i;
 
+/*
+ * ⚠️ AND THE NAME, because a ticker is not written in ASCII.
+ *
+ * `$USDT` and `$USDC` reached the public board at $185B and $76B. The filter
+ * was right and never saw them: Tether's omnichain token is branded **USD₮0**
+ * — U+20AE, not a T — so `NOT_A_PROJECT.has('USD₮0')` is false, and the site
+ * then rendered it as `$USDT` because `sanitizeTicker` strips the ₮ on the way
+ * in. The symbol we JUDGED and the symbol we PUBLISHED were different strings,
+ * which is why nothing looked wrong at either end.
+ *
+ * So the symbol is folded the same way the display is (non-alphanumerics out,
+ * uppercased) before matching, and a handful of issuer names are matched too —
+ * an issuer renames its ticker far more readily than its brand.
+ *
+ * The name rule is ANCHORED and deliberately blunt: `^tether\b` catches every
+ * spelling Tether ships, and it also catches a memecoin called "Tether
+ * Killer". That is the trade, taken knowingly — the cost of a false positive
+ * is one listing nobody misses, and the cost of a false negative is a $185B
+ * stablecoin sitting on a public board being sold as a find.
+ */
+/*
+ * ⚠️ The currency glyphs are TRANSLITERATED, not stripped.
+ *
+ * The first cut of this deleted every non-alphanumeric, so `USD₮0` folded to
+ * `USD0` — still not `USDT`, still not refused, and the fix would have shipped
+ * looking like it worked. ₮ IS a T; a brand writes its ticker in the glyph and
+ * everyone reads it as the letter.
+ */
+const CONFUSABLE = { '₮': 'T', '₿': 'B', 'Ξ': 'E', '₳': 'A', '＄': 'S', '$': 'S', '€': 'E', '£': 'L' };
+const fold = (sym) =>
+  String(sym || '')
+    .replace(/[₮₿Ξ₳＄$€£]/g, (c) => CONFUSABLE[c] || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+// A stable/wrapper ISSUER, not a word that might appear in a memecoin's name.
+const MONEY_NAME = /^(tether|usd coin|circle|binance[- ]peg|bridged|wrapped|staked|rebasing|liquid staked|restaked|first digital|paypal usd|ethena usde|sky dollar|dai stablecoin)\b/i;
+
 /** Is this the money rather than the project? */
-const notAProject = (sym, name) =>
-  NOT_A_PROJECT.has(String(sym || '').toUpperCase()) || WRAPPER_NAME.test(String(name || ''));
+const notAProject = (sym, name) => {
+  const s = fold(sym);
+  if (NOT_A_PROJECT.has(s)) return true;
+  // USD₮0 folds to USDT0, USDC.e to USDCE — a bridged or versioned wrapper of
+  // something already refused is refused too. Bounded to a trailing digit or
+  // an `E`/`B` suffix so a real ticker like USDX is untouched.
+  const base = s.replace(/(\d+|E|B)$/, '');
+  if (base !== s && NOT_A_PROJECT.has(base)) return true;
+  const n = String(name || '');
+  return WRAPPER_NAME.test(n) || MONEY_NAME.test(n);
+};
 
 /**
  * The chain's biggest tokens, market cap first.
@@ -150,4 +196,4 @@ async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_
   return { ok: asked > 0, why, items, pagesRead: asked, nextPage: stoppedAt };
 }
 
-module.exports = { topByMcap, notAProject, NOT_A_PROJECT, _num: num };
+module.exports = { topByMcap, notAProject, NOT_A_PROJECT, _fold: fold, _num: num };

@@ -32,6 +32,10 @@ const coin = (i, over = {}) => ({
   mcap: 10_000_000 - i,
   liq: 500_000,
   priceUsd: 1,
+  // Every candidate carries artwork, because the seeder now REFUSES one that
+  // does not — "setiap token harus punya logonya". A fixture without it would
+  // make every test here a test of the logo gate.
+  logoUrl: `https://img.test/${i}.png`,
   ...over,
 });
 
@@ -56,7 +60,7 @@ function harness({ items = [], ok = true, why = null, rows = [], ever = () => fa
     wasEverListed: ever,
     async fetchTokenInfo(chain, address) {
       calls.info.push([chain, address]);
-      return { name: "Enriched", symbol: "ENR", logoUrl: "http://x/y.png" };
+      return { name: "Enriched", symbol: "ENR", logoUrl: "https://x.test/y.png" };
     },
     async createFromInfo(chain, address, info, opts) {
       calls.create.push({ chain, address, info, opts });
@@ -613,4 +617,37 @@ test("the CLI reports a top-up as recoverable, not as a failure", () => {
   // is the expected state of every chain here and re-running continues it.
   assert.match(src, /process\.exit\(unreadable \|\| truncated \? 1 : 0\)/);
   assert.ok(!/toppable \? 1/.test(src), "a top-up must not fail the run");
+});
+
+// ── "setiap token harus punya logonya" ─────────────────────────────────────
+
+test("a token with NO LOGO is never listed", async () => {
+  // A blank circle reads as broken rather than as a project that has not
+  // uploaded artwork, and on a seeded board that would be most of the page.
+  // A paid listing can be chased for a logo; nobody is going to chase these.
+  const { deps, calls } = harness({
+    items: [coin(1, { logoUrl: null }), coin(2, { logoUrl: "" }), coin(3)],
+  });
+  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0, spread: false });
+  assert.deepStrictEqual(calls.create.map((c) => c.address), [coin(3).address]);
+  assert.match(r.why, /2 had no logo/, "and the shortfall says WHY, not just that it is short");
+});
+
+test("an http-only logo is refused — the site serves https", async () => {
+  const { deps, calls } = harness({ items: [coin(1, { logoUrl: "http://insecure/x.png" })] });
+  await seeder.seedChain("bsc", { target: 1, apply: true, deps, gapMs: 0, spread: false });
+  assert.deepStrictEqual(calls.create, []);
+});
+
+test("⚠️ the logo is re-checked at CREATE, not only when planning", async () => {
+  // Enrichment can only ADD a logo, never remove one — but a candidate whose
+  // url turns out unusable must not slip through on the strength of having had
+  // one when it was planned.
+  const { deps, calls } = harness({ items: [coin(1)] });
+  deps.fetchTokenInfo = async () => ({ logoUrl: "" }); // answers, with nothing usable
+  const r = await seeder.seedChain("bsc", { target: 1, apply: true, deps, gapMs: 0, spread: false });
+  // The candidate's own https logo survives the merge, so this one still lists…
+  assert.strictEqual(calls.create.length, 1);
+  assert.strictEqual(calls.create[0].info.logoUrl, coin(1).logoUrl);
+  assert.strictEqual(r.listed.length, 1);
 });

@@ -74,10 +74,28 @@ const QUERIES = {
   base: ['WETH', 'USDC', 'cbBTC', 'AERO'],
   ethereum: ['WETH', 'USDT', 'USDC', 'DAI'],
   solana: ['SOL', 'USDC', 'USDT'],
+  // ⚠️ TRON needed its OWN entry, and it is the reason `PER_CHAIN` below
+  // exists. It came back "only 0 of the 150 needed are new — 9 already
+  // listed", because the shared vocabulary is English memecoin naming (PEPE,
+  // WOJAK, FLOKI) and Tron's ecosystem is not that: it is SUN, JST, BTT, WIN,
+  // SUNDOG, APENFT. A net woven for one chain's culture catches nothing on
+  // another's, and the failure looks identical to a chain with no tokens.
+  tron: ['WTRX', 'TRX', 'USDT', 'USDD', 'SUN', 'JST', 'BTT', 'WIN', 'NFT'],
   polygon: ['WMATIC', 'WPOL', 'USDC', 'WETH'],
   arbitrum: ['WETH', 'USDC', 'ARB'],
   optimism: ['WETH', 'USDC', 'OP'],
   avalanche: ['WAVAX', 'USDC', 'USDT'],
+};
+
+/** Vocabulary that only makes sense on ONE chain, appended after the shared
+ *  list. Same reasoning as the quote tokens: what a chain's tokens are NAMED
+ *  after is a property of that chain, not of crypto. */
+const PER_CHAIN_VOCAB = {
+  tron: ['SUNDOG', 'SUNCAT', 'SUNWUKONG', 'TRON', 'JUSTIN', 'APENFT', 'STARK'],
+  solana: ['BONK', 'PUMP', 'JUP', 'RAY', 'FART'],
+  base: ['DEGEN', 'BRETT', 'TOSHI', 'CLANKER', 'HIGHER'],
+  bsc: ['BNB', 'FOUR', 'BROCCOLI', 'MUBARAK', 'PALU'],
+  robinhood: ['ROBIN', 'HOOD', 'PONS'],
 };
 
 /*
@@ -112,7 +130,7 @@ function queriesFor(chain, { vocab = true } = {}) {
   if (env) return env.split(',').map((q) => q.trim()).filter(Boolean);
   const native = (CHAINS[chain] && CHAINS[chain].native) || '';
   const quotes = QUERIES[chain] || [...new Set([native && `W${native}`, native, 'USDT', 'USDC'].filter(Boolean))];
-  return vocab ? [...quotes, ...VOCAB] : quotes;
+  return vocab ? [...new Set([...quotes, ...VOCAB, ...(PER_CHAIN_VOCAB[chain] || [])])] : quotes;
 }
 
 async function getJson(url) {
@@ -291,4 +309,4 @@ async function feedAddresses(chain) {
   return out;
 }
 
-module.exports = { topByMcap, queriesFor, QUERIES, VOCAB, _itemOf: itemOf };
+module.exports = { topByMcap, queriesFor, QUERIES, VOCAB, PER_CHAIN_VOCAB, _itemOf: itemOf };

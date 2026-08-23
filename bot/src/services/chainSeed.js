@@ -123,7 +123,7 @@ const DEFAULTS = {
  */
 function plan({ chain, target, current, candidates, known, everListed }) {
   const need = Math.max(0, target - current);
-  const out = { chain, target, current, need, take: [], skipped: { listed: 0, everListed: 0 }, why: null };
+  const out = { chain, target, current, need, take: [], skipped: { listed: 0, everListed: 0, noLogo: 0 }, why: null };
   if (!need) {
     out.why = `already at ${current}/${target}`;
     return out;
@@ -131,6 +131,15 @@ function plan({ chain, target, current, candidates, known, everListed }) {
   for (const c of candidates || []) {
     if (out.take.length >= need) break;
     if (!c || !c.address || !c.symbol || !c.name) continue; // a nameless row on a public site
+    // ⚠️ NO LOGO, NO LISTING — "setiap token harus punya logonya". A row with a
+    // blank circle reads as broken rather than as a token whose project has
+    // not uploaded artwork, and on a seeded board that is most of the page.
+    // A paid listing can be chased for a logo; nobody is going to chase these,
+    // so the source has to supply one or the token waits for the next run.
+    if (!/^https:\/\//.test(String(c.logoUrl || ''))) {
+      out.skipped.noLogo++;
+      continue;
+    }
     const k = keyOf(chain, c.address);
     if (known && known.has(k)) {
       out.skipped.listed++;
@@ -151,10 +160,11 @@ function plan({ chain, target, current, candidates, known, everListed }) {
     // four tokens above the floor" is a floor to lower or a thin chain. The
     // first cut printed the dedup counts either way, so an empty candidate list
     // read as a chain we had already filled.
-    const skipped = out.skipped.listed + out.skipped.everListed;
+    const skipped = out.skipped.listed + out.skipped.everListed + out.skipped.noLogo;
     out.why = skipped
       ? `only ${out.take.length} of the ${need} needed are new — ` +
-        `${out.skipped.listed} already listed, ${out.skipped.everListed} listed before and removed`
+        `${out.skipped.listed} already listed, ${out.skipped.everListed} listed before and removed` +
+        (out.skipped.noLogo ? `, ${out.skipped.noLogo} had no logo` : '')
       : `only ${out.take.length} token(s) on ${chain} clear the floor — ${need} needed`;
   }
   return out;
@@ -434,6 +444,15 @@ async function seedChain(chain, opts = {}) {
       twitter: (full && full.twitter) || c.twitter,
       telegram: (full && full.telegram) || c.telegram,
     };
+    // The enrichment pass can only ADD a logo, never remove one, so this is a
+    // belt on top of the plan's braces rather than a second gate — but a
+    // candidate whose logo url turns out unusable must not slip through on the
+    // strength of having had one.
+    if (!/^https:\/\//.test(String(merged.logoUrl || ''))) {
+      out.failed++;
+      log.debug(`[chainseed] ${c.symbol} on ${chain}: no usable logo`);
+      continue;
+    }
     try {
       // `free` and nothing else — see the header. The absence of a `tg` here is
       // not an accident either: announce() is unreachable from this path.
