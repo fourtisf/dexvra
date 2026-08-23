@@ -8,7 +8,7 @@
  * monogram fallback, which is the right thing to draw and the wrong thing to
  * have to draw on a row nobody will ever come and fix.
  *
- * Four sources, in the order of how much they KNOW about the token:
+ * Seven sources, in the order of how much they KNOW about the token:
  *
  *   1. DexScreener pair info    — what the project itself uploaded
  *   2. GeckoTerminal token      — a second index, different submissions
@@ -18,16 +18,21 @@
  *                                 human at the index has actually looked at
  *   5. Trust Wallet assets      — a community repo of token artwork, which is
  *                                 where a wallet gets its icons from
- *   6. DexScreener's CDN path   — a convention, not an answer; see below
+ *   6. pools.trade              — the Robinhood Chain launchpad. DexScreener
+ *                                 does not index that chain and CoinGecko has
+ *                                 no platform id for it, so for a Robinhood
+ *                                 token this is one of only two places the
+ *                                 artwork can be.
+ *   7. DexScreener's CDN path   — a convention, not an answer; see below
  *
- * ⚠️ AND WHEN ALL SIX HAVE NOTHING, THAT IS INFORMATION. "ga mungkin kalo
+ * ⚠️ AND WHEN ALL SEVEN HAVE NOTHING, THAT IS INFORMATION. "ga mungkin kalo
  * project g punya logo" is right about projects and the tokens it was said
  * about were not projects: `$SAFE`, `$BONK`, `$CAT`, `$WOJAK`, `$MEME` — one
  * per search TERM the seeder uses, on three chains, none with artwork. A real
- * project is on at least one of six indexes within a day of launching. Six
- * empty answers is the cheapest junk filter this repo has.
+ * project is on at least one of seven indexes within a day of launching.
+ * Seven empty answers is the cheapest junk filter this repo has.
  *
- * ⚠️ EVERY CANDIDATE IS FETCHED BEFORE IT IS BELIEVED. Source 4 is a URL
+ * ⚠️ EVERY CANDIDATE IS FETCHED BEFORE IT IS BELIEVED. Source 7 is a URL
  * TEMPLATE — `dd.dexscreener.com/ds-data/tokens/<chain>/<addr>.png` — so it can
  * always be constructed and is very often a 404. Storing one unverified turns
  * "no logo" into "broken image", which is worse: the monogram at least looks
@@ -37,6 +42,7 @@
 const dexscreener = require('../dexscreener');
 const gt = require('../group/gtPairs');
 const launchpads = require('../launchpads');
+const poolstrade = require('../poolstrade');
 const { DS_CHAIN } = require('../dexscreener');
 const log = require('../helpers/logger');
 
@@ -233,6 +239,7 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
   const dsInfo = deps.dsInfo || dexscreener.fetchTokenInfo;
   const gtInfo = deps.gtInfo || gtLogo;
   const padInfo = deps.padInfo || launchpads.fetchTokenInfo;
+  const ptInfo = deps.ptInfo || poolstrade.fetchTokenInfo;
   const cgInfo = deps.cgInfo || coingecko;
   const gtDown = deps.gtInCooldown || gt.inCooldown;
   const verify = deps.isImage || isImage;
@@ -253,7 +260,7 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
   // Asked CONCURRENTLY — independent services, and a cleanup walks hundreds of
   // rows, so serial timeouts per token are the difference between a run and an
   // afternoon.
-  const [ds, gt2, pad, cg] = await Promise.all([
+  const [ds, gt2, pad, cg, pt] = await Promise.all([
     ask('dexscreener', () => dsInfo(chain, address)),
     // ⚠️ GeckoTerminal's 429 arms a PROCESS-WIDE cooldown, after which every
     // read returns instantly with nothing. Calling it anyway and reading that
@@ -263,6 +270,7 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
 
     ask('launchpad', () => (padInfo ? padInfo(chain, address) : null)),
     ask('coingecko', () => cgInfo(chain, address)),
+    ask('poolstrade', () => (ptInfo ? ptInfo(chain, address) : null)),
   ]);
   if (cg && cg.ok === false) unreachable.push(`coingecko: ${cg.why}`);
   if (gt2 && gt2.ok === false) unreachable.push(`geckoterminal: ${gt2.why}`);
@@ -273,6 +281,7 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
     ['geckoterminal', httpsUrl(gt2 && (gt2.url || gt2.logoUrl))],
     ['launchpad', httpsUrl(pad && pad.logoUrl)],
     ['coingecko', httpsUrl(cg && cg.url)],
+    ['poolstrade', httpsUrl(pt && pt.logoUrl)],
     ['trustwallet', httpsUrl(trustWallet(chain, address))],
     ['dexscreener-cdn', httpsUrl(cdnGuess(chain, address))],
   ];
@@ -288,14 +297,18 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
   // which a caller may delete the listing. `ok:false` means one could not be
   // asked, and the honest answer is "not yet known".
   //
-  // GeckoTerminal is deliberately NOT one that matters, and that is a fact
-  // about the industry rather than a shortcut: GT is CoinGecko's, and its
-  // token images come from the same catalogue — so asking CoinGecko already
-  // covers it. It is also the only source here with a shared rate limit, and
-  // waiting on the redundant one cost a whole cleanup run: 429 after two rows,
-  // then 120 seconds, over and over, for eighty-three of them. A bonus source
-  // may never be the reason nothing can be decided.
-  const blocking = unreachable.filter((u) => !u.startsWith('geckoterminal:'));
+  // ⚠️ GeckoTerminal is redundant ONLY WHERE COINGECKO COVERS THE CHAIN, and
+  // the first cut of this rule got that wrong in the way that matters. GT is
+  // CoinGecko's and shares its catalogue — true on Ethereum, BSC, Base. On
+  // ROBINHOOD it is the opposite: DexScreener does not index that chain,
+  // CoinGecko has no platform id for it, and GT is one of only two places the
+  // artwork can be. Skipping it there turned "we did not look" into "no
+  // artwork on any source" for every Robinhood row on the board.
+  //
+  // So it is a bonus where something else covers the same ground, and required
+  // where nothing does.
+  const gtRedundant = !!CG_PLATFORM[chain];
+  const blocking = unreachable.filter((u) => !(gtRedundant && u.startsWith('geckoterminal:')));
   const ok = blocking.length === 0;
   if (!ok) log.debug(`[tokenlogo] ${chain}/${address}: undecided — ${blocking.join(', ')}`);
   // `unreachable` still carries GT so a caller can SAY it was skipped; `ok`

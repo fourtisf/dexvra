@@ -13,21 +13,23 @@ const deps = (over = {}) => ({
   gtInfo: async () => null,
   padInfo: async () => null,
   cgInfo: async () => ({ ok: true, url: null }),
+  ptInfo: async () => null,
   gtInCooldown: () => false,
   isImage: async () => true,
   ...over,
 });
 
-test("it asks SIX sources, in order of how much each knows about the token", async () => {
+test("it asks SEVEN sources, in order of how much each knows about the token", async () => {
   const order = [];
   const d = deps({
     dsInfo: async () => (order.push("ds"), null),
     gtInfo: async () => (order.push("gt"), null),
     padInfo: async () => (order.push("pad"), null),
     cgInfo: async () => (order.push("cg"), { ok: true, url: null }),
+    ptInfo: async () => (order.push("pt"), null),
   });
   const hit = await resolveLogo("bsc", "0xabc", { deps: d });
-  assert.deepStrictEqual(order.sort(), ["cg", "ds", "gt", "pad"], "every index is asked");
+  assert.deepStrictEqual(order.sort(), ["cg", "ds", "gt", "pad", "pt"], "every index is asked");
   // The CDN path is a CONVENTION we construct, so it is the last resort.
   assert.strictEqual(hit.source, "dexscreener-cdn");
   assert.strictEqual(hit.url, cdnGuess("bsc", "0xabc"));
@@ -164,7 +166,7 @@ test("a network failure is a miss, never a throw", async () => {
 // for every one of those rows, the script called it "no logo anywhere", and it
 // was one --apply away from deleting eighty-three public listings on it.
 
-test("⚠️ GeckoTerminal is a BONUS source — it may never block a decision", async () => {
+test("⚠️ GeckoTerminal is a bonus ONLY where CoinGecko covers the chain", async () => {
   // GT is CoinGecko's and its token images come from the same catalogue, so
   // asking CoinGecko already covers it. It is also the only source here with a
   // shared rate limit, and treating it as required cost a whole cleanup run:
@@ -177,9 +179,32 @@ test("⚠️ GeckoTerminal is a BONUS source — it may never block a decision",
   });
   const r = await resolveLogo("bsc", "0xabc", { deps: d });
   assert.strictEqual(asked, false, "a parked source is not even called");
-  assert.strictEqual(r.ok, true, "the other five answered — that is a decision");
+  assert.strictEqual(r.ok, true, "CoinGecko covers BSC and shares GT's catalogue");
   assert.match(r.unreachable.join(" "), /geckoterminal: cooldown/, "…and it is still REPORTED");
   assert.deepStrictEqual(r.blocking, [], "nothing that matters was missing");
+});
+
+test("⚠️ …and it BLOCKS on a chain nothing else indexes", async () => {
+  // The rule's first cut skipped GT everywhere, and every row in that cleanup
+  // run was ROBINHOOD: DexScreener does not index the chain, CoinGecko has no
+  // platform id for it, Trust Wallet has no path. GT is one of only two places
+  // the artwork can be, so "GeckoTerminal skipped — no artwork on any source"
+  // was a claim resting on nothing.
+  const { CG_PLATFORM } = require("../src/services/tokenLogo");
+  assert.ok(!CG_PLATFORM.robinhood, "the premise: CoinGecko does not cover it");
+  const d = deps({ gtInCooldown: () => true, isImage: async () => false });
+  const r = await resolveLogo("robinhood", "0xabc", { deps: d });
+  assert.strictEqual(r.ok, false, "we did not look — that is not 'nothing is there'");
+  assert.deepStrictEqual(r.blocking, ["geckoterminal: cooldown"]);
+});
+
+test("pools.trade is the OTHER place a Robinhood token's artwork lives", async () => {
+  const d = deps({ ptInfo: async () => ({ logoUrl: "https://pools/a.png" }) });
+  const hit = await resolveLogo("robinhood", "0xabc", { deps: d });
+  assert.strictEqual(hit.source, "poolstrade");
+  // …and it is a real module in this repo, not a URL invented here.
+  const src = require("node:fs").readFileSync(require.resolve("../src/services/tokenLogo.js"), "utf8");
+  assert.match(src, /require\('\.\.\/poolstrade'\)/);
 });
 
 test("any OTHER unreachable source still blocks the decision", async () => {

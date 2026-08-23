@@ -233,7 +233,12 @@ removed. Only rows the bot auto-listed for free are ever touched.
         undecided++;
         console.log(`  ${Y}?${X} $${r.sym} (${r.chain}) ${D}— undecided: ${hit.unreachable.join(', ')}${X}`);
       } else {
-        const skipped = (hit.unreachable || []).length ? ` ${D}(GeckoTerminal skipped — rate limited; its catalogue is CoinGecko's, already asked)${X}` : '';
+        // Name what was skipped and WHY it was safe to skip — a bare "no
+        // artwork on any source" over a source that was never asked is the
+        // claim this whole guard exists to stop making.
+        const skipped = (hit.unreachable || []).length
+          ? ` ${D}(${hit.unreachable.join(', ')} — covered by CoinGecko on this chain)${X}`
+          : '';
         console.log(`  ${D}− $${r.sym} (${r.chain}) — no artwork on any source${X}${skipped}`);
         if (apply) {
           try {

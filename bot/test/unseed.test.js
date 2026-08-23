@@ -159,7 +159,7 @@ test("a row with no logo from ANY source is removed, not left blank", () => {
   // ⚠️ …and the count moved off "all 6" because GeckoTerminal is a BONUS
   // source now: it shares CoinGecko's catalogue, so it adds nothing the run
   // does not already have, and waiting on it stalled the whole pass.
-  assert.match(src, /GeckoTerminal skipped/);
+  assert.match(src, /covered by CoinGecko on this chain/);
   // ⚠️ …and ONLY when every source actually answered. The wording moved off
   // "anywhere" deliberately: the first live run printed that phrase under a
   // GeckoTerminal 429, i.e. about a source it never asked.
@@ -211,7 +211,10 @@ test("⚠️ the run stops arming the rate limit, and stops hanging on it", () =
   // 3. and GT does not gate the decision at all — it shares CoinGecko's
   //    catalogue, so the run already has what it would add.
   assert.match(logo, /const blocking = unreachable\.filter/);
-  assert.match(logo, /startsWith\('geckoterminal:'\)/);
+  // ⚠️ …and only where CoinGecko covers the chain. Skipping GT on Robinhood —
+  // which DexScreener does not index and CoinGecko has no id for — turned "we
+  // did not look" into "no artwork anywhere" for every row on that chain.
+  assert.match(logo, /const gtRedundant = !!CG_PLATFORM\[chain\]/);
 
   // The wait survives for a source that DOES block, bounded and once.
   assert.match(src, /waited < MAX_WAIT_MS/);
