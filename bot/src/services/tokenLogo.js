@@ -42,6 +42,7 @@ const log = require('../helpers/logger');
 
 const TIMEOUT_MS = 8000;
 const httpsUrl = (u) => (/^https:\/\/\S+$/.test(String(u || '')) ? String(u) : null);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Does this url actually serve an image? Never throws.
@@ -137,15 +138,64 @@ async function gtLogo(chain, address) {
   return { ok: true, url: httpsUrl(attr.image_url) };
 }
 
-async function coingecko(chain, address) {
+/*
+ * ⚠️ COINGECKO IS PACED, and it is the source that actually finds things.
+ *
+ * A cleanup walks a row every 120ms and asked CoinGecko once per row with no
+ * gap at all. Its free tier is a handful of calls a minute, so it started
+ * refusing — and because a refusal is `ok:false`, the run then blocked on it
+ * while SLEEPING ON GECKOTERMINAL'S CLOCK, which had nothing to do with the
+ * limit that was actually stopping it. Two different services' rate limits,
+ * one wait, keyed to the wrong one.
+ *
+ * So: one call at a time, a minimum gap between them, and `Retry-After`
+ * honoured once. Slower than an unpaced run, and an unpaced run does not
+ * finish.
+ */
+// Read per call, not frozen at require: a test that cannot turn the gap off
+// spends 2.5 seconds per case, and a slow test is one that gets deleted.
+const cgGapMs = () => {
+  const n = Number(String(process.env.CG_MIN_GAP_MS || '').trim());
+  return Number.isFinite(n) && n >= 0 ? n : 2500;
+};
+let cgNextAt = 0;
+let cgChain = Promise.resolve();
+
+/** Serialise CoinGecko calls and space them. Concurrent callers queue rather
+ *  than all firing at once, which is what a per-row `Promise.all` would do. */
+function cgSlot() {
+  const wait = cgChain.then(async () => {
+    const now = Date.now();
+    const delay = Math.max(0, cgNextAt - now);
+    if (delay) await sleep(delay);
+    cgNextAt = Math.max(now, cgNextAt) + cgGapMs();
+  });
+  cgChain = wait.catch(() => {});
+  return wait;
+}
+
+const retryAfterMs = (res) => {
+  const h = Number(res.headers && res.headers.get && res.headers.get('retry-after'));
+  // Their number, used to park ours — bounded, and never negative.
+  return Number.isFinite(h) && h > 0 ? Math.min(h * 1000, 60_000) : 0;
+};
+
+async function coingecko(chain, address, { retried = false } = {}) {
   const plat = CG_PLATFORM[chain];
   // A chain CoinGecko has no id for is ANSWERED — there is nothing to ask.
   if (!plat || !address) return { ok: true, url: null };
+  await cgSlot();
   try {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/coins/${plat}/contract/${encodeURIComponent(address)}`,
       { signal: AbortSignal.timeout(TIMEOUT_MS) },
     );
+    if (res.status === 429 && !retried) {
+      // Once. A second refusal means the budget is genuinely spent and the
+      // caller should be told, not held.
+      await sleep(retryAfterMs(res) || cgGapMs() * 4);
+      return coingecko(chain, address, { retried: true });
+    }
     // 404 is the ordinary answer here — CoinGecko is curated, so most tokens a
     // seeding run finds are simply not in it. A 429 or a 5xx is the opposite:
     // the index never looked, and reporting that as "not in CoinGecko" is how

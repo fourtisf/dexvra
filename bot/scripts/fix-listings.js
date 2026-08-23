@@ -31,7 +31,6 @@ require("../src/config/loadEnv").loadEnv();
 if (!process.env.GT_MAX_RPM) process.env.GT_MAX_RPM = "10";
 
 const api = require('../src/api/dexvra');
-const gt = require('../src/group/gtPairs');
 const { resolveLogo } = require('../src/services/tokenLogo');
 const { notAProject } = require('../src/services/bigCoins');
 const build = require('../src/helpers/build');
@@ -136,9 +135,14 @@ removed. Only rows the bot auto-listed for free are ever touched.
   let refused = 0;
   let waited = 0;
   const retry = [];
+  const heldBack = new Set(); // a row may be held back ONCE, never in a loop
   // The whole run may sleep this long in total waiting out rate limits. A
   // maintenance pass can afford minutes; it may not afford an afternoon.
   const MAX_WAIT_MS = 10 * 60 * 1000;
+  // Long enough for a free-tier window to roll, short enough that eighty
+  // rows do not become an evening. The per-source pacing is what keeps this
+  // rare; this is the net under it.
+  const BACKOFF_MS = 20 * 1000;
   const bySource = {};
   const dropped = new Set();
 
@@ -199,18 +203,23 @@ removed. Only rows the bot auto-listed for free are ever touched.
             console.log(`  ${Y}⚠ $${r.sym}: ${e.message}${X}`);
           }
         }
-      } else if (!hit.ok && waited < MAX_WAIT_MS && gt.cooldownRemaining() > 0) {
-        // ⚠️ WAIT IT OUT RATHER THAN GIVING UP ON EIGHTY-TWO ROWS.
+      } else if (!hit.ok && waited < MAX_WAIT_MS && !heldBack.has(r.id)) {
+        // ⚠️ BACK OFF ON WHAT IS ACTUALLY BLOCKING, not on a clock next to it.
         //
-        // The first run marked one row decided and every row after it
-        // `undecided: geckoterminal: cooldown` — the 429 lasts 120s and the
-        // loop walks a row every 120ms, so the whole pass ran inside one
-        // cooldown. A maintenance script is exactly the caller that can afford
-        // to sleep; the buy monitor is exactly the one that cannot.
-        const left = Math.min(gt.cooldownRemaining() + 500, MAX_WAIT_MS - waited);
-        console.log(`  ${D}… GeckoTerminal is rate limited — waiting ${Math.round(left / 1000)}s${X}`);
+        // This used to sleep for `gt.cooldownRemaining()`. Once GeckoTerminal
+        // stopped blocking anything, the source that DID block was CoinGecko —
+        // and the run sat out 120 seconds of GeckoTerminal's limit for it, then
+        // resumed into a CoinGecko limit that was never waited on at all. Two
+        // services, two limits, one wait keyed to the wrong one.
+        //
+        // So the backoff is short and generic, the blocker is NAMED, and the
+        // row goes round exactly once — `heldBack` is what makes "once" true
+        // rather than hopeful.
+        const left = Math.min(BACKOFF_MS, MAX_WAIT_MS - waited);
+        console.log(`  ${D}… ${hit.blocking.join(', ')} — backing off ${Math.round(left / 1000)}s${X}`);
         await sleep(left);
         waited += left;
+        heldBack.add(r.id);
         retry.push(r); // decided on the second pass, not guessed at on the first
       } else if (!hit.ok) {
         // ⚠️ A SOURCE THAT COULD NOT BE ASKED HAS NOT SAID NO.

@@ -254,3 +254,60 @@ test("the cleanup deletes only on ok:true, and says so when it cannot", () => {
     "the undecided guard is upstream of the logo-less delete",
   );
 });
+
+
+// ── ⚠️ Two services, two rate limits, one wait keyed to the wrong one ───────
+
+test("CoinGecko is PACED — an unpaced call per row is what started refusing", async () => {
+  // A cleanup walks a row every 120ms; CoinGecko's free tier is a handful of
+  // calls a minute. It refused, `ok:false` blocked the run, and the run then
+  // slept on GECKOTERMINAL'S clock — a limit that had nothing to do with it.
+  const logo = require("node:fs")
+    .readFileSync(require.resolve("../src/services/tokenLogo.js"), "utf8");
+  assert.match(logo, /cgGapMs\(\)/);
+  assert.match(logo, /process\.env\.CG_MIN_GAP_MS/);
+  assert.match(logo, /await cgSlot\(\)/, "every call takes a slot");
+  assert.match(logo, /res\.status === 429 && !retried/, "and a refusal is retried ONCE");
+  assert.match(logo, /retryAfterMs\(res\)/, "honouring their own number");
+});
+
+test("a 429 is retried once, then reported rather than held", async () => {
+  const real = global.fetch;
+  const { coingecko } = require("../src/services/tokenLogo");
+  process.env.CG_MIN_GAP_MS = "0";
+  try {
+    let n = 0;
+    global.fetch = async () => {
+      n++;
+      return { status: 429, ok: false, headers: { get: () => "0" } };
+    };
+    const r = await coingecko("bsc", "0xabc");
+    assert.strictEqual(n, 2, "one retry, not a loop");
+    assert.strictEqual(r.ok, false, "a second refusal is reported, never waited out for ever");
+
+    n = 0;
+    global.fetch = async () =>
+      n++ === 0
+        ? { status: 429, ok: false, headers: { get: () => "0" } }
+        : { status: 200, ok: true, json: async () => ({ image: { large: "https://cg/a.png" } }) };
+    assert.deepStrictEqual(await coingecko("bsc", "0xabc"), { ok: true, url: "https://cg/a.png" });
+  } finally {
+    global.fetch = real;
+    delete process.env.CG_MIN_GAP_MS;
+  }
+});
+
+test("the cleanup backs off on the NAMED blocker, and holds a row back once", () => {
+  const src = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "scripts", "fix-listings.js"),
+    "utf8",
+  );
+  assert.match(src, /hit\.blocking\.join/, "the wait says WHICH source stopped it");
+  assert.match(src, /!heldBack\.has\(r\.id\)/, "…and a row is held back once, not in a loop");
+  assert.match(src, /heldBack\.add\(r\.id\)/);
+  // The old form slept for GeckoTerminal's cooldown whatever was blocking.
+  assert.ok(
+    !/gt\.cooldownRemaining\(\) > 0\)/.test(src.replace(/^\s*\/\/.*$/gm, "")),
+    "the backoff must not key on one service's clock while another blocks",
+  );
+});
