@@ -31,6 +31,7 @@
  */
 const bigCoins = require('./bigCoins');
 const dsBigCoins = require('./dsBigCoins');
+const tokenLogo = require('./tokenLogo');
 const gt = require('../group/gtPairs');
 const autoLister = require('./autoLister');
 const discovery = require('../discovery');
@@ -123,7 +124,7 @@ const DEFAULTS = {
  */
 function plan({ chain, target, current, candidates, known, everListed }) {
   const need = Math.max(0, target - current);
-  const out = { chain, target, current, need, take: [], skipped: { listed: 0, everListed: 0, noLogo: 0 }, why: null };
+  const out = { chain, target, current, need, take: [], skipped: { listed: 0, everListed: 0 }, why: null };
   if (!need) {
     out.why = `already at ${current}/${target}`;
     return out;
@@ -134,12 +135,14 @@ function plan({ chain, target, current, candidates, known, everListed }) {
     // ⚠️ NO LOGO, NO LISTING — "setiap token harus punya logonya". A row with a
     // blank circle reads as broken rather than as a token whose project has
     // not uploaded artwork, and on a seeded board that is most of the page.
-    // A paid listing can be chased for a logo; nobody is going to chase these,
-    // so the source has to supply one or the token waits for the next run.
-    if (!/^https:\/\//.test(String(c.logoUrl || ''))) {
-      out.skipped.noLogo++;
-      continue;
-    }
+    // A paid listing can be chased for a logo; nobody is going to chase these.
+    //
+    // The market read is only ONE source, so a candidate that arrives without
+    // artwork is not yet a candidate without artwork — `tokenLogo` asks three
+    // more before the token is dropped. That happens at CREATE time, where the
+    // cost is paid once per token actually being listed rather than once per
+    // candidate considered.
+    if (!/^https:\/\//.test(String(c.logoUrl || ''))) c.needsLogo = true;
     const k = keyOf(chain, c.address);
     if (known && known.has(k)) {
       out.skipped.listed++;
@@ -160,11 +163,10 @@ function plan({ chain, target, current, candidates, known, everListed }) {
     // four tokens above the floor" is a floor to lower or a thin chain. The
     // first cut printed the dedup counts either way, so an empty candidate list
     // read as a chain we had already filled.
-    const skipped = out.skipped.listed + out.skipped.everListed + out.skipped.noLogo;
+    const skipped = out.skipped.listed + out.skipped.everListed;
     out.why = skipped
       ? `only ${out.take.length} of the ${need} needed are new — ` +
-        `${out.skipped.listed} already listed, ${out.skipped.everListed} listed before and removed` +
-        (out.skipped.noLogo ? `, ${out.skipped.noLogo} had no logo` : '')
+        `${out.skipped.listed} already listed, ${out.skipped.everListed} listed before and removed`
       : `only ${out.take.length} token(s) on ${chain} clear the floor — ${need} needed`;
   }
   return out;
@@ -301,12 +303,13 @@ async function seedChain(chain, opts = {}) {
   const create = deps.createFromInfo || autoLister.createFromInfo;
   const listings = deps.getListings || api.getListings;
   const everListed = deps.wasEverListed || autoLister.wasEverListed;
+  const findLogo = deps.resolveLogo || tokenLogo.resolveLogo;
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const cooldownLeft = deps.cooldownRemaining || (useGecko ? gt.cooldownRemaining : () => 0);
 
   // The ceiling the operator typed becomes THIS chain's own number.
   o.target = o.spread === false ? o.target : targetFor(chain, o.target, o.targetMin);
-  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, topUp: null, source: o.source, why: null, ok: false };
+  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, noLogo: 0, truncated: null, topUp: null, source: o.source, why: null, ok: false };
   if (!chainOf(chain)) {
     out.why = `unknown chain ${chain}`;
     return out;
@@ -444,13 +447,16 @@ async function seedChain(chain, opts = {}) {
       twitter: (full && full.twitter) || c.twitter,
       telegram: (full && full.telegram) || c.telegram,
     };
-    // The enrichment pass can only ADD a logo, never remove one, so this is a
-    // belt on top of the plan's braces rather than a second gate — but a
-    // candidate whose logo url turns out unusable must not slip through on the
-    // strength of having had one.
+    // Still nothing? Ask every other source before giving up on the token —
+    // DexScreener, GeckoTerminal, its launchpad, the image CDN. Each candidate
+    // is FETCHED before it is believed, so a 404 never becomes a broken image.
     if (!/^https:\/\//.test(String(merged.logoUrl || ''))) {
-      out.failed++;
-      log.debug(`[chainseed] ${c.symbol} on ${chain}: no usable logo`);
+      const hit = await findLogo(chain, c.address).catch(() => null);
+      if (hit) merged.logoUrl = hit.url;
+    }
+    if (!/^https:\/\//.test(String(merged.logoUrl || ''))) {
+      out.noLogo++;
+      log.debug(`[chainseed] ${c.symbol} on ${chain}: no logo from any source`);
       continue;
     }
     try {
@@ -472,7 +478,14 @@ async function seedChain(chain, opts = {}) {
     if (o.gapMs) await sleep(o.gapMs);
   }
   if (out.listed.length < out.need && !out.why) {
-    out.why = `listed ${out.listed.length}/${out.need}${out.failed ? ` — ${out.failed} refused by the site` : ''}`;
+    out.why =
+      `listed ${out.listed.length}/${out.need}` +
+      (out.failed ? ` — ${out.failed} refused by the site` : '') +
+      // Named separately from a refusal: "no logo anywhere" is a fact about the
+      // token that no re-run will change, and "the site refused it" is not.
+      (out.noLogo ? `${out.failed ? ',' : ' —'} ${out.noLogo} had no logo` : '');
+  } else if (out.noLogo && out.why) {
+    out.why += `, ${out.noLogo} had no logo`;
   }
   return out;
 }

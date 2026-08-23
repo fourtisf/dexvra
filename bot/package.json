@@ -23,7 +23,8 @@
     "trending:check": "node scripts/trending-check.js",
     "seed:chain": "node scripts/seed-chain.js",
     "trending:chains": "node scripts/trending-chains.js",
-    "unseed:chain": "node scripts/unseed-chain.js"
+    "unseed:chain": "node scripts/unseed-chain.js",
+    "listings:fix": "node scripts/fix-listings.js"
   },
   "engines": {
     "node": ">=18"

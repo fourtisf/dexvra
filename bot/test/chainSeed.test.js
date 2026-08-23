@@ -40,8 +40,8 @@ const coin = (i, over = {}) => ({
 });
 
 /** seedChain with every dependency injected — no network, no disk. */
-function harness({ items = [], ok = true, why = null, rows = [], ever = () => false, createImpl, topImpl, geckoImpl, cooldown = () => 0, sleepImpl } = {}) {
-  const calls = { create: [], info: [], top: [], gecko: [], slept: [] };
+function harness({ items = [], ok = true, why = null, rows = [], ever = () => false, createImpl, topImpl, geckoImpl, logoImpl, cooldown = () => 0, sleepImpl } = {}) {
+  const calls = { create: [], info: [], top: [], gecko: [], logo: [], slept: [] };
   const deps = {
     cooldownRemaining: cooldown,
     async topByMcap(chain, o) {
@@ -58,6 +58,10 @@ function harness({ items = [], ok = true, why = null, rows = [], ever = () => fa
       return rows;
     },
     wasEverListed: ever,
+    async resolveLogo(chain, address) {
+      calls.logo.push([chain, address]);
+      return logoImpl ? logoImpl(chain, address) : null;
+    },
     async fetchTokenInfo(chain, address) {
       calls.info.push([chain, address]);
       return { name: "Enriched", symbol: "ENR", logoUrl: "https://x.test/y.png" };
@@ -621,20 +625,38 @@ test("the CLI reports a top-up as recoverable, not as a failure", () => {
 
 // ── "setiap token harus punya logonya" ─────────────────────────────────────
 
-test("a token with NO LOGO is never listed", async () => {
+test("a token with no logo ANYWHERE is never listed", async () => {
   // A blank circle reads as broken rather than as a project that has not
   // uploaded artwork, and on a seeded board that would be most of the page.
-  // A paid listing can be chased for a logo; nobody is going to chase these.
+  // "Anywhere" is the operative word — the market read is one source of four.
   const { deps, calls } = harness({
     items: [coin(1, { logoUrl: null }), coin(2, { logoUrl: "" }), coin(3)],
   });
+  deps.fetchTokenInfo = async () => ({ name: "Enriched" }); // enrichment has none either
   const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0, spread: false });
   assert.deepStrictEqual(calls.create.map((c) => c.address), [coin(3).address]);
   assert.match(r.why, /2 had no logo/, "and the shortfall says WHY, not just that it is short");
+  // …and it did not give up without asking the other sources.
+  assert.deepStrictEqual(calls.logo.map((c) => c[1]).sort(), [coin(1).address, coin(2).address].sort());
+});
+
+test("a logo found by ANOTHER source rescues the listing", async () => {
+  // "cari sumber logo entah dri dexscrener pumpfun atau apalah cri dri banyak
+  // sumber" — a candidate that arrives without artwork is not yet a candidate
+  // without artwork.
+  const { deps, calls } = harness({
+    items: [coin(1, { logoUrl: null })],
+    logoImpl: async () => ({ url: "https://pump.test/a.png", source: "launchpad" }),
+  });
+  deps.fetchTokenInfo = async () => ({ name: "Enriched" });
+  const r = await seeder.seedChain("bsc", { target: 1, apply: true, deps, gapMs: 0, spread: false });
+  assert.strictEqual(r.listed.length, 1);
+  assert.strictEqual(calls.create[0].info.logoUrl, "https://pump.test/a.png");
 });
 
 test("an http-only logo is refused — the site serves https", async () => {
   const { deps, calls } = harness({ items: [coin(1, { logoUrl: "http://insecure/x.png" })] });
+  deps.fetchTokenInfo = async () => ({ name: "Enriched" });
   await seeder.seedChain("bsc", { target: 1, apply: true, deps, gapMs: 0, spread: false });
   assert.deepStrictEqual(calls.create, []);
 });

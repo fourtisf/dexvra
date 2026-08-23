@@ -117,3 +117,64 @@ test("the bot's client has the delete call, and it is the only one", () => {
     assert.ok(!/deleteListing/.test(body), `${f} must not be able to delete listings`);
   }
 });
+
+// ── Double rows on the board ────────────────────────────────────────────────
+//
+// `$FLOKI` appeared twice, rows 8 and 9, same name, both drawing the monogram.
+// One seeding run found the same token through two addresses.
+
+const fix = require("node:path").join(__dirname, "..", "scripts", "fix-listings.js");
+const fixSrc = () => fss.readFileSync(fix, "utf8");
+
+test("of a duplicate set, the one with a LOGO is kept", () => {
+  // Then the bigger cap, then the older row — the last only so the answer is
+  // stable across runs rather than depending on the order the API returned.
+  const rows = [
+    { id: "a", chain: "bsc", sym: "FLOKI", mcap: 9_000_000, createdAt: 5 },
+    { id: "b", chain: "bsc", sym: "FLOKI", mcap: 1_000_000, createdAt: 9, logoUrl: "https://i/b.png" },
+  ];
+  assert.match(fixSrc(), /if \(hasLogo\(a\) !== hasLogo\(b\)\) return hasLogo\(a\) \? -1 : 1/);
+  // …and the ordering is stated before the cap, so a logo outranks nine times
+  // the market cap. A row that renders is worth more than a row that is bigger.
+  const src = fixSrc();
+  assert.ok(src.indexOf("hasLogo(a) !== hasLogo(b)") < src.indexOf("Number(b.mcap)"));
+  assert.strictEqual(rows.length, 2);
+});
+
+test("⚠️ dedupe is scoped to ONE CHAIN and to rows the bot listed free", () => {
+  // Two different real tokens CAN share a ticker — that is ordinary in crypto,
+  // and on a paid board removing either would be wrong. It is safe here only
+  // because the set is narrowed to auto-listed FREE rows on the SAME chain:
+  // that is not two projects, it is one run finding one token twice.
+  const src = fixSrc();
+  assert.match(src, /rows\.filter\(removable\)/, "paid rows are never in a duplicate set");
+  assert.match(src, /`\$\{r\.chain\}:\$\{String\(r\.sym \|\| ''\)\.trim\(\)\.toUpperCase\(\)\}`/, "the key carries the chain");
+  assert.match(src, /Two different real tokens CAN share a ticker/, "the trade must stay stated");
+});
+
+test("a row with no logo from ANY source is removed, not left blank", () => {
+  const src = fixSrc();
+  assert.match(src, /resolveLogo\(r\.chain, r\.address\)/);
+  assert.match(src, /no logo anywhere/);
+  assert.match(src, /api\.updateListing\(r\.id, \{ logoUrl: hit\.url \}\)/, "a logo that IS found is stored");
+  // A stablecoin that slipped in earlier should go, not be given artwork.
+  assert.match(src, /notAProject\(r\.sym, r\.name\)/);
+});
+
+test("dedupe runs BEFORE the logo pass", () => {
+  // Otherwise the logo pass spends four network reads per row on rows that are
+  // about to be removed anyway.
+  const src = fixSrc();
+  assert.ok(src.indexOf("1. duplicates") < src.indexOf("2. logos"));
+  assert.match(src, /dropped\.has\(r\.id\)/, "and a dropped row is not then given a logo");
+});
+
+test("it inherits every guard unseed has", () => {
+  const src = fixSrc();
+  assert.match(src, /const apply = flags\.includes\('--apply'\)/);
+  assert.match(src, /DRY RUN/);
+  assert.match(src, /r\.source === 'bot'/);
+  assert.match(src, /=== 'FREE'/);
+  assert.match(src, /r\.trendingRank == null/);
+  assert.match(src, /!r\.trendExp/);
+});
