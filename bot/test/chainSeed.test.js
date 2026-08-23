@@ -36,14 +36,19 @@ const coin = (i, over = {}) => ({
 });
 
 /** seedChain with every dependency injected — no network, no disk. */
-function harness({ items = [], ok = true, why = null, rows = [], ever = () => false, createImpl, topImpl, cooldown = () => 0, sleepImpl } = {}) {
-  const calls = { create: [], info: [], top: [], slept: [] };
+function harness({ items = [], ok = true, why = null, rows = [], ever = () => false, createImpl, topImpl, geckoImpl, cooldown = () => 0, sleepImpl } = {}) {
+  const calls = { create: [], info: [], top: [], gecko: [], slept: [] };
   const deps = {
     cooldownRemaining: cooldown,
     async topByMcap(chain, o) {
       calls.top.push([chain, o]);
       if (topImpl) return topImpl(chain, o, calls.top.length);
       return { ok, why, items };
+    },
+    async topByMcapGecko(chain, o) {
+      calls.gecko.push([chain, o]);
+      if (geckoImpl) return geckoImpl(chain, o, calls.gecko.length);
+      return { ok: true, why: null, items: [], nextPage: null };
     },
     async getListings() {
       return rows;
@@ -84,7 +89,7 @@ test("the target is UP TO, not add-N — a chain already there lists nothing", a
     items: [coin(1), coin(2)],
     rows: Array.from({ length: 50 }, (_, i) => ({ chain: "base", address: `0x${i}` })),
   });
-  const r = await seeder.seedChain("base", { target: 50, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("base", { target: 50, apply: true, deps, gapMs: 0, spread: false });
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.listed, []);
   assert.match(r.why, /already at 50\/50/);
@@ -94,7 +99,7 @@ test("the target is UP TO, not add-N — a chain already there lists nothing", a
 
 test("it lists with the FREE package — never `trending`, which books a board slot", async () => {
   const { deps, calls } = harness({ items: [coin(1), coin(2)] });
-  await seeder.seedChain("bsc", { target: 2, apply: true, deps, gapMs: 0 });
+  await seeder.seedChain("bsc", { target: 2, apply: true, deps, gapMs: 0, spread: false });
   assert.strictEqual(calls.create.length, 2);
   for (const c of calls.create) {
     assert.strictEqual(c.opts.pkgKey, "free", "a seeded row is a plain listing, not a purchase");
@@ -116,28 +121,44 @@ test("a token already listed, or listed once and removed, is skipped", async () 
     rows: [{ chain: "bsc", address: coin(1).address.toUpperCase() }], // case must not matter
     ever: (chain, address) => address === coin(2).address,
   });
-  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0, spread: false });
   assert.deepStrictEqual(calls.create.map((c) => c.address), [coin(3).address]);
   assert.match(r.why, /1 already listed, 1 listed before and removed/);
 });
 
 test("an unreadable market is ok:false — NOT an empty chain", async () => {
   const { deps, calls } = harness({ ok: false, why: "429 from GeckoTerminal", items: [] });
-  const r = await seeder.seedChain("ethereum", { target: 50, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("ethereum", { target: 50, apply: true, deps, gapMs: 0, spread: false, source: "gecko" });
   assert.strictEqual(r.ok, false);
   assert.match(r.why, /could not read the market.*429/);
   assert.strictEqual(calls.create.length, 0);
 
   // …and the readable-but-empty case is a different answer with ok:true.
   const empty = harness({ ok: true, items: [] });
-  const r2 = await seeder.seedChain("ethereum", { target: 50, apply: true, deps: empty.deps, gapMs: 0 });
+  const r2 = await seeder.seedChain("ethereum", { target: 50, apply: true, deps: empty.deps, gapMs: 0, spread: false, source: "gecko" });
   assert.strictEqual(r2.ok, true);
   assert.match(r2.why, /clear the floor/);
 });
 
+test("under `auto`, unreadable means BOTH sources failed — one answer is an answer", async () => {
+  // A DexScreener outage while GeckoTerminal answers is not an unreadable
+  // chain: GT is the authoritative enumeration here, and reporting its "there
+  // is nothing above the floor" as "we could not look" would send the operator
+  // to check a network that is fine.
+  const half = harness({ ok: false, why: "ENOTFOUND", items: [] });
+  const r = await seeder.seedChain("ethereum", { target: 50, deps: half.deps, gapMs: 0, spread: false });
+  assert.strictEqual(r.ok, true, "GeckoTerminal answered");
+  assert.strictEqual(half.calls.gecko.length, 1, "and it was asked, because DS came up short");
+
+  const both = harness({ ok: false, why: "ENOTFOUND", items: [], geckoImpl: () => ({ ok: false, why: "cooldown", items: [] }) });
+  const r2 = await seeder.seedChain("ethereum", { target: 50, deps: both.deps, gapMs: 0, spread: false });
+  assert.strictEqual(r2.ok, false);
+  assert.match(r2.why, /could not read the market/);
+});
+
 test("a dry run plans and writes nothing", async () => {
   const { deps, calls } = harness({ items: [coin(1), coin(2), coin(3)] });
-  const r = await seeder.seedChain("base", { target: 3, deps, gapMs: 0 });
+  const r = await seeder.seedChain("base", { target: 3, deps, gapMs: 0, spread: false });
   assert.strictEqual(r.planned, 3);
   assert.deepStrictEqual(r.listed, []);
   assert.strictEqual(calls.create.length, 0, "--apply is the only thing that writes");
@@ -151,7 +172,7 @@ test("one refusal does not end the run, and is reported", async () => {
       return { listing: {}, input: { sym: info.symbol } };
     },
   });
-  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0, spread: false });
   assert.strictEqual(calls.create.length, 3, "the third candidate is still tried");
   assert.strictEqual(r.listed.length, 2);
   assert.strictEqual(r.failed, 1);
@@ -163,14 +184,14 @@ test("token info is an UPGRADE — a failed lookup still lists the token", async
   deps.fetchTokenInfo = async () => {
     throw new Error("timeout");
   };
-  const r = await seeder.seedChain("bsc", { target: 1, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("bsc", { target: 1, apply: true, deps, gapMs: 0, spread: false });
   assert.strictEqual(r.listed.length, 1);
   assert.strictEqual(calls.create[0].info.name, "Token 1", "GT's own name carries the listing");
 });
 
 test("an unknown chain is refused before anything is read", async () => {
   const { deps, calls } = harness({ items: [coin(1)] });
-  const r = await seeder.seedChain("notachain", { target: 50, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("notachain", { target: 50, apply: true, deps, gapMs: 0, spread: false });
   assert.strictEqual(r.ok, false);
   assert.match(r.why, /unknown chain/);
   assert.strictEqual(calls.top.length, 0);
@@ -178,7 +199,7 @@ test("an unknown chain is refused before anything is read", async () => {
 
 test("it asks GT for far MORE than the shortfall, within GT's page limit", async () => {
   const { deps, calls } = harness({ items: [] });
-  await seeder.seedChain("bsc", { target: 50, pages: 99, deps, gapMs: 0 });
+  await seeder.seedChain("bsc", { target: 50, pages: 99, deps, gapMs: 0, spread: false });
   const [, o] = calls.top[0];
   // The biggest tokens on a chain are the ones most likely to be listed
   // already, so a limit of exactly `need` comes back mostly consumed.
@@ -220,7 +241,7 @@ test("a cooldown is WAITED OUT and the read RESUMES at the page that failed", as
       left = 0;
     },
   });
-  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0, spread: false });
 
   assert.strictEqual(calls.top.length, 2, "it asked again after waiting");
   assert.strictEqual(calls.top[1][1].startPage, 2, "resumed at the page that did NOT arrive");
@@ -235,7 +256,7 @@ test("a truncated read is reported as TRUNCATED, never as a thin chain", async (
     cooldown: () => 0, // the cooldown already lifted; the read still ended early
     topImpl: () => ({ ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [coin(1)] }),
   });
-  const r = await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0 });
+  const r = await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0, spread: false });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.truncated, "rate limited");
   // "only 1 token(s) on bsc clear the floor" would send the operator to lower
@@ -262,7 +283,7 @@ test("only a COOLDOWN is worth sleeping on — a timeout answers the same in 2mi
     cooldown: () => 0,
     topImpl: () => ({ ok: true, why: "request failed", nextPage: 2, pagesRead: 1, items: [coin(1)] }),
   });
-  await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0 });
+  await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0, spread: false });
   assert.deepStrictEqual(calls.slept, [], "a dead socket is not a quota problem");
   assert.strictEqual(calls.top.length, 1);
 });
@@ -273,7 +294,7 @@ test("waiting stops once there are enough candidates", async () => {
     cooldown: () => 120_000,
     topImpl: () => ({ ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: plenty }),
   });
-  await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0 });
+  await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0, spread: false });
   assert.deepStrictEqual(calls.slept, [], "a target already met must not buy another two minutes");
 });
 
@@ -342,6 +363,7 @@ test("a progress renderer that throws cannot break the run", async () => {
     apply: true,
     deps,
     gapMs: 0,
+    spread: false,
     onProgress() {
       throw new Error("EPIPE");
     },
@@ -370,6 +392,7 @@ test("progress reports a WAIT before sleeping, not after", async () => {
     apply: true,
     deps,
     gapMs: 0,
+    spread: false,
     onProgress: (ev) => seenEvents.push(ev.kind),
   });
   assert.ok(seenEvents.indexOf("wait") < seenEvents.indexOf("slept"), "the wait is announced first");
@@ -379,52 +402,56 @@ test("progress reports a WAIT before sleeping, not after", async () => {
 
 // ── Which market source the seeder uses ─────────────────────────────────────
 
-test("DexScreener is the DEFAULT source, and gecko is still reachable", async () => {
-  const dsCalls = [];
-  const gtCalls = [];
-  const dsMod = require("../src/services/dsBigCoins");
-  const gtMod = require("../src/services/bigCoins");
-  const realDs = dsMod.topByMcap;
-  const realGt = gtMod.topByMcap;
-  try {
-    dsMod.topByMcap = async (chain) => (dsCalls.push(chain), { ok: true, why: null, items: [], nextPage: null });
-    gtMod.topByMcap = async (chain) => (gtCalls.push(chain), { ok: true, why: null, items: [], nextPage: null });
+test("`auto` asks DexScreener FIRST and GeckoTerminal only for the shortfall", async () => {
+  // Neither alone is enough: DS has no pool ranking to paginate, GT has a
+  // quota the buy alerts are also on. So the expensive one is asked only when
+  // it can still change the answer.
+  const filled = harness({ items: Array.from({ length: 40 }, (_, i) => coin(i + 1)) });
+  await seeder.seedChain("bsc", { target: 5, deps: filled.deps, gapMs: 0, spread: false });
+  assert.strictEqual(filled.calls.top.length, 1, "DexScreener leads");
+  assert.deepStrictEqual(filled.calls.gecko, [], "a chain DS can fill never touches the quota");
 
-    const rows = { async getListings() { return []; }, wasEverListed: () => false, sleep: async () => {} };
-    await seeder.seedChain("bsc", { target: 5, deps: rows, gapMs: 0 });
-    assert.deepStrictEqual(dsCalls, ["bsc"], "no key, no shared ceiling, no waiting — the default");
-    assert.deepStrictEqual(gtCalls, []);
-
-    await seeder.seedChain("bsc", { target: 5, source: "gecko", deps: rows, gapMs: 0 });
-    assert.deepStrictEqual(gtCalls, ["bsc"], "the deeper read stays one flag away");
-  } finally {
-    dsMod.topByMcap = realDs;
-    gtMod.topByMcap = realGt;
-  }
+  const short = harness({ items: [coin(1)] });
+  const r = await seeder.seedChain("bsc", { target: 30, deps: short.deps, gapMs: 0, spread: false });
+  assert.strictEqual(short.calls.gecko.length, 1, "…and it IS asked when DS came up short");
+  assert.match(r.source, /dexscreener/);
 });
 
-test("the DexScreener path can never invent a reason to wait", async () => {
-  // `gather`'s wait/resume loop exists for GeckoTerminal's PROCESS-WIDE
-  // cooldown. DexScreener has none — a 429 there is one request's answer — so
-  // reading gt's clock on this path would sleep two minutes over a failure
-  // that had nothing to do with it, which is the whole defect being escaped.
+test("`auto` MERGES, and a GeckoTerminal row never overwrites a richer one", async () => {
+  const rich = { ...coin(1), logoUrl: "https://i/a.png", twitter: "https://x.com/a", enriched: true };
+  const { deps, calls } = harness({
+    items: [rich],
+    geckoImpl: () => ({ ok: true, why: null, items: [{ ...coin(1) }, coin(2)], nextPage: null }),
+  });
+  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0, spread: false });
+  assert.strictEqual(r.listed.length, 2, "the duplicate is not listed twice");
+  const one = calls.create.find((c) => c.address === coin(1).address);
+  // DS rows carry the logo and socials that make a seeded listing look real;
+  // a GT row for the same token carries less, and must not replace it.
+  assert.strictEqual(one.info.twitter, "https://x.com/a");
+});
+
+test("only `gecko` reads GeckoTerminal's cooldown — DexScreener has none", async () => {
+  // `gather`'s wait/resume loop exists for GT's PROCESS-WIDE cooldown. A 429
+  // from DexScreener is one request's answer, so sleeping two minutes on gt's
+  // clock there would be waiting out a failure that had nothing to do with it.
   const gtMod = require("../src/group/gtPairs");
-  const dsMod = require("../src/services/dsBigCoins");
-  const realDs = dsMod.topByMcap;
   try {
     gtMod.armCooldown("test"); // as if the bot had just been rate limited
     assert.ok(gtMod.cooldownRemaining() > 0, "the cooldown really is armed");
     const slept = [];
-    dsMod.topByMcap = async () => ({ ok: true, why: "HTTP 429", nextPage: 2, pagesRead: 1, items: [coin(1)] });
-    const r = await seeder.seedChain("bsc", {
-      target: 50,
-      deps: { async getListings() { return []; }, wasEverListed: () => false, sleep: async (ms) => slept.push(ms) },
-      gapMs: 0,
+    const { deps } = harness({
+      ok: true,
+      why: "HTTP 429",
+      items: [coin(1)],
+      topImpl: () => ({ ok: true, why: "HTTP 429", nextPage: 2, pagesRead: 1, items: [coin(1)] }),
+      sleepImpl: async (ms) => slept.push(ms),
     });
+    deps.cooldownRemaining = undefined; // let the real clock through
+    const r = await seeder.seedChain("bsc", { target: 50, source: "dexscreener", deps, gapMs: 0, spread: false });
     assert.deepStrictEqual(slept, [], "GT's cooldown is not this source's cooldown");
     assert.strictEqual(r.truncated, "HTTP 429", "…and the truncation is still reported honestly");
   } finally {
-    dsMod.topByMcap = realDs;
     gtMod._reset();
   }
 });
@@ -436,7 +463,7 @@ test("a candidate that arrived enriched is not looked up a second time", async (
       { ...coin(2), enriched: false },
     ],
   });
-  const r = await seeder.seedChain("bsc", { target: 2, apply: true, deps, gapMs: 0 });
+  const r = await seeder.seedChain("bsc", { target: 2, apply: true, deps, gapMs: 0, spread: false });
   assert.strictEqual(r.listed.length, 2);
   assert.deepStrictEqual(calls.info.map((c) => c[1]), [coin(2).address], "only the bare one pays for a lookup");
   // …and the socials it arrived with still reach the listing.
@@ -450,7 +477,62 @@ test("no liquidity floor by default — the operator's call, stated", async () =
   assert.strictEqual(seeder.DEFAULTS.minLiq, 0);
   assert.strictEqual(seeder.DEFAULTS.minMcap, 1_000_000);
   const { deps, calls } = harness({ items: [coin(1)] });
-  await seeder.seedChain("bsc", { target: 1, deps, gapMs: 0 });
+  await seeder.seedChain("bsc", { target: 1, deps, gapMs: 0, spread: false });
   assert.strictEqual(calls.top[0][1].minLiq, 0);
   assert.strictEqual(calls.top[0][1].minMcap, 1_000_000);
+});
+
+// ── "setiap chain harus beda2 jumlah totalnya jangan sama" ──────────────────
+
+test("every chain gets its OWN total, and no two of the big ones collide", () => {
+  const chains = ["bsc", "base", "ethereum", "solana", "robinhood", "polygon", "arbitrum", "avalanche"];
+  const targets = chains.map((c) => seeder.targetFor(c, 100));
+  for (const t of targets) assert.ok(t >= 70 && t <= 100, `${t} is outside [70, 100]`);
+  // One number for every chain makes a site read as generated rather than as a
+  // market — the same complaint the trending board's fixed perChain produced.
+  assert.ok(new Set(targets).size >= chains.length - 2, `too many chains share a total: ${targets}`);
+});
+
+test("⚠️ the total is STABLE per chain — a rolled one would break `up to`", () => {
+  // The whole feature rests on the target being UP TO rather than add-N: a
+  // re-run must list nothing on a chain already there. A target that rolled
+  // fresh each run destroys exactly that — one run picks 94, the next picks 78
+  // and calls the chain over target, the one after picks 99 and lists five
+  // more, for ever. Derived from the chain name, never Math.random().
+  for (let i = 0; i < 5; i++) assert.strictEqual(seeder.targetFor("bsc", 100), seeder.targetFor("bsc", 100));
+  // Comments stripped — the header explaining the rule would fail its own guard.
+  assert.ok(!/Math\.random/.test(code()), "a seeded target may never be random");
+});
+
+test("a pinned range is one number, and the ceiling is never exceeded", () => {
+  assert.strictEqual(seeder.targetFor("bsc", 50, 50), 50);
+  for (const c of ["bsc", "base", "ethereum", "solana"]) {
+    assert.ok(seeder.targetFor(c, 50, 50) === 50);
+    assert.ok(seeder.targetFor(c, 100) <= 100, "the number the operator typed is the CEILING");
+  }
+});
+
+test("the spread reaches the run — a chain seeds to ITS number, not the ceiling", async () => {
+  const { deps } = harness({ items: [] });
+  const r = await seeder.seedChain("base", { target: 100, deps, gapMs: 0 });
+  assert.strictEqual(r.target, seeder.targetFor("base", 100));
+  assert.notStrictEqual(r.target, 100, "base's own number is not the ceiling");
+});
+
+test("--same pins every chain to the ceiling, for when one number IS wanted", async () => {
+  const { deps } = harness({ items: [] });
+  const r = await seeder.seedChain("base", { target: 100, spread: false, deps, gapMs: 0 });
+  assert.strictEqual(r.target, 100);
+});
+
+test("the CLI offers --all and --same, and defaults to the auto source", () => {
+  const src = require("node:fs").readFileSync(require.resolve("../scripts/seed-chain.js"), "utf8");
+  // A flag that is documented and not wired, or wired and not documented, is
+  // a feature nobody finds — the lesson `fr_open` cost one repo over.
+  for (const f of ["--all", "--same", "--target-min", "--source"]) {
+    assert.ok(src.includes(f), `${f} is not in the CLI`);
+  }
+  assert.match(src, /flags\.includes\('--all'\)/, "--all must be read, not only printed");
+  assert.match(src, /flags\.includes\('--same'\)/, "--same must be read, not only printed");
+  assert.strictEqual(seeder.DEFAULTS.source, "auto");
 });

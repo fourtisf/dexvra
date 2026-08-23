@@ -136,18 +136,15 @@ function itemOf(chain, p) {
   };
 }
 
-/** Merge a batch of pairs into the by-token map, keeping the DEEPEST pool for
- *  each token. A real token seen through a thin pool reads as illiquid, which
- *  is the same rule `bigCoins` follows one source over. */
-function absorb(best, chain, dsChain, pairs) {
-  for (const p of pairs || []) {
-    if (!p || p.chainId !== dsChain) continue; // search answers across ALL chains
-    const it = itemOf(chain, p);
-    if (!it) continue;
-    const k = it.address.toLowerCase();
-    const prev = best.get(k);
-    if (!prev || (it.liq || 0) > (prev.liq || 0)) best.set(k, it);
-  }
+/** Merge one pair into the by-token map, keeping the DEEPEST pool for each
+ *  token. A real token seen through a thin pool reads as illiquid, which is
+ *  the rule `bigCoins` follows one source over. */
+function absorbPair(best, chain, p) {
+  const it = itemOf(chain, p);
+  if (!it) return;
+  const k = it.address.toLowerCase();
+  const prev = best.get(k);
+  if (!prev || (it.liq || 0) > (prev.liq || 0)) best.set(k, it);
 }
 
 /**
@@ -158,16 +155,27 @@ function absorb(best, chain, dsChain, pairs) {
  * of liquidity is a thing this repo has warned about since the auto-lister was
  * written), so the caller can still set a floor; it is simply not imposed.
  */
-async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, feeds = true } = {}) {
+async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, feeds = true, probe = null } = {}) {
   const dsChain = DS_CHAIN[chain];
   // A chain DexScreener does not index cannot be asked at all, and saying so
   // is the difference between "nothing qualifies" and "we never looked".
   if (!dsChain) return { ok: false, why: `no DexScreener chain id for ${chain}`, items: [] };
 
-  const best = new Map();
+  const best = new Map(); // address (lower) → the deepest pair we have for it
+  const wanted = new Map(); // address (lower) → address, awaiting a price
   let asked = 0;
   let why = null;
+  const step = (name, n) => probe && probe({ chain, step: name, count: n });
 
+  // ── Phase 1: ENUMERATE ────────────────────────────────────────────────────
+  //
+  // ⚠️ BOTH SIDES OF EVERY PAIR, and this is the whole reason the first cut
+  // found almost nothing (bsc 1, base 1, ethereum 0). Searching `q=WETH`
+  // returns pairs OF WETH, and DexScreener puts the searched token on the BASE
+  // side — so every result was WETH/USDC-shaped, `notAProject` correctly
+  // dropped the base, and the project sitting on the QUOTE side was thrown
+  // away with it. The base side is free data when it is a project; the quote
+  // side is an ADDRESS worth pricing.
   for (const q of queriesFor(chain)) {
     const res = await getJson(`${SEARCH}?q=${encodeURIComponent(q)}`);
     if (!res.ok) {
@@ -175,26 +183,49 @@ async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, f
       continue; // one bad query must not cost the others
     }
     asked++;
-    absorb(best, chain, dsChain, (res.body && res.body.pairs) || []);
+    for (const p of (res.body && res.body.pairs) || []) {
+      if (!p || p.chainId !== dsChain) continue; // search answers across ALL chains
+      absorbPair(best, chain, p);
+      for (const side of [p.baseToken, p.quoteToken]) {
+        const a = side && side.address;
+        if (!a || notAProject(side.symbol, side.name)) continue;
+        const k = a.toLowerCase();
+        if (!best.has(k)) wanted.set(k, a);
+      }
+    }
     await sleep(GAP_MS);
   }
+  step('search', best.size + wanted.size);
 
-  // Top up from the feeds only when the search did not already find plenty.
-  // They are ranked by who PAID for a boost rather than by depth, so they are
-  // the second answer, never the first.
-  if (feeds && best.size < limit) {
-    const addrs = await feedAddresses(chain);
-    for (let i = 0; i < addrs.length && best.size < limit * 2; i += BATCH) {
-      const res = await getJson(TOKENS + addrs.slice(i, i + BATCH).map(encodeURIComponent).join(','));
-      if (!res.ok) {
-        why = res.why;
-        break;
-      }
-      asked++;
-      absorb(best, chain, dsChain, (res.body && res.body.pairs) || []);
-      await sleep(GAP_MS);
+  // The discovery feeds this repo already reads. Ranked by who PAID for a
+  // boost rather than by depth, so they top up rather than lead.
+  if (feeds) {
+    for (const a of await feedAddresses(chain)) {
+      const k = a.toLowerCase();
+      if (!best.has(k)) wanted.set(k, a);
     }
+    step('feeds', wanted.size);
   }
+
+  // ── Phase 2: PRICE ────────────────────────────────────────────────────────
+  //
+  // /tokens/ takes a comma-separated BATCH and answers with each token on the
+  // base side, which is the only way a quote-side address gets a market cap of
+  // its own — the pair it was found in reports the cap of the OTHER token.
+  const todo = [...wanted.values()];
+  for (let i = 0; i < todo.length; i += BATCH) {
+    const res = await getJson(TOKENS + todo.slice(i, i + BATCH).map(encodeURIComponent).join(','));
+    if (!res.ok) {
+      why = res.why;
+      break;
+    }
+    asked++;
+    for (const p of (res.body && res.body.pairs) || []) {
+      if (p && p.chainId === dsChain) absorbPair(best, chain, p);
+    }
+    await sleep(GAP_MS);
+  }
+  step('priced', best.size);
 
   const items = [...best.values()]
     .filter((t) => t.mcap)
@@ -204,6 +235,7 @@ async function topByMcap(chain, { limit = 60, minMcap = 1_000_000, minLiq = 0, f
     .filter((t) => t.mcap >= minMcap && (t.liq || 0) >= minLiq)
     .sort((a, b) => b.mcap - a.mcap)
     .slice(0, limit);
+  step('qualified', items.length);
 
   if (why) log.debug(`[dsbigcoins] ${chain}: ${asked} read(s), last failure — ${why}`);
   // ok is "something answered", never "everything answered" — a chain read

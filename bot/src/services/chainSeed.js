@@ -40,6 +40,38 @@ const log = require('../helpers/logger');
 
 const keyOf = (chain, address) => `${chain}:${String(address || '').toLowerCase()}`;
 
+/** FNV-1a. A hash, not a roll: see `targetFor`. */
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * THIS CHAIN'S OWN TARGET, inside [floor, ceiling].
+ *
+ * "setiap chain harus beda2 jumlah totalnya jangan sama" — one number for every
+ * chain makes a site read as generated rather than as a market, which is the
+ * same complaint the trending board's fixed `perChain: 5` produced and the same
+ * fix: a range, not a constant.
+ *
+ * ⚠️ DERIVED FROM THE CHAIN NAME, never `Math.random()`. The whole feature
+ * rests on the target being UP TO rather than add-N — a re-run must list
+ * nothing on a chain already there — and a target that rolls fresh each run
+ * destroys exactly that: one run picks 94, the next picks 78 and reports the
+ * chain over target, the one after picks 99 and lists five more. Stable per
+ * chain per ceiling, so re-running is still a no-op.
+ */
+function targetFor(chain, ceiling, floor = Math.max(1, Math.round(ceiling * 0.7))) {
+  const lo = Math.min(floor, ceiling);
+  const hi = Math.max(floor, ceiling);
+  if (lo === hi) return hi;
+  return lo + (fnv1a(`dexvra:seed:${chain}:${hi}`) % (hi - lo + 1));
+}
+
 /** GeckoTerminal serves at most 10 pages of pools per network. Asking for more
  *  is not a bigger net, it is a wasted request against a shared quota. */
 const GT_MAX_PAGES = 10;
@@ -55,13 +87,18 @@ const DEFAULTS = {
   // one. The stables-and-wrappers filter is untouched, so the top of a chain
   // still cannot fill with WETH and USDC.
   minLiq: 0,
-  // DexScreener needs no key and publishes a far higher ceiling than
-  // GeckoTerminal's ~30/min-per-IP, which the running bot is already on — the
-  // first live run spent twelve minutes on one chain waiting out 429s, and
-  // every one of those 429s also paused buy alerts for every group. `gecko`
-  // stays available: it is the better ENUMERATION (a real pool ranking to
-  // paginate), it is simply not worth the quota here.
-  source: 'dexscreener',
+  // ⚠️ NEITHER SOURCE ALONE IS ENOUGH, which is why the default is `auto`.
+  //
+  // DexScreener needs no key and does not share GeckoTerminal's ~30/min-per-IP
+  // ceiling — the ceiling the running bot is already on, where the first live
+  // run spent twelve minutes on one chain and paused every group's buy alerts
+  // doing it. But it has no pool ranking to paginate (`dexscreener.js` says so
+  // at its own top), so it enumerates by search and comes up short on a big
+  // chain. GeckoTerminal ranks pools properly and is the expensive one.
+  //
+  // So: DexScreener first, and GeckoTerminal asked ONLY for the shortfall it
+  // leaves. On a chain DS fills, GT is never touched at all.
+  source: 'auto',
   pages: GT_MAX_PAGES,
   gapMs: 400, // between creates — the site is one small server, not a CDN
   // ⚠️ How long this may sleep waiting out GeckoTerminal's shared cooldown.
@@ -244,6 +281,7 @@ async function seedChain(chain, opts = {}) {
   // wait/resume loop honest instead of it inventing a reason to sleep.
   const useGecko = o.source === 'gecko';
   const top = deps.topByMcap || (useGecko ? bigCoins.topByMcap : dsBigCoins.topByMcap);
+  const topGecko = deps.topByMcapGecko || bigCoins.topByMcap;
   const info = deps.fetchTokenInfo || discovery.fetchTokenInfo;
   const create = deps.createFromInfo || autoLister.createFromInfo;
   const listings = deps.getListings || api.getListings;
@@ -251,7 +289,9 @@ async function seedChain(chain, opts = {}) {
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const cooldownLeft = deps.cooldownRemaining || (useGecko ? gt.cooldownRemaining : () => 0);
 
-  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, why: null, ok: false };
+  // The ceiling the operator typed becomes THIS chain's own number.
+  o.target = o.spread === false ? o.target : targetFor(chain, o.target, o.targetMin);
+  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, source: o.source, why: null, ok: false };
   if (!chainOf(chain)) {
     out.why = `unknown chain ${chain}`;
     return out;
@@ -276,6 +316,42 @@ async function seedChain(chain, opts = {}) {
   }
 
   const res = await gather(chain, o, { need: out.need, top, sleep, cooldownLeft, waited: out });
+  out.source = o.source;
+
+  // ── `auto`: ask the EXPENSIVE source only for what the cheap one missed ──
+  //
+  // A shortfall here is not "this chain is thin", it is "search cannot
+  // enumerate a chain" — the known limit of the DexScreener path. GeckoTerminal
+  // can, at the price of a quota the buy alerts are also on, so it is asked
+  // second and only when it can still change the answer.
+  if (o.source === 'auto') {
+    const fresh = (list) => list.filter((c) => c && c.address && !known.has(keyOf(chain, c.address)));
+    if (fresh(res.items).length < out.need) {
+      const g = await gather(chain, { ...o, source: 'gecko' }, {
+        need: out.need,
+        top: topGecko,
+        sleep,
+        cooldownLeft: deps.cooldownRemaining || gt.cooldownRemaining,
+        waited: out,
+      });
+      // MERGE, never replace: DexScreener's rows carry the logo and socials
+      // that make a seeded listing look like a real one, and a GT row that
+      // duplicates one would overwrite them with less.
+      const have = new Set(res.items.map((c) => String(c.address).toLowerCase()));
+      for (const c of g.items || []) {
+        if (c && c.address && !have.has(String(c.address).toLowerCase())) res.items.push(c);
+      }
+      if (g.ok) res.ok = true;
+      // The truncation that matters is the one that left us short. GT's is
+      // reported over DS's, because GT is the source that was still trying.
+      res.truncated = g.truncated || res.truncated;
+      res.why = g.why || res.why;
+      out.source = g.items && g.items.length ? 'auto (dexscreener + gecko)' : 'auto (dexscreener)';
+    } else {
+      out.source = 'auto (dexscreener)';
+    }
+  }
+
   if (!res.ok && !res.items.length) {
     out.why = `could not read the market for ${chain}: ${res.why || 'unknown'}`;
     return out;
@@ -356,4 +432,4 @@ async function seedChain(chain, opts = {}) {
   return out;
 }
 
-module.exports = { seedChain, plan, DEFAULTS, GT_MAX_PAGES };
+module.exports = { seedChain, plan, targetFor, DEFAULTS, GT_MAX_PAGES };

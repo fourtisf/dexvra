@@ -224,3 +224,62 @@ test("queries are env-overridable per chain, and no chain is left unaskable", ()
   const guessed = ds.queriesFor("tron");
   assert.ok(guessed.length > 0 && guessed.includes("WTRX"), `generic guess was ${guessed}`);
 });
+
+test("BOTH SIDES of a pair are considered — the project is often the QUOTE", async () => {
+  // The defect this fixes, and it produced a live run of bsc 1 · base 1 ·
+  // ethereum 0: searching `q=WETH` returns pairs OF WETH with WETH on the BASE
+  // side, `notAProject` correctly drops the base, and the project sitting on
+  // the quote side went out with it. Nearly every result looked like this.
+  const priced = [];
+  const f = stubFetch((url) => {
+    if (url.includes("/search")) {
+      return {
+        pairs: [
+          {
+            ...pair({ n: 1 }),
+            baseToken: { address: "0xweth", symbol: "WETH", name: "Wrapped Ether" },
+            quoteToken: { address: "0xproj", symbol: "PROJ", name: "Project" },
+          },
+        ],
+      };
+    }
+    if (url.includes("/dex/tokens/")) {
+      priced.push(decodeURIComponent(url.split("/dex/tokens/")[1]));
+      return { pairs: [pair({ n: 2, baseToken: { address: "0xproj", symbol: "PROJ", name: "Project" } })] };
+    }
+    return [];
+  });
+  try {
+    const r = await ds.topByMcap("bsc", { feeds: false });
+    assert.ok(priced.some((b) => b.includes("0xproj")), "the quote-side address must be priced");
+    assert.ok(!priced.some((b) => b.includes("0xweth")), "and the money must not be");
+    assert.deepStrictEqual(r.items.map((i) => i.symbol), ["PROJ"]);
+    // Its cap comes from the batch lookup, where it is the BASE — the pair it
+    // was found in reports the OTHER token's cap.
+    assert.strictEqual(r.items[0].mcap, 5_000_000);
+  } finally {
+    f.restore();
+  }
+});
+
+test("a base-side project is free data and is not re-priced", async () => {
+  const priced = [];
+  const f = stubFetch((url) => {
+    if (url.includes("/search")) return { pairs: [pair({ n: 1 })] };
+    if (url.includes("/dex/tokens/")) {
+      priced.push(url);
+      return { pairs: [] };
+    }
+    return [];
+  });
+  try {
+    const r = await ds.topByMcap("bsc", { feeds: false });
+    assert.deepStrictEqual(r.items.map((i) => i.symbol), ["T1"]);
+    // The search answer already carried its cap, liquidity, logo and socials.
+    // Asking again is one request per token, which is the budget this source
+    // was chosen to save.
+    assert.ok(!priced.some((u) => u.toLowerCase().includes("bbbb")), `re-priced a token it already had: ${priced}`);
+  } finally {
+    f.restore();
+  }
+});

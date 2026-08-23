@@ -38,6 +38,8 @@ if (!process.env.GT_MAX_RPM) process.env.GT_MAX_RPM = "10";
 
 const seeder = require('../src/services/chainSeed');
 const gt = require('../src/group/gtPairs');
+const { DS_CHAIN } = require('../src/dexscreener');
+const { CHAINS } = require('../src/config/chains');
 // A 120-second wait that prints nothing is indistinguishable from a hang, and
 // the first live run was reported as exactly that. The renderer is a leaf
 // module so its countdown can be driven by a test.
@@ -71,8 +73,11 @@ Options
   --target=N      how many listings the chain should END UP with (default ${seeder.DEFAULTS.target})
   --min-mcap=N    floor on market cap  (default ${seeder.DEFAULTS.minMcap.toLocaleString('en-US')})
   --min-liq=N     floor on liquidity   (default ${seeder.DEFAULTS.minLiq.toLocaleString('en-US')}, i.e. none)
-  --source=       dexscreener (default, no key, no waiting) or gecko (deeper,
-                  but shares the ~30/min ceiling that pauses the bot's buy alerts)
+  --source=       auto (default: DexScreener, then GeckoTerminal for whatever
+                  it could not find), dexscreener, or gecko
+  --all           every chain the site supports that DexScreener indexes
+  --same          pin every chain to --target instead of giving each its own
+  --target-min=N  the floor of the per-chain spread (default 70% of --target)
   --apply         actually create the listings (without it, nothing is written)
 
 The target is UP TO, not add-N: a chain already at the target lists nothing, so
@@ -95,8 +100,8 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   };
   const apply = flags.includes('--apply');
   const source = (flag('source') || seeder.DEFAULTS.source).toLowerCase();
-  if (!['dexscreener', 'gecko'].includes(source)) {
-    console.error(`\n${R}✗${X} --source must be dexscreener or gecko\n`);
+  if (!['auto', 'dexscreener', 'gecko'].includes(source)) {
+    console.error(`\n${R}✗${X} --source must be auto, dexscreener or gecko\n`);
     process.exit(2);
   }
   const opts = {
@@ -105,8 +110,22 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     minLiq: num(flag('min-liq'), seeder.DEFAULTS.minLiq),
     source,
     apply,
+    // The number typed is a CEILING; each chain gets its own inside it, so a
+    // site does not read as generated. `--same` pins every chain to it.
+    spread: !flags.includes('--same'),
+    targetMin: flag('target-min') ? num(flag('target-min'), undefined) : undefined,
   };
 
+  if (flags.includes('--all')) {
+    // Every chain the site supports that DexScreener also indexes. A chain
+    // neither index can be asked about would report "no chain id" forever,
+    // which is noise rather than a finding.
+    for (const c of Object.keys(CHAINS)) if (DS_CHAIN[c] && !chains.includes(c)) chains.push(c);
+  }
+  if (!chains.length) {
+    console.error(`\n${R}✗${X} name at least one chain, or pass --all\n`);
+    process.exit(2);
+  }
   const bad = chains.filter((c) => !chainOf(c));
   if (bad.length) {
     console.error(`\n${R}✗${X} unknown chain: ${bad.join(', ')}\n`);
@@ -114,10 +133,20 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   }
 
   console.log(
-    `\n${B}Seeding to ${opts.target} listings per chain${X}  ` +
+    `\n${B}Seeding ${chains.length} chain(s) to ${opts.spread ? 'up to ' : ''}${opts.target} listings${X}  ` +
       `${D}via ${source} · mcap ≥ $${opts.minMcap.toLocaleString('en-US')}` +
       `${opts.minLiq ? ` · liq ≥ $${opts.minLiq.toLocaleString('en-US')}` : ' · no liquidity floor'}${X}`,
   );
+  if (opts.spread) {
+    // Say the numbers out loud BEFORE the run. "up to 100" over a chain that
+    // stops at 74 reads as a failure otherwise — the same reason the trending
+    // panel prints every count against its range rather than against a target.
+    console.log(
+      `${D}Each chain gets its own total so the site does not read as generated: ` +
+        chains.map((c) => `${c} ${seeder.targetFor(c, opts.target, opts.targetMin)}`).join(' · ') +
+        `${X}${D}  (stable per chain — re-running lists nothing twice). --same pins them all.${X}`,
+    );
+  }
   console.log(
     apply
       ? `${Y}APPLY — real listings will be created on the site. Nothing is posted to any channel.${X}`
@@ -126,7 +155,13 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   // GeckoTerminal's ceiling is per IP and the running bot is on it too, so say
   // what this costs and what removes the cost. A run that has to wait is not
   // broken; a run that LOOKS broken because it waited silently is.
-  if (source === 'gecko') {
+  if (source === 'auto') {
+    console.log(
+      `${D}DexScreener leads (no key, no waiting, does not pause the bot's buy alerts); GeckoTerminal is` +
+        ` asked ONLY for the shortfall it leaves, because its ~30/min ceiling is the one the running bot` +
+        ` is also on. A chain DexScreener can fill never touches that quota.${X}\n`,
+    );
+  } else if (source === 'gecko') {
     console.log(
       gt.hasApiKey()
         ? `${D}GECKOTERMINAL_API_KEY is set — the read runs at the raised limit.${X}\n`
@@ -160,11 +195,12 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     }
     const head = `${chain}  ${r.current} → ${r.current + r.listed.length}/${r.target}`;
     const waited = r.waitedMs ? `  ${D}(waited ${Math.round(r.waitedMs / 1000)}s on the rate limit)${X}` : '';
+    const via = r.source && r.source !== source ? `  ${D}[${r.source}]${X}` : '';
     if (!apply) {
-      console.log(`${G}•${X} ${B}${head}${X}  ${D}(would list ${r.planned})${X}${waited}`);
+      console.log(`${G}•${X} ${B}${head}${X}  ${D}(would list ${r.planned})${X}${via}${waited}`);
     } else {
       created += r.listed.length;
-      console.log(`${G}✓${X} ${B}${head}${X}  ${D}(+${r.listed.length}${r.failed ? `, ${r.failed} refused` : ''})${X}${waited}`);
+      console.log(`${G}✓${X} ${B}${head}${X}  ${D}(+${r.listed.length}${r.failed ? `, ${r.failed} refused` : ''})${X}${via}${waited}`);
     }
     // ⚠️ A read cut short is OUR quota, not a thin chain, and the two need
     // opposite responses — re-run, versus lower the floor. It is yellow and it
