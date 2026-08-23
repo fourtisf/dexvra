@@ -30,6 +30,7 @@
  * the number on the chip.
  */
 const bigCoins = require('./bigCoins');
+const dsBigCoins = require('./dsBigCoins');
 const gt = require('../group/gtPairs');
 const autoLister = require('./autoLister');
 const discovery = require('../discovery');
@@ -46,7 +47,21 @@ const GT_MAX_PAGES = 10;
 const DEFAULTS = {
   target: 50,
   minMcap: 1_000_000,
-  minLiq: 50_000,
+  // ⚠️ NO LIQUIDITY FLOOR — "min mc 1 juta gada vol dll", the operator's call,
+  // taken with the trade-off stated rather than argued: a market cap with no
+  // depth behind it is a real thing, and this repo has warned since the
+  // auto-lister was written that a $1M cap can be printed on $300 of
+  // liquidity. `--min-liq=` puts a floor back; the default no longer imposes
+  // one. The stables-and-wrappers filter is untouched, so the top of a chain
+  // still cannot fill with WETH and USDC.
+  minLiq: 0,
+  // DexScreener needs no key and publishes a far higher ceiling than
+  // GeckoTerminal's ~30/min-per-IP, which the running bot is already on — the
+  // first live run spent twelve minutes on one chain waiting out 429s, and
+  // every one of those 429s also paused buy alerts for every group. `gecko`
+  // stays available: it is the better ENUMERATION (a real pool ranking to
+  // paginate), it is simply not worth the quota here.
+  source: 'dexscreener',
   pages: GT_MAX_PAGES,
   gapMs: 400, // between creates — the site is one small server, not a CDN
   // ⚠️ How long this may sleep waiting out GeckoTerminal's shared cooldown.
@@ -224,13 +239,17 @@ async function gather(chain, o, { need, top, sleep, cooldownLeft, waited }) {
 async function seedChain(chain, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const deps = o.deps || {};
-  const top = deps.topByMcap || bigCoins.topByMcap;
+  // Only GeckoTerminal has a process-wide cooldown to wait out. Handing the
+  // DexScreener path a clock that is always zero is what keeps `gather`'s
+  // wait/resume loop honest instead of it inventing a reason to sleep.
+  const useGecko = o.source === 'gecko';
+  const top = deps.topByMcap || (useGecko ? bigCoins.topByMcap : dsBigCoins.topByMcap);
   const info = deps.fetchTokenInfo || discovery.fetchTokenInfo;
   const create = deps.createFromInfo || autoLister.createFromInfo;
   const listings = deps.getListings || api.getListings;
   const everListed = deps.wasEverListed || autoLister.wasEverListed;
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
-  const cooldownLeft = deps.cooldownRemaining || gt.cooldownRemaining;
+  const cooldownLeft = deps.cooldownRemaining || (useGecko ? gt.cooldownRemaining : () => 0);
 
   const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, why: null, ok: false };
   if (!chainOf(chain)) {
@@ -284,14 +303,21 @@ async function seedChain(chain, opts = {}) {
 
   for (const c of p.take) {
     // Enrich from the source every other listing uses, so a seeded row carries
-    // the same logo and socials a scanned one does. An UPGRADE only: GT already
-    // gave a name, a symbol, a cap and an image, so a failed lookup must not
-    // cost the listing.
+    // the same logo and socials a scanned one does. An UPGRADE only: the market
+    // read already gave a name, a symbol, a cap and an image, so a failed
+    // lookup must not cost the listing.
+    //
+    // A DexScreener candidate that already arrived with a logo AND a link is
+    // skipped: the enrichment call asks DexScreener the same question about
+    // the same token, once per token, and fifty of those is the request budget
+    // this source was chosen to save.
     let full = null;
-    try {
-      full = await info(chain, c.address);
-    } catch (e) {
-      log.debug(`[chainseed] token info ${chain}/${c.address}: ${e.message}`);
+    if (!c.enriched) {
+      try {
+        full = await info(chain, c.address);
+      } catch (e) {
+        log.debug(`[chainseed] token info ${chain}/${c.address}: ${e.message}`);
+      }
     }
     const merged = {
       ...(full || {}),
@@ -302,6 +328,9 @@ async function seedChain(chain, opts = {}) {
       priceUsd: (full && full.priceUsd) || c.priceUsd,
       liq: (full && full.liq) || c.liq,
       vol24: (full && full.vol24) || c.vol24,
+      website: (full && full.website) || c.website,
+      twitter: (full && full.twitter) || c.twitter,
+      telegram: (full && full.telegram) || c.telegram,
     };
     try {
       // `free` and nothing else — see the header. The absence of a `tg` here is

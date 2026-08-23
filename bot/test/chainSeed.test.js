@@ -376,3 +376,81 @@ test("progress reports a WAIT before sleeping, not after", async () => {
   assert.ok(seenEvents.indexOf("slept") < seenEvents.indexOf("resume"), "and resume lands after it");
   assert.ok(seenEvents.includes("read"), "a page that arrived is reported too");
 });
+
+// ── Which market source the seeder uses ─────────────────────────────────────
+
+test("DexScreener is the DEFAULT source, and gecko is still reachable", async () => {
+  const dsCalls = [];
+  const gtCalls = [];
+  const dsMod = require("../src/services/dsBigCoins");
+  const gtMod = require("../src/services/bigCoins");
+  const realDs = dsMod.topByMcap;
+  const realGt = gtMod.topByMcap;
+  try {
+    dsMod.topByMcap = async (chain) => (dsCalls.push(chain), { ok: true, why: null, items: [], nextPage: null });
+    gtMod.topByMcap = async (chain) => (gtCalls.push(chain), { ok: true, why: null, items: [], nextPage: null });
+
+    const rows = { async getListings() { return []; }, wasEverListed: () => false, sleep: async () => {} };
+    await seeder.seedChain("bsc", { target: 5, deps: rows, gapMs: 0 });
+    assert.deepStrictEqual(dsCalls, ["bsc"], "no key, no shared ceiling, no waiting — the default");
+    assert.deepStrictEqual(gtCalls, []);
+
+    await seeder.seedChain("bsc", { target: 5, source: "gecko", deps: rows, gapMs: 0 });
+    assert.deepStrictEqual(gtCalls, ["bsc"], "the deeper read stays one flag away");
+  } finally {
+    dsMod.topByMcap = realDs;
+    gtMod.topByMcap = realGt;
+  }
+});
+
+test("the DexScreener path can never invent a reason to wait", async () => {
+  // `gather`'s wait/resume loop exists for GeckoTerminal's PROCESS-WIDE
+  // cooldown. DexScreener has none — a 429 there is one request's answer — so
+  // reading gt's clock on this path would sleep two minutes over a failure
+  // that had nothing to do with it, which is the whole defect being escaped.
+  const gtMod = require("../src/group/gtPairs");
+  const dsMod = require("../src/services/dsBigCoins");
+  const realDs = dsMod.topByMcap;
+  try {
+    gtMod.armCooldown("test"); // as if the bot had just been rate limited
+    assert.ok(gtMod.cooldownRemaining() > 0, "the cooldown really is armed");
+    const slept = [];
+    dsMod.topByMcap = async () => ({ ok: true, why: "HTTP 429", nextPage: 2, pagesRead: 1, items: [coin(1)] });
+    const r = await seeder.seedChain("bsc", {
+      target: 50,
+      deps: { async getListings() { return []; }, wasEverListed: () => false, sleep: async (ms) => slept.push(ms) },
+      gapMs: 0,
+    });
+    assert.deepStrictEqual(slept, [], "GT's cooldown is not this source's cooldown");
+    assert.strictEqual(r.truncated, "HTTP 429", "…and the truncation is still reported honestly");
+  } finally {
+    dsMod.topByMcap = realDs;
+    gtMod._reset();
+  }
+});
+
+test("a candidate that arrived enriched is not looked up a second time", async () => {
+  const { deps, calls } = harness({
+    items: [
+      { ...coin(1), enriched: true, twitter: "https://x.com/a", logoUrl: "https://i/a.png" },
+      { ...coin(2), enriched: false },
+    ],
+  });
+  const r = await seeder.seedChain("bsc", { target: 2, apply: true, deps, gapMs: 0 });
+  assert.strictEqual(r.listed.length, 2);
+  assert.deepStrictEqual(calls.info.map((c) => c[1]), [coin(2).address], "only the bare one pays for a lookup");
+  // …and the socials it arrived with still reach the listing.
+  const enriched = calls.create.find((c) => c.address === coin(1).address);
+  assert.strictEqual(enriched.info.twitter, "https://x.com/a");
+});
+
+test("no liquidity floor by default — the operator's call, stated", async () => {
+  // "min mc 1 juta gada vol dll". A cap with no depth behind it is a real
+  // hazard, so `--min-liq=` still works; it is simply not imposed.
+  assert.strictEqual(seeder.DEFAULTS.minLiq, 0);
+  assert.strictEqual(seeder.DEFAULTS.minMcap, 1_000_000);
+  const { deps, calls } = harness({ items: [coin(1)] });
+  await seeder.seedChain("bsc", { target: 1, deps, gapMs: 0 });
+  assert.strictEqual(calls.top[0][1].minLiq, 0);
+  assert.strictEqual(calls.top[0][1].minMcap, 1_000_000);
+});

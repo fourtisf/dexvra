@@ -70,7 +70,9 @@ ${B}seed:chain${X} — list a chain's biggest tokens until it reaches a target c
 Options
   --target=N      how many listings the chain should END UP with (default ${seeder.DEFAULTS.target})
   --min-mcap=N    floor on market cap  (default ${seeder.DEFAULTS.minMcap.toLocaleString('en-US')})
-  --min-liq=N     floor on liquidity   (default ${seeder.DEFAULTS.minLiq.toLocaleString('en-US')})
+  --min-liq=N     floor on liquidity   (default ${seeder.DEFAULTS.minLiq.toLocaleString('en-US')}, i.e. none)
+  --source=       dexscreener (default, no key, no waiting) or gecko (deeper,
+                  but shares the ~30/min ceiling that pauses the bot's buy alerts)
   --apply         actually create the listings (without it, nothing is written)
 
 The target is UP TO, not add-N: a chain already at the target lists nothing, so
@@ -92,10 +94,16 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
     return hit ? hit.slice(name.length + 3) : null;
   };
   const apply = flags.includes('--apply');
+  const source = (flag('source') || seeder.DEFAULTS.source).toLowerCase();
+  if (!['dexscreener', 'gecko'].includes(source)) {
+    console.error(`\n${R}✗${X} --source must be dexscreener or gecko\n`);
+    process.exit(2);
+  }
   const opts = {
     target: num(flag('target'), seeder.DEFAULTS.target),
     minMcap: num(flag('min-mcap'), seeder.DEFAULTS.minMcap),
     minLiq: num(flag('min-liq'), seeder.DEFAULTS.minLiq),
+    source,
     apply,
   };
 
@@ -107,7 +115,8 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
 
   console.log(
     `\n${B}Seeding to ${opts.target} listings per chain${X}  ` +
-      `${D}mcap ≥ $${opts.minMcap.toLocaleString('en-US')} · liq ≥ $${opts.minLiq.toLocaleString('en-US')}${X}`,
+      `${D}via ${source} · mcap ≥ $${opts.minMcap.toLocaleString('en-US')}` +
+      `${opts.minLiq ? ` · liq ≥ $${opts.minLiq.toLocaleString('en-US')}` : ' · no liquidity floor'}${X}`,
   );
   console.log(
     apply
@@ -117,12 +126,21 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   // GeckoTerminal's ceiling is per IP and the running bot is on it too, so say
   // what this costs and what removes the cost. A run that has to wait is not
   // broken; a run that LOOKS broken because it waited silently is.
-  console.log(
-    gt.hasApiKey()
-      ? `${D}GECKOTERMINAL_API_KEY is set — the read runs at the raised limit.${X}\n`
-      : `${D}No GECKOTERMINAL_API_KEY: shares the free ~30/min ceiling with the running bot, so this` +
-        ` paces slowly and waits out any rate limit. It can take a few minutes per chain.${X}\n`,
-  );
+  if (source === 'gecko') {
+    console.log(
+      gt.hasApiKey()
+        ? `${D}GECKOTERMINAL_API_KEY is set — the read runs at the raised limit.${X}\n`
+        : `${D}No GECKOTERMINAL_API_KEY: shares the free ~30/min ceiling with the running bot, so this` +
+          ` paces slowly and waits out any rate limit. It can take a few minutes per chain.${X}\n`,
+    );
+  } else {
+    console.log(
+      `${D}DexScreener needs no key and does not share GeckoTerminal's ceiling, so this does not wait` +
+        ` and does not pause the bot's buy alerts. It enumerates by searching the chain's own quote` +
+        ` tokens, so it finds fewer than a full pool ranking would — ${X}${D}--source=gecko${X}${D} is` +
+        ` the deeper read when you have a GECKOTERMINAL_API_KEY.${X}\n`,
+    );
+  }
 
   let unreadable = 0;
   let truncated = 0;
