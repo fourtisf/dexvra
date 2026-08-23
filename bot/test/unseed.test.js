@@ -155,7 +155,11 @@ test("⚠️ dedupe is scoped to ONE CHAIN and to rows the bot listed free", () 
 test("a row with no logo from ANY source is removed, not left blank", () => {
   const src = fixSrc();
   assert.match(src, /resolveLogo\(r\.chain, r\.address\)/);
-  assert.match(src, /all 6 sources answered, none has artwork/);
+  assert.match(src, /no artwork on any source/);
+  // ⚠️ …and the count moved off "all 6" because GeckoTerminal is a BONUS
+  // source now: it shares CoinGecko's catalogue, so it adds nothing the run
+  // does not already have, and waiting on it stalled the whole pass.
+  assert.match(src, /GeckoTerminal skipped/);
   // ⚠️ …and ONLY when every source actually answered. The wording moved off
   // "anywhere" deliberately: the first live run printed that phrase under a
   // GeckoTerminal 429, i.e. about a source it never asked.
@@ -184,23 +188,34 @@ test("it inherits every guard unseed has", () => {
 });
 
 
-test("⚠️ a cooldown is WAITED OUT, not turned into 82 undecided rows", () => {
-  // The first run decided ONE row and reported every row after it as
-  // `undecided: geckoterminal: cooldown`. The 429 lasts 120s and the loop walks
-  // a row every 120ms, so the entire pass ran inside a single cooldown — a
-  // report about our own pacing, dressed as a report about 83 tokens.
+test("⚠️ the run stops arming the rate limit, and stops hanging on it", () => {
+  // Two rounds of this. First: every row after the first came back
+  // `undecided: geckoterminal: cooldown`, because a 429 parks GT for 120s and
+  // the loop walks a row every 120ms — a report about our own pacing dressed
+  // as a report about 83 tokens. Then, once it waited: 429 after TWO rows, then
+  // 120 seconds, over and over. Three fixes, and the third is the one that
+  // actually settles it.
   const src = fixSrc();
-  assert.match(src, /gt\.cooldownRemaining\(\) > 0 && waited < MAX_WAIT_MS/);
-  assert.match(src, /retry\.push\(r\)/, "a parked row goes round again");
-  assert.match(src, /queue\.push\(\.\.\.retry\.splice/, "…exactly once, not for ever");
-  assert.match(src, /MAX_WAIT_MS = 10 \* 60 \* 1000/, "and the waiting is bounded");
-  // And the run stops arming the limit itself: one light GT call per row
-  // instead of the heavy market read, at a rate that leaves the bot its room.
-  assert.match(src, /process\.env\.GT_MAX_RPM = "10"/);
+
+  // 1. one LIGHT GT call per row, not the heavy market read that armed it
   const logo = fss
     .readFileSync(require.resolve("../src/services/tokenLogo.js"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, ""); // the header NAMES the heavy read it replaced
   assert.match(logo, /networks\/\$\{net\}\/tokens\//, "one endpoint, not fetchMarket");
   assert.ok(!/marketdata/.test(logo), "the heavy read is what armed the 429");
+
+  // 2. a rate that leaves the running bot its room on the shared IP
+  assert.match(src, /process\.env\.GT_MAX_RPM = "10"/);
+
+  // 3. and GT does not gate the decision at all — it shares CoinGecko's
+  //    catalogue, so the run already has what it would add.
+  assert.match(logo, /const blocking = unreachable\.filter/);
+  assert.match(logo, /startsWith\('geckoterminal:'\)/);
+
+  // The wait survives for a source that DOES block, bounded and once.
+  assert.match(src, /waited < MAX_WAIT_MS/);
+  assert.match(src, /retry\.push\(r\)/, "a genuinely parked row goes round again");
+  assert.match(src, /queue\.push\(\.\.\.retry\.splice/, "…exactly once, not for ever");
+  assert.match(src, /MAX_WAIT_MS = 10 \* 60 \* 1000/);
 });

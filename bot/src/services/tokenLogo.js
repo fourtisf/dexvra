@@ -234,12 +234,23 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
   }
 
   // ⚠️ `ok` is the whole point of this return shape. `ok:true, url:null` means
-  // every source ANSWERED and none had artwork — the only state in which a
-  // caller may delete the listing. `ok:false` means at least one could not be
+  // the sources that MATTER answered and none had artwork — the only state in
+  // which a caller may delete the listing. `ok:false` means one could not be
   // asked, and the honest answer is "not yet known".
-  const ok = unreachable.length === 0;
-  if (!ok) log.debug(`[tokenlogo] ${chain}/${address}: undecided — ${unreachable.join(', ')}`);
-  return { ok, url: null, source: null, tried, unreachable };
+  //
+  // GeckoTerminal is deliberately NOT one that matters, and that is a fact
+  // about the industry rather than a shortcut: GT is CoinGecko's, and its
+  // token images come from the same catalogue — so asking CoinGecko already
+  // covers it. It is also the only source here with a shared rate limit, and
+  // waiting on the redundant one cost a whole cleanup run: 429 after two rows,
+  // then 120 seconds, over and over, for eighty-three of them. A bonus source
+  // may never be the reason nothing can be decided.
+  const blocking = unreachable.filter((u) => !u.startsWith('geckoterminal:'));
+  const ok = blocking.length === 0;
+  if (!ok) log.debug(`[tokenlogo] ${chain}/${address}: undecided — ${blocking.join(', ')}`);
+  // `unreachable` still carries GT so a caller can SAY it was skipped; `ok`
+  // simply does not hang on it.
+  return { ok, url: null, source: null, tried, unreachable, blocking };
 }
 
 module.exports = { resolveLogo, isImage, cdnGuess, trustWallet, coingecko, gtLogo, CG_PLATFORM, TW_CHAIN, _httpsUrl: httpsUrl };

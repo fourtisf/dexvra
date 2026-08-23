@@ -164,7 +164,11 @@ test("a network failure is a miss, never a throw", async () => {
 // for every one of those rows, the script called it "no logo anywhere", and it
 // was one --apply away from deleting eighty-three public listings on it.
 
-test("a GeckoTerminal COOLDOWN makes the answer undecided, never 'none'", async () => {
+test("⚠️ GeckoTerminal is a BONUS source — it may never block a decision", async () => {
+  // GT is CoinGecko's and its token images come from the same catalogue, so
+  // asking CoinGecko already covers it. It is also the only source here with a
+  // shared rate limit, and treating it as required cost a whole cleanup run:
+  // 429 after two rows, then 120s, over and over, for eighty-three of them.
   let asked = false;
   const d = deps({
     gtInCooldown: () => true,
@@ -173,8 +177,28 @@ test("a GeckoTerminal COOLDOWN makes the answer undecided, never 'none'", async 
   });
   const r = await resolveLogo("bsc", "0xabc", { deps: d });
   assert.strictEqual(asked, false, "a parked source is not even called");
-  assert.strictEqual(r.ok, false, "…and the answer is UNKNOWN");
-  assert.match(r.unreachable.join(" "), /geckoterminal: cooldown/);
+  assert.strictEqual(r.ok, true, "the other five answered — that is a decision");
+  assert.match(r.unreachable.join(" "), /geckoterminal: cooldown/, "…and it is still REPORTED");
+  assert.deepStrictEqual(r.blocking, [], "nothing that matters was missing");
+});
+
+test("any OTHER unreachable source still blocks the decision", async () => {
+  const d = deps({
+    dsInfo: async () => {
+      throw new Error("ENOTFOUND");
+    },
+    isImage: async () => false,
+  });
+  const r = await resolveLogo("bsc", "0xabc", { deps: d });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.blocking, ["dexscreener: ENOTFOUND"]);
+});
+
+test("a REACHABLE GeckoTerminal is still used, and still wins its slot", async () => {
+  const d = deps({ gtInfo: async () => ({ url: "https://gt/a.png" }) });
+  const hit = await resolveLogo("bsc", "0xabc", { deps: d });
+  assert.strictEqual(hit.source, "geckoterminal");
+  assert.strictEqual(hit.url, "https://gt/a.png");
 });
 
 test("CoinGecko: 404 is an answer, 429 is not", async () => {

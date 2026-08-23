@@ -199,7 +199,7 @@ removed. Only rows the bot auto-listed for free are ever touched.
             console.log(`  ${Y}⚠ $${r.sym}: ${e.message}${X}`);
           }
         }
-      } else if (!hit.ok && gt.cooldownRemaining() > 0 && waited < MAX_WAIT_MS) {
+      } else if (!hit.ok && waited < MAX_WAIT_MS && gt.cooldownRemaining() > 0) {
         // ⚠️ WAIT IT OUT RATHER THAN GIVING UP ON EIGHTY-TWO ROWS.
         //
         // The first run marked one row decided and every row after it
@@ -224,7 +224,8 @@ removed. Only rows the bot auto-listed for free are ever touched.
         undecided++;
         console.log(`  ${Y}?${X} $${r.sym} (${r.chain}) ${D}— undecided: ${hit.unreachable.join(', ')}${X}`);
       } else {
-        console.log(`  ${D}− $${r.sym} (${r.chain}) — all 6 sources answered, none has artwork${X}`);
+        const skipped = (hit.unreachable || []).length ? ` ${D}(GeckoTerminal skipped — rate limited; its catalogue is CoinGecko's, already asked)${X}` : '';
+        console.log(`  ${D}− $${r.sym} (${r.chain}) — no artwork on any source${X}${skipped}`);
         if (apply) {
           try {
             await api.deleteListing(r.id);
