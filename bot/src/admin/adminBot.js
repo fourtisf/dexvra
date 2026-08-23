@@ -2654,6 +2654,97 @@ function bcControlKb(count) {
   ]);
 }
 
+// ── Broadcast Manager — the fourtis adminbot's dashboard, over this bot's
+//    own job store: who can be reached, how the last send went, and the
+//    all-time record, with every broadcast action one tap below it. ─────────
+const bcDate = (ms) => {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+};
+
+function bcManagerText(s = bcStore.stats(), audienceCount = bcStore.audience().length) {
+  const last = s.lastCompleted
+    ? `${bcDate(s.lastCompleted.finishedAt || s.lastCompleted.createdAt)} · ✅ ${s.lastCompleted.sent} / ${s.lastCompleted.total} · ❌ ${s.lastCompleted.failed}`
+    : "— none completed yet";
+  // No fabricated 100% over zero attempts: with nothing sent there is no rate.
+  const rate = s.successRate == null ? "—" : `${s.successRate.toFixed(1)}%`;
+  return (
+    `📣 <b>Broadcast Manager</b>\n\n` +
+    `👥 <b>Audience</b>\n· Total users: <b>${audienceCount}</b>\n\n` +
+    `🏁 <b>Last completed</b>\n${last}\n\n` +
+    `📈 <b>All-time</b>\n` +
+    `· Broadcasts: <b>${s.broadcasts}</b> (${s.done} done)\n` +
+    `· Messages sent: <b>${s.sent}</b>\n` +
+    `· Success rate: <b>${rate}</b>`
+  );
+}
+
+function bcManagerKb() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("➕ Create Broadcast", "bc_new")],
+    [Markup.button.callback("📋 Status", "bc_status"), Markup.button.callback("✏️ Edit Sent", "bc_edit")],
+    [Markup.button.callback("📁 History / Export", "bc_hist")],
+    [Markup.button.callback("🔄 Refresh", "bc_refresh"), Markup.button.callback("🏠 Home", "home")],
+  ]);
+}
+
+const bcKindTag = (j) =>
+  `${(j.kind || "send") === "edit" ? "✏️ edit" : "📣 send"}${j.test ? " · 🧪 test" : ""}`;
+
+/** History: the last N jobs, newest first — date, kind, and the counts that
+ *  say how it went. `jobs` is an argument so the render is testable without a
+ *  disk (the stats() rule). */
+function bcHistoryText(jobs = bcStore.allJobs(), limit = 10) {
+  if (!jobs.length) return "📁 <b>Broadcast history</b>\n\nNo broadcasts yet.";
+  const lines = jobs.slice(0, limit).map((j) => {
+    const st = j.status === "completed" ? `✅ ${j.sent}/${j.total} · ❌ ${j.failed}` : `⏳ ${j.status} (${j.cursor}/${j.total})`;
+    return `${bcDate(j.finishedAt || j.createdAt)} · ${bcKindTag(j)} · ${st}`;
+  });
+  const more = jobs.length > limit ? `\n\n…and ${jobs.length - limit} older — 📤 Export has all of them.` : "";
+  return `📁 <b>Broadcast history</b> (${jobs.length} total)\n\n${lines.join("\n")}${more}`;
+}
+
+/** The full record as CSV — the export half of 📁 History / Export. */
+function bcCsv(jobs = bcStore.allJobs()) {
+  const esc = (v) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const head = "id,kind,test,status,created_at,finished_at,sent,failed,total,by";
+  const rows = jobs.map((j) =>
+    [
+      j.id,
+      j.kind || "send",
+      j.test ? "yes" : "no",
+      j.status,
+      new Date(j.createdAt).toISOString(),
+      j.finishedAt ? new Date(j.finishedAt).toISOString() : "",
+      j.sent,
+      j.failed,
+      j.total,
+      j.createdByUsername ? `@${j.createdByUsername}` : j.createdBy,
+    ]
+      .map(esc)
+      .join(","),
+  );
+  return [head, ...rows].join("\n");
+}
+
+/** The newest completed real send that ✏️ Edit Sent can point at — or the
+ *  reason there is none. Two different "no" answers on purpose: "nothing to
+ *  edit" and "sent before message ids were recorded" send the admin to
+ *  different conclusions. */
+function bcEditable() {
+  const done = bcStore
+    .allJobs()
+    .filter((j) => (j.kind || "send") === "send" && !j.test && j.status === "completed");
+  if (!done.length) return { error: "none" };
+  const job = done[0]; // allJobs is newest-first
+  if (!job.sentIds || !Object.keys(job.sentIds).length) return { error: "no_ids", job };
+  return { job };
+}
+
 /** Poll a broadcast job and live-edit a status message until it completes. */
 function pollProgress(telegram, chatId, messageId, jobId) {
   const started = Date.now();
@@ -2665,10 +2756,12 @@ function pollProgress(telegram, chatId, messageId, jobId) {
       return;
     }
     const done = job.status === "completed";
+    const isEdit = (job.kind || "send") === "edit";
     const pct = job.total ? Math.round((job.cursor / job.total) * 100) : 100;
+    const verb = isEdit ? "Edited" : "Sent";
     const text = done
-      ? `✅ <b>Broadcast complete</b>${job.test ? " (test)" : ""}\nSent: <b>${job.sent}</b>  ·  Failed: <b>${job.failed}</b>  ·  Total: <b>${job.total}</b>`
-      : `📣 <b>Broadcasting…</b>${job.test ? " (test)" : ""}\nProgress: <b>${pct}%</b> (${job.cursor}/${job.total})\nSent: ${job.sent}  ·  Failed: ${job.failed}`;
+      ? `✅ <b>${isEdit ? "Edit" : "Broadcast"} complete</b>${job.test ? " (test)" : ""}\n${verb}: <b>${job.sent}</b>  ·  Failed: <b>${job.failed}</b>  ·  Total: <b>${job.total}</b>`
+      : `📣 <b>${isEdit ? "Editing sent messages…" : "Broadcasting…"}</b>${job.test ? " (test)" : ""}\nProgress: <b>${pct}%</b> (${job.cursor}/${job.total})\n${verb}: ${job.sent}  ·  Failed: ${job.failed}`;
     if (text !== lastText) {
       lastText = text;
       try {
@@ -2683,7 +2776,7 @@ function pollProgress(telegram, chatId, messageId, jobId) {
 
 async function launchBroadcast(ctx, test) {
   const draft = ctx.session.bcDraft;
-  if (!draft) return ctx.reply("Nothing composed. Tap 📣 Broadcast to start.").catch(() => {});
+  if (!draft) return ctx.reply("Nothing composed. Tap ➕ Create Broadcast to start.").catch(() => {});
   const targets = test ? [String(ctx.from.id)] : bcStore.audience();
   if (!targets.length) {
     return ctx.reply("No /start users yet — nobody to broadcast to.").catch(() => {});
@@ -4119,15 +4212,93 @@ function build() {
     await edit(ctx, btKindText(ctx.match[1]), btKindKb(ctx.match[1]));
   });
 
+  // 📣 opens the MANAGER, not the compose prompt: the dashboard answers the
+  // questions an admin actually arrives with (who can I reach? how did the
+  // last one go?) and every action is one tap below it — the fourtis panel.
   bot.action("bc", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
+    await edit(ctx, bcManagerText(), bcManagerKb());
+  });
+  bot.action("bc_refresh", async (ctx) => {
+    ctx.answerCbQuery("Refreshed").catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(ctx, bcManagerText(), bcManagerKb());
+  });
+  bot.action("bc_new", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
     ctx.session.awaitingBroadcast = true;
+    ctx.session.awaitingBcEdit = null;
     ctx.session.bcDraft = null;
     await ctx.reply(
       `📣 <b>Broadcast</b>\n\nSend the message to broadcast to all /start users — <b>text</b>, or a <b>photo with a caption</b> (HTML allowed). /cancel to abort.`,
       HTML,
     );
+  });
+  bot.action("bc_status", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    // resumable first — an interrupted job is the one an admin is here about
+    const live = [...bcStore.jobsByStatus("in_progress"), ...bcStore.jobsByStatus("pending")][0];
+    if (live) {
+      const msg = await ctx.reply("📋 Reading the running broadcast…", HTML);
+      return pollProgress(ctx.telegram, msg.chat.id, msg.message_id, live.id);
+    }
+    const s = bcStore.stats();
+    const last = s.lastCompleted
+      ? `Last completed: ${bcDate(s.lastCompleted.finishedAt || s.lastCompleted.createdAt)} · ✅ ${s.lastCompleted.sent}/${s.lastCompleted.total} · ❌ ${s.lastCompleted.failed}`
+      : "Nothing has completed yet.";
+    await ctx.reply(`📋 No broadcast is running.\n${last}`, HTML);
+  });
+  bot.action("bc_edit", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const r = bcEditable();
+    if (r.error === "none") {
+      return ctx.reply("✏️ Nothing to edit yet — no completed broadcast on file.").catch(() => {});
+    }
+    if (r.error === "no_ids") {
+      // Different fact from "nothing to edit": the send predates message-id
+      // recording, so its messages can never be found again.
+      return ctx
+        .reply(
+          "✏️ The last broadcast was sent before message ids were recorded, so its messages can't be edited. Broadcasts sent from now on can be.",
+        )
+        .catch(() => {});
+    }
+    ctx.session.awaitingBcEdit = r.job.id;
+    ctx.session.awaitingBroadcast = false;
+    const snippet = (r.job.text || "(photo, no caption)").slice(0, 300);
+    const media = r.job.mediaFileId || r.job.mediaPath ? "\n<i>It is a photo — the new text replaces its CAPTION; the photo itself stays.</i>" : "";
+    await ctx.reply(
+      `✏️ <b>Edit Sent</b> — rewriting the broadcast of ${bcDate(r.job.finishedAt || r.job.createdAt)} ` +
+        `(✅ ${r.job.sent} delivered).\n\nCurrent text:\n<blockquote>${escapeHtml(snippet)}</blockquote>\n` +
+        `Send the NEW text (HTML allowed). /cancel to abort.${media}`,
+      HTML,
+    );
+  });
+  bot.action("bc_hist", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    await edit(
+      ctx,
+      bcHistoryText(),
+      Markup.inlineKeyboard([
+        [Markup.button.callback("📤 Export CSV", "bc_csv")],
+        [Markup.button.callback("⬅ Back", "bc")],
+      ]),
+    );
+  });
+  bot.action("bc_csv", async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    if (!guard(ctx)) return;
+    const jobs = bcStore.allJobs();
+    if (!jobs.length) return ctx.reply("Nothing to export yet.").catch(() => {});
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    await ctx
+      .replyWithDocument({ source: Buffer.from(bcCsv(jobs), "utf8"), filename: `broadcasts_${stamp}.csv` })
+      .catch((e) => ctx.reply(`⚠️ Export failed: ${e.message}`).catch(() => {}));
   });
   bot.action("bc_send", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
@@ -4144,7 +4315,8 @@ function build() {
     if (!guard(ctx)) return;
     ctx.session.bcDraft = null;
     ctx.session.awaitingBroadcast = false;
-    await edit(ctx, homeText(), mainKb());
+    ctx.session.awaitingBcEdit = null;
+    await edit(ctx, bcManagerText(), bcManagerKb());
   });
 
   bot.command("cancel", async (ctx) => {
@@ -4155,6 +4327,7 @@ function build() {
     ctx.session.awaitingEmoji = null;
     ctx.session.awaitingBanner = false;
     ctx.session.awaitingBroadcast = false;
+    ctx.session.awaitingBcEdit = null;
     ctx.session.awaitingBt = null;
     ctx.session.bcDraft = null;
     // Top-Gainers state too, for the same reason: an armed "send me a token link"
@@ -4402,6 +4575,27 @@ function build() {
       } catch (e) {
         await ctx.reply(`⚠️ ${e.message}`).catch(() => {});
       }
+      return;
+    }
+    if (ctx.session.awaitingBcEdit) {
+      const sourceId = ctx.session.awaitingBcEdit;
+      ctx.session.awaitingBcEdit = null;
+      const r = await bcStore.createEditJob({
+        sourceId,
+        text,
+        entities,
+        createdBy: String(ctx.from.id),
+        createdByUsername: ctx.from.username,
+      });
+      if (r.error) {
+        await ctx.reply(`⚠️ Couldn't queue the edit (${r.error}).`).catch(() => {});
+        return;
+      }
+      const msg = await ctx.reply(
+        `✏️ <b>Edit queued</b> for <b>${r.job.total}</b> delivered message(s). Rewriting via the main bot…`,
+        HTML,
+      );
+      pollProgress(ctx.telegram, msg.chat.id, msg.message_id, r.job.id);
       return;
     }
     if (ctx.session.awaitingBroadcast) {
@@ -4675,3 +4869,4 @@ module.exports._allEmoji = { allEmojiSlots, allEmojiKeys, allEmojiKb, allEmojiTe
 // Exposed for tests: any template rendered on sample values, the thing every
 // preview button shows.
 module.exports._preview = { renderSample, SPECIAL_RENDER, SAMPLE_VARS };
+module.exports._bc = { bcManagerText, bcManagerKb, bcHistoryText, bcCsv, bcEditable, bcDate };
