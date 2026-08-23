@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
 import { gtGet } from "@/lib/providers/gt";
+import { readWhy } from "@/lib/providers/gtPool";
 import type { Trade } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -64,12 +65,18 @@ export async function GET(req: NextRequest) {
   const pool = (req.nextUrl.searchParams.get("pool") ?? "").trim();
   const network = CHAINS[chain]?.geckoNetwork;
   if (!network || !pool || pool.length > 90 || /[^A-Za-z0-9:_-]/.test(pool)) {
-    return NextResponse.json({ trades: [] });
+    return NextResponse.json({ trades: [], why: "No indexed pool for this token yet." });
   }
   try {
     const trades = await cached(`trades:${network}:${pool}`, TRADES_TTL, () => fetchTrades(network, pool));
-    return NextResponse.json({ trades });
-  } catch {
-    return NextResponse.json({ trades: [] });
+    // An empty list from a pool that DOES exist is an answer: nothing has
+    // traded in the window. It is not the same as "we could not look".
+    return NextResponse.json({ trades, why: trades.length ? null : "No trades in this pool's recent window." });
+  } catch (err) {
+    // ⚠️ THE REASON TRAVELS. The panel used to receive a bare empty list for
+    // every failure and answer it by DRAWING TWELVE INVENTED TRADES — see
+    // components/TokenTrades. Whatever it renders now, it renders knowing
+    // which of the two things happened.
+    return NextResponse.json({ trades: [], why: `Couldn't read recent trades just now (${readWhy(err)}).` });
   }
 }

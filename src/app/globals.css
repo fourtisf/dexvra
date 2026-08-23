@@ -904,6 +904,10 @@ body{
 .trades-live.on{color:var(--mint)}
 .trades-live .dot-live{opacity:.4}
 .trades-live.on .dot-live{opacity:1}
+/* The two states that used to be filled with fabricated trades — see
+   components/TokenTrades. An honest empty panel beats a convincing full one. */
+.trades-none{padding:26px 16px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.5}
+.trades-stale{padding:7px 14px;font-family:var(--fm);font-size:10.5px;color:var(--amber);border-bottom:1px solid var(--line);background:rgba(231,199,122,.06)}
 .trades-scroll{max-height:420px;overflow-y:auto;overflow-x:auto;scrollbar-width:thin}
 .trades-row{display:grid;grid-template-columns:80px 84px 100px 118px 120px 1fr;gap:8px;align-items:center;padding:10px 16px;border-top:1px solid var(--line);font-family:var(--fm);font-size:12.5px;min-width:560px}
 .trades-hd{border-top:none;position:sticky;top:0;background:var(--card);font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);z-index:2}
