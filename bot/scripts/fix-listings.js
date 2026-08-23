@@ -169,7 +169,13 @@ removed. Only rows the bot auto-listed for free are ever touched.
   // ── 2. logos ──────────────────────────────────────────────────────────────
   if (doLogos) {
     const missing = rows.filter((r) => !dropped.has(r.id) && removable(r) && !hasLogo(r));
-    console.log(`${B}Logos${X}  ${missing.length} row(s) with no logo`);
+    // ⚠️ THIS IS THE INPUT COUNT, AND IT MUST NOT READ AS THE ANSWER. It said
+    // "83 row(s) with no logo", which is what the run was HANDED — and since
+    // the same board hands it the same number every time, an operator reading
+    // a screenshot of it reasonably concluded the fix had changed nothing.
+    // The outcome is the summary at the bottom; this line says what is about
+    // to be attempted, in the future tense, so the two cannot be confused.
+    console.log(`${B}Logos${X}  resolving ${missing.length} row(s) that have no logo yet…`);
     // A row parked behind a cooldown goes round once more rather than being
     // called undecided; only the SECOND pass may conclude anything.
     const queue = [...missing];
@@ -258,7 +264,14 @@ removed. Only rows the bot auto-listed for free are ever touched.
     }
   }
 
+  // ⚠️ THE STAMP IS REPEATED HERE, not only in the header. This run walks
+  // hundreds of rows, so by the time the verdict prints the header is far off
+  // the top of the scrollback — and a verdict whose revision cannot be read is
+  // how a stale checkout and a fix that did not work stay indistinguishable.
+  // Same reason `fonts:check` and `trending:check` print it; they are one
+  // screen, this is not.
   const sources = Object.entries(bySource).map(([s, n]) => `${n} ${s}`).join(', ');
+  console.log(`\n${D}build ${build.stamp()}${X}`);
   if (apply) {
     console.log(
       `\n${G}${fixed}${X} logo(s) added${sources ? ` ${D}(${sources})${X}` : ''}` +

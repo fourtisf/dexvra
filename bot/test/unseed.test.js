@@ -125,6 +125,11 @@ test("the bot's client has the delete call, and it is the only one", () => {
 
 const fix = require("node:path").join(__dirname, "..", "scripts", "fix-listings.js");
 const fixSrc = () => fss.readFileSync(fix, "utf8");
+/** Same comment-stripping rule as `code()` above, for the cleanup script. */
+const fixCode = () =>
+  fixSrc()
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
 
 test("of a duplicate set, the one with a LOGO is kept", () => {
   // Then the bigger cap, then the older row — the last only so the answer is
@@ -221,4 +226,40 @@ test("⚠️ the run stops arming the rate limit, and stops hanging on it", () =
   assert.match(src, /retry\.push\(r\)/, "a genuinely parked row goes round again");
   assert.match(src, /queue\.push\(\.\.\.retry\.splice/, "…exactly once, not for ever");
   assert.match(src, /MAX_WAIT_MS = 10 \* 60 \* 1000/);
+});
+
+// ── "masih seperti ini" — a header that reads as a verdict ──────────────────
+//
+// The run printed `Logos  83 row(s) with no logo`, hit GeckoTerminal's 429 on
+// the next line, and was reported as unchanged. Both facts were true and the
+// conclusion was wrong: 83 is what the board HANDED the run, not what the run
+// decided — and since the same board hands it the same number every time, that
+// line is the same on a working revision and a broken one. The verdict is the
+// summary at the bottom, minutes of scrollback later.
+
+test("⚠️ the logo header states the INPUT, in the future tense", () => {
+  const c = fixCode();
+  // "resolving N row(s) that have no logo YET" — a count of work about to be
+  // attempted. The old wording asserted an outcome the run had not reached.
+  assert.match(c, /Logos\$\{X\}  resolving \$\{missing\.length\} row\(s\) that have no logo yet/);
+  assert.ok(
+    !/\$\{missing\.length\} row\(s\) with no logo/.test(c),
+    "the verdict-shaped wording must not come back",
+  );
+});
+
+test("⚠️ the build stamp is printed with the VERDICT, not only the header", () => {
+  const c = fixCode();
+  const stamps = c.match(/build \$\{build\.stamp\(\)\}/g) || [];
+  assert.ok(
+    stamps.length >= 2,
+    `the stamp must survive the scrollback — found ${stamps.length} occurrence(s)`,
+  );
+  // …and the second one sits with the summary, after the row loop, or it is
+  // just the header printed twice.
+  const header = c.indexOf("Cleaning ${rows.length} listing(s)");
+  const sources = c.indexOf("const sources = Object.entries(bySource)");
+  const last = c.lastIndexOf("build ${build.stamp()}");
+  assert.ok(header > -1 && sources > -1 && last > sources && last > header,
+    "the second stamp belongs with the summary, after every row has been walked");
 });
