@@ -87,14 +87,23 @@ export function _gtReset(): void {
   state.nextAt = 0;
 }
 
-// ⚠️ SAID OUT LOUD, ONCE, AT BOOT. Whether a key is set is the single thing
-// most likely to make a busy deployment look broken — and from outside, "the
-// chart is empty" looks identical whether the ceiling is 30 requests a minute
-// or the Pro tier's. The trade bot prints the same kind of line for its RPC
-// (`rpc PUBLIC default (rate-limited)`), and for the same reason.
-//
-// The KEY is never printed: it would land in pm2's log. The base carries none.
-if (typeof window === "undefined") {
+/**
+ * The line an operator greps for to answer "which GeckoTerminal tier is this
+ * box on?" — the single thing most likely to make a busy deployment look
+ * broken, because from outside "the chart is empty" looks identical whether the
+ * ceiling is 30 requests a minute or the Pro tier's. The trade bot prints the
+ * same kind of line for its RPC (`rpc PUBLIC default (rate-limited)`).
+ *
+ * ⚠️ CALLED FROM instrumentation.ts, NOT FROM MODULE SCOPE. It used to print on
+ * import, which in a Next production server means "whenever the first request
+ * happens to reach a route that uses GT" — so an operator who restarted and
+ * immediately grepped the log got NOTHING, which reads exactly like a build
+ * that was never deployed. A boot line that is not printed at boot is worse
+ * than no boot line.
+ *
+ * The KEY is never printed: it would land in pm2's log. The base carries none.
+ */
+export function gtBanner(): void {
   console.log(
     `[gt] ${
       GT_KEYED
