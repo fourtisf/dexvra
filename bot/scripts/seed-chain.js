@@ -24,7 +24,20 @@
 // fourth idea of it, resolved against the CWD alone.
 require("../src/config/loadEnv").loadEnv();
 
+// ⚠️ THIS SCRIPT IS A SECOND PROCESS ON THE SAME IP AS THE RUNNING BOT.
+//
+// GeckoTerminal's free ceiling (~30 req/min) is per IP; `gtPairs`'s pacing
+// budget is per PROCESS. So the bot pacing itself at 25 rpm and this script
+// pacing itself at 25 rpm is ~50 rpm at the ceiling — which is exactly how the
+// first live run 429'd on its second page, and a 429 the BOT catches pauses
+// every group's buy alerts for two minutes. Halving our own budget leaves the
+// live path its room. Set AFTER loadEnv (which uses override:true) and only
+// when the operator has not chosen a number themselves, and BEFORE the first
+// require of repo code — `gtPairs` freezes the rate at require time.
+if (!process.env.GT_MAX_RPM) process.env.GT_MAX_RPM = "10";
+
 const seeder = require('../src/services/chainSeed');
+const gt = require('../src/group/gtPairs');
 const { chainOf } = require('../src/config/chains');
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
@@ -94,11 +107,21 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
   );
   console.log(
     apply
-      ? `${Y}APPLY — real listings will be created on the site. Nothing is posted to any channel.${X}\n`
-      : `${D}DRY RUN — nothing is written. Add --apply to create the listings.${X}\n`,
+      ? `${Y}APPLY — real listings will be created on the site. Nothing is posted to any channel.${X}`
+      : `${D}DRY RUN — nothing is written. Add --apply to create the listings.${X}`,
+  );
+  // GeckoTerminal's ceiling is per IP and the running bot is on it too, so say
+  // what this costs and what removes the cost. A run that has to wait is not
+  // broken; a run that LOOKS broken because it waited silently is.
+  console.log(
+    gt.hasApiKey()
+      ? `${D}GECKOTERMINAL_API_KEY is set — the read runs at the raised limit.${X}\n`
+      : `${D}No GECKOTERMINAL_API_KEY: shares the free ~30/min ceiling with the running bot, so this` +
+        ` paces slowly and waits out any rate limit. It can take a few minutes per chain.${X}\n`,
   );
 
   let unreadable = 0;
+  let truncated = 0;
   let created = 0;
   for (const chain of chains) {
     const r = await seeder.seedChain(chain, opts);
@@ -111,24 +134,40 @@ re-running after a half-finished pass is safe. Nothing is posted to any channel.
       continue;
     }
     const head = `${chain}  ${r.current} → ${r.current + r.listed.length}/${r.target}`;
+    const waited = r.waitedMs ? `  ${D}(waited ${Math.round(r.waitedMs / 1000)}s on the rate limit)${X}` : '';
     if (!apply) {
-      console.log(`${G}•${X} ${B}${head}${X}  ${D}(would list ${r.planned})${X}`);
+      console.log(`${G}•${X} ${B}${head}${X}  ${D}(would list ${r.planned})${X}${waited}`);
     } else {
       created += r.listed.length;
-      console.log(`${G}✓${X} ${B}${head}${X}  ${D}(+${r.listed.length}${r.failed ? `, ${r.failed} refused` : ''})${X}`);
+      console.log(`${G}✓${X} ${B}${head}${X}  ${D}(+${r.listed.length}${r.failed ? `, ${r.failed} refused` : ''})${X}${waited}`);
     }
-    if (r.why) console.log(`  ${D}${r.why}${X}`);
+    // ⚠️ A read cut short is OUR quota, not a thin chain, and the two need
+    // opposite responses — re-run, versus lower the floor. It is yellow and it
+    // makes the whole run exit non-zero, because the chain is NOT settled.
+    if (r.truncated) {
+      truncated++;
+      console.log(`  ${Y}⚠${X} ${r.why}`);
+    } else if (r.why) {
+      console.log(`  ${D}${r.why}${X}`);
+    }
     for (const t of (apply ? r.listed : []).slice(0, 60)) {
       console.log(`  ${D}·${X} $${t.sym}  ${D}$${Math.round(t.mcap || 0).toLocaleString('en-US')}${X}`);
     }
   }
 
-  if (apply) console.log(`\n${G}${created}${X} listing(s) created. ${D}Nothing was announced.${X}\n`);
-  else console.log(`\n${D}Re-run with --apply to create them.${X}\n`);
+  if (apply) console.log(`\n${G}${created}${X} listing(s) created. ${D}Nothing was announced.${X}`);
+  else console.log(`\n${D}Re-run with --apply to create them.${X}`);
+  if (truncated) {
+    console.log(
+      `${Y}${truncated} chain(s) did not finish reading the market.${X} Re-running continues where it stopped — ` +
+        `it lists nothing twice. ${D}A GECKOTERMINAL_API_KEY removes the wait entirely.${X}`,
+    );
+  }
+  console.log('');
 
-  // Non-zero when a chain could not be READ — a cron or an operator scrolling
-  // back must not take a silent pass for a full chain.
-  process.exit(unreadable ? 1 : 0);
+  // Non-zero when a chain could not be READ, or was only read in part — a cron
+  // or an operator scrolling back must not take either for a settled chain.
+  process.exit(unreadable || truncated ? 1 : 0);
 })().catch((e) => {
   console.error(`\n${R}✗${X} ${e.stack || e.message}\n`);
   process.exit(1);

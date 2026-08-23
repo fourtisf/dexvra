@@ -75,7 +75,7 @@ const notAProject = (sym, name) =>
  * as "this chain has no big tokens" and the board stays short with nobody the
  * wiser; the same rule `pumpfunNewX` and `core.dsPairsX` are written under.
  */
-async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_000, pages = 2 } = {}) {
+async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_000, pages = 2, startPage = 1 } = {}) {
   const net = gt.networkOf(chain);
   // Robinhood is the live example: GT does index it, but a chain with no
   // network id cannot be asked at all, and saying so is the difference between
@@ -85,13 +85,16 @@ async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_
   const best = new Map(); // token address (lower) → the deepest pool we saw for it
   let asked = 0;
   let why = null;
-  for (let page = 1; page <= pages; page++) {
+  let stoppedAt = null; // the page we did NOT get, so a caller can resume there
+  const lastPage = startPage + pages - 1;
+  for (let page = startPage; page <= lastPage; page++) {
     // Ranked by 24h VOLUME, then re-sorted by cap here. GT has no
     // sort-by-market-cap, and volume is the right net to cast: a token with a
     // large cap and no trading is not on anybody's trending board either.
     const res = await gt.gtGet(`/networks/${net}/pools`, { include: 'base_token', page, sort: 'h24_volume_usd_desc' });
     if (!res.ok) {
       why = res.reason || `HTTP ${res.status}`;
+      stoppedAt = page;
       break; // partial results are still results — report them with the reason
     }
     asked++;
@@ -139,7 +142,12 @@ async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_
     .slice(0, limit);
 
   if (why) log.debug(`[bigcoins] ${chain}: GT stopped after ${asked} page(s) — ${why}`);
-  return { ok: asked > 0, why, items };
+  // ⚠️ A read CUT SHORT is not a thin chain, and the two are indistinguishable
+  // from `items` alone. `seed:chain`'s first live run reported "only 7 token(s)
+  // on bsc clear the floor" after GT 429'd on page 2 — a fact about our quota,
+  // printed as a fact about BSC. `nextPage` says where to resume once the
+  // cooldown lifts; null means every page asked for was actually read.
+  return { ok: asked > 0, why, items, pagesRead: asked, nextPage: stoppedAt };
 }
 
 module.exports = { topByMcap, notAProject, NOT_A_PROJECT, _num: num };

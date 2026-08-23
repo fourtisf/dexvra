@@ -30,6 +30,7 @@
  * the number on the chip.
  */
 const bigCoins = require('./bigCoins');
+const gt = require('../group/gtPairs');
 const autoLister = require('./autoLister');
 const discovery = require('../discovery');
 const api = require('../api/dexvra');
@@ -48,6 +49,16 @@ const DEFAULTS = {
   minLiq: 50_000,
   pages: GT_MAX_PAGES,
   gapMs: 400, // between creates — the site is one small server, not a CDN
+  // ⚠️ How long this may sleep waiting out GeckoTerminal's shared cooldown.
+  //
+  // The first live run is the reason it exists: BSC's read tripped a 429 on
+  // page 2, which arms a 120s PROCESS-WIDE cooldown, and base and ethereum
+  // were then never asked at all — they came back "could not read the market:
+  // cooldown", which reads as two dead chains rather than as our own quota.
+  // A bulk one-off is exactly the caller that can afford to wait; the buy
+  // monitor is exactly the one that cannot, which is why waiting lives here
+  // and not in `gtGet`.
+  maxWaitMs: 15 * 60 * 1000,
 };
 
 /**
@@ -98,6 +109,90 @@ function plan({ chain, target, current, candidates, known, everListed }) {
 }
 
 /**
+ * Every big token on a chain, ACROSS GeckoTerminal's rate limit.
+ *
+ * A 429 arms a 120s process-wide cooldown, and `gtGet` then refuses instantly
+ * for every caller — correct for the buy monitor, which cannot wait, and fatal
+ * here: the first live run read one page of BSC, tripped the limit, and then
+ * reported base and ethereum as unreadable chains without asking GT a single
+ * question about either. So this waits the cooldown out and RESUMES from the
+ * page that did not arrive, rather than starting over (re-reading pages 1..N
+ * spends the very quota that ran out) or giving up.
+ *
+ * Bounded by `maxWaitMs`, and it stops waiting the moment it has enough
+ * candidates — a target already met must not buy another two minutes.
+ * Returns `{ ok, why, items, truncated }`; `truncated` is set when the read
+ * ended early anyway, and is what keeps a quota failure from being reported as
+ * a thin chain.
+ */
+async function gather(chain, o, { need, top, sleep, cooldownLeft, waited }) {
+  const wantPages = Math.min(o.pages, GT_MAX_PAGES);
+  const limit = Math.max(need * 4, 60);
+  const seen = new Map(); // address (lower) → item, so a resumed read dedups
+  let page = 1;
+  let ok = false;
+  let why = null;
+  let truncated = null;
+  let spentWaitMs = 0;
+
+  while (page <= wantPages) {
+    const res = await top(chain, {
+      // Ask for far more than the shortfall: the tokens already listed are the
+      // ones most likely to sit at the TOP of a by-cap list, so a limit of
+      // exactly `need` comes back mostly consumed by rows we already have.
+      limit,
+      minMcap: o.minMcap,
+      minLiq: o.minLiq,
+      pages: wantPages - page + 1,
+      startPage: page,
+    }).catch((e) => ({ ok: false, why: e.message, items: [] }));
+
+    for (const it of res.items || []) {
+      const k = keyOf(chain, it.address);
+      const prev = seen.get(k);
+      if (!prev || (it.liq || 0) > (prev.liq || 0)) seen.set(k, it);
+    }
+    if (res.ok) ok = true;
+    why = res.why || why;
+
+    // Read every page it was asked for — nothing left to resume.
+    if (!res.why) {
+      truncated = null;
+      break;
+    }
+    truncated = res.why;
+
+    // Enough already, or nothing left in the budget: stop, and say why.
+    if (seen.size >= limit) break;
+    const left = cooldownLeft();
+    // Only a COOLDOWN is worth sleeping on. A 404, a timeout or a dead socket
+    // answers identically in two minutes, and sleeping on one is the caller
+    // paying for a failure that was never about the quota — the rule the
+    // launchpad breaker states as "an HTTP status never benches a pad".
+    if (!left) break;
+    const wait = Math.min(left + 500, o.maxWaitMs - spentWaitMs);
+    if (wait <= 0) {
+      truncated = `${truncated}, and the ${Math.round(o.maxWaitMs / 1000)}s wait budget is spent`;
+      break;
+    }
+    log.info(
+      `[chainseed] ${chain}: GeckoTerminal is rate limited — waiting ${Math.round(wait / 1000)}s, ` +
+        `then resuming at page ${res.nextPage || page}`,
+    );
+    await sleep(wait);
+    spentWaitMs += wait;
+    if (waited) waited.waitedMs = (waited.waitedMs || 0) + wait;
+    // Resume where GT stopped. `nextPage` is the page that did NOT arrive; a
+    // read that failed before its first page still reports one, so this can
+    // never silently skip a page or spin on the same one.
+    page = res.nextPage || page;
+    if (res.nextPage == null) break;
+  }
+
+  return { ok, why, truncated, items: [...seen.values()].sort((a, b) => (b.mcap || 0) - (a.mcap || 0)) };
+}
+
+/**
  * Bring one chain up to `target` listings. Never throws.
  *
  * `apply: false` (the default) plans and reports without creating anything —
@@ -120,8 +215,9 @@ async function seedChain(chain, opts = {}) {
   const listings = deps.getListings || api.getListings;
   const everListed = deps.wasEverListed || autoLister.wasEverListed;
   const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const cooldownLeft = deps.cooldownRemaining || gt.cooldownRemaining;
 
-  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, why: null, ok: false };
+  const out = { chain, target: o.target, current: 0, need: 0, planned: 0, listed: [], failed: 0, waitedMs: 0, truncated: null, why: null, ok: false };
   if (!chainOf(chain)) {
     out.why = `unknown chain ${chain}`;
     return out;
@@ -145,24 +241,26 @@ async function seedChain(chain, opts = {}) {
     return out;
   }
 
-  const res = await top(chain, {
-    // Ask for far more than the shortfall: the tokens already listed are the
-    // ones most likely to sit at the TOP of a by-cap list, so a limit of
-    // exactly `need` comes back mostly consumed by rows we already have.
-    limit: Math.max(out.need * 4, 60),
-    minMcap: o.minMcap,
-    minLiq: o.minLiq,
-    pages: Math.min(o.pages, GT_MAX_PAGES),
-  }).catch((e) => ({ ok: false, why: e.message, items: [] }));
+  const res = await gather(chain, o, { need: out.need, top, sleep, cooldownLeft, waited: out });
   if (!res.ok && !res.items.length) {
     out.why = `could not read the market for ${chain}: ${res.why || 'unknown'}`;
     return out;
   }
   out.ok = true;
+  // A read that stopped early is a fact about OUR quota, and it must not be
+  // reported as a fact about the chain — see `truncated` in `gather`.
+  out.truncated = res.truncated || null;
 
   const p = plan({ chain, target: o.target, current: out.current, candidates: res.items, known, everListed });
   out.planned = p.take.length;
   out.why = p.why;
+  // ⚠️ When the read was cut short, "only 7 token(s) clear the floor" is a
+  // sentence about GeckoTerminal's rate limit wearing a sentence about BSC.
+  // The operator's next move differs completely between the two — wait and
+  // re-run, versus lower the floor — so the truncation OUTRANKS the count.
+  if (out.truncated && p.take.length < p.need) {
+    out.why = `the market read was cut short (${out.truncated}) — ${p.take.length} found so far, ${p.need} needed. Re-run to continue.`;
+  }
   if (!p.take.length) {
     if (!out.why) out.why = `no token on ${chain} clears the floor (mcap ≥ $${o.minMcap.toLocaleString('en-US')})`;
     return out;

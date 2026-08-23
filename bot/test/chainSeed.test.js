@@ -36,11 +36,13 @@ const coin = (i, over = {}) => ({
 });
 
 /** seedChain with every dependency injected — no network, no disk. */
-function harness({ items = [], ok = true, why = null, rows = [], ever = () => false, createImpl } = {}) {
-  const calls = { create: [], info: [], top: [] };
+function harness({ items = [], ok = true, why = null, rows = [], ever = () => false, createImpl, topImpl, cooldown = () => 0, sleepImpl } = {}) {
+  const calls = { create: [], info: [], top: [], slept: [] };
   const deps = {
+    cooldownRemaining: cooldown,
     async topByMcap(chain, o) {
       calls.top.push([chain, o]);
+      if (topImpl) return topImpl(chain, o, calls.top.length);
       return { ok, why, items };
     },
     async getListings() {
@@ -56,7 +58,10 @@ function harness({ items = [], ok = true, why = null, rows = [], ever = () => fa
       if (createImpl) return createImpl(chain, address, info, opts);
       return { listing: { id: address }, input: { sym: info.symbol } };
     },
-    sleep: async () => {},
+    async sleep(ms) {
+      calls.slept.push(ms);
+      if (sleepImpl) await sleepImpl(ms);
+    },
   };
   return { deps, calls };
 }
@@ -187,4 +192,142 @@ test("createFromInfo is the ONE owner of turning a priced token into a listing",
   // through both doors.
   assert.strictEqual(typeof autoLister.createFromInfo, "function");
   assert.ok(!/createListing/.test(code()), "chainSeed must go through autoLister, never the API directly");
+});
+
+
+// ── GeckoTerminal's shared 120s cooldown ─────────────────────────────────────
+//
+// The first live dry run is what these are about. BSC read one page, GT 429'd
+// on page 2 — which arms a PROCESS-WIDE cooldown — and the run then reported
+// "only 7 token(s) on bsc clear the floor" plus two chains that were never
+// asked anything at all:
+//
+//   ✗ base — could not read the market for base: cooldown
+//   ✗ ethereum — could not read the market for ethereum: cooldown
+//
+// Every line of that is our own quota, printed as three facts about three
+// chains. A bulk one-off is exactly the caller that can afford to wait.
+
+test("a cooldown is WAITED OUT and the read RESUMES at the page that failed", async () => {
+  let left = 120_000;
+  const { deps, calls } = harness({
+    cooldown: () => left,
+    topImpl: (chain, o, n) =>
+      n === 1
+        ? { ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [coin(1)] }
+        : { ok: true, why: null, nextPage: null, pagesRead: 3, items: [coin(2), coin(3)] },
+    sleepImpl: async () => {
+      left = 0;
+    },
+  });
+  const r = await seeder.seedChain("bsc", { target: 3, apply: true, deps, gapMs: 0 });
+
+  assert.strictEqual(calls.top.length, 2, "it asked again after waiting");
+  assert.strictEqual(calls.top[1][1].startPage, 2, "resumed at the page that did NOT arrive");
+  assert.ok(calls.slept[0] >= 120_000, `slept ${calls.slept[0]}ms — it must wait the cooldown out`);
+  assert.strictEqual(r.listed.length, 3, "all three tokens found across the two reads");
+  // Re-reading pages 1..N would spend the very quota that just ran out.
+  assert.deepStrictEqual(calls.create.map((c) => c.address).sort(), [coin(1), coin(2), coin(3)].map((c) => c.address).sort());
+});
+
+test("a truncated read is reported as TRUNCATED, never as a thin chain", async () => {
+  const { deps } = harness({
+    cooldown: () => 0, // the cooldown already lifted; the read still ended early
+    topImpl: () => ({ ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [coin(1)] }),
+  });
+  const r = await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.truncated, "rate limited");
+  // "only 1 token(s) on bsc clear the floor" would send the operator to lower
+  // the market-cap floor for a problem that clears itself in two minutes.
+  assert.match(r.why, /cut short/);
+  assert.match(r.why, /Re-run to continue/);
+  assert.ok(!/clear the floor/.test(r.why), "the quota must outrank the count");
+});
+
+test("the wait is BOUNDED — a stuck cooldown cannot hold the run for ever", async () => {
+  const { deps, calls } = harness({
+    cooldown: () => 120_000, // never lifts
+    topImpl: () => ({ ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: [coin(1)] }),
+  });
+  const r = await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0, maxWaitMs: 200_000 });
+  const total = calls.slept.reduce((a, b) => a + b, 0);
+  assert.ok(total <= 200_000, `slept ${total}ms against a 200000ms budget`);
+  assert.ok(calls.slept.length >= 1 && calls.slept.length < 20, "it stops, rather than spinning");
+  assert.match(r.truncated, /wait budget is spent/);
+});
+
+test("only a COOLDOWN is worth sleeping on — a timeout answers the same in 2min", async () => {
+  const { deps, calls } = harness({
+    cooldown: () => 0,
+    topImpl: () => ({ ok: true, why: "request failed", nextPage: 2, pagesRead: 1, items: [coin(1)] }),
+  });
+  await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0 });
+  assert.deepStrictEqual(calls.slept, [], "a dead socket is not a quota problem");
+  assert.strictEqual(calls.top.length, 1);
+});
+
+test("waiting stops once there are enough candidates", async () => {
+  const plenty = Array.from({ length: 300 }, (_, i) => coin(i + 1));
+  const { deps, calls } = harness({
+    cooldown: () => 120_000,
+    topImpl: () => ({ ok: true, why: "rate limited", nextPage: 2, pagesRead: 1, items: plenty }),
+  });
+  await seeder.seedChain("bsc", { target: 50, deps, gapMs: 0 });
+  assert.deepStrictEqual(calls.slept, [], "a target already met must not buy another two minutes");
+});
+
+test("topByMcap says WHERE it stopped, so a caller can resume there", async () => {
+  const gt = require("../src/group/gtPairs");
+  const bigCoins = require("../src/services/bigCoins");
+  const asked = [];
+  const real = gt.gtGet;
+  try {
+    gt.gtGet = async (path, params) => {
+      asked.push(params.page);
+      // page 3 is where the quota runs out
+      if (params.page >= 3) return { ok: false, status: 429, reason: "rate limited" };
+      return { ok: true, status: 200, body: { data: [], included: [] } };
+    };
+    const r = await bigCoins.topByMcap("bsc", { pages: 5, startPage: 2 });
+    assert.deepStrictEqual(asked, [2, 3], "startPage is honoured, and it stops at the refusal");
+    assert.strictEqual(r.nextPage, 3, "the page that did NOT arrive");
+    assert.strictEqual(r.pagesRead, 1);
+    assert.strictEqual(r.why, "rate limited");
+
+    asked.length = 0;
+    gt.gtGet = async (path, params) => {
+      asked.push(params.page);
+      return { ok: true, status: 200, body: { data: [], included: [] } };
+    };
+    const full = await bigCoins.topByMcap("bsc", { pages: 2 });
+    assert.strictEqual(full.nextPage, null, "null means every page asked for was read");
+    assert.strictEqual(full.why, null);
+  } finally {
+    gt.gtGet = real;
+  }
+});
+
+test("the CLI halves its own GT budget BEFORE requiring the client", () => {
+  // Two processes on one IP, each pacing itself at the free ceiling, is ~2x the
+  // ceiling — which is how the first live run 429'd on its second page. And a
+  // 429 the running BOT catches pauses every group's buy alerts for 120s, so
+  // this script's convenience is charged to a paying customer's chat.
+  //
+  // ORDER is the rule, not presence: `gtPairs` freezes GT_MAX_RPM at require
+  // time, so a line set after the require reads exactly like one that works.
+  // The loadEnv guard is written the same way, for the same reason.
+  const src = require("node:fs").readFileSync(require.resolve("../scripts/seed-chain.js"), "utf8");
+  const set = src.indexOf("GT_MAX_RPM");
+  const req = src.search(/require\('\.\.\/src\//);
+  assert.ok(set > 0, "the script must lower its own GT budget");
+  assert.ok(req > 0, "the script must require repo code (this guard is measuring nothing otherwise)");
+  assert.ok(set < req, "GT_MAX_RPM must be set BEFORE the first repo require");
+  // …and it must not overrule an operator who chose a number in .env.
+  assert.match(src, /if \(!process\.env\.GT_MAX_RPM\)/);
+});
+
+test("a chain read only in PART exits non-zero — it is not a settled chain", () => {
+  const src = require("node:fs").readFileSync(require.resolve("../scripts/seed-chain.js"), "utf8");
+  assert.match(src, /process\.exit\(unreadable \|\| truncated \? 1 : 0\)/);
 });

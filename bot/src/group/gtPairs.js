@@ -239,6 +239,14 @@ const COOLDOWN_MS = 120 * 1000;
 let cooldownUntil = 0;
 
 const inCooldown = (at = Date.now()) => at < cooldownUntil;
+/** How much of the cooldown is left, in ms (0 when it is not armed).
+ *
+ *  A caller that CAN wait needs the number, not the boolean. The buy monitor
+ *  cannot — a buy alert two minutes late is not a buy alert — but a bulk
+ *  one-off like `seed:chain` has nothing to lose by sleeping, and without this
+ *  it reported "could not read the market" for every chain after the first,
+ *  which reads as a dead chain rather than as our own quota. */
+const cooldownRemaining = (at = Date.now()) => Math.max(0, cooldownUntil - at);
 
 function armCooldown(why, at = Date.now()) {
   if (inCooldown(at)) return;
@@ -412,7 +420,6 @@ module.exports = {
   gtAddr,
   isHexAddress,
   hasApiKey: () => !!GT_KEY,
-  inCooldown,
   fetchPool,
   fetchPoolCached,
   isGtPrimary,
@@ -423,6 +430,7 @@ module.exports = {
   fetchTokenInfo,
   networkOf,
   inCooldown,
+  cooldownRemaining,
   armCooldown,
   _reset,
   GT,
