@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
-import { networkOf, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
+import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +21,13 @@ export async function GET(req: NextRequest) {
   }
   try {
     const poolAddress = await cached(`pool:${network}:${address}`, POOL_TTL, () => topPoolAddress(network, address));
-    return NextResponse.json({ network, poolAddress });
-  } catch {
-    return NextResponse.json({ network, poolAddress: null });
+    // A null here is an ANSWER: GeckoTerminal indexes no pool for this token.
+    return NextResponse.json({ network, poolAddress, why: poolAddress ? null : "No pool indexed for this token yet." });
+  } catch (err) {
+    // ⚠️ AND A NULL HERE IS A SILENCE. `topPoolAddress` is careful to throw for
+    // everything that is not a 404 — a rate-limit cooldown included — and this
+    // catch used to flatten that into the same `poolAddress: null` the answer
+    // uses. One field, two opposite meanings, and the caller could not tell.
+    return NextResponse.json({ network, poolAddress: null, why: `Couldn't look up the pool just now (${readWhy(err)}).` });
   }
 }

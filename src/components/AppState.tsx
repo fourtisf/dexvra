@@ -122,11 +122,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
         /* keep last data */
       }
     };
-    load();
-    const id = setInterval(load, POLL_TOKENS_MS);
+    // ⚠️ A HIDDEN TAB MUST NOT KEEP THE PIPELINE WARM. This polled every 30s
+    // regardless of whether anybody was looking, and behind /api/tokens sits
+    // the board's GeckoTerminal refresh — whose quota is counted per IP and
+    // shared with the bot suite on the same box. A browser left open on a
+    // background tab was spending the site's ceiling on a page nobody could
+    // see. A tab coming back to the front reloads at once, so the reader never
+    // waits for the next tick to see fresh numbers.
+    const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+    const tick = () => {
+      if (visible()) void load();
+    };
+    if (visible()) void load();
+    const id = setInterval(tick, POLL_TOKENS_MS);
+    const onShow = () => {
+      if (visible()) void load();
+    };
+    document.addEventListener("visibilitychange", onShow);
     return () => {
       stop = true;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onShow);
     };
   }, []);
 

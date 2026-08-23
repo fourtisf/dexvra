@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { BoardToken, Trade } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
 import { fmtNum, fmtPrice } from "@/lib/format";
+import { TRADES_POLL_MS } from "@/lib/trades";
 
 function ago(ts: number): string {
   const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
@@ -31,7 +32,10 @@ const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}
 //
 // So: real trades, or a sentence saying which of the two reasons there are none.
 
-const POLL_MS = 12_000;
+// ⚠️ NOT A NUMBER OF ITS OWN. It used to be 12s against a route that cached for
+// 8s, so every poll was a guaranteed upstream miss. lib/trades keeps the two
+// together — the chart learnt the same rule as `pollMsFor`.
+const POLL_MS = TRADES_POLL_MS;
 const tradeKey = (tr: Trade) => `${tr.ts}:${tr.trader}:${tr.usd.toFixed(2)}`;
 
 export function TokenTrades({ t }: { t: BoardToken }) {
@@ -40,7 +44,14 @@ export function TokenTrades({ t }: { t: BoardToken }) {
   /** Why there are none — the panel's whole answer when the list is empty. */
   const [why, setWhy] = useState<string | null>(null);
   const network = CHAINS[t.chain]?.geckoNetwork ?? null;
-  const canLive = Boolean(network && t.poolAddress);
+  // ⚠️ ONLY THE CHAIN DECIDES WHETHER TO ASK. This used to require
+  // `t.poolAddress` as well and short-circuit to "no indexed pool for this
+  // token yet" without a single request — but that field is null for every
+  // token DexScreener priced rather than GeckoTerminal, which GT frequently
+  // indexes perfectly well. The panel would have asserted, to a visitor, that a
+  // token with a live feed had no pool. The route resolves the pool now; the
+  // address is the question, the pool is a hint.
+  const canLive = Boolean(network);
 
   useEffect(() => {
     let stop = false;
@@ -57,9 +68,9 @@ export function TokenTrades({ t }: { t: BoardToken }) {
       return;
     }
 
-    const url = `/api/trades?chain=${encodeURIComponent(t.chain)}&pool=${encodeURIComponent(
-      t.poolAddress as string,
-    )}`;
+    const url =
+      `/api/trades?chain=${encodeURIComponent(t.chain)}&address=${encodeURIComponent(t.address)}` +
+      (t.poolAddress ? `&pool=${encodeURIComponent(t.poolAddress)}` : "");
 
     const tick = async () => {
       try {
@@ -94,7 +105,7 @@ export function TokenTrades({ t }: { t: BoardToken }) {
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t.chain, t.poolAddress]);
+  }, [t.chain, t.address, t.poolAddress]);
 
   const sym = useMemo(() => t.symbol.replace(/^\$/, ""), [t.symbol]);
 

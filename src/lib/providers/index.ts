@@ -1,5 +1,5 @@
 import { CHAINS } from "@/config/chains";
-import { cached } from "@/lib/cache";
+import { cache, cached } from "@/lib/cache";
 import {
   SEED_ROWS,
   rowToBoardToken,
@@ -33,6 +33,9 @@ import { setResolvedLogo } from "@/lib/store";
 // The web app must be the polite tenant — `cached` serves stale on a failed
 // refresh, so a missed minute costs staleness, never a DEMO board.
 const PRICE_TTL = 60_000;
+/** Matches the TTL /api/pool, /api/ohlcv and /api/trades read that key with —
+ *  one number, or the board would plant an entry they expire differently. */
+const POOL_CACHE_TTL = 10 * 60_000;
 const FNG_TTL = 10 * 60_000;
 
 const esc = (s: string) =>
@@ -156,6 +159,17 @@ async function loadListedTokens(): Promise<BoardToken[]> {
         featured: t.trendingRank != null,
         vol: m?.vol["24h"] ?? t.vol["24h"],
       });
+
+    // ⚠️ THE POOL WE ALREADY HAVE. GeckoTerminal hands the top pool back with
+    // every board refresh, and /api/ohlcv and /api/trades were each paying a
+    // separate lookup for the same answer the moment a visitor opened the page.
+    // Planting it in the cache they already read costs nothing and removes an
+    // upstream request per token page — on a quota counted per IP, that is the
+    // cheapest saving available anywhere in this app.
+    if (m?.poolAddress) {
+      const net = CHAINS[t.chain]?.geckoNetwork;
+      if (net) cache.set(`pool:${net}:${t.address}`, m.poolAddress, POOL_CACHE_TTL);
+    }
 
     if (!m) return { ...t, logoUrl: logo.url }; // keep fallback figures for this listing
     const score = dexvraScore({ chg: m.chg, liq: m.liq, taxPct: t.taxPct, txns: m.txns, holders: t.holders });

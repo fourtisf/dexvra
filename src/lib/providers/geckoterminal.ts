@@ -2,7 +2,7 @@
 // this file too (geckoterminal.test.ts), and the alias is a Next-only thing —
 // the same rule every other node-tested module here already follows.
 import { CHAINS } from "../../config/chains.ts";
-import { gtGet } from "./gt.ts";
+import { gtGet, gtInCooldown } from "./gt.ts";
 import type { PeriodKey, TxSplit } from "@/lib/types";
 
 // GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
@@ -210,5 +210,14 @@ export async function fetchListedMarket(
     }
   }
   if (failed === chunks.length) throw firstErr instanceof Error ? firstErr : new Error(`GeckoTerminal failed (${chainId})`);
+  // ⚠️ A CYCLE CUT SHORT BY THE COOLDOWN IS A FAILED CYCLE, not a partial one.
+  // The contract above — "a chunk that fails is SKIPPED, its tokens keep their
+  // fallback figures" — was written for one bad chunk out of many. With a
+  // process-wide 429 cooldown, chunk 1 can succeed and every later chunk return
+  // without asking, and returning that map hands the caller 30 live tokens and
+  // 140 silently unpriced ones, which `cached()` then serves as the board for a
+  // minute. Throwing sends the whole chain to DexScreener instead, which is the
+  // fallback that exists for exactly this.
+  if (failed > 0 && gtInCooldown()) throw firstErr instanceof Error ? firstErr : new Error(`GeckoTerminal rate limited (${chainId})`);
   return out;
 }

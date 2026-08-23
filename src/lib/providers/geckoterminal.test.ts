@@ -75,21 +75,38 @@ test("addresses reach GT VERBATIM — base58 is case-significant", async () => {
   }
 });
 
-test("a 429 stops the REST of the cycle — the quota is already gone", async () => {
-  // This used to assert that chunk 3 still went out after chunk 2 was
-  // rate-limited. It only "worked" because a mock will happily answer a request
-  // GeckoTerminal would have refused: a 429 means the IP is over its ceiling,
-  // so the next chunk is another 429 that extends the window we are waiting on.
+test("a 429 stops the rest of the cycle AND fails the chain, so DexScreener takes it", async () => {
+  // Two rules moved here, in two steps, and both are about the same thing.
   //
-  // The tokens that miss out do NOT go blank — DexScreener prices the leftovers
-  // (indexedMarket), and anything it misses keeps its last-known reading. What
-  // must still hold is the original lesson: one bad chunk never kills the chain.
+  // 1. A 429 stops the remaining chunks. The old test asserted chunk 3 still
+  //    went out after chunk 2 was rate-limited, which only ever "worked" in a
+  //    mock: a real 429 means the IP is over its ceiling, so the next chunk is
+  //    another 429 that extends the window.
+  // 2. And the SHORTENED cycle must not be returned as a partial answer. The
+  //    "a failed chunk is skipped" contract was written for one bad chunk out
+  //    of many; under a process-wide cooldown it would hand the caller 30 live
+  //    tokens and 140 silently unpriced ones, which `cached()` then serves as
+  //    the board for a minute. Throwing sends the WHOLE chain to DexScreener
+  //    (indexedMarket), which is the fallback that exists for exactly this and
+  //    which covers 22 of the 23 registered chains.
   try {
     const addresses = Array.from({ length: 70 }, (_, i) => addr(i));
     const urls = mockGt([null, 429, null]); // chunk 2 of 3 is rate-limited
-    const map = await fetchListedMarket("solana", addresses);
-    assert.strictEqual(map.size, 30, "chunk 1 landed and the chain still answered");
+    await assert.rejects(() => fetchListedMarket("solana", addresses), /429/);
     assert.strictEqual(urls.length, 2, "chunk 3 was never fired into a live rate limit");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("…but an ORDINARY failed chunk is still just skipped", async () => {
+  // The original lesson stands wherever the quota is not the problem: a 500 on
+  // one chunk costs its tokens their reading this cycle, not the whole chain.
+  try {
+    const addresses = Array.from({ length: 70 }, (_, i) => addr(i));
+    mockGt([null, 500, null]);
+    const map = await fetchListedMarket("solana", addresses);
+    assert.strictEqual(map.size, 40, "chunks 1 and 3 landed");
   } finally {
     globalThis.fetch = realFetch;
   }

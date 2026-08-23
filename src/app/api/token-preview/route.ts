@@ -182,7 +182,15 @@ async function searchNetwork(address: string): Promise<{ chain: string; token: s
   const res = await gtGet<{
     data?: { relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } } }[];
   }>(`/search/pools`, { query: forQuery(address), page: 1 });
-  if (!res.ok) return null;
+  // ⚠️ A 404 IS "no pool matches"; A COOLDOWN IS "we never asked". Both used to
+  // return null here, and null means "not on any network we index" to the
+  // caller — a statement about somebody's token, made on the strength of our
+  // own rate limit. fetchPreview above draws this line correctly; this call
+  // site did not.
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    throw new Error(res.reason ?? "GeckoTerminal failed");
+  }
   const json = res.body ?? {};
   const want = forQuery(address).toLowerCase();
   for (const pool of json.data ?? []) {
@@ -281,7 +289,13 @@ export async function GET(req: NextRequest) {
     // reached from a buy alert, and a buy alert fires on tokens far too new for
     // GeckoTerminal. Scoped to the chain the URL names so a copycat at the same
     // address on another chain cannot answer for it.
-    const ds = await cached(`ds:${chain}:${address}`, TTL, () => fromDexScreener(address, chain).catch(() => null));
+    // ⚠️ THE CATCH IS OUTSIDE THE CACHE, and the difference is five minutes of
+    // being wrong. Inside the loader it RESOLVED to null, so `cached()` stored
+    // "DexScreener has no pair for this token" — a claim about the token — for
+    // every transport failure. That matters more now than it did: DexScreener
+    // is the source that carries this whole site while GeckoTerminal's per-IP
+    // cooldown holds, so its bad minute must not become the app's bad five.
+    const ds = await cached(`ds:${chain}:${address}`, TTL, () => fromDexScreener(address, chain)).catch(() => null);
     if (ds) return NextResponse.json({ token: ds.token, chain });
     const network = CHAINS[chain].geckoNetwork;
     if (!network) return NextResponse.json({ token: null, chain: null }, { status: 200 });
