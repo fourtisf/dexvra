@@ -155,7 +155,7 @@ test("⚠️ dedupe is scoped to ONE CHAIN and to rows the bot listed free", () 
 test("a row with no logo from ANY source is removed, not left blank", () => {
   const src = fixSrc();
   assert.match(src, /resolveLogo\(r\.chain, r\.address\)/);
-  assert.match(src, /no logo on any of/);
+  assert.match(src, /all 6 sources answered, none has artwork/);
   // ⚠️ …and ONLY when every source actually answered. The wording moved off
   // "anywhere" deliberately: the first live run printed that phrase under a
   // GeckoTerminal 429, i.e. about a source it never asked.
@@ -181,4 +181,26 @@ test("it inherits every guard unseed has", () => {
   assert.match(src, /=== 'FREE'/);
   assert.match(src, /r\.trendingRank == null/);
   assert.match(src, /!r\.trendExp/);
+});
+
+
+test("⚠️ a cooldown is WAITED OUT, not turned into 82 undecided rows", () => {
+  // The first run decided ONE row and reported every row after it as
+  // `undecided: geckoterminal: cooldown`. The 429 lasts 120s and the loop walks
+  // a row every 120ms, so the entire pass ran inside a single cooldown — a
+  // report about our own pacing, dressed as a report about 83 tokens.
+  const src = fixSrc();
+  assert.match(src, /gt\.cooldownRemaining\(\) > 0 && waited < MAX_WAIT_MS/);
+  assert.match(src, /retry\.push\(r\)/, "a parked row goes round again");
+  assert.match(src, /queue\.push\(\.\.\.retry\.splice/, "…exactly once, not for ever");
+  assert.match(src, /MAX_WAIT_MS = 10 \* 60 \* 1000/, "and the waiting is bounded");
+  // And the run stops arming the limit itself: one light GT call per row
+  // instead of the heavy market read, at a rate that leaves the bot its room.
+  assert.match(src, /process\.env\.GT_MAX_RPM = "10"/);
+  const logo = fss
+    .readFileSync(require.resolve("../src/services/tokenLogo.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, ""); // the header NAMES the heavy read it replaced
+  assert.match(logo, /networks\/\$\{net\}\/tokens\//, "one endpoint, not fetchMarket");
+  assert.ok(!/marketdata/.test(logo), "the heavy read is what armed the 429");
 });

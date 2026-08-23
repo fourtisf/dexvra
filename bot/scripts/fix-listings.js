@@ -23,7 +23,15 @@
 // ⚠️ .env FIRST, before anything requires config/constants.
 require("../src/config/loadEnv").loadEnv();
 
+// ⚠️ A SECOND PROCESS ON THE SAME IP AS THE RUNNING BOT. GeckoTerminal's free
+// ceiling is per IP while the pacing budget is per PROCESS, so walking hundreds
+// of rows at the default rate arms a 429 the BOT also pays for. Set before the
+// first repo require — `gtPairs` freezes the rate at require time — and never
+// over an operator's own value.
+if (!process.env.GT_MAX_RPM) process.env.GT_MAX_RPM = "10";
+
 const api = require('../src/api/dexvra');
+const gt = require('../src/group/gtPairs');
 const { resolveLogo } = require('../src/services/tokenLogo');
 const { notAProject } = require('../src/services/bigCoins');
 const build = require('../src/helpers/build');
@@ -126,6 +134,11 @@ removed. Only rows the bot auto-listed for free are ever touched.
   let removedNoLogo = 0;
   let undecided = 0;
   let refused = 0;
+  let waited = 0;
+  const retry = [];
+  // The whole run may sleep this long in total waiting out rate limits. A
+  // maintenance pass can afford minutes; it may not afford an afternoon.
+  const MAX_WAIT_MS = 10 * 60 * 1000;
   const bySource = {};
   const dropped = new Set();
 
@@ -153,7 +166,12 @@ removed. Only rows the bot auto-listed for free are ever touched.
   if (doLogos) {
     const missing = rows.filter((r) => !dropped.has(r.id) && removable(r) && !hasLogo(r));
     console.log(`${B}Logos${X}  ${missing.length} row(s) with no logo`);
-    for (const r of missing) {
+    // A row parked behind a cooldown goes round once more rather than being
+    // called undecided; only the SECOND pass may conclude anything.
+    const queue = [...missing];
+    for (let i = 0; i < queue.length; i++) {
+      const r = queue[i];
+      if (i === missing.length && retry.length) console.log(`\n${D}  second pass — ${retry.length} row(s) held back by the rate limit${X}`);
       // A stablecoin that slipped in earlier should go, not be given artwork.
       if (notAProject(r.sym, r.name)) {
         console.log(`  ${D}− $${r.sym} (${r.chain}) — not a project${X}`);
@@ -181,6 +199,19 @@ removed. Only rows the bot auto-listed for free are ever touched.
             console.log(`  ${Y}⚠ $${r.sym}: ${e.message}${X}`);
           }
         }
+      } else if (!hit.ok && gt.cooldownRemaining() > 0 && waited < MAX_WAIT_MS) {
+        // ⚠️ WAIT IT OUT RATHER THAN GIVING UP ON EIGHTY-TWO ROWS.
+        //
+        // The first run marked one row decided and every row after it
+        // `undecided: geckoterminal: cooldown` — the 429 lasts 120s and the
+        // loop walks a row every 120ms, so the whole pass ran inside one
+        // cooldown. A maintenance script is exactly the caller that can afford
+        // to sleep; the buy monitor is exactly the one that cannot.
+        const left = Math.min(gt.cooldownRemaining() + 500, MAX_WAIT_MS - waited);
+        console.log(`  ${D}… GeckoTerminal is rate limited — waiting ${Math.round(left / 1000)}s${X}`);
+        await sleep(left);
+        waited += left;
+        retry.push(r); // decided on the second pass, not guessed at on the first
       } else if (!hit.ok) {
         // ⚠️ A SOURCE THAT COULD NOT BE ASKED HAS NOT SAID NO.
         //
@@ -193,7 +224,7 @@ removed. Only rows the bot auto-listed for free are ever touched.
         undecided++;
         console.log(`  ${Y}?${X} $${r.sym} (${r.chain}) ${D}— undecided: ${hit.unreachable.join(', ')}${X}`);
       } else {
-        console.log(`  ${D}− $${r.sym} (${r.chain}) — no logo on any of ${hit.tried.length || 6} sources${X}`);
+        console.log(`  ${D}− $${r.sym} (${r.chain}) — all 6 sources answered, none has artwork${X}`);
         if (apply) {
           try {
             await api.deleteListing(r.id);
@@ -205,6 +236,10 @@ removed. Only rows the bot auto-listed for free are ever touched.
         }
       }
       await sleep(120);
+      // Fold the held-back rows onto the end of the queue exactly once.
+      if (i === queue.length - 1 && retry.length) {
+        queue.push(...retry.splice(0, retry.length));
+      }
     }
   }
 

@@ -36,7 +36,6 @@
  */
 const dexscreener = require('../dexscreener');
 const gt = require('../group/gtPairs');
-const marketdata = require('../marketdata');
 const launchpads = require('../launchpads');
 const { DS_CHAIN } = require('../dexscreener');
 const log = require('../helpers/logger');
@@ -112,6 +111,32 @@ const TW_CHAIN = {
   avalanche: 'avalanchec',
 };
 
+/**
+ * GeckoTerminal's own token record — ONE light call for `image_url`.
+ *
+ * ⚠️ It used to ask `marketdata.fetchMarket`, which is the heavy read: pools,
+ * candles, a price, a market cap. Eighty-three rows × several GT requests each
+ * is a rate limit we arm OURSELVES, and the first cleanup run did exactly that
+ * — one 429 on row one, then eighty-two rows reported `undecided` because the
+ * cooldown it caused never lifted inside the run. A logo needs one endpoint.
+ *
+ * Through `gtGet`, so it shares the paced queue and the cooldown rather than
+ * being a private client with its own idea of the quota.
+ */
+async function gtLogo(chain, address) {
+  const net = gt.networkOf(chain);
+  if (!net || !address) return { ok: true, url: null }; // nothing to ask
+  const res = await gt.gtGet(`/networks/${net}/tokens/${encodeURIComponent(address)}`);
+  if (!res.ok) {
+    // A 404 is an answer — GT does not index this token. Anything else means
+    // it never looked.
+    if (res.status === 404) return { ok: true, url: null };
+    return { ok: false, why: res.reason || `HTTP ${res.status}` };
+  }
+  const attr = (res.body && res.body.data && res.body.data.attributes) || {};
+  return { ok: true, url: httpsUrl(attr.image_url) };
+}
+
 async function coingecko(chain, address) {
   const plat = CG_PLATFORM[chain];
   // A chain CoinGecko has no id for is ANSWERED — there is nothing to ask.
@@ -156,7 +181,7 @@ function trustWallet(chain, address) {
  */
 async function resolveLogo(chain, address, { deps = {} } = {}) {
   const dsInfo = deps.dsInfo || dexscreener.fetchTokenInfo;
-  const gtInfo = deps.gtInfo || marketdata.fetchMarket;
+  const gtInfo = deps.gtInfo || gtLogo;
   const padInfo = deps.padInfo || launchpads.fetchTokenInfo;
   const cgInfo = deps.cgInfo || coingecko;
   const gtDown = deps.gtInCooldown || gt.inCooldown;
@@ -185,14 +210,17 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
     // as "GT has no logo" is exactly how one rate limit deleted eighty-three
     // rows' worth of evidence.
     gtDown() ? Promise.resolve(unreachable.push('geckoterminal: cooldown') && null) : ask('geckoterminal', () => gtInfo(chain, address)),
+
     ask('launchpad', () => (padInfo ? padInfo(chain, address) : null)),
     ask('coingecko', () => cgInfo(chain, address)),
   ]);
   if (cg && cg.ok === false) unreachable.push(`coingecko: ${cg.why}`);
+  if (gt2 && gt2.ok === false) unreachable.push(`geckoterminal: ${gt2.why}`);
 
   const candidates = [
     ['dexscreener', httpsUrl(ds && ds.logoUrl)],
-    ['geckoterminal', httpsUrl(gt2 && gt2.logoUrl)],
+    // `.url` from gtLogo; `.logoUrl` is the shape a caller's own stub may use.
+    ['geckoterminal', httpsUrl(gt2 && (gt2.url || gt2.logoUrl))],
     ['launchpad', httpsUrl(pad && pad.logoUrl)],
     ['coingecko', httpsUrl(cg && cg.url)],
     ['trustwallet', httpsUrl(trustWallet(chain, address))],
@@ -214,4 +242,4 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
   return { ok, url: null, source: null, tried, unreachable };
 }
 
-module.exports = { resolveLogo, isImage, cdnGuess, trustWallet, coingecko, CG_PLATFORM, TW_CHAIN, _httpsUrl: httpsUrl };
+module.exports = { resolveLogo, isImage, cdnGuess, trustWallet, coingecko, gtLogo, CG_PLATFORM, TW_CHAIN, _httpsUrl: httpsUrl };
