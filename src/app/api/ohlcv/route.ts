@@ -22,6 +22,14 @@ const POOL_TTL = 10 * 60_000;
 
 export interface OhlcvResponse {
   ok: boolean;
+  /**
+   * WHICH BUILD ANSWERED. Not decoration: a chart that fails and a chart whose
+   * fix was never deployed are indistinguishable from the outside, and working
+   * that out has now cost a round trip on this very endpoint — the server had
+   * merged a stale ref, so the answer came from the old code and said so
+   * nowhere. `/api/token-preview` carries the same stamp for the same reason.
+   */
+  build: string;
   /** GeckoTerminal network id — the client builds its "open on GT" link from
    *  this plus `pool`, so it never has to re-derive either. */
   network: string | null;
@@ -33,8 +41,11 @@ export interface OhlcvResponse {
   why: string | null;
 }
 
+const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "unknown";
+
 const fail = (tf: Timeframe, why: string, network: string | null = null, pool: string | null = null): OhlcvResponse => ({
   ok: false,
+  build: BUILD,
   network,
   pool,
   tf,
@@ -95,7 +106,7 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
     const resolved = await cached(`pool:${network}:${address}`, POOL_TTL, () => topPoolAddress(network, address));
     if (!resolved) {
       return candles?.length === 0
-        ? { ok: false, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." }
+        ? { ok: false, build: BUILD, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." }
         : fail(
             tf,
             pool
@@ -121,9 +132,9 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
   // yet — and it is not an error. Saying so beats an empty grid that reads as a
   // broken page.
   if (candles.length === 0)
-    return { ok: false, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." };
+    return { ok: false, build: BUILD, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." };
 
-  return { ok: true, network, pool, tf, candles, why: null };
+  return { ok: true, build: BUILD, network, pool, tf, candles, why: null };
 }
 
 export async function GET(req: NextRequest) {

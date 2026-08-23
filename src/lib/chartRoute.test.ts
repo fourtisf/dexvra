@@ -47,6 +47,19 @@ test("a pool address from the caller is a HINT, and a 404 on it re-resolves", ()
   assert.match(ROUTE, /deeper\.length > 0 \|\| candles == null/, "and a worse answer there never replaces a good one");
 });
 
+test("⚠️ every answer names the BUILD that produced it", () => {
+  // A chart that fails and a chart whose fix was never deployed look identical
+  // from outside. Working that out cost a round trip on this endpoint: the
+  // server had merged a stale remote ref, so the old code answered and nothing
+  // said so. The stamp is the cheapest possible tell, and /api/token-preview
+  // already carries it for the same reason.
+  assert.match(ROUTE, /build: string;/, "it is part of the response shape, not a debug flag");
+  assert.match(ROUTE, /process\.env\.NEXT_PUBLIC_BUILD/);
+  const responses = (ROUTE.match(/\{ ok: (?:true|false), /g) ?? []).length;
+  const stamped = (ROUTE.match(/build: BUILD/g) ?? []).length;
+  assert.equal(stamped, responses + 1, "every hand-built response, plus fail() — an unstamped one is the one you would be reading");
+});
+
 test("⚠️ the reason an upstream gave is never dropped on the way to the panel", () => {
   // The first live failure on the server answered a bare "Couldn't read the
   // chart just now." — the pool lookup throws a plain Error, so the branch that
