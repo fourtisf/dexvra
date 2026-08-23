@@ -35,6 +35,7 @@
  * which is what a CDN does when it does not want to admit a miss.
  */
 const dexscreener = require('../dexscreener');
+const gt = require('../group/gtPairs');
 const marketdata = require('../marketdata');
 const launchpads = require('../launchpads');
 const { DS_CHAIN } = require('../dexscreener');
@@ -113,20 +114,24 @@ const TW_CHAIN = {
 
 async function coingecko(chain, address) {
   const plat = CG_PLATFORM[chain];
-  if (!plat || !address) return null;
+  // A chain CoinGecko has no id for is ANSWERED — there is nothing to ask.
+  if (!plat || !address) return { ok: true, url: null };
   try {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/coins/${plat}/contract/${encodeURIComponent(address)}`,
       { signal: AbortSignal.timeout(TIMEOUT_MS) },
     );
     // 404 is the ordinary answer here — CoinGecko is curated, so most tokens a
-    // seeding run finds are simply not in it. Never a reason to warn.
-    if (!res.ok) return null;
+    // seeding run finds are simply not in it. A 429 or a 5xx is the opposite:
+    // the index never looked, and reporting that as "not in CoinGecko" is how
+    // a rate limit becomes a deleted listing.
+    if (res.status === 404) return { ok: true, url: null };
+    if (!res.ok) return { ok: false, why: `HTTP ${res.status}` };
     const j = await res.json();
     const img = j && j.image;
-    return httpsUrl((img && (img.large || img.small || img.thumb)) || null);
-  } catch {
-    return null;
+    return { ok: true, url: httpsUrl((img && (img.large || img.small || img.thumb)) || null) };
+  } catch (e) {
+    return { ok: false, why: (e && e.message) || 'request failed' };
   }
 }
 
@@ -154,42 +159,59 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
   const gtInfo = deps.gtInfo || marketdata.fetchMarket;
   const padInfo = deps.padInfo || launchpads.fetchTokenInfo;
   const cgInfo = deps.cgInfo || coingecko;
+  const gtDown = deps.gtInCooldown || gt.inCooldown;
   const verify = deps.isImage || isImage;
 
   const tried = [];
-  const candidates = [];
+  const unreachable = [];
 
-  // 1 + 2 + 3 are ASKED CONCURRENTLY — they are independent services and a
-  // cleanup walks hundreds of rows, so three serial timeouts per token is the
-  // difference between a run and an afternoon.
-  const [ds, gt, pad, cg] = await Promise.all([
+  /** Ask one source. A THROW means we could not ask; `null` means it answered
+   *  and has nothing. Those are different facts and this is where they part. */
+  const ask = (name, fn) =>
     Promise.resolve()
-      .then(() => dsInfo(chain, address))
-      .catch(() => null),
-    Promise.resolve()
-      .then(() => gtInfo(chain, address))
-      .catch(() => null),
-    Promise.resolve()
-      .then(() => (padInfo ? padInfo(chain, address) : null))
-      .catch(() => null),
-    Promise.resolve()
-      .then(() => cgInfo(chain, address))
-      .catch(() => null),
+      .then(fn)
+      .catch((e) => {
+        unreachable.push(`${name}: ${(e && e.message) || 'failed'}`);
+        return null;
+      });
+
+  // Asked CONCURRENTLY — independent services, and a cleanup walks hundreds of
+  // rows, so serial timeouts per token are the difference between a run and an
+  // afternoon.
+  const [ds, gt2, pad, cg] = await Promise.all([
+    ask('dexscreener', () => dsInfo(chain, address)),
+    // ⚠️ GeckoTerminal's 429 arms a PROCESS-WIDE cooldown, after which every
+    // read returns instantly with nothing. Calling it anyway and reading that
+    // as "GT has no logo" is exactly how one rate limit deleted eighty-three
+    // rows' worth of evidence.
+    gtDown() ? Promise.resolve(unreachable.push('geckoterminal: cooldown') && null) : ask('geckoterminal', () => gtInfo(chain, address)),
+    ask('launchpad', () => (padInfo ? padInfo(chain, address) : null)),
+    ask('coingecko', () => cgInfo(chain, address)),
   ]);
-  candidates.push(['dexscreener', httpsUrl(ds && ds.logoUrl)]);
-  candidates.push(['geckoterminal', httpsUrl(gt && gt.logoUrl)]);
-  candidates.push(['launchpad', httpsUrl(pad && pad.logoUrl)]);
-  candidates.push(['coingecko', httpsUrl(cg)]);
-  candidates.push(['trustwallet', httpsUrl(trustWallet(chain, address))]);
-  candidates.push(['dexscreener-cdn', httpsUrl(cdnGuess(chain, address))]);
+  if (cg && cg.ok === false) unreachable.push(`coingecko: ${cg.why}`);
+
+  const candidates = [
+    ['dexscreener', httpsUrl(ds && ds.logoUrl)],
+    ['geckoterminal', httpsUrl(gt2 && gt2.logoUrl)],
+    ['launchpad', httpsUrl(pad && pad.logoUrl)],
+    ['coingecko', httpsUrl(cg && cg.url)],
+    ['trustwallet', httpsUrl(trustWallet(chain, address))],
+    ['dexscreener-cdn', httpsUrl(cdnGuess(chain, address))],
+  ];
 
   for (const [source, url] of candidates) {
     if (!url) continue;
     tried.push(source);
-    if (await verify(url)) return { url, source, tried };
+    if (await verify(url)) return { ok: true, url, source, tried, unreachable };
   }
-  log.debug(`[tokenlogo] ${chain}/${address}: no logo from ${tried.join(', ') || 'any source'}`);
-  return null;
+
+  // ⚠️ `ok` is the whole point of this return shape. `ok:true, url:null` means
+  // every source ANSWERED and none had artwork — the only state in which a
+  // caller may delete the listing. `ok:false` means at least one could not be
+  // asked, and the honest answer is "not yet known".
+  const ok = unreachable.length === 0;
+  if (!ok) log.debug(`[tokenlogo] ${chain}/${address}: undecided — ${unreachable.join(', ')}`);
+  return { ok, url: null, source: null, tried, unreachable };
 }
 
 module.exports = { resolveLogo, isImage, cdnGuess, trustWallet, coingecko, CG_PLATFORM, TW_CHAIN, _httpsUrl: httpsUrl };

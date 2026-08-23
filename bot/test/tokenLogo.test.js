@@ -12,7 +12,8 @@ const deps = (over = {}) => ({
   dsInfo: async () => null,
   gtInfo: async () => null,
   padInfo: async () => null,
-  cgInfo: async () => null,
+  cgInfo: async () => ({ ok: true, url: null }),
+  gtInCooldown: () => false,
   isImage: async () => true,
   ...over,
 });
@@ -23,7 +24,7 @@ test("it asks SIX sources, in order of how much each knows about the token", asy
     dsInfo: async () => (order.push("ds"), null),
     gtInfo: async () => (order.push("gt"), null),
     padInfo: async () => (order.push("pad"), null),
-    cgInfo: async () => (order.push("cg"), null),
+    cgInfo: async () => (order.push("cg"), { ok: true, url: null }),
   });
   const hit = await resolveLogo("bsc", "0xabc", { deps: d });
   assert.deepStrictEqual(order.sort(), ["cg", "ds", "gt", "pad"], "every index is asked");
@@ -53,7 +54,9 @@ test("⚠️ six empty answers is INFORMATION, not a gap in the search", async (
   // $MEME — one per search TERM the seeder uses, across three chains, none
   // with artwork on any index. A real project is on at least one within a day.
   const d = deps({ isImage: async () => false });
-  assert.strictEqual(await resolveLogo("ethereum", "0xjunk", { deps: d }), null);
+  const r = await resolveLogo("ethereum", "0xjunk", { deps: d });
+  assert.strictEqual(r.url, null);
+  assert.strictEqual(r.ok, true, "every source ANSWERED — that is what makes it safe to act on");
 });
 
 test("the project's own upload wins, and a later source is not even fetched", async () => {
@@ -90,12 +93,12 @@ test("⚠️ every candidate is FETCHED before it is believed", async () => {
 
 test("no source has one → null, never a guess", async () => {
   const d = deps({ isImage: async () => false });
-  assert.strictEqual(await resolveLogo("bsc", "0xabc", { deps: d }), null);
+  assert.strictEqual((await resolveLogo("bsc", "0xabc", { deps: d })).url, null);
 });
 
 test("an http url is refused — the site serves https", async () => {
   const d = deps({ dsInfo: async () => ({ logoUrl: "http://insecure/a.png" }), isImage: async () => false });
-  assert.strictEqual(await resolveLogo("bsc", "0xabc", { deps: d }), null);
+  assert.strictEqual((await resolveLogo("bsc", "0xabc", { deps: d })).url, null);
 });
 
 test("a source that THROWS costs that source, never the search", async () => {
@@ -107,6 +110,7 @@ test("a source that THROWS costs that source, never the search", async () => {
   });
   const hit = await resolveLogo("bsc", "0xabc", { deps: d });
   assert.strictEqual(hit.source, "geckoterminal");
+  assert.deepStrictEqual(hit.unreachable, ["dexscreener: ENOTFOUND"], "…and the throw is REPORTED, not swallowed");
 });
 
 test("a chain DexScreener does not index still gets the three real sources", async () => {
@@ -114,7 +118,7 @@ test("a chain DexScreener does not index still gets the three real sources", asy
   const d = deps({ gtInfo: async () => ({ logoUrl: "https://gt/x.png" }) });
   assert.strictEqual((await resolveLogo("notachain", "0xabc", { deps: d })).source, "geckoterminal");
   const none = deps({ isImage: async () => true });
-  assert.strictEqual(await resolveLogo("notachain", "0xabc", { deps: none }), null, "and no CDN guess to fall back on");
+  assert.strictEqual((await resolveLogo("notachain", "0xabc", { deps: none })).url, null, "and no CDN guess to fall back on");
 });
 
 test("isImage rejects an HTML error page served with a 200", async () => {
@@ -150,4 +154,79 @@ test("a network failure is a miss, never a throw", async () => {
   } finally {
     global.fetch = real;
   }
+});
+
+
+// ── ⚠️ A source that could not be ASKED has not said no ─────────────────────
+//
+// The first live cleanup run printed "83 row(s) with no logo" directly under
+// `GeckoTerminal backing off for 120s — HTTP 429`. Source two answered nothing
+// for every one of those rows, the script called it "no logo anywhere", and it
+// was one --apply away from deleting eighty-three public listings on it.
+
+test("a GeckoTerminal COOLDOWN makes the answer undecided, never 'none'", async () => {
+  let asked = false;
+  const d = deps({
+    gtInCooldown: () => true,
+    gtInfo: async () => ((asked = true), null),
+    isImage: async () => false,
+  });
+  const r = await resolveLogo("bsc", "0xabc", { deps: d });
+  assert.strictEqual(asked, false, "a parked source is not even called");
+  assert.strictEqual(r.ok, false, "…and the answer is UNKNOWN");
+  assert.match(r.unreachable.join(" "), /geckoterminal: cooldown/);
+});
+
+test("CoinGecko: 404 is an answer, 429 is not", async () => {
+  const real = global.fetch;
+  const { coingecko } = require("../src/services/tokenLogo");
+  try {
+    global.fetch = async () => ({ status: 404, ok: false });
+    assert.deepStrictEqual(await coingecko("bsc", "0xabc"), { ok: true, url: null }, "curated index, token simply absent");
+
+    global.fetch = async () => ({ status: 429, ok: false });
+    assert.strictEqual((await coingecko("bsc", "0xabc")).ok, false, "rate limited is not 'not listed'");
+
+    global.fetch = async () => {
+      throw new Error("ETIMEDOUT");
+    };
+    assert.strictEqual((await coingecko("bsc", "0xabc")).ok, false);
+
+    global.fetch = async () => ({ status: 200, ok: true, json: async () => ({ image: { large: "https://cg/a.png" } }) });
+    assert.deepStrictEqual(await coingecko("bsc", "0xabc"), { ok: true, url: "https://cg/a.png" });
+  } finally {
+    global.fetch = real;
+  }
+  // A chain CoinGecko has no id for is ANSWERED — there is nothing to ask.
+  assert.deepStrictEqual(await coingecko("notachain", "0xabc"), { ok: true, url: null });
+});
+
+test("ok:true with no url is the ONLY state a caller may delete on", async () => {
+  const answered = await resolveLogo("ethereum", "0xjunk", { deps: deps({ isImage: async () => false }) });
+  assert.strictEqual(answered.ok, true);
+  assert.strictEqual(answered.url, null);
+
+  const blind = await resolveLogo("ethereum", "0xjunk", {
+    deps: deps({ isImage: async () => false, dsInfo: async () => { throw new Error("down"); } }),
+  });
+  assert.strictEqual(blind.ok, false);
+  assert.strictEqual(blind.url, null, "same url, completely different fact");
+});
+
+test("the cleanup deletes only on ok:true, and says so when it cannot", () => {
+  const src = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "scripts", "fix-listings.js"),
+    "utf8",
+  );
+  assert.match(src, /\} else if \(!hit\.ok\) \{/, "undecided must branch BEFORE the delete");
+  assert.match(src, /undecided\+\+/);
+  assert.match(src, /UNDECIDED/);
+  assert.match(src, /process\.exit\(refused \|\| undecided \? 1 : 0\)/, "unfinished work must not exit clean");
+  // The logo-less delete is reached only when `hit.url` is falsy AND `hit.ok`.
+  // (`removedNoLogo++` also appears earlier, in the not-a-project branch, which
+  // needs no resolver answer at all — so this measures the LAST one.)
+  assert.ok(
+    src.indexOf("} else if (!hit.ok) {") < src.lastIndexOf("removedNoLogo++"),
+    "the undecided guard is upstream of the logo-less delete",
+  );
 });

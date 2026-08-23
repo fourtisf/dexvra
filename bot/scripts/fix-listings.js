@@ -124,6 +124,7 @@ removed. Only rows the bot auto-listed for free are ever touched.
   let removedDupes = 0;
   let fixed = 0;
   let removedNoLogo = 0;
+  let undecided = 0;
   let refused = 0;
   const bySource = {};
   const dropped = new Set();
@@ -168,7 +169,7 @@ removed. Only rows the bot auto-listed for free are ever touched.
         continue;
       }
       const hit = await resolveLogo(r.chain, r.address);
-      if (hit) {
+      if (hit.url) {
         bySource[hit.source] = (bySource[hit.source] || 0) + 1;
         console.log(`  ${G}+${X} $${r.sym} (${r.chain}) ${D}← ${hit.source}${X}`);
         if (apply) {
@@ -180,8 +181,19 @@ removed. Only rows the bot auto-listed for free are ever touched.
             console.log(`  ${Y}⚠ $${r.sym}: ${e.message}${X}`);
           }
         }
+      } else if (!hit.ok) {
+        // ⚠️ A SOURCE THAT COULD NOT BE ASKED HAS NOT SAID NO.
+        //
+        // GeckoTerminal's 429 arms a process-wide cooldown, and the first live
+        // run tripped it on its very first lookup — so source two answered
+        // nothing for all eighty-three rows and this script called that "no
+        // logo anywhere" and was one --apply away from deleting them on it.
+        // Deleting a public row is the one action in here that cannot be
+        // undone, so it requires every source to have actually ANSWERED.
+        undecided++;
+        console.log(`  ${Y}?${X} $${r.sym} (${r.chain}) ${D}— undecided: ${hit.unreachable.join(', ')}${X}`);
       } else {
-        console.log(`  ${D}− $${r.sym} (${r.chain}) — no logo anywhere${X}`);
+        console.log(`  ${D}− $${r.sym} (${r.chain}) — no logo on any of ${hit.tried.length || 6} sources${X}`);
         if (apply) {
           try {
             await api.deleteListing(r.id);
@@ -196,16 +208,27 @@ removed. Only rows the bot auto-listed for free are ever touched.
     }
   }
 
+  const sources = Object.entries(bySource).map(([s, n]) => `${n} ${s}`).join(', ');
   if (apply) {
     console.log(
-      `\n${G}${fixed}${X} logo(s) added${Object.keys(bySource).length ? ` ${D}(${Object.entries(bySource).map(([s, n]) => `${n} ${s}`).join(', ')})${X}` : ''}` +
+      `\n${G}${fixed}${X} logo(s) added${sources ? ` ${D}(${sources})${X}` : ''}` +
         ` · ${G}${removedDupes}${X} duplicate(s) and ${G}${removedNoLogo}${X} logo-less row(s) removed` +
-        `${refused ? ` · ${Y}${refused}${X} refused` : ''}. ${D}Nothing was announced.${X}\n`,
+        `${refused ? ` · ${Y}${refused}${X} refused` : ''}. ${D}Nothing was announced.${X}`,
     );
   } else {
-    console.log(`\n${D}Re-run with --apply to make these changes.${X}\n`);
+    console.log(`\n${D}Would add ${fixed || Object.values(bySource).reduce((a, b) => a + b, 0)} logo(s)${sources ? ` (${sources})` : ''}. Re-run with --apply.${X}`);
   }
-  process.exit(refused ? 1 : 0);
+  if (undecided) {
+    console.log(
+      `${Y}${undecided} row(s) UNDECIDED${X} — a source could not be reached, so they were left alone.\n` +
+        `${D}Nothing is deleted on a source that never answered. Re-run in a few minutes;` +
+        ` a GECKOTERMINAL_API_KEY removes the rate limit that causes most of these.${X}`,
+    );
+  }
+  console.log('');
+  // Undecided rows are unfinished work, not a failure — but the run did not do
+  // what it was asked, so it must not exit clean and read as done.
+  process.exit(refused || undecided ? 1 : 0);
 })().catch((e) => {
   console.error(`\n${R}✗${X} ${e.stack || e.message}\n`);
   process.exit(1);

@@ -452,7 +452,7 @@ async function seedChain(chain, opts = {}) {
     // is FETCHED before it is believed, so a 404 never becomes a broken image.
     if (!/^https:\/\//.test(String(merged.logoUrl || ''))) {
       const hit = await findLogo(chain, c.address).catch(() => null);
-      if (hit) merged.logoUrl = hit.url;
+      if (hit && hit.url) merged.logoUrl = hit.url;
     }
     if (!/^https:\/\//.test(String(merged.logoUrl || ''))) {
       out.noLogo++;

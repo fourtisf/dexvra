@@ -155,7 +155,11 @@ test("⚠️ dedupe is scoped to ONE CHAIN and to rows the bot listed free", () 
 test("a row with no logo from ANY source is removed, not left blank", () => {
   const src = fixSrc();
   assert.match(src, /resolveLogo\(r\.chain, r\.address\)/);
-  assert.match(src, /no logo anywhere/);
+  assert.match(src, /no logo on any of/);
+  // ⚠️ …and ONLY when every source actually answered. The wording moved off
+  // "anywhere" deliberately: the first live run printed that phrase under a
+  // GeckoTerminal 429, i.e. about a source it never asked.
+  assert.match(src, /} else if \(!hit\.ok\) \{/);
   assert.match(src, /api\.updateListing\(r\.id, \{ logoUrl: hit\.url \}\)/, "a logo that IS found is stored");
   // A stablecoin that slipped in earlier should go, not be given artwork.
   assert.match(src, /notAProject\(r\.sym, r\.name\)/);
