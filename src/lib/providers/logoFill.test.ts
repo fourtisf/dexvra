@@ -165,3 +165,24 @@ test("backfillLogos returns instantly and never runs two sweeps at once", async 
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(asked, 2, "the first sweep carried on through its own list");
 });
+
+test("a store that refuses every write is reported as a FAULT, not a count", () => {
+  // "0 written" reads as a detail in a line that also says "3 found". A sweep
+  // whose work cannot be persisted loses it on the next restart, and the logos
+  // come back with nothing anywhere saying why.
+  const lines: string[] = [];
+  return sweepLogos([tok(30)], {
+    resolve: async () => found("https://img.example/f.png"),
+    persist: async () => false,
+    now: () => T,
+    log: (m) => lines.push(m),
+  }).then(() => {
+    assert.match(lines[0], /NONE of them could be written/);
+  });
+});
+
+test("…and it stays quiet when there was nothing to write", async () => {
+  const lines: string[] = [];
+  await sweepLogos([tok(31)], { resolve: async () => nothing(), now: () => T, log: (m) => lines.push(m) });
+  assert.ok(!/NONE of them/.test(lines[0]), "no logos found is not a store fault");
+});

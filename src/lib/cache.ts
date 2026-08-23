@@ -10,7 +10,26 @@ export interface KVCache {
   get<T>(key: string): T | undefined;
   getStale<T>(key: string): T | undefined;
   set<T>(key: string, value: T, ttlMs: number): void;
+  /** How many entries are held. Present so the bound below can be tested. */
+  readonly size?: number;
 }
+
+/**
+ * ⚠️ THE CACHE IS BOUNDED, because half its keys come from a query string.
+ *
+ * `/api/token-preview`, `/api/pool` and `/api/ohlcv` all key on an address a
+ * stranger typed, and nothing here ever removed an entry — an expired one just
+ * sat in the Map until something overwrote it. So a loop over random addresses
+ * grew this process's memory without limit, and the biggest entries are candle
+ * arrays (a couple of hundred rows each).
+ *
+ * Evicted by INSERTION ORDER of the last write, not by expiry: an expired entry
+ * is still the stale copy `cached()` serves when a provider is down, and that
+ * safety net is the difference between a stale board and a demo one. The keys
+ * the app actually lives on are rewritten every cycle, so they move to the back
+ * of the queue and are never the ones dropped.
+ */
+const MAX_ENTRIES = 1200;
 
 class MemoryCache implements KVCache {
   private store = new Map<string, Entry<unknown>>();
@@ -27,13 +46,29 @@ class MemoryCache implements KVCache {
   }
 
   set<T>(key: string, value: T, ttlMs: number): void {
+    // Delete before set: a Map keeps a key's ORIGINAL insertion position on
+    // overwrite, so without this the most-written key would be the first one
+    // evicted — exactly backwards.
+    this.store.delete(key);
     this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
+    if (this.store.size > MAX_ENTRIES) {
+      for (const k of this.store.keys()) {
+        this.store.delete(k);
+        if (this.store.size <= MAX_ENTRIES) break;
+      }
+    }
+  }
+
+  /** Entries currently held — exported for the test that pins the bound. */
+  get size(): number {
+    return this.store.size;
   }
 }
 
 // Survive Next.js dev-mode module reloads with a global singleton.
 const g = globalThis as { __appCache?: KVCache };
 export const cache: KVCache = g.__appCache ?? (g.__appCache = new MemoryCache());
+export const CACHE_MAX_ENTRIES = MAX_ENTRIES;
 
 // In-flight loads coalesced by key so a burst of concurrent misses triggers
 // one provider call, not N — the third-party free tiers are rate-limited.

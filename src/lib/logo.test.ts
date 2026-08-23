@@ -22,3 +22,9 @@ test("⚠️ an ipfs:// URI goes to the proxy too, instead of to a browser that 
   // loads the scheme — so a token whose artwork we HAD still drew a monogram.
   assert.equal(logoSrc("ipfs://bafyabc/logo.png"), "/api/logo?u=ipfs%3A%2F%2Fbafyabc%2Flogo.png");
 });
+
+test("⚠️ a protocol-relative //host/x.png is a stranger's server, not ours", () => {
+  // It starts with a slash, so the "same-origin" branch used to hand it
+  // straight to the browser — the one shape that looks local and is not.
+  assert.equal(logoSrc("//cdn.example/x.png"), "/api/logo?u=https%3A%2F%2Fcdn.example%2Fx.png");
+});

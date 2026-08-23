@@ -86,21 +86,33 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
   let candles: Candle[] | null = null;
   if (pool) candles = await fetchCandles(network, pool, address, tf);
 
-  if (candles == null) {
+  // ⚠️ An EMPTY list from the hint is also a reason to go and ask, not only a
+  // 404. A DexScreener pair address can be a real-but-thin GT pool that has
+  // never traded on this timeframe, and reporting "no candles" for it hides the
+  // deep pool that has a year of them. Costs one extra request, in the one case
+  // where we were about to draw nothing anyway.
+  if (candles == null || candles.length === 0) {
     const resolved = await cached(`pool:${network}:${address}`, POOL_TTL, () => topPoolAddress(network, address));
     if (!resolved) {
-      return fail(
-        tf,
-        pool
-          ? "GeckoTerminal doesn't index a pool for this token yet."
-          : "No pool indexed for this token yet — nothing to chart.",
-        network,
-        null,
-      );
+      return candles?.length === 0
+        ? { ok: false, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." }
+        : fail(
+            tf,
+            pool
+              ? "GeckoTerminal doesn't index a pool for this token yet."
+              : "No pool indexed for this token yet — nothing to chart.",
+            network,
+            null,
+          );
     }
     if (resolved !== pool) {
-      pool = resolved;
-      candles = await fetchCandles(network, pool, address, tf);
+      const deeper = await fetchCandles(network, resolved, address, tf);
+      // Only take the deeper pool's answer if it is actually better: a 404 or an
+      // empty list there must not throw away candles the hint already gave us.
+      if (deeper && (deeper.length > 0 || candles == null)) {
+        pool = resolved;
+        candles = deeper;
+      }
     }
     if (candles == null) return fail(tf, "GeckoTerminal doesn't index a pool for this token yet.", network, pool);
   }
@@ -122,6 +134,12 @@ export async function GET(req: NextRequest) {
   const tf = tfOf(q.get("tf"));
 
   if (!safeAddress(address)) return NextResponse.json(fail(tf, "That contract address isn't one we can chart."));
+  // ⚠️ CHECKED BEFORE THE CACHE KEY IS BUILT, not inside the loader. The key is
+  // `ohlcv:<chain>:…`, and an unvalidated chain is an unbounded set of keys in
+  // a process-lifetime cache — a memory leak anybody could drive from a query
+  // string, for answers nobody could use.
+  const network = networkOf(chain);
+  if (!network) return NextResponse.json(fail(tf, "We don't have a chart source for that chain yet."));
   const pool = safeAddress(hint) ? hint : null;
 
   try {

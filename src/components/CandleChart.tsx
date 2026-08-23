@@ -155,11 +155,19 @@ export function CandleChart({
   // ── geometry ────────────────────────────────────────────────────────────
   useEffect(() => {
     const el = wrapRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(([e]) => {
-      const r = e.contentRect;
-      setBox({ w: Math.round(r.width), h: Math.round(r.height) });
-    });
+    if (!el) return;
+    const measure = () => setBox({ w: Math.round(el.clientWidth), h: Math.round(el.clientHeight) });
+    // ⚠️ MEASURE NOW, not only on the observer's first callback. Without
+    // ResizeObserver — an old browser, or a rendering context that has none —
+    // `box` stayed {0,0} for ever, `geo` stayed null, and the panel rendered
+    // NOTHING AT ALL: no chart, no message, no error. A blank surface that
+    // reads as "still loading" is the state this repo keeps paying for.
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -218,6 +226,10 @@ export function CandleChart({
   };
 
   const gtLink = feed?.network && feed?.pool ? `https://www.geckoterminal.com/${feed.network}/pools/${feed.pool}` : gtUrl ?? null;
+  // We have candles and cannot draw them: the panel is too small for a chart to
+  // mean anything. It must SAY so — the alternative is an empty box that reads
+  // exactly like a chart still loading.
+  const tooSmall = status === "ok" && !geo && box.w > 0 && box.h > 0 && candles.length > 0;
 
   return (
     <div className="ck">
@@ -230,7 +242,9 @@ export function CandleChart({
               {change.toFixed(2)}% {span && <span className="ck-chg-tf">over {span}</span>}
             </span>
           )}
-          {status === "ok" && <span className="ck-live" title="Refreshing while you watch" />}
+          {/* Only over a chart that is actually drawn: a live dot on a blank
+              panel is the reassuring reading of a state that is not. */}
+          {status === "ok" && geo != null && <span className="ck-live" title="Refreshing while you watch" />}
         </div>
         <div className="ck-tfs" role="tablist" aria-label="Chart timeframe">
           {TIMEFRAMES.map((k) => (
@@ -259,11 +273,13 @@ export function CandleChart({
         onTouchMove={(e) => e.touches[0] && onMove(e.touches[0].clientX)}
         onTouchEnd={() => setHover(null)}
       >
-        {status === "loading" && (
+        {(status === "loading" || (status === "ok" && !geo && !tooSmall)) && (
           <div className="ck-msg">
             <span className="dot-live" /> Loading candles…
           </div>
         )}
+
+        {tooSmall && <div className="ck-msg">Not enough room here to draw the chart.</div>}
 
         {(status === "none" || status === "error") && (
           <div className="ck-msg ck-empty">

@@ -1344,7 +1344,7 @@ with nothing in the UI to say so.
   that lets the file reference nothing).
 
 ```bash
-npm test    # tokenLogo / logoFill / logoWrite / logoPipeline — 60 tests, no network
+npm test    # tokenLogo / logoFill / logoWrite / logoPipeline — 56 tests, no network
 ```
 
 **Config a fix depends on:** nothing. `CG_MIN_GAP_MS` widens the CoinGecko gap
@@ -1425,6 +1425,69 @@ server said.
 **Config a fix depends on:** nothing. `GECKOTERMINAL_API_KEY` is not read by the
 web app; the chart shares the same free quota as the rest of the site, which is
 why each timeframe caches for its own interval and the client polls no faster.
+
+### "apakah anda yakin, coba audit" — six of these were in the FIX
+
+Asked straight after the two features above landed, and the answer was no.
+Every defect found is one of this file's own recurring shapes, reintroduced by
+the code written to stop it.
+
+- ⚠️ **A 429 FROM COINGECKO COST ONE CALL PER ROW, AND THE BOT PAYS THE SAME
+  BILL.** The sweep paced its calls and then, on a rate-limited minute, spent
+  every remaining row proving the same refusal — sixteen requests into a service
+  that had already said no, every one of them landing as "undecided" anyway. A
+  429 now arms a PROCESS-WIDE cooldown and the rest of the sweep is not asked at
+  all. `bot/src/services/tokenLogo.js` states the identical rule about
+  GeckoTerminal's cooldown and names what ignoring it cost: *"one rate limit
+  deleted eighty-three rows' worth of evidence."*
+- **CoinGecko was asked even when DexScreener had already answered.** It is the
+  paced, per-IP, shared-with-the-bot one; a call made when the artwork is
+  already in hand is a call the next row does not get. Two waves now: the two
+  indexes together, then CoinGecko only if they came up empty.
+- ⚠️ **`status: "ok"` WITH NO GEOMETRY DREW NOTHING AT ALL** — no chart, no
+  message, no error. `box` starts at `{0,0}` and only a ResizeObserver callback
+  filled it, so a context without one rendered a blank panel for ever, which
+  reads exactly like a chart still loading. It measures immediately now, and
+  "we have candles and cannot draw them here" is its own sentence. The live dot
+  was showing over that blank panel too: the reassuring reading of a state that
+  was not.
+- ⚠️ **The cache key was built from an UNVALIDATED chain.** `/api/ohlcv` checked
+  the chain inside its loader, i.e. after `ohlcv:<chain>:…` had been handed to a
+  cache with no bound and no eviction — a memory leak anybody could drive from a
+  query string, for answers nobody could use. The chain is checked first now,
+  **and `lib/cache.ts` is bounded** (1200 entries, evicted by last-write order,
+  never by expiry — an expired entry is still the stale copy that keeps a
+  provider outage from emptying the board).
+- **An EMPTY candle list from a hinted pool ended the lookup.** A DexScreener
+  pair address can be a real-but-thin GT pool that has never traded on that
+  timeframe; reporting "no candles" for it hid the deep pool with a year of
+  them. An empty answer now re-resolves, and a worse answer from the deeper pool
+  never replaces candles the hint already gave us.
+- ⚠️ **A comment described a ranking that did not exist.** "the board hands them
+  over ranked" — it handed them over in whatever order the store held. The sweep
+  looks up eight rows a pass and a board can be eighty short, so the order is a
+  decision: featured rows first, then by 24h volume.
+- **`//host/logo.png` was treated as same-origin.** It starts with a slash and
+  loads from a stranger's server — the one url shape that looks local and is
+  not. It goes through the proxy now.
+- **Bodies nobody was going to read were left open.** `isImage`'s GET, the
+  proxy's redirect hops and its wrong-content-type path all abandoned a response
+  body, which keeps the socket busy until the GC gets round to it on a server
+  doing this per token. All three release now, and an image declaring more than
+  3MB is refused before it is downloaded rather than after.
+- **`cloudfront.net` came off the proxy allowlist.** It would have made us an
+  image CDN for every AWS customer alive — somebody else's bandwidth and
+  somebody else's content, served from our domain.
+- Two of the new guard tests were asserting on CHARACTER DISTANCE between two
+  lines, so adding a comment between them failed the build. A test about
+  formatting is not a test about behaviour; both compare positions in the
+  comment-stripped source now.
+
+**One consequence worth knowing about:** an admin who CLEARS a listing's logo
+will see the site resolve one again, because an empty `logoUrl` is exactly the
+state the sweep exists to fill. To pin a different image, set it — a stored
+logo always wins. There is deliberately no "this token has no logo" flag: the
+monogram is what a row with no artwork draws, and it is drawn from the ticker.
 
 ## Two bot processes, one config
 

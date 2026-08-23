@@ -72,9 +72,10 @@ test("the candle for the minute we are in is not 'the future'", () => {
   assert.equal(out.length, 1);
 });
 
-test("a repeated timestamp collapses to the newest reading of it", () => {
-  // The in-progress candle is re-sent as it fills; two bars at one x is a
-  // rendering artefact, and the stale one is the wrong survivor.
+test("a repeated timestamp collapses to one, deterministically", () => {
+  // Two bodies stacked at one x is a rendering artefact. Which row is "newer"
+  // is not knowable from the payload, so the rule is last-one-wins and is
+  // pinned here rather than described as something it cannot know.
   const out = normalizeCandles([row(T0, 1, 1, 1, 1), row(T0, 1, 2, 1, 1.8)], { now: NOW });
   assert.equal(out.length, 1);
   assert.equal(out[0].c, 1.8);

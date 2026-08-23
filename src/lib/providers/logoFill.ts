@@ -50,9 +50,13 @@ interface Known {
 
 // Per-process memory. The durable copy is the listing store — this only spares
 // a restart from re-asking for rows it has already written.
-const g = globalThis as { __dexvraLogoMem?: Map<string, Known> };
+const g = globalThis as { __dexvraLogoMem?: Map<string, Known>; __dexvraLogoSweeping?: { on: boolean } };
 const mem: Map<string, Known> = g.__dexvraLogoMem ?? (g.__dexvraLogoMem = new Map());
-let sweeping = false;
+// The "one sweep at a time" flag lives on the same global as the memory, and
+// for the same reason: Next can hold more than one instance of a module, and a
+// per-instance flag would let two sweeps run while sharing one memory — which
+// is precisely the state the flag exists to prevent.
+const running = g.__dexvraLogoSweeping ?? (g.__dexvraLogoSweeping = { on: false });
 
 const key = (chain: string, address: string) => `${chain}:${String(address).toLowerCase()}`;
 
@@ -109,8 +113,9 @@ export interface SweepReport {
  * Resolve logos for tokens that have none. Awaited by the tests; called
  * FIRE-AND-FORGET by the board pipeline (see backfillLogos below).
  *
- * Candidates are taken in the order given — the board hands them over ranked,
- * so the rows a visitor is most likely to look at get their artwork first.
+ * Candidates are taken in the ORDER GIVEN and the cap bites at MAX_PER_SWEEP,
+ * so the order is a decision, not a detail: the board pipeline sorts featured
+ * rows first and then by 24h volume before calling this.
  */
 export async function sweepLogos(
   candidates: { chain: string; address: string }[],
@@ -158,7 +163,11 @@ export async function sweepLogos(
     deps.log(
       `[logos] looked up ${report.looked}: ${report.found} found${src ? ` (${src})` : ""}` +
         `, ${report.missing} with no artwork anywhere, ${report.undecided} undecided (an upstream could not be asked)` +
-        `, ${report.persisted} written to the listing store`,
+        `, ${report.persisted} written to the listing store` +
+        // A store that refuses every write is a sweep whose work dies with the
+        // process — the logos come back on the next restart and nothing said
+        // why. The count alone reads as a detail; this reads as a fault.
+        (report.found > 0 && report.persisted === 0 ? " ⚠️ NONE of them could be written — they will be lost on restart" : ""),
     );
   }
   return report;
@@ -173,12 +182,12 @@ export async function sweepLogos(
  * already halfway through.
  */
 export function backfillLogos(candidates: { chain: string; address: string }[], deps: FillDeps = {}): void {
-  if (sweeping || candidates.length === 0) return;
-  sweeping = true;
+  if (running.on || candidates.length === 0) return;
+  running.on = true;
   void sweepLogos(candidates, deps)
     .catch(() => {})
     .finally(() => {
-      sweeping = false;
+      running.on = false;
     });
 }
 
@@ -187,7 +196,7 @@ export function backfillLogos(candidates: { chain: string; address: string }[], 
  *  to be able to clear it. */
 export function _resetLogoMemory(): void {
   mem.clear();
-  sweeping = false;
+  running.on = false;
 }
 
 export const _MAX_PER_SWEEP = MAX_PER_SWEEP;

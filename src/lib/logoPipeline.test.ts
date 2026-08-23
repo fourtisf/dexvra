@@ -38,6 +38,14 @@ test("a row with nothing but the convention is queued for the resolver", () => {
   assert.match(PIPELINE, /shouldLookUp\(/, "and only when it is worth spending a lookup on");
 });
 
+test("the handful the sweep looks up is the handful worth looking up", () => {
+  // It does 8 rows a pass and a board can be 80 short, so the ORDER is a
+  // decision: a featured row and a row nobody scrolls to are not worth the
+  // same lookup. Without this the list was whatever order the store held.
+  assert.match(PIPELINE, /needLogo\.sort\(/);
+  assert.match(PIPELINE, /Number\(b\.featured\) - Number\(a\.featured\) \|\| b\.vol - a\.vol/);
+});
+
 test("what the sweep finds is persisted, or it dies with the process", () => {
   assert.match(PIPELINE, /backfillLogos\(/);
   assert.match(PIPELINE, /persist: setResolvedLogo/);
@@ -81,7 +89,24 @@ test("⚠️ redirects are followed BY HAND and re-checked against the allowlist
   assert.match(PROXY, /redirect: "manual"/);
   assert.ok(!/redirect: "follow"/.test(code(PROXY)), "no follow left anywhere in the proxy");
   const loop = PROXY.slice(PROXY.indexOf("for (let hop"));
-  assert.match(loop.slice(0, 600), /if \(!next \|\| !allowed\(next\)\)/, "every hop is validated");
+  assert.match(loop, /if \(!next \|\| !allowed\(next\)\)/, "every hop is validated");
+  // ⚠️ Not a character window: a slice measured in characters fails the moment
+  // a comment lands between the two lines, which is a test about formatting.
+  assert.ok(loop.indexOf("allowed(next)") < loop.indexOf("url = next"), "…before it is followed");
+});
+
+test("the proxy carries no host broad enough to make us anyone's image CDN", () => {
+  // A bare cloudfront.net would proxy every AWS customer's bucket through our
+  // domain — somebody else's bandwidth and somebody else's content, served as
+  // ours. Narrow beats convenient here.
+  for (const host of ["cloudfront.net", "amazonaws.com", "googleusercontent.com"])
+    assert.ok(!new RegExp(`"${host.replace(".", "\\.")}"`).test(PROXY), `${host} is too broad to allow`);
+});
+
+test("a body we are not going to read is released", () => {
+  // On a long-lived server doing this per token, an unread body keeps its
+  // socket busy until the GC gets round to it.
+  assert.ok((PROXY.match(/body\?\.cancel\(\)/g) ?? []).length >= 3, "redirects, wrong types and oversized bodies");
 });
 
 test("only https, only images, and an SVG is served inert", () => {

@@ -8,6 +8,10 @@ export function logoSrc(url?: string | null): string | undefined {
   if (!url) return undefined;
   const u = String(url).trim();
   if (!u) return undefined;
+  // ⚠️ `//host/logo.png` is PROTOCOL-RELATIVE, not same-origin: it starts with a
+  // slash and loads from a stranger's server. It belongs in the proxy with every
+  // other external url.
+  if (u.startsWith("//")) return `/api/logo?u=${encodeURIComponent(`https:${u}`)}`;
   if (u.startsWith("/") || u.startsWith("data:")) return u; // same-origin / inline
   // ⚠️ EVERY other scheme goes to the proxy, not just http(s). A launchpad's
   // on-chain metadata gives `ipfs://<cid>`, and no <img> on earth loads that:

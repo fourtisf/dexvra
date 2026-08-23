@@ -128,7 +128,9 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   // (see pickLogo). Keyed rather than zipped by index: the mapping is 1:1 today
   // and an index that silently drifts would hand one token another's artwork.
   const rowOf = new Map(rows.map((r) => [`${r.chain}:${r.address.toLowerCase()}`, r]));
-  const needLogo: { chain: string; address: string }[] = [];
+  // Candidates for the logo sweep, with what it takes to RANK them — the sweep
+  // only looks up a handful per pass, so which handful matters.
+  const needLogo: { chain: string; address: string; featured: boolean; vol: number }[] = [];
 
   const tokens = fallback.map((t) => {
     const m = live.get(t.chain)?.get(t.address.toLowerCase());
@@ -148,7 +150,12 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     // logo — the row is drawing a monogram or a guess, and it is exactly what
     // the resolver is for.
     if ((logo.kind === "convention" || logo.kind === "none") && shouldLookUp(t.chain, t.address))
-      needLogo.push({ chain: t.chain, address: t.address });
+      needLogo.push({
+        chain: t.chain,
+        address: t.address,
+        featured: t.trendingRank != null,
+        vol: m?.vol["24h"] ?? t.vol["24h"],
+      });
 
     if (!m) return { ...t, logoUrl: logo.url }; // keep fallback figures for this listing
     const score = dexvraScore({ chg: m.chg, liq: m.liq, taxPct: t.taxPct, txns: m.txns, holders: t.holders });
@@ -177,6 +184,11 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   // on that. The sweep is bounded and one-at-a-time (logoFill.ts); what it
   // finds lands in the listing store, so the row is fixed for good rather than
   // for this process's lifetime.
+  // RANKED, because a sweep does 8 rows and a board can be short by 80: a
+  // featured row and a row nobody scrolls to are not worth the same lookup.
+  // (The sweep's own comment says the caller hands them over ranked — this is
+  // where that becomes true, rather than a comment describing nothing.)
+  needLogo.sort((a, b) => Number(b.featured) - Number(a.featured) || b.vol - a.vol);
   backfillLogos(needLogo, {
     persist: setResolvedLogo,
     log: (msg) => console.log(msg),

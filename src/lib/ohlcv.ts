@@ -101,8 +101,10 @@ const FUTURE_SKEW_SEC = 6 * 60 * 60;
  *    a partially-filled current candle) would otherwise draw a body sticking
  *    out of the range it is supposed to sit inside. Widening keeps every
  *    reported number visible; clamping the body would hide one.
- *  • DUPLICATE TIMESTAMPS collapse to the LAST one seen for that stamp — the
- *    in-progress candle is the one that gets re-sent as it fills.
+ *  • DUPLICATE TIMESTAMPS collapse to ONE — the last occurrence in the
+ *    response wins. Which of two rows for the same stamp is "newer" is not
+ *    knowable from the payload, so this is a DETERMINISTIC choice rather than
+ *    a claim: what matters is that two bodies never stack at one x.
  */
 export function normalizeCandles(raw: unknown, opts: { now?: number } = {}): Candle[] {
   if (!Array.isArray(raw)) return [];

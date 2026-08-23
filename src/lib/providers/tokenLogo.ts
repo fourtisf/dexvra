@@ -74,12 +74,22 @@ export async function isImage(url: string): Promise<boolean> {
         redirect: "follow",
         cache: "no-store",
       });
-      if (res.status === 405 || res.status === 501) continue; // HEAD refused — try GET
-      if (!res.ok) return false;
+      // ⚠️ A GET's body must be released or the socket stays busy until the GC
+      // gets round to it — and this runs on a long-lived server, dozens of
+      // candidates at a time. HEAD has no body, so cancelling is a no-op there.
+      const done = (v: boolean) => {
+        void res.body?.cancel().catch(() => {});
+        return v;
+      };
+      if (res.status === 405 || res.status === 501) {
+        done(false); // HEAD refused — release and try GET
+        continue;
+      }
+      if (!res.ok) return done(false);
       const type = String(res.headers.get("content-type") ?? "").toLowerCase();
-      if (type.startsWith("image/")) return true;
-      if (type) return false;
-      return method === "GET"; // no content-type at all: accept only real bytes
+      if (type.startsWith("image/")) return done(true);
+      if (type) return done(false);
+      return done(method === "GET"); // no content-type at all: accept only real bytes
     } catch {
       return false; // a candidate we cannot reach is a candidate we cannot use
     }
@@ -154,9 +164,17 @@ async function gtLogo(chain: string, address: string): Promise<string | null> {
  * Its free tier is a handful of calls a minute PER IP — and the bot suite runs
  * on the same box, against the same ceiling, for the same reason. A backfill
  * that fires one call per row is a 429 by the tenth row, and a 429 is `ok:false`
- * for every row after it. So: one call at a time, a minimum gap between them,
- * `Retry-After` honoured once. Slower than an unpaced run; an unpaced run does
- * not finish.
+ * for every row after it. So: one call at a time, with a minimum gap between
+ * them. Slower than an unpaced run; an unpaced run does not finish.
+ *
+ * ⚠️ AND A 429 ARMS A PROCESS-WIDE COOLDOWN. Pacing alone is not enough: with
+ * eight rows in a sweep, a rate-limited minute cost sixteen further requests
+ * (each row's call plus its retry) into a service that was already refusing —
+ * and every one of them came back as "undecided" anyway. The bot's own
+ * resolver states the same rule about GeckoTerminal's cooldown, and names what
+ * ignoring it cost: "one rate limit deleted eighty-three rows' worth of
+ * evidence". While the cooldown holds, CoinGecko is not asked at all and says
+ * so, which is `ok:false` — never "this project has no logo".
  */
 const cgGapMs = (): number => {
   const n = Number(String(process.env.CG_MIN_GAP_MS ?? "").trim());
@@ -167,6 +185,10 @@ const cgGapMs = (): number => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let cgNextAt = 0;
 let cgChain: Promise<void> = Promise.resolve();
+/** How long a 429 benches CoinGecko for every caller in this process, when it
+ *  did not send a usable `Retry-After`. */
+const CG_COOLDOWN_MS = 60_000;
+let cgCooldownUntil = 0;
 
 /** Serialise CoinGecko calls and space them out. Concurrent callers queue
  *  rather than all firing at once, which is what a `Promise.all` would do. */
@@ -181,19 +203,26 @@ function cgSlot(): Promise<void> {
   return wait;
 }
 
-async function cgLogo(chain: string, address: string, retried = false): Promise<string | null> {
+async function cgLogo(chain: string, address: string): Promise<string | null> {
   const plat = CHAINS[chain]?.coingecko;
   if (!plat) return null; // no platform id — nothing to ask, and that is an answer
+  // Benched: throw WITHOUT a request. A caller reads this as unreachable, which
+  // is exactly what it is — the alternative is spending the rest of the sweep's
+  // rows proving the same 429 over and over.
+  const left = cgCooldownUntil - Date.now();
+  if (left > 0) throw new Error(`CoinGecko rate-limited, benched for ${Math.ceil(left / 1000)}s`);
+
   await cgSlot();
   const res = await fetch(`https://api.coingecko.com/api/v3/coins/${plat}/contract/${encodeURIComponent(address)}`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(TIMEOUT_MS),
     cache: "no-store",
   });
-  if (res.status === 429 && !retried) {
+  if (res.status === 429) {
     const h = Number(res.headers.get("retry-after"));
-    await sleep(Number.isFinite(h) && h > 0 ? Math.min(h * 1000, 60_000) : cgGapMs() * 4);
-    return cgLogo(chain, address, true); // once; a second refusal is a real limit
+    const wait = Number.isFinite(h) && h > 0 ? Math.min(h * 1000, 10 * 60_000) : CG_COOLDOWN_MS;
+    cgCooldownUntil = Date.now() + wait;
+    throw new Error(`CoinGecko 429 — benched for ${Math.round(wait / 1000)}s`);
   }
   // 404 is the ORDINARY answer here — CoinGecko is curated, so most memecoins
   // simply are not in it. A 429 or a 5xx is the opposite: it never looked, and
@@ -203,6 +232,12 @@ async function cgLogo(chain: string, address: string, retried = false): Promise<
   if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
   const j = (await res.json()) as { image?: { large?: string; small?: string; thumb?: string } };
   return httpsUrl(j.image?.large ?? j.image?.small ?? j.image?.thumb ?? null);
+}
+
+/** Test seam: the cooldown is process-wide by design, so a test that wants a
+ *  live CoinGecko has to be able to clear it. */
+export function _resetCgCooldown(): void {
+  cgCooldownUntil = 0;
 }
 
 export interface LogoDeps {
@@ -215,10 +250,21 @@ export interface LogoDeps {
 /**
  * The best logo url for a token, or `null` when no source has one.
  *
- * The three API sources are asked CONCURRENTLY — they are independent services
- * and a backfill walks dozens of rows, so serial timeouts per token are the
- * difference between a sweep and an afternoon. Only the CANDIDATES are then
- * tried in order, and the first one that really serves an image wins.
+ * TWO WAVES, and the split is about CoinGecko's quota rather than speed.
+ *
+ *  1. DexScreener + GeckoTerminal, CONCURRENTLY — independent services, and a
+ *     sweep walks dozens of rows, so serial timeouts per token are the
+ *     difference between a sweep and an afternoon.
+ *  2. CoinGecko, and ONLY if wave 1 produced nothing that really serves an
+ *     image. It is the paced, rate-limited, per-IP one that the bot suite on
+ *     the same box is also spending; a call made when we already have the
+ *     artwork is a call the next row does not get. The cost is one extra round
+ *     trip on the rows where wave 1 was empty — which is a background sweep's
+ *     latency, not a reader's.
+ *  3. The CDN convention, last, because it is a guess (see cdnGuess).
+ *
+ * Every candidate is verified before it is believed, in this order, and the
+ * first that really serves an image wins.
  */
 export async function resolveLogo(chain: string, address: string, deps: LogoDeps = {}): Promise<LogoResult> {
   const ds = deps.ds ?? dsLogo;
@@ -227,6 +273,7 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
   const verify = deps.verify ?? isImage;
 
   const unreachable: string[] = [];
+  const tried: LogoSource[] = [];
   const ask = (name: string, fn: () => Promise<string | null>): Promise<string | null> =>
     Promise.resolve()
       .then(fn)
@@ -235,25 +282,31 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
         return null;
       });
 
-  const [dsUrl, gtUrl, cgUrl] = await Promise.all([
+  /** Verify a wave's candidates in order; the first real image ends the walk. */
+  const pick = async (wave: [LogoSource, string | null][]): Promise<LogoResult | null> => {
+    for (const [source, url] of wave) {
+      if (!url) continue;
+      tried.push(source);
+      if (await verify(url)) return { ok: true, url, source, tried, unreachable };
+    }
+    return null;
+  };
+
+  const [dsUrl, gtUrl] = await Promise.all([
     ask("dexscreener", () => ds(chain, address)),
     ask("geckoterminal", () => gt(chain, address)),
-    ask("coingecko", () => cg(chain, address)),
   ]);
-
-  const candidates: [LogoSource, string | null][] = [
+  const indexes = await pick([
     ["dexscreener", httpsUrl(dsUrl)],
     ["geckoterminal", httpsUrl(gtUrl)],
-    ["coingecko", httpsUrl(cgUrl)],
-    ["dexscreener-cdn", cdnGuess(chain, address)],
-  ];
+  ]);
+  if (indexes) return indexes;
 
-  const tried: LogoSource[] = [];
-  for (const [source, url] of candidates) {
-    if (!url) continue;
-    tried.push(source);
-    if (await verify(url)) return { ok: true, url, source, tried, unreachable };
-  }
+  const curated = await pick([["coingecko", httpsUrl(await ask("coingecko", () => cg(chain, address)))]]);
+  if (curated) return curated;
+
+  const convention = await pick([["dexscreener-cdn", cdnGuess(chain, address)]]);
+  if (convention) return convention;
 
   return { ok: unreachable.length === 0, url: null, source: null, tried, unreachable };
 }
@@ -293,7 +346,8 @@ export function pickLogo(x: {
   chain: string;
   address: string;
 }): PickedLogo {
-  const stored = httpsUrl(x.stored) ?? (String(x.stored ?? "").startsWith("/") ? String(x.stored) : null);
+  const storedRaw = String(x.stored ?? "").trim();
+  const stored = httpsUrl(storedRaw) ?? (storedRaw.startsWith("/") ? storedRaw : null);
   if (stored) return { url: stored, kind: "stored" }; // includes our own /api/media uploads
   const live = httpsUrl(x.live);
   if (live) return { url: live, kind: "live" };

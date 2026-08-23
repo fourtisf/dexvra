@@ -25,7 +25,6 @@ const ALLOW = [
   "coingecko.com",
   "coinmarketcap.com",
   "dextools.io",
-  "birdeye.so",
   // wallets / token lists / DEX front-ends that host their own icon sets
   "githubusercontent.com",
   "trustwallet.com",
@@ -33,9 +32,11 @@ const ALLOW = [
   "raydium.io",
   "pancakeswap.finance",
   "1inch.io",
-  // generic CDNs the above hand off to
+  // generic CDNs the above hand off to. ⚠️ Kept NARROW on purpose: a bare
+  // `cloudfront.net` would make this an image proxy for every AWS customer
+  // alive, which is somebody else's bandwidth and somebody else's content
+  // served from our domain.
   "imagedelivery.net",
-  "cloudfront.net",
   // IPFS / Arweave — where a launchpad's metadata points. pump.fun's own
   // gateway (pump.mypinata.cloud) is under mypinata.cloud.
   "ipfs.io",
@@ -108,6 +109,9 @@ export async function GET(req: NextRequest) {
       if (res.status < 300 || res.status >= 400) break;
       const loc = res.headers.get("location");
       if (!loc) break;
+      // A redirect's body is never read; release it or the socket stays busy
+      // until the GC gets round to it, on a server doing this per token.
+      void res.body?.cancel().catch(() => {});
       const next = normalize(new URL(loc, url).toString());
       if (!next || !allowed(next)) return new NextResponse(null, { status: 400 });
       url = next;
@@ -116,7 +120,17 @@ export async function GET(req: NextRequest) {
     if (!res || !res.ok) return new NextResponse(null, { status: 404 });
 
     const ct = res.headers.get("content-type") || "image/png";
-    if (!/^image\//i.test(ct)) return new NextResponse(null, { status: 404 });
+    if (!/^image\//i.test(ct)) {
+      void res.body?.cancel().catch(() => {});
+      return new NextResponse(null, { status: 404 });
+    }
+    // Refuse a body we would only throw away — the size check below happens
+    // after the download, and a declared 50MB image is not worth fetching.
+    const declared = Number(res.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > 3_000_000) {
+      void res.body?.cancel().catch(() => {});
+      return new NextResponse(null, { status: 404 });
+    }
     const buf = Buffer.from(await res.arrayBuffer());
     if (!buf.length || buf.length > 3_000_000) return new NextResponse(null, { status: 404 });
     return new NextResponse(buf, {

@@ -13,6 +13,10 @@ const PAGE = read("src/app/(site)/token/[chain]/[address]/page.tsx");
 const POOL = read("src/app/api/pool/route.ts");
 const GTPOOL = read("src/lib/providers/gtPool.ts");
 const CSS = read("src/app/globals.css");
+/** Comments quote the code they guard, so a POSITIONAL check has to read the
+ *  code alone — the first mention of the cache key in this route is the comment
+ *  explaining why it is built after the chain check. */
+const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 test("⚠️ the candles are asked for OUR token, not the pool's base side", () => {
   // GT's OHLCV defaults to `base`, which is our token only by luck: in a
@@ -36,7 +40,11 @@ test("a pool address from the caller is a HINT, and a 404 on it re-resolves", ()
   // The token page passes the pool GeckoTerminal named, but a preview built
   // from DexScreener carries a PAIR address GT has never indexed.
   assert.match(ROUTE, /A caller-supplied pool is a HINT/);
-  assert.match(ROUTE, /if \(candles == null\) \{[\s\S]{0,200}topPoolAddress\(network, address\)/, "a 404 sends us to the pool GT does know");
+  // Distance-free: a character window between two lines breaks the moment a
+  // comment is added between them, which is a test about formatting.
+  assert.match(ROUTE, /if \(candles == null \|\| candles\.length === 0\)/, "a 404 OR an empty list re-resolves");
+  assert.match(ROUTE, /topPoolAddress\(network, address\)/, "…to the pool GT does know");
+  assert.match(ROUTE, /deeper\.length > 0 \|\| candles == null/, "and a worse answer there never replaces a good one");
 });
 
 test("'no pool yet' and 'we could not read it' stay different answers", () => {
@@ -44,6 +52,25 @@ test("'no pool yet' and 'we could not read it' stay different answers", () => {
   assert.match(ROUTE, /No pool indexed for this token yet/);
   assert.match(ROUTE, /Couldn't read the chart just now/);
   assert.match(CHART, /status === "error" \? "Chart unavailable right now" : "No candles yet"/);
+});
+
+test("⚠️ an unknown chain is refused BEFORE the cache key is built", () => {
+  // The key is `ohlcv:<chain>:…` and the cache lives as long as the process:
+  // an unvalidated chain is an unbounded set of keys anybody can create from a
+  // query string, for answers nobody could use.
+  const handler = code(ROUTE.slice(ROUTE.indexOf("export async function GET")));
+  const guard = handler.indexOf("if (!network)");
+  const key = handler.indexOf("`ohlcv:");
+  assert.ok(guard > 0 && key > guard, "the chain check comes first");
+});
+
+test("the panel never renders a blank box", () => {
+  // status "ok" with no geometry yet drew NOTHING — no chart, no message —
+  // which reads exactly like a chart still loading, for ever.
+  assert.match(CHART, /status === "ok" && !geo && !tooSmall/);
+  assert.match(CHART, /Not enough room here to draw the chart/);
+  // …and the measurement no longer depends on ResizeObserver existing.
+  assert.match(CHART, /measure\(\);/);
 });
 
 test("the address and pool that go into an upstream path are bounded", () => {

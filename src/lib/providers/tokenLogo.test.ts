@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cdnGuess, isImage, pickLogo, resolveLogo, type LogoDeps } from "./tokenLogo.ts";
+import { _resetCgCooldown, cdnGuess, isImage, pickLogo, resolveLogo, type LogoDeps } from "./tokenLogo.ts";
 
 const ADDR = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce";
 const MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
@@ -245,4 +245,63 @@ test("a chain with no convention reports none rather than inventing a path", () 
 test("junk in any rung is skipped, not rendered", () => {
   const p = pickLogo({ stored: "  ", live: "not-a-url", resolved: "http://insecure/x.png", chain: "solana", address: MINT });
   assert.equal(p.kind, "convention");
+});
+
+// ── CoinGecko: the quota nobody else can spend for us ───────────────────────
+
+test("CoinGecko is not asked at all when an index already has the artwork", async () => {
+  // Its free tier is per IP and the bot suite shares that IP: a call made when
+  // we already have the logo is a call the next row does not get.
+  let cgCalls = 0;
+  const r = await resolveLogo("ethereum", ADDR, {
+    ...none,
+    ds: async () => IMG,
+    cg: async () => {
+      cgCalls++;
+      return null;
+    },
+  });
+  assert.equal(r.source, "dexscreener");
+  assert.equal(cgCalls, 0);
+});
+
+test("…and it IS asked the moment they have nothing", async () => {
+  let cgCalls = 0;
+  await resolveLogo("ethereum", ADDR, {
+    ...none,
+    cg: async () => {
+      cgCalls++;
+      return null;
+    },
+    verify: async () => false,
+  });
+  assert.equal(cgCalls, 1);
+});
+
+test("⚠️ a CoinGecko 429 benches it for the whole process, not just that row", async () => {
+  // Pacing alone is not enough: eight rows in a sweep meant eight more requests
+  // into a service that was already refusing, and every one came back
+  // undecided anyway. The bot's resolver states the same rule about GT.
+  process.env.CG_MIN_GAP_MS = "0"; // the pacing is not what is under test
+  _resetCgCooldown();
+  let hits = 0;
+  const noIndexes: LogoDeps = { ds: async () => null, gt: async () => null, verify: async () => false };
+  await withFetch(
+    async () => {
+      hits++;
+      return new Response("{}", { status: 429, headers: { "content-type": "application/json" } });
+    },
+    async () => {
+      const first = await resolveLogo("ethereum", ADDR, noIndexes);
+      assert.equal(first.ok, false, "a refusal is undecided, never 'no logo'");
+      assert.match(first.unreachable.join(" "), /429/);
+
+      const second = await resolveLogo("ethereum", "0x2222222222222222222222222222222222222222", noIndexes);
+      assert.equal(second.ok, false);
+      assert.match(second.unreachable.join(" "), /benched/, "the second row is told why, without asking again");
+    },
+  );
+  assert.equal(hits, 1, "one request, not one per row");
+  _resetCgCooldown();
+  delete process.env.CG_MIN_GAP_MS;
 });
