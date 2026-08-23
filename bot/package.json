@@ -20,7 +20,8 @@
     "rpc:check": "node scripts/rpc-check.js",
     "treasury": "node scripts/treasury.js",
     "test": "node scripts/run-tests.js",
-    "trending:check": "node scripts/trending-check.js"
+    "trending:check": "node scripts/trending-check.js",
+    "seed:chain": "node scripts/seed-chain.js"
   },
   "engines": {
     "node": ">=18"
