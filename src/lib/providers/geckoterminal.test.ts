@@ -5,6 +5,12 @@
 import test from "node:test";
 import assert from "node:assert";
 import { GT_MULTI_MAX, fetchListedMarket } from "./geckoterminal.ts";
+import { _gtReset } from "./gt.ts";
+
+// ⚠️ The 429 cooldown is PROCESS-WIDE by design (providers/gt.ts), so a test
+// that earns one silences every test after it — which showed up as two
+// unrelated sibling-pool tests failing for no visible reason.
+test.beforeEach(_gtReset);
 
 const realFetch = globalThis.fetch;
 
@@ -69,12 +75,21 @@ test("addresses reach GT VERBATIM — base58 is case-significant", async () => {
   }
 });
 
-test("one failed chunk skips its tokens; it does not kill the chain", async () => {
+test("a 429 stops the REST of the cycle — the quota is already gone", async () => {
+  // This used to assert that chunk 3 still went out after chunk 2 was
+  // rate-limited. It only "worked" because a mock will happily answer a request
+  // GeckoTerminal would have refused: a 429 means the IP is over its ceiling,
+  // so the next chunk is another 429 that extends the window we are waiting on.
+  //
+  // The tokens that miss out do NOT go blank — DexScreener prices the leftovers
+  // (indexedMarket), and anything it misses keeps its last-known reading. What
+  // must still hold is the original lesson: one bad chunk never kills the chain.
   try {
     const addresses = Array.from({ length: 70 }, (_, i) => addr(i));
-    mockGt([null, 429, null]); // chunk 2 of 3 is rate-limited
+    const urls = mockGt([null, 429, null]); // chunk 2 of 3 is rate-limited
     const map = await fetchListedMarket("solana", addresses);
-    assert.strictEqual(map.size, 40, "chunks 1 and 3 still landed");
+    assert.strictEqual(map.size, 30, "chunk 1 landed and the chain still answered");
+    assert.strictEqual(urls.length, 2, "chunk 3 was never fired into a live rate limit");
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -87,6 +102,8 @@ test("but a chain where NOTHING answered throws — down and empty are different
   try {
     mockGt([429, 429, 429]);
     await assert.rejects(
+      // The CAUSE, not the consequence: the later chunks fail with "cooling
+      // down", and reporting that would hide the 429 that armed it.
       () => fetchListedMarket("solana", Array.from({ length: 70 }, (_, i) => addr(i))),
       /GeckoTerminal 429/,
     );

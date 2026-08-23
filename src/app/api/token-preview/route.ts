@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
+import { gtGet } from "@/lib/providers/gt";
 
 export const dynamic = "force-dynamic";
 
@@ -37,20 +38,17 @@ const num = (s: unknown): number | null => {
 };
 
 async function fetchPreview(network: string, address: string): Promise<Preview | null> {
-  const res = await fetch(
-    `https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${address}?include=top_pools`,
-    { headers: { accept: "application/json;version=20230302" }, signal: AbortSignal.timeout(8000), cache: "no-store" },
-  );
+  const res = await gtGet<{
+    data?: { attributes?: Record<string, unknown>; relationships?: { top_pools?: { data?: { id?: string }[] } } };
+    included?: { id?: string; attributes?: { address?: string } }[];
+  }>(`/networks/${network}/tokens/${address}`, { include: "top_pools" });
   // 404 is a real answer — that contract is not indexed — and must not be
   // retried or cached as an error. The page copes with a null.
   if (!res.ok) {
     if (res.status === 404) return null;
-    throw new Error(`GeckoTerminal ${res.status}`);
+    throw new Error(res.reason ?? "GeckoTerminal failed");
   }
-  const json = (await res.json()) as {
-    data?: { attributes?: Record<string, unknown>; relationships?: { top_pools?: { data?: { id?: string }[] } } };
-    included?: { id?: string; attributes?: { address?: string } }[];
-  };
+  const json = res.body ?? {};
   const a = json.data?.attributes;
   if (!a) return null;
   const topId = json.data?.relationships?.top_pools?.data?.[0]?.id;
@@ -181,15 +179,11 @@ const forQuery = (address: string): string =>
  * so the caller falls back to the per-chain probe.
  */
 async function searchNetwork(address: string): Promise<{ chain: string; token: string } | null> {
-  const res = await fetch(`${"https://api.geckoterminal.com/api/v2"}/search/pools?query=${encodeURIComponent(forQuery(address))}&page=1`, {
-    headers: { accept: "application/json;version=20230302" },
-    signal: AbortSignal.timeout(8000),
-    cache: "no-store",
-  });
-  if (!res.ok) return null;
-  const json = (await res.json()) as {
+  const res = await gtGet<{
     data?: { relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } } }[];
-  };
+  }>(`/search/pools`, { query: forQuery(address), page: 1 });
+  if (!res.ok) return null;
+  const json = res.body ?? {};
   const want = forQuery(address).toLowerCase();
   for (const pool of json.data ?? []) {
     // Token ids are "<network>_<address>". The BASE token is checked first: a

@@ -24,6 +24,7 @@
 // Relative imports with extensions: node:test resolves this file, and "@/" is
 // a Next-only alias.
 import { CHAINS } from "../../config/chains.ts";
+import { gtGet } from "./gt.ts";
 
 const TIMEOUT_MS = 8000;
 
@@ -145,15 +146,15 @@ async function dsLogo(chain: string, address: string): Promise<string | null> {
 async function gtLogo(chain: string, address: string): Promise<string | null> {
   const net = CHAINS[chain]?.geckoNetwork;
   if (!net) return null;
-  const res = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${encodeURIComponent(address)}`, {
-    headers: { accept: "application/json;version=20230302" },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-    cache: "no-store",
-  });
+  // Through the shared client, so a 429 the board earned does not turn every
+  // logo lookup into "this project has no artwork" — that would be a rate limit
+  // written permanently into the listing store.
+  const res = await gtGet<{ data?: { attributes?: { image_url?: string | null } } }>(
+    `/networks/${net}/tokens/${encodeURIComponent(address)}`,
+  );
   if (res.status === 404) return null; // GT does not index it — an answer
-  if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
-  const json = (await res.json()) as { data?: { attributes?: { image_url?: string | null } } };
-  const img = json.data?.attributes?.image_url;
+  if (!res.ok) throw new Error(res.reason ?? "GeckoTerminal failed");
+  const img = res.body?.data?.attributes?.image_url;
   // GT sends the literal string "missing.png" for a token with no artwork.
   return img && !String(img).endsWith("missing.png") ? httpsUrl(img) : null;
 }

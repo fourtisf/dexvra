@@ -1426,6 +1426,64 @@ server said.
 web app; the chart shares the same free quota as the rest of the site, which is
 why each timeframe caches for its own interval and the client polls no faster.
 
+### The IP was the ceiling, and the web app had SIX doors onto it
+
+The first live request after deploying the chart answered
+`(GeckoTerminal 429)`, and a bare `curl` to GT from the same box answered 429
+too. So this was never a chart bug: **GT's free tier is ~30 requests a minute
+counted PER IP**, the bot suite lives on that same box, and the web app had
+just started asking for candles on top of it.
+
+What the web app was doing to itself is the shape `bot/src/group/gtPairs.js`
+warns about in its own header — *"Two modules with their own fetch and their own
+backoff means one of them keeps hammering through a 429 that the other has
+already noticed"* — except it had **six**: the market pipeline, the pool
+resolver, the candles route, the trades feed (polled every ~12s by every open
+token page), the token preview and the logo resolver. Each with its own base,
+its own headers, its own idea of failure, and no key support at all.
+
+`src/lib/providers/gt.ts` is the one client now, and it is the bot's rules
+transplanted:
+
+- **A 429 from ANY caller silences ALL of them** for `GT_COOLDOWN_MS` (120s,
+  the bot's number, so there is one figure to reason about across two processes
+  on one IP). While it holds, `gtGet` answers *"rate limited — cooling down for
+  Ns"* **without making a request**, and every caller treats that as "could not
+  ask" — never as "nothing there". That last part is what stops a rate limit
+  being written permanently into the listing store as "this project has no
+  logo".
+- **A 5xx or a timeout does NOT arm it.** Those are per-request failures and say
+  nothing about the quota; arming a process-wide cooldown for one slow pool
+  would take every chart on the site down for two minutes.
+- ⚠️ **The cooldown is re-checked AFTER the pacing gap.** A request that waited
+  its turn may have been overtaken by a 429 armed by whatever went out ahead of
+  it, and firing it anyway is how a cooldown gets extended.
+- ⚠️ **A 429 now ends the market cycle's remaining chunks**, where before it
+  skipped one chunk and carried on. The old behaviour only ever "worked" in a
+  mock: a 429 means the IP is over its ceiling, so the next chunk is another 429
+  that extends the window. The tokens that miss out do not go blank —
+  DexScreener prices the leftovers and `fillFromLastGood` covers the rest.
+- **The chain's error is the FIRST failure, not the last.** Once a 429 arms the
+  cooldown every later chunk fails with "cooling down", and reporting that would
+  hide the 429 that caused it.
+- **`GECKOTERMINAL_API_KEY` is read by the web app now**, exactly as the bot
+  reads it: the key switches the base to the Pro one and sends
+  `x-cg-pro-api-key`. It is the only real way past the ceiling.
+- **The boot line says which tier is in use** and never the key
+  (`[gt] PUBLIC free tier (~30 req/min per IP…)`), because "the chart is empty"
+  looks identical from outside whether the ceiling is 30/min or the Pro tier's.
+  Same reason the trade bot prints `rpc PUBLIC default (rate-limited)`.
+
+```bash
+npm test    # gt / geckoterminal — the cooldown, the key, the chunk rules
+pm2 logs dexvra --lines 50 --nostream | grep '\[gt\]'   # which tier this box is on
+```
+
+**Config a fix depends on:** `GECKOTERMINAL_API_KEY` in the **repo-root** `.env`
+(`/opt/dexvra/.env` — the web app does not read `bot/.env`). Until it is set the
+site stays on the shared free tier and a busy minute still ends in a cooldown;
+everything degrades honestly, but the ceiling is the ceiling.
+
 ### "apakah anda yakin, coba audit" — six of these were in the FIX
 
 Asked straight after the two features above landed, and the answer was no.

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
+import { gtGet } from "@/lib/providers/gt";
 import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 import { TF, normalizeCandles, tfOf, type Candle, type Timeframe } from "@/lib/ohlcv";
 
@@ -16,8 +17,6 @@ export const dynamic = "force-dynamic";
  * history", which is the shape of every reporting bug in this repo.
  */
 
-const BASE = "https://api.geckoterminal.com/api/v2";
-const HEADERS = { accept: "application/json;version=20230302" };
 const POOL_TTL = 10 * 60_000;
 
 export interface OhlcvResponse {
@@ -61,9 +60,9 @@ class Unreadable extends Error {}
 
 async function fetchCandles(network: string, pool: string, token: string, tf: Timeframe): Promise<Candle[] | null> {
   const spec = TF[tf];
-  const qs = new URLSearchParams({
-    aggregate: String(spec.aggregate),
-    limit: String(spec.limit),
+  const res = await gtGet<{ data?: { attributes?: { ohlcv_list?: unknown } } }>(`/networks/${network}/pools/${pool}/ohlcv/${spec.path}`, {
+    aggregate: spec.aggregate,
+    limit: spec.limit,
     currency: "usd",
     // ⚠️ OUR token, never the pool's base side. GT's OHLCV defaults to `base`,
     // which is our token only by luck: in a WETH/OURTOKEN pool it is WETH, and
@@ -72,17 +71,11 @@ async function fetchCandles(network: string, pool: string, token: string, tf: Ti
     // bot repo names the same address for the same reason.
     token,
   });
-  const res = await fetch(`${BASE}/networks/${network}/pools/${pool}/ohlcv/${spec.path}?${qs}`, {
-    headers: HEADERS,
-    signal: AbortSignal.timeout(9000),
-    cache: "no-store",
-  });
   // 404: GT does not index this pool — an answer about the pool, cacheable, and
   // the signal the caller uses to go and resolve a pool it does know.
   if (res.status === 404) return null;
-  if (!res.ok) throw new Unreadable(`GeckoTerminal ${res.status}`);
-  const json = (await res.json()) as { data?: { attributes?: { ohlcv_list?: unknown } } };
-  return normalizeCandles(json.data?.attributes?.ohlcv_list);
+  if (!res.ok) throw new Unreadable(res.reason ?? "GeckoTerminal failed");
+  return normalizeCandles(res.body?.data?.attributes?.ohlcv_list);
 }
 
 async function load(chain: string, address: string, tf: Timeframe, hint: string | null): Promise<OhlcvResponse> {

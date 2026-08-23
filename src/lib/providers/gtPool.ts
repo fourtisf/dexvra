@@ -7,9 +7,7 @@
 // standing rule applies — two copies of "where does this token trade" drift,
 // and the drift is invisible because both answers are plausible pool addresses.
 import { CHAINS } from "../../config/chains.ts";
-
-const BASE = "https://api.geckoterminal.com/api/v2";
-const HEADERS = { accept: "application/json;version=20230302" };
+import { gtGet } from "./gt.ts";
 
 interface GtPoolRow {
   id?: string;
@@ -40,16 +38,14 @@ const addrOf = (p: GtPoolRow): string | null =>
  * is an answer, and it is `null`.
  */
 export async function topPoolAddress(network: string, address: string): Promise<string | null> {
-  const res = await fetch(
-    `${BASE}/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`,
-    { headers: HEADERS, signal: AbortSignal.timeout(9000), cache: "no-store" },
-  );
+  // Through the shared client: it owns the base, the API key and the 429
+  // cooldown that every GT caller in this app honours.
+  const res = await gtGet<{ data?: GtPoolRow[] }>(`/networks/${network}/tokens/${encodeURIComponent(address)}/pools`, { page: 1 });
   // 404 = GT has no such token on this network. That is a real answer and must
-  // not be retried or thrown; every other status means it never looked.
+  // not be retried or thrown; every other outcome means it never looked.
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
-  const json = (await res.json()) as { data?: GtPoolRow[] };
-  const rows = (json.data ?? []).filter((p) => addrOf(p));
+  if (!res.ok) throw new Error(res.reason ?? "GeckoTerminal failed");
+  const rows = (res.body?.data ?? []).filter((p) => addrOf(p));
   if (rows.length === 0) return null;
   const deepest = rows.reduce((best, p) =>
     num(p.attributes?.reserve_in_usd) > num(best.attributes?.reserve_in_usd) ? p : best,

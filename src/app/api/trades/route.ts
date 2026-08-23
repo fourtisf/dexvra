@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
+import { gtGet } from "@/lib/providers/gt";
 import type { Trade } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -23,15 +24,17 @@ interface GtTrade {
 }
 
 async function fetchOnce(network: string, pool: string): Promise<Trade[]> {
-  const res = await fetch(
+  // Through the shared client: this route is polled every ~12s by every open
+  // token page, so it is one of the app's biggest GT consumers and must be
+  // silenced by a 429 anybody else earned.
+  const res = await gtGet<{ data?: GtTrade[] }>(
     // trade_volume_in_usd_greater_than=0 keeps out dust; GeckoTerminal returns
     // the most recent ~300 trades for the pool — we surface the freshest 60.
-    `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/trades?trade_volume_in_usd_greater_than=0`,
-    { headers: { accept: "application/json;version=20230302" }, signal: AbortSignal.timeout(9000), cache: "no-store" },
+    `/networks/${network}/pools/${pool}/trades`,
+    { trade_volume_in_usd_greater_than: 0 },
   );
-  if (!res.ok) throw new Error(`GeckoTerminal ${res.status}`);
-  const json = (await res.json()) as { data?: GtTrade[] };
-  return (json.data ?? []).slice(0, 60).map((tr) => {
+  if (!res.ok) throw new Error(res.reason ?? "GeckoTerminal failed");
+  return (res.body?.data ?? []).slice(0, 60).map((tr) => {
     const a = tr.attributes;
     const buy = a.kind === "buy";
     return {

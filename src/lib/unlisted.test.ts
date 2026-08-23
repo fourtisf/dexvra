@@ -157,7 +157,10 @@ test("EVM addresses are lowercased for the upstream, base58 ones are not", () =>
 test("the chain lookup is ONE request across every network, not one per chain", () => {
   // Fifteen requests per search against a 30-a-minute budget shared with the
   // listing and trending pipelines: one person typing would starve the site.
-  assert.match(ROUTE, /search\/pools\?query=/);
+  // The endpoint, not the URL text: the query string is built by the shared GT
+  // client now (providers/gt owns the base, the API key and the 429 cooldown),
+  // so pinning `?query=` was pinning where the "?" is typed.
+  assert.match(ROUTE, /`\/search\/pools`, \{ query: forQuery\(address\), page: 1 \}/);
   const fn = ROUTE.slice(ROUTE.indexOf("async function findAnyChain"));
   assert.ok(fn.indexOf("searchNetwork(address)") < fn.indexOf("Promise.all"), "search first, fan-out only as fallback");
 });

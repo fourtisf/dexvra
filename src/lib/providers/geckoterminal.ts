@@ -2,14 +2,12 @@
 // this file too (geckoterminal.test.ts), and the alias is a Next-only thing —
 // the same rule every other node-tested module here already follows.
 import { CHAINS } from "../../config/chains.ts";
+import { gtGet } from "./gt.ts";
 import type { PeriodKey, TxSplit } from "@/lib/types";
 
 // GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
 // set of listed token addresses — Dexvra is paid-listing only, so we never
 // crawl the whole chain. Rate-limited: always go through the cache layer.
-const BASE = "https://api.geckoterminal.com/api/v2";
-const HEADERS = { accept: "application/json;version=20230302" };
-
 export interface LiveMarket {
   priceUsd: number;
   mcap: number | null;
@@ -148,12 +146,16 @@ async function fetchChunk(
   // ⚠️ Addresses go to GT VERBATIM — base58 (Solana) is case-significant, and
   // lowercasing one asks GT about an address that does not exist. Only OUR map
   // keys are lowercased; those are ours and merely have to be consistent.
-  const res = await fetch(
-    `${BASE}/networks/${network}/tokens/multi/${chunk.join(",")}?include=top_pools`,
-    { headers: HEADERS, signal: AbortSignal.timeout(9000), cache: "no-store" },
+  //
+  // Through the shared client (providers/gt): the board is this app's heaviest
+  // GT consumer, so a 429 it earns must silence the charts and the trades feed
+  // too — and a 429 THEY earn must stop the board re-asking.
+  const res = await gtGet<{ data?: GtToken[]; included?: GtPool[] }>(
+    `/networks/${network}/tokens/multi/${chunk.join(",")}`,
+    { include: "top_pools" },
   );
-  if (!res.ok) throw new Error(`GeckoTerminal ${res.status} (${chainId})`);
-  const json = (await res.json()) as { data?: GtToken[]; included?: GtPool[] };
+  if (!res.ok) throw new Error(`${res.reason ?? "GeckoTerminal failed"} (${chainId})`);
+  const json = res.body ?? {};
   const poolsById = new Map((json.included ?? []).map((p) => [p.id, p]));
   for (const token of json.data ?? []) {
     const ids = (token.relationships?.top_pools?.data ?? []).map((d) => d.id);
@@ -193,16 +195,20 @@ export async function fetchListedMarket(
   for (let i = 0; i < addresses.length; i += GT_MULTI_MAX) chunks.push(addresses.slice(i, i + GT_MULTI_MAX));
 
   let failed = 0;
-  let lastErr: unknown;
+  // ⚠️ The FIRST failure, not the last. Once a 429 arms the shared cooldown
+  // every later chunk fails with "cooling down for 118s" — a consequence, not a
+  // cause — and reporting that as the chain's error hides the 429 that produced
+  // it. The first one is the diagnosis.
+  let firstErr: unknown;
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await sleep(CHUNK_GAP_MS);
     try {
       await fetchChunk(chainId, network, chunks[i], out);
     } catch (err) {
       failed++;
-      lastErr = err;
+      if (firstErr === undefined) firstErr = err;
     }
   }
-  if (failed === chunks.length) throw lastErr instanceof Error ? lastErr : new Error(`GeckoTerminal failed (${chainId})`);
+  if (failed === chunks.length) throw firstErr instanceof Error ? firstErr : new Error(`GeckoTerminal failed (${chainId})`);
   return out;
 }
