@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
-import { networkOf, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
+import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 import { TF, normalizeCandles, tfOf, type Candle, type Timeframe } from "@/lib/ohlcv";
 
 export const dynamic = "force-dynamic";
@@ -151,7 +151,13 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     // Never cached, so the next poll re-asks: this is "GeckoTerminal did not
     // answer", which is about the upstream and not about the token.
-    const why = err instanceof Unreadable ? `Couldn't read the chart just now (${err.message}).` : "Couldn't read the chart just now.";
-    return NextResponse.json(fail(tf, why, networkOf(chain), pool));
+    //
+    // ⚠️ THE REASON IS NEVER DROPPED. This branch used to print a bare
+    // "Couldn't read the chart just now." for everything that was not an
+    // `Unreadable`, and the pool lookup throws a plain Error — so the first
+    // live failure on the server said nothing at all about whether GeckoTerminal
+    // had rate-limited us, 404'd, or was unreachable from that box. Three
+    // different problems, one shrug, and the operator left to guess.
+    return NextResponse.json(fail(tf, `Couldn't read the chart just now (${readWhy(err)}).`, networkOf(chain), pool));
   }
 }

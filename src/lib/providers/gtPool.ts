@@ -61,6 +61,22 @@ export async function topPoolAddress(network: string, address: string): Promise<
  *  coverage — the single reason a chart can be missing for a whole chain. */
 export const networkOf = (chain: string): string | null => CHAINS[chain]?.geckoNetwork ?? null;
 
+/**
+ * WHY a GeckoTerminal read failed, in words a chart panel can print.
+ *
+ * ⚠️ undici puts the syscall in `err.cause`, so an unwrapped transport failure
+ * reads as the two words `fetch failed` — which names neither the host nor what
+ * went wrong, and cost this repo a round of guessing on the Solana buy path
+ * (`netErr()` in the trade bot exists for exactly this). An HTTP status carries
+ * its own explanation and is already in the message.
+ */
+export function readWhy(err: unknown): string {
+  const e = err as { message?: string; cause?: { code?: string; message?: string } } | null;
+  const msg = String(e?.message || "failed");
+  const code = e?.cause?.code || e?.cause?.message;
+  return code && !msg.includes(String(code)) ? `${msg}: ${code}` : msg;
+}
+
 /** Addresses and pool addresses go into an upstream URL PATH, so they are
  *  bounded and character-restricted rather than trusted. Same guard /api/pool
  *  and /api/token-preview already apply, in one place now. */

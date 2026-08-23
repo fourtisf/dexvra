@@ -47,6 +47,15 @@ test("a pool address from the caller is a HINT, and a 404 on it re-resolves", ()
   assert.match(ROUTE, /deeper\.length > 0 \|\| candles == null/, "and a worse answer there never replaces a good one");
 });
 
+test("⚠️ the reason an upstream gave is never dropped on the way to the panel", () => {
+  // The first live failure on the server answered a bare "Couldn't read the
+  // chart just now." — the pool lookup throws a plain Error, so the branch that
+  // only unwrapped `Unreadable` threw the reason away. Rate-limited, 404'd and
+  // unreachable are three different problems, and that was one shrug for all.
+  assert.match(ROUTE, /readWhy\(err\)/);
+  assert.ok(!/: "Couldn't read the chart just now\."/.test(ROUTE), "no reasonless branch left");
+});
+
 test("'no pool yet' and 'we could not read it' stay different answers", () => {
   // An empty grid gives the reader the same reaction to both.
   assert.match(ROUTE, /No pool indexed for this token yet/);
