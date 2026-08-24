@@ -443,8 +443,30 @@ async function fillFromLaunchpad(chain, address, out) {
   };
 }
 
-/** @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>} */
-async function fetchMarket(chain, address) {
+/**
+ * @param {object}  [opts]
+ * @param {boolean} [opts.cheap] Ask DexScreener FIRST and stop there the moment
+ *   it has the price and the market cap — see `fetchPrice` below for why.
+ * @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>}
+ */
+async function fetchMarket(chain, address, opts = {}) {
+  // ⚠️ THIS PROCESS IS NOT THE ONLY THING ON THIS IP.
+  //
+  // GeckoTerminal's free tier is ~30 requests a minute counted PER IP, and the
+  // website (dexvra.io) runs on the same box. Its candlestick charts have
+  // exactly ONE free source of OHLCV — GeckoTerminal — while a price and a
+  // market cap have TWO, and DexScreener's costs us nothing at all. So a caller
+  // that reads a price and nothing else must not spend the one budget the
+  // charts cannot do without: the site answered "Couldn't read the chart just
+  // now (GeckoTerminal 429)" while the bot's background pipelines were priced
+  // through here on timers.
+  //
+  // It is not a second idea of how these hosts fail — same two readers, same
+  // merge below, one different ORDER — because a third private answer to "is
+  // GeckoTerminal up" is what this repo keeps paying for.
+  const dsFirst = opts.cheap ? await fetchDS(chain, address) : null;
+  if (dsFirst && dsFirst.priceUsd && dsFirst.mcap) return dsFirst;
+
   const gt = await fetchGT(chain, address);
   // Only skip DexScreener when GT already has EVERYTHING. GT often returns a
   // price+mcap but no liquidity (reserve_in_usd null) for GT-primary chains
@@ -457,7 +479,10 @@ async function fetchMarket(chain, address) {
   // any request is made.
   if (gt && gt.priceUsd && gt.mcap && gt.liq && gt.change24h != null) return gt;
   // GT missing entirely, or missing price/mcap/liq → let DexScreener fill gaps.
-  const ds = await fetchDS(chain, address);
+  // In cheap mode it has ALREADY been asked, and its answer is reused — a miss
+  // included. `dsFirst || await fetchDS(...)` would re-ask on every miss, which
+  // is the shape that made the cheap read cost two requests instead of one.
+  const ds = opts.cheap ? dsFirst : await fetchDS(chain, address);
   let out;
   if (!gt && !ds) out = null;
   else if (!gt) out = ds;
@@ -489,7 +514,14 @@ async function fetchMarket(chain, address) {
   // the last place that can still make it true from published data. Only
   // reached when every source above came back with no reading, so an indexed,
   // healthy token never pays for the request.
-  if (out && out.change24h == null && out.poolAddress) {
+  //
+  // ⚠️ AND NEVER ON THE CHEAP READ. This is an OHLCV call — the single most
+  // expensive thing in this file, and the exact endpoint the website's charts
+  // are queuing for. A caller that opted out of GeckoTerminal for a price must
+  // not be handed a GeckoTerminal request for a 24h change it does not read.
+  // A cheap read that reaches DexScreener for the price and GT for the cap
+  // would otherwise land here and buy candles for nobody.
+  if (!opts.cheap && out && out.change24h == null && out.poolAddress) {
     const c = await changeFromCandles(chain, out.poolAddress, address);
     if (Number.isFinite(c.change)) {
       out.change24h = c.change;
@@ -506,6 +538,29 @@ async function fetchMarket(chain, address) {
   }
   return out;
 }
+
+/**
+ * Price and market cap for a caller that needs NOTHING ELSE — the cheap read.
+ *
+ * `fetchMarket` stays GeckoTerminal-first and is still right for everything
+ * that publishes a 24h change, a liquidity figure, a pool address or a logo:
+ * GT is the better source for all of those, and for the GT-primary chains
+ * (Robinhood, Plasma) it is the only one. This is for the pipelines that look
+ * at `priceUsd` and `mcap` and throw the rest away — the pump checker being by
+ * far the biggest, because it prices EVERY approved listing on a three-minute
+ * timer, which is a request a second against a thirty-a-minute ceiling shared
+ * with the site's charts.
+ *
+ * ⚠️ A STORED BASELINE MAY THEREFORE BE COMPARED AGAINST THE OTHER SOURCE, and
+ * that is not new: `fetchMarket` already falls through to DexScreener whenever
+ * GT is cooled down, so a pump baseline recorded from GT has always been
+ * compared against DexScreener readings — intermittently, flipping between the
+ * two from poll to poll. Reading one source consistently is strictly steadier
+ * than alternating, and the two agree to a fraction of a percent on any token
+ * whose deepest pool both can see. `pickTrusted` below is what catches the case
+ * where they do not.
+ */
+const fetchPrice = (chain, address) => fetchMarket(chain, address, { cheap: true });
 
 /** Which of two disagreeing sources to believe. Agreement (or a missing value)
  *  keeps the GeckoTerminal reading, which is the normal path. */
@@ -533,4 +588,4 @@ module.exports = {
   CHANGE_POOL_MIN_SHARE,
   _pickTrusted: pickTrusted,
   SANE_CHANGE_PCT,
-  MCAP_DISAGREE_FACTOR, fetchMarket, fetchTokenDescription };
+  MCAP_DISAGREE_FACTOR, fetchMarket, fetchPrice, fetchTokenDescription };

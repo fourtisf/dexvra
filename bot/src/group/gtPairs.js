@@ -170,12 +170,34 @@ async function fetchTokenInfo(chain, address) {
 // so those requests were invisible to the cooldown AND to any budget. The
 // realtime path was being starved by jobs that did not know there was a budget
 // to starve it out of. The buy bot's trades feed now goes first, always.
+/** GeckoTerminal's free ceiling, in requests a minute, counted PER IP. */
+const GT_FREE_CEILING_RPM = 30;
+
+/**
+ * The default budget when nothing is pinned.
+ *
+ * ⚠️ IT IS A SPLIT, NOT A SOLO CEILING. It used to be 25 — "comfortably under
+ * the free ceiling" — and that was true while this process was the only thing
+ * on the box. It is not any more: the website (dexvra.io) runs on the same IP,
+ * and its candlestick charts have exactly ONE free source of OHLCV, which is
+ * this one. At 25 the bot could take the whole ceiling by itself, and did: the
+ * site answered `Couldn't read the chart just now (GeckoTerminal 429)` while a
+ * bare `curl` to GeckoTerminal from the same box answered 429 too. Nothing was
+ * wrong with the chart.
+ *
+ * So the keyless default leaves the other half of the IP's allowance alone.
+ * Pure and exported because the split is a number to be tested, not a comment
+ * to be believed — and because a test cannot read the default at all once the
+ * runner has pinned `GT_MAX_RPM` in the environment.
+ *
+ * A key raises the real limit far past either figure.
+ */
+const defaultRpm = (hasKey) => (hasKey ? 300 : Math.floor(GT_FREE_CEILING_RPM / 2));
+
 const GT_RPM = (() => {
   const n = Number(String(process.env.GT_MAX_RPM || "").trim());
   if (Number.isFinite(n) && n > 0) return n;
-  // Comfortably under the free ceiling, because the penalty for touching it is
-  // shared by every group. A key raises the real limit far past this.
-  return GT_KEY ? 300 : 25;
+  return defaultRpm(!!GT_KEY);
 })();
 const GT_MIN_GAP_MS = Math.ceil(60000 / GT_RPM);
 // Past this the request is refused rather than queued. An unbounded queue turns
@@ -230,6 +252,29 @@ function gtSlot(priority = PRIO_BACKGROUND) {
 
 /** Queue depth, for the diagnostics scripts. */
 const gtPressure = () => ({ realtime: gtQueue[0].length, background: gtQueue[1].length, rpm: GT_RPM });
+
+/**
+ * The line an operator greps to answer "which GeckoTerminal tier and what
+ * budget is this process on?" — printed at boot, next to the build sha, for
+ * exactly the reason that one is: from outside, a quiet buy bot and an empty
+ * chart look identical whether the ceiling is 30 requests a minute shared with
+ * the website or the Pro tier's.
+ *
+ * The web app prints its own `[gt]` line for the same question. Two processes,
+ * one IP, one allowance — and the two lines together are the only way to see
+ * how it is being split.
+ *
+ * The KEY is never printed. It would land in pm2's log.
+ */
+function gtBanner() {
+  log.info(
+    `[gt] ${
+      GT_KEY
+        ? "API key set"
+        : `PUBLIC free tier (~${GT_FREE_CEILING_RPM} req/min per IP, shared with the website on this box)`
+    } · budget ${GT_RPM}/min${process.env.GT_MAX_RPM ? " (GT_MAX_RPM)" : ""}`,
+  );
+}
 
 // ── Shared rate-limit cooldown ───────────────────────────────────────────────
 // Armed by a 429 (or a 5xx run) and honoured by EVERY caller. While it is armed
@@ -313,18 +358,33 @@ const networkOf = (chain) => (chainOf(chain) && chainOf(chain).geckoNetwork) || 
  * Resolve the token's deepest pool on its chain into a snapshot:
  *   { poolAddress, priceUsd, mcap, volume24h, liquidity, buys24h, sells24h }
  * Returns null when neither GT nor DexScreener has the token.
+ *
+ * ⚠️ DEXSCREENER FIRST WHERE IT INDEXES THE CHAIN, and the reason is the same
+ * one the file header gives for sharing a cooldown, one step further out: the
+ * ~30-requests-a-minute free ceiling is counted PER IP, and the website on this
+ * same box draws candlestick charts whose ONLY free source of OHLCV is
+ * GeckoTerminal. Price, market cap, liquidity and the pool's two sides all have
+ * a second source that costs us none of that budget — so spending a GT request
+ * on them is spending the one thing the charts cannot get anywhere else.
+ *
+ * The buy bot no longer needs GT for DETECTION either (chainTrades reads the
+ * pool's own Swap events), so what is left here is decoration on an alert. GT
+ * remains first — in fact the only source — for the GT-primary chains, and the
+ * fallback everywhere else, so nothing loses an answer it used to have.
  */
 async function fetchPool(chain, address) {
+  const ds = isGtPrimary(chain) ? null : await fetchDsPool(chain, address).catch(() => null);
+  if (ds && ds.priceUsd > 0) return ds;
   const net = networkOf(chain);
   if (net) {
     const gt = await fetchGtPool(net, address).catch(() => null);
     if (gt) return gt;
   }
-  if (!isGtPrimary(chain)) {
-    const ds = await fetchDsPool(chain, address).catch(() => null);
-    if (ds) return ds;
-  }
-  return null;
+  // A DexScreener pair with no usable price still beats nothing: it carries the
+  // pool address, the ticker and the counter side, which is what a self-heal is
+  // after. Returning null here would send the caller back to GT next poll for
+  // an answer we already have.
+  return ds;
 }
 
 // ── Pool metadata cache ──────────────────────────────────────────────────────
@@ -415,10 +475,13 @@ module.exports = {
   GT_BASE: GT,
   gtSlot,
   gtPressure,
+  gtBanner,
   PRIO_REALTIME,
   PRIO_BACKGROUND,
   gtAddr,
   isHexAddress,
+  defaultRpm,
+  GT_FREE_CEILING_RPM,
   hasApiKey: () => !!GT_KEY,
   fetchPool,
   fetchPoolCached,

@@ -8,7 +8,14 @@
 // the per-step latch persist across restarts.
 const { PUMP_CHECK_MS, CHANNELS, SITE_URL, X_POST_TIMEOUT_MS } = require("../config/constants");
 const api = require("../api/dexvra");
-const { fetchMarket } = require("../marketdata");
+// ⚠️ `fetchPrice`, NOT `fetchMarket`. This loop prices EVERY approved listing
+// every three minutes and reads two fields off the answer — the price and the
+// market cap — so on the heavy read it was, by itself, most of a
+// thirty-requests-a-minute GeckoTerminal ceiling that is counted per IP and
+// shared with the website's candlestick charts on the same box. DexScreener
+// publishes both numbers and costs us none of that budget; GT is still asked
+// for the chains and the tokens DexScreener cannot answer. See marketdata.js.
+const { fetchPrice } = require("../marketdata");
 const postids = require("../channels/postids");
 const fmt = require("../channels/format");
 const post = require("../channels/post");
@@ -194,8 +201,8 @@ function start(tg) {
     for (const r of listings) {
       if (r.status !== "approved") continue;
       const key = keyOf(r);
-      const m = await fetchMarket(r.chain, r.address).catch(() => null);
-      await sleep(300); // be polite to GeckoTerminal
+      const m = await fetchPrice(r.chain, r.address).catch(() => null);
+      await sleep(300); // be polite to the indexers — mostly DexScreener now
       if (!m || !m.priceUsd) continue;
 
       if (!baseline[key]) {

@@ -10,6 +10,11 @@ const log = require("./src/helpers/logger");
 // that did not work look identical from Telegram.
 log.info(`[boot] build ${require("./src/helpers/build").stamp()}`);
 log.info(envFiles.length ? `[env] loaded ${envFiles.join(", ")}` : "[env] no .env found — using process env only");
+// Which GeckoTerminal tier and budget this process runs on. The free ceiling is
+// counted per IP and the website shares it, so "the charts are empty" and "the
+// buy bot is quiet" can both be this one number — and it is invisible from
+// Telegram. Printed AFTER loadEnv, because the budget freezes at require time.
+require("./src/group/gtPairs").gtBanner();
 require("./src/helpers/net").preferIPv4(); // before any socket opens
 
 const NON_FATAL = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|network|timeout/i;
