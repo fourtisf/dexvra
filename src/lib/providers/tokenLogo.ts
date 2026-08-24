@@ -15,11 +15,15 @@
 // What the site resolves it PERSISTS to the listing store, so the answer is
 // found once and then belongs to the bot's board too.
 //
-// THE ORDER IS "HOW MUCH DOES THIS SOURCE KNOW ABOUT THE TOKEN":
-//   1. DexScreener pair info — what the project itself uploaded
-//   2. GeckoTerminal token   — a second index, different submissions
-//   3. CoinGecko by contract — curated; a human has looked at this one
-//   4. DexScreener's CDN     — a URL CONVENTION, not an answer (see below)
+// THE ORDER — FREE SOURCES FIRST, because a logo lookup that spends a
+// GeckoTerminal request is a chart that does not draw (they share one ~30/min
+// per-IP quota):
+//   1. DexScreener pair info — what the project itself uploaded; no tight limit
+//   2. Trust Wallet assets   — a GitHub CDN icon set, EVM only, free
+//   3. GeckoTerminal token   — a second index, but it COSTS the shared quota,
+//                              so it is only asked when 1 and 2 came up empty
+//   4. CoinGecko by contract — curated; a human has looked at this one; paced
+//   5. DexScreener's CDN     — a URL CONVENTION, not an answer (see below)
 //
 // Relative imports with extensions: node:test resolves this file, and "@/" is
 // a Next-only alias.
@@ -28,7 +32,7 @@ import { gtGet } from "./gt.ts";
 
 const TIMEOUT_MS = 8000;
 
-export type LogoSource = "dexscreener" | "geckoterminal" | "coingecko" | "dexscreener-cdn";
+export type LogoSource = "dexscreener" | "trustwallet" | "geckoterminal" | "coingecko" | "dexscreener-cdn";
 
 export interface LogoResult {
   /**
@@ -143,6 +147,28 @@ async function dsLogo(chain: string, address: string): Promise<string | null> {
   return null;
 }
 
+/** Trust Wallet's assets repo — a curated community icon set on GitHub's CDN,
+ *  EVM only, and FREE: no key, no rate limit, and — the reason it moves ahead
+ *  of GeckoTerminal — it costs nothing from the GeckoTerminal quota the charts
+ *  are fighting over. The path is keyed on the EIP-55 CHECKSUMMED address; our
+ *  listing store keeps EVM addresses checksummed, and a wrong-case guess simply
+ *  fails `isImage` and is skipped, so this only ever adds coverage. */
+const TW_CHAIN: Record<string, string> = {
+  ethereum: "ethereum",
+  bsc: "smartchain",
+  base: "base",
+  polygon: "polygon",
+  arbitrum: "arbitrum",
+  optimism: "optimism",
+  avalanche: "avalanchec",
+};
+
+function twGuess(chain: string, address: string): string | null {
+  const slug = TW_CHAIN[chain];
+  if (!slug || !/^0x[a-fA-F0-9]{40}$/.test(address)) return null;
+  return `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${slug}/assets/${address}/logo.png`;
+}
+
 async function gtLogo(chain: string, address: string): Promise<string | null> {
   const net = CHAINS[chain]?.geckoNetwork;
   if (!net) return null;
@@ -245,6 +271,9 @@ export interface LogoDeps {
   ds?: (chain: string, address: string) => Promise<string | null>;
   gt?: (chain: string, address: string) => Promise<string | null>;
   cg?: (chain: string, address: string) => Promise<string | null>;
+  /** Trust Wallet is a pure URL guess, but injectable so a test can silence it
+   *  and exercise the DS→GT→CG→CDN order without an EVM guess in the way. */
+  tw?: (chain: string, address: string) => string | null;
   verify?: (url: string) => Promise<boolean>;
 }
 
@@ -271,6 +300,7 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
   const ds = deps.ds ?? dsLogo;
   const gt = deps.gt ?? gtLogo;
   const cg = deps.cg ?? cgLogo;
+  const tw = deps.tw ?? twGuess;
   const verify = deps.verify ?? isImage;
 
   const unreachable: string[] = [];
@@ -293,15 +323,20 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
     return null;
   };
 
-  const [dsUrl, gtUrl] = await Promise.all([
-    ask("dexscreener", () => ds(chain, address)),
-    ask("geckoterminal", () => gt(chain, address)),
-  ]);
-  const indexes = await pick([
+  // ⚠️ THE FREE SOURCES FIRST — and GeckoTerminal is NOT free here. Its quota
+  // is the same ~30/min-per-IP the charts are starving on, so a logo lookup
+  // that spends a GT request is a chart that does not draw. DexScreener has
+  // most memecoin artwork and no tight limit; Trust Wallet is a GitHub CDN.
+  // Only when BOTH of those come up empty do we spend a GeckoTerminal call.
+  const dsUrl = await ask("dexscreener", () => ds(chain, address));
+  const free = await pick([
     ["dexscreener", httpsUrl(dsUrl)],
-    ["geckoterminal", httpsUrl(gtUrl)],
+    ["trustwallet", tw(chain, address)],
   ]);
-  if (indexes) return indexes;
+  if (free) return free;
+
+  const onGt = await pick([["geckoterminal", httpsUrl(await ask("geckoterminal", () => gt(chain, address)))]]);
+  if (onGt) return onGt;
 
   const curated = await pick([["coingecko", httpsUrl(await ask("coingecko", () => cg(chain, address)))]]);
   if (curated) return curated;

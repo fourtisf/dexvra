@@ -1484,6 +1484,74 @@ pm2 logs dexvra --lines 50 --nostream | grep '\[gt\]'   # which tier this box is
 site stays on the shared free tier and a busy minute still ends in a cooldown;
 everything degrades honestly, but the ceiling is the ceiling.
 
+### …and the bot was the one spending it — "chartnya mana"
+
+The web app was cut back six ways and the charts still came back
+`(GeckoTerminal 429)`. Everything above is about the web app's SHARE of the
+ceiling, and the web app was never the one eating it: the bot suite on the same
+box was, and it had no idea the website existed.
+
+**The ceiling is per IP, so the two processes' budgets have to ADD UP TO IT.**
+`GT_MAX_RPM` defaulted to 25 against a ~30/min ceiling — "comfortably under",
+and true for as long as the bot was the only thing on the box. It has not been
+for a while. Three changes, and the first two are the same rule in two modules:
+
+| where | was | is |
+| --- | --- | --- |
+| `pumpChecker` | `fetchMarket` — GT-first, every approved listing, every 3 min | `fetchPrice` — DexScreener first |
+| `gtPairs.fetchPool` | GT first, DexScreener as fallback | DexScreener first where it indexes the chain |
+| `GT_MAX_RPM` default | 25 (a solo ceiling) | 15 (half of 30 — a SPLIT) |
+
+- **A PRICE has two free sources; a CANDLE has one.** That asymmetry is the
+  whole argument. GeckoTerminal is the only free OHLCV for arbitrary DEX
+  tokens, so a request spent there on a number DexScreener also publishes is a
+  chart that does not draw. `fetchPrice` is for callers that read `priceUsd`
+  and `mcap` and throw the rest away; `fetchMarket` stays GT-first and is still
+  right for anything publishing a 24h change, liquidity, a pool address or a
+  logo — GT is the better source for all of those, and on Robinhood/Plasma the
+  only one.
+- **It is one ORDER, not a second client.** `fetchMarket(chain, addr,
+  { cheap })` reuses the same two readers and the same merge; a third private
+  answer to "is GeckoTerminal up" is what this repo keeps paying for.
+  ⚠️ And the cheap pass must REUSE a DexScreener *miss* rather than re-ask —
+  `dsFirst || await fetchDS(…)` re-asks on every miss, because a miss is null,
+  which doubles the load on the source the change exists to prefer.
+- ⚠️ **A stored pump baseline is now compared against the other source — and
+  that is not new.** `fetchMarket` has always fallen through to DexScreener
+  while GT was cooled down, so a GT-recorded baseline has been measured against
+  DexScreener readings intermittently, flipping poll to poll. Reading one
+  source consistently is steadier than alternating, and the ladder's floor is
+  +100%: a source disagreement large enough to fabricate a step is the poisoned
+  pool `pickTrusted` already catches.
+- **The buy bot's interval was NOT lengthened, and the measurement is why.**
+  That was the plan — and `BUYBOT_POOL_MIN_MS` turns out not to be a GT knob
+  any more. Detection comes off the chain (`group/chainTrades.js` reads the
+  pool's own Swap events on every EVM and Solana chain), and the metadata read
+  is capped by `META_TTL_MS` at one a minute per pool however fast the loop
+  runs. So lengthening it would have bought alert latency for almost no quota.
+  What the buy bot actually spends GT on is that metadata read — hence the
+  source order, which costs nothing at all.
+- **A `[gt]` boot line in the bot too**, beside the build sha, because the two
+  lines together are the only way to see how the one allowance is being split.
+  The KEY is never printed; it would land in pm2's log.
+- **`buybot:check` names the neighbour.** It used to advise checking "whether
+  you are sharing an IP with something else hitting GT's ~30 req/min" — which
+  sent an operator hunting for a stranger. It is the website, on this box, and
+  a diagnostic that knows the answer should say it.
+
+```bash
+cd bot && node scripts/run-tests.js test/gtQuota.test.js   # 11 tests, no network
+pm2 logs dexvra-bot --lines 50 --nostream | grep -F '[gt]'  # the bot's half
+pm2 logs dexvra     --lines 50 --nostream | grep -F '[gt]'  # the site's half
+```
+
+⚠️ **This touches `bot/`, so the deploy is the ecosystem restart, not just
+`pm2 restart dexvra`** — see "Two bot processes, one config".
+
+**Config a fix depends on:** nothing. `GECKOTERMINAL_API_KEY` is still the only
+thing that raises the real ceiling rather than dividing it; until it is set,
+30/min is 30/min and this only decides who gets which share.
+
 ### "apakah anda yakin, coba audit" — six of these were in the FIX
 
 Asked straight after the two features above landed, and the answer was no.

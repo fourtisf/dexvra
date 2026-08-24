@@ -115,7 +115,11 @@ async function main() {
     }
     console.log("\n   What to check, in order:");
     console.log(`   • egress from this server to ${gt.GT_BASE} (curl it)`);
-    console.log("   • whether you are sharing an IP with something else hitting GT's ~30 req/min");
+    // Named, not hinted at. "something else" sent an operator looking for a
+    // stranger on the IP; it is the website on this same box, its charts have
+    // no second source of candles, and the two budgets are meant to add up to
+    // GT's ~30/min — `[gt]` in each process's boot log prints both halves.
+    console.log("   • the website on this same box also spends this IP's ~30 req/min (grep -F '[gt]' in both logs)");
     console.log("   • GECKOTERMINAL_API_KEY — the real fix if the cooldown keeps arming");
     console.log("   • BUYBOT_POOL_MIN_MS — raise it if you track many pools");
     process.exit(1);

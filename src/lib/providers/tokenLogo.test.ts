@@ -12,6 +12,7 @@ const none: LogoDeps = {
   ds: async () => null,
   gt: async () => null,
   cg: async () => null,
+  tw: () => null, // silenced by default so the DS→GT→CG→CDN order is testable
   verify: async () => true,
 };
 
@@ -45,6 +46,22 @@ test("a candidate that does not verify is skipped, not stored", async () => {
 test("CoinGecko is reached when the two indexes have nothing", async () => {
   const r = await resolveLogo("bsc", ADDR, { ...none, cg: async () => IMG });
   assert.equal(r.source, "coingecko");
+});
+
+test("Trust Wallet is a FREE source ahead of GeckoTerminal — it spends no GT quota", async () => {
+  // A logo lookup that spends a GeckoTerminal request is a chart that does not
+  // draw. Trust Wallet (GitHub CDN, EVM only) answers before GT is ever asked.
+  let gtAsked = 0;
+  const r = await resolveLogo("bsc", ADDR, {
+    ...none,
+    tw: () => "https://raw.githubusercontent.com/trustwallet/assets/x/logo.png",
+    gt: async () => {
+      gtAsked++;
+      return IMG;
+    },
+  });
+  assert.equal(r.source, "trustwallet");
+  assert.equal(gtAsked, 0, "GeckoTerminal was never asked once a free source answered");
 });
 
 test("the CDN convention is the last candidate, never the first", async () => {
