@@ -13,6 +13,7 @@ import { shortAddr } from "@/lib/walletConnect";
 import { NAV_GROUPS } from "./Sidebar";
 import { usePathname, useRouter } from "next/navigation";
 import { logoSrc } from "@/lib/logo";
+import { changeReading } from "@/lib/home";
 
 /** What /api/token-preview hands back for a contract nobody has listed. */
 interface UnlistedHit {
@@ -227,7 +228,10 @@ export function Topbar() {
               )
             ) : (
               matches.map((t) => {
-                const up = t.chg["24h"] >= 0;
+                // Through the sane reading — a search hit must not show a
+                // five-million-percent figure any more than the board does.
+                const reading = changeReading(t, "24h");
+                const up = (reading ?? 0) >= 0;
                 return (
                   <button key={t.key} className="sdd-item" onMouseDown={(e) => { e.preventDefault(); go(t); }}>
                     <Coin token={t} size={30} fontSize={14} />
@@ -237,7 +241,9 @@ export function Topbar() {
                     </div>
                     <div className="sdd-px">
                       <div>{fmtPrice(t.priceUsd)}</div>
-                      <div className={up ? "sdd-up" : "sdd-dn"}>{up ? "+" : ""}{t.chg["24h"].toFixed(1)}%</div>
+                      {reading != null && (
+                        <div className={up ? "sdd-up" : "sdd-dn"}>{up ? "+" : ""}{reading.toFixed(1)}%</div>
+                      )}
                     </div>
                   </button>
                 );

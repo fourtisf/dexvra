@@ -10,6 +10,7 @@ import {
   HOME_BOARD_ROWS,
   HOME_CHAIN_LIMIT,
   HOME_TRENDING_MAX,
+  SANE_CHANGE_PCT,
   changeReading,
   expander,
   capped,
@@ -604,6 +605,36 @@ test("a fallback row's zero is a dash, never a fabricated ▲0.0%", () => {
   const demo = tok({ sym: "DEMO", chg: 12.5 });
   demo.source = "seed";
   assert.strictEqual(changeReading(demo, "24h"), 12.5, "captured nonzero prints — the demo board is built from these");
+});
+
+test("⚠️ an absurd change is a dash and sinks — never a five-million-percent #1", () => {
+  // GeckoTerminal handed the board +5,191,162% for $MONA, an $8-volume pool
+  // measured from a near-zero opening tick, and the raw number crowned a dead
+  // token #1. The bot refuses the identical figure over the identical bound.
+  const insane = tok({ sym: "MONA", chg: 5191162 });
+  insane.source = "live";
+  assert.strictEqual(changeReading(insane, "24h"), null, "unreadable, not a gain");
+
+  const bigButReal = tok({ sym: "BIG", chg: SANE_CHANGE_PCT - 1 });
+  bigButReal.source = "live";
+  assert.strictEqual(changeReading(bigButReal, "24h"), SANE_CHANGE_PCT - 1, "a real 4900% still prints");
+
+  const negInsane = tok({ sym: "DUMP", chg: -99999 });
+  negInsane.source = "live";
+  assert.strictEqual(changeReading(negInsane, "24h"), null, "the bound is symmetric");
+
+  const nan = tok({ sym: "NAN", chg: 0 });
+  nan.source = "live";
+  (nan.chg as Record<string, number>)["24h"] = Number.POSITIVE_INFINITY;
+  assert.strictEqual(changeReading(nan, "24h"), null, "a non-finite reading is never printed");
+});
+
+test("the sort ranks through the reading, so an unreadable change cannot lead", () => {
+  // The display went through changeReading but the SORT read the raw field, so
+  // a dash could still sit at #1. Both go through the one gate now.
+  assert.match(read("src/components/TokenBoard.tsx"), /changeReading\(t, p\) \?\? -Infinity/);
+  // …and the top-movers ticker filters the unreadable out entirely.
+  assert.match(read("src/components/Ticker.tsx"), /changeReading\(t, "24h"\)/);
 });
 
 test("all three surfaces render the reading through the one helper", () => {

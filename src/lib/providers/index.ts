@@ -10,6 +10,7 @@ import {
 import { approvedRows } from "@/lib/store";
 import { dexvraScore } from "@/lib/score";
 import { syntheticTrend, visualFor } from "@/lib/visual";
+import { SANE_CHANGE_PCT } from "@/lib/home";
 import type {
   BoardToken,
   ChainHeat,
@@ -216,7 +217,9 @@ function buildHeat(tokens: BoardToken[]): ChainHeat[] {
   for (const t of tokens) {
     const e = byChain.get(t.chain) ?? { vol: 0, chg: 0, n: 0 };
     e.vol += t.vol["24h"];
-    e.chg += t.chg["24h"];
+    // An absurd change is unreadable, not heat — bound it so one dead pool
+    // does not swing a whole chain's average (see SANE_CHANGE_PCT).
+    e.chg += Math.abs(t.chg["24h"]) <= SANE_CHANGE_PCT ? t.chg["24h"] : 0;
     e.n++;
     byChain.set(t.chain, e);
   }
@@ -242,7 +245,12 @@ function buildSignals(tokens: BoardToken[]): Signal[] {
   if (whale)
     sig.push({ kind: "whale", color: "#7CE0B0", symbol: whale.symbol, chain: whale.chain, text: `whale inflow — <b>${fmtCap(whale.vol["1h"])}</b> volume in the last hour`, minutesAgo: 7 });
 
-  const mover = [...tokens].sort((a, b) => b.chg["1h"] - a.chg["1h"])[0];
+  // A "momentum spike" leads with the biggest 1h gain that is actually
+  // measurable — a five-million-percent reading off a near-dead pool is noise,
+  // not momentum.
+  const mover = [...tokens]
+    .filter((t) => Math.abs(t.chg["1h"]) <= SANE_CHANGE_PCT)
+    .sort((a, b) => b.chg["1h"] - a.chg["1h"])[0];
   if (mover && mover.chg["1h"] > 0)
     sig.push({ kind: "volume", color: "#E7C77A", symbol: mover.symbol, chain: mover.chain, text: `momentum spike <b>+${mover.chg["1h"].toFixed(1)}%</b> in 1h`, minutesAgo: 11 });
 

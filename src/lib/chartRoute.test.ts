@@ -135,8 +135,22 @@ test("the chart is candles, with volume, on a timeframe the reader picks", () =>
 });
 
 test("a poll that fails never blanks a chart that is already drawn", () => {
-  assert.match(CHART, /if \(quiet && drawn > 0\) return;/);
-  assert.match(CHART, /pollMsFor\(tf\)/, "and it never polls faster than the answer can change");
+  // A quiet poll that comes back empty/failed short-circuits while candles are
+  // on screen — it no longer re-renders, it just reports the status upward.
+  assert.match(CHART, /if \(quiet && drawn > 0\) return "ok";/);
+  assert.match(CHART, /pollMsFor\(tf\)/, "a settled chart never polls faster than the answer can change");
+});
+
+test("⚠️ a transient cooldown recovers on screen, without hammering GeckoTerminal", () => {
+  // The chart failure the operator saw was "cooling down for 1s" — the tail of
+  // a 120s rate-limit window. A request made while the cooldown holds returns
+  // WITHOUT reaching GT (providers/gt), so a quick client re-poll is free
+  // upstream and lets the chart draw itself the moment the window clears,
+  // instead of waiting out the slow 30–90s poll.
+  assert.match(CHART, /st === "error" && recovering < RECOVER_MAX/, "only the transient state is fast-retried");
+  assert.match(CHART, /RECOVER_MAX = 8/, "and it is bounded — a truly unreachable box falls back to the slow poll");
+  // "none" (no pool indexed) is a real answer, never fast-retried.
+  assert.ok(!/st === "none"[^;]*RECOVER/.test(CHART));
 });
 
 test("every drawn number is measured over the window that is actually drawn", () => {

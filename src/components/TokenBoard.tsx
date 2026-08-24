@@ -42,7 +42,9 @@ type SortKey = "price" | "chg" | "mcap" | "liq" | "vol" | "tx";
 
 const SORT_VAL: Record<SortKey, (t: BoardToken, p: PeriodKey) => number> = {
   price: (t) => t.priceUsd,
-  chg: (t, p) => t.chg[p],
+  // Through the READING, not the raw field — an unreadable/absurd change sinks
+  // to the bottom instead of crowning a dead token #1 (see changeReading).
+  chg: (t, p) => changeReading(t, p) ?? -Infinity,
   mcap: (t) => t.mcap ?? 0,
   liq: (t) => t.liq ?? 0,
   vol: (t, p) => t.vol[p],
@@ -215,7 +217,8 @@ function StdRow({
 
 function NpRow({ t, i, flashDir }: { t: BoardToken; i: number; flashDir?: "up" | "dn" }) {
   const { openDetail } = useApp();
-  const up = t.chg["24h"] >= 0;
+  const reading = changeReading(t, "24h");
+  const up = (reading ?? 0) >= 0;
   return (
     <div
       className={`row ${flashDir === "up" ? "flash-up" : ""} ${flashDir === "dn" ? "flash-dn" : ""}`}
@@ -234,10 +237,16 @@ function NpRow({ t, i, flashDir }: { t: BoardToken; i: number; flashDir?: "up" |
       </div>
       <div className="c-num price c-mcap">{fmtPrice(t.priceUsd)}</div>
       <div className="c-num">
-        <span className={`chg ${up ? "up" : "dn"}`}>
-          {up ? "+" : ""}
-          {t.chg["24h"].toFixed(1)}%
-        </span>
+        {reading != null ? (
+          <span className={`chg ${up ? "up" : "dn"}`}>
+            {up ? "+" : ""}
+            {reading.toFixed(1)}%
+          </span>
+        ) : (
+          <span className="chg none" title="No 24h reading — the pool is too new or too thin to measure">
+            —
+          </span>
+        )}
       </div>
       <div className="c-num c-liq mono-dim">{fmtCap(t.liq)}</div>
       <div className="c-txns tx-cell">

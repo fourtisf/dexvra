@@ -107,8 +107,14 @@ export function CandleChart({
     const ac = new AbortController();
     let stopped = false;
     let drawn = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // How many times in a row we have retried a TRANSIENT failure (a GT
+    // cooldown). Bounded, so a genuinely unreachable box settles to the slow
+    // poll instead of retrying forever.
+    let recovering = 0;
 
-    const run = async (quiet: boolean) => {
+    // Returns the last status so the scheduler can decide how soon to look again.
+    const run = async (quiet: boolean): Promise<Status> => {
       if (!quiet) {
         setStatus("loading");
         setFeed(null);
@@ -119,36 +125,54 @@ export function CandleChart({
         if (poolHint) qs.set("pool", poolHint);
         const res = await fetch(`/api/ohlcv?${qs}`, { signal: ac.signal });
         const j = (await res.json()) as Feed;
-        if (stopped) return;
+        if (stopped) return "loading";
         if (j.ok && j.candles?.length) {
           drawn = j.candles.length;
           setFeed(j);
           setStatus("ok");
-          return;
+          return "ok";
         }
         // A POLL THAT FAILS MUST NEVER BLANK A CHART THAT IS ALREADY DRAWN —
         // the pool did not stop existing because one request did not land, and
         // "no candles yet" over a chart the reader was just looking at is a
         // worse answer than a slightly stale one.
-        if (quiet && drawn > 0) return;
+        if (quiet && drawn > 0) return "ok";
         setFeed(j);
-        setStatus(j.why && /couldn't read/i.test(j.why) ? "error" : "none");
+        const st: Status = j.why && /couldn't read/i.test(j.why) ? "error" : "none";
+        setStatus(st);
+        return st;
       } catch {
-        if (stopped) return;
-        if (quiet && drawn > 0) return;
+        if (stopped) return "loading";
+        if (quiet && drawn > 0) return "ok";
         setFeed(null);
         setStatus("error");
+        return "error";
       }
     };
 
-    void run(false);
-    // Polling faster than the route's own cache TTL only ever returns the same
-    // bytes, so the interval is derived from it rather than picked.
-    const id = setInterval(() => void run(true), pollMsFor(tf));
+    // ⚠️ RECOVER FAST FROM A COOLDOWN, WITHOUT HAMMERING GECKOTERMINAL. An
+    // "error" here is almost always the shared 120s rate-limit cooldown, and a
+    // request made while it holds returns WITHOUT reaching GT (providers/gt) —
+    // so a quick client re-poll is free upstream and simply lets the chart draw
+    // itself the moment the window clears, instead of the reader staring at
+    // "cooling down" until the slow 30–90s poll comes round. Bounded to a
+    // handful of tries: past that the box is genuinely unreachable, and we fall
+    // back to the slow poll rather than spinning. "none" (no pool indexed) is a
+    // real answer, not a cooldown, so it is never fast-retried.
+    const RECOVER_MS = 5_000;
+    const RECOVER_MAX = 8;
+    const schedule = (st: Status) => {
+      if (stopped) return;
+      const fast = st === "error" && recovering < RECOVER_MAX;
+      recovering = st === "error" ? recovering + 1 : 0;
+      timer = setTimeout(async () => schedule(await run(true)), fast ? RECOVER_MS : pollMsFor(tf));
+    };
+
+    void run(false).then(schedule);
     return () => {
       stopped = true;
       ac.abort();
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
     };
   }, [chain, address, tf, poolHint]);
 

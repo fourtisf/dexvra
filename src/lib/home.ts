@@ -16,6 +16,19 @@
 import { CHAIN_IDS } from "../config/chains.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
 
+/**
+ * The largest 24h/period change the board will SHOW or RANK as a real reading.
+ *
+ * ⚠️ GeckoTerminal handed the board +5,191,162% for $MONA — an $8-volume,
+ * $0-liquidity pool whose "price" is measured from a near-zero opening tick —
+ * and, unbounded, that raw number crowned a dead token #1 with a five-million-
+ * percent gain. The bot's `marketdata.js` refuses the identical figure over the
+ * identical bound. Above it the change is UNREADABLE: a dash, never a number,
+ * and the sort sinks it rather than ranking it. Doctrine, twice over: an
+ * unreadable change is not a printed 0%, and it is certainly not a record gain.
+ */
+export const SANE_CHANGE_PCT = 5000;
+
 /** Chains offered on the home filter before "+N more". Six fits one row on a
  *  laptop; the rest are one tap away. The wall of 23 wrapped pills the page
  *  used to open with is what "jangan terlalu banyak chain" was about. */
@@ -117,9 +130,13 @@ export function movers(
     return [...tokens].sort((a, b) => a.listedMinutesAgo - b.listedMinutesAgo).slice(0, limit);
   }
   const up = kind === "gainers";
+  // Ranked by the READING, not the raw field: a "Top Gainer" measured through
+  // the sane bound, so a near-dead pool's absurd figure never leads the list.
   return tokens
-    .filter((t) => (up ? t.chg[frame] > 0 : t.chg[frame] < 0))
-    .sort((a, b) => (up ? b.chg[frame] - a.chg[frame] : a.chg[frame] - b.chg[frame]))
+    .map((t) => ({ t, r: changeReading(t, frame) }))
+    .filter((x): x is { t: BoardToken; r: number } => x.r != null && (up ? x.r > 0 : x.r < 0))
+    .sort((a, b) => (up ? b.r - a.r : a.r - b.r))
+    .map((x) => x.t)
     .slice(0, limit);
 }
 
@@ -230,6 +247,11 @@ export function expander(total: number, base: number, max: number) {
  */
 export function changeReading(t: BoardToken, frame: PeriodKey): number | null {
   const v = t.chg[frame];
+  if (!Number.isFinite(v)) return null;
+  // An absurd figure off a near-dead pool is unreadable, not a gain — the one
+  // gate every renderer AND the sort go through, so a five-million-percent
+  // reading can neither be printed nor crowned #1. See SANE_CHANGE_PCT.
+  if (Math.abs(v) > SANE_CHANGE_PCT) return null;
   if (v === 0 && t.source !== "live") return null;
   return v;
 }
