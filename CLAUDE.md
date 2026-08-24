@@ -1399,6 +1399,40 @@ five timeframes, a crosshair readout, in the site's own type and colour.
   body — a smear), so the percentage is computed over the same candles, and it is
   labelled `over 40h`: the page header carries a 24h figure directly above it.
 
+### "Kalo token belum listing hapus chartnya"
+
+The unlisted token page — what `/token/<chain>/<ca>` shows for a contract nobody
+has listed — charted too. It was added for a good reason (every buy-bot alert
+links there, the buy bot is free and runs on ANY contract, so for most arrivals
+that IS the token page) and removed for a better one, on the owner's call.
+
+**The page is reachable by pasting any contract at all.** So every visit polled
+`/api/ohlcv` for a token that is not on the site, out of the ~15 req/min
+GeckoTerminal share the web app splits with the bot suite on this box — a listed
+customer's chart competing for the ceiling with an unlisted stranger's. Charting
+is what a listing buys.
+
+- **The price and market cap STAY**, and the difference is what they cost: they
+  ride ONE cached `/api/token-preview` request the page already makes, where a
+  chart is a fresh poll per visit. They are why a visitor off a buy alert reads
+  the page as a product rather than a 404, which is the whole reason the dead
+  end ("Only paid listings appear here" plus a Back button) was replaced.
+- ⚠️ **Two removals, two reasons, and collapsing them is how one comes back.**
+  The third-party **EMBED** was banned separately, because it sat on "Loading
+  chart settings…" for seconds and then planted a competitor's logo and wordmark
+  across a Dexvra page. That ban is not what was relaxed, and the test asserts
+  both independently — plus the CandleChart component's own no-iframe guard,
+  which moved to `chartRoute.test.ts` now that this page no longer mounts it.
+- **A deleted feature leaves a note where it was.** With no trace, the next
+  person to notice this page has no chart simply adds one back — and the quota
+  it spends is invisible from the page itself. A test pins the note.
+
+```bash
+npm test    # unlisted / chartRoute — 311 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ### It is judged by LOOKING at it, so there is a script that renders it
 
 Three defects got through the unit tests and a source scan, and all three were

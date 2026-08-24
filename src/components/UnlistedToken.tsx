@@ -13,13 +13,17 @@
  * So: the contract, the network, the live price and market cap that
  * GeckoTerminal already publishes about it, and the two things a visitor can
  * actually do — list it, or go look at what is listed.
+ *
+ * A CANDLESTICK CHART IS NOT ON THAT LIST, and the note further down says why:
+ * the price/cap come free with a request this page already makes, a chart is a
+ * per-visit poll against a shared GeckoTerminal ceiling, and this page is
+ * reachable by pasting any contract at all.
  */
 
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useApp } from "@/components/AppState";
-import { CandleChart } from "@/components/CandleChart";
 import { ChainLogo } from "@/components/ChainLogo";
 import { CHAINS } from "@/config/chains";
 import { BOT_URL } from "@/config/socials";
@@ -33,9 +37,6 @@ interface Preview {
   priceUsd: number | null;
   mcap: number | null;
   logoUrl: string | null;
-  /** May be a DexScreener PAIR address when that is the source that found the
-   *  token — /api/ohlcv treats it as a hint and re-resolves if GT disagrees. */
-  poolAddress: string | null;
 }
 
 export function UnlistedToken({ chain, address }: { chain: string; address: string }) {
@@ -141,24 +142,25 @@ export function UnlistedToken({ chain, address }: { chain: string; address: stri
           <Link className="btn-ghost2" href="/">Browse listed tokens</Link>
         </div>
 
-        {/* A CHART, BUT NEVER AN EMBED. What was banned here was a third-party
-            iframe that sat on "Loading chart settings…" for seconds and then
-            planted a competitor's logo and wordmark across the bottom of a
-            Dexvra page — and that objection is to the EMBED, not to charting a
-            token. This is our own renderer over our own /api/ohlcv: our type,
-            our colours, one JSON request, and nothing loads at all for a
-            contract no index has heard of. */}
-        {done && tok && (
-          <div className="unlisted-chart">
-            <CandleChart
-              chain={chain}
-              address={address}
-              symbol={ticker ?? "Token"}
-              poolHint={tok.poolAddress}
-              gtUrl={c?.geckoNetwork ? `https://www.geckoterminal.com/${c.geckoNetwork}/tokens/${address}` : null}
-            />
-          </div>
-        )}
+        {/* NO CHART HERE, DELIBERATELY — and the ban on the third-party
+            EMBED that used to sit here stands separately and for its own
+            reason: it sat on "Loading chart settings…" for seconds and then
+            planted a competitor's logo and wordmark across a Dexvra page.
+
+            What was removed on top of that is our OWN candlestick chart, by
+            the owner's call, and the quota argument is what makes it the right
+            one. This page is reachable by pasting ANY contract — every buy-bot
+            alert links here — so each visit charted a token nobody listed, and
+            every one of those spent from the ~15 req/min GeckoTerminal share
+            the site has to split with the bot suite on this box. A listed
+            token's chart competing with an unlisted stranger's is the ceiling
+            being spent on the pages that are not the product.
+
+            The price and market cap above stay: they come from ONE cached
+            /api/token-preview request that this page was already making, and
+            they are why a visitor off a buy alert reads this as a product
+            rather than a 404. Charting is what listing buys.
+            unlisted.test.ts fails if a chart comes back here. */}
       </div>
     </section>
   );

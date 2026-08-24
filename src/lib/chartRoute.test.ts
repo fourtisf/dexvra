@@ -132,6 +132,11 @@ test("the chart is candles, with volume, on a timeframe the reader picks", () =>
   assert.match(CHART, /ck-vol/);
   assert.match(CHART, /TIMEFRAMES\.map/);
   assert.match(CHART, /role="tab"/);
+  // The renderer is ours end to end. An embed must not creep back in through
+  // the component now that the unlisted page — which used to guard this — no
+  // longer mounts it at all.
+  assert.ok(!/<iframe/.test(CHART));
+  assert.match(CHART, /fetch\(`\/api\/ohlcv\?/);
 });
 
 test("a poll that fails never blanks a chart that is already drawn", () => {

@@ -38,31 +38,35 @@ test("it shows the live price and market cap it can get for an UNLISTED token", 
   // Fourtis shows $0.0115 / MC $11.04M on a token it has never listed, and it
   // is the reason the page reads as a product rather than a 404: the visitor
   // came from a buy alert and wants the number.
+  //
+  // These SURVIVED the chart removal below, and the difference is what it
+  // costs: they ride one cached /api/token-preview request this page already
+  // makes, where a chart is a fresh poll per visit against a shared ceiling.
+  // Charting is what a listing buys; a price is not.
   assert.match(COMPONENT, /\/api\/token-preview\?chain=/);
   assert.match(COMPONENT, /fmtPrice\(tok\.priceUsd\)/);
   assert.match(COMPONENT, /fmtCap\(tok\.mcap\)/);
 });
 
-test("the page charts the token WITHOUT embedding anybody else's chart", () => {
-  // The ban was on the EMBED, and it stands: a third-party iframe sat on
-  // "Loading chart settings…" for seconds and then planted a competitor's logo
-  // and wordmark across the bottom of a Dexvra page.
-  //
-  // A chart itself was never the problem, and "tokens must have a candlestick
-  // chart" is the ask this page answers with its own renderer over its own
-  // /api/ohlcv: our type, our colours, one JSON request, and nothing loaded at
-  // all for a contract no index has heard of.
-  assert.ok(!/<iframe/.test(COMPONENT), "no iframe at all");
+test("an unlisted token gets NO chart — and the embed ban stands separately", () => {
+  // Two removals, two different reasons, and collapsing them is how one comes
+  // back. The EMBED was banned because a third-party iframe sat on "Loading
+  // chart settings…" and then planted a competitor's logo across a Dexvra
+  // page. Our OWN chart was removed later, by the owner's call, for QUOTA:
+  // this page is reachable by pasting any contract — every buy-bot alert links
+  // here — so each visit polled /api/ohlcv for a token nobody listed, out of
+  // the ~15 req/min GeckoTerminal share the site splits with the bot suite.
+  assert.ok(!/<CandleChart/.test(COMPONENT), "no chart on a token nobody has listed");
+  assert.ok(!/CandleChart/.test(COMPONENT), "and the import went with it");
+  assert.ok(!/<iframe/.test(COMPONENT), "the embed ban is not what was relaxed");
   assert.ok(!/embed=1|light_chart|grayscale=/.test(COMPONENT), "and no embed URL left behind");
-  assert.match(COMPONENT, /<CandleChart/, "the chart is ours");
-  assert.match(COMPONENT, /done && tok &&/, "and it is not mounted for a token no source found");
-  assert.match(CSS, /\.unlisted-chart\{/, "with styles of its own, not an embed's");
+  assert.ok(!/\.unlisted-chart\{/.test(CSS), "the styles went too, not just the markup");
 });
 
-test("the chart on the unlisted page reads OUR endpoint, not a third party's", () => {
-  const CHART = read("src/components/CandleChart.tsx");
-  assert.match(CHART, /fetch\(`\/api\/ohlcv\?/);
-  assert.ok(!/<iframe/.test(CHART), "an embed must not creep back in through the component");
+test("the removal left a note, so it does not read as an oversight", () => {
+  // With no trace, the next person to notice this page has no chart simply adds
+  // one back — and the quota it spends is invisible from the page itself.
+  assert.match(COMPONENT, /NO CHART HERE, DELIBERATELY/);
 });
 
 test("a contract the feed has never seen still renders the page", () => {
@@ -90,7 +94,7 @@ test("the preview is cached — a shared alert must not hammer the upstream", ()
 
 test("the view is styled, and readable on a phone", () => {
   assert.match(CSS, /\.unlisted\{/);
-  assert.match(CSS, /@media \(max-width:640px\)\{[\s\S]*?\.unlisted-h/, "the heading and chart scale down");
+  assert.match(CSS, /@media \(max-width:640px\)\{[\s\S]*?\.unlisted-h/, "the heading scales down");
 });
 
 // ── Search · pasting a contract nobody has listed ────────────────────────────
