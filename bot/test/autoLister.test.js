@@ -136,6 +136,11 @@ test("a scan lists a qualifying token once, and never re-lists it", async () => 
 });
 
 test("a token already on the site is left alone — including a paying customer's", async () => {
+  // ⚠️ resetState() clears the PACE CLOCK, which the test above set by listing.
+  // Without it this scan returns 0 because the pace holds it, `known.has(key)`
+  // could be deleted outright and the assertion below would stay green — the
+  // rule under test answered for by a rule that is not under test.
+  await al.resetState();
   await al.set({ enabled: true });
   const realCreate = api.createListing;
   const realGet = api.getListings;
@@ -155,6 +160,10 @@ test("a token already on the site is left alone — including a paying customer'
     });
     assert.strictEqual(n, 0);
     assert.strictEqual(calls, 0, "never touch a token that is already listed");
+    // …and it says WHICH rule stopped it, so a future gate cannot answer for
+    // this one silently.
+    assert.strictEqual(al.lastScan().known, 1, "it was skipped as already-known, not held by anything else");
+    assert.strictEqual(al.lastScan().paced, null, "the pace must not be what produced this 0");
   } finally {
     api.createListing = realCreate;
     api.getListings = realGet;
@@ -215,6 +224,10 @@ test("caps hold: per run and per day", async () => {
   } finally {
     api.createListing = realCreate;
     api.getListings = realGet;
+    // `paceListings` is PERSISTED, so leaving it off here would hand it to
+    // every test written below this one — which would then be measuring the
+    // old behaviour without saying so.
+    await al.reset();
   }
 });
 

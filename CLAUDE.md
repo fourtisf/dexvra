@@ -1050,8 +1050,81 @@ the per-token trigger band exists to stop the feed looking like.
   which is worse. Stated, never inherited: the same rule the auto-trend panel
   helper had to learn.
 
+### The audit round — and the panel was contradicting itself in four places
+
+Run against the finished feature by four independent lenses, and every defect
+found is one of this file's own recurring shapes, reintroduced by the code
+written to stop it. **The engine was right in all of them; the SCREEN was not.**
+
+- ⚠️ **🔎 Test scan could not see the pace, so the panel said the opposite of
+  itself four lines apart** — `next one due in 2h30m`, and under it
+  *"2 would be listed right now"*. `dryRun` never called `pace()`, and it is the
+  button whose documented job is answering "why has nothing been listed?" — with
+  the pace shipped ON, the pace is now the commonest answer and the test scan
+  was the one surface that could not give it. It carries `report.pace` now
+  (its own field, never `report.paced`: flipping `scanLine` into the paced
+  branch would hide the market verdicts, and reporting the market is what a test
+  scan is FOR), and the verdict says *"2 qualify, but the pace holds the next
+  listing for 2h30m"* — or, with the pace open, that a real scan lists **the
+  first one**, because `perRun` is 1 and promising two is a number the engine
+  cannot produce.
+- ⚠️ **`≈ up to 0 a day`, for a feed listing every other day.** Both ends of the
+  rate are `Math.floor(1440 / gap)`, so both go to zero the moment a band passes
+  24h — which the rails allow up to a week. A printed zero is a claim nobody
+  measured, the trending board's defect one screen over; a band slower than a
+  day now says so in words, and says the daily cap cannot be what stops it.
+- ⚠️ **`fmtGap` rounds, so a wait of 20 seconds printed as `0 min`** — on the
+  one line whose whole job is saying why nothing was listed. "under a minute",
+  and never a bare `<`.
+- ⚠️ **The ready line asserted "due now" over the two gates that run BEFORE the
+  pace.** `pace()` knows only its own clock; `runOnce` checks `enabled` and the
+  daily cap first and returns without ever reaching it. So a service switched
+  OFF, and a day already full, both printed *"the next scan may list one"*. The
+  auto-raid panel had to learn to DROP its ready line rather than reword it, and
+  this is the same fix: `held — the service is 🔴 OFF`, `held — today's 12/12
+  cap is reached`.
+- ⚠️ **"nothing listed yet" is a claim about the FEED and the clock is a new
+  field**, so every install that upgrades prints it directly above its own
+  *"Listed so far: 84"*. It is a statement about the CLOCK now.
+- ⚠️ **A pinned band (min = max) IS a fixed heartbeat**, and the line beside it
+  said *"never a fixed heartbeat"* — two ➕ taps from the shipped default, denying
+  exactly what it was doing.
+- **"the N/day cap is the only bound" was false** on a zero floor: pacing forces
+  one listing per scan and scans are their own band. It names both now.
+- **A negative ask on the ceiling row was answered as a floor conflict.** Both
+  refusals were reachable and the wrong one won, which sends the operator to
+  change the wrong setting.
+
+And four in the TESTS, which matter more, because a test that passes for the
+wrong reason is how the next round starts:
+
+- ⚠️ **The pace gate was answering for the paying-customer dedupe test.** The
+  test above it lists at the same synthetic `now`, so `known.has(key)` could
+  have been deleted outright and the suite stayed green. This shape was caught
+  and fixed one test higher and not applied to the next one down. It asserts
+  `lastScan().known === 1` and `lastScan().paced === null` now — which rule
+  stopped the scan, not merely that it stopped.
+- **"the clock survives a restart" did not test persistence.** It read `pace()`
+  off the live module; a clock held in a module-level variable passes that. It
+  re-requires the module, the move the package-rotation test already makes.
+- ⚠️ **Nothing drove `start()`** — the three cadence tests all called the helper,
+  and `start()` is its only production caller, so it could go back to rolling its
+  own gap with every one of them green. That is the repo's own rule about a guard
+  measuring the stack that actually runs, and it needed the REAL clock: under the
+  suite's synthetic `now` every stored stamp reads as skewed and the pace never
+  engages at all.
+- **"a zero band cannot spin the loop" was vacuous** — `HARD.gapMin`'s floor of
+  5 min made the assertion true whatever the branch did. It is asserted against a
+  one-second wait now, which is the case that reaches it. The `Math.max(30_000)`
+  it was aimed at is unreachable belt-and-braces and says so, rather than
+  carrying a test that claims to cover it.
+
+The four guarantees were then MUTATION-TESTED rather than argued: `start()`
+rolling its own gap, the wait re-rolled every scan, the clock in memory, and the
+gate moved above discovery. Each fails between one and five tests.
+
 ```bash
-cd bot && node scripts/run-tests.js test/autoListerPace.test.js test/autoListerPacePanel.test.js   # 24 tests, no network
+cd bot && node scripts/run-tests.js test/autoListerPace.test.js test/autoListerPacePanel.test.js   # 35 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but ⚠️ **it ships ON at the operator's own

@@ -555,7 +555,15 @@ function pace(cfg = get(), state = loadState(), now = Date.now()) {
 /** Minutes as an operator reads them: "45 min", "2h", "2h30m". One owner, so
  *  the scan log, the panel and the alert cannot spell a duration three ways. */
 function fmtGap(mins) {
-  const m = Math.max(0, Math.round(Number(mins) || 0));
+  const raw = Number(mins) || 0;
+  const m = Math.max(0, Math.round(raw));
+  // ⚠️ A positive wait under 30s rounds to zero, and the one line whose job is
+  // answering "why has nothing been listed" would then state a wait of NONE on
+  // a scan that listed nothing because of it. A configured 0 still reads "0
+  // min" — that band end is a real setting. No bare "<": these strings reach a
+  // parse_mode HTML message, where one would make Telegram reject the whole
+  // thing (see the trade bot's `&lt;0.01%`).
+  if (m === 0 && raw > 0) return "under a minute";
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);
   const r = m % 60;
@@ -939,6 +947,14 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     return report;
   }
 
+  // What the PACE would do to these verdicts. On its own field, never
+  // `report.paced`: that one flips scanLine into the paced branch, and a test
+  // scan exists to report the MARKET — hiding the verdicts behind the wait
+  // would answer a question the operator did not ask. The panel reconciles the
+  // two. Without this, "2 would be listed right now" printed four lines under
+  // "next one due in 2h30m" — a screen contradicting itself, which is the
+  // defect this whole feature keeps being audited for.
+  report.pace = pace(cfg, state, now);
   report.qualified = [];
   const budget = Math.min(DRY_LOOKUPS, cfg.maxLookupsPerRun);
   for (const c of candidates) {
@@ -1151,7 +1167,11 @@ function nextScanDelayMs(cfg = get(), state = loadState(), now = Date.now(), rng
   // Just AFTER it opens, and jittered, so the listings do not land on a clock
   // of their own either — the pace is the thing that must not look generated.
   if (p.on && p.waitMs > 0) ms = Math.min(ms, p.waitMs + (30 + rng() * 240) * 1000);
-  // A floor: a band of 0–0 with the pace open would otherwise spin the loop.
+  // Belt and braces. The 30s in the jitter above already guarantees this, so
+  // the floor is unreachable today and is here only so that changing the jitter
+  // cannot turn the loop into a spin. Nothing tests it as a live branch,
+  // because claiming coverage of a branch that cannot be reached is worse than
+  // having none.
   return Math.max(30_000, ms);
 }
 

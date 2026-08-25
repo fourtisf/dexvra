@@ -1690,33 +1690,60 @@ function alPaceLine(c) {
     );
   }
   const p = autoLister.pace(c);
-  // What the band works out to over a day, and which limit actually stops it.
+  const gap = autoLister.fmtGap;
+  const pinned = c.maxListGapMin === c.minListGapMin;
+  // ⚠️ Both ends of the rate are FLOORED integers, so both go to 0 the moment a
+  // gap passes 24h — and the band then rendered "≈ up to 0 a day" for a feed
+  // that lists perfectly well, once every day and a half. Zero is a claim, not
+  // an approximation. `hi === null` is the other end of the same problem: a
+  // floor of 0 has no fastest rate to state at all.
   const lo = c.maxListGapMin > 0 ? Math.floor(1440 / c.maxListGapMin) : null;
   const hi = c.minListGapMin > 0 ? Math.floor(1440 / c.minListGapMin) : null;
+  // What ELSE bounds the feed, whatever the band says. Pacing forces one
+  // listing per scan, and scans are their own band — so `maxPerDay` is never
+  // "the only bound", and saying it was is the 🧲 label defect again.
+  const perScan = `still one per scan, and scans are ${c.minGapMin}–${c.maxGapMin} min apart`;
   let reach;
   if (hi == null) {
-    // A floor of 0 means no minimum spacing at the fast end; claiming a rate
-    // there would be inventing one.
-    reach = `no minimum spacing at the fast end — the <b>${c.maxPerDay}</b>/day cap is the only bound`;
+    reach = `no minimum spacing at the fast end — ${perScan}, under your <b>${c.maxPerDay}</b>/day cap`;
+  } else if (hi === 0) {
+    // Slower than one a day at BOTH ends: the pace is the bound, and the cap
+    // cannot be what stops it.
+    reach = `slower than <b>one a day</b>, so your <b>${c.maxPerDay}</b>/day cap never binds`;
   } else {
-    // ⚠️ Never a bare "&lt;1" here: a literal `<` makes Telegram reject the whole
-    // message (parse_mode HTML), and the panel then silently stops updating.
+    // ⚠️ Never a bare "&lt;" or "<" here: a literal `<` makes Telegram reject the
+    // whole message (parse_mode HTML), and the panel then silently stops
+    // updating — the exact failure a panel line exists to report.
     const band = lo === 0 ? `up to <b>${hi}</b>` : lo === hi ? `<b>${lo}</b>` : `<b>${lo}–${hi}</b>`;
     reach =
       hi > c.maxPerDay
         ? `≈ ${band} a day, so your <b>${c.maxPerDay}</b>/day cap is what stops it`
         : `≈ ${band} a day, inside your <b>${c.maxPerDay}</b>/day cap`;
   }
-  const next = p.skewed
-    ? `<b>due now</b> — the stored clock reads in the future and was discarded`
-    : p.waitMs > 0
-      ? `next one due <b>in ${autoLister.fmtGap(p.waitMs / 60000)}</b>`
-      : p.lastAt
-        ? `<b>due now</b> — the next scan may list one`
-        : `<b>due now</b> — nothing listed yet`;
+  // ⚠️ `pace()` knows only about its own clock, and TWO gates run before it in
+  // runOnce: the service being off, and today's cap. A green "the next scan may
+  // list one" under either of those is a ready line contradicting the screen it
+  // is on — the auto-raid panel had to learn to DROP its ready line rather than
+  // reword it, for the same reason.
+  const today = autoLister.stats().today;
+  let next;
+  if (!c.enabled) next = `<b>held</b> — the service is 🔴 OFF`;
+  else if (today >= c.maxPerDay) next = `<b>held</b> — today's <b>${today}/${c.maxPerDay}</b> cap is reached`;
+  else if (p.skewed) next = `<b>due now</b> — the stored clock reads in the future and was discarded`;
+  else if (p.waitMs > 0) next = `next one due <b>in ${gap(p.waitMs / 60000)}</b>`;
+  // ⚠️ "nothing listed yet" is a claim about the FEED and this is a claim about
+  // the CLOCK. `lastListAt` is a new field, so it is null on every install that
+  // upgrades — which on deploy day is all of them, printing "nothing listed
+  // yet" directly above their own "Listed so far: 84".
+  else next = p.lastAt ? `<b>due now</b> — the next scan may list one` : `<b>due now</b> — no listing on the clock yet`;
+  // ⚠️ A pinned band (min = max) IS a fixed heartbeat: `paceGapMs` returns the
+  // floor for every roll. Two ➕ taps from the shipped default, and the line
+  // would have gone on denying exactly what it was doing.
+  const how = pinned
+    ? `<i>(a fixed wait — widen the band to vary it)</i>`
+    : `<i>(rolled fresh after each one, never a fixed heartbeat)</i>`;
   return (
-    `⏳ <b>Listing pace: 🟢 one free listing every ${autoLister.paceRange(c)}</b> ` +
-    `<i>(rolled fresh after each one, never a fixed heartbeat)</i>\n` +
+    `⏳ <b>Listing pace: 🟢 one free listing every ${autoLister.paceRange(c)}</b> ${how}\n` +
     `   ${reach} · ${next}\n` +
     // Three services list through the same door and only this one is paced.
     // Without this line, an extra listing landing between two paced ones is a
@@ -1727,6 +1754,7 @@ function alPaceLine(c) {
       : "")
   );
 }
+
 
 /** Is "Listing & Trending" one of the enabled packages? Drives the rows that
  *  only make sense when a board slot is on the table. */
@@ -3674,7 +3702,7 @@ function build() {
     const note =
       c[key] === asked
         ? ""
-        : key === "maxListGapMin" && asked < c.minListGapMin
+        : key === "maxListGapMin" && asked >= 0 && asked < c.minListGapMin
           ? ` — a ceiling under the ${autoLister.fmtGap(c.minListGapMin)} floor pins it there`
           : ` — ${askedTxt} is outside the limits`;
     ctx.answerCbQuery(`⏳ Pace: one every ${autoLister.paceRange(c)}${note}`).catch(() => {});
@@ -3767,11 +3795,23 @@ function build() {
       .map((q) => `• <b>${q.sym}</b> on ${q.chain} — ${usd(q.mcap)} (trigger ${usd(q.trigger)})`)
       .join("\n");
     const sampled = r.sampled ? ` <i>(sample of the first ${r.priced} — a tap must not run for minutes)</i>` : "";
+    // ⚠️ The verdict has to answer to the PACE, or the panel contradicts itself
+    // four lines apart: "next one due in 2h30m" above, "2 would be listed right
+    // now" below. A test scan reports the MARKET (that is what it is for, and
+    // why dryRun still prices while the pace holds) — what it may not do is
+    // describe a scan the engine would not perform.
+    const p = r.pace || autoLister.pace();
+    const wouldList = !p.on
+      ? `<b>${r.listed}</b> would be listed right now`
+      : p.due
+        ? `<b>${r.listed}</b> qualif${r.listed === 1 ? "ies" : "y"} — a real scan would list <b>the first one</b>, then wait ${escapeHtml(autoLister.paceRange())}`
+        : `<b>${r.listed}</b> qualif${r.listed === 1 ? "ies" : "y"}, but the pace holds the next listing for ` +
+          `<b>${escapeHtml(autoLister.fmtGap(p.waitMs / 60000))}</b>`;
     const verdict = r.blocker
       ? `⛔ <b>${escapeHtml(r.blocker)}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
       : `🔎 <b>Test scan</b> — ${escapeHtml(autoLister.scanLine(r))}${sampled}\n\n` +
         (r.listed
-          ? `<b>${r.listed}</b> would be listed right now:\n${found}\n\n<i>Nothing was listed — this was a dry run.</i>`
+          ? `${wouldList}:\n${found}\n\n<i>Nothing was listed — this was a dry run.</i>`
           : `<i>Nothing qualifies in this sample. No token is past its trigger with enough liquidity and volume — the service itself is working.</i>`);
     // Telegram rejects an edit over 4096 chars, and the panel text is already
     // long — a rejected edit would lose the verdict entirely, which is the one

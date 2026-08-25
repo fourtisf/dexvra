@@ -182,3 +182,199 @@ test("no bare '<' can reach Telegram — one would make it reject the whole pane
     assert.ok(!bare.includes("<"), `a literal "<" survives for ${JSON.stringify(cfg)}: ${bare.slice(0, 300)}`);
   }
 });
+
+// ── The copy that is COMPUTED, state by state ──────────────────────────────
+//
+// Every branch below produced a sentence that was wrong before it was found by
+// an audit, and each was wrong in this repo's recurring way: a claim the reader
+// has no reason to doubt.
+
+test("a band slower than a day does not report a rate of ZERO", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  const h = harness();
+  for (const cfg of [
+    { minListGapMin: 2880, maxListGapMin: 4320 },
+    { minListGapMin: 10080, maxListGapMin: 10080 },
+    { minListGapMin: 1441, maxListGapMin: 1441 },
+  ]) {
+    await autoLister.set(cfg);
+    await h.tap("al");
+    const txt = h.lastText();
+    // "≈ up to 0 a day" for a feed that lists every other day is the printed
+    // 0.00% this repo refuses on the trending board, one screen over.
+    assert.ok(!/\b0<\/b> a day/.test(txt) && !/up to <b>0<\/b>/.test(txt), `a rate of zero: ${txt.match(/⏳.*\n.*/)}`);
+    assert.match(txt, /slower than <b>one a day<\/b>/);
+    assert.match(txt, /cap never binds/, "…and the day cap cannot be what stops a feed slower than it");
+  }
+});
+
+test("a floor of zero does not claim the daily cap is the ONLY bound", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  await autoLister.set({ minListGapMin: 0, maxListGapMin: 240, minGapMin: 25, maxGapMin: 90 });
+  const h = harness();
+  await h.tap("al");
+  const txt = h.lastText();
+  assert.ok(!/only bound/.test(txt), "pacing still forces one per scan — the cap is not the only bound");
+  assert.match(txt, /one per scan/);
+  assert.match(txt, /25–90 min apart/, "…and the scan cadence is the other half of that bound");
+});
+
+test("a PINNED band is not described as 'never a fixed heartbeat' — it is exactly one", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  const h = harness();
+  await h.tap("al");
+  assert.match(h.lastText(), /never a fixed heartbeat/, "a real band is rolled");
+
+  // Two ➕ taps from the shipped default.
+  await autoLister.set({ minListGapMin: 180, maxListGapMin: 180 });
+  await h.tap("al");
+  const txt = h.lastText();
+  assert.ok(!/never a fixed heartbeat/.test(txt), "a pinned band IS a fixed heartbeat — paceGapMs returns the floor");
+  assert.match(txt, /a fixed wait/);
+});
+
+test("the ready line is DROPPED where a gate above the pace holds the scan", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  const h = harness();
+
+  // runOnce checks `enabled` and the daily cap BEFORE it ever reaches the pace,
+  // so pace().due says nothing about either. "the next scan may list one" under
+  // 🔴 OFF is a ready line contradicting the screen it is on — the auto-raid
+  // panel had to learn to drop its ready line rather than reword it.
+  await autoLister.set({ enabled: false });
+  await h.tap("al");
+  assert.match(h.lastText(), /held<\/b> — the service is 🔴 OFF/);
+  assert.ok(!/the next scan may list one/.test(h.lastText()));
+
+  await autoLister.set({ enabled: true, maxPerDay: 1 });
+  await autoLister.rememberListed([]); // no-op; the count comes from state.day
+  const fss2 = require("node:fs");
+  const path2 = require("node:path");
+  const f = path2.join(process.env.BOT_DATA_DIR, "autoListerState.json");
+  const st = JSON.parse(fss2.readFileSync(f, "utf8"));
+  st.day = { key: new Date().toISOString().slice(0, 10), n: 1 };
+  fss2.writeFileSync(f, JSON.stringify(st));
+  await h.tap("al");
+  assert.match(h.lastText(), /held<\/b> — today's <b>1\/1<\/b> cap is reached/);
+});
+
+test("'nothing listed yet' is a claim about the CLOCK, and every install upgrades without one", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  // Enabled, or the 🔴 OFF branch above wins and this branch is never rendered.
+  await autoLister.set({ enabled: true });
+  // The state an existing server has on deploy day: a history of listings, and
+  // no pace clock — the field is new. Saying "nothing listed yet" over its own
+  // "Listed so far: 2" is a panel disagreeing with itself.
+  const fss2 = require("node:fs");
+  const path2 = require("node:path");
+  const f = path2.join(process.env.BOT_DATA_DIR, "autoListerState.json");
+  fss2.writeFileSync(
+    f,
+    JSON.stringify({
+      listed: { "solana:a": { at: 1, sym: "AAA" }, "solana:b": { at: 2, sym: "BBB" } },
+      everListed: { "solana:a": 1, "solana:b": 2 },
+    }),
+  );
+  const h = harness();
+  await h.tap("al");
+  const txt = h.lastText();
+  assert.match(txt, /Listed so far: <b>2<\/b>/);
+  assert.ok(!/nothing listed yet/.test(txt), "it contradicted its own 'Listed so far' two lines down");
+  assert.match(txt, /no listing on the clock yet/);
+});
+
+test("🔎 Test scan does not contradict the pace line four lines above it", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  await autoLister.set({ enabled: true, minMcap: 1e6, maxMcap: 1.5e6, minListGapMin: 150, maxListGapMin: 150 });
+
+  const ds = require("../src/discovery");
+  const api = require("../src/api/dexvra");
+  const real = { d: ds.fetchDiscovery, i: ds.fetchTokenInfo, g: api.getListings };
+  t.after(() => {
+    ds.fetchDiscovery = real.d;
+    ds.fetchTokenInfo = real.i;
+    api.getListings = real.g;
+  });
+  ds.fetchDiscovery = async () => [
+    { chain: "solana", address: "So1a" },
+    { chain: "solana", address: "So1b" },
+  ];
+  ds.fetchTokenInfo = async () => ({
+    name: "Tok",
+    symbol: "TOK",
+    mcap: 1.5e6,
+    liq: 120_000,
+    vol24: 300_000,
+    priceUsd: 1,
+    pairCreatedAt: Date.now() - 48 * 3600_000,
+  });
+  api.getListings = async () => [];
+
+  // Put a listing on the clock so the pace is mid-wait.
+  const fss2 = require("node:fs");
+  const path2 = require("node:path");
+  const f = path2.join(process.env.BOT_DATA_DIR, "autoListerState.json");
+  const st = JSON.parse(fss2.readFileSync(f, "utf8"));
+  st.lastListAt = Date.now() - 30 * 60_000; // 30 min into a 150 min wait
+  st.paceRoll = 0;
+  fss2.writeFileSync(f, JSON.stringify(st));
+
+  const h = harness();
+  await h.tap("alscan");
+  const txt = h.lastText();
+  assert.match(txt, /next one due <b>in 2h<\/b>/, "the pace line is where it always was");
+  // …and the verdict beneath it may not say the opposite.
+  assert.ok(!/would be listed right now/.test(txt), `the verdict contradicts the pace line: ${txt.slice(-400)}`);
+  assert.match(txt, /but the pace holds the next listing for <b>2h<\/b>/);
+  assert.match(txt, /TOK/, "it still reports the MARKET — that is what a test scan is for");
+});
+
+test("…and with the pace open the verdict says only the FIRST of them goes", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.resetState();
+  await autoLister.set({ enabled: true, minMcap: 1e6, maxMcap: 1.5e6, maxPerRun: 3 });
+
+  const ds = require("../src/discovery");
+  const api = require("../src/api/dexvra");
+  const real = { d: ds.fetchDiscovery, i: ds.fetchTokenInfo, g: api.getListings };
+  t.after(() => {
+    ds.fetchDiscovery = real.d;
+    ds.fetchTokenInfo = real.i;
+    api.getListings = real.g;
+  });
+  ds.fetchDiscovery = async () => [
+    { chain: "solana", address: "So1c" },
+    { chain: "solana", address: "So1d" },
+  ];
+  ds.fetchTokenInfo = async () => ({
+    name: "Tok",
+    symbol: "TOK",
+    mcap: 1.5e6,
+    liq: 120_000,
+    vol24: 300_000,
+    priceUsd: 1,
+    pairCreatedAt: Date.now() - 48 * 3600_000,
+  });
+  api.getListings = async () => [];
+
+  const h = harness();
+  await h.tap("alscan");
+  const txt = h.lastText();
+  // maxPerRun is 3 and two qualify, but a paced scan lists ONE — a verdict
+  // promising two is a number the engine cannot produce.
+  assert.ok(!/would be listed right now/.test(txt));
+  assert.match(txt, /a real scan would list <b>the first one<\/b>/);
+});

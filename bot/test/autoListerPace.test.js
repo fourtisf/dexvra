@@ -201,9 +201,15 @@ test("the clock survives a restart — a redeploy must not publish back to back"
   const h = harness(["So1", "So2"]);
   try {
     await al.runOnce({ now, deps: h.deps });
-    // pace() re-reads the state file, which is what a fresh process does.
-    const p = al.pace(al.get(), undefined, now + 30 * MIN);
-    assert.strictEqual(p.due, false);
+    // A restart is a fresh REQUIRE — the same move the package-rotation test
+    // makes, and for the same reason. Reading pace() off the live module would
+    // pass on a clock held in a module-level variable, which is precisely the
+    // implementation this rule exists to forbid: this service is redeployed far
+    // more often than it is paced.
+    delete require.cache[require.resolve("../src/services/autoLister")];
+    const rebooted = require("../src/services/autoLister");
+    const p = rebooted.pace(rebooted.get(), undefined, now + 30 * MIN);
+    assert.strictEqual(p.due, false, "the clock went back to zero across a restart");
     assert.strictEqual(p.waitMs, 90 * MIN);
     assert.strictEqual(p.lastAt, now);
   } finally {
@@ -295,8 +301,14 @@ test("the TEST SCAN is not paced — it is the operator asking what the market l
     const before = h.counts().priced;
     const r = await al.dryRun({ now: now + MIN, deps: h.deps });
     assert.ok(h.counts().priced > before, "a read-only scan must still price");
-    assert.ok(!r.paced, "and must never report itself as paced");
-    assert.ok(r.listed >= 1, "it says what a real scan WOULD have listed");
+    assert.ok(!r.paced, "and must never report itself as paced — it reports the MARKET");
+    assert.ok(r.listed >= 1, "it says what qualifies right now");
+    // …but it KNOWS about the pace, or the panel prints "2 would be listed
+    // right now" four lines under "next one due in 2h30m" — one screen
+    // contradicting itself, which is what this feature keeps being audited for.
+    assert.ok(r.pace, "the dry run must carry the pace as context");
+    assert.strictEqual(r.pace.due, false);
+    assert.ok(r.pace.waitMs > 0);
   } finally {
     h.restore();
   }
@@ -423,12 +435,84 @@ test("the shortening can only ever make a scan SOONER — the watchdog keeps its
   }
 });
 
-test("a zero band cannot spin the loop", async () => {
-  await fresh({ minGapMin: 5, maxGapMin: 5, minListGapMin: 0, maxListGapMin: 0 });
+test("a wait with seconds left still schedules a real sleep, never a spin", async () => {
+  // The shortened delay is waitMs plus the jitter, so the smallest it can be is
+  // the jitter's own floor. Asserted against a wait of ONE SECOND — the case
+  // that reaches it — rather than a zero band, where the base 5-min scan gap
+  // makes the assertion true no matter what the branch does.
+  await fresh({ minGapMin: 5, maxGapMin: 5, minListGapMin: 60, maxListGapMin: 60 });
   const h = harness(["So1", "So2"]);
   try {
     await al.runOnce({ now, deps: h.deps });
-    assert.ok(al.nextScanDelayMs(al.get(), undefined, now, () => 0) >= 30_000);
+    const t = now + 60 * MIN - 1000; // one second of wait left
+    for (const r of [0, 0.5, 1]) {
+      const ms = al.nextScanDelayMs(al.get(), undefined, t, () => r);
+      assert.ok(ms >= 30_000, `a one-second wait scheduled a ${ms}ms sleep`);
+      assert.ok(ms >= 1000, "…and never before the boundary");
+    }
+  } finally {
+    h.restore();
+  }
+});
+
+test("START ITSELF honours the pace — not just the helper it calls", async () => {
+  // The three tests above call nextScanDelayMs directly, and `start()` is its
+  // only production caller. A start() that went back to rolling its own gap
+  // would leave all three green — the repo's own rule that a guard is honest
+  // only while it measures the stack that actually runs.
+  //
+  // ⚠️ On the REAL clock, deliberately: `start()` and `runOnce`'s default both
+  // read Date.now(), and this suite's synthetic `now` is years ahead — under it
+  // every stored stamp reads as skewed and the pace never engages at all, so
+  // the test would pass over a start() that ignored it.
+  const t0 = Date.now();
+  await fresh({ minGapMin: 60, maxGapMin: 60, minListGapMin: 10, maxListGapMin: 10 });
+  const h = harness(["So1", "So2"], { info: () => ({ ...healthy(), pairCreatedAt: t0 - 48 * HOUR }) });
+  const realSetTimeout = global.setTimeout;
+  try {
+    assert.strictEqual(await al.runOnce({ now: t0, deps: h.deps }), 1, "the clock has to start");
+    const delays = [];
+    let boot = null;
+    global.setTimeout = (fn, ms) => {
+      delays.push(ms);
+      if (!boot) boot = fn;
+      return { unref() {} };
+    };
+    const svc = al.start(null, { rng: () => 0.5 });
+    await boot(); // the first scan runs, finds the pace closed, and reschedules
+    svc.stop();
+    const scheduled = delays[delays.length - 1]; // schedule() is the last thing run() does
+    // The cadence alone would be 60 min. The wait has ~10 left, so the loop must
+    // wake for it instead — the whole point of the shortening.
+    assert.ok(scheduled < 20 * MIN, `start() ignored the pace and slept ${(scheduled / MIN).toFixed(1)} min`);
+    assert.ok(scheduled > 5 * MIN, `start() woke before the boundary: ${(scheduled / MIN).toFixed(1)} min`);
+  } finally {
+    global.setTimeout = realSetTimeout;
+    h.restore();
+  }
+});
+
+test("a positive wait under half a minute is not reported as NONE", () => {
+  // fmtGap rounds, and the paced scan line's whole job is answering "why has
+  // nothing been listed" — stating a wait of zero on the scan the wait held
+  // back is the printed-0.00% shape one surface over.
+  assert.strictEqual(al.fmtGap(20 / 60), "under a minute");
+  assert.strictEqual(al.fmtGap(29 / 60), "under a minute");
+  assert.strictEqual(al.fmtGap(0), "0 min", "a configured zero is a real setting and still reads as one");
+  // …and it must never be spelled with a bare "<": these strings reach a
+  // parse_mode HTML message, where one makes Telegram reject the whole thing.
+  assert.ok(!al.fmtGap(20 / 60).includes("<"));
+});
+
+test("the scan line never says the wait is over on a scan the wait stopped", async () => {
+  await fresh({ minListGapMin: 120, maxListGapMin: 120 });
+  const h = harness(["So1", "So2"]);
+  try {
+    await al.runOnce({ now, deps: h.deps });
+    await al.runOnce({ now: now + 120 * MIN - 20_000, deps: h.deps }); // 20s left
+    const line = al.scanLine(al.lastScan());
+    assert.match(line, /due in under a minute/);
+    assert.ok(!/due in 0 min/.test(line), `it reported a wait of none: ${line}`);
   } finally {
     h.restore();
   }
