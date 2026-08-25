@@ -1627,7 +1627,12 @@ function alText() {
     `🚫 Ignore above: <b>${usd(c.maxMcapHard)}</b>\n` +
     `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
     `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +
-    `🔢 Max <b>${c.maxPerDay}</b>/day, <b>${c.maxPerRun}</b>/scan · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
+    alPaceLine(c) +
+    // `x/scan` is dropped while pacing is on rather than shown greyed: a paced
+    // scan lists at most one, so printing 3 would be a row the engine ignores.
+    `🔢 Max <b>${c.maxPerDay}</b>/day` +
+    (c.paceListings ? `` : `, <b>${c.maxPerRun}</b>/scan`) +
+    ` · scans every <b>${c.minGapMin}–${c.maxGapMin} min</b> (random)\n` +
     `🌐 Chains: <b>${alChainScope(c)}</b>` +
     (c.chains.length
       ? ` <i>(the whole scan budget goes to ${c.chains.length === 1 ? "this chain" : "these chains"})</i>`
@@ -1669,6 +1674,60 @@ function alText() {
     `gets there on tier #1–#3.`
   );
 }
+/**
+ * The listing pace, with the arithmetic it implies done out loud.
+ *
+ * "one every 2h–3h" and "max 12/day" are two numbers governing one feed, and
+ * which of them binds is not obvious from either. The trending panel's
+ * "🧲 max 3/chain" was read as a cap on the board when it was a speed, and the
+ * very first question it drew is the one this line answers before it is asked.
+ */
+function alPaceLine(c) {
+  if (!c.paceListings) {
+    return (
+      `⏳ <b>Listing pace: 🔴 OFF</b> — up to <b>${c.maxPerRun}</b> listings per scan, back to ` +
+      `back <i>(only the ${c.maxPerDay}/day cap spaces them out)</i>\n`
+    );
+  }
+  const p = autoLister.pace(c);
+  // What the band works out to over a day, and which limit actually stops it.
+  const lo = c.maxListGapMin > 0 ? Math.floor(1440 / c.maxListGapMin) : null;
+  const hi = c.minListGapMin > 0 ? Math.floor(1440 / c.minListGapMin) : null;
+  let reach;
+  if (hi == null) {
+    // A floor of 0 means no minimum spacing at the fast end; claiming a rate
+    // there would be inventing one.
+    reach = `no minimum spacing at the fast end — the <b>${c.maxPerDay}</b>/day cap is the only bound`;
+  } else {
+    // ⚠️ Never a bare "&lt;1" here: a literal `<` makes Telegram reject the whole
+    // message (parse_mode HTML), and the panel then silently stops updating.
+    const band = lo === 0 ? `up to <b>${hi}</b>` : lo === hi ? `<b>${lo}</b>` : `<b>${lo}–${hi}</b>`;
+    reach =
+      hi > c.maxPerDay
+        ? `≈ ${band} a day, so your <b>${c.maxPerDay}</b>/day cap is what stops it`
+        : `≈ ${band} a day, inside your <b>${c.maxPerDay}</b>/day cap`;
+  }
+  const next = p.skewed
+    ? `<b>due now</b> — the stored clock reads in the future and was discarded`
+    : p.waitMs > 0
+      ? `next one due <b>in ${autoLister.fmtGap(p.waitMs / 60000)}</b>`
+      : p.lastAt
+        ? `<b>due now</b> — the next scan may list one`
+        : `<b>due now</b> — nothing listed yet`;
+  return (
+    `⏳ <b>Listing pace: 🟢 one free listing every ${autoLister.paceRange(c)}</b> ` +
+    `<i>(rolled fresh after each one, never a fixed heartbeat)</i>\n` +
+    `   ${reach} · ${next}\n` +
+    // Three services list through the same door and only this one is paced.
+    // Without this line, an extra listing landing between two paced ones is a
+    // bug report — and it is the market filler doing exactly its job.
+    (autoTrend.get().fillFromMarket
+      ? `   <i>Covers this scan only — 🧲 Fill from market (Auto Trending) still lists when a ` +
+        `chain's board is short.</i>\n`
+      : "")
+  );
+}
+
 /** Is "Listing & Trending" one of the enabled packages? Drives the rows that
  *  only make sense when a board slot is on the table. */
 const alTrendOn = (c) => c.pkgs.includes("trending");
@@ -1778,6 +1837,23 @@ function alKb() {
     [cb(`💧 Liq ${usd(c.minLiq)}`, "alnop"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
     [cb(`📊 Vol ${usd(c.minVol24)}`, "alnop"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
     [cb(`🔢 ${c.maxPerDay}/day`, "alnop"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
+    [cb(`⏳ Pace: ${c.paceListings ? `1 every ${autoLister.paceRange(c)}` : "OFF"}`, "alpace")],
+    // Hidden while the pace is off, like the board-slot row above: a band that
+    // governs nothing is a setting the operator can change and not see act.
+    ...(c.paceListings
+      ? [
+          [
+            cb(`⏳ Every ${autoLister.fmtGap(c.minListGapMin)}`, "alnop"),
+            cb("➖", "alpmin:-30"),
+            cb("➕", "alpmin:30"),
+          ],
+          [
+            cb(`   to ${autoLister.fmtGap(c.maxListGapMin)}`, "alnop"),
+            cb("➖", "alpmax:-30"),
+            cb("➕", "alpmax:30"),
+          ],
+        ]
+      : []),
     // MULTI-select, not a radio: any combination can be on, and two or more
     // means they take turns rather than one winning. Tapping the only enabled
     // one is refused by togglePkg — an empty list is not a setting.
@@ -3560,6 +3636,52 @@ function build() {
     ctx.answerCbQuery(`Max/day: ${c.maxPerDay}`).catch(() => {});
     await edit(ctx, alText(), alKb());
   });
+  bot.action("alpace", async (ctx) => {
+    if (!guard(ctx)) return;
+    const on = !autoLister.get().paceListings;
+    const c = await autoLister.set({ paceListings: on });
+    log.info(
+      `[adminbot] auto-listing pace ${on ? `ON (1 every ${autoLister.paceRange(c)})` : "OFF"} ` +
+        `by @${ctx.from.username || ctx.from.id}`,
+    );
+    ctx
+      .answerCbQuery(
+        on
+          ? `⏳ One free listing every ${autoLister.paceRange(c)}`
+          : `⚠️ Pace OFF — up to ${c.maxPerRun} listings can go out in one scan, back to back. ` +
+            `Only the ${c.maxPerDay}/day cap spaces them after that.`,
+        // A `show_alert` on the way OFF, the 🧲 rule: it changes what the public
+        // feed does, and a toast is furniture people tap past.
+        { show_alert: !on },
+      )
+      .catch(() => {});
+    await edit(ctx, alText(), alKb());
+  });
+  const alGapStep = (key) => async (ctx) => {
+    if (!guard(ctx)) return;
+    const asked = autoLister.get()[key] + Number(ctx.match[1]);
+    const c = await autoLister.set({ [key]: asked });
+    // The whole BAND is reported, never just the end that was tapped: lowering
+    // the ceiling under the floor moves the floor's partner too (an inverted
+    // range resolves to the floor), and an answer naming one number while the
+    // other moved is the ✅-carrying-a-number-nobody-asked-for defect.
+    //
+    // A refused value names WHICH refusal it was. "1h is outside the limits" is
+    // false about a 1h ceiling under a 2h30m floor — 1h is well inside the
+    // rails — and a diagnosis pointing at the wrong cause sends the operator to
+    // change the wrong setting.
+    const askedTxt = asked < 0 ? "a negative wait" : autoLister.fmtGap(asked);
+    const note =
+      c[key] === asked
+        ? ""
+        : key === "maxListGapMin" && asked < c.minListGapMin
+          ? ` — a ceiling under the ${autoLister.fmtGap(c.minListGapMin)} floor pins it there`
+          : ` — ${askedTxt} is outside the limits`;
+    ctx.answerCbQuery(`⏳ Pace: one every ${autoLister.paceRange(c)}${note}`).catch(() => {});
+    await edit(ctx, alText(), alKb());
+  };
+  bot.action(/^alpmin:(-?\d+)$/, alGapStep("minListGapMin"));
+  bot.action(/^alpmax:(-?\d+)$/, alGapStep("maxListGapMin"));
   bot.action("alch", async (ctx) => {
     if (!guard(ctx)) return;
     ctx.answerCbQuery().catch(() => {});

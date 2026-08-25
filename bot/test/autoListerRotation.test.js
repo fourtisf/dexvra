@@ -45,7 +45,11 @@ async function listMany(n, t, tag) {
   };
   api.getListings = async () => [];
   t.after(() => Object.assign(api, real));
-  await al.set({ maxPerRun: n, maxPerDay: n, minMcap: 1 * M, maxMcap: 1.5 * M, postChannel: false });
+  // The rotation is about which package the NEXT listing gets, and this helper
+  // reads it off n listings in one scan. The listing pace caps a scan at one, so
+  // it is turned off here rather than inherited — the two interact, and that
+  // interaction is pinned in autoListerPace.test.js instead of hidden here.
+  await al.set({ paceListings: false, maxPerRun: n, maxPerDay: n, minMcap: 1 * M, maxMcap: 1.5 * M, postChannel: false });
   await al.runOnce({
     now,
     deps: {
@@ -96,7 +100,7 @@ test("the turn survives a restart — it is on disk, not in memory", async (t) =
 test("a rejected token does not burn a turn", async (t) => {
   await al.reset();
   await al.resetState();
-  await al.set({ enabled: true, pkgs: ["xpress", "trending"], maxPerRun: 2, maxPerDay: 2, minMcap: 1 * M, maxMcap: 1.5 * M, postChannel: false });
+  await al.set({ enabled: true, paceListings: false, pkgs: ["xpress", "trending"], maxPerRun: 2, maxPerDay: 2, minMcap: 1 * M, maxMcap: 1.5 * M, postChannel: false });
 
   const created = [];
   const real = { createListing: api.createListing, getListings: api.getListings };

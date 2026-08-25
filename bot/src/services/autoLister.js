@@ -82,6 +82,29 @@ const DEFAULTS = {
   maxLookupsPerRun: 40, // politeness toward the DexScreener API
   minGapMin: 25, // random wait between scans (never a fixed heartbeat)
   maxGapMin: 90,
+  // ── How often a LISTING may go out, as opposed to how often we LOOK ───────
+  //
+  // Two different questions that had one answer. The gap above is the SCAN
+  // cadence, and a scan that finds nothing lists nothing — so it was never a
+  // statement about the feed. With maxPerRun 3 behind it the site could take
+  // three listings inside one minute and three more half an hour later, which
+  // is the firehose maxPerDay was invented to bound and does not actually
+  // bound: twelve a day arriving in four bursts is still four bursts.
+  //
+  // The operator's ask (2026-08-25) is the other question — "berapa jam sekali
+  // baru free listing di range misal range 2 sampai 3 jam". So this is a FLOOR
+  // on the spacing between one free listing and the next, rolled fresh inside
+  // the band each time: a fixed 2h would put every listing on the same minute
+  // of the hour, which is the other half of looking machine-run (the reason the
+  // scan gap is a band too).
+  //
+  // While it is on a scan lists AT MOST ONE token. `maxPerRun` describes how
+  // big a burst may be, and the whole point of a pace is that there are none —
+  // so the panel stops printing a per-scan number that can no longer happen,
+  // rather than leaving a row the engine ignores.
+  paceListings: true,
+  minListGapMin: 120, // 2h — the operator's own example
+  maxListGapMin: 180, // 3h
   // Which packages an auto listing can get. More than one → they take turns,
   // one per listing, in this order. Never empty (get() falls back to ["free"]).
   pkgs: ["free"],
@@ -139,6 +162,10 @@ const HARD = {
   perRun: [1, 25],
   lookups: [5, 200],
   gapMin: [5, 1440],
+  // 0 is deliberately legal: "no floor" is a thing an operator may mean, and it
+  // is what the 🔴 OFF toggle does anyway — an expressible zero beats a hidden
+  // one. A week is the ceiling; past that the feature is "off" spelled long.
+  listGapMin: [0, 10_080],
   trendHours: [1, 48],
 };
 
@@ -151,7 +178,8 @@ function clampInt(v, [lo, hi], fb) {
 function get() {
   const c = loadJSONSync(FILE, {}) || {};
   const g = { ...DEFAULTS };
-  for (const k of ["enabled", "postChannel", "announceChannel"]) if (typeof c[k] === "boolean") g[k] = c[k];
+  for (const k of ["enabled", "postChannel", "announceChannel", "paceListings"])
+    if (typeof c[k] === "boolean") g[k] = c[k];
   g.minMcap = clampInt(c.minMcap, HARD.mcap, DEFAULTS.minMcap);
   g.maxMcap = clampInt(c.maxMcap, HARD.mcap, DEFAULTS.maxMcap);
   if (g.maxMcap < g.minMcap) g.maxMcap = g.minMcap; // keep the band valid
@@ -166,6 +194,13 @@ function get() {
   g.minGapMin = clampInt(c.minGapMin, HARD.gapMin, DEFAULTS.minGapMin);
   g.maxGapMin = clampInt(c.maxGapMin, HARD.gapMin, DEFAULTS.maxGapMin);
   if (g.maxGapMin < g.minGapMin) g.maxGapMin = g.minGapMin;
+  g.minListGapMin = clampInt(c.minListGapMin, HARD.listGapMin, DEFAULTS.minListGapMin);
+  g.maxListGapMin = clampInt(c.maxListGapMin, HARD.listGapMin, DEFAULTS.maxListGapMin);
+  // An inverted band resolves to the FLOOR, never the ceiling — the same call
+  // the per-chain trending target makes, for the same reason: the floor is the
+  // number the operator set, and widening the wait to one they never typed is a
+  // feed that goes quiet for hours with nothing anywhere saying why.
+  if (g.maxListGapMin < g.minListGapMin) g.maxListGapMin = g.minListGapMin;
   // `pkgs` is the current shape; `pkg` (a single key) is what every install
   // before the rotation existed has on disk. Read the old one when the new one
   // is absent, so nobody's saved choice silently reverts to "free" on deploy.
@@ -221,7 +256,17 @@ async function reset() {
  *  ("🧹 Clear history"), used after wiping the site's listings so it can
  *  repopulate. Nothing else may clear the ledger. */
 async function resetState() {
-  await saveJSON(STATE_FILE, { listed: {}, day: null, everListed: {}, pkgTurn: 0, cool: {}, scan: null, blocked: 0 });
+  await saveJSON(STATE_FILE, {
+    listed: {},
+    day: null,
+    everListed: {},
+    pkgTurn: 0,
+    cool: {},
+    scan: null,
+    blocked: 0,
+    lastListAt: null,
+    paceRoll: 0,
+  });
 }
 
 // ── State: what we already listed, and today's count ────────────────────────
@@ -254,6 +299,21 @@ const loadState = () => {
     // Both exist so "nothing was listed" is answerable — see scanReport().
     scan: s.scan && typeof s.scan === "object" ? s.scan : null,
     blocked: Number(s.blocked) || 0,
+    // ── The pacing clock ────────────────────────────────────────────────────
+    // When the last free listing went out, and the roll that decides how long
+    // the wait after it is. PERSISTED, because a restart that reset the clock
+    // would let a redeploy publish back-to-back listings — and this service is
+    // redeployed far more often than it is paced.
+    lastListAt: Number(s.lastListAt) > 0 ? Number(s.lastListAt) : null,
+    // The roll is a FRACTION of the band, not an absolute "next at" timestamp,
+    // so that editing the band in the panel applies to the wait already in
+    // progress. A stored timestamp would go on honouring a range the operator
+    // has since changed, and from the panel that is indistinguishable from a
+    // clock that has stopped.
+    // ⚠️ `Number(undefined)` is NaN and `Number(null)` is 0 — and 0 is a legal
+    // roll meaning "the shortest wait in the band", which is the safe way to
+    // fall: an unreadable roll must never freeze the feed for the maximum.
+    paceRoll: rollOf(s.paceRoll),
   };
 };
 
@@ -280,6 +340,7 @@ const blank = (now) => ({
   offChain: 0, // outside the operator's chain scope — costs no lookup
   reasons: {}, // rejection text (numbers stripped) → count
   capped: null, // "9/9" when the operator's own daily cap ended the scan
+  paced: null, // {waitMs, nextAt, gapMs} when the listing pace held this scan back
   blocker: null,
 });
 
@@ -417,6 +478,97 @@ function stats(now = Date.now()) {
   };
 }
 
+// ── The listing pace ────────────────────────────────────────────────────────
+//
+// One free listing per rolled wait, and the wait is rolled ONCE — at the moment
+// a listing goes out — never re-rolled by the scans that follow it.
+//
+// ⚠️ A fresh roll every scan converges on the FLOOR and the randomness becomes
+// decorative: with a scan every 25–90 min, the first roll that happens to land
+// under the elapsed time opens the gate, so the effective spacing is the
+// minimum of however many rolls fit in the window. This repo has already paid
+// for that shape once, in the per-chain trending target, where re-rolling every
+// cycle ratcheted the other way and pinned every chain to its maximum. Rolling
+// at the listing is the same fix as hashing the trigger off the address: the
+// number has to be genuinely reached, and it does not move while you wait.
+//
+// THE PACE BELONGS TO THE SCAN, and only to the scan. Two other services list
+// through `createFromInfo` and neither is touched:
+//   • trendFill.fillChain — lists to fill a trending board a chain cannot fill
+//     from its own listings. Pacing it would put the "board stays short" saga
+//     straight back; its own rate limit is `fillMaxPerCycle`.
+//   • chainSeed — an operator-triggered bulk inventory fill. Not a feed event.
+// The panel says so, because three listings appearing at once while the pace
+// reads 2h–3h is otherwise a bug report.
+
+/** A stored roll, forced into [0,1). See loadState() for why 0 is the fallback. */
+function rollOf(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n < 1 ? n : 0;
+}
+
+/** How long the wait after a listing is, for a given roll. Pure. */
+function paceGapMs(cfg, roll) {
+  const lo = Number(cfg.minListGapMin) || 0;
+  const hi = Number(cfg.maxListGapMin) || 0;
+  return (lo + rollOf(roll) * Math.max(0, hi - lo)) * 60_000;
+}
+
+/**
+ * The pacing clock as a whole answer: `due` is what gates a listing, and the
+ * rest is what the panel prints.
+ *
+ * Pure, and the ONE owner — the scan, the panel, the scan line and the tests
+ * all read it. A screen that computes its own version of a rule eventually
+ * disagrees with the rule, which is how the buy card ended up with two ideas of
+ * "whale" and showed only one of them.
+ */
+function pace(cfg = get(), state = loadState(), now = Date.now()) {
+  const on = !!cfg.paceListings;
+  const gapMs = paceGapMs(cfg, state.paceRoll);
+  const lastAt = state.lastListAt || null;
+  const nextAt = lastAt == null ? null : lastAt + gapMs;
+  // ⚠️ A stamp in the FUTURE is clock skew or a restored backup, not a listing
+  // that has not happened yet — and there is no way to learn how long ago the
+  // real one was. So the clock is treated as SPENT and the feed goes on. The
+  // first cut clamped `lastAt` to `now` instead, which reads as the cautious
+  // choice and is the exact opposite: `nextAt` then recedes with every tick and
+  // the service never lists again, silently, with a panel still reading 🟢 ON.
+  // The next listing overwrites the stamp, so it heals itself.
+  const skewed = lastAt != null && lastAt > now;
+  // Never listed yet → due now. A fresh install, and every install on the day
+  // this ships, must not sit out a wait for a listing that never happened.
+  const waitMs = !on || nextAt == null || skewed ? 0 : Math.max(0, nextAt - now);
+  return {
+    on,
+    lastAt,
+    nextAt,
+    gapMs,
+    waitMs,
+    skewed,
+    due: waitMs <= 0,
+    minMin: Number(cfg.minListGapMin) || 0,
+    maxMin: Number(cfg.maxListGapMin) || 0,
+  };
+}
+
+/** Minutes as an operator reads them: "45 min", "2h", "2h30m". One owner, so
+ *  the scan log, the panel and the alert cannot spell a duration three ways. */
+function fmtGap(mins) {
+  const m = Math.max(0, Math.round(Number(mins) || 0));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h}h${r}m` : `${h}h`;
+}
+
+/** The configured band in words — "2h–3h", or one number when it is pinned. */
+function paceRange(cfg = get()) {
+  const lo = fmtGap(cfg.minListGapMin);
+  const hi = fmtGap(cfg.maxListGapMin);
+  return lo === hi ? lo : `${lo}–${hi}`;
+}
+
 const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
 
 /** May the scan list on this chain under the current scope? Empty = all. */
@@ -535,7 +687,7 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
  * not take down the service loop. `deps` is injectable so tests don't touch the
  * network.
  */
-async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
+async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = {}) {
   const cfg = get();
   if (!cfg.enabled) return 0; // not a fault, and not worth a report
   const discover = deps.fetchDiscovery || ds.fetchDiscovery;
@@ -600,11 +752,33 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     return 0;
   }
 
+  // ── The pace gate ─────────────────────────────────────────────────────────
+  // Deliberately AFTER discovery and the ledger fold and BEFORE the first price
+  // lookup. Those two calls are the only things that prove this service can
+  // still see the market and reach the site — the blocked-scan watchdog is
+  // built on them — so gating above them would cut its resolution from every
+  // 25–90 min to once per rolled wait, and BLOCKED_ALERTS_AT would stop meaning
+  // 1.5–4.5 hours. Everything past this point costs a DexScreener lookup per
+  // candidate, and a scan that may not list has no use for one.
+  const p = pace(cfg, state, now);
+  if (!p.due) {
+    report.paced = { waitMs: p.waitMs, nextAt: p.nextAt, gapMs: p.gapMs };
+    await fileReport(report, state);
+    // At INFO, not debug: with a 2–3h pace this is what most scans do, and
+    // "why has nothing been listed" has to be answerable from pm2 alone. A
+    // paced scan that logged nothing would look exactly like a dead loop.
+    log.info(`[autolist] scan: ${scanLine(report)}`);
+    return 0;
+  }
+
   state.cool = pruneCool(state.cool, now);
+  // While pacing is on a scan lists AT MOST ONE token: `maxPerRun` says how big
+  // a burst may be, and a paced feed has no bursts.
+  const perRun = p.on ? 1 : cfg.maxPerRun;
   let listedNow = 0;
   let lookups = 0;
   for (const c of candidates) {
-    if (listedNow >= cfg.maxPerRun || today >= cfg.maxPerDay) break;
+    if (listedNow >= perRun || today >= cfg.maxPerDay) break;
     if (lookups >= cfg.maxLookupsPerRun) break;
     const key = keyOf(c.chain, c.address);
     // Three separate reasons to leave it alone: this service already picked it,
@@ -668,12 +842,18 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
     today += 1;
     listedNow += 1;
     state.day = { key: dayKey(now), n: today };
+    // The clock starts at the listing, and the wait that follows it is rolled
+    // HERE — once, for this listing — never by the scans that come after. See
+    // pace(): re-rolling on each scan collapses the spacing to the floor.
+    state.lastListAt = now;
+    state.paceRoll = rng();
     await saveJSON(STATE_FILE, state).catch(() => {});
     log.info(
       `[autolist] listed ${input.sym} on ${c.chain} at $${Math.round(info.mcap).toLocaleString("en-US")} ` +
         `(its trigger was $${trigger.toLocaleString("en-US")}) as "${pkgOf(pkgKey).label}"` +
         `${input.tier && input.tier !== "FREE" ? ` [${input.tier}]` : ""} — ` +
-        `${today}/${cfg.maxPerDay} today`,
+        `${today}/${cfg.maxPerDay} today` +
+        (p.on ? ` — next free listing in ${fmtGap(paceGapMs(cfg, state.paceRoll) / 60_000)}` : ""),
     );
 
     if (cfg.postChannel && tg) await announce(tg, c, info, input, cfg).catch(() => {});
@@ -692,6 +872,14 @@ async function runOnce({ tg, now = Date.now(), deps = {} } = {}) {
 function scanLine(report) {
   if (report.blocker) return `⛔ ${report.blocker}`;
   if (report.capped) return `daily cap reached (${report.capped}) — nothing more today, by your setting`;
+  if (report.paced)
+    return (
+      // The candidate count rides along on purpose: it is the proof that
+      // discovery is alive, and without it a long paced stretch reads as a
+      // service that has gone blind.
+      `${report.candidates} candidates seen · paced — next free listing due in ` +
+      `${fmtGap(report.paced.waitMs / 60_000)} (this wait: ${fmtGap(report.paced.gapMs / 60_000)})`
+    );
   const head =
     `${report.candidates} candidates · ${report.priced} priced · ${report.listed} listed` +
     (report.known ? ` · ${report.known} already known` : "") +
@@ -943,19 +1131,42 @@ async function fetchLogo(logoUrl) {
 }
 
 /**
- * Start the loop. Self-reschedules with a RANDOM gap (never setInterval): a
- * fixed heartbeat puts every listing on the same minute of the hour, which is
- * the other half of looking machine-run.
+ * How long until the next scan. Pure, so the rule below is testable without a
+ * timer — and it is a rule, not a formula.
+ *
+ * The cadence is its own random band (a fixed heartbeat puts every listing on
+ * the same minute of the hour, the other half of looking machine-run), and it
+ * is ALSO never allowed to sleep past the moment the listing pace opens.
+ *
+ * ⚠️ Without that second half a paced feed is the wait PLUS a scan gap: a rolled
+ * 2h13m served by a loop that next wakes 40 min later publishes at 2h53m, and
+ * over a day a band labelled "2h–3h" quietly means 2h–4h30m. Measured on a
+ * simulated day before this was added — gaps of 134, 173, 192, 212 and 225 min
+ * against a 120–180 band. `min()` can only ever make a scan SOONER, so the
+ * blocked-scan watchdog keeps every bit of its resolution.
+ */
+function nextScanDelayMs(cfg = get(), state = loadState(), now = Date.now(), rng = Math.random) {
+  let ms = (cfg.minGapMin + rng() * (cfg.maxGapMin - cfg.minGapMin)) * 60_000;
+  const p = pace(cfg, state, now);
+  // Just AFTER it opens, and jittered, so the listings do not land on a clock
+  // of their own either — the pace is the thing that must not look generated.
+  if (p.on && p.waitMs > 0) ms = Math.min(ms, p.waitMs + (30 + rng() * 240) * 1000);
+  // A floor: a band of 0–0 with the pace open would otherwise spin the loop.
+  return Math.max(30_000, ms);
+}
+
+/**
+ * Start the loop. Self-reschedules with a RANDOM gap (never setInterval) —
+ * see nextScanDelayMs for the two rules that gap answers to.
  */
 function start(tg, { rng = Math.random } = {}) {
   let timer = null;
   let stopped = false;
   const schedule = () => {
     if (stopped) return;
-    const cfg = get();
-    const mins = cfg.minGapMin + rng() * (cfg.maxGapMin - cfg.minGapMin);
-    log.debug(`[autolist] next scan in ${mins.toFixed(1)}min`);
-    timer = setTimeout(run, mins * 60_000);
+    const ms = nextScanDelayMs(get(), loadState(), Date.now(), rng);
+    log.debug(`[autolist] next scan in ${(ms / 60_000).toFixed(1)}min`);
+    timer = setTimeout(run, ms);
     if (timer.unref) timer.unref();
   };
   const run = async () => {
@@ -1005,6 +1216,11 @@ module.exports = {
   stats,
   history,
   triggerMcap,
+  pace,
+  paceGapMs,
+  nextScanDelayMs,
+  paceRange,
+  fmtGap,
   rejectReason,
   listingInput,
   announce,

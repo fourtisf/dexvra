@@ -975,6 +975,90 @@ their own `.env`.
 cd bot && node scripts/run-tests.js test/loadEnv.test.js
 ```
 
+## The gap between two free listings was never a setting
+
+"fitur free listing itu buat berapa jam sekali baru free listing di range misal
+range 2 sampai 3 jam" (2026-08-25). Auto-Listing had `minGapMin`/`maxGapMin`
+(25–90 min) on the panel labelled *scans every…*, and it was read as the answer
+to this. **It is not, and the difference is the whole section.**
+
+That band is the SCAN cadence, and a scan that finds nothing lists nothing — so
+it was never a statement about the feed. Behind it sat `maxPerRun: 3`, which
+means the site could take three listings inside one minute and three more half
+an hour later. `maxPerDay: 12` was supposed to bound that and does not: twelve a
+day arriving in four bursts is still four bursts, and a burst is exactly what
+the per-token trigger band exists to stop the feed looking like.
+
+- **`pace()` is the one owner of "may a listing go out right now"**, and it is
+  PURE — the scan gates on it, the panel prints from it, the tests call it. A
+  screen that computes its own version of a rule eventually disagrees with the
+  rule; that is how the buy card ended up with two ideas of "whale".
+- ⚠️ **The wait is rolled ONCE, at the listing — never by the scans that wait
+  it out.** A fresh roll every scan converges on the FLOOR: with a scan every
+  25–90 min, the first roll that happens to land under the elapsed time opens
+  the gate, so the spacing collapses to the minimum of however many rolls fit in
+  the window, and the band is decorative while every number on the panel still
+  reads correct. Same defect as the per-chain trending target re-rolling every
+  cycle, which ratcheted the other way and pinned every chain to its maximum.
+  Rolling at the listing is the same fix as hashing a token's trigger off its
+  address: the number has to be genuinely reached, and it does not move while
+  you wait.
+- **The roll is stored as a FRACTION of the band, not as an absolute "next at".**
+  So editing the band in the panel applies to the wait already in progress. A
+  stored timestamp would go on honouring a range the operator has since changed,
+  and from the panel that is indistinguishable from a clock that has stopped.
+- **The clock is on disk.** A restart that reset it would let a redeploy publish
+  back to back, and this service is redeployed far more often than it is paced.
+- ⚠️ **A stamp in the FUTURE is treated as SPENT, not as caution.** Clock skew
+  or a restored backup, and there is no way to learn how long ago the real
+  listing was. The first cut clamped `lastAt` to `now`, which reads as the
+  careful choice and is the exact opposite: `nextAt` then recedes with every
+  tick and the service never lists again, silently, with the panel still reading
+  🟢 ON. Found by a test asserting the wrong behaviour and passing — the
+  reassuring reading, for the fourth time in this file.
+- **The gate sits AFTER discovery and the site read, BEFORE the first price
+  lookup.** Those two calls are the only things that prove the service can still
+  see the market and reach the site — `BLOCKED_ALERTS_AT` is built on them — so
+  gating above them would cut the watchdog from every 25–90 min to once per
+  rolled wait. Everything past the gate costs a DexScreener lookup per
+  candidate, and a scan that may not list has no use for one.
+- **A paced scan logs at INFO.** With a 2–3h pace this is what most scans do,
+  and "why has nothing been listed" has to be answerable from pm2 alone; a scan
+  that logged nothing would look exactly like a dead loop. The report carries the
+  candidate count for the same reason — a long paced stretch must not read as a
+  service that has gone blind.
+- **While the pace is on, `maxPerRun` is not in play** and the panel stops
+  printing it. A per-scan number that can no longer happen is a row the engine
+  ignores, and this file already names what those cost.
+- **The pace belongs to the SCAN, and only to the scan.** `trendFill.fillChain`
+  and `chainSeed` list through the same `createFromInfo` and are untouched:
+  pacing the filler would put the "board stays short" saga straight back, and
+  the seeder is an operator-triggered bulk inventory fill, not a feed event. The
+  panel says so under the pace line, because three listings appearing at once
+  while it reads 2h–3h is otherwise a bug report.
+- **The panel does the arithmetic out loud** — `≈ 8–12 a day, inside your 12/day
+  cap`. Two numbers governing one feed with nothing saying which binds is the
+  🧲 `max 3/chain` label again, whose very first question was which of the two
+  it was.
+- **An inverted band resolves to the FLOOR**, and a refused value names WHICH
+  refusal it was: "1h is outside the limits" is false about a 1h ceiling under a
+  2h30m floor, and a diagnosis pointing at the wrong cause sends the operator to
+  change the wrong setting.
+- ⚠️ **The legacy tests were made to say `paceListings: false` out loud.** With
+  the pace on its shipped default a scan lists at most one, so four burst tests
+  failed — and one dedupe assertion would have gone on passing for a NEW reason,
+  which is worse. Stated, never inherited: the same rule the auto-trend panel
+  helper had to learn.
+
+```bash
+cd bot && node scripts/run-tests.js test/autoListerPace.test.js test/autoListerPacePanel.test.js   # 24 tests, no network
+```
+
+**Config a fix depends on:** nothing — but ⚠️ **it ships ON at the operator's own
+2h–3h and that CHANGES an existing install's behaviour on deploy**, deliberately,
+the way `minMcapUsd` did. The old behaviour is one tap: ⏳ Pace → OFF on the
+🆓 Auto Listing panel.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

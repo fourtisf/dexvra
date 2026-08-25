@@ -55,7 +55,10 @@ test("a Base scope lists Base and spends NO lookups on anything else", async (t)
   await al.reset();
   const created = [];
   stubApi(t, created);
-  await al.set({ enabled: true, chains: ["base"], maxPerRun: 5, maxPerDay: 5, minMcap: 1 * M, maxMcap: 1.5 * M, postChannel: false });
+  // `paceListings: false` so the scan runs the whole candidate list: this test
+  // counts what the SCOPE skipped, and a paced scan stops after its one listing
+  // with the tally still short of the candidates behind it.
+  await al.set({ enabled: true, paceListings: false, chains: ["base"], maxPerRun: 5, maxPerDay: 5, minMcap: 1 * M, maxMcap: 1.5 * M, postChannel: false });
 
   const priced = [];
   const n = await al.runOnce({

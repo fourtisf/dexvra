@@ -120,10 +120,12 @@ test("a scan lists a qualifying token once, and never re-lists it", async () => 
     assert.strictEqual(await al.runOnce({ now, deps }), 1);
     assert.strictEqual(created.length, 1);
     assert.strictEqual(created[0].sym, "NINEHOOD");
-    // Second scan: already ours.
-    assert.strictEqual(await al.runOnce({ now, deps }), 0, "no duplicate listing");
+    // Second scan: already ours. ⚠️ WELL past the listing pace's longest wait,
+    // or this 0 would be the pace holding the scan back rather than the dedupe
+    // under test — a green assertion measuring something else entirely.
+    assert.strictEqual(await al.runOnce({ now: now + 6 * HOUR, deps }), 0, "no duplicate listing");
     assert.strictEqual(created.length, 1);
-    const s = al.stats(now);
+    const s = al.stats(now + 6 * HOUR);
     assert.strictEqual(s.total, 1);
     assert.strictEqual(s.today, 1);
     assert.strictEqual(al.history()[0].sym, "NINEHOOD");
@@ -192,7 +194,9 @@ test("when the site's listing list is unreachable the scan stops", async () => {
 test("caps hold: per run and per day", async () => {
   await al.reset();
   await al.resetState(); // earlier tests already spent part of today's budget
-  await al.set({ enabled: true, maxPerRun: 2, maxPerDay: 3, minMcap: 1 * M, maxMcap: 1.5 * M });
+  // The per-RUN cap is what this test is about, and the listing pace overrides
+  // it to one — a different limit, with its own file. Stated, not inherited.
+  await al.set({ enabled: true, paceListings: false, maxPerRun: 2, maxPerDay: 3, minMcap: 1 * M, maxMcap: 1.5 * M });
   const realCreate = api.createListing;
   const realGet = api.getListings;
   api.createListing = async (i) => ({ id: "x", ...i });
