@@ -1845,6 +1845,39 @@ state the sweep exists to fill. To pin a different image, set it — a stored
 logo always wins. There is deliberately no "this token has no logo" flag: the
 monogram is what a row with no artwork draws, and it is drawn from the ticker.
 
+### "tambahkan logo project nya" — the only tool that filled them also deleted rows
+
+Reported with a screenshot of the home board, `$TRUMP` drawing its `TP`
+monogram (2026-08-26). The resolver was not the gap: `listings:fix` already
+reaches **seven** sources. What was missing is that the same run **removes every
+row it could not find artwork for**, and `--logos-only` does not change that —
+it skips the dedupe pass, not the deletions. So an operator who wanted logos
+filled had no way to run it without also losing tokens.
+
+- **`--keep` is the opt-out, and the delete stays the DEFAULT.** It answers an
+  earlier request in this script's own header (*"jika tidak ada logo hapus aja
+  tokenya"*), and quietly reversing that would surprise whoever relies on it.
+- ⚠️ **`--keep` is TOTAL.** A flag that spared the logo pass and still dropped
+  duplicates would be the reassuring reading of its own name — this file's most
+  expensive recurring shape. Mutation-tested: reinstating that one delete fails
+  the test.
+- **The rows that finish with no artwork are NAMED, with their address.** A
+  count sends the operator back to the board to work out which — a diagnosis
+  with no hands attached is a bug report the code files against its owner.
+- **The header says which mode the run is in before it does anything**, in the
+  dry run too.
+- ⚠️ **Nothing here can be verified from a sandbox.** DexScreener, CoinGecko and
+  GeckoTerminal are unreachable from the dev environment, so whether a logo
+  exists is a property of the SERVER's egress today — the rule `raid:check`,
+  `launchpads:check` and `fonts:check` already state. The script prints the
+  build stamp twice for the same reason.
+
+```bash
+cd bot && npm run listings:fix -- --logos-only --keep            # dry run: what would be filled
+cd bot && npm run listings:fix -- --logos-only --keep --apply    # fill them; delete nothing
+cd bot && node scripts/run-tests.js test/fixListingsKeep.test.js # 6 tests, no network
+```
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

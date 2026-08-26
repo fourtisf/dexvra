@@ -95,6 +95,20 @@ function duplicates(rows) {
   const flags = process.argv.slice(2).filter((a) => a.startsWith('--'));
   const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
   const apply = flags.includes('--apply');
+  // ⚠️ FILL THE LOGOS, DELETE NOTHING.
+  //
+  // "tambahkan logo project nya cari di beberapa sumber dan download" — the ask
+  // was to GIVE rows artwork, and the only tool that resolves artwork also
+  // removes every row it could not find any for. `--logos-only` does not change
+  // that: it skips the dedupe pass, not the deletions. So an operator who wanted
+  // logos filled had no way to run this without also losing tokens.
+  //
+  // The delete is not a bug and stays the default — it answers an earlier
+  // request in this script's own header ("jika tidak ada logo hapus aja
+  // tokenya"), and quietly reversing that would surprise whoever relies on it.
+  // This is the opt-out, and it is total: nothing is removed, anywhere, and the
+  // rows that end with no artwork are NAMED so they can be handled by hand.
+  const keep = flags.includes('--keep');
   const doDupes = !flags.includes('--logos-only');
   const doLogos = !flags.includes('--dupes-only');
 
@@ -107,11 +121,16 @@ ${B}listings:fix${X} — remove double rows, and give every row a logo
   npm run listings:fix -- bsc solana --apply
   npm run listings:fix -- --dupes-only --apply
   npm run listings:fix -- --logos-only --apply
+  npm run listings:fix -- --logos-only --keep --apply   # fill logos, delete NOTHING
 
-Logos are resolved from DexScreener, GeckoTerminal, the token's launchpad and
-DexScreener's image CDN — every candidate is FETCHED before it is stored, so a
-404 never becomes a broken image. A row with no logo from any source is
-removed. Only rows the bot auto-listed for free are ever touched.
+Logos are resolved from DexScreener, GeckoTerminal, the token's launchpad,
+CoinGecko, Trust Wallet, pools.trade and DexScreener's image CDN — every
+candidate is FETCHED before it is stored, so a 404 never becomes a broken image.
+Only rows the bot auto-listed for free are ever touched.
+
+${B}--keep${X} deletes nothing at all: duplicates stay, rows with no artwork stay, and
+every row still missing a logo is listed at the end with its address so you can
+set one by hand. Without it, a row with no logo on any source is REMOVED.
 `);
     process.exit(0);
   }
@@ -126,13 +145,23 @@ removed. Only rows the bot auto-listed for free are ever touched.
   if (only.length) rows = rows.filter((r) => only.includes(r.chain));
 
   console.log(`\n${B}Cleaning ${rows.length} listing(s)${only.length ? ` on ${only.join(', ')}` : ''}${X}   ${D}build ${build.stamp()}${X}`);
-  console.log(apply ? `${Y}APPLY — rows will be changed and removed.${X}\n` : `${D}DRY RUN — nothing is written. Add --apply.${X}\n`);
+  console.log(
+    apply
+      ? keep
+        ? `${Y}APPLY${X} ${G}--keep${X} — logos are filled in; ${B}nothing is deleted${X}.\n`
+        : `${Y}APPLY — rows will be changed and removed.${X}\n`
+      : `${D}DRY RUN — nothing is written. Add --apply.${X}${keep ? ` ${G}--keep${X}${D} is on: nothing would be deleted.${X}` : ''}\n`,
+  );
 
   let removedDupes = 0;
   let fixed = 0;
   let removedNoLogo = 0;
   let undecided = 0;
   let refused = 0;
+  // Under --keep: the rows that finish with no artwork, named. A count alone
+  // sends the operator back to the board to work out WHICH — the diagnosis
+  // with no hands attached this repo keeps paying for.
+  const kept = [];
   let waited = 0;
   const retry = [];
   const heldBack = new Set(); // a row may be held back ONCE, never in a loop
@@ -147,7 +176,13 @@ removed. Only rows the bot auto-listed for free are ever touched.
   const dropped = new Set();
 
   // ── 1. duplicates ─────────────────────────────────────────────────────────
-  if (doDupes) {
+  if (doDupes && keep) {
+    // --keep means nothing is removed ANYWHERE. A flag that spared the logo
+    // pass and quietly deleted duplicates would be the reassuring reading of
+    // its own name, which is the shape this repo keeps paying for.
+    const dupes = duplicates(rows);
+    console.log(`${B}Duplicates${X}  ${dupes.length} row(s) — left alone (--keep)\n`);
+  } else if (doDupes) {
     const dupes = duplicates(rows);
     console.log(`${B}Duplicates${X}  ${dupes.length} row(s) to drop`);
     for (const { row } of dupes) {
@@ -184,6 +219,13 @@ removed. Only rows the bot auto-listed for free are ever touched.
       if (i === missing.length && retry.length) console.log(`\n${D}  second pass — ${retry.length} row(s) held back by the rate limit${X}`);
       // A stablecoin that slipped in earlier should go, not be given artwork.
       if (notAProject(r.sym, r.name)) {
+        if (keep) {
+          // Still not worth a lookup — a stablecoin's "artwork" is not the
+          // problem — but under --keep it is reported, never removed.
+          console.log(`  ${D}· $${r.sym} (${r.chain}) — not a project, left alone${X}`);
+          kept.push({ ...r, why: 'not a project' });
+          continue;
+        }
         console.log(`  ${D}− $${r.sym} (${r.chain}) — not a project${X}`);
         if (apply) {
           try {
@@ -245,6 +287,11 @@ removed. Only rows the bot auto-listed for free are ever touched.
         const skipped = (hit.unreachable || []).length
           ? ` ${D}(${hit.unreachable.join(', ')} — covered by CoinGecko on this chain)${X}`
           : '';
+        if (keep) {
+          console.log(`  ${Y}·${X} $${r.sym} (${r.chain}) ${D}— no artwork on any source, left alone${X}${skipped}`);
+          kept.push({ ...r, why: 'no artwork on any source' });
+          continue;
+        }
         console.log(`  ${D}− $${r.sym} (${r.chain}) — no artwork on any source${X}${skipped}`);
         if (apply) {
           try {
@@ -272,14 +319,30 @@ removed. Only rows the bot auto-listed for free are ever touched.
   // screen, this is not.
   const sources = Object.entries(bySource).map(([s, n]) => `${n} ${s}`).join(', ');
   console.log(`\n${D}build ${build.stamp()}${X}`);
-  if (apply) {
+  if (apply && !keep) {
     console.log(
       `\n${G}${fixed}${X} logo(s) added${sources ? ` ${D}(${sources})${X}` : ''}` +
         ` · ${G}${removedDupes}${X} duplicate(s) and ${G}${removedNoLogo}${X} logo-less row(s) removed` +
         `${refused ? ` · ${Y}${refused}${X} refused` : ''}. ${D}Nothing was announced.${X}`,
     );
-  } else {
+  } else if (!keep) {
     console.log(`\n${D}Would add ${fixed || Object.values(bySource).reduce((a, b) => a + b, 0)} logo(s)${sources ? ` (${sources})` : ''}. Re-run with --apply.${X}`);
+  }
+  if (keep) {
+    console.log(
+      `\n${G}${fixed || Object.values(bySource).reduce((a, b) => a + b, 0)}${X} logo(s) ${apply ? 'added' : 'would be added'}` +
+        `${sources ? ` ${D}(${sources})${X}` : ''} · ${B}nothing was deleted${X}.`,
+    );
+    if (kept.length) {
+      // NAMED, with the address. "12 rows still have no logo" sends the
+      // operator back to the board to work out which twelve — a diagnosis with
+      // no hands attached is a bug report the code files against its owner.
+      console.log(
+        `\n${Y}${kept.length} row(s) still have no artwork anywhere${X} ${D}— no source has one, so there is` +
+          ` nothing to download. Set one by hand on the listing, or leave the monogram:${X}`,
+      );
+      for (const r of kept) console.log(`  ${D}·${X} $${r.sym} ${D}${r.chain}  ${r.address}  (${r.why})${X}`);
+    }
   }
   if (undecided) {
     console.log(
