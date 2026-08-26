@@ -54,11 +54,72 @@ const ALLOW = [
   "cryptologos.cc",
 ];
 
-/** A public IPFS gateway for `ipfs://` URIs, which is what a launchpad's
- *  on-chain metadata actually contains. Before this they were handed to the
- *  browser verbatim: no `<img>` anywhere loads an ipfs:// scheme, so the logo
- *  was lost between two systems that each had it. */
-const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+/**
+ * IPFS gateways, in order — a LIST, never one host.
+ *
+ * ⚠️ THIS WAS `const IPFS_GATEWAY = "https://ipfs.io/ipfs/"`, AND IT COST A
+ * PAID LISTING ITS LOGO. `$BREAKING` stored
+ * `https://ipfs.io/ipfs/<cid>`; ipfs.io answered **404**, the proxy gave up,
+ * and the token drew its `BR` monogram on a page people open to decide whether
+ * to buy. Nothing was wrong with the url, the CID, or the allowlist — one
+ * gateway could not find the content.
+ *
+ * "Never one hardcoded host" is this repo's own rule, learned when Jupiter
+ * retired `quote-api.jup.ag/v6` and every Solana buy died. `JUP_BASES` is the
+ * reference; this is the same shape one service over.
+ *
+ * ⚠️ AND IT FAILS OVER ON AN HTTP STATUS, WHICH THAT RULE NORMALLY FORBIDS.
+ * The reason the rule says transport-only is that "an HTTP status means the
+ * host is there and answered, and the same request gets the same status
+ * everywhere else". THAT IS NOT TRUE OF A CONTENT-ADDRESSED FETCH. A CID is
+ * the hash of the bytes: a 404 from one gateway means *this gateway cannot
+ * find them*, and another gateway serving the same CID serves byte-identical
+ * content. So a 404 here is a fact about the gateway, not about the token —
+ * exactly the distinction `logoFill` draws between "nothing there" and "could
+ * not ask".
+ *
+ * Env-overridable (`IPFS_GATEWAYS`, comma-separated) so a gateway going dark
+ * costs a line in `.env` rather than a deploy — the `pads.js` contract. Every
+ * entry still has to pass the allowlist below; the env cannot widen it.
+ */
+const IPFS_GATEWAYS: string[] = (process.env.IPFS_GATEWAYS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .concat(
+    process.env.IPFS_GATEWAYS
+      ? []
+      : [
+          "https://ipfs.io/ipfs/",
+          "https://dweb.link/ipfs/",
+          "https://gateway.pinata.cloud/ipfs/",
+          "https://nftstorage.link/ipfs/",
+          "https://w3s.link/ipfs/",
+        ],
+  );
+
+/** How many gateways one request may try, and how long each gets. A logo is an
+ *  `<img>` and does not block the page, but a request that can hang for half a
+ *  minute is a socket held open per token on a board of two hundred. */
+const IPFS_MAX_TRIES = 3;
+const IPFS_TRY_MS = 5000;
+const ONE_TRY_MS = 8000;
+
+/** The `<cid>/<path…>` of an IPFS url, or null when this is not one.
+ *
+ *  Recognised in BOTH spellings, because a stored logo is usually already an
+ *  https gateway url (`https://ipfs.io/ipfs/<cid>`) rather than the `ipfs://`
+ *  URI a launchpad's metadata carries — and it is the https one that had no
+ *  second chance. */
+function ipfsPath(raw: string): string | null {
+  const s = raw.trim();
+  if (/^ipfs:\/\//i.test(s)) {
+    const p = s.replace(/^ipfs:\/\//i, "").replace(/^ipfs\//i, "");
+    return p || null;
+  }
+  const m = /^https?:\/\/[^/]+\/ipfs\/(.+)$/i.exec(s);
+  return m ? m[1] : null;
+}
 
 /** How many redirects to follow. IPFS gateways bounce to a per-CID subdomain,
  *  and CDNs bounce to their edge, so refusing redirects outright would lose
@@ -76,53 +137,103 @@ function normalize(raw: string): URL | null {
   const s = raw.trim();
   if (!s) return null;
   try {
-    if (/^ipfs:\/\//i.test(s)) {
-      // ipfs://<cid>/<path…> and the older ipfs://ipfs/<cid> spelling.
-      const path = s.replace(/^ipfs:\/\//i, "").replace(/^ipfs\//i, "");
-      return path ? new URL(IPFS_GATEWAY + path) : null;
-    }
+    // ipfs://<cid>/<path…> and the older ipfs://ipfs/<cid> spelling. No <img>
+    // on earth loads that scheme, so a token whose artwork we HAD still drew a
+    // monogram until this rewrote it.
+    const cid = /^ipfs:\/\//i.test(s) ? ipfsPath(s) : null;
+    if (/^ipfs:\/\//i.test(s)) return cid ? new URL(IPFS_GATEWAYS[0] + cid) : null;
     return new URL(s);
   } catch {
     return null;
   }
 }
 
+/**
+ * Every url worth trying for one request, in order.
+ *
+ * For anything but IPFS that is the one url we were given — a 404 from
+ * dexscreener's CDN IS an answer about the token. For an IPFS url it is the
+ * gateway the caller named FIRST (a working one must not be demoted), then the
+ * others with the same CID.
+ */
+function candidates(url: URL): URL[] {
+  const cid = ipfsPath(url.toString());
+  if (!cid) return [url];
+  const out = [url];
+  for (const gw of IPFS_GATEWAYS) {
+    if (out.length >= IPFS_MAX_TRIES) break;
+    try {
+      const u = new URL(gw + cid);
+      if (u.toString() !== url.toString() && allowed(u)) out.push(u);
+    } catch {
+      /* a malformed gateway in .env costs that entry, never the request */
+    }
+  }
+  return out;
+}
+
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("u");
   if (!raw) return new NextResponse(null, { status: 400 });
-  let url = normalize(raw);
-  if (!url || !allowed(url)) return new NextResponse(null, { status: 400 });
+  const first = normalize(raw);
+  if (!first || !allowed(first)) return new NextResponse(null, { status: 400 });
 
-  try {
-    // ⚠️ REDIRECTS ARE FOLLOWED BY HAND, and every hop is re-checked against
-    // the allowlist. `redirect: "follow"` hands the guard's whole job to the
-    // upstream: an allowed host answering `302 http://169.254.169.254/…` would
-    // have this server fetch its own cloud metadata and serve the bytes back.
+  // One url for an ordinary CDN, several gateways for an IPFS CID — see
+  // IPFS_GATEWAYS for why a 404 is a fact about the gateway there and an answer
+  // about the token everywhere else.
+  const tries = candidates(first);
+  const perTry = tries.length > 1 ? IPFS_TRY_MS : ONE_TRY_MS;
+  const deadline = Date.now() + 12_000;
+
+  for (let i = 0; i < tries.length; i++) {
+    // Only START another attempt while there is time for it. Without this the
+    // worst case is every gateway's full timeout end to end, on a board asking
+    // for two hundred logos.
+    if (i > 0 && Date.now() > deadline) break;
+    let url = tries[i];
     let res: Response | null = null;
-    for (let hop = 0; hop <= MAX_HOPS; hop++) {
-      res = await fetch(url.toString(), {
-        headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
-        signal: AbortSignal.timeout(8000),
-        redirect: "manual",
-        cache: "no-store",
-      });
-      if (res.status < 300 || res.status >= 400) break;
-      const loc = res.headers.get("location");
-      if (!loc) break;
-      // A redirect's body is never read; release it or the socket stays busy
-      // until the GC gets round to it, on a server doing this per token.
-      void res.body?.cancel().catch(() => {});
-      const next = normalize(new URL(loc, url).toString());
-      if (!next || !allowed(next)) return new NextResponse(null, { status: 400 });
-      url = next;
-      res = null;
+    try {
+      // ⚠️ REDIRECTS ARE FOLLOWED BY HAND, and every hop is re-checked against
+      // the allowlist. `redirect: "follow"` hands the guard's whole job to the
+      // upstream: an allowed host answering `302 http://169.254.169.254/…`
+      // would have this server fetch its own cloud metadata and serve the bytes
+      // back.
+      for (let hop = 0; hop <= MAX_HOPS; hop++) {
+        res = await fetch(url.toString(), {
+          headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
+          signal: AbortSignal.timeout(perTry),
+          redirect: "manual",
+          cache: "no-store",
+        });
+        if (res.status < 300 || res.status >= 400) break;
+        const loc = res.headers.get("location");
+        if (!loc) break;
+        // A redirect's body is never read; release it or the socket stays busy
+        // until the GC gets round to it, on a server doing this per token.
+        void res.body?.cancel().catch(() => {});
+        const next = normalize(new URL(loc, url).toString());
+        // ⚠️ A REDIRECT SOMEWHERE WE DO NOT ALLOW ENDS THE WHOLE REQUEST, and
+        // does not fall through to the next gateway: it is the one failure that
+        // is about US being pointed at something, not about the content being
+        // unavailable, and quietly trying elsewhere would bury it.
+        if (!next || !allowed(next)) return new NextResponse(null, { status: 400 });
+        url = next;
+        res = null;
+      }
+    } catch {
+      res = null; // transport failure — the next gateway may still have it
     }
-    if (!res || !res.ok) return new NextResponse(null, { status: 404 });
 
+    if (!res || !res.ok) {
+      void res?.body?.cancel().catch(() => {});
+      continue;
+    }
     const ct = res.headers.get("content-type") || "image/png";
     if (!/^image\//i.test(ct)) {
+      // A gateway that answers 200 with an HTML "not found" page is a miss, not
+      // an image — the same thing a CDN does when it will not admit one.
       void res.body?.cancel().catch(() => {});
-      return new NextResponse(null, { status: 404 });
+      continue;
     }
     // Refuse a body we would only throw away — the size check below happens
     // after the download, and a declared 50MB image is not worth fetching.
@@ -131,7 +242,12 @@ export async function GET(req: NextRequest) {
       void res.body?.cancel().catch(() => {});
       return new NextResponse(null, { status: 404 });
     }
-    const buf = Buffer.from(await res.arrayBuffer());
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(await res.arrayBuffer());
+    } catch {
+      continue; // the body died mid-download; another gateway may finish
+    }
     if (!buf.length || buf.length > 3_000_000) return new NextResponse(null, { status: 404 });
     return new NextResponse(buf, {
       status: 200,
@@ -146,7 +262,10 @@ export async function GET(req: NextRequest) {
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       },
     });
-  } catch {
-    return new NextResponse(null, { status: 502 });
   }
+
+  // Every candidate refused it. 404 rather than 502 because <Coin>'s onError
+  // listens for a failed load, not for a status — the monogram is the designed
+  // fallback and it must still fire.
+  return new NextResponse(null, { status: 404 });
 }
