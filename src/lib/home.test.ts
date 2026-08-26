@@ -11,6 +11,7 @@ import {
   HOME_CHAIN_LIMIT,
   HOME_TRENDING_MAX,
   SANE_CHANGE_PCT,
+  byChange,
   changeRank,
   changeReading,
   expander,
@@ -693,6 +694,50 @@ test("⚠️ an unrankable row sinks in BOTH sort directions", () => {
   ];
   assert.deepStrictEqual([...rows].sort(cmp(-1)).map((t) => t.symbol), ["$UP", "$DOWN", "$DEAD"], "descending");
   assert.deepStrictEqual([...rows].sort(cmp(1)).map((t) => t.symbol), ["$DOWN", "$UP", "$DEAD"], "ascending — DEAD must not lead");
+});
+
+test("⚠️ EVERY surface that ranks by change goes through the one gate", () => {
+  // The first cut of the volume floor fixed the home board and missed two: the
+  // /trending page — whose entire heading is "Top Gainers" — sorted on the RAW
+  // field, through neither gate, so a five-million-percent figure off a
+  // near-dead pool could take its 🥇 medal; and the Ticker marquee, on every
+  // page of the site, crowned the token the board underneath ranked tenth. One
+  // screen, two rankings, disagreeing.
+  //
+  // This is the guard, not the fix: a FOURTH surface added later has to appear
+  // here or fail the build.
+  const RANKERS: [string, RegExp][] = [
+    // the full board — DEMOTES (paying customers must not vanish)
+    ["src/components/TokenBoard.tsx", /chg: \(t, p\) => changeRank\(t, p\)/],
+    // the Top Gainers/Losers page — one owner, shared with the board
+    ["src/app/(site)/trending/page.tsx", /byChange\(/],
+    // the marquee — a curated eight, so it EXCLUDES
+    ["src/components/Ticker.tsx", /\.filter\(tradedEnough\)/],
+    // the home rails — likewise
+    ["src/lib/home.ts", /\.filter\(tradedEnough\)/],
+  ];
+  for (const [file, want] of RANKERS) {
+    assert.ok(existsSync(join(process.cwd(), file)), `${file} is gone — this guard is now describing nothing`);
+    assert.match(read(file), want, `${file} ranks by change without going through the gate`);
+  }
+  // …and nobody may go back to subtracting the raw field.
+  for (const file of ["src/app/(site)/trending/page.tsx", "src/components/Ticker.tsx", "src/components/TokenBoard.tsx"]) {
+    const src = read(file).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    assert.ok(!/\.chg\[\w+\]\s*-\s*\w+\.chg\[/.test(src), `${file} subtracts the raw chg field again`);
+  }
+});
+
+test("byChange sinks an unrankable row on the LOSERS tab too", () => {
+  // -Infinity is less than zero, so on "Top Losers" a demoted row would be
+  // CROWNED — the fix producing a worse version of the bug it fixes, which is
+  // exactly why `movers` excludes rather than demotes.
+  const pool = [
+    tok({ sym: "DEAD", chg: -80, vol: 0.02 }),
+    tok({ sym: "REALDN", chg: -9, vol: 500_000 }),
+    tok({ sym: "REALUP", chg: 12, vol: 500_000 }),
+  ];
+  assert.deepStrictEqual(byChange(pool, "24h", -1).map((t) => t.symbol), ["$REALUP", "$REALDN", "$DEAD"], "gainers tab");
+  assert.deepStrictEqual(byChange(pool, "24h", 1).map((t) => t.symbol), ["$REALDN", "$REALUP", "$DEAD"], "losers tab");
 });
 
 test("a quiet token is left OUT of gainers/losers, not demoted into them", () => {

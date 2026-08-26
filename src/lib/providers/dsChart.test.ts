@@ -419,12 +419,39 @@ test("both reasons travel when neither source could be asked", () => {
   // "GeckoTerminal 429" alone, with a second source silently unreachable behind
   // it, is the shrug this endpoint has already been fixed for once.
   const route = code(read("src/app/api/ohlcv/route.ts"));
-  assert.match(route, /\[gt\.why, ds\?\.why\]/);
+  assert.match(route, /gtSilent \? gt\.why : null/);
+  assert.match(route, /dsSilent \? ds\?\.why/);
   // …and the sentence must still carry "couldn't read", because the panel
   // classifies error-vs-answer on that substring and only errors get the fast
   // retry that lets a chart appear the moment a cooldown lifts.
-  assert.match(route, /Couldn't read the chart just now \(\$\{reasons/);
+  assert.match(route, /Couldn't read the chart just now \(\$\{readWhy\(err\)\}\)/);
   assert.match(code(read("src/components/CandleChart.tsx")), /couldn't read/i);
+});
+
+test("⚠️ a source that could not be ASKED is THROWN, so it is never cached", () => {
+  // `load()` IS the cached loader. A returned failure goes straight into the
+  // cache for the timeframe's TTL — up to FIFTEEN MINUTES on 1d, longer than
+  // the 120s cooldown it would be reporting. The rule has been in this file
+  // since it was written; wrapping GeckoTerminal in a try/catch so DexScreener
+  // could be tried afterwards quietly turned the throw into a return.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  const loader = route.slice(route.indexOf("async function load("), route.indexOf("export async function GET"));
+  assert.match(loader, /throw new Unreadable\(/, "the could-not-ask branch must THROW out of the cached loader");
+  assert.ok(!/return fail\(tf, `Couldn't read/.test(loader), "…and must not return a cacheable failure instead");
+  // The cached() call wraps load, which is what makes the above load-bearing.
+  assert.match(route, /cached\(key, TF\[tf\]\.ttlMs, \(\) => load\(/);
+});
+
+test("⚠️ EVERY applicable source must have answered before 'no candles' is published", () => {
+  // With GeckoTerminal cooling down and DexScreener replying "no pair for this
+  // token", ONE source answered — and publishing that as the settled answer
+  // says "No candles yet" about a token GT indexes perfectly well, on the panel
+  // state that never fast-retries. A source that is not applicable at all (no
+  // DS coverage for the chain, or a ?source= pin) is not an unanswered source.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  assert.match(route, /const gtSilent = askGt && !gt\.answered;/);
+  assert.match(route, /const dsSilent = dsAvailable && !dsAnswered;/);
+  assert.match(route, /if \(!gtSilent && !dsSilent && \(gt\.answered \|\| dsAnswered\)\)/);
 });
 
 test("the panel SAYS when it drew from the fallback", () => {

@@ -8,6 +8,7 @@ import type { CSSProperties } from "react";
 import { Coin } from "@/components/Coin";
 import { TierTag } from "@/components/TierTag";
 import { ChainLogo } from "@/components/ChainLogo";
+import { byChange } from "@/lib/home";
 import { fmtPrice } from "@/lib/format";
 import { tierColor, tierRank } from "@/lib/packages";
 import { chainOf } from "@/config/chains";
@@ -43,11 +44,15 @@ export default function TrendingPage() {
     if (chain !== "all" && !chains.includes(chain)) setChain("all");
   }, [chain, chains]);
 
+  // ⚠️ THROUGH `byChange`, NOT THE RAW FIELD. This sort used to read
+  // `b.chg[frame] - a.chg[frame]` — so the one page whose whole heading is
+  // "Top Gainers" went through NEITHER gate the rest of the site uses: a
+  // five-million-percent figure off a near-dead pool could lead it, and
+  // `$MRNA +465%` on five cents of 24h volume took its 🥇 medal. One owner
+  // now, shared with the home board's comparator, and an unrankable row sinks
+  // on the LOSERS tab too rather than being crowned by it.
   const list = useMemo(
-    () =>
-      [...(data?.tokens ?? [])]
-        .filter((t) => inChain(t.chain))
-        .sort((a, b) => (mode === "gain" ? b.chg[frame] - a.chg[frame] : a.chg[frame] - b.chg[frame])),
+    () => byChange((data?.tokens ?? []).filter((t) => inChain(t.chain)), frame, mode === "gain" ? -1 : 1),
     [data, mode, frame, inChain],
   );
 

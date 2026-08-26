@@ -1,7 +1,7 @@
 "use client";
 
 import { fmtPrice } from "@/lib/format";
-import { changeReading } from "@/lib/home";
+import { changeReading, tradedEnough } from "@/lib/home";
 import { coinBg, monogram } from "@/lib/visual";
 import { logoSrc } from "@/lib/logo";
 import { useApp } from "./AppState";
@@ -10,8 +10,15 @@ export function Ticker() {
   const { data } = useApp();
   // Ranked and shown through the sane reading — a five-million-percent figure
   // off a near-dead pool must not lead the top-movers bar (see changeReading).
+  // …and through `tradedEnough`, which is the same rule at the other end of the
+  // scale. This marquee is a numbered top-EIGHT on every page of the site, so a
+  // token that traded five cents in a day led it — while the board directly
+  // underneath, which reads the volume, ranked it tenth. One screen, two
+  // rankings, disagreeing. EXCLUDED rather than demoted, like `movers`: there
+  // is no honest place in a curated eight for a number that means nothing.
   const top = data
     ? data.tokens
+        .filter(tradedEnough)
         .map((t) => ({ t, r: changeReading(t, "24h") }))
         .filter((x): x is { t: (typeof data.tokens)[number]; r: number } => x.r != null)
         .sort((a, b) => b.r - a.r)

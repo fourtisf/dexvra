@@ -10,7 +10,7 @@ import {
 import { approvedRows } from "@/lib/store";
 import { dexvraScore } from "@/lib/score";
 import { syntheticTrend, visualFor } from "@/lib/visual";
-import { SANE_CHANGE_PCT } from "@/lib/home";
+import { SANE_CHANGE_PCT, tradedEnough } from "@/lib/home";
 import type {
   BoardToken,
   ChainHeat,
@@ -248,8 +248,13 @@ function buildSignals(tokens: BoardToken[]): Signal[] {
   // A "momentum spike" leads with the biggest 1h gain that is actually
   // measurable — a five-million-percent reading off a near-dead pool is noise,
   // not momentum.
+  // …and with TRADING behind it. The sane bound catches the absurd readings and
+  // misses the quiet ones: `+79.0% in 1h` on a token that traded five cents all
+  // day is the same noise at a legal magnitude, and the home page would publish
+  // it as a headline while the board directly underneath ranked that token last
+  // for exactly the same reason. One screen, two claims.
   const mover = [...tokens]
-    .filter((t) => Math.abs(t.chg["1h"]) <= SANE_CHANGE_PCT)
+    .filter((t) => tradedEnough(t) && Math.abs(t.chg["1h"]) <= SANE_CHANGE_PCT)
     .sort((a, b) => b.chg["1h"] - a.chg["1h"])[0];
   if (mover && mover.chg["1h"] > 0)
     sig.push({ kind: "volume", color: "#E7C77A", symbol: mover.symbol, chain: mover.chain, text: `momentum spike <b>+${mover.chg["1h"].toFixed(1)}%</b> in 1h`, minutesAgo: 11 });

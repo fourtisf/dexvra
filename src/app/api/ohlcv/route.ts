@@ -240,8 +240,18 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
   // asked is a fact about us. The panel reacts differently to the two (it
   // fast-retries only the second), so collapsing them would leave a rate limit
   // looking like a token with no history, for ever.
+  //
+  // ⚠️ EVERY SOURCE THAT COULD HAVE ANSWERED MUST HAVE ANSWERED, not just one
+  // of them. With GeckoTerminal cooling down and DexScreener replying "no pair
+  // for this token", one source answered — and reporting that as the settled
+  // answer publishes "No candles yet" about a token GT indexes perfectly well,
+  // on the panel state that never fast-retries, so it stays wrong until the
+  // reader reloads. A source that was not applicable at all (no DS coverage
+  // for this chain, or a `?source=` pin) is not an unanswered source.
   const dsAnswered = Boolean(ds && ds.ok);
-  if (gt.answered || dsAnswered)
+  const gtSilent = askGt && !gt.answered;
+  const dsSilent = dsAvailable && !dsAnswered;
+  if (!gtSilent && !dsSilent && (gt.answered || dsAnswered))
     return {
       ok: false,
       build: BUILD,
@@ -266,11 +276,25 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
       sourceUrl: null,
     };
 
-  // Neither could be asked. BOTH reasons travel: "GeckoTerminal 429" alone,
-  // with a second source silently unreachable behind it, is the shrug this
-  // endpoint has already been fixed for once.
-  const reasons = [gt.why, ds?.why].filter(Boolean).join("; ");
-  return fail(tf, `Couldn't read the chart just now (${reasons || "no source answered"}).`, network, gt.pool);
+  // ⚠️ THROWN, NOT RETURNED — because `load()` IS THE CACHED LOADER.
+  //
+  // This branch is "a source could not be asked", and the rule this file has
+  // stated since it was written is that only an ANSWER may be cached: caching
+  // a 429 lets a two-minute backoff blank every chart on the site for the TTL,
+  // which is up to fifteen minutes on the 1d timeframe — longer than the
+  // cooldown it is reporting. It used to reach the GET catch by throwing
+  // `Unreadable` out of `fetchCandles`; wrapping GeckoTerminal in a try/catch
+  // so DexScreener could be tried afterwards quietly turned that throw into a
+  // RETURN, and a returned failure goes straight into the cache. The second
+  // source was the whole reason for the try/catch, so the throw moves here.
+  //
+  // BOTH reasons travel: "GeckoTerminal 429" alone, with a second source
+  // silently unreachable behind it, is the shrug this endpoint has already been
+  // fixed for once.
+  const reasons = [gtSilent ? gt.why : null, dsSilent ? ds?.why ?? "DexScreener was not asked" : null]
+    .filter(Boolean)
+    .join("; ");
+  throw new Unreadable(reasons || "no source answered");
 }
 
 export async function GET(req: NextRequest) {

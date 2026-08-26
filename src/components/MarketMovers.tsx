@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap } from "@/lib/format";
-import { changeReading, freshness, movers, type MoverKind } from "@/lib/home";
+import { changeReading, freshness, movers, tradedEnough, type MoverKind } from "@/lib/home";
 import { useApp } from "./AppState";
 import { Coin } from "./Coin";
 import { Spark } from "./Spark";
@@ -30,6 +30,22 @@ const ic = (d: string) => (
     ))}
   </svg>
 );
+
+/** The card is empty because everything that moved is too quiet to call a
+ *  mover — not because nothing moved. Said in the reader's terms, not ours. */
+const QUIET_EMPTY = "Nothing here traded enough to call a mover.";
+
+/** Would this deck have had rows but for the traded-enough rule? `fresh` never
+ *  applies it, so it is never this kind of empty. */
+function quietOnly(tokens: readonly BoardToken[], kind: MoverKind, frame: PeriodKey): boolean {
+  if (kind === "fresh") return false;
+  const up = kind === "gainers";
+  return tokens.some((t) => {
+    if (tradedEnough(t)) return false;
+    const r = changeReading(t, frame);
+    return r != null && (up ? r > 0 : r < 0);
+  });
+}
 
 const DECKS: Deck[] = [
   {
@@ -175,7 +191,16 @@ export function MarketMovers({
               {loading ? (
                 <MvSkeleton />
               ) : rows.length === 0 ? (
-                <p className="mv-empty">{deck.empty}</p>
+                // ⚠️ "Nothing is up on this timeframe" BECAME A FALSE CLAIM the
+                // moment `movers` started excluding tokens with no trading
+                // behind their percentage. On a small chain whose three
+                // listings are all up and all quiet, the board directly above
+                // this card reads `$AAA +58.2%` while this one says nothing is
+                // up — one screen, two statements, and the confident one is
+                // wrong. The card is still empty (a "Top Gainer" with five
+                // cents of volume is the claim this whole change refuses to
+                // make) but it says WHICH kind of empty it is.
+                <p className="mv-empty">{quietOnly(tokens, deck.kind, frame) ? QUIET_EMPTY : deck.empty}</p>
               ) : (
                 rows.map((t, i) => (
                   <MoverRow key={t.key} t={t} i={i} frame={frame} kind={deck.kind} />

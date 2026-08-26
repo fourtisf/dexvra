@@ -305,6 +305,18 @@ export const RANK_MIN_VOL_USD = 1_000;
  * make one process over, for the same reason and in the same words. This one is
  * a RANKING rule with no operator behind it, so it fails open; the bot's is a
  * floor an operator explicitly set, so that one fails closed.
+ *
+ * ⚠️ …AND ON TODAY'S DATA THAT BRANCH IS A SAFETY NET, NOT A LIVE PATH, because
+ * the producers destroy the distinction before it gets here: `BoardToken.vol` is
+ * `Record<PeriodKey, number>` with no room for a null, so `poolstrade.ts`
+ * (`l.vol24h ?? 0`) turns a launchpad that published no volume into a measured
+ * zero. Said out loud rather than left as a comment describing a state that
+ * cannot occur — the reader after this one would otherwise trust an exemption
+ * that never fires. What it costs today: a Robinhood bonding-curve launch whose
+ * pad publishes a 24h CHANGE and no 24h VOLUME ranks as quiet. It still renders,
+ * with its own percentage; it just cannot lead a board. Making that honest means
+ * widening the type, which is a change to every producer and every consumer of
+ * `vol`, and it is not what was reported.
  */
 export function tradedEnough(t: BoardToken): boolean {
   const vol24 = t.vol["24h"];
@@ -333,4 +345,33 @@ export function changeRank(t: BoardToken, frame: PeriodKey): number {
   const r = changeReading(t, frame);
   if (r == null) return -Infinity;
   return tradedEnough(t) ? r : -Infinity;
+}
+
+/**
+ * A whole list ranked by change, biggest first (`dir` -1) or smallest first
+ * (`dir` 1) — the /trending "Top Gainers / Top Losers" board.
+ *
+ * ⚠️ IT EXISTS BECAUSE THAT PAGE HAD ITS OWN COPY, and the copy read the RAW
+ * field: `b.chg[frame] - a.chg[frame]`. So the page whose entire heading is
+ * "Top Gainers" was the one surface that went through NEITHER gate — a
+ * five-million-percent figure off a near-dead pool could lead it, which
+ * `SANE_CHANGE_PCT` was written to stop everywhere else, and `$MRNA +465%` on
+ * five cents took its 🥇 medal. Three private copies of "which change may rank
+ * this" is how the trending board's fabricated-percentage saga went three
+ * rounds; this is the second copy, deleted.
+ *
+ * An unrankable row sinks in BOTH directions — `-Infinity` is less than
+ * everything, so on the LOSERS tab it would otherwise be crowned, which is the
+ * fix producing a worse version of the bug it fixes. Same rule as the board's
+ * comparator, and the same reason `movers` excludes rather than demotes.
+ */
+export function byChange(tokens: readonly BoardToken[], frame: PeriodKey, dir: 1 | -1): BoardToken[] {
+  return [...tokens].sort((a, b) => {
+    const va = changeRank(a, frame);
+    const vb = changeRank(b, frame);
+    const ua = !Number.isFinite(va);
+    const ub = !Number.isFinite(vb);
+    if (ua || ub) return ua && ub ? 0 : ua ? 1 : -1;
+    return (vb - va) * -dir;
+  });
 }
