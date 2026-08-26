@@ -666,6 +666,35 @@ test("an unreadable volume is not a small one — it must not be demoted", () =>
   assert.strictEqual(tradedEnough(unknown), true);
 });
 
+test("⚠️ an unrankable row sinks in BOTH sort directions", () => {
+  // One tap on the 24H % header flips the sort to ascending, and -Infinity is
+  // less than everything — so the demoted rows would LEAD the board, which is
+  // the same defect as feeding -Infinity to a Top Losers filter, on the full
+  // board. This was already true of an UNREADABLE change before the volume
+  // floor existed; the floor only widened the set that hits it.
+  // Comment-stripped: a rule stated in a comment is not a rule.
+  const board = read("src/components/TokenBoard.tsx").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const sorter = board.slice(board.indexOf("const sorted = useMemo"), board.indexOf("const exp = useMemo"));
+  assert.match(sorter, /Number\.isFinite\(va\)/, "the comparator must notice an unrankable value");
+  assert.match(sorter, /ua \? 1 : -1/, "…and push it last regardless of direction");
+  // Drive the comparator itself, so this is not only a source scan.
+  const cmp = (dir: 1 | -1) => (a: BoardToken, b: BoardToken) => {
+    const va = changeRank(a, "24h");
+    const vb = changeRank(b, "24h");
+    const ua = !Number.isFinite(va);
+    const ub = !Number.isFinite(vb);
+    if (ua || ub) return ua && ub ? 0 : ua ? 1 : -1;
+    return (vb - va) * -dir;
+  };
+  const rows = [
+    tok({ sym: "DEAD", chg: 465, vol: 0.05 }),
+    tok({ sym: "UP", chg: 12, vol: 500_000 }),
+    tok({ sym: "DOWN", chg: -9, vol: 500_000 }),
+  ];
+  assert.deepStrictEqual([...rows].sort(cmp(-1)).map((t) => t.symbol), ["$UP", "$DOWN", "$DEAD"], "descending");
+  assert.deepStrictEqual([...rows].sort(cmp(1)).map((t) => t.symbol), ["$DOWN", "$UP", "$DEAD"], "ascending — DEAD must not lead");
+});
+
 test("a quiet token is left OUT of gainers/losers, not demoted into them", () => {
   // ⚠️ -Infinity is LESS THAN ZERO. Feeding a demoted row to the losers filter
   // would CROWN it — the fix producing a worse version of the bug it fixes, on

@@ -344,9 +344,28 @@ export function StdBoard({
 
   const sorted = useMemo(() => {
     if (!sortable) return tokens;
-    return [...tokens].sort(
-      (a, b) => (SORT_VAL[sortKey](b, period) - SORT_VAL[sortKey](a, period)) * -sortDir,
-    );
+    return [...tokens].sort((a, b) => {
+      const va = SORT_VAL[sortKey](a, period);
+      const vb = SORT_VAL[sortKey](b, period);
+      // ⚠️ AN UNRANKABLE ROW SINKS IN BOTH DIRECTIONS.
+      //
+      // `-Infinity` is how this sort says "there is no number here" — an
+      // unreadable change, or a real percentage with no trading behind it. It
+      // is LESS THAN EVERYTHING, so on the descending board it sinks correctly
+      // and on the ASCENDING one it rises to the top: one tap on the 24H %
+      // header and the board is led by exactly the rows the reading rule and
+      // the volume floor exist to keep off the top of it. `movers` already had
+      // to learn this — -Infinity fed to a "Top Losers" filter CROWNS a quiet
+      // token — and the header tap is the same bug on the full board.
+      //
+      // So an unrankable row goes last whatever the direction, and the real
+      // values sort among themselves. It is not hidden: the row still renders
+      // its own percentage, in its own column.
+      const ua = !Number.isFinite(va);
+      const ub = !Number.isFinite(vb);
+      if (ua || ub) return ua && ub ? 0 : ua ? 1 : -1;
+      return (vb - va) * -sortDir;
+    });
   }, [tokens, sortable, sortKey, sortDir, period]);
 
   const exp = useMemo(() => expander(sorted.length, limit || sorted.length, expandTo), [sorted.length, limit, expandTo]);

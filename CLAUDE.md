@@ -975,6 +975,111 @@ their own `.env`.
 cd bot && node scripts/run-tests.js test/loadEnv.test.js
 ```
 
+### The fifth cause was the opposite one: the board was full of nothing
+
+"untuk free trending mohon di filter agar high mc dan vol yang rame yang
+ditrendingkan, bukan kaya vol bahkan ga ada $10 di trendingin", with a screenshot
+of the board:
+
+```
+$MRNA   +465.0%   MCAP $157.7K   VOL $0.05   10 txns
+$GOOGL  +164.0%   MCAP  $66.4K   VOL $0.04    8 txns
+```
+
+Every round above was the board being SHORT. This one is the board being full of
+tokens that traded five cents in a day, promoted for free over real markets —
+and **ranking could never have prevented it**. `byGain` sorts by 24h change, and
+a percentage off an empty book is the biggest one there is: the same defect
+`minGainPct` was written for at the other end of the scale (a token down 99.94%
+on a $1,648 cap), and with five slots and five junk candidates sorting still
+promotes junk.
+
+- **`autoTrend.floorRefusal` is the ONE owner** of "is this big enough and busy
+  enough for a free slot", and it takes plain `{mcap, vol24}` rather than a row —
+  the promoter annotates `_mcap`/`_vol24` onto a LISTING and the filler reads
+  `mcap`/`vol24` off a MARKET candidate, and a predicate that knew one shape
+  would have forced the other door to write its own.
+- **They are QUALITY floors, not discretionary ones.** `minGainPct` deliberately
+  governs only the target ABOVE `perChainMin`, because a short board is worse
+  than a flat token. These bind every free slot the bot books: the gain-floor
+  pass, the FLOOR FILL (the pass whose whole job is to overrule a floor, and
+  therefore exactly the pass that would delete these silently on the chains that
+  are short — the free-fall bound has this scar), `trendFill` (whose listings
+  book their slot at CREATION), and the query itself.
+- ⚠️ **⚡ Run now is bound TOO, and that is the one place this differs from
+  every other rule here.** A forced run bypasses the gain floor and the
+  free-fall bound on purpose — those govern how DISCRETIONARY the bot is being,
+  and the operator has decided. These are the standing answer to what may go on
+  the board at all, and a button that quietly published `VOL $0.05` would
+  reproduce the report from the one path an operator uses *while they are
+  watching*. The refusal names both floors and the tokens.
+- ⚠️ **NO "nothing on this chain qualifies" EXEMPTION**, unlike `hasMarket` and
+  `hasReading`. Those fall open because a chain no indexer covers would never
+  fill. These must not: the market filler exists for a chain that cannot fill
+  from its own listings, so refusing ROUTES rather than strands — and an
+  exemption would put the reported board straight back on a chain of dead
+  tokens, which is the chain that produces one. The floor shortfall raises
+  `gap()`, so the filler is asked.
+- **An UNREADABLE value is refused; a measured ZERO is refused for a different
+  reason.** A floor is a CLAIM ("cap ≥ $100K"), and a token whose cap nobody
+  publishes cannot be shown to satisfy it — the gainers `minMcapUsd` rule. A
+  volume of exactly 0 is a READING, and it is the one being filtered.
+- ⚠️ **`fetchMarket` carried no volume at all.** Both readers had
+  `volume_usd.h24` / `volume.h24` in scope and discarded them. `vnum` publishes
+  it from the DEEPEST pool — never summed across pools, which would inflate the
+  one number the floor judges a token by — and it needed its own reader because
+  `num()` answers null for 0.
+- **`trendingWatch` gained a `below_floors` cause.** `spares_unusable` asserts
+  "they are below −15%", and with the floors on that is now usually the wrong
+  sentence — it sends the operator to look at a percentage when the answer is a
+  $0.05 volume. The filler's `why` ladder reports the DOMINANT counter, not the
+  first one written down: every branch says "every", and with three mutually
+  exclusive counters that is only true of the one accounting for all of them.
+- **The panel rows are TYPED, not stepped.** A cap floor moves in millions and a
+  volume floor in thousands, so one step size fits neither: at ±$1M a $10K
+  volume floor is unreachable, and at ±$10K a $5M cap floor is five hundred
+  taps. `0` reads as **OFF** everywhere — `$0` on a row labelled "min cap" says
+  the opposite of what it means.
+- **The legacy tests state `minMcapUsd: 0, minVol24hUsd: 0` out loud** rather
+  than inheriting it — the rule the pace tests had to learn.
+
+**And the SITE had the same defect with its own cause.** The home board opens
+sorted by 24h % and the only bound was `SANE_CHANGE_PCT`, so +465% on five cents
+was a legal reading and led the board. `changeRank` = `changeReading` plus
+`tradedEnough`.
+
+- **It DEMOTES, it never hides.** These boards carry paying customers; a listing
+  that vanished because its pool was quiet today is a refund conversation. The
+  row keeps its real percentage in its own column.
+- ⚠️ **…but `movers` EXCLUDES instead**, because `-Infinity` is less than zero
+  and a demoted row fed to a "Top Losers" filter would be CROWNED by it — the
+  fix producing a worse version of the bug it fixes, on the surface next door.
+- ⚠️ **AND AN UNRANKABLE ROW HAS TO SINK IN BOTH DIRECTIONS.** One tap on the
+  24H % header flips the sort ascending, and `-Infinity` leads it — the same bug
+  again, on the full board, reachable with one click. It was already true of an
+  unreadable change before any of this; the volume floor only widened the set
+  that hits it. The comparator pushes an unrankable value last whichever way the
+  board is sorted.
+- **An unreadable VOLUME is not a small one** — that exemption fails OPEN here,
+  because this is a ranking rule with no operator behind it, while the bot's
+  floors fail CLOSED because an operator set them.
+
+```bash
+cd bot && node scripts/run-tests.js test/trendQuality.test.js   # 19 tests, no network
+cd bot && npm run trending:check                                # the floors are on the config line
+cd bot && npm run trending:check -- --floors                    # …and how many spares they refuse
+npm test                                                        # home / TokenBoard, site side
+```
+
+The four promotion guarantees are MUTATION-TESTED rather than argued: reaching
+around the floors in the floor fill, dropping them from the promotion pass,
+bypassing them on a forced run, and dropping the filler's refusal each fail
+between one and four tests.
+
+**Config a fix depends on:** nothing — but ⚠️ **the floors ship ON and that
+CHANGES an existing board on deploy**, deliberately, the way the gainers
+`minMcapUsd` did. Either is one tap to `0` on ⚙️ Auto-Trend.
+
 ## The gap between two free listings was never a setting
 
 "fitur free listing itu buat berapa jam sekali baru free listing di range misal
@@ -2009,6 +2114,104 @@ npm test    # gtBudget — the one-owner guard, and the rest of the GT budget
 **Config a fix depends on:** `GECKOTERMINAL_API_KEY` in the repo-root `.env`
 for the site, and `bot/.env` for the bot. Until one is set, 30/min is 30/min and
 a busy minute still ends in a cooldown — this only makes the minute go further.
+
+### "Mending tambahkan api dari dexscreener" — the ceiling was never going to move
+
+Reported a fourth time, with the token page reading `Chart unavailable right
+now · Couldn't read the chart just now (GeckoTerminal 429 (rate limited))`.
+Every round above cut what we SPEND — six GT doors down to one client, an
+hour-long pool cache, DexScreener-first pricing in the bot — and every round
+made the minute go further without ever removing the minute. The operator's own
+answer is the only one that does:
+
+    A PRICE HAS TWO FREE SOURCES; A CANDLE HAS ONE.
+
+`src/lib/providers/dsChart.ts` is the second one, and two of its rules would
+each have shipped a source that answers perfectly and draws nothing:
+
+- ⚠️ **DexScreener sends MILLISECONDS; everything downstream is SECONDS.**
+  `Candle.t` is GeckoTerminal's unit, `CandleChart` multiplies by 1000, and
+  `normalizeCandles` refuses a stamp more than six hours ahead — so a
+  millisecond feed is not merely wrong, every candle is silently DROPPED as
+  "the future" and the panel reports "no candles on this timeframe" about a
+  source that answered. `normalize.toMs`, pointing the other way. Converted by
+  MAGNITUDE, because both spellings are plausible from an undocumented feed and
+  guessing one costs the whole chart.
+- ⚠️ **A DS PAIR ADDRESS IS NOT A GT POOL ID** — the rule this repo already
+  states in seven places. `/api/pool` and `/api/trades` read the `pool:` cache
+  and hand its value to GeckoTerminal, and the panel built a
+  `geckoterminal.com/<network>/pools/<pool>` link out of it. The pair gets its
+  own field and its own namespace; `pool` still only ever carries a GT pool, and
+  the "open at the source" link is built by whoever knows which source answered.
+
+⚠️ **AND THE REQUEST SHAPE IS A GUESS.** DexScreener publishes **no** documented
+OHLCV endpoint — its own chart is a TradingView chart on an internal datafeed,
+and nothing in this repo had ever called one. That is exactly the state
+`pads.js` marks `verified: false` and was designed for, so it ships under the
+same contract: a base LIST with `DS_CHART_API` pinning one **and** skipping it,
+a PATH template list, `DS_CHART_BARS_KEY` for the envelope, `DS_CHART=0` to kill
+it. **A renamed segment costs a line in `.env`, not a deploy** — which is the
+whole licence for shipping a shape nobody here has exercised. And it can never
+be the only source: **a guess must lose to an answer**, so GeckoTerminal stays
+first whenever it can answer.
+
+- **TWO FAILOVER RULES, AND MIXING THEM IS THE BUG.** Across BASES: transport
+  only — `JUP_BASES`' rule, because a status means the host answered and the
+  same request gets it everywhere else. Across PATHS: a 404 only, because that
+  is a DIFFERENT RESOURCE on the same host and "that spelling is not here" is
+  exactly when the other spelling is worth trying. A 429 says nothing about
+  which path is right, so it retries neither.
+- **A 429 arms its own process-wide cooldown.** A client that hammers through
+  its own 429 is precisely the defect `gt.ts` was written to end, and adding a
+  second upstream without one would reintroduce it a host over.
+- **GT is not ASKED while its cooldown holds.** `gtGet` would answer without a
+  request, so skipping costs nothing upstream — and answering during exactly
+  that window is the entire reason a second source exists. That is the state the
+  screenshot was taken in.
+- **Both reasons travel** when neither answered, and the sentence keeps the words
+  *couldn't read*: the panel classifies error-vs-answer on that substring, and
+  only an error gets the fast retry that lets a chart appear the moment a
+  cooldown lifts.
+- ⚠️ **The no-candles branch carries the SPECIFIC reason.** It used to assert
+  *"This pool has no candles on this timeframe yet"* for every way a source can
+  answer with nothing — so a token NEITHER index has a pair for was told its
+  pool was empty, which claims a pool that does not exist.
+- **The panel SAYS when it drew from the fallback** (`via DexScreener`). Without
+  it, a chart from the second source and one from GT are the same picture, and
+  *"the fallback works"* and *"the fallback never fires"* are the reassuring
+  reading this repo keeps paying for.
+
+```bash
+npm run build && npm start &
+npm run chart:check                       # per source, on the box; non-zero if neither draws
+npm run chart:check -- bsc 0x8b7a…7777    # one token you are looking at
+```
+
+⚠️ **The check drives the RUNNING SERVER, not the provider module.** Importing
+`src/**/*.ts` needs node's type stripping and **production runs 18.19**, where
+that import simply throws — a check that cannot run on the box is "apt-get
+install is not a fix, it is a request", one feature over. It asks each source
+separately (`?source=`), because with GeckoTerminal healthy the DexScreener path
+never runs and a check that only asked normally would report a green chart while
+saying nothing about the fallback.
+
+⚠️ **`chart:preview` had been permanently red and therefore useless as a gate.**
+It still asserted *"an unlisted token gets the chart too"* — written before that
+chart was deliberately removed ("Kalo token belum listing hapus chartnya"). So it
+had exited non-zero on every run since, and a check that asserts a deleted
+feature is worse than no check: it trains the reader to ignore the red. It
+asserts the DECISION now, and gained the fallback state — judged by LOOKING at
+the render, 21/21.
+
+⚠️ **The chart-route build-stamp guard matched `{ ok: true, `** — the one-line
+spelling — so an UNSTAMPED multi-line response would have passed it, which is the
+one shape it exists to catch. It counts the property now.
+
+**Config a fix depends on:** nothing; every knob has a working default. But
+whether the guessed shape answers is a property of the server's egress, so
+`npm run chart:check` on the box is the only way to learn it — and
+`GECKOTERMINAL_API_KEY` is still the only thing that raises the real ceiling
+rather than dividing it.
 
 ## Two bot processes, one config
 
