@@ -8,6 +8,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { fmtCap } = require("../src/helpers/format");
+const fss = require("node:fs");
+const path = require("node:path");
 
 test("a real figure under a dollar is never rendered as $0", () => {
   assert.strictEqual(fmtCap(0.06), "$0.06");
@@ -35,4 +37,17 @@ test("nothing above a dollar changed", () => {
   assert.strictEqual(fmtCap(4707.61), "$4.7K");
   assert.strictEqual(fmtCap(1.5e6), "$1.50M");
   assert.strictEqual(fmtCap(2.3e9), "$2.30B");
+});
+
+test("⚠️ the two copies agree on a NON-FINITE value too", () => {
+  // The one input the agreement test never tried, and the one the two copies
+  // had drifted on: the bot guards `!Number.isFinite` and the website did not,
+  // so a NaN printed `—` in a channel post and `$NaN` on the board. An
+  // unreadable figure is a dash everywhere else in this repo.
+  const web = fss.readFileSync(path.join(__dirname, "..", "..", "src", "lib", "format.ts"), "utf8");
+  assert.match(web, /!Number\.isFinite\(n\)\) return "—"/, "the website copy dropped the non-finite guard");
+  for (const v of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])
+    assert.strictEqual(fmtCap(v), "—", `fmtCap(${v})`);
+  assert.strictEqual(fmtCap(null), "—");
+  assert.strictEqual(fmtCap(0), "$0", "…and a REAL zero is still a fact");
 });

@@ -1545,11 +1545,19 @@ function atFloorsLine(c) {
   const parts = [];
   if (c.minMcapUsd > 0) parts.push(`market cap ≥ <b>${fmtCap(c.minMcapUsd)}</b>`);
   if (c.minVol24hUsd > 0) parts.push(`24h volume ≥ <b>${fmtCap(c.minVol24hUsd)}</b>`);
+  // ⚠️ WHAT HAPPENS NEXT DEPENDS ON A TOGGLE FOUR PARAGRAPHS DOWN. The first
+  // cut promised "goes to 🧲 Fill from market" unconditionally, so with the
+  // filler OFF one message said the gap would be filled and then, lower down,
+  // that a chain with no spare listings "stays short until somebody lists
+  // tokens on it". A panel contradicting itself in two places is the buy card's
+  // two ideas of "whale", on a screen an operator tunes from.
+  const next = c.fillFromMarket
+    ? `A chain whose spares all fail this goes to 🧲 Fill from market instead of publishing a dead row.`
+    : `⚠️ With 🧲 Fill from market OFF, a chain whose spares all fail this publishes a SHORT board — nothing replaces them.`;
   return (
     `🏦 <b>Quality floors</b> — a free slot needs ${parts.join(" and ")}. ` +
     `Applies to every slot this bot books, ⚡ Run now included; paid slots are never filtered. ` +
-    `<i>A chain whose spares all fail this goes to 🧲 Fill from market instead of publishing a dead row. ` +
-    `Set either to 0 to switch it off.</i>`
+    `<i>${next} Set either to 0 to switch it off.</i>`
   );
 }
 

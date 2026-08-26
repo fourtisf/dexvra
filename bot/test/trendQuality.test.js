@@ -401,6 +401,25 @@ test("a chain short for the OLD reasons still gets the old answers", async () =>
   );
 });
 
+test("⚠️ trending:check counts refusals with the BOT'S counter, not a copy", () => {
+  // The check script filtered on `floorRefusal` alone, so it counted the tail
+  // `byGain` never priced: on a chain with 44 spares it reported 44 refusals
+  // where the running bot reports 25 — the check and the thing it mirrors
+  // disagreeing about the one number an operator would act on. `fonts:check`
+  // printed nine green ticks over a banner drawing boxes for exactly this.
+  const src = fss.readFileSync(path.join(__dirname, "..", "scripts", "trending-check.js"), "utf8");
+  assert.match(src, /autoTrend\.countFloorRefusals\(ranked, cfg\)/, "the script must call the bot's counter");
+  assert.ok(
+    !/\.filter\(\(r\) => autoTrend\.floorRefusal\(/.test(src),
+    "the script grew its own copy of the count again",
+  );
+  // …and the counter itself honours "we actually looked".
+  const cfg = { minMcapUsd: 100_000, minVol24hUsd: 10_000 };
+  const priced = { _change: 5, _mcap: 1000, _vol24: 1 };       // looked at, refused
+  const tail = { _change: undefined, _mcap: undefined, _vol24: undefined }; // never priced
+  assert.strictEqual(autoTrend.countFloorRefusals([priced, tail, tail], cfg), 1);
+});
+
 // ── config plumbing ──────────────────────────────────────────────────────────
 
 test("both floors PERSIST — a setting set() does not write is a setting that reverts", async () => {

@@ -22,7 +22,15 @@ export function fmtPrice(p: number): string {
 }
 
 export function fmtCap(n: number | null): string {
-  if (n == null) return "—";
+  // ⚠️ AND A NON-FINITE VALUE IS "—", NOT "$NaN".
+  //
+  // The two copies of this function had drifted on exactly one input: the bot's
+  // port guards `!Number.isFinite(Number(n))` and this one did not, so a NaN
+  // reaching a board cell printed `$NaN` on the site and `—` in a channel post
+  // — the divergence the "they must agree exactly" test exists to prevent, on
+  // the one case that test never tried. `$NaN` is never a wanted output for any
+  // caller, and an unreadable figure is a dash everywhere else in this repo.
+  if (n == null || !Number.isFinite(n)) return "—";
   if (n >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
   if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
   if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";

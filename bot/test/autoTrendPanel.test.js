@@ -225,3 +225,45 @@ test("the fill number reads as a SPEED, not as a cap on the board", async () => 
   assert.ok(label, `the button must carry the unit too: ${kb.flat().join(" | ")}`);
   assert.ok(!/max/.test(label), `"max N/chain" is the reading that caused the question: ${label}`);
 });
+
+// ── the quality floors ───────────────────────────────────────────────────────
+
+test("the floors are on the panel, editable, and 0 reads as OFF", async () => {
+  const on = await panel(COUNTS, { minMcapUsd: 100_000, minVol24hUsd: 10_000 });
+  assert.ok(on.text.includes("Quality floors"), "the floors must be explained, not only stepped");
+  assert.ok(/\$100\.0K/.test(on.text) && /\$10\.0K/.test(on.text), "…with their actual numbers");
+  const labels = on.kb.flat().join(" | ");
+  assert.ok(/🏦 cap \$100\.0K\+/.test(labels), `no cap row: ${labels}`);
+  assert.ok(/📊 vol \$10\.0K\+/.test(labels), `no volume row: ${labels}`);
+
+  // ⚠️ 0 IS OFF AND MUST READ AS OFF. "$0" on a row labelled "min cap" says the
+  // filter is set to nothing, which is the opposite of what it means.
+  const off = await panel(COUNTS, { minMcapUsd: 0, minVol24hUsd: 0 });
+  const offLabels = off.kb.flat().join(" | ");
+  assert.ok(/🏦 cap OFF/.test(offLabels), `the off state prints a number: ${offLabels}`);
+  assert.ok(!/cap \$0/.test(offLabels) && !/vol \$0/.test(offLabels), "…and never $0");
+  assert.ok(off.text.includes("Quality floors: OFF"), "the body must say so too");
+});
+
+test("⚠️ the floors paragraph never promises a filler that is switched OFF", async () => {
+  // One message said the gap would be filled and then, four paragraphs down,
+  // that a chain with no spare listings "stays short until somebody lists
+  // tokens on it". A panel contradicting itself in two places is the buy card's
+  // two ideas of "whale", on the screen an operator tunes from.
+  const on = await panel(COUNTS, { minMcapUsd: 100_000, minVol24hUsd: 10_000, fillFromMarket: true });
+  assert.ok(/goes to 🧲 Fill from market/.test(on.text));
+
+  const off = await panel(COUNTS, { minMcapUsd: 100_000, minVol24hUsd: 10_000, fillFromMarket: false });
+  assert.ok(!/goes to 🧲 Fill from market/.test(off.text), "it promised a filler that is off");
+  assert.ok(/publishes a SHORT board/.test(off.text), "…and it must say what happens instead");
+});
+
+test("the label row OPENS a typed input — a $10K floor cannot be stepped to", async () => {
+  // The trigger ceiling stepped in ±$100,000 and drew "angkanya bisa di ketik
+  // biar cpt". A cap floor moves in millions and a volume floor in thousands,
+  // so one step size fits neither: at ±$1M a $10K volume floor is unreachable.
+  const kb = admin._test.atKb();
+  const data = JSON.stringify(kb);
+  assert.ok(data.includes("atset:minMcapUsd"), "the cap label is still a no-op button");
+  assert.ok(data.includes("atset:minVol24hUsd"), "the volume label is still a no-op button");
+});

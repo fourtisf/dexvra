@@ -518,6 +518,27 @@ function floorRefusal({ mcap, vol24 }, cfg) {
 /** The promoter's adapter: a ranked LISTING carries byGain's annotations. */
 const rowRefusal = (r, cfg) => floorRefusal({ mcap: r._mcap, vol24: r._vol24 }, cfg);
 
+/**
+ * How many of a `byGain`-ranked list the floors refused — the number that
+ * reaches the watch, the log line and `trending:check`.
+ *
+ * ⚠️ IT IS A FUNCTION BECAUSE THE CHECK SCRIPT HAD ITS OWN COPY OF IT, and the
+ * copy was missing the "we actually looked" half — so on a chain with 44
+ * spares it reported 44 refusals where the bot reports 25, and the two
+ * disagreed about the one number the operator would act on. A check that
+ * measures its own copy of the question proves nothing; `fonts:check` printed
+ * nine green ticks over a banner drawing boxes for exactly this reason.
+ *
+ * `_change === undefined` is this repo's spelling of "byGain never priced this
+ * one" (the tail past PROBE_CAP). Those rows are still refused — promoting a
+ * token nobody priced is how a dead row reaches the board — they are simply not
+ * COUNTED as having failed a floor nobody read them against.
+ */
+const looked = (r) => r._change !== undefined;
+function countFloorRefusals(ranked, cfg) {
+  return ranked.filter((r) => looked(r) && rowRefusal(r, cfg)).length;
+}
+
 async function byGain(rows, rng = Math.random) {
   // No shortcut for a single candidate: it still has to be PRICED, or the
   // caller's floor sees an unannotated row and reads it as "never looked" —
@@ -718,7 +739,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       // opened — a number that sends them to change a setting over a cap
       // nobody read. `_change === undefined` is the repo's existing spelling
       // of "never looked".
-      if (bad && r._change !== undefined) refusals.push({ r, bad });
+      if (bad && looked(r)) refusals.push({ r, bad });
       return !bad;
     });
     if (refusals.length) {
@@ -1154,6 +1175,7 @@ module.exports = {
   // refusing a token at −20% while the other lists one is the same board saying
   // two things.
   FLOOR_FILL_MAX_DROP,
+  countFloorRefusals,
   // …and the quality floors, for exactly the same reason, one round later. Both
   // doors ask THIS function: the promoter through `rowRefusal` above, and
   // `trendFill` for the tokens it would list straight into a slot. A second
