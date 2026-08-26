@@ -12,6 +12,7 @@ const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const PIPELINE = read("src/lib/providers/index.ts");
 const PROXY = read("src/app/api/logo/route.ts");
 const COIN = read("src/components/Coin.tsx");
+const STORE = read("src/lib/store.ts");
 /** Comments quote the defect they guard against, so a scan for a banned line
  *  has to read the CODE. Without this the proxy's own warning about
  *  `redirect: "follow"` fails the test that forbids it. */
@@ -28,9 +29,54 @@ test("⚠️ the board no longer merges logos with `t.logoUrl ?? m.logoUrl`", ()
 });
 
 test("the ladder reads the STORED row, not the board token's filled-in guess", () => {
-  assert.match(PIPELINE, /stored: row\?\.logoUrl/);
+  // …by way of `storedLogo`, which is that row's value minus the one case where
+  // it is not a logo at all (see the next test).
+  assert.match(PIPELINE, /const storedLogo = row\?\.logoUrl && !lost\.has\(row\.logoUrl\)/);
+  assert.match(PIPELINE, /stored: storedLogo/);
   assert.match(PIPELINE, /live: m\?\.logoUrl/);
   assert.match(PIPELINE, /resolved: knownLogo\(/);
+});
+
+test("⚠️ an upload whose file is gone loses to every answer below it", () => {
+  // data/listings.json is mirrored to Mongo and restored from it; data/uploads
+  // is not. So a box that loses its disk comes back asserting `/api/media/…`
+  // for every paid listing with none of those files behind them — and the row
+  // is monogrammed FOR EVER, because `pickLogo` calls it "stored" (so the
+  // resolver never queues it) and `setResolvedLogo` refuses to write over any
+  // logoUrl at all. Two correct guards holding a dead URL between them.
+  assert.match(PIPELINE, /lostUploads\(rows\.map\(\(r\) => r\.logoUrl\)/);
+  assert.match(PIPELINE, /list: listUploads/);
+  // …and it is cleared in the store, or the sweep's answer has nowhere to land.
+  assert.match(PIPELINE, /forgetLostUploads\(/);
+  assert.match(STORE, /applyLostUpload\(/, "the rule lives in logoWrite, where a test can drive it");
+  assert.ok(!/await forgetLostUploads/.test(PIPELINE), "a board render must not wait on a store write");
+});
+
+test("⚠️ a re-list may fill a listing's fields, never blank them", () => {
+  // `addListing` keeps the id on a duplicate and used to write the incoming row
+  // over the stored one WHOLE — and `buildRow` renders an absent optional field
+  // as `undefined`. So every re-POST of a token the site already carried erased
+  // the logo the project uploaded, their socials, the overview, and a trending
+  // window that was still running. Nothing failed and nothing said so.
+  assert.match(STORE, /mergeRelist\(rows\[dupIdx\], rec\)/);
+  assert.ok(
+    !/created = \{\s*\.\.\.rec,\s*id: dupIdx >= 0/.test(STORE),
+    "the wholesale overwrite is gone",
+  );
+});
+
+test("one owner for the uploads directory", () => {
+  // Three files declared `path.join(process.cwd(), "data", "uploads")`. It
+  // matters more now that the board asks whether an upload is still on disk: a
+  // reader pointed at the wrong directory reports every paid listing's logo as
+  // lost, and the site clears them.
+  const owners = ["src/app/api/admin/upload/route.ts", "src/app/api/internal/upload/route.ts", "src/app/api/media/[name]/route.ts"];
+  for (const f of owners) {
+    const src = code(read(f));
+    assert.match(src, /UPLOADS_DIR/, `${f} reads the shared path`);
+    assert.ok(!/"data", "uploads"/.test(src), `${f} must not declare its own copy`);
+  }
+  assert.match(read("src/lib/uploadsDir.ts"), /export const UPLOADS_DIR/);
 });
 
 test("a row with nothing but the convention is queued for the resolver", () => {

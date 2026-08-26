@@ -59,6 +59,33 @@ function candles(n, step) {
   return out;
 }
 
+/** THE SHAPE THAT WAS REPORTED: $0.000803 → $0.0281 in two days, i.e. a 35x.
+ *  On a LINEAR axis the whole of the early history is a line on the floor and
+ *  only the last spike is readable — which is the picture the price-scale
+ *  control exists for, so it is the picture this script has to render. A steady
+ *  compounding climb with a little noise, deterministic. */
+function ramp(n, step) {
+  const now = Math.floor(Date.now() / 1000);
+  const lo = 0.000803;
+  const hi = 0.0281;
+  const g = (hi / lo) ** (1 / (n - 1));
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const o = lo * g ** i;
+    const c = o * g * (1 + (rnd() - 0.5) * 0.04);
+    out.push({
+      t: now - (n - 1 - i) * step,
+      o, c,
+      h: Math.max(o, c) * (1 + rnd() * 0.02),
+      l: Math.min(o, c) * (1 - rnd() * 0.02),
+      v: Math.round(500 + rnd() * 9000),
+    });
+  }
+  return out;
+}
+
 const TOKEN = {
   key: `${CHAIN}:${ADDR}`, chain: CHAIN, address: ADDR, symbol: "$FLOKI", name: "Floki",
   logoUrl: null, emoji: "🐶", gradient: ["#7BE8C2", "#22C39A", "#0B6E52"],
@@ -93,6 +120,9 @@ const stub = async (page, mode) => {
     // The FALLBACK, drawn. With GeckoTerminal healthy this state never occurs
     // in a preview run, and it is the one state where the panel says something
     // extra — so it has to be looked at deliberately or the chip ships unseen.
+    // The 35x climb the price-scale control was reported for.
+    if (m === "ramp")
+      return r.fulfill({ json: { ok: true, network: CHAIN, pool: POOL, tf, candles: ramp(160, STEP[tf] ?? 900), why: null, source: "geckoterminal", sourceUrl: `https://www.geckoterminal.com/${CHAIN}/pools/${POOL}` } });
     if (m === "dexscreener")
       return r.fulfill({
         json: {
@@ -158,9 +188,142 @@ try {
     // EXACT: `hasText: "5m"` also matches the 15m tab.
     await page.getByRole("tab", { name: tf, exact: true }).click();
     await page.waitForTimeout(700);
-    check(`the ${tf} tab draws its own candles`, (await page.locator(".ck-c").count()) > 20 && (await page.locator(".ck-tf.on").innerText()) === tf);
+    // Scoped to the tablist: the LIN/LOG pair wears the same `.ck-tf` pill.
+    check(`the ${tf} tab draws its own candles`, (await page.locator(".ck-c").count()) > 20 && (await page.locator('[role="tablist"] .ck-tf.on').innerText()) === tf);
   }
   await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart-1d.png` });
+
+  // ── the reader's vertical ────────────────────────────────────────────────
+  // Judged by LOOKING at it, on the shape that was reported: a 35x climb whose
+  // whole history is flat on the floor of a linear panel. Four shots, because
+  // "the control exists" and "the control changes the picture" are different
+  // claims and only the second one is the feature.
+  mode = "ramp";
+  await page.getByRole("tab", { name: "15m", exact: true }).click();
+  await page.waitForTimeout(900);
+  await page.mouse.move(10, 10); // drop the crosshair so the shots are clean
+  await page.waitForTimeout(120);
+  const plot = await page.locator(".ck-plot").boundingBox();
+  /** Where the MIDDLE of the move sits, as a fraction up the PRICE area — the
+   *  price at which the token had done half its multiple belongs somewhere near
+   *  the middle of a chart of that move. Measured against the price grid rather
+   *  than the whole svg: the volume band and the time axis are not part of the
+   *  scale, and counting them would flatter a linear chart by a fifth. */
+  const halfwayUp = () =>
+    page.evaluate(() => {
+      // The first five .ck-grid lines are the price grid, drawn before the
+      // volume baseline — so they ARE the price area, exactly.
+      const grid = [...document.querySelectorAll(".ck-grid")].slice(0, 5).map((g) => g.getBoundingClientRect().top);
+      const bodies = [...document.querySelectorAll(".ck-c .ck-body")];
+      if (grid.length < 5 || !bodies.length) return null;
+      const top = Math.min(...grid);
+      const bottom = Math.max(...grid);
+      const mid = bodies[Math.floor(bodies.length / 2)].getBoundingClientRect().top;
+      return 1 - (mid - top) / (bottom - top);
+    });
+
+  const linUp = await halfwayUp();
+  await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/scale-lin.png` });
+  check("LIN: a 35x move flattens its own history — the reported picture", linUp != null && linUp < 0.25, `half the move sits ${(linUp * 100).toFixed(0)}% up the price area`);
+
+  await page.getByRole("button", { name: "LOG", exact: true }).click();
+  await page.waitForTimeout(400);
+  const logUp = await halfwayUp();
+  await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/scale-log.png` });
+  check("LOG: the same history is readable across the panel", logUp != null && logUp > 0.4 && logUp < 0.6, `half the move sits ${(logUp * 100).toFixed(0)}% up the price area`);
+  check("…and the panel says which axis it is on", (await page.locator('[aria-label="Price scale"] .ck-tf.on').innerText()) === "LOG");
+
+  // Drag the price gutter — the control the reader asked for by name.
+  await page.getByRole("button", { name: "LIN", exact: true }).click();
+  await page.waitForTimeout(300);
+  const spanOf = () =>
+    page.evaluate(() => {
+      const ys = [...document.querySelectorAll(".ck-c .ck-body")].map((b) => b.getBoundingClientRect());
+      if (!ys.length) return null;
+      return Math.max(...ys.map((r) => r.bottom)) - Math.min(...ys.map((r) => r.top));
+    });
+  const before = await spanOf();
+  const gutter = await page.locator(".ck-yaxis").boundingBox();
+  await page.mouse.move(gutter.x + gutter.width / 2, plot.y + plot.height * 0.6);
+  await page.mouse.down();
+  await page.mouse.move(gutter.x + gutter.width / 2, plot.y + plot.height * 0.2, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const after = await spanOf();
+  check("dragging the price axis UP stretches the chart", after > before * 1.4, `${Math.round(before)}px → ${Math.round(after)}px`);
+  check("…and the panel offers the way back", (await page.locator(".ck-auto").count()) === 1);
+  await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/scale-stretched.png` });
+
+  // Drag the chart body — content follows the finger.
+  const topBefore = await page.evaluate(() =>
+    Math.min(...[...document.querySelectorAll(".ck-c .ck-body")].map((b) => b.getBoundingClientRect().top)));
+  await page.mouse.move(plot.x + plot.width * 0.4, plot.y + plot.height * 0.4);
+  await page.mouse.down();
+  await page.mouse.move(plot.x + plot.width * 0.4, plot.y + plot.height * 0.4 + 60, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const topAfter = await page.evaluate(() =>
+    Math.min(...[...document.querySelectorAll(".ck-c .ck-body")].map((b) => b.getBoundingClientRect().top)));
+  // ⚠️ BY THE DRAG DISTANCE, not merely "downwards". `>20px` passed happily on
+  // a build where a pointermove over the gutter ran the handler twice — once
+  // for the gutter and again as it bubbled to the plot — so every drag applied
+  // its zoom TWICE and the scale ran away exponentially under the hand. It
+  // measured as a working control and read as an uncontrollable one.
+  const moved = topAfter - topBefore;
+  check("dragging the chart moves it BY the drag — content follows the finger", Math.abs(moved - 60) < 8, `60px drag moved it ${Math.round(moved)}px`);
+
+  // ⚠️ THE CLIP. Unclipped, a stretched chart draws its wicks straight through
+  // the volume histogram and the time stamps.
+  //
+  // Measured by HIT-TESTING, and MUTATION-TESTED in the page: the clip is
+  // pulled off, the same points are probed again, and it is put back. Two
+  // cheaper checks were tried first and both were worthless — bounding boxes
+  // on clipped SVG come back collapsed or stale, and a run where nothing
+  // overflows makes any "nothing spilled" assertion true of a chart with no
+  // clip at all. This one fails if the clip stops working AND fails if the
+  // probe stops being able to see a spill.
+  const clip = await page.evaluate(() => {
+    const grid = [...document.querySelectorAll(".ck-grid")].slice(0, 5).map((g) => g.getBoundingClientRect().top);
+    const svg = document.querySelector(".ck-svg").getBoundingClientRect();
+    const below = Math.max(...grid); // the floor of the price area
+    const g = document.querySelector(".ck-svg g[clip-path]");
+    const probe = () => {
+      for (let f = 0.15; f <= 0.9; f += 0.1) {
+        const x = svg.left + svg.width * f;
+        for (const y of [below + 14, below + 34, svg.bottom - 8]) {
+          const el = document.elementFromPoint(x, y);
+          if (el && (el.classList.contains("ck-body") || el.classList.contains("ck-wick"))) return true;
+        }
+      }
+      return false;
+    };
+    const withClip = probe();
+    const attr = g?.getAttribute("clip-path") ?? null;
+    g?.removeAttribute("clip-path");
+    const without = probe();
+    if (attr) g?.setAttribute("clip-path", attr);
+    return { attr, withClip, without };
+  });
+  check("the candles are drawn inside a clip at all", Boolean(clip.attr), String(clip.attr));
+  check("a stretch really does push candles past the price area", clip.without, "…so the check below is not vacuous");
+  check("…and the clip keeps them off the volume band and the time axis", !clip.withClip);
+  // …and the one number the reader came for is still on screen.
+  const tagOn = await page.evaluate(() => {
+    const svg = document.querySelector(".ck-svg").getBoundingClientRect();
+    const t = document.querySelector(".ck-lasttx");
+    if (!t) return false;
+    const r = t.getBoundingClientRect();
+    return r.top >= svg.top - 1 && r.bottom <= svg.bottom + 1;
+  });
+  check("the last-price tag is pinned into the panel, never dragged off it", tagOn);
+
+  // …and the way back.
+  await page.locator(".ck-auto").click();
+  await page.waitForTimeout(300);
+  check("⤢ Auto hands the axis back to the data", (await page.locator(".ck-auto").count()) === 0);
+  const reset = await spanOf();
+  check("…and the chart is where it started", Math.abs(reset - before) < 6, `${Math.round(before)}px → ${Math.round(reset)}px`);
+  mode = "ok";
 
   // ── the two states with nothing to draw ──────────────────────────────────
   // They must not read the same: one is about the token, the other about us.

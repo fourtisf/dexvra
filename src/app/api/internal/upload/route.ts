@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
 import { isUploadFile } from "@/lib/upload";
+import { UPLOADS_DIR } from "@/lib/uploadsDir";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { internalAuthorized, unauthorizedInternal } from "@/lib/internalAuth";
@@ -13,7 +14,8 @@ export const dynamic = "force-dynamic";
 // admin upload — never trust the client MIME, reject SVG (script vector).
 // Returns { url: "/api/media/<24hex>.<ext>" }, which passes the LOGO_RE gate.
 const MAX = 3 * 1024 * 1024; // 3 MB
-const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
+// One owner for this path — see lib/uploadsDir.ts.
+const UPLOAD_DIR = UPLOADS_DIR;
 
 function sniff(b: Uint8Array): string | null {
   if (b.length < 12) return null;

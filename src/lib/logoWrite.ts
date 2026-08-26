@@ -50,3 +50,52 @@ export function applyResolvedLogo<T extends LogoRow>(
   });
   return wrote ? { rows: next, wrote } : { rows, wrote };
 }
+
+/**
+ * Forget an uploaded logo whose FILE IS GONE.
+ *
+ * ⚠️ THIS IS THE ONE WRITE IN THIS FILE THAT TURNS SOMETHING INTO NOTHING, and
+ * the asymmetry above is why it needs its own function and its own guard rather
+ * than a flag on `applyResolvedLogo`. It is justified by one fact and no
+ * judgement: the "something" does not exist. `/api/media/<hex>.png` with no
+ * file behind it is not artwork somebody chose, it is a 404 wearing the shape
+ * of one — and while the row holds it, `applyResolvedLogo` can never write the
+ * replacement the resolver finds, because that guard sees a `logoUrl` and stops.
+ *
+ * It can only ever clear an UPLOAD. An external https logo may be temporarily
+ * unreachable — a CDN blip, a hotlink block, a rate limit — and none of those
+ * is knowable from this server; clearing one would delete a project's artwork
+ * over a bad minute. An upload is on our own disk: its absence is a local fact,
+ * decided by `lostUploads`, which refuses to answer at all when the directory
+ * itself cannot be read.
+ *
+ * The caller has already established the file is missing. This is the rule for
+ * what may then be written, kept pure so "only an upload, only this row" is
+ * driven by a test instead of read off the source.
+ */
+export function applyLostUpload<T extends LogoRow>(
+  rows: T[],
+  chain: string,
+  address: string,
+): { rows: T[]; wrote: boolean } {
+  const want = String(address ?? "").toLowerCase();
+  if (!want || !chain) return { rows, wrote: false };
+
+  let wrote = false;
+  const next = rows.map((r) => {
+    if (wrote || r.chain !== chain || String(r.address).toLowerCase() !== want) return r;
+    // Only an upload, and only one that is actually there to clear.
+    if (!isUpload(r.logoUrl)) return r;
+    wrote = true;
+    const { logoUrl: _gone, ...rest } = r;
+    return rest as T;
+  });
+  return wrote ? { rows: next, wrote } : { rows, wrote };
+}
+
+/** The same `/api/media/<24hex>.<ext>` shape the media route serves. Repeated
+ *  here rather than imported so this module stays dependency-free — it is the
+ *  rule file the test runner loads on its own. */
+function isUpload(url: unknown): boolean {
+  return /^\/api\/media\/[a-f0-9]{24}\.(?:png|jpe?g|gif|webp)$/i.test(String(url ?? "").trim());
+}

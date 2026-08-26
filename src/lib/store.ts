@@ -14,7 +14,8 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
   if (!r.telegram) r.telegram = s.telegram;
 }
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
-import { applyResolvedLogo } from "./logoWrite";
+import { applyLostUpload, applyResolvedLogo } from "./logoWrite";
+import { mergeRelist } from "./relist";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
 const MIRROR_KEY = "listings";
@@ -166,8 +167,15 @@ export async function addListing(rec: ListingRow, opts?: { status?: ListingStatu
     const dupIdx = rows.findIndex(
       (r) => r.chain === rec.chain && r.address.toLowerCase() === rec.address.toLowerCase(),
     );
+    // ⚠️ A RE-LIST MAY FILL A FIELD, NEVER BLANK ONE. This used to write `rec`
+    // over the stored row whole, and `buildRow` renders an absent optional
+    // field as `undefined` — so every re-POST of a token the site already
+    // carried erased the logo the project uploaded, their socials, the
+    // overview, and a trending window that was still running. See relist.ts;
+    // clearing a field is the PATCH path's job, where "" means "clear this".
+    const base = dupIdx >= 0 ? mergeRelist(rows[dupIdx], rec) : rec;
     created = {
-      ...rec,
+      ...base,
       id: dupIdx >= 0 ? rows[dupIdx].id : id,
       status: opts?.status ?? "pending",
       createdAt: dupIdx >= 0 ? rows[dupIdx].createdAt : createdSeq++,
@@ -239,6 +247,41 @@ export async function setResolvedLogo(chain: string, address: string, logoUrl: s
     return out.rows as StoredListing[];
   });
   return wrote;
+}
+
+/**
+ * Forget uploaded logos whose files are no longer on disk.
+ *
+ * Called by the board pipeline, which is where the absence is established (one
+ * directory listing per rebuild — see lib/mediaFile.ts). The RULE is in
+ * lib/logoWrite as a pure function, next to the write it unblocks: while a row
+ * keeps a dead `/api/media/…`, `setResolvedLogo` can never replace it, because
+ * that guard stops at any `logoUrl` at all.
+ *
+ * ⚠️ ALL OF THEM IN ONE MUTATION. A box restored from the Mongo mirror has lost
+ * EVERY upload at once, so a per-row call would rewrite the whole store once
+ * per row — dozens of serialized disk writes and dozens of Mongo mirrors for
+ * one fact discovered in one directory listing.
+ *
+ * Returns the rows actually written, so the caller can say it once in the log
+ * rather than on every 60s rebuild. Artwork disappearing off a paid listing is
+ * a fact an operator is owed, even when the site heals it by itself.
+ */
+export async function forgetLostUploads(
+  targets: readonly { chain: string; address: string }[],
+): Promise<{ chain: string; address: string }[]> {
+  if (targets.length === 0) return [];
+  const cleared: { chain: string; address: string }[] = [];
+  await mutate((rows) => {
+    let out = rows;
+    for (const t of targets) {
+      const r = applyLostUpload(out, t.chain, t.address);
+      if (r.wrote) cleared.push(t);
+      out = r.rows;
+    }
+    return out as StoredListing[];
+  });
+  return cleared;
 }
 
 export async function setStatus(id: string, status: ListingStatus): Promise<StoredListing | null> {

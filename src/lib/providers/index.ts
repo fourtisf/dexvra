@@ -28,7 +28,9 @@ import { fillFromLastGood } from "./lastGood";
 import { pickLogo } from "./tokenLogo";
 import { rememberPool } from "./poolCache";
 import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
-import { setResolvedLogo } from "@/lib/store";
+import { forgetLostUploads, setResolvedLogo } from "@/lib/store";
+import { lostUploads } from "@/lib/mediaFile";
+import { listUploads } from "@/lib/uploadsDir";
 
 // 60s, not 30: at 173 listings a refresh is ~8 chunked GT requests, and the
 // bot suite shares this server's IP and GT quota (~30 req/min, its own docs).
@@ -38,6 +40,10 @@ const PRICE_TTL = 60_000;
 /** Matches the TTL /api/pool, /api/ohlcv and /api/trades read that key with —
  *  one number, or the board would plant an entry they expire differently. */
 const FNG_TTL = 10 * 60_000;
+/** Stamped onto the payload so a diagnostic can tell "the fix is deployed" from
+ *  "the fix is on a branch the server never pulled" — the same line
+ *  `/api/ohlcv` carries and the same reason. */
+const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "unknown";
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -132,6 +138,15 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   // (see pickLogo). Keyed rather than zipped by index: the mapping is 1:1 today
   // and an index that silently drifts would hand one token another's artwork.
   const rowOf = new Map(rows.map((r) => [`${r.chain}:${r.address.toLowerCase()}`, r]));
+  // ⚠️ AN UPLOAD WHOSE FILE IS GONE IS NOT A STORED LOGO. `data/listings.json`
+  // is mirrored to Mongo and restored from it; `data/uploads/` is not — so a
+  // box that loses its disk comes back with every row still asserting
+  // `/api/media/<hex>.png` and not one of those files behind it. Left alone the
+  // row is monogrammed FOR EVER: `pickLogo` calls it "stored", so the resolver
+  // never queues it, and `setResolvedLogo` refuses to write over a row that has
+  // a logoUrl at all. One directory listing per rebuild answers it for every
+  // row at once, and reports nothing missing when it cannot look (mediaFile.ts).
+  const lost = await lostUploads(rows.map((r) => r.logoUrl), { list: listUploads });
   // Candidates for the logo sweep, with what it takes to RANK them — the sweep
   // only looks up a handful per pass, so which handful matters.
   const needLogo: { chain: string; address: string; featured: boolean; vol: number }[] = [];
@@ -143,8 +158,13 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     // this the row would flicker back to a monogram whenever it does.
     if (m?.logoUrl) rememberLogo(t.chain, t.address, m.logoUrl);
     const row = rowOf.get(`${t.chain}:${t.address.toLowerCase()}`);
+    // The row's own logo — unless it is an upload we no longer hold, in which
+    // case it is a 404 wearing the shape of a decision and must lose to every
+    // answer below it. Cleared in the store too (fire-and-forget, below), or
+    // the resolver's write can never land.
+    const storedLogo = row?.logoUrl && !lost.has(row.logoUrl) ? row.logoUrl : undefined;
     const logo = pickLogo({
-      stored: row?.logoUrl,
+      stored: storedLogo,
       live: m?.logoUrl,
       resolved: knownLogo(t.chain, t.address),
       chain: t.chain,
@@ -203,6 +223,25 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   // featured row and a row nobody scrolls to are not worth the same lookup.
   // (The sweep's own comment says the caller hands them over ranked — this is
   // where that becomes true, rather than a comment describing nothing.)
+  // Forget the dead uploads in the store, so the sweep's answer has somewhere
+  // to land. Best-effort and off the render path: a failed write costs one more
+  // rebuild, never the board. Said out loud ONCE — the write is what makes it
+  // once, since a cleared row no longer matches on the next cycle. Artwork
+  // disappearing off a paid listing is a fact an operator is owed even when the
+  // site heals it by itself.
+  const dead = rows.filter((r) => r.logoUrl && lost.has(r.logoUrl));
+  if (dead.length > 0)
+    void forgetLostUploads(dead.map((r) => ({ chain: r.chain, address: r.address })))
+      .then((cleared) => {
+        for (const c of cleared) {
+          const r = rowOf.get(`${c.chain}:${c.address.toLowerCase()}`);
+          console.warn(
+            `[logos] ${r?.sym ?? c.address} (${c.chain}): the uploaded logo ${r?.logoUrl ?? ""} is no longer on disk — cleared, the resolver will look for a replacement`,
+          );
+        }
+      })
+      .catch(() => {});
+
   needLogo.sort((a, b) => Number(b.featured) - Number(a.featured) || b.vol - a.vol);
   backfillLogos(needLogo, {
     persist: setResolvedLogo,
@@ -289,6 +328,7 @@ export async function getTokensPayload(): Promise<TokensPayload> {
   }
   const signals = buildSignals(tokens);
   return {
+    build: BUILD,
     tokens,
     heat: buildHeat(tokens),
     signals,

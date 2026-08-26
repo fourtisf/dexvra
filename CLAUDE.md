@@ -2023,6 +2023,146 @@ cd bot && node scripts/run-tests.js test/tokenLogo.test.js   # 28 tests, no netw
 `bot/.env` is still the only thing that raises the real ceiling rather than
 dividing it, and a cleanup over hundreds of rows is exactly when that shows.
 
+### "punya logo pas listing, skrg sudah ilang" — two ways a row loses artwork it HAD
+
+Reported with a screenshot of `$BREAKING`'s token page (2026-08-26): a paid
+Solana listing, five days old, drawing the site's `BR` monogram. Every section
+above is about a row that never had a logo. **This one had one, and lost it**,
+which is a different failure and needed a different answer — and the two causes
+found are both the same shape, a value deleted by something that was not asked
+to delete anything.
+
+#### 1. A RE-LIST ERASED IT
+
+`addListing` treats a chain+address it already holds as the same listing and
+keeps its id — and then wrote the incoming row over the stored one **whole**:
+
+```js
+created = { ...rec, id: rows[dupIdx].id, … };   // rec, not a merge
+rows[dupIdx] = created;
+```
+
+`buildRow` renders an absent optional field as `undefined`
+(`logoUrl: input.logoUrl ? … : undefined`). So every re-POST of a token the
+site already carried **deleted whatever it did not re-supply**: the logo the
+project uploaded on the listing form, their socials, the overview — and
+`trendingRank` / `trendStart` / `trendExp`, i.e. a trending window somebody had
+paid for, ended mid-flight.
+
+There are four callers that re-POST an existing token in the ordinary course of
+business — a second purchase through `fulfillListing`, `autoLister`, the board
+filler through `createFromInfo`, a project re-submitting the public form — and
+none of them carries a logo it was never given.
+
+- **`src/lib/relist.ts` is the rule, and it is "ABSENT MUST NOT ERASE", not
+  "never change".** A re-list that carries a value still wins: an operator
+  re-listing with new artwork gets the new artwork. What it may no longer do is
+  turn something into nothing by saying nothing — the same asymmetry
+  `applyResolvedLogo` is built on, pointing the other way.
+- **Clearing a field is the PATCH path's job.** `sanitizePatch` reads `""` as
+  "clear this" precisely because an edit can mean it; a create that arrives
+  without a field is not a statement about that field. A blank string counts as
+  absent here for the same reason — it is what an untouched form field becomes.
+- **The guard lives at the STORE, not at the caller.** `deleteListing`'s own
+  header already says why: *"a caller can be wrong about what it is holding,
+  and the store cannot."* The DELETE path has refused to touch a paid listing
+  for months; the CREATE path was destroying the same rows.
+- Pure and mutation-tested — reinstating the wholesale overwrite fails
+  `logoPipeline.test.ts`.
+
+#### 2. THE UPLOADED FILE IS GONE, AND TWO CORRECT GUARDS HELD THE DEAD URL IN PLACE
+
+An uploaded logo is `/api/media/<24hex>.png`, written to `data/uploads/`.
+`data/listings.json` is mirrored to Mongo and restored from it — store.ts says
+so at the restore path, *"fresh container after a VPS reset"* — and
+**`data/uploads/` is not mirrored at all.** So a box that loses its disk comes
+back with every listing intact, every one still asserting its `/api/media/…`,
+and not one of those files on disk.
+
+⚠️ **And the row is then monogrammed FOR EVER**, by two rules that are each
+right on their own:
+
+| rule | why it is right | what it does here |
+| --- | --- | --- |
+| `pickLogo` ranks `stored` first | somebody CHOSE that image | the row reads as "has a logo", so the resolver never queues it — the queue is `convention \|\| none` |
+| `applyResolvedLogo` never overwrites a `logoUrl` | it is what makes a background sweep safe | even a logo resolved in memory could never be persisted |
+
+- **A stored upload with no file is not a stored logo** — it is a 404 wearing
+  the shape of a decision, and it loses to every rung below it.
+- **ONE directory listing per board rebuild**, not one stat per row: the board
+  reprices ~200 rows every 60s.
+- ⚠️ **"The directory could not be READ" is not "the files are gone."** An
+  unmounted volume, a permissions change and a container mid-restore all answer
+  identically, and reading that as a deletion would strip the artwork off every
+  paid listing on the site in one sweep. `lostUploads` reports **nothing**
+  missing when it cannot look. A missing directory is empty (nothing was ever
+  uploaded on this box); an unreadable one is unknown.
+- **It can only ever clear an UPLOAD.** A CDN blip, a hotlink block or a rate
+  limit are not facts about the token and none is knowable from this server;
+  clearing an external logo would delete a project's artwork over a bad minute.
+  An upload is on our own disk, so its absence is a local fact.
+- **The row is cleared in the STORE too**, or the resolver's answer has nowhere
+  to land — and it is said out loud once, because artwork disappearing off a
+  paid listing is a fact an operator is owed even when the site heals it.
+- **`UPLOADS_DIR` is one owner now.** Three files declared
+  `path.join(process.cwd(), "data", "uploads")`, and it matters more once the
+  board asks whether an upload is still there: a reader pointed at the wrong
+  directory reports every paid listing's logo as lost. ⚠️ It deliberately does
+  **not** honour `DATA_DIR` — `store.ts` does, so on a box that sets it the
+  listings and the uploads already live apart, and teaching this path about it
+  would move where the app LOOKS without moving the files.
+
+#### …and the operator was the detector, so there is a check
+
+Three things produce that monogram and the board renders all three identically:
+the row lost its logo, the file is gone, or **our own proxy refuses a working
+url** because its host is missing from `/api/logo`'s allowlist. They need three
+different fixes.
+
+```bash
+npm run logos:check                       # every listed token
+npm run logos:check -- solana VJdpSDD…    # the one somebody is asking about
+npm run logos:check -- --bad              # only the rows that fail
+```
+
+- **It drives the RUNNING SERVER and pulls every logo through `/api/logo`** —
+  the same url `logoSrc` hands the browser. Whether a CDN answers is a property
+  of this box's egress today (the rule `raid:check`, `launchpads:check`,
+  `fonts:check` and `chart:check` all state), and a check that reasoned about
+  the url instead of loading it would print green over exactly the rows that
+  draw monograms. It also cannot import `src/**/*.ts` — production runs Node 18,
+  where that throws.
+- **With `INTERNAL_API_TOKEN` set it also reads the STORED row**, which is what
+  separates "this row lost its logo" from "this logo will not load". ⚠️ Without
+  it the answer is genuinely ambiguous for a CDN-shaped url — the seed listings
+  STORE that exact string — and it says so rather than guessing: the first cut
+  reported *"nobody has given this token artwork"* over rows that had one.
+- **`/api/tokens` carries the build stamp now**, for the reason `fonts:check`
+  prints one: every round of this begins with somebody reading a check as a
+  statement about the fix they just deployed.
+- Non-zero when any row would draw a monogram, so green means "the board's
+  artwork is safe" and not "the server answered".
+
+```bash
+npm test    # relist / mediaFile / logoWrite / logoPipeline
+```
+
+⚠️ **What could NOT be verified here.** The merge is proved end to end against
+a running server (a re-list with no optional fields leaves the logo, the
+socials, the overview and a live trending window untouched, and one carrying a
+new logo still wins). The lost-upload healing is proved by its unit rules and
+its wiring only: it runs inside `loadListedTokens`, which needs at least one
+market provider to answer, and this sandbox has no egress — on a box where
+every provider is down the board falls back to `rowsToBoardTokens` and the
+ladder does not run at all. `npm run logos:check` on the server is how that one
+gets measured.
+
+**Config a fix depends on:** nothing. `INTERNAL_API_TOKEN` only makes the check
+more specific. ⚠️ And the durability hole is still open by design:
+`data/uploads/` is not in the Mongo mirror, so a lost disk still loses the
+uploaded FILES — what changed is that the site now notices and re-resolves
+instead of drawing a monogram for ever.
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both
@@ -2269,6 +2409,117 @@ floors in the floor fill, dropping them from the promotion pass, bypassing them
 on a forced run, dropping the filler's refusal, letting the base rule leak,
 skipping the millisecond conversion, taking the quote-side pair, and each of the
 above — and each fails between one and four tests.
+
+### "chartnya bisa di set kaya di atas ke bawah" — the vertical belongs to the reader
+
+Reported with the same `$BREAKING` screenshot (2026-08-26). The token had gone
+from **$0.000803 to $0.0281 in two days** and the chart of it was a flat line
+along the floor of the panel with one spike at the right-hand edge. Every
+number on it was correct. The picture was useless — **on a LINEAR axis a 35×
+move spends 96% of the height on the last 4% of the story** — and there was
+nothing the reader could do about it: the y-axis was computed from the window
+and that was the end of it.
+
+Two answers, and they are one transform, so they are one module
+(`src/lib/chartScale.ts`):
+
+- **LIN / LOG**, in the header. On a log axis a doubling is the same distance
+  wherever it happens, so the early history is as readable as the spike. That
+  is the answer to *this* picture.
+- **A MANUAL ADJUST.** Drag the price gutter to stretch or squash, drag the
+  chart to move it up and down, double-click (or ⤢ Auto) for the automatic
+  range back. TradingView's grammar, because it is the one people already know.
+
+- **The adjust is `{zoom, shift}`, NOT a stored `{lo, hi}`.** A stored pair
+  would go on describing a price range the market has since left, so a chart
+  left alone for an hour would drift off its own candles while the reader
+  watched. Two dimensionless numbers describe a relationship to whatever the
+  auto range is *now*, which survives new candles arriving underneath it.
+- **`shift` is measured in AUTO spans and the drag against the VISIBLE one**,
+  so `panByDrag` divides by the zoom. Without that, panning a chart stretched
+  10× flings it off screen in a few pixels; the same drag has to travel the
+  same distance on the panel at every zoom.
+- **A stretch keeps the middle of the view where it was.** Zooming that also
+  slid the chart up the axis is a control nobody can aim — you lose the candle
+  you were looking at.
+- ⚠️ **A LINEAR PRICE AXIS MAY NOT GO BELOW ZERO.** Squash far enough and the
+  padded range walks past the origin and the gutter starts labelling negative
+  dollars, on the panel somebody is reading to decide whether to buy. Log space
+  has no such floor (10⁻⁹ is a price), so the clamp only binds where it means
+  something.
+- ⚠️ **A log axis must never be handed a non-positive price.** `Math.log10(0)`
+  is `-Infinity` and one of those turns the whole axis into NaN, which renders
+  as an empty panel that reads exactly like a chart still loading — the state
+  this repo has already paid for twice.
+- **The grid ticks are evenly spaced in the AXIS's space, not in dollars**, or
+  a log chart's five lines bunch at one end.
+- ⚠️ **A stretched chart is CLIPPED.** Unclipped, the wicks run straight
+  through the volume histogram and the time stamps. …but **the last-price tag
+  is PINNED, not clipped**: it is the number the reader came for, and a scale
+  they dragged must not be able to take it off screen. It rides the edge, which
+  is why the grid label still gives way to it.
+- ⚠️ **A phone can still scroll the page.** A vertical touch drag across the
+  plot is how a phone scrolls, so only a MOUSE pans the chart body;
+  `touch-action:none` is taken on the narrow gutter alone, which is the one
+  place that trade is worth making.
+- ⚠️ **`useId()` returns `:r0:`** — legal in an id, and a colon inside a
+  `url(#…)` reference is one browser quirk away from a clip that silently does
+  nothing, on somebody else's browser and nowhere near a test. Stripped to word
+  characters.
+- **The MODE survives a timeframe switch and the ADJUST does not.** Somebody
+  who wants a log axis wants it on every tab; a stretch aimed at two days of
+  15m candles is meaningless over six months of daily ones, and inheriting it
+  opens the new tab on an axis with no candles in it.
+- ⚠️ **AND THE PANEL SAYS WHEN THE READER HAS MOVED IT.** A log chart and a
+  linear one of the same token are different pictures, and so are an auto range
+  and a stretched one; anybody comparing two screenshots is owed the
+  difference. Two buttons rather than one toggle, so the mode is readable OFF
+  the picture, and `⤢ Auto` exists only while the axis is not the data's own —
+  the escape hatch and the tell at once. Same rule as the `via DexScreener`
+  chip one feature over.
+
+#### ⚠️ The gutter is INSIDE the plot, and pointer events bubble
+
+Every pointer event over the price axis ran BOTH handlers and the two fought
+over one drag. **Measured, not reasoned about**: with the three
+`stopPropagation` calls removed, a 60px pan moved the chart **210px**, and the
+same axis drag produced a different zoom. Which handler wins in which order is
+not worth working out — a drag belongs to the element it started on.
+
+It still "worked": the chart did stretch and did move. So the preview's check
+had to change too — `> 20px` passed happily on the broken build, and
+`|moved − 60| < 8` is what catches it. **A control that responds is not a
+control that obeys.**
+
+#### It is judged by LOOKING at it
+
+`chart:preview` renders the reported shape (`ramp()`, a 35× climb) and measures
+where **half the move** sits — the price at which the token had done half its
+multiple belongs somewhere near the middle of a chart of that move:
+
+```
+LIN: half the move sits 16% up the price area     ← the reported picture
+LOG: half the move sits 50% up the price area
+```
+
+- **Against the PRICE AREA, not the whole svg.** The volume band and the time
+  axis are not part of the scale, and counting them flatters a linear chart by
+  a fifth — the first cut measured that way and read 26%.
+- ⚠️ **The clip is MUTATION-TESTED in the page**: the attribute is pulled off,
+  the same points are probed again, and it is put back. Two cheaper checks were
+  tried first and both were worthless — `getBoundingClientRect` on clipped SVG
+  comes back collapsed or stale, and a run where nothing overflows makes any
+  "nothing spilled" assertion true of a chart with no clip at all. This one
+  fails if the clip stops working AND fails if the probe stops being able to
+  see a spill.
+
+```bash
+npm test                                     # chartScale (16) + the panel guards
+npm run build && npm start &
+npm run chart:preview                        # 33 checks, incl. LIN/LOG and every drag
+```
+
+**Config a fix depends on:** nothing.
 
 ## Two bot processes, one config
 
