@@ -48,6 +48,16 @@ const snum = (x) => {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
 };
+// A TRADED VOLUME. Zero is a FACT — a pool nobody touched for a day traded
+// nothing, and that is exactly the reading the free-trending floor is there to
+// act on — so `num` (which answers null for 0) is the wrong reader here and
+// would turn "this token is dead" into "we could not tell". A NEGATIVE volume
+// is a broken row and is refused, so the two states stay distinguishable:
+// `0` means measured-and-empty, `null` means nobody published one.
+const vnum = (x) => {
+  const n = snum(x);
+  return n != null && n >= 0 ? n : null;
+};
 
 // DexScreener chainId per dexvra chain — used ONLY to filter candidate pairs.
 // NEVER match a DexScreener pair by address alone: the token endpoint returns
@@ -295,10 +305,17 @@ async function fetchGT(chain, address) {
     }
     const img = attr.image_url;
     const liq = pool && pool.attributes ? num(pool.attributes.reserve_in_usd) : null;
+    // FROM THE DEEPEST POOL, like the price and the liquidity beside it — never
+    // summed across pools. A token's siblings are the same market seen twice,
+    // and adding them up inflates the one number the trending floor judges a
+    // token by. Only the CHANGE falls back to a sibling (see `changeFromPools`),
+    // because a missing percentage is a blank row and a missing volume is not.
+    const vol24h = pool && pool.attributes ? vnum(pool.attributes.volume_usd?.h24) : null;
     return {
       priceUsd: price,
       mcap,
       liq,
+      vol24h,
       poolAddress,
       change24h,
       changeWhy,
@@ -333,6 +350,7 @@ async function fetchDS(chain, address) {
       priceUsd: num(p.priceUsd),
       mcap: num(p.marketCap) ?? num(p.fdv),
       liq: num(p.liquidity?.usd),
+      vol24h: vnum(p.volume?.h24),
       poolAddress: p.pairAddress || null,
       change24h: p.priceChange ? snum(p.priceChange.h24) : null,
       name: base.name || null,
@@ -428,6 +446,11 @@ async function fillFromLaunchpad(chain, address, out) {
     priceUsd: num(base.priceUsd) ?? num(lp.priceUsd),
     mcap: num(base.mcap) ?? num(lp.mcap),
     liq: num(base.liq) ?? num(lp.liq),
+    // A launchpad publishes no 24h volume, so this can only ever carry through
+    // what an indexer already found. NOT defaulted to 0: a token still on a
+    // bonding curve has traded, and calling that "zero volume" would let the
+    // free-trending floor refuse it on a number nobody measured.
+    vol24h: vnum(base.vol24h),
     // No pool is the whole point — there is nothing to link to yet, and
     // inventing an address here would send a chart link somewhere that 404s.
     poolAddress: base.poolAddress || null,
@@ -447,7 +470,7 @@ async function fillFromLaunchpad(chain, address, out) {
  * @param {object}  [opts]
  * @param {boolean} [opts.cheap] Ask DexScreener FIRST and stop there the moment
  *   it has the price and the market cap — see `fetchPrice` below for why.
- * @returns {Promise<{priceUsd:number|null,mcap:number|null,poolAddress:string|null}|null>}
+ * @returns {Promise<{priceUsd:number|null,mcap:number|null,liq:number|null,vol24h:number|null,change24h:number|null,poolAddress:string|null}|null>}
  */
 async function fetchMarket(chain, address, opts = {}) {
   // ⚠️ THIS PROCESS IS NOT THE ONLY THING ON THIS IP.
@@ -498,6 +521,7 @@ async function fetchMarket(chain, address, opts = {}) {
       priceUsd: trusted.priceUsd ?? gt.priceUsd ?? ds.priceUsd,
       mcap: trusted.mcap ?? gt.mcap ?? ds.mcap,
       liq: trusted.liq ?? gt.liq ?? ds.liq,
+      vol24h: trusted.vol24h ?? gt.vol24h ?? ds.vol24h,
       poolAddress: trusted.poolAddress || gt.poolAddress || ds.poolAddress,
       change24h: trusted.change24h ?? gt.change24h ?? ds.change24h,
       changeWhy: gt.changeWhy || null,

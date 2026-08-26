@@ -11,6 +11,7 @@ import {
   HOME_CHAIN_LIMIT,
   HOME_TRENDING_MAX,
   SANE_CHANGE_PCT,
+  changeRank,
   changeReading,
   expander,
   capped,
@@ -21,6 +22,7 @@ import {
   resolveChain,
   splitChains,
   topCoins,
+  tradedEnough,
 } from "./home.ts";
 import { CHAIN_IDS } from "../config/chains.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
@@ -631,10 +633,51 @@ test("⚠️ an absurd change is a dash and sinks — never a five-million-perce
 
 test("the sort ranks through the reading, so an unreadable change cannot lead", () => {
   // The display went through changeReading but the SORT read the raw field, so
-  // a dash could still sit at #1. Both go through the one gate now.
-  assert.match(read("src/components/TokenBoard.tsx"), /changeReading\(t, p\) \?\? -Infinity/);
+  // a dash could still sit at #1. Both go through one gate — and the sort's gate
+  // is `changeRank`, which is `changeReading` PLUS the traded-enough rule, so a
+  // real percentage with no market behind it cannot lead either.
+  assert.match(read("src/components/TokenBoard.tsx"), /chg: \(t, p\) => changeRank\(t, p\)/);
   // …and the top-movers ticker filters the unreadable out entirely.
   assert.match(read("src/components/Ticker.tsx"), /changeReading\(t, "24h"\)/);
+});
+
+test("a percentage with no trading behind it cannot lead the board", () => {
+  // The reported board, verbatim: MRNA +465% on five cents of 24h volume held
+  // rank 1 over every real market, because the only bound on the chg sort was
+  // SANE_CHANGE_PCT and 465 is a legal reading.
+  const dead = tok({ sym: "MRNA", chg: 465, vol: 0.05 });
+  const real = tok({ sym: "REAL", chg: 12, vol: 636_200 });
+  assert.strictEqual(changeRank(real, "24h"), 12, "a traded market ranks on its own number");
+  assert.strictEqual(changeRank(dead, "24h"), -Infinity, "five cents of volume is not a trend");
+  assert.ok(changeRank(real, "24h") > changeRank(dead, "24h"), "the real market outranks it");
+
+  // ⚠️ IT DEMOTES, IT NEVER HIDES — the row keeps its own printed percentage.
+  // These boards carry paying customers; a listing that vanished because its
+  // pool was quiet today would be a refund conversation.
+  assert.strictEqual(changeReading(dead, "24h"), 465, "the cell still prints the real reading");
+});
+
+test("an unreadable volume is not a small one — it must not be demoted", () => {
+  // The bot's trending floors make the same exemption in the same words: a
+  // chain no indexer covers publishes no volume, and sinking every one of its
+  // listings would be a ranking rule quietly deleting a whole network.
+  const unknown = tok({ sym: "RBH", chg: 30, vol: Number.NaN });
+  assert.strictEqual(changeRank(unknown, "24h"), 30, "no volume published → ranked on its reading");
+  assert.strictEqual(tradedEnough(unknown), true);
+});
+
+test("a quiet token is left OUT of gainers/losers, not demoted into them", () => {
+  // ⚠️ -Infinity is LESS THAN ZERO. Feeding a demoted row to the losers filter
+  // would CROWN it — the fix producing a worse version of the bug it fixes, on
+  // the surface next door. movers() filters on tradedEnough instead.
+  const pool = [
+    tok({ sym: "DEADUP", chg: 465, vol: 0.05 }),
+    tok({ sym: "DEADDN", chg: -80, vol: 0.02 }),
+    tok({ sym: "REALUP", chg: 12, vol: 500_000 }),
+    tok({ sym: "REALDN", chg: -9, vol: 500_000 }),
+  ];
+  assert.deepStrictEqual(movers(pool, "gainers", "24h").map((t) => t.symbol), ["$REALUP"]);
+  assert.deepStrictEqual(movers(pool, "losers", "24h").map((t) => t.symbol), ["$REALDN"]);
 });
 
 test("all three surfaces render the reading through the one helper", () => {

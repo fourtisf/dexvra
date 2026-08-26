@@ -29,6 +29,7 @@ const discovery = require('../discovery');
 const api = require('../api/dexvra');
 const { chainOf } = require('../config/chains');
 const log = require('../helpers/logger');
+const { fmtCap } = require('../helpers/format');
 
 const keyOf = (chain, address) => `${chain}:${String(address || '').toLowerCase()}`;
 
@@ -60,6 +61,11 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
     limit: Math.max(need * 5, 10),
     minMcap: Number(cfg.fillMinMcap) || 5_000_000,
     minLiq: Number(cfg.fillMinLiq) || 100_000,
+    // The free-trending volume floor, applied at the QUERY so a quiet page of
+    // pools never becomes candidates at all. `fillMinMcap` ($5M) already sits
+    // far above the cap floor, so the cap needs nothing here — the volume floor
+    // had no equivalent anywhere in this path.
+    minVol24: Number(cfg.minVol24hUsd) || 0,
   }).catch((e) => ({ ok: false, why: e.message, items: [] }));
   if (!res.ok && !res.items.length) {
     // "GT is rate-limited" and "this chain has no big tokens" need different
@@ -105,10 +111,32 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
   // just as narrow: only where NOTHING on this chain has a reading do the
   // unreadable go on, or a chain no indexer covers could never be filled.
   const anyReading = res.items.some((c) => Number.isFinite(c.change24h));
+  // ⚠️ AND THE QUALITY FLOORS BIND THIS DOOR TOO — the third time this exact
+  // sentence has had to be written in this file, which is the argument for it
+  // being ONE function rather than three.
+  //
+  // The floors already sit above `topByMcap` as `minMcap`/`minVol24`, so most
+  // of what would fail here never arrives. This is the belt: `topByMcap` is a
+  // MARKET read that can be stubbed, widened, or answered by a second source
+  // (`dsBigCoins` asks the same question a different way), and a filled listing
+  // books its board slot at creation — so a candidate that slipped past the
+  // query would be published with nothing left to refuse it.
+  const refusal = (deps && deps.floorRefusal) || require('./autoTrend').floorRefusal;
+  // One counter per refusal, and each candidate increments exactly one — the
+  // `why` ladder below reports the DOMINANT one, which only works while they
+  // partition the refusals rather than overlapping.
   let inFreeFall = 0;
   let noReading = 0;
+  let belowFloor = 0;
+  let lastFloorWhy = null;
   for (const c of res.items) {
     if (out.listed.length >= need) break;
+    const bad = refusal({ mcap: c.mcap, vol24: c.vol24 }, cfg);
+    if (bad) {
+      belowFloor++;
+      lastFloorWhy = bad.why;
+      continue;
+    }
     // An UNREADABLE change is not a fall — same exemption the promoter makes,
     // and for the same reason: Robinhood has no indexer, so judging by a number
     // nobody can read would mean never filling that chain at all.
@@ -167,13 +195,33 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
     }
   }
   if (out.listed.length < need && !out.why) {
+    // Each counter is a DIFFERENT answer for whoever reads it, which is why
+    // this is a ladder rather than one "nothing qualified": free-fall clears
+    // itself in a day, a floor is a SETTING the operator can change, and
+    // "already listed" is neither and needs no action at all. A counter that
+    // did not join this ladder would report as "already listed" — the defect
+    // boardPercent.test.js already pins one field over.
+    //
+    // ⚠️ The DOMINANT one wins, not the first one written down. Every branch
+    // here says "every", and with three mutually exclusive counters (each
+    // candidate increments exactly one) that is only true of the counter that
+    // accounts for all of them — so a chain with one dead token and twenty in
+    // free-fall must not be reported as a floor problem, and vice versa. The
+    // count is printed whenever it is not the whole story.
+    const worst = [
+      { n: belowFloor, text:
+        `big token(s) on ${chain} below the free-trending floors ` +
+        `(cap ${fmtCap(Number(cfg.minMcapUsd) || 0)}, 24h vol ${fmtCap(Number(cfg.minVol24hUsd) || 0)}) — ` +
+        `the last was ${lastFloorWhy}` },
+      { n: inFreeFall, text: `big token(s) on ${chain} down more than ${maxDrop}% — a short board beats one in free-fall` },
+      { n: noReading, text: `big token(s) on ${chain} with no 24h reading — a trending row without a percentage is not a trending row` },
+    ].sort((a, b) => b.n - a.n)[0];
+    const refusedTotal = belowFloor + inFreeFall + noReading;
     out.why =
       out.tried === 0
-        ? inFreeFall
-          ? `every big token on ${chain} that is not already listed is down more than ${maxDrop}% — a short board beats one in free-fall`
-          : noReading
-            ? `every big token on ${chain} that is not already listed has no 24h reading — a trending row without a percentage is not a trending row`
-            : `every big token on ${chain} is already listed`
+        ? worst.n > 0
+          ? `${worst.n === refusedTotal ? "every one of the" : `${worst.n} of ${refusedTotal}`} ${worst.text}`
+          : `every big token on ${chain} is already listed`
         : `only ${out.listed.length}/${need} could be listed`;
   }
   return out;

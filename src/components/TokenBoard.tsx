@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { capped, changeReading, expander } from "@/lib/home";
+import { capped, changeRank, changeReading, expander } from "@/lib/home";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
@@ -42,9 +42,14 @@ type SortKey = "price" | "chg" | "mcap" | "liq" | "vol" | "tx";
 
 const SORT_VAL: Record<SortKey, (t: BoardToken, p: PeriodKey) => number> = {
   price: (t) => t.priceUsd,
-  // Through the READING, not the raw field — an unreadable/absurd change sinks
-  // to the bottom instead of crowning a dead token #1 (see changeReading).
-  chg: (t, p) => changeReading(t, p) ?? -Infinity,
+  // Through `changeRank`, not the raw field and not `changeReading` — an
+  // unreadable/absurd change sinks to the bottom, AND so does a real percentage
+  // with no trading behind it. The board opens on this sort, so whatever wins
+  // it is what the site says is trending; `$MRNA +465%` on $0.05 of 24h volume
+  // held rank 1 over every real market until this read the volume too. The row
+  // still renders its own percentage — see changeRank, which demotes and never
+  // hides.
+  chg: (t, p) => changeRank(t, p),
   mcap: (t) => t.mcap ?? 0,
   liq: (t) => t.liq ?? 0,
   vol: (t, p) => t.vol[p],

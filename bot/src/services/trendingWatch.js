@@ -44,7 +44,16 @@ const REPEAT_MS = Math.max(GRACE_MS, Number(process.env.TREND_SHORT_REPEAT_MS) |
  * exactly what took three rounds. `fill` is what the market filler reported for
  * this chain on the last pass, when it ran.
  */
-function diagnose({ featured, floor, eligible = 0, fillWhy = null, gainFloor = 0 }) {
+function diagnose({
+  featured,
+  floor,
+  eligible = 0,
+  fillWhy = null,
+  gainFloor = 0,
+  floorRefused = 0,
+  minMcapUsd = 0,
+  minVol24hUsd = 0,
+}) {
   if (featured >= floor) return null;
   // The FILLER'S OWN REASON OUTRANKS THE COUNT. It is the most specific fact
   // available, and it is only ever set on a chain the cycle actually tried to
@@ -57,6 +66,23 @@ function diagnose({ featured, floor, eligible = 0, fillWhy = null, gainFloor = 0
       text:
         `the market fill could not help: ${fillWhy}` +
         (eligible > 0 ? ` (${eligible} spare listing(s) here, none of them promotable)` : ' (no spare listings here either)'),
+    };
+  }
+  // ⚠️ WHICH REFUSAL, NOT JUST HOW MANY SPARES. This sits ABOVE
+  // `spares_unusable` because it is the more specific fact and because that
+  // branch's text asserts "−15%" — a sentence that is simply false about a
+  // chain whose spares were refused for a $0.05 volume, and it is the sentence
+  // an operator would act on. `floorRefused` is counted by the promoter on the
+  // pass that refused them, so it can only be non-zero when a cycle has run.
+  if (floorRefused > 0) {
+    const money = (n) => (n >= 1_000_000 ? `$${Math.round(n / 1_000_000)}M` : n >= 1000 ? `$${Math.round(n / 1000)}K` : `$${n}`);
+    return {
+      code: 'below_floors',
+      text:
+        `${floorRefused} spare listing(s) here, and none went on — they are below the free-trending floors ` +
+        `(min cap ${money(minMcapUsd)}, min 24h volume ${money(minVol24hUsd)}). That is the filter doing its job: ` +
+        `a dead token is not a trending row. The next cycle lists a big-cap to cover the gap while 🧲 Fill from market ` +
+        `is ON — or lower 🏦/📊 on ⚙️ Auto-Trend if these floors are too strict for this chain.`,
     };
   }
   if (eligible > 0) {

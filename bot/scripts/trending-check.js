@@ -32,6 +32,7 @@ const watch = require('../src/services/trendingWatch');
 const api = require('../src/api/dexvra');
 const { chainOf } = require('../src/config/chains');
 const build = require('../src/helpers/build');
+const { fmtCap } = require('../src/helpers/format');
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 
@@ -66,21 +67,72 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   const on = (r, id) => String(r.chain).toLowerCase() === String(id).toLowerCase();
 
   const target = cfg.perChainMax > cfg.perChainMin ? `${cfg.perChainMin}–${cfg.perChainMax}` : `${cfg.perChainMin}`;
-  console.log(`  ${D}target ${target} per chain · gain floor +${cfg.minGainPct}% · fill from market ${cfg.fillFromMarket ? 'ON' : 'OFF'}${X}\n`);
+  // The free-trending floors are printed HERE, on the config line, because from
+  // a short board they are indistinguishable from a chain with no listings —
+  // and unlike everything else on this line they refuse candidates silently
+  // unless somebody is reading pm2. `OFF` for a 0 is the whole point: a floor
+  // nobody set must not read as a floor that refused something.
+  const floors =
+    cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0
+      ? `min cap ${fmtCap(cfg.minMcapUsd)} · min 24h vol ${fmtCap(cfg.minVol24hUsd)}`
+      : 'quality floors OFF';
+  console.log(`  ${D}target ${target} per chain · gain floor +${cfg.minGainPct}% · ${floors} · fill from market ${cfg.fillFromMarket ? 'ON' : 'OFF'}${X}\n`);
+
+  // ── --floors: how many spares the quality floors would refuse ──────────────
+  //
+  // ⚠️ MEASURED WITH THE PRODUCTION FUNCTIONS, never re-derived. `byGain` is
+  // what annotates a candidate and `floorRefusal` is what judges one, so this
+  // asks the same two questions the promoter asks, in the same order, and
+  // cannot answer differently from the running bot. A second copy of "is this
+  // token big enough" is how `fonts:check` printed nine green ticks over a
+  // banner drawing boxes.
+  //
+  // Behind a FLAG because it prices every spare at GeckoTerminal's politeness
+  // pace — 250ms each, up to 25 a chain — which is most of a minute on a busy
+  // install, and the default run has to stay usable from a cron. Without it the
+  // floors still appear on the config line above, so the operator knows this
+  // flag is the next thing to try.
+  const measureFloors = process.argv.includes('--floors');
+  const refusedByChain = new Map();
+  if (measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
+    console.log(`  ${D}pricing every spare against the floors — this takes a moment${X}\n`);
+    for (const id of cfg.chains) {
+      const spares = rows.filter((r) => r.status === 'approved' && !isFeatured(r) && on(r, id));
+      if (!spares.length) continue;
+      const ranked = await autoTrend.byGain(spares).catch(() => []);
+      refusedByChain.set(id, ranked.filter((r) => autoTrend.floorRefusal({ mcap: r._mcap, vol24: r._vol24 }, cfg)).length);
+    }
+  }
 
   const short = [];
   for (const id of cfg.chains) {
     const featured = rows.filter((r) => isFeatured(r) && on(r, id)).length;
     const eligible = rows.filter((r) => r.status === 'approved' && !isFeatured(r) && on(r, id)).length;
     const label = (chainOf(id) && chainOf(id).label) || id;
-    const why = watch.diagnose({ featured, floor: cfg.perChainMin, eligible, gainFloor: cfg.minGainPct });
+    const why = watch.diagnose({
+      featured,
+      floor: cfg.perChainMin,
+      eligible,
+      gainFloor: cfg.minGainPct,
+      // Only ever passed when it was actually MEASURED. Handing diagnose a 0
+      // it did not measure would silently pick the "−15%" branch over a chain
+      // whose spares are dead, which is the wrong sentence and the one the
+      // operator would act on.
+      floorRefused: refusedByChain.get(id) || 0,
+      minMcapUsd: cfg.minMcapUsd,
+      minVol24hUsd: cfg.minVol24hUsd,
+    });
+    const floorNote = refusedByChain.has(id) ? ` ${D}· ${refusedByChain.get(id)} below the floors${X}` : '';
     if (why) {
       short.push({ id, featured, why });
-      console.log(`  ${R}✗${X} ${String(label).padEnd(12)} ${R}${featured}/${cfg.perChainMin}${X} ${D}· ${eligible} spare listing(s)${X}`);
+      console.log(`  ${R}✗${X} ${String(label).padEnd(12)} ${R}${featured}/${cfg.perChainMin}${X} ${D}· ${eligible} spare listing(s)${X}${floorNote}`);
       console.log(`      ${Y}${why.text}${X}`);
     } else {
-      console.log(`  ${G}✓${X} ${String(label).padEnd(12)} ${featured}/${cfg.perChainMin} ${D}· ${eligible} spare listing(s)${X}`);
+      console.log(`  ${G}✓${X} ${String(label).padEnd(12)} ${featured}/${cfg.perChainMin} ${D}· ${eligible} spare listing(s)${X}${floorNote}`);
     }
+  }
+  if (!measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
+    console.log(`\n  ${D}re-run with --floors to price every spare and see how many the floors refuse${X}`);
   }
 
   // ── "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" ───────────────────

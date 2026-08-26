@@ -132,7 +132,16 @@ export function movers(
   const up = kind === "gainers";
   // Ranked by the READING, not the raw field: a "Top Gainer" measured through
   // the sane bound, so a near-dead pool's absurd figure never leads the list.
+  //
+  // …and through `tradedEnough`, which is the same rule at the other end of the
+  // scale. "Top Gainer" is a CLAIM, and a token that traded five cents in a day
+  // cannot support it at +465% any more than at +5,000,000%. Here the quiet
+  // token is left OUT rather than demoted: this is a curated ten, not a board a
+  // reader scrolls, and there is no honest place in a top-ten for a row whose
+  // number means nothing. (On the full board it is demoted instead — see
+  // `changeRank`, and note that -Infinity would otherwise top the LOSERS.)
   return tokens
+    .filter(tradedEnough)
     .map((t) => ({ t, r: changeReading(t, frame) }))
     .filter((x): x is { t: BoardToken; r: number } => x.r != null && (up ? x.r > 0 : x.r < 0))
     .sort((a, b) => (up ? b.r - a.r : a.r - b.r))
@@ -254,4 +263,74 @@ export function changeReading(t: BoardToken, frame: PeriodKey): number | null {
   if (Math.abs(v) > SANE_CHANGE_PCT) return null;
   if (v === 0 && t.source !== "live") return null;
   return v;
+}
+
+/**
+ * How much 24h volume a percentage needs behind it before it may RANK a board.
+ *
+ * ⚠️ THE SANE BOUND CAUGHT THE ABSURD FIGURES AND MISSED THE QUIET ONES.
+ * `SANE_CHANGE_PCT` exists because "an absurd figure off a near-dead pool is
+ * unreadable, not a gain". The pool being near-dead is the actual defect;
+ * 5,000% was only the symptom that happened to get reported first. The home
+ * board opens sorted by 24h change, and it published this:
+ *
+ *   #1  $MRNA   +465.0%   MCAP $157.7K   VOL $0.05   10 txns
+ *   #2  $GOOGL  +164.0%   MCAP  $66.4K   VOL $0.04    8 txns
+ *
+ * Five cents of trading in a day, crowning the board over real markets. Both
+ * readings are under the sane bound, both are legal, and neither means
+ * anything: a percentage is a claim about a market, and there was no market.
+ *
+ * `home.ts` already argued the other half of this and stopped one step short —
+ * idle tokens are deliberately not excluded from the VOLUME or SCORE rankings,
+ * which is right, because on those an idle token sinks by itself. On a CHANGE
+ * ranking it floats to the top instead, and that is the case this covers.
+ *
+ * $1,000 is deliberately far below anything a reader would call busy — the
+ * rows this was reported for are three to five ORDERS of magnitude under it —
+ * because this is a ranking floor, not an eligibility one.
+ */
+export const RANK_MIN_VOL_USD = 1_000;
+
+/**
+ * Did enough trading happen for this token's percentage to mean anything?
+ *
+ * Judged on 24h volume whatever frame is being ranked, on purpose: a token with
+ * five cents of trading in a DAY has no meaningful five-minute move either, and
+ * a per-period floor would need a per-period number nobody could defend.
+ *
+ * ⚠️ AN UNREADABLE VOLUME IS NOT A SMALL ONE. A token whose volume nobody
+ * published answers `true` — demoting it would silently sink every listing on a
+ * chain no indexer covers, which is the exemption the bot's trending floors
+ * make one process over, for the same reason and in the same words. This one is
+ * a RANKING rule with no operator behind it, so it fails open; the bot's is a
+ * floor an operator explicitly set, so that one fails closed.
+ */
+export function tradedEnough(t: BoardToken): boolean {
+  const vol24 = t.vol["24h"];
+  return !Number.isFinite(vol24) || vol24 >= RANK_MIN_VOL_USD;
+}
+
+/**
+ * The change a full BOARD SORT may use, as opposed to the one a cell prints.
+ *
+ * ⚠️ IT DEMOTES, IT NEVER HIDES. A row under the floor keeps its real
+ * percentage in its own column — `changeReading` is untouched and is still the
+ * one owner of what is printed — and simply cannot outrank a token that
+ * actually traded. Dropping the row would be a different and worse product:
+ * these boards carry paying customers, and a listing that vanishes from the
+ * site because its pool was quiet today is a refund conversation. `-Infinity`
+ * is what this sort already uses for an unreadable change, so a demoted row
+ * lands in exactly the company it belongs in.
+ *
+ * ⚠️ NOT FOR THE GAINERS/LOSERS RAILS. `-Infinity` is less than zero, so a
+ * demoted row fed to a "Top Losers" filter would be CROWNED by it — the fix
+ * producing a worse version of the bug it fixes, on the surface next door.
+ * Those rails are a curated ten, not a full board, so there the right move is
+ * to leave a quiet token out entirely: `movers` filters on `tradedEnough`.
+ */
+export function changeRank(t: BoardToken, frame: PeriodKey): number {
+  const r = changeReading(t, frame);
+  if (r == null) return -Infinity;
+  return tradedEnough(t) ? r : -Infinity;
 }

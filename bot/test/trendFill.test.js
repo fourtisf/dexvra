@@ -299,7 +299,7 @@ test("a chain with nothing left to promote is filled, and the request is the rea
     { status: "approved", chain: "base", address: "0x1", sym: "ONE", trendingRank: 1, trendExp: Date.now() + 3.6e6 },
   ];
   try {
-    await autoTrend.set({ enabled: true, perChain: 5, chains: ["base"], fillFromMarket: true, fillMaxPerCycle: 3 });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, perChain: 5, chains: ["base"], fillFromMarket: true, fillMaxPerCycle: 3 });
     await autoTrend.runOnce({
       rng: () => 0.5,
       deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { chain, need, listed: [], tried: 0, why: "test" }; } },
@@ -337,7 +337,7 @@ test("a RED day is not a listing spree — the gain floor must not trigger the f
   market.fetchMarket = async () => ({ change24h: -3 });
   api.bookTrending = async () => ({});
   try {
-    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 5, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 6 });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["base"], perChainMin: 5, perChainMax: 5, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 6 });
     await autoTrend.runOnce({
       rng: () => 0.5,
       deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { listed: [] }; } },
@@ -373,7 +373,7 @@ test("a spare in FREE-FALL is not a spare — the chain is still asked to be fil
   market.fetchMarket = async () => ({ change24h: -30 });
   api.bookTrending = async () => ({});
   try {
-    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 5, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 3 });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["base"], perChainMin: 5, perChainMax: 5, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 3 });
     await autoTrend.runOnce({
       rng: () => 0.5,
       deps: { fillChain: async (chain, need) => { calls.push([chain, need]); return { listed: [] }; } },
@@ -410,7 +410,7 @@ test("a chain ABOVE its minimum whose spares are falling is left alone", async (
   market.fetchMarket = async () => ({ change24h: -30 });
   api.bookTrending = async () => ({});
   try {
-    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 8, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 3 });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["base"], perChainMin: 5, perChainMax: 8, minGainPct: 5, fillFromMarket: true, fillMaxPerCycle: 3 });
     await autoTrend.runOnce({ rng: () => 0.999, deps: { fillChain: async (c, n) => { calls.push([c, n]); return { listed: [] }; } } });
     assert.deepStrictEqual(calls, []);
   } finally {
@@ -448,7 +448,7 @@ test("a token with NO MARKET is not auto-promoted while the chain has priced spa
     return {};
   };
   try {
-    await autoTrend.set({ enabled: true, chains: ["robinhood"], perChainMin: 1, perChainMax: 1, minGainPct: 5, fillFromMarket: false });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["robinhood"], perChainMin: 1, perChainMax: 1, minGainPct: 5, fillFromMarket: false });
     await autoTrend.runOnce({ rng: () => 0.5, deps: { fillChain: async (c, n) => { calls.push([c, n]); return { listed: [] }; } } });
     assert.deepStrictEqual(booked, ["live1"], "a bare ticker with no price and no cap took a public board slot");
   } finally {
@@ -478,7 +478,7 @@ test("…but on a chain NOTHING can price, the unpriced still go on", async () =
     return {};
   };
   try {
-    await autoTrend.set({ enabled: true, chains: ["robinhood"], perChainMin: 1, perChainMax: 1, minGainPct: 5, fillFromMarket: false });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["robinhood"], perChainMin: 1, perChainMax: 1, minGainPct: 5, fillFromMarket: false });
     await autoTrend.runOnce({ rng: () => 0.5, deps: { fillChain: async () => ({ listed: [] }) } });
     assert.strictEqual(booked.length, 1, "a chain no indexer covers must still fill");
   } finally {
@@ -514,7 +514,7 @@ test("below the minimum, the best candidates go on even when they are DOWN", asy
   market.fetchMarket = async (_c, address) => ({ change24h: gains[address] });
   api.bookTrending = async (_c, address) => (promoted.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, chains: ["ethereum"], perChainMin: 5, perChainMax: 8, minGainPct: 5, fillFromMarket: true });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["ethereum"], perChainMin: 5, perChainMax: 8, minGainPct: 5, fillFromMarket: true });
     await autoTrend.runOnce({ rng: () => 0.999, deps: { fillChain: async () => ({ listed: [] }) } });
     // Exactly TWO — enough to reach the floor of 5, and no more: the rolled
     // target above the minimum is still the gain floor's to refuse.
@@ -546,7 +546,7 @@ test("at or above the minimum the gain floor still refuses — it only yields to
   market.fetchMarket = async () => ({ change24h: -2 });
   api.bookTrending = async (_c, address) => (promoted.push(address), {});
   try {
-    await autoTrend.set({ enabled: true, chains: ["ethereum"], perChainMin: 5, perChainMax: 8, minGainPct: 5 });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["ethereum"], perChainMin: 5, perChainMax: 8, minGainPct: 5 });
     await autoTrend.runOnce({ rng: () => 0.999, deps: { fillChain: async () => ({ listed: [] }) } });
     assert.deepStrictEqual(promoted, [], "at the floor, a losing token must not be promoted to pad the board");
   } finally {
@@ -570,7 +570,7 @@ test("a cycle that ends with a chain short RECORDS it — the operator is not th
     { status: "approved", chain: "base", address: "b1", trendingRank: 1, trendExp: now + 3.6e6 },
   ];
   try {
-    await autoTrend.set({ enabled: true, chains: ["base"], perChainMin: 5, perChainMax: 5, fillFromMarket: true });
+    await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["base"], perChainMin: 5, perChainMax: 5, fillFromMarket: true });
     await autoTrend.runOnce({
       rng: () => 0.5,
       deps: { fillChain: async () => ({ listed: [], why: "every big token on base is already listed" }) },

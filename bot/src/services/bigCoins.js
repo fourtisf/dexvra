@@ -121,7 +121,7 @@ const notAProject = (sym, name) => {
  * as "this chain has no big tokens" and the board stays short with nobody the
  * wiser; the same rule `pumpfunNewX` and `core.dsPairsX` are written under.
  */
-async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_000, pages = 2, startPage = 1 } = {}) {
+async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_000, minVol24 = 0, pages = 2, startPage = 1 } = {}) {
   const net = gt.networkOf(chain);
   // Robinhood is the live example: GT does index it, but a chain with no
   // network id cannot be asked at all, and saying so is the difference between
@@ -183,7 +183,13 @@ async function topByMcap(chain, { limit = 10, minMcap = 5_000_000, minLiq = 100_
   const items = [...best.values()]
     .filter((t) => t.address && t.symbol && t.mcap)
     .filter((t) => !notAProject(t.symbol, t.name))
-    .filter((t) => t.mcap >= minMcap && t.liq >= minLiq)
+    // ⚠️ `vol24` was COLLECTED and never filtered on. GT is queried
+    // `h24_volume_usd_desc`, which is a RANKING and not a floor — page 2 of a
+    // quiet chain is full of pools that have not traded all day, and a filler
+    // that listed one would put the very row the free-trending floors exist to
+    // keep off the board straight into a slot, having booked it at creation.
+    // `minVol24` defaults to 0 so every existing caller is unchanged.
+    .filter((t) => t.mcap >= minMcap && t.liq >= minLiq && t.vol24 >= minVol24)
     .sort((a, b) => b.mcap - a.mcap)
     .slice(0, limit);
 

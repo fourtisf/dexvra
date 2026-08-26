@@ -55,7 +55,7 @@ test("a promotion that cannot post YET stays queued", async () => {
   // The bug, exactly: drainPending popped the head, saved, and only then tried
   // to post — so "too soon, 12 min to go" ate the promotion.
   await autoTrend.resetState();
-  await autoTrend.set({ enabled: true, announce: true, announceGapMin: 60, announcePerDay: 100 });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, announce: true, announceGapMin: 60, announcePerDay: 100 });
   api.getListings = async () => [listing("bsc", "cake")];
   await autoTrend.queueAnnounce({ chain: "bsc", address: "cake" }, 6);
   assert.strictEqual(autoTrend.pendingCount(), 1);
@@ -69,7 +69,7 @@ test("a promotion that cannot post YET stays queued", async () => {
 
 test("the same promotion posts once the gap has passed", async () => {
   await autoTrend.resetState();
-  await autoTrend.set({ enabled: true, announce: true, announceGapMin: 15, announcePerDay: 100 });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, announce: true, announceGapMin: 15, announcePerDay: 100 });
   const posts = [];
   autoTrend._test.setAnnouncer(async (row) => (posts.push(row.address), { message_id: posts.length }));
   api.getListings = async () => [listing("bsc", "cake")];
@@ -87,7 +87,7 @@ test("a refusal that will never clear does NOT sit in the queue forever", async 
   // A token already announced this week is a real no. Keeping it would block
   // everything behind it — a queue that never advances is worse than a drop.
   await autoTrend.resetState();
-  await autoTrend.set({ enabled: true, announce: true, announceCooldownDays: 7 });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, announce: true, announceCooldownDays: 7 });
   api.getListings = async () => [listing("bsc", "cake")];
   await autoTrend._test.setAnnounced("bsc", "cake", NOW - 2 * 86400000);
   await autoTrend.queueAnnounce({ chain: "bsc", address: "cake" }, 6);
@@ -99,7 +99,7 @@ test("a slot that ended before the queue reached it is not announced", async () 
   // The queue can be hours deep and a slot lasts 3–18h. Posting a card for a
   // token no longer on the board is worse than not posting it.
   await autoTrend.resetState();
-  await autoTrend.set({ enabled: true, announce: true, announceGapMin: 5 });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, announce: true, announceGapMin: 5 });
   const posts = [];
   autoTrend._test.setAnnouncer(async (row) => (posts.push(row.address), { message_id: 1 }));
   api.getListings = async () => [
@@ -119,7 +119,7 @@ test("a cold start queues every promotion — none is skipped", async () => {
   // Every slot filled at once used to produce ONE post and the rest as silent
   // promotions.
   await autoTrend.resetState();
-  await autoTrend.set({ enabled: true, announce: true, perChain: 5, announceGapMin: 15, announcePerDay: 100 });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, announce: true, perChain: 5, announceGapMin: 15, announcePerDay: 100 });
   const rows = [];
   for (const chain of autoTrend.get().chains) {
     for (let i = 0; i < 5; i++) rows.push({ status: "approved", chain, address: `${chain}${i}`, sym: `${chain}${i}`, trendingRank: null });

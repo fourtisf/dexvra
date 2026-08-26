@@ -285,7 +285,7 @@ const listing = (address) => ({ status: "approved", chain: "solana", address, sy
 
 test("a token with no 24h reading is NOT promoted while the chain has tokens that do", async () => {
   await autoTrend.reset();
-  await autoTrend.set({ enabled: true, chains: ["solana"], perChainMin: 3, perChainMax: 3, announce: false, fillFromMarket: false });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["solana"], perChainMin: 3, perChainMax: 3, announce: false, fillFromMarket: false });
   const booked = await promoteWith(
     [listing("up"), listing("flat"), listing("blank"), listing("down")],
     (a) => (a === "blank" ? { priceUsd: 1, mcap: 5e6, change24h: null } : { priceUsd: 1, mcap: 5e6, change24h: { up: 20, flat: 1, down: -3 }[a] }),
@@ -299,7 +299,7 @@ test("…but where NOTHING on the chain has a reading, they still go on", async 
   // a chain no indexer covers would otherwise never fill, and a short board on
   // it helps nobody.
   await autoTrend.reset();
-  await autoTrend.set({ enabled: true, chains: ["solana"], perChainMin: 2, perChainMax: 2, announce: false, fillFromMarket: false });
+  await autoTrend.set({ enabled: true, minMcapUsd: 0, minVol24hUsd: 0, chains: ["solana"], perChainMin: 2, perChainMax: 2, announce: false, fillFromMarket: false });
   const booked = await promoteWith([listing("a"), listing("b")], () => ({ priceUsd: 1, mcap: 5e6, change24h: null }));
   assert.deepStrictEqual(booked.sort(), ["a", "b"]);
 });
@@ -310,6 +310,9 @@ test("the FLOOR fill honours the reading rule too — or the rule is decorative"
   await autoTrend.reset();
   await autoTrend.set({
     enabled: true, chains: ["solana"], perChainMin: 2, perChainMax: 2,
+    // Stated, not inherited: this test is about the READING rule, and the
+    // quality floors would refuse every fixture here for publishing no volume.
+    minMcapUsd: 0, minVol24hUsd: 0,
     minGainPct: 50, announce: false, fillFromMarket: false,
   });
   const booked = await promoteWith(

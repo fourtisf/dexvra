@@ -1522,6 +1522,37 @@ function atThroughputNote(c) {
   );
 }
 
+/** A floor's label. `0` is OFF, and it must READ as off: `$0` on a button
+ *  labelled "min cap" says the floor is set to nothing, which is the opposite
+ *  of what it means. The `—` the board uses for an absent number would be worse
+ *  still; this row has a state, and the state is that the filter is not on. */
+const floorLabel = (n) => (Number(n) > 0 ? fmtCap(Number(n)) : "OFF");
+/** The same value on a BUTTON, where "+" means "or more". It has to be inside
+ *  this helper rather than appended at the call site: `cap OFF+` is what that
+ *  produces the moment somebody switches a floor off, and a row that reads as
+ *  nonsense on its off state is a row nobody trusts in either state. */
+const floorBtn = (n) => (Number(n) > 0 ? `${fmtCap(Number(n))}+` : "OFF");
+
+/** The one sentence describing what the floors do, so `atText` and the typed
+ *  reply cannot drift into two accounts of the same rule. */
+function atFloorsLine(c) {
+  if (!(c.minMcapUsd > 0) && !(c.minVol24hUsd > 0)) {
+    return (
+      `🏦 <b>Quality floors: OFF</b> — every listed token is promotable, including ones with no ` +
+      `trading at all. That is what put <code>VOL $0.05</code> on the board.`
+    );
+  }
+  const parts = [];
+  if (c.minMcapUsd > 0) parts.push(`market cap ≥ <b>${fmtCap(c.minMcapUsd)}</b>`);
+  if (c.minVol24hUsd > 0) parts.push(`24h volume ≥ <b>${fmtCap(c.minVol24hUsd)}</b>`);
+  return (
+    `🏦 <b>Quality floors</b> — a free slot needs ${parts.join(" and ")}. ` +
+    `Applies to every slot this bot books, ⚡ Run now included; paid slots are never filtered. ` +
+    `<i>A chain whose spares all fail this goes to 🧲 Fill from market instead of publishing a dead row. ` +
+    `Set either to 0 to switch it off.</i>`
+  );
+}
+
 function atText() {
   const c = autoTrend.get();
   const short = c.chains.filter((id) => ((_atCounts[id] && _atCounts[id].featured) || 0) < c.perChainMin);
@@ -1534,6 +1565,8 @@ function atText() {
     `or more are picked; <b>below the minimum the best available go on even if they are down</b>, because a ` +
     `board short of the number you set is worse than a flat token — never one down more than 15%. ` +
     `Paid tiers still sort above auto ones.\n\n` +
+    atFloorsLine(c) +
+    `\n\n` +
     `📊 <b>Board right now</b> — target <b>${tgtRange(c)}</b> per chain, rolled at random\n` +
     atBoardLines(c) +
     `\n\n` +
@@ -1583,6 +1616,14 @@ function atKb() {
     [cb("➖", "attgt:-1"), cb(`🎯 min ${c.perChainMin}/chain`, "atnop"), cb("➕", "attgt:1")],
     [cb("➖", "attgx:-1"), cb(`🎯 max ${c.perChainMax}/chain`, "atnop"), cb("➕", "attgx:1")],
     [cb("➖", "atgain:-5"), cb(`📈 min +${c.minGainPct}% 24h`, "atnop"), cb("➕", "atgain:5")],
+    // ✏️ TYPED, not stepped, and the reason is arithmetic. A market-cap floor
+    // moves in millions and a volume floor in thousands, so one step size fits
+    // neither: at ±$1M a $10K volume floor is unreachable, and at ±$10K a $5M
+    // cap floor is five hundred taps. "angkanya bisa di ketik biar cpt" was
+    // reported about a row that stepped in ±$100,000; these two are worse.
+    // The ➖/➕ are kept for a nudge and sized per row.
+    [cb("➖", "atmcap:-50000"), cb(`🏦 cap ${floorBtn(c.minMcapUsd)}`, "atset:minMcapUsd"), cb("➕", "atmcap:50000")],
+    [cb("➖", "atvol:-5000"), cb(`📊 vol ${floorBtn(c.minVol24hUsd)}`, "atset:minVol24hUsd"), cb("➕", "atvol:5000")],
     [cb(`🧲 Fill from market: ${c.fillFromMarket ? "ON" : "OFF"}`, "atfill")],
     ...(c.fillFromMarket
       ? [
@@ -1779,6 +1820,21 @@ const AL_TYPED = {
   trendHours: { kind: "int", label: "Board slot (hours)", eg: "12 · 24" },
   minListGapMin: { kind: "gap", label: "Pace — every", eg: "2h · 90m · 2h30m" },
   maxListGapMin: { kind: "gap", label: "Pace — up to", eg: "4h · 3h30m" },
+};
+
+/**
+ * The same table for 🤖 Auto Trending's two quality floors.
+ *
+ * A SEPARATE table rather than two more rows in AL_TYPED, because the key is
+ * what the reply is applied to and the two panels write to different stores —
+ * `minVol24` (Auto Listing) and `minVol24hUsd` (Auto Trending) are different
+ * settings with nearly the same name, and one shared table keyed by a bare
+ * string is how a reply meant for one lands in the other. The `kind` vocabulary
+ * and the parsers are shared; only the destination differs.
+ */
+const AT_TYPED = {
+  minMcapUsd: { kind: "cap", label: "Min market cap for a free slot", eg: "100k · 250k · 1M" },
+  minVol24hUsd: { kind: "cap", label: "Min 24h volume for a free slot", eg: "10k · 50k · 250k" },
 };
 /** One value, spelled the way its row spells it. */
 const alShow = (key, v) =>
@@ -3638,6 +3694,40 @@ function build() {
   bot.action(/^atgain:(-?\d+)$/, atStep("minGainPct", "Min 24h gain"));
   bot.action(/^atfmc:(-?\d+)$/, atStep("fillMinMcap", "Big-coin floor"));
   bot.action(/^atfmax:(-?\d+)$/, atStep("fillMaxPerCycle", "Fill per chain"));
+  // ⚠️ MONEY ROWS ECHO THROUGH fmtCap, NOT THE RAW NUMBER. `atStep`'s toast is
+  // `${label}: ${c[key]}`, which for these would read "Min cap: 100000" — the
+  // spelling this repo already replaced everywhere else because `$1,000,000`
+  // rendered as `From $1,000,0…` on a phone. And a clamped-to-0 value must say
+  // OFF, or a floor the operator just switched off reports as "$0", which reads
+  // like a floor that is set and refusing nothing.
+  const atMoneyStep = (key, label) => async (ctx) => {
+    if (!guard(ctx)) return;
+    const c = await autoTrend.set({ [key]: autoTrend.get()[key] + Number(ctx.match[1]) });
+    ctx.answerCbQuery(`${label}: ${floorLabel(c[key])}`).catch(() => {});
+    await edit(ctx, atText(), atKb());
+  };
+  bot.action(/^atmcap:(-?\d+)$/, atMoneyStep("minMcapUsd", "Min market cap"));
+  bot.action(/^atvol:(-?\d+)$/, atMoneyStep("minVol24hUsd", "Min 24h volume"));
+  // ✏️ The LABEL is the input — the same three-part pattern Auto Listing uses
+  // (`alset:` → a spec table → the shared text handler), so a fourth row added
+  // later cannot grow its own idea of what a valid value is.
+  bot.action(/^atset:([A-Za-z0-9]+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    const spec = AT_TYPED[key];
+    // An unknown key is an old button from somebody's scrollback. Answer it,
+    // change nothing, and never arm a wait whose reply has nowhere to go.
+    if (!spec) return ctx.answerCbQuery("That row is gone — reopen 🤖 Auto Trending.").catch(() => {});
+    ctx.session.awaitingBt = { mode: "atset", atKey: key };
+    ctx.answerCbQuery().catch(() => {});
+    await ctx
+      .reply(
+        `✏️ <b>${spec.label}</b>\n\nKirim angkanya — contoh: <code>${spec.eg}</code>\n` +
+          `<code>0</code> mematikan filter ini.\n\n/cancel untuk batal.`,
+        { parse_mode: "HTML" },
+      )
+      .catch(() => {});
+  });
   bot.action("atrst", async (ctx) => {
     if (!guard(ctx)) return;
     await autoTrend.reset();
@@ -4625,9 +4715,44 @@ function build() {
     // Banner-artwork settings input (per service: logo spot / creative slot /
     // text overlay)
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
-      const { mode, kind, elem, pos, chain, alKey } = ctx.session.awaitingBt;
+      const { mode, kind, elem, pos, chain, alKey, atKey } = ctx.session.awaitingBt;
       ctx.session.awaitingBt = null;
       const low = text.trim().toLowerCase();
+      // ── Auto-Trending: a typed value for one of the two quality floors ──
+      //
+      // Same three rules as `alset` below, deliberately in the same shape: the
+      // parser is `parseCap` (never a private copy — `500k` reaching `Number()`
+      // as NaN and being stored as the DEFAULT under a ✅ is the scar it
+      // carries), a value it cannot read is REFUSED rather than defaulted, and
+      // a clamped value says it was clamped.
+      if (mode === "atset") {
+        const spec = AT_TYPED[atKey];
+        if (!spec) return;
+        const asked = parseCap(text);
+        if (asked == null) {
+          return ctx
+            .reply(
+              `⚠️ tidak bisa membaca <code>${escapeHtml(text.trim())}</code> sebagai angka.\n\n` +
+                `Contoh: <code>${escapeHtml(spec.eg)}</code> — atau <code>0</code> untuk mematikan filter ini.\n\n` +
+                `<i>Tidak ada yang diubah.</i>`,
+              { ...HTML, ...atKb() },
+            )
+            .catch(() => {});
+        }
+        const c = await autoTrend.set({ [atKey]: asked });
+        const got = c[atKey];
+        const clamped =
+          got !== asked
+            ? `\n<i>Disesuaikan dari ${escapeHtml(floorLabel(asked))} — itu batas yang diizinkan.</i>`
+            : "";
+        // A floor set to 0 is OFF, and the confirmation has to say so: "✅ Min
+        // 24h volume → $0" reads like a filter that is on and refusing nothing.
+        const off = got === 0 ? `\n<i>Filter ini sekarang MATI — token tanpa transaksi bisa masuk board lagi.</i>` : "";
+        log.info(`[adminbot] auto-trend ${atKey} → ${got} by @${ctx.from.username || ctx.from.id}`);
+        return ctx
+          .reply(`✅ <b>${spec.label}</b> → <b>${escapeHtml(floorLabel(got))}</b>${clamped}${off}`, { ...HTML, ...atKb() })
+          .catch(() => {});
+      }
       // ── Auto-Listing: a typed value for one panel row ──
       if (mode === "alset") {
         const spec = AL_TYPED[alKey];

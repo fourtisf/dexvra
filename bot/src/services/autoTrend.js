@@ -13,6 +13,10 @@ const market = require("../marketdata");
 const { CHAINS } = require("../config/chains");
 const ops = require("../helpers/opsThrottle");
 const log = require("../helpers/logger");
+// The repo's one money formatter. A refusal that says "$0.05 24h volume" is a
+// diagnosis; one that says "below the volume floor" sends the operator back to
+// the board to work out which token and by how much.
+const { fmtCap } = require("../helpers/format");
 
 const FILE = "autoTrend.json";
 /**
@@ -55,6 +59,32 @@ const DEFAULTS = {
   // tokens are exempt — Robinhood has no indexer, and judging them by a number
   // nobody can read would mean never filling that chain at all.
   minGainPct: 0,
+  // ── What is big enough and busy enough to deserve a FREE slot ──
+  //
+  // "untuk free trending mohon di filter agar high mc dan vol yang rame yang
+  // ditrendingkan, bukan kaya vol bahkan ga ada $10 di trendingin". The board
+  // was publishing rows like `$MRNA · MCAP $157.7K · VOL $0.05 · 10 txns` —
+  // five cents of trading over a whole day — beside real markets, and a reader
+  // cannot tell which is which from a percentage alone. A +465% move on a token
+  // nobody traded is not a trend; it is one buy against an empty book, which is
+  // the same defect `minGainPct` was written for one field over (a huge
+  // percentage off a $1,648 cap) and which ranking alone can never fix: with
+  // five slots and five junk candidates, sorting still promotes junk.
+  //
+  // These are QUALITY floors, not discretionary ones. `minGainPct` deliberately
+  // governs only the part of the target above `perChainMin` — a board under the
+  // operator's minimum is a worse product than a board carrying something down
+  // 2%. These are the opposite: they bind every free slot this bot books, on
+  // BOTH doors and on a forced run, because "the board must be full" was never
+  // an argument for filling it with a dead token. A chain that cannot reach its
+  // minimum from its own listings raises a gap instead, and the market filler —
+  // whose whole job is that case — lists real big coins into it.
+  //
+  // ⚠️ They ship ON, and that CHANGES an existing install's board on deploy.
+  // Deliberate, the way `minMcapUsd` did for the gainers banner: it is what was
+  // asked for. Either is switched off with a 0 on the panel.
+  minMcapUsd: 100_000,
+  minVol24hUsd: 10_000,
   // ── When a chain has nothing left to promote ──
   // Auto-trend promotes what is LISTED, so a chain with three listings caps out
   // at three rows however often it runs. Ethereum published 3 and Base 2
@@ -124,6 +154,14 @@ const HARD = {
   fillMinLiqMax: 50_000_000,
   fillMaxPerCycleMin: 0,   // 0 = never fill from the market
   fillMaxPerCycleMax: 10,
+  // 0 = the floor is OFF, and it has to stay expressible: an operator who wants
+  // the old unfiltered board must be able to say so. The ceilings are the real
+  // rails — a ten-billion floor would empty the board for good, which is the
+  // same reason the gainers caps have theirs.
+  minMcapUsdMin: 0,
+  minMcapUsdMax: 10_000_000_000,
+  minVol24hUsdMin: 0,
+  minVol24hUsdMax: 1_000_000_000,
   minGainPct: [-100, 500],
   // The old ceiling was 24/day, which is BELOW the ~57 promotions a day that 5
   // chains × 5 slots actually produce — so "announce everything" was
@@ -172,6 +210,8 @@ function get() {
   // empty.
   if (g.perChainMax < g.perChainMin) g.perChainMax = g.perChainMin;
   g.minGainPct = clampInt(c.minGainPct, ...HARD.minGainPct, DEFAULTS.minGainPct);
+  g.minMcapUsd = clampInt(c.minMcapUsd, HARD.minMcapUsdMin, HARD.minMcapUsdMax, DEFAULTS.minMcapUsd);
+  g.minVol24hUsd = clampInt(c.minVol24hUsd, HARD.minVol24hUsdMin, HARD.minVol24hUsdMax, DEFAULTS.minVol24hUsd);
   g.fillFromMarket = c.fillFromMarket !== false;
   g.fillMinMcap = clampInt(c.fillMinMcap, HARD.fillMinMcapMin, HARD.fillMinMcapMax, DEFAULTS.fillMinMcap);
   g.fillMinLiq = clampInt(c.fillMinLiq, HARD.fillMinLiqMin, HARD.fillMinLiqMax, DEFAULTS.fillMinLiq);
@@ -209,7 +249,7 @@ async function set(patch = {}) {
   // that reverts on the next read — the toggle would report ON and the loop
   // would keep the old value.
   if (typeof patch.fillFromMarket === "boolean") next.fillFromMarket = patch.fillFromMarket;
-  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChainMin", "perChainMax", "minGainPct", "fillMinMcap", "fillMinLiq", "fillMaxPerCycle", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
+  for (const k of ["minHours", "maxHours", "minGapMin", "maxGapMin", "perChainMin", "perChainMax", "minGainPct", "minMcapUsd", "minVol24hUsd", "fillMinMcap", "fillMinLiq", "fillMaxPerCycle", "announcePerDay", "announceGapMin", "announceCooldownDays"]) {
     if (patch[k] != null) next[k] = patch[k];
   }
   if (Array.isArray(patch.chains)) next.chains = patch.chains;
@@ -435,6 +475,49 @@ const PROBE_CAP = 25;
 const PROBE_GAP_MS = 250;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * ⚠️ THE ONE OWNER OF "IS THIS BIG ENOUGH AND BUSY ENOUGH FOR A FREE SLOT".
+ *
+ * Every door onto this board asks it: the gain-floor pass, the floor fill, the
+ * forced per-chain run, and `trendFill` for the tokens it would LIST into a
+ * slot. That is not tidiness — the free-fall bound taught this exact lesson one
+ * field over. `FLOOR_FILL_MAX_DROP` bound the promoter and not the filler, so
+ * the filler would have listed a big-cap down 40% into the very slot the
+ * promoter had just refused a token down 20% for: the rule made decorative by
+ * the code written to help it. Two copies of a floor is two floors.
+ *
+ * Returns `null` when the candidate is fine, or the REASON it was refused —
+ * because a count of refusals sends the operator back to the board to work out
+ * which one it was, and this repo has paid for that shape more than once.
+ *
+ * It takes plain `{mcap, vol24}` rather than a row, deliberately: the promoter
+ * annotates `_mcap`/`_vol24` onto a LISTING and the filler reads `mcap`/`vol24`
+ * off a MARKET candidate, and a predicate that knew one shape would have forced
+ * the other door to write its own — which is the whole failure this exists to
+ * prevent. The adapter is one object literal at each call site.
+ *
+ * A floor set to 0 is OFF and asks nothing at all, so an unreadable cap on a
+ * chain no indexer covers costs nothing until an operator actually sets a
+ * floor. Once one is set, an unreadable value is REFUSED: the floor is a claim
+ * ("cap ≥ $100K"), and a token whose cap nobody publishes cannot be shown to
+ * satisfy it. Same rule, same wording, as the gainers banner's `minMcapUsd`.
+ */
+function floorRefusal({ mcap, vol24 }, cfg) {
+  const minMcap = Number(cfg && cfg.minMcapUsd) || 0;
+  const minVol = Number(cfg && cfg.minVol24hUsd) || 0;
+  if (minMcap > 0) {
+    if (!Number.isFinite(mcap)) return { code: "mcap", why: "market cap could not be read" };
+    if (mcap < minMcap) return { code: "mcap", why: `${fmtCap(mcap)} cap`, value: mcap };
+  }
+  if (minVol > 0) {
+    if (!Number.isFinite(vol24)) return { code: "vol", why: "24h volume could not be read" };
+    if (vol24 < minVol) return { code: "vol", why: `${fmtCap(vol24)} 24h volume`, value: vol24 };
+  }
+  return null;
+}
+/** The promoter's adapter: a ranked LISTING carries byGain's annotations. */
+const rowRefusal = (r, cfg) => floorRefusal({ mcap: r._mcap, vol24: r._vol24 }, cfg);
+
 async function byGain(rows, rng = Math.random) {
   // No shortcut for a single candidate: it still has to be PRICED, or the
   // caller's floor sees an unannotated row and reads it as "never looked" —
@@ -445,9 +528,23 @@ async function byGain(rows, rng = Math.random) {
   for (const r of probe) {
     let change = null;
     let priced = false;
+    let mcap = null;
+    let vol24 = null;
     try {
       const m = await market.fetchMarket(r.chain, r.address);
       if (m && Number.isFinite(m.change24h)) change = m.change24h;
+      // The SAME read, not a second lookup. `fetchMarket` already returns the
+      // cap and the 24h volume, and this loop is paced at 250ms against a quota
+      // shared with the website's charts — a floor that re-fetched what it was
+      // just handed would double the cost of every cycle.
+      //
+      // null is "nobody published one", never 0. `clearsFloors` refuses that
+      // when a floor is on, because a floor is a CLAIM ("cap ≥ $100K") and a
+      // token with no cap cannot be shown to satisfy it — the gainers banner's
+      // `minMcapUsd` states the same rule. A genuine 0 (a pool that traded
+      // nothing all day) is a reading, and it is the exact one being filtered.
+      if (m && Number.isFinite(m.mcap)) mcap = m.mcap;
+      if (m && Number.isFinite(m.vol24h)) vol24 = m.vol24h;
       // "NO 24h READING" AND "NO MARKET AT ALL" ARE DIFFERENT FACTS, and the
       // board renders them identically — which is how `$BINGBONG` reached a
       // pinned public board as a bare ticker with no percentage and no market
@@ -459,6 +556,8 @@ async function byGain(rows, rng = Math.random) {
     }
     r._change = change;   // carried so the caller can apply a floor without re-fetching
     r._priced = priced;
+    r._mcap = mcap;
+    r._vol24 = vol24;
     scored.push({ r, change });
     await sleep(PROBE_GAP_MS);
   }
@@ -471,8 +570,16 @@ async function byGain(rows, rng = Math.random) {
     [unpriced[i], unpriced[j]] = [unpriced[j], unpriced[i]];
   }
   // The unprobed tail keeps _change undefined rather than null, so the floor can
-  // tell "we looked and there is no price" from "we never looked".
-  for (const r of rest) r._change = undefined;
+  // tell "we looked and there is no price" from "we never looked". The cap and
+  // the volume are set the same way and for the same reason: `undefined` is the
+  // only value that cannot be mistaken for a measurement, and promoting a token
+  // nobody looked at is how a dead row reaches the board with no decision
+  // behind it.
+  for (const r of rest) {
+    r._change = undefined;
+    r._mcap = undefined;
+    r._vol24 = undefined;
+  }
   return [...priced.map((x) => x.r), ...unpriced, ...rest];
 }
 
@@ -551,6 +658,12 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   const gap = (id, n) => {
     if (n > 0) gaps.set(id, Math.max(gaps.get(id) || 0, n));
   };
+  // Per chain: how many spares the free-trending floors refused this pass. The
+  // watch renders "short" three different ways and the shortfall's CAUSE is
+  // what tells them apart — a count nobody can read is the same as no count,
+  // which is how three rounds of "trending minimal harus 5" each had to be
+  // diagnosed from scratch.
+  const floorRefusedByChain = new Map();
 
   for (const step of plan) {
     if (step.need <= 0) continue;
@@ -570,12 +683,50 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // moving; filling it at random made that claim false, and put a token down
     // 80% next to one up 40% with nothing to tell them apart.
     const ranked = await byGain(eligible, rng);
+    // ⚠️ THE QUALITY FLOORS RUN FIRST, AND THEY BIND A FORCED RUN TOO.
+    //
+    // First, because everything below reasons about "what else is on this
+    // chain" — `anyPriced`, `anyReading`, the free-fall bound. Those questions
+    // have to be asked of the candidates actually in play: a chain whose one
+    // readable token is refused for having a $157K cap has, for the purposes of
+    // the exemptions, nothing readable left. Asking them of the full list would
+    // let a token this pass can never promote decide whether the others are
+    // exempt.
+    //
+    // And a forced run, because that is the one place this differs from every
+    // other rule here. `step.forced` (⚡ Run now, and `forceChain`) deliberately
+    // ignores the gain floor and the free-fall bound: those govern how
+    // DISCRETIONARY the bot is being, and an operator tapping Run now has
+    // decided that for it. These floors are not that — they are the operator's
+    // standing answer to "what may go on this board at all", and a button that
+    // quietly published `VOL $0.05` would reproduce the exact report this was
+    // written for, from the one path an operator uses while they are watching.
+    // Refusing costs nothing they cannot see: it is counted, named with the
+    // token and its number, and both floors are one tap away on the same panel.
+    const refusals = [];
+    const ranQualified = ranked.filter((r) => {
+      const bad = rowRefusal(r, cfg);
+      if (bad) refusals.push({ r, bad });
+      return !bad;
+    });
+    if (refusals.length) {
+      // INFO, not debug: with the floors on, this is the commonest reason a
+      // chain sits under its minimum, and "why is the board short" has to be
+      // answerable from pm2 alone. Capped — a chain with forty dead listings
+      // must not print forty of them every cycle.
+      log.info(
+        `[autotrend] ${step.id}: ${refusals.length} candidate(s) below the free-trending floors ` +
+          `(cap ${fmtCap(cfg.minMcapUsd)}, 24h vol ${fmtCap(cfg.minVol24hUsd)}) — ` +
+          refusals.slice(0, 5).map(({ r, bad }) => `${r.sym || "?"} ${bad.why}`).join(", ") +
+          (refusals.length > 5 ? `, +${refusals.length - 5} more` : ""),
+      );
+    }
     // Losers are not promoted. `change` is attached by byGain; null means the
     // price could not be read, and those stay eligible on purpose.
     // A token with no market ANYWHERE (no price, not merely no 24h reading) is
     // only a candidate where nothing else on the chain is priced either — see
     // the floor fill below, which states the reasoning in full.
-    const anyPriced = ranked.some((r) => r._priced);
+    const anyPriced = ranQualified.some((r) => r._priced);
     const hasMarket = (r) => !anyPriced || r._priced !== false;
     // ⚠️ A TRENDING ROW WITHOUT A PERCENTAGE IS THE THING THAT GOT REPORTED.
     //
@@ -593,11 +744,11 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // treated as unreadable rather than as a maybe: promoting a token we never
     // looked at is how a blank reaches the board with nobody having decided it
     // should.
-    const anyReading = ranked.some((r) => Number.isFinite(r._change));
+    const anyReading = ranQualified.some((r) => Number.isFinite(r._change));
     const hasReading = (r) => !anyReading || Number.isFinite(r._change);
     const worthy = step.forced
-      ? ranked
-      : ranked.filter(
+      ? ranQualified
+      : ranQualified.filter(
           (r) => (r._change === null || r._change >= cfg.minGainPct) && hasMarket(r) && hasReading(r),
         );
     // ⚠️ THE MINIMUM OUTRANKS THE GAIN FLOOR.
@@ -642,7 +793,14 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
         (r._change === null || r._change >= -FLOOR_FILL_MAX_DROP) &&
         hasMarket(r) &&
         hasReading(r);
-      const extra = ranked.filter(fillable).slice(0, step.needFloor - picks.length);
+      // ⚠️ FROM `ranQualified`, NEVER FROM `ranked`. This is the pass whose
+      // whole purpose is to overrule a floor — the minimum outranks the gain
+      // floor — so it is exactly the pass that would delete the cap and volume
+      // floors by reaching around them, and it would do it silently, on the
+      // chains that are short, which is every chain the operator is looking at.
+      // The free-fall bound has this scar already: a rule the floor fill does
+      // not honour is a rule the floor fill deletes.
+      const extra = ranQualified.filter(fillable).slice(0, step.needFloor - picks.length);
       if (extra.length) {
         log.info(
           `[autotrend] ${step.id}: promoting ${extra.length} below the +${cfg.minGainPct}% floor to reach the minimum of ${cfg.perChainMin} ` +
@@ -667,9 +825,22 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     // is the red-day spree `gap()` exists to prevent and which this does not
     // re-open.
     if (!step.forced && picks.length < step.needFloor) {
-      short.push(`${step.id} (needs ${step.needFloor - picks.length} more to reach the minimum; every spare is below −${FLOOR_FILL_MAX_DROP}%)`);
+      // ⚠️ NAME WHICH REFUSAL IT WAS. This line used to assert "every spare is
+      // below −15%" for every way a spare can be unusable, and with the quality
+      // floors on that is now most often false — it would send an operator to
+      // look at a percentage when the real answer is a $0.05 volume. The
+      // refusals were counted a few lines up precisely so this can say so.
+      const whyShort = refusals.length
+        ? `every spare is below the free-trending floors (cap ${fmtCap(cfg.minMcapUsd)}, 24h vol ${fmtCap(cfg.minVol24hUsd)})`
+        : `every spare is below −${FLOOR_FILL_MAX_DROP}%`;
+      short.push(`${step.id} (needs ${step.needFloor - picks.length} more to reach the minimum; ${whyShort})`);
       gap(step.id, step.needFloor - picks.length);
     }
+    // How many of this chain's spares the floors refused, so the watch can name
+    // the cause rather than guessing between three of them. Recorded even when
+    // the chain filled anyway: the board is what matters, and a chain that
+    // reached its minimum is not short whatever was refused on the way.
+    floorRefusedByChain.set(step.id, refusals.length);
     if (!picks.length) {
       // No gap() HERE: this chain is at or above the minimum and its spares are
       // simply not up enough — the gain floor working as designed. Anything
@@ -769,6 +940,14 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
         eligible: after.filter((r) => r.status === "approved" && !isFeatured(r) && on(r, id)).length,
         fillWhy: fillWhyByChain.get(id) || null,
         gainFloor: cfg.minGainPct,
+        // ⚠️ `eligible` above is the RAW spare count — approved and not
+        // featured, before any floor. Without this the watch would report a
+        // chain full of $0.05-volume listings as "N spare listing(s) here and
+        // none went on — they are below −15%", which is a true count under a
+        // false reason, and it is the reason the operator would act on.
+        floorRefused: floorRefusedByChain.get(id) || 0,
+        minMcapUsd: cfg.minMcapUsd,
+        minVol24hUsd: cfg.minVol24hUsd,
       }));
       const { state: nextWatch, alerts } = watch.evaluate(snapshot, st.boardWatch, { now: Date.now() });
       st.boardWatch = nextWatch;
@@ -866,9 +1045,33 @@ async function forceChain(chain, { count = 1, rng = Math.random } = {}) {
     return { promoted: 0, syms: [], reason: `all ${approved.length} listed token(s) on ${id} are already trending` };
   }
   const ranked = await byGain(eligible, rng);
+  // The quality floors bind this button too — see the long note on the same
+  // filter in `runOnce`. ⚡ Run now is the path an operator uses while they are
+  // WATCHING the board, so it is the last place that may publish a token with
+  // five cents of volume; a floor it did not honour would be a floor with a
+  // one-tap bypass. The refusal names the tokens and both numbers, because
+  // "nothing qualified" with no figures beside it is a button that appears
+  // broken, and the fix (lower a floor, or 🧲 fill from market) is on the same
+  // screen.
+  const refused = [];
+  const qualified = ranked.filter((r) => {
+    const bad = rowRefusal(r, cfg);
+    if (bad) refused.push(`${r.sym || String(r.address).slice(0, 6)} ${bad.why}`);
+    return !bad;
+  });
+  if (!qualified.length) {
+    return {
+      promoted: 0,
+      syms: [],
+      reason:
+        `all ${refused.length} spare listing(s) on ${id} are below the free-trending floors ` +
+        `(cap ${fmtCap(cfg.minMcapUsd)}, 24h vol ${fmtCap(cfg.minVol24hUsd)}): ${refused.slice(0, 4).join(", ")}` +
+        (refused.length > 4 ? `, +${refused.length - 4} more` : ""),
+    };
+  }
   const syms = [];
   let lastErr = null;
-  for (const r of ranked.slice(0, Math.max(1, count))) {
+  for (const r of qualified.slice(0, Math.max(1, count))) {
     const hours = cfg.minHours + Math.floor(rng() * (cfg.maxHours - cfg.minHours + 1));
     try {
       await api.bookTrending(r.chain, r.address, hours);
@@ -939,4 +1142,11 @@ module.exports = {
   // refusing a token at −20% while the other lists one is the same board saying
   // two things.
   FLOOR_FILL_MAX_DROP,
+  // …and the quality floors, for exactly the same reason, one round later. Both
+  // doors ask THIS function: the promoter through `rowRefusal` above, and
+  // `trendFill` for the tokens it would list straight into a slot. A second
+  // copy would be two floors, and the free-fall bound has already shown which
+  // way that fails — the door without the rule wins, because its picks book
+  // their slot directly.
+  floorRefusal,
 };
