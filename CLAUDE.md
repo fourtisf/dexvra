@@ -2213,6 +2213,63 @@ whether the guessed shape answers is a property of the server's egress, so
 `GECKOTERMINAL_API_KEY` is still the only thing that raises the real ceiling
 rather than dividing it.
 
+#### The audit round — the fix cached the very thing it was written for
+
+Run against both features by five independent lenses, and every defect found is
+one of this file's own recurring shapes, reintroduced by the code written to
+stop it.
+
+- ⚠️ **A GECKOTERMINAL RATE LIMIT WAS BEING CACHED AS THE CHART'S ANSWER**, for
+  the timeframe's TTL — up to FIFTEEN MINUTES on 1d, longer than the 120s
+  cooldown it was reporting. `load()` IS the cached loader, and the rule stated
+  at `Unreadable`'s own definition is that only an ANSWER may be cached. It used
+  to reach the route's catch by THROWING out of `fetchCandles`; wrapping
+  GeckoTerminal in a try/catch so DexScreener could be tried afterwards quietly
+  turned that throw into a RETURN. Proved by measurement rather than by reading:
+  three identical requests against a stub produce six upstream hits.
+- ⚠️ **ONE SOURCE ANSWERING IS NOT EVERY SOURCE ANSWERING.** With GT cooling
+  down and DexScreener replying *"no pair for this token"*, the route published
+  *"No candles yet"* about a token GT indexes perfectly well — on the panel state
+  that never fast-retries, so it stayed wrong until the reader reloaded.
+- ⚠️ **THE VOLUME FLOOR BOUND ONE BOARD OUT OF FOUR.** `/trending` — the page
+  whose entire heading is *Top Gainers* — sorted `b.chg[frame] - a.chg[frame]`,
+  the RAW field, through neither gate, so even a five-million-percent reading
+  could take its 🥇 medal. The **Ticker** crowned, on every page, the token the
+  board directly underneath ranked tenth. `/watchlist` and the home **wire
+  headline** did the same. `byChange` is the one owner for a whole list;
+  `tradedEnough` is the filter for a curated few; a test pins every ranking
+  surface so a fifth cannot be missed.
+- ⚠️ **`trending:check --floors` HAD ITS OWN COPY OF THE REFUSAL COUNT**, missing
+  the "we actually looked" half — 44 refusals where the bot reports 25. A check
+  that measures its own copy of the question proves nothing.
+- ⚠️ **A TOKEN NOBODY PRICED IS NOT A TOKEN THAT FAILED THE FLOORS.** `byGain`
+  prices at most 25 a chain; counting the tail as refused told an operator with
+  100 listings that 75 of their tokens were too small, about tokens the pass
+  never opened. And **the test for it was vacuous** — the log buffer it read was
+  module-level, so `.find()` returned an earlier test's line and the assertion
+  passed whatever the code did.
+- ⚠️ **THE PANEL PROMISED A FILLER THAT WAS SWITCHED OFF**, four paragraphs above
+  saying a chain with no spares "stays short until somebody lists tokens on it".
+- ⚠️ **`fmtCap` printed `$NaN` on the site where the bot's 1:1 port prints `—`** —
+  two copies the repo requires to agree exactly, drifting on the one input the
+  agreement test never tried.
+- **The base-failover rule was true in the comment and false in the code**, and
+  the test for it was vacuous because the shipped base list has ONE entry: a test
+  driving it cannot tell a correct loop from a broken one. `dsCandles` takes a
+  documented `bases` seam now.
+- ⚠️ **"Nothing is up on this timeframe" became a FALSE claim** the moment
+  `movers` started excluding quiet tokens — the board above the card reads
+  +58.2% while the card says nothing is up.
+- **`chart:preview` had been permanently red**, asserting a chart on the unlisted
+  page that was deliberately deleted. A check that asserts a removed feature is
+  worse than no check: it trains the reader to ignore the red.
+
+Every guarantee is MUTATION-TESTED rather than argued — reaching around the
+floors in the floor fill, dropping them from the promotion pass, bypassing them
+on a forced run, dropping the filler's refusal, letting the base rule leak,
+skipping the millisecond conversion, taking the quote-side pair, and each of the
+above — and each fails between one and four tests.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
