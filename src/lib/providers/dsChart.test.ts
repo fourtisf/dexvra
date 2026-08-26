@@ -440,6 +440,16 @@ test("⚠️ a source that could not be ASKED is THROWN, so it is never cached",
   assert.ok(!/return fail\(tf, `Couldn't read/.test(loader), "…and must not return a cacheable failure instead");
   // The cached() call wraps load, which is what makes the above load-bearing.
   assert.match(route, /cached\(key, TF\[tf\]\.ttlMs, \(\) => load\(/);
+
+  // ⚠️ AND THROWING BUYS A SECOND THING, WHICH IS THE BIGGER ONE. `cached()`
+  // answers a THROWN loader with `getStale` — the last good value, expired or
+  // not (cache.test.ts pins it: "an expired entry is still the stale copy
+  // served when a provider is down"). So a reader whose chart was already
+  // drawn keeps seeing real candles through a GT cooldown instead of a
+  // "Chart unavailable" panel. RETURNING the failure did the opposite: it
+  // `cache.set` the error OVER the good candles, so the safety net had nothing
+  // left to serve and the failure became the stale value.
+  assert.match(read("src/lib/cache.ts"), /const stale = cache\.getStale<T>\(key\);/, "the stale-on-throw net is gone");
 });
 
 test("⚠️ EVERY applicable source must have answered before 'no candles' is published", () => {
