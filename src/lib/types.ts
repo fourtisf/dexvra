@@ -84,6 +84,11 @@ export interface WireItem {
 }
 
 export interface TokensPayload {
+  /** The commit this server is running. Every check in this repo prints one,
+   *  for the reason `fonts:check` learned the hard way: each round of a bug
+   *  begins with somebody reading a diagnostic as a statement about the fix
+   *  they just deployed. `logos:check` compares it against the checkout. */
+  build: string;
   tokens: BoardToken[];
   heat: ChainHeat[];
   wire: WireItem[];

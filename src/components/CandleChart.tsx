@@ -21,10 +21,36 @@
  * of the two reasons it is — no pool indexed yet, versus we could not read the
  * chart just now. Those need different reactions from the reader, and an empty
  * grid gives them the same one.
+ *
+ * THE VERTICAL BELONGS TO THE READER
+ * $BREAKING went from $0.000803 to $0.0281 in two days and the chart of it was
+ * a flat line on the floor with one spike at the right-hand edge — every number
+ * correct, the picture useless, because on a LINEAR axis a 35x move spends 96%
+ * of the height on the last 4% of the story. So the axis is a control now:
+ * LIN/LOG in the header, drag the price gutter to stretch or squash, drag the
+ * chart to move it up and down, double-click for the automatic range back. The
+ * arithmetic is in lib/chartScale.ts, where a test can drive it — a scale is
+ * arithmetic, and the ways it goes wrong (a zero span, a log of zero, an axis
+ * walked into negative dollars) are invisible until they are on a screen.
+ *
+ * ⚠️ AND THE PANEL SAYS WHEN THE READER HAS MOVED IT. A log chart and a linear
+ * one of the same token are different pictures, and so are an auto range and a
+ * stretched one; anybody comparing two screenshots is owed the difference. The
+ * mode is always visible and `⤢ Auto` appears the moment the axis is no longer
+ * the data's own.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { TIMEFRAMES, pollMsFor, priceRange, windowChangePct, type Candle, type Timeframe } from "@/lib/ohlcv";
+import {
+  AUTO,
+  isAdjusted,
+  panByDrag,
+  priceScale,
+  zoomByDrag,
+  type ScaleAdjust,
+  type ScaleMode,
+} from "@/lib/chartScale";
 import { fmtCap, fmtPrice } from "@/lib/format";
 
 interface Feed {
@@ -105,7 +131,23 @@ export function CandleChart({
   const [feed, setFeed] = useState<Feed | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  // The reader's vertical. `mode` is a PREFERENCE and survives a timeframe
+  // switch — somebody who wants a log axis wants it on every tab. `adjust` is a
+  // view of ONE window and does not: a stretch aimed at two days of 15m candles
+  // is meaningless over six months of daily ones, and inheriting it would open
+  // the new tab on an axis with no candles in it.
+  const [mode, setMode] = useState<ScaleMode>("lin");
+  const [adjust, setAdjust] = useState<ScaleAdjust>(AUTO);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  /** The drag in progress, if any. A ref rather than state: it changes on every
+   *  pointer event and nothing renders from it directly. */
+  const dragRef = useRef<{ kind: "zoom" | "pan"; y: number; id: number } | null>(null);
+  // ⚠️ `useId()` returns `:r0:` — legal in an id, and a colon inside a
+  // `url(#…)` reference is one browser-quirk away from a clip that silently
+  // does nothing (and it can never be found with querySelector). Stripped to
+  // word characters, because the failure mode is a chart drawing over its own
+  // volume band on somebody else's browser and nowhere near a test.
+  const clipId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
 
   // ── data ────────────────────────────────────────────────────────────────
   // One effect owns the whole lifecycle for one (token, timeframe): the first
@@ -185,6 +227,10 @@ export function CandleChart({
     };
   }, [chain, address, tf, poolHint]);
 
+  // A stretch belongs to the window it was aimed at. Switching timeframe or
+  // token replaces that window wholesale, so the axis goes back to the data's.
+  useEffect(() => setAdjust(AUTO), [chain, address, tf]);
+
   // ── geometry ────────────────────────────────────────────────────────────
   useEffect(() => {
     const el = wrapRef.current;
@@ -222,22 +268,20 @@ export function CandleChart({
 
     const range = priceRange(view);
     if (!range) return null;
-    // A little headroom top and bottom so a wick never touches the frame and
-    // the last-price tag has somewhere to sit.
-    const pad = (range.hi - range.lo) * 0.06;
-    const lo = Math.max(range.lo - pad, range.lo * 0.5);
-    const hi = range.hi + pad;
+    // The vertical, including whatever the reader has done to it. Headroom,
+    // the log transform and the bounds all live in lib/chartScale.
+    const scale = priceScale(range, mode, adjust, { top: PAD_T, height: priceH });
     const maxVol = view.reduce((m, c) => Math.max(m, c.v), 0);
 
     const step = plotW / view.length;
     const body = Math.max(1, Math.min(MAX_BODY, step * 0.66));
-    const yOf = (p: number) => PAD_T + (1 - (p - lo) / (hi - lo)) * priceH;
+    const yOf = scale.yOf;
     const xOf = (i: number) => PAD_L + step * (i + 0.5);
     const volTop = PAD_T + priceH + GAP;
     const yVol = (v: number) => (maxVol > 0 ? volH - (v / maxVol) * volH : volH);
 
-    return { w, h, lo, hi, step, body, yOf, xOf, priceH, volH, volTop, plotW, maxVol, yVol, view };
-  }, [box, candles]);
+    return { w, h, scale, step, body, yOf, xOf, priceH, volH, volTop, plotW, maxVol, yVol, view };
+  }, [box, candles, mode, adjust]);
 
   // EVERYTHING BELOW READS THE VISIBLE WINDOW, not the fetched list — a
   // percentage measured over candles that were never drawn is a number the
@@ -258,6 +302,60 @@ export function CandleChart({
     setHover(i >= 0 && i < geo.view.length ? i : null);
   };
 
+  // ── the reader's vertical ───────────────────────────────────────────────
+  const resetScale = useCallback(() => setAdjust(AUTO), []);
+
+  /** Start a drag. `kind` is decided by WHERE it started: the price gutter
+   *  scales, the chart itself pans — the grammar every charting tool uses, so
+   *  there is nothing to learn. */
+  const startDrag = (e: React.PointerEvent<HTMLElement>, kind: "zoom" | "pan") => {
+    // Same reason as `moveDrag`: a pointerdown on the gutter would otherwise
+    // start a zoom and then bubble to the plot, which would replace it with a
+    // pan — the axis control silently becoming a pan control.
+    e.stopPropagation();
+    // ⚠️ ONLY A MOUSE MAY PAN THE CHART BODY. On a phone a vertical drag across
+    // the plot is how the page is scrolled, and stealing it would trap the
+    // reader on the chart. The gutter is a deliberate target and takes touch
+    // (`touch-action: none` on it); the body does not.
+    if (kind === "pan" && e.pointerType !== "mouse") return;
+    dragRef.current = { kind, y: e.clientY, id: e.pointerId };
+    setHover(null); // a crosshair frozen mid-drag reads as a hung chart
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const moveDrag = (e: React.PointerEvent<HTMLElement>): boolean => {
+    const d = dragRef.current;
+    if (!d || d.id !== e.pointerId || !geo) return false;
+    // ⚠️ THE GUTTER IS INSIDE THE PLOT, AND POINTER EVENTS BUBBLE — so without
+    // this every pointer event over the price axis ran BOTH handlers, and the
+    // two of them fought over one drag. MEASURED, not reasoned about: with the
+    // three `stopPropagation` calls removed, a 60px pan moved the chart 210px
+    // and the same axis drag produced a different zoom. Which handler wins in
+    // which order is not worth working out; a drag belongs to the element it
+    // started on, and `chart:preview` asserts the chart moves BY the drag
+    // rather than merely in its direction — the version of that check that
+    // said `> 20px` passed on the broken build.
+    e.stopPropagation();
+    const dy = e.clientY - d.y;
+    d.y = e.clientY;
+    // Measured against the PRICE area, not the whole panel: the volume band and
+    // the time axis are not part of the scale being dragged.
+    setAdjust((a) => (d.kind === "zoom" ? zoomByDrag(a, dy, geo.priceH) : panByDrag(a, dy, geo.priceH)));
+    return true;
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLElement>) => {
+    e.stopPropagation();
+    if (dragRef.current?.id === e.pointerId) dragRef.current = null;
+    // Only what we actually took. On touch the body drag is never started (the
+    // page scroller keeps it), so the pointerdown returns before capturing —
+    // and every touch-scroll across the chart then arrives here with nothing to
+    // release. Chromium treats that as a no-op and the phone check in
+    // `chart:preview` confirms it, but the spec allows a NotFoundError and this
+    // is the path every phone reader takes.
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
   // The route names the link now, because only it knows which source answered.
   // The GT-shaped fallback stays for an older cached response and for the
   // caller-supplied `gtUrl`.
@@ -269,6 +367,13 @@ export function CandleChart({
   // mean anything. It must SAY so — the alternative is an empty box that reads
   // exactly like a chart still loading.
   const tooSmall = status === "ok" && !geo && box.w > 0 && box.h > 0 && candles.length > 0;
+  /** Where the last-price tag sits: on the price, PINNED into the panel. A
+   *  reader who has dragged the scale can put the last close off screen, and
+   *  the one number they came for must not go with it. */
+  const lastTagY =
+    geo && last
+      ? Math.min(PAD_T + geo.priceH - 10, Math.max(PAD_T + 10, geo.yOf(last.c)))
+      : 0;
 
   return (
     <div className="ck">
@@ -295,32 +400,70 @@ export function CandleChart({
             </span>
           )}
         </div>
-        <div className="ck-tfs" role="tablist" aria-label="Chart timeframe">
-          {TIMEFRAMES.map((k) => (
-            <button
-              key={k}
-              role="tab"
-              aria-selected={k === tf}
-              className={`ck-tf ${k === tf ? "on" : ""}`}
-              onClick={() => {
-                setHover(null);
-                setTf(k);
-              }}
-            >
-              {k}
+        <div className="ck-ctl">
+          {/* The escape hatch, and the TELL. It is only here while the axis is
+              no longer the data's own — so a screenshot of a stretched chart
+              carries the fact that somebody stretched it. Double-clicking the
+              plot does the same thing; this is the version that works on a
+              phone and the version that is discoverable. */}
+          {isAdjusted(adjust) && (
+            <button className="ck-auto" onClick={resetScale} title="Back to the automatic price range">
+              ⤢ Auto
             </button>
-          ))}
+          )}
+          {/* Two buttons rather than one toggle: which axis a chart is on has
+              to be readable OFF the picture, not by hovering it. A log chart
+              and a linear one of the same token are different pictures. */}
+          <div className="ck-tfs" role="group" aria-label="Price scale">
+            {(["lin", "log"] as const).map((m) => (
+              <button
+                key={m}
+                aria-pressed={m === mode}
+                className={`ck-tf ${m === mode ? "on" : ""}`}
+                title={
+                  m === "log"
+                    ? "Logarithmic price scale — equal percentage moves are equal heights, so a 35x reads across the whole chart"
+                    : "Linear price scale — equal dollar moves are equal heights"
+                }
+                onClick={() => setMode(m)}
+              >
+                {m.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div className="ck-tfs" role="tablist" aria-label="Chart timeframe">
+            {TIMEFRAMES.map((k) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={k === tf}
+                className={`ck-tf ${k === tf ? "on" : ""}`}
+                onClick={() => {
+                  setHover(null);
+                  setTf(k);
+                }}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       <div
         className="ck-plot"
         ref={wrapRef}
-        onMouseMove={(e) => onMove(e.clientX)}
-        onMouseLeave={() => setHover(null)}
-        onTouchStart={(e) => e.touches[0] && onMove(e.touches[0].clientX)}
-        onTouchMove={(e) => e.touches[0] && onMove(e.touches[0].clientX)}
-        onTouchEnd={() => setHover(null)}
+        onPointerDown={(e) => startDrag(e, "pan")}
+        onPointerMove={(e) => {
+          // A drag owns the pointer; only a free one moves the crosshair.
+          if (!moveDrag(e)) onMove(e.clientX);
+        }}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onPointerLeave={() => {
+          if (!dragRef.current) setHover(null);
+        }}
+        onDoubleClick={resetScale}
       >
         {(status === "loading" || (status === "ok" && !geo && !tooSmall)) && (
           <div className="ck-msg">
@@ -346,14 +489,26 @@ export function CandleChart({
 
         {status === "ok" && geo && (
           <svg className="ck-svg" width={geo.w} height={geo.h} aria-label={`${symbol} price chart, ${tf} candles`} role="img">
+            {/* The area a candle may be drawn in. ⚠️ WITHOUT IT A STRETCHED
+                CHART DRAWS OVER EVERYTHING: zoom in and the wicks run straight
+                through the volume histogram, the time axis and the header,
+                which is not a chart with a bug in it, it is not a chart. */}
+            <defs>
+              <clipPath id={`ckp${clipId}`}>
+                <rect x={0} y={PAD_T - 2} width={geo.w - PAD_R} height={geo.priceH + 4} />
+              </clipPath>
+            </defs>
+
             {/* price grid + right-hand axis */}
             {Array.from({ length: GRID_LINES }, (_, i) => {
-              const p = geo.lo + ((geo.hi - geo.lo) * i) / (GRID_LINES - 1);
+              // Evenly spaced up the PANEL and priced from the axis — on a log
+              // scale, five evenly-spaced dollar amounts bunch at one end.
+              const p = geo.scale.priceAt(i / (GRID_LINES - 1));
               const y = geo.yOf(p);
               // The last-price tag is drawn in the same gutter. Two figures on
               // top of each other read as one wrong figure, so the grid label
               // gives way — the tag is the number people are looking for.
-              const hidden = last != null && Math.abs(y - geo.yOf(last.c)) < 12;
+              const hidden = last != null && Math.abs(y - lastTagY) < 12;
               return (
                 <g key={`g${i}`}>
                   <line x1={PAD_L} x2={geo.w - PAD_R} y1={y} y2={y} className="ck-grid" />
@@ -390,6 +545,7 @@ export function CandleChart({
             </g>
 
             {/* candles */}
+            <g clipPath={`url(#ckp${clipId})`}>
             {geo.view.map((c, i) => {
               const up = c.c >= c.o;
               const x = geo.xOf(i);
@@ -406,26 +562,36 @@ export function CandleChart({
                 </g>
               );
             })}
+            {/* The dashed line belongs to the plot and is clipped with it; the
+                TAG does not — see below. */}
+            {last && (
+              <line
+                x1={PAD_L}
+                x2={geo.w - PAD_R}
+                y1={geo.yOf(last.c)}
+                y2={geo.yOf(last.c)}
+                className={`ck-lastline ${last.c >= last.o ? "up" : "dn"}`}
+              />
+            )}
+            </g>
 
-            {/* last price */}
+            {/* last price. ⚠️ THE TAG IS PINNED INTO THE PANEL rather than
+                clipped away with the line: it is the number the reader came for,
+                and a scale they have dragged must not be able to take it off
+                screen. It rides the edge when the price is out of view — the
+                same thing every charting tool does, and the reason the grid
+                label above still gives way to it. */}
             {last && (
               <g>
-                <line
-                  x1={PAD_L}
-                  x2={geo.w - PAD_R}
-                  y1={geo.yOf(last.c)}
-                  y2={geo.yOf(last.c)}
-                  className={`ck-lastline ${last.c >= last.o ? "up" : "dn"}`}
-                />
                 <rect
                   x={geo.w - PAD_R + 2}
-                  y={geo.yOf(last.c) - 9}
+                  y={lastTagY - 9}
                   width={PAD_R - 6}
                   height={18}
                   rx={4}
                   className={`ck-lastbg ${last.c >= last.o ? "up" : "dn"}`}
                 />
-                <text x={geo.w - PAD_R + 7} y={geo.yOf(last.c) + 3.5} className="ck-lasttx">
+                <text x={geo.w - PAD_R + 7} y={lastTagY + 3.5} className="ck-lasttx">
                   {fmtPrice(last.c)}
                 </text>
               </g>
@@ -468,6 +634,26 @@ export function CandleChart({
               />
             )}
           </svg>
+        )}
+
+        {/* THE PRICE GUTTER IS A CONTROL. Its own element rather than a region
+            of the svg, because it needs three things the plot cannot give it:
+            `touch-action: none` (so a drag here is a scale and not a page
+            scroll — the one place on the chart where that trade is worth
+            making), a resize cursor, and a title that says what it does. It
+            sits over the axis labels, where there are no candles to hit. */}
+        {status === "ok" && geo && (
+          <div
+            className="ck-yaxis"
+            style={{ width: PAD_R }}
+            title="Drag up to stretch the price scale, down to squash it · double-click for auto"
+            aria-label="Price scale — drag to zoom"
+            onPointerDown={(e) => startDrag(e, "zoom")}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onDoubleClick={resetScale}
+          />
         )}
 
         {status === "ok" && geo && active && (

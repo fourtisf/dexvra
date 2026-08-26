@@ -4,7 +4,7 @@
 // and a source scan cannot tell a guard from a comment about one.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyResolvedLogo, type LogoRow } from "./logoWrite.ts";
+import { applyLostUpload, applyResolvedLogo, type LogoRow } from "./logoWrite.ts";
 
 const SHIB = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce";
 const rows = (): LogoRow[] => [
@@ -64,4 +64,61 @@ test("a token that is not listed changes nothing at all", () => {
   const out = applyResolvedLogo(before, "ethereum", "0x9999999999999999999999999999999999999999", OURS);
   assert.equal(out.wrote, false);
   assert.equal(out.rows, before, "the same array back — nothing to persist");
+});
+
+// ── the one write that turns something into nothing ─────────────────────────
+
+const UPLOAD = "/api/media/aaaaaaaaaaaaaaaaaaaaaaaa.png";
+
+test("a lost upload is cleared, so the resolver's write has somewhere to land", () => {
+  // While the row holds it, applyResolvedLogo stops at `r.logoUrl` and the
+  // replacement can never be persisted. Two correct guards holding a dead URL
+  // between them is exactly the permanent monogram this pair exists to break.
+  const rows = [{ chain: "solana", address: "MiNt", logoUrl: UPLOAD }];
+  const out = applyLostUpload(rows, "solana", "mint");
+  assert.equal(out.wrote, true);
+  assert.equal(out.rows[0].logoUrl, undefined);
+  // …and now the resolver may write.
+  const then = applyResolvedLogo(out.rows, "solana", "mint", "https://cdn.example/found.png");
+  assert.equal(then.wrote, true);
+  assert.equal(then.rows[0].logoUrl, "https://cdn.example/found.png");
+});
+
+test("⚠️ it can ONLY clear an upload — never an external logo", () => {
+  // A CDN blip, a hotlink block or a rate limit are not facts about the token,
+  // and none of them is knowable from this server. Clearing one would delete a
+  // project's artwork over a bad minute.
+  const rows = [{ chain: "solana", address: "mint", logoUrl: "https://cdn.example/real.png" }];
+  const out = applyLostUpload(rows, "solana", "mint");
+  assert.equal(out.wrote, false);
+  assert.equal(out.rows[0].logoUrl, "https://cdn.example/real.png");
+});
+
+test("it touches one row, on the right chain, and nothing else", () => {
+  const rows = [
+    { chain: "ethereum", address: "0xabc", logoUrl: UPLOAD },
+    { chain: "solana", address: "0xabc", logoUrl: UPLOAD },
+    { chain: "solana", address: "other", logoUrl: UPLOAD },
+  ];
+  const out = applyLostUpload(rows, "solana", "0xABC");
+  assert.equal(out.rows[0].logoUrl, UPLOAD, "same address, different chain, different token");
+  assert.equal(out.rows[1].logoUrl, undefined);
+  assert.equal(out.rows[2].logoUrl, UPLOAD);
+});
+
+test("a row with no logo at all is not a write", () => {
+  const rows = [{ chain: "solana", address: "mint" }];
+  assert.equal(applyLostUpload(rows, "solana", "mint").wrote, false);
+});
+
+test("a missing chain or address writes nothing", () => {
+  const rows = [{ chain: "solana", address: "mint", logoUrl: UPLOAD }];
+  assert.equal(applyLostUpload(rows, "", "mint").wrote, false);
+  assert.equal(applyLostUpload(rows, "solana", "").wrote, false);
+});
+
+test("the rows array is not mutated", () => {
+  const rows = [{ chain: "solana", address: "mint", logoUrl: UPLOAD }];
+  applyLostUpload(rows, "solana", "mint");
+  assert.equal(rows[0].logoUrl, UPLOAD);
 });

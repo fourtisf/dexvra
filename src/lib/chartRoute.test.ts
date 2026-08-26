@@ -173,6 +173,76 @@ test("every drawn number is measured over the window that is actually drawn", ()
   assert.match(CHART, /geo\.view\.map/);
 });
 
+// ── the reader's vertical ───────────────────────────────────────────────────
+
+test("THE BUG: a 30x move on a linear axis has no vertical the reader controls", () => {
+  // $BREAKING ran $0.000803 → $0.0281 in two days and the whole history sat
+  // flat on the floor of the panel. Every number correct, the picture useless.
+  // The answer is both halves: a LOG axis, and a scale the reader can drag.
+  assert.match(CHART, /priceScale\(range, mode, adjust/, "the vertical is a computed scale, not a fixed lo/hi");
+  assert.match(CHART, /zoomByDrag\(a, dy, geo\.priceH\)/, "drag the gutter to stretch or squash");
+  assert.match(CHART, /panByDrag\(a, dy, geo\.priceH\)/, "drag the chart to move it up and down");
+  assert.match(CHART, /onDoubleClick=\{resetScale\}/, "and double-click hands it back to the data");
+});
+
+test("the scale math is one owner, and the panel does not grow a second copy", () => {
+  // A screen that computes its own version of a rule eventually disagrees with
+  // the rule. Every way the axis can be wrong — a zero span, a log of a
+  // non-positive price, an axis walked into negative dollars — is arithmetic,
+  // and it lives where node:test can drive it.
+  assert.ok(!/Math\.log10/.test(code(CHART)), "no private log transform in the renderer");
+  assert.ok(!/\(1 - \(p - lo\)/.test(code(CHART)), "no second y-mapping");
+  assert.match(CHART, /from "@\/lib\/chartScale"/);
+});
+
+test("⚠️ the reader can see WHICH axis they are looking at, off the picture", () => {
+  // A log chart and a linear one of the same token are different pictures, and
+  // so are an auto range and a stretched one. Anybody comparing two
+  // screenshots is owed the difference — the same reason the DexScreener
+  // fallback names itself rather than drawing an identical chart in silence.
+  assert.match(CHART, /\["lin", "log"\] as const/, "both modes are on screen, not one toggle");
+  assert.match(CHART, /aria-pressed=\{m === mode\}/);
+  assert.match(CHART, /isAdjusted\(adjust\) && \(/, "⤢ Auto appears only when the axis is not the data's own");
+});
+
+test("⚠️ a stretched chart cannot draw over the volume band or the axis", () => {
+  // Zoom in far enough and unclipped wicks run through the histogram, the time
+  // stamps and the header. That is not a chart with a bug in it.
+  assert.match(CHART, /<clipPath id=\{`ckp\$\{clipId\}`\}>/);
+  assert.match(CHART, /clipPath=\{`url\(#ckp\$\{clipId\}\)`\}/);
+  // …and the last-price TAG is pinned instead of clipped: it is the number the
+  // reader came for, and a scale they dragged must not take it off screen.
+  assert.match(CHART, /const lastTagY =/);
+  assert.match(CHART, /Math\.min\(PAD_T \+ geo\.priceH - 10, Math\.max\(PAD_T \+ 10, geo\.yOf\(last\.c\)\)\)/);
+});
+
+test("⚠️ a phone can still scroll the page past the chart", () => {
+  // A vertical touch drag across the plot is how a phone scrolls. Stealing it
+  // would trap the reader on the chart — so only a MOUSE pans the body, and
+  // touch-action:none is taken on the narrow gutter alone.
+  assert.match(CHART, /if \(kind === "pan" && e\.pointerType !== "mouse"\) return;/);
+  const ck = CSS.slice(CSS.indexOf("CANDLESTICK CHART"), CSS.indexOf("GENERAL TIDY-UPS"));
+  assert.match(ck, /\.ck-yaxis\{[^}]*touch-action:none/);
+  assert.match(ck, /\.ck-plot\{[^}]*touch-action:pan-y/, "the plot body leaves the page scroller alone");
+});
+
+test("⚠️ the gutter is INSIDE the plot, and pointer events bubble", () => {
+  // Without this, every pointer event over the price axis ran BOTH handlers
+  // and the two fought over one drag. Measured on a build with the three calls
+  // removed: a 60px pan moved the chart 210px. It still "worked" — the chart
+  // did stretch and did move — which is why only a measurement caught it, and
+  // why `chart:preview` asserts the movement MATCHES the drag.
+  const drag = CHART.slice(CHART.indexOf("const startDrag"), CHART.indexOf("// ── the price gutter"));
+  assert.equal((drag.match(/e\.stopPropagation\(\)/g) ?? []).length, 3, "start, move and end each stop there");
+});
+
+test("a manual stretch belongs to the window it was aimed at", () => {
+  // A zoom set on two days of 15m candles means nothing over six months of
+  // daily ones — inheriting it opens the new tab on an axis with no candles in
+  // it. The MODE is a preference and does survive.
+  assert.match(CHART, /setAdjust\(AUTO\), \[chain, address, tf\]/);
+});
+
 test("⚠️ the time-axis anchor is the renderer's, and CSS does not override it", () => {
   // A CSS declaration beats an SVG presentation attribute, so `text-anchor` in
   // the stylesheet silently overrode the per-label anchor that keeps the end
