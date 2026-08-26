@@ -570,6 +570,47 @@ function fmtGap(mins) {
   return r ? `${h}h${r}m` : `${h}h`;
 }
 
+/**
+ * "2h30m" → 150. The INVERSE of fmtGap, and it lives beside it for that reason
+ * — the rule `parseCap` states at its own definition, one module over.
+ *
+ * Returns null on anything it cannot read, never a number and never a default:
+ * a parser that cannot fail is a parser that lies for its caller. An admin sent
+ * `500k` to the gainers market-cap floor, `Number()` gave NaN, the clamp swapped
+ * in the default, and the bot answered ✅ with a number nobody asked for.
+ *
+ * ⚠️ A BARE NUMBER IS REFUSED, and that is the one place this parser is strict.
+ * "3" is three minutes to this module's storage and three hours to the panel
+ * printing "Every 3h" — and guessing wrong by 20× on THIS setting turns the feed
+ * into exactly the firehose the pace exists to prevent. One character of unit is
+ * cheaper than that. Everything else is generous: h/m, the Indonesian jam/menit
+ * an operator here actually types, decimals, spaces, and a compound like 2h30m.
+ */
+function parseGap(s) {
+  const t = String(s == null ? "" : s).trim().toLowerCase().replace(/[\s,]/g, "");
+  if (!t) return null;
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const fin = (mins) => (mins != null && Number.isFinite(mins) && mins >= 0 ? Math.round(mins) : null);
+  // Longest alternatives first — "hour" must not be eaten by "h" and then fail.
+  const H = "hours|hour|hrs|hr|jam|h|j";
+  const M = "minutes|minute|mins|min|menit|mnt|m";
+  // Compound: "2h30m", "2h30", "1jam30menit"
+  const both = new RegExp(`^(\\d+(?:\\.\\d+)?)(?:${H})(\\d+(?:\\.\\d+)?)(?:${M})?$`).exec(t);
+  if (both) {
+    const h = num(both[1]);
+    const m = num(both[2]);
+    return h == null || m == null ? null : fin(h * 60 + m);
+  }
+  const h = new RegExp(`^(\\d+(?:\\.\\d+)?)(?:${H})$`).exec(t);
+  if (h) return fin((num(h[1]) ?? NaN) * 60);
+  const m = new RegExp(`^(\\d+(?:\\.\\d+)?)(?:${M})$`).exec(t);
+  if (m) return fin(num(m[1]) ?? NaN);
+  return null; // deliberately NO bare-number branch — see the warning above
+}
+
 /** The configured band in words — "2h–3h", or one number when it is pinned. */
 function paceRange(cfg = get()) {
   const lo = fmtGap(cfg.minListGapMin);
@@ -1241,6 +1282,7 @@ module.exports = {
   nextScanDelayMs,
   paceRange,
   fmtGap,
+  parseGap,
   rejectReason,
   listingInput,
   announce,

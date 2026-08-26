@@ -1132,6 +1132,45 @@ cd bot && node scripts/run-tests.js test/autoListerPace.test.js test/autoListerP
 the way `minMcapUsd` did. The old behaviour is one tap: ⏳ Pace → OFF on the
 🆓 Auto Listing panel.
 
+### "angkanya bisa di ketik biar cpt" — twenty-two taps for one number
+
+The trigger ceiling steps in ±$100,000, so moving it from $1M to $3.2M is
+twenty-two taps, and the pace band steps in 30 min. The label button beside each
+➖/➕ pair was an `alnop` — a button that did nothing at all — so the fix cost no
+new row on a keyboard that is already fourteen deep: **the label IS the input**.
+
+- **`AL_TYPED` is one table**, and `kind` picks the parser. A row added later
+  cannot grow its own idea of what a valid value is — the shape `pads.js` and
+  `MOODS` already use in this repo.
+- **The money parser is `parseCap`, IMPORTED**, not a second copy. It already
+  exists for the gainers settings and it already carries the scar: `500k` →
+  `Number()` → NaN → `clampNum` swapped in the default → *"✅ Minimum market cap
+  → $1.00M"*, a number nobody asked for under a tick.
+- **`parseGap` lives beside `fmtGap` as its inverse**, the contract `parseCap`
+  states one module over, and returns `null` on anything it cannot read.
+- ⚠️ **A BARE NUMBER IS REFUSED on a duration row, and that is deliberate.**
+  `3` is three minutes to the store and three hours to the label printing
+  "Every 3h" — and being wrong by 20× on *this* setting is the firehose the pace
+  exists to prevent. The refusal names BOTH readings rather than guessing. Every
+  other spelling is generous: `2h30m`, `90m`, `2.5h`, and the `3jam` /
+  `90 menit` an Indonesian operator actually types.
+- **A clamped value says it was clamped**, and the two pace rows report the whole
+  BAND rather than the end that was typed — raising the floor past the ceiling
+  moves the ceiling too, and naming one number while the other moved sends the
+  operator to change the wrong setting.
+- ⚠️ **`$1,000,000` rendered as `From $1,000,0…`** — the one row whose job is
+  showing a value showed everything but its last digits. The labels are `fmtCap`
+  now (`$1.00M`), which is what the rest of the repo already spells money as.
+- ⚠️ **A fake Telegram update must be faithful WHERE THE FRAMEWORK LOOKS.**
+  Telegraf's `bot.command()` matches the `bot_command` ENTITY, not the text, so
+  a `/cancel` sent without one arrives as ordinary text and the handler never
+  fires. The first cut of the `/cancel` test therefore reported a wait surviving
+  a cancel that was never delivered — a test measuring its own fake.
+
+```bash
+cd bot && node scripts/run-tests.js test/autoListerTyped.test.js   # 13 tests, no network
+```
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

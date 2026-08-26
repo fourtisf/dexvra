@@ -8,7 +8,7 @@ const fss = require("node:fs");
 const path = require("node:path");
 const { isAdminUser, ADMIN_BOT_TOKEN, CHANNELS } = require("../config/constants");
 const { getMediaFileId, payloadArgs } = require("../helpers/message");
-const { escapeHtml, fmtPrice, fmtCap } = require("../helpers/format");
+const { escapeHtml, fmtPrice, fmtCap, parseCap } = require("../helpers/format");
 const { DATA_DIR } = require("../helpers/persist");
 const bcStore = require("../broadcast/store");
 const bannerTpl = require("../bannerTemplate");
@@ -1657,6 +1657,7 @@ function alText() {
         `\n`
       : "") +
     `\n` +
+    `<i>✏️ Tap any value to type it — <code>3.2M</code>, <code>25k</code>, <code>2h30m</code>.</i>\n\n` +
     `Listed so far: <b>${s.total}</b> (today: ${s.today})\n` +
     (recent ? `${recent}\n\n` : "\n") +
     // "Listed so far" alone cannot distinguish a quiet market from a service
@@ -1755,6 +1756,33 @@ function alPaceLine(c) {
   );
 }
 
+
+/**
+ * Every Auto-Listing value that can be TYPED instead of tapped.
+ *
+ * The panel steps in ±$100,000, so moving the trigger ceiling from $1M to $3.2M
+ * is twenty-two taps — the operator's report was simply "biar cepat". The label
+ * button beside each ➖/➕ pair used to be a no-op; it opens a typed input now,
+ * which costs no new row on a keyboard that is already tall.
+ *
+ * ONE TABLE, so a row added later cannot grow its own idea of what a valid
+ * value is. `kind` picks the parser, and each parser returns null rather than a
+ * default on anything it cannot read — the rule the gainers settings paid for
+ * when `500k` was silently stored as $1M under a ✅.
+ */
+const AL_TYPED = {
+  minMcap: { kind: "cap", label: "Trigger from", eg: "1M · 1.2m · 1,200,000" },
+  maxMcap: { kind: "cap", label: "Trigger to", eg: "3.2M · 3200k" },
+  minLiq: { kind: "cap", label: "Min liquidity", eg: "25k · 25000" },
+  minVol24: { kind: "cap", label: "Min 24h volume", eg: "30k · 30000" },
+  maxPerDay: { kind: "int", label: "Max per day", eg: "5 · 12" },
+  trendHours: { kind: "int", label: "Board slot (hours)", eg: "12 · 24" },
+  minListGapMin: { kind: "gap", label: "Pace — every", eg: "2h · 90m · 2h30m" },
+  maxListGapMin: { kind: "gap", label: "Pace — up to", eg: "4h · 3h30m" },
+};
+/** One value, spelled the way its row spells it. */
+const alShow = (key, v) =>
+  AL_TYPED[key].kind === "gap" ? autoLister.fmtGap(v) : AL_TYPED[key].kind === "int" ? String(v) : usd(v);
 
 /** Is "Listing & Trending" one of the enabled packages? Drives the rows that
  *  only make sense when a board slot is on the table. */
@@ -1860,23 +1888,26 @@ function alKb() {
   const c = autoLister.get();
   return Markup.inlineKeyboard([
     [cb(c.enabled ? "⏸ Disable" : "▶️ Enable", "alen")],
-    [cb(`🎯 From ${usd(c.minMcap)}`, "alnop"), cb("➖", "almin:-100000"), cb("➕", "almin:100000")],
-    [cb(`   To ${usd(c.maxMcap)}`, "alnop"), cb("➖", "almax:-100000"), cb("➕", "almax:100000")],
-    [cb(`💧 Liq ${usd(c.minLiq)}`, "alnop"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
-    [cb(`📊 Vol ${usd(c.minVol24)}`, "alnop"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
-    [cb(`🔢 ${c.maxPerDay}/day`, "alnop"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
+    // ✏️ marks a label that opens a typed input. The money figures are COMPACT
+    // here: `$1,000,000` renders as "From $1,000,0…" on a phone, so the one row
+    // whose job is showing a value showed everything but its last digits.
+    [cb(`✏️ 🎯 From ${fmtCap(c.minMcap)}`, "alset:minMcap"), cb("➖", "almin:-100000"), cb("➕", "almin:100000")],
+    [cb(`✏️    To ${fmtCap(c.maxMcap)}`, "alset:maxMcap"), cb("➖", "almax:-100000"), cb("➕", "almax:100000")],
+    [cb(`✏️ 💧 Liq ${fmtCap(c.minLiq)}`, "alset:minLiq"), cb("➖", "alliq:-5000"), cb("➕", "alliq:5000")],
+    [cb(`✏️ 📊 Vol ${fmtCap(c.minVol24)}`, "alset:minVol24"), cb("➖", "alvol:-10000"), cb("➕", "alvol:10000")],
+    [cb(`✏️ 🔢 ${c.maxPerDay}/day`, "alset:maxPerDay"), cb("➖", "alday:-1"), cb("➕", "alday:1")],
     [cb(`⏳ Pace: ${c.paceListings ? `1 every ${autoLister.paceRange(c)}` : "OFF"}`, "alpace")],
     // Hidden while the pace is off, like the board-slot row above: a band that
     // governs nothing is a setting the operator can change and not see act.
     ...(c.paceListings
       ? [
           [
-            cb(`⏳ Every ${autoLister.fmtGap(c.minListGapMin)}`, "alnop"),
+            cb(`✏️ ⏳ Every ${autoLister.fmtGap(c.minListGapMin)}`, "alset:minListGapMin"),
             cb("➖", "alpmin:-30"),
             cb("➕", "alpmin:30"),
           ],
           [
-            cb(`   to ${autoLister.fmtGap(c.maxListGapMin)}`, "alnop"),
+            cb(`✏️    to ${autoLister.fmtGap(c.maxListGapMin)}`, "alset:maxListGapMin"),
             cb("➖", "alpmax:-30"),
             cb("➕", "alpmax:30"),
           ],
@@ -1891,7 +1922,7 @@ function alKb() {
       cb(`${c.pkgs.includes("trending") ? "🟢" : "▫️"} + Trending`, "alpkg:trending"),
     ],
     ...(alTrendOn(c)
-      ? [[cb(`🔥 Slot ${c.trendHours}h`, "alnop"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
+      ? [[cb(`✏️ 🔥 Slot ${c.trendHours}h`, "alset:trendHours"), cb("➖", "alth:-1"), cb("➕", "alth:1")]]
       : []),
     [cb(`🌐 Chains: ${alChainScope(c)}`, "alch")],
     [cb(`📣 Channel post: ${c.postChannel ? "ON" : "OFF"}`, "alpost")],
@@ -3620,7 +3651,27 @@ function build() {
     if (!guard(ctx)) return;
     await edit(ctx, alText(), alKb());
   });
-  bot.action("alnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // label buttons
+  bot.action("alnop", (ctx) => ctx.answerCbQuery().catch(() => {})); // pre-✏️ label buttons, still in scrollback
+  // ✏️ A typed value for any row on the panel — see AL_TYPED for why it is one
+  // table. Arms the wait and PROMPTS; nothing is stored until the reply lands.
+  bot.action(/^alset:([A-Za-z0-9]+)$/, async (ctx) => {
+    if (!guard(ctx)) return;
+    const key = ctx.match[1];
+    const spec = AL_TYPED[key];
+    // An unknown key means an old button from scrollback. Answer it, change
+    // nothing, and never arm a wait whose reply has nowhere to go.
+    if (!spec) return ctx.answerCbQuery("That row is gone — reopen 🆓 Auto Listing.").catch(() => {});
+    ctx.session.awaitingBt = { mode: "alset", alKey: key };
+    ctx.answerCbQuery("✏️ Kirim nilainya").catch(() => {});
+    await ctx
+      .reply(
+        `✏️ <b>${spec.label}</b> — sekarang <b>${escapeHtml(alShow(key, autoLister.get()[key]))}</b>\n\n` +
+          `Kirim nilai barunya. Contoh: <code>${escapeHtml(spec.eg)}</code>\n\n` +
+          `<i>/cancel untuk batal.</i>`,
+        HTML,
+      )
+      .catch(() => {});
+  });
   bot.action("alen", async (ctx) => {
     if (!guard(ctx)) return;
     const c = await autoLister.set({ enabled: !autoLister.get().enabled });
@@ -4574,9 +4625,55 @@ function build() {
     // Banner-artwork settings input (per service: logo spot / creative slot /
     // text overlay)
     if (ctx.session.awaitingBt && ctx.session.awaitingBt.mode !== "upload") {
-      const { mode, kind, elem, pos, chain } = ctx.session.awaitingBt;
+      const { mode, kind, elem, pos, chain, alKey } = ctx.session.awaitingBt;
       ctx.session.awaitingBt = null;
       const low = text.trim().toLowerCase();
+      // ── Auto-Listing: a typed value for one panel row ──
+      if (mode === "alset") {
+        const spec = AL_TYPED[alKey];
+        if (!spec) return;
+        const asked = spec.kind === "gap" ? autoLister.parseGap(text) : parseCap(text);
+        // PARSE, THEN REFUSE — never fall through to a default. `clampInt`
+        // answers a non-finite value with the shipped default, so a value the
+        // bot could not read would be stored as a number nobody asked for,
+        // under a ✅. That defect has been paid for once already, on the
+        // gainers settings, and it is the reason both parsers return null.
+        if (asked == null) {
+          const hint =
+            spec.kind === "gap"
+              ? // ⚠️ A bare number is the one refusal worth spelling out: "3" is
+                // three minutes to the store and three hours to the label above
+                // it, and being wrong by 20× here is the firehose the pace
+                // exists to prevent. Name BOTH readings rather than guess.
+                /^\d+(\.\d+)?$/.test(low)
+                ? `<code>${escapeHtml(text.trim())}</code> bisa berarti ${escapeHtml(text.trim())} menit atau ${escapeHtml(text.trim())} jam — tulis satuannya.`
+                : `tidak bisa membaca <code>${escapeHtml(text.trim())}</code> sebagai durasi.`
+              : `tidak bisa membaca <code>${escapeHtml(text.trim())}</code> sebagai angka.`;
+          return ctx
+            .reply(`⚠️ ${hint}\n\nContoh: <code>${escapeHtml(spec.eg)}</code>\n\n<i>Tidak ada yang diubah.</i>`, {
+              ...HTML,
+              ...alKb(),
+            })
+            .catch(() => {});
+        }
+        const c = await autoLister.set({ [alKey]: asked });
+        const got = c[alKey];
+        // AND SAY SO WHEN IT WAS CLAMPED. Storing something other than what was
+        // asked for and answering ✅ is the same defect as the default
+        // fallback, moved to the edges. The two pace rows report the whole BAND
+        // rather than the end that was typed: raising the floor past the
+        // ceiling moves the ceiling too, and an answer naming one number while
+        // the other moved sends the operator to change the wrong setting.
+        const shown = spec.kind === "gap" ? `one every ${autoLister.paceRange(c)}` : alShow(alKey, got);
+        const clamped =
+          got !== asked
+            ? `\n<i>Disesuaikan dari ${escapeHtml(alShow(alKey, asked))} — itu batas yang diizinkan.</i>`
+            : "";
+        log.info(`[adminbot] auto-listing ${alKey} → ${got} by @${ctx.from.username || ctx.from.id}`);
+        return ctx
+          .reply(`✅ <b>${spec.label}</b> → <b>${escapeHtml(shown)}</b>${clamped}`, { ...HTML, ...alKb() })
+          .catch(() => {});
+      }
       const cv = (v) => (v === "center" ? "center" : Number(v));
       // ── Pump alert window: "MIN,MAX" (or "MIN MAX") ──
       if (mode === "pumpwindow") {
