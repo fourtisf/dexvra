@@ -32,6 +32,16 @@ const api = require("../src/api/dexvra");
 const autoTrend = require("../src/services/autoTrend");
 const trendFill = require("../src/services/trendFill");
 const watch = require("../src/services/trendingWatch");
+const log = require("../src/helpers/logger");
+
+// The refusal COUNT is what reaches the watch, so one test reads it back off
+// the log line rather than trusting that it was computed correctly.
+const logged = [];
+const realInfo = log.info;
+log.info = (...a) => {
+  logged.push(a.join(" "));
+  return typeof realInfo === "function" ? undefined : undefined;
+};
 
 // The two rows off the operator's screenshot, and one real market from the same
 // board (rank 4, which they opened rather than complained about).
@@ -219,6 +229,42 @@ test("a chain stranded by the floors ASKS THE FILLER — refusing is not a state
     api.getListings = realListings;
   }
   assert.deepStrictEqual(asked, [["solana", 3]], "the fill must be asked for the whole floor shortfall");
+});
+
+test("⚠️ a token nobody PRICED is not counted as one that failed the floors", async () => {
+  // `byGain` prices at most 25 candidates a chain and leaves the rest
+  // annotated `undefined` — "we never looked". Those rows are still filtered
+  // out (promoting a token nobody priced is how a dead row reaches the board),
+  // but counting them as "below the floors" would tell an operator with 100
+  // listings that 75 of their tokens are too small, about tokens this pass
+  // never opened. That number reaches the watch, and it is the number they
+  // would act on.
+  await withFloors({ perChainMin: 1, perChainMax: 1 });
+  // ⚠️ CLEARED, not inherited. `logged` is module-level and every earlier test
+  // in this file writes a refusal line into it — so `find` returned the FIRST
+  // match, from a three-token fixture, and the assertion passed no matter what
+  // this test did. Caught by mutating the source and watching the test stay
+  // green: the persisted-setting leak this repo already documents, in a log
+  // buffer instead of a store.
+  logged.length = 0;
+  const rows = [];
+  // 30 dead ones so the whole probe budget is spent on them, then a real one
+  // far down the tail that never gets looked at.
+  for (let i = 0; i < 30; i++) rows.push(listing(`DEAD${i}`));
+  rows.push(listing("UNSEEN"));
+  const seen = new Set();
+  const { booked } = await promoteWith(rows, (a) => {
+    seen.add(a);
+    return a === "UNSEEN" ? LAOWU : MRNA;
+  });
+  assert.deepStrictEqual(booked, [], "nothing was promotable");
+  assert.ok(!seen.has("UNSEEN"), "the fixture must leave a row unprobed, or this test proves nothing");
+  // The count the watch reads must be the rows actually judged, not the whole
+  // spare list.
+  const line = logged.find((l) => /below the free-trending floors/.test(l));
+  assert.ok(line, "the refusal was never logged");
+  const n = Number((line.match(/: (\d+) candidate/) || [])[1]);
+  assert.ok(n > 0 && n <= 25, `counted ${n} refusals — the unprobed tail was counted too (line: ${line})`);
 });
 
 // ── door 2: the market filler ────────────────────────────────────────────────

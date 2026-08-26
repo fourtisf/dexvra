@@ -706,7 +706,19 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
     const refusals = [];
     const ranQualified = ranked.filter((r) => {
       const bad = rowRefusal(r, cfg);
-      if (bad) refusals.push({ r, bad });
+      // ⚠️ ONLY A ROW WE ACTUALLY LOOKED AT IS COUNTED AS REFUSED.
+      //
+      // `byGain` prices at most PROBE_CAP (25) candidates a chain and leaves
+      // the tail annotated `undefined` — "we never looked", deliberately
+      // distinct from "we looked and there is nothing". Those rows are still
+      // filtered out, and must be: promoting a token nobody priced is how a
+      // dead row reaches the board with no decision behind it. But COUNTING
+      // them as "below the floors" would tell an operator with 100 listings
+      // that 75 of their tokens are too small, about tokens this pass never
+      // opened — a number that sends them to change a setting over a cap
+      // nobody read. `_change === undefined` is the repo's existing spelling
+      // of "never looked".
+      if (bad && r._change !== undefined) refusals.push({ r, bad });
       return !bad;
     });
     if (refusals.length) {
