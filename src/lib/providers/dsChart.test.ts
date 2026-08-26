@@ -513,6 +513,23 @@ test("the check drives the SERVER, not the .ts provider — production runs node
   assert.ok(pkg.scripts.comment_chart_check, "with the prose rationale beside it, as every other script here has");
 });
 
+test("⚠️ chart:check goes green only when EVERY sample drew from EVERY source", () => {
+  // The gate was `gtOk && dsOk` — two COUNTS tested for truthiness while only
+  // `anyDrawn` was compared against the sample size. One DexScreener success
+  // out of three satisfied it, so the script printed two red DexScreener lines
+  // and then "Both sources answer from this box", and exited 0. Reproduced
+  // against a stub. Green must mean "the charts are safe", never "it answered
+  // somewhere" — and a partial miss is the EXPECTED shape of a wrong path
+  // guess, since the template interpolates the AMM per pair.
+  const script = read("scripts/chart-check.mjs");
+  assert.match(script, /gtOk === targets\.length && dsOk === targets\.length/, "the green gate still tests a count for truthiness");
+  assert.ok(!/&& gtOk && dsOk\)/.test(script), "the truthiness gate is back");
+  // …and the ⚠ tier names WHICH source is patchy, with the counts.
+  assert.match(script, /gtOk < targets\.length/);
+  assert.match(script, /dsOk < targets\.length/);
+  assert.match(script, /NO fallback/);
+});
+
 test("the env reader checks the BLANK STRING before Number()", () => {
   // `Number('')` is 0 — finite, non-negative — and it has silently replaced
   // every default with zero four times in this repo.

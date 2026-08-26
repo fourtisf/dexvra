@@ -164,22 +164,43 @@ async function main() {
   }
   console.log(`  ${D}drew from GeckoTerminal: ${gtOk}/${targets.length} · from DexScreener: ${dsOk}/${targets.length}${X}`);
 
-  if (anyDrawn === targets.length && gtOk && dsOk) {
-    console.log(`\n${G}Both sources answer from this box. A GeckoTerminal cooldown no longer blanks the charts.${X}\n`);
+  // ⚠️ EVERY SAMPLE, FROM EVERY SOURCE — not "each source worked once".
+  //
+  // This gate was `gtOk && dsOk`, testing two COUNTS for truthiness while only
+  // `anyDrawn` was compared against the sample size. So one DexScreener success
+  // out of three satisfied it: the script printed two red DexScreener lines and
+  // then `Both sources answer from this box`, and exited 0. Reproduced against
+  // a stub. That is the exact shape this repo keeps paying for — green meaning
+  // "it answered somewhere" rather than "the charts are safe" — and the ⚠ tier
+  // below already existed to carry the in-between.
+  if (gtOk === targets.length && dsOk === targets.length) {
+    console.log(`\n${G}Both sources answer for every sample. A GeckoTerminal cooldown no longer blanks the charts.${X}\n`);
     return;
   }
   if (anyDrawn === targets.length) {
     // One source down is the state this feature exists to survive — and it is
     // exactly the state that becomes an outage the day the other one blinks,
     // unnoticed, because the charts still draw.
+    // Every sample drew from SOMETHING, but at least one source missed at least
+    // one of them — so those tokens have no fallback, and they are in exactly
+    // the state this whole feature exists to end. Named per source with counts,
+    // because "one source is down" and "one source is patchy" need different
+    // reactions and a bare ⚠ gives them the same one.
+    const gaps = [];
+    if (gtOk < targets.length) gaps.push(`GeckoTerminal answered for ${gtOk}/${targets.length}`);
+    if (dsOk < targets.length) gaps.push(`DexScreener answered for ${dsOk}/${targets.length}`);
     console.log(
-      `\n${Y}⚠ Every sample drew, but only ONE source answered.${X}\n` +
-        `  The charts are back to a single point of failure.\n` +
-        (dsOk
+      `\n${Y}⚠ Every sample drew, but not from both sources — ${gaps.join(", ")}.${X}\n` +
+        `  Those tokens have NO fallback: one cooldown and their charts go blank.\n` +
+        (gtOk < targets.length
           ? `  GeckoTerminal: check the quota — GECKOTERMINAL_API_KEY in the repo-root .env raises the ceiling\n` +
             `  rather than dividing it, and the bot suite on this box shares the same per-IP allowance.\n`
-          : `  DexScreener: the request shape is a guess. Fix it without a deploy —\n` +
-            `  DS_CHART_API / DS_CHART_PATH / DS_CHART_BARS_KEY, then restart.\n`),
+          : ``) +
+        (dsOk < targets.length
+          ? `  DexScreener: the request shape is a guess, and it interpolates the AMM per pair — a miss on\n` +
+            `  some chains and not others is the expected shape of a wrong path. Fix it without a deploy:\n` +
+            `  DS_CHART_API / DS_CHART_PATH / DS_CHART_BARS_KEY, then restart.\n`
+          : ``),
     );
     return;
   }

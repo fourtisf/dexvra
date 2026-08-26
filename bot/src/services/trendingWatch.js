@@ -51,8 +51,12 @@ function diagnose({
   fillWhy = null,
   gainFloor = 0,
   floorRefused = 0,
-  minMcapUsd = 0,
-  minVol24hUsd = 0,
+  // ⚠️ THE RENDERED PHRASE, not the two numbers. This branch used to format
+  // them itself and printed `min cap $0` for a floor the operator had switched
+  // OFF — accusing their tokens of failing a floor of nothing. `fmtCap(0)` is
+  // `"$0"`, and `autoTrend.floorsPhrase` is the one place that knows 0 means
+  // "not named at all". This module stays pure; the caller hands it the words.
+  floorsText = '',
 }) {
   if (featured >= floor) return null;
   // The FILLER'S OWN REASON OUTRANKS THE COUNT. It is the most specific fact
@@ -75,12 +79,11 @@ function diagnose({
   // an operator would act on. `floorRefused` is counted by the promoter on the
   // pass that refused them, so it can only be non-zero when a cycle has run.
   if (floorRefused > 0) {
-    const money = (n) => (n >= 1_000_000 ? `$${Math.round(n / 1_000_000)}M` : n >= 1000 ? `$${Math.round(n / 1000)}K` : `$${n}`);
     return {
       code: 'below_floors',
       text:
         `${floorRefused} spare listing(s) here, and none went on — they are below the free-trending floors ` +
-        `(min cap ${money(minMcapUsd)}, min 24h volume ${money(minVol24hUsd)}). That is the filter doing its job: ` +
+        `(${floorsText || 'see ⚙️ Auto-Trend'}). That is the filter doing its job: ` +
         `a dead token is not a trending row. The next cycle lists a big-cap to cover the gap while 🧲 Fill from market ` +
         `is ON — or lower 🏦/📊 on ⚙️ Auto-Trend if these floors are too strict for this chain.`,
     };

@@ -231,6 +231,44 @@ test("a chain stranded by the floors ASKS THE FILLER — refusing is not a state
   assert.deepStrictEqual(asked, [["solana", 3]], "the fill must be asked for the whole floor shortfall");
 });
 
+test("⚠️ the coverage exemptions are asked of the CHAIN, not of what survived the floors", async () => {
+  // The subtlest thing in this pass, and the first cut got it backwards.
+  //
+  // `hasReading` / `hasMarket` exist to answer "does an indexer cover this
+  // chain at all?" — the Robinhood case, where refusing the unreadable would
+  // mean never filling the chain. Scoping them to the post-floor list reads
+  // plausibly and re-opens the exact defect they were written for: a chain with
+  // one readable token too small to promote and one big unreadable one would
+  // see `anyReading === false`, fire the exemption, and publish the unreadable
+  // one as a row with a BLANK PERCENTAGE — on a chain that demonstrably has
+  // coverage. `$MOONCOIN | 12,220,809$` with nothing beside it.
+  await withFloors({ perChainMin: 2, perChainMax: 2 });
+  const rows = [listing("SMALL"), listing("BIGBLANK")];
+  const { booked } = await promoteWith(rows, (a) =>
+    a === "SMALL"
+      ? // readable, and refused by the CAP floor
+        { priceUsd: 1, mcap: 60_000, vol24h: 12_000, change24h: 8 }
+      : // clears both floors, but nobody can read its 24h change
+        { priceUsd: 1, mcap: 3_000_000, vol24h: 800_000, change24h: null },
+  );
+  assert.deepStrictEqual(
+    booked,
+    [],
+    `a blank-percentage row was promoted on a chain that has a readable token: ${booked.join(",")}`,
+  );
+});
+
+test("…and the Robinhood exemption still fires where NOTHING on the chain is readable", async () => {
+  // The other half, unchanged: a chain no indexer covers must still fill, or
+  // the rule above quietly deletes a whole network. The floors are off here
+  // because that is the state a chain with no indexer is actually in — nothing
+  // publishes a cap or a volume for it either.
+  await withFloors({ perChainMin: 2, perChainMax: 2, minMcapUsd: 0, minVol24hUsd: 0 });
+  const rows = [listing("A"), listing("B")];
+  const { booked } = await promoteWith(rows, () => ({ priceUsd: null, mcap: null, vol24h: null, change24h: null }));
+  assert.deepStrictEqual(booked.sort(), ["A", "B"], "a chain with no indexer coverage stopped filling");
+});
+
 test("⚠️ a token nobody PRICED is not counted as one that failed the floors", async () => {
   // `byGain` prices at most 25 candidates a chain and leaves the rest
   // annotated `undefined` — "we never looked". Those rows are still filtered
@@ -378,13 +416,15 @@ test("the watch names the FLOORS, not the −15% sentence, when that is the caus
     floor: 5,
     eligible: 4,
     floorRefused: 4,
-    minMcapUsd: 100_000,
-    minVol24hUsd: 10_000,
+    // The RENDERED phrase, not the two numbers: this module is pure and must
+    // not grow its own idea of how a floor of 0 reads (it had one, and it
+    // printed `min cap $0`).
+    floorsText: autoTrend.floorsPhrase({ minMcapUsd: 100_000, minVol24hUsd: 10_000 }),
   });
   assert.strictEqual(why.code, "below_floors");
   assert.match(why.text, /free-trending floors/);
-  assert.match(why.text, /\$100K/);
-  assert.match(why.text, /\$10K/);
+  assert.match(why.text, /cap \$100\.0K/);
+  assert.match(why.text, /24h vol \$10\.0K/);
   assert.ok(!/below −15%/.test(why.text), "it printed the free-fall sentence over a floor refusal");
 });
 
@@ -418,6 +458,56 @@ test("⚠️ trending:check counts refusals with the BOT'S counter, not a copy",
   const priced = { _change: 5, _mcap: 1000, _vol24: 1 };       // looked at, refused
   const tail = { _change: undefined, _mcap: undefined, _vol24: undefined }; // never priced
   assert.strictEqual(autoTrend.countFloorRefusals([priced, tail, tail], cfg), 1);
+});
+
+test("⚠️ a floor switched OFF is never NAMED as one that refused something", async () => {
+  // `fmtCap(0)` is "$0". The panel already knew 0 means OFF — its own comment
+  // says "$0 on a row labelled 'min cap' says the floor is set to nothing,
+  // which is the opposite of what it means" — and then five other surfaces
+  // built the same parenthetical from raw fmtCap and told the operator their
+  // tokens were refused by a floor of $0.
+  assert.strictEqual(autoTrend.floorsPhrase({ minMcapUsd: 100_000, minVol24hUsd: 10_000 }), "cap $100.0K, 24h vol $10.0K");
+  assert.strictEqual(autoTrend.floorsPhrase({ minMcapUsd: 0, minVol24hUsd: 10_000 }), "24h vol $10.0K");
+  assert.strictEqual(autoTrend.floorsPhrase({ minMcapUsd: 100_000, minVol24hUsd: 0 }), "cap $100.0K");
+  assert.match(autoTrend.floorsPhrase({ minMcapUsd: 0, minVol24hUsd: 0 }), /no quality floors/);
+  for (const cfg of [{ minMcapUsd: 0, minVol24hUsd: 10_000 }, { minMcapUsd: 100_000, minVol24hUsd: 0 }])
+    assert.ok(!/\$0\b/.test(autoTrend.floorsPhrase(cfg)), `an OFF floor was printed as $0: ${autoTrend.floorsPhrase(cfg)}`);
+
+  // …on ⚡ Run now, which is where it was reproduced.
+  await withFloors({ minMcapUsd: 0, minVol24hUsd: 10_000 });
+  const { forced } = await promoteWith([listing("MRNA"), listing("GOOGL")], (a) => ({ MRNA, GOOGL }[a]), {
+    forceChain: "solana",
+  });
+  assert.strictEqual(forced.promoted, 0);
+  assert.ok(!/cap \$0/.test(forced.reason), `Run now blamed a floor of $0: ${forced.reason}`);
+  assert.match(forced.reason, /24h vol \$10\.0K/);
+
+  // …and on the ops-channel alert, which builds from the phrase rather than
+  // formatting the numbers a second time.
+  const why = watch.diagnose({
+    featured: 2, floor: 5, eligible: 6, floorRefused: 6,
+    floorsText: autoTrend.floorsPhrase({ minMcapUsd: 0, minVol24hUsd: 10_000 }),
+  });
+  assert.ok(!/\$0\b/.test(why.text), `the alert blamed a floor of $0: ${why.text}`);
+
+  // …and every surface reads the ONE phrase rather than formatting its own.
+  // …and every surface reads the ONE phrase rather than formatting its own.
+  // `floorsPhrase` is the exception BY DEFINITION — it is the owner — so it is
+  // sliced out before the scan rather than pattern-matched around.
+  const at = fss.readFileSync(path.join(__dirname, "..", "src", "services", "autoTrend.js"), "utf8");
+  const owner = at.indexOf("function floorsPhrase(");
+  const rest = at.slice(0, owner) + at.slice(at.indexOf("}", at.indexOf("return parts.length", owner)));
+  assert.ok(owner > 0, "floorsPhrase is gone — this guard now describes nothing");
+  for (const [label, src] of [
+    ["autoTrend.js (outside floorsPhrase)", rest],
+    ["trendFill.js", fss.readFileSync(path.join(__dirname, "..", "src", "services", "trendFill.js"), "utf8")],
+    ["trending-check.js", fss.readFileSync(path.join(__dirname, "..", "scripts", "trending-check.js"), "utf8")],
+  ]) {
+    assert.ok(
+      !/fmtCap\((?:cfg\.|Number\(cfg\.)min(?:Mcap|Vol24h)Usd/.test(src),
+      `${label} formats a floor itself again`,
+    );
+  }
 });
 
 // ── config plumbing ──────────────────────────────────────────────────────────
@@ -460,4 +550,51 @@ test("fetchMarket carries a 24h volume at all — the floor has nothing to read 
   // A ZERO volume is a fact and must not read as "unknown": `num()` answers
   // null for 0, which is why this needed its own reader.
   assert.match(src, /const vnum =/, "a volume needs a reader that allows 0");
+});
+
+test("⚠️ a MEASURED ZERO volume survives the reader — it is the reading being filtered", async () => {
+  // `vnum` is one word away from `num`, and swapping them passes a source scan,
+  // a typecheck and — until this test — the whole suite. It would collapse
+  // "this pool traded nothing all day" into "nobody published a volume", which
+  // are the two states the floor refuses for DIFFERENT reasons: one is a dead
+  // token, the other is a data gap, and an operator sent to look for the wrong
+  // one is the failure this repo keeps paying for.
+  //
+  // Driven through the real reader by stubbing DexScreener's payload, not by
+  // reading the source — a scan cannot tell `num` from `snum`.
+  const realFetch = global.fetch;
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (!u.includes("dexscreener")) return { ok: false, status: 404, json: async () => ({}) };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        pairs: [
+          {
+            chainId: "bsc",
+            pairAddress: "0xPAIR",
+            baseToken: { address: "0xDEAD", name: "Dead", symbol: "DEAD" },
+            priceUsd: "0.001",
+            marketCap: 5_000_000,
+            liquidity: { usd: 50_000 },
+            // TRADED NOTHING. Not absent — measured, and zero.
+            volume: { h24: 0 },
+            priceChange: { h24: 0 },
+          },
+        ],
+      }),
+    };
+  };
+  try {
+    const m = await market.fetchMarket("bsc", "0xDEAD", { cheap: true });
+    assert.strictEqual(m.vol24h, 0, "a measured zero came back as something else");
+    assert.notStrictEqual(m.vol24h, null, "…and it must not read as 'nobody published one'");
+    // …and the floor then refuses it for the RIGHT reason.
+    const why = autoTrend.floorRefusal({ mcap: m.mcap, vol24: m.vol24h }, { minMcapUsd: 0, minVol24hUsd: 10_000 });
+    assert.match(why.why, /\$0 24h volume/, `wrong refusal reason: ${why && why.why}`);
+    assert.ok(!/could not be read/.test(why.why));
+  } finally {
+    global.fetch = realFetch;
+  }
 });

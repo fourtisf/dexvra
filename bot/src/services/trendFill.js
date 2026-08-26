@@ -210,9 +210,11 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
     // count is printed whenever it is not the whole story.
     const worst = [
       { n: belowFloor, text:
+        // `autoTrend.floorsPhrase`, never a local format: `fmtCap(0)` is "$0",
+        // and a floor the operator switched OFF must not be named as one that
+        // refused something.
         `big token(s) on ${chain} below the free-trending floors ` +
-        `(cap ${fmtCap(Number(cfg.minMcapUsd) || 0)}, 24h vol ${fmtCap(Number(cfg.minVol24hUsd) || 0)}) — ` +
-        `the last was ${lastFloorWhy}` },
+        `(${require('./autoTrend').floorsPhrase(cfg)}) — the last was ${lastFloorWhy}` },
       { n: inFreeFall, text: `big token(s) on ${chain} down more than ${maxDrop}% — a short board beats one in free-fall` },
       { n: noReading, text: `big token(s) on ${chain} with no 24h reading — a trending row without a percentage is not a trending row` },
     ].sort((a, b) => b.n - a.n)[0];

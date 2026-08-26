@@ -72,10 +72,11 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   // and unlike everything else on this line they refuse candidates silently
   // unless somebody is reading pm2. `OFF` for a 0 is the whole point: a floor
   // nobody set must not read as a floor that refused something.
-  const floors =
-    cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0
-      ? `min cap ${fmtCap(cfg.minMcapUsd)} · min 24h vol ${fmtCap(cfg.minVol24hUsd)}`
-      : 'quality floors OFF';
+  // ⚠️ Through the bot's own phrase. The OR gate here used to drag the other
+  // floor's `$0` onto the line the moment one of the two was switched off, so
+  // `min cap $0 · min 24h vol $10.0K` told an operator their tokens were being
+  // refused by a floor of nothing.
+  const floors = cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0 ? autoTrend.floorsPhrase(cfg) : 'quality floors OFF';
   console.log(`  ${D}target ${target} per chain · gain floor +${cfg.minGainPct}% · ${floors} · fill from market ${cfg.fillFromMarket ? 'ON' : 'OFF'}${X}\n`);
 
   // ── --floors: how many spares the quality floors would refuse ──────────────

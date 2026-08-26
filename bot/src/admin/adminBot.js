@@ -1542,6 +1542,10 @@ function atFloorsLine(c) {
       `trading at all. That is what put <code>VOL $0.05</code> on the board.`
     );
   }
+  // The panel spells the floors in its own, fuller voice ("market cap ≥ …"),
+  // but it applies the SAME rule the engine does: a floor of 0 is not named,
+  // because it refused nothing. `autoTrend.floorsPhrase` is the terse form the
+  // log lines, the alert, the filler and the check all share.
   const parts = [];
   if (c.minMcapUsd > 0) parts.push(`market cap ≥ <b>${fmtCap(c.minMcapUsd)}</b>`);
   if (c.minVol24hUsd > 0) parts.push(`24h volume ≥ <b>${fmtCap(c.minVol24hUsd)}</b>`);
