@@ -265,10 +265,68 @@ test("a 404 tries the OTHER path; a 429 does not", async () => {
     return { status: 429 };
   });
   try {
-    const r = await dsCandles("bsc", "0xUS", "15m");
+    const r = await dsCandles("bsc", "0xUS", "15m", { bases: ["http://first.example", "http://second.example"] });
     assert.strictEqual(r.ok, false);
-    assert.strictEqual(tried.length, 1, "a 429 was retried on another path — it says nothing about which path is right");
+    assert.strictEqual(tried.length, 1, "a 429 was retried — it says nothing about which path or host is right");
     assert.match(r.why!, /429/);
+  } finally {
+    f.restore();
+  }
+});
+
+test("a TRANSPORT failure is the one thing that moves to the next base", async () => {
+  // The other half of the rule, and the half the shipped one-entry base list
+  // can never exercise: a host that never answered says nothing about the
+  // request, so the next host is worth asking. `JUP_BASES`, verbatim.
+  _dsChartReset();
+  const hosts: string[] = [];
+  const f = stubFetch((u) => {
+    if (u.includes("token-pairs")) return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }];
+    const host = new URL(u).host;
+    hosts.push(host);
+    if (host === "dead.example") throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    return { bars: [{ t: 1_756_200_000_000, o: 1, h: 1, l: 1, c: 1, v: 1 }] };
+  });
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m", { now: 1_756_200_000_000, bases: ["http://dead.example", "http://live.example"] });
+    assert.strictEqual(r.ok, true, "a dead host ended the lookup instead of moving on");
+    assert.strictEqual(r.candles.length, 1);
+    assert.ok(hosts.includes("live.example"), "the second base was never asked");
+    // …and it did not burn the second PATH on the dead host first: a transport
+    // failure is about the host, not the spelling.
+    assert.strictEqual(hosts.filter((h) => h === "dead.example").length, 1);
+  } finally {
+    f.restore();
+  }
+});
+
+test("⚠️ the base rule holds at the END of the path list too", async () => {
+  // Falling out of the path loop means every spelling ANSWERED, with a 404 —
+  // the host is plainly there and saying no, so another base would say the same.
+  // Without an explicit stop the inner `continue` leaks into the outer loop and
+  // the rule is true in the comment and false in the code.
+  //
+  // ⚠️ IT NEEDS TWO BASES TO MEAN ANYTHING. The shipped list has one, so a test
+  // driving the real list cannot tell a correct loop from a broken one — and
+  // the first version of this test was exactly that: deleting the stop left the
+  // whole suite green. Caught by mutating the source, not by reading it.
+  _dsChartReset();
+  const hosts = new Set<string>();
+  const f = stubFetch((u) => {
+    if (u.includes("token-pairs")) return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }];
+    hosts.add(new URL(u).host);
+    return { status: 404 };
+  });
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m", { bases: ["http://first.example", "http://second.example"] });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(hosts.size, 1, `a second base was tried after a host answered 404: ${[...hosts].join(", ")}`);
+    assert.strictEqual([...hosts][0], "first.example");
+    // …and the reason blames the GUESS, not the pool. DexScreener's own API
+    // named this pair a moment ago, so "no chart here" is far more likely to be
+    // our path than their data — and it is a .env fix, which is the whole point
+    // of the override contract.
+    assert.match(r.why!, /DS_CHART_PATH/);
   } finally {
     f.restore();
   }

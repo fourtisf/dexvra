@@ -366,7 +366,13 @@ export async function dsCandles(
   chain: string,
   address: string,
   tf: Timeframe,
-  opts: { pair?: DsPair | null; now?: number } = {},
+  /** `bases` is a TEST SEAM and nothing else. The failover rule below is about
+   *  what happens ACROSS hosts, and the shipped list has one entry — so a test
+   *  driving the real list cannot tell a correct loop from a broken one, and a
+   *  test that cannot fail is not a test. (Found exactly that way: removing the
+   *  base-rule stop left the suite green.) The `deps` seam in the bot's
+   *  services exists for the same reason. */
+  opts: { pair?: DsPair | null; now?: number; bases?: string[] } = {},
 ): Promise<DsCandles> {
   if (!ENABLED) return { ok: false, candles: [], pair: null, why: "DexScreener charts are switched off (DS_CHART=0)" };
   if (!CHAINS[chain]?.dexscreener)
@@ -387,7 +393,8 @@ export async function dsCandles(
   const qs = `from=${from}&to=${to}&res=${encodeURIComponent(DS_RES[tf])}&cb=${TF[tf].limit}`;
   let lastWhy: string | null = null;
 
-  for (const base of BASES) {
+  for (const base of opts.bases ?? BASES) {
+    let transportFailed = false;
     for (const template of PATHS) {
       const path = template
         .replace("{dex}", encodeURIComponent(pair.dexId))
@@ -427,11 +434,29 @@ export async function dsCandles(
       // is exactly when the other spelling is worth trying. A 429 or a 5xx
       // says nothing about which path is right, so neither is retried.
       if (res.status === 404) continue; // next template
-      if (res.status === 0) break; // transport: next base, not next path
+      if (res.status === 0) {
+        transportFailed = true;
+        break; // transport: next BASE, not next path
+      }
       return { ok: false, candles: [], pair, why: res.why };
     }
+    // ⚠️ AND THE BASE RULE HOLDS AT THE END OF THE PATH LIST TOO. Falling
+    // through here means every spelling ANSWERED, with a 404 — the host is
+    // plainly there and saying no, so another base would say the same and
+    // trying it just doubles the latency. Only a transport failure moves on.
+    // Without this the inner loop's `continue` leaked into the outer one and
+    // the rule was true in the comment and false in the code.
+    if (!transportFailed) break;
   }
-  return { ok: false, candles: [], pair, why: lastWhy ?? "DexScreener did not answer" };
+  // Every path 404'd on a host that answered. For an UNVERIFIED shape that is
+  // very much more likely to be our guess than the pool: DexScreener's own API
+  // named this pair a moment ago. Say so, and name the line that fixes it —
+  // this is the failure mode the whole env-override contract exists for.
+  const why =
+    lastWhy && /404/.test(lastWhy)
+      ? `DexScreener has no chart at any path we know (${lastWhy}) — the request shape is a guess; set DS_CHART_PATH`
+      : lastWhy;
+  return { ok: false, candles: [], pair, why: why ?? "DexScreener did not answer" };
 }
 
 /** The human page for a pair, for the "open it at the source" link. Built from
