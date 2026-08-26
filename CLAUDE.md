@@ -2164,6 +2164,64 @@ more specific. ⚠️ And the durability hole is still open by design:
 uploaded FILES — what changed is that the site now notices and re-resolves
 instead of drawing a monogram for ever.
 
+#### …and the first live run named a cause nobody had considered
+
+`npm run logos:check -- solana VJdpSDD…` on the box, the moment it was
+deployed:
+
+```
+· $BREAKING  solana  external  ipfs.io/ipfs/bafkrei…  HTTP 404
+```
+
+**404, not 400** — so the host passed the allowlist, our proxy reached it, and
+the gateway simply did not have the CID. The row never lost its logo and the
+url was never wrong. `/api/logo` held **one hardcoded IPFS gateway**:
+
+```js
+const IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+```
+
+⚠️ **"Never one hardcoded host" is this file's own first rule**, written when
+Jupiter retired `quote-api.jup.ag/v6` and every Solana buy died — and the logo
+proxy had been breaking it since the day `ipfs://` support was added. A launchpad
+pins its artwork wherever it pins it; asking one public gateway and giving up is
+a coin toss per token.
+
+- **`IPFS_GATEWAYS` is a LIST**, env-overridable (`IPFS_GATEWAYS=`), so a gateway
+  going dark costs a line in `.env` rather than a deploy — the `pads.js`
+  contract. Every entry is asserted to pass the allowlist, or the failover would
+  build urls the guard then refuses: a fallback that cannot fire, which reads
+  exactly like one that never helps.
+- ⚠️ **IT FAILS OVER ON AN HTTP STATUS, WHICH THE STANDING RULE FORBIDS** — and
+  that is deliberate, not an oversight. The rule says transport-only because
+  *"an HTTP status means the host is there and answered, and the same request
+  gets the same status everywhere else."* **That is not true of a
+  content-addressed fetch.** A CID is the hash of the bytes, so another gateway
+  serving that CID serves byte-identical content: a 404 is a fact about the
+  GATEWAY, not about the token. A DexScreener CDN 404 still ends the lookup, and
+  `candidates()` is the one place that distinction lives.
+- **The gateway the caller named is tried FIRST.** A working gateway must not be
+  demoted by a fallback list.
+- **Bounded in tries and in TIME.** Without a deadline the worst case is every
+  gateway's full timeout end to end, per token, on a board asking for two
+  hundred.
+- ⚠️ **A redirect somewhere we do not allow ends the whole request** rather than
+  falling through to the next gateway: that failure is about US being pointed at
+  something, not about the content being unavailable, and retrying elsewhere
+  would bury it.
+- ⚠️ **`logos:check` TRUNCATED THE URL ON THE ROWS THAT FAILED.** The column is
+  elided to keep the table readable, and it elided the one line whose whole job
+  is showing the url that broke — `ipfs.io/ipfs/bafkrei…` cut at exactly 46
+  characters, which reads as a malformed CID rather than a clipped one. An
+  operator cannot copy it, paste it, or tell the two apart. Same defect as
+  `From $1,000,0…` on the row that exists to show a value. The full url now
+  prints under any row that did not load.
+
+**Config a fix depends on:** nothing — but ⚠️ **whether a given gateway serves a
+given CID is a property of the server's egress and of what that gateway has
+pinned today**, which is precisely why the list is env-overridable and why
+`logos:check` measures it on the box rather than reasoning about it here.
+
 #### "apakah anda yakin coba audit lgi" — and the worst one was not the logo
 
 Asked straight after the above landed. The answer was no, and the largest thing

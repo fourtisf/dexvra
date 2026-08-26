@@ -153,6 +153,8 @@ function diagnose(rendered, stored, res, k, haveStore) {
   if (k === "cdn-path?")
     return `the DexScreener CDN path, and it missed. Whether the row STORES it or the site fell back to it needs INTERNAL_API_TOKEN to tell apart`;
   if (k === "none") return `no source has any artwork for this token`;
+  if (/\/ipfs\//i.test(String(rendered ?? "")) && !res.ok)
+    return `this IPFS gateway does not have the CID (${res.why}). Content-addressed storage means another gateway may serve exactly the same bytes — /api/logo tries a LIST of them, so a row still failing here has been refused by all of them`;
   if (!res.ok) return `the image host answered ${res.why}`;
   return "";
 }
@@ -239,12 +241,22 @@ async function main() {
     if (res.status === 400) refused.push(t);
     if (res.ok && onlyBad) continue;
     const mark = res.ok ? `${G}✓${X}` : fault ? `${R}✗${X}` : `${Y}·${X}`;
+    // ⚠️ TRUNCATED ONLY WHERE IT LOADS. The column is elided to keep the table
+    // readable, and the first cut elided it on the FAILING rows too — the one
+    // line whose whole job is showing you the url that broke. It cut
+    // `ipfs.io/ipfs/bafkrei…` at exactly 46 characters, which reads as a
+    // malformed CID rather than a clipped one, and an operator cannot copy it,
+    // paste it in a browser, or tell the two apart. The full url is printed
+    // under any row that did not load.
     const shown = t.logoUrl ? String(t.logoUrl).replace(/^https?:\/\//, "").slice(0, 46) : "—";
     console.log(
       `  ${mark} ${String(t.symbol).padEnd(12)} ${D}${String(t.chain).padEnd(9)}${X} ` +
         `${C}${k.padEnd(13)}${X} ${D}${shown.padEnd(48)}${X} ${res.ok ? D : fault ? R : Y}${res.why}${X}`,
     );
     if (!res.ok) {
+      // The whole url, never elided — this is the value the reader has to act on.
+      if (t.logoUrl && String(t.logoUrl).replace(/^https?:\/\//, "").length > 46)
+        console.log(`     ${D}↳ url: ${t.logoUrl}${X}`);
       const d = diagnose(t.logoUrl, row, res, k, Boolean(stored));
       if (d) console.log(`     ${Y}↳${X} ${d}`);
       if (row && row.logoUrl !== t.logoUrl)

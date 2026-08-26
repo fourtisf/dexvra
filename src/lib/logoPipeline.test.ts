@@ -13,6 +13,9 @@ const PIPELINE = read("src/lib/providers/index.ts");
 const PROXY = read("src/app/api/logo/route.ts");
 const COIN = read("src/components/Coin.tsx");
 const STORE = read("src/lib/store.ts");
+/** The proxy's own ALLOW list, parsed from it — so a guard about "every
+ *  gateway is allowed" cannot drift from the list it is checking against. */
+const ALLOW_HOSTS = [...(PROXY.slice(PROXY.indexOf("const ALLOW = ["), PROXY.indexOf("];", PROXY.indexOf("const ALLOW = ["))).matchAll(/"([a-z0-9.-]+)"/g))].map((m) => m[1]);
 /** Comments quote the defect they guard against, so a scan for a banned line
  *  has to read the CODE. Without this the proxy's own warning about
  *  `redirect: "follow"` fails the test that forbids it. */
@@ -195,6 +198,49 @@ test("⚠️ redirects are followed BY HAND and re-checked against the allowlist
   // ⚠️ Not a character window: a slice measured in characters fails the moment
   // a comment lands between the two lines, which is a test about formatting.
   assert.ok(loop.indexOf("allowed(next)") < loop.indexOf("url = next"), "…before it is followed");
+});
+
+test("⚠️ NEVER ONE HARDCODED IPFS GATEWAY", () => {
+  // `$BREAKING` stored `https://ipfs.io/ipfs/<cid>`, ipfs.io answered 404, the
+  // proxy gave up, and a paid listing drew its monogram. Nothing was wrong with
+  // the url, the CID, or the allowlist — one gateway could not find the
+  // content. "Never one hardcoded host" is this repo's own rule (JUP_BASES).
+  assert.ok(!/const IPFS_GATEWAY\s*=\s*"/.test(code(PROXY)), "the single gateway constant is gone");
+  assert.match(PROXY, /const IPFS_GATEWAYS: string\[\]/);
+  assert.match(PROXY, /process\.env\.IPFS_GATEWAYS/, "…and it is env-overridable, so a dead gateway costs a line not a deploy");
+  // Every gateway in the shipped list must itself pass the allowlist, or the
+  // failover would build urls the guard then refuses — a fallback that cannot
+  // fire, which reads exactly like one that never helps.
+  const list = PROXY.slice(PROXY.indexOf("const IPFS_GATEWAYS"), PROXY.indexOf("const IPFS_MAX_TRIES"));
+  const hosts = [...list.matchAll(/"https:\/\/([^/]+)\//g)].map((m) => m[1]);
+  assert.ok(hosts.length >= 3, `a LIST, not a host — found ${hosts.length}`);
+  for (const h of hosts)
+    assert.ok(
+      ALLOW_HOSTS.some((d) => h === d || h.endsWith(`.${d}`)),
+      `${h} must be on the proxy allowlist, or the failover builds urls the guard then refuses`,
+    );
+});
+
+test("an IPFS 404 falls over to the next gateway; a CDN 404 does not", () => {
+  // The transport-only failover rule exists because "the same request gets the
+  // same status everywhere else". That is NOT true of a content-addressed
+  // fetch: a CID is the hash of the bytes, so another gateway serving it serves
+  // byte-identical content. `candidates()` is where that distinction lives.
+  assert.match(PROXY, /function candidates\(url: URL\): URL\[\]/);
+  assert.match(PROXY, /if \(!cid\) return \[url\];/, "a non-IPFS url gets exactly one attempt");
+  assert.match(PROXY, /const out = \[url\];/, "…and the gateway the caller named is tried FIRST");
+  assert.match(PROXY, /IPFS_MAX_TRIES/, "bounded");
+  assert.match(PROXY, /Date\.now\(\) > deadline/, "…and time-bounded, or one request holds a socket for every gateway's timeout");
+});
+
+test("⚠️ a redirect somewhere we do not allow ends the request, it does not retry", () => {
+  // That failure is about US being pointed at something, not about the content
+  // being unavailable — falling through to the next gateway would bury it.
+  const loop = PROXY.slice(PROXY.indexOf("for (let hop"));
+  assert.ok(
+    loop.indexOf("status: 400") < loop.indexOf("res = null; // transport failure"),
+    "the disallowed-redirect return sits inside the hop loop, before the catch",
+  );
 });
 
 test("the proxy carries no host broad enough to make us anyone's image CDN", () => {
