@@ -23,8 +23,21 @@ function fmtCap(n) {
   if (v >= 1e9) return "$" + (v / 1e9).toFixed(2) + "B";
   if (v >= 1e6) return "$" + (v / 1e6).toFixed(2) + "M";
   if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "K";
+  // ⚠️ NEVER ROUND A REAL NUMBER DOWN TO "$0" — see src/lib/format.ts, which
+  // this is a 1:1 port of. The board printed "$0" volume beside "13 txns" for
+  // a token that had traded $0.06. A printed zero is a claim nobody measured.
+  // A TRUE zero still prints "$0"; that one is a fact.
+  //
+  // No "<" in any branch: this string reaches Telegram with parse_mode HTML,
+  // where one bare "<" makes it reject the whole message.
+  if (v === 0) return "$0";
+  if (v > 0 && v < 1) {
+    const places = Math.min(8, Math.max(2, -Math.floor(Math.log10(v))));
+    return "$" + v.toFixed(places);
+  }
   return "$" + Math.round(v);
 }
+
 
 /** Compact plain number (no $): 1.2M, 840.0K, 42. */
 /**

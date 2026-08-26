@@ -26,6 +26,24 @@ export function fmtCap(n: number | null): string {
   if (n >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
   if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
   if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";
+  // ⚠️ NEVER ROUND A REAL NUMBER DOWN TO "$0".
+  //
+  // `Math.round` alone printed $0 for every value under half a dollar, and the
+  // board showed it beside its own transaction count: "$0" volume next to "13
+  // txns · 6 buys / 7 sells". Measured on the live board — $MRNA traded $0.06,
+  // $GOOGL $0.04, $AMZN $0.31 — so the row asserted no trading happened over
+  // data proving it did. A printed zero is a claim, and this repo refuses the
+  // same shape for an unreadable 24h change; it had never been applied here.
+  //
+  // A TRUE zero still prints "$0" — the row with 0 buys and 0 sells is the one
+  // state in which that is a fact.
+  if (n === 0) return "$0";
+  if (n > 0 && n < 1) {
+    // Enough decimals that the value cannot render as zero, and no more.
+    // 0.31 → $0.31 · 0.06 → $0.06 · 0.004 → $0.004
+    const places = Math.min(8, Math.max(2, -Math.floor(Math.log10(n))));
+    return "$" + n.toFixed(places);
+  }
   return "$" + Math.round(n);
 }
 

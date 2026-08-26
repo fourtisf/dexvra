@@ -1918,6 +1918,55 @@ cd bot && node scripts/run-tests.js test/tokenLogo.test.js   # 28 tests, no netw
 `bot/.env` is still the only thing that raises the real ceiling rather than
 dividing it, and a cleanup over hundreds of rows is exactly when that shows.
 
+## "vol 0 padahal ada transaksi buy and sale"
+
+Reported with a screenshot of the home board, where one row asserted both
+halves of a contradiction:
+
+```
+$MRNA   +185.0%   MCAP $157.7K   VOL $0   TXNS 13 · 6 buys / 7 sells
+```
+
+**Nothing in the data layer invented that zero**, and the first instinct — that
+`?? 0` in the two market readers had turned a missing volume into a fact — was
+wrong. Measured against the live API before writing a line:
+
+```
+MRNA  vol24h = 0.06   txns 6/7        AMZN  vol24h = 0.31   txns 0/1
+GOOGL vol24h = 0.04   txns 4/4        AMZN  vol24h = 0      txns 0/0
+```
+
+The volumes were real. `fmtCap` ended in `Math.round(n)`, so **every genuine
+figure under half a dollar rendered as `$0`** — and the board printed that
+beside its own transaction count, asserting no trading happened over data
+proving it had. The row with a true zero had 0 buys and 0 sells, which is the
+one state in which `$0` is a fact.
+
+- **A printed zero is a claim.** This repo already refuses the same shape for an
+  unreadable 24h change on the trending board; it had never been applied to
+  money. Below a dollar `fmtCap` now keeps exactly enough decimals that a real
+  number cannot render as zero — `$0.06`, `$0.31`, `$0.004` — and no more.
+- **A TRUE zero still prints `$0`, and `null` still prints `—`.** Three states,
+  three spellings: *is zero* · *is small* · *not known*. Collapsing any pair is
+  the defect.
+- ⚠️ **No branch may emit a bare `<`.** `<$0.01` is the obvious spelling and is
+  unavailable: `bot/src/helpers/format.js` carries a 1:1 port of this function
+  and its output reaches Telegram with `parse_mode: HTML`, where one `<` makes
+  it reject the whole message — a 400, which `queuedSend` does not retry, so
+  the post simply vanishes. The trade bot's `&lt;0.01%` paid for that lesson.
+- **Both copies were fixed together and a test asserts they agree exactly**, or
+  a figure reads one way on the site and another in a channel post.
+- **The measurement came first.** Three causes produce `$0` — the upstream
+  omitting the field, the upstream reporting zero, and this rounding — and they
+  need different fixes. One `curl` against the running site separated them in
+  ten seconds; guessing would have bought a nullable-volume refactor rippling
+  through the types, the sort and the score, for a bug that was one line.
+
+```bash
+npm test                                                      # src/lib/format.test.ts
+cd bot && node scripts/run-tests.js test/fmtCapZero.test.js
+```
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
