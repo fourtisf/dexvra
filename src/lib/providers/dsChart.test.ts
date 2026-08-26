@@ -1,0 +1,439 @@
+// THE SECOND CANDLE SOURCE.
+//
+// "beberapa token chartnya tidak ada, mending tambahkan api dari dexscreener",
+// reported with the token page showing:
+//
+//     Chart unavailable right now
+//     Couldn't read the chart just now (GeckoTerminal 429 (rate limited)).
+//
+// Every test here fails on a plausible half-fix, and the two at the top are the
+// ones that would have shipped a source that answers perfectly and draws
+// nothing: a millisecond timestamp silently refused as "the future", and a
+// DexScreener PAIR address published where a GeckoTerminal POOL id is expected.
+//
+// No network: `fetch` is stubbed throughout.
+import test from "node:test";
+import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  DS_RES,
+  _dsChartReset,
+  barToRow,
+  barsOf,
+  dsArmCooldown,
+  dsCandles,
+  dsChartBases,
+  dsChartPaths,
+  dsInCooldown,
+  dsPairUrl,
+  dsTopPair,
+  toSeconds,
+} from "./dsChart.ts";
+import { TIMEFRAMES } from "../ohlcv.ts";
+
+const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+/** Comment-stripped source, for the guards — a rule stated in a comment is not
+ *  a rule, and a test that matched one would pass on code that broke it. */
+const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+const PAIR = { pairAddress: "0xPAIR", dexId: "uniswap", chainId: "bsc", liquidityUsd: 100_000 };
+
+/** Route `fetch` by URL. A handler may return a body, or `{status}` to answer
+ *  with one, or throw to simulate a transport failure. */
+function stubFetch(router: (url: string) => unknown) {
+  const orig = globalThis.fetch;
+  const seen: string[] = [];
+  globalThis.fetch = (async (url: string | URL) => {
+    const u = String(url);
+    seen.push(u);
+    const out = router(u) as { status?: number; body?: unknown } | unknown;
+    const r = out as { status?: number; body?: unknown };
+    if (r && typeof r === "object" && typeof r.status === "number") {
+      return {
+        ok: r.status >= 200 && r.status < 300,
+        status: r.status,
+        headers: { get: () => null },
+        body: { cancel: async () => {} },
+        json: async () => r.body ?? null,
+      } as unknown as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: { cancel: async () => {} },
+      json: async () => out,
+    } as unknown as Response;
+  }) as typeof fetch;
+  return { seen, restore: () => { globalThis.fetch = orig; } };
+}
+
+// ── the two that would have shipped a silent blank ───────────────────────────
+
+test("⚠️ a MILLISECOND timestamp is converted — everything downstream is seconds", () => {
+  // `Candle.t` is documented as seconds (GeckoTerminal's unit), CandleChart
+  // multiplies it by 1000, and normalizeCandles refuses a stamp more than six
+  // hours ahead. So a millisecond feed is not merely wrong: every candle is
+  // DROPPED as "the future", the list comes back empty, and the panel reports
+  // "no candles on this timeframe" about a source that answered perfectly.
+  const ms = 1_756_200_000_000;
+  assert.strictEqual(toSeconds(ms), 1_756_200_000);
+  // …and a value already in seconds is left alone. Both spellings are plausible
+  // from an undocumented feed, and guessing one costs the whole chart.
+  assert.strictEqual(toSeconds(1_756_200_000), 1_756_200_000);
+  const row = barToRow({ t: ms, o: 1, h: 2, l: 0.5, c: 1.5, v: 10 });
+  assert.deepStrictEqual(row, [1_756_200_000, 1, 2, 0.5, 1.5, 10]);
+});
+
+test("⚠️ the DS PAIR address never reaches a field that means a GT POOL", () => {
+  // This repo states the rule in seven places: /api/pool and /api/trades read
+  // the `pool:` cache and hand its value to GeckoTerminal, and CandleChart used
+  // to build a geckoterminal.com/<network>/pools/<pool> link out of it. A pair
+  // address in any of them 404s inside the token page.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  const dsWin = route.slice(route.indexOf('source: "dexscreener"') - 400, route.indexOf('source: "dexscreener"') + 200);
+  assert.match(dsWin, /pool: gt\.pool/, "a DexScreener answer still reports GT's pool — never the DS pair");
+  assert.ok(!/pool: ds\./.test(route), "the DS pair was published as `pool`");
+  // The provider must not touch the shared pool cache either — that key is read
+  // by two other routes that hand its value straight to GeckoTerminal.
+  const prov = code(read("src/lib/providers/dsChart.ts"));
+  assert.ok(!/poolCache|cachedPool|`pool:/.test(prov), "the DS provider wrote into the GT pool namespace");
+});
+
+// ── the request shape, and why every part of it is overridable ───────────────
+
+test("a base LIST, and _API pins one AND skips the list", () => {
+  // An override and a SKIP — the same contract <CHAIN>_V4_POOLMANAGER, JUP_BASE
+  // and LAUNCHPAD_<PAD>_API already have. An operator who pinned a host must
+  // not be outvoted by a default further down the list.
+  assert.deepStrictEqual(dsChartBases("https://pinned.example/"), ["https://pinned.example"]);
+  const dflt = dsChartBases("");
+  assert.ok(dflt.length >= 1);
+  assert.ok(dflt.includes("https://io.dexscreener.com"));
+  // An extra base goes in FRONT of the shipped one, current-first.
+  assert.deepStrictEqual(dsChartBases("", "https://a.example, https://b.example").slice(0, 2), [
+    "https://a.example",
+    "https://b.example",
+  ]);
+});
+
+test("the PATH is a template list too — a renamed segment is a .env line, not a deploy", () => {
+  // The whole reason an unverified request shape may ship: DexScreener
+  // publishes no OHLCV endpoint, so this is a guess about somebody else's
+  // private API and it has to be fixable without a build.
+  const dflt = dsChartPaths("");
+  assert.ok(dflt.length >= 2, "more than one spelling ships — the AMM family decides which");
+  for (const p of dflt) {
+    assert.match(p, /\{dex\}/);
+    assert.match(p, /\{chain\}/);
+    assert.match(p, /\{pair\}/);
+  }
+  assert.deepStrictEqual(dsChartPaths("/x/{dex}/{chain}/{pair}"), ["/x/{dex}/{chain}/{pair}"]);
+});
+
+test("every timeframe has a resolution — a table, never arithmetic", () => {
+  // A combination the upstream does not serve comes back an error, which is
+  // exactly why `TF` is a table and not a calculation.
+  for (const tf of TIMEFRAMES) assert.ok(DS_RES[tf], `${tf} has no DexScreener resolution`);
+  assert.strictEqual(DS_RES["1d"], "1D", "days are not minutes");
+});
+
+test("the bar list is found whatever it is wrapped in", () => {
+  // Not a published contract, so a renamed envelope key must cost nothing.
+  const bars = [{ t: 1, o: 1, h: 1, l: 1, c: 1 }];
+  assert.deepStrictEqual(barsOf(bars), bars);
+  assert.deepStrictEqual(barsOf({ bars }), bars);
+  assert.deepStrictEqual(barsOf({ data: { bars } }), bars);
+  assert.deepStrictEqual(barsOf({ schemaVersion: "1", candles: bars }), bars);
+  assert.strictEqual(barsOf({ nothing: 1 }), null, "an unreadable shape is null, never an empty list");
+});
+
+test("a bar missing a price is dropped; a missing VOLUME is a zero", () => {
+  // The rule normalizeCandles already states: a quiet five minutes is a fact,
+  // and dropping an otherwise good candle over it loses real history.
+  assert.strictEqual(barToRow({ t: 1, o: 1, h: 2, l: 0.5 }), null, "no close → not a candle");
+  assert.deepStrictEqual(barToRow({ t: 1, o: 1, h: 2, l: 0.5, c: 1.5 }), [1, 1, 2, 0.5, 1.5, 0]);
+  // Parallel-array bars are a UDF shape and are read too.
+  assert.deepStrictEqual(barToRow([1, 1, 2, 0.5, 1.5, 7]), [1, 1, 2, 0.5, 1.5, 7]);
+  assert.strictEqual(barToRow("nope"), null);
+});
+
+// ── the pair lookup ──────────────────────────────────────────────────────────
+
+test("the pair is OUR token's DEEPEST, base side only", async () => {
+  // Base-side: a token also appears as the QUOTE side of somebody else's pair,
+  // and charting that draws the other asset's price under our ticker — the
+  // wrong number rather than a missing one, which is the worse of the two.
+  // Deepest: a real token seen through a thin pool reads as a different asset.
+  _dsChartReset();
+  const f = stubFetch(() => [
+    { chainId: "bsc", dexId: "pancake", pairAddress: "THIN", baseToken: { address: "0xUS" }, liquidity: { usd: 1_000 } },
+    { chainId: "bsc", dexId: "pancake", pairAddress: "DEEP", baseToken: { address: "0xUS" }, liquidity: { usd: 900_000 } },
+    { chainId: "bsc", dexId: "pancake", pairAddress: "QUOTE", baseToken: { address: "0xOTHER" }, liquidity: { usd: 9e9 } },
+  ]);
+  try {
+    const r = await dsTopPair("bsc", "0xUS");
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.pair?.pairAddress, "DEEP", "the thin pair or the quote-side one won");
+  } finally {
+    f.restore();
+  }
+});
+
+test("'no pair' and 'could not ask' are different answers", async () => {
+  // The pumpfunNewX rule, on the surface that publishes charts. Collapsing them
+  // is how one rate-limited minute is cached as "this token has no history".
+  _dsChartReset();
+  let f = stubFetch(() => ({ status: 404 }));
+  try {
+    const r = await dsTopPair("bsc", "0xUS");
+    assert.strictEqual(r.ok, true, "a 404 is an ANSWER about the token");
+    assert.strictEqual(r.pair, null);
+  } finally {
+    f.restore();
+  }
+  _dsChartReset();
+  f = stubFetch(() => { throw Object.assign(new Error("fetch failed"), { cause: { code: "ENOTFOUND" } }); });
+  try {
+    const r = await dsTopPair("bsc", "0xUS");
+    assert.strictEqual(r.ok, false, "a dead socket is NOT an answer about the token");
+    assert.match(r.why!, /ENOTFOUND/, "the syscall is never dropped — `fetch failed` alone names nothing");
+  } finally {
+    f.restore();
+  }
+});
+
+// ── candles ──────────────────────────────────────────────────────────────────
+
+test("candles come back through the ONE normaliser, sorted and cleaned", async () => {
+  // normalizeCandles owns every rule about a candle list. A second source that
+  // grew its own idea of a valid candle is the two-pump.fun-hosts defect, on
+  // the surface a person is looking at.
+  _dsChartReset();
+  const now = 1_756_200_000_000;
+  const f = stubFetch((u) => {
+    if (u.includes("token-pairs")) return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 5e5 } }];
+    return {
+      bars: [
+        // Deliberately out of order, in MILLISECONDS, with one zero close.
+        { t: now - 900_000, o: 2, h: 2.4, l: 1.9, c: 2.2, v: 5 },
+        { t: now - 1_800_000, o: 1, h: 1.2, l: 0.9, c: 1.1, v: 3 },
+        { t: now - 2_700_000, o: 0, h: 0, l: 0, c: 0, v: 0 },
+      ],
+    };
+  });
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m", { now });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.candles.length, 2, "the zero-priced row is not a price");
+    assert.ok(r.candles[0].t < r.candles[1].t, "sorted by timestamp, never trusted by position");
+    assert.ok(r.candles.every((c) => c.t < now / 1000 + 1), "…and in seconds, or they read as the future");
+    assert.strictEqual(r.pair?.pairAddress, "0xPAIR");
+  } finally {
+    f.restore();
+  }
+});
+
+test("a 404 tries the OTHER path; a 429 does not", async () => {
+  // ⚠️ TWO DIFFERENT FAILOVER RULES, and mixing them is the bug. Across BASES
+  // it is transport only — an HTTP status means the host answered and the same
+  // request gets the same status everywhere else. Across PATHS a 404 is worth
+  // retrying, because that is a DIFFERENT RESOURCE on the same host and "that
+  // spelling is not here" is exactly when the other spelling is right.
+  _dsChartReset();
+  let tried: string[] = [];
+  let f = stubFetch((u) => {
+    if (u.includes("token-pairs")) return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }];
+    tried.push(u);
+    return u.includes("/v3/") ? { status: 404 } : { bars: [{ t: 1_756_200_000_000, o: 1, h: 1, l: 1, c: 1, v: 1 }] };
+  });
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m", { now: 1_756_200_000_000 });
+    assert.strictEqual(r.ok, true, "the second path was never tried");
+    assert.strictEqual(tried.length, 2);
+    assert.match(tried[1], /\/v2\//);
+  } finally {
+    f.restore();
+  }
+
+  _dsChartReset();
+  tried = [];
+  f = stubFetch((u) => {
+    if (u.includes("token-pairs")) return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }];
+    tried.push(u);
+    return { status: 429 };
+  });
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m");
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(tried.length, 1, "a 429 was retried on another path — it says nothing about which path is right");
+    assert.match(r.why!, /429/);
+  } finally {
+    f.restore();
+  }
+});
+
+test("a 429 arms a cooldown, and nothing asks again while it holds", async () => {
+  // A client that hammers through its own 429 is precisely the defect gt.ts was
+  // written to end. Adding a second upstream without one reintroduces it a host
+  // over.
+  _dsChartReset();
+  assert.strictEqual(dsInCooldown(), false);
+  dsArmCooldown(60_000);
+  assert.strictEqual(dsInCooldown(), true);
+  const f = stubFetch(() => { throw new Error("no request may be made while the cooldown holds"); });
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m");
+    assert.strictEqual(r.ok, false);
+    assert.match(r.why!, /cooling down/, "…and it says so, so the caller treats it as 'could not ask'");
+  } finally {
+    f.restore();
+    _dsChartReset();
+  }
+});
+
+test("a chain DexScreener does not carry is an ANSWER, not a failure", async () => {
+  // Robinhood: `dexscreener: null` in the registry, documented as costing one
+  // source and never a failure.
+  _dsChartReset();
+  const r = await dsCandles("robinhood", "ANY", "15m");
+  assert.strictEqual(r.ok, true, "ok:false would read as 'DexScreener is down'");
+  assert.deepStrictEqual(r.candles, []);
+  assert.match(r.why!, /does not carry/);
+});
+
+test("an unrecognised envelope names the env var that fixes it", async () => {
+  // "It answered with nothing" and "it answered in a shape we cannot read" are
+  // different facts, and only the first is about the pool. The second is ours,
+  // and it is fixable without a deploy — which is the whole licence for
+  // shipping a request shape nobody here has exercised.
+  _dsChartReset();
+  const f = stubFetch((u) =>
+    u.includes("token-pairs")
+      ? [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }]
+      : { somethingElse: true },
+  );
+  try {
+    const r = await dsCandles("bsc", "0xUS", "15m");
+    assert.strictEqual(r.ok, false);
+    assert.match(r.why!, /DS_CHART_BARS_KEY/);
+  } finally {
+    f.restore();
+  }
+});
+
+test("the human link is built from the PAIR — the one place that is the right value", () => {
+  assert.strictEqual(dsPairUrl(PAIR), "https://dexscreener.com/bsc/0xPAIR");
+});
+
+// ── the route: GT first, DexScreener when GT cannot answer ───────────────────
+
+test("⚠️ GeckoTerminal is NOT asked while its cooldown holds", () => {
+  // This is the state the report was taken in: one 429 anywhere arms a
+  // process-wide 120s silence and every chart on the site reads "GeckoTerminal
+  // 429 (rate limited)". Answering during exactly that window is the entire
+  // reason a second source exists — so the route must reach for it rather than
+  // spend a call that cannot succeed.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  assert.match(route, /gtInCooldown\(\)/, "the route must check before it asks");
+  assert.match(route, /dsCandles\(/, "…and reach the second source");
+  // Positions, not a literal: the argument list is not the property under test,
+  // and a guard test that breaks on a `!` is a test about formatting.
+  const gtCall = route.indexOf("await fromGeckoTerminal(");
+  const guard = route.indexOf("!gtInCooldown()");
+  assert.ok(gtCall > 0, "the GT read must still be a call this test can find");
+  assert.ok(guard > 0 && guard < gtCall, "the cooldown is checked BEFORE the GT read, not after");
+});
+
+test("a guess must lose to an answer — GeckoTerminal stays first", () => {
+  // DexScreener's candle shape is a guess about somebody else's private API;
+  // GT's is documented, and its pool ids are what `pool` means to every other
+  // route. `pickLogo` states the same rule one pipeline over.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  const gtWin = route.indexOf('source: "geckoterminal"');
+  const dsWin = route.indexOf('source: "dexscreener"');
+  assert.ok(gtWin > 0 && dsWin > gtWin, "the DexScreener branch must sit below GeckoTerminal's");
+  assert.match(route, /gt\.candles && gt\.candles\.length > 0/, "GT wins whenever it has candles");
+});
+
+test("both reasons travel when neither source could be asked", () => {
+  // "GeckoTerminal 429" alone, with a second source silently unreachable behind
+  // it, is the shrug this endpoint has already been fixed for once.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  assert.match(route, /\[gt\.why, ds\?\.why\]/);
+  // …and the sentence must still carry "couldn't read", because the panel
+  // classifies error-vs-answer on that substring and only errors get the fast
+  // retry that lets a chart appear the moment a cooldown lifts.
+  assert.match(route, /Couldn't read the chart just now \(\$\{reasons/);
+  assert.match(code(read("src/components/CandleChart.tsx")), /couldn't read/i);
+});
+
+test("the panel SAYS when it drew from the fallback", () => {
+  // A chart drawn by DexScreener and one drawn by GeckoTerminal are identical
+  // from outside, so "the second source works" and "the second source never
+  // fires" are the same picture — the reassuring reading, which this repo has
+  // paid for repeatedly.
+  const chart = code(read("src/components/CandleChart.tsx"));
+  assert.match(chart, /feed\?\.source === "dexscreener"/);
+  assert.match(chart, /via DexScreener/);
+  // …and the "open it at the source" link follows the source, or it points at
+  // a GeckoTerminal page for a pool GT never indexed.
+  assert.match(chart, /feed\?\.sourceUrl/);
+  assert.match(chart, /Open the pool on \{srcName\}/);
+});
+
+test("no iframe — this is DexScreener's DATA, never its widget", () => {
+  // Two separate bans, and collapsing them is how one comes back: the
+  // third-party EMBED was removed because it planted a competitor's wordmark
+  // across a Dexvra page after seconds of "Loading chart settings…". Adding a
+  // second DATA source does not relax that.
+  assert.ok(!/<iframe/i.test(read("src/components/CandleChart.tsx")));
+  assert.ok(!/<iframe/i.test(read("src/lib/providers/dsChart.ts")));
+  assert.ok(!/dexscreener\.com\/[^"']*embed/i.test(read("src/lib/providers/dsChart.ts")));
+});
+
+test("?source pins ONE upstream, and it is part of the cache key", () => {
+  // With GeckoTerminal healthy the DexScreener path never runs, so a check that
+  // only asked normally would report a green chart and say nothing about
+  // whether the FALLBACK works — `fonts:check`'s nine green ticks over a banner
+  // drawing boxes. `chart:check` asks each source separately.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  assert.match(route, /q\.get\("source"\)/);
+  assert.match(route, /pinOf/, "…and it is normalised — this value reaches a cache key");
+  assert.match(route, /raw === "geckoterminal" \|\| raw === "dexscreener" \? raw : null/, "anything else is null, never free text");
+  // ⚠️ A forced single-source answer must not be served to an ordinary visitor.
+  assert.match(route, /\$\{pin \?\? "auto"\}/, "the pin is part of the cache key");
+  // …and the chain is STILL checked before any key is built.
+  const handler = route.slice(route.indexOf("export async function GET"));
+  assert.ok(handler.indexOf("if (!network)") > 0);
+  assert.ok(handler.indexOf("`ohlcv:") > handler.indexOf("if (!network)"));
+});
+
+test("the check drives the SERVER, not the .ts provider — production runs node 18", () => {
+  // Importing src/**/*.ts needs node's type stripping (the test script passes
+  // --experimental-strip-types). Production runs 18.19, where that import
+  // throws — and a check that cannot run on the box is the class of fix this
+  // repo has already paid six days for.
+  const script = read("scripts/chart-check.mjs");
+  assert.ok(!/from "\.\.\/src\//.test(script), "the check must not import the app's TypeScript");
+  assert.match(script, /\/api\/ohlcv\?/, "…it goes through the running route instead");
+  assert.match(script, /source: "geckoterminal"|source=geckoterminal|"geckoterminal"/);
+  assert.match(script, /process\.exit\(1\)/, "a check that cannot fail is not a check");
+  // It prints BOTH build stamps, because a check read off a stale server is how
+  // every round of this has started.
+  assert.match(script, /serverBuild/);
+  const pkg = JSON.parse(read("package.json"));
+  assert.strictEqual(pkg.scripts["chart:check"], "node scripts/chart-check.mjs", "…and it is registered");
+  assert.ok(pkg.scripts.comment_chart_check, "with the prose rationale beside it, as every other script here has");
+});
+
+test("the env reader checks the BLANK STRING before Number()", () => {
+  // `Number('')` is 0 — finite, non-negative — and it has silently replaced
+  // every default with zero four times in this repo.
+  const prov = code(read("src/lib/providers/dsChart.ts"));
+  assert.match(prov, /if \(s === ""\) return dflt;/);
+  // …and blank is NOT false for the kill switch: a bare `DS_CHART=` is "never
+  // decided", not "refused".
+  assert.match(prov, /s === "0" \|\| s === "false" \|\| s === "off" \|\| s === "no"/);
+});

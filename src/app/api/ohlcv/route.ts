@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
-import { gtGet } from "@/lib/providers/gt";
+import { gtCooldownLeftMs, gtGet, gtInCooldown } from "@/lib/providers/gt";
 import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 import { cachedPool } from "@/lib/providers/poolCache";
+import { dsCandles, dsChartCovers, dsPairUrl } from "@/lib/providers/dsChart";
 import { TF, normalizeCandles, tfOf, type Candle, type Timeframe } from "@/lib/ohlcv";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,31 @@ export interface OhlcvResponse {
   /** Why there are no candles. Populated ONLY when `ok` is false, and written
    *  for a person reading a chart panel, not for a log. */
   why: string | null;
+  /**
+   * WHICH SOURCE DREW THIS. Not decoration, and not a debug flag.
+   *
+   * The two sources resolve their own pools independently — GeckoTerminal's
+   * deepest pool and DexScreener's deepest PAIR are usually the same market and
+   * are not guaranteed to be — so a reader comparing two screenshots taken an
+   * hour apart needs to be able to see that the underlying pool changed. It is
+   * also the only way to tell, from outside, that the fallback is working at
+   * all: a chart that draws from DexScreener and one that draws from GT look
+   * identical, and "the fix is deployed" and "the fix never fires" are exactly
+   * the pair of readings this repo keeps paying for.
+   */
+  source: "geckoterminal" | "dexscreener" | null;
+  /**
+   * "Open it at the source", built HERE rather than by the client.
+   *
+   * ⚠️ `pool` is a GECKOTERMINAL pool id and the client used to build a
+   * geckoterminal.com link out of it. A DexScreener PAIR address in that field
+   * would produce a link that 404s — the rule `dexscreener.ts` states at its
+   * own `poolAddress: null`, and which /api/pool and /api/trades also depend
+   * on. So `pool` still only ever carries a GT pool, the DS pair never touches
+   * it, and the link the panel shows is computed by whoever knows which source
+   * answered.
+   */
+  sourceUrl: string | null;
 }
 
 const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "unknown";
@@ -50,6 +76,8 @@ const fail = (tf: Timeframe, why: string, network: string | null = null, pool: s
   tf,
   candles: [],
   why,
+  source: null,
+  sourceUrl: null,
 });
 
 /** A GT read that ANSWERED with nothing (404 / 4xx) versus one that never
@@ -78,56 +106,171 @@ async function fetchCandles(network: string, pool: string, token: string, tf: Ti
   return normalizeCandles(res.body?.data?.attributes?.ohlcv_list);
 }
 
-async function load(chain: string, address: string, tf: Timeframe, hint: string | null): Promise<OhlcvResponse> {
-  const network = networkOf(chain);
-  if (!network) return fail(tf, `We don't have a chart source for ${chain} yet.`);
+/** What GeckoTerminal had to say. `candles: null` means it could not be asked
+ *  or does not index a pool; an empty array means it answered and this pool has
+ *  no history on this timeframe. Those two must not collapse — one is a reason
+ *  to go and ask somebody else, and the other is an answer about the token. */
+interface GtOut {
+  candles: Candle[] | null;
+  pool: string | null;
+  why: string | null;
+  /** Did GeckoTerminal ANSWER — including answering "I have no pool for this"?
+   *  `candles: null` covers both that and "could not be asked", and the two
+   *  need different sentences: one is a fact about the token, the other about
+   *  us, and the panel only fast-retries the second. */
+  answered: boolean;
+}
 
+async function fromGeckoTerminal(network: string, address: string, tf: Timeframe, hint: string | null): Promise<GtOut> {
   // A caller-supplied pool is a HINT, not an authority: the token page passes
   // the pool GeckoTerminal named, but a preview built from DexScreener carries
   // a PAIR address GT has never indexed. So a 404 on the hint is not the end of
   // the lookup — it is the reason to ask GT which pool it knows.
   let pool = hint;
   let candles: Candle[] | null = null;
-  if (pool) candles = await fetchCandles(network, pool, address, tf);
+  try {
+    if (pool) candles = await fetchCandles(network, pool, address, tf);
 
-  // ⚠️ An EMPTY list from the hint is also a reason to go and ask, not only a
-  // 404. A DexScreener pair address can be a real-but-thin GT pool that has
-  // never traded on this timeframe, and reporting "no candles" for it hides the
-  // deep pool that has a year of them. Costs one extra request, in the one case
-  // where we were about to draw nothing anyway.
-  if (candles == null || candles.length === 0) {
-    const resolved = await cachedPool(network, address, () => topPoolAddress(network, address));
-    if (!resolved) {
-      return candles?.length === 0
-        ? { ok: false, build: BUILD, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." }
-        : fail(
-            tf,
-            pool
-              ? "GeckoTerminal doesn't index a pool for this token yet."
-              : "No pool indexed for this token yet — nothing to chart.",
-            network,
-            null,
-          );
-    }
-    if (resolved !== pool) {
-      const deeper = await fetchCandles(network, resolved, address, tf);
-      // Only take the deeper pool's answer if it is actually better: a 404 or an
-      // empty list there must not throw away candles the hint already gave us.
-      if (deeper && (deeper.length > 0 || candles == null)) {
-        pool = resolved;
-        candles = deeper;
+    // ⚠️ An EMPTY list from the hint is also a reason to go and ask, not only a
+    // 404. A DexScreener pair address can be a real-but-thin GT pool that has
+    // never traded on this timeframe, and reporting "no candles" for it hides the
+    // deep pool that has a year of them. Costs one extra request, in the one case
+    // where we were about to draw nothing anyway.
+    if (candles == null || candles.length === 0) {
+      const resolved = await cachedPool(network, address, () => topPoolAddress(network, address));
+      if (!resolved)
+        return {
+          candles,
+          pool,
+          answered: true,
+          why: pool
+            ? "GeckoTerminal doesn't index a pool for this token yet."
+            : "No pool indexed for this token yet — nothing to chart.",
+        };
+      if (resolved !== pool) {
+        const deeper = await fetchCandles(network, resolved, address, tf);
+        // Only take the deeper pool's answer if it is actually better: a 404 or an
+        // empty list there must not throw away candles the hint already gave us.
+        if (deeper && (deeper.length > 0 || candles == null)) {
+          pool = resolved;
+          candles = deeper;
+        }
       }
+      if (candles == null)
+        return { candles: null, pool, answered: true, why: "GeckoTerminal doesn't index a pool for this token yet." };
     }
-    if (candles == null) return fail(tf, "GeckoTerminal doesn't index a pool for this token yet.", network, pool);
+    return { candles, pool, answered: true, why: null };
+  } catch (err) {
+    // A 429, a dead socket, a 5xx. NOT an answer about the token, and the
+    // reason is carried out rather than dropped: "rate limited" and "no pool"
+    // send a reader — and this function's caller — to different places.
+    return { candles: null, pool, answered: false, why: readWhy(err) };
   }
+}
 
-  // An empty list is an ANSWER — a pool this new has not traded a full candle
-  // yet — and it is not an error. Saying so beats an empty grid that reads as a
-  // broken page.
-  if (candles.length === 0)
-    return { ok: false, build: BUILD, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." };
+/**
+ * Which sources a request may use. `null` is the normal answer — both, GT
+ * first — and the other two exist so `npm run chart:check` can measure ONE of
+ * them from outside.
+ *
+ * ⚠️ WHY A PUBLIC ROUTE CARRIES A DIAGNOSTIC KNOB AT ALL. Whether an upstream
+ * answers is a property of the server's egress, so it has to be measured on the
+ * box — and with GeckoTerminal healthy the DexScreener path never runs, so a
+ * check that only asked normally would report a green chart and say nothing
+ * about whether the FALLBACK works. That is `fonts:check` printing nine green
+ * ticks over a banner drawing boxes: a guard is only honest while it measures
+ * the stack it claims to. `launchpads:check` passes `force: true` past the
+ * local breaker for the same reason.
+ *
+ * It selects an upstream to READ and nothing else — no write, no secret, no
+ * wider data — which is why it needs no guard. It is part of the cache key, or
+ * a forced single-source answer would be served to an ordinary visitor.
+ */
+export type SourcePin = "geckoterminal" | "dexscreener" | null;
+const pinOf = (raw: string | null): SourcePin =>
+  raw === "geckoterminal" || raw === "dexscreener" ? raw : null;
 
-  return { ok: true, build: BUILD, network, pool, tf, candles, why: null };
+async function load(chain: string, address: string, tf: Timeframe, hint: string | null, pin: SourcePin = null): Promise<OhlcvResponse> {
+  const network = networkOf(chain);
+  const dsAvailable = dsChartCovers(chain) && pin !== "geckoterminal";
+  if (!network && !dsAvailable) return fail(tf, `We don't have a chart source for ${chain} yet.`);
+
+  // ⚠️ WHILE THE GT COOLDOWN HOLDS, GECKOTERMINAL IS NOT ASKED AT ALL.
+  //
+  // `gtGet` would answer without making a request, so skipping costs nothing
+  // upstream — but it also cannot succeed, and answering during exactly that
+  // window is the entire reason a second source exists. This is the state the
+  // report was taken in: every chart on the site reading "GeckoTerminal 429
+  // (rate limited)" because one 429 anywhere arms a process-wide 120s silence.
+  //
+  // GT stays FIRST whenever it can answer. It is the documented source, its
+  // pool ids are what `pool` means to every other route, and DexScreener's
+  // candle shape is a guess about somebody else's private API (see dsChart.ts).
+  // A guess must always lose to an answer — the rule `pickLogo` states one
+  // pipeline over.
+  const askGt = Boolean(network) && pin !== "dexscreener";
+  const gt: GtOut =
+    askGt && !gtInCooldown()
+      ? await fromGeckoTerminal(network!, address, tf, hint)
+      : {
+          candles: null,
+          pool: null,
+          // Not asked at all — never an answer about the token.
+          answered: false,
+          why: !askGt
+            ? network
+              ? "GeckoTerminal was not asked (source=dexscreener)"
+              : `GeckoTerminal has no network id for ${chain}`
+            : `GeckoTerminal is rate limited — cooling down for ${Math.ceil(gtCooldownLeftMs() / 1000)}s`,
+        };
+
+  if (gt.candles && gt.candles.length > 0)
+    return { ok: true, build: BUILD, network, pool: gt.pool, tf, candles: gt.candles, why: null, source: "geckoterminal", sourceUrl: gt.pool && network ? `https://www.geckoterminal.com/${network}/pools/${gt.pool}` : null };
+
+  // GT gave us nothing to draw. Everything below is the second source, and it
+  // is only reached in that case — a healthy chart never pays for it.
+  const ds = dsAvailable ? await dsCandles(chain, address, tf) : null;
+  if (ds && ds.ok && ds.candles.length > 0)
+    return { ok: true, build: BUILD, network, pool: gt.pool, tf, candles: ds.candles, why: null, source: "dexscreener", sourceUrl: ds.pair ? dsPairUrl(ds.pair) : null };
+
+  // ── Nothing to draw, so say WHICH kind of nothing ────────────────────────
+  //
+  // An empty list from a source that ANSWERED is a fact about the pool — this
+  // token is too new to have traded a full candle. A source that could not be
+  // asked is a fact about us. The panel reacts differently to the two (it
+  // fast-retries only the second), so collapsing them would leave a rate limit
+  // looking like a token with no history, for ever.
+  const dsAnswered = Boolean(ds && ds.ok);
+  if (gt.answered || dsAnswered)
+    return {
+      ok: false,
+      build: BUILD,
+      network,
+      pool: gt.pool,
+      tf,
+      candles: [],
+      // ⚠️ THE SPECIFIC REASON, NOT A HOUSE SENTENCE. This branch used to
+      // hardcode "This pool has no candles on this timeframe yet" for every way
+      // a source can answer with nothing — so a token NEITHER index has a pair
+      // for was told its pool had no candles, which asserts a pool that does not
+      // exist. GT's own sentence is preferred when GT looked (its pool ids are
+      // what the rest of the page means by "pool"); DexScreener's is the answer
+      // when GT was never asked. The generic line is the last resort, and it is
+      // now only reached when a source really did find a pool and it really is
+      // empty.
+      why:
+        (gt.answered ? gt.why : null) ??
+        (dsAnswered ? ds!.why : null) ??
+        "This pool has no candles on this timeframe yet.",
+      source: null,
+      sourceUrl: null,
+    };
+
+  // Neither could be asked. BOTH reasons travel: "GeckoTerminal 429" alone,
+  // with a second source silently unreachable behind it, is the shrug this
+  // endpoint has already been fixed for once.
+  const reasons = [gt.why, ds?.why].filter(Boolean).join("; ");
+  return fail(tf, `Couldn't read the chart just now (${reasons || "no source answered"}).`, network, gt.pool);
 }
 
 export async function GET(req: NextRequest) {
@@ -145,12 +288,17 @@ export async function GET(req: NextRequest) {
   const network = networkOf(chain);
   if (!network) return NextResponse.json(fail(tf, "We don't have a chart source for that chain yet."));
   const pool = safeAddress(hint) ? hint : null;
+  // Anything unrecognised is `null` — the normal both-sources answer. This
+  // value reaches a cache key, so it can never be free text.
+  const pin = pinOf(q.get("source"));
 
   try {
     // Keyed on the POOL HINT as well as the token: two callers asking for the
     // same token with different hints must not be served each other's answer.
-    const key = `ohlcv:${chain}:${address}:${pool ?? "-"}:${tf}`;
-    const out = await cached(key, TF[tf].ttlMs, () => load(chain, address, tf, pool));
+    // …and on the SOURCE PIN, or a `chart:check` run forcing one upstream
+    // would leave its answer in the cache for every ordinary visitor.
+    const key = `ohlcv:${chain}:${address}:${pool ?? "-"}:${tf}:${pin ?? "auto"}`;
+    const out = await cached(key, TF[tf].ttlMs, () => load(chain, address, tf, pool, pin));
     return NextResponse.json(out);
   } catch (err) {
     // Never cached, so the next poll re-asks: this is "GeckoTerminal did not

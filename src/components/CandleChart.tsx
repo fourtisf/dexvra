@@ -33,6 +33,15 @@ interface Feed {
   pool: string | null;
   candles: Candle[];
   why: string | null;
+  /** Which upstream drew this — GeckoTerminal, or the DexScreener fallback that
+   *  answers while GT's shared rate-limit cooldown holds. Shown, because
+   *  otherwise a chart drawn by the fallback and a chart drawn by GT are
+   *  identical from outside, and "the second source works" and "the second
+   *  source never fires" are the same picture. */
+  source?: "geckoterminal" | "dexscreener" | null;
+  /** "Open it at the source", built by the route: `pool` is a GeckoTerminal
+   *  pool id and a DexScreener pair address in that field would 404. */
+  sourceUrl?: string | null;
 }
 
 type Status = "loading" | "ok" | "none" | "error";
@@ -249,7 +258,13 @@ export function CandleChart({
     setHover(i >= 0 && i < geo.view.length ? i : null);
   };
 
-  const gtLink = feed?.network && feed?.pool ? `https://www.geckoterminal.com/${feed.network}/pools/${feed.pool}` : gtUrl ?? null;
+  // The route names the link now, because only it knows which source answered.
+  // The GT-shaped fallback stays for an older cached response and for the
+  // caller-supplied `gtUrl`.
+  const srcLink =
+    feed?.sourceUrl ??
+    (feed?.network && feed?.pool ? `https://www.geckoterminal.com/${feed.network}/pools/${feed.pool}` : gtUrl ?? null);
+  const srcName = feed?.source === "dexscreener" ? "DexScreener" : "GeckoTerminal";
   // We have candles and cannot draw them: the panel is too small for a chart to
   // mean anything. It must SAY so — the alternative is an empty box that reads
   // exactly like a chart still loading.
@@ -269,6 +284,16 @@ export function CandleChart({
           {/* Only over a chart that is actually drawn: a live dot on a blank
               panel is the reassuring reading of a state that is not. */}
           {status === "ok" && geo != null && <span className="ck-live" title="Refreshing while you watch" />}
+          {/* The fallback SAYS it is the fallback. Named only when it is not
+              the usual source, so the ordinary chart stays uncluttered — but a
+              chart drawn from DexScreener resolved its own pair independently
+              of GeckoTerminal's pool, and a reader comparing two screenshots
+              is owed the reason they can differ. */}
+          {status === "ok" && geo != null && feed?.source === "dexscreener" && (
+            <span className="ck-src" title="GeckoTerminal is rate limited right now — these candles are DexScreener's">
+              via DexScreener
+            </span>
+          )}
         </div>
         <div className="ck-tfs" role="tablist" aria-label="Chart timeframe">
           {TIMEFRAMES.map((k) => (
@@ -311,9 +336,9 @@ export function CandleChart({
                 token (no pool yet), the other about us (we could not read it). */}
             <div className="ck-empty-k">{status === "error" ? "Chart unavailable right now" : "No candles yet"}</div>
             <p className="ck-empty-p">{feed?.why ?? "Couldn't read the chart just now."}</p>
-            {gtLink && (
-              <a className="ck-empty-a" href={gtLink} target="_blank" rel="noopener noreferrer">
-                Open the pool on GeckoTerminal ↗
+            {srcLink && (
+              <a className="ck-empty-a" href={srcLink} target="_blank" rel="noopener noreferrer">
+                Open the pool on {srcName} ↗
               </a>
             )}
           </div>

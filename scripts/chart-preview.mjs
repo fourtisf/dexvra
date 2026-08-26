@@ -89,8 +89,18 @@ const stub = async (page, mode) => {
     if (m === "none")
       return r.fulfill({ json: { ok: false, network: CHAIN, pool: null, tf, candles: [], why: "No pool indexed for this token yet — nothing to chart." } });
     if (m === "error")
-      return r.fulfill({ json: { ok: false, network: CHAIN, pool: null, tf, candles: [], why: "Couldn't read the chart just now (GeckoTerminal 429)." } });
-    return r.fulfill({ json: { ok: true, network: CHAIN, pool: POOL, tf, candles: candles(160, STEP[tf] ?? 900), why: null } });
+      return r.fulfill({ json: { ok: false, network: CHAIN, pool: null, tf, candles: [], why: "Couldn't read the chart just now (GeckoTerminal 429 (rate limited); DexScreener 403)." } });
+    // The FALLBACK, drawn. With GeckoTerminal healthy this state never occurs
+    // in a preview run, and it is the one state where the panel says something
+    // extra — so it has to be looked at deliberately or the chip ships unseen.
+    if (m === "dexscreener")
+      return r.fulfill({
+        json: {
+          ok: true, network: CHAIN, pool: null, tf, candles: candles(160, STEP[tf] ?? 900), why: null,
+          source: "dexscreener", sourceUrl: `https://dexscreener.com/${CHAIN}/${POOL}`,
+        },
+      });
+    return r.fulfill({ json: { ok: true, network: CHAIN, pool: POOL, tf, candles: candles(160, STEP[tf] ?? 900), why: null, source: "geckoterminal", sourceUrl: `https://www.geckoterminal.com/${CHAIN}/pools/${POOL}` } });
   });
 };
 
@@ -162,12 +172,53 @@ try {
     check(`the "${m}" state says which it is`, want.test(text), text.split("\n")[0]);
     await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/${file}.png` });
   }
+  // ── the DexScreener fallback, drawn ──────────────────────────────────────
+  //
+  // A chart drawn from the second source and one drawn from GeckoTerminal are
+  // identical from outside, so "the fallback works" and "the fallback never
+  // fires" are the same picture — which is the reassuring reading this repo
+  // keeps paying for. The chip is the only tell, and an unseen chip is how it
+  // ships mispositioned, mis-cased or over the live dot.
+  mode = "dexscreener";
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".ck-svg", { timeout: 20000 });
+  check("the fallback still draws a full chart", (await page.locator(".ck-c").count()) > 20);
+  check("…and SAYS it came from DexScreener", (await page.locator(".ck-src").count()) === 1,
+    (await page.locator(".ck-src").count()) ? await page.locator(".ck-src").innerText() : "no chip");
+  // The chip sits in the header row beside the ticker; if it wrapped or
+  // overflowed, the header is taller than the tab strip it shares a line with.
+  const fits = await page.evaluate(() => {
+    const chip = document.querySelector(".ck-src");
+    const head = document.querySelector(".ck-head");
+    if (!chip || !head) return false;
+    const c = chip.getBoundingClientRect();
+    const h = head.getBoundingClientRect();
+    return c.top >= h.top - 0.5 && c.bottom <= h.bottom + 0.5 && c.width > 20;
+  });
+  check("the source chip sits inside the header row", fits);
+  await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/chart-dexscreener.png` });
   mode = "ok";
 
-  // ── the unlisted page: the same renderer, and never an embed ─────────────
+  // ── the unlisted page: NO chart, and never an embed ──────────────────────
+  //
+  // ⚠️ THIS CHECK WAS STALE, AND IT HAD MADE THE WHOLE SCRIPT USELESS AS A GATE.
+  // It waited for `.unlisted-chart .ck-svg` and asserted "an unlisted token gets
+  // the chart too" — written when it did. The chart was then deliberately
+  // REMOVED on the owner's call ("Kalo token belum listing hapus chartnya"):
+  // this page is reachable by pasting any contract at all, every buy-bot alert
+  // links here, and each visit polled /api/ohlcv for a token nobody listed —
+  // a listed customer's chart competing for GeckoTerminal's ceiling with an
+  // unlisted stranger's. Charting is what a listing buys.
+  //
+  // So the assertion has been failing on every run since, which means this
+  // script exited non-zero every time and nobody could use it to gate anything.
+  // A check that asserts a deleted feature is worse than no check: it trains
+  // the reader to ignore the red. It asserts the DECISION now, and
+  // `unlisted.test.ts` pins the same thing from the other side.
   await page.goto(`${BASE}/token/${CHAIN}/9unknown11111111111111111111111111111111111`, { waitUntil: "networkidle" });
-  await page.waitForSelector(".unlisted-chart .ck-svg", { timeout: 20000 });
-  check("an unlisted token gets the chart too", (await page.locator(".unlisted-chart .ck-c").count()) > 20);
+  await page.waitForSelector(".unlisted-wrap, .unlisted", { timeout: 20000 }).catch(() => {});
+  check("an unlisted token gets NO chart — charting is what a listing buys", (await page.locator(".ck-svg").count()) === 0);
+  check("…but it still shows the price it got free with the preview", /\$/.test(await page.locator("body").innerText()));
   check("and no iframe anywhere on it", (await page.locator("iframe").count()) === 0);
   await page.screenshot({ path: `${SHOT_DIR}/unlisted.png`, fullPage: true });
 

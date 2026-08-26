@@ -55,9 +55,16 @@ test("⚠️ every answer names the BUILD that produced it", () => {
   // already carries it for the same reason.
   assert.match(ROUTE, /build: string;/, "it is part of the response shape, not a debug flag");
   assert.match(ROUTE, /process\.env\.NEXT_PUBLIC_BUILD/);
-  const responses = (ROUTE.match(/\{ ok: (?:true|false), /g) ?? []).length;
+  // ⚠️ THE PROPERTY, NOT THE BRACE. This used to match `{ ok: true, ` — the
+  // one-line spelling — and count `fail()` separately as the `+1`. A response
+  // literal broken across lines carried no `{ ok:` on it, so the guard could
+  // not see it at all: an UNSTAMPED multi-line response would have passed,
+  // which is the one shape this test exists to catch. Counting the property
+  // covers both spellings and drops the special case.
+  const responses = (ROUTE.match(/\bok: (?:true|false),/g) ?? []).length;
   const stamped = (ROUTE.match(/build: BUILD/g) ?? []).length;
-  assert.equal(stamped, responses + 1, "every hand-built response, plus fail() — an unstamped one is the one you would be reading");
+  assert.ok(responses >= 3, "the route builds at least the ok / no-candles / fail responses");
+  assert.equal(stamped, responses, "every hand-built response — an unstamped one is the one you would be reading");
 });
 
 test("⚠️ the reason an upstream gave is never dropped on the way to the panel", () => {
