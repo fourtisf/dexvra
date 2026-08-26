@@ -26,9 +26,21 @@ test("an API key switches the base AND sends the header — the only real way pa
   // Same variable the bot reads, so one line in the server's env serves both
   // processes on that IP.
   assert.equal(gtBaseFor(""), "https://api.geckoterminal.com/api/v2");
-  assert.equal(gtBaseFor("k3y"), "https://pro-api.coingecko.com/api/v3/onchain");
-  assert.deepEqual(gtHeadersFor("k3y")["x-cg-pro-api-key"], "k3y");
+  // ⚠️ A COINGECKO KEY COMES IN TWO TIERS, ON TWO DIFFERENT HOSTS, and this
+  // used to know only the paid one. The key an operator will actually obtain
+  // first is the FREE Demo key — so "set GECKOTERMINAL_API_KEY" was advice that
+  // would have been refused, and the fix for a rate-limited chart would have
+  // looked like it changed nothing.
+  assert.equal(gtBaseFor("k3y", "", "demo"), "https://api.coingecko.com/api/v3/onchain");
+  assert.equal(gtBaseFor("k3y", "", "pro"), "https://pro-api.coingecko.com/api/v3/onchain");
+  assert.equal(gtHeadersFor("k3y", "demo")["x-cg-demo-api-key"], "k3y");
+  assert.equal(gtHeadersFor("k3y", "pro")["x-cg-pro-api-key"], "k3y");
+  // …and never the wrong header for the tier, which is how a good key reads as
+  // a bad one.
+  assert.ok(!("x-cg-pro-api-key" in gtHeadersFor("k3y", "demo")));
+  assert.ok(!("x-cg-demo-api-key" in gtHeadersFor("k3y", "pro")));
   assert.ok(!("x-cg-pro-api-key" in gtHeadersFor("")), "no empty header when there is no key");
+  assert.ok(!("x-cg-demo-api-key" in gtHeadersFor("")), "…on either tier");
 });
 
 test("an explicit base pins the host and skips the choice", () => {

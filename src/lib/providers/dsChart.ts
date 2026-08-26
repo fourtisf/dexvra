@@ -285,14 +285,25 @@ async function getJson(url: string, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
       signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
+    // ⚠️ NAME THE HOST. This client talks to TWO different DexScreener hosts —
+    // `api.` for the DOCUMENTED pair lookup and `io.` for the guessed chart
+    // endpoint — and a bare "DexScreener 403" cannot say which refused us.
+    // Those are completely different problems: the first would mean the whole
+    // API is unreachable from this box, the second means only the guessed
+    // shape is, which is a .env line. A live 403 was reported and neither the
+    // panel nor `chart:check` could tell them apart, so an operator with a
+    // working `curl` to `api.dexscreener.com` had no way to see that the
+    // refusal was coming from somewhere else entirely. "Never discard the
+    // reason", one host over.
+    const host = new URL(url).host;
     if (res.status === 429) {
       dsArmCooldown();
       void res.body?.cancel().catch(() => {});
-      return { ok: false, status: 429, body: null, why: "DexScreener 429 (rate limited)" };
+      return { ok: false, status: 429, body: null, why: `${host} 429 (rate limited)` };
     }
     if (!res.ok) {
       void res.body?.cancel().catch(() => {});
-      return { ok: false, status: res.status, body: null, why: `DexScreener ${res.status}` };
+      return { ok: false, status: res.status, body: null, why: `${host} ${res.status}` };
     }
     return { ok: true, status: res.status, body: await res.json(), why: null };
   } catch (err) {

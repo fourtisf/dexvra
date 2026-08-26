@@ -27,20 +27,61 @@
  *  server's env serves both processes. Unset — the default — nothing changes. */
 const GT_KEY = String(process.env.GECKOTERMINAL_API_KEY || "").trim();
 
-/** The Pro base a key unlocks, and the free one otherwise. `GECKOTERMINAL_API_BASE`
- *  pins a host and skips the choice — the same override-and-skip contract the
- *  launchpad registry uses. */
-export const gtBaseFor = (key: string, override = ""): string =>
+/**
+ * ⚠️ A COINGECKO KEY COMES IN TWO TIERS, AND THEY ARE DIFFERENT HOSTS.
+ *
+ * This used to assume every key was a PRO key: pro base, `x-cg-pro-api-key`.
+ * The key an operator will realistically get first is the **free Demo** one —
+ * it costs nothing, and it answers on `api.coingecko.com` with
+ * `x-cg-demo-api-key`. Handed to the pro branch it is simply refused, so the
+ * one line that was supposed to fix a rate-limited chart would have looked like
+ * it changed nothing at all. "Set GECKOTERMINAL_API_KEY" is only advice if the
+ * key an operator can actually obtain is one this code accepts.
+ *
+ * And the Demo key is not a small win here: its ~30 calls/min are counted PER
+ * KEY, not per IP. This box's whole problem is that the web app and the bot
+ * suite split ONE IP's allowance — a Demo key gives the website its own.
+ *
+ * The tier is DISCOVERED, not demanded (`v4.js`'s rule): the two key formats
+ * are indistinguishable, so a key is tried on one tier and, if that tier
+ * refuses it with a 401/403, once on the other — and the answer is remembered
+ * for the process. `GECKOTERMINAL_API_TIER=demo|pro` pins it and skips the
+ * discovery, the same override-and-skip contract as everything else here.
+ */
+export type GtTier = "demo" | "pro";
+const TIER_ENV = String(process.env.GECKOTERMINAL_API_TIER || "").trim().toLowerCase();
+const PINNED_TIER: GtTier | null = TIER_ENV === "demo" || TIER_ENV === "pro" ? TIER_ENV : null;
+
+export const gtBaseForTier = (tier: GtTier): string =>
+  tier === "pro" ? "https://pro-api.coingecko.com/api/v3/onchain" : "https://api.coingecko.com/api/v3/onchain";
+
+/** The base for a given key. `GECKOTERMINAL_API_BASE` pins a host and skips the
+ *  choice — the same override-and-skip contract the launchpad registry uses. */
+export const gtBaseFor = (key: string, override = "", tier: GtTier = "demo"): string =>
   override.trim().replace(/\/+$/, "") ||
-  (key.trim() ? "https://pro-api.coingecko.com/api/v3/onchain" : "https://api.geckoterminal.com/api/v2");
+  (key.trim() ? gtBaseForTier(tier) : "https://api.geckoterminal.com/api/v2");
 
-export const gtHeadersFor = (key: string): Record<string, string> =>
-  key.trim()
-    ? { accept: "application/json;version=20230302", "x-cg-pro-api-key": key.trim() }
-    : { accept: "application/json;version=20230302" };
+export const gtHeadersFor = (key: string, tier: GtTier = "demo"): Record<string, string> => {
+  const accept = { accept: "application/json;version=20230302" };
+  if (!key.trim()) return accept;
+  return { ...accept, [tier === "pro" ? "x-cg-pro-api-key" : "x-cg-demo-api-key"]: key.trim() };
+};
 
-export const GT_BASE = gtBaseFor(GT_KEY, String(process.env.GECKOTERMINAL_API_BASE || ""));
-export const GT_HEADERS: Record<string, string> = gtHeadersFor(GT_KEY);
+const BASE_OVERRIDE = String(process.env.GECKOTERMINAL_API_BASE || "");
+// The tier currently believed correct. Starts at the pin, or at `demo` — the
+// free one, which is what an operator following the advice will have.
+let tier: GtTier = PINNED_TIER ?? "demo";
+/** Whether the OTHER tier is still worth trying once. A pinned tier is never
+ *  second-guessed: an operator who said which they have is not overruled. */
+let tierUnsettled = PINNED_TIER === null;
+
+export const gtTier = (): GtTier => tier;
+export const GT_BASE = gtBaseFor(GT_KEY, BASE_OVERRIDE, tier);
+export const GT_HEADERS: Record<string, string> = gtHeadersFor(GT_KEY, tier);
+/** Live values — GT_BASE/GT_HEADERS are captured at import for the boot line and
+ *  the tests, but a request must read whatever the discovery settled on. */
+const baseNow = () => gtBaseFor(GT_KEY, BASE_OVERRIDE, tier);
+const headersNow = () => gtHeadersFor(GT_KEY, tier);
 
 /** Whether a key is configured. Reported by /api/health-style checks and by the
  *  boot line — "is a key set" is the fact worth printing; WHICH key it is, is a
@@ -107,9 +148,9 @@ export function gtBanner(): void {
   console.log(
     `[gt] ${
       GT_KEYED
-        ? "API key set"
-        : "PUBLIC free tier (~30 req/min per IP, shared with the bot suite on this box) — set GECKOTERMINAL_API_KEY to raise it"
-    } · base ${GT_BASE}`,
+        ? `API key set · ${PINNED_TIER ? `${PINNED_TIER.toUpperCase()} tier (pinned)` : `trying the ${tier.toUpperCase()} tier first, the other on a 401/403`} — the allowance is counted PER KEY, not per IP`
+        : "PUBLIC free tier (~30 req/min per IP, shared with the bot suite on this box) — set GECKOTERMINAL_API_KEY to raise it (a free CoinGecko Demo key works)"
+    } · base ${baseNow()}`,
   );
 }
 
@@ -159,7 +200,7 @@ export async function gtGet<T = unknown>(path: string, params?: Record<string, s
     return { ok: false, status: 0, reason: `rate limited — cooling down for ${Math.ceil(gtCooldownLeftMs() / 1000)}s`, body: null };
 
   const qs = params ? new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : "";
-  const url = `${GT_BASE}${path}${qs ? `?${qs}` : ""}`;
+  const url = `${baseNow()}${path}${qs ? `?${qs}` : ""}`;
   await slot();
   // Re-checked AFTER the gap: a request that waited its turn may have been
   // overtaken by a 429 armed by whatever went out ahead of it, and firing it
@@ -168,7 +209,37 @@ export async function gtGet<T = unknown>(path: string, params?: Record<string, s
     return { ok: false, status: 0, reason: `rate limited — cooling down for ${Math.ceil(gtCooldownLeftMs() / 1000)}s`, body: null };
 
   try {
-    const res = await fetch(url, { headers: GT_HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+    const res = await fetch(url, { headers: headersNow(), signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+    // ⚠️ THE KEY WAS REFUSED — TRY THE OTHER TIER ONCE, THEN REMEMBER.
+    //
+    // A free Demo key on the Pro host and a Pro key on the Demo host both come
+    // back 401/403, and from the panel that is indistinguishable from "the key
+    // is wrong". Since the two key formats cannot be told apart, the honest
+    // move is to ask the other host rather than to demand the operator know
+    // which they hold — `v4.js` discovers its PoolManager for the same reason.
+    // Only ONCE, and only while unsettled: a key that both hosts refuse really
+    // is wrong, and retrying it for ever would double every request.
+    if (GT_KEY && tierUnsettled && (res.status === 401 || res.status === 403)) {
+      void res.body?.cancel().catch(() => {});
+      tier = tier === "demo" ? "pro" : "demo";
+      tierUnsettled = false;
+      const retried = await fetch(`${baseNow()}${path}${qs ? `?${qs}` : ""}`, {
+        headers: headersNow(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        cache: "no-store",
+      });
+      if (retried.ok) {
+        console.log(`[gt] API key accepted on the ${tier.toUpperCase()} tier — set GECKOTERMINAL_API_TIER=${tier} to skip this probe`);
+        return { ok: true, status: retried.status, reason: null, body: (await retried.json()) as T };
+      }
+      void retried.body?.cancel().catch(() => {});
+      return {
+        ok: false,
+        status: retried.status,
+        reason: `GeckoTerminal refused the API key on both tiers (${res.status}/${retried.status}) — check GECKOTERMINAL_API_KEY`,
+        body: null,
+      };
+    }
     if (res.status === 429) {
       const retry = Number(res.headers.get("retry-after"));
       gtArmCooldown(Number.isFinite(retry) && retry > 0 ? Math.min(retry * 1000, 10 * 60_000) : COOLDOWN_MS);
@@ -177,6 +248,18 @@ export async function gtGet<T = unknown>(path: string, params?: Record<string, s
     }
     if (!res.ok) {
       void res.body?.cancel().catch(() => {});
+      // ⚠️ A REFUSED KEY IS NOT A QUOTA PROBLEM, and "GeckoTerminal 403" reads
+      // exactly like one on the panel. Once the tier has settled the probe above
+      // no longer runs, so without this a wrong or expired key would report the
+      // same sentence as a busy minute — and an operator would go on waiting for
+      // a cooldown that is never coming. Name the variable that fixes it.
+      if (GT_KEY && (res.status === 401 || res.status === 403))
+        return {
+          ok: false,
+          status: res.status,
+          reason: `GeckoTerminal refused the API key (${res.status}) — check GECKOTERMINAL_API_KEY`,
+          body: null,
+        };
       return { ok: false, status: res.status, reason: `GeckoTerminal ${res.status}`, body: null };
     }
     return { ok: true, status: res.status, reason: null, body: (await res.json()) as T };

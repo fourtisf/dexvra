@@ -37,12 +37,27 @@ test("⚠️ the GT banner no longer fires from module scope", () => {
   const body = code(GT);
   assert.match(body, /export function gtBanner\(\)/);
   const outsideFn = body.slice(0, body.indexOf("export function gtBanner"));
+  // ⚠️ THE PROPERTY IS "NOTHING LOGS AT IMPORT TIME", not "there is exactly one
+  // console.log in the file". The count was a proxy for it and broke the moment
+  // a legitimate diagnostic was added INSIDE a request path — which is not the
+  // bug this guards. Every log must sit inside a function; a bare one at module
+  // scope is the one that fires on import.
   assert.ok(!/console\.log/.test(outsideFn), "nothing logs at import time");
-  assert.equal((body.match(/console\.log/g) ?? []).length, 1, "one printer, called by the hook");
+  const moduleScope = body.replace(/(?:export\s+)?(?:async\s+)?function[\s\S]*?\n}/g, "");
+  assert.ok(!/console\.log/.test(moduleScope), "a console.log outside every function fires on import");
 });
 
-test("the key itself is never printed — this line goes to pm2's log", () => {
+test("the key itself is never printed — these lines go to pm2's log", () => {
+  // ⚠️ THE PROPERTY IS ABOUT WHAT IS PRINTED, not about where it sits in the
+  // file. This used to slice "everything after gtBanner" and forbid GT_KEY in
+  // it — so it failed on an ordinary truthiness check further down that prints
+  // nothing, and it would have MISSED a console.log added above the banner.
+  // Every printed line in the file is checked instead: `GT_KEYED` (a boolean)
+  // is fine, the key itself never is.
+  const printed = [...code(GT).matchAll(/console\.log\(([\s\S]*?)\);/g)].map((m) => m[1]);
+  assert.ok(printed.length > 0, "no printed line found — this guard is describing nothing");
+  for (const line of printed)
+    assert.ok(!/GT_KEY\b(?!ED)/.test(line), `a printed line references the key itself: ${line.slice(0, 120)}`);
   const banner = GT.slice(GT.indexOf("export function gtBanner"));
-  assert.ok(!/GT_KEY\b(?!ED)/.test(banner), "only whether a key is set, never which");
-  assert.match(banner, /GT_KEYED/);
+  assert.match(banner, /GT_KEYED/, "the banner still reports WHETHER a key is set");
 });
