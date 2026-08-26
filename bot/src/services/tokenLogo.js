@@ -257,40 +257,75 @@ async function resolveLogo(chain, address, { deps = {} } = {}) {
         return null;
       });
 
-  // Asked CONCURRENTLY — independent services, and a cleanup walks hundreds of
-  // rows, so serial timeouts per token are the difference between a run and an
-  // afternoon.
-  const [ds, gt2, pad, cg, pt] = await Promise.all([
+  /** Try candidates in order; the first that FETCHES as a real image wins. */
+  const firstImage = async (cands) => {
+    for (const [source, url] of cands) {
+      if (!url) continue;
+      tried.push(source);
+      if (await verify(url)) return { ok: true, url, source, tried, unreachable };
+    }
+    return null;
+  };
+
+  // ── WAVE 1 — the sources that cost NOTHING ────────────────────────────────
+  //
+  // ⚠️ THE METERED SOURCES ARE NOT IN HERE, AND THAT IS THE WHOLE POINT.
+  //
+  // This used to ask all five concurrently for EVERY row, GeckoTerminal
+  // included — so a token whose logo DexScreener already had still spent a GT
+  // request. Across 463 listings that is 463 requests into a ~30/min per-IP
+  // ceiling shared with the running bot, and the operator watched their own
+  // buy alerts stop: "GeckoTerminal backing off for 120s — Buy alerts are
+  // paused process-wide", over and over, while a cleanup script ate the
+  // quota. The website's resolver has always deferred GT for exactly this
+  // reason (src/lib/providers/tokenLogo.ts); the bot's never learnt it.
+  //
+  // DexScreener has no tight limit, the launchpad (pump.fun and friends) is
+  // free and has artwork from the token's first minute, pools.trade is free,
+  // and Trust Wallet is a GitHub CDN path we construct. Most rows are answered
+  // here and never reach wave 2 at all.
+  const [ds, pad, pt] = await Promise.all([
     ask('dexscreener', () => dsInfo(chain, address)),
+    ask('launchpad', () => (padInfo ? padInfo(chain, address) : null)),
+    ask('poolstrade', () => (ptInfo ? ptInfo(chain, address) : null)),
+  ]);
+  const free = await firstImage([
+    ['dexscreener', httpsUrl(ds && ds.logoUrl)],
+    ['launchpad', httpsUrl(pad && pad.logoUrl)],
+    ['poolstrade', httpsUrl(pt && pt.logoUrl)],
+    ['trustwallet', httpsUrl(trustWallet(chain, address))],
+  ]);
+  if (free) return free;
+
+  // ── WAVE 2 — the METERED ones, only for what wave 1 could not answer ──────
+  //
+  // GeckoTerminal cannot simply be dropped, however much it costs: on
+  // ROBINHOOD it is one of only two places the artwork can be (see the
+  // gtRedundant rule below), so never asking it would turn "we did not look"
+  // into a permanent `undecided` for that whole chain. Asking it LAST is the
+  // fix; not asking it is a different bug.
+  const [gt2, cg] = await Promise.all([
     // ⚠️ GeckoTerminal's 429 arms a PROCESS-WIDE cooldown, after which every
     // read returns instantly with nothing. Calling it anyway and reading that
     // as "GT has no logo" is exactly how one rate limit deleted eighty-three
     // rows' worth of evidence.
     gtDown() ? Promise.resolve(unreachable.push('geckoterminal: cooldown') && null) : ask('geckoterminal', () => gtInfo(chain, address)),
-
-    ask('launchpad', () => (padInfo ? padInfo(chain, address) : null)),
     ask('coingecko', () => cgInfo(chain, address)),
-    ask('poolstrade', () => (ptInfo ? ptInfo(chain, address) : null)),
   ]);
   if (cg && cg.ok === false) unreachable.push(`coingecko: ${cg.why}`);
   if (gt2 && gt2.ok === false) unreachable.push(`geckoterminal: ${gt2.why}`);
-
-  const candidates = [
-    ['dexscreener', httpsUrl(ds && ds.logoUrl)],
+  const metered = await firstImage([
     // `.url` from gtLogo; `.logoUrl` is the shape a caller's own stub may use.
     ['geckoterminal', httpsUrl(gt2 && (gt2.url || gt2.logoUrl))],
-    ['launchpad', httpsUrl(pad && pad.logoUrl)],
     ['coingecko', httpsUrl(cg && cg.url)],
-    ['poolstrade', httpsUrl(pt && pt.logoUrl)],
-    ['trustwallet', httpsUrl(trustWallet(chain, address))],
-    ['dexscreener-cdn', httpsUrl(cdnGuess(chain, address))],
-  ];
+  ]);
+  if (metered) return metered;
 
-  for (const [source, url] of candidates) {
-    if (!url) continue;
-    tried.push(source);
-    if (await verify(url)) return { ok: true, url, source, tried, unreachable };
-  }
+  // ── WAVE 3 — a CONVENTION, never an answer ────────────────────────────────
+  // A path we construct rather than one anybody gave us, so it stays last: a
+  // guess must always lose to an answer.
+  const guessed = await firstImage([['dexscreener-cdn', httpsUrl(cdnGuess(chain, address))]]);
+  if (guessed) return guessed;
 
   // ⚠️ `ok` is the whole point of this return shape. `ok:true, url:null` means
   // the sources that MATTER answered and none had artwork — the only state in

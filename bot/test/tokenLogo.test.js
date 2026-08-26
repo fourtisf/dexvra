@@ -336,3 +336,85 @@ test("the cleanup backs off on the NAMED blocker, and holds a row back once", ()
     "the backoff must not key on one service's clock while another blocks",
   );
 });
+
+// ── The metered sources are asked LAST, and usually not at all ──────────────
+//
+// "jangan ambil dari gecko terminal ambil dri dexscrener updated pumpfun dll"
+// (2026-08-26), sent while the operator watched their own buy alerts stop:
+//
+//   WARN [buybot] GeckoTerminal backing off for 120s — HTTP 429 (rate
+//   limited). Buy alerts are paused process-wide until it lifts.
+//
+// …printed over and over while `listings:fix` walked 463 rows. Every row asked
+// all five sources CONCURRENTLY, so a token whose logo DexScreener already had
+// still spent a GeckoTerminal request out of a ~30/min per-IP ceiling shared
+// with the running bot. The cleanup was starving production.
+
+test("⚠️ a row DexScreener can answer never touches GeckoTerminal or CoinGecko", async () => {
+  const asked = [];
+  const d = deps({
+    dsInfo: async () => (asked.push("ds"), { logoUrl: "https://ds/a.png" }),
+    gtInfo: async () => (asked.push("gt"), { logoUrl: "https://gt/b.png" }),
+    cgInfo: async () => (asked.push("cg"), { ok: true, url: "https://cg/c.png" }),
+  });
+  const hit = await resolveLogo("bsc", "0xabc", { deps: d });
+  assert.strictEqual(hit.source, "dexscreener");
+  assert.ok(!asked.includes("gt"), "GeckoTerminal was asked for a row it was not needed for");
+  assert.ok(!asked.includes("cg"), "CoinGecko was asked for a row it was not needed for");
+});
+
+test("…and so does one the LAUNCHPAD can answer — pump.fun has artwork from minute one", async () => {
+  const asked = [];
+  const d = deps({
+    dsInfo: async () => (asked.push("ds"), null),
+    padInfo: async () => (asked.push("pad"), { logoUrl: "https://pump/c.png" }),
+    gtInfo: async () => (asked.push("gt"), { logoUrl: "https://gt/b.png" }),
+    cgInfo: async () => (asked.push("cg"), { ok: true, url: "https://cg/c.png" }),
+  });
+  const hit = await resolveLogo("solana", "mint", { deps: d });
+  assert.strictEqual(hit.source, "launchpad");
+  assert.deepStrictEqual(asked.sort(), ["ds", "pad"], `the metered sources were asked anyway: ${asked}`);
+});
+
+test("only a row NOTHING free can answer reaches the metered ones", async () => {
+  const asked = [];
+  const d = deps({
+    dsInfo: async () => (asked.push("ds"), null),
+    padInfo: async () => (asked.push("pad"), null),
+    ptInfo: async () => (asked.push("pt"), null),
+    gtInfo: async () => (asked.push("gt"), { logoUrl: "https://gt/b.png" }),
+    cgInfo: async () => (asked.push("cg"), { ok: true, url: null }),
+  });
+  const hit = await resolveLogo("bsc", "0xabc", { deps: d });
+  assert.strictEqual(hit.source, "geckoterminal", "GT is still USED where it is the one that has it");
+  assert.ok(asked.includes("gt"), "…so it must still be asked when wave 1 came up empty");
+});
+
+test("⚠️ GeckoTerminal is DEFERRED, never dropped — Robinhood has nowhere else to look", async () => {
+  // Dropping it outright would turn "we did not look" into a permanent
+  // `undecided` for a whole chain: DexScreener does not index Robinhood and
+  // CoinGecko has no platform id for it. Asking it last is the fix; not
+  // asking it is a different bug.
+  const asked = [];
+  const d = deps({
+    dsInfo: async () => null,
+    padInfo: async () => null,
+    ptInfo: async () => null,
+    gtInfo: async () => (asked.push("gt"), { logoUrl: "https://gt/rh.png" }),
+  });
+  const hit = await resolveLogo("robinhood", "0xrh", { deps: d });
+  assert.ok(asked.includes("gt"), "Robinhood must still reach GeckoTerminal");
+  assert.strictEqual(hit.source, "geckoterminal");
+});
+
+test("the CONVENTION stays last — a guess must lose to an answer", async () => {
+  const d = deps({
+    dsInfo: async () => null,
+    padInfo: async () => null,
+    ptInfo: async () => null,
+    gtInfo: async () => null,
+    cgInfo: async () => ({ ok: true, url: "https://cg/real.png" }),
+  });
+  const hit = await resolveLogo("bsc", "0xabc", { deps: d });
+  assert.strictEqual(hit.source, "coingecko", "the CDN path outranked a source that actually answered");
+});

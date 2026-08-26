@@ -1878,6 +1878,46 @@ cd bot && npm run listings:fix -- --logos-only --keep --apply    # fill them; de
 cd bot && node scripts/run-tests.js test/fixListingsKeep.test.js # 6 tests, no network
 ```
 
+### "jangan ambil dari gecko terminal" — the cleanup was starving the buy bot
+
+Sent while the operator watched their own production stop, over and over, in
+the middle of the logo run:
+
+```
+WARN [buybot] GeckoTerminal backing off for 120s — HTTP 429 (rate limited).
+Buy alerts are paused process-wide until it lifts.
+```
+
+`resolveLogo` asked all five sources **concurrently, for every row**. So a token
+whose artwork DexScreener already had still spent a GeckoTerminal request —
+and 463 listings is 463 requests into a ~30/min **per-IP** ceiling shared with
+the running bot. The cleanup was not slow; it was eating the thing it shares.
+
+- **Two waves. The free sources first.** DexScreener (no tight limit), the
+  launchpad (pump.fun and friends, artwork from the token's first minute),
+  pools.trade, and Trust Wallet's constructed GitHub path. Most rows are
+  answered here and **never reach the metered ones at all**.
+- ⚠️ **GeckoTerminal is DEFERRED, never dropped.** On ROBINHOOD it is one of
+  only two places the artwork can be — DexScreener does not index that chain
+  and CoinGecko has no platform id for it — so never asking it would turn "we
+  did not look" into a permanent `undecided` for a whole chain. Asking it last
+  is the fix; not asking it is a different bug.
+- **The site's resolver has always done this** (`src/lib/providers/tokenLogo.ts`
+  states the rule in its own header: GT "is only asked when 1 and 2 came up
+  empty"). The bot's never learnt it — two resolvers, one lesson, learnt once.
+- **The CONVENTION stays last of all.** `dexscreener-cdn` is a path we build,
+  not an answer anybody gave: a guess must always lose to an answer.
+- Mutation-tested — restoring the single concurrent wave fails four tests, two
+  of them tests that predate this change.
+
+```bash
+cd bot && node scripts/run-tests.js test/tokenLogo.test.js   # 28 tests, no network
+```
+
+**Config a fix depends on:** nothing — but `GECKOTERMINAL_API_KEY` in
+`bot/.env` is still the only thing that raises the real ceiling rather than
+dividing it, and a cleanup over hundreds of rows is exactly when that shows.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
