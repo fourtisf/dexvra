@@ -1967,6 +1967,49 @@ npm test                                                      # src/lib/format.t
 cd bot && node scripts/run-tests.js test/fmtCapZero.test.js
 ```
 
+### "Chart unavailable right now" — and four files owning one number
+
+The token page answered `Couldn't read the chart just now (rate limited —
+cooling down for 88s)`, and the ask was "semua token chartnya tersedia".
+
+⚠️ **That ask cannot be fully met on the free tier, and saying otherwise would
+be the reassuring reading.** A PRICE has two free sources; a CANDLE has one.
+GeckoTerminal is the only free OHLCV for an arbitrary DEX token, its ceiling is
+~30 requests a minute counted PER IP, and this box splits that between the bot
+suite and the web app. One 429 anywhere arms a process-wide cooldown that
+blanks EVERY chart on the site until it lifts. `GECKOTERMINAL_API_KEY` is the
+only thing that raises that ceiling rather than dividing it; everything else
+reduces how often it is hit.
+
+What was worth fixing is that the app was paying for the same answer repeatedly:
+
+- ⚠️ **`POOL_TTL = 10 * 60_000` was declared in FOUR files** — `providers/index.ts`,
+  `/api/pool`, `/api/ohlcv`, `/api/trades` — and all four built the SAME cache
+  key by hand. Four copies of one number sharing one key means whichever writes
+  last sets the expiry, and raising one of them looks like it works while three
+  others quietly disagree. `poolCache.ts` is the one owner now, beside
+  `topPoolAddress`, which was already the one owner of *which* pool.
+- **A token's deepest pool is not a per-minute fact**, so the TTL is an hour
+  rather than ten minutes. Resolving a pool is a GT request, and every chart for
+  a token whose pool has expired pays it again before it can even ask for
+  candles.
+- **`forgetPool` exists so a longer TTL cannot backfire.** A pool that dies
+  mid-window would otherwise be handed back for the rest of the hour — the exact
+  cost the longer TTL is meant to buy.
+- ⚠️ **The guard test that broke was asserting a LITERAL.** It matched
+  `cache.set(\`pool:…\`, m.poolAddress, POOL_CACHE_TTL)` — so it passed happily
+  on the four-way duplication it was meant to describe, and failed on the fix.
+  It asserts the property now: no file may declare its own pool TTL or build the
+  key by hand.
+
+```bash
+npm test    # gtBudget — the one-owner guard, and the rest of the GT budget
+```
+
+**Config a fix depends on:** `GECKOTERMINAL_API_KEY` in the repo-root `.env`
+for the site, and `bot/.env` for the bot. Until one is set, 30/min is 30/min and
+a busy minute still ends in a cooldown — this only makes the minute go further.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

@@ -1,5 +1,5 @@
 import { CHAINS } from "@/config/chains";
-import { cache, cached } from "@/lib/cache";
+import { cached } from "@/lib/cache";
 import {
   SEED_ROWS,
   rowToBoardToken,
@@ -26,6 +26,7 @@ import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 import { fetchIndexedMarket } from "./indexedMarket";
 import { fillFromLastGood } from "./lastGood";
 import { pickLogo } from "./tokenLogo";
+import { rememberPool } from "./poolCache";
 import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
 import { setResolvedLogo } from "@/lib/store";
 
@@ -36,7 +37,6 @@ import { setResolvedLogo } from "@/lib/store";
 const PRICE_TTL = 60_000;
 /** Matches the TTL /api/pool, /api/ohlcv and /api/trades read that key with —
  *  one number, or the board would plant an entry they expire differently. */
-const POOL_CACHE_TTL = 10 * 60_000;
 const FNG_TTL = 10 * 60_000;
 
 const esc = (s: string) =>
@@ -169,7 +169,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     // cheapest saving available anywhere in this app.
     if (m?.poolAddress) {
       const net = CHAINS[t.chain]?.geckoNetwork;
-      if (net) cache.set(`pool:${net}:${t.address}`, m.poolAddress, POOL_CACHE_TTL);
+      if (net) rememberPool(net, t.address, m.poolAddress);
     }
 
     if (!m) return { ...t, logoUrl: logo.url }; // keep fallback figures for this listing

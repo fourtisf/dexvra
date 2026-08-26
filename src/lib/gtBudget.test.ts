@@ -41,8 +41,31 @@ test("a hidden tab stops spending the site's quota", () => {
 test("the board plants the pool it already knows where the chart routes look", () => {
   // GT returns the top pool with every board refresh; /api/ohlcv and
   // /api/trades were each paying a separate lookup for the same answer.
-  assert.match(PIPE, /cache\.set\(`pool:\$\{net\}:\$\{t\.address\}`, m\.poolAddress, POOL_CACHE_TTL\)/);
-  assert.match(PIPE, /const POOL_CACHE_TTL = 10 \* 60_000;/, "the same TTL the readers use");
+  assert.match(PIPE, /rememberPool\(net, t\.address, m\.poolAddress\)/);
+});
+
+test("⚠️ ONE owner for the pool cache — four files used to declare their own TTL", () => {
+  // providers/index.ts, /api/pool, /api/ohlcv and /api/trades each declared
+  // `POOL_TTL = 10 * 60_000` and each built the SAME cache key by hand. Four
+  // copies of one number sharing one key means whichever writes last sets the
+  // expiry, and raising one of them looks like it works while three others
+  // quietly disagree. This test replaces one that asserted the literal — a
+  // source scan that passed on the duplication it was meant to describe.
+  const strip = (src: string) => src.replace(/^\s*\/\/.*$/gm, "");
+  for (const [name, src] of Object.entries({
+    "providers/index.ts": PIPE,
+    "api/pool": read("src/app/api/pool/route.ts"),
+    "api/ohlcv": read("src/app/api/ohlcv/route.ts"),
+    "api/trades": ROUTE,
+  })) {
+    const body = strip(src);
+    assert.ok(!/POOL_(?:CACHE_)?TTL\s*=/.test(body), `${name} declares its own pool TTL`);
+    assert.ok(!/`pool:\$\{/.test(body), `${name} builds the pool cache key by hand`);
+  }
+  // …and the owner is where everyone can find it.
+  const OWNER = read("src/lib/providers/poolCache.ts");
+  assert.match(OWNER, /export const POOL_TTL_MS/);
+  assert.match(OWNER, /export const poolKey/);
 });
 
 test("⚠️ a cycle cut short by the cooldown is a FAILED cycle, not a partial one", () => {

@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cached } from "@/lib/cache";
 import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
+import { cachedPool } from "@/lib/providers/poolCache";
 
 export const dynamic = "force-dynamic";
 
-const POOL_TTL = 10 * 60_000;
 
 // Resolve a token's top pool. GeckoTerminal keys candles and trades by POOL
 // address, not token address, so the client needs this to ask for either.
@@ -20,7 +19,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ network: null, poolAddress: null }, { status: 200 });
   }
   try {
-    const poolAddress = await cached(`pool:${network}:${address}`, POOL_TTL, () => topPoolAddress(network, address));
+    const poolAddress = await cachedPool(network, address, () => topPoolAddress(network, address));
     // A null here is an ANSWER: GeckoTerminal indexes no pool for this token.
     return NextResponse.json({ network, poolAddress, why: poolAddress ? null : "No pool indexed for this token yet." });
   } catch (err) {

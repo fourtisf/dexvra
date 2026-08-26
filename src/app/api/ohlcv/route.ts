@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { cached } from "@/lib/cache";
 import { gtGet } from "@/lib/providers/gt";
 import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
+import { cachedPool } from "@/lib/providers/poolCache";
 import { TF, normalizeCandles, tfOf, type Candle, type Timeframe } from "@/lib/ohlcv";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,6 @@ export const dynamic = "force-dynamic";
  * history", which is the shape of every reporting bug in this repo.
  */
 
-const POOL_TTL = 10 * 60_000;
 
 export interface OhlcvResponse {
   ok: boolean;
@@ -96,7 +96,7 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
   // deep pool that has a year of them. Costs one extra request, in the one case
   // where we were about to draw nothing anyway.
   if (candles == null || candles.length === 0) {
-    const resolved = await cached(`pool:${network}:${address}`, POOL_TTL, () => topPoolAddress(network, address));
+    const resolved = await cachedPool(network, address, () => topPoolAddress(network, address));
     if (!resolved) {
       return candles?.length === 0
         ? { ok: false, build: BUILD, network, pool, tf, candles: [], why: "This pool has no candles on this timeframe yet." }

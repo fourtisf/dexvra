@@ -3,6 +3,7 @@ import { CHAINS } from "@/config/chains";
 import { cached } from "@/lib/cache";
 import { gtGet } from "@/lib/providers/gt";
 import { readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
+import { cachedPool } from "@/lib/providers/poolCache";
 import { TRADES_TTL_MS } from "@/lib/trades";
 import type { Trade } from "@/lib/types";
 
@@ -67,7 +68,6 @@ async function fetchTrades(network: string, pool: string): Promise<Trade[]> {
   return fetchOnce(network, pool);
 }
 
-const POOL_TTL = 10 * 60_000;
 
 export async function GET(req: NextRequest) {
   const chain = (req.nextUrl.searchParams.get("chain") ?? "").trim();
@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
   let pool = safeAddress(hint) ? hint : null;
   if (!pool && safeAddress(address)) {
     try {
-      pool = await cached(`pool:${network}:${address}`, POOL_TTL, () => topPoolAddress(network, address));
+      pool = await cachedPool(network, address, () => topPoolAddress(network, address));
     } catch (err) {
       return NextResponse.json({ trades: [], why: `Couldn't read recent trades just now (${readWhy(err)}).` });
     }
