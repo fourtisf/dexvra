@@ -49,20 +49,25 @@ export interface UploadsReader {
 }
 
 /**
- * Which of these logo URLs are uploads whose file is no longer on disk.
+ * Which uploaded FILES a set of logo URLs points at that are no longer on disk.
+ *
+ * ⚠️ IT ANSWERS IN FILE NAMES, NOT IN URLS, and `isLostUpload` below is the
+ * only way to ask about a row. The first cut returned the URLs — trimmed on the
+ * way in — so the caller's `lost.has(row.logoUrl)` compared an untrimmed store
+ * value against a trimmed key and quietly answered "not lost" for exactly the
+ * rows this module exists to find. Two normalisers for one lookup key is the
+ * shape this repo keeps paying for; `mediaName` is now the only one, and both
+ * sides go through it.
  *
  * ONE directory listing, not one stat per row: the board reprices ~200 rows
  * every 60s, and 200 syscalls to answer a question about one directory is 199
  * more than it takes.
- *
- * Returns the URLs verbatim (as passed in) so a caller can match them against
- * the rows it already holds.
  */
 export async function lostUploads(urls: readonly unknown[], reader: UploadsReader): Promise<Set<string>> {
-  const wanted = new Map<string, string>(); // file name → the url that asked for it
+  const wanted = new Set<string>();
   for (const u of urls) {
     const n = mediaName(u);
-    if (n) wanted.set(n, String(u).trim());
+    if (n) wanted.add(n);
   }
   if (wanted.size === 0) return new Set();
 
@@ -75,6 +80,15 @@ export async function lostUploads(urls: readonly unknown[], reader: UploadsReade
   }
 
   const lost = new Set<string>();
-  for (const [name, url] of wanted) if (!present.has(name)) lost.add(url);
+  for (const name of wanted) if (!present.has(name)) lost.add(name);
   return lost;
+}
+
+/** Is THIS row's logo an upload whose file is gone? The one way to ask — see
+ *  the warning on `lostUploads`. Anything that is not one of our own uploads is
+ *  never lost: what an external host does is not knowable from this server. */
+export function isLostUpload(lost: ReadonlySet<string>, url: unknown): boolean {
+  if (lost.size === 0) return false;
+  const n = mediaName(url);
+  return n != null && lost.has(n);
 }

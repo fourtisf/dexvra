@@ -847,9 +847,12 @@ body{
 .ck-auto{font-family:var(--fm);font-size:10.5px;font-weight:700;letter-spacing:.04em;color:var(--amber);background:rgba(231,199,122,.09);border:1px solid rgba(231,199,122,.35);border-radius:8px;padding:4px 8px;cursor:pointer;white-space:nowrap;transition:background .15s}
 .ck-auto:hover{background:rgba(231,199,122,.18)}
 .ck-plot{position:relative;flex:1;min-height:0;cursor:crosshair;touch-action:pan-y}
-/* A mouse drag on the body pans the price scale. The cursor says so while it
-   is happening; the rest of the time the crosshair is the truthful one. */
-.ck-plot.dragging{cursor:grabbing}
+/* A mouse drag on the body pans the price scale, and the cursor says so while
+   it is happening. ⚠️ `:active` rather than a class off `dragRef`: a ref does
+   not re-render, so the class arrived on the first move and then STAYED after
+   the drag ended — a grabbing cursor over a chart nobody is dragging, until
+   something else happened to re-render. */
+.ck-plot:active{cursor:grabbing}
 /* The price gutter, as a control. `touch-action:none` is the one place on this
    chart where a vertical touch drag is taken from the page scroller — it is a
    deliberate, narrow target with a resize cursor on it, and the plot body

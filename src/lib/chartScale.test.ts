@@ -44,6 +44,28 @@ test("…and on a log axis it is readable across the whole panel", () => {
   assert.ok(near(d1, d2, 1e-6), "equal ratios are equal distances");
 });
 
+test("⚠️ the LINEAR auto range never bottoms out at zero on a big move", () => {
+  // The six lines this module replaced floored the padded low at `lo * 0.5` —
+  // "never more than one halving below the lowest price" — and the first cut
+  // dropped it. On a 35x, 6% of the RANGE is bigger than the whole bottom of
+  // it, so the axis bottomed at $0: a third of the panel given to prices that
+  // never existed, squashing the early history further onto the floor, on the
+  // exact chart this module exists for.
+  const s = priceScale(BREAKING, "lin", AUTO, PLOT);
+  assert.ok(s.lo >= BREAKING.lo * 0.5 - 1e-12, `lo was ${s.lo}, expected no lower than ${BREAKING.lo * 0.5}`);
+  assert.ok(s.lo > 0, "and certainly not zero");
+  // …and it still pads normally when the range is not extreme.
+  const ordinary = priceScale({ lo: 100, hi: 110 }, "lin", AUTO, PLOT);
+  assert.ok(ordinary.lo < 100 && ordinary.lo > 99, `padded to ${ordinary.lo}, not floored`);
+});
+
+test("…but the floor is a LINEAR rule and does not bind a log axis", () => {
+  // Log padding is symmetric in RATIO and behaves by itself; applying a linear
+  // floor there would refuse the reader the bottom of their own chart.
+  const s = priceScale(BREAKING, "log", AUTO, PLOT);
+  assert.ok(s.lo < BREAKING.lo && s.lo > 0);
+});
+
 test("a log axis never asks for the log of a non-positive price", () => {
   // Math.log10(0) is -Infinity and one of those turns the whole axis into NaN,
   // which renders as an empty panel that reads exactly like a chart loading.

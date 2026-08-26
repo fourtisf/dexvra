@@ -2147,11 +2147,12 @@ npm run logos:check -- --bad              # only the rows that fail
 npm test    # relist / mediaFile / logoWrite / logoPipeline
 ```
 
-⚠️ **What could NOT be verified here.** The merge is proved end to end against
-a running server (a re-list with no optional fields leaves the logo, the
-socials, the overview and a live trending window untouched, and one carrying a
-new logo still wins). The lost-upload healing is proved by its unit rules and
-its wiring only: it runs inside `loadListedTokens`, which needs at least one
+⚠️ **What could NOT be verified here.** The merge and both takeover locks are
+proved end to end against a running server: a re-list with no optional fields
+leaves the logo, the socials, the overview and a live trending window untouched
+and one carrying a new logo still wins; a public submission for a live listing
+answers 409 and changes nothing. The lost-upload healing is proved by its unit
+rules and its wiring only: it runs inside `loadListedTokens`, which needs at least one
 market provider to answer, and this sandbox has no egress — on a box where
 every provider is down the board falls back to `rowsToBoardTokens` and the
 ladder does not run at all. `npm run logos:check` on the server is how that one
@@ -2162,6 +2163,70 @@ more specific. ⚠️ And the durability hole is still open by design:
 `data/uploads/` is not in the Mongo mirror, so a lost disk still loses the
 uploaded FILES — what changed is that the site now notices and re-resolves
 instead of drawing a monogram for ever.
+
+#### "apakah anda yakin coba audit lgi" — and the worst one was not the logo
+
+Asked straight after the above landed. The answer was no, and the largest thing
+found is in the same function and is not about artwork at all.
+
+⚠️ **ANYONE COULD UNPUBLISH A PAYING CUSTOMER BY TYPING THEIR CONTRACT INTO THE
+PUBLIC FORM.** `/api/submit` is unauthenticated and calls
+`addListing(row, { status: "pending" })`. On a duplicate, `addListing` keeps the
+existing row's id — so the submission never created anything, it **took that row
+over**: the status went back to `pending`, `approvedRows()` filters on
+`approved`, and the listing left the site. Five times per IP per ten minutes.
+Measured, with the route guard removed and only the store lock in place: the
+row came back reading `$STOLEN`. It also replaced the name, and — because a
+public submitter may pick a package tier — handed out whatever tier they asked
+for.
+
+**Two locks, because each one leaves the other's half open.**
+
+- **The route refuses a duplicate outright**, 409, naming which state it is in
+  ("already listed" and "already in the review queue" are different things to
+  the person typing, and neither is their fault). One token, one listing — the
+  rule the bot's own flow states *before* it will take a form
+  (`listed.blockIfListed`). Refusing is the only answer that cannot be turned
+  into an edit of somebody else's row.
+- **`keepStatus` at the store: a create may PROMOTE a row, never demote one.**
+  Demotion is still perfectly possible through `setStatus`, which is what an
+  admin rejecting a listing calls. What may not happen is a row losing its
+  standing as a *side effect* of somebody creating something. It is at the
+  store for the reason `deleteListing`'s guard is: *a caller can be wrong about
+  what it is holding, and the store cannot.*
+- ⚠️ **And the form reported the refusal as a success.** `pay()` fired the
+  request and forgot it (`void fetch(…).catch(() => {})`), wrote the local "My
+  listings" record and went straight to *"Submission received!"* — so a 400, a
+  429, a dead network and now this 409 all showed a project a green tick over a
+  queue entry that does not exist. It awaits the answer now, shows the server's
+  own sentence, and writes the local record only after the server takes it.
+
+And four more, all this file's own recurring shapes:
+
+- ⚠️ **`lostUploads` keyed its answer by trimmed URL and the caller asked with
+  the raw store value.** `lost.has(row.logoUrl)` was therefore false for exactly
+  the rows the module exists to find — and the test written for it **asserted
+  the mismatch and passed**. Two normalisers for one lookup key; `mediaName` is
+  the only one now, and `isLostUpload` is the only way to ask.
+- ⚠️ **`logos:check` would have been RED FOR EVER.** It failed on any row
+  drawing a monogram — but a board always carries rows nobody has made artwork
+  for, and the resolver's backlog is not a fault. A check that is always red is
+  worse than no check: it trains the reader to ignore the red, which is the
+  state `chart:preview` sat in for weeks. It now separates **broken** (a stored
+  logo that will not load, an upload whose file is gone, a url our own proxy
+  refuses) from **nothing to draw yet**, and only the first turns the exit code.
+- **The `needLogo.sort` comment had been orphaned** by the block inserted above
+  it — left describing the wrong line, which is the "a comment describing
+  nothing" this file names one section over.
+- **`logos:check` carries a port of `logoSrc`** (it cannot import `src/**/*.ts`
+  — production runs Node 18), and a port is a second owner. A guard pins the
+  four branches in both files, because a check that fetched the raw url would
+  print green over every logo `/api/logo` refuses — one of the three causes it
+  exists to name.
+
+```bash
+npm test    # relist / mediaFile / logoWrite / logoPipeline — the two locks included
+```
 
 ## "vol 0 padahal ada transaksi buy and sale"
 
@@ -2513,11 +2578,50 @@ LOG: half the move sits 50% up the price area
   fails if the clip stops working AND fails if the probe stops being able to
   see a spill.
 
+#### The audit round — the new module had dropped half of the six lines it replaced
+
+- ⚠️ **THE LINEAR PADDING FLOOR WENT MISSING, ON THE VERY CHART THIS EXISTS
+  FOR.** The code `priceScale` grew out of was
+  `lo = Math.max(range.lo - pad, range.lo * 0.5)` — pad by 6%, but **never more
+  than one halving below the lowest price**. The first cut kept the padding and
+  dropped the floor. On a 35× move, 6% of the *range* is far bigger than the
+  whole bottom of it, so `lo - pad` goes negative and the axis bottomed out at
+  **$0**: a third of the panel handed to prices that never existed, squashing
+  the early history that much further onto the floor. A fix making its own
+  symptom worse. It is a LINEAR rule — log padding is symmetric in ratio and
+  behaves by itself — and it is mutation-tested.
+- ⚠️ **The `dragging` cursor came off a REF, so it never cleared.** A ref does
+  not re-render: the class arrived on the first move and then stayed after the
+  drag ended, until something else happened to re-render. `:active` needs no
+  state and cannot get stuck.
+- **`releasePointerCapture` was called on an element that may never have
+  captured.** On touch the body drag is deliberately not started, so every
+  touch-scroll across the chart arrives at `endDrag` with nothing to release.
+  Chromium treats that as a no-op — **measured**, the phone check in
+  `chart:preview` taps the chart and scrolls past it — but the spec allows a
+  `NotFoundError` and this is the path every phone reader takes. Guarded with
+  `hasPointerCapture`.
+- ⚠️ **`chart:preview`'s phone context had no `hasTouch`**, so the "phone"
+  checks were driving the DESKTOP pointer path and reporting it as the phone's —
+  a guard measuring a stack the reader does not use, one surface over.
+- ⚠️ **The clip probe went stale the moment the floor was restored** — the
+  narrower auto range stopped pushing any candle past the price area, so there
+  was nothing to clip and the check had nothing to prove. **The vacuity guard
+  said so instead of passing quietly**, which is the entire reason it is there.
+  Worth knowing why the fix was fiddly: the zone where the clip matters is only
+  ~120px tall, between the floor of the price area and the bottom of the svg,
+  which clips everything past it by itself. A 260px shove sails straight out of
+  the zone and looks exactly like a chart that never overflowed.
+- The header said **30x** where the token did **35x** — the number the whole
+  section argues from.
+
 ```bash
-npm test                                     # chartScale (16) + the panel guards
+npm test                                     # chartScale (18) + the panel guards
 npm run build && npm start &
-npm run chart:preview                        # 33 checks, incl. LIN/LOG and every drag
+npm run chart:preview                        # 35 checks, incl. LIN/LOG, every drag, and a phone
 ```
+
+
 
 **Config a fix depends on:** nothing.
 

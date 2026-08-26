@@ -29,7 +29,7 @@ import { pickLogo } from "./tokenLogo";
 import { rememberPool } from "./poolCache";
 import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
 import { forgetLostUploads, setResolvedLogo } from "@/lib/store";
-import { lostUploads } from "@/lib/mediaFile";
+import { isLostUpload, lostUploads } from "@/lib/mediaFile";
 import { listUploads } from "@/lib/uploadsDir";
 
 // 60s, not 30: at 173 listings a refresh is ~8 chunked GT requests, and the
@@ -162,7 +162,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     // case it is a 404 wearing the shape of a decision and must lose to every
     // answer below it. Cleared in the store too (fire-and-forget, below), or
     // the resolver's write can never land.
-    const storedLogo = row?.logoUrl && !lost.has(row.logoUrl) ? row.logoUrl : undefined;
+    const storedLogo = row?.logoUrl && !isLostUpload(lost, row.logoUrl) ? row.logoUrl : undefined;
     const logo = pickLogo({
       stored: storedLogo,
       live: m?.logoUrl,
@@ -223,13 +223,19 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   // featured row and a row nobody scrolls to are not worth the same lookup.
   // (The sweep's own comment says the caller hands them over ranked — this is
   // where that becomes true, rather than a comment describing nothing.)
+  needLogo.sort((a, b) => Number(b.featured) - Number(a.featured) || b.vol - a.vol);
+  backfillLogos(needLogo, {
+    persist: setResolvedLogo,
+    log: (msg) => console.log(msg),
+  });
+
   // Forget the dead uploads in the store, so the sweep's answer has somewhere
   // to land. Best-effort and off the render path: a failed write costs one more
   // rebuild, never the board. Said out loud ONCE — the write is what makes it
   // once, since a cleared row no longer matches on the next cycle. Artwork
   // disappearing off a paid listing is a fact an operator is owed even when the
   // site heals it by itself.
-  const dead = rows.filter((r) => r.logoUrl && lost.has(r.logoUrl));
+  const dead = rows.filter((r) => isLostUpload(lost, r.logoUrl));
   if (dead.length > 0)
     void forgetLostUploads(dead.map((r) => ({ chain: r.chain, address: r.address })))
       .then((cleared) => {
@@ -241,12 +247,6 @@ async function loadListedTokens(): Promise<BoardToken[]> {
         }
       })
       .catch(() => {});
-
-  needLogo.sort((a, b) => Number(b.featured) - Number(a.featured) || b.vol - a.vol);
-  backfillLogos(needLogo, {
-    persist: setResolvedLogo,
-    log: (msg) => console.log(msg),
-  });
 
   return tokens;
 }

@@ -118,6 +118,10 @@ async function loads(url) {
   }
 }
 
+/** Did the internal API answer? Without it a same-origin url cannot be told
+ *  apart from a row that lost its logo, so it is not called a fault. */
+const haveStoreKnown = (stored) => Boolean(stored);
+
 async function storedRows() {
   if (!TOKEN) return null;
   try {
@@ -199,7 +203,22 @@ async function main() {
         `  ${D}erased apart from one that will not load.${X}\n`,
     );
 
-  const bad = [];
+  // ⚠️ TWO KINDS OF FAILURE, AND ONLY ONE OF THEM IS A FAULT.
+  //
+  // A board always has some rows nobody has ever made artwork for — the
+  // resolver sweeps eight a minute and will fill what it can find, and a token
+  // whose project never drew a logo is not a defect. If those failed the run,
+  // this check would be RED for ever, and a check that is always red is worse
+  // than no check: it trains the reader to ignore the red. (`chart:preview`
+  // spent weeks in exactly that state, asserting a feature that had been
+  // deliberately deleted.)
+  //
+  // So: `broken` is a row where something we HAVE is not working — a stored
+  // logo that will not load, an upload whose file is gone, a url our own proxy
+  // refuses. That is what turns the exit code. `backlog` is a row with nothing
+  // to break yet, and it is reported and counted and does not fail anything.
+  const broken = [];
+  const backlog = [];
   const refused = [];
   let ok = 0;
   let unreachable = 0;
@@ -210,16 +229,20 @@ async function main() {
     const res = await loads(t.logoUrl);
     const row = stored?.get(`${t.chain}:${String(t.address).toLowerCase()}`);
     const k = kindOf(t.logoUrl, row, Boolean(stored));
+    const fault =
+      !res.ok &&
+      !res.unreachable &&
+      (k === "upload" || k === "stored" || res.status === 400 || (!haveStoreKnown(stored) && k === "same-origin"));
     if (res.unreachable) unreachable++;
     else if (res.ok) ok++;
-    else bad.push({ t, k, res, row });
+    else (fault ? broken : backlog).push({ t, k, res, row });
     if (res.status === 400) refused.push(t);
     if (res.ok && onlyBad) continue;
-    const mark = res.ok ? `${G}✓${X}` : `${R}✗${X}`;
+    const mark = res.ok ? `${G}✓${X}` : fault ? `${R}✗${X}` : `${Y}·${X}`;
     const shown = t.logoUrl ? String(t.logoUrl).replace(/^https?:\/\//, "").slice(0, 46) : "—";
     console.log(
       `  ${mark} ${String(t.symbol).padEnd(12)} ${D}${String(t.chain).padEnd(9)}${X} ` +
-        `${C}${k.padEnd(13)}${X} ${D}${shown.padEnd(48)}${X} ${res.ok ? D : R}${res.why}${X}`,
+        `${C}${k.padEnd(13)}${X} ${D}${shown.padEnd(48)}${X} ${res.ok ? D : fault ? R : Y}${res.why}${X}`,
     );
     if (!res.ok) {
       const d = diagnose(t.logoUrl, row, res, k, Boolean(stored));
@@ -230,7 +253,8 @@ async function main() {
   }
 
   console.log(
-    `\n  ${D}${rows.length} listed · ${ok} with artwork that loads · ${bad.length} drawing a monogram` +
+    `\n  ${D}${rows.length} listed · ${ok} with artwork that loads · ${broken.length} broken · ` +
+      `${backlog.length} with nothing to draw yet` +
       (unreachable ? ` · ${unreachable} unreachable` : "") +
       `${X}`,
   );
@@ -243,14 +267,20 @@ async function main() {
         refused.map((t) => `      ${t.symbol}  ${t.logoUrl}`).join("\n"),
     );
 
-  if (!bad.length) {
-    console.log(`\n${G}Every listed token draws real artwork from this box.${X}\n`);
+  if (!broken.length) {
+    if (backlog.length)
+      console.log(
+        `\n${G}Nothing is broken.${X} ${D}${backlog.length} row(s) have no artwork anywhere yet — that is the${X}\n` +
+          `  ${D}resolver's ordinary backlog, not a fault; it sweeps 8 a minute and fills what it finds.${X}\n`,
+      );
+    else console.log(`\n${G}Every listed token draws real artwork from this box.${X}\n`);
     return;
   }
   console.log(
-    `\n${R}${bad.length} listed token(s) would draw a monogram.${X}\n` +
-      `  ${D}A row with nothing anywhere is fair — the resolver sweeps 8 a minute and will fill${X}\n` +
-      `  ${D}what it can find. A row whose STORED logo will not load is the one to act on.${X}\n`,
+    `\n${R}${broken.length} listed token(s) have artwork that is BROKEN, not missing.${X}\n` +
+      `  ${D}Each one is something the site HAS and cannot serve — act on these.${X}\n` +
+      broken.map((b) => `      ${b.t.symbol.padEnd(12)} ${b.k.padEnd(12)} ${b.res.why}`).join("\n") +
+      `\n`,
   );
   process.exit(1);
 }

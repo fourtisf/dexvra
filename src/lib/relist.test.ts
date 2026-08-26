@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PRESERVED_ON_RELIST, mergeRelist } from "./relist.ts";
+import { PRESERVED_ON_RELIST, keepStatus, mergeRelist } from "./relist.ts";
 
 // The row as it sits in the store: a project's uploaded artwork, the socials
 // they typed, and a trending slot somebody paid for and is still running.
@@ -92,4 +92,40 @@ test("a trending window that is still running is not ended by a re-list", () => 
   const out = mergeRelist(STORED, BARE);
   assert.equal(out.trendExp, 9_000);
   assert.equal(out.trendingRank, 1);
+});
+
+
+// ── a create may promote a row, never demote it ─────────────────────────────
+
+test("⚠️ THE TAKEOVER: a public submission cannot unpublish a live listing", () => {
+  // `/api/submit` is unauthenticated and creates with `pending`. On a duplicate
+  // `addListing` keeps the existing row's id, so the submission did not create
+  // anything — it took the row over and set it back to pending, and
+  // `approvedRows()` filters on approved. The listing simply left the site.
+  assert.equal(keepStatus("approved", "pending"), "approved");
+  assert.equal(keepStatus("approved", "rejected"), "approved");
+});
+
+test("…but a create may still PROMOTE one", () => {
+  // An admin adding a token that is sitting in the pending queue, or the bot
+  // creating an approved listing over a rejected row, are both real.
+  assert.equal(keepStatus("pending", "approved"), "approved");
+  assert.equal(keepStatus("rejected", "approved"), "approved");
+  assert.equal(keepStatus("rejected", "pending"), "pending");
+});
+
+test("a brand-new row gets exactly what the caller asked for", () => {
+  assert.equal(keepStatus(undefined, "pending"), "pending");
+  assert.equal(keepStatus(undefined, "approved"), "approved");
+});
+
+test("an unknown status is not something to invent a ranking for", () => {
+  assert.equal(keepStatus("archived", "pending"), "pending");
+  assert.equal(keepStatus("approved", "whatever"), "whatever");
+});
+
+test("demotion is still possible — it just is not a side effect of a create", () => {
+  // `setStatus` is what an admin rejecting a listing calls, and it is untouched.
+  // This rule is only about what CREATING something may do to a row that exists.
+  assert.notEqual(keepStatus("approved", "pending"), "pending");
 });

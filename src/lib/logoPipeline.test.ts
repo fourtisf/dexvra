@@ -31,7 +31,7 @@ test("⚠️ the board no longer merges logos with `t.logoUrl ?? m.logoUrl`", ()
 test("the ladder reads the STORED row, not the board token's filled-in guess", () => {
   // …by way of `storedLogo`, which is that row's value minus the one case where
   // it is not a logo at all (see the next test).
-  assert.match(PIPELINE, /const storedLogo = row\?\.logoUrl && !lost\.has\(row\.logoUrl\)/);
+  assert.match(PIPELINE, /const storedLogo = row\?\.logoUrl && !isLostUpload\(lost, row\.logoUrl\)/);
   assert.match(PIPELINE, /stored: storedLogo/);
   assert.match(PIPELINE, /live: m\?\.logoUrl/);
   assert.match(PIPELINE, /resolved: knownLogo\(/);
@@ -46,6 +46,10 @@ test("⚠️ an upload whose file is gone loses to every answer below it", () =>
   // logoUrl at all. Two correct guards holding a dead URL between them.
   assert.match(PIPELINE, /lostUploads\(rows\.map\(\(r\) => r\.logoUrl\)/);
   assert.match(PIPELINE, /list: listUploads/);
+  // ⚠️ ONE normaliser for the lookup key. The first cut keyed the set by
+  // trimmed URL and asked with the raw store value, so it answered "not lost"
+  // for exactly the rows it exists to find.
+  assert.ok(!/lost\.has\(/.test(code(PIPELINE)), "the caller asks through isLostUpload, never by raw string");
   // …and it is cleared in the store, or the sweep's answer has nowhere to land.
   assert.match(PIPELINE, /forgetLostUploads\(/);
   assert.match(STORE, /applyLostUpload\(/, "the rule lives in logoWrite, where a test can drive it");
@@ -65,6 +69,38 @@ test("⚠️ a re-list may fill a listing's fields, never blank them", () => {
   );
 });
 
+test("⚠️ TWO LOCKS on the takeover, because each one leaves the other's half open", () => {
+  // `/api/submit` is unauthenticated and `addListing` keeps the id of a
+  // chain+address it already holds — so a submission for a live paid listing
+  // took that row over. MEASURED with the route guard removed and only the
+  // store lock in place: the row stayed approved and kept its logo, and its
+  // ticker came back `$STOLEN`. With only the route guard, a future caller
+  // reintroduces the demotion. Both, or it is half fixed.
+  const SUBMIT = code(read("src/app/api/submit/route.ts"));
+  assert.match(SUBMIT, /const existing = \(await allListings\(\)/, "the route refuses a duplicate outright");
+  assert.match(SUBMIT, /status: 409/);
+  assert.ok(SUBMIT.indexOf("existing") < SUBMIT.indexOf("addListing(built.row"), "…before it writes anything");
+  assert.match(STORE, /keepStatus\(rows\[dupIdx\]\.status/, "and a create may promote a row, never demote one");
+});
+
+test("the listing form does not report a refusal as a success", () => {
+  // It fired the request and forgot it, wrote the local "My listings" record,
+  // and went straight to "Submission received!" — so a 400, a 429, a dead
+  // network and now the 409 above all showed a paying project a green tick over
+  // a queue entry that does not exist.
+  const MODAL = code(read("src/components/ListingModal.tsx"));
+  assert.ok(!/void fetch\("\/api\/submit"/.test(MODAL), "the fire-and-forget submit is gone");
+  assert.match(MODAL, /if \(!res\.ok\) \{/);
+  assert.ok(
+    MODAL.indexOf("await fetch(\"/api/submit\"") < MODAL.indexOf("setStep(4)"),
+    "the server answers before the success screen",
+  );
+  assert.ok(
+    MODAL.indexOf("if (!res.ok)") < MODAL.indexOf("addListing({"),
+    "…and before the local record, or a refused listing sits in My listings for ever",
+  );
+});
+
 test("one owner for the uploads directory", () => {
   // Three files declared `path.join(process.cwd(), "data", "uploads")`. It
   // matters more now that the board asks whether an upload is still on disk: a
@@ -77,6 +113,26 @@ test("one owner for the uploads directory", () => {
     assert.ok(!/"data", "uploads"/.test(src), `${f} must not declare its own copy`);
   }
   assert.match(read("src/lib/uploadsDir.ts"), /export const UPLOADS_DIR/);
+});
+
+test("⚠️ logos:check asks for the url the BROWSER asks for", () => {
+  // The script cannot import `lib/logo.ts` — production runs Node 18 and a
+  // check that will not run on the box is worth nothing — so it carries a port
+  // of `logoSrc`, and a port is a second owner. A guard is only honest while it
+  // measures the stack the page actually uses: a check that fetched the raw url
+  // would report green over every logo `/api/logo` refuses, which is one of the
+  // three causes it exists to name.
+  const CHECK = code(read("scripts/logo-check.mjs"));
+  const SRC = code(read("src/lib/logo.ts"));
+  for (const branch of [
+    'u.startsWith("//")',                       // protocol-relative → the proxy
+    'u.startsWith("/") || u.startsWith("data:")', // same-origin / inline → as-is
+    "/^[a-z][a-z0-9+.-]*:\\/\\//i.test(u)",       // every other scheme → the proxy
+    "/api/logo?u=${encodeURIComponent(",
+  ]) {
+    assert.ok(SRC.includes(branch), `logoSrc still has: ${branch}`);
+    assert.ok(CHECK.includes(branch), `logos:check mirrors it: ${branch}`);
+  }
 });
 
 test("a row with nothing but the convention is queued for the resolver", () => {

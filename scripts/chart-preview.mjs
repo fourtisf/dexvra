@@ -275,6 +275,13 @@ try {
   // ⚠️ THE CLIP. Unclipped, a stretched chart draws its wicks straight through
   // the volume histogram and the time stamps.
   //
+  // ⚠️ AND THE ZONE IT MATTERS IN IS ONLY ~120px TALL — between the floor of
+  // the price area and the bottom of the svg, which clips everything past it
+  // by itself. Push the chart harder than that and the candles sail straight
+  // out of the zone, and the probe truthfully reports nothing to clip. A 260px
+  // shove was tried here and did exactly that; the vacuity guard below said so
+  // rather than letting the clip check pass on an empty region.
+  //
   // Measured by HIT-TESTING, and MUTATION-TESTED in the page: the clip is
   // pulled off, the same points are probed again, and it is put back. Two
   // cheaper checks were tried first and both were worthless — bounding boxes
@@ -287,10 +294,15 @@ try {
     const svg = document.querySelector(".ck-svg").getBoundingClientRect();
     const below = Math.max(...grid); // the floor of the price area
     const g = document.querySelector(".ck-svg g[clip-path]");
+    // A SCAN, not three sample points. The first cut probed y = below+14,
+    // below+34 and svg.bottom-8, and a hard enough drag pushes the candles past
+    // all three — so the probe reported "nothing down here" about a chart that
+    // was drawing everywhere. x stops at 80% because the price gutter is an
+    // overlay and would answer every hit test in the last 7%.
     const probe = () => {
-      for (let f = 0.15; f <= 0.9; f += 0.1) {
+      for (let f = 0.12; f <= 0.8; f += 0.04) {
         const x = svg.left + svg.width * f;
-        for (const y of [below + 14, below + 34, svg.bottom - 8]) {
+        for (let y = below + 6; y <= svg.bottom - 2; y += 6) {
           const el = document.elementFromPoint(x, y);
           if (el && (el.classList.contains("ck-body") || el.classList.contains("ck-wick"))) return true;
         }
@@ -386,7 +398,11 @@ try {
   await page.screenshot({ path: `${SHOT_DIR}/unlisted.png`, fullPage: true });
 
   // ── a phone ──────────────────────────────────────────────────────────────
-  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+  // `hasTouch` is not decoration: a phone dispatches POINTER events with
+  // `pointerType: "touch"`, and the chart's drag rules turn on exactly that
+  // value. A narrow viewport driven by a mouse would exercise the desktop path
+  // and report it as the phone's.
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, serviceWorkers: "block" });
   const m = await mctx.newPage();
   m.on("pageerror", (e) => errs.push(`(phone) ${e.message}`));
   await stub(m, () => "ok");
@@ -397,6 +413,20 @@ try {
   // read one bar out of. The window narrows to what fits.
   check("the phone window narrows to candles you can actually see", phone > 20 && phone < drawn, `${phone} of ${drawn}`);
   check("the page does not scroll sideways", !(await m.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)));
+  // ⚠️ A PHONE TOUCHES THE CHART, and on touch the body drag is deliberately
+  // NOT taken (the page scroller keeps it) — which means the pointerdown
+  // handler returns before it ever captures the pointer, and the pointerup /
+  // pointercancel that follow must cope with that. Every touch-scroll across
+  // the chart goes down this path, so anything thrown here is thrown constantly
+  // and on the one surface most of this token's readers are using.
+  const mplot = await m.locator(".ck-plot").boundingBox();
+  await m.touchscreen.tap(mplot.x + mplot.width * 0.5, mplot.y + mplot.height * 0.5);
+  await m.waitForTimeout(150);
+  const beforeScroll = await m.evaluate(() => window.scrollY);
+  await m.evaluate(() => window.scrollBy(0, 120));
+  await m.waitForTimeout(200);
+  check("a tap on the chart is harmless", errs.length === 0, errs.join(" | "));
+  check("…and the page still scrolls past it", (await m.evaluate(() => window.scrollY)) > beforeScroll);
   await m.screenshot({ path: `${SHOT_DIR}/phone.png` });
 
   check("no page errors", errs.length === 0, errs.join(" | "));

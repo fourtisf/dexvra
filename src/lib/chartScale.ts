@@ -125,8 +125,10 @@ export function priceScale(
   const toD = (p: number) => (log ? Math.log10(Math.max(p, MIN_PRICE)) : p);
   const fromD = (d: number) => (log ? 10 ** d : d);
 
-  let d0 = toD(Math.min(range.lo, range.hi));
-  let d1 = toD(Math.max(range.lo, range.hi));
+  const rLo = Math.min(range.lo, range.hi);
+  const rHi = Math.max(range.lo, range.hi);
+  let d0 = toD(rLo);
+  let d1 = toD(rHi);
   // A window in which nothing moved has zero height and would divide by zero.
   // `priceRange` already widens an exactly-flat window, but a rounding-flat one
   // in log space can still land here.
@@ -135,8 +137,23 @@ export function priceScale(
     d0 -= e;
     d1 += e;
   }
-  const padded = (d1 - d0) * (1 + 2 * PAD_FRAC);
-  const mid0 = (d0 + d1) / 2;
+  // Headroom, top and bottom, so a wick never touches the frame and the
+  // last-price tag has somewhere to sit.
+  const pad = (d1 - d0) * PAD_FRAC;
+  let lo0 = d0 - pad;
+  const hi0 = d1 + pad;
+  // ⚠️ AND THE FLOOR THE PADDING NEEDS ON A LINEAR AXIS, which the first cut of
+  // this module dropped when it replaced the six lines it grew out of. On a
+  // token that has done 35x, 6% of the RANGE is far bigger than the whole
+  // bottom of it, so `lo - pad` goes negative and the axis bottoms out at $0 —
+  // handing a third of the panel to prices that never existed and squashing
+  // the early history that much further onto the floor. On the very chart this
+  // module was written for. The old rule is "never more than one halving below
+  // the lowest price", and it is a LINEAR rule: log padding is symmetric in
+  // ratio and behaves by itself.
+  if (!log) lo0 = Math.max(lo0, rLo * 0.5);
+  const padded = hi0 - lo0;
+  const mid0 = (lo0 + hi0) / 2;
 
   // Shift is measured in AUTO spans, so the same drag moves the same distance
   // on screen whatever the zoom — and re-rolling the zoom does not also move

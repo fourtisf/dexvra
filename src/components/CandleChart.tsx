@@ -25,7 +25,7 @@
  * THE VERTICAL BELONGS TO THE READER
  * $BREAKING went from $0.000803 to $0.0281 in two days and the chart of it was
  * a flat line on the floor with one spike at the right-hand edge — every number
- * correct, the picture useless, because on a LINEAR axis a 30x move spends 96%
+ * correct, the picture useless, because on a LINEAR axis a 35x move spends 96%
  * of the height on the last 4% of the story. So the axis is a control now:
  * LIN/LOG in the header, drag the price gutter to stretch or squash, drag the
  * chart to move it up and down, double-click for the automatic range back. The
@@ -347,7 +347,13 @@ export function CandleChart({
   const endDrag = (e: React.PointerEvent<HTMLElement>) => {
     e.stopPropagation();
     if (dragRef.current?.id === e.pointerId) dragRef.current = null;
-    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    // Only what we actually took. On touch the body drag is never started (the
+    // page scroller keeps it), so the pointerdown returns before capturing —
+    // and every touch-scroll across the chart then arrives here with nothing to
+    // release. Chromium treats that as a no-op and the phone check in
+    // `chart:preview` confirms it, but the spec allows a NotFoundError and this
+    // is the path every phone reader takes.
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
   // The route names the link now, because only it knows which source answered.
@@ -416,7 +422,7 @@ export function CandleChart({
                 className={`ck-tf ${m === mode ? "on" : ""}`}
                 title={
                   m === "log"
-                    ? "Logarithmic price scale — equal percentage moves are equal heights, so a 30x reads across the whole chart"
+                    ? "Logarithmic price scale — equal percentage moves are equal heights, so a 35x reads across the whole chart"
                     : "Linear price scale — equal dollar moves are equal heights"
                 }
                 onClick={() => setMode(m)}
@@ -445,7 +451,7 @@ export function CandleChart({
       </div>
 
       <div
-        className={`ck-plot${dragRef.current ? " dragging" : ""}`}
+        className="ck-plot"
         ref={wrapRef}
         onPointerDown={(e) => startDrag(e, "pan")}
         onPointerMove={(e) => {

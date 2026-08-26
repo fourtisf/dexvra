@@ -88,3 +88,38 @@ function absent(v: unknown): boolean {
   if (v == null) return true;
   return typeof v === "string" && v.trim() === "";
 }
+
+
+// ── and the half a re-list does not carry: the row's STANDING ────────────────
+
+/**
+ * A create may PROMOTE a listing's status. It may never demote one.
+ *
+ * ⚠️ `/api/submit` is unauthenticated and calls `addListing(row, {status:
+ * "pending"})`. On a duplicate, `addListing` keeps the existing row's id — so a
+ * submission for an address that is already an APPROVED paid listing took that
+ * row over and set it back to `pending`. `approvedRows()` filters on
+ * `status === "approved"`, so **the listing simply left the site**: a stranger
+ * could unpublish a paying customer by typing their contract into the public
+ * form, five times per IP per ten minutes.
+ *
+ * The submit route now refuses a duplicate outright — one token, one listing,
+ * the rule the bot's own listing flow states before it will even take a form.
+ * This is the second lock, and it is at the STORE for the reason
+ * `deleteListing`'s guard is: *a caller can be wrong about what it is holding,
+ * and the store cannot.*
+ *
+ * Demotion is still perfectly possible — through `setStatus`, which is what an
+ * admin rejecting a listing calls. What may not happen is a row losing its
+ * standing as a SIDE EFFECT of somebody creating something.
+ */
+const RANK: Record<string, number> = { rejected: 0, pending: 1, approved: 2 };
+
+export function keepStatus(prev: string | undefined, next: string): string {
+  const p = RANK[String(prev ?? "")];
+  const n = RANK[String(next)];
+  // An unknown status on either side is not something to reason about: hand
+  // back what the caller asked for rather than inventing a ranking for it.
+  if (p == null || n == null) return next;
+  return p > n ? String(prev) : next;
+}

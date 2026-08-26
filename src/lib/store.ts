@@ -15,7 +15,7 @@ function fillSeedSocials(r: { sym: string; website?: string; twitter?: string; t
 }
 import { kvGet, kvSet, mongoConfigured } from "./mongo";
 import { applyLostUpload, applyResolvedLogo } from "./logoWrite";
-import { mergeRelist } from "./relist";
+import { keepStatus, mergeRelist } from "./relist";
 
 // Mongo mirror key for this store (doc _id in the `web` collection).
 const MIRROR_KEY = "listings";
@@ -177,7 +177,16 @@ export async function addListing(rec: ListingRow, opts?: { status?: ListingStatu
     created = {
       ...base,
       id: dupIdx >= 0 ? rows[dupIdx].id : id,
-      status: opts?.status ?? "pending",
+      // ⚠️ A CREATE MAY PROMOTE A ROW, NEVER DEMOTE ONE. `/api/submit` is
+      // unauthenticated and creates with `pending`; on a duplicate this used to
+      // set an APPROVED paid listing back to pending, and `approvedRows()`
+      // filters on approved — so a stranger could unpublish a customer by
+      // typing their contract into the public form. See relist.ts; demoting is
+      // `setStatus`'s job, which is what an admin rejecting a listing calls.
+      status:
+        dupIdx >= 0
+          ? (keepStatus(rows[dupIdx].status, opts?.status ?? "pending") as ListingStatus)
+          : (opts?.status ?? "pending"),
       createdAt: dupIdx >= 0 ? rows[dupIdx].createdAt : createdSeq++,
       // Real listing timestamp so the site shows a LIVE "listed X ago" instead of
       // the frozen listedMin=0 → "0m ago". Preserved across dup re-submits/patches.

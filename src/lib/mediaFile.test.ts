@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lostUploads, mediaName } from "./mediaFile.ts";
+import { isLostUpload, lostUploads, mediaName } from "./mediaFile.ts";
 
 const A = "/api/media/aaaaaaaaaaaaaaaaaaaaaaaa.png";
 const B = "/api/media/bbbbbbbbbbbbbbbbbbbbbbbb.webp";
@@ -24,19 +24,22 @@ test("mediaName reads our own upload shape and nothing else", () => {
 
 test("an upload whose file is gone is reported lost", async () => {
   const lost = await lostUploads([A, B], reader(["bbbbbbbbbbbbbbbbbbbbbbbb.webp"]));
-  assert.deepEqual([...lost], [A]);
+  assert.equal(isLostUpload(lost, A), true);
+  assert.equal(isLostUpload(lost, B), false);
 });
 
 test("an upload that is still there is not", async () => {
   const lost = await lostUploads([A], reader(["aaaaaaaaaaaaaaaaaaaaaaaa.png"]));
-  assert.equal(lost.size, 0);
+  assert.equal(isLostUpload(lost, A), false);
 });
 
 test("an EXTERNAL logo is never reported lost", async () => {
   // Whether a CDN answers is not knowable from this server, and a bad minute
   // must never delete a project's artwork. Only our own disk is a local fact.
-  const lost = await lostUploads([EXTERNAL, "ipfs://cid/logo.png", ""], reader([]));
-  assert.equal(lost.size, 0);
+  const lost = await lostUploads([EXTERNAL, "ipfs://cid/logo.png", "", A], reader([]));
+  assert.equal(isLostUpload(lost, EXTERNAL), false);
+  assert.equal(isLostUpload(lost, "ipfs://cid/logo.png"), false);
+  assert.equal(isLostUpload(lost, A), true, "…while the upload beside them still is");
 });
 
 test("⚠️ a directory that cannot be READ reports nothing missing", async () => {
@@ -44,7 +47,8 @@ test("⚠️ a directory that cannot be READ reports nothing missing", async () 
   // answer identically, and reading that as "every uploaded logo was deleted"
   // would strip the artwork off every paid listing on the site in one sweep.
   const lost = await lostUploads([A, B], broken);
-  assert.equal(lost.size, 0, "could not look is not everything is gone");
+  assert.equal(isLostUpload(lost, A), false, "could not look is not everything is gone");
+  assert.equal(isLostUpload(lost, B), false);
 });
 
 test("…but an EMPTY directory does report them, which is the case being healed", async () => {
@@ -52,7 +56,8 @@ test("…but an EMPTY directory does report them, which is the case being healed
   // the state the whole module exists for, so it must not be confused with the
   // unreadable one above.
   const lost = await lostUploads([A, B], reader([]));
-  assert.deepEqual([...lost].sort(), [A, B].sort());
+  assert.equal(isLostUpload(lost, A), true);
+  assert.equal(isLostUpload(lost, B), true);
 });
 
 test("it asks the directory ONCE, however many rows there are", async () => {
@@ -70,7 +75,14 @@ test("no upload in the list means no syscall at all", async () => {
   assert.equal(lost.size, 0);
 });
 
-test("the returned value is the URL as given, so a caller can match its rows", async () => {
+test("⚠️ ONE normaliser, so a caller cannot miss a row by asking differently", async () => {
+  // The first cut returned trimmed URLs and the caller asked with the raw store
+  // value: `lost.has(row.logoUrl)` was false for exactly the rows this module
+  // exists to find, and the test written for it asserted the mismatch rather
+  // than catching it. Both sides go through `mediaName` now, so spacing, case
+  // and the caller's spelling cannot separate them.
   const lost = await lostUploads([`  ${A}  `], reader([]));
-  assert.deepEqual([...lost], [A], "trimmed, which is what the store would hold");
+  assert.equal(isLostUpload(lost, A), true);
+  assert.equal(isLostUpload(lost, `  ${A}  `), true);
+  assert.equal(isLostUpload(lost, A.toUpperCase().replace("/API/MEDIA/", "/api/media/")), true);
 });
