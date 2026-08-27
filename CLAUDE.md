@@ -1469,8 +1469,24 @@ selector, and every argument word with the addresses among them labelled. A
 launchpad integration that cannot be read out of a real trade is one built on
 guesses, and this repo does not put guessed addresses on a money path.
 
+⚠️ **AND THE INSTRUCTION THAT ASKED FOR IT WAS ITSELF THE DEFECT.** It was
+written as `--tx 0x<your own buy on the pad>` — a command with a placeholder in
+angle brackets, pasted straight into a live shell, where bash reads `<` and `>`
+as redirects and dies with `syntax error near unexpected token 'newline'`
+before the script ever runs. **This file's own first rule, broken in the act of
+diagnosing something else:** a command an operator can paste must contain only
+real values, or it must not be a command.
+
+So the hash is no longer asked for at all. **Section 4x finds the trade
+itself**, from the token address the operator already has: every buy on a curve
+moves the token OUT of the curve contract, which emits a `Transfer` — and a
+Transfer log carries its transaction hash, from which the CALL is one read
+away. It prints the contract, the selector, the value and the labelled argument
+words, and RANKS the call that carried value first, because that one is the
+buy and a sell or a plain send is not.
+
 ```bash
-cd tradebot && npm run preflight:robinhood -- --tx 0x<your own buy on the pad>
+cd tradebot && npm run preflight:robinhood -- --token 0xTHE_TOKEN_YOU_LAUNCHED
 ```
 
 ⚠️ **And the token card was RIGHT all along.** *"This token's liquidity is on

@@ -329,6 +329,93 @@ async function main() {
     }
   }
 
+  // ── 4x. HOW is this token actually bought?  (--token) ─────────────────────
+  /*
+   * The launchpad's buy interface, read off a real trade, with NOTHING for the
+   * operator to paste but the token address they already have.
+   *
+   * Asking for a transaction hash was the wrong shape twice over: it is a hunt
+   * through an explorer, and the instruction that carried it was written with a
+   * `<placeholder>` in it — which bash reads as a redirect, so the command
+   * failed with `syntax error near unexpected token 'newline'` before it ran.
+   * This file's own first rule: a command an operator can paste must contain
+   * only real values, or it must not be a command.
+   *
+   * So the chain is asked instead. Every buy on a bonding curve moves the token
+   * OUT of the curve contract, which emits a Transfer — and a Transfer log
+   * carries its transaction hash. From there the call itself is one read away:
+   * the contract that was called, the value, and the 4-byte selector. That is
+   * exactly what a curve route has to be built from.
+   */
+  if (TOKEN && /^0x[a-fA-F0-9]{40}$/.test(TOKEN)) {
+    console.log(`\n4x. How is ${TOKEN} bought?  (--token, last ${SPAN} blocks)`);
+    const XFER = ethers.id('Transfer(address,address,uint256)');
+    let tlogs = [];
+    try {
+      tlogs = await prov.getLogs({ address: TOKEN, topics: [XFER], fromBlock: Math.max(0, head - SPAN), toBlock: head });
+    } catch (_) {
+      // A range-capped node: walk the tail in steps rather than giving up.
+      const STEP = 200;
+      for (let to = head; to > head - SPAN && tlogs.length < 40; to -= STEP) {
+        try { tlogs.push(...await prov.getLogs({ address: TOKEN, topics: [XFER], fromBlock: Math.max(0, to - STEP + 1), toBlock: to })); }
+        catch (_) { break; }
+      }
+    }
+    if (!tlogs.length) {
+      warn('no transfers of this token in the window', `nobody has traded it in ${SPAN} blocks — rerun with --blocks ${SPAN * 10}`);
+    } else {
+      ok(`${tlogs.length} transfer(s)`, 'reading the calls behind the newest few');
+      const seen = new Map();   // `${to}|${selector}` → { n, hash, value, args }
+      const newest = tlogs.slice(-12).reverse();
+      for (const lg of newest) {
+        if (seen.size >= 6) break;
+        let txo = null;
+        try { txo = await prov.getTransaction(lg.transactionHash); } catch (_) { continue; }
+        if (!txo || !txo.to || !txo.data || txo.data.length < 10) continue;
+        const k = `${String(txo.to).toLowerCase()}|${txo.data.slice(0, 10)}`;
+        if (seen.has(k)) { seen.get(k).n++; continue; }
+        const body = txo.data.slice(10);
+        const args = [];
+        for (let i = 0; i < Math.min(8, body.length / 64); i++) args.push(body.slice(i * 64, i * 64 + 64));
+        seen.set(k, { n: 1, hash: lg.transactionHash, value: txo.value || 0n, args });
+      }
+      if (!seen.size) { warn('no decodable calls behind those transfers', 'they may all be plain wallet-to-wallet sends'); }
+      // The one that MOVES VALUE is the buy: a sell or a plain transfer carries
+      // no ETH. Ranked so the operator does not have to work out which row is
+      // the one that matters.
+      const rows = [...seen.entries()].sort((a, b) => (b[1].value > a[1].value ? 1 : b[1].value < a[1].value ? -1 : b[1].n - a[1].n));
+      for (const [k, v] of rows) {
+        const [to, sel] = k.split('|');
+        const paid = v.value > 0n;
+        console.log('');
+        note(`${paid ? '💰 ' : '   '}to ${to}`);
+        note(`      selector ${sel}   value ${ethers.formatEther(v.value)} ${chain.native}   ×${v.n}`);
+        note(`      tx ${v.hash}`);
+        for (let i = 0; i < v.args.length; i++) {
+          const w = v.args[i];
+          const isAddr = /^0{24}[0-9a-f]{40}$/i.test(w) && !/^0+$/.test(w.slice(24));
+          if (isAddr) {
+            const a = ethers.getAddress('0x' + w.slice(24));
+            note(`      arg[${i}] = ${a}${a.toLowerCase() === TOKEN.toLowerCase() ? '   ← the token' : ''}`);
+          } else {
+            let n = ''; try { n = BigInt('0x' + w).toString(); } catch (_) {}
+            note(`      arg[${i}] = ${n.length > 30 ? '0x' + w : n}`);
+          }
+        }
+      }
+      const buy = rows.find(([, v]) => v.value > 0n);
+      console.log('');
+      if (buy) {
+        note(`→ THE BUY: contract ${buy[0].split('|')[0]}, selector ${buy[0].split('|')[1]}.`);
+        note('  That pair is the launchpad curve route. Send these lines back and the buy');
+        note('  path can be built from a real trade instead of a guessed ABI.');
+      } else {
+        note('→ None of these calls carried value, so none of them is a BUY.');
+        note('  Make one small buy on the pad\'s website, then rerun this same command.');
+      }
+    }
+  }
+
   // ── 4b. find the launchpad without needing a tx hash ──────────────────────
   // `--tx` settles it, but it asks the operator to go and find a launch
   // transaction by hand first. This asks the chain instead: scan recent blocks

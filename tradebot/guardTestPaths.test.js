@@ -67,6 +67,23 @@ test('a test that needs a newer Node skips, it does not fail', () => {
 // is what left a Pons integration reading green while a real launch went by
 // unseen. 4t asks the chain the opposite question, from a token the operator
 // already has in front of them.
+test('preflight 4x reads the BUY interface off a real trade, with nothing to paste', () => {
+  // Asking for a transaction hash was the wrong shape twice: it is a hunt
+  // through an explorer, and the instruction carrying it was written with a
+  // <placeholder>, which bash reads as a redirect — the command died with
+  // "syntax error near unexpected token" before it ran. This file's own first
+  // rule: a command an operator can paste must contain only real values.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'scripts', 'robinhood-preflight.js'), 'utf8');
+  assert.match(src, /4x\. How is/, 'the buy-interface probe is gone');
+  // A buy moves the token OUT of the curve, and a Transfer log carries its
+  // transaction hash — that is the whole trick, and it needs no hash pasted.
+  assert.match(src, /Transfer\(address,address,uint256\)/, 'it no longer finds the trade from the token itself');
+  assert.match(src, /getTransaction\(lg\.transactionHash\)/, 'it stopped reading the CALL behind the transfer');
+  // The one that MOVES VALUE is the buy — ranked, so the operator does not have
+  // to work out which row matters.
+  assert.match(src, /v\.value > 0n/, 'the buy is no longer told apart from a sell by the value it carries');
+});
+
 test('preflight 4t finds the contract that announced a given token', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'scripts', 'robinhood-preflight.js'), 'utf8');
   assert.match(src, /4t\. Who announced/, 'the token-targeted launchpad probe is gone');
