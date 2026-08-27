@@ -458,8 +458,11 @@ async function main() {
   // launch transaction can say what IS there.
   console.log('\n5. What a real launch actually emits  (--tx)');
   if (!TX) {
-    note('Pass --tx followed by the hash of a real pools.trade launch to settle this.');
-    note('Find one: open a new token on pools.trade → its creation tx on the explorer.');
+    note('Pass --tx followed by a transaction hash to settle this. TWO kinds are useful:');
+    note('  • a LAUNCH tx  → names the factory + event the snipe must watch');
+    note('  • a BUY tx of yours, made on the pad\'s own website → names the contract');
+    note('    and the 4-byte selector a buy goes through, which is what a curve route');
+    note('    has to be built from. Open your own buy on the explorer and copy its hash.');
   } else if (!/^0x[a-fA-F0-9]{64}$/.test(TX)) {
     bad('--tx is not a transaction hash', TX);
   } else {
@@ -468,6 +471,42 @@ async function main() {
       if (!rc) { bad('transaction not found', TX); }
       else {
         ok('receipt', `block ${rc.blockNumber}, ${rc.logs.length} log(s)`);
+        // THE CALL ITSELF, not only its logs. For a LAUNCH the logs answer the
+        // question; for a BUY they do not — what the bot needs in order to
+        // route through a launchpad's curve is the contract that was called and
+        // the 4-byte selector it was called with, and both are sitting in the
+        // transaction the operator already made by hand on the pad's website.
+        // A launchpad integration that cannot be read out of a real trade is a
+        // launchpad integration built on guesses.
+        try {
+          const txo = await prov.getTransaction(TX);
+          if (txo) {
+            const sel = (txo.data || '0x').slice(0, 10);
+            const words = Math.max(0, ((txo.data || '0x').length - 10) / 64);
+            console.log('');
+            note(`the CALL: to ${txo.to}`);
+            note(`   value    ${ethers.formatEther(txo.value || 0n)} ${chain.native}`);
+            note(`   selector ${sel}   (${words} argument word(s))`);
+            // Every 32-byte word that looks like an address, named — the token,
+            // the recipient and the curve all arrive this way, and seeing them
+            // is what turns a selector into a signature.
+            const body = (txo.data || '0x').slice(10);
+            for (let i = 0; i < words && i < 8; i++) {
+              const w = body.slice(i * 64, i * 64 + 64);
+              const asAddr = '0x' + w.slice(24);
+              const looksAddr = /^0{24}[0-9a-f]{40}$/i.test(w) && !/^0+$/.test(w.slice(24));
+              let v = '';
+              try { v = BigInt('0x' + w).toString(); } catch (_) { v = ''; }
+              note(`   arg[${i}]   0x${w}`);
+              if (looksAddr) note(`             = address ${ethers.getAddress(asAddr)}${asAddr.toLowerCase() === String(TOKEN || '').toLowerCase() ? '   ← the token' : ''}`);
+              else if (v && v.length < 30) note(`             = ${v}`);
+            }
+            note('');
+            note('→ THIS is what a Pons buy looks like. Send the `to`, the selector and the');
+            note('  argument list back, and the curve route can be built from a real trade');
+            note('  rather than from a guessed ABI.');
+          }
+        } catch (_) { /* the logs above are the primary answer; this is a bonus */ }
         console.log('');
         const byAddr = new Map();
         for (const l of rc.logs) {

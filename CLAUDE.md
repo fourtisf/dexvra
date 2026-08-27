@@ -1443,6 +1443,36 @@ real launch goes by unseen.
   it now names the probe that answers the question instead, because "rerun with
   more blocks" is the wrong advice for the state it usually means.
 
+#### Why a Pons token cannot be bought, stated once and for all
+
+Established by elimination, not by assumption, after three rounds of "masih
+sama aja":
+
+1. **The card is right.** `tokenSnapshot` tries `v4.price()` BEFORE it falls
+   through to the indexer, and `v4.js` scans up to 4,000,000 blocks (trying
+   `fromBlock: 0` first) for an Initialize log naming the token, reading the
+   whole PoolKey including `hooks`. A hooked v4 pool would be found. It found
+   none.
+2. **So no v4 pool exists for that token yet** — which is exactly what the pad's
+   own page says: *"At the threshold the curve closes and liquidity moves to a
+   Uniswap v4 pool."* Pre-threshold there is a Pons CURVE contract and nothing
+   else.
+3. **This engine has no route to that curve.** Not a bug, not a missing
+   config: no code here knows the Pons curve's interface, and the honest
+   consequence is that a Pons token is unbuyable by this bot until it
+   graduates.
+
+**What unblocks it is one transaction the operator has already made.** A buy on
+the pad's own website names the contract and the 4-byte selector a Pons buy
+goes through, and `--tx` now decodes exactly that — `to`, `value`, the
+selector, and every argument word with the addresses among them labelled. A
+launchpad integration that cannot be read out of a real trade is one built on
+guesses, and this repo does not put guessed addresses on a money path.
+
+```bash
+cd tradebot && npm run preflight:robinhood -- --tx 0x<your own buy on the pad>
+```
+
 ⚠️ **And the token card was RIGHT all along.** *"This token's liquidity is on
 Pons v2, which Dexvra can't route through yet"* is not a bug: Pons v2 tokens
 trade on a bonding curve until the threshold, and only then does liquidity move
