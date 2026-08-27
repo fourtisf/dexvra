@@ -1294,8 +1294,46 @@ an action which cannot succeed will be reported as broken, and it was.**
   perfectly arm-able. EVM comparison is case-insensitive (a pasted checksum
   spelling must not read as a second, un-armed target) and Solana's is not.
 
+#### "set 0.01 eth 5 wallet tpi laporanya hanya 1 wallet" — and there was no way to change it
+
+Both halves of the next report are one design hole. `newSnipeDraft` defaults
+its wallet row to the **ACTIVE wallet**, so a target armed before that row is
+touched watches with one — correct as a default, and invisible as a decision.
+Change the row afterwards, tap ⚡, and it was **refused as a duplicate**: the
+only route to the settings the user wanted was knowing they had to REMOVE the
+target first, which nothing on any screen said.
+
+- **⚡ on an already-watching target UPDATES it.** Tapping arm on a panel
+  showing this target with new settings has exactly one possible meaning —
+  "watch it with THESE" — and refusing is the least useful reading of an
+  unambiguous request. The button says `⚡ UPDATE` when it will re-term rather
+  than arm, because those are different events to a reader.
+- ⚠️ **An edit rewrites the TERMS and never the HISTORY.** `spentEth`,
+  `bought`, `holding`, `copySell`, the id and the cursor all survive: a budget
+  that reset itself on an edit would let one target spend its cap twice, and a
+  cleared `bought` map would re-buy a launch it already holds.
+- **The budget floor is re-read against the NEW wallet count.** Five wallets at
+  0.01 costs 0.05 a launch; a 0.03 budget on that selection is a watch that can
+  never fire, and it is refused with the number.
+- **A budget BELOW what is already spent is allowed, and SAID.** It is the one
+  edit that halts a watch without removing it — refusing it would deny that,
+  and applying it silently would be a watch that never buys again with nothing
+  saying why.
+- ⚠️ **"Budget itu untuk apa saya tidak mengerti."** `💰 Budget: 0.15 ETH` says
+  nothing about what it authorises, which is the entire question. The row does
+  the division out loud now — *"the total this watch may EVER spend — 3
+  launch(es) at 0.05 ETH each, then it stops buying"* — the same fix the 🧲
+  fill-rate label needed when its very first question was which of two numbers
+  governed what.
+- **Three tests changed premise, not rule.** "A refused arm keeps the draft"
+  and "a refusal reaches the user" were both written against the duplicate,
+  which is no longer a refusal; they use refusals that still exist. ⚠️ And one
+  of those attempts revealed the panel's own guard working: a budget under one
+  launch is refused at its ROW by `updateSnipeDraft`, so the panel can never
+  display a setting the arm would then reject.
+
 ```bash
-cd tradebot && node --test snipePanel.test.js   # 51 tests, no network
+cd tradebot && node --test snipePanel.test.js   # 55 tests, no network
 ```
 
 **Config a fix depends on:** nothing.

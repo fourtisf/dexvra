@@ -504,12 +504,27 @@ const S = {
   // where the Target row that fixes it is one tap away, instead of after a tap
   // that could never have worked.
   'snipe.panel.already_dev': {
-    en: '✅ <b>Already watching this developer</b> on this chain — there is nothing left to arm. Change the 🎯 Target row to watch a different one, or open 👥 Copy &amp; Snipe to see or remove it.',
-    id: '✅ <b>Developer ini sudah dipantau</b> di chain ini — tidak ada yang perlu dipasang lagi. Ganti baris 🎯 Target untuk memantau yang lain, atau buka 👥 Copy &amp; Snipe untuk melihat/menghapusnya.',
+    en: '✅ <b>Already watching this developer</b> — used <b>{spent}/{max} {native}</b> so far. Tapping ⚡ now <b>UPDATES</b> it to the settings above; what it has already spent stays spent.',
+    id: '✅ <b>Developer ini sudah dipantau</b> — terpakai <b>{spent}/{max} {native}</b> sejauh ini. Tap ⚡ sekarang akan <b>MEMPERBARUI</b> ke pengaturan di atas; yang sudah terpakai tetap terhitung.',
   },
   'snipe.panel.already_ca': {
-    en: '✅ <b>This contract is already armed</b> on this chain — there is nothing left to arm. Change the 🎯 Target row, or open 🎯 Sniper to see or remove it.',
-    id: '✅ <b>Kontrak ini sudah terpasang</b> di chain ini — tidak ada yang perlu dipasang lagi. Ganti baris 🎯 Target, atau buka 🎯 Sniper untuk melihat/menghapusnya.',
+    en: '✅ <b>This contract is already armed</b> on this chain. Tapping ⚡ now <b>UPDATES</b> it to the settings above rather than arming a second one.',
+    id: '✅ <b>Kontrak ini sudah terpasang</b> di chain ini. Tap ⚡ sekarang akan <b>MEMPERBARUI</b> ke pengaturan di atas, bukan memasang yang kedua.',
+  },
+  'snipe.panel.update_btn': { en: '⚡ UPDATE — apply these settings', id: '⚡ PERBARUI — terapkan pengaturan ini' },
+  // The budget, in the unit a reader thinks in. "0.15 ETH" says nothing about
+  // how many buys it authorises, which is the entire question.
+  'snipe.panel.budget_runs': {
+    en: 'the total this watch may EVER spend — {n} launch(es) at {per} {native} each, then it stops buying',
+    id: 'total maksimum yang boleh dibelanjakan pantauan ini — {n} launch @ {per} {native}, setelah itu berhenti membeli',
+  },
+  'snipe.panel.updated': {
+    en: '✅ <b>Updated</b> — the watch now uses the settings you just set.\nAlready spent: <b>{spent} {native}</b> of its budget (an edit never un-spends money).',
+    id: '✅ <b>Diperbarui</b> — pantauan sekarang memakai pengaturan yang baru Anda set.\nSudah terpakai: <b>{spent} {native}</b> dari budget (mengubah pengaturan tidak mengembalikan dana yang sudah terpakai).',
+  },
+  'snipe.panel.updated_exhausted': {
+    en: '⚠️ <b>Budget already used up</b> — this watch will not buy again until you raise the budget above what it has spent.',
+    id: '⚠️ <b>Budget sudah habis</b> — pantauan ini tidak akan membeli lagi sampai budget dinaikkan di atas yang sudah terpakai.',
   },
   'snipe.panel.see_dev_btn': { en: '👥 Already watching — open Copy & Snipe', id: '👥 Sudah dipantau — buka Copy & Snipe' },
   'snipe.panel.see_ca_btn': { en: '🎯 Already armed — open Sniper', id: '🎯 Sudah terpasang — buka Sniper' },

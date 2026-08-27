@@ -161,14 +161,27 @@ test('⚡ arms THROUGH addSnipeTarget with every panel row mapped, then clears t
   assert.strictEqual(core.snipeDraft(u), null, 'an armed draft must not linger and re-arm');
 });
 
-test('an arm addSnipeTarget refuses (already armed) leaves the draft intact', () => {
+test('a REFUSED arm leaves the draft intact — the user fixes one row, not seven', () => {
+  const u = user();
+  core.newSnipeDraft(CHAT);
+  // No amount: the refusal this rule was written for. (An ALREADY-ARMED target
+  // is no longer a refusal at all — tapping the panel's arm row re-terms it,
+  // see the update tests below.)
+  core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA });
+  assert.throws(() => core.armSnipeDraft(CHAT), /no amount/);
+  assert.ok(core.snipeDraft(u), 'the draft was discarded on a refused arm');
+  assert.equal(core.armedSnipeTargets(u).length, 0, 'the refused arm still created a target');
+});
+
+test('arming the SAME contract twice re-terms one target, never a second', () => {
   const u = user();
   core.addSnipeTarget(CHAT, { ca: CA, chain: 'robinhood', amount: 0.05 });
   core.newSnipeDraft(CHAT);
   core.updateSnipeDraft(CHAT, { chain: 'robinhood', ca: CA, amount: 0.1 });
-  assert.throws(() => core.armSnipeDraft(CHAT), /already armed/);
-  assert.ok(core.snipeDraft(u), 'the draft was discarded on a refused arm');
-  assert.equal(core.armedSnipeTargets(u).length, 1, 'the refused arm still created a target');
+  const t = core.armSnipeDraft(CHAT);
+  assert.equal(t._updated, true, 'a duplicate CA arm is still refused instead of updating');
+  assert.equal(core.armedSnipeTargets(u).length, 1, 'a second target was armed for one contract');
+  assert.equal(core.snipeDraft(u), null, 'a SPENT draft must be cleared');
 });
 
 test('a chain disabled AFTER the draft was written is refused, never silently swapped', () => {
@@ -836,16 +849,20 @@ test('a REFUSED arm reaches the user where the tap was made, not only in the pan
   const first = await tapped('snw:arm');
   assert.ok(first.some((c) => c.method === 'sendMessage' && /armed/i.test(c.text)), 'the first arm did not confirm');
 
-  // The same dev again — what an operator does after tweaking a row.
-  devDraft();
+  // A refusal that reaches the ARM step. (An already-armed target is no longer
+  // one — the arm row re-terms it, see the update tests below; and a budget
+  // under one launch is refused at its own ROW by updateSnipeDraft, which is
+  // the panel never displaying a setting the arm would then reject.)
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA2, walletIds: '*' });
   const again = await tapped('snw:arm');
   const sent = again.find((c) => c.method === 'sendMessage');
   assert.ok(sent, 'the refusal never left the panel — off screen, the button reads as dead');
-  assert.match(sent.text, /already sniping that dev/i, 'the sent message must carry the REASON, not a generic error');
+  assert.match(sent.text, /no amount/i, 'the sent message must carry the REASON, not a generic error');
   assert.match(sent.text, /nothing was spent/i, 'a refused arm must say no money moved');
   // The panel still carries it too — the row to fix stays one tap away.
   const edited = again.find((c) => c.method === 'editMessageText');
-  assert.match(edited.text, /already sniping that dev/i);
+  assert.match(edited.text, /no amount/i);
 });
 
 test('a panel carrying a refusal never tells the reader to tap ARM again', async () => {
@@ -865,7 +882,7 @@ test('a panel carrying a refusal never tells the reader to tap ARM again', async
   assert.match(tg._test.snipeSetupScreen(CHAT).text, /ARM SNIPE/);
 });
 
-test('a panel whose target is ALREADY watching does not offer a tap that can only fail', async () => {
+test('a panel whose target is ALREADY watching says so, and its arm row says UPDATE', async () => {
   // "mengapa seperti ini" — the refusal was correct and the panel that produced
   // it was not: every row ✅, "Ready … tap ⚡ ARM SNIPE", and a live ⚡ button
   // for a dev the store already watches. Indistinguishable from a panel that
@@ -878,7 +895,9 @@ test('a panel whose target is ALREADY watching does not offer a tap that can onl
   assert.match(s.text, /Already watching this developer/i, 'the panel still reads as un-armed');
   assert.ok(!/tap <b>⚡ ARM SNIPE<\/b>/.test(s.text), 'it still tells the reader to arm what is armed');
   const flat = s.kb.inline_keyboard.flat();
-  assert.ok(!flat.some((b) => b.callback_data === 'snw:arm'), 'the ⚡ row still offers a tap that can only be refused');
+  const arm = flat.find((b) => b.callback_data === 'snw:arm');
+  assert.ok(arm, 'the arm row is gone — a re-term is exactly what this panel is for');
+  assert.match(arm.text, /UPDATE|PERBARUI/, 'the button still promises to ARM what is already armed');
   assert.ok(flat.some((b) => b.callback_data === 'copy'), 'no route to the list the target is already on');
 });
 
@@ -898,4 +917,70 @@ test('armedTargetFor is the ONE owner, and it is chain- and kind-correct', () =>
   // EVM address comparison is case-insensitive; the checksum spelling a user
   // pastes must not read as a second, un-armed target.
   assert.ok(core.armedTargetFor(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA.toLowerCase() }));
+});
+
+// ── "set 0.01 eth 5 wallet tpi laporanya hanya 1 wallet" ────────────────────
+//
+// A NEW draft defaults its wallet row to the ACTIVE wallet, so a target armed
+// before that row is touched watches with one. Changing the row afterwards and
+// tapping ⚡ was refused as a duplicate — and the only route to the settings
+// the user wanted was knowing they had to REMOVE the target first, which
+// nothing said. ⚡ updates now.
+
+test('⚡ on an already-watching target RE-TERMS it — the wallet selection takes effect', async () => {
+  const u = user();
+  // Armed the way theirs was: default wallet row (one wallet), small budget.
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01', budget: '0.1' });
+  const first = core.armSnipeDraft(CHAT);
+  assert.equal(core.copyFanOut(u, first), 1, 'the default draft armed more than the active wallet');
+  first.spentEth = 0.02;   // two launches already bought
+
+  // Re-open the panel, pick All, raise the budget, tap ⚡.
+  devDraft();              // kind dev, All(5), 0.01, budget 0.15
+  const calls = await tapped('snw:arm');
+  const stored = core.ensureUser(CHAT).copy.targets;
+  assert.equal(stored.length, 1, 'a second target was armed instead of the first being updated');
+  const nAll = core.walletList(u).length;
+  assert.ok(nAll > 1, 'this fixture needs more than one wallet to prove a multiplier');
+  assert.equal(core.copyFanOut(u, stored[0]), nAll, 'the wallet selection still does not take effect — the reported defect');
+  assert.equal(stored[0].maxEth, '0.15', 'the budget edit was dropped');
+  // AN EDIT NEVER UN-SPENDS MONEY: a budget that reset here would let one
+  // target spend its cap twice.
+  assert.equal(Number(stored[0].spentEth), 0.02, 'the spend history was wiped by an edit');
+  assert.ok(stored[0].bought, 'the dedup map was dropped — launches it already holds could be re-bought');
+  // …and the confirmation says RE-TERMED, not "armed": the two are different
+  // events to a reader whose budget is already partly spent.
+  const sent = calls.find((c) => c.method === 'sendMessage');
+  assert.match(sent.text, /Updated/i, 'a re-termed target was announced as freshly armed');
+  assert.match(sent.text, /0\.020/, 'the confirmation hides what was already spent');
+});
+
+test('the panel says what a budget IS, in launches', () => {
+  // "budget itu untuk apa saya tidak mengerti ini bikin bingung" — "0.15 ETH"
+  // says nothing about how many buys it authorises, which is the whole question.
+  user();
+  devDraft();
+  const txt = tg._test.snipeSetupScreen(CHAT).text;
+  assert.match(txt, /the total this watch may EVER spend/i, 'the budget row still states a number with no unit of meaning');
+  const runs = Math.floor(0.15 / (0.01 * core.walletList(core.ensureUser(CHAT)).length));
+  assert.match(txt, new RegExp(`${runs} launch`), 'budget ÷ per-launch is not done out loud');
+  assert.match(txt, /then it stops buying/i, 'nothing says what happens when the budget runs out');
+});
+
+test('a budget below what is already spent is allowed, and SAID', async () => {
+  const u = user();
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01', budget: '0.5' });
+  const t = core.armSnipeDraft(CHAT);
+  t.spentEth = 0.3;
+  // Lowering the budget under the spend is the one edit that HALTS a watch
+  // without removing it — refusing it would deny that, and doing it silently
+  // would be a watch that never buys again with nothing saying why.
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01', budget: '0.05' });
+  const calls = await tapped('snw:arm');
+  const sent = calls.find((c) => c.method === 'sendMessage');
+  assert.match(sent.text, /Budget already used up/i, 'a halted watch is silent about being halted');
+  assert.equal(core.ensureUser(CHAT).copy.targets[0].maxEth, '0.05');
 });

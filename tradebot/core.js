@@ -1257,6 +1257,56 @@ function armedTargetFor(chatId, { kind, chain, ca }) {
   return armedSnipeTargets(u).find((t) => t.chain === chain && norm(t.ca) === want) || null;
 }
 
+/**
+ * Re-terms a target that is already watching, from the panel's draft.
+ *
+ * The bounds are the ARMING sites' bounds, re-checked here — a second set of
+ * limits would be a way to edit a target into a state ⚡ would have refused to
+ * create. The budget floor is re-read against the NEW wallet count, because
+ * that is the number that changed most often: five wallets at 0.01 costs 0.05 a
+ * launch, and a 0.03 budget on that selection is a watch that can never fire.
+ *
+ * `_updated` is how the caller tells "armed" from "re-termed" on the message it
+ * sends back — the two are different events to a reader, and a confirmation
+ * saying "armed" over a target that has already spent money is a lie about what
+ * just happened.
+ */
+function updateArmedTarget(chatId, t, d, walletOpts) {
+  const u = ensureUser(chatId);
+  const dev = t.mode === 'launches';
+  const be = Number(d.amount);
+  if (!(be > 0)) throw new Error('no amount yet — pick how much to spend first');
+  const sel = { walletId: walletOpts.walletId, walletIds: walletOpts.walletIds };
+  const perLaunch = be * copyFanOut(u, sel);
+  const spent = Number(t.spentEth) || 0;
+  const me = dev
+    ? (Number(d.budget) > 0 ? Number(d.budget) : perLaunch * 10)
+    : Number(t.maxEth) || 0;
+  if (dev && !(me >= perLaunch)) {
+    throw new Error(`total budget must be ≥ ${trimAmt(perLaunch)} — one launch buys on ${copyFanOut(u, sel)} wallet(s)`);
+  }
+  const tp = Number(d.tpPct) || 0, sl = Number(d.slPct) || 0;
+  if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
+  if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
+  t.buyEth = String(be);
+  if (dev) t.maxEth = String(me);
+  t.walletId = walletOpts.walletId || undefined;
+  t.walletIds = walletOpts.walletIds;
+  t.slipBps = Math.max(0, Math.min(5000, Math.round(Number(d.slipPct) * 100) || 0)) || undefined;
+  t.tpPct = tp || undefined;
+  t.slPct = sl || undefined;
+  if (!dev && Number(d.ttlH) > 0) t.expiresAt = Date.now() + Number(d.ttlH) * 3600000;
+  saveStoreNow();
+  // A budget now BELOW what is already spent is legal and means "stop here" —
+  // refusing it would deny the one edit that halts a target without removing
+  // it. It is said out loud rather than discovered when nothing ever buys again.
+  return Object.assign(Object.create(Object.getPrototypeOf(t)), t, {
+    _updated: true,
+    _spent: spent,
+    _exhausted: dev && spent >= Number(t.maxEth),
+  });
+}
+
 function armSnipeDraft(chatId) {
   const u = ensureUser(chatId);
   const d = snipeDraft(u);
@@ -1275,6 +1325,30 @@ function armSnipeDraft(chatId) {
   const walletOpts = sel === '*'
     ? { walletId: '*' }
     : sel.length === 1 ? { walletId: sel[0] } : { walletIds: sel };
+  // ALREADY WATCHING THIS TARGET? Then ⚡ UPDATES it — it does not refuse.
+  //
+  // "saya kan set 0.01 eth 5 wallet tpi laporanya hanya 1 wallet". A new draft
+  // defaults its wallet row to the ACTIVE wallet, so a target armed before that
+  // row was touched watches with one; changing the row afterwards and tapping ⚡
+  // was refused as a duplicate, and the only route to the settings the user
+  // wanted was to know they had to REMOVE the target first — which nothing said.
+  // Tapping ⚡ on a panel showing this target with new settings has exactly one
+  // possible meaning: watch it with THESE. Refusing is the least useful reading
+  // of an unambiguous request.
+  //
+  // What is REWRITTEN is the terms (amount, budget, wallets, slippage, TP/SL).
+  // What is PRESERVED is the history — `spentEth`, `bought`, `holding`,
+  // `copySell`, the id and the cursor — because a budget that reset itself on an
+  // edit would let one target spend its cap again, and a cleared `bought` map
+  // would re-buy a launch it already holds. An edit changes the rules going
+  // forward; it never un-spends money.
+  const existing = armedTargetFor(chatId, { kind: (d.kind || 'ca') === 'dev' ? 'dev' : 'ca', chain: d.chain, ca: d.ca });
+  if (existing) {
+    const upd = updateArmedTarget(chatId, existing, d, walletOpts);
+    u.snipeDraft = null;
+    saveStoreNow();
+    return upd;
+  }
   // A dev-wallet target is a copy target in 'launches' mode — the SAME store
   // the wizard and /copy write, so the panel cannot grow a second idea of what
   // a dev snipe is. The caller tells them apart by `mode === 'launches'`.
@@ -4090,7 +4164,7 @@ module.exports = {
   setConfirmBuy, setExpert, setReceiptStyle, perWalletReceipts, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingSet, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
-  canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets, armedTargetFor,
+  canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets, armedTargetFor, updateArmedTarget,
   claimSnipeTarget, settleSnipeTarget, rearmSnipeTarget, expireSnipeTarget, MAX_SNIPE_TARGETS, SNIPE_TTL_MS,
   snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H, copyFanOut,
   feePayoutEnabled, payFromFeeWallet,

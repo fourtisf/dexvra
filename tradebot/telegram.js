@@ -1942,15 +1942,24 @@ function snipeSetupScreen(chatId, note) {
   // on the armed message. Expiry stays hidden on the dev path — a copy target
   // does not expire, and a row the backend ignores would be the
   // stop-loss-the-user-believes-exists.
+  const budNum = Number(d.budget) > 0 ? Number(d.budget) : (d.amount ? Number(d.amount) * selCount * 10 : 0);
+  const perLaunch = Number(d.amount) > 0 ? Number(d.amount) * selCount : 0;
+  // A BUDGET IS A COUNT OF LAUNCHES, and that is the only unit a reader thinks
+  // in — "0.15 ETH" says nothing about how many buys it authorises, which is
+  // the whole question ("budget itu untuk apa saya tidak mengerti"). The row
+  // does the division out loud, the way the 🧲 fill rate had to.
+  const budRuns = perLaunch > 0 && budNum > 0 ? Math.floor(budNum / perLaunch) : 0;
   const budLab = d.budget
     ? `${esc(d.budget)} ${esc(ch.native)}`
-    : (d.amount ? `${esc(trimNum(Number(d.amount) * selCount * 10))} ${esc(ch.native)} (10×)` : T(chatId, 'snipe.panel.bud_auto'));
+    : (d.amount ? `${esc(trimNum(budNum))} ${esc(ch.native)} (10×)` : T(chatId, 'snipe.panel.bud_auto'));
   L.push(
     '',
     T(chatId, 'snipe.panel.optional'),
     `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
     `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
-    dev ? `▫️ 💰 ${T(chatId, 'snipe.panel.budget')}: <b>${budLab}</b>` : `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
+    dev
+      ? `▫️ 💰 ${T(chatId, 'snipe.panel.budget')}: <b>${budLab}</b>${budRuns > 0 ? `\n     <i>${T(chatId, 'snipe.panel.budget_runs', { n: budRuns, per: esc(trimNum(perLaunch)), native: esc(ch.native) })}</i>` : ''}`
+      : `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
     '',
     T(chatId, dev ? 'snipe.panel.dev_foot' : 'snipe.panel.foot'),
   );
@@ -1976,7 +1985,9 @@ function snipeSetupScreen(chatId, note) {
   // still be acted on.
   const armed = d.ca ? core.armedTargetFor(chatId, { kind: dev ? 'dev' : 'ca', chain: d.chain, ca: d.ca }) : null;
   if (note) L.push('', T(chatId, 'snipe.panel.refused'));
-  else if (armed) L.push('', T(chatId, dev ? 'snipe.panel.already_dev' : 'snipe.panel.already_ca'));
+  else if (armed) L.push('', T(chatId, dev ? 'snipe.panel.already_dev' : 'snipe.panel.already_ca', {
+    spent: esc(Number(armed.spentEth || 0).toFixed(3)), max: esc(armed.maxEth || '—'), native: esc(ch.native),
+  }));
   else L.push('', T(chatId, ready ? 'snipe.panel.ready' : 'snipe.panel.not_ready'));
   // Label + value, two buttons a row — the reference's two-column table. Both
   // open the same editor, so there is no wrong half to tap.
@@ -1996,9 +2007,12 @@ function snipeSetupScreen(chatId, note) {
   // The ⚡ row is REPLACED, not merely relabelled, when this target is already
   // watching: the tap can only be refused, so the row becomes the one thing
   // the reader actually wants next — the list it is already on.
-  kbRows.push(armed
-    ? [btn(T(chatId, dev ? 'snipe.panel.see_dev_btn' : 'snipe.panel.see_ca_btn'), dev ? 'copy' : 'csn')]
-    : [btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')]);
+  // ⚡ UPDATES an already-watching target rather than refusing it: tapping it on
+  // a panel showing new settings has one possible meaning. The label says which
+  // of the two it will do, because "armed" and "re-termed" are different events
+  // to someone whose budget has already been partly spent.
+  kbRows.push([btn(T(chatId, armed ? 'snipe.panel.update_btn' : 'snipe.panel.arm_btn'), 'snw:arm')]);
+  if (armed) kbRows.push([btn(T(chatId, dev ? 'snipe.panel.see_dev_btn' : 'snipe.panel.see_ca_btn'), dev ? 'copy' : 'csn')]);
   kbRows.push(dev
     ? [btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')]
     : [btn(T(chatId, 'snipe.panel.oneline_btn'), 'csnadd'), btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')]);
@@ -3844,12 +3858,21 @@ async function onCallback(q) {
             addr: esc(short(tgt.address)), chain: `${chG.emoji} ${esc(chG.name)}`,
             perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(chG.native),
           }) + multi + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off');
+          // ARMED and RE-TERMED are different events to a reader whose budget
+          // has already been partly spent — a confirmation saying "armed" over
+          // a target mid-spend misstates what just happened.
+          if (tgt._updated) {
+            text = T(chatId, 'snipe.panel.updated', { spent: esc(Number(tgt._spent || 0).toFixed(3)), native: esc(chG.native) })
+              + (tgt._exhausted ? '\n' + T(chatId, 'snipe.panel.updated_exhausted') : '')
+              + '\n\n' + text;
+          }
           kb = { inline_keyboard: [
             ...(on ? [] : [[btn(T(chatId, 'dev.on_btn'), 'cptog')]]),
             [btn(T(chatId, 'snipe.panel.home_btn'), 'csn'), btn('👥 Copy & Snipe', 'copy')],
           ] };
         } else {
           text = snipeArmedText(chatId, tgt);
+          if (tgt._updated) text = T(chatId, 'snipe.panel.updated', { spent: '0.000', native: esc((core.chainOf(tgt.chain) || {}).native || '') }) + '\n\n' + text;
           kb = { inline_keyboard: [[btn(T(chatId, 'snipe.panel.home_btn'), 'csn'), btn('« Menu', 'menu')]] };
         }
         await edit(chatId, mid, T(chatId, 'snipe.panel.spent'));
