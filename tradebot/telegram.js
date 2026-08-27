@@ -1937,28 +1937,19 @@ function snipeSetupScreen(chatId, note) {
   );
   L.push(`${need(!!wLab)} 💳 ${T(chatId, 'snipe.panel.wallet')}: <b>${esc(wLab || '—')}</b>`);
   L.push(`${need(!!d.amount)} 💵 ${T(chatId, dev ? 'snipe.panel.amount_dev' : 'snipe.panel.amount')}: ${amtLine ? `<b>${amtLine}</b>` : `<i>${T(chatId, 'snipe.panel.pick')}</i>`}`);
-  // The budget is a CAP with a default, not a question ("fitur yang tadi hapus
-  // aja"): unset means ten launches, and the concrete number is shown here and
-  // on the armed message. Expiry stays hidden on the dev path — a copy target
-  // does not expire, and a row the backend ignores would be the
-  // stop-loss-the-user-believes-exists.
-  const budNum = Number(d.budget) > 0 ? Number(d.budget) : (d.amount ? Number(d.amount) * selCount * 10 : 0);
-  const perLaunch = Number(d.amount) > 0 ? Number(d.amount) * selCount : 0;
-  // A BUDGET IS A COUNT OF LAUNCHES, and that is the only unit a reader thinks
-  // in — "0.15 ETH" says nothing about how many buys it authorises, which is
-  // the whole question ("budget itu untuk apa saya tidak mengerti"). The row
-  // does the division out loud, the way the 🧲 fill rate had to.
-  const budRuns = perLaunch > 0 && budNum > 0 ? Math.floor(budNum / perLaunch) : 0;
-  const budLab = d.budget
-    ? `${esc(d.budget)} ${esc(ch.native)}`
-    : (d.amount ? `${esc(trimNum(budNum))} ${esc(ch.native)} (10×)` : T(chatId, 'snipe.panel.bud_auto'));
+  // NO BUDGET ROW. The dev-snipe cap was removed outright on the owner's call
+  // ("hapus fitur budget jdi budget fiturnya tidak ada"), so there is nothing
+  // to set — and a row for a setting the engine no longer reads would be the
+  // stop-loss-the-user-believes-exists, which is the one thing this panel has
+  // always refused to grow. What replaces it is the sentence below: an uncapped
+  // watch says so, every time, on the panel and on the confirmation.
   L.push(
     '',
     T(chatId, 'snipe.panel.optional'),
     `▫️ 📉 ${T(chatId, 'snipe.panel.slip')}: <b>${slipLab}</b>`,
     `▫️ 📊 ${T(chatId, 'snipe.panel.tpsl')}: <b>${tpslLab}</b>`,
     dev
-      ? `▫️ 💰 ${T(chatId, 'snipe.panel.budget')}: <b>${budLab}</b>${budRuns > 0 ? `\n     <i>${T(chatId, 'snipe.panel.budget_runs', { n: budRuns, per: esc(trimNum(perLaunch)), native: esc(ch.native) })}</i>` : ''}`
+      ? `⚠️ <i>${T(chatId, 'snipe.panel.nocap', { per: esc(Number(d.amount) > 0 ? trimNum(Number(d.amount) * selCount) : '—'), native: esc(ch.native) })}</i>`
       : `▫️ 🕒 ${T(chatId, 'snipe.panel.ttl')}: <b>${d.ttlH}h</b>`,
     '',
     T(chatId, dev ? 'snipe.panel.dev_foot' : 'snipe.panel.foot'),
@@ -1986,7 +1977,7 @@ function snipeSetupScreen(chatId, note) {
   const armed = d.ca ? core.armedTargetFor(chatId, { kind: dev ? 'dev' : 'ca', chain: d.chain, ca: d.ca }) : null;
   if (note) L.push('', T(chatId, 'snipe.panel.refused'));
   else if (armed) L.push('', T(chatId, dev ? 'snipe.panel.already_dev' : 'snipe.panel.already_ca', {
-    spent: esc(Number(armed.spentEth || 0).toFixed(3)), max: esc(armed.maxEth || '—'), native: esc(ch.native),
+    spent: esc(Number(armed.spentEth || 0).toFixed(3)), native: esc(ch.native),
   }));
   else L.push('', T(chatId, ready ? 'snipe.panel.ready' : 'snipe.panel.not_ready'));
   // Label + value, two buttons a row — the reference's two-column table. Both
@@ -2000,7 +1991,6 @@ function snipeSetupScreen(chatId, note) {
     [btn(`📊 ${T(chatId, 'snipe.panel.tpsl')}`, 'snw:tpsl'), btn(tpslOn ? tpslLab : T(chatId, 'snipe.panel.off'), 'snw:tpsl')],
   ];
   if (dev) {
-    kbRows.push([btn(`💰 ${T(chatId, 'snipe.panel.budget')}`, 'snw:bud'), btn(d.budget ? `✅ ${d.budget} ${ch.native}` : (d.amount ? `${trimNum(Number(d.amount) * selCount * 10)} ${ch.native} (10×)` : '10×'), 'snw:bud')]);
   } else {
     kbRows.push([btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')]);
   }
@@ -2065,19 +2055,6 @@ function snwAmountScreen(chatId) {
   kbR.push([btn(T(chatId, 'snipe.panel.custom_btn'), 'snw:amtc')]);
   kbR.push([btn('« Back', 'snw:open')]);
   return { text: T(chatId, 'snipe.panel.amt_pick', { native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
-}
-function snwBudgetScreen(chatId) {
-  const u = core.ensureUser(chatId);
-  const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
-  const ch = core.chainOf(d.chain) || { native: '' };
-  // Multiples of ONE LAUNCH, not of the per-wallet amount: with 5 wallets
-  // selected a launch costs 5× the amount, and a "3×" pick priced off the
-  // amount alone would arm a budget the fire-time check can never fit.
-  const per = (Number(d.amount) || 0) * core.copyFanOut(u, { walletIds: d.walletIds });
-  const kbR = [];
-  if (per > 0) kbR.push([3, 5, 10].map((m) => btn(`${d.budget === trimNum(per * m) ? '✓ ' : ''}${trimNum(per * m)} ${ch.native} (${m}×)`, `snwb:${trimNum(per * m)}`)));
-  kbR.push([btn('« Back', 'snw:open')]);
-  return { text: T(chatId, 'snipe.panel.bud_pick', { amt: per > 0 ? `${trimNum(per)} ${esc(ch.native)}` : '—', native: esc(ch.native) }), kb: { inline_keyboard: kbR } };
 }
 function snwSlipScreen(chatId) {
   const u = core.ensureUser(chatId);
@@ -2421,12 +2398,18 @@ function copyScreen(chatId) {
       const ch = core.chainOf(t.chain) || { emoji: '' };
       const badge = (t.mode === 'launches') ? '🎯 dev snipe' : '👥 copy trades';
       const spent = Number(t.spentEth).toFixed(3), max = esc(t.maxEth);
+      // A dev snipe has no cap, so it has no "/max" to print — a denominator
+      // there would be a limit that does not exist. The running TOTAL stays:
+      // it is the only number that says what an uncapped watch has spent.
+      const spend = (t.mode === 'launches')
+        ? T(chatId, 'copy.spent_uncapped', { spent })
+        : `used ${spent}/${max}`;
       const held = Object.keys(t.holding || {}).length;
       // ×N on the per-buy figure: a 3-wallet target spends 3× this on every
       // launch, and a row that hides the multiplier is the one screen where a
       // user checks what the bot is committed to spending.
       const nW = core.copyFanOut(u, t);
-      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy${nW > 1 ? ` × <b>${nW}</b> wallets` : ''} · used ${spent}/${max} ${ch.native || ''}\n` +
+      body += `${ch.emoji} <code>${short(t.address)}</code> · <b>${badge}</b>\n    ${esc(t.buyEth)}/buy${nW > 1 ? ` × <b>${nW}</b> wallets` : ''} · ${spend} ${ch.native || ''}\n` +
         `    🔻 Exit mirror: <b>${t.copySell ? '🟢 ON' : '⚪ OFF'}</b>${held ? ` · watching <b>${held}</b> position${held > 1 ? 's' : ''}` : ''}\n`;
       kbRows.push([
         btn(t.copySell ? '🔻 Exit mirror OFF' : '🔻 Exit mirror ON', `cpsell:${t.id}`),
@@ -2445,7 +2428,7 @@ function copyScreen(chatId) {
   // disappear when the follow list is full.
   kbRows.push([btn('📍 Snipe one contract', 'csn')]);
   kbRows.push([btn('« Menu', 'menu')]);
-  body += `\n<i>Both modes skip honeypots and are capped by your budget. Turn the master switch ON to start. ⚠️ High risk — DYOR.</i>`;
+  body += `\n<i>Both modes skip honeypots. Copy trades is capped by its budget; 🎯 dev snipe has NO cap — it buys every launch until you turn it off or remove it. Turn the master switch ON to start. ⚠️ High risk — DYOR.</i>`;
   body += `\n<i>The exit mirror only ever sells what copy bought from that wallet, and only positions opened after you enabled it — it will not reach back into bags you already held.</i>`;
   if (!core.canDevSnipe(ach.key)) body += `\n<i>🎯 Dev snipe is available on Robinhood Chain &amp; Solana — switch chain (🌐) to add one.</i>`;
   return { text: body, kb: { inline_keyboard: kbRows } };
@@ -3814,16 +3797,6 @@ async function onCallback(q) {
       setPending(chatId, { action: 'snw_dev' });
       return edit(chatId, mid, T(chatId, 'snipe.panel.dev_prompt', { chain: `${ch.emoji} ${esc(ch.name)}` }), rows([btn('« Back', 'snw:open')]));
     }
-    if (ca === 'bud') {
-      const u = core.ensureUser(chatId);
-      const d = core.snipeDraft(u) || core.newSnipeDraft(chatId);
-      // A budget is multiples of the amount — no amount yet means the amount
-      // question comes first, not a picker with nothing on it.
-      if (!(Number(d.amount) > 0)) { setPending(chatId, { action: 'snw_amt' }); const s = snwAmountScreen(chatId); return edit(chatId, mid, s.text, s.kb); }
-      setPending(chatId, { action: 'snw_bud' });
-      const s = snwBudgetScreen(chatId);
-      return edit(chatId, mid, s.text, s.kb);
-    }
     if (ca === 'amtc') { const u = core.ensureUser(chatId); const d = core.snipeDraft(u) || core.newSnipeDraft(chatId); const ch = core.chainOf(d.chain) || { native: '' }; setPending(chatId, { action: 'snw_amt' }); return send(chatId, T(chatId, 'snipe.panel.amt_prompt', { native: esc(ch.native) })); }
     if (ca === 'slipc') { setPending(chatId, { action: 'snw_slip' }); return send(chatId, T(chatId, 'snipe.panel.slip_prompt')); }
     if (ca === 'tpslc') { setPending(chatId, { action: 'snw_tpsl' }); return send(chatId, T(chatId, 'snipe.panel.tpsl_prompt')); }
@@ -3856,15 +3829,13 @@ async function onCallback(q) {
           const multi = walletScopeLine(chatId, tgt, tgt.buyEth, chG.native, 'dev.armed_wallets');
           text = T(chatId, 'dev.armed', {
             addr: esc(short(tgt.address)), chain: `${chG.emoji} ${esc(chG.name)}`,
-            perBuy: esc(tgt.buyEth), budget: esc(tgt.maxEth), native: esc(chG.native),
+            perBuy: esc(tgt.buyEth), native: esc(chG.native),
           }) + multi + '\n' + T(chatId, on ? 'dev.live' : 'dev.master_off');
           // ARMED and RE-TERMED are different events to a reader whose budget
           // has already been partly spent — a confirmation saying "armed" over
           // a target mid-spend misstates what just happened.
           if (tgt._updated) {
-            text = T(chatId, 'snipe.panel.updated', { spent: esc(Number(tgt._spent || 0).toFixed(3)), native: esc(chG.native) })
-              + (tgt._exhausted ? '\n' + T(chatId, 'snipe.panel.updated_exhausted') : '')
-              + '\n\n' + text;
+            text = T(chatId, 'snipe.panel.updated', { spent: esc(Number(tgt._spent || 0).toFixed(3)), native: esc(chG.native) }) + '\n\n' + text;
           }
           kb = { inline_keyboard: [
             ...(on ? [] : [[btn(T(chatId, 'dev.on_btn'), 'cptog')]]),
@@ -3927,7 +3898,7 @@ async function onCallback(q) {
     const s = snwWalletScreen(chatId);
     return edit(chatId, mid, s.text, s.kb);
   }
-  if (k === 'snwch' || k === 'snwa' || k === 'snwb' || k === 'snws' || k === 'snwx' || k === 'snwt') {
+  if (k === 'snwch' || k === 'snwa' || k === 'snws' || k === 'snwx' || k === 'snwt') {
     let note = null;
     try {
       if (k === 'snwch') {
@@ -3939,7 +3910,6 @@ async function onCallback(q) {
         if (had && !d.ca) note = T(chatId, 'snipe.panel.ca_dropped').replace(/<[^>]+>/g, '');
       }
       else if (k === 'snwa') core.updateSnipeDraft(chatId, { amount: ca });
-      else if (k === 'snwb') core.updateSnipeDraft(chatId, { budget: ca });
       else if (k === 'snws') core.updateSnipeDraft(chatId, { slipPct: ca });
       else if (k === 'snwx') core.updateSnipeDraft(chatId, { ttlH: ca });
       else {
@@ -4530,12 +4500,6 @@ async function resolvePending(chatId, p, text, m) {
       const s = snipeSetupScreen(chatId);
       return send(chatId, s.text, s.kb);
     }
-    if (p.action === 'snw_bud') {
-      const n = Number(String(t).replace('%', '').replace(',', '.'));
-      try { core.updateSnipeDraft(chatId, { budget: n }); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
-      const s = snipeSetupScreen(chatId);
-      return send(chatId, s.text, s.kb);
-    }
     if (p.action === 'snw_slip') {
       const n = Number(String(t).replace('%', '').replace(',', '.'));
       try { core.updateSnipeDraft(chatId, { slipPct: n }); } catch (e) { return send(chatId, T(chatId, 'snipe.ca.bad_slip')); }
@@ -4616,17 +4580,15 @@ async function resolvePending(chatId, p, text, m) {
       }
       const chN = core.chainOf(chainKey) || { native: '' };
       const patch = { chain: chainKey, kind: 'dev', ca: addr };
-      // The old one-line (`<wallet> <perBuy> <budget>`) still lands in one go:
-      // extra words on the line are the later questions, answered early.
+      // The old one-line (`<wallet> <perBuy>`) still lands in one go: an extra
+      // word on the line is the amount question, answered early. A THIRD word
+      // used to be the budget and is now ignored rather than refused — an
+      // operator with the old grammar in muscle memory must not have their
+      // target rejected over a setting that no longer exists.
       if (parts[1] !== undefined) {
         const a = Number(String(parts[1]).replace(',', '.'));
         if (!(a > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(chN.native) }));
         patch.amount = a;
-      }
-      if (parts[2] !== undefined) {
-        const b = Number(String(parts[2]).replace(',', '.'));
-        if (!(b > 0)) return send(chatId, T(chatId, 'dev.bad_amt', { native: esc(chN.native) }));
-        patch.budget = b;
       }
       try { core.updateSnipeDraft(chatId, patch); } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
       const swNote = switched ? T(chatId, 'snipe.panel.switched', { chain: `${switched.emoji} ${switched.name}` }) : null;
@@ -4654,7 +4616,7 @@ async function resolvePending(chatId, p, text, m) {
         const tgt = core.addCopyTarget(chatId, parts[0], ch.key, parts[1], parts[2], mode);
         const u2 = core.ensureUser(chatId);
         const onNote = (u2.copy && u2.copy.on) ? 'The master switch is ON — it is live now.' : 'Turn the master switch ON to start.';
-        if (mode === 'launches') return send(chatId, `✅ <b>Dev snipe armed</b> 🎯\nWatching <code>${short(tgt.address)}</code> on ${ch.emoji} ${esc(ch.name)} — when it launches a new token I'll buy <b>${esc(tgt.buyEth)} ${ch.native}</b> (budget ${esc(tgt.maxEth)}).\n${onNote}`, rows([btn('👥 Copy & Snipe', 'copy')]));
+        if (mode === 'launches') return send(chatId, `✅ <b>Dev snipe armed</b> 🎯\nWatching <code>${short(tgt.address)}</code> on ${ch.emoji} ${esc(ch.name)} — when it launches a new token I'll buy <b>${esc(tgt.buyEth)} ${ch.native}</b>.\n⚠️ <i>No spending cap — it buys EVERY launch until you turn it off.</i>\n${onNote}`, rows([btn('👥 Copy & Snipe', 'copy')]));
         return send(chatId, `✅ <b>Copying trades</b> 👥\nFollowing <code>${short(tgt.address)}</code> on ${ch.emoji} ${esc(ch.name)} — ${esc(tgt.buyEth)} ${ch.native}/buy, budget ${esc(tgt.maxEth)}.\n${onNote}`, rows([btn('👥 Copy & Snipe', 'copy')]));
       } catch (e) { return send(chatId, '❌ ' + esc(e.message || String(e))); }
     }
@@ -5767,5 +5729,5 @@ async function start() {
   }
 }
 
-module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, destHint, onCallback, normalizeCommand, onMessage, registerCommands, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwBudgetScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
+module.exports = { start, _test: { parseUsd, usdShort, orderPrompt, cardSide, doSell, doBuy, walletLine, marketLine, _shouldAnswerInGroup, walletScreen, walletsScreen, removeWalletScreen, exportKeyMsg, wdWalletLine, destHint, onCallback, normalizeCommand, onMessage, registerCommands, wdSweepChainScreen, wdSweepPickScreen, wdSweepResultText, tokensScreen, depositScreen, settingsScreen, notifyScreen, securityScreen, ordersScreen, dcaScreen, portfolioScreen, helpText, statsText, walletPickScreen, tradeTargets, tokenCard, sellMenu, monitorPayload, startMonitor, stopMonitor, adoptMonitor, resumeMonitors, _monitors, _monitorByToken, MON_EVERY_MS, MON_WINDOW_MS, gasScreen, langScreen, monitorListScreen, friendlyError, copyScreen, snipeScreen, caSnipeScreen, snipeSetupScreen, snwChainScreen, snwWalletScreen, snwAmountScreen, snwSlipScreen, snwTpslScreen, snwTtlScreen, parseSnipeLine, snipeArmedText, quickSym, walletLabelFor, PRICES, isCa, fmtNat, wAddr, isAddrFor, _placeAutoExit, parseAmt, _sendQ, resolvePending, isAddrFor } };
 if (require.main === module) start();

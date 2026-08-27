@@ -291,8 +291,19 @@ async function _followerBuy(u, t, token, chainKey, out) {
   // N × buyEth, and partially filling a selection would make "which wallets
   // bought" a lottery. Fit whole, or skip whole.
   const fanOutEth = Number(t.buyEth) * wids.length;
-  if (Number(t.spentEth) + fanOutEth > Number(t.maxEth) + 1e-12) return false;         // budget cap
-  if (safety.supported(chainKey)) { const s = await safety.tokenSecurity(chainKey, token).catch(() => null); if (s && safety.verdict(chainKey, s).level === 'danger') return false; }
+  // ⚠️ A DEV SNIPE HAS NO CAP — the owner removed the budget feature outright,
+  // so this watch buys every launch until it is switched off or the wallets run
+  // dry. `spentEth` is still accumulated: it is the running total the Copy &
+  // Snipe row prints, and dropping it would take away the only number that says
+  // what an uncapped watch has actually spent. Copy TRADES keeps its cap.
+  const capped = t.mode !== 'launches';
+  if (capped && Number(t.spentEth) + fanOutEth > Number(t.maxEth) + 1e-12) return false;   // budget cap
+  if (safety.supported(chainKey)) {
+    const s = await safety.tokenSecurity(chainKey, token).catch(() => null);
+    // A honeypot skip is the gate WORKING, and it is still an event the user
+    // wants: their dev launched, and the bot deliberately stayed out.
+    if (s && safety.verdict(chainKey, s).level === 'danger') { if (out) out.why = 'the safety scan flagged it as DANGER (honeypot / cannot sell) — skipped on purpose'; return false; }
+  }
   // RE-CHECKED, because the safety call above is a NETWORK await and this
   // target is no longer fired by one loop only: the retry ring and the pad
   // loop run concurrently with the chain's discovery loop, so two launches by
@@ -301,7 +312,7 @@ async function _followerBuy(u, t, token, chainKey, out) {
   // by a full fan-out. The claim below is synchronous after this line, which
   // is what makes the check-then-claim atomic in a single-threaded process.
   if (t.bought[key]) return false;
-  if (Number(t.spentEth) + fanOutEth > Number(t.maxEth) + 1e-12) return false;
+  if (capped && Number(t.spentEth) + fanOutEth > Number(t.maxEth) + 1e-12) return false;
   const bk = Object.keys(t.bought); if (bk.length >= 2000) delete t.bought[bk[0]];
   t.bought[key] = true;
   t.spentEth = Number(t.spentEth) + fanOutEth;   // claimed BEFORE the buys — a missed snipe beats spending twice
@@ -371,6 +382,9 @@ async function _followerBuy(u, t, token, chainKey, out) {
   // caller reads `out.notYet` and parks the launch in the retry ring instead.
   const notYet = fails.length > 0 && fails.every((f) => _notYetTradeable(f.err));
   if (out && notYet) out.notYet = true;
+  // The REASON travels, so the caller can tell the user rather than swallowing
+  // it. A dev launch that is seen and not bought must never be silent.
+  else if (out && fails.length) out.why = String((fails[0].err && fails[0].err.message) || fails[0].err);
   if ((fails.length && !notYet) || (broadcasts.length && !fills.length)) {
     const e0 = (fails[0] || broadcasts[0]).err;
     const now = Date.now(), fk = u.chatId + ':devsnipe:' + key;
@@ -417,7 +431,13 @@ async function _followerBuy(u, t, token, chainKey, out) {
  * gated by core.buy / canTradeNow exactly as for every other discovery source,
  * so a hostile or wrong event can waste a look, never aim a trade.
  */
-const PONS_FACTORY_DEFAULT = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB';
+// TWO FACTORIES, not one. Pons kept its V1 deployment live for tokens launched
+// before the V2 upgrade, and a scan watching a single address is blind to
+// everything the other one emits — eth_getLogs answers an unmatched address
+// with an empty array, so that blindness reads as a quiet launchpad. Same rule
+// as JUP_BASES: a LIST, current first, legacy kept, so a rollover in either
+// direction needs no deploy.
+const PONS_FACTORY_DEFAULT = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB,0x0c37a24F5D23A486FA692d1500881d698B1F77a4';
 const PONS_EVENT_DEFAULT = 'event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchConfigId, uint256 positionId, uint256 restrictionsEndBlock, uint256 initialBuyAmount)';
 const _envs = (k, d) => { const v = String(process.env[k] == null ? '' : process.env[k]).trim(); return v || d; };
 /** Read PER CALL, not at require time, so `--update-env` + restart is the whole
@@ -428,7 +448,9 @@ function _ponsCfg() {
   const on = !(flag === '0' || flag === 'false' || flag === 'off' || flag === 'no');
   const eventSig = _envs('PONS_EVENT', PONS_EVENT_DEFAULT);
   const name = (eventSig.match(/event\s+(\w+)/) || [])[1] || 'TokenLaunched';
-  return { on, factory: _envs('PONS_FACTORY', PONS_FACTORY_DEFAULT), eventSig, name };
+  const factories = _envs('PONS_FACTORY', PONS_FACTORY_DEFAULT)
+    .split(',').map((x) => x.trim()).filter((x) => /^0x[0-9a-fA-F]{40}$/.test(x));
+  return { on, factories, factory: factories[0] || '', eventSig, name };
 }
 let _ponsCursor = 0;
 let _ponsCode = null;            // { at, ok } — getCode re-checked hourly, so a fixed .env heals without a second thought
@@ -437,26 +459,38 @@ async function _ponsScan(prov, head, armed, devFollowers) {
   const cfg = _ponsCfg();
   if (!cfg.on) return;
   const now = Date.now();
+  if (!cfg.factories.length) { _snipeStats.ponsErr = 'PONS_FACTORY holds no valid address'; return; }
   // A factory with no CODE is the wrong-address state, and it must be a
-  // sentence in /health rather than an eternal empty scan. Re-checked hourly:
-  // a corrected PONS_FACTORY must not stay condemned by a cached verdict.
-  // Keyed by the ADDRESS it judged: a verdict about one factory must never
-  // answer for another (an operator correcting PONS_FACTORY gets a fresh look).
-  if (!_ponsCode || _ponsCode.factory !== cfg.factory || now - _ponsCode.at > 3600000) {
-    try { _ponsCode = { at: now, factory: cfg.factory, ok: (await prov.getCode(cfg.factory)) !== '0x' }; }
-    catch (_) { _ponsCode = null; }   // an unreadable chain is not an answer
+  // sentence in /health rather than an eternal empty scan. Re-checked hourly,
+  // and keyed by the ADDRESS LIST it judged: a verdict about one deployment
+  // must never answer for another. ONE live factory is enough to scan — the
+  // legacy address is expected to be dead on a fresh chain and must not
+  // condemn the current one.
+  const fkey = cfg.factories.join(',');
+  if (!_ponsCode || _ponsCode.factory !== fkey || now - _ponsCode.at > 3600000) {
+    try {
+      const codes = await Promise.all(cfg.factories.map((f) => prov.getCode(f).catch(() => null)));
+      const live = cfg.factories.filter((f, i) => codes[i] && codes[i] !== '0x');
+      _ponsCode = { at: now, factory: fkey, ok: live.length > 0, live };
+    } catch (_) { _ponsCode = null; }   // an unreadable chain is not an answer
   }
   if (_ponsCode && !_ponsCode.ok) {
-    _snipeStats.ponsErr = `PONS_FACTORY ${cfg.factory} has no contract on this chain — set the real one in .env (npm run preflight:robinhood probes it)`;
+    _snipeStats.ponsErr = `no PONS_FACTORY address has contract code on this chain (${cfg.factories.join(', ')}) — set the real one in .env (npm run preflight:robinhood probes it)`;
     return;
   }
+  const live = (_ponsCode && _ponsCode.live && _ponsCode.live.length) ? _ponsCode.live : cfg.factories;
   if (!_ponsCursor || head < _ponsCursor) { _ponsCursor = head; return; }   // pin near head first pass — the first look only seeds
   const from = Math.max(_ponsCursor + 1, head - SNIPE_MAX_SPAN);
   if (from > head) { _ponsCursor = head; return; }
   let evs = [];
   try {
-    const c = new ethers.Contract(cfg.factory, [cfg.eventSig], prov);
-    evs = await c.queryFilter(c.filters[cfg.name](), from, head);
+    // Every live factory, one cursor. They are one launchpad to the user, and
+    // a per-factory cursor would let a quiet deployment hold the busy one back.
+    const per = await Promise.all(live.map((f) => {
+      const c = new ethers.Contract(f, [cfg.eventSig], prov);
+      return c.queryFilter(c.filters[cfg.name](), from, head);
+    }));
+    evs = per.flat();
   } catch (e) {
     // Its own failure surface, and the PRIMARY scan's cursor is untouched: a
     // Pons outage may cost Pons launches, never pools.trade ones. The cursor
@@ -480,7 +514,7 @@ async function _ponsScan(prov, head, armed, devFollowers) {
     // Rate-limited to one raw look per 10 min; a quiet pad costs nothing.
     _ponsRawCheckAt = now;
     try {
-      const raw = await prov.getLogs({ address: cfg.factory, fromBlock: from, toBlock: head });
+      const raw = (await Promise.all(live.map((f) => prov.getLogs({ address: f, fromBlock: from, toBlock: head }).catch(() => [])))).flat();
       if (raw.length) _snipeStats.ponsErr = `Pons factory emitted ${raw.length} log(s) our PONS_EVENT did not match — the signature is stale, override PONS_EVENT in .env`;
     } catch (_) {}
   }
@@ -550,7 +584,21 @@ async function _fireLaunch(chainKey, L, opts = {}) {
     // ring disabled the queue is a no-op, and reporting true would leave the
     // caller believing a launch is parked that is in fact gone — the caller
     // unmarks on that answer so the graduation event can still offer it.
-    if (!ok) return { held, queued: _queueLaunch(chainKey, L, skip, opts.eligible) };
+    if (!ok) {
+      const q = _queueLaunch(chainKey, L, skip, opts.eligible);
+      // With the ring OFF there is no later moment to speak at, so the notice
+      // goes out now rather than never.
+      if (!q && L.creator) {
+        for (const u of devFollowers) {
+          for (const t of u.copy.targets) {
+            if (t.mode !== 'launches' || t.chain !== chainKey) continue;
+            if (_addrKey(chainKey, t.address) !== _addrKey(chainKey, L.creator)) continue;
+            _devLaunchMissed(u, t, chainKey, L, 'no market this bot can route through had opened yet', { follow: true }).catch(() => {});
+          }
+        }
+      }
+      return { held, queued: q };
+    }
   }
 
   // ── Dev-wallet snipe: buy this launch for anyone following its creator.
@@ -574,8 +622,12 @@ async function _fireLaunch(chainKey, L, opts = {}) {
         // was dropped on the floor at the one moment it is guaranteed to be
         // too early.
         const out = {};
-        if (await _followerBuy(u, t, token, chainKey, out)) held.add(u.chatId);
-        else if (out.notYet) waiting = true;
+        if (await _followerBuy(u, t, token, chainKey, out)) { held.add(u.chatId); return; }
+        if (out.notYet) { waiting = true; return; }
+        // NOT bought, and not merely early. Whatever the reason — an unroutable
+        // venue, a danger flag, a dead wallet — the user hears it, because a
+        // dev launch going by in silence is what this whole path is for.
+        if (out.why) await _devLaunchMissed(u, t, chainKey, L, out.why, { follow: _mayBecomeTradeable(out.why) });
       });
     }
   }
@@ -624,6 +676,66 @@ async function _fireLaunch(chainKey, L, opts = {}) {
   if (waiting) waiting = _queueLaunch(chainKey, L, new Set([...(skip || []), ...held]), opts.eligible);
   return { held, queued: waiting };
 }
+
+/**
+ * A launch this bot SAW, matched to a dev target, and could not buy.
+ *
+ * "TOKEN SUDAH LAUNCH SNIPE ON TPI PAS TOKEN LAUNCH BOT MALA DIAM TIDAK ADA
+ * EKSEKUSI — MINIMAL KALO GAGAL HARUS ADA PESANYA FAIL."
+ *
+ * The bot was not broken and it was not idle: the token launched onto a Pons
+ * bonding curve, and this engine has no route through one — `canTradeNow` said
+ * no, `_notYetTradeable` deliberately excludes "can't route through" from the
+ * retry ring (retrying an unroutable venue is two minutes of RPC for an answer
+ * that will not change), and the whole thing ended in SILENCE. Every state in
+ * that chain was individually correct and the sum of them was a sniper that
+ * watched a launch go by without a word.
+ *
+ * So: an armed follower whose dev launched something is TOLD, always, whatever
+ * the outcome — and where the token will become buyable later (a curve that
+ * graduates into a pool this engine can route), the launch is handed to the CA
+ * snipe, which already polls `canTradeNow` for up to its TTL and fires the
+ * moment it flips. That turns "never bought" into "bought at graduation" using
+ * only paths that already work.
+ */
+async function _devLaunchMissed(u, t, chainKey, L, why, opts = {}) {
+  const ch = core.chainOf(chainKey) || { emoji: '', name: chainKey, native: 'ETH' };
+  const key = u.chatId + ':devmiss:' + _addrKey(chainKey, L.token);
+  const now = Date.now();
+  if (now - (_snipeFailAt.get(key) || 0) < 300000) return;   // one notice per launch per 5 min
+  _snipeFailAt.set(key, now);
+  let follow = '';
+  if (opts.follow) {
+    // Hand it to the CA snipe rather than inventing a second waiting room: that
+    // loop already probes canTradeNow on a timer, buys on the first tick it can
+    // fill, and carries the user's own slippage and TP/SL. A failure to arm it
+    // is reported — a follow-up the user believes exists is worse than none.
+    try {
+      core.addSnipeTarget(u.chatId, {
+        ca: L.token, chain: chainKey, amount: t.buyEth,
+        walletId: t.walletId, walletIds: t.walletIds,
+        slipBps: t.slipBps, tpPct: t.tpPct, slPct: t.slPct,
+      });
+      follow = '\n🎯 <i>Armed as a contract snipe — I will buy it the moment it becomes tradeable (when the curve graduates into a pool).</i>';
+    } catch (e) {
+      const m = String((e && e.message) || e);
+      follow = /already armed/i.test(m)
+        ? '\n🎯 <i>Already queued as a contract snipe — I will buy it the moment it becomes tradeable.</i>'
+        : `\n⚠️ <i>Could not queue it as a contract snipe: ${esc(m)}</i>`;
+    }
+  }
+  _notify(u.chatId, `⚠️ <b>Dev launched — NOT bought</b> on ${ch.emoji} ${esc(ch.name)}\n` +
+    `Dev <code>${short(t.address)}</code> launched <code>${L.token}</code>\n` +
+    `<b>Why:</b> ${esc(why)}${follow}`, {
+      inline_keyboard: [[{ text: '📍 Open token', callback_data: `ca:${L.token}` }, { text: '👥 Copy & Snipe', callback_data: 'copy' }]],
+    }, 'copy');
+}
+
+/** Can this token become buyable LATER? A bonding curve that graduates into a
+ *  pool can; a token whose liquidity sits on a venue this engine will never
+ *  route through cannot be distinguished from one that graduates, so both are
+ *  followed — the CA snipe expires on its own TTL and costs one cheap probe. */
+const _mayBecomeTradeable = (why) => /route through|no route|no liquidity|no pool|zero quote|not tradable|not tradeable|curve|bonding/i.test(String(why || ''));
 
 /** Everyone with snipe-all armed on this chain, with a real amount set. */
 const _armedOn = (chainKey) => core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains[chainKey] && Number(u.snipe.ethAmount) > 0);
@@ -765,6 +877,23 @@ async function launchRetryCycle() {
       // (PairCreated) buy that predates this whole feature — a curve token's
       // pre-migration life is minutes-to-days, far past this ring's window.
       if (!e.done.size) _snipeUnmark(e.chainKey, e.L.token);
+      // AND THE FOLLOWERS ARE TOLD. The ring giving up is the last moment
+      // anybody could learn that a watched dev launched something the bot never
+      // managed to buy; past it there is no event left to hang a word on. The
+      // CA snipe picks the token up and keeps probing for its whole TTL, which
+      // is the window a bonding curve actually graduates in.
+      if (e.L.creator) {
+        for (const u of launchFollowers(e.chainKey)) {
+          if (e.done.has(u.chatId)) continue;
+          for (const t of (u.copy.targets || [])) {
+            if (t.mode !== 'launches' || t.chain !== e.chainKey) continue;
+            if (_addrKey(e.chainKey, t.address) !== _addrKey(e.chainKey, e.L.creator)) continue;
+            _devLaunchMissed(u, t, e.chainKey, e.L,
+              `no market this bot can route through opened within ${Math.round(LAUNCH_RETRY_MS / 60000)} min of the launch`,
+              { follow: true }).catch(() => {});
+          }
+        }
+      }
     }
   }
   const live = [..._launchRetry];
@@ -1451,7 +1580,8 @@ async function positionsCycle() {
 // Mirror a followed wallet's BUYS: watch ERC20 Transfer logs TO the target, and
 // only mirror when the token came FROM its own WETH pair (i.e. a real swap-buy,
 // not an airdrop/transfer). Honeypots skipped. Total spend per target is HARD-
-// capped at maxEth, so worst-case loss is bounded even if it mirrors a bad token.
+// capped at maxEth for copy TRADES (a dev snipe is uncapped by design — see
+// _followerBuy), so a mirrored bad token is bounded on the path that has a cap.
 // Sells are the user's job (TP/SL/manual) — we never auto-sell someone else's exit.
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const COPY_MAX_MIRRORS_PER_CYCLE = Math.max(1, Number(process.env.COPY_MAX_MIRRORS || 5));

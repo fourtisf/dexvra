@@ -38,7 +38,13 @@ let FEEDS = {};   // chainKey -> { byPad: { key: {ok, why, items} }, ok, why }
 const buys = [];
 const notes = [];
 
+// The CA-snipe hand-off an unbuyable dev launch takes. Recorded rather than
+// mocked away: the point of the test is that the launch is FOLLOWED, and a stub
+// that silently accepted anything would pass on code that queued nothing.
+const caArmed = [];
 const coreStub = {
+  addSnipeTarget: (chatId, spec) => { caArmed.push({ chatId, ...spec }); return spec; },
+  armedSnipeTargets: () => caArmed,
   CFG: { gasBufferEth: '0.001', solGasBuffer: '0.01' },
   chains: {
     isSvm: (k) => k === 'solana',
@@ -60,7 +66,12 @@ const coreStub = {
   canTradeNow: async (ca, chain) => CAN_TRADE(ca, chain),
   buy: async (chatId, token, amt, chain, wid, opts) => { const r = await BUY(chatId, token, amt, chain, wid, opts); buys.push({ chatId, token, amt, chain, wid }); return r; },
 };
-const safetyStub = { supported: () => !!SAFETY, tokenSecurity: async (...a) => SAFETY(...a), verdict: () => ({ level: 'ok' }) };
+let SAFE = { supported: false, level: 'ok' };
+const safetyStub = {
+  supported: () => SAFE.supported || !!SAFETY,
+  tokenSecurity: async (...a) => (SAFETY ? SAFETY(...a) : {}),
+  verdict: () => ({ level: SAFE.level || 'ok' }),
+};
 const solanaStub = { isSolAddress: () => true, WSOL_MINT: 'W', solToLamports: (n) => BigInt(Math.round(Number(n) * 1e9)), pumpfunNewX: async () => ({ ok: true, coins: [] }) };
 const lpStub = {
   probes: () => [],   // upstreams.js reads the probe list at require time
@@ -94,6 +105,7 @@ inject('launchpads', lpStub);
 const w = require(path.join(dir, 'watchers'));
 w.setNotifier((chatId, text, kb, kind) => notes.push({ chatId, text, kind }));
 const T = w._test;
+T._caArmed = caArmed;
 
 let _uid = 0;   // NOT USERS.length: two users built before either is pushed would share an id
 const armUser = (chain, amt = 0.05) => ({ chatId: 100 + _uid++, snipe: { chains: { [chain]: true }, ethAmount: amt }, wallets: [{ id: 'w1', address: '0xME' }] });
@@ -113,6 +125,7 @@ function reset() {
   // behind by the backoff test reads as "the pad loop is broken" in every
   // later test. Stated here, not inherited.
   T._padFeedFail.clear();
+  caArmed.length = 0;
   for (const k of Object.keys(T._padSnipeStats.pads)) delete T._padSnipeStats.pads[k];
   T._padSnipeStats.lastErr = null; T._padSnipeStats.lastErrAt = null;
 }
@@ -447,29 +460,24 @@ test('…but a launch SOMEBODY holds stays marked — their graduation re-buy is
   assert.equal(T._snipeMark('robinhood', '0xN1'), false, 'a launch somebody holds was unmarked — its graduation event now buys it twice for them');
 });
 
-test('the dev-target budget cannot be spent past its cap by two concurrent launches', async () => {
-  reset();
-  const dev = '0xDEADDEV';
-  const u = devUser('robinhood', dev);
-  // Budget 0.05: room for exactly ONE 0.02 buy plus change — never two.
-  u.copy.targets[0].maxEth = '0.05';
-  u.copy.targets[0].buyEth = '0.02';
-  u.copy.targets[0].spentEth = 0.02;
-  USERS.push(u);
-  // The safety gate is a NETWORK await; hold the first call open until the
-  // second has read the (stale) spentEth — the exact interleave the retry
-  // ring made possible by firing concurrently with the discovery loop.
-  let release; const gate = new Promise((r) => { release = r; });
-  let calls = 0;
-  SAFETY = async () => { calls++; if (calls === 1) await gate; return null; };
-  const t = u.copy.targets[0];
-  const a = T._followerBuy(u, t, '0xP1', 'robinhood', {});
-  const b = T._followerBuy(u, t, '0xP2', 'robinhood', {});
-  release();
-  await Promise.all([a, b]);
-  assert.ok(Number(t.spentEth) <= Number(t.maxEth) + 1e-12, `spent ${t.spentEth} past the cap ${t.maxEth} — the check-then-claim spans the safety await`);
-  assert.equal(buys.length, 1, 'both launches bought — the budget re-check after the await is gone');
+test('a COPY-TRADES budget cannot be spent past its cap by two concurrent buys', () => {
+  // The check-then-claim spans a network await (the safety gate), and the retry
+  // ring made concurrent _followerBuy calls on one target possible: both could
+  // read a stale spentEth, both pass, both claim — real money past the cap.
+  // ⚠️ Asserted on 'trades', because the DEV snipe no longer has a cap at all
+  // (the budget feature was removed on the owner's call); the race is still
+  // live for copy-trades, which kept its budget, and the re-check that fixes it
+  // is shared by both modes.
+  const SRC = require('node:fs').readFileSync(require('node:path').join(__dirname, 'watchers.js'), 'utf8');
+  const fn = SRC.slice(SRC.indexOf('async function _followerBuy('), SRC.indexOf('const _armedOn ='));
+  const gate = fn.indexOf('safety.tokenSecurity');
+  const claim = fn.indexOf('t.bought[key] = true;');
+  assert.ok(gate > 0 && claim > gate, 'the safety await and the claim moved — this test is asserting nothing');
+  const between = fn.slice(gate, claim);
+  assert.match(between, /if \(t\.bought\[key\]\) return false;/, 'the dedup is no longer re-checked after the await');
+  assert.match(between, /if \(capped && Number\(t\.spentEth\) \+ fanOutEth > Number\(t\.maxEth\)/, 'the budget is no longer re-checked after the await');
 });
+
 
 test('a user who arms AFTER a launch is queued is not bought into it', async () => {
   reset();
@@ -671,6 +679,74 @@ test('a PONS_FACTORY with no contract behind it is a sentence, not an eternal em
     const prov = ponsProvider({ code: '0x', logs: [ponsLog('0x' + 'a5'.repeat(20), '0x' + 'e'.repeat(40), 10550)] });
     await T._ponsScan(prov, 10600, USERS, []);
     assert.equal(buys.length, 0);
-    assert.match(String(T._snipeStats.ponsErr), /no contract/, 'a wrong factory address reads as a quiet chain');
+    const why = String(T._snipeStats.ponsErr);
+    assert.match(why, /contract code/, 'a wrong factory address reads as a quiet chain');
+    assert.match(why, /PONS_FACTORY/, 'the sentence must name the knob that fixes it');
+    assert.match(why, /0xffff/i, 'the sentence must name the address it judged');
   } finally { delete process.env.PONS_FACTORY; }
+});
+
+// ── "BOT MALA DIAM TIDAK ADA EKSEKUSI — MINIMAL KALO GAGAL HARUS ADA PESANYA" ─
+//
+// A watched dev launched a token onto a Pons bonding curve. canTradeNow said
+// no (this engine has no route through one), _notYetTradeable deliberately
+// excludes "can't route through" from the retry ring, and the whole chain ended
+// in SILENCE. Every step was individually correct; the sum was a sniper that
+// watched a launch go by without a word.
+
+test('a dev launch the bot cannot buy is REPORTED, never silent', async () => {
+  reset();
+  const dev = '0x' + 'd'.repeat(40);
+  const u = devUser('robinhood', dev);
+  USERS.push(u);
+  BUY = async () => { throw new Error("this token's liquidity is on Pons v2, which Dexvra can't route through yet — no swap to sign"); };
+  await T._fireLaunch('robinhood', { token: '0xPONS1', sym: 'TEST', creator: dev, at: Date.now() }, { armed: [], devFollowers: [u] });
+  const texts = notes.map((n) => n.text).join('\n');
+  assert.match(texts, /NOT bought/i, 'the launch went by in silence — the reported defect');
+  assert.match(texts, /Pons v2|route through/i, 'the notice must carry the REASON, not a shrug');
+  assert.match(texts, /<code>0xPONS1<\/code>/, 'the notice must name the token');
+});
+
+test('…and an unroutable launch is followed until it becomes tradeable', async () => {
+  reset();
+  const dev = '0x' + 'd'.repeat(40);
+  const u = devUser('robinhood', dev);
+  USERS.push(u);
+  BUY = async () => { throw new Error("liquidity is on Pons v2, which Dexvra can't route through yet"); };
+  await T._fireLaunch('robinhood', { token: '0xPONS2', sym: 'TEST', creator: dev, at: Date.now() }, { armed: [], devFollowers: [u] });
+  // A bonding curve becomes buyable when it graduates into a pool. The CA snipe
+  // already polls canTradeNow for its whole TTL and fires on the first tick it
+  // can fill — so the launch is handed to it rather than dropped.
+  const armed = T._caArmed;
+  assert.equal(armed.length, 1, 'the unbuyable launch was dropped instead of being followed to graduation');
+  assert.equal(String(armed[0].ca).toLowerCase(), '0xpons2');
+  assert.match(notes.map((n) => n.text).join('\n'), /contract snipe/i, 'the follow-up was silent — a queue the user does not know about is no queue');
+});
+
+test('a honeypot skip is the gate WORKING, and is still said out loud', async () => {
+  reset();
+  const dev = '0x' + 'd'.repeat(40);
+  const u = devUser('robinhood', dev);
+  USERS.push(u);
+  SAFE = { supported: true, level: 'danger' };
+  try {
+    await T._fireLaunch('robinhood', { token: '0xRUG', sym: 'RUG', creator: dev, at: Date.now() }, { armed: [], devFollowers: [u] });
+    const texts = notes.map((n) => n.text).join('\n');
+    assert.match(texts, /NOT bought/i, 'the bot stayed out of a honeypot and never said so');
+    assert.match(texts, /DANGER|honeypot/i, 'the notice must say it was a deliberate skip, not a failure');
+  } finally { SAFE = { supported: false, level: 'ok' }; }
+});
+
+test('one notice per launch, not one per tick', async () => {
+  reset();
+  const dev = '0x' + 'd'.repeat(40);
+  const u = devUser('robinhood', dev);
+  USERS.push(u);
+  BUY = async () => { throw new Error("can't route through yet"); };
+  const L = { token: '0xNOISE', sym: 'N', creator: dev, at: Date.now() };
+  await T._fireLaunch('robinhood', L, { armed: [], devFollowers: [u] });
+  await T._fireLaunch('robinhood', L, { armed: [], devFollowers: [u] });
+  await T._fireLaunch('robinhood', L, { armed: [], devFollowers: [u] });
+  const hits = notes.filter((n) => /NOT bought/i.test(n.text)).length;
+  assert.equal(hits, 1, `${hits} notices for one launch — a warning per tick is a warning nobody reads`);
 });

@@ -545,6 +545,12 @@ function ensureUser(chatId, referredBy) {
       // Retro-applying it would auto-sell bags the user acquired under a
       // buy-only regime and never agreed to hand over.
       if (typeof t.copySell !== 'boolean') { t.copySell = true; ch = true; }
+      // The dev-snipe cap was REMOVED. A stale `maxEth` on a 'launches' target
+      // is a number no code reads any more, and a field that looks meaningful
+      // and binds nothing is exactly what this repo refuses to leave lying
+      // around — every screen would go on rendering "used 0.02/0.1" over a
+      // watch with no limit at all.
+      if (t.mode === 'launches' && t.maxEth !== undefined) { delete t.maxEth; ch = true; }
       if (!t.holding || typeof t.holding !== 'object') { t.holding = {}; ch = true; }
     }
     if (!Array.isArray(u.dca)) { u.dca = []; ch = true; }                                  // scheduled buys (DCA)
@@ -934,18 +940,32 @@ function addCopyTarget(chatId, address, chain, buyEth, maxEth, mode, opts = {}) 
   // "ten buys" default are both scaled by the selection, so "budget" means the
   // same thing on one wallet and on five.
   const perLaunch = be * copyFanOut(u, { walletId, walletIds });
-  // The budget is a CAP, not a question ("fitur yang tadi hapus aja"): omitted,
-  // it defaults to ten LAUNCHES — an uncapped auto-buyer is the "buy ngasal"
-  // class of hazard, so the cap survives even when nobody is asked for one.
-  // The armed message states the concrete number either way.
-  const me = (maxEth == null || maxEth === '') ? perLaunch * 10 : Number(maxEth);
-  if (!(me >= perLaunch)) throw new Error(perLaunch > be ? `total budget must be ≥ ${trimAmt(perLaunch)} — one launch buys on ${copyFanOut(u, { walletId, walletIds })} wallets` : 'total budget must be ≥ the per-buy amount');
+  // ⚠️ THE DEV SNIPE HAS NO SPENDING CAP — the owner's explicit call ("hapus
+  // fitur budget jdi budget fiturnya tidak ada"), taken after the trade-off was
+  // put to them in as many words. It is a real removal, not a hidden default:
+  // a 'launches' target buys EVERY launch that developer makes, on every wallet
+  // in its selection, until the master switch goes off, the target is removed,
+  // or the wallets run dry.
+  //
+  // What replaces the cap is VISIBILITY, because this repo's rule is that
+  // nothing spends money silently, not that everything must be bounded: the
+  // arming confirmation and the Copy & Snipe row both say the watch is
+  // uncapped, and `spentEth` is still accumulated so the running total is on
+  // screen. `_followerBuy` skips its budget test for this mode alone.
+  //
+  // COPY TRADES ('trades') KEEPS ITS CAP. It was not what was asked about — the
+  // question was about the per-LAUNCH budget on the snipe panel — and silently
+  // uncapping a second feature on the strength of a request about the first is
+  // how a removal turns into an incident.
+  const capped = mode !== 'launches';
+  const me = capped ? ((maxEth == null || maxEth === '') ? perLaunch * 10 : Number(maxEth)) : 0;
+  if (capped && !(me >= perLaunch)) throw new Error(perLaunch > be ? `total budget must be ≥ ${trimAmt(perLaunch)} — one launch buys on ${copyFanOut(u, { walletId, walletIds })} wallets` : 'total budget must be ≥ the per-buy amount');
   const tp = Number(opts.tpPct) || 0, sl = Number(opts.slPct) || 0;
   if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
   if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
   const t = {
     id: 'cp' + crypto.randomBytes(4).toString('hex'), address, chain, mode,
-    buyEth: String(be), maxEth: String(me), spentEth: 0, bought: {}, holding: {}, copySell: true,
+    buyEth: String(be), maxEth: capped ? String(me) : undefined, spentEth: 0, bought: {}, holding: {}, copySell: true,
     walletId: walletId || undefined, walletIds,
     slipBps: Math.max(0, Math.min(5000, Math.round(Number(opts.slipBps) || 0))) || undefined,
     tpPct: tp || undefined, slPct: sl || undefined,
@@ -1129,7 +1149,7 @@ function newSnipeDraft(chatId) {
     // off, sama kaya beli"): an array of wallet ids, or '*' for every wallet
     // resolved at fire time. Same model as the buy/sell wallet picker.
     chain: userChain(u), ca: null, walletIds: w ? [w.id] : [],
-    amount: null, budget: null, slipPct: 0, tpPct: 0, slPct: 0, ttlH: SNIPE_DRAFT_TTL_H,
+    amount: null, slipPct: 0, tpPct: 0, slPct: 0, ttlH: SNIPE_DRAFT_TTL_H,
     createdAt: Date.now(),
   };
   saveStore();
@@ -1191,20 +1211,6 @@ function updateSnipeDraft(chatId, patch = {}) {
       d.amount = String(a);
     }
   }
-  if (patch.budget !== undefined) {
-    if (patch.budget === null) d.budget = null;
-    else {
-      const b = Number(patch.budget);
-      if (!(b > 0)) throw new Error('budget must be > 0');
-      // The same rule addCopyTarget enforces, checked here so the panel refuses
-      // at the row instead of at ⚡ — same message, one wording. Priced per
-      // LAUNCH: a budget that covers one wallet but not the selection would arm
-      // a target the fire-time check can never fit.
-      const per = Number(d.amount) * copyFanOut(u, { walletIds: d.walletIds });
-      if (d.amount && b < per) throw new Error(per > Number(d.amount) ? `total budget must be ≥ ${trimAmt(per)} — one launch buys on ${copyFanOut(u, { walletIds: d.walletIds })} wallets` : 'total budget must be ≥ the per-buy amount');
-      d.budget = String(b);
-    }
-  }
   if (patch.slipPct !== undefined) {
     const s = Number(patch.slipPct);
     if (!Number.isFinite(s) || s < 0 || s > 50) throw new Error('slippage must be 0–50%');
@@ -1262,9 +1268,8 @@ function armedTargetFor(chatId, { kind, chain, ca }) {
  *
  * The bounds are the ARMING sites' bounds, re-checked here — a second set of
  * limits would be a way to edit a target into a state ⚡ would have refused to
- * create. The budget floor is re-read against the NEW wallet count, because
- * that is the number that changed most often: five wallets at 0.01 costs 0.05 a
- * launch, and a 0.03 budget on that selection is a watch that can never fire.
+ * create. A dev target has no budget to re-check (the cap was removed on the
+ * owner's call — see addCopyTarget); a copy-TRADES target keeps its own.
  *
  * `_updated` is how the caller tells "armed" from "re-termed" on the message it
  * sends back — the two are different events to a reader, and a confirmation
@@ -1276,20 +1281,11 @@ function updateArmedTarget(chatId, t, d, walletOpts) {
   const dev = t.mode === 'launches';
   const be = Number(d.amount);
   if (!(be > 0)) throw new Error('no amount yet — pick how much to spend first');
-  const sel = { walletId: walletOpts.walletId, walletIds: walletOpts.walletIds };
-  const perLaunch = be * copyFanOut(u, sel);
   const spent = Number(t.spentEth) || 0;
-  const me = dev
-    ? (Number(d.budget) > 0 ? Number(d.budget) : perLaunch * 10)
-    : Number(t.maxEth) || 0;
-  if (dev && !(me >= perLaunch)) {
-    throw new Error(`total budget must be ≥ ${trimAmt(perLaunch)} — one launch buys on ${copyFanOut(u, sel)} wallet(s)`);
-  }
   const tp = Number(d.tpPct) || 0, sl = Number(d.slPct) || 0;
   if (tp < 0 || tp > 100000) throw new Error('take-profit must be 0–100000%');
   if (sl < 0 || sl >= 100) throw new Error('stop-loss must be below 100%');
   t.buyEth = String(be);
-  if (dev) t.maxEth = String(me);
   t.walletId = walletOpts.walletId || undefined;
   t.walletIds = walletOpts.walletIds;
   t.slipBps = Math.max(0, Math.min(5000, Math.round(Number(d.slipPct) * 100) || 0)) || undefined;
@@ -1297,14 +1293,7 @@ function updateArmedTarget(chatId, t, d, walletOpts) {
   t.slPct = sl || undefined;
   if (!dev && Number(d.ttlH) > 0) t.expiresAt = Date.now() + Number(d.ttlH) * 3600000;
   saveStoreNow();
-  // A budget now BELOW what is already spent is legal and means "stop here" —
-  // refusing it would deny the one edit that halts a target without removing
-  // it. It is said out loud rather than discovered when nothing ever buys again.
-  return Object.assign(Object.create(Object.getPrototypeOf(t)), t, {
-    _updated: true,
-    _spent: spent,
-    _exhausted: dev && spent >= Number(t.maxEth),
-  });
+  return Object.assign(Object.create(Object.getPrototypeOf(t)), t, { _updated: true, _spent: spent });
 }
 
 function armSnipeDraft(chatId) {
@@ -1357,7 +1346,7 @@ function armSnipeDraft(chatId) {
     // Budget unset = ten buys (addCopyTarget's default) — a cap without a
     // question. Every other panel row rides the target and is honoured by
     // _followerBuy: wallet selection, slippage, TP/SL.
-    t = addCopyTarget(chatId, d.ca, d.chain, d.amount, Number(d.budget) > 0 ? d.budget : null, 'launches', {
+    t = addCopyTarget(chatId, d.ca, d.chain, d.amount, null, 'launches', {
       ...walletOpts,
       slipBps: Math.round((Number(d.slipPct) || 0) * 100),
       tpPct: d.tpPct, slPct: d.slPct,

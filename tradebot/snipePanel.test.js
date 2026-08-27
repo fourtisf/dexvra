@@ -433,10 +433,13 @@ test('the dev panel carries every setting the engine honours, and only those', (
   core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
   const s = tg._test.snipeSetupScreen(CHAT);
   const flat = s.kb.inline_keyboard.flat().map((b) => b.callback_data);
-  for (const cb of ['snw:wal', 'snw:slip', 'snw:tpsl', 'snw:bud']) {
+  for (const cb of ['snw:wal', 'snw:slip', 'snw:tpsl']) {
     assert.ok(flat.includes(cb), `the dev panel lost ${cb}`);
   }
   assert.ok(!flat.includes('snw:ttl'), 'the dev panel shows an expiry the dev path ignores');
+  // The budget row went with the FEATURE, not just off the screen — a row for
+  // a setting the engine no longer reads is the same defect as an expiry row.
+  assert.ok(!flat.includes('snw:bud'), 'the budget row is back, for a cap that no longer exists');
   // …and the wallet picker is the same multi-select the CA kind gets: the
   // exit mirror records one LEG per wallet now, so every slice is sold from
   // the wallet that bought it.
@@ -468,42 +471,34 @@ test('the engine honours the dev rows: wallet, slippage, TP/SL at the fill', () 
   assert.strictEqual((fn.match(/\}, wid\)/g) || []).length, 2, 'a dev TP/SL order binds to the wrong wallet');
 });
 
-test('the dev target stores wallet, slippage and TP/SL, and the budget defaults to 10×', () => {
+test('the dev target stores wallet, slippage and TP/SL, and NO budget', () => {
   const u = user();
   const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletId: 'w2', slipBps: 2500, tpPct: 100, slPct: 50 });
   assert.equal(t.walletId, 'w2');
   assert.equal(t.slipBps, 2500);
   assert.equal(t.tpPct, 100);
   assert.equal(t.slPct, 50);
-  // No budget question ("fitur yang tadi hapus aja") — but never uncapped: ten
+  // NO CAP AT ALL: the budget feature was removed outright on the owner's call
+  // ("hapus fitur budget jdi budget fiturnya tidak ada"). What replaces it is
+  // the panel and the confirmation saying the watch is uncapped — see
   // buys by default, stated on the armed message.
-  assert.equal(t.maxEth, '0.5');
+  assert.equal(t.maxEth, undefined, 'a dev target grew a cap back');
   assert.throws(() => core.addCopyTarget(CHAT, CA, 'robinhood', 0.05, null, 'launches', { walletId: 'nope' }), /no such wallet/);
   assert.ok(u.copy.targets.length >= 1);
 });
 
-test('the budget is priced per LAUNCH, so a multi-wallet target can never arm inert', () => {
-  // The defect this pins: _followerBuy fits the whole fan-out or skips it, so a
-  // budget covering ONE wallet but not the selection armed cleanly and then
-  // silently never fired — an armed watch that can never fire.
+test('a multi-wallet dev target prices its LAUNCH by the selection', () => {
+  // The budget that made this a floor is gone; the per-LAUNCH arithmetic it was
+  // built on is not — it is what every screen and the confirmation quote.
   const u = user();
-  // 2 wallets × 0.05 = 0.1 per launch. A 0.05 budget is below one launch.
-  assert.throws(
-    () => core.addCopyTarget(CHAT, MINT, 'solana', 0.05, 0.05, 'launches', { walletIds: ['w1', 'w2'] }),
-    /budget must be ≥ 0\.1/,
-    'a budget that cannot fund one launch was accepted');
-  // The default scales too: ten LAUNCHES, not ten wallet-buys.
-  const t = core.addCopyTarget(CHAT, MINT, 'solana', 0.05, null, 'launches', { walletIds: ['w1', 'w2'] });
-  assert.equal(t.maxEth, '1', 'the default budget funds fewer than ten launches');
-  // …and whatever arms must actually be spendable by the fire-time check.
-  const wl = core.walletList(u).length;
-  assert.ok(Number(t.maxEth) >= Number(t.buyEth) * (t.walletIds || [1]).length, 'the armed target cannot afford its own first launch');
-  assert.ok(wl >= 2);
-  // The panel's budget row refuses the same way, at the row.
   core.newSnipeDraft(CHAT);
-  core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev', ca: MINT, amount: 0.05, walletIds: ['w1', 'w2'] });
-  assert.throws(() => core.updateSnipeDraft(CHAT, { budget: 0.05 }), /budget must be ≥ 0\.1/);
+  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, walletIds: '*', amount: 0.05 });
+  const t = core.armSnipeDraft(CHAT);
+  assert.equal(core.copyFanOut(u, t), core.walletList(u).length, 'the selection did not reach the target');
+  assert.equal(t.buyEth, '0.05', 'the per-WALLET amount is what is stored');
+  assert.equal(t.maxEth, undefined, 'an uncapped target must carry no cap field');
 });
+
 
 test('a dev snipe on several wallets says PER LAUNCH, not one-shot', () => {
   // The cadence belongs to the feature: a CA snipe fires once, a dev snipe
@@ -513,7 +508,11 @@ test('a dev snipe on several wallets says PER LAUNCH, not one-shot', () => {
   const arm = SRC.slice(SRC.indexOf("if (ca === 'arm')"), SRC.indexOf("if (ca === 'cancel')") > SRC.indexOf("if (ca === 'arm')") ? SRC.indexOf("if (ca === 'cancel')") : SRC.indexOf("if (k === 'snww'"));
   assert.match(arm, /walletScopeLine\(chatId, tgt, tgt\.buyEth, chG\.native, 'dev\.armed_wallets'\)/, 'the dev arm lost its recurring wording');
   const i18n = require('./i18n');
-  assert.match(i18n.t('en', 'dev.armed_wallets', { scope: '3 wallets', amt: '0.05', native: 'SOL', total: '0.15' }), /per launch/i);
+  // EVERY launch, and no cap — the two facts that separate this from the CA
+  // snipe's one-shot total.
+  const devLine = i18n.t('en', 'dev.armed_wallets', { scope: '3 wallets', amt: '0.05', native: 'SOL', total: '0.15' });
+  assert.match(devLine, /EVERY launch/i);
+  assert.match(devLine, /no cap/i, 'the recurring line no longer says the spend is uncapped');
   assert.match(i18n.t('en', 'snipe.panel.armed_wallets', { scope: '3 wallets', amt: '0.05', native: 'SOL', total: '0.15' }), /in total/i);
 });
 
@@ -521,8 +520,8 @@ test('a dev snipe on several wallets says PER LAUNCH, not one-shot', () => {
 
 test('the dev flow is wallet → amount → ⚡, and nothing arms before ⚡', async () => {
   // "aturan hapus aja, jadiin 1 aja … pas udah drop wallet harusnya ada custom
-  // amount." Two questions total: the wallet, then the amount — the budget is
-  // a default (10×), not a question.
+  // amount." Two questions total: the wallet, then the amount — there is no
+  // budget question, because there is no budget.
   const u = user();
   core.newSnipeDraft(CHAT);
   core.updateSnipeDraft(CHAT, { chain: 'solana', kind: 'dev' });
@@ -536,7 +535,7 @@ test('the dev flow is wallet → amount → ⚡, and nothing arms before ⚡', a
   assert.equal(tgt.chain, 'solana');
   assert.equal(tgt.address, MINT);
   assert.equal(tgt.buyEth, '0.05');
-  assert.equal(tgt.maxEth, '0.5', 'the unset budget did not default to 10×');
+  assert.equal(tgt.maxEth, undefined, 'the dev flow grew a budget back');
   assert.strictEqual(core.snipeDraft(u), null, 'an armed dev draft lingered');
 });
 
@@ -558,7 +557,10 @@ test('the old one-line dev arm fills every row in one go', async () => {
   const d = core.snipeDraft(u);
   assert.equal(d.ca, MINT);
   assert.equal(d.amount, '0.05');
-  assert.equal(d.budget, '0.5');
+  // A THIRD word on the old line was the budget. The feature is gone and the
+  // word is IGNORED rather than refused — an operator with the old grammar in
+  // muscle memory must not have their target rejected over a dead setting.
+  assert.equal(d.budget, undefined, 'the draft grew the budget field back');
   assert.ok(core.armSnipeDraft(CHAT), 'a fully pasted line could not arm');
 });
 
@@ -569,13 +571,13 @@ test('a refused dev step keeps the draft where it was', async () => {
   assert.match((await typed('snw_dev', 'not-an-address')).replace(/<[^>]+>/g, ''), /not a valid|bukan alamat/i);
   assert.strictEqual(core.snipeDraft(u).ca, null);
   core.updateSnipeDraft(CHAT, { ca: MINT, amount: 0.05 });
-  // A budget below the per-launch amount is refused by the SAME rule the store
-  // enforces — at the row, instead of being discovered at ⚡.
-  assert.match((await typed('snw_bud', '0.01')).replace(/<[^>]+>/g, ''), /budget/i);
-  assert.strictEqual(core.snipeDraft(u).budget, null);
-  // …and the unset budget is no blocker: ⚡ arms with the 10× default.
+  // A bad AMOUNT is refused by the same rule the store enforces — at the row,
+  // instead of being discovered at ⚡. (The budget step it used to test is
+  // gone with the feature.)
+  assert.throws(() => core.updateSnipeDraft(CHAT, { amount: 0 }), /amount/i);
+  assert.strictEqual(core.snipeDraft(u).amount, '0.05', 'a refused row changed the draft anyway');
   const tgt = core.armSnipeDraft(CHAT);
-  assert.equal(tgt.maxEth, '0.5');
+  assert.equal(tgt.maxEth, undefined);
 });
 
 test('an OFF master switch is said at ⚡, with the one-tap fix', () => {
@@ -839,7 +841,7 @@ async function tapped(data) {
 function devDraft() {
   core.newSnipeDraft(CHAT);
   core.updateSnipeDraft(CHAT, {
-    kind: 'dev', chain: 'robinhood', ca: CA, walletIds: '*', amount: '0.01', slipPct: 50, budget: '0.15',
+    kind: 'dev', chain: 'robinhood', ca: CA, walletIds: '*', amount: '0.01', slipPct: 50,
   });
 }
 
@@ -929,22 +931,22 @@ test('armedTargetFor is the ONE owner, and it is chain- and kind-correct', () =>
 
 test('⚡ on an already-watching target RE-TERMS it — the wallet selection takes effect', async () => {
   const u = user();
-  // Armed the way theirs was: default wallet row (one wallet), small budget.
+  // Armed the way theirs was: the default wallet row, i.e. ONE wallet.
   core.newSnipeDraft(CHAT);
-  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01', budget: '0.1' });
+  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01' });
   const first = core.armSnipeDraft(CHAT);
   assert.equal(core.copyFanOut(u, first), 1, 'the default draft armed more than the active wallet');
   first.spentEth = 0.02;   // two launches already bought
 
-  // Re-open the panel, pick All, raise the budget, tap ⚡.
-  devDraft();              // kind dev, All(5), 0.01, budget 0.15
+  // Re-open the panel, pick All, tap ⚡.
+  devDraft();              // kind dev, All wallets, 0.01
   const calls = await tapped('snw:arm');
   const stored = core.ensureUser(CHAT).copy.targets;
   assert.equal(stored.length, 1, 'a second target was armed instead of the first being updated');
   const nAll = core.walletList(u).length;
   assert.ok(nAll > 1, 'this fixture needs more than one wallet to prove a multiplier');
   assert.equal(core.copyFanOut(u, stored[0]), nAll, 'the wallet selection still does not take effect — the reported defect');
-  assert.equal(stored[0].maxEth, '0.15', 'the budget edit was dropped');
+  assert.equal(stored[0].maxEth, undefined, 'a cap came back on an uncapped feature');
   // AN EDIT NEVER UN-SPENDS MONEY: a budget that reset here would let one
   // target spend its cap twice.
   assert.equal(Number(stored[0].spentEth), 0.02, 'the spend history was wiped by an edit');
@@ -956,31 +958,22 @@ test('⚡ on an already-watching target RE-TERMS it — the wallet selection tak
   assert.match(sent.text, /0\.020/, 'the confirmation hides what was already spent');
 });
 
-test('the panel says what a budget IS, in launches', () => {
-  // "budget itu untuk apa saya tidak mengerti ini bikin bingung" — "0.15 ETH"
-  // says nothing about how many buys it authorises, which is the whole question.
-  user();
+test('an uncapped dev watch SAYS it is uncapped, with the per-launch figure', () => {
+  // The budget feature was removed outright ("hapus fitur budget jdi budget
+  // fiturnya tidak ada"). What may not go with it is the reader knowing what
+  // they just armed: an auto-buyer that does not say it is unbounded is the one
+  // shape this panel will not ship.
+  const u = user();
   devDraft();
   const txt = tg._test.snipeSetupScreen(CHAT).text;
-  assert.match(txt, /the total this watch may EVER spend/i, 'the budget row still states a number with no unit of meaning');
-  const runs = Math.floor(0.15 / (0.01 * core.walletList(core.ensureUser(CHAT)).length));
-  assert.match(txt, new RegExp(`${runs} launch`), 'budget ÷ per-launch is not done out loud');
-  assert.match(txt, /then it stops buying/i, 'nothing says what happens when the budget runs out');
+  assert.match(txt, /No spending cap/i, 'the panel is silent about being uncapped');
+  assert.match(txt, /EVERY launch/i, 'nothing says how often it buys');
+  assert.match(txt, /until you turn it off/i, 'nothing says what the only stop is');
+  // The per-LAUNCH figure is the multiplied one — the number actually leaving
+  // the wallets on each launch, not the per-wallet slice.
+  const per = 0.01 * core.walletList(u).length;
+  assert.ok(txt.includes(String(per)), `the panel does not state the ${per} that leaves per launch`);
+  // …and no budget row survives anywhere on the screen.
+  assert.ok(!/💰/.test(txt), 'a budget line is still rendered');
 });
 
-test('a budget below what is already spent is allowed, and SAID', async () => {
-  const u = user();
-  core.newSnipeDraft(CHAT);
-  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01', budget: '0.5' });
-  const t = core.armSnipeDraft(CHAT);
-  t.spentEth = 0.3;
-  // Lowering the budget under the spend is the one edit that HALTS a watch
-  // without removing it — refusing it would deny that, and doing it silently
-  // would be a watch that never buys again with nothing saying why.
-  core.newSnipeDraft(CHAT);
-  core.updateSnipeDraft(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA, amount: '0.01', budget: '0.05' });
-  const calls = await tapped('snw:arm');
-  const sent = calls.find((c) => c.method === 'sendMessage');
-  assert.match(sent.text, /Budget already used up/i, 'a halted watch is silent about being halted');
-  assert.equal(core.ensureUser(CHAT).copy.targets[0].maxEth, '0.05');
-});

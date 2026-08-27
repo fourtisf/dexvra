@@ -1332,11 +1332,91 @@ target first, which nothing on any screen said.
   launch is refused at its ROW by `updateSnipeDraft`, so the panel can never
   display a setting the arm would then reject.
 
+#### "hapus fitur budget" — a cap removed on the owner's call
+
+Asked, and confirmed with the trade-off stated in as many words. **The dev
+snipe now has no spending cap at all**: it buys every launch that developer
+makes, on every wallet in its selection, until the master switch goes off, the
+target is removed, or the wallets run dry.
+
+- **It is a real removal, not a hidden default.** No row, no draft field, no
+  `maxEth` on a 'launches' target — and `ensureUser` DELETES a stale one, or
+  every screen would go on rendering `used 0.02/0.1` over a watch with no
+  limit at all. A field that looks meaningful and binds nothing is the row the
+  engine ignores, one level down.
+- **What replaces the cap is VISIBILITY.** This repo's rule is that nothing
+  spends money silently, not that everything must be bounded: the panel, the
+  arming confirmation and the Copy & Snipe row each say the watch is uncapped
+  and what the only stop is, and `spentEth` is still accumulated because it is
+  the only number that says what an uncapped watch has actually spent.
+- ⚠️ **COPY TRADES KEPT ITS CAP.** It was not what was asked about — the
+  question was the per-LAUNCH budget on the snipe panel — and silently
+  uncapping a second feature on the strength of a request about the first is
+  how a removal turns into an incident.
+- **The old one-line grammar still parses.** A third word used to be the
+  budget; it is IGNORED rather than refused, because an operator with the old
+  line in muscle memory must not have their target rejected over a dead
+  setting.
+
+### "TOKEN SUDAH LAUNCH SNIPE ON TPI PAS TOKEN LAUNCH BOT MALA DIAM"
+
+A watched dev launched `$TEST` on Pons and the bot did nothing — no buy, no
+message. **The bot was neither broken nor idle, and its own token card said so
+in a sentence nobody thought to connect:** *"This token's liquidity is on Pons
+v2, which Dexvra can't route through yet — so there's nothing to quote and no
+swap to sign."* The launch was on a bonding curve this engine has no route
+through: `canTradeNow` said no, `_notYetTradeable` deliberately excludes "can't
+route through" from the retry ring (retrying an unroutable venue is two minutes
+of RPC for an answer that will not change), and the chain ended in silence.
+**Every step was individually correct and the sum of them was a sniper that
+watched a launch go by without a word.**
+
+- **An armed follower whose dev launched something is TOLD, always.**
+  `_devLaunchMissed` names the token, the dev and the REASON — an unroutable
+  venue, a DANGER flag, a dead wallet — because "minimal kalo gagal harus ada
+  pesanya" is the floor, not a feature request. One notice per launch per five
+  minutes: a warning per tick is a warning nobody reads.
+- **A honeypot skip is the gate WORKING and is still said**, or the one case
+  where staying out was the right call looks identical to being broken.
+- ⚠️ **An unroutable launch is HANDED TO THE CA SNIPE, not dropped.** A
+  bonding curve becomes buyable when it graduates into a pool this engine can
+  route (Pons v2 graduates into a Uniswap v4 pool, which `v4.js` already
+  autodiscovers). The CA snipe already polls `canTradeNow` for its whole TTL
+  and fires on the first tick it can fill — so "never bought" becomes "bought
+  at graduation" using only paths that already work, with no new money-path
+  guesses. It carries the target's own wallet selection, slippage and TP/SL,
+  and a failure to queue it is REPORTED: a follow-up the user believes exists
+  is worse than none.
+- **The ring's expiry is the last moment anyone can be told.** Past it there is
+  no event left to hang a word on, so that is where the notice goes for a
+  launch nobody managed to buy.
+- ⚠️ **TWO Pons factories, not one.** Pons kept its V1 deployment live for
+  tokens launched before the V2 upgrade, and a scan watching one address is
+  blind to the other — `eth_getLogs` answers an unmatched address with an empty
+  array, so that blindness reads as a quiet launchpad. A LIST now (current
+  first, legacy kept), all live ones scanned on one cursor, and ONE live
+  factory is enough — a dead legacy address must not condemn the current one.
+- ⚠️ **The pad's HOST was a guess and the guess was wrong.** `pons.fun` was
+  invented from the pad's name; the launchpad is served from
+  **`ponsfamily.com/launchpad/<token>`**, which an operator's screenshot
+  settled after the first check reported "can't reach api.pons.fun". The real
+  host leads the base list and the invented ones cost nothing behind it —
+  which is the whole reason a base list exists.
+
+⚠️ **What this does NOT do: trade the Pons curve.** Buying pre-graduation needs
+a route through Pons's own curve contract, and writing one against an interface
+that cannot be verified from here would be a guessed address on a money path —
+the one thing this repo refuses outright. Until that is verified on the box, an
+armed dev snipe on a Pons launch buys **at graduation**, and says so at the
+moment it cannot buy sooner.
+
 ```bash
-cd tradebot && node --test snipePanel.test.js   # 55 tests, no network
+cd tradebot && node --test snipePanel.test.js padSnipe.test.js   # 92 tests, no network
 ```
 
-**Config a fix depends on:** nothing.
+**Config a fix depends on:** nothing. `PONS_FACTORY` takes a comma list if
+either deployment moves, and `LAUNCHPAD_PONS_API` pins the host if
+`ponsfamily.com` is not where its API answers from.
 
 ### "angkanya bisa di ketik biar cpt" — twenty-two taps for one number
 

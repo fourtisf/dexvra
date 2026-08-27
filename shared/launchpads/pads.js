@@ -436,14 +436,21 @@ function build() {
       // token and its creator without knowing which contract minted it. It does
       // not replace the factory scan (that one is faster and needs no third
       // party); it covers what the factory scan cannot see.
-      bases: ['https://pons.fun/api', 'https://api.pons.fun'],
-      tokenPath: '/tokens/{id}',
-      feedPath: '/tokens?sort=created&order=desc&limit={n}',
+      // ⚠️ THE HOST WAS A GUESS AND THE GUESS WAS WRONG. `pons.fun` and
+      // `api.pons.fun` were invented from the pad's name; the launchpad is
+      // actually served from **ponsfamily.com** (`/launchpad/<token>`), which
+      // an operator's own screenshot settled after the first check reported
+      // "can't reach api.pons.fun". The real host leads the list, the invented
+      // ones stay behind it costing nothing — a base LIST is exactly so a
+      // wrong first guess is a reorder, not a deploy.
+      bases: ['https://www.ponsfamily.com/api', 'https://ponsfamily.com/api', 'https://api.ponsfamily.com', 'https://pons.fun/api'],
+      tokenPath: '/launchpad/{id}',
+      feedPath: '/launchpad/tokens?sort=created&order=desc&limit={n}',
       idKeys: ['address', 'tokenAddress', 'contractAddress', 'token.address', 'id'],
       parse: (pad, chain, raw, now) => {
         const rec = common(blank(pad, chain, str(pick(raw, ['address', 'tokenAddress', 'contractAddress', 'token.address']), 64)), raw, now);
         rec.launchpad = 'Pons';
-        if (rec.address) rec.launchUrl = 'https://pons.fun/token/' + rec.address;
+        if (rec.address) rec.launchUrl = 'https://www.ponsfamily.com/launchpad/' + rec.address;
         return curveState(rec, {
           graduated: bool(pick(raw, ['graduated', 'isGraduated', 'migrated', 'completed', 'isCompleted', 'listed'])),
           progressApi: pick(raw, ['progress', 'progressPct', 'bondingProgress', 'curveProgress', 'bondingCurveProgress']),

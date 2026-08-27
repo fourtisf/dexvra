@@ -467,7 +467,6 @@ const S = {
   'snipe.panel.wallet': { en: 'Wallet', id: 'Wallet' },
   'snipe.panel.amount': { en: 'Amount', id: 'Jumlah' },
   'snipe.panel.amount_dev': { en: 'Amount / launch', id: 'Jumlah / launch' },
-  'snipe.panel.budget': { en: 'Budget', id: 'Budget total' },
   'snipe.panel.slip': { en: 'Slippage', id: 'Slippage' },
   'snipe.panel.tpsl': { en: 'TP / SL', id: 'TP / SL' },
   'snipe.panel.ttl': { en: 'Expiry', id: 'Masa aktif' },
@@ -504,28 +503,26 @@ const S = {
   // where the Target row that fixes it is one tap away, instead of after a tap
   // that could never have worked.
   'snipe.panel.already_dev': {
-    en: '✅ <b>Already watching this developer</b> — used <b>{spent}/{max} {native}</b> so far. Tapping ⚡ now <b>UPDATES</b> it to the settings above; what it has already spent stays spent.',
-    id: '✅ <b>Developer ini sudah dipantau</b> — terpakai <b>{spent}/{max} {native}</b> sejauh ini. Tap ⚡ sekarang akan <b>MEMPERBARUI</b> ke pengaturan di atas; yang sudah terpakai tetap terhitung.',
+    en: '✅ <b>Already watching this developer</b> — spent <b>{spent} {native}</b> so far. Tapping ⚡ now <b>UPDATES</b> it to the settings above; what it has already spent stays spent.',
+    id: '✅ <b>Developer ini sudah dipantau</b> — sudah terpakai <b>{spent} {native}</b>. Tap ⚡ sekarang akan <b>MEMPERBARUI</b> ke pengaturan di atas; yang sudah terpakai tetap terhitung.',
   },
   'snipe.panel.already_ca': {
     en: '✅ <b>This contract is already armed</b> on this chain. Tapping ⚡ now <b>UPDATES</b> it to the settings above rather than arming a second one.',
     id: '✅ <b>Kontrak ini sudah terpasang</b> di chain ini. Tap ⚡ sekarang akan <b>MEMPERBARUI</b> ke pengaturan di atas, bukan memasang yang kedua.',
   },
   'snipe.panel.update_btn': { en: '⚡ UPDATE — apply these settings', id: '⚡ PERBARUI — terapkan pengaturan ini' },
-  // The budget, in the unit a reader thinks in. "0.15 ETH" says nothing about
-  // how many buys it authorises, which is the entire question.
-  'snipe.panel.budget_runs': {
-    en: 'the total this watch may EVER spend — {n} launch(es) at {per} {native} each, then it stops buying',
-    id: 'total maksimum yang boleh dibelanjakan pantauan ini — {n} launch @ {per} {native}, setelah itu berhenti membeli',
+  // THE DEV SNIPE HAS NO CAP. The budget feature was removed outright, so the
+  // panel states the consequence in its place — an uncapped auto-buyer that
+  // does not say it is uncapped is the one shape this repo will not ship.
+  'snipe.panel.nocap': {
+    en: 'No spending cap: this buys <b>{per} {native}</b> of EVERY launch this developer makes, until you turn it off or remove it. Your wallet balance is the only limit.',
+    id: 'Tanpa batas belanja: ini membeli <b>{per} {native}</b> pada SETIAP launch developer ini, sampai Anda matikan atau hapus. Saldo wallet adalah satu-satunya batas.',
   },
   'snipe.panel.updated': {
-    en: '✅ <b>Updated</b> — the watch now uses the settings you just set.\nAlready spent: <b>{spent} {native}</b> of its budget (an edit never un-spends money).',
-    id: '✅ <b>Diperbarui</b> — pantauan sekarang memakai pengaturan yang baru Anda set.\nSudah terpakai: <b>{spent} {native}</b> dari budget (mengubah pengaturan tidak mengembalikan dana yang sudah terpakai).',
+    en: '✅ <b>Updated</b> — the watch now uses the settings you just set.\nSpent so far: <b>{spent} {native}</b> (an edit never un-spends money).',
+    id: '✅ <b>Diperbarui</b> — pantauan sekarang memakai pengaturan yang baru Anda set.\nSudah terpakai: <b>{spent} {native}</b> (mengubah pengaturan tidak mengembalikan dana yang sudah terpakai).',
   },
-  'snipe.panel.updated_exhausted': {
-    en: '⚠️ <b>Budget already used up</b> — this watch will not buy again until you raise the budget above what it has spent.',
-    id: '⚠️ <b>Budget sudah habis</b> — pantauan ini tidak akan membeli lagi sampai budget dinaikkan di atas yang sudah terpakai.',
-  },
+  'copy.spent_uncapped': { en: 'spent {spent} · <b>no cap</b>', id: 'terpakai {spent} · <b>tanpa batas</b>' },
   'snipe.panel.see_dev_btn': { en: '👥 Already watching — open Copy & Snipe', id: '👥 Sudah dipantau — buka Copy & Snipe' },
   'snipe.panel.see_ca_btn': { en: '🎯 Already armed — open Sniper', id: '🎯 Sudah terpasang — buka Sniper' },
   'snipe.panel.refused': {
@@ -558,7 +555,7 @@ const S = {
   // the multiplied total is real money and belongs on the consent message.
   // The scope, and the two CADENCES. The cadence belongs to the FEATURE, not to
   // the wallet selection: a CA snipe fires ONCE (its total is a one-off), a dev
-  // snipe fires on every launch until the budget runs out. Keying these on
+  // snipe fires on EVERY launch, with no cap at all. Keying these on
   // '*'-vs-subset instead put the one-shot sentence on a recurring watch — the
   // most expensive half of the pair to understate.
   'snipe.panel.scope_all': { en: 'every wallet ({n})', id: 'semua wallet ({n})' },
@@ -568,14 +565,9 @@ const S = {
     id: '👥 Di <b>{scope}</b> — {amt} {native} per wallet, total sampai <b>{total} {native}</b> kalau semuanya keisi.',
   },
   'dev.armed_wallets': {
-    en: '👥 On <b>{scope}</b> — {amt} {native} each, so <b>{total} {native}</b> per launch, until the budget runs out.',
-    id: '👥 Di <b>{scope}</b> — {amt} {native} per wallet, jadi <b>{total} {native}</b> per launch, sampai budget-nya habis.',
+    en: '👥 On <b>{scope}</b> — {amt} {native} each, so <b>{total} {native}</b> on EVERY launch, with no cap.',
+    id: '👥 Di <b>{scope}</b> — {amt} {native} per wallet, jadi <b>{total} {native}</b> tiap launch, tanpa batas.',
   },
-  'snipe.panel.bud_pick': {
-    en: '💰 <b>Budget</b> — optional\n\nThe max TOTAL to spend on this developer; I stop buying its launches once it is reached. Left unset it is <b>10×</b> the per-launch amount (per launch: <b>{amt}</b>). Tap one, or type your own in {native}.',
-    id: '💰 <b>Budget</b> — opsional\n\nBatas TOTAL belanja untuk developer ini; saya berhenti beli launch-nya begitu tercapai. Kalau tidak diisi, otomatis <b>10×</b> jumlah per launch (per launch: <b>{amt}</b>). Tap salah satu, atau ketik sendiri dalam {native}.',
-  },
-  'snipe.panel.bud_auto': { en: '10× the amount (auto)', id: '10× jumlah (otomatis)' },
   // ONE question, nothing else ("untuk ini cukup berikan pertanyaan dev wallet
   // aja"). The what-happens-next explanation lives on the panel's dev footer,
   // and the amount/budget questions follow on their own screens — restating
@@ -587,8 +579,8 @@ const S = {
     id: '🧑‍💻 <b>Wallet developer</b> di {chain}\n\nPaste <b>alamat wallet developer</b>-nya:',
   },
   'snipe.panel.dev_foot': {
-    en: "<i>Buys use the wallet and slippage on this panel; TP/SL become real sell orders at each fill. Only this developer's own launches are bought — never its ordinary trades. Honeypots are skipped; the budget caps your risk.</i>",
-    id: '<i>Buy pakai wallet dan slippage di panel ini; TP/SL jadi order jual sungguhan di tiap fill. Hanya launch milik developer ini yang dibeli — bukan trade biasanya. Honeypot otomatis dilewati; budget membatasi risiko kamu.</i>',
+    en: "<i>Buys use the wallet and slippage on this panel; TP/SL become real sell orders at each fill. Only this developer's own launches are bought — never its ordinary trades. Honeypots are skipped. There is no spending cap: TP/SL and your wallet balance are what bound the risk.</i>",
+    id: '<i>Buy pakai wallet dan slippage di panel ini; TP/SL jadi order jual sungguhan di tiap fill. Hanya launch milik developer ini yang dibeli — bukan trade biasanya. Honeypot otomatis dilewati. Tidak ada batas belanja: TP/SL dan saldo wallet Anda yang membatasi risikonya.</i>',
   },
   'snipe.panel.amt_pick': {
     en: '💵 <b>Amount</b>\n\nHow much {native} should this snipe spend when it fires?\n\n<i>Keep it small — a launch is high-risk by definition.</i>',
@@ -643,8 +635,8 @@ const S = {
   // address shape, so the user says which they mean — no paste can be
   // auto-classified into one or the other.
   'snipe.panel.target_kind': {
-    en: '🎯 <b>Target</b>\n\nWhat should the snipe watch?\n\n📍 <b>Token contract</b> — buy THIS token the moment its pool opens.\n🧑‍💻 <b>Dev wallet</b> — buy every NEW token that developer launches, until a budget runs out.',
-    id: '🎯 <b>Target</b>\n\nSnipe-nya mau mengawasi apa?\n\n📍 <b>Kontrak token</b> — beli token INI begitu pool-nya buka.\n🧑‍💻 <b>Wallet developer</b> — beli tiap token BARU yang di-launch developer itu, sampai budget-nya habis.',
+    en: '🎯 <b>Target</b>\n\nWhat should the snipe watch?\n\n📍 <b>Token contract</b> — buy THIS token the moment its pool opens, once.\n🧑‍💻 <b>Dev wallet</b> — buy every NEW token that developer launches, with no spending cap, until you turn it off.',
+    id: '🎯 <b>Target</b>\n\nSnipe-nya mau mengawasi apa?\n\n📍 <b>Kontrak token</b> — beli token INI begitu pool-nya buka, sekali.\n🧑‍💻 <b>Wallet developer</b> — beli tiap token BARU yang di-launch developer itu, tanpa batas belanja, sampai Anda matikan.',
   },
   'snipe.panel.kind_ca': { en: '📍 Token contract', id: '📍 Kontrak token' },
   'snipe.panel.kind_dev': { en: '🧑‍💻 Dev wallet', id: '🧑‍💻 Wallet developer' },
@@ -654,9 +646,13 @@ const S = {
   // and confirmation strings.
   'dev.bad_addr': { en: '❌ That is not a valid {chain} wallet address — paste it again.', id: '❌ Itu bukan alamat wallet {chain} yang valid — paste ulang ya.' },
   'dev.bad_amt': { en: '❌ Send a positive amount in {native}, e.g. <code>0.05</code>.', id: '❌ Kirim jumlah positif dalam {native}, contoh <code>0.05</code>.' },
+  // ⚠️ The spend has NO CEILING on this feature, so the confirmation says the
+  // whole truth: what it buys, on every launch, and what the only stop is. A
+  // message that spends money names its trigger — and an uncapped one names its
+  // limit, or the absence of it.
   'dev.armed': {
-    en: '✅ <b>Dev snipe armed</b> 🧑‍💻\nWatching <code>{addr}</code> on {chain} — every new token it launches, I buy <b>{perBuy} {native}</b>, until <b>{budget} {native}</b> is spent.',
-    id: '✅ <b>Dev snipe terpasang</b> 🧑‍💻\nMengawasi <code>{addr}</code> di {chain} — tiap token baru yang dia launch, saya beli <b>{perBuy} {native}</b>, sampai total <b>{budget} {native}</b> terpakai.',
+    en: '✅ <b>Dev snipe armed</b> 🧑‍💻\nWatching <code>{addr}</code> on {chain} — every new token it launches, I buy <b>{perBuy} {native}</b>.\n⚠️ <b>No spending cap</b> — this keeps buying until you turn it off, remove it, or the wallet runs out.',
+    id: '✅ <b>Dev snipe terpasang</b> 🧑‍💻\nMengawasi <code>{addr}</code> di {chain} — tiap token baru yang dia launch, saya beli <b>{perBuy} {native}</b>.\n⚠️ <b>Tanpa batas belanja</b> — terus membeli sampai Anda matikan, hapus, atau saldo wallet habis.',
   },
   'dev.live': { en: 'The master switch is ON — it is live now.', id: 'Master switch sudah ON — langsung aktif sekarang.' },
   // An OFF master switch after arming is the stop-loss-the-user-believes-
