@@ -2636,6 +2636,78 @@ LOG: half the move sits 50% up the price area
   fails if the clip stops working AND fails if the probe stops being able to
   see a spill.
 
+#### "bisa di geser ke kanan ke kiri chartnya" — the other axis
+
+The vertical landed and the very next thing asked for was the horizontal, with
+the reference named: *"kaya trading view … atau dexscreener"*. Fair — **a chart
+you cannot move through time is a picture**, and the two tools everybody arrives
+from both do it: drag sideways to travel, wheel to zoom, and the candle under
+the cursor stays under the cursor.
+
+- **The state is `{count, endOffset}`, NOT `{startIndex, endIndex}`** — the same
+  decision the price scale makes storing `{zoom, shift}` rather than `{lo, hi}`,
+  and for the same reason one axis over. New candles arrive at the RIGHT every
+  poll, so a pair of absolute indices would slide one candle further into the
+  past on every refresh while the reader watched. `endOffset` is measured from
+  the newest candle: a reader parked at the live edge stays there, and one who
+  scrolled back stays exactly where they scrolled to. Pinned by a test that adds
+  candles under a scrolled window.
+- **ONE GESTURE, TWO AXES.** A body drag travels sideways and moves the price
+  scale vertically at once, which is the grammar both references use. The gutter
+  stays price-only.
+- ⚠️ **The phone GAINS the horizontal and still never loses the vertical page
+  scroll.** `touch-action: pan-y` hands the browser the vertical and leaves us
+  the horizontal — which is exactly the half worth having on a phone. The
+  earlier rule ("only a mouse may pan the body") was right when the body drag
+  meant only the price axis; it would now cost a phone the one gesture it most
+  wants.
+- ⚠️ **THE WHEEL NEEDS A NATIVE, NON-PASSIVE LISTENER.** React attaches
+  `onWheel` passively, and a passive listener **cannot** `preventDefault` — so
+  the handler would zoom the chart and let the page scroll away underneath it at
+  the same time. Bound with `addEventListener(…, { passive: false })`, and
+  because it is bound ONCE it reads the geometry through a ref: a stale `geo`
+  in that closure would zoom against a window that no longer exists.
+- ⚠️ **The live dot does not claim "live" over candles from two days ago.**
+  Scrolled back, the chart is still refreshing but what the reader is looking at
+  is not the present; the pulsing dot would be the reassuring reading of a state
+  that is not. A `HISTORY` chip takes its place, in the same microlabel voice as
+  `via DexScreener`.
+- **Every gesture is CLAMPED to the data** — a reader cannot scroll past the
+  newest candle or before the oldest, so no drag can empty the panel. The
+  horizontal version of the price axis refusing to walk below zero.
+- **A slow drag accumulates.** Rounding each event to zero candles is a chart
+  that responds without obeying — the same defect the double-applied zoom had,
+  pointing the other way.
+- ⚠️ **`limit` IS A QUERY PARAM, NOT A REQUEST COUNT.** The timeframes fetched
+  180–200 candles, barely more than one screen fits, so there was nothing to
+  scroll back INTO. Raising them (288 / 384 / 336 / 360 / 365 — a day of 5m
+  through a year of daily) costs payload and **nothing else**: one request per
+  timeframe either way, and the shared ~30/min GeckoTerminal ceiling is
+  untouched.
+
+⚠️ **And the preview's first pan check was measuring the wrong thing** — it
+compared an axis stamp taken BEFORE the zoom, and the window had been clamped
+back to the same first candle, so it reported the drag as broken while the drag
+was fine. A check that fails on working code is as expensive as one that passes
+on broken code. It zooms in hard first (with the whole history on screen there
+is nowhere to travel TO) and compares against the state immediately before the
+drag.
+
+#### …and `logos:check` failed on its own happy path
+
+`pm2 restart dexvra && npm run logos:check` is the order an operator actually
+types after a deploy, and Next takes a few seconds to bind — so the check
+reported *"the server did not answer"* for the one sequence it was written to be
+used in. It retries the first connection now, bounded, and SAYS it is waiting.
+A check that fails on its own happy path teaches the reader to ignore it, which
+is the state `chart:preview` sat in for weeks.
+
+```bash
+npm test                                     # chartScale (29) + the panel guards
+npm run build && npm start &
+npm run chart:preview                        # 43 checks, both axes, and a phone
+```
+
 #### The audit round — the new module had dropped half of the six lines it replaced
 
 - ⚠️ **THE LINEAR PADDING FLOOR WENT MISSING, ON THE VERY CHART THIS EXISTS

@@ -44,12 +44,18 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { TIMEFRAMES, pollMsFor, priceRange, windowChangePct, type Candle, type Timeframe } from "@/lib/ohlcv";
 import {
   AUTO,
+  AUTO_TIME,
   isAdjusted,
+  isTimeAdjusted,
   panByDrag,
+  panTimeByDrag,
   priceScale,
+  timeWindow,
   zoomByDrag,
+  zoomTimeAt,
   type ScaleAdjust,
   type ScaleMode,
+  type TimeView,
 } from "@/lib/chartScale";
 import { fmtCap, fmtPrice } from "@/lib/format";
 
@@ -138,16 +144,24 @@ export function CandleChart({
   // the new tab on an axis with no candles in it.
   const [mode, setMode] = useState<ScaleMode>("lin");
   const [adjust, setAdjust] = useState<ScaleAdjust>(AUTO);
+  // …and the horizontal. Same reasoning, other axis: a chart you cannot travel
+  // through time in is a picture, not a chart.
+  const [timeView, setTimeView] = useState<TimeView>(AUTO_TIME);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   /** The drag in progress, if any. A ref rather than state: it changes on every
    *  pointer event and nothing renders from it directly. */
-  const dragRef = useRef<{ kind: "zoom" | "pan"; y: number; id: number } | null>(null);
+  const dragRef = useRef<{ kind: "zoom" | "pan"; x: number; y: number; id: number } | null>(null);
   // ⚠️ `useId()` returns `:r0:` — legal in an id, and a colon inside a
   // `url(#…)` reference is one browser-quirk away from a clip that silently
   // does nothing (and it can never be found with querySelector). Stripped to
   // word characters, because the failure mode is a chart drawing over its own
   // volume band on somebody else's browser and nowhere near a test.
   const clipId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  // The wheel listener is bound ONCE (it has to be, to be non-passive), so it
+  // reads the current geometry through refs rather than closing over one
+  // render's — a stale `geo` there would zoom against a window that has gone.
+  const geoRef = useRef<{ plotW: number; fit: number; view: Candle[] } | null>(null);
+  const candlesRef = useRef(0);
 
   // ── data ────────────────────────────────────────────────────────────────
   // One effect owns the whole lifecycle for one (token, timeframe): the first
@@ -229,7 +243,10 @@ export function CandleChart({
 
   // A stretch belongs to the window it was aimed at. Switching timeframe or
   // token replaces that window wholesale, so the axis goes back to the data's.
-  useEffect(() => setAdjust(AUTO), [chain, address, tf]);
+  useEffect(() => {
+    setAdjust(AUTO);
+    setTimeView(AUTO_TIME);
+  }, [chain, address, tf]);
 
   // ── geometry ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -262,9 +279,13 @@ export function CandleChart({
 
     // HOW MANY CANDLES FIT, not how many arrived. 200 candles across a phone's
     // 330px plot is a 1.6px body per candle — a green-and-red smear you cannot
-    // read a single bar out of. The window narrows to the most RECENT ones,
-    // which is the half anybody opening a memecoin chart is looking at.
-    const view = candles.slice(-Math.max(24, Math.floor(plotW / MIN_STEP)));
+    // read a single bar out of. That is the AUTO answer and the ceiling on
+    // zooming out; where the window actually sits is the reader's, and
+    // `timeWindow` clamps their gesture to what the data can show.
+    const fit = Math.max(24, Math.floor(plotW / MIN_STEP));
+    const win = timeWindow(candles.length, fit, timeView);
+    const view = candles.slice(win.start, win.start + win.count);
+    if (view.length === 0) return null;
 
     const range = priceRange(view);
     if (!range) return null;
@@ -280,8 +301,11 @@ export function CandleChart({
     const volTop = PAD_T + priceH + GAP;
     const yVol = (v: number) => (maxVol > 0 ? volH - (v / maxVol) * volH : volH);
 
-    return { w, h, scale, step, body, yOf, xOf, priceH, volH, volTop, plotW, maxVol, yVol, view };
-  }, [box, candles, mode, adjust]);
+    return { w, h, scale, step, body, yOf, xOf, priceH, volH, volTop, plotW, maxVol, yVol, view, fit, win };
+  }, [box, candles, mode, adjust, timeView]);
+
+  geoRef.current = geo;
+  candlesRef.current = candles.length;
 
   // EVERYTHING BELOW READS THE VISIBLE WINDOW, not the fetched list — a
   // percentage measured over candles that were never drawn is a number the
@@ -303,7 +327,10 @@ export function CandleChart({
   };
 
   // ── the reader's vertical ───────────────────────────────────────────────
-  const resetScale = useCallback(() => setAdjust(AUTO), []);
+  const resetScale = useCallback(() => {
+    setAdjust(AUTO);
+    setTimeView(AUTO_TIME);
+  }, []);
 
   /** Start a drag. `kind` is decided by WHERE it started: the price gutter
    *  scales, the chart itself pans — the grammar every charting tool uses, so
@@ -313,12 +340,7 @@ export function CandleChart({
     // start a zoom and then bubble to the plot, which would replace it with a
     // pan — the axis control silently becoming a pan control.
     e.stopPropagation();
-    // ⚠️ ONLY A MOUSE MAY PAN THE CHART BODY. On a phone a vertical drag across
-    // the plot is how the page is scrolled, and stealing it would trap the
-    // reader on the chart. The gutter is a deliberate target and takes touch
-    // (`touch-action: none` on it); the body does not.
-    if (kind === "pan" && e.pointerType !== "mouse") return;
-    dragRef.current = { kind, y: e.clientY, id: e.pointerId };
+    dragRef.current = { kind, x: e.clientX, y: e.clientY, id: e.pointerId };
     setHover(null); // a crosshair frozen mid-drag reads as a hung chart
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
@@ -337,10 +359,25 @@ export function CandleChart({
     // said `> 20px` passed on the broken build.
     e.stopPropagation();
     const dy = e.clientY - d.y;
+    const dx = e.clientX - d.x;
     d.y = e.clientY;
-    // Measured against the PRICE area, not the whole panel: the volume band and
-    // the time axis are not part of the scale being dragged.
-    setAdjust((a) => (d.kind === "zoom" ? zoomByDrag(a, dy, geo.priceH) : panByDrag(a, dy, geo.priceH)));
+    d.x = e.clientX;
+    if (d.kind === "zoom") {
+      // The gutter scales the price axis and nothing else. Measured against the
+      // PRICE area, not the whole panel: the volume band and the time axis are
+      // not part of the scale being dragged.
+      setAdjust((a) => zoomByDrag(a, dy, geo.priceH));
+      return true;
+    }
+    // A body drag travels through TIME sideways and moves the price scale
+    // vertically — one gesture, two axes, which is the grammar TradingView and
+    // DexScreener both use.
+    if (dx) setTimeView((t) => panTimeByDrag(t, dx, geo.step, candles.length, geo.fit));
+    // ⚠️ VERTICAL IS THE MOUSE'S ONLY. On a phone a vertical drag across the
+    // plot is how the page is scrolled, and stealing it would trap the reader
+    // on the chart — `touch-action: pan-y` hands the browser the vertical and
+    // leaves us the horizontal, which is exactly the half worth having there.
+    if (dy && e.pointerType === "mouse") setAdjust((a) => panByDrag(a, dy, geo.priceH));
     return true;
   };
 
@@ -355,6 +392,29 @@ export function CandleChart({
     // is the path every phone reader takes.
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
+
+  // ⚠️ THE WHEEL NEEDS A NATIVE, NON-PASSIVE LISTENER. React attaches `onWheel`
+  // passively, and a passive listener CANNOT `preventDefault` — so the handler
+  // would run, zoom the chart, and let the page scroll away underneath it at the
+  // same time. Bound here instead, and only over the plot.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const g = geoRef.current;
+      if (!g || g.view.length === 0) return; // nothing drawn — leave the page alone
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const frac = (e.clientX - r.left - PAD_L) / Math.max(1, g.plotW);
+      // Up/away = zoom IN (fewer candles, wider bodies), the direction every
+      // charting tool uses. Trackpads send small deltas and mice send ~100, so
+      // the step is bounded rather than proportional.
+      const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      setTimeView((t) => zoomTimeAt(t, factor, frac, candlesRef.current, g.fit));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   // The route names the link now, because only it knows which source answered.
   // The GT-shaped fallback stays for an older cached response and for the
@@ -388,7 +448,18 @@ export function CandleChart({
           )}
           {/* Only over a chart that is actually drawn: a live dot on a blank
               panel is the reassuring reading of a state that is not. */}
-          {status === "ok" && geo != null && <span className="ck-live" title="Refreshing while you watch" />}
+          {/* ⚠️ Only AT THE LIVE EDGE. Scrolled back into history, a pulsing
+              "live" dot over candles from two days ago is the reassuring
+              reading of a state that is not — the chart is still refreshing,
+              but what you are looking at is not the present. */}
+          {status === "ok" && geo != null && geo.win.atLiveEdge && (
+            <span className="ck-live" title="Refreshing while you watch" />
+          )}
+          {status === "ok" && geo != null && !geo.win.atLiveEdge && (
+            <span className="ck-src" title="You have scrolled back — double-click or ⤢ Auto to return to the latest candle">
+              history
+            </span>
+          )}
           {/* The fallback SAYS it is the fallback. Named only when it is not
               the usual source, so the ordinary chart stays uncluttered — but a
               chart drawn from DexScreener resolved its own pair independently
@@ -406,7 +477,7 @@ export function CandleChart({
               carries the fact that somebody stretched it. Double-clicking the
               plot does the same thing; this is the version that works on a
               phone and the version that is discoverable. */}
-          {isAdjusted(adjust) && (
+          {(isAdjusted(adjust) || isTimeAdjusted(timeView)) && (
             <button className="ck-auto" onClick={resetScale} title="Back to the automatic price range">
               ⤢ Auto
             </button>

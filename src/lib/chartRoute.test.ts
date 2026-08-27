@@ -202,7 +202,11 @@ test("⚠️ the reader can see WHICH axis they are looking at, off the picture"
   // fallback names itself rather than drawing an identical chart in silence.
   assert.match(CHART, /\["lin", "log"\] as const/, "both modes are on screen, not one toggle");
   assert.match(CHART, /aria-pressed=\{m === mode\}/);
-  assert.match(CHART, /isAdjusted\(adjust\) && \(/, "⤢ Auto appears only when the axis is not the data's own");
+  assert.match(
+    CHART,
+    /\(isAdjusted\(adjust\) \|\| isTimeAdjusted\(timeView\)\) && \(/,
+    "⤢ Auto appears the moment EITHER axis is no longer the data's own",
+  );
 });
 
 test("⚠️ a stretched chart cannot draw over the volume band or the axis", () => {
@@ -220,7 +224,11 @@ test("⚠️ a phone can still scroll the page past the chart", () => {
   // A vertical touch drag across the plot is how a phone scrolls. Stealing it
   // would trap the reader on the chart — so only a MOUSE pans the body, and
   // touch-action:none is taken on the narrow gutter alone.
-  assert.match(CHART, /if \(kind === "pan" && e\.pointerType !== "mouse"\) return;/);
+  // The rule moved when the body drag gained a horizontal axis: a phone GETS
+  // the sideways pan (the page scrolls vertically, so there is no conflict) and
+  // never the vertical one.
+  assert.match(CHART, /if \(dy && e\.pointerType === "mouse"\) setAdjust/);
+  assert.match(CHART, /if \(dx\) setTimeView/, "…and the horizontal is for every pointer");
   const ck = CSS.slice(CSS.indexOf("CANDLESTICK CHART"), CSS.indexOf("GENERAL TIDY-UPS"));
   assert.match(ck, /\.ck-yaxis\{[^}]*touch-action:none/);
   assert.match(ck, /\.ck-plot\{[^}]*touch-action:pan-y/, "the plot body leaves the page scroller alone");
@@ -240,7 +248,36 @@ test("a manual stretch belongs to the window it was aimed at", () => {
   // A zoom set on two days of 15m candles means nothing over six months of
   // daily ones — inheriting it opens the new tab on an axis with no candles in
   // it. The MODE is a preference and does survive.
-  assert.match(CHART, /setAdjust\(AUTO\), \[chain, address, tf\]/);
+  assert.match(CHART, /setAdjust\(AUTO\);\s*\n\s*setTimeView\(AUTO_TIME\);\s*\n\s*\}, \[chain, address, tf\]\)/);
+});
+
+test("the chart travels through time, and the reader can aim it", () => {
+  // "bisa di geser ke kanan ke kiri chartnya" — a chart you cannot move through
+  // time is a picture. Drag sideways to travel, wheel to zoom, and the candle
+  // under the cursor stays under the cursor.
+  assert.match(CHART, /panTimeByDrag\(t, dx, geo\.step, candles\.length, geo\.fit\)/);
+  assert.match(CHART, /zoomTimeAt\(t, factor, frac, candlesRef\.current, g\.fit\)/);
+  assert.match(CHART, /timeWindow\(candles\.length, fit, timeView\)/, "the window is computed, not `slice(-fit)`");
+  assert.ok(!/candles\.slice\(-Math\.max/.test(code(CHART)), "the fixed most-recent window is gone");
+});
+
+test("⚠️ the wheel listener is NATIVE and non-passive, or it cannot work at all", () => {
+  // React attaches `onWheel` passively, and a passive listener cannot
+  // preventDefault — the handler would zoom the chart and let the page scroll
+  // away underneath it at the same time.
+  assert.ok(!/onWheel=/.test(code(CHART)), "no React onWheel — it would be passive");
+  assert.match(CHART, /addEventListener\("wheel", onWheel, \{ passive: false \}\)/);
+  assert.match(CHART, /removeEventListener\("wheel", onWheel\)/, "and it is removed");
+  // Bound once, so it must read the live geometry rather than one render's.
+  assert.match(CHART, /geoRef\.current = geo;/);
+});
+
+test("⚠️ the live dot does not claim 'live' over candles from two days ago", () => {
+  // Scrolled back into history the chart is still refreshing, but what the
+  // reader is looking at is not the present — the pulsing dot would be the
+  // reassuring reading of a state that is not.
+  assert.match(CHART, /geo\.win\.atLiveEdge && \(\s*\n\s*<span className="ck-live"/);
+  assert.match(CHART, /!geo\.win\.atLiveEdge/, "…and it says so instead");
 });
 
 test("⚠️ the time-axis anchor is the renderer's, and CSS does not override it", () => {

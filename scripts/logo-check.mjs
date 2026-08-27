@@ -159,17 +159,43 @@ function diagnose(rendered, stored, res, k, haveStore) {
   return "";
 }
 
+/** Retry a connection while the server is still coming up. Bounded, and it
+ *  SAYS it is waiting — a silent 15-second pause reads as a hang. */
+async function withRetry(fn, tries = 6, gapMs = 2500) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (i === tries - 1) break;
+      if (i === 0) process.stdout.write(`  ${D}waiting for ${BASE} to come up`);
+      process.stdout.write(".");
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
+  process.stdout.write(`${X}\n`);
+  throw last;
+}
+
 async function main() {
   console.log(`\nWhich listed tokens would draw a monogram?   ${D}checkout ${stamp()} · server ${BASE}${X}\n`);
 
   let payload;
   try {
-    const res = await fetch(`${BASE}/api/tokens`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(45_000) });
-    if (!res.ok) throw new Error(`the server answered HTTP ${res.status}`);
-    payload = await res.json();
+    // ⚠️ WAIT FOR A SERVER THAT IS STILL BOOTING. The natural way to run this
+    // is `pm2 restart dexvra && npm run logos:check`, and Next takes a few
+    // seconds to bind — so the first cut reported "the server did not answer"
+    // for the one order an operator actually types, right after a deploy. A
+    // check that fails on its own happy path teaches the reader to ignore it.
+    payload = await withRetry(async () => {
+      const res = await fetch(`${BASE}/api/tokens`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(45_000) });
+      if (!res.ok) throw new Error(`the server answered HTTP ${res.status}`);
+      return res.json();
+    });
   } catch (e) {
     console.log(
-      `${R}✗ The server at ${BASE} did not answer (${e?.message ?? e}).${X}\n` +
+      `${R}✗ The server at ${BASE} did not answer after several tries (${e?.message ?? e}).${X}\n` +
         `  Start it (\`npm run build && npm start\`) or point BASE_URL at the right port —\n` +
         `  dexvra.io runs on 3005 under pm2. Nothing here is a statement about the logos.\n`,
     );

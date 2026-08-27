@@ -210,3 +210,114 @@ export function panByDrag(a: ScaleAdjust, dyPx: number, plotHeight: number): Sca
   const base = clampAdjust(a);
   return clampAdjust({ ...base, shift: base.shift + dyPx / plotHeight / base.zoom });
 }
+
+// ── the horizontal, which belongs to the reader too ──────────────────────────
+//
+// "bisa di geser ke kanan ke kiri chartnya" — the vertical control landed and
+// the very next thing asked for was the other axis, because a chart you cannot
+// move through time is a picture, not a chart. TradingView and DexScreener both
+// do this and it is the grammar people arrive with: drag sideways to travel,
+// wheel to zoom, and the candle under the cursor stays under the cursor.
+//
+// The state is `{count, endOffset}` and NOT `{startIndex, endIndex}`, for the
+// same reason the price scale stores `{zoom, shift}` rather than `{lo, hi}`:
+// new candles arrive at the RIGHT every poll, so a pair of absolute indices
+// would drift one candle further into the past on every refresh while the
+// reader watched. `endOffset` is measured from the newest candle, so a reader
+// parked at the live edge stays at the live edge and a reader who has scrolled
+// back stays exactly where they scrolled to.
+
+export interface TimeView {
+  /** How many candles are visible. `null` = as many as fit the panel. */
+  count: number | null;
+  /** How many candles are hidden to the RIGHT of the view. 0 = the live edge. */
+  endOffset: number;
+}
+
+export const AUTO_TIME: TimeView = { count: null, endOffset: 0 };
+
+export const isTimeAdjusted = (t: TimeView): boolean => t.count != null || t.endOffset !== 0;
+
+/** Fewest candles the reader may zoom into. Below this the chart is a handful
+ *  of bars with no shape to read, and the axis labels collide. */
+const MIN_VISIBLE = 12;
+
+export interface Window {
+  /** First visible index into the candle array. */
+  start: number;
+  /** How many are visible. */
+  count: number;
+  /** Normalised — clamped to what the data can actually show. */
+  view: TimeView;
+  /** Is the right edge the newest candle? The live dot means something else
+   *  when the reader has scrolled back into history. */
+  atLiveEdge: boolean;
+}
+
+/**
+ * Which slice of the candle array is on screen.
+ *
+ * `fit` is how many the panel has room for at a readable width — the auto
+ * answer, and also the ceiling on zooming out, because past it the bodies merge
+ * into a smear (the reason `MIN_STEP` exists).
+ *
+ * Everything is CLAMPED to the data: a reader cannot scroll past the newest
+ * candle or before the oldest one, so the panel can never come up empty from a
+ * gesture. That is the horizontal version of the price axis refusing to walk
+ * below zero.
+ */
+export function timeWindow(total: number, fit: number, tv: TimeView): Window {
+  const room = Math.max(MIN_VISIBLE, Math.floor(fit) || MIN_VISIBLE);
+  if (total <= 0) return { start: 0, count: 0, view: AUTO_TIME, atLiveEdge: true };
+  const wanted = tv.count == null ? Math.min(room, total) : tv.count;
+  const count = Math.max(1, Math.min(Math.round(clampNum(wanted, MIN_VISIBLE, Math.max(MIN_VISIBLE, room))), total));
+  const endOffset = Math.round(clampNum(tv.endOffset, 0, Math.max(0, total - count)));
+  const start = Math.max(0, total - endOffset - count);
+  return {
+    start,
+    count,
+    view: { count: tv.count == null ? null : count, endOffset },
+    atLiveEdge: endOffset === 0,
+  };
+}
+
+function clampNum(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * A sideways drag → a new time window.
+ *
+ * THE CONTENT FOLLOWS THE FINGER, exactly as it does vertically: drag RIGHT and
+ * the candles move right, which means older ones come in from the left — so the
+ * window moves BACK in time and `endOffset` grows. `step` is the pixel width of
+ * one candle, which is what turns pixels into candles.
+ */
+export function panTimeByDrag(tv: TimeView, dxPx: number, step: number, total: number, fit: number): TimeView {
+  if (!(step > 0) || !Number.isFinite(dxPx)) return tv;
+  const w = timeWindow(total, fit, tv);
+  // Fractional pixels accumulate: a slow drag must not be rounded away to
+  // nothing on every event and leave the chart feeling stuck.
+  const moved = dxPx / step;
+  return timeWindow(total, fit, { count: w.count, endOffset: w.view.endOffset + moved }).view;
+}
+
+/**
+ * A wheel or pinch → a new time window, ANCHORED at the pointer.
+ *
+ * `frac` is where the pointer sits across the plot, 0 = left edge, 1 = right.
+ * The candle under it stays under it, which is the whole difference between a
+ * zoom you can aim and one that throws your place away — the same rule the
+ * price axis follows by zooming about the centre of the view.
+ */
+export function zoomTimeAt(tv: TimeView, factor: number, frac: number, total: number, fit: number): TimeView {
+  if (!(factor > 0) || !Number.isFinite(frac)) return tv;
+  const w = timeWindow(total, fit, tv);
+  const anchor = w.start + clampNum(frac, 0, 1) * w.count; // index under the pointer
+  const count = clampNum(w.count * factor, MIN_VISIBLE, total);
+  const start = anchor - clampNum(frac, 0, 1) * count;
+  return timeWindow(total, fit, { count, endOffset: total - (start + count) }).view;
+}
+
+export const _MIN_VISIBLE = MIN_VISIBLE;
