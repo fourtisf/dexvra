@@ -4576,6 +4576,40 @@ the chain, so 4p on the box is the measurement — and if it goes red, the whole
 fix is the two lines 4t prints.
 
 
+#### …and a Pons token still could not be BOUGHT, because V3 was off
+
+The scan above finds the launch. Filling it is a separate question, and the
+answer was no: **`chains.js` shipped Robinhood's Uniswap V3
+`factory`/`router`/`quoter` blank**, `v3Cfg()` needs factory AND router, so the
+V3 leg was disabled outright — and a Pons V1 launch goes *straight into a
+Uniswap V3 pool*. So every Pons V1 token reached `bestDexVenue` with no V2 pair
+and no V3 config, and the card said *"This token's liquidity is on Pons v2,
+which Dexvra can't route through yet"* about an ordinary Uniswap pool it was
+simply not configured to look in. `preflight:robinhood` has been printing the
+instruction the whole time — *"they are untradeable until these are set"*.
+
+- **The addresses are a CITATION, not a guess.** The old comment sent the next
+  person to "Uniswap's deployments page"; this is that page, quoted:
+  `github.com/Uniswap/contracts` → `deployments/json/4663.json`.
+- **AND IT CROSS-CHECKS**, which is what separates it from the two researched
+  Pons values that were both wrong one section up. That same file's
+  `UniswapV2Router02` is byte-for-byte the `DEX_ROUTER` this repo has been
+  trading through since it was written — so the record and this file describe
+  the same deployment, and a record that ever stops matching is a record of some
+  other chain. `robinhoodRouting.test.js` pins that equality for that reason.
+- ⚠️ **A citation is still not a measurement**, and this feature has just been
+  taught that twice in one round. A wrong value here FAILS SAFE — a factory with
+  no code makes `getPool` throw and `v3BestPool` answer null; a wrong router
+  cannot pass the `estimateGas` the V3 buy does before it signs — but "fails
+  safe" is not "is correct", so **`preflight:robinhood` now `getCode`s both**
+  and says whether it is looking at the shipped default or an operator's own
+  value. Red there is a real answer; the fix is `scripts/v3-discover.js`.
+- **The QUOTER is never read** — V3 pricing is off the pool's own `slot0`, which
+  is why a canonical quoter copied from another chain could sit here wrong for
+  so long without being noticed. It is carried so the record is complete.
+- **Blank env means UNSET, not "set to nothing".** A `.env` carrying a bare
+  `ROBINHOOD_V3_ROUTER=` must not switch the leg back off; a test pins it.
+
 Whether a pad's guessed feed path is right is measured on the box, not assumed
 — every new feed is `verified: false` until `launchpads:check` proves it, and a
 wrong path costs a `.env` line (`LAUNCHPAD_<PAD>_FEED_PATH`), not a deploy.

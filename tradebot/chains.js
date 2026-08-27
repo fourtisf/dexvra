@@ -21,11 +21,44 @@ const CHAINS = {
   robinhood: {
     key: 'robinhood', name: 'Robinhood Chain', emoji: '🪶', chainId: Number(env('CHAIN_ID', '4663')), native: 'ETH', curve: true,
     rpc: env('RPC', 'https://rpc.mainnet.chain.robinhood.com'),
-    // Uniswap V3 on Robinhood Chain: NO baked defaults on purpose — the official
-    // deployment addresses must come from Uniswap's deployments page (or run
-    // scripts/v3-discover.js against a known V3 pool). Guessed addresses on a
-    // money path are worse than a disabled feature. All three set → V3 routing on.
-    v3: { factory: env('ROBINHOOD_V3_FACTORY', ''), router: env('ROBINHOOD_V3_ROUTER', ''), quoter: env('ROBINHOOD_V3_QUOTER', '') },
+    // Uniswap V3 on Robinhood Chain.
+    //
+    // These are NOT guesses, and they are NOT the canonical addresses copied off
+    // another chain — that is what put a wrong quoter here once, and it is still
+    // banned. They are the deployment record the previous comment here told the
+    // next person to go and read, quoted rather than recalled:
+    //
+    //     github.com/Uniswap/contracts → deployments/json/4663.json
+    //
+    // AND IT CROSS-CHECKS. That file's `UniswapV2Router02` is byte-for-byte the
+    // `DEX_ROUTER` default two lines below, which this repo has been trading
+    // through since it was written — so the record and this file are describing
+    // the same deployment, and a record that ever stops matching is a record of
+    // some other chain. `robinhoodRouting.test.js` pins that equality for
+    // exactly that reason.
+    //
+    // WHY IT MATTERS: `v3Cfg()` needs factory AND router, so blank meant the V3
+    // leg was disabled outright — and a Pons V1 launch goes STRAIGHT INTO A
+    // UNISWAP V3 POOL (the section on the Pons scan says so). So every Pons V1
+    // token reached `bestDexVenue` with no V2 pair and no V3 config, and the
+    // card answered "Dexvra can't route through that yet" about an ordinary
+    // Uniswap pool it was simply not configured to look in. `preflight:robinhood`
+    // has been printing "they are untradeable until these are set" ever since;
+    // this is that instruction, carried out.
+    //
+    // ⚠️ STILL WORTH MEASURING ON THE BOX, and the round that produced the Pons
+    // scan is why: two researched Pons values both turned out wrong, and only
+    // `preflight:robinhood` settled it. A wrong value here FAILS SAFE — a factory
+    // with no code makes `getPool` throw and `v3BestPool` returns null, and a
+    // wrong router cannot pass the `estimateGas` the V3 buy does before it signs
+    // — but "fails safe" is not "is correct":
+    //     node scripts/v3-discover.js <a real Pons pool address> robinhood
+    // The QUOTER is deliberately never read (pricing is off the pool's own
+    // slot0); it is carried so the record is complete and `v3-discover` has
+    // something to compare against.
+    v3: { factory: env('ROBINHOOD_V3_FACTORY', '0x1f7d7550b1b028f7571e69a784071f0205fd2efa'),
+          router: env('ROBINHOOD_V3_ROUTER', '0xcaf681a66d020601342297493863e78c959e5cb2'),
+          quoter: env('ROBINHOOD_V3_QUOTER', '0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7') },
     factory: env('FACTORY_ADDR', '0xf0a093bc6ab5bb408ca1f084ec2161d879edaa57'),
     router: env('DEX_ROUTER', '0x89e5db8b5aa49aa85ac63f691524311aeb649eba'),
     weth: env('WETH', '0x0bd7d308f8e1639fab988df18a8011f41eacad73'),

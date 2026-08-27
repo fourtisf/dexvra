@@ -687,8 +687,30 @@ async function main() {
   }
   if (!(chain.v3 && chain.v3.factory && chain.v3.router)) {
     note('V3 routing is OFF (ROBINHOOD_V3_FACTORY / ROBINHOOD_V3_ROUTER unset).');
-    note('If graduated pools.trade tokens live in V3 pools, they are untradeable until');
-    note('these are set — use scripts/v3-discover.js <poolAddress> robinhood.');
+    note('Pons V1 launches straight into a Uniswap V3 pool, so those tokens are');
+    note('untradeable until these are set — scripts/v3-discover.js <poolAddress> robinhood.');
+  } else {
+    // The addresses now ship as defaults, taken from Uniswap's own deployment
+    // record for chainId 4663. That makes them a citation rather than a guess —
+    // and this round has already been taught, twice, that a citation is not a
+    // measurement. So the preflight VERIFIES them here rather than assuming, and
+    // says which it is looking at: an operator's own value or the shipped one.
+    const src = (k) => ((process.env[k] || '').trim() ? 'from .env' : 'shipped default');
+    for (const [name, addr, key] of [
+      ['V3 factory', chain.v3.factory, 'ROBINHOOD_V3_FACTORY'],
+      ['V3 router', chain.v3.router, 'ROBINHOOD_V3_ROUTER'],
+    ]) {
+      try {
+        const code = await prov.getCode(addr);
+        if (!code || code === '0x') {
+          bad(`${name} has NO CODE`, `${addr} (${src(key)})`);
+          note(`  Nothing routes through V3 here. Set ${key}= in tradebot/.env after running`);
+          note('  scripts/v3-discover.js <a real V3 pool address> robinhood.');
+        } else ok(`${name} (${src(key)})`, addr);
+      } catch (e) {
+        warn(`${name} could not be read`, `${addr} — ${(e && e.shortMessage) || (e && e.message) || e}`);
+      }
+    }
   }
 
   // ── summary ───────────────────────────────────────────────────────────────
