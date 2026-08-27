@@ -61,8 +61,13 @@ test("⚠️ every answer names the BUILD that produced it", () => {
   // not see it at all: an UNSTAMPED multi-line response would have passed,
   // which is the one shape this test exists to catch. Counting the property
   // covers both spellings and drops the special case.
-  const responses = (ROUTE.match(/\bok: (?:true|false),/g) ?? []).length;
-  const stamped = (ROUTE.match(/build: BUILD/g) ?? []).length;
+  // ⚠️ THE CODE, NOT THE PROSE. A comment in the route quoting `ok: true,` —
+  // written to explain why the builders keep that spelling — counted as a
+  // sixth response and failed this guard. The repo's own rule: a scan for a
+  // line has to read the code, because comments quote the defect they guard.
+  const src = code(ROUTE);
+  const responses = (src.match(/\bok: (?:true|false),/g) ?? []).length;
+  const stamped = (src.match(/build: BUILD/g) ?? []).length;
   assert.ok(responses >= 3, "the route builds at least the ok / no-candles / fail responses");
   assert.equal(stamped, responses, "every hand-built response — an unstamped one is the one you would be reading");
 });

@@ -26,6 +26,8 @@ export async function register(): Promise<void> {
     console.log(`[boot] build ${process.env.NEXT_PUBLIC_BUILD || "unknown"} · node ${process.version} · pid ${process.pid}`);
     const { gtBanner } = await import("./lib/providers/gt");
     gtBanner();
+    const { chartSourceBanner } = await import("./lib/ohlcv");
+    console.log(chartSourceBanner());
   } catch (err) {
     console.error("[boot] instrumentation failed (the site is unaffected):", err);
   }

@@ -298,10 +298,54 @@ interface Fetched {
   why: string | null;
 }
 
+/**
+ * The headers the guessed chart host expects.
+ *
+ * ⚠️ THIS IS THE MOST LIKELY CAUSE OF THE 403 THAT WAS REPORTED. `io.` is not a
+ * public API — it is the internal datafeed behind DexScreener's own TradingView
+ * chart, and it sits behind Cloudflare. A request carrying nothing but
+ * `accept: application/json` from a datacenter IP is exactly the shape a bot
+ * filter refuses; the same request with the headers a browser sends is the one
+ * it lets through. `/api/logo` in this repo already sends a compatible
+ * user-agent for the same reason, one CDN over.
+ *
+ * The documented `api.` host does NOT need them (it answered 200 from the box
+ * with none), so they are sent only where they might help.
+ *
+ * ⚠️ Env-overridable, and this matters more than usual: whether a given header
+ * set gets past a bot filter is a property of the box's IP reputation TODAY,
+ * not of this code. `DS_CHART_HEADERS` takes `Name: value` pairs separated by
+ * `|`, and REPLACES the set — an operator who has found a combination that
+ * works must not have it silently outvoted by a default.
+ */
+function chartHeaders(): Record<string, string> {
+  const raw = String(process.env.DS_CHART_HEADERS ?? "").trim();
+  if (raw) {
+    const out: Record<string, string> = {};
+    for (const pair of raw.split("|")) {
+      const i = pair.indexOf(":");
+      if (i > 0) out[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();
+    }
+    if (Object.keys(out).length) return out;
+  }
+  return {
+    accept: "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9",
+    // Identifiable, and browser-shaped — the same compromise `/api/logo` makes.
+    "user-agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 DexvraChart/1.0",
+    referer: "https://dexscreener.com/",
+    origin: "https://dexscreener.com",
+  };
+}
+
 async function getJson(url: string, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
   try {
+    // The documented pairs host is happy with a bare request; the guessed chart
+    // host is the one that needs to look like a browser.
+    const isChartHost = !url.startsWith(PAIRS_BASE);
     const res = await fetch(url, {
-      headers: { accept: "application/json" },
+      headers: isChartHost ? chartHeaders() : { accept: "application/json" },
       signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });

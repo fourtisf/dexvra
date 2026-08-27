@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_TF,
   TF,
+  chartPrefOf,
+  chartSourceBanner,
   TIMEFRAMES,
   normalizeCandles,
   pollMsFor,
@@ -135,4 +137,29 @@ test("every timeframe is a combination GeckoTerminal actually serves", () => {
 test("the client never polls faster than the answer can change", () => {
   // A poll inside the route's cache TTL only ever returns the same bytes.
   for (const k of TIMEFRAMES) assert.ok(pollMsFor(k as Timeframe) >= TF[k as Timeframe].ttlMs);
+});
+
+// ── which source goes first ─────────────────────────────────────────────────
+
+test("CHART_SOURCE resolves the order, and blank is the shipped default", () => {
+  // `Number('')`-shaped defaults have cost this repo four separate outages, so
+  // an unset var resolves to what shipped and nothing else.
+  assert.equal(chartPrefOf(undefined), "auto");
+  assert.equal(chartPrefOf(""), "auto");
+  assert.equal(chartPrefOf("  "), "auto");
+  assert.equal(chartPrefOf("banana"), "auto", "an unreadable value is never a guess");
+  assert.equal(chartPrefOf("dexscreener"), "dexscreener");
+  assert.equal(chartPrefOf(" DexScreener "), "dexscreener");
+  assert.equal(chartPrefOf("ds"), "dexscreener");
+  assert.equal(chartPrefOf("gt"), "geckoterminal");
+});
+
+test("the boot line says which order is in effect, and what a failure would mean", () => {
+  // Same reason as the `[gt]` tier line: a setting that never arrived and a
+  // setting that did not help are indistinguishable from a browser.
+  assert.match(chartSourceBanner("auto"), /GeckoTerminal first/);
+  assert.match(chartSourceBanner("dexscreener"), /DexScreener FIRST/);
+  assert.match(chartSourceBanner("dexscreener"), /\.env fix/, "a guessed shape failing is a config fix, not a deploy");
+  assert.match(chartSourceBanner("geckoterminal"), /ONLY/);
+  assert.match(chartSourceBanner("geckoterminal"), /blanks every chart/, "…and it names what that costs");
 });

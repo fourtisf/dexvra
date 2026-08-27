@@ -2636,6 +2636,60 @@ LOG: half the move sits 50% up the price area
   fails if the clip stops working AND fails if the probe stops being able to
   see a spill.
 
+#### "saya ingin pakai api dexscreener aja untuk chart" — an ORDER, not a deletion
+
+The DexScreener source already existed (the same operator asked for it, and it
+shipped). What did not exist is a way to make it PRIMARY, and on that box
+`io.dexscreener.com` was answering **403**. Two things:
+
+- ⚠️ **THE 403 WAS PROBABLY OUR OWN REQUEST SHAPE.** `io.` is not a public API —
+  it is the internal datafeed behind DexScreener's own TradingView chart, and it
+  sits behind Cloudflare. We were sending nothing but `accept:
+  application/json` from a datacenter IP, which is exactly the shape a bot
+  filter refuses. It now sends what a browser sends (user-agent, referer,
+  origin, accept-language) — the same compromise `/api/logo` already makes one
+  CDN over. The DOCUMENTED `api.` host does not get them: it answered 200 from
+  the box with none, so they are sent only where they might help.
+  `DS_CHART_HEADERS` REPLACES the set (`Name: value` pairs separated by `|`),
+  because whether a header combination gets past a bot filter is a property of
+  the box's IP reputation today, not of this code.
+- **`CHART_SOURCE` is the order**: `auto` (GT first, the shipped default),
+  `dexscreener` (DS first, GT behind it), `geckoterminal` (GT only). Blank is
+  `auto` — an unset var resolves to what shipped, never to a guess.
+
+⚠️ **IT IS AN ORDER AND NEVER A DELETION, and that is not overruling the ask.**
+DexScreener publishes no documented OHLCV endpoint, so `dsChart.ts` is a GUESS
+about somebody else's private API. Making a guess primary is a legitimate trade
+— it costs nothing while it works, and it leaves the whole ~30 req/min GT
+allowance for the board, the pools and the trades feed. Making it the ONLY
+source means the day DexScreener renames a path, every chart on the site goes
+dark with no way back. `askGt` may therefore only be switched off by the
+`?source=` PIN (the check script's seam), never by the preference — and that is
+mutation-tested: letting `PREF` silence GeckoTerminal fails the guard.
+
+- ⚠️ **The boot line prints the order**, for the reason the `[gt]` tier line
+  exists: a setting that never arrived and a setting that did not help are
+  indistinguishable from a browser, and this repo has lost evenings to an
+  `.env` written to the wrong file.
+- ⚠️ **A type PREDICATE narrows the FALSE branch too.** `(x): x is DsCandles`
+  left `ds` as `null` after the ordering blocks, so every use below read as
+  `never` and the "which kind of nothing" logic stopped type-checking while
+  still compiling — the guard rail off, silently. A plain boolean does not.
+- ⚠️ **The build-stamp guard was counting a code sample inside a COMMENT.** The
+  repo's own rule — a scan for a line has to read the code, because comments
+  quote the defect they guard against — had not been applied to that one test.
+
+```bash
+pm2 logs dexvra --lines 20 --nostream | grep -F '[chart]'   # which order is live
+npm run chart:check                                          # per source, on the box
+```
+
+**Config a fix depends on:** nothing — `CHART_SOURCE` is optional and blank is
+the shipped behaviour. But ⚠️ **whether the guessed shape answers at all is a
+property of the server's egress**, so `chart:check` on the box is the only way
+to learn it, and `GECKOTERMINAL_API_KEY` is still the only thing that raises the
+real ceiling rather than dividing it.
+
 #### "Chart unavailable right now" again — and one retry that was hammering a refusal
 
 ```
