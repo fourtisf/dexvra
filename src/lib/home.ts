@@ -254,6 +254,23 @@ export function expander(total: number, base: number, max: number) {
  * refusing to print it would hide a real reading. A seed token with a nonzero
  * captured change also prints — the demo board is built from those.
  */
+/**
+ * The MONEY figure a renderer may print for a token — or null.
+ *
+ * `changeReading`'s rule, one column over, and it exists because of a board of
+ * Robinhood listings rendering `$0` price · `$0` MCAP · `$0` VOL on every row:
+ * those zeros were the store's captured-at-listing defaults on rows no
+ * provider had priced this cycle, and `$0` on a public board is a claim nobody
+ * measured — the "vol 0 padahal ada transaksi" defect, one field over. A LIVE
+ * zero stays a zero (a measured quiet day is a fact); a zero from a row whose
+ * source never measured anything is a dash.
+ */
+export function figureReading(t: Pick<BoardToken, "source">, v: number | null): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  if (v === 0 && t.source !== "live") return null;
+  return v;
+}
+
 export function changeReading(t: BoardToken, frame: PeriodKey): number | null {
   const v = t.chg[frame];
   if (!Number.isFinite(v)) return null;

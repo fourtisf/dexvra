@@ -1,6 +1,9 @@
 // Number formatting ported 1:1 from the prototype (fmtPrice etc.) — the
 // handoff calls these out as canonical.
-export function fmtPrice(p: number): string {
+export function fmtPrice(p: number | null): string {
+  // null is "not known here" and prints the same dash every other formatter
+  // prints for it — a price of $0 is a claim, and no market prices at zero.
+  if (p == null || !Number.isFinite(p)) return "—";
   // guard: without this, the trailing-zero strip below turns 0 into "$0."
   if (!(p > 0)) return "$0";
   if (p >= 1)

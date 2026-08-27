@@ -2385,6 +2385,56 @@ raises the site's share and `0` turns it off, and `GECKOTERMINAL_API_KEY` is
 still the only thing that raises the real ceiling rather than dividing it.
 
 
+## "robinhood chain price dll tidak ada datanya" — a chain of $0 rows, and no line anywhere saying why
+
+Reported with a screenshot of the home board: seven Robinhood listings —
+$GME, $INDEX, $PONS, $AAPL, $VEX, $WALL3, $WOJAK — every one rendering
+`$0` price · `—` change · `$0` MCAP · `$0` VOL · `0` txns. Three different
+failures render EXACTLY like that, and they need three different fixes:
+GeckoTerminal has no data for those tokens (nothing to configure — a fresh
+launchpad token has no indexed pool), GT is refusing/limiting the box (quota),
+or GT answers fine and the site's own pipeline is broken. Nothing on the board,
+in the store or in the logs could say which.
+
+- ⚠️ **A chain whose every provider fails, failed SILENTLY.** `loadListedTokens`
+  ran the per-chain fetches under `Promise.allSettled` and never looked at the
+  rejections — a chain could throw on every cycle for a week and the only
+  symptom was its rows sitting on their captured-at-listing zeros. One
+  greppable `[market] <chain>: every provider failed this cycle — <why>` line
+  per chain per cycle now.
+- ⚠️ **The zeros themselves were CLAIMS.** Those `$0`s were the store's
+  captured-at-listing defaults on rows no provider had priced — printed on a
+  public board as three measurements per row that nobody made. `figureReading`
+  is `changeReading`'s money-column twin, in the same module for the same
+  reason: a zero from a row whose source never measured anything is a dash; a
+  LIVE zero keeps its zero (a measured quiet day is a fact); a captured nonzero
+  still prints (the demo board is built from those). Every money cell on BOTH
+  row components goes through it — the 24h column already drew its dash while
+  PRICE beside it claimed `$0`, two cells one inch apart disagreeing about what
+  unknown looks like — and a source-scan test refuses any cell reading the raw
+  field again.
+- **`npm run market:check` says WHICH of the three it is, on the box.** It
+  drives the RUNNING server's `/api/tokens` (what the board actually serves,
+  build stamp included) and then GeckoTerminal DIRECTLY with the site's own
+  request shape, per token: `GT prices it right now` → the fault is the site's
+  half, read `pm2 logs dexvra | grep -F '[market]'` then `'[gt]'`; `GT has no
+  record` → the token genuinely has no indexed pool and the board is honest
+  about it; a 404/429 names the config/quota. ⚠️ The script carries a PORT of
+  `chains.ts`' `geckoNetwork` map (production runs Node 18 — a check script
+  cannot import `src/**/*.ts`, the `logos:check` rule), and a guard test pins
+  the port equal to the real map — the first run of that guard caught the port
+  missing thirteen chains, which is the guard doing its job on its author.
+
+```bash
+npm run market:check                # every chain, the worst one probed against GT
+npm run market:check -- robinhood   # one chain, per token, with the next step named
+```
+
+**Config a fix depends on:** nothing for the code. Whether Robinhood rows can
+price at all is a fact about GT's coverage of those tokens, measured on the
+box — and `GECKOTERMINAL_API_KEY` in the repo-root `.env` is still the only
+thing that raises the shared ceiling rather than dividing it.
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both

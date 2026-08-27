@@ -109,10 +109,21 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   const fallback = rowsToBoardTokens(rows);
 
   const marketResults = await Promise.allSettled(
-    Object.entries(byChain).map(async ([chain, addrs]) => ({
-      chain,
-      map: await fetchChainMarket(chain, addrs),
-    })),
+    Object.entries(byChain).map(async ([chain, addrs]) => {
+      try {
+        return { chain, map: await fetchChainMarket(chain, addrs) };
+      } catch (err) {
+        // SAID, per chain, per cycle — before this, a chain whose every
+        // provider failed simply fell out of the allSettled results and its
+        // rows rendered their captured-at-listing zeros with nothing anywhere
+        // naming a cause: seven Robinhood listings sat on a public board as
+        // "$0 · $0 · $0" for however long it took a person to count them. One
+        // greppable line per failing chain per cycle is the price of never
+        // diagnosing that from a screenshot again.
+        console.warn(`[market] ${chain}: every provider failed this cycle — ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
+    }),
   );
   const anyLive = marketResults.some((r) => r.status === "fulfilled" && r.value.map.size > 0);
   if (!anyLive) throw new Error("no live market data for any listing");

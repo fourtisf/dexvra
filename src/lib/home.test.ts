@@ -24,8 +24,9 @@ import {
   splitChains,
   topCoins,
   tradedEnough,
+  figureReading,
 } from "./home.ts";
-import { CHAIN_IDS } from "../config/chains.ts";
+import { CHAINS, CHAIN_IDS } from "../config/chains.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
 
 const PERIODS: PeriodKey[] = ["5m", "1h", "6h", "24h"];
@@ -763,4 +764,42 @@ test("all three surfaces render the reading through the one helper", () => {
     "src/components/TopCoins.tsx",
   ])
     assert.match(read(f), /changeReading\(/, `${f} uses changeReading`);
+});
+
+// ── figureReading: the money-column twin of changeReading ────────────────────
+
+test("a zero from a row nobody priced is a dash, a LIVE zero is a fact", () => {
+  // Seven Robinhood listings rendered "$0 · $0 · $0" — captured-at-listing
+  // defaults on rows no provider had priced, printed as three claims per row.
+  assert.equal(figureReading({ source: "seed" }, 0), null, "an unmeasured zero was printed as a figure");
+  assert.equal(figureReading({ source: "live" }, 0), 0, "a measured quiet day must keep its zero");
+  assert.equal(figureReading({ source: "seed" }, 157_700), 157_700, "a captured nonzero figure still prints — the demo board is built from those");
+  assert.equal(figureReading({ source: "live" }, NaN), null);
+  assert.equal(figureReading({ source: "live" }, null), null);
+});
+
+test("every money cell on the board goes through figureReading", () => {
+  // A source scan, because the defect was exactly one cell reading the raw
+  // field: the 24h column drew its dash while PRICE beside it claimed $0.
+  const src = readFileSync(join(import.meta.dirname, "..", "components", "TokenBoard.tsx"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/([^:])\/\/.*$/gm, "$1");
+  for (const bare of ["fmtPrice(t.priceUsd)", "fmtCap(t.mcap)", "fmtCap(t.liq)", "fmtCap(t.vol[period])", "fmtNum(buys + sells)", 'fmtNum(t.txns["24h"].buys + t.txns["24h"].sells)']) {
+    assert.ok(!src.includes(bare), `a board cell reads the raw field again: ${bare}`);
+  }
+  assert.match(src, /figureReading\(t, t\.priceUsd\)/, "the price cell no longer goes through figureReading");
+});
+
+test("the market-check port of geckoNetwork agrees with chains.ts exactly", () => {
+  // scripts/market-check.mjs cannot import TS on the production Node, so it
+  // carries a PORT of the geckoNetwork map — and a check reading a different
+  // network id than the site proves nothing about the site. Same guard shape
+  // as the logoSrc port in logos:check.
+  const src = readFileSync(join(import.meta.dirname, "..", "..", "scripts", "market-check.mjs"), "utf8");
+  const m = src.match(/const GECKO_NETWORK = \{([\s\S]*?)\};/);
+  assert.ok(m, "market-check.mjs lost its GECKO_NETWORK map");
+  const ported = Object.fromEntries([...m[1].matchAll(/(\w+): "([^"]+)"/g)].map((x) => [x[1], x[2]]));
+  for (const [id, cfg] of Object.entries(CHAINS)) {
+    if (cfg.geckoNetwork == null) continue;
+    assert.equal(ported[id], cfg.geckoNetwork, `market-check's map disagrees with chains.ts for '${id}'`);
+  }
 });

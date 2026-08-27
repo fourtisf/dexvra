@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { capped, changeRank, changeReading, expander } from "@/lib/home";
+import { capped, changeRank, changeReading, expander, figureReading } from "@/lib/home";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap, fmtNum, fmtPrice } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
@@ -150,7 +150,15 @@ function StdRow({
   override?: { price: number; chgDelta: number };
 }) {
   const { openDetail } = useApp();
-  const price = override?.price ?? t.priceUsd;
+  // EVERY money figure goes through figureReading: a zero on a row no provider
+  // priced is the store's captured default, not a market fact, and this board
+  // rendered seven Robinhood listings as "$0 · $0 · $0" — three claims per row
+  // that nobody measured. The dash the 24h column already draws, on every
+  // column that can lie the same way.
+  const price = override?.price ?? figureReading(t, t.priceUsd);
+  const mcap = figureReading(t, t.mcap);
+  const liq = figureReading(t, t.liq);
+  const vol = figureReading(t, t.vol[period]);
   const reading = changeReading(t, period);
   const chg = (reading ?? 0) + (override?.chgDelta ?? 0);
   const up = chg >= 0;
@@ -159,6 +167,7 @@ function StdRow({
   const hasReading = reading != null || override?.chgDelta != null;
   const dec = period === "5m" ? 2 : 1;
   const { buys, sells } = t.txns[period];
+  const tx = figureReading(t, buys + sells);
   const rank = i < 3 ? <Medal n={i + 1} /> : i + 1;
 
   return (
@@ -177,7 +186,7 @@ function StdRow({
           <div className="nm">{t.name}</div>
           {/* phones: the hidden table columns condense into this line */}
           <div className="m-stats">
-            <b>MC</b> {fmtCap(t.mcap)} · <b>V</b> {fmtCap(t.vol[period])} · <b>TX</b> {fmtNum(buys + sells)} ·{" "}
+            <b>MC</b> {fmtCap(mcap)} · <b>V</b> {fmtCap(vol)} · <b>TX</b> {fmtNum(tx)} ·{" "}
             <span style={{ color: scoreTier(t.score).color }}>DXS {t.score}</span>
           </div>
         </div>
@@ -195,16 +204,18 @@ function StdRow({
           </span>
         )}
       </div>
-      <div className="c-num c-mcap mono-dim">{fmtCap(t.mcap)}</div>
-      <div className="c-num c-liq mono-dim">{fmtCap(t.liq)}</div>
-      <div className="c-num c-vol mono-dim">{fmtCap(t.vol[period])}</div>
+      <div className="c-num c-mcap mono-dim">{fmtCap(mcap)}</div>
+      <div className="c-num c-liq mono-dim">{fmtCap(liq)}</div>
+      <div className="c-num c-vol mono-dim">{fmtCap(vol)}</div>
       <div className="c-txns tx-cell">
-        <div className="tx-main">{fmtNum(buys + sells)}</div>
-        <div className="tx-split">
-          <span className="b">{fmtNum(buys)}</span>
-          <span className="sl"> / </span>
-          <span className="s">{fmtNum(Math.max(sells, 0))}</span>
-        </div>
+        <div className="tx-main">{fmtNum(tx)}</div>
+        {tx != null && (
+          <div className="tx-split">
+            <span className="b">{fmtNum(buys)}</span>
+            <span className="sl"> / </span>
+            <span className="s">{fmtNum(Math.max(sells, 0))}</span>
+          </div>
+        )}
       </div>
       <div className="c-info info-cell">
         <span className="dscore" style={{ color: scoreTier(t.score).color }} title="Dexvra Score">
@@ -224,6 +235,9 @@ function NpRow({ t, i, flashDir }: { t: BoardToken; i: number; flashDir?: "up" |
   const { openDetail } = useApp();
   const reading = changeReading(t, "24h");
   const up = (reading ?? 0) >= 0;
+  // The same figureReading rule as the main row — a fresh pair is exactly the
+  // row most likely to carry captured zeros nobody measured.
+  const npTx = figureReading(t, t.txns["24h"].buys + t.txns["24h"].sells);
   return (
     <div
       className={`row ${flashDir === "up" ? "flash-up" : ""} ${flashDir === "dn" ? "flash-dn" : ""}`}
@@ -240,7 +254,7 @@ function NpRow({ t, i, flashDir }: { t: BoardToken; i: number; flashDir?: "up" |
       <div>
         <span className="age-chip">⏱ {fmtAge(t.ageMinutes)}</span>
       </div>
-      <div className="c-num price c-mcap">{fmtPrice(t.priceUsd)}</div>
+      <div className="c-num price c-mcap">{fmtPrice(figureReading(t, t.priceUsd))}</div>
       <div className="c-num">
         {reading != null ? (
           <span className={`chg ${up ? "up" : "dn"}`}>
@@ -253,14 +267,16 @@ function NpRow({ t, i, flashDir }: { t: BoardToken; i: number; flashDir?: "up" |
           </span>
         )}
       </div>
-      <div className="c-num c-liq mono-dim">{fmtCap(t.liq)}</div>
+      <div className="c-num c-liq mono-dim">{fmtCap(figureReading(t, t.liq))}</div>
       <div className="c-txns tx-cell">
-        <div className="tx-main">{fmtNum(t.txns["24h"].buys + t.txns["24h"].sells)}</div>
-        <div className="tx-split">
-          <span className="b">{fmtNum(t.txns["24h"].buys)}</span>
-          <span className="sl"> / </span>
-          <span className="s">{fmtNum(t.txns["24h"].sells)}</span>
-        </div>
+        <div className="tx-main">{fmtNum(npTx)}</div>
+        {npTx != null && (
+          <div className="tx-split">
+            <span className="b">{fmtNum(t.txns["24h"].buys)}</span>
+            <span className="sl"> / </span>
+            <span className="s">{fmtNum(t.txns["24h"].sells)}</span>
+          </div>
+        )}
       </div>
       <StarButton token={t} />
     </div>

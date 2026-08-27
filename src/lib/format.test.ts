@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fmtCap } from "./format.ts";
+import { fmtCap, fmtPrice } from "./format.ts";
 
 // ⚠️ A PRINTED ZERO IS A CLAIM.
 //
@@ -58,4 +58,15 @@ test("⚠️ no branch can emit a bare '<' — the bot's port reaches parse_mode
   // available as a spelling however tempting it reads.
   for (const v of [0, 1e-9, 0.004, 0.06, 0.99, 1, 999, 1e6, 1e9])
     assert.ok(!fmtCap(v).includes("<"), `fmtCap(${v}) = ${fmtCap(v)}`);
+});
+
+test("a price nobody measured is a dash, never $0", () => {
+  // The board rendered seven Robinhood rows as "$0" price — the store's
+  // captured-at-listing default on rows no provider had priced. fmtPrice(null)
+  // is the renderer's way to say "not known", same as fmtCap and fmtNum.
+  assert.equal(fmtPrice(null), "—");
+  assert.equal(fmtPrice(NaN), "—");
+  // …and a literal zero passed in still prints $0 — the CALLER decides what a
+  // zero means (figureReading), the formatter only refuses to invent one.
+  assert.equal(fmtPrice(0), "$0");
 });
