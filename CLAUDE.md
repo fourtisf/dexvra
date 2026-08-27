@@ -2636,6 +2636,44 @@ LOG: half the move sits 50% up the price area
   fails if the clip stops working AND fails if the probe stops being able to
   see a spill.
 
+#### "Chart unavailable right now" again — and one retry that was hammering a refusal
+
+```
+Couldn't read the chart just now (GeckoTerminal is rate limited —
+cooling down for 92s; io.dexscreener.com 403).
+```
+
+**Both sources at once, and the panel said so correctly** — that message is the
+feature working: it names each host and each reason, which is why the cause was
+readable at a glance instead of being another round of investigation. There is
+no code fix for the ceiling itself; ⚠️ **`GECKOTERMINAL_API_KEY` in the
+repo-root `.env` is the only thing that raises it rather than dividing it**, and
+that sentence is now in this file five times.
+
+But the retry underneath it was wrong:
+
+- ⚠️ **A 403 IS A REFUSAL BY THE HOST, AND RETRYING IT EVERY FIVE SECONDS IS THE
+  429 DEFECT ONE STATUS OVER.** The panel fast-retries a transient chart failure
+  every 5s (up to 8 times) so a chart draws itself the moment a GeckoTerminal
+  cooldown lifts — and that is free upstream, because `gtGet` answers a
+  cooled-down request WITHOUT making one. DexScreener had no such guard for a
+  403: with GT cooling down and `io.dexscreener.com` refusing this box, **every
+  chart view spent eight requests proving the same refusal**. Exactly the shape
+  this file already names for CoinGecko — *"a 429 now arms a process-wide
+  cooldown and the rest of the sweep is not asked at all"*. 401/451 join it.
+- **404 is deliberately NOT in that set.** It is an ANSWER about the pair
+  ("DexScreener has no pair for this token"), not a refusal of us, and caching
+  it as an outage would blind the fallback for every other token. The same line
+  `logoFill` draws between "nothing there" and "could not ask", and the same one
+  the IPFS gateway list draws in the other direction.
+- Mutation-tested: putting the 429-only guard back fails the test.
+
+⚠️ **And the rebuilds themselves cost quota.** The OHLCV cache is per PROCESS,
+so every `pm2 restart dexvra` empties it and the next view of every open chart
+re-fetches. Half a dozen deploys in a row on a box already sharing ~30 req/min
+with the bot suite is enough to sit in a cooldown for a while, with nothing
+wrong anywhere. Worth knowing before diagnosing a chart that is only cold.
+
 #### "bisa di geser ke kanan ke kiri chartnya" — the other axis
 
 The vertical landed and the very next thing asked for was the horizontal, with
