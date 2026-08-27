@@ -411,46 +411,173 @@ async function _followerBuy(u, t, token, chainKey, out) {
  * with no extra read at all (better than the pool-opener inference the
  * PairCreated scan needs).
  *
- * EVERYTHING HERE IS A GUESS AN OPERATOR CAN CORRECT WITHOUT A DEPLOY, the
- * pads-table contract: the factory address and the event signature come from
- * Pons's public integration docs, were cross-checked against the chain's own
- * explorer, and could not be verified against a live RPC from where this was
- * written — so both are env-overridable, and every way the guess can be wrong
- * is DIAGNOSED rather than silent:
+ * ⚠️ THE FIRST TWO SHIPPED DEFAULTS WERE BOTH WRONG, AND NOTHING SAID SO.
+ * The factory addresses and the `TokenLaunched(...)` signature came from Pons's
+ * public integration docs and could not be checked against a live RPC from
+ * where they were written. Measured on the box, neither address had contract
+ * code, and the documented signature hashes to 0xdb51ea… while the launchpad
+ * that really announces a Pons launch emits 0x8d4aad… — so the filter could
+ * never have matched a log even had the address been right. Both defaults are
+ * now what `npm run preflight:robinhood` READ OFF THE CHAIN, and the shape of
+ * the fix is why they can be replaced without a deploy:
  *
  *   LAUNCHPAD_PONS=0   kills this scan AND the HTTP pad (one feature, one switch)
  *   PONS_FACTORY=0x…   a moved factory is a .env line
- *   PONS_EVENT=event … a rotated signature is a .env line
+ *   PONS_EVENT=…       a rotated event is a .env line — EITHER a full
+ *                      `event Foo(address indexed token, …)` signature, OR the
+ *                      bare 32-byte topic0 an explorer shows
  *
  *   • factory has no CODE        → ponsErr says so (the wrong-address tell)
- *   • factory emits logs but the
- *     event never decodes        → ponsErr says the SIGNATURE is stale, not the host
+ *   • factory emits logs but none
+ *     carry our topic0           → ponsErr says the EVENT is stale, not the host
+ *   • a launch we cannot resolve → ponsErr names the candidates (never a guess)
  *   • nothing emitted at all     → ponsSeen stays 0 in /health, like every feed
  *
- * Nothing from the event reaches the money path: the buy is priced, routed and
- * gated by core.buy / canTradeNow exactly as for every other discovery source,
- * so a hostile or wrong event can waste a look, never aim a trade.
+ * ⚠️ A TOPIC0 IS NOT AN ABI, AND THIS SCAN AIMS A BUY. Knowing which log
+ * announces a launch says nothing about which of its words is the token, and
+ * reading the wrong word buys a stranger's contract with somebody's money. So
+ * in topic-only mode NOTHING IS GUESSED: the token is resolved by MEASUREMENT
+ * (_ponsResolve — two independent facts about the launch transaction that have
+ * to agree), and a launch that cannot be resolved is refused and diagnosed
+ * rather than fired. A missed snipe is a shrug; the wrong token is not.
+ *
+ * Beyond that, nothing from the event reaches the money path: the buy is
+ * priced, routed and gated by core.buy / canTradeNow exactly as for every other
+ * discovery source.
  */
-// TWO FACTORIES, not one. Pons kept its V1 deployment live for tokens launched
-// before the V2 upgrade, and a scan watching a single address is blind to
-// everything the other one emits — eth_getLogs answers an unmatched address
-// with an empty array, so that blindness reads as a quiet launchpad. Same rule
-// as JUP_BASES: a LIST, current first, legacy kept, so a rollover in either
-// direction needs no deploy.
-const PONS_FACTORY_DEFAULT = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB,0x0c37a24F5D23A486FA692d1500881d698B1F77a4';
-const PONS_EVENT_DEFAULT = 'event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchConfigId, uint256 positionId, uint256 restrictionsEndBlock, uint256 initialBuyAmount)';
+// TWO FACTORIES, not one — and these two were MEASURED, not guessed: both
+// emitted a log for the same launch at Robinhood block 47496254, so which of
+// them is the launchpad proper and which the token factory is not a question
+// this scan has to answer. Watching both costs one getLogs each and _snipeMark
+// collapses a token seen twice into one fire. Same rule as JUP_BASES: a LIST,
+// current first, so a rollover in either direction needs no deploy.
+const PONS_FACTORY_DEFAULT = '0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e,0xe33e9e479df8802cb0866d5d05258bec4cf62948';
+// The topic0 the launchpad actually emits. It is a HASH with no name attached —
+// 1050 candidate `name(argtypes)` spellings were hashed against it and none
+// matched, so the event's ABI is genuinely unknown and this scan must work
+// without one. A human-readable PONS_EVENT still wins wherever somebody learns
+// the real spelling; KNOWN_SIGS is where it lands so the decode path lights up
+// again by itself.
+const PONS_TOPIC0_DEFAULT = '0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607';
+const PONS_EVENT_DEFAULT = PONS_TOPIC0_DEFAULT;
+// Signatures we know the spelling of. A matched topic0 here decodes properly
+// (named `token` / `deployer`, no receipt read at all); an unmatched one falls
+// to the measured resolve. The documented Pons signature is kept because it may
+// well be live on another deployment — it simply is not the one this chain
+// emits.
+const PONS_KNOWN_SIGS = [
+  'event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchConfigId, uint256 positionId, uint256 restrictionsEndBlock, uint256 initialBuyAmount)',
+];
 const _envs = (k, d) => { const v = String(process.env[k] == null ? '' : process.env[k]).trim(); return v || d; };
+const _isTopic0 = (s) => /^0x[0-9a-fA-F]{64}$/.test(String(s || '').trim());
+/** topic0 for a human-readable `event Foo(...)` — the canonical `Foo(t1,t2)`
+ *  form ethers hashes, with `indexed` and parameter names stripped. */
+function _sigTopic(sig) {
+  try { return ethers.EventFragment.from(sig).topicHash; } catch (_) { return null; }
+}
 /** Read PER CALL, not at require time, so `--update-env` + restart is the whole
  *  fix — and so the kill switch shares LAUNCHPAD_PONS with the HTTP pad: an
  *  operator turning Pons off must not have to know it is two mechanisms. */
 function _ponsCfg() {
   const flag = _envs('LAUNCHPAD_PONS', '').toLowerCase();
   const on = !(flag === '0' || flag === 'false' || flag === 'off' || flag === 'no');
-  const eventSig = _envs('PONS_EVENT', PONS_EVENT_DEFAULT);
-  const name = (eventSig.match(/event\s+(\w+)/) || [])[1] || 'TokenLaunched';
+  const raw = _envs('PONS_EVENT', PONS_EVENT_DEFAULT);
+  // Two spellings, one knob: an operator reading a topic0 off an explorer must
+  // not have to invent an ABI to use it, and one who KNOWS the ABI must not
+  // lose the named decode. Which one arrived is decided by shape, never by a
+  // second env var that can disagree with the first.
+  let eventSig = null, topic0 = null;
+  if (_isTopic0(raw)) {
+    topic0 = raw.toLowerCase();
+    eventSig = PONS_KNOWN_SIGS.find((s) => _sigTopic(s) === topic0) || null;
+  } else {
+    eventSig = raw;
+    topic0 = _sigTopic(raw);
+  }
+  const name = eventSig ? (eventSig.match(/event\s+(\w+)/) || [])[1] || 'TokenLaunched' : '';
   const factories = _envs('PONS_FACTORY', PONS_FACTORY_DEFAULT)
     .split(',').map((x) => x.trim()).filter((x) => /^0x[0-9a-fA-F]{40}$/.test(x));
-  return { on, factories, factory: factories[0] || '', eventSig, name };
+  return { on, factories, factory: factories[0] || '', eventSig, topic0, name, decodable: !!(eventSig && topic0) };
+}
+
+// ---- resolving a launch whose ABI we do not have -------------------------
+const _TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+const _ZERO32 = '0x' + '0'.repeat(64);
+const _TOKEN0_SELECTOR = '0x0dfe1681';          // token0() — a pair answers, an ERC-20 does not
+const PONS_RESOLVE_MAX = 12;                    // receipts per scan; a launch is rare, a broken filter is not
+
+/** Every address the log NAMES, order-independent — indexed topics plus every
+ *  32-byte data word shaped like a left-padded address. Order-independent is
+ *  the point: a layout guess is exactly what this avoids. */
+function _logAddrs(log) {
+  const out = new Set();
+  const add = (w) => {
+    if (typeof w !== 'string' || !/^0x0{24}[0-9a-fA-F]{40}$/.test(w)) return;
+    const a = ('0x' + w.slice(26)).toLowerCase();
+    if (a !== '0x' + '0'.repeat(40)) out.add(a);
+  };
+  const topics = log.topics || [];
+  for (let i = 1; i < topics.length; i++) add(String(topics[i]).toLowerCase());
+  const data = String(log.data || '0x').slice(2).toLowerCase();
+  for (let i = 0; i + 64 <= data.length; i += 64) add('0x' + data.slice(i, i + 64));
+  return out;
+}
+
+/** Which token did this launch create? TWO INDEPENDENT FACTS THAT MUST AGREE:
+ *  the launch log NAMES the address, and the same transaction MINTED it (an
+ *  ERC-20 `Transfer` out of the zero address). Either alone is guessable — the
+ *  log names the pool and the quote token too, and a transaction can mint more
+ *  than one thing — and their intersection is decided by the chain rather than
+ *  by an assumed argument position.
+ *
+ *  ⚠️ It refuses rather than picks. Anything but exactly one survivor returns a
+ *  `why` and fires nothing: the cost of refusing is a missed snipe, and the
+ *  cost of picking wrong is buying a stranger's contract.
+ *
+ *  The deployer is the transaction's SENDER — the same inference the
+ *  PairCreated scan already documents, and it only ever decides whether a dev
+ *  follower matches, never what gets bought. A decodable PONS_EVENT skips all
+ *  of this and uses the event's own `deployer`. */
+async function _ponsResolve(prov, log, factories) {
+  const named = _logAddrs(log);
+  for (const f of factories) named.delete(String(f).toLowerCase());
+  // …and the emitter itself, which `factories` may not name once an operator
+  // has pinned a shorter PONS_FACTORY list than the chain actually runs.
+  if (log.address) named.delete(String(log.address).toLowerCase());
+  if (!named.size) return { why: 'the launch log names no address' };
+  let rc;
+  try { rc = await prov.getTransactionReceipt(log.transactionHash); }
+  catch (e) { return { why: 'could not read the launch transaction (' + String((e && e.message) || e).slice(0, 80) + ')' }; }
+  if (!rc || !rc.logs) return { why: 'the launch transaction has no readable receipt' };
+  const minted = new Set();
+  for (const l of rc.logs) {
+    // 3 topics, not 4: an ERC-721 mint carries its id as a third indexed topic,
+    // and a v3 position NFT is minted from the zero address in exactly these
+    // transactions.
+    if (!l || !l.topics || l.topics.length !== 3) continue;
+    if (String(l.topics[0]).toLowerCase() !== _TRANSFER_TOPIC) continue;
+    if (String(l.topics[1]).toLowerCase() !== _ZERO32) continue;
+    minted.add(String(l.address).toLowerCase());
+  }
+  let cand = [...minted].filter((a) => named.has(a));
+  if (cand.length > 1) {
+    // The one predictable ambiguity: a v2-style launch mints its LP token too,
+    // and the pair is named by the log as the pool. ELIMINATE by asking the
+    // chain (a pair answers token0(), an ERC-20 does not) — never select by it.
+    const pairish = await Promise.all(cand.map(async (a) => {
+      try { const r = await prov.call({ to: a, data: _TOKEN0_SELECTOR }); return typeof r === 'string' && r.length >= 66; }
+      catch (_) { return false; }
+    }));
+    cand = cand.filter((_, i) => !pairish[i]);
+  }
+  if (cand.length !== 1) {
+    return { why: cand.length
+      ? `${cand.length} of the launch log's addresses were minted in its own transaction (${cand.map((a) => a.slice(0, 10)).join(', ')}) — set PONS_EVENT to the real signature to decode it`
+      : 'no address named by the launch log was minted in its own transaction — set PONS_EVENT to the real signature' };
+  }
+  let deployer = '';
+  try { deployer = rc.from ? ethers.getAddress(rc.from) : ''; } catch (_) {}
+  return { token: ethers.getAddress(cand[0]), deployer };
 }
 let _ponsCursor = 0;
 let _ponsCode = null;            // { at, ok } — getCode re-checked hourly, so a fixed .env heals without a second thought
@@ -460,6 +587,10 @@ async function _ponsScan(prov, head, armed, devFollowers) {
   if (!cfg.on) return;
   const now = Date.now();
   if (!cfg.factories.length) { _snipeStats.ponsErr = 'PONS_FACTORY holds no valid address'; return; }
+  // An unparseable PONS_EVENT is neither a topic0 nor a signature, so there is
+  // nothing to filter on. Say which two spellings are accepted rather than
+  // scanning for ever against a filter that can never match.
+  if (!cfg.topic0) { _snipeStats.ponsErr = `PONS_EVENT is neither a 32-byte topic0 nor an "event Foo(...)" signature — set one of those in .env`; return; }
   // A factory with no CODE is the wrong-address state, and it must be a
   // sentence in /health rather than an eternal empty scan. Re-checked hourly,
   // and keyed by the ADDRESS LIST it judged: a verdict about one deployment
@@ -484,12 +615,13 @@ async function _ponsScan(prov, head, armed, devFollowers) {
   if (from > head) { _ponsCursor = head; return; }
   let evs = [];
   try {
-    // Every live factory, one cursor. They are one launchpad to the user, and
-    // a per-factory cursor would let a quiet deployment hold the busy one back.
-    const per = await Promise.all(live.map((f) => {
-      const c = new ethers.Contract(f, [cfg.eventSig], prov);
-      return c.queryFilter(c.filters[cfg.name](), from, head);
-    }));
+    // Filtered by TOPIC0, never by a decoded ABI — the topic is the only part
+    // of the event this chain has told us, and matching on it works whether or
+    // not anybody ever learns the signature behind it. Every live factory, one
+    // cursor: they are one launchpad to the user, and a per-factory cursor
+    // would let a quiet deployment hold the busy one back.
+    const per = await Promise.all(live.map((f) =>
+      prov.getLogs({ address: f, topics: [cfg.topic0], fromBlock: from, toBlock: head })));
     evs = per.flat();
   } catch (e) {
     // Its own failure surface, and the PRIMARY scan's cursor is untouched: a
@@ -507,21 +639,43 @@ async function _ponsScan(prov, head, armed, devFollowers) {
     _snipeStats.launchesSeen += evs.length;
     _snipeStats.lastLaunchAt = now;
   } else if (now - _ponsRawCheckAt > 600000) {
-    // Decoded nothing. "Quiet launchpad" and "stale event signature" are
-    // different facts, and only the chain can separate them: if the factory
-    // EMITTED logs in this very range that our filter did not match, the
-    // signature is the problem — a .env line, and this sentence names it.
-    // Rate-limited to one raw look per 10 min; a quiet pad costs nothing.
+    // Matched nothing. "Quiet launchpad" and "stale event" are different facts,
+    // and only the chain can separate them: if the factory EMITTED logs in this
+    // very range that our topic0 did not match, the event is the problem — a
+    // .env line, and this sentence names it, WITH the topics it did see, since
+    // one of them is the answer. Rate-limited to one raw look per 10 min; a
+    // quiet pad costs nothing.
     _ponsRawCheckAt = now;
     try {
       const raw = (await Promise.all(live.map((f) => prov.getLogs({ address: f, fromBlock: from, toBlock: head }).catch(() => [])))).flat();
-      if (raw.length) _snipeStats.ponsErr = `Pons factory emitted ${raw.length} log(s) our PONS_EVENT did not match — the signature is stale, override PONS_EVENT in .env`;
+      if (raw.length) {
+        const seen = [...new Set(raw.map((l) => String((l.topics || [])[0] || '')).filter(Boolean))].slice(0, 4);
+        _snipeStats.ponsErr = `Pons factory emitted ${raw.length} log(s), none carrying our PONS_EVENT topic ${cfg.topic0.slice(0, 12)}… — it is stale. Topics seen: ${seen.join(', ')} — put one in PONS_EVENT`;
+      }
     } catch (_) {}
   }
+  // Resolve each launch to a token BEFORE firing. A decodable event answers
+  // from the log itself; a bare topic0 costs one receipt read and may refuse.
+  // Bounded, because a filter matching the wrong high-frequency event must cost
+  // a diagnosis rather than a receipt read per log for ever.
+  const iface = cfg.decodable ? (() => { try { return new ethers.Interface([cfg.eventSig]); } catch (_) { return null; } })() : null;
+  const unresolved = [];
+  let looked = 0;
   for (const e of evs) {
-    const a = e.args || {};
-    const token = a.token;
-    if (!token) continue;
+    let token = '', creator = '';
+    if (iface) {
+      try {
+        const a = iface.parseLog({ topics: [...(e.topics || [])], data: e.data }).args;
+        token = a.token || ''; creator = a.deployer || '';
+      } catch (_) {}
+    }
+    if (!token) {
+      if (looked >= PONS_RESOLVE_MAX) { unresolved.push('bounded at ' + PONS_RESOLVE_MAX + ' per scan'); continue; }
+      looked++;
+      const r = await _ponsResolve(prov, e, live);
+      if (!r.token) { unresolved.push(r.why); continue; }
+      token = r.token; creator = r.deployer || '';
+    }
     const firstSee = _snipeMark(SNIPE_CHAIN, token);
     // The same fire path and the same re-sight shape as every other source:
     // snipe-all only on first sight (the emptied set riding as `skip`), dev
@@ -529,11 +683,14 @@ async function _ponsScan(prov, head, armed, devFollowers) {
     await _fireLaunch(SNIPE_CHAIN, {
       token,
       sym: '',
-      creator: a.deployer || '',
+      creator,
       at: Date.now(),
       via: 'pons',
     }, { armed: firstSee ? armed : [], devFollowers, skip: firstSee ? null : new Set(armed.map((u) => u.chatId)) });
   }
+  // A launch seen and NOT fired is the state that most looks like a quiet
+  // launchpad, so it is never silent — /health carries the reason and the knob.
+  if (unresolved.length) _snipeStats.ponsErr = `${unresolved.length} Pons launch(es) could not be resolved to a token and were NOT bought: ${unresolved[0]}`;
 }
 
 // ------------------------------------------------------------------ one launch, every audience
@@ -2814,4 +2971,12 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _padFeedFail, _armedOn, _ponsScan, _ponsCfg } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _padFeedFail, _armedOn, _ponsScan, _ponsCfg, _ponsResolve, _logAddrs, PONS_KNOWN_SIGS,
+  // The raw-mismatch probe is rate-limited to one look per 10 min, which is
+  // right in production and is inherited state in a suite: one test consuming
+  // it leaves the next reading a null `ponsErr`, which looks exactly like the
+  // diagnosis being broken. Stated by reset(), never inherited.
+  // (the CURSOR is deliberately left alone — a test that seeds it is testing
+  // the seeding rule, and clearing it here would silently turn those into
+  // first-look-only passes that assert nothing.)
+  _ponsResetProbe: () => { _ponsRawCheckAt = 0; } } };

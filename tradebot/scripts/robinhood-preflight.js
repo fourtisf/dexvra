@@ -212,23 +212,30 @@ async function main() {
   }
 
   // ── 4p. Pons — the SECOND launchpad this chain's snipe watches ────────────
-  // Discovery for Pons is on-chain (watchers._ponsScan): its own factory, its
-  // own TokenLaunched signature, both guessed from public docs and both
-  // env-overridable. This is the one command that verifies the guess against
-  // the live chain — the sandbox the integration was written in could reach
-  // neither the RPC nor the explorer, so until this prints green the Pons scan
-  // is `verified: false` in spirit even though it ships on.
+  // Discovery for Pons is on-chain (watchers._ponsScan). The FIRST defaults
+  // came from public docs and were both wrong — no code at either address, and
+  // a documented signature hashing to a topic0 this chain never emits — so what
+  // ships now is what THIS script read off the chain, and what it still cannot
+  // read is the ABI behind that topic0. This is the one command that says
+  // whether the trigger is alive on the box, and it drives the bot's own
+  // config and its own resolver rather than a second copy of either.
   console.log('\n4p. Pons launchpad (on-chain scan)');
   try {
-    const pons = require('../watchers')._test._ponsCfg();
+    const ponsT = require('../watchers')._test;
+    const pons = ponsT._ponsCfg();
     if (!pons.on) {
       note('LAUNCHPAD_PONS=0 — the Pons scan is OFF, nothing to probe.');
+    } else if (!pons.topic0) {
+      bad('PONS_EVENT is neither a topic0 nor a signature', 'set a 32-byte 0x… topic or an "event Foo(...)" line in tradebot/.env');
     } else {
-      const piface = new ethers.Interface([pons.eventSig]);
-      const pev = piface.getEvent(pons.name);
-      const ptopic = pev.topicHash;
+      // topic-only is the SHIPPED state: the launch topic is known, its ABI is
+      // not. Decoding lights up by itself if PONS_EVENT ever carries a real
+      // signature (or a topic0 whose spelling PONS_KNOWN_SIGS holds).
+      const piface = pons.decodable ? new ethers.Interface([pons.eventSig]) : null;
+      const ptopic = pons.topic0;
       note(`factories ${(pons.factories || [pons.factory]).join(', ')}`);
-      note(`event   ${pev.format('full')}`);
+      note(piface ? `event   ${piface.getEvent(pons.name).format('full')}`
+        : `event   topic0 ${ptopic} — ABI unknown, so a launch is resolved by MEASUREMENT (named by the log AND minted in its own transaction)`);
       const flist = pons.factories && pons.factories.length ? pons.factories : [pons.factory];
       const codes = await Promise.all(flist.map((f) => prov.getCode(f).catch(() => null)));
       const liveF = flist.filter((f, i) => codes[i] && codes[i] !== '0x');
@@ -245,11 +252,24 @@ async function main() {
         if (plogs == null) bad('getLogs failed', 'retry with --blocks 500');
         else if (plogs.length) {
           ok(`${plogs.length} Pons launch(es)`, `blocks ${pfrom}–${head}`);
+          // ⚠️ Matching a log is HALF the trigger. The scan still has to name
+          // the token, and in topic-only mode that is a measurement that can
+          // legitimately refuse — a probe reporting "alive" off the log count
+          // alone would print green over a scan that buys nothing, which is
+          // this repo's most expensive recurring shape. So resolve each one
+          // THROUGH THE BOT'S OWN RESOLVER and report what it actually got.
+          let resolved = 0, refused = null;
           for (const l of plogs.slice(-3)) {
-            try { const d = piface.parseLog(l); note(`latest: ${d.args.token} by ${d.args.deployer} (block ${l.blockNumber})`); }
-            catch (_) { note(`log at block ${l.blockNumber} matched topic0 but did not fully decode — PONS_EVENT is close but not exact`); }
+            if (piface) {
+              try { const d = piface.parseLog(l); resolved++; note(`latest: ${d.args.token} by ${d.args.deployer} (block ${l.blockNumber})`); continue; }
+              catch (_) { note(`log at block ${l.blockNumber} matched topic0 but did not fully decode — PONS_EVENT is close but not exact`); }
+            }
+            const r = await ponsT._ponsResolve(prov, l, liveF).catch((e) => ({ why: (e && e.message) || String(e) }));
+            if (r && r.token) { resolved++; note(`latest: ${r.token} by ${r.deployer || '(sender unreadable)'} (block ${l.blockNumber}, resolved from the launch transaction)`); }
+            else { refused = refused || (r && r.why); note(`block ${l.blockNumber}: NOT resolvable — ${r && r.why}`); }
           }
-          note('→ The Pons snipe trigger is alive.');
+          if (resolved) ok('the Pons snipe trigger is alive', `${resolved} launch(es) resolved to a token`);
+          else bad('Pons launches are seen but none resolves to a token', refused || 'set PONS_EVENT to the real signature in tradebot/.env');
         } else {
           // Zero decoded: let the chain say whether that is a quiet pad or a
           // stale signature — the same computed diagnosis the running bot makes.
@@ -258,7 +278,8 @@ async function main() {
             const pt = [...new Set(praw.map((l) => (l.topics && l.topics[0]) || '(none)'))];
             warn('factory is LIVE but our event never matched', `${praw.length} log(s), ${pt.length} type(s) in this window`);
             for (const t of pt.slice(0, 6)) note(`   ${t}`);
-            note('→ Override PONS_EVENT in tradebot/.env with the real signature (the topic0 list above is the lead).');
+            note('→ One of those topics IS the launch. PONS_EVENT takes it verbatim — no signature to hunt for:');
+            note(`     PONS_EVENT=${pt[0]}`);
           } else {
             note(`no Pons activity in this window — the pad may simply be quiet, or these are not the factories it launches from.`);
             note(`→ SETTLE IT: rerun with --token <a token you launched on Pons> and this script will name the contract that announced it.`);
@@ -413,9 +434,17 @@ async function main() {
       const [eAddr, eTopic] = rows[0][0].split('|');
       note('');
       note(`→ Earliest mention: ${eAddr} (topic0 ${eTopic}).`);
-      note('  If that is not a PONS_FACTORY above, it is the launchpad this bot should watch:');
+      note('  If that is not a PONS_FACTORY above, it is the launchpad this bot should watch.');
+      note('  Both lines are complete — paste them into tradebot/.env and restart with --update-env:');
       note(`     PONS_FACTORY=${eAddr}`);
-      note('  and PONS_EVENT must be the signature whose keccak matches that topic0.');
+      note(`     PONS_EVENT=${eTopic}`);
+      // ⚠️ It used to say "PONS_EVENT must be the signature whose keccak
+      // matches that topic0" — which is a research task, not an instruction.
+      // 1050 candidate `name(argtypes)` spellings were hashed against the topic
+      // this very probe found, and none matched; an operator has no better
+      // chance. So PONS_EVENT takes the TOPIC ITSELF, and the scan resolves the
+      // token by measurement instead of by an ABI nobody has.
+      note('  (a bare topic0 is enough — the scan then resolves the token from the launch transaction itself)');
     }
   }
 

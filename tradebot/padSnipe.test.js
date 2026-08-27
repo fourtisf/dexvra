@@ -125,6 +125,10 @@ function reset() {
   // behind by the backoff test reads as "the pad loop is broken" in every
   // later test. Stated here, not inherited.
   T._padFeedFail.clear();
+  // …and the Pons raw-mismatch probe, for the same reason: it is rate-limited
+  // to one look per 10 min, so a test that consumed it leaves the next reading
+  // a null ponsErr — which looks exactly like the diagnosis being broken.
+  T._ponsResetProbe();
   caArmed.length = 0;
   for (const k of Object.keys(T._padSnipeStats.pads)) delete T._padSnipeStats.pads[k];
   T._padSnipeStats.lastErr = null; T._padSnipeStats.lastErrAt = null;
@@ -578,33 +582,68 @@ test('_notYetTradeable separates "no market yet" from every real failure', () =>
 // times out, the sandbox is egress-blocked), so discovery is the factory's own
 // TokenLaunched log. These tests drive _ponsScan with a stub provider serving
 // REAL encoded logs — the decode path is the part a guessed ABI gets wrong.
+//
+// ⚠️ AND THE FIRST SHIPPED DEFAULTS WERE BOTH WRONG. The factory addresses came
+// from Pons's docs and had no contract code on the chain; the documented
+// `TokenLaunched(...)` signature hashes to 0xdb51ea…, while the launchpad that
+// really announces a launch emits 0x8d4aad… — so the filter could never have
+// matched a log even with the right address. Both defaults are what the
+// preflight READ OFF THE BOX, and the ABI behind that topic0 is genuinely
+// unknown (1050 candidate spellings hashed, none matched), so the scan has to
+// work from a bare topic0 — which is what most of these tests drive.
 const PONS_SIG = 'TokenLaunched(address,address,address,address,address,uint256,uint256,uint256,uint256,uint256)';
-const PONS_FACTORY = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB';
-function ponsLog(token, deployer, blockNumber) {
+const PONS_SIG_FULL = 'event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchConfigId, uint256 positionId, uint256 restrictionsEndBlock, uint256 initialBuyAmount)';
+const PONS_TOPIC0 = '0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607';
+const PONS_FACTORY = '0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e';
+const pad32 = (a) => ethers.zeroPadValue(ethers.getAddress(a), 32);
+const unpad = (w) => ('0x' + String(w).slice(26)).toLowerCase();
+/** An ERC-20 mint — `Transfer` out of the zero address, THREE topics (a v3
+ *  position NFT mints with four, and is minted in these very transactions). */
+const mintLog = (token, to) => ({
+  address: token,
+  topics: [ethers.id('Transfer(address,address,uint256)'), '0x' + '0'.repeat(64), pad32(to)],
+  data: ethers.zeroPadValue('0x0de0b6b3a7640000', 32),
+});
+function ponsLog(token, deployer, blockNumber, over = {}) {
   const coder = ethers.AbiCoder.defaultAbiCoder();
-  const pad32 = (a) => ethers.zeroPadValue(ethers.getAddress(a), 32);
   return {
     address: PONS_FACTORY,
-    topics: [ethers.id(PONS_SIG), pad32(token), pad32(deployer), pad32('0x' + '3'.repeat(40))],
+    topics: [PONS_TOPIC0, pad32(token), pad32(deployer), pad32('0x' + '3'.repeat(40))],
+    // The pool and the quote token are named by the log too — which is exactly
+    // why "an address in the log" is not enough to identify the launched token.
     data: coder.encode(['address', 'address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
       ['0x' + '4'.repeat(40), '0x' + '5'.repeat(40), 1n, 1n, 7n, 0n, 0n]),
-    blockNumber, blockHash: '0x' + 'b'.repeat(64), transactionHash: '0x' + 'c'.repeat(64),
+    blockNumber, blockHash: '0x' + 'b'.repeat(64), transactionHash: ethers.id(token + ':' + blockNumber),
     index: 0, transactionIndex: 0, removed: false,
+    ...over,
   };
 }
 function ponsProvider(ctl) {
+  ctl.receiptReads = 0;
   const p = {
     getCode: async () => ctl.code ?? '0xdeadbeef',
     getLogs: async (f) => {
-      // queryFilter passes topics; the raw-mismatch probe does not. Serving
+      // The scan filters by topic0; the raw-mismatch probe does not. Serving
       // them apart is what lets a test present "the factory emits logs our
       // filter does not match".
       if (f && f.topics && f.topics.length) return (ctl.logs || []).filter((l) => l.topics[0] === f.topics[0]);
       return (ctl.raw || ctl.logs || []);
     },
+    // The launch transaction: by default it mints exactly the token the log
+    // names, from the deployer's own wallet — the ordinary case. A test that
+    // wants the ambiguous or empty case supplies `ctl.receipts`.
+    getTransactionReceipt: async (h) => {
+      ctl.receiptReads++;
+      if (ctl.receipts) return ctl.receipts[h] || null;
+      const l = (ctl.logs || []).find((x) => x.transactionHash === h);
+      if (!l) return null;
+      return { from: unpad(l.topics[2]), logs: [mintLog(unpad(l.topics[1]), '0x' + '9'.repeat(40))] };
+    },
     getNetwork: async () => new ethers.Network('robinhood', 4663),
     _detectNetwork: async () => new ethers.Network('robinhood', 4663),
-    call: async () => '0x', resolveName: async (n) => n,
+    // token0() — a pair answers with a word, an ERC-20 reverts or returns '0x'.
+    call: async (tx) => (ctl.callBy || {})[String(tx && tx.to).toLowerCase()] || '0x',
+    resolveName: async (n) => n,
   };
   p.provider = p;
   return p;
@@ -684,6 +723,150 @@ test('a PONS_FACTORY with no contract behind it is a sentence, not an eternal em
     assert.match(why, /PONS_FACTORY/, 'the sentence must name the knob that fixes it');
     assert.match(why, /0xffff/i, 'the sentence must name the address it judged');
   } finally { delete process.env.PONS_FACTORY; }
+});
+
+// ── the ABI is unknown, and the scan may not guess one ───────────────────────
+
+test('the shipped defaults are what the BOX measured, not what the docs said', () => {
+  const cfg = T._ponsCfg();
+  assert.equal(cfg.topic0, PONS_TOPIC0, 'the default filter must be the topic0 read off the chain');
+  assert.notEqual(ethers.id(PONS_SIG), PONS_TOPIC0,
+    'the documented TokenLaunched signature is NOT what this chain emits — that mismatch is why the first scan could never match a log');
+  assert.equal(cfg.decodable, false, 'no ABI is known for that topic0, so the scan must not claim it can decode one');
+  assert.ok(cfg.factories.includes(PONS_FACTORY), 'the measured factory must ship as a default');
+  assert.equal(cfg.factories.length, 2, 'both factories that announced the measured launch are watched');
+});
+
+test('with no ABI the token is resolved by MEASUREMENT — minted in its own launch transaction', async () => {
+  reset();
+  const uA = armUser('robinhood');
+  USERS.push(uA);
+  const token = '0x' + 'b1'.repeat(20);
+  const ctl = { logs: [ponsLog(token, '0x' + 'd'.repeat(40), 10650)] };
+  const prov = ponsProvider(ctl);
+  await T._ponsScan(prov, 10700, [uA], []);
+  assert.equal(buys.length, 1, 'a launch whose ABI we do not have was not sniped');
+  assert.equal(String(buys[0].token).toLowerCase(), token, 'the wrong address was bought');
+  // The log NAMES the pool and the quote token too — being named is not enough.
+  assert.ok(ctl.receiptReads > 0, 'the resolve must ask the chain, not read an argument position');
+});
+
+test('two candidates is a REFUSAL, not a coin toss', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  const token = '0x' + 'b2'.repeat(20);
+  const log = ponsLog(token, '0x' + 'd'.repeat(40), 10750);
+  const ctl = {
+    logs: [log],
+    // Both the token and the pool named by the log minted here, and neither
+    // answers token0() — nothing on the chain separates them.
+    receipts: { [log.transactionHash]: { from: '0x' + 'd'.repeat(40), logs: [mintLog(token, '0x' + '9'.repeat(40)), mintLog('0x' + '4'.repeat(40), '0x' + '9'.repeat(40))] } },
+  };
+  await T._ponsScan(ponsProvider(ctl), 10800, USERS, []);
+  assert.equal(buys.length, 0, 'an ambiguous launch was fired at anyway — that spends money on a guess');
+  const why = String(T._snipeStats.ponsErr);
+  assert.match(why, /could not be resolved/, 'a refused launch must not read as a quiet launchpad');
+  assert.match(why, /PONS_EVENT/, 'the sentence must name the knob that resolves it');
+});
+
+test('…and a PAIR among the candidates is eliminated by asking the chain, never by position', async () => {
+  reset();
+  const uA = armUser('robinhood');
+  USERS.push(uA);
+  const token = '0x' + 'b3'.repeat(20);
+  const pair = '0x' + '4'.repeat(40);
+  const log = ponsLog(token, '0x' + 'd'.repeat(40), 10850);
+  const ctl = {
+    logs: [log],
+    receipts: { [log.transactionHash]: { from: '0x' + 'd'.repeat(40), logs: [mintLog(token, '0x' + '9'.repeat(40)), mintLog(pair, '0x' + '9'.repeat(40))] } },
+    callBy: { [pair]: ethers.zeroPadValue('0x01', 32) },   // it answers token0() — it is the LP, not the launch
+  };
+  await T._ponsScan(ponsProvider(ctl), 10900, [uA], []);
+  assert.equal(buys.length, 1, 'a v2-style launch that mints its LP token must still resolve');
+  assert.equal(String(buys[0].token).toLowerCase(), token, 'the LP token was bought instead of the launch');
+});
+
+test('a launch whose transaction minted nothing is refused and REPORTED', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  const log = ponsLog('0x' + 'b4'.repeat(20), '0x' + 'd'.repeat(40), 10950);
+  const ctl = { logs: [log], receipts: { [log.transactionHash]: { from: '0x' + 'd'.repeat(40), logs: [] } } };
+  await T._ponsScan(ponsProvider(ctl), 11000, USERS, []);
+  assert.equal(buys.length, 0);
+  assert.match(String(T._snipeStats.ponsErr), /minted/, 'the reason must say what was looked for');
+});
+
+test('PONS_EVENT takes a full signature, and then costs no receipt read at all', async () => {
+  reset();
+  const dev = '0x' + 'd'.repeat(40);
+  const uA = armUser('robinhood');
+  const uD = devUser('robinhood', dev);
+  USERS.push(uA, uD);
+  process.env.PONS_EVENT = PONS_SIG_FULL;
+  try {
+    assert.equal(T._ponsCfg().decodable, true);
+    const token = '0x' + 'b5'.repeat(20);
+    const log = ponsLog(token, dev, 11050, { topics: [ethers.id(PONS_SIG), pad32(token), pad32(dev), pad32('0x' + '3'.repeat(40))] });
+    const ctl = { logs: [log] };
+    await T._ponsScan(ponsProvider(ctl), 11100, [uA], [uD]);
+    assert.equal(String(buys[0] && buys[0].token).toLowerCase(), token, 'a decodable event must read the token off the log');
+    assert.equal(ctl.receiptReads, 0, 'a known ABI must not pay for the measured resolve');
+    assert.equal(buys.filter((b) => b.chatId === uD.chatId).length, 1, "the event's own deployer must still reach dev followers");
+  } finally { delete process.env.PONS_EVENT; }
+});
+
+test('a topic0 whose spelling we DO know decodes by name — PONS_KNOWN_SIGS is that bridge', async () => {
+  reset();
+  const uA = armUser('robinhood');
+  USERS.push(uA);
+  // An operator pastes a topic0 off an explorer. If it happens to be one we
+  // know the signature for, the named decode lights up by itself.
+  process.env.PONS_EVENT = ethers.id(PONS_SIG);
+  try {
+    const cfg = T._ponsCfg();
+    assert.equal(cfg.decodable, true, 'a known topic0 must resolve to its signature');
+    assert.match(String(cfg.eventSig), /TokenLaunched/);
+    const token = '0x' + 'b6'.repeat(20);
+    const log = ponsLog(token, '0x' + 'd'.repeat(40), 11150, { topics: [ethers.id(PONS_SIG), pad32(token), pad32('0x' + 'd'.repeat(40)), pad32('0x' + '3'.repeat(40))] });
+    const ctl = { logs: [log] };
+    await T._ponsScan(ponsProvider(ctl), 11200, [uA], []);
+    assert.equal(ctl.receiptReads, 0);
+    assert.equal(String(buys[0] && buys[0].token).toLowerCase(), token);
+  } finally { delete process.env.PONS_EVENT; }
+});
+
+test('an unmatched topic0 names the topics the factory DID emit — one of them is the answer', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  const alien = ponsLog('0x' + 'b7'.repeat(20), '0x' + 'd'.repeat(40), 11250);
+  alien.topics[0] = ethers.id('SomeOtherLaunch(address,address)');
+  await T._ponsScan(ponsProvider({ logs: [alien] }), 11300, USERS, []);
+  assert.equal(buys.length, 0);
+  const why = String(T._snipeStats.ponsErr);
+  assert.match(why, /PONS_EVENT/, 'the sentence must name the knob');
+  assert.ok(why.includes(ethers.id('SomeOtherLaunch(address,address)')),
+    'a diagnosis that withholds the topic it saw sends the operator back to the explorer');
+});
+
+test('PONS_EVENT that is neither shape is refused up front, not scanned against for ever', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  process.env.PONS_EVENT = 'TokenLaunched';   // a name is not a signature and not a topic
+  try {
+    assert.equal(T._ponsCfg().topic0, null);
+    await T._ponsScan(ponsProvider({ logs: [ponsLog('0x' + 'b8'.repeat(20), '0x' + 'd'.repeat(40), 11350)] }), 11400, USERS, []);
+    assert.equal(buys.length, 0);
+    assert.match(String(T._snipeStats.ponsErr), /topic0|signature/, 'it must say which two spellings it takes');
+  } finally { delete process.env.PONS_EVENT; }
+});
+
+test('_logAddrs takes every address the log NAMES, order-independent', () => {
+  const token = '0x' + 'b9'.repeat(20);
+  const dev = '0x' + 'd'.repeat(40);
+  const got = T._logAddrs(ponsLog(token, dev, 1));
+  for (const a of [token, dev, '0x' + '3'.repeat(40), '0x' + '4'.repeat(40), '0x' + '5'.repeat(40)])
+    assert.ok(got.has(a.toLowerCase()), `the log names ${a} and _logAddrs missed it`);
+  assert.equal(got.has('0x' + '0'.repeat(40)), false, 'the zero address is not a candidate');
 });
 
 // ── "BOT MALA DIAM TIDAK ADA EKSEKUSI — MINIMAL KALO GAGAL HARUS ADA PESANYA" ─

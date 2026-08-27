@@ -4491,6 +4491,90 @@ signature is wrong, the fix is `PONS_FACTORY=` / `PONS_EVENT=` in
 `/opt/dexvra/tradebot/.env` (the trade bot reads its OWN `.env` — the rule
 above) and a `--update-env` restart.
 
+#### The probe answered, and BOTH researched guesses were wrong
+
+The section above ships a factory address and an event signature taken from
+Pons's public docs, and says in as many words that only the box can settle
+them. It did, and the answer was **no on both counts**:
+
+- **Neither address had contract code.** `getCode` on the box came back `0x`
+  for `0xA5aA…` and `0x0c37…`, so the scan was condemned before it ever
+  filtered a log — and it said so, correctly, in `/health`.
+- ⚠️ **And the signature could never have matched either.** The documented
+  `TokenLaunched(address,address,address,address,address,uint256,…)` hashes to
+  `0xdb51ea…`; the launchpad that really announces a Pons launch emits
+  `0x8d4aad…`. So even with the right address the filter would have returned an
+  empty array for ever — **the exact shape this whole feature exists to close**,
+  reproduced by the fix for it. Two guesses, and each one alone was enough to
+  make the scan inert.
+
+Both defaults are now what `preflight:robinhood` READ OFF THE CHAIN
+(`0x7ed598bc…` and `0xe33e9e47…`, which both announced the same launch at block
+47496254; `PONS_TOPIC0_DEFAULT` is the measured topic). What could NOT be read
+is the ABI behind that topic — **1050 candidate `name(argtypes)` spellings were
+hashed against it and none matched** — and that is the interesting half.
+
+- ⚠️ **A TOPIC0 IS NOT AN ABI, AND THIS SCAN AIMS A BUY.** Knowing which log
+  announces a launch says nothing about which of its words is the token, and a
+  launch log NAMES the pool and the quote token too. Reading the wrong word
+  buys a stranger's contract with somebody's money — so `_ponsResolve` guesses
+  **nothing**: the token is the address the log NAMES *and* that the same
+  transaction MINTED (an ERC-20 `Transfer` out of the zero address). Two
+  independent facts, and their intersection is decided by the chain rather than
+  by an assumed argument position.
+- **It REFUSES rather than picks.** Anything but exactly one survivor fires
+  nothing and says why. The cost of refusing is a missed snipe — a shrug, the
+  rule this file has stated since the CA snipe; the cost of picking is the
+  wrong token.
+- **The one predictable ambiguity is ELIMINATED by asking the chain, never by
+  position:** a v2-style launch mints its LP token too, and the pair is named
+  by the log as the pool — so a second candidate is dropped when it answers
+  `token0()`. An eliminator, never a selector; two survivors still refuse.
+- **`Transfer` is matched on THREE topics, not four.** A Uniswap v3 position
+  NFT is minted from the zero address in exactly these transactions, and ERC-721
+  carries its id as a third indexed topic.
+- **The deployer is the transaction's SENDER** — the inference the
+  `PairCreated` scan already documents. It only ever decides whether a dev
+  follower matches, never what gets bought, so being wrong costs a miss.
+- **`PONS_EVENT` takes EITHER spelling, decided by shape**: a full
+  `event Foo(...)` signature, or the bare 32-byte topic0 an explorer shows. The
+  old instruction — *"PONS_EVENT must be the signature whose keccak matches that
+  topic0"* — is a research task, not an instruction, and 1050 hashes say an
+  operator has no better chance than this session had. `PONS_KNOWN_SIGS` is the
+  bridge: a pasted topic0 whose spelling we DO know lights the named decode back
+  up by itself, with no receipt read at all.
+- ⚠️ **MATCHING A LOG IS HALF THE TRIGGER, so 4p no longer calls a topic match
+  "alive".** It resolves every launch it finds **through the bot's own
+  `_ponsResolve`** and goes RED when none resolves — a probe green on the log
+  count alone would print a tick over a scan that names no token and therefore
+  buys nothing. That is `fonts:check`'s nine green ticks over a banner
+  publishing boxes, one feature over: a guard is only honest while it measures
+  the stack the thing it guards actually runs.
+- **4t prints both `.env` lines COMPLETE** — `PONS_FACTORY=` and now
+  `PONS_EVENT=` with the topic it just found. This file's first rule, and the
+  one this very round already cost an operator a broken shell over.
+- ⚠️ **The raw-mismatch probe is rate-limited to one look per 10 min**, which is
+  right in production and is inherited state in a suite: one test consuming it
+  leaves the next reading a null `ponsErr`, which looks exactly like the
+  diagnosis being broken. `reset()` states it (`_ponsResetProbe`) rather than
+  letting test order decide. The CURSOR is deliberately NOT reset — a test that
+  seeds it is testing the seeding rule.
+- Four guarantees are MUTATION-TESTED rather than argued: picking instead of
+  refusing on ambiguity, dropping the minted-in-its-own-transaction half of the
+  proof, dropping the `token0()` eliminator, and restoring the documented
+  topic0. Each fails between one and seven tests.
+
+```bash
+cd tradebot && node --test padSnipe.test.js          # 48 tests, no network
+cd tradebot && npm run preflight:robinhood           # 4p: resolves each launch, RED if none does
+```
+
+⚠️ **Still not verified from here, and it cannot be:** whether that topic0 is
+the launch event on every Pons deployment, and whether a real Pons launch
+transaction mints exactly one address the log also names. Both are properties of
+the chain, so 4p on the box is the measurement — and if it goes red, the whole
+fix is the two lines 4t prints.
+
 
 Whether a pad's guessed feed path is right is measured on the box, not assumed
 — every new feed is `verified: false` until `launchpads:check` proves it, and a

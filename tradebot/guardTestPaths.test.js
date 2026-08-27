@@ -115,3 +115,28 @@ test('preflight 4t finds the contract that announced a given token', () => {
   // exactly the blind spot this whole round was about.
   assert.match(src, /pons\.factories && pons\.factories\.length \? pons\.factories : \[pons\.factory\]/, '4p is back to probing one factory');
 });
+
+test('preflight 4p survives a Pons config with no ABI, and does not call a topic match "alive"', () => {
+  // The shipped PONS_EVENT is a bare topic0: the launch topic was measured off
+  // the chain, the signature behind it was not (1050 candidate spellings hashed,
+  // none matched). 4p used to build `new ethers.Interface([pons.eventSig])`
+  // unconditionally, so the probe would have crashed on its own default.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'scripts', 'robinhood-preflight.js'), 'utf8');
+  const p4 = src.slice(src.indexOf('4p. Pons'), src.indexOf('4x. How is'));
+  assert.match(p4, /pons\.decodable \? new ethers\.Interface/, '4p builds an Interface from a signature that may not exist');
+  // ⚠️ MATCHING A LOG IS HALF THE TRIGGER. A probe that reported "alive" off the
+  // log count alone would print green over a scan that names no token and
+  // therefore buys nothing — the fonts:check defect, one feature over. It has
+  // to resolve THROUGH THE BOT'S OWN RESOLVER, and fail when none resolves.
+  assert.match(p4, /ponsT\._ponsResolve\(prov, l, liveF\)/, '4p no longer measures the stack the scan actually runs');
+  assert.match(p4, /bad\('Pons launches are seen but none resolves to a token'/, 'a launch nothing can buy is reported as alive again');
+  // The .env lines it prints must be COMPLETE — this file's first rule, and the
+  // one that already cost an operator a broken shell this round.
+  assert.match(src, /PONS_EVENT=\$\{eTopic\}/, '4t stopped printing a pasteable PONS_EVENT');
+  // Comments stripped first: 4t's own comment QUOTES the sentence it replaced,
+  // and a guard that trips on its own documentation gets deleted, not fixed.
+  // (This repo has shipped that exact mistake in a build-stamp guard.)
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/PONS_EVENT must be the signature whose keccak/.test(code),
+    'the probe is telling the operator to go and find a signature nobody can compute');
+});
