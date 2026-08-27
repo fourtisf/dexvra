@@ -142,18 +142,38 @@ export interface DsCandles {
 // Next can hold more than one instance of a module, so a per-instance cooldown
 // would let one instance hammer through a 429 the other already saw. Same
 // globalThis trick, and the same reason, as gt.ts.
-const g = globalThis as { __dexvraDsChart?: { until: number } };
-const state = g.__dexvraDsChart ?? (g.__dexvraDsChart = { until: 0 });
+const g = globalThis as { __dexvraDsChart?: { until: number; why: string } };
+const state = g.__dexvraDsChart ?? (g.__dexvraDsChart = { until: 0, why: "" });
 
 export const dsInCooldown = (at = Date.now()): boolean => at < state.until;
 export const dsCooldownLeftMs = (at = Date.now()): number => Math.max(0, state.until - at);
-export function dsArmCooldown(ms = COOLDOWN_MS, at = Date.now()): void {
+
+/**
+ * ⚠️ THE COOLDOWN CARRIES ITS REASON, and the panel prints THAT.
+ *
+ * It used to be armed only by a 429, so every message could hardcode "rate
+ * limited". The moment a 403 could arm it too, that line became a lie: a live
+ * chart read `io.dexscreener.com 403` on one request and `rate limited —
+ * cooling down for 55s` on the next, about the same host and the same refusal.
+ * Those need different reactions — a rate limit passes by itself, a host
+ * refusing this server does not — and "never discard the reason" is this repo's
+ * own rule about exactly this.
+ */
+export function dsArmCooldown(ms = COOLDOWN_MS, at = Date.now(), why = "rate limited"): void {
   const until = at + Math.max(1000, ms);
-  if (until > state.until) state.until = until;
+  if (until > state.until) {
+    state.until = until;
+    state.why = why;
+  }
 }
+
+/** How this source is unavailable, in the words of whatever armed it. */
+export const dsCooldownWhy = (): string => state.why || "rate limited";
+
 /** Test seam — the cooldown is process-wide by design. */
 export function _dsChartReset(): void {
   state.until = 0;
+  state.why = "";
 }
 
 /** Whether this source is available at all for a chain. `null` in the registry
@@ -310,9 +330,9 @@ async function getJson(url: string, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
     // ("DexScreener has no pair for this token"), not a refusal of us, and
     // caching it as an outage would blind the fallback for every other token.
     if (res.status === 429 || res.status === 401 || res.status === 403 || res.status === 451) {
-      dsArmCooldown();
+      const what = res.status === 429 ? "rate limited" : `${res.status}, refusing this server`;
+      dsArmCooldown(COOLDOWN_MS, Date.now(), `${host} is ${what}`);
       void res.body?.cancel().catch(() => {});
-      const what = res.status === 429 ? "rate limited" : "refusing this server";
       return { ok: false, status: res.status, body: null, why: `${host} ${res.status} (${what})` };
     }
     if (!res.ok) {
@@ -346,7 +366,7 @@ export async function dsTopPair(chain: string, address: string): Promise<{ ok: b
   const slug = CHAINS[chain]?.dexscreener;
   if (!slug) return { ok: true, pair: null, why: `DexScreener does not carry ${chain}` };
   if (dsInCooldown())
-    return { ok: false, pair: null, why: `rate limited — cooling down for ${Math.ceil(dsCooldownLeftMs() / 1000)}s` };
+    return { ok: false, pair: null, why: `${dsCooldownWhy()} — cooling down for ${Math.ceil(dsCooldownLeftMs() / 1000)}s` };
 
   // The DOCUMENTED endpoint, unlike the bars call below. Addresses go out
   // VERBATIM: hex may be folded, but base58 and TON are case-SENSITIVE.
@@ -403,7 +423,7 @@ export async function dsCandles(
   if (!CHAINS[chain]?.dexscreener)
     return { ok: true, candles: [], pair: null, why: `DexScreener does not carry ${chain}` };
   if (dsInCooldown())
-    return { ok: false, candles: [], pair: null, why: `rate limited — cooling down for ${Math.ceil(dsCooldownLeftMs() / 1000)}s` };
+    return { ok: false, candles: [], pair: null, why: `${dsCooldownWhy()} — cooling down for ${Math.ceil(dsCooldownLeftMs() / 1000)}s` };
 
   let pair = opts.pair ?? null;
   if (!pair) {

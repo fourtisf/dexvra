@@ -2674,6 +2674,46 @@ re-fetches. Half a dozen deploys in a row on a box already sharing ~30 req/min
 with the bot suite is enough to sit in a cooldown for a while, with nothing
 wrong anywhere. Worth knowing before diagnosing a chart that is only cold.
 
+#### The logo came back — and the same rule was missing a third time
+
+`$BREAKING` drew its real artwork the moment the gateway list deployed, which
+settles that one. Two things the same screenshot showed, and both are the same
+sentence written for a third source.
+
+- ⚠️ **THE COOLDOWN WAS REPORTING A REFUSAL AS A RATE LIMIT.** The panel read
+  `io.dexscreener.com 403` on one request and `rate limited — cooling down for
+  55s` on the next, about the same host and the same refusal. Every cooldown
+  message hardcoded "rate limited" because only a 429 could arm one — the moment
+  a 403 could too, that line became a lie, and the two need different reactions:
+  a rate limit passes by itself, a host refusing this server does not. The
+  cooldown carries its REASON now and the panel prints that. "Never discard the
+  reason", one module over.
+- ⚠️ **A SOURCE THAT REFUSES US MUST BE BENCHED — FOR EVERY SOURCE.** CoinGecko
+  learnt this when a 429 on row one cost a request per row for the rest of the
+  sweep. DexScreener never did, and it is the source that matters MOST for the
+  logos: pump.fun artwork lives there and `resolveLogo` asks it FIRST. On a box
+  whose IP DexScreener refuses, every sweep spent eight requests proving the
+  same 403 — for ever — and every one of those rows came back `undecided` and
+  was requeued 30 minutes later. `benched` is ONE table now rather than a
+  variable per source, because this is the third time the rule has been written
+  in this repo (`gt.ts`, `dsChart.ts`, here) and a fourth private copy is how
+  two of them end up disagreeing. `REFUSAL` is 401/403/429/451; a 404 benches
+  nothing, because that is an ANSWER about the token.
+
+⚠️ **And a token with no logo on OUR board that has one on DexScreener is now a
+measurement, not a guess** — if DexScreener refuses this box, our best logo
+source is unavailable there and it will say so:
+
+```bash
+curl -s -o /dev/null -w "api.dexscreener.com → %{http_code}\n" \
+  https://api.dexscreener.com/tokens/v1/solana/<mint>
+```
+
+A 200 means the source is reachable and the row is simply still in the
+resolver's queue; a 403 means DexScreener is refusing this server, and no amount
+of sweeping will change that — the logos then have to come from GeckoTerminal,
+CoinGecko or the launchpad.
+
 #### "bisa di geser ke kanan ke kiri chartnya" — the other axis
 
 The vertical landed and the very next thing asked for was the horizontal, with

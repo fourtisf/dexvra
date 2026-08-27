@@ -25,6 +25,7 @@ import {
   dsCandles,
   dsChartBases,
   dsChartPaths,
+  dsCooldownWhy,
   dsInCooldown,
   dsPairUrl,
   dsTopPair,
@@ -595,4 +596,14 @@ test("…but a 404 does NOT arm it — that is an answer about the pair, not a r
     f.restore();
     _dsChartReset();
   }
+});
+
+test("a 429-armed cooldown still reads as a rate limit", () => {
+  // The two are different facts and both have to survive to the panel.
+  _dsChartReset();
+  dsArmCooldown(5000, Date.now(), "io.dexscreener.com is rate limited");
+  assert.match(dsCooldownWhy(), /rate limited/);
+  assert.ok(!/refusing/.test(dsCooldownWhy()));
+  _dsChartReset();
+  assert.equal(dsCooldownWhy(), "rate limited", "and it falls back to the honest default when nothing armed it");
 });

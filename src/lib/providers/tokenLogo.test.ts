@@ -322,3 +322,60 @@ test("⚠️ a CoinGecko 429 benches it for the whole process, not just that row
   _resetCgCooldown();
   delete process.env.CG_MIN_GAP_MS;
 });
+
+// ── a source that refuses us is benched, for every source ───────────────────
+//
+// These drive the REAL `dsLogo` (no `ds:` dep) by stubbing global fetch, which
+// is the only way to exercise the HTTP status handling the rule lives in.
+
+function stubStatus(status: number): { asked: () => number; restore: () => void } {
+  const orig = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = (async (u: string | URL) => {
+    if (String(u).includes("dexscreener")) {
+      n++;
+      return new Response(status === 404 ? "[]" : "no", { status });
+    }
+    return new Response("{}", { status: 404 }); // every other source: an answer, nothing there
+  }) as typeof globalThis.fetch;
+  return { asked: () => n, restore: () => { globalThis.fetch = orig; } };
+}
+
+const OTHER = "GUmbtfjSZkybSFgPibBcvwExEBdXwewJHR5PkTjzpump";
+
+test("⚠️ a DexScreener 403 benches it — a sweep must not spend a row proving the same refusal", async () => {
+  // CoinGecko got this rule when a 429 on row one cost a request per row for
+  // the rest of the sweep. DexScreener never did, and it is the source that
+  // matters MOST here: pump.fun artwork lives there and `resolveLogo` asks it
+  // first. A box whose IP DexScreener refuses would spend eight requests a
+  // sweep, every sweep, for ever — and every one of those rows came back
+  // `undecided` and got requeued 30 minutes later.
+  _resetCgCooldown();
+  const f = stubStatus(403);
+  try {
+    await resolveLogo("solana", MINT, { tw: () => null, verify: async () => false });
+    const spent = f.asked();
+    assert.ok(spent >= 1, "the first row asked");
+    await resolveLogo("solana", OTHER, { tw: () => null, verify: async () => false });
+    assert.equal(f.asked(), spent, "the next row made no DexScreener request at all");
+  } finally {
+    f.restore();
+    _resetCgCooldown();
+  }
+});
+
+test("…but a DexScreener 404 does not — that is an answer about the token", async () => {
+  // Treating a curated miss as an outage is how one absent token blinds the
+  // source for every other row on the board.
+  _resetCgCooldown();
+  const f = stubStatus(404);
+  try {
+    await resolveLogo("solana", MINT, { tw: () => null, verify: async () => false });
+    const spent = f.asked();
+    await resolveLogo("solana", OTHER, { tw: () => null, verify: async () => false });
+    assert.ok(f.asked() > spent, "the next row is still asked");
+  } finally {
+    f.restore();
+    _resetCgCooldown();
+  }
+});
