@@ -10,6 +10,7 @@ import { Socials } from "@/components/Socials";
 import { TokenTrades } from "@/components/TokenTrades";
 import { TierTag, TrendingBadge } from "@/components/TierTag";
 import { CHAINS } from "@/config/chains";
+import { dexEmbedUrl, dexTokenUrl } from "@/lib/dexscreener";
 import { fmtAge, fmtCap, fmtNum, fmtPrice, pathFrom } from "@/lib/format";
 import { scoreTier } from "@/lib/score";
 
@@ -48,15 +49,16 @@ export default function TokenPage() {
   }
 
   const c = CHAINS[t.chain];
-  const network = c?.geckoNetwork ?? null;
   const up = t.chg["24h"] >= 0;
   const col = up ? "#3DDC97" : "#F76A85";
   const watching = watchlist.has(t.key);
   const st = scoreTier(t.score);
-  const chartSrc =
-    network && t.poolAddress
-      ? `https://www.geckoterminal.com/${network}/pools/${t.poolAddress}?embed=1&info=0&swaps=0&grayscale=0&light_chart=0&resolution=15m`
-      : null;
+  // DexScreener is the chart source. It keys the embed by pair address, but
+  // also resolves a bare token address to that token's top pair — so a listing
+  // still charts on the very first render, before the provider has handed us a
+  // pool. Only a chain DexScreener doesn't index falls back to the sparkline.
+  const chartSrc = dexEmbedUrl(t.chain, t.address, t.poolAddress);
+  const dexUrl = dexTokenUrl(t.chain, t.address);
   const d = pathFrom(t.trend, 640, 120);
 
   const copyCa = () => {
@@ -121,7 +123,14 @@ export default function TokenPage() {
       <div className="tp-grid">
         <div className="tp-chart-wrap">
           {chartSrc ? (
-            <iframe className="tp-chart" title={`${t.symbol} chart`} src={chartSrc} allow="clipboard-write" allowFullScreen />
+            <iframe
+              className="tp-chart"
+              title={`${t.symbol} price chart on DexScreener`}
+              src={chartSrc}
+              loading="lazy"
+              allow="clipboard-write"
+              allowFullScreen
+            />
           ) : (
             <div className="tp-chart-fallback">
               <svg viewBox="0 0 640 120" preserveAspectRatio="none" style={{ width: "100%", height: "100%" }}>
@@ -129,9 +138,9 @@ export default function TokenPage() {
                 <path d={d} fill="none" stroke={col} strokeWidth="2.4" strokeLinecap="round" />
               </svg>
               <div className="chart-note">
-                {network ? (
-                  <a href={`https://www.geckoterminal.com/${network}/tokens/${t.address}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
-                    Open full chart on GeckoTerminal ↗
+                {dexUrl ? (
+                  <a href={dexUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--mint)" }}>
+                    Open full chart on DexScreener ↗
                   </a>
                 ) : (
                   `Price trend · ${c?.label ?? t.chain} charts coming soon`

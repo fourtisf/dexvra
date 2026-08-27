@@ -14,7 +14,7 @@ export interface ListingRow {
   emoji: string;
   tier: ListingTier;
   trendingRank?: number; // present = featured on Trending; value is only a stable sub-order within a tier (Diamond-first ordering wins), never shown as a number
-  logoUrl?: string; // admin-set logo image URL; overrides the emoji + live logo
+  logoUrl?: string; // admin-set logo image URL; outranks every provider logo
   listedMin: number; // minutes since the listing went live
   tax: number;
   holders: number;
@@ -30,10 +30,11 @@ export interface ListingRow {
   telegram?: string;
 }
 
-// Only real tokens that resolve to a GeckoTerminal pool, so every listing
-// opens with a live candlestick chart (Solana / ETH / Base / BSC — the
-// chains GeckoTerminal charts). TON & Robinhood stay supported chains for
-// real paid listings, but aren't seeded here (no reliable chart source).
+// Only real tokens DexScreener indexes, so every listing opens with a live
+// DexScreener candlestick chart and a real logo (Solana / ETH / Base / BSC).
+// TON & Tron stay supported chains for real paid listings but aren't seeded
+// here; Robinhood Chain has no DexScreener coverage at all, so its listings
+// chart from the sparkline until it does.
 export const SEED_ROWS: ListingRow[] = [
   { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", sym: "$BONK", name: "Bonk", emoji: "🐕", tier: "DIAMOND", trendingRank: 1, listedMin: 18, tax: 0, holders: 812000, price: 0.0000246, chg24h: 12.4, mcap: 1720000000, liq: 24000000, vol24h: 138000000, buyShare: 0.56, tx24h: 240000, twitter: "https://x.com/bonk_inu" },
   { chain: "solana", address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", sym: "$WIF", name: "dogwifhat", emoji: "🐶", tier: "GOLD", trendingRank: 3, listedMin: 44, tax: 0, holders: 214000, price: 1.83, chg24h: 6.1, mcap: 1830000000, liq: 31000000, vol24h: 96000000, buyShare: 0.52, tx24h: 88000, twitter: "https://x.com/dogwifcoin" },
@@ -84,6 +85,10 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     address: r.address,
     symbol: r.sym,
     name: r.name,
+    // Only the admin-set logo — a derived CDN guess here would outrank the
+    // provider's authoritative image in the merge. Listings that reach the UI
+    // without one still render a logo: <TokenLogo> appends DexScreener's CDN
+    // path to its candidates and falls back to a ticker monogram.
     logoUrl: r.logoUrl ?? null,
     emoji: r.emoji,
     gradient: v.gradient,
@@ -104,9 +109,12 @@ export function rowToBoardToken(r: ListingRow): BoardToken {
     listedMinutesAgo: r.listedMin,
     score,
     poolAddress: null,
+    // Only what the project actually supplied — the provider layer fills the
+    // gaps from DexScreener, and <Socials> supplies the generic fallbacks.
+    // Defaulting here instead would mask both.
     links: {
-      website: r.website ?? `https://dexscreener.com/${r.chain}/${r.address}`,
-      twitter: r.twitter ?? `https://x.com/search?q=%24${r.sym.replace(/^\$/, "")}&f=live`,
+      website: r.website ?? null,
+      twitter: r.twitter ?? null,
       telegram: r.telegram ?? null,
     },
   };

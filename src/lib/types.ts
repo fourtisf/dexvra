@@ -16,8 +16,8 @@ export interface BoardToken {
   address: string;
   symbol: string; // display form, "$"-prefixed
   name: string;
-  logoUrl: string | null;
-  emoji: string; // fallback visual when no logoUrl
+  logoUrl: string | null; // best logo we resolved server-side; null = client derives one
+  emoji: string; // project-picked glyph, shown in the admin/submission flows
   gradient: [string, string, string];
   priceUsd: number;
   mcap: number | null;
@@ -36,7 +36,7 @@ export interface BoardToken {
   trendingRank: number | null; // booked a Trending slot? (non-null = featured); used only as a stable sub-order within a tier — no number is shown
   listedMinutesAgo: number; // how long ago the project paid to list
   score: number; // Dexvra Score 0–100 (signal-based, not votes)
-  poolAddress: string | null; // top pool — used to embed the GeckoTerminal chart
+  poolAddress: string | null; // deepest pool/pair contract — keys the DexScreener chart embed and the trades feed
   links: { website: string | null; twitter: string | null; telegram: string | null };
 }
 

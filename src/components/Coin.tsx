@@ -4,16 +4,19 @@ import type { BoardToken } from "@/lib/types";
 import { coinBg } from "@/lib/visual";
 import type { CSSProperties } from "react";
 import { ChainLogo } from "./ChainLogo";
+import { TokenLogo } from "./TokenLogo";
 
-/** Emoji-gradient coin (prototype look) that upgrades to the real logo when
- *  the provider supplies one. The chain badge is the real chain logo. */
+/** Gradient coin (prototype look) filled with the token's real logo. Every
+ *  listing has one: `TokenLogo` walks each known image source and ends on a
+ *  ticker monogram, so the coin is never blank and never a stand-in emoji.
+ *  The chain badge is the real chain logo. */
 export function Coin({
   token,
   size,
   fontSize,
   withBadge = true,
 }: {
-  token: Pick<BoardToken, "emoji" | "gradient" | "logoUrl" | "chain" | "symbol">;
+  token: Pick<BoardToken, "logoUrl" | "chain" | "address" | "symbol" | "name" | "gradient">;
   size?: number;
   fontSize?: number;
   withBadge?: boolean;
@@ -27,13 +30,8 @@ export function Coin({
   const logoSize = size ? Math.max(14, Math.round(size * 0.4)) : 15;
   const ring = logoSize + 4; // badge = logo + a thin card-colored ring, so nothing clips
   const inner = (
-    <div className="coin" style={style}>
-      {token.logoUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={token.logoUrl} alt="" loading="lazy" />
-      ) : (
-        token.emoji
-      )}
+    <div className="coin" style={style} title={`${token.symbol} · ${token.name}`}>
+      <TokenLogo token={token} />
     </div>
   );
   if (!withBadge) return inner;

@@ -2,6 +2,7 @@
 
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
+import { TokenLogo } from "@/components/TokenLogo";
 import { CHAINS } from "@/config/chains";
 import { tierLabel } from "@/lib/packages";
 
@@ -53,7 +54,15 @@ export default function AccountPage() {
                     background: "radial-gradient(circle at 32% 26%,#B8FFD0,#3DF59F 45%,#0B9E5E)",
                   }}
                 >
-                  {m.emoji}
+                  <TokenLogo
+                    token={{
+                      logoUrl: null,
+                      chain: m.chain,
+                      address: m.address ?? "",
+                      symbol: m.symbol,
+                      name: m.name,
+                    }}
+                  />
                 </div>
                 <div>
                   <div style={{ fontFamily: "var(--fd)", fontWeight: 700, fontSize: 14 }}>{m.symbol}</div>

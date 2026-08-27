@@ -4,7 +4,11 @@ export interface ChainConfig {
   id: string;
   label: string;
   color: string;
-  /** GeckoTerminal network id; null = no market-data provider coverage yet */
+  /** DexScreener chain id — the primary market-data + chart source.
+   *  null = DexScreener doesn't index this chain (no embed chart, no logo CDN) */
+  dexscreenerChain: string | null;
+  /** GeckoTerminal network id — fallback market data + the trades feed;
+   *  null = no coverage there either */
   geckoNetwork: string | null;
   /** GoPlus numeric chain id for EVM security scans; null = non-EVM */
   goPlusChainId: string | null;
@@ -22,6 +26,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   solana: {
     id: "solana",
     label: "Solana",
+    dexscreenerChain: "solana",
     color: "#14F195",
     geckoNetwork: "solana",
     goPlusChainId: null,
@@ -32,6 +37,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   bsc: {
     id: "bsc",
     label: "BSC",
+    dexscreenerChain: "bsc",
     color: "#F0B90B",
     geckoNetwork: "bsc",
     goPlusChainId: "56",
@@ -42,6 +48,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   ethereum: {
     id: "ethereum",
     label: "Ethereum",
+    dexscreenerChain: "ethereum",
     color: "#9AA5FF",
     geckoNetwork: "eth",
     goPlusChainId: "1",
@@ -52,6 +59,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   base: {
     id: "base",
     label: "Base",
+    dexscreenerChain: "base",
     color: "#3B82F6",
     geckoNetwork: "base",
     goPlusChainId: "8453",
@@ -62,6 +70,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   robinhood: {
     id: "robinhood",
     label: "Robinhood",
+    dexscreenerChain: null,
     color: "#CCFF00",
     geckoNetwork: null,
     goPlusChainId: null,
@@ -72,6 +81,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   tron: {
     id: "tron",
     label: "Tron",
+    dexscreenerChain: "tron",
     color: "#FF060A",
     geckoNetwork: "tron",
     goPlusChainId: null, // GoPlus token_security doesn't cover Tron; scanner falls back to basic info
@@ -82,6 +92,7 @@ export const CHAINS: Record<string, ChainConfig> = {
   ton: {
     id: "ton",
     label: "TON",
+    dexscreenerChain: "ton",
     color: "#0098EA",
     geckoNetwork: "ton",
     goPlusChainId: null,

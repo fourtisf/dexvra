@@ -1,29 +1,19 @@
 import { CHAINS } from "@/config/chains";
 import type { PeriodKey, TxSplit } from "@/lib/types";
+import { EMPTY_LINKS, num, type LiveMarket } from "./market";
 
-// GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
-// set of listed token addresses — Dexvra is paid-listing only, so we never
-// crawl the whole chain. Rate-limited: always go through the cache layer.
+// GeckoTerminal free API (no key). FALLBACK market source — DexScreener is
+// primary (see ./dexscreener). Still the sole source for the per-pool trades
+// feed. We fetch live data for a SPECIFIC set of listed token addresses —
+// Dexvra is paid-listing only, so we never crawl the whole chain.
+// Rate-limited: always go through the cache layer.
 const BASE = "https://api.geckoterminal.com/api/v2";
 const HEADERS = { accept: "application/json;version=20230302" };
-
-export interface LiveMarket {
-  priceUsd: number;
-  mcap: number | null;
-  liq: number | null;
-  chg: Record<PeriodKey, number>;
-  vol: Record<PeriodKey, number>;
-  txns: Record<PeriodKey, TxSplit>;
-  ageMinutes: number | null;
-  logoUrl: string | null;
-  poolAddress: string | null; // top pool contract — for the chart embed
-}
-
-const num = (s: unknown): number | null => {
-  if (s == null) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-};
+// Shorter than DexScreener's: this now runs *after* a failed primary call, so
+// the two timeouts stack on a chain whose data nobody can serve. Keeping the
+// worst case inside ~15s is what stops /api/tokens from hanging on the board's
+// first paint before it falls back to the listing's own figures.
+const TIMEOUT_MS = 6_000;
 
 interface GtToken {
   id: string;
@@ -89,6 +79,8 @@ function mapMarket(token: GtToken, pool: GtPool | undefined, poolId: string | un
     ageMinutes,
     logoUrl: img && img !== "missing.png" ? img : null,
     poolAddress: poolAddrOf(pool, poolId),
+    // GeckoTerminal's token payload carries no project links.
+    links: EMPTY_LINKS,
   };
 }
 
@@ -104,7 +96,7 @@ export async function fetchListedMarket(
 
   const res = await fetch(
     `${BASE}/networks/${network}/tokens/multi/${addresses.slice(0, 30).join(",")}?include=top_pools`,
-    { headers: HEADERS, signal: AbortSignal.timeout(9000), cache: "no-store" },
+    { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" },
   );
   if (!res.ok) throw new Error(`GeckoTerminal ${res.status} (${chainId})`);
   const json = (await res.json()) as { data?: GtToken[]; included?: GtPool[] };

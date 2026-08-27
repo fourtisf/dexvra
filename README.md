@@ -29,24 +29,50 @@ open it in a browser and click around before touching the code.
 
 | Need | Provider | Notes |
 |---|---|---|
-| Prices, mcap, vol, liq, txns, new pairs | GeckoTerminal free API | per-period stats (5m/1h/6h/24h), no key needed |
+| Prices, mcap, vol, liq, txns, logos, pair addresses, project links | **DexScreener** (primary) | one call per chain, per-period stats (5m/1h/6h/24h), no key |
+| Same, when DexScreener is unreachable | GeckoTerminal free API | fallback only; also the sole source of the per-pool trades feed |
 | Fear & Greed | alternative.me | free |
 | Scanner — EVM | GoPlus Security API | free tier, no key |
 | Scanner — Solana | RugCheck API | free tier |
 
-All third-party data flows through the provider layer; the UI never talks to
-providers directly, so swapping DexScreener/Birdeye/Helius in later touches
-nothing outside `src/lib/providers/`. When every provider is unreachable the
-API falls back to the prototype's 20 seed tokens and the boards show a
-**demo data** pill instead of **live**.
+Both market providers implement one interface (`LiveMarket` in
+`src/lib/providers/market.ts`), so `providers/index.ts` merges either without
+branching. All third-party data flows through the provider layer; the UI never
+talks to providers directly. When every provider is unreachable the API falls
+back to the seed listings and the boards show a **demo data** pill instead of
+**live**.
+
+### Charts — DexScreener
+
+Token pages embed the DexScreener chart (`src/lib/dexscreener.ts` builds every
+DexScreener URL; nothing else hardcodes one). The embed is keyed by pair
+address, but DexScreener also resolves a bare token address to that token's top
+pair — so a listing charts on its very first render, before the provider hands
+back a pool. Only a chain DexScreener doesn't index (see
+`dexscreenerChain` in `src/config/chains.ts`) falls back to the sparkline.
+
+### Logos — every listing has one
+
+There is no emoji fallback on the board any more. `src/lib/logo.ts` resolves a
+token's logo through an ordered candidate list and `<TokenLogo>` walks it:
+
+1. the admin-set logo (upload or pasted URL) — always wins;
+2. the image DexScreener returns for the token;
+3. DexScreener's deterministic logo CDN path, derived from chain + address;
+4. a ticker monogram drawn on the token's gradient — no network needed, so a
+   coin is filled even offline, while an image is still loading, or when every
+   source 404s.
+
+The monogram is the only fallback: a token never borrows an unrelated glyph.
 
 ## Chains
 
-Config-driven in `src/config/chains.ts` — label, color, provider network ids,
-explorer + buy deeplinks (Jupiter/Uniswap/Pancake/STON.fi), and address
-validation per chain. Adding a chain is one entry there; nothing else
-hardcodes chain ids. Robinhood Chain currently has no market-data provider
-coverage (`geckoNetwork: null`) — its tokens appear once paid listings exist.
+Config-driven in `src/config/chains.ts` — label, color, provider network ids
+(`dexscreenerChain`, `geckoNetwork`), explorer + buy deeplinks
+(Jupiter/Uniswap/Pancake/STON.fi), and address validation per chain. Adding a
+chain is one entry there; nothing else hardcodes chain ids. Robinhood Chain has
+no coverage on either provider (`dexscreenerChain: null`, `geckoNetwork: null`)
+— its listings show the sparkline and a monogram until one indexes it.
 
 The brand name is a placeholder: change it once in `src/config/brand.ts`.
 

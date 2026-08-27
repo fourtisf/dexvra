@@ -1,7 +1,6 @@
-// Deterministic fallback visuals for tokens without a logo image, so live
-// tokens keep the prototype's emoji-coin look until real logos load.
-const EMOJIS = ["🐸","🚀","🌕","💎","⚡","🐶","🦉","🍰","🐻","🛰️","🌿","👾","🥛","⛽","🏹","🍙","🍛","🗿","🐈‍⬛","⚔️"];
-
+// Deterministic per-token colour, so the gradient behind a token's logo is
+// stable across refreshes and identical on the server and the client.
+// (Logos themselves are resolved in lib/logo.ts — never generated here.)
 const GRADIENTS: [string, string, string][] = [
   ["#C9D4FF", "#6D8BFF", "#2A3FB8"],
   ["#FFE9A8", "#FFC53D", "#B57900"],
@@ -21,17 +20,13 @@ export function hashStr(s: string): number {
   return h;
 }
 
-export function visualFor(sym: string): { emoji: string; gradient: [string, string, string] } {
-  const h = hashStr(sym);
-  // `h` is an unsigned 32-bit value, so use the UNSIGNED shift `>>>`. The
-  // signed `>>` sign-extends when the high bit is set, making the result
-  // negative → a negative modulo → an out-of-range index → undefined gradient
-  // → "Cannot read properties of undefined (reading '0')" in coinBg for ~half
-  // of all symbols. (Seed tokens dodge this by carrying hardcoded gradients.)
-  return {
-    emoji: EMOJIS[h % EMOJIS.length],
-    gradient: GRADIENTS[(h >>> 4) % GRADIENTS.length],
-  };
+export function visualFor(sym: string): { gradient: [string, string, string] } {
+  // `hashStr` returns an unsigned 32-bit value, so use the UNSIGNED shift
+  // `>>>`. The signed `>>` sign-extends when the high bit is set, making the
+  // result negative → a negative modulo → an out-of-range index → undefined
+  // gradient → "Cannot read properties of undefined (reading '0')" in coinBg
+  // for ~half of all symbols.
+  return { gradient: GRADIENTS[(hashStr(sym) >>> 4) % GRADIENTS.length] };
 }
 
 export function coinBg(g?: [string, string, string]): string {

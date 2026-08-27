@@ -1,5 +1,6 @@
 import type { BoardToken } from "@/lib/types";
 import { CHAINS } from "@/config/chains";
+import { dexTokenUrl } from "@/lib/dexscreener";
 import Link from "next/link";
 
 const XLogo = () => (
@@ -18,6 +19,15 @@ const WebLogo = () => (
     <path d="M3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18" />
   </svg>
 );
+// Generic candlestick glyph rather than DexScreener's own mark — this is a
+// link to the token's chart there, not a claim of affiliation.
+const ChartLogo = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <path d="M7 4v3.5M7 16.5V20M17 4v5.5M17 18.5V20" />
+    <rect x="4.5" y="7.5" width="5" height="9" rx="1.2" />
+    <rect x="14.5" y="9.5" width="5" height="9" rx="1.2" />
+  </svg>
+);
 const ScanLogo = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path d="M12 3 5 6v5c0 4.5 3 7.9 7 9.5 4-1.6 7-5 7-9.5V6l-7-3z" />
@@ -27,20 +37,29 @@ const ScanLogo = () => (
 
 export function Socials({ t }: { t: BoardToken }) {
   const c = CHAINS[t.chain];
-  const tg = t.links.telegram ?? t.links.website;
+  const chart = dexTokenUrl(t.chain, t.address);
+  // The project's own handle when it gave us one (or DexScreener knows it),
+  // otherwise a live cashtag search — never a dead "#" link.
+  const twitter =
+    t.links.twitter ?? `https://x.com/search?q=%24${encodeURIComponent(t.symbol.replace(/^\$/, ""))}&f=live`;
   return (
     <div className="soc-row">
-      <a className="soc soc-x" href={t.links.twitter ?? "#"} target="_blank" rel="noopener noreferrer" title="X (Twitter)">
+      <a className="soc soc-x" href={twitter} target="_blank" rel="noopener noreferrer" title="X (Twitter)">
         <XLogo />
       </a>
-      {tg && (
-        <a className="soc soc-tg" href={tg} target="_blank" rel="noopener noreferrer" title="Telegram">
+      {t.links.telegram && (
+        <a className="soc soc-tg" href={t.links.telegram} target="_blank" rel="noopener noreferrer" title="Telegram">
           <TgLogo />
         </a>
       )}
       {t.links.website && (
         <a className="soc" href={t.links.website} target="_blank" rel="noopener noreferrer" title="Website">
           <WebLogo />
+        </a>
+      )}
+      {chart && (
+        <a className="soc" href={chart} target="_blank" rel="noopener noreferrer" title="Chart on DexScreener">
+          <ChartLogo />
         </a>
       )}
       {c && (

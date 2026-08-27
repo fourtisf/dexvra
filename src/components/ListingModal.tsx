@@ -66,6 +66,7 @@ export function ListingModal() {
       name: form.name.trim(),
       emoji: form.emoji.trim() || "🆕",
       chain: form.chain,
+      address: form.ca.trim(),
       tier: tier.key,
       status: "IN REVIEW",
     });

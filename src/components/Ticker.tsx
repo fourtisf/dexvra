@@ -3,6 +3,7 @@
 import { fmtPrice } from "@/lib/format";
 import { coinBg } from "@/lib/visual";
 import { useApp } from "./AppState";
+import { TokenLogo } from "./TokenLogo";
 
 export function Ticker() {
   const { data } = useApp();
@@ -18,12 +19,7 @@ export function Ticker() {
         <span className="tick-item" key={prefix + t.key + i}>
           <span className="rnk">{i + 1}.</span>
           <span className="tick-coin" style={{ background: coinBg(t.gradient) }}>
-            {t.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={t.logoUrl} alt="" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} />
-            ) : (
-              t.emoji
-            )}
+            <TokenLogo token={t} monogramChars={2} />
           </span>
           <span className="sym">{t.symbol}</span>
           <span className="px">{fmtPrice(t.priceUsd)}</span>

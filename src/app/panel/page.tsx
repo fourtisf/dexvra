@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { StoredListing } from "@/lib/store";
 import type { ListingTier } from "@/lib/types";
 import { CHAIN_IDS, CHAINS } from "@/config/chains";
+import { TokenLogo } from "@/components/TokenLogo";
 import { LISTING_TIERS, tierLabel } from "@/lib/packages";
 import { Logo } from "@/components/Logo";
 
@@ -282,12 +283,12 @@ export default function AdminDashboard() {
                     <td>
                       <div className="a-sym">
                         <span className="a-logo">
-                          {r.logoUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={r.logoUrl} alt="" />
-                          ) : (
-                            r.emoji
-                          )}
+                          {/* same resolution the public board uses, so the
+                              panel never disagrees with what visitors see */}
+                          <TokenLogo
+                            token={{ logoUrl: r.logoUrl ?? null, chain: r.chain, address: r.address, symbol: r.sym, name: r.name }}
+                            monogramChars={2}
+                          />
                         </span>
                         {r.sym}
                       </div>
@@ -339,20 +340,18 @@ export default function AdminDashboard() {
                         <div className="edit-panel">
                           <div className="edit-grid">
                             <div className="add-fld"><label>Name</label><input className="a-input" value={ef.name} onChange={setE("name")} /></div>
-                            <div className="add-fld"><label>Emoji (fallback)</label><input className="a-input" value={ef.emoji} onChange={setE("emoji")} maxLength={4} placeholder="🐕" /></div>
+                            <div className="add-fld"><label>Emoji (listing form only)</label><input className="a-input" value={ef.emoji} onChange={setE("emoji")} maxLength={4} placeholder="🐕" /></div>
                             <div className="add-fld">
                               <label>Preview</label>
                               <div className="edit-logo-box">
-                                {ef.logoUrl ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={ef.logoUrl} alt="" />
-                                ) : (
-                                  <span>{ef.emoji || "🪙"}</span>
-                                )}
+                                <TokenLogo
+                                  token={{ logoUrl: ef.logoUrl || null, chain: r.chain, address: r.address, symbol: r.sym, name: ef.name || r.name }}
+                                  monogramChars={2}
+                                />
                               </div>
                             </div>
                             <div className="add-fld wide">
-                              <label>Logo — upload a file or paste an image URL</label>
+                              <label>Logo override — upload a file or paste an image URL (leave empty to use the token&apos;s DexScreener logo)</label>
                               <div className="logo-row">
                                 <label className={`abtn upload-btn ${uploading ? "busy" : ""}`}>
                                   {uploading ? "Uploading…" : "⬆ Upload"}

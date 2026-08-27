@@ -3,7 +3,9 @@
 import { useMemo, useState } from "react";
 import { useApp } from "@/components/AppState";
 import { PageHead } from "@/components/PageHead";
+import { TokenLogo } from "@/components/TokenLogo";
 import { StdBoard } from "@/components/TokenBoard";
+import { coinBg } from "@/lib/visual";
 
 export default function SearchPage() {
   const { data } = useApp();
@@ -41,8 +43,11 @@ export default function SearchPage() {
       </label>
       <div className="tagrow">
         {suggestions.map((t) => (
-          <button key={t.key} className="qtag" onClick={() => setQ(t.symbol)}>
-            {t.emoji} {t.symbol}
+          <button key={t.key} className="qtag qtag-token" onClick={() => setQ(t.symbol)}>
+            <span className="qtag-coin" style={{ background: coinBg(t.gradient) }}>
+              <TokenLogo token={t} monogramChars={2} />
+            </span>
+            {t.symbol}
           </button>
         ))}
       </div>

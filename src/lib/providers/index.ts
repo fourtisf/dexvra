@@ -19,8 +19,11 @@ import type {
   WireItem,
 } from "@/lib/types";
 import { fmtCap } from "@/lib/format";
+import { dexLogoUrl } from "@/lib/dexscreener";
 import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
-import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
+import { fetchListedMarket as fetchDexScreener } from "./dexscreener";
+import { fetchListedMarket as fetchGeckoTerminal } from "./geckoterminal";
+import type { LiveMarket } from "./market";
 
 const PRICE_TTL = 30_000;
 const FNG_TTL = 10 * 60_000;
@@ -39,6 +42,20 @@ async function loadRows(): Promise<ListingRow[]> {
   }
 }
 
+/** Live data for one chain's listings: DexScreener first (it carries the
+ *  logo, the project links and the pair address the chart embeds), falling
+ *  back to GeckoTerminal when DexScreener errors or doesn't know the chain.
+ *  Throws only when neither source answers. */
+async function fetchChainMarket(chain: string, addrs: string[]): Promise<Map<string, LiveMarket>> {
+  try {
+    const dex = await fetchDexScreener(chain, addrs);
+    if (dex.size > 0) return dex;
+  } catch {
+    // fall through to GeckoTerminal
+  }
+  return fetchGeckoTerminal(chain, addrs);
+}
+
 /** Merge live market data onto the paid listings. Any listing without live
  *  data keeps its fallback figures, so the board always renders. */
 async function loadListedTokens(): Promise<BoardToken[]> {
@@ -49,7 +66,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   const marketResults = await Promise.allSettled(
     Object.entries(byChain).map(async ([chain, addrs]) => ({
       chain,
-      map: await fetchListedMarket(chain, addrs),
+      map: await fetchChainMarket(chain, addrs),
     })),
   );
   const anyLive = marketResults.some((r) => r.status === "fulfilled" && r.value.map.size > 0);
@@ -65,7 +82,18 @@ async function loadListedTokens(): Promise<BoardToken[]> {
     const v = visualFor(t.symbol);
     return {
       ...t,
-      logoUrl: t.logoUrl ?? m.logoUrl, // admin-set logo wins; else live logo
+      // Logo precedence: admin upload → provider image → DexScreener's CDN
+      // path. The last is deterministic, so a listing is never logo-less
+      // server-side; the client still falls back to a monogram if the image
+      // itself 404s.
+      logoUrl: t.logoUrl ?? m.logoUrl ?? dexLogoUrl(t.chain, t.address, "lg"),
+      // Same rule for links: whatever the project filled in on its listing
+      // wins, otherwise take what DexScreener knows about the token.
+      links: {
+        website: t.links.website ?? m.links.website,
+        twitter: t.links.twitter ?? m.links.twitter,
+        telegram: t.links.telegram ?? m.links.telegram,
+      },
       priceUsd: m.priceUsd,
       mcap: m.mcap ?? t.mcap,
       liq: m.liq ?? t.liq,

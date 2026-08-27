@@ -27,6 +27,9 @@ export interface MyListing {
   name: string;
   emoji: string;
   chain: string;
+  /** Contract address — resolves the submission's real logo while it waits in
+   *  review. Optional: records saved by older builds don't carry one. */
+  address?: string;
   tier: string;
   status: "IN REVIEW";
 }

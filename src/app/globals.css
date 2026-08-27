@@ -538,7 +538,29 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 @media (max-width:1000px){.row.head .c-vol{display:none}}
 @media (max-width:860px){.row.head .c-txns{display:none}}
 @media (max-width:600px){.row.head .c-mcap{display:none}}
-.coin img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+/* ---- TOKEN LOGOS ----
+   Every listing renders a real logo. <TokenLogo> settles on the provider
+   image, the DexScreener CDN image, or a ticker monogram — these rules make
+   all three fill their coin identically. */
+/* Logo and monogram share one grid cell so the monogram can sit underneath a
+   logo that hasn't painted yet — the coin is never an empty circle. */
+.coin,.tick-coin,.qtag-coin{grid-template-areas:"logo"}
+.coin img,.tick-coin img,.qtag-coin img,.coin-mono{grid-area:logo}
+.coin img,.tick-coin img,.qtag-coin img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
+.coin-mono{
+  font-family:var(--fd);font-weight:800;text-transform:uppercase;
+  font-size:.58em;letter-spacing:-.03em;line-height:1;
+  color:rgba(255,255,255,.96);text-shadow:0 1px 2px rgba(0,0,0,.45);
+  max-width:88%;overflow:hidden;
+}
+/* Small coins carry a 2-character monogram, so it can run proportionally
+   larger than the 3-character one on a board coin. */
+.tick-coin .coin-mono,.qtag-coin .coin-mono{font-size:.85em;letter-spacing:-.05em}
+.qtag-token{display:inline-flex;align-items:center;gap:7px}
+.qtag-coin{
+  width:17px;height:17px;border-radius:50%;flex:none;display:grid;place-items:center;
+  font-size:9px;border:1.5px solid rgba(255,255,255,.28);overflow:hidden;
+}
 .src-pill{
   font-family:var(--fm);font-size:8.5px;font-weight:800;letter-spacing:.12em;
   border-radius:999px;padding:3px 8px;text-transform:uppercase;white-space:nowrap;
@@ -738,7 +760,7 @@ body{
 .tp-subrow .ca-box{flex:1;min-width:240px}
 .tp-grid{display:grid;grid-template-columns:1fr 320px;gap:14px;align-items:start}
 .tp-chart-wrap{border:1px solid var(--line2);border-radius:18px;overflow:hidden;background:#0a0c10;box-shadow:0 22px 52px rgba(0,0,0,.5);height:620px}
-.tp-chart{width:100%;height:664px;border:0;display:block}
+.tp-chart{width:100%;height:100%;border:0;display:block}
 .tp-chart-fallback{height:100%;display:flex;flex-direction:column;justify-content:center;padding:20px}
 .tp-side{display:flex;flex-direction:column;gap:12px;position:sticky;top:78px}
 .tp-stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}
@@ -749,7 +771,6 @@ body{
   .tp-side{position:static}
   .tp-stats{grid-template-columns:repeat(4,1fr)}
   .tp-chart-wrap{height:460px}
-  .tp-chart{height:504px}
 }
 @media (max-width:640px){
   .tp-head{gap:12px}
@@ -760,7 +781,6 @@ body{
   .tp-actions .btn-primary,.tp-actions .btn-ghost2{flex:1;justify-content:center}
   .tp-stats{grid-template-columns:1fr 1fr}
   .tp-chart-wrap{height:360px}
-  .tp-chart{height:404px}
 }
 
 /* ============ GENERAL TIDY-UPS ============ */
@@ -939,14 +959,18 @@ body{
 @media(max-width:520px){.admin-stats,.add-grid{grid-template-columns:1fr}.admin-wrap{padding:16px}}
 
 /* ── Admin: per-listing logo + inline editor ──────────────────────────── */
-.a-logo{display:inline-grid;place-items:center;width:22px;height:22px;font-size:15px}
+.a-logo{display:inline-grid;grid-template-areas:"logo";place-items:center;width:22px;height:22px;font-size:15px;border-radius:50%;overflow:hidden}
+.a-logo img,.a-logo .coin-mono{grid-area:logo}
 .a-logo img{width:22px;height:22px;border-radius:50%;object-fit:cover;background:#0a0e16}
+.a-logo .coin-mono{font-size:9.5px;color:var(--muted);text-shadow:none}
 .edit-row td{background:rgba(34,211,238,.04);padding:0}
 .edit-panel{padding:16px 18px;display:flex;flex-direction:column;gap:12px;border-left:3px solid var(--mint)}
 .edit-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .edit-grid .wide{grid-column:1 / -1}
-.edit-logo-box{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;border:1px solid var(--line2);background:rgba(255,255,255,.03);font-size:22px;overflow:hidden}
+.edit-logo-box{width:44px;height:44px;border-radius:12px;display:grid;grid-template-areas:"logo";place-items:center;border:1px solid var(--line2);background:rgba(255,255,255,.03);font-size:22px;overflow:hidden}
+.edit-logo-box img,.edit-logo-box .coin-mono{grid-area:logo}
 .edit-logo-box img{width:100%;height:100%;object-fit:cover}
+.edit-logo-box .coin-mono{font-size:15px;color:var(--muted);text-shadow:none}
 .edit-actions{display:flex;align-items:center;gap:10px}
 @media(max-width:700px){.edit-grid{grid-template-columns:1fr}}
 
