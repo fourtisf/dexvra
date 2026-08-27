@@ -48,12 +48,22 @@ export interface TfSpec {
 /** Display order of the timeframe tabs. */
 export const TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 
+/**
+ * ⚠️ `limit` IS A QUERY PARAM, NOT A REQUEST COUNT. Raising it costs payload
+ * and nothing else — one request per timeframe either way, and the shared
+ * ~30/min GeckoTerminal ceiling is untouched. It was 180–200 across the board,
+ * which is barely more than one screen fits: the chart had nothing to scroll
+ * back INTO once the reader could travel through time. GT caps a request at
+ * 1000; these stay well under it and each one is a round span a person can name
+ * (a day of 5m, four days of 15m, a fortnight of 1h, two months of 4h, a year
+ * of daily).
+ */
 export const TF: Record<Timeframe, TfSpec> = {
-  "5m": { path: "minute", aggregate: 5, seconds: 300, limit: 200, ttlMs: 60_000 },
-  "15m": { path: "minute", aggregate: 15, seconds: 900, limit: 200, ttlMs: 90_000 },
-  "1h": { path: "hour", aggregate: 1, seconds: 3600, limit: 200, ttlMs: 5 * 60_000 },
-  "4h": { path: "hour", aggregate: 4, seconds: 14_400, limit: 180, ttlMs: 10 * 60_000 },
-  "1d": { path: "day", aggregate: 1, seconds: 86_400, limit: 180, ttlMs: 15 * 60_000 },
+  "5m": { path: "minute", aggregate: 5, seconds: 300, limit: 288, ttlMs: 60_000 },
+  "15m": { path: "minute", aggregate: 15, seconds: 900, limit: 384, ttlMs: 90_000 },
+  "1h": { path: "hour", aggregate: 1, seconds: 3600, limit: 336, ttlMs: 5 * 60_000 },
+  "4h": { path: "hour", aggregate: 4, seconds: 14_400, limit: 360, ttlMs: 10 * 60_000 },
+  "1d": { path: "day", aggregate: 1, seconds: 86_400, limit: 365, ttlMs: 15 * 60_000 },
 };
 
 /** The default tab. 15m over a couple of days is the window a memecoin is

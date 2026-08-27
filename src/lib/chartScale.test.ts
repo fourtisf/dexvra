@@ -178,3 +178,101 @@ test("the scale describes a RELATIONSHIP, so new candles do not strand it", () =
   assert.ok(after.hi > before.hi, "the view followed the data");
   assert.ok(after.hi - after.lo > 0);
 });
+
+// ── the horizontal ──────────────────────────────────────────────────────────
+
+import { AUTO_TIME, isTimeAdjusted, panTimeByDrag, timeWindow, zoomTimeAt } from "./chartScale.ts";
+
+const TOTAL = 400; // candles fetched
+const FIT = 160; // candles the panel has room for
+const STEP = 7; // px per candle
+
+test("auto shows the NEWEST candles that fit, and says it is at the live edge", () => {
+  const w = timeWindow(TOTAL, FIT, AUTO_TIME);
+  assert.equal(w.count, FIT);
+  assert.equal(w.start, TOTAL - FIT);
+  assert.equal(w.atLiveEdge, true);
+});
+
+test("fewer candles than fit → all of them, no empty space to scroll into", () => {
+  const w = timeWindow(30, FIT, AUTO_TIME);
+  assert.equal(w.start, 0);
+  assert.equal(w.count, 30);
+});
+
+test("THE ASK: dragging right travels BACK in time, content following the finger", () => {
+  // "bisa di geser ke kanan ke kiri chartnya".
+  const t = panTimeByDrag(AUTO_TIME, 20 * STEP, STEP, TOTAL, FIT);
+  const w = timeWindow(TOTAL, FIT, t);
+  assert.equal(w.view.endOffset, 20, "20 candles' width moved the window 20 candles");
+  assert.equal(w.start, TOTAL - FIT - 20);
+  assert.equal(w.atLiveEdge, false);
+  // …and dragging left comes back.
+  const back = panTimeByDrag(t, -20 * STEP, STEP, TOTAL, FIT);
+  assert.equal(timeWindow(TOTAL, FIT, back).atLiveEdge, true);
+});
+
+test("a drag cannot scroll past the newest candle or before the oldest", () => {
+  const future = panTimeByDrag(AUTO_TIME, -10_000, STEP, TOTAL, FIT);
+  assert.equal(timeWindow(TOTAL, FIT, future).view.endOffset, 0, "the live edge is the end");
+  const past = panTimeByDrag(AUTO_TIME, 10_000, STEP, TOTAL, FIT);
+  const w = timeWindow(TOTAL, FIT, past);
+  assert.equal(w.start, 0, "…and the oldest candle is the other end");
+  assert.equal(w.count, FIT, "the window never shrinks to fill the gap");
+});
+
+test("⚠️ a slow drag is not rounded away to nothing", () => {
+  // Sub-candle movement accumulates. Rounding each event to zero is a chart
+  // that feels stuck under the hand — it responds and does not obey.
+  let t = AUTO_TIME;
+  for (let i = 0; i < 10; i++) t = panTimeByDrag(t, STEP * 0.6, STEP, TOTAL, FIT);
+  assert.ok(timeWindow(TOTAL, FIT, t).view.endOffset >= 5, "ten sixths of a candle is about six candles");
+});
+
+test("the wheel zooms about the POINTER — the candle under it stays under it", () => {
+  const before = timeWindow(TOTAL, FIT, AUTO_TIME);
+  const frac = 0.25;
+  const under = before.start + frac * before.count;
+  const t = zoomTimeAt(AUTO_TIME, 1 / 1.5, frac, TOTAL, FIT);
+  const after = timeWindow(TOTAL, FIT, t);
+  assert.ok(after.count < before.count, "zoomed in");
+  const nowUnder = after.start + frac * after.count;
+  assert.ok(Math.abs(nowUnder - under) <= 1.5, `anchor moved ${Math.abs(nowUnder - under).toFixed(1)} candles`);
+});
+
+test("zoom is bounded at both ends", () => {
+  let t = AUTO_TIME as ReturnType<typeof timeWindow>["view"];
+  for (let i = 0; i < 40; i++) t = zoomTimeAt(t, 1 / 1.5, 0.5, TOTAL, FIT);
+  assert.ok(timeWindow(TOTAL, FIT, t).count >= 12, "never fewer than a readable handful");
+  for (let i = 0; i < 40; i++) t = zoomTimeAt(t, 1.5, 0.5, TOTAL, FIT);
+  assert.ok(timeWindow(TOTAL, FIT, t).count <= FIT, "and never wider than the panel can draw");
+});
+
+test("⚠️ the window is measured from the NEWEST candle, so a poll does not drag it", () => {
+  // New candles arrive at the right every poll. A pair of absolute indices
+  // would slide one candle further into the past on every refresh while the
+  // reader watched — the horizontal version of storing {lo, hi}.
+  const t = panTimeByDrag(AUTO_TIME, 30 * STEP, STEP, TOTAL, FIT);
+  const before = timeWindow(TOTAL, FIT, t);
+  const after = timeWindow(TOTAL + 3, FIT, t); // three new candles arrived
+  assert.equal(after.view.endOffset, before.view.endOffset, "the reader stays where they scrolled to");
+  assert.equal(after.start, before.start + 3, "…which is the same candles on screen");
+});
+
+test("a reader parked at the live edge STAYS at the live edge as candles arrive", () => {
+  const w = timeWindow(TOTAL + 5, FIT, AUTO_TIME);
+  assert.equal(w.atLiveEdge, true);
+  assert.equal(w.start + w.count, TOTAL + 5);
+});
+
+test("isTimeAdjusted answers the question the panel prints", () => {
+  assert.equal(isTimeAdjusted(AUTO_TIME), false);
+  assert.equal(isTimeAdjusted({ count: null, endOffset: 12 }), true);
+  assert.equal(isTimeAdjusted({ count: 40, endOffset: 0 }), true);
+});
+
+test("no candles at all is drawable, not a crash", () => {
+  const w = timeWindow(0, FIT, AUTO_TIME);
+  assert.equal(w.count, 0);
+  assert.equal(w.atLiveEdge, true);
+});

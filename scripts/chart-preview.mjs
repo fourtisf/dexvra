@@ -329,6 +329,55 @@ try {
   });
   check("the last-price tag is pinned into the panel, never dragged off it", tagOn);
 
+  // ── travelling through time ──────────────────────────────────────────────
+  // "bisa di geser ke kanan ke kiri chartnya". A chart you cannot move through
+  // time is a picture, so this drives the real gestures and measures that the
+  // WINDOW changed, not merely that something happened.
+  await page.locator(".ck-auto").click();
+  await page.waitForTimeout(300);
+  const firstStamp = () => page.evaluate(() => document.querySelector(".ck-axis-x")?.textContent ?? "");
+  const nCandles = () => page.locator(".ck-c").count();
+  const before0 = await nCandles();
+
+  // Wheel = zoom the time axis, anchored at the pointer. Zoomed in hard on
+  // purpose: with the whole fetched history already on screen there is nowhere
+  // to travel TO, and a pan check would pass or fail on the clamp instead of on
+  // the pan. (The first cut compared a stamp taken BEFORE this zoom, and the
+  // window had been clamped back to the same first candle — it reported the
+  // drag as broken when the drag was fine.)
+  await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.wheel(0, -300);
+    await page.waitForTimeout(120);
+  }
+  await page.waitForTimeout(300);
+  const zoomed = await nCandles();
+  check("the wheel zooms the time axis", zoomed > 0 && zoomed < before0 * 0.75, `${before0} → ${zoomed} candles`);
+  check("…and the page did not scroll away underneath it", (await page.evaluate(() => window.scrollY)) === 0);
+
+  // Drag sideways = travel. Right = back in time.
+  const t0 = await firstStamp();
+  await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(plot.x + plot.width * 0.5 + 220, plot.y + plot.height * 0.5, { steps: 14 });
+  await page.mouse.up();
+  await page.waitForTimeout(350);
+  const t1 = await firstStamp();
+  check("dragging right travels BACK in time", t1 !== "" && t1 !== t0, `${t0} → ${t1}`);
+  check("…and the same number of candles is still drawn", Math.abs((await nCandles()) - zoomed) <= 1, "a pan moves the window, it does not resize it");
+  check("…and the panel stops claiming the candles are live", (await page.locator(".ck-live").count()) === 0);
+  check("…and says it is showing history instead", (await page.locator(".ck-src").innerText()) === "HISTORY");
+  await page.locator(".tp-chart-wrap").screenshot({ path: `${SHOT_DIR}/time-scrolled.png` });
+
+  // A drag cannot run off the end of the data.
+  await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(plot.x + plot.width * 0.5 - 4000, plot.y + plot.height * 0.5, { steps: 20 });
+  await page.mouse.up();
+  await page.waitForTimeout(350);
+  check("a drag past the newest candle stops at the live edge", (await page.locator(".ck-live").count()) === 1);
+  check("…with a chart still drawn", (await nCandles()) > 5);
+
   // …and the way back.
   await page.locator(".ck-auto").click();
   await page.waitForTimeout(300);
