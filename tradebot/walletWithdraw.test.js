@@ -925,7 +925,7 @@ test("every user-facing command the bot handles is in the / menu", { skip: !core
     if (fn) assert.match(src.slice(src.indexOf("function " + fn)).slice(0, 400), /admins\.includes/, "/" + c + " must be gated");
   }
   // ALIASES whose primary is registered — the menu is a list people scroll.
-  const alias = ["positions", "bags", "track", "refer", "lang", "bahasa", "withdrawall"];
+  const alias = ["positions", "bags", "track", "refer", "lang", "bahasa", "withdrawall", "sniper"];
   const missing = [...handled].filter((c) => !reg.has(c) && !adminOnly.includes(c) && !alias.includes(c));
   assert.deepEqual(missing, [], "handled but undiscoverable: " + missing.map((c) => "/" + c).join(" "));
 });

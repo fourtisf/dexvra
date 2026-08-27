@@ -5532,8 +5532,13 @@ async function registerCommands() {
     { command: 'chain',     description: 'Switch chain (Robinhood, ETH, Base, BNB, ARB, SOL)' },
     { command: 'buy',       description: 'Buy a token: /buy <address> <amount or $usd>' },
     { command: 'sell',      description: 'Sell a token: /sell <address> <percent>' },
+    // ONE sniper entry. /snipe and /sniper both answered with the identical
+    // description, which is the /withdraw-vs-/withdrawall defect verbatim: a
+    // second way in that does not do a second thing is a question the user has
+    // to answer before they can start ("cukup buat 1 command aja"). /sniper
+    // still ANSWERS — it was live and is in somebody's scrollback — it is just
+    // no longer a menu entry.
     { command: 'snipe',     description: 'Sniper — full settings panel' },
-    { command: 'sniper',    description: 'Sniper — full settings panel' },
     { command: 'copy',      description: 'Copy another wallet\'s buys' },
     { command: 'orders',    description: 'Auto-sell orders (take-profit / stop-loss)' },
     { command: 'dca',       description: 'Scheduled recurring buys' },

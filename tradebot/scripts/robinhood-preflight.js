@@ -246,7 +246,7 @@ async function main() {
             for (const t of pt.slice(0, 6)) note(`   ${t}`);
             note('→ Override PONS_EVENT in tradebot/.env with the real signature (the topic0 list above is the lead).');
           } else {
-            note('no Pons activity in this window — the pad may simply be quiet; rerun with --blocks 5000 to widen the look.');
+            note(`no Pons activity in this window — the pad may simply be quiet; rerun with --blocks ${SPAN * 10} to widen the look.`);
           }
         }
       }
