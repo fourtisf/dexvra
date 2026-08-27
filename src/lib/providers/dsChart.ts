@@ -92,6 +92,29 @@ export function dsChartBases(override = "", extra = ""): string[] {
  * per AMM family, and which family a pair belongs to is not something the
  * documented API tells us. `DS_CHART_PATH` replaces the list outright.
  */
+/**
+ * The QUERY STRING — and it is env-overridable for the same reason the path is.
+ *
+ * ⚠️ THIS WAS THE ONE PART OF THE REQUEST THAT WAS NOT. The whole licence for
+ * shipping an unverified shape is that every part of it costs a line in `.env`
+ * rather than a deploy, and a hardcoded query breaks that promise on the half
+ * most likely to be wrong: `io.dexscreener.com` answered **400** — it is
+ * talking to us and refusing the parameters, which is a far narrower failure
+ * than the 403 that came before it.
+ *
+ * `{from}` `{to}` `{res}` `{limit}` are substituted. An operator can read the
+ * real shape out of their own browser (dexscreener.com → DevTools → Network →
+ * filter "bars") and paste it here with no deploy at all.
+ */
+export function dsChartQuery(from: number, to: number, res: string, limit: number, override = process.env.DS_CHART_QUERY): string {
+  const tpl = String(override ?? "").trim() || "from={from}&to={to}&res={res}&cb={limit}";
+  return tpl
+    .replace(/\{from\}/g, String(from))
+    .replace(/\{to\}/g, String(to))
+    .replace(/\{res\}/g, encodeURIComponent(res))
+    .replace(/\{limit\}/g, String(limit));
+}
+
 export function dsChartPaths(override = ""): string[] {
   const pinned = override.trim();
   if (pinned) return pinned.split(",").map((s) => s.trim()).filter(Boolean);
@@ -137,6 +160,12 @@ export interface DsCandles {
   pair: DsPair | null;
   /** Why, in words, when `ok` is false. Never dropped. */
   why: string | null;
+  /** The last upstream URL actually attempted, for the diagnostic. NOT shown to
+   *  a visitor: `chart:check` asks with `?source=dexscreener` and only that pin
+   *  surfaces it. An operator cannot fix a guessed request shape they cannot
+   *  see — the same defect as `logos:check` eliding the url on the rows that
+   *  failed. */
+  url?: string | null;
 }
 
 // Next can hold more than one instance of a module, so a per-instance cooldown
@@ -339,6 +368,20 @@ function chartHeaders(): Record<string, string> {
   };
 }
 
+/** The first useful line of an error body, or "". Bounded to a phrase: this
+ *  reaches the chart panel, and an upstream's HTML error page is not a message
+ *  for a reader. Never throws — a body we cannot read is simply no hint. */
+async function bodyHint(res: Response): Promise<string> {
+  try {
+    const raw = (await res.text()).slice(0, 400);
+    const flat = raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    if (!flat) return "";
+    return ` — ${flat.slice(0, 140)}${flat.length > 140 ? "…" : ""}`;
+  } catch {
+    return "";
+  }
+}
+
 async function getJson(url: string, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
   try {
     // The documented pairs host is happy with a bare request; the guessed chart
@@ -380,8 +423,13 @@ async function getJson(url: string, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
       return { ok: false, status: res.status, body: null, why: `${host} ${res.status} (${what})` };
     }
     if (!res.ok) {
-      void res.body?.cancel().catch(() => {});
-      return { ok: false, status: res.status, body: null, why: `${host} ${res.status}` };
+      // ⚠️ NEVER DISCARD THE REASON — this repo's own rule, and this is exactly
+      // the case it was written for: "an HTTP error puts the explanation in the
+      // response body". A bare `io.dexscreener.com 400` told an operator that
+      // the guessed shape is wrong and nothing about WHICH part, which is the
+      // difference between a one-line .env fix and another round of guessing.
+      // Bounded and flattened: an HTML error page must not fill the panel.
+      return { ok: false, status: res.status, body: null, why: `${host} ${res.status}${await bodyHint(res)}` };
     }
     return { ok: true, status: res.status, body: await res.json(), why: null };
   } catch (err) {
@@ -479,8 +527,12 @@ export async function dsCandles(
 
   const to = opts.now ?? Date.now();
   const from = to - windowMsFor(tf);
-  const qs = `from=${from}&to=${to}&res=${encodeURIComponent(DS_RES[tf])}&cb=${TF[tf].limit}`;
+  const qs = dsChartQuery(from, to, DS_RES[tf], TF[tf].limit);
   let lastWhy: string | null = null;
+  /** The last URL actually attempted. An operator cannot fix a guessed request
+   *  shape they cannot see — the same defect as `logos:check` eliding the url
+   *  on exactly the rows that failed. */
+  let lastUrl: string | null = null;
 
   for (const base of opts.bases ?? BASES) {
     let transportFailed = false;
@@ -489,7 +541,9 @@ export async function dsCandles(
         .replace("{dex}", encodeURIComponent(pair.dexId))
         .replace("{chain}", encodeURIComponent(pair.chainId))
         .replace("{pair}", encodeURIComponent(pair.pairAddress));
-      const res = await getJson(`${base}${path}?${qs}`);
+      const url = `${base}${path}?${qs}`;
+      const res = await getJson(url);
+      lastUrl = url;
 
       if (res.ok) {
         const bars = barsOf(res.body);
@@ -518,16 +572,24 @@ export async function dsCandles(
       // request that was always going to fail. That is `JUP_BASES`' rule
       // verbatim.
       //
-      // Across PATHS: a 404 only. This is NOT the same request — it is a
-      // different resource on the same host, and "that spelling is not here"
-      // is exactly when the other spelling is worth trying. A 429 or a 5xx
-      // says nothing about which path is right, so neither is retried.
-      if (res.status === 404) continue; // next template
+      // Across PATHS: a 404 or a 400 ONLY. This is NOT the same request — it is
+      // a different resource on the same host, and "that spelling is not here"
+      // (404) and "that spelling does not take these parameters" (400) are both
+      // exactly when the OTHER spelling is worth trying: v2 and v3 of an API
+      // routinely take different params, which is the whole reason two
+      // templates are listed. A 429, a 5xx or a 403 says nothing about which
+      // path is right, so none of them is retried.
+      //
+      // ⚠️ The 400 was added after the live run: `io.dexscreener.com` answered
+      // 403 to a bare request and 400 once it was sent browser headers — it is
+      // TALKING to us and refusing the parameters, which is a far narrower
+      // failure, and the second template deserves its turn at it.
+      if (res.status === 404 || res.status === 400) continue; // next template
       if (res.status === 0) {
         transportFailed = true;
         break; // transport: next BASE, not next path
       }
-      return { ok: false, candles: [], pair, why: res.why };
+      return { ok: false, candles: [], pair, why: res.why, url: lastUrl };
     }
     // ⚠️ AND THE BASE RULE HOLDS AT THE END OF THE PATH LIST TOO. Falling
     // through here means every spelling ANSWERED, with a 404 — the host is

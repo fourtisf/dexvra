@@ -26,6 +26,7 @@ import {
   dsCandles,
   dsChartBases,
   dsChartPaths,
+  dsChartQuery,
   dsCooldownWhy,
   dsInCooldown,
   dsPairUrl,
@@ -452,7 +453,12 @@ test("both reasons travel when neither source could be asked", () => {
   // it, is the shrug this endpoint has already been fixed for once.
   const route = code(read("src/app/api/ohlcv/route.ts"));
   assert.match(route, /gtSilent \? gt\.why : null/);
-  assert.match(route, /dsSilent \? ds\?\.why/);
+  assert.match(route, /const dsWhy = dsSilent \? \(ds\?\.why \?\? "DexScreener was not asked"\)/);
+  assert.match(route, /reasons = \[gtSilent \? gt\.why : null, dsWhy\]/, "both, still joined");
+  // ⚠️ The attempted URL rides along ONLY under the `?source=` pin — the check
+  // script's seam. A visitor must never see a raw upstream URL in the panel,
+  // and an operator cannot fix a guessed request shape they cannot see.
+  assert.match(route, /pin && ds\?\.url \? ` \[tried \$\{ds\.url\}\]` : ""/);
   // …and the sentence must still carry "couldn't read", because the panel
   // classifies error-vs-answer on that substring and only errors get the fast
   // retry that lets a chart appear the moment a cooldown lifts.
@@ -637,4 +643,43 @@ test("a 429-armed cooldown still reads as a rate limit", () => {
   assert.ok(!/refusing/.test(dsCooldownWhy()));
   _dsChartReset();
   assert.equal(dsCooldownWhy(), "rate limited", "and it falls back to the honest default when nothing armed it");
+});
+
+test("⚠️ every part of the request is env-overridable — including the QUERY", () => {
+  // The whole licence for shipping an unverified shape is that a wrong guess
+  // costs a line in .env rather than a deploy. The query string was the one
+  // part that was hardcoded — and it is the half most likely to be wrong:
+  // io.dexscreener.com answered 403 to a bare request and 400 once it was sent
+  // browser headers, i.e. it is TALKING to us and refusing the parameters.
+  assert.equal(
+    dsChartQuery(100, 200, "15", 384, undefined),
+    "from=100&to=200&res=15&cb=384",
+    "the shipped default",
+  );
+  assert.equal(
+    dsChartQuery(100, 200, "1D", 365, "from={from}&to={to}&resolution={res}&countback={limit}&currency=usd"),
+    "from=100&to=200&resolution=1D&countback=365&currency=usd",
+    "an operator can paste the shape they read out of their own browser",
+  );
+  assert.equal(dsChartQuery(1, 2, "5", 9, "   "), "from=1&to=2&res=5&cb=9", "blank is the default, never empty");
+});
+
+test("a 400 tries the OTHER path spelling; a 403 does not", () => {
+  // 404 ("not here") and 400 ("not with these parameters") are both about THIS
+  // spelling — v2 and v3 of an API routinely take different params, which is
+  // the whole reason two templates are listed. A refusal says nothing about
+  // which path is right.
+  const src = code(read("src/lib/providers/dsChart.ts"));
+  assert.match(src, /if \(res\.status === 404 \|\| res\.status === 400\) continue;/);
+  assert.ok(!/res\.status === 403[^\n]*continue/.test(src), "a refusal is not a spelling problem");
+});
+
+test("⚠️ an HTTP error carries the upstream's own explanation", () => {
+  // "Never discard the reason" — an HTTP error puts the explanation in the
+  // response body, and a bare `io.dexscreener.com 400` said the guessed shape
+  // is wrong and nothing about WHICH part.
+  const src = code(read("src/lib/providers/dsChart.ts"));
+  assert.match(src, /await bodyHint\(res\)/);
+  assert.match(src, /replace\(\/<\[\^>\]\*>\/g, " "\)/, "an HTML error page is flattened, not pasted into the panel");
+  assert.match(src, /slice\(0, 140\)/, "and bounded");
 });

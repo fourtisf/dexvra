@@ -110,9 +110,22 @@ async function main() {
   console.log(`\nCan this box draw a chart?   ${D}checkout ${stamp()} · server ${BASE}${X}\n`);
   console.log(
     `  ${Y}⚠ DexScreener publishes no documented OHLCV endpoint — its request shape is a guess.${X}\n` +
-      `    ${D}A red DexScreener line is a .env fix, not a deploy: DS_CHART_API pins a base,${X}\n` +
-      `    ${D}DS_CHART_PATH rewrites the path, DS_CHART_BARS_KEY names the envelope key.${X}\n` +
-      `    ${D}DS_CHART=0 switches the second source off entirely.${X}\n`,
+      `    ${D}A red DexScreener line is a .env fix, not a deploy:${X}\n` +
+      `    ${D}  DS_CHART_API pins a base · DS_CHART_PATH rewrites the path${X}\n` +
+      `    ${D}  DS_CHART_QUERY rewrites the query ({from} {to} {res} {limit})${X}\n` +
+      `    ${D}  DS_CHART_HEADERS replaces the headers ("Name: v|Name: v")${X}\n` +
+      `    ${D}  DS_CHART_BARS_KEY names the envelope key · DS_CHART=0 switches it off${X}\n`,
+  );
+  // ⚠️ HOW TO FIND THE REAL SHAPE. A status alone is not actionable: 403 means
+  // the host refused us, 400 means it is TALKING to us and refusing the
+  // parameters, and only the second is fixable from here. The endpoint is the
+  // one DexScreener's own chart calls, so the operator's own browser is the
+  // authoritative source for its shape — and a browser is exactly what this
+  // box is not. Saying so is the difference between a diagnosis and a shrug.
+  console.log(
+    `    ${D}A 400 means the host ANSWERED and refused the parameters. Read the real shape${X}\n` +
+      `    ${D}off dexscreener.com in your own browser — DevTools → Network → filter "bars"${X}\n` +
+      `    ${D}— then paste its query into DS_CHART_QUERY and its path into DS_CHART_PATH.${X}\n`,
   );
 
   let gtOk = 0;
