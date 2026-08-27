@@ -4,7 +4,11 @@
  * launchpad (snipe + curve trading) path depends on. Spends nothing, signs nothing.
  *
  *   cd tradebot && node scripts/robinhood-preflight.js
- *   cd tradebot && node scripts/robinhood-preflight.js --token 0x<a pools.trade token>
+ *   cd tradebot && node scripts/robinhood-preflight.js --token 0x<a token you launched>
+ *       …probes curveOf() AND (4t) names the contract + event that announced
+ *       that token, which is the two .env lines the Pons scan needs. This is
+ *       the probe that settles a launchpad integration: a configured factory
+ *       that is live-but-WRONG reports "0 events", exactly like a quiet pad.
  *   cd tradebot && node scripts/robinhood-preflight.js --discover
  *   cd tradebot && node scripts/robinhood-preflight.js --tx 0xTHE_REAL_HASH
  *
@@ -54,6 +58,10 @@ const ok = (name, info) => console.log(`  ✅ ${name}${info ? '  · ' + info : '
 const bad = (name, info) => { failures++; console.log(`  ❌ ${name}${info ? '  · ' + info : ''}`); };
 const warn = (name, info) => { warnings++; console.log(`  ⚠️  ${name}${info ? '  · ' + info : ''}`); };
 const note = (s) => console.log(`     ${s}`);
+
+function _ponsCfgSafe() {
+  try { return require('../watchers')._test._ponsCfg(); } catch (_) { return { factories: [] }; }
+}
 
 async function main() {
   const chain = core.chainOf(CHAIN);
@@ -219,15 +227,21 @@ async function main() {
       const piface = new ethers.Interface([pons.eventSig]);
       const pev = piface.getEvent(pons.name);
       const ptopic = pev.topicHash;
-      note(`factory ${pons.factory}`);
+      note(`factories ${(pons.factories || [pons.factory]).join(', ')}`);
       note(`event   ${pev.format('full')}`);
-      const pcode = await prov.getCode(pons.factory).catch(() => null);
-      if (pcode == null) bad('getCode failed', 'the node did not answer — rerun');
-      else if (pcode === '0x') bad('factory has NO CODE', 'set PONS_FACTORY in tradebot/.env to the real one');
+      const flist = pons.factories && pons.factories.length ? pons.factories : [pons.factory];
+      const codes = await Promise.all(flist.map((f) => prov.getCode(f).catch(() => null)));
+      const liveF = flist.filter((f, i) => codes[i] && codes[i] !== '0x');
+      for (let i = 0; i < flist.length; i++) {
+        if (codes[i] == null) warn(`getCode failed for ${flist[i]}`, 'the node did not answer — rerun');
+        else if (codes[i] === '0x') note(`${flist[i]} — no code (a retired deployment reads like this; harmless while another answers)`);
+        else ok(`${flist[i]} has code`, `${(codes[i].length - 2) / 2} bytes`);
+      }
+      if (!liveF.length) bad('no PONS_FACTORY has code', 'set the real one in tradebot/.env');
       else {
-        ok('factory has code', `${(pcode.length - 2) / 2} bytes`);
         const pfrom = Math.max(0, head - SPAN);
-        const plogs = await prov.getLogs({ address: pons.factory, topics: [ptopic], fromBlock: pfrom, toBlock: head }).catch(() => null);
+        const plogs = (await Promise.all(liveF.map((f) => prov.getLogs({ address: f, topics: [ptopic], fromBlock: pfrom, toBlock: head }).catch(() => null))))
+          .reduce((acc, r) => (r == null || acc == null ? null : acc.concat(r)), []);
         if (plogs == null) bad('getLogs failed', 'retry with --blocks 500');
         else if (plogs.length) {
           ok(`${plogs.length} Pons launch(es)`, `blocks ${pfrom}–${head}`);
@@ -239,19 +253,81 @@ async function main() {
         } else {
           // Zero decoded: let the chain say whether that is a quiet pad or a
           // stale signature — the same computed diagnosis the running bot makes.
-          const praw = await prov.getLogs({ address: pons.factory, fromBlock: pfrom, toBlock: head }).catch(() => []);
+          const praw = (await Promise.all(liveF.map((f) => prov.getLogs({ address: f, fromBlock: pfrom, toBlock: head }).catch(() => [])))).flat();
           if (praw.length) {
             const pt = [...new Set(praw.map((l) => (l.topics && l.topics[0]) || '(none)'))];
             warn('factory is LIVE but our event never matched', `${praw.length} log(s), ${pt.length} type(s) in this window`);
             for (const t of pt.slice(0, 6)) note(`   ${t}`);
             note('→ Override PONS_EVENT in tradebot/.env with the real signature (the topic0 list above is the lead).');
           } else {
-            note(`no Pons activity in this window — the pad may simply be quiet; rerun with --blocks ${SPAN * 10} to widen the look.`);
+            note(`no Pons activity in this window — the pad may simply be quiet, or these are not the factories it launches from.`);
+            note(`→ SETTLE IT: rerun with --token <a token you launched on Pons> and this script will name the contract that announced it.`);
           }
         }
       }
     }
   } catch (e) { warn('Pons probe failed', (e && e.message) || String(e)); }
+
+  // ── 4t. WHO launched THIS token?  (--token) ───────────────────────────────
+  /*
+   * The one probe that settles a launchpad integration with no guessing left.
+   *
+   * 4p can only report what the CONFIGURED factory emitted, so a factory that is
+   * live-but-wrong looks identical to a quiet pad: "0 events" either way. This
+   * asks the opposite question — here is a token that was definitely launched;
+   * WHICH contract announced it, and with WHAT event? The chain knows, the
+   * operator has the address in front of them, and the answer is the two .env
+   * lines the Pons scan needs.
+   *
+   * It scans for any log whose topics or data CONTAIN the token address, which
+   * catches it whether the launchpad indexes it (a topic) or packs it into the
+   * data — a filter on topics alone would miss half the ABIs in the wild.
+   */
+  if (TOKEN && /^0x[a-fA-F0-9]{40}$/.test(TOKEN)) {
+    console.log(`\n4t. Who announced ${TOKEN}?  (--token, last ${SPAN} blocks)`);
+    const needle = TOKEN.slice(2).toLowerCase();
+    const hits = new Map();   // `${address}|${topic0}` → { n, blocks:[] }
+    const STEP = 200;
+    let scanned = 0, refused = 0;
+    for (let to = head; to > head - SPAN && refused < 5; to -= STEP) {
+      const from = Math.max(0, to - STEP + 1);
+      try {
+        for (const lg of await prov.getLogs({ fromBlock: from, toBlock: to })) {
+          const hay = ((lg.topics || []).join('') + (lg.data || '')).toLowerCase();
+          if (!hay.includes(needle)) continue;
+          const k = `${String(lg.address).toLowerCase()}|${(lg.topics && lg.topics[0]) || '(none)'}`;
+          const cur = hits.get(k) || { n: 0, blocks: [] };
+          cur.n++; if (cur.blocks.length < 3) cur.blocks.push(lg.blockNumber);
+          hits.set(k, cur);
+        }
+        scanned += to - from + 1;
+      } catch (_) { refused++; }
+    }
+    if (!hits.size) {
+      warn(`nothing in ${scanned} blocks mentions this token`, 'it launched longer ago than the window — rerun with --blocks 50000');
+    } else {
+      ok(`${hits.size} contract/event pair(s) mention it`, `across ${scanned} blocks`);
+      const rows = [...hits.entries()].sort((a, b) => b[1].n - a[1].n);
+      for (const [k, v] of rows.slice(0, 10)) {
+        const [addr, topic] = k.split('|');
+        const mine = addr === String(chain.factory).toLowerCase() ? '   ← the configured pools.trade factory'
+          : (_ponsCfgSafe().factories || []).some((f) => f.toLowerCase() === addr) ? '   ← a configured PONS_FACTORY' : '';
+        note(`${addr}${mine}`);
+        note(`   topic0 ${topic}  ×${v.n}  (block ${v.blocks.join(', ')})`);
+      }
+      // The CREATION event is the earliest one naming the token, and its emitter
+      // is the launchpad. Said plainly, because the whole point is that the
+      // operator should not have to interpret a table.
+      const earliest = rows.reduce((a, b) => (Math.min(...b[1].blocks) < Math.min(...a[1].blocks) ? b : a));
+      const [eAddr, eTopic] = earliest[0].split('|');
+      note('');
+      note(`→ Earliest mention: ${eAddr} (topic0 ${eTopic}).`);
+      note('  If that is not a PONS_FACTORY above, it is the launchpad this bot should watch:');
+      note(`     PONS_FACTORY=${eAddr}`);
+      note('  and PONS_EVENT must be the signature whose keccak matches that topic0.');
+      note('  Read the decoded event name on the explorer, then set both in tradebot/.env.');
+    }
+  }
 
   // ── 4b. find the launchpad without needing a tx hash ──────────────────────
   // `--tx` settles it, but it asks the operator to go and find a launch

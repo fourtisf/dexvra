@@ -1418,6 +1418,40 @@ cd tradebot && node --test snipePanel.test.js padSnipe.test.js   # 92 tests, no 
 either deployment moves, and `LAUNCHPAD_PONS_API` pins the host if
 `ponsfamily.com` is not where its API answers from.
 
+#### "masih sama ajaa" — and the preflight was reporting the wrong-factory state as a quiet one
+
+The next run: 4p green (`factory has code · 24353 bytes`), **`no Pons activity
+in this window`** — and a token the operator had launched on Pons forty minutes
+earlier, well inside the 5000-block window. Those two facts cannot both be true
+of a correct factory address. **A factory that is live-but-WRONG reports zero
+events, which is byte-identical to a quiet pad**, and that ambiguity is the
+whole reason a researched-but-unverified integration can read green while every
+real launch goes by unseen.
+
+- **`--token <ca>` (section 4t) settles it from the operator's own data.** It
+  scans recent blocks for any log MENTIONING that token and prints which
+  contract announced it, with the topic0 — then prints the `PONS_FACTORY=` line
+  to paste. The launchpad cannot hide from the token it launched.
+- ⚠️ **Topics AND data.** A launchpad that packs the token into the data rather
+  than indexing it is invisible to a topic-only filter, and that is half the
+  ABIs in the wild.
+- **4p probes EVERY configured factory** now, not just the first, and a dead
+  legacy address prints as an ordinary note instead of failing the section —
+  a retired deployment is expected to have no code and must not condemn the
+  live one.
+- **The "quiet pad" note stopped guessing.** It used to advise a wider window;
+  it now names the probe that answers the question instead, because "rerun with
+  more blocks" is the wrong advice for the state it usually means.
+
+⚠️ **And the token card was RIGHT all along.** *"This token's liquidity is on
+Pons v2, which Dexvra can't route through yet"* is not a bug: Pons v2 tokens
+trade on a bonding curve until the threshold, and only then does liquidity move
+into a Uniswap v4 pool. `tokenSnapshot` already tries `v4.price()` first —
+`v4.js` reads whole PoolKeys off Initialize logs, hooks included, so a
+graduated Pons pool routes today. What does not exist is a route to the CURVE
+itself, and that is the honest boundary: **an armed dev snipe on a Pons launch
+buys at graduation, and says so at the moment it cannot buy sooner.**
+
 ### "angkanya bisa di ketik biar cpt" — twenty-two taps for one number
 
 The trigger ceiling steps in ±$100,000, so moving it from $1M to $3.2M is

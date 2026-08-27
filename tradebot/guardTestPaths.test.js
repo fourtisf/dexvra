@@ -59,3 +59,26 @@ test('a test that needs a newer Node skips, it does not fail', () => {
   assert.match(src, /MOCK_TIMERS_OK/, 'the version guard is gone');
   assert.match(src, /skip: SKIP/, '…and the tests no longer route through it');
 });
+
+// ── the probe that settles a launchpad integration ──────────────────────────
+//
+// 4p can only report what the CONFIGURED factory emitted, so a factory that is
+// live-but-WRONG reports "0 events" — identical to a quiet pad. That ambiguity
+// is what left a Pons integration reading green while a real launch went by
+// unseen. 4t asks the chain the opposite question, from a token the operator
+// already has in front of them.
+test('preflight 4t finds the contract that announced a given token', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'scripts', 'robinhood-preflight.js'), 'utf8');
+  assert.match(src, /4t\. Who announced/, 'the token-targeted launchpad probe is gone');
+  // TOPICS **AND** DATA: a launchpad that packs the token into the data rather
+  // than indexing it would be invisible to a topic-only filter, which is half
+  // the ABIs in the wild.
+  assert.match(src, /\(lg\.topics \|\| \[\]\)\.join\(''\) \+ \(lg\.data \|\| ''\)/, 'the scan reads topics only again');
+  // It must PRINT the .env line, not leave the operator to assemble it: a
+  // diagnosis with no hands attached is a bug report the code files against
+  // its owner.
+  assert.match(src, /PONS_FACTORY=\$\{eAddr\}/, 'the probe stops short of the fix it found');
+  // …and 4p must probe EVERY configured factory, or the legacy deployment is
+  // exactly the blind spot this whole round was about.
+  assert.match(src, /pons\.factories && pons\.factories\.length \? pons\.factories : \[pons\.factory\]/, '4p is back to probing one factory');
+});
