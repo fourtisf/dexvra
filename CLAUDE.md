@@ -2504,6 +2504,37 @@ now also publishes — on the chain with the most listings on the box.
   (candles) source, so the sentence stays true; it just stops being the only
   path to a priced board.
 
+#### ⚠️ …and the flip made it WORSE for one deploy: 62/66 → 0/66
+
+The next `market:check` on the box read `robinhood 0/66 priced` on build
+`87dca08`. The deploy was correct; the change was not. **"No consumer
+hardcoded robinhood is special" — stated in that very commit message — was
+false in exactly one place**, and it is the place that decides this chain's
+market:
+
+`fetchChainMarket` branches for the pools.trade chain to ADD the launchpad,
+and it did that by replacing the indexed path wholesale: `fetchListedMarket`
+(GT alone) + the launchpad, never `fetchIndexedMarket` (GT **then DexScreener
+for the leftovers**). So robinhood was the one chain that never had the
+gap-fill — invisible while DS did not carry the chain, and the moment the
+registry said it did, the slug took away robinhood's GT-ONLY PRIORITY (it
+"has a fallback" now) over a code path that still could not reach one. Both
+halves were individually defensible; together they were strictly worse than
+either.
+
+- **A registry saying a source exists, over a code path that cannot reach it,
+  is worse than not having the source.** The priority scheduler and the
+  coverage map now agree because they read the same fact and the same
+  function does the asking.
+- ⚠️ **The regression shipped because no test drove that branch** — the
+  indexed-merge tests all target `fetchIndexedMarket`, which robinhood never
+  called. The guard is a source scan (the branch lives behind an `"@/"`-alias
+  import this runner cannot resolve) and it is MUTATION-TESTED: putting
+  `fetchListedMarket` back fails it.
+- **`market:check` is what caught it, twice, in a minute** — the board's own
+  `0/66` next to `162/192`. That is the check earning its keep: the first run
+  named the budget race, this one named a regression I introduced.
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both

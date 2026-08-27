@@ -2,6 +2,8 @@
 // whether a chain has a market at all.
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fetchIndexedMarket } from "./indexedMarket.ts";
 import type { LiveMarket } from "./geckoterminal.ts";
 
@@ -75,4 +77,25 @@ test("GT down and DS answering EMPTY still throws — down and empty are differe
     }),
     /GeckoTerminal 429/,
   );
+});
+
+// ── the pools.trade chain is not exempt from the second source ──────────────
+//
+// Robinhood went 62/66 priced → 0/66 on the commit that gave it a DexScreener
+// slug. Giving it the slug took away its GT-ONLY PRIORITY (it "has a fallback"
+// now) while `fetchChainMarket`'s pools.trade branch still called GT directly
+// and never asked DexScreener — a registry saying a source exists over a code
+// path that cannot reach it. A source scan, because driving the real branch
+// needs the "@/"-aliased module this runner cannot resolve.
+
+test("the pools.trade branch goes through the indexed PAIR, not GT alone", () => {
+  const src = readFileSync(join(import.meta.dirname, "index.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const i = src.indexOf("if (chain !== POOLS_TRADE_CHAIN)");
+  assert.ok(i > 0, "fetchChainMarket moved — this test is asserting nothing");
+  const branch = src.slice(i, i + 900);
+  assert.match(branch, /fetchIndexedMarket\(chain, addrs\)[\s\S]{0,80}fetchLaunchMarket\(chain, addrs\)/,
+    "the launchpad chain lost its GT→DexScreener gap-fill again");
+  assert.ok(!/fetchListedMarket\(chain, addrs\)/.test(branch),
+    "the branch calls GT directly again — DexScreener can never fill its leftovers");
 });

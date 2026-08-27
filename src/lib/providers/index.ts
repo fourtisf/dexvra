@@ -21,7 +21,7 @@ import type {
 } from "@/lib/types";
 import { fmtCap } from "@/lib/format";
 import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
-import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
+import { type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 import { fetchIndexedMarket } from "./indexedMarket";
 import { partitionByFallback } from "./dexscreener";
@@ -87,18 +87,28 @@ function expireTrending(rows: ListingRow[]): ListingRow[] {
 async function fetchChainMarket(chain: string, addrs: string[]): Promise<Map<string, LiveMarket>> {
   if (chain !== POOLS_TRADE_CHAIN) return fetchIndexedMarket(chain, addrs);
 
-  const [gt, launch] = await Promise.allSettled([
-    fetchListedMarket(chain, addrs),
+  // ⚠️ THE INDEXED PAIR IS `fetchIndexedMarket`, NOT `fetchListedMarket`.
+  //
+  // This branch existed to ADD the launchpad to the pools.trade chain, and it
+  // did that by replacing the indexed path wholesale — so robinhood was the one
+  // chain that never got the GT→DexScreener gap-fill, invisibly, because DS did
+  // not carry the chain when this was written. The moment it did, giving
+  // robinhood a `dexscreener` slug took its GT-only PRIORITY away (it now
+  // "has a fallback") while this branch still never asked DexScreener for it:
+  // 62/66 priced went to 0/66. A registry saying a source exists and a code
+  // path that cannot reach it is worse than either alone.
+  const [indexed, launch] = await Promise.allSettled([
+    fetchIndexedMarket(chain, addrs),
     fetchLaunchMarket(chain, addrs),
   ]);
-  const primary = gt.status === "fulfilled" ? gt.value : null;
+  const primary = indexed.status === "fulfilled" ? indexed.value : null;
   const secondary = launch.status === "fulfilled" ? launch.value : null;
   // Both providers down for this chain is the one case the caller must see as a
   // failure — reporting an empty map would read as "listed, but no activity".
-  if (!primary && !secondary) throw gt.status === "rejected" ? gt.reason : new Error(`no market data (${chain})`);
+  if (!primary && !secondary) throw indexed.status === "rejected" ? indexed.reason : new Error(`no market data (${chain})`);
 
   const out = new Map(secondary ?? []);
-  for (const [addr, m] of primary ?? []) out.set(addr, m); // GT wins on overlap
+  for (const [addr, m] of primary ?? []) out.set(addr, m); // an indexed pool wins over the curve
   return out;
 }
 
