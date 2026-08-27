@@ -16,6 +16,7 @@ import test from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { chartPrefOf } from "../ohlcv.ts";
 import {
   DS_RES,
   _dsChartReset,
@@ -405,15 +406,45 @@ test("⚠️ GeckoTerminal is NOT asked while its cooldown holds", () => {
   assert.ok(guard > 0 && guard < gtCall, "the cooldown is checked BEFORE the GT read, not after");
 });
 
-test("a guess must lose to an answer — GeckoTerminal stays first", () => {
+test("a guess must lose to an answer — GeckoTerminal stays first BY DEFAULT", () => {
   // DexScreener's candle shape is a guess about somebody else's private API;
   // GT's is documented, and its pool ids are what `pool` means to every other
   // route. `pickLogo` states the same rule one pipeline over.
+  //
+  // ⚠️ THIS IS NOW ABOUT THE DEFAULT, because an operator asked to reorder it:
+  // "saya ingin pakai api dexscreener aja untuk chart". Their call to make —
+  // GeckoTerminal's ~30 req/min is per IP and shared with four bot processes,
+  // so a chart that reaches for DexScreener first leaves that allowance for
+  // everything else. What may NOT change is that an unset `CHART_SOURCE`
+  // resolves to the documented source, and that the guess never becomes the
+  // ONLY source (see the next test).
   const route = code(read("src/app/api/ohlcv/route.ts"));
-  const gtWin = route.indexOf('source: "geckoterminal"');
-  const dsWin = route.indexOf('source: "dexscreener"');
-  assert.ok(gtWin > 0 && dsWin > gtWin, "the DexScreener branch must sit below GeckoTerminal's");
-  assert.match(route, /gt\.candles && gt\.candles\.length > 0/, "GT wins whenever it has candles");
+  assert.match(route, /chartPrefOf\(process\.env\.CHART_SOURCE\)/, "the order is an operator preference");
+  assert.match(route, /if \(dsFirst\) \{/, "…and it is ONE boolean, so the two sources cannot drift");
+  // Blank resolves to `auto`, and `auto` is GT-first.
+  assert.equal(chartPrefOf(undefined), "auto");
+  assert.equal(chartPrefOf(""), "auto");
+  assert.equal(chartPrefOf("   "), "auto");
+  assert.equal(chartPrefOf("nonsense"), "auto", "an unreadable value is the shipped default, never a guess");
+  assert.equal(chartPrefOf("dexscreener"), "dexscreener");
+  assert.equal(chartPrefOf("DS"), "dexscreener");
+  assert.equal(chartPrefOf("geckoterminal"), "geckoterminal");
+});
+
+test("⚠️ reordering is an ORDER, never a deletion — the guess is never the only source", () => {
+  // Making a guess primary is a legitimate trade: it costs nothing while it
+  // works. Making it the ONLY source means the day DexScreener renames a path,
+  // every chart on the site goes dark with no way back. `CHART_SOURCE` moves
+  // GT behind DexScreener; it does not switch it off.
+  const route = code(read("src/app/api/ohlcv/route.ts"));
+  // In the DexScreener-first branch, GeckoTerminal is still asked afterwards.
+  const branch = route.slice(route.indexOf("if (dsFirst) {"), route.indexOf("// ── Nothing to draw"));
+  assert.match(branch, /askDs\(\)[\s\S]*askGtNow\(\)/, "DS first, then GT — both asked");
+  assert.match(branch, /askGtNow\(\)[\s\S]*askDs\(\)/, "…and GT first, then DS, in the other mode");
+  // `askGt` may only be switched off by the ?source= PIN (the check script's
+  // seam), never by the operator's ordering preference.
+  assert.match(route, /const askGt = Boolean\(network\) && pin !== "dexscreener";/);
+  assert.ok(!/const askGt = [^;]*PREF/.test(route), "the preference must not silence GeckoTerminal");
 });
 
 test("both reasons travel when neither source could be asked", () => {

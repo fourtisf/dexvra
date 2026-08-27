@@ -3,8 +3,8 @@ import { cached } from "@/lib/cache";
 import { gtCooldownLeftMs, gtGet, gtInCooldown } from "@/lib/providers/gt";
 import { networkOf, readWhy, safeAddress, topPoolAddress } from "@/lib/providers/gtPool";
 import { cachedPool } from "@/lib/providers/poolCache";
-import { dsCandles, dsChartCovers, dsPairUrl } from "@/lib/providers/dsChart";
-import { TF, normalizeCandles, tfOf, type Candle, type Timeframe } from "@/lib/ohlcv";
+import { dsCandles, dsChartCovers, dsPairUrl, type DsCandles } from "@/lib/providers/dsChart";
+import { TF, chartPrefOf, normalizeCandles, tfOf, type ChartPref, type Candle, type Timeframe } from "@/lib/ohlcv";
 
 export const dynamic = "force-dynamic";
 
@@ -190,10 +190,20 @@ export type SourcePin = "geckoterminal" | "dexscreener" | null;
 const pinOf = (raw: string | null): SourcePin =>
   raw === "geckoterminal" || raw === "dexscreener" ? raw : null;
 
+// Which source goes first — see `chartPrefOf` in lib/ohlcv.ts for why this is
+// an ORDER and never a deletion.
+const PREF: ChartPref = chartPrefOf(process.env.CHART_SOURCE);
+
 async function load(chain: string, address: string, tf: Timeframe, hint: string | null, pin: SourcePin = null): Promise<OhlcvResponse> {
   const network = networkOf(chain);
-  const dsAvailable = dsChartCovers(chain) && pin !== "geckoterminal";
+  // A `?source=` pin is the check script's seam and outranks the operator's
+  // standing preference; `CHART_SOURCE=geckoterminal` drops the guess entirely.
+  const dsAvailable = dsChartCovers(chain) && pin !== "geckoterminal" && !(pin === null && PREF === "geckoterminal");
   if (!network && !dsAvailable) return fail(tf, `We don't have a chart source for ${chain} yet.`);
+  // DexScreener goes first when the operator has asked for it — or when the
+  // caller pinned it. Everything below reads this one boolean, so the two
+  // sources cannot drift into two ideas of who is primary.
+  const dsFirst = pin === "dexscreener" || (pin === null && PREF === "dexscreener" && dsAvailable);
 
   // ⚠️ WHILE THE GT COOLDOWN HOLDS, GECKOTERMINAL IS NOT ASKED AT ALL.
   //
@@ -208,30 +218,83 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
   // candle shape is a guess about somebody else's private API (see dsChart.ts).
   // A guess must always lose to an answer — the rule `pickLogo` states one
   // pipeline over.
+  // ⚠️ A `?source=` PIN MEANS "ONLY THAT ONE" — it is the check script's seam,
+  // and it exists so `chart:check` can measure each source separately (with GT
+  // healthy the DexScreener path never runs, and a check that only asked
+  // normally would report a green chart while saying nothing about the
+  // fallback). `CHART_SOURCE` is a different thing: an ORDER, with the other
+  // source still behind it.
   const askGt = Boolean(network) && pin !== "dexscreener";
-  const gt: GtOut =
-    askGt && !gtInCooldown()
-      ? await fromGeckoTerminal(network!, address, tf, hint)
-      : {
-          candles: null,
-          pool: null,
-          // Not asked at all — never an answer about the token.
-          answered: false,
-          why: !askGt
-            ? network
-              ? "GeckoTerminal was not asked (source=dexscreener)"
-              : `GeckoTerminal has no network id for ${chain}`
-            : `GeckoTerminal is rate limited — cooling down for ${Math.ceil(gtCooldownLeftMs() / 1000)}s`,
-        };
 
-  if (gt.candles && gt.candles.length > 0)
-    return { ok: true, build: BUILD, network, pool: gt.pool, tf, candles: gt.candles, why: null, source: "geckoterminal", sourceUrl: gt.pool && network ? `https://www.geckoterminal.com/${network}/pools/${gt.pool}` : null };
+  let gt: GtOut = {
+    candles: null,
+    pool: null,
+    answered: false, // not asked at all — never an answer about the token
+    why: !askGt
+      ? network
+        ? "GeckoTerminal was not asked (source=dexscreener)"
+        : `GeckoTerminal has no network id for ${chain}`
+      : `GeckoTerminal is rate limited — cooling down for ${Math.ceil(gtCooldownLeftMs() / 1000)}s`,
+  };
+  let ds: DsCandles | null = null;
 
-  // GT gave us nothing to draw. Everything below is the second source, and it
-  // is only reached in that case — a healthy chart never pays for it.
-  const ds = dsAvailable ? await dsCandles(chain, address, tf) : null;
-  if (ds && ds.ok && ds.candles.length > 0)
-    return { ok: true, build: BUILD, network, pool: gt.pool, tf, candles: ds.candles, why: null, source: "dexscreener", sourceUrl: ds.pair ? dsPairUrl(ds.pair) : null };
+  // ⚠️ ASSIGNED IN THE MAIN FLOW, not inside a thunk. A `let` written only from
+  // a closure keeps its initializer's narrowing, and TypeScript then reads `ds`
+  // as `never` at every use below — which compiles to a runtime that works and
+  // a type-check that does not, i.e. the guard rail off.
+  const askDs = async (): Promise<DsCandles | null> =>
+    dsAvailable ? await dsCandles(chain, address, tf) : null;
+  const askGtNow = async (): Promise<GtOut | null> =>
+    askGt && !gtInCooldown() ? await fromGeckoTerminal(network!, address, tf, hint) : null;
+
+  // ⚠️ A PLAIN BOOLEAN, NOT A TYPE PREDICATE. `x is DsCandles` also narrows the
+  // FALSE branch — to `null` — so every use of `ds` after these blocks read as
+  // `never`, and the "which kind of nothing" logic below stopped type-checking
+  // while still compiling. A guard rail that is off is worse than none.
+  const drewDs = (x: DsCandles | null): boolean => Boolean(x && x.ok && x.candles.length > 0);
+  const drewGt = (x: GtOut): boolean => Boolean(x.candles && x.candles.length > 0);
+
+  // Annotated rather than `as const`, so the response literals keep the plain
+  // `ok: true,` spelling the build-stamp guard counts — a builder the guard
+  // cannot see is exactly the unstamped response it exists to catch.
+  const gtOut = (): OhlcvResponse => ({
+    ok: true,
+    build: BUILD,
+    network,
+    pool: gt.pool,
+    tf,
+    candles: gt.candles!,
+    why: null,
+    source: "geckoterminal",
+    sourceUrl: gt.pool && network ? `https://www.geckoterminal.com/${network}/pools/${gt.pool}` : null,
+  });
+  const dsOut = (x: DsCandles): OhlcvResponse => ({
+    ok: true,
+    build: BUILD,
+    network,
+    pool: gt.pool,
+    tf,
+    candles: x.candles,
+    why: null,
+    source: "dexscreener",
+    sourceUrl: x.pair ? dsPairUrl(x.pair) : null,
+  });
+
+  // Each source is asked at most ONCE, and the second only when the first came
+  // back with nothing to draw — a healthy chart never pays for the other one.
+  if (dsFirst) {
+    ds = await askDs();
+    if (drewDs(ds)) return dsOut(ds!);
+    const g = await askGtNow();
+    if (g) gt = g;
+    if (drewGt(gt)) return gtOut();
+  } else {
+    const g = await askGtNow();
+    if (g) gt = g;
+    if (drewGt(gt)) return gtOut();
+    ds = await askDs();
+    if (drewDs(ds)) return dsOut(ds!);
+  }
 
   // ── Nothing to draw, so say WHICH kind of nothing ────────────────────────
   //

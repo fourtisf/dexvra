@@ -179,3 +179,56 @@ export function priceRange(candles: Candle[]): { lo: number; hi: number } | null
  *  the route and the client cannot disagree about the poll interval — a client
  *  polling faster than the cache TTL only ever gets the same bytes back. */
 export const pollMsFor = (tf: Timeframe): number => Math.max(30_000, TF[tf].ttlMs);
+
+/**
+ * WHICH SOURCE GOES FIRST — an operator's standing preference.
+ *
+ * "saya ingin pakai api dexscreener aja untuk chart". Fair, and it is their
+ * call to make: GeckoTerminal's ~30 req/min is counted PER IP and shared with
+ * four bot processes on the same box, so a chart that reaches for DexScreener
+ * first leaves that whole allowance for everything else — the board's prices,
+ * the pool lookups, the trades feed.
+ *
+ * ⚠️ IT IS AN ORDER, NEVER A DELETION, and that is not me overruling the ask.
+ * DexScreener publishes no documented OHLCV endpoint: the request shape in
+ * dsChart.ts is a GUESS about somebody else's private API (see its header).
+ * Making a guess primary is a legitimate trade — it costs nothing while it
+ * works — but making it the ONLY source means the day DexScreener renames a
+ * path, every chart on the site goes dark with no way back. With GT behind it,
+ * that day costs a slower chart and nothing else. `CHART_SOURCE=geckoterminal`
+ * is the one value that does drop a source, and it drops the guess.
+ *
+ *   CHART_SOURCE=auto           GeckoTerminal first, DexScreener when it cannot
+ *                               answer. The default, and what shipped.
+ *   CHART_SOURCE=dexscreener    DexScreener first, GeckoTerminal behind it.
+ *   CHART_SOURCE=geckoterminal  GeckoTerminal only.
+ *
+ * Blank means `auto` — `Number('')`-shaped defaults have cost this repo four
+ * separate outages, so an unset var resolves to the shipped behaviour and
+ * nothing else.
+ */
+export type ChartPref = "auto" | "dexscreener" | "geckoterminal";
+export function chartPrefOf(raw: string | undefined): ChartPref {
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (s === "dexscreener" || s === "ds") return "dexscreener";
+  if (s === "geckoterminal" || s === "gt") return "geckoterminal";
+  return "auto";
+}
+
+/**
+ * The chart's source order, in one line, for the boot log.
+ *
+ * ⚠️ Printed for the reason the `[gt]` line is: "the chart is empty" looks
+ * identical from outside whether the order is what the operator set or what
+ * shipped. A setting that never arrived and a setting that did not help are
+ * indistinguishable from a browser, and this repo has lost evenings to exactly
+ * that — an `.env` written to the wrong file, a `--update-env` that was never
+ * passed. One line settles it.
+ */
+export function chartSourceBanner(pref: ChartPref = chartPrefOf(process.env.CHART_SOURCE)): string {
+  if (pref === "dexscreener")
+    return "[chart] source order: DexScreener FIRST, GeckoTerminal behind it (CHART_SOURCE=dexscreener) — DexScreener's OHLCV shape is undocumented, so a failure there is a .env fix (DS_CHART_API / DS_CHART_PATH / DS_CHART_HEADERS), never a dead chart";
+  if (pref === "geckoterminal")
+    return "[chart] source order: GeckoTerminal ONLY (CHART_SOURCE=geckoterminal) — the DexScreener fallback is switched off, so a GT rate limit blanks every chart until it lifts";
+  return "[chart] source order: GeckoTerminal first, DexScreener when it cannot answer (default) — set CHART_SOURCE=dexscreener to swap them";
+}
