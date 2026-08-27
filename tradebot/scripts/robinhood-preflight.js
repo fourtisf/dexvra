@@ -203,6 +203,56 @@ async function main() {
     } catch (_) { /* best-effort */ }
   }
 
+  // ── 4p. Pons — the SECOND launchpad this chain's snipe watches ────────────
+  // Discovery for Pons is on-chain (watchers._ponsScan): its own factory, its
+  // own TokenLaunched signature, both guessed from public docs and both
+  // env-overridable. This is the one command that verifies the guess against
+  // the live chain — the sandbox the integration was written in could reach
+  // neither the RPC nor the explorer, so until this prints green the Pons scan
+  // is `verified: false` in spirit even though it ships on.
+  console.log('\n4p. Pons launchpad (on-chain scan)');
+  try {
+    const pons = require('../watchers')._test._ponsCfg();
+    if (!pons.on) {
+      note('LAUNCHPAD_PONS=0 — the Pons scan is OFF, nothing to probe.');
+    } else {
+      const piface = new ethers.Interface([pons.eventSig]);
+      const pev = piface.getEvent(pons.name);
+      const ptopic = pev.topicHash;
+      note(`factory ${pons.factory}`);
+      note(`event   ${pev.format('full')}`);
+      const pcode = await prov.getCode(pons.factory).catch(() => null);
+      if (pcode == null) bad('getCode failed', 'the node did not answer — rerun');
+      else if (pcode === '0x') bad('factory has NO CODE', 'set PONS_FACTORY in tradebot/.env to the real one');
+      else {
+        ok('factory has code', `${(pcode.length - 2) / 2} bytes`);
+        const pfrom = Math.max(0, head - SPAN);
+        const plogs = await prov.getLogs({ address: pons.factory, topics: [ptopic], fromBlock: pfrom, toBlock: head }).catch(() => null);
+        if (plogs == null) bad('getLogs failed', 'retry with --blocks 500');
+        else if (plogs.length) {
+          ok(`${plogs.length} Pons launch(es)`, `blocks ${pfrom}–${head}`);
+          for (const l of plogs.slice(-3)) {
+            try { const d = piface.parseLog(l); note(`latest: ${d.args.token} by ${d.args.deployer} (block ${l.blockNumber})`); }
+            catch (_) { note(`log at block ${l.blockNumber} matched topic0 but did not fully decode — PONS_EVENT is close but not exact`); }
+          }
+          note('→ The Pons snipe trigger is alive.');
+        } else {
+          // Zero decoded: let the chain say whether that is a quiet pad or a
+          // stale signature — the same computed diagnosis the running bot makes.
+          const praw = await prov.getLogs({ address: pons.factory, fromBlock: pfrom, toBlock: head }).catch(() => []);
+          if (praw.length) {
+            const pt = [...new Set(praw.map((l) => (l.topics && l.topics[0]) || '(none)'))];
+            warn('factory is LIVE but our event never matched', `${praw.length} log(s), ${pt.length} type(s) in this window`);
+            for (const t of pt.slice(0, 6)) note(`   ${t}`);
+            note('→ Override PONS_EVENT in tradebot/.env with the real signature (the topic0 list above is the lead).');
+          } else {
+            note('no Pons activity in this window — the pad may simply be quiet; rerun with --blocks 5000 to widen the look.');
+          }
+        }
+      }
+    }
+  } catch (e) { warn('Pons probe failed', (e && e.message) || String(e)); }
+
   // ── 4b. find the launchpad without needing a tx hash ──────────────────────
   // `--tx` settles it, but it asks the operator to go and find a launch
   // transaction by hand first. This asks the chain instead: scan recent blocks

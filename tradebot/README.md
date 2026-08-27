@@ -43,7 +43,12 @@ by base58 address). Solana is **off by default** — enable it by adding `solana
   scans cannot see is still sniped, and a launch seen **before** its market opens is
   parked in a retry ring (`LAUNCH_RETRY_MS`, 3 min) and bought the moment a route
   exists rather than dropped — which is also what makes the **dev-wallet snipe**
-  actually fill: it sees the dev's mint before the dev opens the pool.
+  actually fill: it sees the dev's mint before the dev opens the pool. **Pons**
+  (pons.fun, the second Robinhood Chain launchpad) is discovered **on-chain** —
+  its factory's `TokenLaunched` log, `deployer` = the dev wallet — because its
+  HTTP API is unreachable from datacenter IPs; `PONS_FACTORY` / `PONS_EVENT`
+  override the guesses, `LAUNCHPAD_PONS=0` turns it off, and
+  `npm run preflight:robinhood` (section 4p) verifies it against the live chain.
 - **Limit / TP / SL + Price alerts** — set a USD target; the bot polls the price
   and executes (orders) or just pings you (alerts, notify-only) when crossed. Works on
   every chain, Solana included (DexScreener pricing).

@@ -115,7 +115,7 @@ function _snipeUnmark(chainKey, token) {
 // from a quiet market — and eth_getLogs returns an EMPTY ARRAY (not an error) for a
 // topic nothing emits. So a snipe pointed at the wrong launchpad ran forever, reported
 // 🟢 on /health, and never fired. These counters are what make that state visible.
-const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt: null, lastScanAt: null };
+const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt: null, lastScanAt: null, ponsSeen: 0, ponsErr: null };
 // The Solana twin. `lastFeedOkAt` and `lastLaunchAt` are BOTH needed and mean
 // different things: the first says pump.fun answered, the second says it had
 // something. With only the loop's own heartbeat, a feed that had been dead for
@@ -163,7 +163,10 @@ async function snipeCycle() {
   // One line per scan, only while somebody is armed (the early return above means an
   // idle bot logs nothing). Without it, "is the snipe working?" had no answer short of
   // waiting for a fill that may never come.
-  console.log(`[snipe] ${SNIPE_CHAIN} blocks ${from}-${head} · launches ${evs.length} · armed ${armed.length} · devFollowers ${devFollowers.length} · seen-total ${_snipeStats.launchesSeen}`);
+  console.log(`[snipe] ${SNIPE_CHAIN} blocks ${from}-${head} · launches ${evs.length} · armed ${armed.length} · devFollowers ${devFollowers.length} · seen-total ${_snipeStats.launchesSeen}${_snipeStats.ponsSeen ? ` (pons ${_snipeStats.ponsSeen})` : ''}`);
+  // The SECOND Robinhood launchpad, on its own cursor: a Pons outage or a
+  // stale Pons ABI may cost Pons launches, never the primary scan's.
+  await _ponsScan(prov, head, armed, devFollowers).catch((e) => { _snipeStats.ponsErr = 'Pons scan: ' + ((e && e.message) || String(e)).slice(0, 160); });
   for (const e of evs) {
     const ca = e.args && e.args.token;
     if (!ca) continue;
@@ -374,6 +377,129 @@ async function _followerBuy(u, t, token, chainKey, out) {
     if (now - (_snipeFailAt.get(fk) || 0) > 300000) { _snipeFailAt.set(fk, now); _notify(u.chatId, `⚠️ Dev-snipe of ${short(token)} failed${wids.length > 1 ? ` on ${fails.length || broadcasts.length} wallet(s)` : ''}: ${esc((e0 && e0.message) || String(e0))} (muted 5 min)`, undefined, 'copy'); }
   }
   return held;
+}
+
+// ------------------------------------------------------------------ Pons — the SECOND launchpad on Robinhood, read from the chain itself
+/*
+ * pons.fun launches straight into a Uniswap v3 (V1) / v4-hook (V2) pool on
+ * Robinhood Chain, announced by ITS OWN factory's `TokenLaunched` event — a
+ * different contract and a different signature from the `TokenCreated` the
+ * primary scan filters. eth_getLogs answers an unknown topic with an empty
+ * array, so before this scan existed a Pons launch did not look like a missing
+ * feature: it looked like a quiet chain.
+ *
+ * ON-CHAIN ON PURPOSE, not through the HTTP pad. pons.fun's API answers
+ * neither from the production box (timeout) nor from anywhere this was built
+ * (egress-blocked), and the chain is the one source the bot already reads for
+ * every trade. The registry's HTTP pad for Pons stays — it can only ever add
+ * display metadata — but DISCOVERY does not depend on it. The event's
+ * `deployer` is the actual dev wallet, so the dev-wallet snipe matches here
+ * with no extra read at all (better than the pool-opener inference the
+ * PairCreated scan needs).
+ *
+ * EVERYTHING HERE IS A GUESS AN OPERATOR CAN CORRECT WITHOUT A DEPLOY, the
+ * pads-table contract: the factory address and the event signature come from
+ * Pons's public integration docs, were cross-checked against the chain's own
+ * explorer, and could not be verified against a live RPC from where this was
+ * written — so both are env-overridable, and every way the guess can be wrong
+ * is DIAGNOSED rather than silent:
+ *
+ *   LAUNCHPAD_PONS=0   kills this scan AND the HTTP pad (one feature, one switch)
+ *   PONS_FACTORY=0x…   a moved factory is a .env line
+ *   PONS_EVENT=event … a rotated signature is a .env line
+ *
+ *   • factory has no CODE        → ponsErr says so (the wrong-address tell)
+ *   • factory emits logs but the
+ *     event never decodes        → ponsErr says the SIGNATURE is stale, not the host
+ *   • nothing emitted at all     → ponsSeen stays 0 in /health, like every feed
+ *
+ * Nothing from the event reaches the money path: the buy is priced, routed and
+ * gated by core.buy / canTradeNow exactly as for every other discovery source,
+ * so a hostile or wrong event can waste a look, never aim a trade.
+ */
+const PONS_FACTORY_DEFAULT = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB';
+const PONS_EVENT_DEFAULT = 'event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchConfigId, uint256 positionId, uint256 restrictionsEndBlock, uint256 initialBuyAmount)';
+const _envs = (k, d) => { const v = String(process.env[k] == null ? '' : process.env[k]).trim(); return v || d; };
+/** Read PER CALL, not at require time, so `--update-env` + restart is the whole
+ *  fix — and so the kill switch shares LAUNCHPAD_PONS with the HTTP pad: an
+ *  operator turning Pons off must not have to know it is two mechanisms. */
+function _ponsCfg() {
+  const flag = _envs('LAUNCHPAD_PONS', '').toLowerCase();
+  const on = !(flag === '0' || flag === 'false' || flag === 'off' || flag === 'no');
+  const eventSig = _envs('PONS_EVENT', PONS_EVENT_DEFAULT);
+  const name = (eventSig.match(/event\s+(\w+)/) || [])[1] || 'TokenLaunched';
+  return { on, factory: _envs('PONS_FACTORY', PONS_FACTORY_DEFAULT), eventSig, name };
+}
+let _ponsCursor = 0;
+let _ponsCode = null;            // { at, ok } — getCode re-checked hourly, so a fixed .env heals without a second thought
+let _ponsRawCheckAt = 0;         // the decode-mismatch probe is rate-limited; see below
+async function _ponsScan(prov, head, armed, devFollowers) {
+  const cfg = _ponsCfg();
+  if (!cfg.on) return;
+  const now = Date.now();
+  // A factory with no CODE is the wrong-address state, and it must be a
+  // sentence in /health rather than an eternal empty scan. Re-checked hourly:
+  // a corrected PONS_FACTORY must not stay condemned by a cached verdict.
+  // Keyed by the ADDRESS it judged: a verdict about one factory must never
+  // answer for another (an operator correcting PONS_FACTORY gets a fresh look).
+  if (!_ponsCode || _ponsCode.factory !== cfg.factory || now - _ponsCode.at > 3600000) {
+    try { _ponsCode = { at: now, factory: cfg.factory, ok: (await prov.getCode(cfg.factory)) !== '0x' }; }
+    catch (_) { _ponsCode = null; }   // an unreadable chain is not an answer
+  }
+  if (_ponsCode && !_ponsCode.ok) {
+    _snipeStats.ponsErr = `PONS_FACTORY ${cfg.factory} has no contract on this chain — set the real one in .env (npm run preflight:robinhood probes it)`;
+    return;
+  }
+  if (!_ponsCursor || head < _ponsCursor) { _ponsCursor = head; return; }   // pin near head first pass — the first look only seeds
+  const from = Math.max(_ponsCursor + 1, head - SNIPE_MAX_SPAN);
+  if (from > head) { _ponsCursor = head; return; }
+  let evs = [];
+  try {
+    const c = new ethers.Contract(cfg.factory, [cfg.eventSig], prov);
+    evs = await c.queryFilter(c.filters[cfg.name](), from, head);
+  } catch (e) {
+    // Its own failure surface, and the PRIMARY scan's cursor is untouched: a
+    // Pons outage may cost Pons launches, never pools.trade ones. The cursor
+    // stays put so the range is retried — unless the range itself is the
+    // problem, which is skipped forward like the DEX scan does.
+    _snipeStats.ponsErr = 'Pons scan: ' + ((e && e.message) || String(e)).slice(0, 160);
+    if (_isRangeError(e)) _ponsCursor = head;
+    return;
+  }
+  _ponsCursor = head;
+  _snipeStats.ponsErr = null;   // the chain ANSWERED — whatever was wrong is over (the raw check below may re-diagnose)
+  if (evs.length) {
+    _snipeStats.ponsSeen += evs.length;
+    _snipeStats.launchesSeen += evs.length;
+    _snipeStats.lastLaunchAt = now;
+  } else if (now - _ponsRawCheckAt > 600000) {
+    // Decoded nothing. "Quiet launchpad" and "stale event signature" are
+    // different facts, and only the chain can separate them: if the factory
+    // EMITTED logs in this very range that our filter did not match, the
+    // signature is the problem — a .env line, and this sentence names it.
+    // Rate-limited to one raw look per 10 min; a quiet pad costs nothing.
+    _ponsRawCheckAt = now;
+    try {
+      const raw = await prov.getLogs({ address: cfg.factory, fromBlock: from, toBlock: head });
+      if (raw.length) _snipeStats.ponsErr = `Pons factory emitted ${raw.length} log(s) our PONS_EVENT did not match — the signature is stale, override PONS_EVENT in .env`;
+    } catch (_) {}
+  }
+  for (const e of evs) {
+    const a = e.args || {};
+    const token = a.token;
+    if (!token) continue;
+    const firstSee = _snipeMark(SNIPE_CHAIN, token);
+    // The same fire path and the same re-sight shape as every other source:
+    // snipe-all only on first sight (the emptied set riding as `skip`), dev
+    // followers always — `deployer` IS the dev wallet here.
+    await _fireLaunch(SNIPE_CHAIN, {
+      token,
+      sym: '',
+      creator: a.deployer || '',
+      at: Date.now(),
+      via: 'pons',
+    }, { armed: firstSee ? armed : [], devFollowers, skip: firstSee ? null : new Set(armed.map((u) => u.chatId)) });
+  }
 }
 
 // ------------------------------------------------------------------ one launch, every audience
@@ -2367,6 +2493,11 @@ function health() {
     out.snipe.launchesSeen = _snipeStats.launchesSeen;
     out.snipe.sinceLastLaunchMs = _snipeStats.lastLaunchAt ? now - _snipeStats.lastLaunchAt : null;
     out.snipe.blocksScanned = _snipeStats.blocksScanned;
+    // The Pons factory scan rides this loop but fails on its own: zero seen
+    // with a null error is a quiet launchpad; zero seen with an error is a
+    // wrong address or a stale signature, and the sentence says which.
+    out.snipe.ponsSeen = _snipeStats.ponsSeen;
+    out.snipe.ponsErr = _snipeStats.ponsErr || null;
   }
   // The same two numbers for Solana. They were only ever wired to the EVM loop,
   // which is precisely why a dead pump.fun host could sit behind a green tick:
@@ -2553,4 +2684,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _padFeedFail, _armedOn } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _padFeedFail, _armedOn, _ponsScan, _ponsCfg } };

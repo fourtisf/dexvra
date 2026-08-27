@@ -3980,8 +3980,61 @@ pons-probe boot alert (by design — `verified:false` pads are supposed to be
 loud until checked on the box).
 
 ```bash
-cd tradebot && node --test padSnipe.test.js         # 29 tests now — every finding above is pinned
+cd tradebot && node --test padSnipe.test.js         # 34 tests now — every finding above is pinned
 ```
+
+### "pons launchpad tidak anda add??" — it WAS added, and the ✗ proved it; the fix is on-chain
+
+The first `launchpads:check` on the box: `✗ pons — can't reach api.pons.fun`,
+read as "pons was never added". The row existing is what proves it was — what
+failed is the GUESSED HTTP hosts, which answer neither from the server
+(timeout) nor from anywhere this repo is developed (egress-blocked). The same
+run also measured `moonshot` (DNS dead — host retired) and `four.meme`
+(403 — the datacenter-IP block the launchpads section already predicts).
+
+So Pons discovery is **on-chain now** (`_ponsScan` in `tradebot/watchers.js`),
+and that is the better design, not a fallback: Pons launches straight into a
+Uniswap v3 (V1) / v4-hook (V2) pool on Robinhood Chain, announced by its own
+factory's `TokenLaunched` event — a **different contract and signature** from
+the `TokenCreated` the primary scan filters, i.e. exactly the second-launchpad
+blind spot this feature exists to close, on the bot's own chain. The chain is
+the one source the box already reads for every trade; no third party, no
+egress. The event's `deployer` is the actual dev wallet, so the dev snipe
+matches with zero extra reads. The HTTP pad stays for display metadata only.
+
+- **The factory address and event signature are researched guesses** —
+  cross-checked against Pons's public integration docs and the chain explorer,
+  but NOT verifiable against a live RPC from the sandbox this was written in.
+  So both are env-overridable (`PONS_FACTORY`, `PONS_EVENT`), the kill switch
+  is shared with the HTTP pad (`LAUNCHPAD_PONS=0` — one feature, one switch),
+  and every way the guess can be wrong is DIAGNOSED, never silent:
+  a factory with no code → `ponsErr` names the address; a factory that emits
+  logs the filter never matches → `ponsErr` says the SIGNATURE is stale (the
+  raw-vs-decoded probe, rate-limited to one per 10 min); nothing emitted →
+  `ponsSeen` stays 0 in /health beside a null error, a quiet pad.
+- **Its own cursor, its own failure surface.** A Pons outage or a stale Pons
+  ABI costs Pons launches, never the pools.trade scan sharing the loop.
+- **The code verdict is cached per FACTORY** — a verdict about one address
+  must not answer for another, or a corrected `.env` stays condemned.
+- **Nothing from the event reaches the money path.** The buy is priced,
+  routed and gated by `core.buy`/`canTradeNow` like every discovery source;
+  Pons V1 pools are plain v3 and V2 pools are the v4 hooks `v4.js` already
+  autodiscovers, which is why no routing code was needed.
+- **`npm run preflight:robinhood` now probes it** (section 4p): code, recent
+  `TokenLaunched` count with the latest launches decoded, and the computed
+  stale-signature diagnosis with the factory's real topic0 list as the lead.
+  That command, on the box, is what turns this integration from "researched"
+  to "verified".
+
+```bash
+cd tradebot && node --test padSnipe.test.js          # includes the 5 Pons-scan tests
+cd tradebot && npm run preflight:robinhood           # 4p verifies the factory against the live chain
+```
+
+**Config a fix depends on:** nothing to turn on. If 4p says the factory or
+signature is wrong, the fix is `PONS_FACTORY=` / `PONS_EVENT=` in
+`/opt/dexvra/tradebot/.env` (the trade bot reads its OWN `.env` — the rule
+above) and a `--update-env` restart.
 
 
 Whether a pad's guessed feed path is right is measured on the box, not assumed

@@ -122,8 +122,9 @@ test('every auto-snipe purchase names the feature and its blast radius', () => {
   // and target-less, said on the message itself.
   assert.strictEqual((WATCH.match(/buys EVERY new launch on this chain while armed/g) || []).length, 1);
   // …and every discovery source reaches that one site: the factory scan, the
-  // EVM pair scan, the pump.fun feed, the launchpad feeds and the retry ring.
-  assert.strictEqual((WATCH.match(/await _fireLaunch\(/g) || []).length, 5, 'a discovery source stopped calling the shared fire path');
+  // Pons factory scan, the EVM pair scan, the pump.fun feed, the launchpad
+  // feeds and the retry ring.
+  assert.strictEqual((WATCH.match(/await _fireLaunch\(/g) || []).length, 6, 'a discovery source stopped calling the shared fire path');
   // No auto-snipe purchase message without it.
   assert.ok(!/<b>Sniped \$\$\{esc\((?:sym|r\.sym)\b/.test(WATCH), 'an auto-snipe site still says just "Sniped"');
 });

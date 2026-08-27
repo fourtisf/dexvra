@@ -563,3 +563,114 @@ test('_notYetTradeable separates "no market yet" from every real failure', () =>
   for (const m of yes) assert.equal(T._notYetTradeable(new Error(m)), true, `should retry: ${m}`);
   for (const m of no) assert.equal(T._notYetTradeable(new Error(m)), false, `must not retry: ${m}`);
 });
+
+// ── Pons: the second Robinhood launchpad, read from the chain itself ─────────
+//
+// The HTTP pad for Pons cannot answer from anywhere this repo runs (the box
+// times out, the sandbox is egress-blocked), so discovery is the factory's own
+// TokenLaunched log. These tests drive _ponsScan with a stub provider serving
+// REAL encoded logs — the decode path is the part a guessed ABI gets wrong.
+const PONS_SIG = 'TokenLaunched(address,address,address,address,address,uint256,uint256,uint256,uint256,uint256)';
+const PONS_FACTORY = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB';
+function ponsLog(token, deployer, blockNumber) {
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  const pad32 = (a) => ethers.zeroPadValue(ethers.getAddress(a), 32);
+  return {
+    address: PONS_FACTORY,
+    topics: [ethers.id(PONS_SIG), pad32(token), pad32(deployer), pad32('0x' + '3'.repeat(40))],
+    data: coder.encode(['address', 'address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
+      ['0x' + '4'.repeat(40), '0x' + '5'.repeat(40), 1n, 1n, 7n, 0n, 0n]),
+    blockNumber, blockHash: '0x' + 'b'.repeat(64), transactionHash: '0x' + 'c'.repeat(64),
+    index: 0, transactionIndex: 0, removed: false,
+  };
+}
+function ponsProvider(ctl) {
+  const p = {
+    getCode: async () => ctl.code ?? '0xdeadbeef',
+    getLogs: async (f) => {
+      // queryFilter passes topics; the raw-mismatch probe does not. Serving
+      // them apart is what lets a test present "the factory emits logs our
+      // filter does not match".
+      if (f && f.topics && f.topics.length) return (ctl.logs || []).filter((l) => l.topics[0] === f.topics[0]);
+      return (ctl.raw || ctl.logs || []);
+    },
+    getNetwork: async () => new ethers.Network('robinhood', 4663),
+    _detectNetwork: async () => new ethers.Network('robinhood', 4663),
+    call: async () => '0x', resolveName: async (n) => n,
+  };
+  p.provider = p;
+  return p;
+}
+const { ethers } = require('ethers');
+
+test('a Pons TokenLaunched log is sniped, and its deployer IS the dev wallet', async () => {
+  reset();
+  const dev = '0x' + 'd'.repeat(40);
+  const uA = armUser('robinhood');
+  const uD = devUser('robinhood', dev);
+  USERS.push(uA, uD);
+  const ctl = { logs: [] };
+  const prov = ponsProvider(ctl);
+  await T._ponsScan(prov, 10000, [uA], [uD]);   // first look seeds only
+  assert.equal(buys.length, 0, 'the seeding pass bought');
+  ctl.logs = [ponsLog('0x' + 'a1'.repeat(20), dev, 10050)];
+  await T._ponsScan(prov, 10100, [uA], [uD]);
+  assert.equal(buys.filter((b) => b.chatId === uA.chatId).length, 1, 'the armed user missed a Pons launch');
+  assert.equal(buys.filter((b) => b.chatId === uD.chatId).length, 1, 'the dev follower missed their dev\'s Pons launch');
+  assert.match(notes.map((n) => n.text).join('\n'), /Dev snipe/);
+  assert.ok(T._snipeStats.ponsSeen >= 1);
+  assert.equal(T._snipeStats.ponsErr, null);
+});
+
+test('a Pons launch is never double-served on a re-scan, and dev followers still pass', async () => {
+  reset();
+  const uA = armUser('robinhood');
+  USERS.push(uA);
+  const ctl = { logs: [ponsLog('0x' + 'a2'.repeat(20), '0x' + 'e'.repeat(40), 10150)] };
+  const prov = ponsProvider(ctl);
+  await T._ponsScan(prov, 10200, [uA], []);
+  assert.equal(buys.length, 1);
+  // The same log range replayed (a lagging RPC head): marked → snipe-all skipped.
+  await T._ponsScan(prov, 10200, [uA], []);   // head < cursor pins, no re-buy
+  await T._ponsScan(prov, 10250, [uA], []);
+  assert.equal(buys.length, 1, 'a re-scan re-bought a Pons launch');
+});
+
+test('a factory that emits logs our filter does not match names the SIGNATURE as the problem', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  const alien = ponsLog('0x' + 'a3'.repeat(20), '0x' + 'e'.repeat(40), 10350);
+  alien.topics[0] = ethers.id('SomethingElse(address)');   // rotated ABI
+  const ctl = { logs: [alien] };
+  const prov = ponsProvider(ctl);
+  await T._ponsScan(prov, 10400, USERS, []);
+  assert.equal(buys.length, 0);
+  assert.match(String(T._snipeStats.ponsErr), /PONS_EVENT/, 'a stale signature reads as a quiet launchpad');
+});
+
+test('LAUNCHPAD_PONS=0 kills the chain scan too — one feature, one switch', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  process.env.LAUNCHPAD_PONS = '0';
+  try {
+    const ctl = { logs: [ponsLog('0x' + 'a4'.repeat(20), '0x' + 'e'.repeat(40), 10450)] };
+    await T._ponsScan(ponsProvider(ctl), 10500, USERS, []);
+    assert.equal(buys.length, 0, 'the kill switch does not reach the on-chain scan');
+  } finally { delete process.env.LAUNCHPAD_PONS; }
+  assert.equal(T._ponsCfg().on, true, 'blank must mean ON — the pads-table rule');
+});
+
+test('a PONS_FACTORY with no contract behind it is a sentence, not an eternal empty scan', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  // The code verdict is cached per FACTORY for an hour — a different address
+  // (the operator's .env override) gets a fresh look, which is also what lets
+  // this test run after the ones that proved the default factory good.
+  process.env.PONS_FACTORY = '0x' + 'f'.repeat(40);
+  try {
+    const prov = ponsProvider({ code: '0x', logs: [ponsLog('0x' + 'a5'.repeat(20), '0x' + 'e'.repeat(40), 10550)] });
+    await T._ponsScan(prov, 10600, USERS, []);
+    assert.equal(buys.length, 0);
+    assert.match(String(T._snipeStats.ponsErr), /no contract/, 'a wrong factory address reads as a quiet chain');
+  } finally { delete process.env.PONS_FACTORY; }
+});
