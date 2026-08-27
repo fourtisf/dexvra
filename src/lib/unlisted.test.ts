@@ -218,7 +218,7 @@ test("every chain declares a DexScreener id, or explicitly declares it has none"
   for (const c of Object.values(CHAINS)) {
     assert.ok("dexscreener" in c, `${c.id} must declare a dexscreener id (null if unsupported)`);
   }
-  assert.strictEqual(CHAINS.robinhood.dexscreener, null, "DexScreener does not carry Robinhood Chain");
+  assert.strictEqual(CHAINS.robinhood.dexscreener, "robinhood", "DexScreener added Robinhood Chain (~July 2026) — null here re-blinds the one chain that lost the GT budget race for lack of a second source");
   assert.strictEqual(CHAINS.sei.dexscreener, "seiv2", "its id differs from ours");
 });
 

@@ -158,7 +158,7 @@ function changeFromPools(j, deepest) {
 // %" — rows on the PINNED board with a market cap and no percentage, reported
 // again after the sibling-pool fallback and the DexScreener pass had both been
 // added. Most of the leftovers were on ROBINHOOD, and that is the whole tell:
-// DexScreener does not index it (`GT_PRIMARY` in group/gtPairs), so GT's `h24`
+// DexScreener did not index it then (`GT_PRIMARY` in group/gtPairs), so GT's `h24`
 // is the ONLY reading in the entire fallback chain — when it is null there is
 // nothing behind it, and the row publishes bare.
 //

@@ -5,12 +5,16 @@
 
 // DexScreener's own chain slug, for the 📈 Chart link on a group buy alert.
 //
-// Almost every id already matches; the map exists for the ones that do not, and
-// for the ONE chain DexScreener does not index at all. Robinhood Chain is
-// absent on purpose — GeckoTerminal carries it and DexScreener does not, so a
-// dexscreener.com/robinhood/… link would be a 404 on every alert. A missing
-// entry means "no chart there", and the caller falls back.
+// Almost every id already matches; the map exists for the ones that do not. A
+// missing entry means "DexScreener has no such chain" and the caller falls
+// back. Robinhood spent this file's whole history absent on purpose ("GT
+// carries it and DexScreener does not") — DexScreener added the chain around
+// July 2026 (dexscreener.com/new-pairs/robinhood), and keeping it absent had
+// become the opposite of the entry's stated reason: every robinhood read paid
+// the shared GT quota for a number DexScreener now also publishes. Whether DS
+// actually answers for a given token is measured on the box, never assumed.
 const DEXSCREENER_SLUG = {
+  robinhood: "robinhood",
   solana: "solana",
   bsc: "bsc",
   ethereum: "ethereum",

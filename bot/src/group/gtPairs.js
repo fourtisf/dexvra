@@ -35,8 +35,11 @@ const TIMEOUT_MS = 8000;
 
 // Chains DexScreener does NOT index — must go through GT (mirror marketdata's
 // DS_CHAIN gaps). Kept as a set so the buy-bot never falls back to a source
-// that returns nothing for these.
-const GT_PRIMARY = new Set(["robinhood", "plasma"]);
+// that returns nothing for these. Robinhood LEFT this set when DexScreener
+// added the chain (~July 2026): keeping it here meant every robinhood pool
+// read spent the shared ~30/min GT quota on a number DexScreener now also
+// carries — on the chain with the most listings on the box.
+const GT_PRIMARY = new Set(["plasma"]);
 const isGtPrimary = (chain) => GT_PRIMARY.has(chain);
 
 const num = (x) => {

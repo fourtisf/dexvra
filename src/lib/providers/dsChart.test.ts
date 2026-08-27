@@ -355,10 +355,11 @@ test("a 429 arms a cooldown, and nothing asks again while it holds", async () =>
 });
 
 test("a chain DexScreener does not carry is an ANSWER, not a failure", async () => {
-  // Robinhood: `dexscreener: null` in the registry, documented as costing one
-  // source and never a failure.
+  // A chain with no `dexscreener` slug in the registry costs one source and is
+  // never a failure. Robinhood used to be the live example until DexScreener
+  // added the chain (~July 2026); an unregistered id keeps the rule testable.
   _dsChartReset();
-  const r = await dsCandles("robinhood", "ANY", "15m");
+  const r = await dsCandles("no-such-chain", "ANY", "15m");
   assert.strictEqual(r.ok, true, "ok:false would read as 'DexScreener is down'");
   assert.deepStrictEqual(r.candles, []);
   assert.match(r.why!, /does not carry/);

@@ -91,8 +91,11 @@ test("the DS pool address never reaches poolAddress — it feeds a GT chart embe
 test("a chain DexScreener does not carry answers empty without a request", async () => {
   try {
     const urls = mockDs(() => []);
-    assert.strictEqual((await fetchDsMarket("robinhood", [addr(1)])).size, 0);
-    assert.strictEqual(urls.length, 0, "chains.ts says dexscreener: null there");
+    // A chain id with no chains.ts entry stands in for "no DS coverage" — the
+    // real chains all carry a slug today (Robinhood was the last holdout, and
+    // DexScreener added it ~July 2026), and this rule must outlive the roster.
+    assert.strictEqual((await fetchDsMarket("no-such-chain", [addr(1)])).size, 0);
+    assert.strictEqual(urls.length, 0, "chains.ts has no dexscreener slug there");
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -115,13 +118,16 @@ test("the chains with no DexScreener fallback are exactly the GT-only set", () =
   // fired every chain concurrently against a GT budget the site's own demand
   // exceeds, and the one chain that cannot recover through DexScreener lost
   // the race every time. The scheduler now spends the budget on these first.
-  assert.equal(dsCovers("robinhood"), false);
+  // Robinhood was the motivating case and is COVERED now (DexScreener added
+  // the chain ~July 2026) — the mechanism outlives the roster: any chain
+  // without a slug goes in the first-priority group, today and later.
+  assert.equal(dsCovers("robinhood"), true);
   assert.equal(dsCovers("solana"), true);
-  assert.equal(dsCovers("bsc"), true);
+  assert.equal(dsCovers("no-such-chain"), false);
   const [gtOnly, covered] = partitionByFallback([
-    ["solana", []], ["robinhood", []], ["bsc", []],
+    ["solana", []], ["no-such-chain", []], ["bsc", []],
   ]);
-  assert.deepEqual(gtOnly.map((e) => e[0]), ["robinhood"], "the GT-only chain must be in the first-priority group");
+  assert.deepEqual(gtOnly.map((e) => e[0]), ["no-such-chain"], "the GT-only chain must be in the first-priority group");
   assert.deepEqual(covered.map((e) => e[0]), ["solana", "bsc"]);
 });
 

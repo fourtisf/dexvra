@@ -43,18 +43,22 @@ test("a group whose pool hasn't resolved yet still gets a chart", () => {
   assert.strictEqual(l["Chart"], "https://dexscreener.com/solana/So1Token", "DexScreener resolves a token too");
 });
 
-test("the one chain DexScreener does not index never gets a dexscreener link", () => {
-  // Robinhood Chain is on GeckoTerminal and not on DexScreener, so the slug is
-  // deliberately absent and the button falls back rather than 404ing.
-  assert.strictEqual(chartUrl("robinhood", "0xPool"), null);
+test("a chain DexScreener does not index never gets a dexscreener link", () => {
+  // The slug is deliberately absent for a chain DS has no page for, and the
+  // button falls back rather than 404ing. Robinhood carried this test until
+  // DexScreener added the chain (~July 2026) — its alerts get a REAL
+  // dexscreener chart link now, which is the button working, not a regression.
+  assert.strictEqual(chartUrl("no-such-chain", "0xPool"), null);
+  assert.strictEqual(chartUrl("robinhood", "0xPool"), "https://dexscreener.com/robinhood/0xPool");
   const l = links(mon.renderRealAlert(g({ chain: "robinhood", address: "0xCA" }), buy, pool, null));
-  assert.ok(!/dexscreener/.test(l["Chart"]), "no dead dexscreener link");
-  assert.match(l["Chart"], /dexvra\.io\/token\/robinhood\/0xCA/);
+  assert.match(l["Chart"], /dexscreener\.com\/robinhood/, "the chart button must use the page that exists now");
 });
 
-test("every chain the bot supports either has a chart or is a known exception", () => {
+test("every chain the bot supports has a chart", () => {
+  // The last known exception (robinhood) fell when DexScreener added the
+  // chain; a chain reappearing in this list is a missing DEXSCREENER_SLUG row.
   const missing = CHAIN_IDS.filter((c) => !chartUrl(c, "X"));
-  assert.deepStrictEqual(missing, ["robinhood"], "a new chain needs a DEXSCREENER_SLUG entry");
+  assert.deepStrictEqual(missing, [], "a new chain needs a DEXSCREENER_SLUG entry");
 });
 
 test("the third link is Dexvra, on the token's own page", () => {

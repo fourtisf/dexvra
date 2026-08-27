@@ -92,7 +92,12 @@ export const CHAINS: Record<string, ChainConfig> = {
     label: "Robinhood",
     color: "#CCFF00",
     geckoNetwork: "robinhood", // GT indexes Robinhood Chain → live price/mcap/liq + chart embed
-    dexscreener: null,
+    // DexScreener added Robinhood Chain (~July 2026, dexscreener.com/new-pairs/robinhood).
+    // This was null from the chain's launch — and null made Robinhood the ONE
+    // chain with no second source, which is why it lost the shared GT budget
+    // race every cycle and rendered 0/66 priced. Whether DS actually answers
+    // for a given token is measured on the box: npm run market:check -- robinhood.
+    dexscreener: "robinhood",
     coingecko: null,
     goPlusChainId: null,
     explorer: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,

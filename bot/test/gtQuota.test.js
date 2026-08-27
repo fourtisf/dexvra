@@ -182,11 +182,12 @@ test("…while the heavy read still measures a missing change from candles", asy
 });
 
 test("a GT-primary chain still goes straight to GeckoTerminal", async () => {
-  // Robinhood has no DexScreener index at all, so preferring it there would be
-  // a request that can never answer, ahead of the one that can.
+  // Plasma has no DexScreener index, so preferring DS there would be a request
+  // that can never answer, ahead of the one that can. (Robinhood carried this
+  // test until DexScreener added the chain ~July 2026 — it is DS-first now.)
   const f = stubFetch((url) => (isGt(url) ? gtToken({ price_usd: "0.5", market_cap_usd: "1000000" }) : null));
   try {
-    const m = await market.fetchPrice("robinhood", "0xabc");
+    const m = await market.fetchPrice("plasma", "0xabc");
     assert.ok(m);
     assert.strictEqual(m.priceUsd, 0.5);
     assert.ok(f.gt().length >= 1);
@@ -262,10 +263,10 @@ test("…and GeckoTerminal is still the only source for a GT-primary chain", asy
       : null,
   );
   try {
-    const p = await gtPairs.fetchPool("robinhood", "0xabc");
+    const p = await gtPairs.fetchPool("plasma", "0xabc");
     assert.ok(p);
     assert.strictEqual(p.source, "gt");
-    assert.deepStrictEqual(f.ds(), [], "DexScreener does not index Robinhood — asking is a wasted round trip");
+    assert.deepStrictEqual(f.ds(), [], "DexScreener does not index Plasma — asking is a wasted round trip");
   } finally {
     f.restore();
   }

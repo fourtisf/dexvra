@@ -147,10 +147,12 @@ test("an http:// or junk candidate is refused before it is ever fetched", async 
 });
 
 test("a chain DexScreener does not carry has no CDN convention to fall back on", async () => {
-  // Robinhood: no DexScreener slug, so the guess cannot be built — and a
-  // fabricated path would 404 on every row of that chain.
-  assert.equal(cdnGuess("robinhood", ADDR), null);
-  const r = await resolveLogo("robinhood", ADDR, { ...none, verify: async () => true });
+  // No DexScreener slug → the guess cannot be built, and a fabricated path
+  // would 404 on every row of that chain. Robinhood was the live example until
+  // DexScreener added the chain (~July 2026); an unregistered id keeps the
+  // rule testable whatever the roster does next.
+  assert.equal(cdnGuess("no-such-chain", ADDR), null);
+  const r = await resolveLogo("no-such-chain", ADDR, { ...none, verify: async () => true });
   assert.equal(r.url, null);
   assert.deepEqual(r.tried, []);
   assert.equal(r.ok, true);
@@ -373,7 +375,7 @@ test("with nothing asserted the convention is used, and MARKED as a guess", () =
 });
 
 test("a chain with no convention reports none rather than inventing a path", () => {
-  const p = pickLogo({ chain: "robinhood", address: ADDR });
+  const p = pickLogo({ chain: "no-such-chain", address: ADDR });
   assert.deepEqual(p, { url: null, kind: "none" });
 });
 

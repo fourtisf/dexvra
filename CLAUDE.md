@@ -2466,6 +2466,44 @@ the chains that could afford to lose were spending the budget it needed.
   raises it — and with 66 robinhood listings and the bot suite on the same
   IP, this box has outgrown the free tier.
 
+### "mengapa tidak pakai sumber dari dexscreener.com?" — because a fact had expired
+
+The right question, and the answer used to be "DexScreener does not index
+Robinhood Chain" — stated in five places across three packages, each with the
+same justification, all written when the chain launched. **DexScreener added
+Robinhood around July 2026** (`dexscreener.com/new-pairs/robinhood`), and from
+that day every one of those entries meant the opposite of its own comment:
+every robinhood read paid the shared ~30/min GT quota for a number DexScreener
+now also publishes — on the chain with the most listings on the box.
+
+- **The flip is one row in each package's own map**: `dexscreener: "robinhood"`
+  in `src/config/chains.ts`, `DEXSCREENER_SLUG` in `bot/src/config/chains.js`
+  (which also gives robinhood buy alerts a real chart button — the "known
+  exception" list in `buyCta.test.js` is empty now), `GT_PRIMARY` in
+  `bot/src/group/gtPairs.js` shrinks to `plasma` (robinhood pool reads go
+  DS-first), and `DS_CHAIN_KEY` in `tradebot/core.js`.
+- **Every consumer already knew what to do with a covered chain** — DS-first
+  pricing, the market fallback, the CDN logo convention, the chart links —
+  because none of them ever hardcoded "robinhood is special"; they all read
+  their registry. The whole change is data.
+- ⚠️ **The stale fact lived in TESTS as much as in code.** Seven tests across
+  the three packages asserted "DexScreener does not carry Robinhood" as a
+  permanent truth; each now tests the same RULE against a chain id that has no
+  registry entry at all (`no-such-chain`), so the rule outlives the roster —
+  a test pinned to a third party's current coverage is a test that expires
+  without notice.
+- **Whether DS actually answers for a given robinhood token is measured on the
+  box** (`npm run market:check -- robinhood`, `buybot:check`), never assumed —
+  the change is fail-open everywhere: an empty DS answer costs nothing, GT
+  stays primary for the full market read.
+- **This is the real quota relief.** The priority fix decided who WINS the
+  site's GT share; this shrinks what everyone needs from it: robinhood board
+  chunks gain a fallback, the buy-bot's robinhood metadata reads leave GT, and
+  `GECKOTERMINAL_API_KEY` moves from "urgent" back to "headroom" — it is still
+  the only thing that raises the ceiling, and GT is still the only free OHLCV
+  (candles) source, so the sentence stays true; it just stops being the only
+  path to a priced board.
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both

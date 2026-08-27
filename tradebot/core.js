@@ -1776,7 +1776,10 @@ async function ethUsd(chainKey) {
 // This is a PRICE source, never a routing one: everything it returns is marked
 // routable:false, and the buy path refuses those. Quoting a price the engine
 // cannot actually fill is the one failure mode worse than saying "not supported".
-const DS_CHAIN_KEY = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana' };
+// robinhood joined when DexScreener added the chain (~July 2026) — before
+// that, a robinhood pair in a DS response was impossible and the missing key
+// was correct. Display/enrichment only, same as every entry here.
+const DS_CHAIN_KEY = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
 const DS_TO_CHAIN = Object.fromEntries(Object.entries(DS_CHAIN_KEY).map(([k, v]) => [v, k]));
 const _dsCache = new Map();   // caLower → { at, pairs }
 const DS_TTL_MS = 30000;
