@@ -24,11 +24,16 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 process.env.LAUNCH_RETRY_MS = process.env.LAUNCH_RETRY_MS || '180000';
+// A small per-cycle budget so the overflow paths are exercisable with a
+// handful of launches (the constant is read once, at require time).
+process.env.DEX_SNIPE_MAX_TOKENS = '3';
 
 // ---- stubs injected before watchers.js requires them ----
 const USERS = [];
 let BUY = async () => ({ sym: 'PAD', gotTokens: 100, spentEth: 0.05, native: 'ETH', hash: '0xhash', gotRaw: '100' });
 let CAN_TRADE = async () => true;
+let BAL_OR_NULL = async () => 10n ** 20n;   // plenty; a test sets null for "could not read"
+let SAFETY = null;   // set to an async fn to make the safety gate real for one test
 let FEEDS = {};   // chainKey -> { byPad: { key: {ok, why, items} }, ok, why }
 const buys = [];
 const notes = [];
@@ -47,6 +52,7 @@ const coreStub = {
   activeAddress: () => '0xME',
   walletAddress: () => 'SoMeAddr',
   ethBalance: async () => 10n ** 20n,   // plenty
+  ethBalanceOrNull: async (...a) => BAL_OR_NULL(...a),   // what _canAfford actually reads
   gasBufferWei: () => 10n ** 15n,
   saveStoreNow: () => {},
   saveStore: () => {},
@@ -54,7 +60,7 @@ const coreStub = {
   canTradeNow: async (ca, chain) => CAN_TRADE(ca, chain),
   buy: async (chatId, token, amt, chain, wid, opts) => { const r = await BUY(chatId, token, amt, chain, wid, opts); buys.push({ chatId, token, amt, chain, wid }); return r; },
 };
-const safetyStub = { supported: () => false, tokenSecurity: async () => null, verdict: () => ({ level: 'ok' }) };
+const safetyStub = { supported: () => !!SAFETY, tokenSecurity: async (...a) => SAFETY(...a), verdict: () => ({ level: 'ok' }) };
 const solanaStub = { isSolAddress: () => true, WSOL_MINT: 'W', solToLamports: (n) => BigInt(Math.round(Number(n) * 1e9)), pumpfunNewX: async () => ({ ok: true, coins: [] }) };
 const lpStub = {
   probes: () => [],   // upstreams.js reads the probe list at require time
@@ -97,13 +103,18 @@ function reset() {
   USERS.length = 0; buys.length = 0; notes.length = 0;
   BUY = async () => ({ sym: 'PAD', gotTokens: 100, spentEth: 0.05, native: 'ETH', hash: '0xhash', gotRaw: '100' });
   CAN_TRADE = async () => true;
+  BAL_OR_NULL = async () => 10n ** 20n;
+  SAFETY = null;
   FEEDS = {};
   T._launchRetry.clear();
   T._padCursors.clear();
-  // The feed-bench map persists across tests by design (it is process state in
-  // the bot) — and a bench left behind by the backoff test reads as "the pad
-  // loop is broken" in every later test. Stated here, not inherited.
+  // The feed-bench map and the per-pad stats persist across tests by design
+  // (they are process state in the bot) — and a bench or a fail-count left
+  // behind by the backoff test reads as "the pad loop is broken" in every
+  // later test. Stated here, not inherited.
   T._padFeedFail.clear();
+  for (const k of Object.keys(T._padSnipeStats.pads)) delete T._padSnipeStats.pads[k];
+  T._padSnipeStats.lastErr = null; T._padSnipeStats.lastErrAt = null;
 }
 const feedOk = (items) => ({ ok: true, why: '', items });
 const item = (addr, over) => Object.assign({ address: addr, symbol: 'PAD', name: 'Pad Token', creator: '', createdAt: Date.now(), graduated: false, pad: 'pons' }, over);
@@ -390,6 +401,160 @@ test('a pad replaying stale history after a bench does not buy ten-minute-old la
   await T.padSnipeCycle();
   assert.equal(buys.length, 1, 'a stale launch was sniped — that is buying somebody\'s exit');
   assert.equal(buys[0].token, '0xNew1');
+});
+
+// ── the audit round: five defects the first cut of this feature shipped ──────
+
+test('a launch the ring gave up on unblocks its own graduation buy', async () => {
+  reset();
+  USERS.push(armUser('bsc'));
+  // A four.meme curve token: seen by the pad feed, gated (no market), parked.
+  CAN_TRADE = async () => false;
+  const t0 = Date.now() - 5000;
+  FEEDS.bsc = { ok: true, byPad: { fourmeme: feedOk([item('0xM0', { createdAt: t0, pad: 'fourmeme' })]) } };
+  await T.padSnipeCycle();   // seed
+  FEEDS.bsc = { ok: true, byPad: { fourmeme: feedOk([item('0xM1', { createdAt: t0 + 1000, pad: 'fourmeme' })]) } };
+  await T.padSnipeCycle();
+  assert.equal(T._launchRetry.size, 1);
+  // The ring expires it — a curve lives minutes-to-days, far past the window.
+  const k = [...T._launchRetry.keys()][0];
+  T._launchRetry.get(k).L.at = Date.now() - 10 * 60 * 1000;
+  await T.launchRetryCycle();
+  assert.equal(T._launchRetry.size, 0);
+  // NOBODY was served, so the mark must be gone: the graduation PairCreated
+  // event — where these tokens were ALWAYS bought before the pad loop existed —
+  // has to be able to offer it. A mark left behind here made the launchpad
+  // integration silently disable the one path that already worked.
+  assert.equal(T._snipeMark('bsc', '0xM1'), true, 'the expired launch stayed marked — the graduation snipe is permanently suppressed');
+});
+
+test('…but a launch SOMEBODY holds stays marked — their graduation re-buy is the double spend', async () => {
+  reset();
+  const u1 = armUser('robinhood'); const u2 = armUser('robinhood');
+  USERS.push(u1, u2);
+  // u1 fills; u2 is too early → the launch requeues carrying u1 in done.
+  BUY = async (chatId) => {
+    if (chatId === u1.chatId) return { sym: 'N', gotTokens: 10, spentEth: 0.05, native: 'ETH', hash: '0xhash' };
+    throw new Error('no pool');
+  };
+  await T._fireLaunch('robinhood', { token: '0xN1', sym: 'N', creator: '', at: Date.now() }, { armed: USERS, devFollowers: [] });
+  assert.equal(T._launchRetry.size, 1);
+  // Expire it with u2 still unfilled: u1 HOLDS the token, so the mark must stay.
+  const k = [...T._launchRetry.keys()][0];
+  T._launchRetry.get(k).L.at = Date.now() - 10 * 60 * 1000;
+  T._snipeMark('robinhood', '0xN1');   // the discoverer marked it (as the scans do)
+  await T.launchRetryCycle();
+  assert.equal(T._snipeMark('robinhood', '0xN1'), false, 'a launch somebody holds was unmarked — its graduation event now buys it twice for them');
+});
+
+test('the dev-target budget cannot be spent past its cap by two concurrent launches', async () => {
+  reset();
+  const dev = '0xDEADDEV';
+  const u = devUser('robinhood', dev);
+  // Budget 0.05: room for exactly ONE 0.02 buy plus change — never two.
+  u.copy.targets[0].maxEth = '0.05';
+  u.copy.targets[0].buyEth = '0.02';
+  u.copy.targets[0].spentEth = 0.02;
+  USERS.push(u);
+  // The safety gate is a NETWORK await; hold the first call open until the
+  // second has read the (stale) spentEth — the exact interleave the retry
+  // ring made possible by firing concurrently with the discovery loop.
+  let release; const gate = new Promise((r) => { release = r; });
+  let calls = 0;
+  SAFETY = async () => { calls++; if (calls === 1) await gate; return null; };
+  const t = u.copy.targets[0];
+  const a = T._followerBuy(u, t, '0xP1', 'robinhood', {});
+  const b = T._followerBuy(u, t, '0xP2', 'robinhood', {});
+  release();
+  await Promise.all([a, b]);
+  assert.ok(Number(t.spentEth) <= Number(t.maxEth) + 1e-12, `spent ${t.spentEth} past the cap ${t.maxEth} — the check-then-claim spans the safety await`);
+  assert.equal(buys.length, 1, 'both launches bought — the budget re-check after the await is gone');
+});
+
+test('a user who arms AFTER a launch is queued is not bought into it', async () => {
+  reset();
+  const u1 = armUser('robinhood');
+  USERS.push(u1);
+  BUY = async () => { throw new Error('no pool'); };
+  await T._fireLaunch('robinhood', { token: '0xQ1', sym: 'Q', creator: '', at: Date.now() }, { armed: [u1], devFollowers: [] });
+  assert.equal(T._launchRetry.size, 1);
+  // u2 arms a minute later — the launch predates their consent to spend.
+  const u2 = armUser('robinhood');
+  USERS.push(u2);
+  BUY = async () => ({ sym: 'Q', gotTokens: 10, spentEth: 0.05, native: 'ETH', hash: '0xhash' });
+  await T.launchRetryCycle();
+  assert.equal(buys.filter((b) => b.chatId === u1.chatId).length, 1, 'the user who was armed at queue time never got their fill');
+  assert.equal(buys.filter((b) => b.chatId === u2.chatId).length, 0, 'the ring retro-sniped for a user who armed after the launch');
+});
+
+test('a re-scan requeue remembers the users served in the FIRST pass', async () => {
+  reset();
+  const dev = '0xDEADDEV';
+  const uA = armUser('robinhood');
+  const uD = devUser('robinhood', dev);
+  USERS.push(uA, uD);
+  // First pass: uA fills through snipe-all.
+  await T._fireLaunch('robinhood', { token: '0xR1', sym: 'R', creator: '', at: Date.now() }, { armed: [uA], devFollowers: [] });
+  assert.equal(buys.filter((b) => b.chatId === uA.chatId).length, 1);
+  // Re-scan (cursor regression): armed is emptied AND rides as skip — the
+  // dev buy is too early, so the launch requeues. Without the skip, `done`
+  // is built only from THIS invocation and uA is exposed to a ring re-buy.
+  BUY = async () => { throw new Error('no pool'); };
+  await T._fireLaunch('robinhood', { token: '0xR1', sym: 'R', creator: dev, at: Date.now() },
+    { armed: [], devFollowers: [uD], skip: new Set([uA.chatId]) });
+  assert.equal(T._launchRetry.size, 1);
+  BUY = async () => ({ sym: 'R', gotTokens: 10, spentEth: 0.05, native: 'ETH', hash: '0xhash', gotRaw: '10' });
+  await T.launchRetryCycle();
+  assert.equal(buys.filter((b) => b.chatId === uA.chatId).length, 1, 'the ring re-bought a launch for a user who filled it in the first pass — a double spend');
+  assert.equal(buys.filter((b) => b.chatId === uD.chatId).length, 1, 'the waiting dev follower never filled');
+});
+
+test('a registry-breaker SKIP is "we did not ask", never a feed failure', async () => {
+  reset();
+  USERS.push(armUser('bsc'));
+  FEEDS.bsc = { ok: true, byPad: { fourmeme: { ok: false, skipped: true, why: 'four.meme: skipped, 3 failures in a row (unreachable) — retrying in 240s', items: [] } } };
+  for (let i = 0; i < 4; i++) await T.padSnipeCycle();
+  const stat = T._padSnipeStats.pads['bsc:fourmeme'];
+  assert.equal(stat.fail, 0, 'a skip we issued ourselves was counted as the host failing');
+  assert.equal(T._padFeedFail.size, 0, 'the local bench fed on the registry bench — a double-bench that outlives the outage');
+  assert.match(stat.why, /skipped/, 'the reason must still be visible');
+});
+
+test('a feed whose items carry no createdAt says so, instead of seeding for ever', async () => {
+  reset();
+  USERS.push(armUser('bsc'));
+  const rows = [item('0xS1', { createdAt: null, pad: 'fourmeme' }), item('0xS2', { createdAt: null, pad: 'fourmeme' })];
+  FEEDS.bsc = { ok: true, byPad: { fourmeme: feedOk(rows) } };
+  await T.padSnipeCycle();
+  await T.padSnipeCycle();
+  assert.equal(buys.length, 0);
+  const stat = T._padSnipeStats.pads['bsc:fourmeme'];
+  assert.ok(stat.lastOkAt, 'the host answered — that fact stays recorded');
+  assert.match(String(stat.why), /createdAt|cursor/, 'a pad that can never fire reads as a healthy quiet one');
+});
+
+test('an unreadable balance is a silent skip, never a "wallet has 0.00000" notice', async () => {
+  reset();
+  USERS.push(armUser('robinhood'));
+  BAL_OR_NULL = async () => null;   // dead RPC — the read FAILED, the wallet is fine
+  await T._fireLaunch('robinhood', { token: '0xT1', sym: 'T', creator: '', at: Date.now() }, { armed: USERS, devFollowers: [] });
+  assert.equal(buys.length, 0);
+  assert.equal(notes.length, 0, 'a dead RPC was reported to a funded user as an empty wallet — and the told-once flag latched on it');
+});
+
+test('pump.fun overflow past the per-cycle budget queues for the ring', async () => {
+  reset();
+  USERS.push(armUser('solana'));
+  const t0 = Date.now() - 5000;
+  const coin = (i) => ({ mint: 'PumpMint' + i, symbol: 'P' + i, creator: '', createdTs: t0 + i * 10 });
+  solanaStub.pumpfunNewX = async () => ({ ok: true, coins: [coin(0)] });
+  await T.solSnipeCycle();   // seeds the pump cursor
+  solanaStub.pumpfunNewX = async () => ({ ok: true, coins: Array.from({ length: 6 }, (_, i) => coin(i + 1)) });
+  await T.solSnipeCycle();
+  assert.equal(buys.length + T._launchRetry.size, 6, `${buys.length} bought + ${T._launchRetry.size} queued — the overflow vanished past the cursor`);
+  assert.ok(T._launchRetry.size > 0, 'nothing was queued — the budget cap is not being exercised (raise the launch count)');
+  await T.launchRetryCycle();
+  assert.equal(buys.length, 6, 'the queued pump.fun overflow was never fired');
 });
 
 test('_notYetTradeable separates "no market yet" from every real failure', () => {

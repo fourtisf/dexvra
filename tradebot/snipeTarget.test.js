@@ -323,7 +323,11 @@ test('the EVM scan resolves who opened the pool, and only when someone is watchi
   // dedup, the safety gate and the buy live there — so four sources cannot
   // drift into four ideas of what a snipe does. The dev-vs-snipe-all skip
   // (`held`) lives inside it and is pinned by its own behavioural tests.
-  assert.match(fn, /await _fireLaunch\(ch\.key, \{ token,[^}]+\}, \{ armed, devFollowers \}\)/, 'the EVM path grew its own fire logic');
+  // The re-sight shape: snipe-all is EMPTIED (never re-served), dev followers
+  // always pass (idempotent via their own `bought` map), and the emptied armed
+  // ride as `skip` so a requeue cannot re-buy for a user served earlier.
+  assert.match(fn, /await _fireLaunch\(ch\.key, \{ token,[^}]+\}, \{ armed: firstSee \? armed : \[\], devFollowers, skip: firstSee \? null : new Set\(armed\.map\(\(u\) => u\.chatId\)\) \}\)/, 'the EVM path grew its own fire logic');
+  assert.ok(!/if \(!_snipeMark\(ch\.key, token\)\) continue;/.test(fn), 'a re-sighted token skips dev followers whole again — the graduation snipe is inert');
 });
 
 test('an unreadable transaction cannot stop the snipe', async () => {

@@ -3919,10 +3919,70 @@ guaranteed to fail.
   derives from `lp.padsFor()` now; a `RENAMES` map (empty) is the only local
   fact left.
 
+### "apakah anda yakin??" — the audit found nine more, and the worst was the feature disabling itself
+
+Asked straight after the above landed. A five-lens adversarial audit (every
+finding attacked by two independent refuters; 20 raw claims, 13 survived, plus
+three found by re-reading before the audit ran) — and the worst finding is this
+file's oldest shape: **the reassuring reading was available, and it was wrong.**
+
+- ⚠️ **The pad loop's mark was silently disabling the graduation snipe.** The
+  pad feed marks a curve token at MINT, minutes-to-days before anything can
+  fill it; the retry ring gave up after its three-minute window and the mark
+  stayed. When the token graduated into the PairCreated log — the one place
+  these tokens were ALWAYS bought before this feature existed — the dedup
+  skipped everyone, dev followers included. A launchpad integration built to
+  widen discovery had quietly turned the working path off, on every pad-covered
+  EVM chain, for any launch that takes longer than three minutes to graduate —
+  which is nearly all of them. `_snipeUnmark`: a launch NOBODY was served (no
+  fill, no broadcast) is unmarked on every terminal ring outcome — expiry, cap
+  eviction, audience-gone, ring-disabled — so its graduation event can offer
+  it; a launch somebody HOLDS stays marked, because for them the graduation
+  buy is the double spend. And a re-sighted token is emptied of its snipe-all
+  audience, never `continue`d whole — snipeCycle's shape, now on all three
+  event scans, so dev followers (idempotent via their own `bought` map) still
+  fill at graduation.
+- ⚠️ **The dev budget's check-then-claim spanned a network await.** The safety
+  gate sits between "does it fit" and "claim it", and the ring now fires
+  concurrently with the discovery loops — two launches by one dev could both
+  read a stale `spentEth` inside that await, both pass, both claim: real money
+  past the user's cap by a full fan-out. Both the dedup and the cap are
+  re-checked AFTER the await, synchronously with the claim.
+- ⚠️ **A re-scan's requeue forgot who was already served.** The emptied
+  snipe-all audience now rides as `skip`, so a launch parked during a re-scan
+  carries the first pass's fills in `done` — without it the ring re-bought for
+  a user whose fill happened before the requeue existed.
+- **The ring retro-sniped for users who armed after the launch.** The audience
+  is FROZEN at queue time (`eligible`) — arming is forward-looking, the
+  audit-#2 rule, and the ring re-reading `_armedOn` at fire time was a window
+  around it.
+- **solSnipeCycle still dropped over-budget launches** — the exact shape just
+  fixed in padSnipeCycle, one loop up. Overflow queues there too.
+- **A registry-breaker SKIP was counted as a feed failure** — "we never asked"
+  recorded as "it did not answer", and the two benches fed each other's
+  counters. A skip updates the visible `why` and nothing else.
+- **A feed whose items carry no readable `createdAt` seeded forever** and read
+  green: the cursor could never advance, so no launch there could ever fire,
+  while every stat said the pad was healthy. It records exactly that, as a
+  parse problem (`_FEED_PATH`/field fix), never a bench.
+- ⚠️ **`health()` assigned over the ring loop's own heartbeat**, so a stuck or
+  disabled ring rendered green because its counters still existed. Merged, with
+  `enabled` stated; `padSnipe.err` carries its age, or Tuesday's error reads as
+  now's.
+- ⚠️ **`_canAfford` read a dead RPC as an empty wallet** — `ethBalance` answers
+  0n for both, so a funded Solana user would have been told "wallet has
+  0.00000" and the told-once flag latched on a balance nobody read.
+  `ethBalanceOrNull`, the same fix the removal guard needed one section up.
+
+Refuted and NOT acted on, for the record: the `LAUNCH_RETRY_MS=0` "pad snipe
+can't buy" claim (the gate still fires tradeable launches inline), and the
+pons-probe boot alert (by design — `verified:false` pads are supposed to be
+loud until checked on the box).
+
 ```bash
-cd tradebot && node --test padSnipe.test.js         # 17 tests, no network — the ring, the pads, the dev fill
-cd tradebot && npm run launchpads:check             # which pad feeds answer from THIS box
+cd tradebot && node --test padSnipe.test.js         # 29 tests now — every finding above is pinned
 ```
+
 
 Whether a pad's guessed feed path is right is measured on the box, not assumed
 — every new feed is `verified: false` until `launchpads:check` proves it, and a
