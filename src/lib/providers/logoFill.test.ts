@@ -12,7 +12,7 @@ import {
   sweepLogos,
   type FillDeps,
 } from "./logoFill.ts";
-import type { LogoResult } from "./tokenLogo.ts";
+import { resolveLogo, type LogoResult } from "./tokenLogo.ts";
 
 const T = 1_700_000_000_000;
 const found = (url: string): LogoResult => ({ ok: true, url, source: "dexscreener", tried: ["dexscreener"], unreachable: [] });
@@ -185,4 +185,48 @@ test("…and it stays quiet when there was nothing to write", async () => {
   const lines: string[] = [];
   await sweepLogos([tok(31)], { resolve: async () => nothing(), now: () => T, log: (m) => lines.push(m) });
   assert.ok(!/NONE of them/.test(lines[0]), "no logos found is not a store fault");
+});
+
+// ── the two halves as one chain ─────────────────────────────────────────────
+
+test("⚠️ END TO END: a logo we were handed but could not open is UNDECIDED, not a 12h miss", async () => {
+  // The two rules above are each pinned at their own seam, and the defect lived
+  // in the JOIN: resolveLogo collapsed "could not verify" into "not artwork",
+  // so `ok` stayed true and this sweep wrote a twelve-hour miss about a token
+  // whose url DexScreener had just handed us. Driving the REAL resolver is the
+  // only thing that catches that — a stubbed LogoResult asserts the shape the
+  // stub was given.
+  const IMG = "https://cdn.example/logo.png";
+  const r = await sweepLogos([tok(9)], {
+    now: () => T,
+    resolve: (c, a) =>
+      resolveLogo(c, a, {
+        ds: async () => IMG,
+        gt: async () => null,
+        cg: async () => null,
+        tw: () => null,
+        verify: async () => "unreachable",
+      }),
+  });
+  assert.equal(r.undecided, 1);
+  assert.equal(r.missing, 0, "we were handed artwork — 'no artwork anywhere' is a false claim here");
+  // …and it is retried in half an hour rather than half a day.
+  assert.equal(shouldLookUp("ethereum", tok(9).address, T + _UNDECIDED_TTL_MS + 1), true);
+});
+
+test("…and one that really is not an image stays a decided miss", async () => {
+  const r = await sweepLogos([tok(10)], {
+    now: () => T,
+    resolve: (c, a) =>
+      resolveLogo(c, a, {
+        ds: async () => "https://cdn.example/logo.png",
+        gt: async () => null,
+        cg: async () => null,
+        tw: () => null,
+        verify: async () => "not-image",
+      }),
+  });
+  assert.equal(r.missing, 1);
+  assert.equal(r.undecided, 0);
+  assert.equal(shouldLookUp("ethereum", tok(10).address, T + _UNDECIDED_TTL_MS + 1), false, "a real miss is not re-asked in 30 minutes");
 });

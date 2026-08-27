@@ -6,7 +6,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 process.env.GT_MIN_GAP_MS = "0"; // the pacing gap is not what these pin
-const { _gtReset, gtArmCooldown, gtBaseFor, gtGet, gtHeadersFor, gtInCooldown } = await import("./gt.ts");
+// Short enough to assert on, long enough that "it waited" is measurable. Read
+// at module load, which is why it is set before the import.
+process.env.GT_BUDGET_WAIT_MS = "150";
+const { _gtReset, gtArmCooldown, gtBaseFor, gtGet, gtHeadersFor, gtInCooldown, gtSpentThisMinute } = await import("./gt.ts");
+const { readFileSync } = await import("node:fs");
+/** Read the module's SOURCE. The env knobs are read at load, so the shape of
+ *  the knob is what a test can pin without a second module instance. */
+const readGt = () => readFileSync("src/lib/providers/gt.ts", "utf8");
 
 const withFetch = async (impl: typeof fetch, fn: () => Promise<void>) => {
   const real = globalThis.fetch;
@@ -124,4 +131,69 @@ test("the cooldown only ever extends, never shortens", async () => {
   gtArmCooldown(300_000);
   gtArmCooldown(1000);
   assert.ok(gtInCooldown(Date.now() + 200_000), "a short arm must not cancel a long one");
+});
+
+// ── the site's half of one IP's allowance ───────────────────────────────────
+//
+// The bot's client was cut to 15/min so the two processes on this box would ADD
+// UP to the ~30/min ceiling. The site never got its half — a 120ms floor is
+// ~500/min, i.e. no budget at all — so the bot held politely to fifteen while
+// the site took whatever it liked, and both of them ate the 429. A split one
+// side observes is not a split.
+
+test("under budget, nothing is held back", async () => {
+  let hits = 0;
+  await withFetch(async () => { hits++; return reply(200, { ok: 1 }); }, async () => {
+    assert.equal((await gtGet("/x")).ok, true);
+    assert.equal((await gtGet("/y")).ok, true);
+  });
+  assert.equal(hits, 2);
+  assert.equal(gtSpentThisMinute(), 2, "a request that went out takes exactly one slot");
+});
+
+test("⚠️ the budget PACES — the 16th request waits for a slot before it gives up", async () => {
+  // A refusal would blank a chart the moment a board rebuild used the minute's
+  // allowance. Waiting is the point: a chart that draws a second late beats one
+  // that does not draw.
+  let hits = 0;
+  const t0 = Date.now();
+  let over: Awaited<ReturnType<typeof gtGet>> | null = null;
+  await withFetch(async () => { hits++; return reply(200, { ok: 1 }); }, async () => {
+    for (let i = 0; i < 15; i++) assert.equal((await gtGet(`/p${i}`)).ok, true);
+    over = await gtGet("/p15");
+  });
+  const waited = Date.now() - t0;
+  assert.equal(hits, 15, "the 16th request must not have been made");
+  assert.ok(waited >= 120, `it must actually wait for a slot, waited ${waited}ms`);
+  assert.equal(over!.ok, false);
+  // ⚠️ status 0 is "we did not ask" — the same answer the cooldown gives, which
+  // every caller already reads as "could not ask" rather than "nothing there".
+  assert.equal(over!.status, 0);
+  assert.match(over!.reason ?? "", /budget/i);
+  // Our own pacing must never be reported as the upstream's refusal: that sends
+  // an operator to check a service that is perfectly healthy, and reads as a
+  // fact about the quota rather than about us.
+  assert.doesNotMatch(over!.reason ?? "", /429/);
+  assert.match(over!.reason ?? "", /GT_MAX_RPM|GECKOTERMINAL_API_KEY/, "the refusal names the knob that lifts it");
+});
+
+test("the budget is a ROLLING window, not a per-minute bucket", async () => {
+  // A bucket lets 15 requests go at :59 and 15 more at :00 — the burst the
+  // ceiling actually punishes.
+  const src = readGt();
+  assert.match(src, /gtSpentThisMinute/, "the window is measured, not counted per calendar minute");
+  assert.match(src, /at - 60_000/);
+  assert.doesNotMatch(src, /getMinutes\(\)/);
+});
+
+test("GT_MAX_RPM is READ from the env and 0 turns it off — the escape hatch a Pro key needs", () => {
+  const src = readGt();
+  assert.match(src, /num\(process\.env\.GT_MAX_RPM, 15, 0\)/, "default 15 = half of the free ~30/min ceiling");
+  assert.match(src, /if \(MAX_RPM <= 0\) return true;/);
+});
+
+test("the boot line PRINTS the budget — a split nobody can read is how this one stayed missing", () => {
+  const src = readGt();
+  const banner = src.slice(src.indexOf("export function gtBanner"));
+  assert.match(banner, /budget \$\{MAX_RPM/, "the banner must state the budget in force");
 });

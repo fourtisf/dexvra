@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { _resetCgCooldown, cdnGuess, isImage, pickLogo, resolveLogo, type LogoDeps } from "./tokenLogo.ts";
+import { _resetCgCooldown, cdnGuess, checkImage, isImage, pickLogo, resolveLogo, type LogoDeps } from "./tokenLogo.ts";
 
 const ADDR = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce";
 const MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
@@ -181,8 +181,13 @@ const withFetch = async (impl: typeof fetch, fn: () => Promise<void>) => {
   }
 };
 
+// ⚠️ A STRING BODY MAKES NODE STAMP `content-type: text/plain` ON THE RESPONSE
+// BY ITSELF, so a fixture that passes no type still arrives carrying one — and
+// the branch that exists for "no content-type at all" could never be reached.
+// Bytes get no default type, which is what a real image CDN's bare 200 looks
+// like.
 const reply = (status: number, type: string | null): Response =>
-  new Response(status === 204 ? null : "x", {
+  new Response(status === 204 ? null : type ? "x" : new Uint8Array([120]), {
     status,
     headers: type ? { "content-type": type } : {},
   });
@@ -222,8 +227,121 @@ test("isImage: a host we cannot reach is a candidate we cannot use", async () =>
     },
     async () => {
       assert.equal(await isImage(IMG), false);
+      // …and it is UNREACHABLE, never "answered, and not an image". The whole
+      // 12h-miss-versus-30min-undecided decision downstream hangs on that word.
+      assert.equal(await checkImage(IMG), "unreachable");
     },
   );
+});
+
+test("⚠️ $MORTY: a HEAD the CDN refuses is retried as GET, which is what the browser sends", async () => {
+  // The reported shape: artwork plainly visible on DexScreener, a monogram on
+  // our board. `isImage` fell through to GET on 405/501 alone and RETURNED on
+  // everything else, so a CDN answering HEAD with 403 was written off — while
+  // /api/logo, which issues a plain GET, could fetch the file the whole time.
+  for (const headStatus of [403, 404, 500]) {
+    const methods: string[] = [];
+    await withFetch(
+      async (_u, init) => {
+        methods.push(String(init?.method));
+        return methods.length === 1 ? reply(headStatus, "text/html") : reply(200, "image/png");
+      },
+      async () => {
+        assert.equal(await isImage(IMG), true, `HEAD ${headStatus} must not end the check`);
+      },
+    );
+    assert.deepEqual(methods, ["HEAD", "GET"], `HEAD ${headStatus} must be retried as GET`);
+  }
+});
+
+test("isImage: a HEAD that hangs up is retried as GET too", async () => {
+  const methods: string[] = [];
+  await withFetch(
+    async (_u, init) => {
+      methods.push(String(init?.method));
+      if (methods.length === 1) throw new Error("ECONNRESET");
+      return reply(200, "image/webp");
+    },
+    async () => {
+      assert.equal(await isImage(IMG), true);
+    },
+  );
+  assert.deepEqual(methods, ["HEAD", "GET"]);
+});
+
+test("isImage: GET's answer is FINAL — a refused GET is unreachable, a 404 is not", async () => {
+  // Both passes see the same reply, which is the ordinary case.
+  const count = { n: 0 };
+  await withFetch(
+    async () => {
+      count.n++;
+      return reply(404, "text/plain");
+    },
+    async () => {
+      // A 404 from both is an ANSWER about the file: this url is not artwork.
+      assert.equal(await checkImage(IMG), "not-image");
+    },
+  );
+  assert.equal(count.n, 2, "one HEAD, one GET — and no third request");
+
+  await withFetch(async () => reply(403, "text/html"), async () => {
+    // A refusal is a fact about the HOST. Reading it as "not artwork" is how a
+    // CDN that blocks this box empties a project's logo out of the store.
+    assert.equal(await checkImage(IMG), "unreachable");
+  });
+  await withFetch(async () => reply(503, "text/html"), async () => {
+    assert.equal(await checkImage(IMG), "unreachable");
+  });
+});
+
+test("isImage: a GET with no content-type at all is believed; a HEAD with none is not", async () => {
+  // A HEAD that says nothing has said nothing — only the pass that carried the
+  // bytes is evidence.
+  const methods: string[] = [];
+  await withFetch(
+    async (_u, init) => {
+      methods.push(String(init?.method));
+      return reply(200, null);
+    },
+    async () => {
+      assert.equal(await isImage(IMG), true);
+    },
+  );
+  assert.deepEqual(methods, ["HEAD", "GET"]);
+});
+
+test("⚠️ a candidate we could not VERIFY is unreachable, not an absence of artwork", async () => {
+  // DexScreener handed us a real url and the check could not complete. The old
+  // code read that as `false` — "not artwork" — and `ok` stayed true, so the
+  // sweep remembered a 12-hour miss about a token whose logo we had in hand.
+  const r = await resolveLogo("ethereum", ADDR, {
+    ds: async () => IMG,
+    gt: async () => null,
+    cg: async () => null,
+    tw: () => null,
+    verify: async () => "unreachable",
+  });
+  assert.equal(r.url, null);
+  assert.equal(r.ok, false, "an unverifiable candidate may never be reported as a decided miss");
+  assert.ok(
+    r.unreachable.some((u) => u.includes("dexscreener") && u.includes(IMG)),
+    `the url that could not be checked must be named: ${JSON.stringify(r.unreachable)}`,
+  );
+});
+
+test("a candidate that ANSWERED and is not an image is still a decided miss", async () => {
+  // The other side of the same line: this one really is "no artwork here", and
+  // downgrading it to undecided would re-ask every 30 minutes for ever.
+  const r = await resolveLogo("ethereum", ADDR, {
+    ds: async () => IMG,
+    gt: async () => null,
+    cg: async () => null,
+    tw: () => null,
+    verify: async () => "not-image",
+  });
+  assert.equal(r.url, null);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.unreachable, []);
 });
 
 // ── the ladder ──────────────────────────────────────────────────────────────

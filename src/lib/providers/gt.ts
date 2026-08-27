@@ -100,17 +100,43 @@ const num = (raw: string | undefined, dflt: number, min: number): number => {
 /** How long a 429 silences every caller. 120s matches the bot's, so there is
  *  one number to reason about across the two processes on one IP. */
 const COOLDOWN_MS = num(process.env.GT_COOLDOWN_MS, 120_000, 1000);
-/** A floor between two GT requests from this process. Not a budget — the
- *  cooldown is what enforces the ceiling — just enough that a page opening
- *  four panels at once does not arrive as one burst. */
+/** A floor between two GT requests from this process — just enough that a page
+ *  opening four panels at once does not arrive as one burst. */
 const MIN_GAP_MS = num(process.env.GT_MIN_GAP_MS, 120, 0);
+
+/**
+ * ⚠️ THIS PROCESS'S HALF OF ONE IP'S ALLOWANCE, and the half that was missing.
+ *
+ * The ceiling is ~30 req/min counted PER IP, and the bot suite lives on the
+ * same box — so, as CLAUDE.md puts it, "the two processes' budgets have to ADD
+ * UP TO IT". The bot's client was cut to `GT_MAX_RPM=15` for exactly that
+ * reason. The site never got its half: a 120ms floor is ~500 req/min, i.e. no
+ * budget at all, so the bot held politely to fifteen while the site took
+ * whatever it liked and both of them ate the 429. A split one side observes is
+ * not a split.
+ *
+ * It is a PACE, not a refusal: over budget, a request WAITS for a slot rather
+ * than failing, because a chart that draws a second late beats one that does
+ * not draw. Only when a slot cannot be had inside `GT_BUDGET_WAIT_MS` does it
+ * give up — and it gives up the way the cooldown does, `status: 0`, which
+ * every caller already reads as "could not ask" rather than "nothing there".
+ *
+ * `GT_MAX_RPM=0` disables it. An operator on a Pro key raises it in one line;
+ * the boot line prints whatever is in force, because a budget nobody can read
+ * is how this one stayed missing.
+ */
+const MAX_RPM = num(process.env.GT_MAX_RPM, 15, 0);
+/** The longest a request may wait for a budget slot before answering "could not
+ *  ask". Longer than a couple of seconds and a page reads as hung, which is a
+ *  worse failure than a chart that retries. */
+const BUDGET_WAIT_MS = num(process.env.GT_BUDGET_WAIT_MS, 3000, 0);
 const TIMEOUT_MS = 9000;
 
 // Next can hold more than one instance of a module; a per-instance cooldown
 // would let one instance hammer through a 429 the other already saw, which is
 // the exact failure this file exists to prevent.
-const g = globalThis as { __dexvraGt?: { until: number; nextAt: number; chain: Promise<void> } };
-const state = g.__dexvraGt ?? (g.__dexvraGt = { until: 0, nextAt: 0, chain: Promise.resolve() });
+const g = globalThis as { __dexvraGt?: { until: number; nextAt: number; chain: Promise<void>; sent: number[] } };
+const state = g.__dexvraGt ?? (g.__dexvraGt = { until: 0, nextAt: 0, chain: Promise.resolve(), sent: [] });
 
 export const gtInCooldown = (at = Date.now()): boolean => at < state.until;
 export const gtCooldownLeftMs = (at = Date.now()): number => Math.max(0, state.until - at);
@@ -126,6 +152,16 @@ export function gtArmCooldown(ms = COOLDOWN_MS, at = Date.now()): void {
 export function _gtReset(): void {
   state.until = 0;
   state.nextAt = 0;
+  state.sent.length = 0;
+}
+
+/** How many of this minute's budget slots are already spent. Exported so a test
+ *  — and `/api/gt-status` if it ever wants it — can read the split rather than
+ *  infer it. */
+export function gtSpentThisMinute(at = Date.now()): number {
+  const cut = at - 60_000;
+  while (state.sent.length && state.sent[0] <= cut) state.sent.shift();
+  return state.sent.length;
 }
 
 /**
@@ -150,7 +186,7 @@ export function gtBanner(): void {
       GT_KEYED
         ? `API key set · ${PINNED_TIER ? `${PINNED_TIER.toUpperCase()} tier (pinned)` : `trying the ${tier.toUpperCase()} tier first, the other on a 401/403`} — the allowance is counted PER KEY, not per IP`
         : "PUBLIC free tier (~30 req/min per IP, shared with the bot suite on this box) — set GECKOTERMINAL_API_KEY to raise it (a free CoinGecko Demo key works)"
-    } · base ${baseNow()}`,
+    } · budget ${MAX_RPM > 0 ? `${MAX_RPM}/min from THIS process` : "OFF (GT_MAX_RPM=0)"} · base ${baseNow()}`,
   );
 }
 
@@ -158,14 +194,34 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Serialise the gap so concurrent callers space out instead of all firing at
  *  once (the same shape as the CoinGecko pacer in tokenLogo). */
-function slot(): Promise<void> {
+function slot(): Promise<boolean> {
   const wait = state.chain.then(async () => {
     const now = Date.now();
     const delay = Math.max(0, state.nextAt - now);
     if (delay) await sleep(delay);
     state.nextAt = Math.max(now, state.nextAt) + MIN_GAP_MS;
+    if (MAX_RPM <= 0) return true;
+    // A ROLLING window, not a per-minute bucket: a bucket lets 15 requests go
+    // at :59 and 15 more at :00, which is the burst the ceiling actually
+    // punishes.
+    const giveUpAt = Date.now() + BUDGET_WAIT_MS;
+    for (;;) {
+      const at = Date.now();
+      if (gtSpentThisMinute(at) < MAX_RPM) {
+        // Counted when the slot is TAKEN, not when the response lands: a
+        // request that is then skipped by the cooldown re-check below has still
+        // reserved its place. Over-counting spends a little less than the
+        // allowance; under-counting spends more than it, and that is the 429.
+        state.sent.push(at);
+        return true;
+      }
+      if (at >= giveUpAt) return false;
+      // Sleep until the oldest request falls out of the window — never a fixed
+      // poll, which would spin for a whole minute on a saturated budget.
+      await sleep(Math.min(giveUpAt - at, Math.max(25, state.sent[0] + 60_000 - at)));
+    }
   });
-  state.chain = wait.catch(() => {});
+  state.chain = wait.then(() => {}).catch(() => {});
   return wait;
 }
 
@@ -201,7 +257,16 @@ export async function gtGet<T = unknown>(path: string, params?: Record<string, s
 
   const qs = params ? new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : "";
   const url = `${baseNow()}${path}${qs ? `?${qs}` : ""}`;
-  await slot();
+  if (!(await slot()))
+    return {
+      ok: false,
+      status: 0,
+      // Named as OURS, not as GeckoTerminal's — this is our own budget holding
+      // the request back, and reporting it as an upstream failure would send an
+      // operator to check a service that is perfectly healthy.
+      reason: `over this process's GeckoTerminal budget (${MAX_RPM}/min, shared with the bot suite on this IP) — raise GT_MAX_RPM or set GECKOTERMINAL_API_KEY`,
+      body: null,
+    };
   // Re-checked AFTER the gap: a request that waited its turn may have been
   // overtaken by a 429 armed by whatever went out ahead of it, and firing it
   // anyway is how a cooldown gets extended.
