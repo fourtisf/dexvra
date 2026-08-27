@@ -1958,8 +1958,17 @@ function snipeSetupScreen(chatId, note) {
   // never states that the thing is not armed yet — "dmn ada teks snipe atau
   // confirm??" is what a panel that looks finished but has not fired asks of
   // its reader. Nothing here spends until ⚡ is tapped, so say both halves.
+  //
+  // ⚠️ AND A REFUSED PANEL DROPS IT, never keeps it beside the refusal. "⚡ ARM
+  // SNIPE was tapped and refused" over "tap ⚡ ARM SNIPE below to start
+  // watching" is two lines contradicting each other with the reassuring one
+  // LAST, directly above the button — so the reader taps again, gets the same
+  // silence, and reports the button as dead. The auto-raid panel already had to
+  // learn to DROP its ready line rather than reword it; this is the same rule,
+  // on the panel that spends money.
   const ready = !!d.ca && !!d.amount && selCount > 0;
-  L.push('', T(chatId, ready ? 'snipe.panel.ready' : 'snipe.panel.not_ready'));
+  if (note) L.push('', T(chatId, 'snipe.panel.refused'));
+  else L.push('', T(chatId, ready ? 'snipe.panel.ready' : 'snipe.panel.not_ready'));
   // Label + value, two buttons a row — the reference's two-column table. Both
   // open the same editor, so there is no wrong half to tap.
   const kbRows = [
@@ -3832,8 +3841,22 @@ async function onCallback(q) {
         await edit(chatId, mid, T(chatId, 'snipe.panel.spent'));
         return send(chatId, text, kb);
       } catch (e) {
-        const s = snipeSetupScreen(chatId, String((e && e.message) || e));
-        return edit(chatId, mid, s.text, s.kb);
+        // A REFUSAL IS SENT, NOT ONLY EDITED IN.
+        //
+        // "pas pilih arm malah tidak mau respon" — it DID respond: the reason
+        // was written into the panel, near the TOP of a twenty-line message the
+        // reader is scrolled past (the buttons are at the bottom, which is why
+        // they are looking there). An in-place edit notifies nobody and happens
+        // off screen — the exact lesson the SUCCESS path above already carries,
+        // never applied to the failure path beside it. So the panel still shows
+        // the reason (the row to fix is one tap away) AND the reason lands at
+        // the bottom of the chat, where the tap was made.
+        const why = String((e && e.message) || e);
+        const s = snipeSetupScreen(chatId, why);
+        await edit(chatId, mid, s.text, s.kb);
+        return send(chatId, T(chatId, 'snipe.panel.refused_msg', { why: esc(why) }), { inline_keyboard: [
+          [btn(T(chatId, 'snipe.panel.home_btn'), 'csn'), btn('👥 Copy & Snipe', 'copy')],
+        ] });
       }
     }
     // 'open' and anything unrecognised: (re)draw the panel.

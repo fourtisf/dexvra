@@ -308,9 +308,12 @@ test('the ⚡ handler goes through core.armSnipeDraft and never around it', () =
   assert.match(block, /core\.armSnipeDraft\(chatId\)/, '⚡ no longer arms through the draft');
   assert.ok(!block.includes('addSnipeTarget'), 'the panel grew a second arming site around armSnipeDraft');
   assert.ok(!block.includes('addCopyTarget'), 'the panel arms dev targets around armSnipeDraft');
-  // No toast on failure: the panel re-renders with the reason IN it, where the
-  // row to fix is one tap away. A toast disappears; the row stays.
-  assert.match(block, /snipeSetupScreen\(chatId, String\(\(e && e\.message\) \|\| e\)\)/);
+  // The panel re-renders with the reason IN it, where the row to fix is one tap
+  // away — AND the reason is sent to the bottom of the chat, because the panel
+  // edit lands off screen for anyone scrolled to the buttons ("pas pilih arm
+  // malah tidak mau respon"). Both, not either.
+  assert.match(block, /const s = snipeSetupScreen\(chatId, why\)/, 'the refusal stopped re-rendering the panel');
+  assert.match(block, /return send\(chatId, T\(chatId, 'snipe\.panel\.refused_msg'/, 'a refused arm is silent again wherever the reader is scrolled');
 });
 
 // ── the Target paste ─────────────────────────────────────────────────────────
@@ -794,4 +797,70 @@ test('the typed TP/SL editor accepts 100/50 and off, refuses an impossible SL', 
   const out = await typed('snw_tpsl', '100/150');
   assert.match(out.replace(/<[^>]+>/g, ''), /TP\/SL/i);
   assert.equal(core.snipeDraft(u).slPct, 0, 'an impossible stop-loss was stored');
+});
+
+// ── "pas pilih arm malah tidak mau respon" ──────────────────────────────────
+//
+// The tap DID respond: `armSnipeDraft` refused (an already-armed dev, a full
+// target list) and the reason was written into the panel — near the TOP of a
+// twenty-line message the reader is scrolled past, because the buttons are at
+// the BOTTOM and that is where they are looking. Off screen, an in-place edit
+// notifies nobody: from the user's seat the button is dead. Worse, the panel's
+// LAST line still read "tap ⚡ ARM SNIPE below to start watching", directly
+// above the button that had just refused.
+
+/** Drive the real callback handler and capture what Telegram was asked to do. */
+async function tapped(data) {
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, opt) => {
+    let b = {}; try { b = JSON.parse(opt.body); } catch (_) {}
+    calls.push({ method: String(url).split('/').pop(), text: b.text || '' });
+    return { json: async () => ({ ok: true, result: { message_id: 9 } }) };
+  };
+  try { await tg._test.onCallback({ id: 'q', data, message: { chat: { id: CHAT }, message_id: 5 } }); }
+  finally { global.fetch = realFetch; }
+  return calls;
+}
+
+function devDraft() {
+  core.newSnipeDraft(CHAT);
+  core.updateSnipeDraft(CHAT, {
+    kind: 'dev', chain: 'robinhood', ca: CA, walletIds: '*', amount: '0.01', slipPct: 50, budget: '0.15',
+  });
+}
+
+test('a REFUSED arm reaches the user where the tap was made, not only in the panel', async () => {
+  user();
+  devDraft();
+  const first = await tapped('snw:arm');
+  assert.ok(first.some((c) => c.method === 'sendMessage' && /armed/i.test(c.text)), 'the first arm did not confirm');
+
+  // The same dev again — what an operator does after tweaking a row.
+  devDraft();
+  const again = await tapped('snw:arm');
+  const sent = again.find((c) => c.method === 'sendMessage');
+  assert.ok(sent, 'the refusal never left the panel — off screen, the button reads as dead');
+  assert.match(sent.text, /already sniping that dev/i, 'the sent message must carry the REASON, not a generic error');
+  assert.match(sent.text, /nothing was spent/i, 'a refused arm must say no money moved');
+  // The panel still carries it too — the row to fix stays one tap away.
+  const edited = again.find((c) => c.method === 'editMessageText');
+  assert.match(edited.text, /already sniping that dev/i);
+});
+
+test('a panel carrying a refusal never tells the reader to tap ARM again', async () => {
+  user();
+  devDraft();
+  await tapped('snw:arm');          // arms it
+  devDraft();
+  await tapped('snw:arm');          // refused
+  const refused = tg._test.snipeSetupScreen(CHAT, 'already sniping that dev on this chain').text;
+  assert.ok(!/tap <b>⚡ ARM SNIPE<\/b> below to start watching/.test(refused),
+    'the ready line survives beside a refusal — the reassuring line is LAST, right above the button');
+  assert.match(refused, /Not armed/i, 'a refused panel must say it is not armed');
+  // …and an un-refused panel still says its ready line, or this fix would have
+  // deleted the line whose absence started the whole "dmn ada teks confirm??".
+  user();
+  devDraft();
+  assert.match(tg._test.snipeSetupScreen(CHAT).text, /ARM SNIPE/);
 });

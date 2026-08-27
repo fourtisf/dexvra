@@ -497,6 +497,17 @@ const S = {
     en: '⏳ Fill the rows marked ⏳ above, then tap <b>⚡ ARM SNIPE</b>.',
     id: '⏳ Isi dulu baris bertanda ⏳ di atas, lalu tap <b>⚡ PASANG SNIPE</b>.',
   },
+  // Replaces the ready line whenever the panel carries a refusal: the reason is
+  // already printed above, and repeating "tap ⚡ ARM SNIPE" underneath it is the
+  // panel telling the reader to do the thing that just failed.
+  'snipe.panel.refused': {
+    en: '⚠️ <b>Not armed.</b> The reason is above — fix that row, or open 👥 Copy &amp; Snipe to see what is already watching.',
+    id: '⚠️ <b>Belum terpasang.</b> Alasannya di atas — perbaiki baris itu, atau buka 👥 Copy &amp; Snipe untuk melihat yang sudah memantau.',
+  },
+  'snipe.panel.refused_msg': {
+    en: '⚠️ <b>Not armed</b> — {why}.\nNothing is watching and nothing was spent. The setup panel above still holds your settings.',
+    id: '⚠️ <b>Belum terpasang</b> — {why}.\nTidak ada yang memantau dan tidak ada dana terpakai. Panel setup di atas masih menyimpan pengaturan Anda.',
+  },
   'snipe.panel.oneline_btn': { en: '⌨️ One line', id: '⌨️ Satu baris' },
   'snipe.panel.discard_btn': { en: '🗑 Discard', id: '🗑 Buang' },
   'snipe.panel.set_btn': { en: 'Set target', id: 'Isi target' },

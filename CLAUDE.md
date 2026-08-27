@@ -1237,6 +1237,44 @@ cd bot && node scripts/run-tests.js test/autoListerPace.test.js test/autoListerP
 the way `minMcapUsd` did. The old behaviour is one tap: ⏳ Pace → OFF on the
 🆓 Auto Listing panel.
 
+### "pas pilih arm malah tidak mau respon" — it answered, off screen
+
+Reported with the 🎛 Snipe Setup panel filled in and ⚡ ARM SNIPE doing
+nothing. The tap was acked, the handler ran, and `armSnipeDraft` refused with
+a real reason (*already sniping that dev on this chain* — the operator had
+armed it, tweaked a row, and tapped again). **The reason was rendered into the
+panel, near the TOP of a twenty-line message**, and the reader is at the
+BOTTOM, because that is where the buttons are. An in-place edit notifies
+nobody and, once scrolled, happens off screen — so the button reads as dead.
+
+This file already names that lesson, on this very handler: the SUCCESS path
+sends the confirmation as a NEW message *("dmn ada teks snipe atau confirm??"
+— it was there, written into the panel message in place)*. **The failure path
+beside it kept editing.** A lesson applied to one branch of an if/else is a
+lesson half-learnt.
+
+- **A refusal is SENT as well as edited in.** The panel keeps the reason (the
+  row to fix is one tap away — the original comment's reasoning stands), and
+  the reason also lands at the bottom of the chat, where the tap was made,
+  naming what was refused and stating that **nothing was spent**.
+- ⚠️ **A refused panel DROPS its ready line.** Its last line still read
+  *"✅ Ready. Nothing is armed yet — tap ⚡ ARM SNIPE below to start
+  watching"* — directly above the button that had just refused, with the
+  reassuring line LAST. So the reader taps again, gets the same silence, and
+  reports a dead button. The auto-raid panel had to learn to DROP its ready
+  line rather than reword it; this is the same rule on the panel that spends
+  money. A panel with no refusal still says its ready line — pinned, because
+  deleting it is what started *"dmn ada teks confirm??"* in the first place.
+- **The tests DRIVE the registered handler** through a real callback update
+  and assert a `sendMessage` carrying the reason, not merely that the code
+  calls `snipeSetupScreen`. A source scan passed on the broken revision.
+
+```bash
+cd tradebot && node --test snipePanel.test.js   # 49 tests, no network
+```
+
+**Config a fix depends on:** nothing.
+
 ### "angkanya bisa di ketik biar cpt" — twenty-two taps for one number
 
 The trigger ceiling steps in ±$100,000, so moving it from $1M to $3.2M is
