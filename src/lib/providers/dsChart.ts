@@ -296,10 +296,24 @@ async function getJson(url: string, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
     // refusal was coming from somewhere else entirely. "Never discard the
     // reason", one host over.
     const host = new URL(url).host;
-    if (res.status === 429) {
+    // ⚠️ A 403 IS A REFUSAL BY THE HOST, AND RETRYING IT EVERY FIVE SECONDS IS
+    // THE 429 DEFECT ONE STATUS OVER. The panel fast-retries a transient chart
+    // failure every 5s (up to 8 times) so a chart draws itself the moment a
+    // GeckoTerminal cooldown lifts — free upstream, because `gtGet` answers a
+    // cooled-down request WITHOUT making one. DexScreener had no such guard for
+    // a 403: with GT cooling down and `io.dexscreener.com` refusing this box,
+    // every chart view spent eight requests proving the same refusal. That is
+    // the shape CLAUDE.md already names for CoinGecko — "a 429 now arms a
+    // process-wide cooldown and the rest of the sweep is not asked at all".
+    //
+    // 404 is deliberately NOT in this set: that is an ANSWER about the pair
+    // ("DexScreener has no pair for this token"), not a refusal of us, and
+    // caching it as an outage would blind the fallback for every other token.
+    if (res.status === 429 || res.status === 401 || res.status === 403 || res.status === 451) {
       dsArmCooldown();
       void res.body?.cancel().catch(() => {});
-      return { ok: false, status: 429, body: null, why: `${host} 429 (rate limited)` };
+      const what = res.status === 429 ? "rate limited" : "refusing this server";
+      return { ok: false, status: res.status, body: null, why: `${host} ${res.status} (${what})` };
     }
     if (!res.ok) {
       void res.body?.cancel().catch(() => {});

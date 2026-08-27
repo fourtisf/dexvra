@@ -549,3 +549,50 @@ test("the env reader checks the BLANK STRING before Number()", () => {
   // decided", not "refused".
   assert.match(prov, /s === "0" \|\| s === "false" \|\| s === "off" \|\| s === "no"/);
 });
+
+test("⚠️ a 403 arms the cooldown — retrying a refusal is the 429 defect one status over", async () => {
+  // Reported live: "GeckoTerminal is rate limited — cooling down for 92s;
+  // io.dexscreener.com 403". The panel fast-retries a transient chart failure
+  // every 5s so the chart draws itself the moment a GT cooldown lifts — free
+  // upstream, because gtGet answers a cooled-down request WITHOUT making one.
+  // DexScreener had no such guard for a 403, so every chart view spent eight
+  // requests proving the same refusal.
+  _dsChartReset();
+  let bars = 0;
+  const f = stubFetch((u) => {
+    if (u.includes("token-pairs"))
+      return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }];
+    bars++;
+    return { status: 403 };
+  });
+  try {
+    const a = await dsCandles("bsc", "0xUS", "15m", {});
+    assert.strictEqual(a.ok, false);
+    assert.match(a.why!, /403/);
+    assert.ok(dsInCooldown(), "a host refusing us is not asked again straight away");
+    const spent = bars;
+    const b = await dsCandles("bsc", "0xUS", "15m", {});
+    assert.strictEqual(bars, spent, "the next request made no upstream call at all");
+    assert.match(b.why!, /cooling down/);
+  } finally {
+    f.restore();
+    _dsChartReset();
+  }
+});
+
+test("…but a 404 does NOT arm it — that is an answer about the pair, not a refusal of us", async () => {
+  // Caching it as an outage would blind the fallback for every other token.
+  _dsChartReset();
+  const f = stubFetch((u) => {
+    if (u.includes("token-pairs"))
+      return [{ chainId: "bsc", dexId: "uniswap", pairAddress: "0xPAIR", baseToken: { address: "0xus" }, liquidity: { usd: 1 } }];
+    return { status: 404 };
+  });
+  try {
+    await dsCandles("bsc", "0xUS", "15m", {});
+    assert.ok(!dsInCooldown(), "the next token is still asked");
+  } finally {
+    f.restore();
+    _dsChartReset();
+  }
+});
