@@ -1232,6 +1232,31 @@ function clearSnipeDraft(chatId) {
 /** Arm the draft — THROUGH addSnipeTarget, never around it. The draft is
  *  cleared only on SUCCESS: a refused arm ("already armed", cap reached) leaves
  *  the panel intact so the user fixes one row instead of retyping seven. */
+/**
+ * The target already watching this (kind, chain, address), or null.
+ *
+ * THE SINGLE OWNER of "is this a duplicate", because two of them had already
+ * appeared: `addSnipeTarget` and `addCopyTarget` each refuse one at arm time,
+ * and the PANEL knew about neither — so it rendered every row ✅, printed
+ * "Ready … tap ⚡ ARM SNIPE", and offered a live button for a target that
+ * could only ever be refused. A screen that offers an action which cannot
+ * succeed is a screen that gets reported as broken, and it was.
+ *
+ * `kind` is 'dev' (a copy target in launches mode) or 'ca' (an armed snipe
+ * target). Address comparison is chain-correct: base58 is case-SIGNIFICANT.
+ */
+function armedTargetFor(chatId, { kind, chain, ca }) {
+  const u = getUser(chatId);
+  if (!u || !chain || !ca) return null;
+  const norm = (a) => (isSvm(chain) ? String(a || '').trim() : String(a || '').trim().toLowerCase());
+  const want = norm(ca);
+  if (kind === 'dev') {
+    const list = (u.copy && Array.isArray(u.copy.targets)) ? u.copy.targets : [];
+    return list.find((t) => t.mode === 'launches' && t.chain === chain && norm(t.address) === want) || null;
+  }
+  return armedSnipeTargets(u).find((t) => t.chain === chain && norm(t.ca) === want) || null;
+}
+
 function armSnipeDraft(chatId) {
   const u = ensureUser(chatId);
   const d = snipeDraft(u);
@@ -4065,7 +4090,7 @@ module.exports = {
   setConfirmBuy, setExpert, setReceiptStyle, perWalletReceipts, setAutoExit, setAutoProtect, getLang, setLang, setNotify, notifyOn, NOTIFY_TYPES,
   tradeSelection, setTradeAll, toggleTradeWallet, tradeWalletIds,
   addCopyTarget, removeCopyTarget, setCopyOn, setCopySell, copyHoldingAdd, copyHoldingDrop, copyHoldingSet, copyHoldingBump, copyHoldingRetry, copyTokenKey, MAX_COPY_TARGETS, canDevSnipe,
-  canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets,
+  canTradeNow, addSnipeTarget, removeSnipeTarget, snipeTargets, snipeTargetById, armedSnipeTargets, armedTargetFor,
   claimSnipeTarget, settleSnipeTarget, rearmSnipeTarget, expireSnipeTarget, MAX_SNIPE_TARGETS, SNIPE_TTL_MS,
   snipeDraft, newSnipeDraft, updateSnipeDraft, clearSnipeDraft, armSnipeDraft, SNIPE_DRAFT_TTL_H, copyFanOut,
   feePayoutEnabled, payFromFeeWallet,

@@ -500,6 +500,19 @@ const S = {
   // Replaces the ready line whenever the panel carries a refusal: the reason is
   // already printed above, and repeating "tap ⚡ ARM SNIPE" underneath it is the
   // panel telling the reader to do the thing that just failed.
+  // The panel's own reading of the duplicate the arming sites refuse. Said HERE,
+  // where the Target row that fixes it is one tap away, instead of after a tap
+  // that could never have worked.
+  'snipe.panel.already_dev': {
+    en: '✅ <b>Already watching this developer</b> on this chain — there is nothing left to arm. Change the 🎯 Target row to watch a different one, or open 👥 Copy &amp; Snipe to see or remove it.',
+    id: '✅ <b>Developer ini sudah dipantau</b> di chain ini — tidak ada yang perlu dipasang lagi. Ganti baris 🎯 Target untuk memantau yang lain, atau buka 👥 Copy &amp; Snipe untuk melihat/menghapusnya.',
+  },
+  'snipe.panel.already_ca': {
+    en: '✅ <b>This contract is already armed</b> on this chain — there is nothing left to arm. Change the 🎯 Target row, or open 🎯 Sniper to see or remove it.',
+    id: '✅ <b>Kontrak ini sudah terpasang</b> di chain ini — tidak ada yang perlu dipasang lagi. Ganti baris 🎯 Target, atau buka 🎯 Sniper untuk melihat/menghapusnya.',
+  },
+  'snipe.panel.see_dev_btn': { en: '👥 Already watching — open Copy & Snipe', id: '👥 Sudah dipantau — buka Copy & Snipe' },
+  'snipe.panel.see_ca_btn': { en: '🎯 Already armed — open Sniper', id: '🎯 Sudah terpasang — buka Sniper' },
   'snipe.panel.refused': {
     en: '⚠️ <b>Not armed.</b> The reason is above — fix that row, or open 👥 Copy &amp; Snipe to see what is already watching.',
     id: '⚠️ <b>Belum terpasang.</b> Alasannya di atas — perbaiki baris itu, atau buka 👥 Copy &amp; Snipe untuk melihat yang sudah memantau.',

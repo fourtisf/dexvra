@@ -864,3 +864,38 @@ test('a panel carrying a refusal never tells the reader to tap ARM again', async
   devDraft();
   assert.match(tg._test.snipeSetupScreen(CHAT).text, /ARM SNIPE/);
 });
+
+test('a panel whose target is ALREADY watching does not offer a tap that can only fail', async () => {
+  // "mengapa seperti ini" — the refusal was correct and the panel that produced
+  // it was not: every row ✅, "Ready … tap ⚡ ARM SNIPE", and a live ⚡ button
+  // for a dev the store already watches. Indistinguishable from a panel that
+  // has never been armed, which is exactly how it gets tapped.
+  user();
+  devDraft();
+  await tapped('snw:arm');                       // now armed
+  devDraft();                                    // re-open the panel, same dev
+  const s = tg._test.snipeSetupScreen(CHAT);
+  assert.match(s.text, /Already watching this developer/i, 'the panel still reads as un-armed');
+  assert.ok(!/tap <b>⚡ ARM SNIPE<\/b>/.test(s.text), 'it still tells the reader to arm what is armed');
+  const flat = s.kb.inline_keyboard.flat();
+  assert.ok(!flat.some((b) => b.callback_data === 'snw:arm'), 'the ⚡ row still offers a tap that can only be refused');
+  assert.ok(flat.some((b) => b.callback_data === 'copy'), 'no route to the list the target is already on');
+});
+
+test('armedTargetFor is the ONE owner, and it is chain- and kind-correct', () => {
+  user();
+  devDraft();
+  const before = core.armedTargetFor(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA });
+  assert.equal(before, null, 'nothing is armed yet');
+  core.armSnipeDraft(CHAT);
+  assert.ok(core.armedTargetFor(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA }), 'the armed dev is not found');
+  // A dev target is NOT a CA target — the two stores are separate, and reading
+  // one for the other would render a panel that refuses to arm something
+  // arm-able.
+  assert.equal(core.armedTargetFor(CHAT, { kind: 'ca', chain: 'robinhood', ca: CA }), null);
+  // …and not on another chain: the same address is a different target there.
+  assert.equal(core.armedTargetFor(CHAT, { kind: 'dev', chain: 'solana', ca: CA }), null);
+  // EVM address comparison is case-insensitive; the checksum spelling a user
+  // pastes must not read as a second, un-armed target.
+  assert.ok(core.armedTargetFor(CHAT, { kind: 'dev', chain: 'robinhood', ca: CA.toLowerCase() }));
+});

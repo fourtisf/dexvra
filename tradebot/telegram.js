@@ -1967,7 +1967,16 @@ function snipeSetupScreen(chatId, note) {
   // learn to DROP its ready line rather than reword it; this is the same rule,
   // on the panel that spends money.
   const ready = !!d.ca && !!d.amount && selCount > 0;
+  // ALREADY WATCHING THIS EXACT TARGET? Then ⚡ can only ever be refused, and a
+  // panel that shows every row ✅ over a live ARM button is indistinguishable
+  // from one that has never been armed — which is precisely how an operator
+  // ends up tapping it, being refused, and asking why. `armedTargetFor` is the
+  // one owner of that question; the two arming sites already refuse a
+  // duplicate, and this is the same fact read one screen earlier, where it can
+  // still be acted on.
+  const armed = d.ca ? core.armedTargetFor(chatId, { kind: dev ? 'dev' : 'ca', chain: d.chain, ca: d.ca }) : null;
   if (note) L.push('', T(chatId, 'snipe.panel.refused'));
+  else if (armed) L.push('', T(chatId, dev ? 'snipe.panel.already_dev' : 'snipe.panel.already_ca'));
   else L.push('', T(chatId, ready ? 'snipe.panel.ready' : 'snipe.panel.not_ready'));
   // Label + value, two buttons a row — the reference's two-column table. Both
   // open the same editor, so there is no wrong half to tap.
@@ -1984,7 +1993,12 @@ function snipeSetupScreen(chatId, note) {
   } else {
     kbRows.push([btn(`🕒 ${T(chatId, 'snipe.panel.ttl')}`, 'snw:ttl'), btn(`${d.ttlH}h`, 'snw:ttl')]);
   }
-  kbRows.push([btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')]);
+  // The ⚡ row is REPLACED, not merely relabelled, when this target is already
+  // watching: the tap can only be refused, so the row becomes the one thing
+  // the reader actually wants next — the list it is already on.
+  kbRows.push(armed
+    ? [btn(T(chatId, dev ? 'snipe.panel.see_dev_btn' : 'snipe.panel.see_ca_btn'), dev ? 'copy' : 'csn')]
+    : [btn(T(chatId, 'snipe.panel.arm_btn'), 'snw:arm')]);
   kbRows.push(dev
     ? [btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')]
     : [btn(T(chatId, 'snipe.panel.oneline_btn'), 'csnadd'), btn(T(chatId, 'snipe.panel.discard_btn'), 'snw:cancel')]);

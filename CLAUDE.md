@@ -1269,8 +1269,33 @@ lesson half-learnt.
   and assert a `sendMessage` carrying the reason, not merely that the code
   calls `snipeSetupScreen`. A source scan passed on the broken revision.
 
+#### …and the refusal was right — the PANEL that produced it was not
+
+With the reason finally visible (*already sniping that dev on this chain*),
+the next question was "mengapa seperti ini". Because the panel that offered
+the tap showed **every row ✅ and a live ⚡ ARM SNIPE button for a developer
+the store was already watching** — indistinguishable from a panel that has
+never been armed, which is exactly how it gets tapped. **A screen that offers
+an action which cannot succeed will be reported as broken, and it was.**
+
+- **`core.armedTargetFor(chatId, {kind, chain, ca})` is the ONE owner of "is
+  this a duplicate".** Two already existed — `addSnipeTarget` and
+  `addCopyTarget` each refuse one at arm time — and the panel knew about
+  neither. It is the same fact, read one screen earlier, where it can still be
+  acted on.
+- **The ⚡ row is REPLACED, not relabelled**: an already-watching target's row
+  becomes the list it is already on (👥 Copy & Snipe for a dev, 🎯 Sniper for
+  a CA). A button whose only outcome is a refusal is not a button.
+- **The status line says it too**, where the 🎯 Target row that fixes it is one
+  tap away — change the target, or go remove the existing one.
+- ⚠️ **Kind and chain are part of the identity.** A dev target and a CA target
+  live in different stores and the same address on another chain is a
+  different target; reading one for the other would refuse to arm something
+  perfectly arm-able. EVM comparison is case-insensitive (a pasted checksum
+  spelling must not read as a second, un-armed target) and Solana's is not.
+
 ```bash
-cd tradebot && node --test snipePanel.test.js   # 49 tests, no network
+cd tradebot && node --test snipePanel.test.js   # 51 tests, no network
 ```
 
 **Config a fix depends on:** nothing.
