@@ -15,12 +15,21 @@ let SNAP_PRICE = 0;                  // tokenSnapshot priceEth (positions test)
 let SELL_BEHAVIOR = { ok: true };   // core.sell behavior (positions test)
 const sellCalls = [];               // records core.sell(chatId, ca, pct, chain, wid, opts)
 let SAFE = { supported: false, sec: null };   // safety re-check result (positions test)
+const ONE_WALLET = [{ id: 'w1', address: '0xME' }];
 const coreStub = {
   CFG: { gasBufferEth: '0.001', solGasBuffer: '0.01' },
-  chains: { isSvm: (k) => k === 'solana', isEnabled: () => true },
+  chains: { isSvm: (k) => k === 'solana', isEnabled: () => true, enabledChains: () => [] },
+  // The multi-wallet dev snipe resolves the target's wallet SELECTION at fire
+  // time (walletId/'*'/walletIds → walletList, falling back to activeWallet),
+  // and records one exit-mirror LEG per buying wallet through copyHoldingAdd.
+  // The stub predated all of that, so this script had been crashing on
+  // `core.activeWallet is not a function` since the selection landed — i.e. the
+  // one offline check of the dev snipe could not run at all.
+  activeWallet: () => ONE_WALLET[0],
+  copyHoldingAdd: () => {},
   chainOf: (k) => ({ key: k, name: k, emoji: '◆', native: k === 'solana' ? 'SOL' : 'ETH', explorer: 'https://x' }),
   allUsers: () => USERS,
-  walletList: (u) => u.wallets || [],
+  walletList: (u) => u.wallets || ONE_WALLET,
   notifyOn: () => false,   // alerts OFF → only autoProtect can drive positionsCycle
   tokenSnapshot: async () => (SNAP_PRICE > 0 ? { priceEth: SNAP_PRICE, sym: 'DEV' } : null),
   sell: async (chatId, ca, pct, chain, wid, opts) => {
