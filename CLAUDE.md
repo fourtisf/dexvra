@@ -2286,6 +2286,105 @@ And four more, all this file's own recurring shapes:
 npm test    # relist / mediaFile / logoWrite / logoPipeline — the two locks included
 ```
 
+### "token morty tidak ada logonya padahal di dexscrener ada" — the guard was not asking the renderer's question
+
+Reported with a screenshot of DexScreener showing `$MORTY`'s artwork beside our
+board drawing its monogram. Every source in the ladder was working: DexScreener
+handed us the url. **`isImage` threw it away**, and it threw it away for a
+reason that had nothing to do with the file.
+
+`isImage` probes `["HEAD", "GET"]` — but only a **405/501** ever reached the
+GET. Every other HEAD outcome returned: a non-2xx status, a non-image
+content-type, an exception. So a CDN answering HEAD with 403 (or 404, or an
+HTML error page, or by hanging up) was written off — while `/api/logo/route.ts`,
+which issues a **plain GET, exactly like the browser**, could fetch that file
+the whole time.
+
+- ⚠️ **A GUARD IS ONLY HONEST WHILE IT MEASURES THE STACK THE RENDERER USES.**
+  This is the `fonts:check` lesson — nine green ticks over a banner publishing
+  boxes, because `warnBoxes()` measured a font stack that renderer did not draw
+  with — one module over and pointing the same way. Any HEAD outcome short of
+  "yes, an image" is retried as GET now, and only GET's answer is final.
+- **This is NOT "fail over on a TRANSPORT error only" being broken.** That
+  rule's stated reason is that an HTTP status means the host answered and *the
+  same request gets the same status everywhere else* — and **HEAD and GET are
+  different requests** to the same host, which is the one case the reason does
+  not cover. Same shape as the IPFS gateway list failing over on a 404: there,
+  a CID is the hash of the bytes, so the status is a fact about the gateway; here
+  it is a fact about the method.
+- The cost is one extra request per REJECTED candidate, against unmetered image
+  CDNs, and the sweep is capped at eight rows.
+
+**And a verification we could not COMPLETE was being written down as an
+answer.** `pick()` read `if (await verify(url))`, so a url we were handed and
+then failed to open — a timeout, a 5xx, a CDN refusing this box — fell through
+to `ok: unreachable.length === 0`, which stayed **true**. `sweepLogos` wrote
+that as `kind: "miss"`, would not look again for **twelve hours**, and the log
+line said *"N with no artwork anywhere"* about tokens whose artwork we had in
+hand. That is the module's own headline contract inverted: `ok: true, url: null`
+is supposed to mean *every source answered and this project has no artwork*.
+
+- **`checkImage` returns three verdicts**, because two of them are not the same
+  fact: `image` · `not-image` (it ANSWERED and is not one — a 404, an HTML error
+  page) · `unreachable` (no decision — DNS, a timeout, a 5xx, a refusal). A
+  refusal or a 5xx is a fact about the HOST; only a non-refusal 4xx is a fact
+  about the file.
+- **An unverifiable candidate is an unreachable SOURCE**, so `ok` goes false and
+  the sweep records `undecided` — retried in 30 minutes rather than 12 hours —
+  and the url that could not be checked is NAMED.
+- **A real `not-image` stays a decided miss.** Downgrading it would re-ask every
+  30 minutes for ever, which is the other half of the same line.
+- ⚠️ **The test fixture could not reach the branch it was written for.** Node
+  stamps `content-type: text/plain` on a `Response` built from a STRING, so
+  `reply(200, null)` still arrived carrying a type and the "no content-type at
+  all" case had never been exercised. Bytes get no default type. A test
+  measuring its own fake, for the second time in this file.
+- Mutation-tested: HEAD's verdict being final again, the unverifiable candidate
+  reading as "not artwork", and a 5xx reading as an answer each fail between one
+  and three tests.
+
+```bash
+npm test    # tokenLogo (37) + logoFill (15)
+```
+
+### …and the site had never taken its half of the split
+
+The bot's client was cut to `GT_MAX_RPM=15` — *"the ceiling is per IP, so the
+two processes' budgets have to ADD UP TO IT"* — and **the web app never got the
+other half.** Its only pacing was a 120 ms floor between requests, which is
+~500 req/min: no budget at all. So the bot held politely to fifteen while the
+site took whatever it liked, and both of them ate the 429 the split existed to
+prevent. **A split one side observes is not a split.**
+
+- **It is a PACE, not a refusal.** Over budget a request WAITS for a slot, up to
+  `GT_BUDGET_WAIT_MS` (3s) — a chart that draws a second late beats one that
+  does not draw. Only then does it give up.
+- **It gives up the way the cooldown does** — `status: 0` — which every caller
+  already reads as "could not ask" rather than "nothing there".
+- ⚠️ **And it names itself, not GeckoTerminal.** Reporting our own pacing as
+  `GeckoTerminal 429` sends an operator to check a service that is perfectly
+  healthy, and reads as a fact about the quota rather than about us. The
+  sentence names the two knobs that lift it.
+- **A ROLLING window, never a per-minute bucket** — a bucket lets 15 requests go
+  at :59 and 15 more at :00, which is exactly the burst the ceiling punishes.
+- **The slot is counted when it is TAKEN, not when the response lands.** A
+  request then skipped by the cooldown re-check has still reserved its place;
+  over-counting spends a little under the allowance, under-counting spends over
+  it, and over it is the 429.
+- **The boot line PRINTS the budget** (`· budget 15/min from THIS process`),
+  because a budget nobody can read is how this one stayed missing while the
+  file it belongs to argued for it in prose.
+
+```bash
+pm2 logs dexvra     --lines 50 --nostream | grep -F '[gt]'   # the site's half
+pm2 logs dexvra-bot --lines 50 --nostream | grep -F '[gt]'   # the bot's half
+```
+
+**Config a fix depends on:** nothing — `GT_MAX_RPM` in the **repo-root** `.env`
+raises the site's share and `0` turns it off, and `GECKOTERMINAL_API_KEY` is
+still the only thing that raises the real ceiling rather than dividing it.
+
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both

@@ -62,44 +62,83 @@ const httpsUrl = (u: unknown): string | null => {
 };
 
 /**
+ * Three verdicts, because two of them are not the same fact.
+ *
+ *   image       — it really serves one
+ *   not-image   — it ANSWERED and it is not one (a 404, a CDN's HTML error page)
+ *   unreachable — we could not get a decision (DNS, a timeout, a 5xx, a refusal)
+ *
+ * ⚠️ THE THIRD ONE IS THE POINT. `resolveLogo` promises that `ok: true,
+ * url: null` means "every source answered and this project has no artwork" —
+ * the ONLY state in which a caller may remember a miss for twelve hours. A
+ * verification we could not complete used to collapse into `false`, i.e. into
+ * "not artwork", so a CDN that timed out was written into the store as a
+ * project with no logo. That is the rate-limit-as-an-answer defect this whole
+ * module is built around, one function further down the chain.
+ */
+export type ImageVerdict = "image" | "not-image" | "unreachable";
+
+async function probe(url: string, method: "HEAD" | "GET"): Promise<ImageVerdict> {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: "follow",
+      cache: "no-store",
+    });
+    // ⚠️ A GET's body must be released or the socket stays busy until the GC
+    // gets round to it — and this runs on a long-lived server, dozens of
+    // candidates at a time. HEAD has no body, so cancelling is a no-op there.
+    const done = (v: ImageVerdict) => {
+      void res.body?.cancel().catch(() => {});
+      return v;
+    };
+    // A refusal or a 5xx is a fact about the HOST; only a 4xx that is not a
+    // refusal is a fact about the file.
+    if (!res.ok) return done(res.status >= 500 || REFUSAL.has(res.status) ? "unreachable" : "not-image");
+    const type = String(res.headers.get("content-type") ?? "").toLowerCase();
+    if (type.startsWith("image/")) return done("image");
+    if (type) return done("not-image"); // a 200 carrying HTML is a CDN's error page
+    // No content-type at all: a HEAD that says nothing has said nothing, and
+    // only a GET — which carried the bytes — is evidence either way.
+    return done(method === "GET" ? "image" : "unreachable");
+  } catch {
+    return "unreachable"; // a candidate we could not reach is not a candidate we refused
+  }
+}
+
+/**
  * Does this URL actually serve an image? Never throws.
  *
- * HEAD first because it costs no bytes, then GET — some CDNs answer HEAD with
- * 405 while serving the file perfectly well, and treating that as a miss throws
- * away a good logo. A 200 carrying HTML is a CDN's error page, which is exactly
- * what the CDN convention below returns for a token it has never seen.
+ * ⚠️ HEAD IS AN OPTIMISATION, AND ITS ANSWER IS NOT GET'S ANSWER. This used to
+ * fall through to GET on a 405/501 alone and RETURN on everything else — so a
+ * CDN answering HEAD with 403, or 404, or `text/html`, or by hanging up, was
+ * written off while a plain GET served the file perfectly well. That is
+ * precisely what `$MORTY` looked like: artwork visible on DexScreener, a
+ * monogram on our board, and `/api/logo/route.ts` — which issues a plain GET,
+ * exactly like the browser — able to fetch it the whole time.
+ *
+ * So the guard now measures the stack the RENDERER uses: any HEAD outcome
+ * short of "yes, an image" is retried as GET, and only GET's answer is final.
+ *
+ * This is not the "fail over on a TRANSPORT error only" rule being broken. That
+ * rule's stated reason is that an HTTP status means the host answered and the
+ * same request gets the same status everywhere else — and HEAD and GET are
+ * DIFFERENT REQUESTS to the same host, which is the one case the reason does
+ * not cover. The cost is one extra request per rejected candidate, against
+ * unmetered image CDNs, capped by the sweep at eight rows.
  */
+export async function checkImage(url: string): Promise<ImageVerdict> {
+  const head = await probe(url, "HEAD");
+  if (head === "image") return head;
+  return probe(url, "GET");
+}
+
+/** The boolean question, for callers that only want to know whether to use the
+ *  url. Anything that is not a verified image is not one to render. */
 export async function isImage(url: string): Promise<boolean> {
-  for (const method of ["HEAD", "GET"] as const) {
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: { "user-agent": "Mozilla/5.0 (compatible; DexvraLogo/1.0)", accept: "image/*,*/*" },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-        redirect: "follow",
-        cache: "no-store",
-      });
-      // ⚠️ A GET's body must be released or the socket stays busy until the GC
-      // gets round to it — and this runs on a long-lived server, dozens of
-      // candidates at a time. HEAD has no body, so cancelling is a no-op there.
-      const done = (v: boolean) => {
-        void res.body?.cancel().catch(() => {});
-        return v;
-      };
-      if (res.status === 405 || res.status === 501) {
-        done(false); // HEAD refused — release and try GET
-        continue;
-      }
-      if (!res.ok) return done(false);
-      const type = String(res.headers.get("content-type") ?? "").toLowerCase();
-      if (type.startsWith("image/")) return done(true);
-      if (type) return done(false);
-      return done(method === "GET"); // no content-type at all: accept only real bytes
-    } catch {
-      return false; // a candidate we cannot reach is a candidate we cannot use
-    }
-  }
-  return false;
+  return (await checkImage(url)) === "image";
 }
 
 /**
@@ -313,7 +352,10 @@ export interface LogoDeps {
   /** Trust Wallet is a pure URL guess, but injectable so a test can silence it
    *  and exercise the DS→GT→CG→CDN order without an EVM guess in the way. */
   tw?: (chain: string, address: string) => string | null;
-  verify?: (url: string) => Promise<boolean>;
+  /** Boolean stubs still work and mean exactly what they used to: `true` is
+   *  "an image", `false` is "answered, and not one". A stub that wants to
+   *  exercise the third state returns the verdict itself. */
+  verify?: (url: string) => Promise<boolean | ImageVerdict>;
 }
 
 /**
@@ -340,7 +382,12 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
   const gt = deps.gt ?? gtLogo;
   const cg = deps.cg ?? cgLogo;
   const tw = deps.tw ?? twGuess;
-  const verify = deps.verify ?? isImage;
+  const verify = deps.verify ?? checkImage;
+  /** Normalise the seam: an old boolean stub keeps its exact meaning. */
+  const check = async (url: string): Promise<ImageVerdict> => {
+    const v = await verify(url);
+    return v === true ? "image" : v === false ? "not-image" : v;
+  };
 
   const unreachable: string[] = [];
   const tried: LogoSource[] = [];
@@ -352,12 +399,26 @@ export async function resolveLogo(chain: string, address: string, deps: LogoDeps
         return null;
       });
 
-  /** Verify a wave's candidates in order; the first real image ends the walk. */
+  /**
+   * Verify a wave's candidates in order; the first real image ends the walk.
+   *
+   * ⚠️ A CANDIDATE WE COULD NOT VERIFY IS AN UNREACHABLE SOURCE, not an absence
+   * of artwork. This used to read `if (await verify(url))` — so a source that
+   * handed us a perfectly good url we then failed to check (a timeout, a 5xx,
+   * a CDN refusing this box) fell through to `ok: unreachable.length === 0`,
+   * which stayed TRUE. `sweepLogos` wrote that as `kind: "miss"` and would not
+   * look again for twelve hours, and the log line said "N with no artwork
+   * anywhere" about tokens whose artwork we had been handed and had simply
+   * failed to open. That is a failure rendered as a fact, which is the one
+   * shape this whole file exists to refuse.
+   */
   const pick = async (wave: [LogoSource, string | null][]): Promise<LogoResult | null> => {
     for (const [source, url] of wave) {
       if (!url) continue;
       tried.push(source);
-      if (await verify(url)) return { ok: true, url, source, tried, unreachable };
+      const verdict = await check(url);
+      if (verdict === "image") return { ok: true, url, source, tried, unreachable };
+      if (verdict === "unreachable") unreachable.push(`${source}: could not verify ${url}`);
     }
     return null;
   };
