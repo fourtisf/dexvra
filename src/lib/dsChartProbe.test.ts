@@ -9,7 +9,7 @@
 // the parts that do not need the network have to be provable without it.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { barsOf, classify, fill, scanBundle } from "../../scripts/ds-chart-probe.mjs";
+import { barsOf, classify, fill, scanBundle, upsertEnv } from "../../scripts/ds-chart-probe.mjs";
 
 test("⚠️ a discovered template survives the braces in its own placeholders", () => {
   // THE DEFECT: the template pattern's character class stopped at `{`, so
@@ -85,4 +85,46 @@ test("barsOf reads the same envelopes the provider does, one level of nesting in
   assert.equal(barsOf({ a: { b: { c: { d: rows } } } }), null, "must not recurse without bound");
   assert.equal(barsOf(null), null);
   assert.equal(barsOf("nope"), null);
+});
+
+test("⚠️ writing to .env.local never disturbs a line it did not put there", () => {
+  // That file holds ADMIN_PASS_HASH, INTERNAL_API_TOKEN and the bot keys. A
+  // probe that rewrites, reorders or reformats any of them is a far worse
+  // outage than the chart it was fixing.
+  const before = [
+    "ADMIN_PASS_HASH=scrypt:abc:def",
+    "# the chart source",
+    "GECKOTERMINAL_API_KEY=CG-existing",
+    "",
+  ].join("\n");
+  const after = upsertEnv(before, { DS_CHART_PATH: "/dex/chart/{dex}/history" });
+  assert.ok(after.startsWith("ADMIN_PASS_HASH=scrypt:abc:def\n# the chart source\nGECKOTERMINAL_API_KEY=CG-existing"));
+  assert.match(after, /^DS_CHART_PATH=\/dex\/chart\/\{dex\}\/history$/m);
+});
+
+test("a key that is already set is replaced in place, not duplicated", () => {
+  const before = "A=1\nDS_CHART_PATH=/old\nB=2\n";
+  const after = upsertEnv(before, { DS_CHART_PATH: "/new" });
+  assert.equal((after.match(/^DS_CHART_PATH=/gm) ?? []).length, 1);
+  assert.match(after, /^DS_CHART_PATH=\/new$/m);
+  // …and it stays where it was, so a diff of the file reads as one line changed.
+  assert.equal(after.trim().split("\n")[1], "DS_CHART_PATH=/new");
+});
+
+test("a commented-out key is left commented and the real one is appended", () => {
+  // `#DS_CHART_PATH=…` is an operator's note to themselves, not an assignment.
+  const after = upsertEnv("#DS_CHART_PATH=/tried-this\n", { DS_CHART_PATH: "/real" });
+  assert.match(after, /^#DS_CHART_PATH=\/tried-this$/m);
+  assert.match(after, /^DS_CHART_PATH=\/real$/m);
+});
+
+test("a file with no trailing newline does not get two keys on one line", () => {
+  const after = upsertEnv("A=1", { DS_CHART_API: "https://io.dexscreener.com" });
+  assert.match(after, /^A=1$/m);
+  assert.match(after, /^DS_CHART_API=https:\/\/io\.dexscreener\.com$/m);
+});
+
+test("an empty or absent file is a valid starting point", () => {
+  assert.match(upsertEnv("", { A: "1" }), /^A=1$/m);
+  assert.match(upsertEnv(undefined, { A: "1" }), /^A=1$/m);
 });

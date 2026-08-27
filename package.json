@@ -19,6 +19,8 @@
     "chart:check": "node scripts/chart-check.mjs",
   "comment_ds_probe": "chart:check reports that the guessed DexScreener candle shape failed and then tells the operator to read the real one out of a browser's DevTools. The box is not a browser \u2014 but it can read the browser's code. This resolves the pair through the documented api. host, greps dexscreener.com's own JS bundle for the datafeed host and path, probes each candidate with dsChart's real headers, and prints the .env lines for whatever answers with bars. A wrong guess stays a .env line, never a deploy.",
   "ds:probe": "node scripts/ds-chart-probe.mjs",
+  "comment_ds_apply": "The same probe, applying what it finds: it upserts DS_CHART_API/PATH/QUERY into .env.local (after a backup) instead of printing them for a human to paste. Opt-in via --write because a probe that edits an operator's environment unasked is not a probe.",
+  "ds:apply": "node scripts/ds-chart-probe.mjs --write",
     "comment_chart_preview": "The chart panel is judged by LOOKING at it — a clipped axis stamp and a smeared phone window both passed the unit tests. Needs a running server; stubs the upstreams in the browser so it works with no egress.",
     "chart:preview": "node scripts/chart-preview.mjs",
     "comment_logos_check": "Which listed tokens would draw a monogram, and WHICH of the three causes it is: the row lost its logo, the uploaded file is gone, or our own proxy refuses a working url. Drives the running server and pulls each logo through the same /api/logo the browser uses — whether a CDN answers is a property of this box's egress today. Non-zero when any row would draw a monogram.",

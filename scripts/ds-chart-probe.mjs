@@ -36,6 +36,8 @@
 // the same floor `chart:check` documents.
 import { execSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m", C = "\x1b[36m", D = "\x1b[2m", X = "\x1b[0m";
 
@@ -168,16 +170,56 @@ async function discover(chain, pairAddress) {
 const BUILTIN_PATHS = [
   "/dex/chart/amm/v3/{dex}/bars/{chain}/{pair}",
   "/dex/chart/amm/v2/{dex}/bars/{chain}/{pair}",
+  "/dex/chart/amm/v1/{dex}/bars/{chain}/{pair}",
   "/dex/chart/amm/{dex}/bars/{chain}/{pair}",
   "/dex/chart/bars/{chain}/{pair}",
+  "/dex/chart/{chain}/{pair}/bars",
   "/dex/bars/{chain}/{pair}",
   "/u/chart/bars/{chain}/{pair}",
+  // TradingView's UDF convention — see UDF_ROOTS.
+  "/dex/chart/amm/v3/{dex}/history",
+  "/dex/chart/history",
+  "/history",
 ];
 const BUILTIN_QUERIES = [
   "from={from}&to={to}&res={res}&cb={limit}",
   "from={from}&to={to}&resolution={res}&countback={limit}",
+  "from={from}&to={to}&res={res}&countback={limit}",
+  // UDF's own spelling: the symbol travels in the QUERY, not the path.
+  "symbol={chain}%3A{pair}&from={from}&to={to}&resolution={res}",
   "symbol={pair}&from={from}&to={to}&resolution={res}",
 ];
+
+/**
+ * ⚠️ FIND THE DATAFEED ROOT BEFORE GUESSING ITS BARS PATH.
+ *
+ * DexScreener's chart is TradingView, and a TradingView chart is fed by a UDF
+ * datafeed. UDF datafeeds SELF-IDENTIFY: `GET {root}/config` answers with a
+ * `supported_resolutions` array, and nothing else on the internet answers that
+ * way by accident. So instead of spraying bars paths and reading 404s, ask each
+ * candidate root one cheap question first — a hit pins the root exactly, and
+ * from there `/history` is a convention rather than a guess.
+ *
+ * This is the part that can turn "somewhere in this host" into an answer
+ * without a browser, which is the whole problem this script exists for.
+ */
+const UDF_ROOTS = [
+  "/dex/chart/amm/v3/{dex}",
+  "/dex/chart/amm/{dex}",
+  "/dex/chart",
+  "/dex",
+  "",
+];
+
+/** A UDF /config answer, or null. `supported_resolutions` is the tell. */
+async function udfConfig(base, root, vars) {
+  const url = `${base}${fill(root, vars)}/config`;
+  const r = await get(url);
+  if (!r.ok) return null;
+  const j = safeJson(r.body);
+  if (j && Array.isArray(j.supported_resolutions)) return { url, resolutions: j.supported_resolutions };
+  return null;
+}
 
 export const fill = (tpl, v) =>
   tpl.replace(/\{dex\}/g, v.dex).replace(/\{chain\}/g, v.chain).replace(/\{pair\}/g, v.pair)
@@ -221,9 +263,52 @@ const hint = (r) => {
   return flat ? ` ${D}— ${flat.slice(0, 110)}${flat.length > 110 ? "…" : ""}${X}` : "";
 };
 
+/**
+ * Upsert keys into a .env file's TEXT, preserving everything else.
+ *
+ * ⚠️ AN OPERATOR'S .env IS THE MOST DANGEROUS FILE ON THE BOX. It holds
+ * ADMIN_PASS_HASH, INTERNAL_API_TOKEN and the bot keys, and this script has no
+ * business touching any of them. So: replace a key that is already there, in
+ * place, and append the ones that are not. Never reorder, never reformat,
+ * never drop a comment, never rewrite a line it did not put there.
+ */
+export function upsertEnv(text, kv) {
+  let out = String(text ?? "");
+  if (out && !out.endsWith("\n")) out += "\n";
+  for (const [k, v] of Object.entries(kv)) {
+    const line = `${k}=${v}`;
+    // Only a real assignment at the start of a line — a commented-out
+    // `#DS_CHART_PATH=` stays a comment, and a key that merely appears inside
+    // another value is not this key.
+    const re = new RegExp(`^${k}=.*$`, "m");
+    out = re.test(out) ? out.replace(re, line) : out + line + "\n";
+  }
+  return out;
+}
+
+/** Write the winning shape into .env.local, after a backup. */
+function applyEnv(kv, file) {
+  const target = resolve(file);
+  const before = existsSync(target) ? readFileSync(target, "utf8") : "";
+  if (existsSync(target)) {
+    // A dated copy, because the next line rewrites a file holding secrets.
+    const bak = `${target}.bak-dsprobe`;
+    copyFileSync(target, bak);
+    console.log(`  ${D}backed up ${target} → ${bak}${X}`);
+  }
+  writeFileSync(target, upsertEnv(before, kv), "utf8");
+  return target;
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 const SAMPLE = [{ chain: "solana", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", label: "USDC (Solana)" }];
-const argv = process.argv.slice(2);
+const rawArgv = process.argv.slice(2);
+/** `--write` applies the winning shape to .env.local instead of printing it for
+ *  a human to paste. Opt-in: a probe that edits an operator's environment
+ *  without being asked is not a probe. */
+const WRITE = rawArgv.includes("--write");
+const ENV_FILE = (rawArgv.find((a) => a.startsWith("--env="))?.slice(6) ?? ".env.local").trim();
+const argv = rawArgv.filter((a) => !a.startsWith("--"));
 const targets = argv.length >= 2 ? [{ chain: argv[0], address: argv[1], label: `${argv[1].slice(0, 10)}… (${argv[0]})` }] : SAMPLE;
 
 async function main() {
@@ -254,9 +339,28 @@ async function main() {
     // human to assemble but not worth an HTTP request.
     const addressable = (p) => p.includes("{pair}") || p.includes("{chain}");
     const discovered = [...(d.templates ?? []), ...(d.fragments ?? [])].filter(addressable);
-    const paths = [...new Set([...discovered, ...BUILTIN_PATHS])];
+    const paths = [...new Set([...discovered, ...BUILTIN_PATHS])]; // mutable: UDF hits are unshifted in front
     const now = Math.floor(Date.now() / 1000);
     const vars = { dex: pair.dexId, chain: pair.chainId, pair: pair.pairAddress, from: now - 6 * 3600, to: now, res: "15", limit: 100 };
+
+    // A UDF datafeed answers /config with `supported_resolutions`, which no
+    // other endpoint does by accident. A hit here pins the ROOT exactly, so
+    // /history stops being a guess — and it goes to the front of the sweep.
+    const udfPaths = [];
+    for (const base of [...new Set(bases)]) {
+      for (const root of UDF_ROOTS) {
+        const cfg = await udfConfig(base, root, vars);
+        if (!cfg) continue;
+        console.log(`  ${G}✓ udf${X} ${cfg.url} ${D}resolutions: ${cfg.resolutions.slice(0, 8).join(",")}${X}`);
+        // ⚠️ THE TEMPLATE, NOT THE FILLED PATH. `root` still holds `{dex}`, and
+        // the dex id is per-token: pinning `/dex/chart/amm/v3/raydium/history`
+        // into DS_CHART_PATH would draw every Raydium pair and 404 every
+        // Uniswap, Pancake and Orca one — a fix that looks like it worked
+        // because the token in front of you happens to be on the right AMM.
+        udfPaths.push(`${root}/history`);
+      }
+    }
+    if (udfPaths.length) paths.unshift(...udfPaths);
 
     console.log(`  ${D}probing ${[...new Set(bases)].length} base(s) × ${paths.length} path(s) × ${BUILTIN_QUERIES.length} query shape(s)${X}`);
     let win = null;
@@ -289,11 +393,17 @@ async function main() {
 
     if (win) {
       anyWin = true;
-      console.log(`\n  ${G}FOUND IT.${X} Paste into ${C}/opt/dexvra/.env.local${X} — no deploy, then ${C}pm2 restart dexvra --update-env${X}:\n`);
-      console.log(`${G}DS_CHART_API=${win.base}${X}`);
-      console.log(`${G}DS_CHART_PATH=${win.path}${X}`);
-      console.log(`${G}DS_CHART_QUERY=${win.q}${X}\n`);
-      console.log(`  ${D}Then confirm through the real route:  npm run chart:check${X}\n`);
+      const kv = { DS_CHART_API: win.base, DS_CHART_PATH: win.path, DS_CHART_QUERY: win.q };
+      if (WRITE) {
+        const target = applyEnv(kv, ENV_FILE);
+        console.log(`\n  ${G}FOUND IT — and written to ${target}.${X}\n`);
+        for (const [k, v] of Object.entries(kv)) console.log(`${G}${k}=${v}${X}`);
+        console.log(`\n  ${C}pm2 restart dexvra --update-env${X}   ${D}then:  npm run chart:check${X}\n`);
+      } else {
+        console.log(`\n  ${G}FOUND IT.${X} Re-run with ${C}--write${X} to apply it, or paste into ${C}${ENV_FILE}${X}:\n`);
+        for (const [k, v] of Object.entries(kv)) console.log(`${G}${k}=${v}${X}`);
+        console.log(`\n  ${D}Then:  pm2 restart dexvra --update-env  &&  npm run chart:check${X}\n`);
+      }
     } else {
       console.log(`\n  ${R}Nothing returned bars.${X} Read the lines above in this order:\n`);
       console.log(`   ${D}• every line 403/401 → the host refuses this server's IP. DS_CHART_HEADERS may help;${X}`);
