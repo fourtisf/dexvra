@@ -21,16 +21,32 @@
 const lp = require('../shared/launchpads');
 const { safeUrl } = require('../shared/launchpads/normalize');
 
-/** Chain keys this bot uses → the registry's. They already agree; the map is
- *  here so a future rename is one line rather than a silent no-op. */
-const CHAIN = { solana: 'solana', bsc: 'bsc', base: 'base' };
-const chainFor = (chainKey) => CHAIN[chainKey] || null;
+/**
+ * Chain keys this bot uses → the registry's.
+ *
+ * DERIVED FROM THE REGISTRY, never listed here. This was a hand-written map of
+ * three chains (`solana`, `bsc`, `base`), and the moment a pad was added to the
+ * table for a fourth it was dropped on the floor RIGHT HERE: `chainFor` answered
+ * null, `covers()` said no, `record()` returned "chain not covered", and the new
+ * pad's feed was never asked anything. Nothing threw and nothing logged — the
+ * chain simply read as one no launchpad knows, which is indistinguishable from a
+ * pad that is down and from a chain nobody launches on. Two lists of the same
+ * fact, and the one further from the table is the one that goes stale.
+ *
+ * RENAMES is the only reason a map is needed at all, and it is deliberately
+ * EMPTY: both sides agree on every key today. A future rename is one entry here
+ * instead of a silent no-op.
+ */
+const RENAMES = {};   // our chain key → the registry's, wherever they ever differ
+function chainFor(chainKey) {
+  const k = RENAMES[chainKey] || chainKey;
+  return (k && lp.padsFor(k).length > 0) ? k : null;
+}
 
 /** Does any enabled pad cover this chain? Callers skip the whole leg otherwise
  *  rather than paying a lookup that can only return null. */
 function covers(chainKey) {
-  const c = chainFor(chainKey);
-  return !!c && lp.padsFor(c).length > 0;
+  return !!chainFor(chainKey);
 }
 
 /**

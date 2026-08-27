@@ -50,10 +50,16 @@ test('arming a CA target never arms chain-wide auto-snipe', () => {
 });
 
 test('auto-snipe fires ONLY on its own explicit per-chain flag', () => {
-  // The armed filter is the whole gate. If this line ever weakens — an implicit
-  // default, a master switch standing in for it — the reported incident becomes
-  // the designed behaviour.
-  assert.match(WATCH, /u\.snipe && u\.snipe\.chains && u\.snipe\.chains\.solana && Number\(u\.snipe\.ethAmount\) > 0/);
+  // The armed filter is the whole gate, and it has ONE owner now — `_armedOn` —
+  // because four discovery sources each carrying their own copy of this filter
+  // is four places for it to weaken independently. If the owner's line ever
+  // weakens — an implicit default, a master switch standing in for it — the
+  // reported incident becomes the designed behaviour.
+  assert.match(WATCH, /const _armedOn = \(chainKey\) => core\.allUsers\(\)\.filter\(\(u\) => u\.snipe && u\.snipe\.chains && u\.snipe\.chains\[chainKey\] && Number\(u\.snipe\.ethAmount\) > 0\);/);
+  // And no source filters for itself: every `armed` in the snipe loops comes
+  // from that one owner.
+  assert.ok(!/u\.snipe\.chains\.solana/.test(WATCH), 'a snipe loop grew back a private armed filter');
+  assert.strictEqual((WATCH.match(/_armedOn\(/g) || []).length >= 4, true, 'a discovery source stopped reading the shared gate');
   // And the only writer of that flag is the explicit toggle.
   const writers = (CORE.match(/u\.snipe\.chains\[key\] = /g) || []).length;
   assert.strictEqual(writers, 1, `${writers} writers of the chain flag — one of them is not the toggle`);
@@ -106,11 +112,18 @@ test('the snipe screen says the action on the button, and the amount has ONE hom
 // ── attribution: a message that spends money names its trigger ──────────────
 
 test('every auto-snipe purchase names the feature and its blast radius', () => {
+  // ONE purchase site now — _fireLaunch — where there used to be three copies
+  // (the pump feed, the EVM scan and the Solana scan). The count is pinned at
+  // exactly one: a second site is a source that stopped going through the
+  // shared fire path, i.e. a purchase message free to drop this label.
   const sites = (WATCH.match(/Auto-Snipe bought \$/g) || []).length;
-  assert.strictEqual(sites, 3, `${sites} auto-snipe notify sites carry the label — expected the pump feed, the EVM scan and the Solana scan`);
+  assert.strictEqual(sites, 1, `${sites} auto-snipe notify sites — the one owner is _fireLaunch`);
   // The line that answers "why did my bot buy this": the feature is chain-wide
   // and target-less, said on the message itself.
-  assert.strictEqual((WATCH.match(/buys EVERY new launch on this chain while armed/g) || []).length, 3);
+  assert.strictEqual((WATCH.match(/buys EVERY new launch on this chain while armed/g) || []).length, 1);
+  // …and every discovery source reaches that one site: the factory scan, the
+  // EVM pair scan, the pump.fun feed, the launchpad feeds and the retry ring.
+  assert.strictEqual((WATCH.match(/await _fireLaunch\(/g) || []).length, 5, 'a discovery source stopped calling the shared fire path');
   // No auto-snipe purchase message without it.
   assert.ok(!/<b>Sniped \$\$\{esc\((?:sym|r\.sym)\b/.test(WATCH), 'an auto-snipe site still says just "Sniped"');
 });
@@ -118,8 +131,9 @@ test('every auto-snipe purchase names the feature and its blast radius', () => {
 test('every auto-snipe purchase carries the off switch', () => {
   assert.match(WATCH, /const _autoSnipeKb = \(chainKey\) => \(\{ inline_keyboard: \[\[\{ text: '🛑 Stop auto-snipe on this chain', callback_data: `sntog:\$\{chainKey\}` \}\]\] \}\)/);
   // `_autoSnipeKb\(` does not match the definition (`_autoSnipeKb = (`), so
-  // this count is exactly the CALL sites — which is what must not shrink.
-  assert.strictEqual((WATCH.match(/_autoSnipeKb\(/g) || []).length, 3, 'a purchase site lost its disarm button');
+  // this count is exactly the CALL sites — the one purchase message in
+  // _fireLaunch, which every source shares.
+  assert.strictEqual((WATCH.match(/_autoSnipeKb\(/g) || []).length, 1, 'the purchase site lost its disarm button');
   // The callback it fires is the same sntog the settings screen uses, so the
   // button and the screen cannot disagree about what "off" means.
   assert.match(TG, /if \(k === 'sntog'\)/);

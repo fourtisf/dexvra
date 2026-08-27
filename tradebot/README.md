@@ -37,7 +37,13 @@ by base58 address). Solana is **off by default** — enable it by adding `solana
 - **Snipe (multi-chain)** — auto-buy every new Robinhood Chain launch, every new
   Uniswap/Pancake pair on ETH/Base/BNB/Arbitrum, and every new **pump.fun** launch on
   Solana (discovery via the pump.fun feed, buy via Jupiter); DANGER-flagged tokens
-  skipped. Opt-in per chain.
+  skipped. Opt-in per chain. Discovery also polls **every launchpad in the shared
+  registry** (`shared/launchpads/pads.js` — Pons on Robinhood, LetsBonk / Moonshot on
+  Solana, four.meme on BNB, Virtuals on Base, …), so a token born on a pad the event
+  scans cannot see is still sniped, and a launch seen **before** its market opens is
+  parked in a retry ring (`LAUNCH_RETRY_MS`, 3 min) and bought the moment a route
+  exists rather than dropped — which is also what makes the **dev-wallet snipe**
+  actually fill: it sees the dev's mint before the dev opens the pool.
 - **Limit / TP / SL + Price alerts** — set a USD target; the bot polls the price
   and executes (orders) or just pings you (alerts, notify-only) when crossed. Works on
   every chain, Solana included (DexScreener pricing).

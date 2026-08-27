@@ -318,11 +318,12 @@ test('the EVM scan resolves who opened the pool, and only when someone is watchi
   // after the chain check was relaxed: following one developer does not mean
   // wanting every launch on the chain.
   assert.match(fn, /if \(!armed\.length && !devFollowers\.length\) return;/, 'dev followers are still gated on auto-snipe being on');
-  assert.match(fn, /if \(devFollowers\.length\) \{\s*\n\s*const dev = await _devFromPair\(prov, e\);/, 'the pool opener is resolved unconditionally');
-  // The same _followerBuy the Robinhood and Solana paths call, so the three
-  // chains cannot drift into three ideas of what a dev snipe does.
-  assert.match(fn, /_followerBuy\(u, t, token, ch\.key\)/, 'the EVM path grew its own buy');
-  assert.match(fn, /if \(devBoughtBy\.has\(u\.chatId\)\) return;/, 'a dev-sniped launch is also snipe-all bought');
+  assert.match(fn, /const dev = devFollowers\.length \? await _devFromPair\(prov, e\) : '';/, 'the pool opener is resolved unconditionally');
+  // The same _fireLaunch every discovery source calls — the follower match, the
+  // dedup, the safety gate and the buy live there — so four sources cannot
+  // drift into four ideas of what a snipe does. The dev-vs-snipe-all skip
+  // (`held`) lives inside it and is pinned by its own behavioural tests.
+  assert.match(fn, /await _fireLaunch\(ch\.key, \{ token,[^}]+\}, \{ armed, devFollowers \}\)/, 'the EVM path grew its own fire logic');
 });
 
 test('an unreadable transaction cannot stop the snipe', async () => {

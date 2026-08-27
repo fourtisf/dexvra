@@ -1,9 +1,14 @@
 'use strict';
 /*
  * Background watchers for the Dexvra Trade Bot:
- *   • SNIPE  — new-launch auto-buy. Robinhood Chain (factory TokenCreated), EVM DEX
- *              (PairCreated on ETH/Base/BNB/Arbitrum), and SOLANA (pump.fun new-coins
- *              feed → Jupiter buy). Buys for every armed+funded user.
+ *   • SNIPE  — new-launch auto-buy, from FOUR discovery sources into ONE fire
+ *              path (_fireLaunch): the Robinhood factory log (TokenCreated), the
+ *              EVM DEX scan (PairCreated on ETH/Base/BNB/Arbitrum), the pump.fun
+ *              new-coins feed, and every OTHER launchpad in the shared registry
+ *              (padSnipeCycle — Pons, LetsBonk, Moonshot, four.meme, Virtuals, …).
+ *              A launch seen before its market opens parks in the retry ring
+ *              (launchRetryCycle) instead of being dropped. Buys for every
+ *              armed+funded user.
  *   • COPY   — mirror a followed wallet's buys. EVM watches ERC20 Transfer logs from
  *              the token's WETH pair; SOLANA polls the target's signatures and mirrors
  *              a SOL-funded SPL increase. DANGER-flagged tokens (GoPlus/RugCheck) skipped.
@@ -63,10 +68,19 @@ const _snipeSeen = new Map();   // chainKey -> Set(token). PER-CHAIN: a high-vol
                                 // must NOT be able to evict a slow chain's still-in-window
                                 // launch (which would let a cursor regression re-buy it).
 const SNIPE_SEEN_CAP = Math.max(4000, Number(process.env.SNIPE_SEEN_CAP || 20000));
+/** One spelling of a token address per chain. EVM is case-insensitive; a Solana
+ *  base58 mint is not, and lowercasing one is a collision waiting to happen. */
+const _addrKey = (chainKey, addr) => (core.chains.isSvm(chainKey) ? String(addr || '').trim() : String(addr || '').trim().toLowerCase());
 function _snipeMark(chainKey, token) {
   let set = _snipeSeen.get(chainKey);
   if (!set) { set = new Set(); _snipeSeen.set(chainKey, set); }
-  const k = String(token).toLowerCase();
+  // CASE MATTERS ON SOLANA. A base58 mint is case-SIGNIFICANT — the same rule
+  // normalize.addrKey keeps in the launchpad registry — so lowercasing one
+  // folds two different mints onto one key and drops the second launch as
+  // "already sniped". It never fired here while Solana had its own seen-set;
+  // it would the moment the pad feeds started marking Solana launches through
+  // this function, which is a silent miss and the hardest kind to notice.
+  const k = _addrKey(chainKey, token);
   if (set.has(k)) return false;
   set.add(k);
   // FIFO cap comfortably exceeds the most launches that can fall inside ONE chain's
@@ -86,11 +100,11 @@ const _snipeStats = { scans: 0, blocksScanned: 0, launchesSeen: 0, lastLaunchAt:
 // different things: the first says pump.fun answered, the second says it had
 // something. With only the loop's own heartbeat, a feed that had been dead for
 // days still rendered a green tick — the state that looks most like a healthy one.
-// `lastPadErr` is kept apart from `lastErr`: a secondary launchpad being down
-// costs that pad's launches and nothing else, while `lastErr` is pump.fun and
-// turns the loop red. Folding them together would either hide a real outage or
-// invent one.
-const _solSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastFeedOkAt: null, lastErr: null, lastErrAt: null, lastPadErr: null };
+// The OTHER Solana launchpads live in padSnipeCycle and report through
+// `_padSnipeStats`: a secondary pad being down costs that pad's launches and
+// nothing else, while `lastErr` here is pump.fun and turns this loop red.
+// Folding them together would either hide a real outage or invent one.
+const _solSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastFeedOkAt: null, lastErr: null, lastErrAt: null };
 
 /** What a sell actually left in the wallet.
  *
@@ -110,7 +124,7 @@ async function snipeCycle() {
   try { head = await prov.getBlockNumber(); }
   catch (e) { console.error('[snipe] getBlockNumber:', e.message); throw e; }
   if (!_lastSnipeBlock || head < _lastSnipeBlock) _lastSnipeBlock = head;   // pin cursor near head always
-  const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.robinhood && Number(u.snipe.ethAmount) > 0);
+  const armed = _armedOn(SNIPE_CHAIN);
   const devFollowers = launchFollowers('robinhood');   // users sniping specific dev wallets on Robinhood
   if (!armed.length && !devFollowers.length) { _lastSnipeBlock = head; return; }
   const factory = new ethers.Contract(core.chainOf(SNIPE_CHAIN).factory, core.FACTORY_ABI, prov);
@@ -132,48 +146,29 @@ async function snipeCycle() {
   console.log(`[snipe] ${SNIPE_CHAIN} blocks ${from}-${head} · launches ${evs.length} · armed ${armed.length} · devFollowers ${devFollowers.length} · seen-total ${_snipeStats.launchesSeen}`);
   for (const e of evs) {
     const ca = e.args && e.args.token;
-    const sym = (e.args && e.args.symbol) || '?';
     if (!ca) continue;
     // Record EVERY launch once — even in a dev-follower-only window with no armed
     // snipe-all user — so snipe-all stays forward-looking (a user who arms AFTER a
-    // launch never retro-snipes it on a re-scan). Matches solSnipeCycle's unconditional
-    // _solSnipeSeen. (Audit #2 fix.)
+    // launch never retro-snipes it on a re-scan). Matches the Solana and launchpad
+    // feeds, which mark unconditionally too. (Audit #2 fix.)
     const firstSee = _snipeMark(SNIPE_CHAIN, ca);
-    // ── Dev-wallet snipe: buy this launch for anyone following its CREATOR. Idempotent
-    // via each target's own dedup map, so a cursor regression / re-scan can't double-buy.
-    const devBoughtBy = new Set();   // chatIds that dev-sniped THIS launch → skip them in snipe-all (no double buy)
-    if (devFollowers.length) {
-      const creator = (e.args && e.args.creator) ? String(e.args.creator).toLowerCase() : '';
-      if (creator) {
-        const matches = [];
-        for (const u of devFollowers) for (const t of u.copy.targets) if (t.mode === 'launches' && t.chain === 'robinhood' && String(t.address).toLowerCase() === creator) matches.push({ u, t });
-        if (matches.length) await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => { if (await _followerBuy(u, t, ca, 'robinhood')) devBoughtBy.add(u.chatId); });
-      }
-    }
-    // ── Snipe ALL launches: every armed user buys concurrently (bounded) with their
-    // ACTIVE wallet. `firstSee` gates it so a re-scanned block range can't buy the same
-    // launch twice (audit #1) — dev-snipe above is exempt (own dedup).
-    if (armed.length && firstSee) {
-      await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
-        if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
-        const addr = core.activeAddress(u); if (!addr) return;
-        try {
-          const bal = await core.ethBalance(addr, SNIPE_CHAIN);
-          const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(SNIPE_CHAIN);
-          if (_affordCheck(u, SNIPE_CHAIN, bal, need)) return;
-        } catch (_) { return; }
-        try {
-          const r = await core.buy(u.chatId, ca, u.snipe.ethAmount, SNIPE_CHAIN);
-          _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(sym)}</b>\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} $${esc(r.sym)} for ${r.spentEth} ${r.native}\n<code>${ca}</code>\n${txLink(SNIPE_CHAIN, r.hash)}`, _autoSnipeKb(SNIPE_CHAIN), 'snipe');
-        } catch (err) {
-          const now = Date.now();
-          if (now - (_snipeFailAt.get(u.chatId) || 0) > 300000) {   // ≤ 1 failure DM / 5 min / user
-            _snipeFailAt.set(u.chatId, now);
-            _notify(u.chatId, `⚠️ A snipe failed: ${esc(err.message || String(err))} (further failures muted for 5 min)`, undefined, 'snipe');
-          }
-        }
-      });
-    }
+    // `armed` is EMPTIED on a re-scan rather than filtered: snipe-all has no
+    // dedup of its own, so a re-scanned block range would buy the same launch
+    // twice (audit #1). The dev snipe is exempt because each target's `bought`
+    // map already makes it idempotent — and skipping it on a re-scan would drop
+    // a launch whose first attempt was simply too early.
+    //
+    // No gate: a `TokenCreated` log means the curve exists in the block just
+    // read, and spending a round trip to confirm what the log already said is
+    // how a sniper arrives late. A buy that finds no market yet lands in the
+    // retry ring instead.
+    await _fireLaunch(SNIPE_CHAIN, {
+      token: ca,
+      sym: (e.args && e.args.symbol) || '',
+      creator: (e.args && e.args.creator) || '',
+      at: Date.now(),
+      via: 'factory',
+    }, { armed: firstSee ? armed : [], devFollowers });
   }
 }
 // Can this user afford the snipe? Returns true when they CANNOT (skip them).
@@ -206,10 +201,16 @@ function _affordCheck(u, chainKey, bal, need) {
     core.saveStoreNow();
     const ch = core.chainOf(chainKey);
     const native = (ch && ch.native) || 'ETH';
+    // SOLANA COUNTS IN LAMPORTS (9dp), NOT WEI. This notice was EVM-only, and
+    // wiring the Solana snipe into it with formatEther would have printed
+    // "Need 0.000000002" for two SOL — a number that reads as a bug in the bot
+    // rather than as an empty wallet, on the one message whose whole job is to
+    // tell the user what to top up.
+    const unit = (v) => ethers.formatUnits(v, core.chains.isSvm(chainKey) ? 9 : 18);
     _notify(
       u.chatId,
       `⏸ <b>Snipe skipped — not enough ${esc(native)}</b>\n` +
-        `Need <b>${ethers.formatEther(need)}</b> (${u.snipe.ethAmount} + gas), wallet has <b>${Number(ethers.formatEther(bal)).toFixed(5)}</b>.\n` +
+        `Need <b>${unit(need)}</b> (${u.snipe.ethAmount} + gas), wallet has <b>${Number(unit(bal)).toFixed(5)}</b>.\n` +
         `Sniping stays on. Top up or lower the amount — you will not be told about this again.`,
       undefined,
       'snipe',
@@ -230,7 +231,7 @@ function launchFollowers(chainKey) {
 // caller skips a redundant snipe-all buy of the same launch for that user. Returns false
 // when nothing was spent: an early skip (dedup/budget/danger) OR a failed buy that rolled
 // back — in which case a snipe-all fallback for that user is still allowed. (Audit #3 fix.)
-async function _followerBuy(u, t, token, chainKey) {
+async function _followerBuy(u, t, token, chainKey, out) {
   const svm = core.chains.isSvm(chainKey);
   const key = svm ? String(token) : String(token).toLowerCase();
   t.bought = t.bought || {};
@@ -325,12 +326,271 @@ async function _followerBuy(u, t, token, chainKey) {
     const wtag = wids.length > 1 ? ` · ${fills.length}/${wids.length} wallets` : '';
     _notify(u.chatId, `🎯 <b>Dev snipe</b> — $${esc(r0.sym)} on ${ch.emoji} ${esc(ch.name)}${wtag}\nDev <code>${short(t.address)}</code> just launched it · bought ${fmt(totTok)} for ${spentStr} ${r0.native}${t.copySell ? ' · <i>exit mirrored</i>' : ''}${exits}\n<code>${token}</code>\n${txLink(chainKey, r0.hash)}`, undefined, 'copy');
   }
-  if (fails.length || (broadcasts.length && !fills.length)) {
+  // "THERE IS NO MARKET YET" IS NOT A FAILED SNIPE — it is the normal first
+  // answer for a dev's own launch, which this bot sees within seconds of the
+  // mint and usually before the dev has opened the pool. Reported as a failure
+  // it is a DM per launch that fills correctly twenty seconds later, which is
+  // exactly how a user learns to swipe past the warnings that matter. The
+  // caller reads `out.notYet` and parks the launch in the retry ring instead.
+  const notYet = fails.length > 0 && fails.every((f) => _notYetTradeable(f.err));
+  if (out && notYet) out.notYet = true;
+  if ((fails.length && !notYet) || (broadcasts.length && !fills.length)) {
     const e0 = (fails[0] || broadcasts[0]).err;
     const now = Date.now(), fk = u.chatId + ':devsnipe:' + key;
     if (now - (_snipeFailAt.get(fk) || 0) > 300000) { _snipeFailAt.set(fk, now); _notify(u.chatId, `⚠️ Dev-snipe of ${short(token)} failed${wids.length > 1 ? ` on ${fails.length || broadcasts.length} wallet(s)` : ''}: ${esc((e0 && e0.message) || String(e0))} (muted 5 min)`, undefined, 'copy'); }
   }
   return held;
+}
+
+// ------------------------------------------------------------------ one launch, every audience
+/*
+ * A LAUNCH IS DISCOVERED FOUR WAYS AND FIRED ONE WAY.
+ *
+ * The Robinhood factory scan, the EVM `PairCreated` scan, the pump.fun feed and
+ * the launchpad registry's feeds all answer the same question — "a new token
+ * exists" — and each of them used to carry its own copy of what to do about it:
+ * match the dev followers, skip the users who just dev-bought, run the safety
+ * gate, check the balance, buy, notify. Three copies had already drifted (only
+ * one of them recorded the launch when nobody was armed; only one told a user
+ * their wallet was short), and the fourth would have drifted further.
+ *
+ * `armed` is passed in rather than looked up here because the callers gate it
+ * differently on purpose: the Robinhood scan records every launch once but only
+ * lets snipe-all fire on the FIRST sighting, so a re-scanned block range cannot
+ * buy the same launch twice.
+ */
+async function _fireLaunch(chainKey, L, opts = {}) {
+  const armed = opts.armed || [];
+  const devFollowers = opts.devFollowers || [];
+  const skip = opts.skip || null;
+  const token = L.token;
+  const held = new Set();          // chatIds that bought, or broadcast and may still land
+  let waiting = false;             // somebody's buy found no market to fill against YET
+  if (!token || (!armed.length && !devFollowers.length)) return { held, queued: false };
+
+  /*
+   * THE GATE, and it is only for the sources that can see a token BEFORE it has
+   * a market.
+   *
+   * A launchpad feed names a token the second it is minted onto a bonding
+   * curve, which on most chains is minutes-to-days before anything this bot can
+   * route through exists. Firing a buy at it is a guaranteed failure, a wasted
+   * quote and a "⚠️ A snipe failed" DM about a market that has simply not opened
+   * yet. So a pad-discovered launch is asked `canTradeNow` first and parked in
+   * the retry ring when the answer is no.
+   *
+   * The event-driven scans deliberately do NOT gate: a `PairCreated` log means
+   * the pool exists in the block we just read, and a snipe that spends a round
+   * trip confirming what the log already said arrives late. There the FAILURE is
+   * the signal — see `_notYetTradeable` below.
+   */
+  if (opts.gate) {
+    const ok = await core.canTradeNow(token, chainKey).catch(() => false);
+    if (!ok) { _queueLaunch(chainKey, L, skip); return { held, queued: true }; }
+  }
+
+  // ── Dev-wallet snipe: buy this launch for anyone following its creator.
+  // Idempotent via each target's own `bought` map, so a re-scan or a retry can
+  // never buy twice.
+  if (devFollowers.length && L.creator) {
+    const dev = _addrKey(chainKey, L.creator);
+    const matches = [];
+    for (const u of devFollowers) {
+      if (skip && skip.has(u.chatId)) continue;
+      for (const t of u.copy.targets) {
+        if (t.mode !== 'launches' || t.chain !== chainKey) continue;
+        if (_addrKey(chainKey, t.address) === dev) matches.push({ u, t });
+      }
+    }
+    if (matches.length) {
+      await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => {
+        // `out.notYet` is how a dev snipe says "there was nothing to buy from
+        // yet" rather than "it failed". Without it the single most valuable
+        // snipe this bot has — the dev's own launch, seen within seconds —
+        // was dropped on the floor at the one moment it is guaranteed to be
+        // too early.
+        const out = {};
+        if (await _followerBuy(u, t, token, chainKey, out)) held.add(u.chatId);
+        else if (out.notYet) waiting = true;
+      });
+    }
+  }
+
+  if (armed.length) {
+    // Skip anything the safety provider flags as DANGER (honeypot, can't-sell,
+    // owner-rug, blacklist, >10% tax). No data yet — the normal state for a
+    // brand-new token — fails OPEN: sniping fresh launches is the whole point,
+    // and the blind-buy risk is bounded by the amount.
+    let danger = false;
+    if (safety.supported(chainKey)) {
+      const sec = await safety.tokenSecurity(chainKey, token).catch(() => null);
+      danger = !!(sec && safety.verdict(chainKey, sec).level === 'danger');
+    }
+    if (!danger) {
+      const ch = core.chainOf(chainKey) || { emoji: '', name: chainKey };
+      await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
+        if (held.has(u.chatId)) return;             // already dev-sniped this exact launch
+        if (skip && skip.has(u.chatId)) return;     // already served on an earlier pass
+        if (!(await _canAfford(u, chainKey))) return;
+        try {
+          const r = await core.buy(u.chatId, token, u.snipe.ethAmount, chainKey);
+          held.add(u.chatId);
+          _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(r.sym || L.sym || '?')}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, _autoSnipeKb(chainKey), 'snipe');
+        } catch (err) {
+          // "There is no market yet" is not a failure to report — it is the
+          // normal first answer for a token this fresh, and a DM for it would
+          // be one per launch per armed user. It goes in the ring instead.
+          if (_notYetTradeable(err)) { waiting = true; return; }
+          const now = Date.now(), key = u.chatId + ':' + chainKey;
+          if (now - (_snipeFailAt.get(key) || 0) > 300000) {
+            _snipeFailAt.set(key, now);
+            _notify(u.chatId, `⚠️ A snipe on ${esc(ch.name)} failed: ${esc((err && err.message) || String(err))} (muted 5 min)`, undefined, 'snipe');
+          }
+        }
+      });
+    }
+  }
+
+  if (waiting) _queueLaunch(chainKey, L, new Set([...(skip || []), ...held]));
+  return { held, queued: waiting };
+}
+
+/** Everyone with snipe-all armed on this chain, with a real amount set. */
+const _armedOn = (chainKey) => core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains[chainKey] && Number(u.snipe.ethAmount) > 0);
+
+/**
+ * Can this user's ACTIVE wallet pay for the snipe on this chain?
+ *
+ * One function for both worlds. The Solana branch used to be a silent inline
+ * balance check while the EVM one told the user once — so a Solana snipe armed
+ * on an empty wallet was an armed watch that could never fire and never said
+ * why, which is the inert-watch failure this repo refuses everywhere else.
+ */
+async function _canAfford(u, chainKey) {
+  try {
+    if (core.chains.isSvm(chainKey)) {
+      const w = core.activeWallet(u); if (!w) return false;
+      const bal = await core.ethBalance(core.walletAddress(w, chainKey), chainKey);
+      const need = solana.solToLamports(u.snipe.ethAmount) + solana.solToLamports(core.CFG.solGasBuffer);
+      return !_affordCheck(u, chainKey, bal, need);
+    }
+    const addr = core.activeAddress(u); if (!addr) return false;
+    const bal = await core.ethBalance(addr, chainKey);
+    const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(chainKey);
+    return !_affordCheck(u, chainKey, bal, need);
+  } catch (_) { return false; }
+}
+
+/**
+ * Did this buy fail because there is nothing to fill against YET?
+ *
+ * The distinction the whole retry ring rests on. "No route", "no liquidity",
+ * "zero quote" and "no pool" all mean the market has not opened — the token is
+ * real, the wallet is funded, and the same buy will work in ten seconds. Every
+ * other failure (a short balance, a revert, a rate limit, a token that cannot
+ * be routed at all) is a fact about this trade and is reported as one.
+ *
+ * Deliberately NOT matched: "Dexvra can't route through that yet", which names a
+ * VENUE this engine has no path to. Retrying that for two minutes is two minutes
+ * of RPC spent on an answer that will not change.
+ */
+const NOT_YET_RE = /no route|no liquidity|zero quote|no pool|not tradable|not tradeable|no market|not yet tradeable/i;
+function _notYetTradeable(err) {
+  const m = String((err && (err.message || err)) || '');
+  if (/route through/i.test(m)) return false;
+  return NOT_YET_RE.test(m);
+}
+
+// ------------------------------------------------------------------ the retry ring
+/*
+ * A LAUNCH SEEN TOO EARLY IS NOT A LAUNCH MISSED.
+ *
+ * This is the reason a dev-wallet snipe could be armed, correct, funded and
+ * watching the right wallet — and still never buy anything.
+ *
+ * Every discovery source here sees a token at the earliest possible moment,
+ * which is precisely the moment there is usually nothing to trade against: a
+ * pump.fun mint is not on Jupiter for the first few seconds, a launchpad feed
+ * names a token that is on a bonding curve with no pool at all, and a dev's
+ * token can exist for a while before the dev opens its pool. The buy therefore
+ * fails with "no route", and the launch was then dropped FOR EVER: the feed
+ * cursor had already advanced past it and the seen-set had already marked it,
+ * so the very next tick could not re-offer it. The comment on the Solana path
+ * said "retried while it's fresh"; nothing in the code could do that.
+ *
+ * So a launch whose only problem is timing goes in this ring and is re-offered
+ * until it becomes fillable or `LAUNCH_RETRY_MS` runs out. The gate is
+ * `core.canTradeNow` — the single owner of "can a swap be filled right now" —
+ * so a waiting launch costs one cheap probe per tick, not a failed buy.
+ *
+ * `done` is who must NOT be re-offered it: a user whose buy already held. A
+ * ring that forgets that buys the same launch twice for one person, which is
+ * strictly worse than the miss it exists to fix.
+ */
+const LAUNCH_RETRY_MS = Math.max(0, Number(process.env.LAUNCH_RETRY_MS || 180000));   // 0 disables the ring entirely
+const LAUNCH_RETRY_CAP = Math.max(20, Number(process.env.LAUNCH_RETRY_CAP || 400));
+// Probes per tick, and a much tighter budget for Solana — the same split
+// caSnipeCycle makes, for the same reason: an EVM probe is an RPC read against a
+// node we already own, a Solana probe is an aggregator QUOTE against the same
+// keyless host that prices every real buy. Spending that budget here is how the
+// snipe and ordinary trading start failing at the same time.
+const LAUNCH_RETRY_PROBES = Math.max(1, Number(process.env.LAUNCH_RETRY_PROBES || 12));
+const LAUNCH_RETRY_SVM_PROBES = Math.max(1, Number(process.env.LAUNCH_RETRY_SVM_PROBES || 4));
+const LAUNCH_RETRY_POLL_MS = Math.max(2000, Number(process.env.LAUNCH_RETRY_POLL_MS || 5000));
+const _launchRetry = new Map();   // `${chain}:${addrKey}` → { chainKey, L, done:Set, tries }
+let _retryCursor = 0;
+const _retryStats = { polls: 0, pending: 0, queued: 0, fired: 0, expired: 0, lastFiredAt: null };
+
+function _queueLaunch(chainKey, L, done) {
+  if (!LAUNCH_RETRY_MS || !L || !L.token) return;
+  const k = chainKey + ':' + _addrKey(chainKey, L.token);
+  const e = _launchRetry.get(k) || { chainKey, L, done: new Set(), tries: 0 };
+  // `L.at` is the DISCOVERY time and rides on the launch record, so a re-queue
+  // after a retry cannot reset the clock — an entry that keeps failing must
+  // still expire on schedule rather than living in the ring for ever.
+  e.L = L;
+  for (const id of (done || [])) e.done.add(id);
+  if (!_launchRetry.has(k)) _retryStats.queued++;
+  _launchRetry.set(k, e);
+  if (_launchRetry.size > LAUNCH_RETRY_CAP) _launchRetry.delete(_launchRetry.keys().next().value);
+}
+
+async function launchRetryCycle() {
+  const now = Date.now();
+  if (!_launchRetry.size) { _retryStats.pending = 0; return; }
+  _retryStats.polls++;
+  for (const [k, e] of [..._launchRetry]) {
+    if (now - (e.L.at || 0) > LAUNCH_RETRY_MS) { _launchRetry.delete(k); _retryStats.expired++; }
+  }
+  const live = [..._launchRetry];
+  _retryStats.pending = live.length;
+  if (!live.length) return;
+  // Round-robin, so entry 40 is not starved by 1–39 while the ones in front of
+  // it wait out the same two minutes.
+  const off = live.length ? (_retryCursor++ % live.length) : 0;
+  const order = live.slice(off).concat(live.slice(0, off));
+  let probes = 0, svmProbes = 0;
+  for (const [k, e] of order) {
+    const svm = core.chains.isSvm(e.chainKey);
+    if (svm ? svmProbes >= LAUNCH_RETRY_SVM_PROBES : probes >= LAUNCH_RETRY_PROBES) continue;
+    const armed = _armedOn(e.chainKey).filter((u) => !e.done.has(u.chatId));
+    const devFollowers = launchFollowers(e.chainKey).filter((u) => !e.done.has(u.chatId));
+    // Nobody left to buy it for — the user disarmed, or everybody already
+    // filled. Holding the entry would spend probes on a launch with no audience.
+    if (!armed.length && !devFollowers.length) { _launchRetry.delete(k); continue; }
+    if (svm) svmProbes++; else probes++;
+    e.tries++;
+    let ready = false;
+    try { ready = await core.canTradeNow(e.L.token, e.chainKey); }
+    catch (_) { continue; }   // an unreadable chain is not an answer; ask again next tick
+    if (!ready) continue;
+    // Removed BEFORE the fire, and re-queued by `_fireLaunch` only if somebody
+    // still could not fill. Same commit order as every other spend in this file:
+    // a missed retry is a shrug, a double buy is the user's money.
+    _launchRetry.delete(k);
+    _retryStats.fired++; _retryStats.lastFiredAt = Date.now();
+    await _fireLaunch(e.chainKey, e.L, { armed, devFollowers, skip: e.done }).catch(() => {});
+  }
 }
 
 // ------------------------------------------------------------------ multi-chain snipe (new DEX pairs)
@@ -397,7 +657,7 @@ async function _devFromPair(prov, ev) {
 }
 
 async function _dexSnipeChain(ch) {
-  const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains[ch.key] && Number(u.snipe.ethAmount) > 0);
+  const armed = _armedOn(ch.key);
   // Dev followers are a DIFFERENT set, and gating them on `armed` is what kept
   // dev-snipe off every EVM chain even after the chain check was relaxed:
   // following one developer does not mean wanting every launch on the chain,
@@ -427,48 +687,175 @@ async function _dexSnipeChain(ch) {
     if (!token) continue;
     if (!_snipeMark(ch.key, token)) continue;   // already sniped → don't re-buy on a cursor regression / re-scan (audit #1)
     processed++;
-    // ── Dev-wallet snipe, on an EVM chain, which was simply not possible before.
-    // Resolved only when somebody is following a dev here, so the extra read is
-    // paid by the feature that needs it and by nobody else.
-    const devBoughtBy = new Set();
-    if (devFollowers.length) {
-      const dev = await _devFromPair(prov, e);
-      if (dev) {
-        const matches = [];
-        for (const u of devFollowers) {
-          for (const t of u.copy.targets) {
-            if (t.mode === 'launches' && t.chain === ch.key && String(t.address).toLowerCase() === dev) matches.push({ u, t });
-          }
-        }
-        // _followerBuy owns the budget cap, the dedup and the safety gate, and
-        // it is the SAME function the Robinhood and Solana dev snipes call — so
-        // the three chains cannot drift into three ideas of what a dev snipe
-        // does.
-        if (matches.length) await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => { if (await _followerBuy(u, t, token, ch.key)) devBoughtBy.add(u.chatId); });
-      }
-    }
-    if (!armed.length) continue;   // dev-snipe-only followers: skip the snipe-all pass
-    // Skip anything GoPlus flags as DANGER (honeypot, can't-sell, pausable, owner-rug,
-    // blacklist, >10% tax). When GoPlus has no data yet (brand-new token) we proceed —
-    // sniping fresh launches is the whole point; blind-buy risk is bounded by the amount.
-    if (safety.supported(ch.key)) { const s = await safety.tokenSecurity(ch.key, token).catch(() => null); if (s && safety.verdict(ch.key, s).level === 'danger') continue; }
-    await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
-      if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
-      const addr = core.activeAddress(u); if (!addr) return;
-      try {
-        const bal = await core.ethBalance(addr, ch.key);
-        const need = ethers.parseEther(String(u.snipe.ethAmount)) + core.gasBufferWei(ch.key);
-        if (_affordCheck(u, ch.key, bal, need)) return;
-      } catch (_) { return; }
-      try {
-        const r = await core.buy(u.chatId, token, u.snipe.ethAmount, ch.key);
-        _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(r.sym)}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(ch.key, r.hash)}`, _autoSnipeKb(ch.key), 'snipe');
-      } catch (err) {
-        const now = Date.now(), key = u.chatId + ':' + ch.key;
-        if (now - (_snipeFailAt.get(key) || 0) > 300000) { _snipeFailAt.set(key, now); _notify(u.chatId, `⚠️ A snipe on ${esc(ch.name)} failed: ${esc(err.message || String(err))} (muted 5 min)`, undefined, 'snipe'); }
-      }
-    });
+    // ── The wallet that OPENED this pool, which is what makes a dev-wallet
+    // snipe possible on an EVM chain at all. Resolved ONLY when somebody is
+    // following a dev here, so the extra read is paid by the feature that needs
+    // it and by nobody else.
+    //
+    // _fireLaunch owns everything after that — the follower match, the budget,
+    // the dedup, the safety gate and the buy — and it is the SAME function the
+    // Robinhood, Solana and launchpad-feed paths call, so four discovery
+    // sources cannot drift into four ideas of what a snipe does.
+    const dev = devFollowers.length ? await _devFromPair(prov, e) : '';
+    await _fireLaunch(ch.key, { token, sym: '', creator: dev || '', at: Date.now(), via: 'pair' }, { armed, devFollowers });
   }
+}
+
+// ------------------------------------------------------------------ launchpad snipe (every pad, every chain)
+/*
+ * THE SNIPE USED TO BE ONE LAUNCHPAD PER CHAIN, AND ON MOST CHAINS IT WAS NONE.
+ *
+ * Discovery was: one hardcoded factory address on Robinhood, `PairCreated` on
+ * the EVM chains, and pump.fun on Solana. Every one of those sees a token at a
+ * particular MOMENT of its life — the moment a specific contract emits a
+ * specific log — and a token born on any other launchpad is invisible until it
+ * migrates to a DEX, which is hours-to-days after the window anybody wants to
+ * snipe in.
+ *
+ *   • On Robinhood, a launch through any contract other than the configured
+ *     factory is simply never seen. eth_getLogs answers an unknown topic with an
+ *     EMPTY ARRAY, so that reads as a quiet chain rather than as a blind spot.
+ *   • On BNB Chain and Base, a four.meme or Virtuals token has no pair at all
+ *     while it is on its curve, so `PairCreated` cannot fire.
+ *   • On Solana, the other pads were merged into the pump.fun tick by a helper
+ *     that only ever ran there.
+ *
+ * So the registry's feeds get their own loop, for every chain any pad covers,
+ * with the same fire path as the three event scans. Adding a launchpad is now a
+ * row in shared/launchpads/pads.js and nothing else.
+ *
+ * ONE CURSOR PER PAD PER CHAIN. A single shared cursor over a merged feed means
+ * one pad emitting a bad timestamp advances it past every real launch from every
+ * OTHER pad, and the snipe then goes quiet for ever — which looks exactly like a
+ * slow day on the launchpads. (The registry's toMs() already refuses a future
+ * timestamp; this is the second line, and the first one has been wrong before.)
+ *
+ * THE FIRST LOOK ONLY SEEDS, the auto-raid cursor's rule: an empty cursor means
+ * "never looked", so the first read records the head WITHOUT sniping it.
+ * Otherwise a restart buys the last fifty launches at once.
+ */
+const PAD_FEED_LIMIT = Math.max(5, Math.min(200, Number(process.env.LAUNCHPAD_FEED_LIMIT || 50)));
+/*
+ * A FEED PATH THAT IS WRONG ANSWERS 404 FOR EVER, AND ASKING FASTER DOES NOT FIX IT.
+ *
+ * The registry's own breaker deliberately benches a pad only on a TRANSPORT
+ * failure, because for a TOKEN lookup an HTTP status is the host answering — a
+ * 404 there is a fact about the token. For a FEED it is the opposite: a 404 is a
+ * fact about the PATH, it will be 404 on the next tick and the one after, and
+ * this loop would re-ask every few seconds for the life of the process. So a
+ * feed that answers with an error is backed off here, where the question is
+ * "does this path work", and the reason is kept so `snipe:check` and /health can
+ * say WHICH pad went quiet rather than leaving it to be noticed in a month.
+ */
+const PAD_FEED_TRIPS = Math.max(1, Number(process.env.LAUNCHPAD_FEED_TRIPS || 3));
+const PAD_FEED_BACKOFF_MS = Math.max(60000, Number(process.env.LAUNCHPAD_FEED_BACKOFF_MS || 600000));
+const _padCursors = new Map();    // `${chain}:${pad}` → newest createdAt already seen
+const _padFeedFail = new Map();   // `${chain}:${pad}` → { n, until, why }
+const _padSnipeStats = { polls: 0, launchesSeen: 0, lastLaunchAt: null, lastOkAt: null, lastErr: null, lastErrAt: null, pads: {} };
+
+function _padBenched(key, now) {
+  const f = _padFeedFail.get(key);
+  return (f && f.until && now < f.until) ? f : null;
+}
+function _padFeedNoted(key, why, now) {
+  const f = _padFeedFail.get(key) || { n: 0, until: 0, why: '' };
+  f.n += 1; f.why = why;
+  if (f.n >= PAD_FEED_TRIPS) f.until = now + PAD_FEED_BACKOFF_MS;
+  _padFeedFail.set(key, f);
+}
+const _padFeedOk = (key) => { if (_padFeedFail.has(key)) _padFeedFail.delete(key); };
+
+/** New launches from every pad on `chainKey` that has a feed, newest last, with
+ *  each pad's cursor advanced. Never throws: a pad being down costs that pad's
+ *  launches and nothing else. */
+async function _padLaunches(chainKey, now) {
+  const only = launchpads.padsFor(chainKey)
+    .filter((p) => p.feedPath)
+    // pump.fun has its OWN loop and its OWN cursor (solSnipeCycle). Polling it
+    // from here too would be two pollers, two cursors and one feed — the shape
+    // of every "one repo, two answers" defect this registry exists to end.
+    .filter((p) => !(chainKey === 'solana' && p.key === 'pumpfun'))
+    .filter((p) => !_padBenched(chainKey + ':' + p.key, now))
+    .map((p) => p.key);
+  if (!only.length) return [];
+  const r = await launchpads.newLaunches(chainKey, PAD_FEED_LIMIT, { only }).catch(() => null);
+  if (!r) return [];
+  const out = [];
+  for (const key of only) {
+    const sk = chainKey + ':' + key;
+    const res = r.byPad[key];
+    const stat = (_padSnipeStats.pads[sk] = _padSnipeStats.pads[sk] || { ok: 0, fail: 0, seen: 0, why: null, lastOkAt: null });
+    if (!res || !res.ok) {
+      const why = (res && res.why) || r.why || 'feed unreachable';
+      stat.fail++; stat.why = why;
+      _padSnipeStats.lastErr = why; _padSnipeStats.lastErrAt = now;
+      _padFeedNoted(sk, why, now);
+      continue;
+    }
+    // IT ANSWERED. That is worth recording even with an empty list — "the pad
+    // said nothing is launching" and "the pad did not answer" are the two facts
+    // this whole registry refuses to collapse.
+    _padFeedOk(sk);
+    stat.ok++; stat.why = null; stat.lastOkAt = now;
+    _padSnipeStats.lastOkAt = now;
+    if (!res.items.length) continue;
+    const newest = Math.max(0, ...res.items.map((i) => i.createdAt || 0));
+    const cursor = _padCursors.get(sk) || 0;
+    if (newest) _padCursors.set(sk, Math.max(cursor, newest));
+    if (!cursor) continue;   // first look seeds only
+    for (const i of res.items) {
+      if (!((i.createdAt || 0) > cursor)) continue;
+      if (i.graduated === true) continue;   // already migrated — the DEX scan's job, not a launch
+      stat.seen++;
+      out.push({
+        token: i.address,
+        sym: i.symbol || '',
+        name: i.name || '',
+        // Absent or renamed → '' → simply never matches a followed dev, which
+        // fails safe. Same contract as the pump.fun feed's creator field.
+        creator: i.creator || '',
+        createdTs: i.createdAt || 0,
+        at: now,
+        via: 'pad:' + i.pad,
+      });
+    }
+  }
+  out.sort((a, b) => (a.createdTs || 0) - (b.createdTs || 0));
+  return out;
+}
+
+async function padSnipeCycle() {
+  const now = Date.now();
+  const chains = core.chains.enabledChains().map((c) => c.key).filter((k) => launchpads.covers(k));
+  if (!chains.length) return;
+  _padSnipeStats.polls++;
+  // Chains run CONCURRENTLY: one slow launchpad host must not delay the snipe on
+  // a chain whose pads are answering fine.
+  await Promise.all(chains.map(async (chainKey) => {
+    const armed = _armedOn(chainKey);
+    const devFollowers = launchFollowers(chainKey);
+    if (!armed.length && !devFollowers.length) return;   // nobody waiting → no request at all
+    let launches = [];
+    try { launches = await _padLaunches(chainKey, now); }
+    catch (e) { _padSnipeStats.lastErr = (e && e.message) || String(e); _padSnipeStats.lastErrAt = now; return; }
+    if (!launches.length) return;
+    _padSnipeStats.launchesSeen += launches.length;
+    _padSnipeStats.lastLaunchAt = now;
+    console.log(`[padsnipe] ${chainKey} · ${launches.length} new launch(es) · armed ${armed.length} · devFollowers ${devFollowers.length}`);
+    let processed = 0;
+    for (const L of launches) {
+      if (processed >= DEX_SNIPE_MAX_TOKENS) break;
+      if (!_snipeMark(chainKey, L.token)) continue;   // the same per-chain dedup the event scans use
+      processed++;
+      // GATED, unlike the event scans. A pad names a token the moment it is
+      // minted onto a bonding curve — usually long before anything this engine
+      // can route through exists — so firing a buy at it is a guaranteed
+      // failure and a "snipe failed" DM about a market that has not opened.
+      // canTradeNow answers that for one cheap probe, and the retry ring holds
+      // the launch until it flips.
+      await _fireLaunch(chainKey, L, { armed, devFollowers, gate: true }).catch(() => {});
+    }
+  }));
 }
 
 // ------------------------------------------------------------------ orders
@@ -1415,64 +1802,11 @@ async function _copySolTarget(u, t) {
 // (gate fails open, like the EVM snipe). Best-effort — first-second curve sniping would
 // need a pump.fun program integration (future add-on).
 let _solSnipeCursorTs = 0;
-const _solSnipeSeen = new Set();
 const SOL_SNIPE_MAX_AGE_MS = Math.max(60000, Number(process.env.SOL_SNIPE_MAX_AGE_MS || 600000));   // ignore launches older than 10 min
 
-/**
- * New launches from every Solana pad EXCEPT pump.fun, in the shape the loop
- * above already handles.
- *
- * ONE CURSOR PER PAD, and that is the whole reason this is a separate function.
- * A single shared cursor over a merged feed means one pad emitting a bad
- * timestamp advances it past every real launch from every other pad, and the
- * snipe then goes quiet forever — which looks exactly like a slow day. (The
- * registry's toMs() already refuses a future timestamp; this is the second
- * line, and the first one has been wrong before.)
- *
- * THE FIRST LOOK ONLY SEEDS, same rule as the auto-raid cursor: an empty cursor
- * means "never looked", so the first read records the head WITHOUT sniping it.
- * Otherwise a restart buys the last fifty launches at once.
- *
- * Never throws — this runs inside the snipe tick, and a pad being down must
- * cost the pad's launches, not the pump.fun snipe that works.
- */
-const _padCursors = new Map();   // pad key → newest createdAt already seen
-async function _solExtraLaunches() {
-  const only = launchpads.padsFor('solana').filter((p) => p.feedPath && p.key !== 'pumpfun').map((p) => p.key);
-  if (!only.length) return [];
-  const r = await launchpads.newLaunches('solana', 50, { only }).catch(() => null);
-  if (!r) return [];
-  const out = [];
-  for (const key of only) {
-    const res = r.byPad[key];
-    if (!res || !res.ok || !res.items.length) {
-      if (res && !res.ok && res.why) _solSnipeStats.lastPadErr = res.why;   // visible, never fatal
-      continue;
-    }
-    const newest = Math.max(0, ...res.items.map((i) => i.createdAt || 0));
-    const cursor = _padCursors.get(key) || 0;
-    if (newest) _padCursors.set(key, Math.max(cursor, newest));
-    if (!cursor) continue;   // first look seeds only
-    for (const i of res.items) {
-      if (!((i.createdAt || 0) > cursor)) continue;
-      out.push({
-        mint: i.address,
-        name: i.name || '',
-        symbol: i.symbol || '',
-        createdTs: i.createdAt || 0,
-        mcapUsd: i.mcapUsd || 0,
-        complete: i.graduated === true,
-        // Absent or renamed → '' → simply never matches a followed dev, which
-        // fails safe. Same contract as the pump.fun feed's creator field.
-        creator: i.creator || '',
-      });
-    }
-  }
-  return out;
-}
 async function solSnipeCycle() {
   if (!core.chains.isEnabled('solana')) return;
-  const armed = core.allUsers().filter((u) => u.snipe && u.snipe.chains && u.snipe.chains.solana && Number(u.snipe.ethAmount) > 0);
+  const armed = _armedOn('solana');
   const devFollowers = launchFollowers('solana');   // users sniping specific dev wallets on Solana
   if (!armed.length && !devFollowers.length) return;
   // A FEED THAT DID NOT ANSWER IS NOT A QUIET LAUNCHPAD.
@@ -1487,61 +1821,38 @@ async function solSnipeCycle() {
   if (!feed.ok) { _solSnipeStats.lastErr = feed.why || 'feed unreachable'; _solSnipeStats.lastErrAt = Date.now(); throw new Error('pump.fun feed: ' + _solSnipeStats.lastErr); }
   _solSnipeStats.lastFeedOkAt = Date.now();
   const coins = feed.coins;
-  // The OTHER launchpads, merged in — pump.fun is no longer the only place a
-  // Solana token is born, and a snipe that only watches one pad simply does not
-  // see the launches on the rest.
-  const extra = await _solExtraLaunches();
-  const seenNow = coins.length + extra.length;
+  // pump.fun ONLY. Every other Solana pad is polled by padSnipeCycle, which
+  // carries a cursor per pad — letting another pad's timestamps advance THIS
+  // cursor is how one pad reporting a bad clock takes the pump.fun snipe
+  // offline permanently, silently, because a cursor parked ahead of the feed is
+  // indistinguishable from a quiet launchpad.
+  const seenNow = coins.length;
   if (seenNow) { _solSnipeStats.launchesSeen += seenNow; _solSnipeStats.lastLaunchAt = Date.now(); }
   if (!seenNow) return;
-  // COMPUTED FROM pump.fun ALONE. This cursor is pump.fun's, and letting
-  // another pad's timestamps advance it is how one pad reporting a bad clock
-  // takes the pump.fun snipe offline permanently — silently, because a cursor
-  // parked ahead of the feed is indistinguishable from a quiet launchpad. Every
-  // other pad carries its own cursor inside _solExtraLaunches.
   const newestTs = Math.max(0, ...coins.map((c) => c.createdTs || 0));
   if (!_solSnipeCursorTs && newestTs) { _solSnipeCursorTs = newestTs; return; }   // pin near head first pass (no startup flood)
   const now = Date.now();
   const fresh = coins
     .filter((c) => c.createdTs > _solSnipeCursorTs)
-    .concat(extra)
-    .filter((c) => (now - c.createdTs) < SOL_SNIPE_MAX_AGE_MS && !_solSnipeSeen.has(c.mint))
+    .filter((c) => (now - c.createdTs) < SOL_SNIPE_MAX_AGE_MS)
     .sort((a, b) => a.createdTs - b.createdTs);
   if (newestTs) _solSnipeCursorTs = Math.max(_solSnipeCursorTs, newestTs);
   let processed = 0;
   for (const c of fresh) {
     if (processed >= DEX_SNIPE_MAX_TOKENS) break;
-    _solSnipeSeen.add(c.mint);
-    if (_solSnipeSeen.size > 4000) { const it = _solSnipeSeen.values().next().value; _solSnipeSeen.delete(it); }
+    // ONE dedup per chain, shared with the launchpad feeds. This used to be a
+    // private `_solSnipeSeen`, which was fine while pump.fun was the only Solana
+    // source; the moment a second feed can name the same mint, two seen-sets
+    // means two buys of one launch for one user.
+    if (!_snipeMark('solana', c.mint)) continue;
     processed++;
-    // ── Dev-wallet snipe: buy this launch for anyone following its creator (idempotent
-    // via each target's own dedup map). Matched on the pump.fun feed's creator field.
-    const devBoughtBy = new Set();
-    if (devFollowers.length && c.creator) {
-      const matches = [];
-      for (const u of devFollowers) for (const t of u.copy.targets) if (t.mode === 'launches' && t.chain === 'solana' && t.address === c.creator) matches.push({ u, t });
-      if (matches.length) await mapLimit(matches, SNIPE_CONCURRENCY, async ({ u, t }) => { if (await _followerBuy(u, t, c.mint, 'solana')) devBoughtBy.add(u.chatId); });
-    }
-    if (!armed.length) continue;   // dev-snipe-only followers: skip the snipe-all pass
-    if (safety.supported('solana')) { const s = await safety.tokenSecurity('solana', c.mint).catch(() => null); if (s && safety.verdict('solana', s).level === 'danger') continue; }
-    await mapLimit(armed, SNIPE_CONCURRENCY, async (u) => {
-      if (devBoughtBy.has(u.chatId)) return;   // already dev-sniped this exact launch → don't also snipe-all it
-      const w = core.activeWallet(u); if (!w) return;
-      try {
-        const bal = await core.ethBalance(core.walletAddress(w, 'solana'), 'solana');
-        const need = solana.solToLamports(u.snipe.ethAmount) + solana.solToLamports(core.CFG.solGasBuffer);
-        if (bal < need) return;   // can't afford → skip silently
-      } catch (_) { return; }
-      try {
-        const r = await core.buy(u.chatId, c.mint, u.snipe.ethAmount, 'solana');
-        _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(r.sym || c.symbol)}</b> on 🟣 Solana\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${c.mint}</code>\n${txLink('solana', r.hash)}`, _autoSnipeKb('solana'), 'snipe');
-      } catch (err) {
-        const msg = String((err && err.message) || err);
-        if (/no route|no liquidity|not tradable/i.test(msg)) return;   // not yet on Jupiter → retry while fresh
-        const now2 = Date.now(), key = u.chatId + ':solsnipe';
-        if (now2 - (_snipeFailAt.get(key) || 0) > 300000) { _snipeFailAt.set(key, now2); _notify(u.chatId, `⚠️ A Solana snipe failed: ${esc(msg)} (muted 5 min)`, undefined, 'snipe'); }
-      }
-    });
+    // A fresh mint is routinely not on Jupiter yet — that is the NORMAL first
+    // answer here, not a failure — so a buy that finds no route parks in the
+    // retry ring and is re-offered the moment a route exists. The old code
+    // swallowed that error with a comment claiming it would "retry while it's
+    // fresh"; the cursor and the seen-set had both already moved past it, so
+    // nothing could ever offer it again.
+    await _fireLaunch('solana', { token: c.mint, sym: c.symbol || '', creator: c.creator || '', at: Date.now(), via: 'pump.fun' }, { armed, devFollowers });
   }
 }
 
@@ -1923,12 +2234,30 @@ function health() {
     out.solSnipe.sinceFeedOkMs = _solSnipeStats.lastFeedOkAt ? now - _solSnipeStats.lastFeedOkAt : null;
     out.solSnipe.sinceLastLaunchMs = _solSnipeStats.lastLaunchAt ? now - _solSnipeStats.lastLaunchAt : null;
     out.solSnipe.feedErr = _solSnipeStats.lastErr || null;
-    // A secondary pad being down does NOT turn the loop red — it costs that
-    // pad's launches and nothing more — so it needs somewhere to be visible
-    // that is not `feedErr`. Silently narrowing which launchpads are watched is
-    // the kind of degradation nobody notices for a month.
-    out.solSnipe.padErr = _solSnipeStats.lastPadErr || null;
   }
+  // The launchpad feeds — every pad on every covered chain. A secondary pad
+  // being down does NOT turn any loop red (it costs that pad's launches and
+  // nothing more), so without these numbers "which launchpads is this bot
+  // actually watching today" has no answer at all, and silently narrowing that
+  // set is the kind of degradation nobody notices for a month.
+  //
+  // `sinceOkMs` is the one that matters: it says a pad ANSWERED, as opposed to
+  // the loop having run. That distinction is the whole reason a dead pump.fun
+  // host once sat behind a green tick for days.
+  if (out.padSnipe) {
+    out.padSnipe.launchesSeen = _padSnipeStats.launchesSeen;
+    out.padSnipe.sinceOkMs = _padSnipeStats.lastOkAt ? now - _padSnipeStats.lastOkAt : null;
+    out.padSnipe.sinceLastLaunchMs = _padSnipeStats.lastLaunchAt ? now - _padSnipeStats.lastLaunchAt : null;
+    out.padSnipe.err = _padSnipeStats.lastErr || null;
+    // Per pad, because "a launchpad is down" and "every launchpad is down" need
+    // different answers from an operator.
+    out.padSnipe.pads = Object.fromEntries(Object.entries(_padSnipeStats.pads).map(([k, v]) => [k, { ok: v.ok, fail: v.fail, seen: v.seen, why: v.why }]));
+  }
+  // The retry ring. A launch parked here is one the bot HAS seen and cannot buy
+  // yet — the single most misread state in this service, because from outside it
+  // is indistinguishable from a snipe that is not watching at all.
+  out.launchRetry = { pending: _retryStats.pending, queued: _retryStats.queued, fired: _retryStats.fired, expired: _retryStats.expired,
+    sinceFiredMs: _retryStats.lastFiredAt ? now - _retryStats.lastFiredAt : null };
   // A CA snipe that is armed and never probed is the failure mode here — the
   // loop ticking says nothing about whether the targets are being looked at, so
   // both numbers are needed. `armed` with `probes` stuck is a starved ring;
@@ -2030,6 +2359,18 @@ function start() {
   const dexSnipeMs = Math.max(5000, Number(process.env.DEX_SNIPE_POLL_MS || 8000));
   runLoop('snipe', snipeCycle, snipeMs);
   runLoop('dexSnipe', dexSnipeCycle, dexSnipeMs);
+  // The launchpad feeds, for every chain any pad covers. Its own loop and its
+  // own cadence: the two above read block logs from nodes this bot owns, this
+  // one polls third-party HTTP hosts that rate-limit and go down, and folding an
+  // HTTP poll into a block scan means one slow launchpad delaying every snipe on
+  // the chain. It costs nothing while nobody is armed — the cycle takes its
+  // early return before making a request.
+  runLoop('padSnipe', padSnipeCycle, Math.max(5000, Number(process.env.PAD_SNIPE_POLL_MS || 12000)));
+  // The retry ring: launches this bot saw before their market existed. Without
+  // it a dev snipe that arrives first — the whole point of a dev snipe — is a
+  // buy that fails with "no route" and a launch that is then dropped for ever.
+  if (LAUNCH_RETRY_MS) runLoop('launchRetry', launchRetryCycle, LAUNCH_RETRY_POLL_MS);
+  else console.log('[snipe] retry ring OFF (LAUNCH_RETRY_MS=0) — a launch seen before its pool opens is dropped, not retried');
   // Solana snipe runs only when the chain is enabled (its own cadence; pump.fun poll).
   if (core.chains.isEnabled('solana')) runLoop('solSnipe', solSnipeCycle, Math.max(5000, Number(process.env.SOL_SNIPE_POLL_MS || 8000)));
   runLoop('orders', ordersCycle, orderMs);
@@ -2057,4 +2398,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _armedOn } };

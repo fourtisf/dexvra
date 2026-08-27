@@ -329,6 +329,7 @@ function build() {
       covers: 'letsbonk.fun and other Raydium LaunchLab pads',
       bases: ['https://launch-mint-v1.raydium.io'],
       tokenPath: '/get/by/mints?ids={id}',
+      feedPath: '/get/list?sort=new&size={n}&includeNsfw=false',
       idKeys: ['mint', 'mintA.address', 'address'],
       parse: (pad, chain, raw, now) => {
         const rec = common(blank(pad, chain, str(pick(raw, ['mint', 'mintA.address', 'address']), 64)), raw, now);
@@ -350,6 +351,7 @@ function build() {
       covers: 'Moonshot (DEX Screener)',
       bases: ['https://api.moonshot.cc'],
       tokenPath: '/token/v1/solana/{id}',
+      feedPath: '/tokens/v1/new/solana?limit={n}',
       idKeys: ['tokenAddress', 'baseToken.address', 'address', 'mint'],
       parse: (pad, chain, raw, now) => {
         const rec = common(blank(pad, chain, str(pick(raw, ['tokenAddress', 'baseToken.address', 'address']), 64)), raw, now);
@@ -372,6 +374,7 @@ function build() {
       covers: 'four.meme (BNB Chain)',
       bases: ['https://four.meme'],
       tokenPath: '/meme-api/v1/private/token/get/v2?address={id}',
+      feedPath: '/meme-api/v1/private/token/query?orderBy=New&pageIndex=1&pageSize={n}',
       idKeys: ['address', 'tokenAddress', 'contractAddress'],
       parse: (pad, chain, raw, now) => {
         const rec = common(blank(pad, chain, str(pick(raw, ['address', 'tokenAddress', 'contractAddress']), 64)), raw, now);
@@ -393,6 +396,7 @@ function build() {
       covers: 'Virtuals Protocol agent launches (Base)',
       bases: ['https://api.virtuals.io'],
       tokenPath: '/api/virtuals?filters[preToken]={id}',
+      feedPath: '/api/virtuals?sort[0]=createdAt%3Adesc&pagination[pageSize]={n}',
       idKeys: ['preToken', 'tokenAddress', 'address', 'attributes.preToken', 'attributes.tokenAddress'],
       parse: (pad, chain, raw, now) => {
         // Strapi-shaped: the fields live under `attributes`, and the id at the
@@ -407,6 +411,44 @@ function build() {
           progressApi: pick(a, ['progress', 'bondingProgress', 'virtualTokenValue']),
           progressDerived: null,
           migratedPool: str(pick(a, ['lpAddress', 'poolAddress']), 64),
+        });
+      },
+    },
+    {
+      key: 'pons',
+      label: 'Pons',
+      chains: ['robinhood'],
+      verified: false,
+      covers: 'pons.fun (Robinhood Chain)',
+      // WHY A ROBINHOOD PAD EXISTS AT ALL, when that chain already has an
+      // on-chain launch signal.
+      //
+      // The Robinhood snipe discovers launches by filtering ONE factory address
+      // (chains.js `factory`) for ONE `TokenCreated` signature. That is precise
+      // and fast — and it is also blind to every launch that goes through a
+      // DIFFERENT launchpad contract on the same chain. eth_getLogs answers an
+      // unknown topic with an EMPTY ARRAY, so a second launchpad appearing on
+      // Robinhood does not look like a missing feature: it looks like a quiet
+      // chain, behind a green /health, which is exactly how this repo lost days
+      // of Solana discovery once already.
+      //
+      // So the pad is a SECOND, INDEPENDENT way in — an HTTP feed that names the
+      // token and its creator without knowing which contract minted it. It does
+      // not replace the factory scan (that one is faster and needs no third
+      // party); it covers what the factory scan cannot see.
+      bases: ['https://pons.fun/api', 'https://api.pons.fun'],
+      tokenPath: '/tokens/{id}',
+      feedPath: '/tokens?sort=created&order=desc&limit={n}',
+      idKeys: ['address', 'tokenAddress', 'contractAddress', 'token.address', 'id'],
+      parse: (pad, chain, raw, now) => {
+        const rec = common(blank(pad, chain, str(pick(raw, ['address', 'tokenAddress', 'contractAddress', 'token.address']), 64)), raw, now);
+        rec.launchpad = 'Pons';
+        if (rec.address) rec.launchUrl = 'https://pons.fun/token/' + rec.address;
+        return curveState(rec, {
+          graduated: bool(pick(raw, ['graduated', 'isGraduated', 'migrated', 'completed', 'isCompleted', 'listed'])),
+          progressApi: pick(raw, ['progress', 'progressPct', 'bondingProgress', 'curveProgress', 'bondingCurveProgress']),
+          progressDerived: null,
+          migratedPool: str(pick(raw, ['poolAddress', 'pairAddress', 'lpAddress', 'migratedPool']), 64),
         });
       },
     },

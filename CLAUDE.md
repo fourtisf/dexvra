@@ -3829,6 +3829,112 @@ cd tradebot && node --test snipePanel.test.js    # 20 tests, no network
 
 **Config a fix depends on:** nothing. Every knob has a working default.
 
+## The snipe watched one launchpad per chain, and a dev snipe that arrived first could never fill
+
+"add api pons untuk snipe trading ga hanya robinhood chain atau pons launchpad
+tpi beberapa launchpad dan make sure sniper trading snipe dev wallet is working
+bneran beli" (2026-08-27). Two defects, and the second is the one that made the
+first invisible.
+
+**Discovery was one launchpad per chain.** The Robinhood snipe filters ONE
+factory address for ONE `TokenCreated` signature; the EVM chains scan
+`PairCreated`; Solana polls pump.fun. A token born anywhere else — Pons on
+Robinhood, LetsBonk or Moonshot on Solana, four.meme on BNB, Virtuals on Base —
+was invisible until it migrated to a DEX, hours after the window anybody snipes
+in. And `eth_getLogs` answers an unknown topic with an EMPTY ARRAY, so a second
+launchpad appearing on a chain does not read as a missing feature: it reads as a
+quiet chain, behind a green /health — the exact shape of the pump.fun outage.
+
+- **`padSnipeCycle` polls the shared registry's feeds, for every chain any pad
+  covers.** Adding a launchpad to the snipe is now a row in
+  `shared/launchpads/pads.js` and nothing else — every pad in the table gained a
+  `feedPath`, and Pons is a row like any other (`LAUNCHPAD_PONS_API` pins its
+  host, `LAUNCHPAD_PONS=0` kills it, same as every pad). It is a SECOND way in
+  beside the event scans, not a replacement: a log read from our own node is
+  faster than a third-party HTTP poll and needs no third party.
+- **`_fireLaunch` is the one fire path** — the follower match, the dedup, the
+  safety gate, the affordability check, the buy and the purchase message. Four
+  discovery sources each carried their own copy and three had already drifted
+  (only one recorded launches while nobody was armed; only the EVM ones told a
+  user their wallet was short; the Solana one skipped an empty wallet silently
+  — the inert-watch failure, on the money path). `autoSnipeConsent.test.js` now
+  pins the purchase-site count at exactly ONE.
+- **One cursor per pad per chain, first look seeds only** — the rules the Solana
+  extra-pad helper already had, now for every chain. pump.fun keeps its own
+  poller and its own cursor; the pad loop explicitly skips it, or two pollers
+  share one feed and that is "one repo, two answers" again.
+- **A feed that 404s is backed off HERE, not in the registry's breaker.** The
+  breaker deliberately benches only transport failures because for a TOKEN
+  lookup an HTTP status is an answer. For a FEED a 404 is a fact about the
+  path: it will 404 next tick too, for ever, and this loop asks every few
+  seconds. `_padSnipeStats.pads` keeps the reason per pad, in /health.
+- ⚠️ **`_snipeMark` lowercased every address, and base58 is case-SENSITIVE.**
+  Fine while each chain's seen-set only ever saw its own scan; the moment two
+  feeds can name the same Solana mint, two different mints can fold onto one
+  key and the second launch is silently dropped as "already sniped".
+  `_addrKey` — the registry's rule — per chain.
+
+**And a launch seen too early was a launch dropped for ever.** Every discovery
+source sees a token at the earliest possible moment, which is precisely the
+moment there is usually nothing to trade against: a pump.fun mint is not on
+Jupiter for the first seconds, a pad feed names a token that has no pool at
+all, and a dev's token exists before the dev opens its pool. The buy failed
+with "no route" — and the cursor had already advanced, the seen-set had already
+marked it, so nothing could ever offer it again. The Solana path's comment said
+"retried while it's fresh" over code that could not. **That is why the
+dev-wallet snipe "worked" and never bought**: seeing the launch before the pool
+opens is the entire value of following a dev, and it was the one case
+guaranteed to fail.
+
+- **The retry ring** (`_launchRetry`, `LAUNCH_RETRY_MS` 3 min, `=0` disables)
+  holds a launch whose ONLY problem is timing and re-offers it until
+  `core.canTradeNow` — the single owner of "can a swap be filled right now" —
+  flips, or the clock runs out. Probes are bounded and round-robin, with the
+  same tighter Solana budget as the CA snipe, for the same reason: a Solana
+  probe is an aggregator quote against the host every real buy needs.
+- **`_notYetTradeable` separates "no market YET" from every real failure.**
+  "No route / no liquidity / zero quote / no pool" goes in the ring and is NOT
+  a failure DM — a warning per launch that fills twenty seconds later teaches
+  the user to swipe past the warnings that matter. A revert, a short balance, a
+  429, and "liquidity is on a venue Dexvra can't route through" stay failures;
+  the last one is deliberately excluded from the retry ring because it will not
+  change.
+- **The ring remembers who already bought** (`done`), because re-offering a
+  launch to a user whose buy held is a double spend — strictly worse than the
+  miss it exists to fix. A dev target's own `bought` map is the second line.
+- **Pad-discovered launches are GATED on `canTradeNow` before the first buy**;
+  the event scans are not. A `PairCreated` log means the pool exists in the
+  block just read — spending a round trip to confirm what the log said is how a
+  sniper arrives late. There the failure is the signal, and it lands in the
+  ring.
+- ⚠️ **The short-balance notice printed lamports through `formatEther`.** It
+  was EVM-only before `_canAfford` unified the check; on Solana it would have
+  said "Need 0.000000002" for two SOL — a number that reads as a bug in the bot,
+  on the one message whose job is to say what to top up. `formatUnits(v, 9)` on
+  the SVM branch.
+- **`tradebot/launchpads.js` no longer keeps its own chain list.** `chainFor`
+  was a hand-written map of three chains, so a pad added to the table for a
+  fourth chain (Pons/Robinhood, here) was dropped RIGHT THERE: `covers()` said
+  no and the pad was never asked anything — nothing threw, nothing logged. It
+  derives from `lp.padsFor()` now; a `RENAMES` map (empty) is the only local
+  fact left.
+
+```bash
+cd tradebot && node --test padSnipe.test.js         # 17 tests, no network — the ring, the pads, the dev fill
+cd tradebot && npm run launchpads:check             # which pad feeds answer from THIS box
+```
+
+Whether a pad's guessed feed path is right is measured on the box, not assumed
+— every new feed is `verified: false` until `launchpads:check` proves it, and a
+wrong path costs a `.env` line (`LAUNCHPAD_<PAD>_FEED_PATH`), not a deploy.
+
+**Config a fix depends on:** nothing. Every pad ships on, blank means on, and
+the retry ring has a working default. `PAD_SNIPE_POLL_MS`, `LAUNCH_RETRY_MS`,
+`LAUNCHPAD_FEED_BACKOFF_MS` exist for an operator who wants different pacing —
+and pons.fun's real API shape has NOT been verified from inside this sandbox
+(its host blocks this egress), so the first `launchpads:check` on the server is
+the moment `LAUNCHPAD_PONS_API` / `_FEED_PATH` / `_TOKEN_PATH` may need a line.
+
 ## "Did I make money on this one?" — the question /portfolio cannot answer
 
 A position record survives being sold to zero (it carries the lifetime

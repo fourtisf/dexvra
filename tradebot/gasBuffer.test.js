@@ -40,14 +40,21 @@ test("buy() and the snipe pre-check reserve the same amount", () => {
   // again, a user gets the failure notice on every pair instead of a skip.
   assert.match(code("core.js"), /const gasBuf = gasBufferWei\(chainKey\);/);
   const w = code("watchers.js");
-  // EVM paths only. Solana reserves CFG.solGasBuffer in BOTH its pre-check and
-  // its buy, so it never had the divergence and must not be dragged into it.
+  // ONE pre-check for every launch source now. This used to be two copies (the
+  // Robinhood factory scan and the EVM pair scan) and a fourth source would have
+  // made it three — three places for the reserve to drift back apart from
+  // buy()'s, which is the defect this whole file exists for. `_canAfford` is the
+  // single owner; the EVM branch is the only non-Solana `need` in the file.
   const needs = (w.match(/const need = [^;]+;/g) || []).filter((n) => !/solana\./.test(n));
-  assert.ok(needs.length >= 2, "both EVM snipe paths pre-check a balance");
+  assert.strictEqual(needs.length, 1, "the EVM snipe pre-check has more than one definition again");
   for (const n of needs) {
     assert.match(n, /core\.gasBufferWei\(/, `still reading its own buffer: ${n}`);
     assert.ok(!/CFG\.gasBufferEth/.test(n), `must not reserve the L2 default on L1: ${n}`);
   }
+  // And every discovery source reaches it through that one owner, rather than
+  // reading a balance for itself.
+  assert.match(w, /async function _canAfford\(u, chainKey\)/);
+  assert.strictEqual((w.match(/await _canAfford\(u, chainKey\)/g) || []).length, 1, "a snipe path grew its own affordability check");
 });
 
 test("Solana never had the bug, and keeps its own matching pair", () => {
@@ -97,8 +104,13 @@ test("the notice survives a restart, and re-arms only when the wallet can afford
   assert.match(w, /if \(bal >= need\) \{[\s\S]{0,160}delete flags\[chainKey\]/);
 });
 
-test("both snipe paths route a shortfall through it", () => {
+test("both worlds route a shortfall through it", () => {
   const w = code("watchers.js");
-  const calls = w.match(/if \(_affordCheck\(u, [^)]+\)\) return;/g) || [];
-  assert.strictEqual(calls.length, 2, "the launch sniper and the DEX-pair sniper");
+  // Both branches of `_canAfford` — EVM and Solana. The Solana one used to skip
+  // SILENTLY ("can't afford → skip silently"), so a snipe armed on an empty
+  // Solana wallet was an armed watch that could never fire and never said why:
+  // the inert-watch failure, on the money path.
+  const calls = w.match(/!_affordCheck\(u, chainKey, bal, need\)/g) || [];
+  assert.strictEqual(calls.length, 2, "the EVM branch and the Solana branch of _canAfford");
+  assert.match(w, /if \(!\(await _canAfford\(u, chainKey\)\)\) return;/, "the shared fire path stopped checking");
 });
