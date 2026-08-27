@@ -2636,6 +2636,54 @@ LOG: half the move sits 50% up the price area
   fails if the clip stops working AND fails if the probe stops being able to
   see a spill.
 
+#### 403 → 400: the host started talking, and the guess is what it refuses now
+
+The first `chart:check` after the browser headers deployed:
+
+```
+USDC (Solana)   ✓ GeckoTerminal 26 candle(s)    ✗ DexScreener io.dexscreener.com 400
+WBNB (BSC)      ✓ GeckoTerminal 384 candle(s)   ✗ DexScreener io.dexscreener.com 400
+WETH (Ethereum) ✗ GeckoTerminal 429             ✗ DexScreener io.dexscreener.com 400
+```
+
+**The number changed, and that IS the result.** 403 is "I refuse you"; 400 is "I am
+talking to you and your request is wrong". The headers got past the bot filter,
+and what is left is the part this file always said was a guess. Three things,
+and two of them are our own rules broken:
+
+- ⚠️ **WE WERE DISCARDING THE REASON — on the one status that carries it.** This
+  file's own rule is *"an HTTP error puts the explanation in the response
+  body"*, and `getJson` cancelled the body and returned a bare
+  `io.dexscreener.com 400`. That says the guessed shape is wrong and nothing
+  about WHICH part, which is the difference between a one-line `.env` fix and
+  another round of guessing. `bodyHint()` carries it now — flattened (an HTML
+  error page is not a message for a reader) and bounded to a phrase.
+- ⚠️ **THE QUERY STRING WAS THE ONE PART OF THE REQUEST THAT WAS NOT
+  OVERRIDABLE.** The whole licence for shipping an unverified shape is that
+  every part of it costs a line in `.env` rather than a deploy — and the query
+  is the half most likely to be wrong, which the 400 then proved.
+  `DS_CHART_QUERY` takes `{from} {to} {res} {limit}`.
+- **A 400 now tries the OTHER path spelling, a 403 still does not.** 404 ("not
+  here") and 400 ("not with these parameters") are both about THIS spelling, and
+  v2 and v3 of an API routinely take different params — which is the whole
+  reason two templates are listed. A refusal says nothing about which path is
+  right.
+- ⚠️ **The attempted URL travels, but ONLY under the `?source=` pin.** An
+  operator cannot fix a request shape they cannot see — the `logos:check`
+  truncation defect, one feature over — and a visitor must never see a raw
+  upstream URL in the chart panel. The pin is the check script's seam and
+  nothing else sets it.
+- **The check says how to FIND the real shape**, because the endpoint is the one
+  DexScreener's own chart calls: DevTools → Network → filter "bars", then paste
+  the query into `DS_CHART_QUERY` and the path into `DS_CHART_PATH`. A status
+  alone is not actionable; naming the browser as the authoritative source is
+  the difference between a diagnosis and a shrug.
+
+⚠️ **What is still unknown, and cannot be learned here:** the correct shape. This
+sandbox has no egress, and the endpoint is undocumented — so the last step
+genuinely belongs to somebody with a browser and the box. Everything above
+exists so that step is a line in `.env`.
+
 #### "saya ingin pakai api dexscreener aja untuk chart" — an ORDER, not a deletion
 
 The DexScreener source already existed (the same operator asked for it, and it

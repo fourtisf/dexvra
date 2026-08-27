@@ -354,9 +354,13 @@ async function load(chain: string, address: string, tf: Timeframe, hint: string 
   // BOTH reasons travel: "GeckoTerminal 429" alone, with a second source
   // silently unreachable behind it, is the shrug this endpoint has already been
   // fixed for once.
-  const reasons = [gtSilent ? gt.why : null, dsSilent ? ds?.why ?? "DexScreener was not asked" : null]
-    .filter(Boolean)
-    .join("; ");
+  // ⚠️ THE ATTEMPTED URL ONLY UNDER THE `?source=` PIN. That pin is the check
+  // script's seam and nothing else sets it, so an operator running
+  // `chart:check` sees the exact request that failed — and a visitor never sees
+  // a raw upstream URL in the panel. A guessed request shape nobody can read is
+  // a shape nobody can fix.
+  const dsWhy = dsSilent ? (ds?.why ?? "DexScreener was not asked") + (pin && ds?.url ? ` [tried ${ds.url}]` : "") : null;
+  const reasons = [gtSilent ? gt.why : null, dsWhy].filter(Boolean).join("; ");
   throw new Unreadable(reasons || "no source answered");
 }
 
