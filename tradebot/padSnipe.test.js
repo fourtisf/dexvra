@@ -100,6 +100,10 @@ function reset() {
   FEEDS = {};
   T._launchRetry.clear();
   T._padCursors.clear();
+  // The feed-bench map persists across tests by design (it is process state in
+  // the bot) — and a bench left behind by the backoff test reads as "the pad
+  // loop is broken" in every later test. Stated here, not inherited.
+  T._padFeedFail.clear();
 }
 const feedOk = (items) => ({ ok: true, why: '', items });
 const item = (addr, over) => Object.assign({ address: addr, symbol: 'PAD', name: 'Pad Token', creator: '', createdAt: Date.now(), graduated: false, pad: 'pons' }, over);
@@ -332,6 +336,60 @@ test('Solana mints are deduped case-SENSITIVELY — base58 is not EVM', () => {
   // EVM stays case-insensitive: 0xAbc and 0xABC are the same contract.
   assert.equal(T._snipeMark('bsc', '0xAbCd'), true);
   assert.equal(T._snipeMark('bsc', '0xABCD'), false);
+});
+
+test('a BROADCAST buy is never re-offered by the ring — it may still land', async () => {
+  reset();
+  const u1 = armUser('robinhood'); const u2 = armUser('robinhood');
+  USERS.push(u1, u2);
+  // u1's buy broadcasts and dies unconfirmed; u2 is too early. The launch
+  // requeues for u2 — and u1 must be in the ring's done-set, because their
+  // transaction may still confirm and a second buy is a double spend.
+  BUY = async (chatId) => {
+    if (chatId === u1.chatId) { const e = new Error('broadcast, not confirmed'); e.broadcast = true; throw e; }
+    throw new Error('no pool');
+  };
+  await T._fireLaunch('robinhood', { token: '0xL1', sym: 'L', creator: '', at: Date.now() }, { armed: USERS, devFollowers: [] });
+  assert.equal(T._launchRetry.size, 1, 'u2 was dropped instead of parked');
+  BUY = async () => ({ sym: 'L', gotTokens: 10, spentEth: 0.05, native: 'ETH', hash: '0xhash' });
+  await T.launchRetryCycle();
+  assert.equal(buys.filter((b) => b.chatId === u1.chatId).length, 0, 'a broadcast buy was re-offered — a double spend if the first tx lands');
+  assert.equal(buys.filter((b) => b.chatId === u2.chatId).length, 1, 'the waiting user never got their fill');
+});
+
+test('a launch past the per-cycle budget is queued for the ring, never silently dropped', async () => {
+  reset();
+  USERS.push(armUser('solana'));
+  CAN_TRADE = async () => true;
+  const t0 = Date.now() - 5000;
+  FEEDS.solana = { ok: true, byPad: { letsbonk: feedOk([item('SeedMint111', { createdAt: t0, pad: 'letsbonk' })]) } };
+  await T.padSnipeCycle();   // seed
+  // Ten fresh launches against the Solana per-tick budget of 5: the pad cursor
+  // advances past ALL of them, so anything not fired now must be in the ring or
+  // it is gone for ever.
+  const many = Array.from({ length: 10 }, (_, i) => item('FreshMint' + i, { createdAt: t0 + 1000 + i, pad: 'letsbonk' }));
+  FEEDS.solana = { ok: true, byPad: { letsbonk: feedOk(many) } };
+  await T.padSnipeCycle();
+  assert.equal(buys.length + T._launchRetry.size, 10, `${buys.length} bought + ${T._launchRetry.size} queued — the rest vanished past an advanced cursor`);
+  assert.ok(buys.length <= 5, 'the Solana per-tick budget is not being applied');
+  // …and the queued ones fill from the ring.
+  await T.launchRetryCycle(); await T.launchRetryCycle();
+  assert.ok(buys.length > 5, 'the queued overflow was never fired');
+});
+
+test('a pad replaying stale history after a bench does not buy ten-minute-old launches', async () => {
+  reset();
+  USERS.push(armUser('bsc'));
+  const t0 = Date.now() - 30 * 60 * 1000;   // half an hour ago
+  FEEDS.bsc = { ok: true, byPad: { fourmeme: feedOk([item('0xOld0', { createdAt: t0, pad: 'fourmeme' })]) } };
+  await T.padSnipeCycle();   // seed at the stale head
+  FEEDS.bsc = { ok: true, byPad: { fourmeme: feedOk([
+    item('0xOld1', { createdAt: t0 + 60000, pad: 'fourmeme' }),          // newer than the cursor, still 29 min old
+    item('0xNew1', { createdAt: Date.now() - 5000, pad: 'fourmeme' }),   // actually fresh
+  ]) } };
+  await T.padSnipeCycle();
+  assert.equal(buys.length, 1, 'a stale launch was sniped — that is buying somebody\'s exit');
+  assert.equal(buys[0].token, '0xNew1');
 });
 
 test('_notYetTradeable separates "no market yet" from every real failure', () => {

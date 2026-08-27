@@ -437,10 +437,16 @@ async function _fireLaunch(chainKey, L, opts = {}) {
           held.add(u.chatId);
           _notify(u.chatId, `🎯 <b>Auto-Snipe bought $${esc(r.sym || L.sym || '?')}</b> on ${ch.emoji} ${esc(ch.name)}\n<i>Auto-Snipe buys EVERY new launch on this chain while armed — this was not a CA or dev-wallet target.</i>\nBought ${fmt(r.gotTokens)} for ${r.spentEth} ${r.native}\n<code>${token}</code>\n${txLink(chainKey, r.hash)}`, _autoSnipeKb(chainKey), 'snipe');
         } catch (err) {
+          // A buy that was BROADCAST may still land. It counts as HELD — the
+          // CA snipe's rule, for the same reason: this launch can be re-offered
+          // to OTHER users by the retry ring, and re-buying for a user whose
+          // transaction then confirms is a double spend. The failure DM below
+          // still goes out: a transaction in flight is worth knowing about.
+          if (err && err.broadcast) held.add(u.chatId);
           // "There is no market yet" is not a failure to report — it is the
           // normal first answer for a token this fresh, and a DM for it would
           // be one per launch per armed user. It goes in the ring instead.
-          if (_notYetTradeable(err)) { waiting = true; return; }
+          else if (_notYetTradeable(err)) { waiting = true; return; }
           const now = Date.now(), key = u.chatId + ':' + chainKey;
           if (now - (_snipeFailAt.get(key) || 0) > 300000) {
             _snipeFailAt.set(key, now);
@@ -748,6 +754,8 @@ const PAD_FEED_LIMIT = Math.max(5, Math.min(200, Number(process.env.LAUNCHPAD_FE
  * say WHICH pad went quiet rather than leaving it to be noticed in a month.
  */
 const PAD_FEED_TRIPS = Math.max(1, Number(process.env.LAUNCHPAD_FEED_TRIPS || 3));
+const PAD_SNIPE_SVM_PER_TICK = Math.max(1, Number(process.env.PAD_SNIPE_SVM_PER_TICK || 5));
+const PAD_LAUNCH_MAX_AGE_MS = Math.max(60000, Number(process.env.PAD_LAUNCH_MAX_AGE_MS || 600000));
 const PAD_FEED_BACKOFF_MS = Math.max(60000, Number(process.env.LAUNCHPAD_FEED_BACKOFF_MS || 600000));
 const _padCursors = new Map();    // `${chain}:${pad}` → newest createdAt already seen
 const _padFeedFail = new Map();   // `${chain}:${pad}` → { n, until, why }
@@ -806,6 +814,10 @@ async function _padLaunches(chainKey, now) {
     for (const i of res.items) {
       if (!((i.createdAt || 0) > cursor)) continue;
       if (i.graduated === true) continue;   // already migrated — the DEX scan's job, not a launch
+      // The pump.fun loop's age bound, applied here too: a pad coming back from
+      // a ten-minute bench replays everything newer than its stale cursor, and
+      // "sniping" a launch that old is buying somebody's exit.
+      if (now - (i.createdAt || 0) > PAD_LAUNCH_MAX_AGE_MS) continue;
       stat.seen++;
       out.push({
         token: i.address,
@@ -842,10 +854,18 @@ async function padSnipeCycle() {
     _padSnipeStats.launchesSeen += launches.length;
     _padSnipeStats.lastLaunchAt = now;
     console.log(`[padsnipe] ${chainKey} · ${launches.length} new launch(es) · armed ${armed.length} · devFollowers ${devFollowers.length}`);
+    // Per-cycle fire budget, and a much tighter one for Solana: each gated fire
+    // costs one aggregator QUOTE against the same keyless host every real buy
+    // needs — the caSnipeCycle split, for the same reason.
+    const cap = core.chains.isSvm(chainKey) ? Math.min(DEX_SNIPE_MAX_TOKENS, PAD_SNIPE_SVM_PER_TICK) : DEX_SNIPE_MAX_TOKENS;
     let processed = 0;
     for (const L of launches) {
-      if (processed >= DEX_SNIPE_MAX_TOKENS) break;
       if (!_snipeMark(chainKey, L.token)) continue;   // the same per-chain dedup the event scans use
+      // A launch past the budget is QUEUED, never silently dropped — the pad
+      // cursor has already advanced past it, so nothing else can ever offer it
+      // again. It is marked first, so the DEX scan cannot buy it a second time
+      // when it later graduates into a PairCreated log.
+      if (processed >= cap) { _queueLaunch(chainKey, L); continue; }
       processed++;
       // GATED, unlike the event scans. A pad names a token the moment it is
       // minted onto a bonding curve — usually long before anything this engine
@@ -2398,4 +2418,4 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 const fmt = (n) => { n = Number(n) || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K'; return n.toFixed(n < 1 ? 4 : 2); };
 const txLink = (chain, h) => { const c = core.chainOf(chain); return (h && c) ? `<a href="${c.explorer}/tx/${h}">tx ↗</a>` : ''; };
 
-module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _armedOn } };
+module.exports = { copyExitCycle, setNotifier, start, _targetPaid, caSnipeCycle, addOrder, cancelOrder, addAlert, cancelAlert, addDca, cancelDca, health, snipeStats, orderSpeed, orderExec, ORDER_SPEED, ORDER_SPEED_DEFAULT, _test: { ordersCycleExec: orderExec, solSnipeCycle, snipeCycle, copyCycle, _copySolTarget, _solBuyMintFromTx, ordersCycle, dcaCycle, positionsCycle, _followerBuy, launchFollowers, _snipeMark, _snipeStats, caSnipeCycle, _caSnipeStats, _devFromPair, padSnipeCycle, launchRetryCycle, _fireLaunch, _notYetTradeable, _padLaunches, _padSnipeStats, _retryStats, _launchRetry, _padCursors, _padFeedFail, _armedOn } };
