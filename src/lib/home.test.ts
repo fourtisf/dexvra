@@ -789,17 +789,38 @@ test("every money cell on the board goes through figureReading", () => {
   assert.match(src, /figureReading\(t, t\.priceUsd\)/, "the price cell no longer goes through figureReading");
 });
 
-test("the market-check port of geckoNetwork agrees with chains.ts exactly", () => {
+test("the market-check ports of BOTH chain maps agree with chains.ts exactly", () => {
   // scripts/market-check.mjs cannot import TS on the production Node, so it
   // carries a PORT of the geckoNetwork map — and a check reading a different
   // network id than the site proves nothing about the site. Same guard shape
   // as the logoSrc port in logos:check.
   const src = readFileSync(join(import.meta.dirname, "..", "..", "scripts", "market-check.mjs"), "utf8");
-  const m = src.match(/const GECKO_NETWORK = \{([\s\S]*?)\};/);
-  assert.ok(m, "market-check.mjs lost its GECKO_NETWORK map");
-  const ported = Object.fromEntries([...m[1].matchAll(/(\w+): "([^"]+)"/g)].map((x) => [x[1], x[2]]));
+  // BOTH maps: the check probes GeckoTerminal AND DexScreener now, and a
+  // stale slug in either one makes it report "no record" for a token the site
+  // prices perfectly well — a check lying in the reassuring direction.
+  const mapOf = (name) => {
+    const m = src.match(new RegExp(`const ${name} = \\{([\\s\\S]*?)\\};`));
+    assert.ok(m, `market-check.mjs lost its ${name} map`);
+    return Object.fromEntries([...m[1].matchAll(/(\w+): "([^"]+)"/g)].map((x) => [x[1], x[2]]));
+  };
+  const gt = mapOf("GECKO_NETWORK");
+  const ds = mapOf("DEXSCREENER_SLUG");
   for (const [id, cfg] of Object.entries(CHAINS)) {
-    if (cfg.geckoNetwork == null) continue;
-    assert.equal(ported[id], cfg.geckoNetwork, `market-check's map disagrees with chains.ts for '${id}'`);
+    if (cfg.geckoNetwork != null) assert.equal(gt[id], cfg.geckoNetwork, `market-check's GT map disagrees with chains.ts for '${id}'`);
+    if (cfg.dexscreener != null) assert.equal(ds[id], cfg.dexscreener, `market-check's DS map disagrees with chains.ts for '${id}'`);
   }
+});
+
+test("market:check never turns its exit code on one source's rate limit", () => {
+  // It reported a WORKING board (58/66 priced) as a failure because its own GT
+  // probe hit a 429 — the "always red" state chart:preview sat in for weeks,
+  // which trains the reader to ignore the red. "Could not ask" is not a verdict
+  // about the board.
+  const src = readFileSync(join(import.meta.dirname, "..", "..", "scripts", "market-check.mjs"), "utf8");
+  assert.match(src, /if \(!gt\.map && !ds\.map\) \{/, "the both-unreachable branch is gone");
+  assert.match(src, /process\.exit\(c\.live > 0 \? 0 : 1\)/, "an unaskable source turns the exit code again");
+  // The one genuine red: a blank row a source prices right now.
+  assert.match(src, /if \(recoverable > 0\) \{[\s\S]{0,600}process\.exit\(1\)/, "a recoverable blank row no longer fails the check");
+  // A token no source has is the board being HONEST, never a failure.
+  assert.match(src, /nowhere === rows\.length[\s\S]{0,600}process\.exit\(0\)/, "an unindexed token fails the check again");
 });

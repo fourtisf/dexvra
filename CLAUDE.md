@@ -2535,6 +2535,34 @@ either.
   `0/66` next to `162/192`. That is the check earning its keep: the first run
   named the budget race, this one named a regression I introduced.
 
+#### …and then the CHECK was the thing that was wrong
+
+Next run: `robinhood 58/66 priced` — recovered — under a red
+`GT answered 429 … GECKOTERMINAL_API_KEY is the only thing that raises the
+ceiling`, and a non-zero exit. **A working board reported as a failure.** Three
+defects, all mine, all this file's own recurring shapes:
+
+- ⚠️ **It probed ONE source and hung its whole verdict on it.** The site gained
+  a DexScreener fallback for these chains; the check never learned. A GT 429
+  says nothing about whether the board can price — DS may be answering, which
+  is precisely why the board read 58/66 while the check called it broken.
+  Both sources are probed now, with the site's own request shapes, and the
+  per-token line says WHICH one has the price.
+- ⚠️ **"Could not ask" was being reported as "the board is broken."** The
+  distinction this repo keeps everywhere else, missing from the one script
+  whose job is diagnosing. Neither source reachable now prints *"this run says
+  nothing about the board"*, points at the board's own live count as the
+  answer, and only fails if that count is zero.
+- ⚠️ **It was on its way to being PERMANENTLY red**, which is the state
+  `chart:preview` sat in for weeks — and a check that is always red trains the
+  reader to ignore the red. Exit codes follow the BOARD now: red only when a
+  blank row is priced by a source RIGHT NOW (the site's fault); a token no
+  source has is the board being honest and exits **zero**; one probe's rate
+  limit never turns the code on its own.
+- **Both ported chain maps are guarded** (GT and DS), because a stale slug in
+  either makes the check report "no record" for a token the site prices — a
+  check lying in the reassuring direction.
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both
