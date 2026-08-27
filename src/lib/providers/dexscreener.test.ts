@@ -3,7 +3,9 @@
 // until GT indexed its first pool.
 import test from "node:test";
 import assert from "node:assert";
-import { DS_MULTI_MAX, fetchDsMarket } from "./dexscreener.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { DS_MULTI_MAX, dsCovers, fetchDsMarket, partitionByFallback } from "./dexscreener.ts";
 
 const realFetch = globalThis.fetch;
 const addr = (i: number) => `Mint${i}aBcDeFgHiJkLmNpQrStUvWxYz${i}`;
@@ -106,4 +108,28 @@ test("total failure throws; partial failure keeps what answered", async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("the chains with no DexScreener fallback are exactly the GT-only set", () => {
+  // Robinhood sat at 0/66 priced while Solana sat at 162/192: the market cycle
+  // fired every chain concurrently against a GT budget the site's own demand
+  // exceeds, and the one chain that cannot recover through DexScreener lost
+  // the race every time. The scheduler now spends the budget on these first.
+  assert.equal(dsCovers("robinhood"), false);
+  assert.equal(dsCovers("solana"), true);
+  assert.equal(dsCovers("bsc"), true);
+  const [gtOnly, covered] = partitionByFallback([
+    ["solana", []], ["robinhood", []], ["bsc", []],
+  ]);
+  assert.deepEqual(gtOnly.map((e) => e[0]), ["robinhood"], "the GT-only chain must be in the first-priority group");
+  assert.deepEqual(covered.map((e) => e[0]), ["solana", "bsc"]);
+});
+
+test("the market cycle awaits the GT-only chains before the covered ones start", () => {
+  // A scheduling property, pinned at the source: the priority group is only a
+  // priority while it is AWAITED first — launched concurrently it is just a
+  // longer list.
+  const src = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");
+  assert.match(src, /const \[gtOnly, covered\] = partitionByFallback/);
+  assert.match(src, /\.\.\.\(await Promise\.allSettled\(gtOnly\.map\(fetchOne\)\)\),\s*\n\s*\.\.\.\(await Promise\.allSettled\(covered\.map\(fetchOne\)\)\),/, "the GT-only group is no longer awaited ahead of the covered group");
 });

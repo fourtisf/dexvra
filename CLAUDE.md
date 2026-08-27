@@ -2435,6 +2435,37 @@ price at all is a fact about GT's coverage of those tokens, measured on the
 box — and `GECKOTERMINAL_API_KEY` in the repo-root `.env` is still the only
 thing that raises the shared ceiling rather than dividing it.
 
+### …and the first live run of the check named it: the budget race Robinhood always loses
+
+`npm run market:check -- robinhood` on the box: every other chain mostly
+priced (solana 162/192, bsc 75/78, base 17/17), **robinhood 0/66 — every row
+blank** — and the direct GT probe answered **429**. That is not bad luck, it
+is arithmetic: the site's own demand (~19 GT chunks per 60s cycle across all
+chains) exceeds its 15/min budget, every chain fires CONCURRENTLY, and
+whichever chunks queue last lose. A chain DexScreener also covers falls back
+and prices anyway; **Robinhood is `dexscreener: null` — the ONE chain with no
+second source — so it lost the race every cycle, deterministically**, while
+the chains that could afford to lose were spending the budget it needed.
+
+- **GT-only chains draw from the budget FIRST**, awaited before the covered
+  chains start. `partitionByFallback` lives in `dexscreener.ts` beside the
+  coverage map it reads (a second list of "which chains DS covers" would
+  drift), and the priority is pinned by a source test — a priority group is
+  only a priority while it is AWAITED first; launched concurrently it is just
+  a longer list.
+- ⚠️ **The first cut of this edit never landed** — the patch script failed on
+  a later assertion AFTER the body edits and BEFORE the write, so `tsc`
+  passed on an unused import over the unchanged concurrent block. The source
+  test caught it; a green typecheck is not a landed change.
+- **One good cycle now buys three hours of board**: `lastGood` serves the
+  last real observation for `LAST_GOOD_TTL_MS`, so once Robinhood prices
+  once, a later lost race degrades to slightly stale instead of `—`.
+- **The ceiling itself is still the ceiling.** Priority decides who wins the
+  site's share; it cannot make ~19 chunks fit in 15. `GECKOTERMINAL_API_KEY`
+  in the repo-root `.env` (sixth time in this file) is the only thing that
+  raises it — and with 66 robinhood listings and the bot suite on the same
+  IP, this box has outgrown the free tier.
+
 ## "vol 0 padahal ada transaksi buy and sale"
 
 Reported with a screenshot of the home board, where one row asserted both

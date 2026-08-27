@@ -17,6 +17,24 @@ import type { LiveMarket } from "./geckoterminal.ts";
 
 /** DS's tokens endpoint answers at most 30 addresses per request. */
 export const DS_MULTI_MAX = 30;
+
+/** Does DexScreener cover this chain at all? The chains it does not are the
+ *  ones with no second source: when the shared GT budget runs dry mid-cycle,
+ *  every other chain falls back here and still prices — a GT-only chain just
+ *  goes dark. The scheduler orders on this, so it lives beside the map it
+ *  reads rather than as a second list that drifts. */
+export const dsCovers = (chainId: string): boolean => !!CHAINS[chainId]?.dexscreener;
+
+/** Chains split into [GT-only, has-a-fallback] — the order the market cycle
+ *  must spend the GT budget in. Robinhood sat at 0/66 priced while Solana sat
+ *  at 162/192 for exactly this: ~19 chunks of site demand against a 15/min
+ *  budget, all chains firing concurrently, and the one chain that CANNOT
+ *  recover through DexScreener queueing behind seven Solana chunks that can. */
+export function partitionByFallback<T extends [string, unknown]>(entries: T[]): [T[], T[]] {
+  const gtOnly: T[] = [], covered: T[] = [];
+  for (const e of entries) (dsCovers(e[0]) ? covered : gtOnly).push(e);
+  return [gtOnly, covered];
+}
 const BASE = "https://api.dexscreener.com/tokens/v1";
 const CHUNK_GAP_MS = 250;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -24,6 +24,7 @@ import { SEED_FEAR_GREED, fetchFearGreed } from "./feargreed";
 import { fetchListedMarket, type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 import { fetchIndexedMarket } from "./indexedMarket";
+import { partitionByFallback } from "./dexscreener";
 import { fillFromLastGood } from "./lastGood";
 import { pickLogo } from "./tokenLogo";
 import { rememberPool } from "./poolCache";
@@ -108,8 +109,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   const byChain = rowsToAddressesByChain(rows);
   const fallback = rowsToBoardTokens(rows);
 
-  const marketResults = await Promise.allSettled(
-    Object.entries(byChain).map(async ([chain, addrs]) => {
+  const fetchOne = async ([chain, addrs]: [string, string[]]) => {
       try {
         return { chain, map: await fetchChainMarket(chain, addrs) };
       } catch (err) {
@@ -123,8 +123,22 @@ async function loadListedTokens(): Promise<BoardToken[]> {
         console.warn(`[market] ${chain}: every provider failed this cycle — ${err instanceof Error ? err.message : String(err)}`);
         throw err;
       }
-    }),
-  );
+  };
+  // GT-ONLY CHAINS DRAW FROM THE BUDGET FIRST. The site's own demand can
+  // exceed its GT budget in one cycle, and whichever chunks queue last lose —
+  // survivable for every chain DexScreener also covers (they fall back and
+  // still price), fatal for the one it does not: Robinhood rendered 0/66
+  // priced, every cycle, while Solana rendered 162/192, because seven Solana
+  // chunks that had a fallback were spending the budget three Robinhood chunks
+  // needed. The chains that cannot recover go first and are AWAITED before the
+  // rest start; the covered chains then compete among themselves, losers
+  // landing on DexScreener as designed. Costs the covered chains ~a second of
+  // start latency inside a 60s cycle.
+  const [gtOnly, covered] = partitionByFallback(Object.entries(byChain));
+  const marketResults = [
+    ...(await Promise.allSettled(gtOnly.map(fetchOne))),
+    ...(await Promise.allSettled(covered.map(fetchOne))),
+  ];
   const anyLive = marketResults.some((r) => r.status === "fulfilled" && r.value.map.size > 0);
   if (!anyLive) throw new Error("no live market data for any listing");
 
