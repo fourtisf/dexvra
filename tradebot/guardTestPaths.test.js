@@ -82,15 +82,31 @@ test('preflight 4x reads the BUY interface off a real trade, with nothing to pas
   // The one that MOVES VALUE is the buy — ranked, so the operator does not have
   // to work out which row matters.
   assert.match(src, /v\.value > 0n/, 'the buy is no longer told apart from a sell by the value it carries');
+  // ⚠️ NO UNFILTERED getLogs WALK. The first cut of the sibling probe asked for
+  // every log in 200-block steps and matched by substring; over a 50,000-block
+  // window that is 250 requests each pulling the whole chain's logs, and it
+  // simply did not finish. A probe that hangs is worse than one that says it
+  // cannot answer.
+  const t4x = src.slice(src.indexOf('4t. Who announced'), src.indexOf('4b. find the launchpad'));
+  assert.match(t4x, /of \[\[null, asTopic\], \[null, null, asTopic\], \[null, null, null, asTopic\]\]/,
+    '4t no longer filters by topic — an unfiltered walk over a wide window does not finish');
+  assert.ok(!/for \(let to = head/.test(t4x), '4t is walking block ranges again');
+  assert.ok(!/hay\.includes\(needle\)/.test(src), 'the substring scan over every log is back');
+  // And the cheap, address-filtered probe runs FIRST: it answers the question
+  // actually being asked (how a buy is routed) and cannot stall the one after it.
+  assert.ok(src.indexOf('4x. How is') < src.indexOf('4t. Who announced'), 'the expensive probe runs before the cheap one again');
 });
 
 test('preflight 4t finds the contract that announced a given token', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'scripts', 'robinhood-preflight.js'), 'utf8');
   assert.match(src, /4t\. Who announced/, 'the token-targeted launchpad probe is gone');
-  // TOPICS **AND** DATA: a launchpad that packs the token into the data rather
-  // than indexing it would be invisible to a topic-only filter, which is half
-  // the ABIs in the wild.
-  assert.match(src, /\(lg\.topics \|\| \[\]\)\.join\(''\) \+ \(lg\.data \|\| ''\)/, 'the scan reads topics only again');
+  // A launchpad that packs the token into the DATA rather than indexing it is
+  // invisible to a topic filter — that half of the problem is DELEGATED to 4x
+  // (which reads the token's own Transfer logs), and the warning has to say so,
+  // or a reader hits "not found" and concludes the token was never launched.
+  const t4 = src.slice(src.indexOf('4t. Who announced'), src.indexOf('4b. find the launchpad'));
+  assert.match(t4, /packs the token into the DATA/, 'the topic-only blind spot is no longer named');
+  assert.match(t4, /4x/, 'nothing points the reader at the probe that covers it');
   // It must PRINT the .env line, not leave the operator to assemble it: a
   // diagnosis with no hands attached is a bug report the code files against
   // its owner.

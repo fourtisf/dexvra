@@ -268,67 +268,6 @@ async function main() {
     }
   } catch (e) { warn('Pons probe failed', (e && e.message) || String(e)); }
 
-  // ── 4t. WHO launched THIS token?  (--token) ───────────────────────────────
-  /*
-   * The one probe that settles a launchpad integration with no guessing left.
-   *
-   * 4p can only report what the CONFIGURED factory emitted, so a factory that is
-   * live-but-wrong looks identical to a quiet pad: "0 events" either way. This
-   * asks the opposite question — here is a token that was definitely launched;
-   * WHICH contract announced it, and with WHAT event? The chain knows, the
-   * operator has the address in front of them, and the answer is the two .env
-   * lines the Pons scan needs.
-   *
-   * It scans for any log whose topics or data CONTAIN the token address, which
-   * catches it whether the launchpad indexes it (a topic) or packs it into the
-   * data — a filter on topics alone would miss half the ABIs in the wild.
-   */
-  if (TOKEN && /^0x[a-fA-F0-9]{40}$/.test(TOKEN)) {
-    console.log(`\n4t. Who announced ${TOKEN}?  (--token, last ${SPAN} blocks)`);
-    const needle = TOKEN.slice(2).toLowerCase();
-    const hits = new Map();   // `${address}|${topic0}` → { n, blocks:[] }
-    const STEP = 200;
-    let scanned = 0, refused = 0;
-    for (let to = head; to > head - SPAN && refused < 5; to -= STEP) {
-      const from = Math.max(0, to - STEP + 1);
-      try {
-        for (const lg of await prov.getLogs({ fromBlock: from, toBlock: to })) {
-          const hay = ((lg.topics || []).join('') + (lg.data || '')).toLowerCase();
-          if (!hay.includes(needle)) continue;
-          const k = `${String(lg.address).toLowerCase()}|${(lg.topics && lg.topics[0]) || '(none)'}`;
-          const cur = hits.get(k) || { n: 0, blocks: [] };
-          cur.n++; if (cur.blocks.length < 3) cur.blocks.push(lg.blockNumber);
-          hits.set(k, cur);
-        }
-        scanned += to - from + 1;
-      } catch (_) { refused++; }
-    }
-    if (!hits.size) {
-      warn(`nothing in ${scanned} blocks mentions this token`, 'it launched longer ago than the window — rerun with --blocks 50000');
-    } else {
-      ok(`${hits.size} contract/event pair(s) mention it`, `across ${scanned} blocks`);
-      const rows = [...hits.entries()].sort((a, b) => b[1].n - a[1].n);
-      for (const [k, v] of rows.slice(0, 10)) {
-        const [addr, topic] = k.split('|');
-        const mine = addr === String(chain.factory).toLowerCase() ? '   ← the configured pools.trade factory'
-          : (_ponsCfgSafe().factories || []).some((f) => f.toLowerCase() === addr) ? '   ← a configured PONS_FACTORY' : '';
-        note(`${addr}${mine}`);
-        note(`   topic0 ${topic}  ×${v.n}  (block ${v.blocks.join(', ')})`);
-      }
-      // The CREATION event is the earliest one naming the token, and its emitter
-      // is the launchpad. Said plainly, because the whole point is that the
-      // operator should not have to interpret a table.
-      const earliest = rows.reduce((a, b) => (Math.min(...b[1].blocks) < Math.min(...a[1].blocks) ? b : a));
-      const [eAddr, eTopic] = earliest[0].split('|');
-      note('');
-      note(`→ Earliest mention: ${eAddr} (topic0 ${eTopic}).`);
-      note('  If that is not a PONS_FACTORY above, it is the launchpad this bot should watch:');
-      note(`     PONS_FACTORY=${eAddr}`);
-      note('  and PONS_EVENT must be the signature whose keccak matches that topic0.');
-      note('  Read the decoded event name on the explorer, then set both in tradebot/.env.');
-    }
-  }
-
   // ── 4x. HOW is this token actually bought?  (--token) ─────────────────────
   /*
    * The launchpad's buy interface, read off a real trade, with NOTHING for the
@@ -354,11 +293,16 @@ async function main() {
     try {
       tlogs = await prov.getLogs({ address: TOKEN, topics: [XFER], fromBlock: Math.max(0, head - SPAN), toBlock: head });
     } catch (_) {
-      // A range-capped node: walk the tail in steps rather than giving up.
-      const STEP = 200;
-      for (let to = head; to > head - SPAN && tlogs.length < 40; to -= STEP) {
+      // A range-capped node: walk the tail in steps — ON A REQUEST BUDGET. The
+      // step is sized off the window so a wide --blocks does not turn into
+      // hundreds of round trips; a probe that hangs is worse than one that says
+      // it could not answer, which is what the unfiltered first cut of 4t was.
+      const STEP = Math.max(200, Math.ceil(SPAN / 40));
+      let spent = 0;
+      for (let to = head; to > head - SPAN && tlogs.length < 40 && spent < 40; to -= STEP) {
+        spent++;
         try { tlogs.push(...await prov.getLogs({ address: TOKEN, topics: [XFER], fromBlock: Math.max(0, to - STEP + 1), toBlock: to })); }
-        catch (_) { break; }
+        catch (_) { /* one bad range must not abandon the walk */ }
       }
     }
     if (!tlogs.length) {
@@ -413,6 +357,65 @@ async function main() {
         note('→ None of these calls carried value, so none of them is a BUY.');
         note('  Make one small buy on the pad\'s website, then rerun this same command.');
       }
+    }
+  }
+
+  // ── 4t. WHO launched THIS token?  (--token) ───────────────────────────────
+  /*
+   * The probe that settles a launchpad integration: 4p can only report what the
+   * CONFIGURED factory emitted, so a factory that is live-but-WRONG reports
+   * "0 events" — identical to a quiet pad. This asks the opposite question:
+   * here is a token that was definitely launched, WHICH contract announced it?
+   *
+   * ⚠️ FILTERED BY TOPIC, never an unfiltered walk. The first cut asked for
+   * every log in 200-block steps and matched the token by substring; over a
+   * 50,000-block window that is 250 requests each pulling the whole chain's
+   * logs, and it did not finish — the operator watched a probe hang. An indexed
+   * argument IS a topic, so three filters (topic1/2/3) cover every ABI that
+   * indexes the token, in three requests over the whole range. A launchpad that
+   * packs the token into the DATA is out of reach here and is covered by 4x
+   * above, which reads the token's own Transfer logs — address-filtered, and
+   * cheaper still.
+   */
+  if (TOKEN && /^0x[a-fA-F0-9]{40}$/.test(TOKEN)) {
+    console.log(`\n4t. Who announced ${TOKEN}?  (--token, last ${SPAN} blocks)`);
+    const asTopic = ethers.zeroPadValue(ethers.getAddress(TOKEN), 32);
+    const tFrom = Math.max(0, head - SPAN);
+    const hits = new Map();   // `${address}|${topic0}` → { n, blocks:[] }
+    let asked = 0, refused = 0;
+    for (const topics of [[null, asTopic], [null, null, asTopic], [null, null, null, asTopic]]) {
+      asked++;
+      try {
+        for (const lg of await prov.getLogs({ topics, fromBlock: tFrom, toBlock: head })) {
+          const k = `${String(lg.address).toLowerCase()}|${(lg.topics && lg.topics[0]) || '(none)'}`;
+          const cur = hits.get(k) || { n: 0, blocks: [] };
+          cur.n++; if (cur.blocks.length < 3) cur.blocks.push(lg.blockNumber);
+          hits.set(k, cur);
+        }
+      } catch (_) { refused++; }
+    }
+    if (refused === asked) {
+      warn('the node refused a topic-filtered range that wide', `rerun with --blocks ${Math.max(500, Math.floor(SPAN / 10))}`);
+    } else if (!hits.size) {
+      warn(`no log in ${SPAN} blocks names this token as an indexed argument`,
+        'it launched longer ago than the window, or its launchpad packs the token into the DATA — 4x above reads the trade itself');
+    } else {
+      ok(`${hits.size} contract/event pair(s) name it`, `over ${SPAN} blocks`);
+      const rows = [...hits.entries()].sort((a, b) => Math.min(...a[1].blocks) - Math.min(...b[1].blocks));
+      for (const [k, v] of rows.slice(0, 10)) {
+        const [addr, topic] = k.split('|');
+        const cfg = addr === String(chain.factory).toLowerCase() ? '   ← the configured pools.trade factory'
+          : (_ponsCfgSafe().factories || []).some((f) => f.toLowerCase() === addr) ? '   ← a configured PONS_FACTORY' : '';
+        note(`${addr}${cfg}`);
+        note(`   topic0 ${topic}  ×${v.n}  (block ${v.blocks.join(', ')})`);
+      }
+      // The EARLIEST mention is the creation, and its emitter is the launchpad.
+      const [eAddr, eTopic] = rows[0][0].split('|');
+      note('');
+      note(`→ Earliest mention: ${eAddr} (topic0 ${eTopic}).`);
+      note('  If that is not a PONS_FACTORY above, it is the launchpad this bot should watch:');
+      note(`     PONS_FACTORY=${eAddr}`);
+      note('  and PONS_EVENT must be the signature whose keccak matches that topic0.');
     }
   }
 

@@ -1485,6 +1485,22 @@ away. It prints the contract, the selector, the value and the labelled argument
 words, and RANKS the call that carried value first, because that one is the
 buy and a sell or a plain send is not.
 
+⚠️ **AND THE FIRST CUT OF THAT PROBE HUNG.** It matched the token by substring
+against every log, walked in 200-block steps, and over a 50,000-block window
+that is 250 requests each pulling the WHOLE chain's logs — the operator watched
+a probe sit there. **A probe that hangs is worse than one that says it cannot
+answer.** An indexed argument IS a topic, so 4t is three topic-filtered
+requests over the whole range; the DATA-packed case it can no longer see is
+DELEGATED to 4x (address-filtered on the token's own Transfer logs, cheaper
+still) and the warning says so, or "not found" reads as "never launched". 4x
+runs FIRST because it is the cheapest and answers the question actually being
+asked. The stepped fallback carries a request budget.
+
+⚠️ **And syntax-checking the file proved nothing** — the hang was a runtime
+shape. Both probes are now driven against a STUB chain that counts requests:
+they complete, they print the contract and the selector, and they cost **four**
+`getLogs` calls, not two hundred and fifty.
+
 ```bash
 cd tradebot && npm run preflight:robinhood -- --token 0xTHE_TOKEN_YOU_LAUNCHED
 ```
