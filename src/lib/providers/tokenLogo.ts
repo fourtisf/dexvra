@@ -127,12 +127,17 @@ export function cdnGuess(chain: string, address: string): string | null {
 async function dsLogo(chain: string, address: string): Promise<string | null> {
   const slug = CHAINS[chain]?.dexscreener;
   if (!slug) return null; // DexScreener does not carry this chain — an answer
+  refuseIfBenched("DexScreener");
   const res = await fetch(`https://api.dexscreener.com/tokens/v1/${slug}/${encodeURIComponent(address)}`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(TIMEOUT_MS),
     cache: "no-store",
   });
-  if (res.status === 404) return null;
+  if (res.status === 404) return null; // no pairs — an answer about the token
+  if (REFUSAL.has(res.status)) {
+    bench("DexScreener", DS_COOLDOWN_MS);
+    throw new Error(`DexScreener ${res.status} — refusing this server, benched for ${DS_COOLDOWN_MS / 1000}s`);
+  }
   if (!res.ok) throw new Error(`DexScreener ${res.status}`);
   const pairs = (await res.json()) as { baseToken?: { address?: string }; info?: { imageUrl?: string } }[];
   const want = address.toLowerCase();
@@ -215,7 +220,42 @@ let cgChain: Promise<void> = Promise.resolve();
 /** How long a 429 benches CoinGecko for every caller in this process, when it
  *  did not send a usable `Retry-After`. */
 const CG_COOLDOWN_MS = 60_000;
-let cgCooldownUntil = 0;
+
+/**
+ * ⚠️ A SOURCE THAT HAS REFUSED US IS NOT ASKED AGAIN STRAIGHT AWAY — for EVERY
+ * source, not just the one that taught us.
+ *
+ * CoinGecko got this rule when a 429 on row one cost a request per row for the
+ * rest of the sweep. DexScreener never did, and it is the source that matters
+ * most here: pump.fun artwork lives there, `resolveLogo` asks it FIRST, and a
+ * box whose IP DexScreener refuses would spend one request per row proving the
+ * same 403 — eight a sweep, every sweep, for ever, while every one of those
+ * rows came back `undecided` and got requeued 30 minutes later.
+ *
+ * ONE table rather than a variable per source, because this is the third time
+ * the same rule has been written in this repo (gt.ts, dsChart.ts, here) and a
+ * fourth private copy is how two of them end up disagreeing.
+ *
+ * A 404 never benches anything: that is an ANSWER about the token ("not in
+ * this index"), and treating it as an outage is how a curated miss becomes a
+ * permanent monogram.
+ */
+const benched = new Map<string, number>();
+const benchLeftMs = (name: string, at = Date.now()): number => Math.max(0, (benched.get(name) ?? 0) - at);
+function bench(name: string, ms: number, at = Date.now()): void {
+  const until = at + Math.max(1000, ms);
+  if (until > (benched.get(name) ?? 0)) benched.set(name, until);
+}
+/** Throws WITHOUT a request while the source is benched. A caller reads that as
+ *  unreachable, which is exactly what it is. */
+function refuseIfBenched(name: string): void {
+  const left = benchLeftMs(name);
+  if (left > 0) throw new Error(`${name} refused this server — benched for ${Math.ceil(left / 1000)}s`);
+}
+/** The statuses that mean "the host is refusing US", as opposed to answering
+ *  about the token. Kept in one place so a fourth source cannot pick its own. */
+const REFUSAL = new Set([401, 403, 429, 451]);
+const DS_COOLDOWN_MS = 5 * 60_000;
 
 /** Serialise CoinGecko calls and space them out. Concurrent callers queue
  *  rather than all firing at once, which is what a `Promise.all` would do. */
@@ -236,8 +276,7 @@ async function cgLogo(chain: string, address: string): Promise<string | null> {
   // Benched: throw WITHOUT a request. A caller reads this as unreachable, which
   // is exactly what it is — the alternative is spending the rest of the sweep's
   // rows proving the same 429 over and over.
-  const left = cgCooldownUntil - Date.now();
-  if (left > 0) throw new Error(`CoinGecko rate-limited, benched for ${Math.ceil(left / 1000)}s`);
+  refuseIfBenched("CoinGecko");
 
   await cgSlot();
   const res = await fetch(`https://api.coingecko.com/api/v3/coins/${plat}/contract/${encodeURIComponent(address)}`, {
@@ -248,7 +287,7 @@ async function cgLogo(chain: string, address: string): Promise<string | null> {
   if (res.status === 429) {
     const h = Number(res.headers.get("retry-after"));
     const wait = Number.isFinite(h) && h > 0 ? Math.min(h * 1000, 10 * 60_000) : CG_COOLDOWN_MS;
-    cgCooldownUntil = Date.now() + wait;
+    bench("CoinGecko", wait);
     throw new Error(`CoinGecko 429 — benched for ${Math.round(wait / 1000)}s`);
   }
   // 404 is the ORDINARY answer here — CoinGecko is curated, so most memecoins
@@ -264,7 +303,7 @@ async function cgLogo(chain: string, address: string): Promise<string | null> {
 /** Test seam: the cooldown is process-wide by design, so a test that wants a
  *  live CoinGecko has to be able to clear it. */
 export function _resetCgCooldown(): void {
-  cgCooldownUntil = 0;
+  benched.clear();
 }
 
 export interface LogoDeps {
