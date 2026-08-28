@@ -4067,6 +4067,15 @@ trade — could not work. Meanwhile the snipe loop reads this same chain in
   properly-traded sibling taught, for every token on that pad), the teach runs
   on the classify-short case too, and `prepareBuy` falls back to the learned
   shape whenever the observed build cannot produce an expectation.
+- ⚠️ **A ROUTED BUY NAMED NOTHING IT WAS PAID IN.** The quote detection
+  required the payment Transfer to run TRADER → curve, so a pad whose website
+  routes the buy (user → router → curve) pays from the router's address, no leg
+  matched, and `quoteOf` — which needs every sample to carry one — went null.
+  The live refusal was exactly that: *"this pad's buy is not paid in the native
+  coin, and its trades do not show what it IS paid in"*, about a pad that
+  plainly charges something. What the curve RECEIVED is the fact; who forwarded
+  it is not. `quoteOf` still refuses samples that disagree, which is what keeps
+  a router's own fee transfer from being read as the price.
 - ⚠️ **AND THE REFUSAL NOW NAMES THE STAGE.** `err.curve_refused` swallowed
   `prep.why` whole, so a price refusal, a classify refusal and a simulate
   refusal all read as the same "a few more trades on the pad" — the "a value

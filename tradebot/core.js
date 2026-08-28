@@ -79,6 +79,7 @@ const curveTrade = require('./curveTrade');   // a launchpad curve read off the 
 const curvePrice = require('./curvePrice');   // the INDEPENDENT price that gate is checked against
 const { TRANSFER_TOPIC: CURVE_TRANSFER_TOPIC, steppedLogs: curveSteppedLogs } = require('./curveIface.js');   // the seed's topic-filtered, node-sized log walk
 const padFactory = require('./padFactory.js');   // where a pad announces its launches — shared with watchers.js
+const curveIfaceMod = require('./curveIface.js');   // LOG_STEP / LOG_STEPS: the node-sized walk, one owner
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // ---------------------------------------------------------------- config
@@ -2478,16 +2479,32 @@ async function _curveFromLaunchLog(chainKey, ca) {
   const prov = providerFor(chainKey);
   const head = Number(await prov.getBlockNumber());
   const me = String(ca).toLowerCase();
+  /*
+   * ⚠️ ONE STEP AT A TIME, AND IT STOPS AT THE LAUNCH IT WAS LOOKING FOR.
+   *
+   * `steppedLogs`' `want` counts LOGS, and any launch matches that — what this
+   * needs is the launch naming OUR token, which only the caller can recognise.
+   * Handing it the whole budget made an unindexed token pay 48 SERIAL round
+   * trips before the card could render, on the one screen a user stares at
+   * after pasting an address. Walking a step at a time and stopping on the
+   * match makes the ordinary case (a launch minutes old, near the head) one or
+   * two.
+   */
+  const STEP = curveIfaceMod.LOG_STEP;
   for (const a of anns) {
     for (const f of a.factories) {
-      const w = await curveSteppedLogs(prov, { address: f, topics: [a.topic0] }, { head, span: CURVE_SIB_SPAN });
-      for (const lg of (w.logs || [])) {              // newest launches first
-        const named = _namedAddrs(lg);
-        if (!named.includes(me)) continue;            // not THIS token's launch
-        const others = named.filter((x) => x !== me);
-        const coded = await Promise.all(others.map((x) => prov.getCode(x).catch(() => '0x')));
-        const out = others.filter((_, i) => coded[i] && coded[i] !== '0x');
-        if (out.length) return out;
+      const floor = Math.max(0, head - CURVE_SIB_SPAN);
+      for (let to = head, steps = 0; to > floor && steps < curveIfaceMod.LOG_STEPS; to -= STEP, steps++) {
+        const lo = Math.max(floor, to - STEP + 1);
+        const logs = await prov.getLogs({ address: f, topics: [a.topic0], fromBlock: lo, toBlock: to }).catch(() => []);
+        for (const lg of (logs || []).slice().reverse()) {   // newest launch in this step first
+          const named = _namedAddrs(lg);
+          if (!named.includes(me)) continue;                 // not THIS token's launch
+          const others = named.filter((x) => x !== me);
+          const coded = await Promise.all(others.map((x) => prov.getCode(x).catch(() => '0x')));
+          const out = others.filter((_, i) => coded[i] && coded[i] !== '0x');
+          if (out.length) return out;
+        }
       }
     }
   }

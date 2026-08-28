@@ -376,9 +376,30 @@ async function decodeCurveIface(chain, token, opts = {}) {
       const other = ((rcpt && rcpt.logs) || []).filter((l) =>
         l && l.topics && l.topics[0] === TRANSFER_TOPIC && lc(l.address) !== lc(token));
       // A buy: the TRADER paid the curve. A sell: the CURVE paid the trader.
-      const leg = dir === 'buy'
+      let leg = dir === 'buy'
         ? other.find((l) => topicAddr(l.topics[1]) === trader && topicAddr(l.topics[2]) === to)
         : other.find((l) => topicAddr(l.topics[1]) === to && topicAddr(l.topics[2]) === trader);
+      /*
+       * ⚠️ AND WHEN A ROUTER SITS IN BETWEEN, THE TRADER IS NOT ON THE LEG.
+       *
+       * A pad whose website routes the buy (user → router → curve) pays the
+       * curve from the ROUTER's address, so the trader-to-curve match finds
+       * nothing and `quoteOf` — which requires every sample to carry one — went
+       * null. The live refusal was exactly that: "this pad's buy is not paid in
+       * the native coin, and its trades do not show what it IS paid in", about
+       * a pad that plainly charges something.
+       *
+       * The FACT is what the curve RECEIVED (a buy) or PAID OUT (a sell) in
+       * this transaction; who forwarded it does not change what the pad charges
+       * in. Still read from the chain, still one token or none — `quoteOf`
+       * refuses samples that disagree, which is what keeps a router's own fee
+       * transfer from being read as the price.
+       */
+      if (!leg) {
+        leg = dir === 'buy'
+          ? other.find((l) => topicAddr(l.topics[2]) === to)
+          : other.find((l) => topicAddr(l.topics[1]) === to);
+      }
       if (leg) quote = { token: lc(leg.address), amount: logAmount(leg) };
     }
 

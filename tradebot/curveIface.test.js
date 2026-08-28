@@ -318,6 +318,39 @@ test("⚠️ a node that silently empties anything WIDE is still walked — the 
   assert.ok(wideAsks > 0, 'the cheap wide asks are still tried first — they are one request when they work');
 });
 
+test("⚠️ a ROUTED buy still names what the pad charges in — the trader is not on the leg", async () => {
+  /*
+   * The live refusal (19:17): "this pad's buy is not paid in the native coin,
+   * and its trades do not show what it IS paid in", about a pad that plainly
+   * charges something. Its website routes the buy — user → router → curve — so
+   * the payment Transfer runs ROUTER → curve, the trader-to-curve match found
+   * nothing, and quoteOf (which needs every sample to carry one) went null.
+   * What the curve RECEIVED is the fact; who forwarded it is not.
+   */
+  const ROUTER2 = '0xe0000000000000000000000000000000000000e0';
+  const QUOTE = '0x9900000000000000000000000000000000000099';
+  const mk = (h, tokAmt, payAmt) => ({
+    logs: [{ topics: [TRANSFER_TOPIC, topic(CURVE), topic(WALLET)], data: '0x' + num(tokAmt), transactionHash: h, address: TOKEN }],
+    rcpt: { logs: [
+      { address: TOKEN, topics: [TRANSFER_TOPIC, topic(CURVE), topic(WALLET)], data: '0x' + num(tokAmt) },
+      // the payment: the ROUTER pays the curve, not the trader
+      { address: QUOTE, topics: [TRANSFER_TOPIC, topic(ROUTER2), topic(CURVE)], data: '0x' + num(payAmt) },
+    ] },
+  });
+  const a = mk('0xr1', 1000n, 10n), b = mk('0xr2', 2000n, 20n);
+  const chain = {
+    async getLogs() { return [...a.logs, ...b.logs]; },
+    async getTransaction(h) {
+      return { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + word(TOKEN) + num(h === '0xr1' ? 1000 : 2000) };
+    },
+    async getTransactionReceipt(h) { return h === '0xr1' ? a.rcpt : b.rcpt; },
+  };
+  const r = await decodeCurveIface(chain, TOKEN, { head: 9000 });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(r.buy.native, false, 'it is not a native-paid buy');
+  assert.equal(r.buy.quote, QUOTE, "and the pad's own charging token is named, not left null");
+});
+
 test('a walk where every step errors is an outage, not an untraded token', async () => {
   const chain = { async getLogs() { throw new Error('range too wide'); }, async getTransaction() { return null; } };
   const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 5000 });
