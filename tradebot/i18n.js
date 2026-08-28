@@ -700,6 +700,19 @@ const S = {
     en: "Couldn't read live pricing for this token right now. Please try again in a moment.",
     id: 'Harga live token ini belum bisa dibaca sekarang. Coba lagi sebentar lagi.',
   },
+  // ⚠️ NO ROUTE IS A FACT ABOUT THE TOKEN, NOT A HICCUP ON OUR SIDE — and it
+  // used to be reported as one. `no route / no liquidity for this token on
+  // Jupiter` matched the `err.no_price` rule and came out as "Couldn't read
+  // live pricing … please try again in a moment", under a 🔄 Try again button.
+  // So a user whose token simply has no tradable pool was told to keep
+  // retrying, and did: the report was two wallets, the same sentence on both,
+  // over and over. "It answered with nothing" and "it did not answer" are
+  // different facts — this repo's own rule, on the surface that spends money.
+  // This one names what would have to change, so the retry stops.
+  'err.no_route': {
+    en: "No tradable route for this token — the aggregator found no pool it can {act} through. <b>Nothing was sent and nothing was spent.</b> Retrying won't change it: a token still on its launchpad curve becomes tradable only once it migrates to a pool.",
+    id: 'Tidak ada rute untuk token ini — aggregator tidak menemukan pool untuk {act}. <b>Tidak ada yang dikirim dan tidak ada dana keluar.</b> Mengulang tidak akan mengubahnya: token yang masih di kurva launchpad baru bisa ditradingkan setelah pindah ke pool.',
+  },
   // Priced, then refused at the build step. Says the two things that matter:
   // nothing was signed, and it is the router's problem rather than the token's.
   'err.build_failed': {
@@ -793,6 +806,11 @@ function errorKey(raw) {
   if (/max fee per gas|base fee|underpriced|replacement|nonce/.test(m)) return 'err.gas_moved';
   if (/thin pool|price impact|slippage|reverted|iia|too little received/.test(m)) return 'err.slippage';
   if (/not confirmed|timeout|pending/.test(m)) return 'err.unconfirmed';
+  // BEFORE the no_price rule, which would otherwise swallow it: "no liquidity"
+  // appears in both, and only this one means the token cannot be traded at all.
+  // `no pool? try again` is deliberately NOT here — that is a pool READ that
+  // failed, which is ours and is worth retrying.
+  if (/no route|no liquidity \/ zero quote|not tradable/.test(m)) return 'err.no_route';
   if (/could not (read|price)|pool read|quote|no pool|no liquidity/.test(m)) return 'err.no_price';
   if (/private beta|not allowed|notallowed/.test(m)) return 'err.restricted';
   // THE AGGREGATOR PRICED IT AND THEN REFUSED TO BUILD THE TRANSACTION. A
