@@ -1677,6 +1677,14 @@ function alText() {
     `suspiciously round ${usd(1_000_000)}.\n\n` +
     `Status: <b>${c.enabled ? "🟢 ON" : "🔴 OFF"}</b>\n` +
     `🎯 Trigger band: <b>${usd(c.minMcap)} – ${usd(c.maxMcap)}</b>\n` +
+    // The band top past half-the-floor governs nothing (see triggerJitterSpan):
+    // an operator who widened it to $100M was reading it as "list up to $100M",
+    // and the draw then starved the feed to zero for two days. When the stored
+    // band is wider than the draw, the panel does the arithmetic out loud so
+    // the number that actually governs is the one on screen.
+    (c.maxMcap - c.minMcap > autoLister.triggerJitterSpan(c)
+      ? `   <i>triggers land in ${usd(c.minMcap)}–${usd(c.minMcap + autoLister.triggerJitterSpan(c))} — a token past its trigger lists at any size up to the ${usd(c.maxMcapHard)} ceiling</i>\n`
+      : "") +
     `🚫 Ignore above: <b>${usd(c.maxMcapHard)}</b>\n` +
     `💧 Min liquidity: <b>${usd(c.minLiq)}</b> · 📊 min 24h vol: <b>${usd(c.minVol24)}</b>\n` +
     `🕒 Min age: <b>${c.minAgeHours}h</b>\n` +

@@ -63,6 +63,43 @@ test("each token gets its OWN trigger inside the band — not everything at $1M"
   assert.ok(triggers.some((t) => t > 1.05 * M), `every trigger hugs the floor: ${triggers}`);
 });
 
+// ── The wide-band starvation (2026-08-28) ───────────────────────────────────
+// The operator set the band to $1M–$100M — with Ignore-above at $100M, plainly
+// "list anything from $1M to $100M" — and the uniform draw across the whole
+// band handed out $50M mean triggers: 0.4% of tokens drew one under $1.5M and
+// the feed went from 105 lifetime listings to ZERO per day, with every panel
+// light green. The jitter is bounded by the floor now, so the band top past
+// half-the-floor cannot starve anything.
+test("a WIDE band cannot starve the feed — the jitter is bounded by the floor", () => {
+  const cfg = { minMcap: 1 * M, maxMcap: 100 * M, maxMcapHard: 100 * M, minLiq: 25_000, minVol24: 30_000, minAgeHours: 6 };
+  const addrs = Array.from({ length: 40 }, (_, i) => `0xwide${i}`);
+  for (const a of addrs) {
+    const t = al.triggerMcap(a, cfg);
+    assert.ok(
+      t >= cfg.minMcap && t <= cfg.minMcap * 1.5,
+      `trigger $${t} escaped the floor's own smear — the wide band is starving the feed again`,
+    );
+  }
+  // The consequence that actually matters: an ordinary $5M project qualifies.
+  // Under the unbounded draw ~96% of these were refused "below its trigger".
+  for (const a of addrs) {
+    const why = al.rejectReason(healthy({ mcap: 5 * M }), cfg, al.triggerMcap(a, cfg), now);
+    assert.strictEqual(why, null, `a $5M token was refused under a $1M–$100M band: ${why}`);
+  }
+});
+
+test("the shipped band draws bit-for-bit what it always drew — no install's triggers move", () => {
+  const cfg = { minMcap: 1 * M, maxMcap: 1.5 * M };
+  // The pre-fix formula, inlined: uniform across the whole band. On the shipped
+  // band the bounded span IS the band, so the two must agree exactly.
+  const crypto = require("node:crypto");
+  for (const a of ["0xaaa", "0xbbb", "So1ana1", "0xStableAddress"]) {
+    const h = crypto.createHash("sha1").update(a.toLowerCase()).digest();
+    const old = cfg.minMcap + (h.readUInt32BE(0) % (500_000 + 1));
+    assert.strictEqual(al.triggerMcap(a, cfg), old, `the default band's draw moved for ${a}`);
+  }
+});
+
 test("a token's trigger is STABLE — it must climb to its own number", () => {
   const cfg = { minMcap: 1 * M, maxMcap: 1.5 * M };
   const a = al.triggerMcap("0xStableAddress", cfg);

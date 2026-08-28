@@ -623,12 +623,43 @@ const keyOf = (chain, address) => `${chain}:${String(address).toLowerCase()}`;
 /** May the scan list on this chain under the current scope? Empty = all. */
 const chainAllowed = (cfg, chain) => cfg.chains.length === 0 || cfg.chains.includes(chain);
 
+/*
+ * ⚠️ THE JITTER IS BOUNDED BY THE FLOOR, NOT BY THE BAND'S WIDTH.
+ *
+ * The band exists so listings land at $1.08M / $1.42M instead of every one at
+ * a suspiciously round $1,000,000 — a NARROW smear above the floor. But the
+ * trigger used to be drawn uniformly across the WHOLE band, which reads the
+ * band top as "how much jitter" when every operator reads it as "up to what
+ * size may a token list". The two readings coincide on the shipped $1M–$1.5M
+ * and diverge catastrophically apart: an operator set the band to
+ * $1M–$100M (with Ignore-above at $100M — plainly "list anything from $1M to
+ * $100M") and the mean trigger became $50M. Measured: 0.4% of tokens drew a
+ * trigger under $1.5M, so a feed that had listed 105 tokens went to ZERO per
+ * day with every panel light green and the pace reading "due now" — the
+ * quiet-market look, produced by arithmetic.
+ *
+ * So the draw spans at most HALF THE FLOOR above the floor (the designed
+ * $1M→$1.5M smear, exactly), and the band top past that governs nothing —
+ * eligibility's ceiling is `maxMcapHard`, which is its own row. On the shipped
+ * band this is bit-for-bit the old draw (span 500k either way), so no
+ * existing install's triggers move unless its band was wide — where the old
+ * triggers were the defect.
+ */
+const TRIGGER_JITTER_OF_FLOOR = 0.5;
+
+/** How far above the floor a trigger may land under `cfg`. The panel prints
+ *  the effective range from this, so the screen and the draw cannot disagree. */
+function triggerJitterSpan(cfg = get()) {
+  const band = Math.max(0, cfg.maxMcap - cfg.minMcap);
+  return Math.min(band, Math.round(cfg.minMcap * TRIGGER_JITTER_OF_FLOOR));
+}
+
 /**
  * This token's own trigger market cap, stable for as long as the band is.
  * @see the header — derived from the address on purpose, never re-rolled.
  */
 function triggerMcap(address, cfg = get()) {
-  const span = Math.max(0, cfg.maxMcap - cfg.minMcap);
+  const span = triggerJitterSpan(cfg);
   if (!span) return cfg.minMcap;
   const h = crypto.createHash("sha1").update(String(address).toLowerCase()).digest();
   return cfg.minMcap + (h.readUInt32BE(0) % (span + 1));
@@ -1277,6 +1308,7 @@ module.exports = {
   stats,
   history,
   triggerMcap,
+  triggerJitterSpan,
   pace,
   paceGapMs,
   nextScanDelayMs,
