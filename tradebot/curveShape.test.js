@@ -233,6 +233,53 @@ test('⚠️ ONE trade is not two — the classify-short case falls back to the 
   assert.equal(prep.transferred, true, 'built from the learned shape, under the same code-identity proof');
 });
 
+test("⚠️ a token with SOME history but not enough still gets taught — the 19:09 buy failure", async () => {
+  /*
+   * The reported shape: the card rendered routable ("Bonding curve 0% · 2 buys
+   * / 2 sells") and every Buy then failed with "a few more trades on the pad".
+   * Two SAME-SIZED buys DECODE — so `ok` is true and the card offers Buy — but
+   * cannot be CLASSIFIED: nothing can say which argument is the minimum-out.
+   * prepareBuy falls back to a learned shape, and the teach only ever ran for a
+   * token with NO history at all. So the card promised a button the buy could
+   * never honour.
+   */
+  const sameSize = [xfer(NEWCURVE, WALLET, '0xs1'), xfer(NEWCURVE, WALLET, '0xs2')];
+  const sameTxs = {   // identical value AND identical args → no slot can be explained
+    '0xs1': { to: NEWCURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(FRESH) + num(500n * E18) },
+    '0xs2': { to: NEWCURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(FRESH) + num(500n * E18) },
+  };
+  const sibLogs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+  const sibTxs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(SIB) + num(1000n * E18) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(SIB) + num(2000n * E18) },
+  };
+  const chain = {
+    async getBlockNumber() { return 9000; },
+    async getLogs(f) {
+      const a = String((f && f.address) || '').toLowerCase();
+      return a === FRESH ? sameSize : (a === SIB ? sibLogs : []);
+    },
+    async getTransaction(h) { return sameTxs[h] || sibTxs[h] || null; },
+    async getCode(a) { return [CURVE, NEWCURVE].includes(String(a).toLowerCase()) ? CODE : '0x'; },
+    async call() { return '0x'; },
+    async estimateGas() { return 210000n; },
+  };
+  const r = await ct.ifaceFor(chain, 'robinhood', FRESH, {
+    poolHint: async () => NEWCURVE,
+    siblings: async () => [{ token: SIB, pool: CURVE }],
+  });
+  assert.equal(r.ok, true, r.why);
+  // The decode succeeded on its own, so this is NOT the transfer branch — what
+  // must have happened is that the pad got TAUGHT anyway, so prepareBuy's
+  // classify-short fallback has a shape to use.
+  const floor = 400n * E18;
+  const prep = await ct.prepareBuy(chain, 'robinhood', FRESH, {
+    wallet: WALLET, valueWei: E17, slippageBps: 500, expectedTokens: floor, tolPct: 35, minOutRaw: floor,
+  });
+  assert.equal(prep.ok, true, `the card offered Buy and the buy refused: ${prep.why}`);
+  assert.equal(prep.transferred, true, 'built from the shape a sibling taught');
+});
+
 test('the shapes SURVIVE a restart — one taught sibling, ever, is enough', async () => {
   await ct.ifaceFor(sibChain(), 'robinhood', SIB);
   for (const m of ['./curveTrade.js']) delete require.cache[require.resolve(m)];

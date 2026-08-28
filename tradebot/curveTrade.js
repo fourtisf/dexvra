@@ -77,7 +77,18 @@ function _legShape(leg, token) {
     else if (s.role === 'constant') slots.push({ i: s.i, role: 'constant', value: s.value });
     else return null;
   }
-  if (slots.filter((s) => s.role === 'scales').length > 1) return null;
+  /*
+   * ⚠️ EXACTLY ONE AMOUNT-TRACKING SLOT, OR THIS TEACHES NOTHING.
+   *
+   * Two SAME-SIZED buys classify cleanly — and wrongly: with no variation to
+   * correlate against, a real minimum-out reads as a `constant`, so the shape
+   * comes out with no minimum-out at all. `buildFromShape` refuses such a shape
+   * (gas alone is no gate), but recording it is worse than useless: it is
+   * keyed on the pad's BYTECODE, so a degenerate reading from one thin token
+   * would overwrite the good shape a properly-traded sibling taught, for every
+   * token on that pad.
+   */
+  if (slots.filter((s) => s.role === 'scales').length !== 1) return null;
   return { selector: leg.selector, native: true, slots };
 }
 
@@ -222,6 +233,37 @@ const WINDOWS = (() => {
   return out.length ? out : [5000, 60000, 400000];
 })();
 
+/**
+ * TEACH THIS PAD FROM ONE OF ITS OTHER TOKENS, and report whether any of
+ * `pools` now matches.
+ *
+ * ⚠️ A sibling only ever teaches after its curve's BYTECODE matches (inside
+ * `_shapeFor`), so a wrong list, a different pad or a hostile answer teaches
+ * nothing at all. Bounded: the first sibling with a readable history wins, and
+ * `learning` stops the recursion at depth 1.
+ */
+async function _teachFromSiblings(chain, chainKey, opts, pools) {
+  const sibs = await opts.siblings().catch(() => []);
+  for (const s of (Array.isArray(sibs) ? sibs : [])) {
+    if (!s || !s.token) continue;
+    const r = await ifaceFor(chain, chainKey, s.token, {
+      learning: true,
+      // A chain-found sibling arrives WITH its trade hashes (they are how its
+      // token was identified at all), so the decode costs receipts only. An
+      // indexer-found one is looked up the ordinary way.
+      tradeHashes: Array.isArray(s.hashes) && s.hashes.length
+        ? async () => s.hashes
+        : (typeof opts.siblingHashes === 'function' ? () => opts.siblingHashes(s.token) : undefined),
+    }).catch(() => null);
+    if (!r || !r.ok || r.transferred) continue;
+    for (const p of (pools || [])) {
+      const h = await _shapeFor(chain, chainKey, p);
+      if (h) return { pool: p, hit: h };
+    }
+  }
+  return null;
+}
+
 async function ifaceFor(chain, chainKey, ca, opts = {}) {
   const hit = _cached(chainKey, ca);
   if (hit) return hit;
@@ -299,26 +341,8 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
        * readable history wins, and `learning` stops the recursion at depth 1.
        */
       if (!hit && !opts.learning && typeof opts.siblings === 'function') {
-        const sibs = await opts.siblings().catch(() => []);
-        for (const s of (Array.isArray(sibs) ? sibs : [])) {
-          if (!s || !s.token) continue;
-          const r = await ifaceFor(chain, chainKey, s.token, {
-            learning: true,
-            // A chain-found sibling arrives WITH its trade hashes (they are how
-            // its token was identified at all), so the decode costs receipts
-            // only. An indexer-found one is looked up the ordinary way.
-            tradeHashes: Array.isArray(s.hashes) && s.hashes.length
-              ? async () => s.hashes
-              : (typeof opts.siblingHashes === 'function' ? () => opts.siblingHashes(s.token) : undefined),
-          }).catch(() => null);
-          if (!r || !r.ok || r.transferred) continue;
-          // Did THAT sibling teach the bytecode of any candidate we hold?
-          for (const p of pools) {
-            const h = await _shapeFor(chain, chainKey, p);
-            if (h) { pool = p; hit = h; break; }
-          }
-          if (hit) break;
-        }
+        const found = await _teachFromSiblings(chain, chainKey, opts, pools);
+        if (found) { pool = found.pool; hit = found.hit; }
       }
       if (hit && pool) {
         res = {
@@ -333,7 +357,27 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
 
   // Every real discovery teaches the pad's shape — one traded sibling, ever,
   // is what makes the NEXT fresh launch on this pad buyable by its first buyer.
-  if (res.ok && !res.transferred) await _recordShape(chain, chainKey, ca, res);
+  if (res.ok && !res.transferred) {
+    await _recordShape(chain, chainKey, ca, res);
+    /*
+     * ⚠️ AND A TOKEN WITH TOO LITTLE HISTORY TEACHES NOTHING, SO IT MUST BE
+     * TAUGHT — the classify-short case, which the transfer branch above never
+     * sees.
+     *
+     * A pad token with two same-sized buys DECODES (so `ok` is true and the
+     * card offers Buy) but cannot be CLASSIFIED — nothing can say which
+     * argument is the minimum-out. `prepareBuy` then falls back to a learned
+     * shape, and on a pad nobody has taught there is none, so the buy refused
+     * with "a few more trades on the pad" while the card promised a Buy
+     * button. The teach ran only where a token had NO history at all; here it
+     * has some, just not enough.
+     */
+    if (!opts.learning && typeof opts.siblings === 'function' && res.curve && !_legShape(res.buy, ca)) {
+      if (!(await _shapeFor(chain, chainKey, res.curve))) {
+        await _teachFromSiblings(chain, chainKey, opts, [res.curve]).catch(() => null);
+      }
+    }
+  }
 
   // A transport failure is never remembered — the `pumpfunNewX` rule, on the
   // path that spends money.
@@ -402,7 +446,19 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, quoteRaw, sli
       valueWei: iface.buy.native ? spendWei : 0n,
       sizeRaw: iface.buy.native ? 0n : spendQuote,
     });
-    if (!built.ok && built.needsMoreTrades && iface.buy.native) {
+    /*
+     * ⚠️ AND A BUILD THAT SUCCEEDED WITH NO EXPECTATION IS ALSO SHORT.
+     *
+     * Two same-sized samples classify the minimum-out as a `constant`, so
+     * `buildCurveCall` returns ok with `expected: null` — and `sane()` then
+     * refuses every buy with "no independent price to check the curve quote
+     * against" while the card, which only asks whether an interface was read,
+     * offers a Buy button. That was the live 19:09 failure: a promise the buy
+     * could not honour. The learned shape answers it under the same
+     * code-identity proof as the no-history case.
+     */
+    const shortRead = !built.ok ? built.needsMoreTrades : built.expected == null;
+    if (shortRead && iface.buy.native) {
       /*
        * ⚠️ ONE TRADE IS NOT TWO — the classify-short case. The token HAS a
        * history, just not enough of one to explain the arguments; the learned

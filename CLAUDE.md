@@ -4056,6 +4056,25 @@ trade — could not work. Meanwhile the snipe loop reads this same chain in
   node that empties anything wider than it serves, with the trade older than
   the first window).
 
+- ⚠️ **A TOKEN WITH *SOME* HISTORY BUT NOT ENOUGH promised a Buy it could not
+  honour.** Two SAME-SIZED buys DECODE — so `ok` is true and the card offers
+  Buy — but classify wrongly: with no variation to correlate against, a real
+  minimum-out reads as a `constant`, `buildCurveCall` returns ok with
+  `expected: null`, and `sane()` refuses every buy. The self-teach ran only for
+  a token with NO history, so nothing taught the pad. Now: a shape with no
+  amount-tracking slot is never RECORDED (it is keyed on the pad's bytecode, so
+  a degenerate reading from one thin token would overwrite the good shape a
+  properly-traded sibling taught, for every token on that pad), the teach runs
+  on the classify-short case too, and `prepareBuy` falls back to the learned
+  shape whenever the observed build cannot produce an expectation.
+- ⚠️ **AND THE REFUSAL NOW NAMES THE STAGE.** `err.curve_refused` swallowed
+  `prep.why` whole, so a price refusal, a classify refusal and a simulate
+  refusal all read as the same "a few more trades on the pad" — the "a value
+  nobody can read is the same as no value" defect on the money path, and the
+  reason four rounds of "masih sama aja" began with nothing to go on. The
+  template is ours and carries markup; only the appended stage is escaped.
+  (Five call sites also wrapped the whole friendly template in `esc()`, so its
+  `<b>` tags reached Telegram as literal text.)
 - ⚠️ **A LAUNCH NO INDEXER KNOWS YET had no curve address at all.** The pool
   lookup asked DexScreener and GeckoTerminal only, so a token minutes old that
   neither had indexed fell to *"❌ Couldn't price it"* — the exact state a

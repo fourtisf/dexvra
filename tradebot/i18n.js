@@ -856,12 +856,35 @@ function errorKey(raw) {
 }
 
 /** One clear, localized sentence for a failed trade. `action` is 'buy'|'sell'. */
+/** The parenthetical a curve refusal carries — the STAGE that refused. */
+function _stageOf(raw) {
+  const m = String((raw && (raw.message || raw)) || '');
+  const hit = /launchpad curve \(([^)]{3,300})\)/.exec(m) || /the curve rejected this call \(([^)]{3,300})\)/.exec(m);
+  return hit ? hit[1].trim() : null;
+}
+const _escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 function errorText(lang, raw, action) {
   const key = errorKey(raw);
   const act = t(lang, action === 'buy' ? 'word.buy' : action === 'sell' ? 'word.sell' : 'word.transaction');
   // 'err.gas_moved' names the BUTTON to press, which is capitalised UI, not a noun.
   const btn = action === 'buy' ? 'Buy' : 'Sell';
-  return t(lang, key, { act, btn });
+  const body = t(lang, key, { act, btn });
+  /*
+   * ⚠️ AND THE STAGE THAT REFUSED RIDES ALONG, for a curve refusal.
+   *
+   * The friendly sentence swallowed `prep.why` entirely, so every refusal on
+   * this route read as the same "a few more trades on the pad" whatever
+   * actually stopped it — the price, the classify, the simulate. That is the
+   * "a value nobody can read is the same as no value" defect on the money
+   * path, and the card had to learn it first (`curveWhy`): four rounds of
+   * "masih sama aja" began with a message that named no stage.
+   *
+   * The template is OURS and carries markup; only this appended fragment comes
+   * from an error, so only this is escaped.
+   */
+  const stage = key === 'err.curve_refused' ? _stageOf(raw) : null;
+  return stage ? `${body}\n<i>${_escHtml(stage)}</i>` : body;
 }
 
 module.exports = { t, errorKey, errorText, normalize, LANGS, DEFAULT_LANG, LANG_LABEL, _strings: S };

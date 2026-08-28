@@ -2834,7 +2834,7 @@ async function _postWalletReceipt(chatId, { side, ca, chainKey, target, r, e, se
       rate,
       pnl: side === 'sell' && r ? Number(r.realizedEth) : null,
       mcUsd,
-      reason: e ? esc(friendlyError(chatId, e, side)) : '',
+      reason: e ? friendlyError(chatId, e, side) : '',
     });
     const wi = walletIndex(chatId, target.id);
     const explorer = ch.explorer;
@@ -3162,7 +3162,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       // what NO single receipt can say: the totals, the average fill, and the
       // one-outage-said-once collapse.
       const body = oneReason
-        ? `${esc(friendlyError(chatId, fails[0].e, 'buy'))}\n<i>${T(chatId, 'buy.receipt.multi.same', { wallets: esc(fails.map((f) => f.label).join(', ')) })}</i>`
+        ? `${friendlyError(chatId, fails[0].e, 'buy')}\n<i>${T(chatId, 'buy.receipt.multi.same', { wallets: esc(fails.map((f) => f.label).join(', ')) })}</i>`
         : (perWallet ? '' : lines.join('\n'));
       const txt = head + realLine + entryLine + (mkt ? '\n' + mkt : '') + (body ? '\n\n' + body : '');
       // Through the same queue as the receipts. With a progress message this is
@@ -3178,7 +3178,7 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
       const filled = results.findIndex((res) => res.status === 'fulfilled');
       if (okN > 0) startMonitor(chatId, ca, chainKey, targets[filled >= 0 ? filled : 0].id, { surface: true }).catch(() => {});
     }
-  } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'buy.failed')}\n\n${esc(friendlyError(chatId, e, 'buy'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
+  } catch (e) { console.error('buy failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'buy.failed')}\n\n${friendlyError(chatId, e, 'buy')}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(u)}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
   finally { _inflightBuy.delete(key); }
 }
 // Escalating sell: if a sell fails for a RETRIABLE reason (gas rejected by a
@@ -3316,7 +3316,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
             // Same hole as the buy branch above: an empty wallet is expected and
             // stays quiet, but a real exit failure has to reach the log.
             console.error(`sell failed [${t.label}] ${chainKey} ${ca}:`, msg);
-            lines.push(`• <b>${esc(t.label)}</b> · ❌ ${esc(friendlyError(chatId, e, 'sell'))}`);
+            lines.push(`• <b>${esc(t.label)}</b> · ❌ ${friendlyError(chatId, e, 'sell')}`);
           }
         }
       });
@@ -3347,7 +3347,7 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       // wallets it summarises.
       await queuedSend(chatId, () => (pid ? edit(chatId, pid, txt, kb) : send(chatId, txt, kb)));
     }
-  } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'sell.failed')}\n\n${esc(friendlyError(chatId, e, 'sell'))}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
+  } catch (e) { console.error('sell failed:', e && (e.message || e)); await send(chatId, `${T(chatId, 'sell.failed')}\n\n${friendlyError(chatId, e, 'sell')}`, rows([btn('🔄 Try again', `tok:${chain || core.userChain(core.ensureUser(chatId))}:${walletIndex(chatId, walletId)}:${ca}`), btn('« Menu', 'menu')])); }
 }
 
 // The group notice exists for ONE reader: someone who typed a command at the bot
