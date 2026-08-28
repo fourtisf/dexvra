@@ -87,7 +87,11 @@ async function main() {
     const prov = new ethers.JsonRpcProvider(chain.rpc, undefined, { staticNetwork: true });
     const head = await prov.getBlockNumber();
     console.log(`${C}1. Which contract does ${target} trade through?${X}`);
-    observed = await decodeCurveIface(prov, target, { head, blocks: Number(optOf('blocks')) || 50000 });
+    // Default wide: Robinhood Chain blocks are seconds apart, and a token
+    // trading a few hundred dollars a day may have long quiet stretches.
+    const blocks = Number(optOf('blocks')) || 200000;
+    console.log(`   ${D}head ${head} · scanning back ${blocks} blocks${X}`);
+    observed = await decodeCurveIface(prov, target, { head, blocks, steps: Number(optOf('steps')) || 40 });
     if (!observed.ok) { console.log(`   ${R}✗${X} ${observed.why}\n`); process.exit(1); }
     contract = observed.curve;
     console.log(`   ${G}✓${X} ${describeIface(observed)}\n`);

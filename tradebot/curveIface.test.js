@@ -114,7 +114,13 @@ test('⚠️ "could not look" and "nothing to look at" never collapse — and ne
 
   const quiet = await decodeCurveIface(stub({ logs: [] }), TOKEN, { head: 1 });
   assert.equal(quiet.ok, false);
-  assert.match(quiet.why, /nobody has traded/);
+  // ⚠️ IT NO LONGER SAYS "nobody has traded". A public RPC caps eth_getLogs, and
+  // an empty answer to a wide range is about the CAP, not about the token — the
+  // live box asserted "nobody has traded this token in the last 50000 blocks"
+  // about a token whose own card showed $320 of 24h volume. We report what we
+  // FOUND, and name the window.
+  assert.match(quiet.why, /no trades found/);
+  assert.doesNotMatch(quiet.why, /nobody has traded/, 'that is a claim about the token we cannot support');
   assert.notEqual(a.why, quiet.why, 'an outage must not read as an untraded token');
 });
 
@@ -255,4 +261,38 @@ test('samples of identical size cannot prove a slot scales', async () => {
   // is the one that unlocks `scales`.
   const r = classifySlots(leg([S(10n ** 17n, [num(1000n)], WALLET), S(10n ** 17n, [num(1000n)], WALLET)]), TOKEN);
   assert.equal(r.slots[0].role, 'constant');
+});
+
+test('⚠️ a range-capped node is WALKED before its empty answer is believed', async () => {
+  // The defect this exists for: the wide query returns [] because the node
+  // refuses the range, and the token looks untraded. `robinhood-preflight` §4x
+  // already walked the tail in steps; the port carried the logic and dropped
+  // the lesson.
+  let wide = 0, narrow = 0;
+  const CAP = 500;
+  const chain = {
+    async getLogs({ fromBlock, toBlock }) {
+      if (toBlock - fromBlock > CAP) { wide++; return []; }      // silently capped
+      narrow++;
+      return toBlock >= 8800 ? [xfer(CURVE, WALLET, '0xh1')] : [];
+    },
+    async getTransaction() { return { to: CURVE, from: WALLET, value: 10n ** 17n, data: '0xaabbccdd' + word(TOKEN) }; },
+  };
+  const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 5000 });
+  assert.equal(wide, 1, 'the wide query is still tried first — it is one request when it works');
+  assert.ok(narrow > 0, 'and the tail is walked when it comes back empty');
+  assert.equal(r.curve, CURVE, 'the trade the capped node was hiding is found');
+});
+
+test('a walk where every step errors is an outage, not an untraded token', async () => {
+  const chain = { async getLogs() { throw new Error('range too wide'); }, async getTransaction() { return null; } };
+  const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 5000 });
+  assert.match(r.why, /could not read/);
+});
+
+test('the walk is BOUNDED — a wide window must not become hundreds of round trips', async () => {
+  let calls = 0;
+  const chain = { async getLogs() { calls++; return []; }, async getTransaction() { return null; } };
+  await decodeCurveIface(chain, TOKEN, { head: 10_000_000, blocks: 5_000_000, steps: 24 });
+  assert.ok(calls <= 25, `made ${calls} getLogs calls`);
 });

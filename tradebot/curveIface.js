@@ -100,15 +100,52 @@ async function decodeCurveIface(chain, token, opts = {}) {
   const head = Number(opts.head);
   if (!/^0x[a-fA-F0-9]{40}$/.test(String(token || ''))) return { ok: false, why: 'not an EVM token address' };
 
-  let logs;
-  try {
-    logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: Math.max(0, head - span), toBlock: head });
-  } catch (e) {
-    // "We could not look" — never cached, never rendered as a fact about the
-    // token. The rule `pumpfunNewX` states, on the surface that spends money.
-    return { ok: false, why: `could not read this token's transfers (${(e && e.message) || e})` };
+  /*
+   * ⚠️ AN EMPTY ANSWER FROM A WIDE RANGE IS NOT "NOBODY TRADED".
+   *
+   * Public RPCs cap `eth_getLogs`. Some reject a wide range with an error;
+   * others answer [] — and that empty array is about the CAP, not about the
+   * token. The live box reported "nobody has traded this token in the last
+   * 50000 blocks" for a token whose own card showed $320 of 24h volume, which
+   * is the two facts refusing to both be true.
+   *
+   * `scripts/robinhood-preflight.js` §4x already knew this and walks the tail
+   * in steps. That half did not come across when the decode was promoted into
+   * the bot — so the port carried the logic and dropped the lesson, which is
+   * the shape this repo keeps paying for.
+   *
+   * So: ask wide, and if that comes back empty, WALK THE TAIL in bounded steps
+   * before believing it. A step that errors must not abandon the walk — a
+   * range-capped node fails some ranges and serves others.
+   */
+  const from = Math.max(0, head - span);
+  const budget = Math.max(1, Number(opts.steps) || 24);
+  let logs = null;
+  let stepped = 0;
+  let lastErr = null;
+
+  try { logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: from, toBlock: head }); }
+  catch (e) { lastErr = e; }
+
+  if (!logs || !logs.length) {
+    const step = Math.max(200, Math.ceil(span / budget));
+    const found = [];
+    for (let to = head; to > from && stepped < budget && found.length < maxTx * 2; to -= step) {
+      stepped++;
+      try { found.push(...(await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: Math.max(from, to - step + 1), toBlock: to })) || []); }
+      catch (e) { lastErr = e; }   // one bad range must not abandon the walk
+    }
+    if (found.length) logs = found.reverse();   // the walk runs newest-first; restore oldest-first
+    else if (!logs && lastErr) {
+      // Nothing answered at all. "We could not look" — never cached, never
+      // rendered as a fact about the token.
+      return { ok: false, why: `could not read this token's transfers (${(lastErr && lastErr.message) || lastErr})` };
+    }
   }
-  if (!logs || !logs.length) return { ok: false, why: `nobody has traded this token in the last ${span} blocks` };
+
+  if (!logs || !logs.length) {
+    return { ok: false, why: `no trades found for this token in the last ${span} blocks${stepped ? ` (also walked ${stepped} smaller ranges, in case the node caps them)` : ''} — try a wider window with --blocks` };
+  }
 
   // Newest first: a curve's interface can change between deployments, and the
   // most recent trades are the ones a route built now has to match.
