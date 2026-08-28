@@ -122,6 +122,7 @@ async function decodeCurveIface(chain, token, opts = {}) {
   const budget = Math.max(1, Number(opts.steps) || 24);
   let logs = null;
   let stepped = 0;
+  let stepErrs = 0;
   let lastErr = null;
 
   try { logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: from, toBlock: head }); }
@@ -133,14 +134,28 @@ async function decodeCurveIface(chain, token, opts = {}) {
     for (let to = head; to > from && stepped < budget && found.length < maxTx * 2; to -= step) {
       stepped++;
       try { found.push(...(await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: Math.max(from, to - step + 1), toBlock: to })) || []); }
-      catch (e) { lastErr = e; }   // one bad range must not abandon the walk
+      catch (e) { lastErr = e; stepErrs++; }   // one bad range must not abandon the walk
     }
     if (found.length) logs = found.reverse();   // the walk runs newest-first; restore oldest-first
-    else if (!logs && lastErr) {
-      // Nothing answered at all. "We could not look" — never cached, never
+    else if (!logs && (stepErrs > 0 || !stepped)) {
+      // A range with holes in it. "We could not look" — never cached, never
       // rendered as a fact about the token.
       return { ok: false, why: `could not read this token's transfers (${(lastErr && lastErr.message) || lastErr})` };
     }
+    /*
+     * ⚠️ …but a wide ask that FAILED over a stepped walk that cleanly covered
+     * the whole span is an ANSWER about the span, not an outage. A range-capped
+     * node rejects the wide request and serves every step (the exact shape
+     * fbf33e2 was about, one probe over) — and reporting that as "could not
+     * read" did two quiet harms at once: `ifaceFor` only ESCALATES to the wider
+     * windows on "no trades found", and only CACHES a non-transport verdict, so
+     * a quiet pad's token on a capped node was re-walked from scratch on every
+     * attempt and never once looked in the window its trades were actually in.
+     * The step size always covers the span within the budget (step is
+     * ceil(span/budget), floored at 200 only where fewer steps than the budget
+     * suffice), so zero step errors means zero holes. Fall through to
+     * "no trades found", which escalates and caches.
+     */
   }
 
   if (!logs || !logs.length) {

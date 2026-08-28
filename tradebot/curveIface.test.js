@@ -296,6 +296,26 @@ test('a walk where every step errors is an outage, not an untraded token', async
   assert.match(r.why, /could not read/);
 });
 
+test('⚠️ a wide ask that ERRORS over a clean, empty stepped walk is "no trades found" — not an outage', async () => {
+  // A range-capped node that REJECTS the wide request (instead of silently
+  // truncating it) and then serves every step has answered the question: the
+  // span was covered, hole-free, and held nothing. Reporting that as "could
+  // not read" blocked both of ifaceFor's follow-ups — it only escalates to the
+  // wider windows on "no trades found", and only caches a non-transport
+  // verdict — so a quiet token on a capped node was re-walked from scratch
+  // for ever and never once looked in the window its trades were actually in.
+  const chain = {
+    async getLogs({ fromBlock, toBlock }) {
+      if (toBlock - fromBlock > 500) throw new Error('query returned more than 10000 results');
+      return [];
+    },
+    async getTransaction() { return null; },
+  };
+  const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 5000 });
+  assert.match(r.why, /^no trades found/, `an answered span must escalate, got: ${r.why}`);
+  assert.doesNotMatch(r.why, /could not read/);
+});
+
 test('the walk is BOUNDED — a wide window must not become hundreds of round trips', async () => {
   let calls = 0;
   const chain = { async getLogs() { calls++; return []; }, async getTransaction() { return null; } };

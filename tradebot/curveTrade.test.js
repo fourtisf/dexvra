@@ -302,6 +302,34 @@ test('⚠️ the window ESCALATES, because "any launchpad" means any PACE', asyn
   assert.equal(seen[0], 5000, 'and it still STARTED cheap — every lookup must not pay for the slowest pad');
 });
 
+test('⚠️ the ladder still climbs on a node that REJECTS wide ranges', async () => {
+  // The live shape on Robinhood's public RPC: the wide ask for windows 2 and 3
+  // errors with a range cap while every step inside them answers fine. Before
+  // stepErrs, window 2's clean-but-empty stepped walk was misreported as
+  // "could not read" — so the ladder stopped exactly one rung short of the
+  // window a quiet pad's trades are in, on every attempt, with nothing cached.
+  const logs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+  const txs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+  };
+  const TRADE_AT = 405000;   // ~95k blocks back: only window 3 can see it
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    async getLogs(f) {
+      const from = Number(f.fromBlock), to = Number(f.toBlock);
+      if (to - from > 20000) throw new Error('block range too large');   // the cap
+      return from <= TRADE_AT && TRADE_AT <= to ? logs : [];
+    },
+    async getTransaction(h) { return txs[h]; },
+    async estimateGas() { return 210000n; },
+  };
+  ct._reset();
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN);
+  assert.equal(r.ok, true, `the capped node's trades were never reached: ${r.why}`);
+  assert.equal(r.curve, CURVE);
+});
+
 test('…but a dead node is not widened — three tries is three times the same silence', async () => {
   let asked = 0;
   const chain = {
