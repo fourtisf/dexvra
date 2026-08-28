@@ -44,9 +44,19 @@ const fourByteOn = () => !/^(0|false|off|no)$/i.test(String(process.env.ABI_4BYT
 async function getJson(url, fetchImpl) {
   const f = fetchImpl || globalThis.fetch;
   const r = await f(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
   return r.json();
 }
+
+/** Did we FAIL TO ASK, or did the explorer answer and have nothing?
+ *
+ *  ⚠️ These are opposite conclusions and they printed identically. A Cloudflare
+ *  403 in front of an explorer would have read as "this contract is not
+ *  verified", sending the caller down the inference path — with a published ABI
+ *  sitting there unread. The rule this repo states about `pumpfunNewX`, on the
+ *  source that decides how much a curve route can be trusted. A 4xx that is not
+ *  a refusal (404: no such contract) IS an answer. */
+const refused = (e) => !e || !e.status || e.status === 429 || e.status === 403 || e.status === 401 || e.status >= 500;
 
 /**
  * The 4-byte selector of a human-readable signature, e.g. "buy(address,uint256)".
@@ -77,13 +87,15 @@ async function fetchVerifiedAbi(explorerBase, address, opts = {}) {
   if (!base || !/^0x[a-fA-F0-9]{40}$/.test(String(address || ''))) return { ok: false, why: 'no explorer or bad address' };
   const f = opts.fetchImpl;
   const tried = [];
+  let couldNotAsk = 0, attempts = 0;
 
   // Blockscout v2 — the shape most L2 explorers run today.
   try {
     const j = await getJson(`${base}/api/v2/smart-contracts/${address}`, f);
     if (j && Array.isArray(j.abi) && j.abi.length) return { ok: true, abi: j.abi, source: 'blockscout', name: j.name || null };
     tried.push('blockscout: no abi in the answer (contract not verified)');
-  } catch (e) { tried.push(`blockscout: ${(e && e.message) || e}`); }
+    attempts++;
+  } catch (e) { attempts++; if (refused(e)) couldNotAsk++; tried.push(`blockscout: ${(e && e.message) || e}`); }
 
   // Etherscan-compatible.
   try {
@@ -93,9 +105,20 @@ async function fetchVerifiedAbi(explorerBase, address, opts = {}) {
       if (Array.isArray(abi) && abi.length) return { ok: true, abi, source: 'etherscan-compatible', name: null };
     }
     tried.push(`etherscan-compatible: ${(j && j.result) || 'no abi'}`);
-  } catch (e) { tried.push(`etherscan-compatible: ${(e && e.message) || e}`); }
+    attempts++;
+  } catch (e) { attempts++; if (refused(e)) couldNotAsk++; tried.push(`etherscan-compatible: ${(e && e.message) || e}`); }
 
-  return { ok: false, why: `no verified ABI at ${address} — ${tried.join(' · ')}` };
+  // `reachable:false` means the explorer could not be ASKED. The caller must not
+  // read that as "unverified" and fall through to inference as though the
+  // question had been settled.
+  const reachable = couldNotAsk < attempts;
+  return {
+    ok: false,
+    reachable,
+    why: reachable
+      ? `no verified ABI at ${address} — ${tried.join(' · ')}`
+      : `could not reach the explorer for ${address} — ${tried.join(' · ')}`,
+  };
 }
 
 /**

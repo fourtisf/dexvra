@@ -105,3 +105,20 @@ test('a selector is computed from the signature, whitespace and all', () => {
   assert.equal(A.selectorOf('buy(address, uint256)'), A.selectorOf('buy(address,uint256)'));
   assert.equal(A.selectorOf('not a signature'), null);
 });
+
+test('⚠️ "could not ask" and "not verified" are opposite conclusions', async () => {
+  // A Cloudflare 403 in front of an explorer would otherwise read as "this
+  // contract is not verified" and send the caller down the inference path with
+  // a published ABI sitting there unread.
+  const refuse = async () => ({ ok: false, status: 403, async json() { return {}; } });
+  const blocked = await A.fetchVerifiedAbi('https://explorer.example', ADDR, { fetchImpl: refuse });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reachable, false);
+  assert.match(blocked.why, /could not reach/);
+
+  // A 404 IS an answer: the explorer is there and has no such contract.
+  const answered = async () => ({ ok: false, status: 404, async json() { return {}; } });
+  const missing = await A.fetchVerifiedAbi('https://explorer.example', ADDR, { fetchImpl: answered });
+  assert.equal(missing.reachable, true);
+  assert.match(missing.why, /no verified ABI/);
+});
