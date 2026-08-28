@@ -260,6 +260,14 @@ const DEEP_GRID = {
   // How many bars back. The empty string means "omit it" — a required-looking
   // parameter that is actually forbidden is one way to earn a 400.
   cbKey: ["cb", "countback", "limit", ""],
+  // ⚠️ AN EXTRA PARAMETER THE FEED REQUIRES AND WE NEVER SEND LOOKS EXACTLY
+  // LIKE A WRONG ONE WE DO. The live box answered 400 to all five original
+  // shapes with an EMPTY body — the host names nothing, so a missing required
+  // parameter and a misspelled optional one are indistinguishable from the
+  // outside. A chart feed has to be told which currency to quote in
+  // somewhere, and "" (send nothing extra) stays first so the simplest
+  // request is still tried before any of these.
+  extra: ["", "q=usd", "currency=usd", "type=usd", "quote=usd"],
 };
 
 /** Every query string in the grid, coarsest axis first so a hit is found early. */
@@ -277,6 +285,7 @@ export function deepQueries(nowMs = Date.now(), hours = 6, limit = 100) {
     for (const resKey of DEEP_GRID.resKey) {
       for (const resVal of DEEP_GRID.resVal) {
         for (const cbKey of DEEP_GRID.cbKey) {
+        for (const extra of DEEP_GRID.extra) {
           // ⚠️ THE TEMPLATE MUST CARRY {res}, NOT THE SPELLING THAT WON.
           // Freezing `resolution=15` into DS_CHART_QUERY draws 15m candles on
           // the 1h, 4h and 1d tabs — a chart that looks like it works because
@@ -288,7 +297,9 @@ export function deepQueries(nowMs = Date.now(), hours = 6, limit = 100) {
           const q = [`from=${from}`, `to=${to}`, `${resKey}=${encodeURIComponent(resVal)}`];
           const tpl = [`from=${fromTok}`, `to=${toTok}`, `${resKey}=${canon ? "{res}" : encodeURIComponent(resVal)}`];
           if (cbKey) { q.push(`${cbKey}=${limit}`); tpl.push(`${cbKey}={limit}`); }
-          out.push({ q: q.join("&"), tpl: tpl.join("&"), unit, resKey, resVal, cbKey: cbKey || "(omitted)", canon });
+          if (extra) { q.push(extra); tpl.push(extra); }
+          out.push({ q: q.join("&"), tpl: tpl.join("&"), unit, resKey, resVal, cbKey: cbKey || "(omitted)", extra: extra || "(none)", canon });
+        }
         }
       }
     }
@@ -495,14 +506,20 @@ async function main() {
     if (!win && near?.size) {
       const path = [...near.keys()][0];
       const grid = deepQueries();
+      // Announce the cost: 480 shapes at the pace below is the better part of a
+      // minute, and a script that goes silent for that long reads as hung —
+      // which is how the first version of the token probe was reported.
+      const eta = Math.round((grid.length * 110) / 1000);
       console.log(`\n  ${C}▸ path found — sweeping ${grid.length} query shapes on it${X} ${D}${path}${X}`);
+      console.log(`    ${D}~${eta}s, paced. Stops early on a hit, or if the host starts refusing.${X}`);
       let refusals = 0;
+      let tried = 0;
       for (const g of grid) {
         const r = await get(`${base0}${fill(path, vars)}?${g.q}`);
         const v = classify(r);
         if (v.win) {
           win = { base: base0, path, q: g.tpl };
-          console.log(`    ${G}✓${X} ${D}${g.unit} · ${g.resKey}=${g.resVal} · ${g.cbKey}${X}  ${v.verdict}`);
+          console.log(`    ${G}✓${X} ${D}${g.unit} · ${g.resKey}=${g.resVal} · ${g.cbKey} · ${g.extra}${X}  ${v.verdict}`);
           if (!g.canon) {
             // The feed names bar sizes differently from DS_RES, so no template
             // can carry the reader's timeframe — every tab would draw the one
@@ -523,6 +540,8 @@ async function main() {
           console.log(`    ${R}✗${X} the host began refusing this server mid-sweep (${refusals}×) — stopped`);
           break;
         }
+        // A dot per 40 shapes, so a long sweep visibly progresses.
+        if (++tried % 40 === 0) process.stdout.write(`    ${D}… ${tried}/${grid.length}${X}\n`);
         // Paced: this is somebody else's private endpoint, not ours to hammer.
         await new Promise((r2) => setTimeout(r2, 60));
       }
