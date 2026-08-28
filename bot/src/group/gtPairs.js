@@ -173,8 +173,35 @@ async function fetchTokenInfo(chain, address) {
 // so those requests were invisible to the cooldown AND to any budget. The
 // realtime path was being starved by jobs that did not know there was a budget
 // to starve it out of. The buy bot's trades feed now goes first, always.
-/** GeckoTerminal's free ceiling, in requests a minute, counted PER IP. */
-const GT_FREE_CEILING_RPM = 30;
+/**
+ * GeckoTerminal's free ceiling, in requests a minute, counted PER IP.
+ *
+ * ⚠️ THIS WAS 30, AND 30 WAS A GUESS WE HAD BEEN BUDGETING AGAINST FOR MONTHS.
+ * GeckoTerminal's own API page (geckoterminal.com/dex-api) states the free
+ * figure while advertising the paid one: "increase rate limits by 25X, from
+ * 10 calls/min to 250 calls/min". Ten, not thirty.
+ *
+ * Which means the split was never a split: half of an imagined 30 is 15, the
+ * website takes another 15, and the two processes together were asking for
+ * THREE TIMES what the IP is allowed. That is not a busy minute occasionally
+ * going over — it is a guaranteed 429, continuously, which is exactly what the
+ * token page kept reporting ("GeckoTerminal is rate limited — cooling down").
+ * We were not losing a race for the quota. We were the ones exceeding it.
+ *
+ * Being throttled by our OWN budget and being 429'd by theirs are not
+ * comparable failures: our budget PACES a request (it waits for a slot), while
+ * their 429 arms a 120s process-wide cooldown that blanks every chart on the
+ * site. Half the throughput, gracefully, beats three times the throughput into
+ * a wall.
+ *
+ * Env-overridable because a tier is a fact about the account, not about this
+ * code: an operator whose plan really is 30/min raises it in one line, and a
+ * key raises the real limit far past either figure.
+ */
+const GT_FREE_CEILING_RPM = (() => {
+  const n = Number(String(process.env.GT_FREE_CEILING_RPM || "").trim());
+  return Number.isFinite(n) && n > 0 ? n : 10;
+})();
 
 /**
  * The default budget when nothing is pinned.
