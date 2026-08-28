@@ -594,7 +594,24 @@ async function byGain(rows, rng = Math.random) {
     // the board then publishes only as many rows as GT happened to answer for.
     let unread = false;
     try {
-      const m = await market.fetchMarket(r.chain, r.address);
+      // ⚠️ DEXSCREENER FIRST, and it is the single biggest saving on this path.
+      //
+      // This pass prices up to PROBE_CAP candidates on EVERY configured chain,
+      // every cycle — six chains is up to 150 reads — and it was GT-first, into
+      // a ~30 req/min ceiling counted PER IP that this box already shares with
+      // the website's charts. Losing most of a cycle's reads was ordinary, and
+      // a lost read is a row that does not reach the board (see `_unread`).
+      //
+      // A PRICE has two free sources; only a CANDLE has one. Everything this
+      // loop reads — price, cap, 24h volume, 24h change — DexScreener also
+      // publishes, so naming those four lets it answer and GT is never asked.
+      // Where DexScreener is missing any of them (it does not index the
+      // GT-primary chains at all) this falls through to GT exactly as before,
+      // and its answer is reused rather than re-requested.
+      const m = await market.fetchMarket(r.chain, r.address, {
+        cheap: true,
+        need: ["priceUsd", "mcap", "vol24h", "change24h"],
+      });
       // `fetchMarket` returns null only when BOTH readers came up empty, which
       // on this box is far more often a shared 429 than a token nobody indexes.
       if (!m) unread = true;

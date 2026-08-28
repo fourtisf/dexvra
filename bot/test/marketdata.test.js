@@ -161,3 +161,109 @@ test("a GT answer that HAS everything still short-circuits — one field must no
     restore();
   }
 });
+
+// ── `need`: the cheap answer has to carry what the CALLER reads ─────────────
+//
+// The cheap path used to return the moment DexScreener had a price and a cap —
+// right for `fetchPrice`, whose callers read exactly those two, and wrong for
+// the trending promoter, which sorts by `change24h` and applies floors to
+// `mcap`/`vol24h`. Turning that pass cheap without this would have handed it
+// records with no percentage, which it reads as "this token has no reading" and
+// refuses — a cheap read that makes the board SHORTER, not cheaper.
+
+const dsPair = (over = {}) => ({
+  chainId: "solana",
+  baseToken: { address: "So1anaAddr111", name: "Tok", symbol: "TOK" },
+  priceUsd: "1.5",
+  liquidity: { usd: 200_000 },
+  volume: { h24: 90_000 },
+  priceChange: { h24: 4.2 },
+  marketCap: 7_000_000,
+  ...over,
+});
+
+test("⚠️ cheap STOPS at DexScreener only when it has every field the caller named", async () => {
+  let gtAsked = 0;
+  const restore = stubFetch((url) => {
+    if (url.includes("geckoterminal")) {
+      gtAsked++;
+      return gtBody({ price_usd: "1.5", market_cap_usd: "7000000", fdv_usd: null });
+    }
+    return dsBody([dsPair()]);
+  });
+  try {
+    const m = await market.fetchMarket("solana", "So1anaAddr111", {
+      cheap: true,
+      need: ["priceUsd", "mcap", "vol24h", "change24h"],
+    });
+    assert.strictEqual(m.change24h, 4.2);
+    assert.strictEqual(m.vol24h, 90_000);
+    assert.strictEqual(gtAsked, 0, "GeckoTerminal was asked anyway — the whole saving is gone");
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ …and FALLS THROUGH to GT when DexScreener is missing one of them", async () => {
+  let gtAsked = 0;
+  const restore = stubFetch((url) => {
+    if (url.includes("geckoterminal")) {
+      gtAsked++;
+      return gtBody({ price_usd: "1.5", market_cap_usd: "7000000", fdv_usd: null });
+    }
+    // A price and a cap, and NO percentage — exactly the record the old cheap
+    // test accepted, and exactly the one the promoter cannot use.
+    return dsBody([dsPair({ priceChange: {} })]);
+  });
+  try {
+    await market.fetchMarket("solana", "So1anaAddr111", {
+      cheap: true,
+      need: ["priceUsd", "mcap", "vol24h", "change24h"],
+    });
+    assert.strictEqual(gtAsked, 1, "it stopped at a record with no percentage");
+  } finally {
+    restore();
+  }
+});
+
+test("⚠️ a measured 0.00% / $0 volume SATISFIES `need` — they are readings, not blanks", async () => {
+  let gtAsked = 0;
+  const restore = stubFetch((url) => {
+    if (url.includes("geckoterminal")) {
+      gtAsked++;
+      return gtBody({ price_usd: "1.5", market_cap_usd: "7000000", fdv_usd: null });
+    }
+    // A pool that traded nothing all day. A truthiness test would drop both and
+    // send the row to GT — the exact quota this change exists to save.
+    return dsBody([dsPair({ volume: { h24: 0 }, priceChange: { h24: 0 } })]);
+  });
+  try {
+    const m = await market.fetchMarket("solana", "So1anaAddr111", {
+      cheap: true,
+      need: ["priceUsd", "mcap", "vol24h", "change24h"],
+    });
+    assert.strictEqual(m.change24h, 0);
+    assert.strictEqual(m.vol24h, 0);
+    assert.strictEqual(gtAsked, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("the DEFAULT stays what it was — fetchPrice's callers read price and cap", async () => {
+  let gtAsked = 0;
+  const restore = stubFetch((url) => {
+    if (url.includes("geckoterminal")) {
+      gtAsked++;
+      return gtBody({ price_usd: "1.5", market_cap_usd: "7000000", fdv_usd: null });
+    }
+    return dsBody([dsPair({ priceChange: {}, volume: {} })]);
+  });
+  try {
+    const m = await market.fetchMarket("solana", "So1anaAddr111", { cheap: true });
+    assert.strictEqual(m.priceUsd, 1.5);
+    assert.strictEqual(gtAsked, 0, "the cheap default regressed — every pump-checker poll now costs a GT read");
+  } finally {
+    restore();
+  }
+});

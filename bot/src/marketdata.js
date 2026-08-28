@@ -488,7 +488,27 @@ async function fetchMarket(chain, address, opts = {}) {
   // merge below, one different ORDER — because a third private answer to "is
   // GeckoTerminal up" is what this repo keeps paying for.
   const dsFirst = opts.cheap ? await fetchDS(chain, address) : null;
-  if (dsFirst && dsFirst.priceUsd && dsFirst.mcap) return dsFirst;
+  // ⚠️ THE CHEAP ANSWER HAS TO CARRY WHAT THIS CALLER ACTUALLY READS.
+  //
+  // This used to return the moment DexScreener had a price and a cap — right
+  // for `fetchPrice`, whose callers read exactly those two and throw the rest
+  // away, and WRONG for anyone who needs more: they would get a record with
+  // `change24h` missing, and a caller that sorts by it (the trending promoter)
+  // reads that as "this token has no reading" and refuses the row. Turning the
+  // promoter cheap without this would have made the board SHORTER, not
+  // cheaper — the fix producing a worse version of the bug it fixes.
+  //
+  // So the caller names its fields. DexScreener answers only when it has all of
+  // them; otherwise this falls through to GT exactly as before, and `dsFirst`
+  // is reused below rather than re-asked.
+  //
+  // 0 is a READING for a volume or a 24h change (a quiet day) and not a price
+  // or a cap — which is why the two groups are tested differently rather than
+  // with one truthiness check that would drop a real 0.00%.
+  const NEED_DEFAULT = ["priceUsd", "mcap"];
+  const need = Array.isArray(opts.need) && opts.need.length ? opts.need : NEED_DEFAULT;
+  const hasField = (o, f) => (f === "priceUsd" || f === "mcap" ? !!o[f] : Number.isFinite(o[f]));
+  if (dsFirst && need.every((f) => hasField(dsFirst, f))) return dsFirst;
 
   const gt = await fetchGT(chain, address);
   // Only skip DexScreener when GT already has EVERYTHING. GT often returns a

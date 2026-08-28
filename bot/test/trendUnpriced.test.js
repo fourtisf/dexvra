@@ -142,3 +142,57 @@ test("a PARTIAL read is not blamed on the upstream — some rows answered", () =
   });
   assert.strictEqual(why.code, "below_floors");
 });
+
+// ── "kenapa tidak pakai dexscreener??" — because this pass never asked it ────
+//
+// The promoter prices up to PROBE_CAP candidates on EVERY configured chain,
+// every cycle — six chains is up to 150 reads — and it was GT-first, into a
+// ~30 req/min ceiling counted PER IP that this box shares with the website's
+// charts. A lost read is a row that does not reach the board, which is the
+// whole reported symptom. A PRICE has two free sources; only a CANDLE has one.
+
+const marketdata = require("../src/marketdata");
+
+test("⚠️ the promoter asks DexScreener FIRST, and never reaches GT when it answers", async (t) => {
+  let asked = null;
+  const real = marketdata.fetchMarket;
+  marketdata.fetchMarket = async (chain, address, opts) => {
+    asked = opts;
+    return { priceUsd: 0.01, mcap: 9 * M, vol24h: 250_000, change24h: 12.5 };
+  };
+  t.after(() => (marketdata.fetchMarket = real));
+
+  const rows = [row(1)];
+  await autoTrend.byGain(rows, () => 0.5);
+
+  assert.ok(asked && asked.cheap === true, "the pass is still GT-first — it spends the shared quota it does not need");
+  // It must name every field it actually reads, or DexScreener answers without
+  // the 24h change and the promoter reads that as "no reading" and refuses the
+  // row — a cheap read that makes the board SHORTER.
+  assert.deepStrictEqual(
+    [...asked.need].sort(),
+    ["change24h", "mcap", "priceUsd", "vol24h"],
+    "a field this loop reads is missing from `need`",
+  );
+  assert.strictEqual(rows[0]._change, 12.5);
+  assert.strictEqual(rows[0]._mcap, 9 * M);
+  assert.strictEqual(rows[0]._vol24, 250_000);
+  assert.strictEqual(rows[0]._unread, false);
+});
+
+test("⚠️ 0.00% and $0 volume are READINGS — `need` must not drop them as falsy", async (t) => {
+  let asked = null;
+  const real = marketdata.fetchMarket;
+  marketdata.fetchMarket = async (chain, address, opts) => {
+    asked = opts;
+    // A pool that traded nothing all day. Every one of these is a real value,
+    // and a truthiness test would throw all three away and send the row to GT.
+    return { priceUsd: 0.01, mcap: 2 * M, vol24h: 0, change24h: 0 };
+  };
+  t.after(() => (marketdata.fetchMarket = real));
+  const rows = [row(1)];
+  await autoTrend.byGain(rows, () => 0.5);
+  assert.strictEqual(rows[0]._change, 0, "a measured 0.00% became 'no reading'");
+  assert.strictEqual(rows[0]._vol24, 0, "a measured $0 volume became 'no reading'");
+  assert.strictEqual(rows[0]._unread, false);
+});

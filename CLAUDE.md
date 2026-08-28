@@ -778,11 +778,45 @@ cd bot && node scripts/run-tests.js test/trendUnpriced.test.js   # 8 tests, no n
 cd bot && npm run trending:check -- --floors                     # per chain: refused vs unreadable
 ```
 
+#### "kenapa tidak pakai dexscreener??" — because this pass never asked it
+
+The right question, asked straight after. A PRICE has two free sources and only
+a CANDLE has one, and the trending promoter was spending the scarce one on the
+plentiful question: `byGain` priced up to `PROBE_CAP` candidates on EVERY
+configured chain, every cycle — six chains is up to 150 reads — **GT-first**,
+into a ~30 req/min ceiling counted per IP that this box already shares with the
+website's charts. Every read it lost was a row that did not reach the board.
+
+- **`fetchMarket` takes a `need` list now.** The cheap path used to return the
+  moment DexScreener had a price and a cap — correct for `fetchPrice`, whose
+  callers read exactly those two and throw the rest away. ⚠️ **Turning the
+  promoter cheap without this would have made the board SHORTER, not cheaper**:
+  it would have received records with no `change24h`, which that pass reads as
+  "this token has no reading" and refuses — the fix producing a worse version of
+  the bug it fixes. The caller names its fields; DexScreener answers only with
+  all of them, otherwise this falls through to GT exactly as before and the
+  DexScreener answer is reused rather than re-asked.
+- ⚠️ **0 IS A READING for a volume or a 24h change** and is not one for a price
+  or a cap, so the two groups are tested differently. One truthiness check would
+  send every quiet pool to GT — the exact quota the change exists to save.
+- **The market filler gained the same second source.** `bigCoins.topByMcap`
+  (GeckoTerminal) falls back to `dsBigCoins.topByMcap`, which asks DexScreener
+  the same question and already returned the same `{ok, why, items}` shape. GT
+  stays FIRST — it ranks by pool depth across a whole network, the better answer
+  when it is available — and DexScreener is asked only when GT **could not be**,
+  never when GT answered with nothing: that is a fact about the chain, not about
+  us. Both reasons are kept, or "GT was rate-limited" would be replaced by
+  whatever the fallback then said.
+- Mutation-tested: dropping `need`, restoring the GT-first promoter, and
+  removing the filler's fallback each fail a test.
+
 **Config a fix depends on:** nothing in this repo — but ⚠️ **`GECKOTERMINAL_API_KEY`
 in `bot/.env` is the only thing that raises the shared ceiling rather than
 dividing it**, and this is the seventh place in this file that sentence appears.
-Until it is set, a busy minute still costs a cycle its reads; what changed is
-that the board now says so instead of blaming the operator's tokens.
+What changed is that the board now says so instead of blaming the operator's
+tokens, and that the trending pass no longer spends that ceiling on a question
+DexScreener answers for free. The key is still what buys headroom — candles
+(`/api/ohlcv`) have no second source at all.
 
 ### A row with a market cap and no percentage
 

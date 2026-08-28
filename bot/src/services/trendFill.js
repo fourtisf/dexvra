@@ -25,6 +25,7 @@
  */
 const bigCoins = require('./bigCoins');
 const autoLister = require('./autoLister');
+const dsBigCoins = require('./dsBigCoins');
 const discovery = require('../discovery');
 const api = require('../api/dexvra');
 const { chainOf } = require('../config/chains');
@@ -57,7 +58,7 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
   // Ask for more than we need: the ones already on the site are the ones most
   // likely to be at the top of a by-cap list, so a limit of exactly `need`
   // would routinely come back fully consumed by tokens we already have.
-  const res = await top(chain, {
+  const ask = (fn) => fn(chain, {
     limit: Math.max(need * 5, 10),
     minMcap: Number(cfg.fillMinMcap) || 5_000_000,
     minLiq: Number(cfg.fillMinLiq) || 100_000,
@@ -67,6 +68,30 @@ async function fillChain(chain, need, { cfg = {}, now = Date.now(), deps = {}, m
     // had no equivalent anywhere in this path.
     minVol24: Number(cfg.minVol24hUsd) || 0,
   }).catch((e) => ({ ok: false, why: e.message, items: [] }));
+
+  // ⚠️ A SECOND SOURCE FOR THE SAME QUESTION. `bigCoins` reads GeckoTerminal,
+  // whose free tier is ~30 req/min counted PER IP and shared with the website —
+  // so on a busy minute this returns `ok:false` and the chain simply stays
+  // short, which is the reported symptom. `dsBigCoins` asks DexScreener the
+  // same question and returns the SAME shape (`{ok, why, items}` with
+  // `address`/`symbol`/`mcap`/`vol24`/`change24h`), so it is a drop-in.
+  //
+  // GT stays FIRST: it ranks by pool depth across a whole network, which is the
+  // better answer when it is available. DexScreener is asked only when GT could
+  // not be — never when GT answered with nothing, because that is a fact about
+  // the chain, not about us. Both reasons are kept, or "GT was rate-limited"
+  // would be replaced by whatever the fallback then said.
+  let res = await ask(top);
+  if (!res.ok && !res.items.length) {
+    const alt = (deps && deps.topByMcapAlt) || dsBigCoins.topByMcap;
+    const second = await ask(alt).catch((e) => ({ ok: false, why: e.message, items: [] }));
+    if (second.items.length) {
+      log.info(`[trendfill] ${chain}: GeckoTerminal could not answer (${res.why || "unknown"}) — DexScreener found ${second.items.length}`);
+      res = second;
+    } else {
+      res = { ...second, why: `GeckoTerminal: ${res.why || "unknown"} · DexScreener: ${second.why || "nothing"}` };
+    }
+  }
   if (!res.ok && !res.items.length) {
     // "GT is rate-limited" and "this chain has no big tokens" need different
     // answers from whoever reads the log, and only one of them is worth
