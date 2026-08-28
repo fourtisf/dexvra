@@ -2332,6 +2332,28 @@ async function _curveIface(chainKey, ca) {
   } finally { clearTimeout(timer); }
 }
 
+/*
+ * Warm curveTrade's cache for a token something is actively polling.
+ *
+ * FIRE-AND-FORGET AND PACED, because the callers are timers: `canTradeNow` is
+ * probed every few seconds by the CA snipe and the launch retry ring, and a
+ * discovery per probe would spend the RPC budget the buy itself needs. One
+ * bounded discovery per token per CURVE_WARM_MS is the whole cost, it runs off
+ * the probe's own latency path, and curveTrade's cache (hits 30 min, misses
+ * 90s) absorbs everything in between. The map is capped the way _cardReuse is.
+ */
+const CURVE_WARM_MS = Math.max(30_000, Number(process.env.CURVE_WARM_MS || 120_000));
+const _curveWarmAt = new Map();   // `${chain}:${ca}` → last attempt ms
+function _curveWarm(ca, chainKey) {
+  if (!CURVE_ROUTE_ON || isSvm(chainKey)) return;
+  const k = chainKey + ':' + String(ca).toLowerCase();
+  const now = Date.now();
+  if (now - (_curveWarmAt.get(k) || 0) < CURVE_WARM_MS) return;
+  _curveWarmAt.set(k, now);
+  if (_curveWarmAt.size > 500) { const f = _curveWarmAt.keys().next().value; _curveWarmAt.delete(f); }
+  _curveIface(chainKey, ca).catch(() => {});
+}
+
 async function canTradeNow(ca, chainKey) {
   try {
     if (isSvm(chainKey)) return await _solRoutable(ca);
@@ -2348,24 +2370,34 @@ async function canTradeNow(ca, chainKey) {
     if (pick && pick.wethBal != null && pick.wethBal > 0n) return true;
     if (await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false)) return true;
     /*
-     * ⚠️ THE CURVE LEG, AND IT READS THE CACHE ONLY.
+     * ⚠️ THE CURVE LEG. It ANSWERS from the cache only — and it WARMS the
+     * cache in the background, paced, because a cache nothing ever fills is a
+     * leg that never fires.
      *
-     * Without it every AUTOMATED path stays inert while the manual Buy button
-     * works: the dev snipe, the CA snipe, `_fireLaunch`'s gate and the launch
-     * retry ring all poll this predicate, so a token core.buy can now fill
-     * would keep answering "not tradeable" — a user watching a manual buy
-     * succeed while an armed snipe never fires, which is worse than before
-     * because the bot has told them in writing it would buy at graduation.
+     * Without the leg every AUTOMATED path stays inert while the manual Buy
+     * button works: the dev snipe, the CA snipe, `_fireLaunch`'s gate and the
+     * launch retry ring all poll this predicate. And without the WARM the leg
+     * itself was inert for exactly those callers: "buy() does the discovering"
+     * assumed a first manual buy that a snipe-watched launch never gets, so a
+     * curve token nobody happened to buy by hand answered "not tradeable"
+     * until graduation — the state the ring, the CA-snipe handoff and the
+     * bot's own "I will buy it the moment it becomes tradeable" promise all
+     * sat waiting on.
      *
-     * It may NOT discover here: this is polled on a timer, and a dozen RPC
-     * reads per probe would cost the launch the snipe exists to catch. A cached
-     * yes is a cheap yes, and the absence of one is "we have not looked" —
-     * never "this token cannot be traded". buy() does the discovering, and the
-     * first buy warms this for every prober after it.
+     * The probe itself still may NOT block on discovery: it is polled on a
+     * timer, and a dozen serial RPC reads per probe would cost the launch the
+     * snipe exists to catch. So the discovery runs FIRE-AND-FORGET, bounded
+     * (CURVE_DISCOVER_MS), and paced per token (CURVE_WARM_MS) on top of
+     * curveTrade's own cache — this tick answers from what is known, and the
+     * next tick reads what the warm learned. A brand-new curve with no trades
+     * yet stays unreadable until somebody trades on the pad; the warm makes
+     * the snipe fire within a poll or two of that first observed trade,
+     * instead of at graduation.
      */
     if (CURVE_ROUTE_ON) {
       const hit = curveTrade.cached(chainKey, ca);
       if (hit && hit.ok && hit.buy) return true;
+      if (!hit) _curveWarm(ca, chainKey);
     }
     return false;
   } catch (_) { return false; }
@@ -2584,13 +2616,38 @@ async function tokenSnapshot(ca, chainKey) {
       };
     }
     const usd = await ethUsd(chainKey).catch(() => 0);
-    return {
-      ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
+    /*
+     * ⚠️ AN INDEXED TOKEN CAN STILL BE ON A BONDING CURVE, and this branch used
+     * to be the one place that never asked.
+     *
+     * DexScreener indexes several pads' curves as ordinary pairs — Pons on
+     * Robinhood among them — so `m` answering says nothing about a ROUTE. This
+     * returned `routable: false` unconditionally, the card rendered
+     * "liquidity is on Pons v2, which Dexvra can't route through yet" with no
+     * Buy button, and `core.buy` — whose own curve leg fills exactly this
+     * shape — was unreachable from the one surface a user can press Buy on.
+     * The unindexed twin of this branch (above) has consulted the curve since
+     * the feature shipped; being indexed made a token LESS buyable.
+     *
+     * The probe is bounded (CURVE_DISCOVER_MS) and cached (curveTrade: hits
+     * 30 min, misses 90s), and an AMM can never read as a curve: the curve is
+     * the contract the token itself moves to and from, which a router never is.
+     */
+    const extBase = {
+      ca, decimals: dec,
       priceEth: usd > 0 ? m.priceUsd / usd : 0, priceUsd: m.priceUsd,
       mcapEth: usd > 0 && m.mcapUsd ? m.mcapUsd / usd : 0, mcapUsd: m.mcapUsd,
       liquidityUsd: m.liqUsd, volH24Usd: m.volH24Usd, name: m.name, sym: m.sym,
-      dexVenue: 'ext', extVenue: dsVenueLabel(m), routable: false,
+      extVenue: dsVenueLabel(m),
     };
+    const iface = CURVE_ROUTE_ON ? await _curveIface(chainKey, ca) : { ok: false };
+    if (iface.ok && iface.buy) {
+      return {
+        ...extBase, curve: iface.curve, dex: false, graduated: false, progressPct: 0,
+        dexVenue: 'curve', onCurve: true, routable: true,
+      };
+    }
+    return { ...extBase, curve: '', dex: true, graduated: true, progressPct: 100, dexVenue: 'ext', routable: false };
   }
   return { ca, curve: '', priceEth, mcapEth, graduated: true, progressPct: 100, decimals: dec, dex: true, dexVenue, venueWethEth, routable: true };
 }
