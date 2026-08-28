@@ -44,6 +44,7 @@ function withSources({ dex, pools }, fn) {
     di: ds.fetchTokenInfo,
     dix: ds.fetchTokenInfoX,
     pd: ps.fetchDiscovery,
+    pdx: ps.fetchDiscoveryX,
     pi: ps.fetchTokenInfo,
   };
   if (dex) {
@@ -55,7 +56,16 @@ function withSources({ dex, pools }, fn) {
       ds.fetchTokenInfoX = async (...a) => ({ info: await dex.fetchTokenInfo(...a), ok: true, why: null });
     }
   }
-  if (pools) Object.assign(ps, pools);
+  if (pools) {
+    Object.assign(ps, pools);
+    // Same translation as the dex side above, and for the same reason: pools.trade
+    // now reports WHY it is empty, so `discovery` reads `fetchDiscoveryX` and a
+    // helper that swapped only `fetchDiscovery` would leave these tests talking
+    // to the real launchpad.
+    if (pools.fetchDiscovery && !pools.fetchDiscoveryX) {
+      ps.fetchDiscoveryX = async (...a) => ({ items: (await pools.fetchDiscovery(...a)) || [], ok: true, why: null });
+    }
+  }
   return (async () => {
     try {
       return await fn();
@@ -65,6 +75,7 @@ function withSources({ dex, pools }, fn) {
       ds.fetchTokenInfo = real.di;
       ds.fetchTokenInfoX = real.dix;
       ps.fetchDiscovery = real.pd;
+      ps.fetchDiscoveryX = real.pdx;
       ps.fetchTokenInfo = real.pi;
     }
   })();
@@ -291,5 +302,22 @@ test("⚠️ a LAUNCHPAD RECORD DOES NOT MAKE A REFUSAL INTO AN ANSWER", async (
   } finally {
     ds.fetchTokenInfoX = real.ix;
     ps.fetchTokenInfo = real.pi;
+  }
+});
+
+test("⚠️ an unreachable pools.trade is NOT a quiet launchpad", async () => {
+  // It returned the same `[]` for both, at debug level — so `listing:check`
+  // printed `pools.trade → 0 candidate(s)` on the operator's box with nothing
+  // able to say whether the host was retired, the feed switched off, or simply
+  // nothing new had launched. Three different answers, one rendering.
+  const real = ps.fetchDiscoveryX;
+  ps.fetchDiscoveryX = async () => ({ items: [], ok: false, why: "HTTP 404" });
+  try {
+    const d = await discovery.fetchDiscoveryX();
+    const src = d.sources.find((x) => x.name === "poolstrade");
+    assert.strictEqual(src.ok, false);
+    assert.match(src.why, /404/);
+  } finally {
+    ps.fetchDiscoveryX = real;
   }
 });

@@ -46,16 +46,15 @@ const log = require("./helpers/logger");
 async function fetchDiscoveryX() {
   const sources = [
     { name: "dexscreener", fn: () => ds.fetchDiscoveryX() },
-    {
-      name: "poolstrade",
-      fn: async () => {
-        const rows = await poolstrade.fetchDiscovery();
-        // poolstrade has no X shape; a throw is the only failure it reports, so
-        // an empty answer from it genuinely means "nothing new", not "we could
-        // not ask". Stated here rather than assumed at the call site.
-        return { items: Array.isArray(rows) ? rows : [], ok: true, why: null };
-      },
-    },
+    // ⚠️ This entry used to WRAP a plain `fetchDiscovery()` and assert
+    // `ok: true` on the reasoning that "a throw is the only failure it
+    // reports". That was simply untrue — `fetchLaunches` catches its own page
+    // failures and returns `[]` at debug level — so an unreachable launchpad
+    // and a quiet one were the same answer, and the operator's own
+    // `listing:check` printed `⚠ pools.trade → 0 candidate(s)` with nothing
+    // able to say which. A comment asserting a contract the module does not
+    // keep is worse than no comment: it is the reassuring reading, written down.
+    { name: "poolstrade", fn: () => poolstrade.fetchDiscoveryX() },
   ];
   const answers = await Promise.all(
     sources.map(async (s) => {

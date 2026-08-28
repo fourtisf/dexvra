@@ -307,8 +307,23 @@ async function fetchPage(cursor) {
  * Never throws — an unreachable API is an empty list.
  * @returns {Promise<Array<object>>}
  */
-async function fetchLaunches() {
-  if (!ENABLED) return [];
+async function fetchLaunches(status = {}) {
+  // ⚠️ `status` carries WHY there are no rows, because "it answered with
+  // nothing" and "it did not answer" are different facts and this function
+  // returned the same `[]` for both — at debug level, which production does not
+  // print. On the operator's own box `listing:check` printed
+  // `⚠ pools.trade → 0 candidate(s)`, and nothing anywhere could say whether
+  // that was a quiet launchpad, a retired host, or POOLS_TRADE_ENABLED=0. Same
+  // rule the DexScreener feeds had to learn one module over; `discovery.js` even
+  // asserted in a comment that this one could only fail by THROWING, which was
+  // simply untrue — the catch is right here.
+  status.ok = true;
+  status.why = null;
+  if (!ENABLED) {
+    status.ok = false;
+    status.why = "POOLS_TRADE_ENABLED=0 — the launchpad feed is switched off";
+    return [];
+  }
   const out = [];
   const seen = new Set();
   let cursor = null;
@@ -319,7 +334,14 @@ async function fetchLaunches() {
     } catch (e) {
       // A first-page failure is the whole feed being down; a later-page failure
       // still leaves the rows we already have, which are worth keeping.
-      log.debug(`[poolstrade] page ${page + 1}: ${e.message}`);
+      const why = `${e.message}${e.cause && e.cause.code ? ` (${e.cause.code})` : ""}`;
+      log.debug(`[poolstrade] page ${page + 1}: ${why}`);
+      // Only the FIRST page failing means we learned nothing. Losing page three
+      // is a shorter list, not an outage.
+      if (page === 0) {
+        status.ok = false;
+        status.why = why;
+      }
       break;
     }
     const rows = extractList(json);
@@ -344,9 +366,13 @@ async function fetchLaunches() {
 const CACHE_TTL_MS = Math.max(0, Number(env("POOLS_TRADE_CACHE_MS", "60000")) || 60000);
 let _cache = { at: 0, rows: null };
 
-async function cachedLaunches() {
-  if (_cache.rows && Date.now() - _cache.at < CACHE_TTL_MS) return _cache.rows;
-  const rows = await fetchLaunches();
+async function cachedLaunches(status = {}) {
+  if (_cache.rows && Date.now() - _cache.at < CACHE_TTL_MS) {
+    status.ok = true;
+    status.why = null;
+    return _cache.rows;
+  }
+  const rows = await fetchLaunches(status);
   // Only a non-empty result refreshes the cache: caching an empty list after a
   // transient failure would blind every caller for the whole TTL.
   if (rows.length) _cache = { at: Date.now(), rows };
@@ -361,8 +387,18 @@ async function cachedLaunches() {
  * @returns {Promise<Array<{chain: string, address: string}>>}
  */
 async function fetchDiscovery() {
-  const rows = await cachedLaunches();
-  return rows.map((r) => ({ chain: r.chain, address: r.address }));
+  return (await fetchDiscoveryX()).items;
+}
+
+/** The same list, with the reason when it is empty. See fetchLaunches. */
+async function fetchDiscoveryX() {
+  const status = {};
+  const rows = await cachedLaunches(status);
+  return {
+    items: rows.map((r) => ({ chain: r.chain, address: r.address })),
+    ok: status.ok !== false,
+    why: status.why || null,
+  };
 }
 
 /**
@@ -409,6 +445,7 @@ async function fetchTokenInfo(chain, address) {
 module.exports = {
   fetchLaunches,
   fetchDiscovery,
+  fetchDiscoveryX,
   fetchTokenInfo,
   OUR_CHAIN,
   ENABLED,

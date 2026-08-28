@@ -167,7 +167,10 @@ const faults = [];
     for (const src of sources) {
       if (src.name === "dexscreener") continue; // already reported per feed above
       if (!src.ok) bad(`${src.name} → ${src.why}`);
-      else (src.n ? ok : warn)(`${src.name} → ${src.n} candidate(s)`);
+      // A source that ANSWERED with nothing is a quiet launchpad, and says so
+      // rather than wearing the same ⚠ as one that could not be reached.
+      else if (!src.n) note(`${src.name} → answered, 0 candidate(s) (nothing new launched)`);
+      else ok(`${src.name} → ${src.n} candidate(s)`);
     }
   } catch (e) {
     bad(`merged discovery threw: ${e.message}`);

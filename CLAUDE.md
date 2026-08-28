@@ -1908,6 +1908,47 @@ written to stop it.
   one slow response. Eleven panel buttons — ▶️ Enable among them — could be made
   completely inert with 1789/1789 green.
 
+#### The first live run was GREEN — and it named the one source still collapsing
+
+`npm run listing:check` on the box, straight after the deploy:
+
+```
+2 · The scan loop
+  ✓ last scan 2 min ago: 76 candidates seen · paced — next free listing due in 1h25m
+    today: 1/5 · listed all-time 106 · never-relist ledger 509 contracts
+3 · Discovery
+  ✓ token-profiles/latest/v1 → 29 · token-boosts/top/v1 → 30 · token-boosts/latest/v1 → 29
+  ⚠ poolstrade → 0 candidate(s)
+  ✓ 76 merged — solana 53 · robinhood 17 · bsc 4 · ethereum 1 · base 1
+4 ✓ /api/internal/listings → 411      5 ✓ write path reachable and authorised (400)
+6 ⚠ 15 priced (a sample) · 0 would be listed — below its trigger ×14 · low 24h volume ×1
+Free listings can go out: the loop is alive, the market is visible, and the site takes writes.
+```
+
+The feed is publishing (`today: 1/5`, all-time 105 → 106), and **17 Robinhood
+candidates arrived through DexScreener** — the `DEXSCREENER_SLUG` flip and the
+merge-not-override fix, both paying off on the one chain that used to read
+`thin liquidity ($0)` for everything.
+
+⚠️ **But `poolstrade → 0` was the same collapse this whole section is about,
+one source over — and a comment in `discovery.js` asserted it could not be.**
+That entry wrapped a plain `fetchDiscovery()` as `ok: true` on the stated
+reasoning that *"a throw is the only failure it reports"*. Untrue:
+`fetchLaunches` catches its own page failures and returns `[]` at debug level.
+So a retired host, `POOLS_TRADE_ENABLED=0` and a genuinely quiet launchpad were
+one line on the check, and the fix's own prose was the reassuring reading
+written down. **A comment asserting a contract the module does not keep is
+worse than no comment.** `fetchDiscoveryX` reports it now — first-page failure
+only, because losing page three is a shorter list and not an outage — and the
+check prints *"answered, 0 candidate(s)"* for a quiet pad rather than the same
+⚠ a dead one gets.
+
+**And "below its trigger ×14" is the market, not a fault** — the check says so
+in as many words, and the layer that decides is `TRIGGER_JITTER_OF_FLOOR`, one
+section up. Lower 🎯 From to widen it. With `max 5/day` under a 2h–4h pace
+(≈ 6–12/day) it is the CAP that binds, which is what the panel's own arithmetic
+line prints.
+
 ⚠️ **One thing deliberately NOT changed.** The age gate fails OPEN on an unknown
 `pairCreatedAt` (`if (info.pairCreatedAt && …)`), which is the inverse of this
 file's rule that a floor is a CLAIM an unknown value cannot satisfy. Closing it
