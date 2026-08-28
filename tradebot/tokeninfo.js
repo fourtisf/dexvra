@@ -215,6 +215,20 @@ async function socials(ca, chainKey) {
 // Aggregate a rich scan. Returns null only if the token can't be priced at all.
 async function enrich(ca, chainKey) {
   const chain = core.chainOf(chainKey); if (!chain) return null;
+  /*
+   * ⚠️ THE TWO LEGS THAT DO NOT NEED THE SNAPSHOT START WITH IT, not after it.
+   *
+   * `gasSnapshot` reads the chain's fee data and `marketStats` asks the
+   * indexers; neither looks at anything `tokenSnapshot` produces. They were in
+   * the task list BELOW, so their latency was added to a snapshot that can
+   * itself take seconds — on a bonding-curve token the snapshot reads the
+   * curve's interface, which is the slowest thing this bot does.
+   *
+   * `.catch` at CREATION: the `!snap` return below abandons both, and an
+   * unhandled rejection must never come out of an enrichment.
+   */
+  const gasP = gasSnapshot(chainKey).catch(() => null);
+  const mktP = marketStats(ca, chainKey).catch(() => null);
   const snap = await core.tokenSnapshot(ca, chainKey).catch(() => null);
   if (!snap) return null;
   const info = { ...snap, chainKey, native: chain.native };
@@ -275,8 +289,9 @@ async function enrich(ca, chainKey) {
     info.liquidityNative = p && p.wethBal != null ? Number(ethers.formatEther(p.wethBal)) * 2 : null;
   }).catch(() => { info.liquidityNative = null; }));
   if (chain.curve) tasks.push(launchpadApi(ca, chainKey).then((a) => { info.api = a; }));
-  tasks.push(marketStats(ca, chainKey).then((m) => { if (m) info.market = m; }));
-  tasks.push(gasSnapshot(chainKey).then((g) => { info.gas = g; }));
+  // Both were STARTED above, alongside the snapshot — collected here.
+  tasks.push(mktP.then((m) => { if (m) info.market = m; }));
+  tasks.push(gasP.then((g) => { info.gas = g; }));
   if (goplus.supported(chainKey)) tasks.push(goplus.tokenSecurity(chainKey, ca).then((s) => { info.security = s; }).catch(() => {}));
   // Each task swallows its own errors, so Promise.all never rejects; the timeout
   // caps total latency and any unfinished task simply leaves its field undefined.

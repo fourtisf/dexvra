@@ -4105,6 +4105,47 @@ that had now been reported four times.
   as no value" — it cost four rounds. `curveWhy` rides on the snapshot and
   `unroutableCard` prints one short line, only when a reason was recorded.
 
+### "sudah berhasil tpi bot respon lama sekali" — two RPC waves that never needed to be serial
+
+The curve buy landed (a Pons bonding-curve token rendering the full card with
+Buy 0.01 / 0.05 / 0.1, Limit buy and DCA), and the next thing the operator
+said was that the card takes too long to arrive. Measured against the code
+rather than guessed: `tokenCard` awaited `tokeninfo.enrich` — which on a curve
+token reads the curve's interface, the slowest read this bot makes — and only
+THEN read a `totalSupply` plus two balances per wallet, five wallets deep. Two
+waves that know nothing about each other, in series, on the one screen a user
+stares at after pasting an address.
+
+- **The balances START before the scan is awaited and are COLLECTED after it.**
+  They need one thing, the token's decimals, and `tokenMeta` is already
+  fetching it — the same lesson the file's own header states about `tokenMeta`
+  itself, one wave further down. ⚠️ `.catch` at CREATION, because every early
+  return (no price, an unroutable card) leaves the promise in flight and an
+  unhandled rejection for a balance read would take the process down.
+- **`gasSnapshot` and `marketStats` moved up beside the snapshot** in `enrich`
+  for the same reason: neither reads anything the snapshot produces, and both
+  sat in the task list behind it.
+- **`[ui] card … total=Xms enrich=Yms rest=Zms` past `CARD_SLOW_MS`** (1.2s).
+  "The paste is slow" and "the wallet reads are slow" send an operator to
+  different places — a scan timeout versus the RPC — and the existing
+  `[ui] slow cb:` line reports only the whole handler. Silent under the
+  threshold: a fast card must not write a line per paste into a log the snipe
+  loop is already filling.
+- ⚠️ **The gas guard was pinned to a LINE, not a property**, so moving the read
+  earlier failed a test about gas being real. It asserts the property now — the
+  read is made, it lands on `info.gas`, it is collected in the bounded task
+  list — and the new overlap guard is mutation-tested: putting the serial
+  `await core.tokenAcrossWallets(...)` back fails it.
+
+⚠️ **What this does NOT fix: the RPC itself.** `SOLANA_RPC`-style paid
+endpoints are the standing lever on every read here (see "The two biggest
+levers are CONFIG, not code"), and on Robinhood the public node is what the
+curve walk, the balances and the meta reads all share.
+
+```bash
+pm2 logs dexvra-tradebot --nostream --lines 400 | grep -F '[ui] card'
+```
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

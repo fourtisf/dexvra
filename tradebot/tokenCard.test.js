@@ -161,6 +161,31 @@ test("the thin-pool warning survived the rewrite", () => {
   assert.match(plain(render(thin)), /Thin tradeable pool/);
 });
 
+test("⚠️ the card's two RPC waves run CONCURRENTLY — the balances do not wait for the scan", () => {
+  /*
+   * "bot respon dari kirim pesan lama sekali" (2026-08-28). The card awaited
+   * `tokeninfo.enrich` — which on a bonding-curve token reads the curve's
+   * interface, the slowest thing this bot does — and only THEN read a
+   * totalSupply plus two balances per wallet, five wallets deep. Two
+   * independent waves in series, on the one screen a user stares at after
+   * pasting an address. The header already states this lesson about
+   * `tokenMeta`; the balances are the same shape one wave further down.
+   *
+   * A source scan is the honest guard here: the win is that `acrossP` is
+   * CREATED before the enrich await and COLLECTED after it, and a timing test
+   * against stubbed RPC would measure its own fakes.
+   */
+  const src = fs.readFileSync(path.join(__dirname, "telegram.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");   // comments quote the defect they guard
+  const start = src.indexOf("const acrossP =");
+  const awaitEnrich = src.indexOf("await tokeninfo.enrich(");
+  const collect = src.indexOf("await acrossP");
+  assert.ok(start > 0 && awaitEnrich > 0 && collect > 0, "the card's balance wave is not where this expects it");
+  assert.ok(start < awaitEnrich, "the balances must START before the scan is awaited, or they are serial again");
+  assert.ok(collect > awaitEnrich, "and be COLLECTED after it, or the overlap buys nothing");
+  assert.match(src, /const acrossP[\s\S]{0,320}?\.catch\(/, "with a catch at creation — every early return leaves it in flight");
+});
+
 test("gas is read from the chain, and the swap cost is labelled an estimate", () => {
   const src = fs.readFileSync(path.join(__dirname, "tokeninfo.js"), "utf8");
   assert.match(src, /async function gasSnapshot\(chainKey\)/);
@@ -168,7 +193,15 @@ test("gas is read from the chain, and the swap cost is labelled an estimate", ()
   assert.match(src, /const SWAP_GAS_UNITS = 300000n;/, "the units are representative — hence the ≈ on the card");
   assert.match(src, /if \(core\.chains\.isSvm\(chainKey\)\) return null;/, "Solana fees are not gwei");
   // Best-effort like every other leg: a slow RPC must not hold up the card.
-  assert.match(src, /tasks\.push\(gasSnapshot\(chainKey\)\.then\(\(g\) => \{ info\.gas = g; \}\)\);/);
+  // ⚠️ THE PROPERTY, NOT THE LINE. This used to match the exact `tasks.push(
+  // gasSnapshot(chainKey)...)` spelling, so starting the read EARLIER — beside
+  // the snapshot instead of behind it, which is a straight latency win on the
+  // screen the product is judged by — failed a test about gas being real. What
+  // matters is that it is read from the chain, that it lands on `info.gas`, and
+  // that it is awaited inside the bounded task list.
+  assert.match(src, /gasSnapshot\(chainKey\)/, "the read is made");
+  assert.match(src, /info\.gas = g;/, "and it lands on the card's field");
+  assert.match(src, /tasks\.push\(gasP\.then/, "collected in the bounded task list, so a slow RPC cannot hold the card");
 });
 
 // ---------------------------------------------------------------------------

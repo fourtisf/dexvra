@@ -75,6 +75,8 @@ const _priceCache = new Map();
  */
 const _cardReuse = new Map();
 const CARD_REUSE_MS = Math.max(0, Number(process.env.CARD_REUSE_MS || 20000));
+// Past this, a card render says where its time went. `0` silences it.
+const CARD_SLOW_MS = Math.max(0, Number(process.env.CARD_SLOW_MS || 1200));
 /**
  * Last tap wins.
  *
@@ -1315,7 +1317,28 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   const rHit = (opts && opts.reuse && CARD_REUSE_MS > 0) ? _cardReuse.get(rKey) : null;
   const reuse = (rHit && Date.now() - rHit.at < CARD_REUSE_MS) ? rHit : null;
   const metaP = reuse ? Promise.resolve(reuse.meta) : core.tokenMeta(ca, chainKey).catch(() => null);
+  /*
+   * ⚠️ THE BALANCES START NOW, NOT AFTER `enrich`.
+   *
+   * They need one thing — the token's decimals — and `tokenMeta` above is
+   * already fetching it. Awaiting them AFTER the scan put a SECOND full wave
+   * of RPC (a totalSupply plus two balance reads per wallet, five wallets
+   * here) in series behind a wave that takes seconds, on the one screen a user
+   * stares at after pasting an address. Same lesson the header already states
+   * about `tokenMeta` itself, one wave further down; the two do not know about
+   * each other, and the only reason they were serial is the order they were
+   * written in.
+   *
+   * `.catch` at CREATION, not at the await: every early return below (no
+   * price, an unroutable card) leaves this promise in flight, and an
+   * unhandled rejection would take the process down for a balance read.
+   */
+  const acrossP = reuse
+    ? Promise.resolve(reuse.across)
+    : metaP.then((m) => core.tokenAcrossWallets(chatId, ca, chainKey, (m || {}).decimals)).catch(() => null);
+  const tCard = Date.now();
   const info = reuse ? reuse.info : await tokeninfo.enrich(ca, chainKey).catch(() => null);
+  const tEnrich = Date.now();
   if (!info) {
     // "Switch chain" was the ONLY thing this card ever said, and on a curve chain it is
     // usually the wrong advice: the token is right here, but the launchpad factory could
@@ -1368,7 +1391,24 @@ async function tokenCard(chatId, ca, chainKey, walletId, opts) {
   // card to the wallet that actually HOLDS the token so Buy/Sell act on the right one —
   // this is what fixes "Sell failed: token balance is 0" when the bag sits on another
   // wallet than the active one. Explicitly-opened cards keep their wallet.
-  const across = reuse ? reuse.across : await core.tokenAcrossWallets(chatId, ca, chainKey, meta.decimals);
+  // Started before `enrich` (see acrossP) — this is where it is collected, and
+  // on a warm RPC it is usually already resolved. A read that failed falls back
+  // to the ordinary path rather than rendering an empty wallet list.
+  const across = (await acrossP) || await core.tokenAcrossWallets(chatId, ca, chainKey, meta.decimals);
+  /*
+   * WHERE THE TIME WENT, on the screen the whole product is judged by.
+   *
+   * "respon sangat lambat" is measured, not argued — the rule `[ui] slow cb:`
+   * already states one level up. That line reports the WHOLE handler; this one
+   * splits the card itself, because "the paste is slow" and "the wallet reads
+   * are slow" send an operator to different places (a scan timeout versus the
+   * RPC). Only printed past a threshold: a fast card must not write a line per
+   * paste into a log the snipe loop is already filling.
+   */
+  const tAll = Date.now() - tCard;
+  if (tAll >= CARD_SLOW_MS) {
+    console.log(`[ui] card ${String(ca).slice(0, 10)}… ${chainKey} total=${tAll}ms enrich=${tEnrich - tCard}ms rest=${Date.now() - tEnrich}ms wallets=${(across && across.rows ? across.rows.length : 0)}${reuse ? ' (reused)' : ''}`);
+  }
   // Only a LIVE render seeds the cache, so reuse can never chain off reuse and
   // hold a price past its window.
   if (!reuse && CARD_REUSE_MS > 0) {
