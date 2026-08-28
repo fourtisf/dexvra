@@ -49,6 +49,9 @@ const curveTrade = require('./curveTrade');
 // real 32-byte transaction hash, exactly so an indexer cannot hand it junk.
 const H1 = '0x' + '11'.repeat(32);
 const H2 = '0x' + '22'.repeat(32);
+// The pad's curve bytecode — shared across its launches, which is what the
+// learned-shape transfer verifies before it applies.
+const PAD_CODE = '0x60806040cafebabe' + 'cd'.repeat(64);
 
 /** A chain where the token's ONLY market is its curve: no V2 pair, no V3 pool,
  *  two real buys through the curve — none when `quiet`, and none VISIBLE TO an
@@ -88,6 +91,7 @@ function stubChain(token, { quiet = false, capped = false, topicLogs = false } =
     },
     async getTransaction(h) { return txs[h] || null; },
     async getTransactionReceipt(h) { return receipts[h] || null; },
+    async getCode(a) { return String(a).toLowerCase() === CURVE.toLowerCase() ? PAD_CODE : '0x'; },
     async call(tx) {
       const sel = String(tx.data || '').slice(0, 10);
       if (sel === '0x70a08231') return '0x' + num(0n);                        // balanceOf
@@ -143,6 +147,7 @@ function withStubs(chain, { indexed = true, gtTrades = null } = {}) {
   };
   core._clearReadCaches();
   curveTrade._reset();
+  curveTrade._resetShapes();
   return () => {
     core._deps.providerFor = realProv;
     core.v4.price = realPrice;
@@ -152,6 +157,7 @@ function withStubs(chain, { indexed = true, gtTrades = null } = {}) {
     global.fetch = realFetch;
     core._clearReadCaches();
     curveTrade._reset();
+    curveTrade._resetShapes();
   };
 }
 
@@ -211,6 +217,43 @@ test('⚠️ …and with NO GeckoTerminal at all, the CHAIN itself seeds: the cu
     const snap = await core.tokenSnapshot(token, 'base');
     assert.ok(snap, 'the token snapshots');
     assert.equal(snap.routable, true, 'the chain-native seed must light the Buy button without GT');
+    assert.equal(snap.dexVenue, 'curve');
+    assert.equal(String(snap.curve).toLowerCase(), CURVE);
+  } finally { restore(); }
+});
+
+test('⚠️ "ini token kan belum bonding" — a FRESH launch with zero history gets a Buy button off a taught sibling', async () => {
+  // The reported state, end to end: a token minutes old, 0% to graduation,
+  // nothing to decode anywhere — and the pad was already taught by any traded
+  // sibling. Byte-identity carries the interface over; the card lights up for
+  // the FIRST buyer, which is what a launch snipe is.
+  const fresh = '0x1f94e478675d37f15704a48756b5fdf969e39845';
+  const sib = '0x6666666666666666666666666666666666666666';
+  const chain = stubChain(fresh, { quiet: true });           // the fresh token: nothing, anywhere
+  const restore = withStubs(chain, { indexed: true, gtTrades: [] });
+  try {
+    // Any traded sibling teaches the pad — the same discovery the sibling's own
+    // card/buy already runs.
+    const sibLogs = [
+      { transactionHash: H1, blockNumber: 10, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(1000n * E18) },
+      { transactionHash: H2, blockNumber: 11, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(2000n * E18) },
+    ];
+    const sibTxs = {
+      [H1]: { to: CURVE, from: BUYER, value: E17, data: '0xaabbccdd' + addrWord(sib) + addrWord(BUYER) + num(1000n * E18) },
+      [H2]: { to: CURVE, from: BUYER, value: 2n * E17, data: '0xaabbccdd' + addrWord(sib) + addrWord(BUYER) + num(2000n * E18) },
+    };
+    const sibChain = {
+      async getBlockNumber() { return 5000; },
+      async getLogs(f) { return String(f && f.address || '').toLowerCase() === sib ? sibLogs : []; },
+      async getTransaction(h) { return sibTxs[h] || null; },
+      async getCode(a) { return String(a).toLowerCase() === CURVE.toLowerCase() ? PAD_CODE : '0x'; },
+    };
+    const taught = await curveTrade.ifaceFor(sibChain, 'base', sib);
+    assert.equal(taught.ok, true, taught.why);
+
+    const snap = await core.tokenSnapshot(fresh, 'base');
+    assert.ok(snap, 'the fresh token snapshots');
+    assert.equal(snap.routable, true, 'the taught shape must light the Buy button for the FIRST buyer');
     assert.equal(snap.dexVenue, 'curve');
     assert.equal(String(snap.curve).toLowerCase(), CURVE);
   } finally { restore(); }

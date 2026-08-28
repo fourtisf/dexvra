@@ -23,8 +23,92 @@
  * cannot be traded", because the first is ours and the second is not ours to
  * assert. `why` says which, always.
  */
-const { decodeCurveIface, describeIface, TRANSFER_TOPIC } = require('./curveIface.js');
-const { buildCurveCall, simulate, sane, _big: big } = require('./curveRoute.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const { ethers } = require('ethers');
+const { decodeCurveIface, describeIface, TRANSFER_TOPIC, classifySlots } = require('./curveIface.js');
+const { buildCurveCall, buildFromShape, simulate, sane, _big: big } = require('./curveRoute.js');
+
+/*
+ * ── THE LEARNED-SHAPE REGISTRY ──────────────────────────────────────────────
+ *
+ * A launchpad deploys the SAME curve for every token it launches, and the
+ * observed route needs two trades on the token itself — so the FIRST buyer of
+ * a fresh launch could never buy, which is the whole point of a launch snipe:
+ * "ini token kan belum bonding", a fresh Pons launch at 0% with one dust buy,
+ * refused for ever by a route that only reads history.
+ *
+ * So every successful discovery RECORDS the pad's buy shape, keyed by the
+ * keccak of the curve's deployed BYTECODE — and a fresh token whose curve
+ * carries byte-identical code (immutables live in the code, so identity means
+ * identity) gets the shape transferred. What keeps that from being a guess is
+ * in buildFromShape's header: code identity carries the meaning, simulate
+ * answers the storage question, and OUR strong-price floor rides on-chain.
+ *
+ * Persisted to DATA_DIR/curveShapes.json so one traded sibling — ever —
+ * teaches every later launch on that pad, across restarts. Best-effort: a
+ * box that cannot write still learns for the life of the process.
+ */
+const SHAPES_FILE = () => path.join(process.env.DATA_DIR || '.', 'curveShapes.json');
+let _shapes = null;   // `${chainKey}:${keccak(code)}` → { curve, token, at, buy: {selector, native, slots} }
+function _loadShapes() {
+  if (_shapes) return _shapes;
+  _shapes = {};
+  try {
+    const j = JSON.parse(fs.readFileSync(SHAPES_FILE(), 'utf8'));
+    if (j && typeof j === 'object' && !Array.isArray(j)) _shapes = j;
+  } catch (_) { /* first run, or unreadable — in-memory only */ }
+  return _shapes;
+}
+function _saveShapes() { try { fs.writeFileSync(SHAPES_FILE(), JSON.stringify(_shapes)); } catch (_) {} }
+
+/** A leg reduced to what a transfer may carry: selector + per-slot roles.
+ *  null when the leg is not cleanly explainable — an unexplained slot must not
+ *  cross tokens, and neither may a quote-token or over-wide call. BigInts
+ *  (ratioE18) are deliberately dropped: they are the SIBLING's price. */
+function _legShape(leg, token) {
+  if (!leg || leg.wide || !leg.native || leg.quote) return null;
+  const cls = classifySlots(leg, token);
+  if (!cls.ok) return null;
+  const slots = [];
+  for (const s of cls.slots) {
+    if (s.role === 'token' || s.role === 'sender') slots.push({ i: s.i, role: s.role });
+    else if (s.role === 'scales') slots.push({ i: s.i, role: 'scales' });
+    else if (s.role === 'constant') slots.push({ i: s.i, role: 'constant', value: s.value });
+    else return null;
+  }
+  if (slots.filter((s) => s.role === 'scales').length > 1) return null;
+  return { selector: leg.selector, native: true, slots };
+}
+
+async function _recordShape(chain, chainKey, token, iface) {
+  try {
+    if (!iface || !iface.ok || iface.transferred || !iface.curve) return;
+    if (typeof chain.getCode !== 'function') return;
+    const shape = _legShape(iface.buy, token);
+    if (!shape) return;
+    const code = await chain.getCode(iface.curve);
+    if (!code || code === '0x') return;
+    const reg = _loadShapes();
+    reg[`${chainKey}:${ethers.keccak256(code)}`] = { curve: iface.curve, token: String(token).toLowerCase(), at: Date.now(), buy: shape };
+    _saveShapes();
+  } catch (_) { /* learning is free — failing to learn must cost nothing */ }
+}
+
+/** The learned shape whose curve bytecode matches `pool`'s, or null. The
+ *  getCode comparison IS the safety argument — see the registry header. */
+async function _shapeFor(chain, chainKey, pool) {
+  try {
+    if (typeof chain.getCode !== 'function' || !/^0x[a-fA-F0-9]{40}$/.test(String(pool || ''))) return null;
+    const code = await chain.getCode(pool);
+    if (!code || code === '0x') return null;
+    const hit = _loadShapes()[`${chainKey}:${ethers.keccak256(code)}`];
+    return hit && hit.buy ? hit : null;
+  } catch (_) { return null; }
+}
+
+/** Test seam: forget every learned shape (memory AND file). */
+function _resetShapes() { _shapes = {}; _saveShapes(); }
 
 /*
  * ⚠️ THE INDEXER'S TRADE LIST SEEDS DISCOVERY, because the window ladder can
@@ -175,6 +259,32 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
   // seed is a DIFFERENT transport, so it is still worth one try.
   if (res && !res.ok) { const s = await trySeed(); if (s) res = s; }
 
+  /*
+   * A FRESH LAUNCH HAS NO HISTORY TO READ — and that is the one refusal a
+   * learned shape may answer. Only the no-usable-history family transfers; a
+   * transport failure says nothing about the token and an unexplainable call
+   * was refused for a reason that byte-identity does not cure.
+   */
+  if (res && !res.ok && typeof opts.poolHint === 'function'
+      && /no trades found|no decodable calls|neither a buy nor a sell/.test(res.why || '')) {
+    try {
+      const pool = await opts.poolHint();
+      const hit = await _shapeFor(chain, chainKey, pool);
+      if (hit) {
+        res = {
+          ok: true, transferred: true, why: null, curve: String(pool).toLowerCase(),
+          learnedFrom: { curve: hit.curve, token: hit.token },
+          buy: { selector: hit.buy.selector, native: true, quote: null, wide: false, seen: 0, args: [], samples: [], shape: hit.buy },
+          sell: null, samples: 0,
+        };
+      }
+    } catch (_) { /* no transfer — the honest refusal stands */ }
+  }
+
+  // Every real discovery teaches the pad's shape — one traded sibling, ever,
+  // is what makes the NEXT fresh launch on this pad buyable by its first buyer.
+  if (res.ok && !res.transferred) await _recordShape(chain, chainKey, ca, res);
+
   // A transport failure is never remembered — the `pumpfunNewX` rule, on the
   // path that spends money.
   if (res.ok || !/could not read/.test(res.why || '')) _cache.set(key(chainKey, ca), { res, ts: Date.now() });
@@ -229,12 +339,35 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, quoteRaw, sli
     }
   }
 
-  const built = buildCurveCall(iface.buy, {
-    token: ca, wallet, slippageBps, minOutRaw,
-    valueWei: iface.buy.native ? spendWei : 0n,
-    sizeRaw: iface.buy.native ? 0n : spendQuote,
-  });
-  if (!built.ok) return { ok: false, why: built.why, stage: 'build', needsMoreTrades: built.needsMoreTrades };
+  let built;
+  if (iface.buy.shape) {
+    // The transferred path — a fresh launch with no history of its own, on a
+    // curve whose bytecode matches a learned sibling. buildFromShape's header
+    // carries the safety argument; the strong-floor requirement is inside it.
+    built = buildFromShape(iface.buy.shape, { token: ca, wallet, slippageBps, minOutRaw, valueWei: spendWei });
+    if (!built.ok) return { ok: false, why: built.why, stage: 'build' };
+  } else {
+    built = buildCurveCall(iface.buy, {
+      token: ca, wallet, slippageBps, minOutRaw,
+      valueWei: iface.buy.native ? spendWei : 0n,
+      sizeRaw: iface.buy.native ? 0n : spendQuote,
+    });
+    if (!built.ok && built.needsMoreTrades && iface.buy.native) {
+      /*
+       * ⚠️ ONE TRADE IS NOT TWO — the classify-short case. The token HAS a
+       * history, just not enough of one to explain the arguments; the learned
+       * shape answers that exactly the way it answers zero history, under the
+       * same code-identity proof. The selector must match what was observed:
+       * a shape for a different function is a shape for a different call.
+       */
+      const hit = await _shapeFor(chain, chainKey, iface.curve);
+      if (hit && hit.buy.selector === iface.buy.selector) {
+        const alt = buildFromShape(hit.buy, { token: ca, wallet, slippageBps, minOutRaw, valueWei: spendWei });
+        if (alt.ok) built = alt;
+      }
+    }
+    if (!built.ok) return { ok: false, why: built.why, stage: 'build', needsMoreTrades: built.needsMoreTrades };
+  }
 
   const call = { to: iface.curve, data: built.data, value: iface.buy.native ? spendWei : 0n };
   const sim = await simulate(chain, call, wallet);
@@ -243,10 +376,18 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, quoteRaw, sli
 
   // NOT `built.expected ?? expectedTokens` — that compared the indexer's own
   // number against itself and passed everything.
-  const check = sane(built.expected, expectedTokens, tolPct);
-  if (!check.ok) return { ok: false, why: check.why, stage: 'sane', call };
+  //
+  // ⚠️ A TRANSFERRED build carries no expectation of its own to feed sane() —
+  // nothing on THIS token was ever observed. What stands in for it: the shape
+  // was sane()-checkable when it was learned, byte-identity carries the
+  // meaning over, and the on-chain floor is OURS from a strong price
+  // (buildFromShape refuses to build without one).
+  if (!built.transferred) {
+    const check = sane(built.expected, expectedTokens, tolPct);
+    if (!check.ok) return { ok: false, why: check.why, stage: 'sane', call };
+  }
 
-  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, quoteToken: iface.buy.native ? null : iface.buy.quote, boundedByIndependentPrice: built.boundedByIndependentPrice, describe: describeIface(iface) };
+  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, quoteToken: iface.buy.native ? null : iface.buy.quote, boundedByIndependentPrice: built.boundedByIndependentPrice, transferred: !!built.transferred, describe: describeIface(iface) };
 }
 
 /**
@@ -304,4 +445,4 @@ async function prepareSell(chain, chainKey, ca, { wallet, amountRaw, slippageBps
   return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, quoteToken: (iface.sell && iface.sell.quote) || null, boundedByIndependentPrice: built.boundedByIndependentPrice };
 }
 
-module.exports = { ifaceFor, prepareBuy, prepareSell, cached, forget, _reset, _cache };
+module.exports = { ifaceFor, prepareBuy, prepareSell, cached, forget, _reset, _cache, _resetShapes, _shapeFor, _legShape };

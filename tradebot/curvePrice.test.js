@@ -114,7 +114,7 @@ test('⚠️ "could not ask" and "nothing there" are different refusals', async 
 
   const unknown = await cp.expectedTokensFor('robinhood', CA, E18, deps());
   assert.equal(unknown.ok, false);
-  assert.match(unknown.why, /no launchpad knows this token/);
+  assert.match(unknown.why, /no launchpad or indexer publishes a cap/);
   assert.notEqual(unreachable.why, unknown.why);
 });
 

@@ -137,6 +137,29 @@ async function priceWeiPerToken(chainKey, ca, deps = {}, opts = {}) {
     }
   }
 
+  // ── 2b · the INDEXER's cap over the chain's own supply ────────────────────
+  //
+  // DexScreener indexes several pads' curves as ordinary pairs and publishes a
+  // market cap for them — and on the operator's box, where the pad's HTTP host
+  // is unreachable, this is frequently the ONLY strong source there is: a
+  // fresh launch has no fills for tier 3 to read either, so without this the
+  // route refused exactly the tokens it exists for. Same independence class as
+  // tiers 1–2: a third party's number over an eth_call, touching neither the
+  // curve contract nor the argument slots under test.
+  if (usdPerTok == null && deps.indexerMcapUsd && totalSupply) {
+    const mc = await deps.indexerMcapUsd(ca, chainKey).catch(() => null);
+    if (Number(mc) > 0) {
+      const ts = await totalSupply(ca, chainKey).catch(() => null);
+      if (ts && ts > 0n) {
+        const supply = Number(ts) / Number(unit);
+        if (supply > 0) {
+          usdPerTok = Number(mc) / supply;
+          source = 'indexer market cap ÷ on-chain supply';
+        }
+      }
+    }
+  }
+
   if (usdPerTok > 0 && nat > 0) {
     const weiPerTok = BigInt(Math.round((usdPerTok / nat) * 1e18));
     if (weiPerTok > 0n) return { ok: true, weiPerTok, unit, source, tolPct: 35, weak: false };
@@ -170,7 +193,7 @@ async function priceWeiPerToken(chainKey, ca, deps = {}, opts = {}) {
     // a statement about the token.
     return { ok: false, why: `no independent price to check the curve against — the launchpad could not be reached from this server (${lp.why}). That is our side, not the token's.` };
   }
-  return { ok: false, why: 'no independent price to check the curve against — no launchpad knows this token, and its own trades show no fill rate. Refusing to price a curve against itself.' };
+  return { ok: false, why: 'no independent price to check the curve against — no launchpad or indexer publishes a cap for it, and its own trades show no fill rate. Refusing to price a curve against itself.' };
 }
 
 /**

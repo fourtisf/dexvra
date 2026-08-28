@@ -280,4 +280,87 @@ function sane(expectedTokens, indexerTokens, tolPct = 35) {
   return { ok: true, offPct, why: null };
 }
 
-module.exports = { buildCurveCall, simulate, sane, SIZE_BAND, _addrWord: addrWord, _HEX: HEX, _big: big };
+/*
+ * BUILD FROM A TRANSFERRED SHAPE — the same launchpad's interface, learned on a
+ * SIBLING token and applied to a fresh one.
+ *
+ * WHY THIS MAY EXIST AT ALL. The observed route needs two trades of different
+ * sizes on the token itself, so the FIRST buyer of a fresh launch can never
+ * use it — and the first buy is the entire point of a launch snipe. What makes
+ * a transfer sound rather than a guess is BYTE-IDENTITY: the caller has proved
+ * (getCode) that this token's curve carries exactly the bytecode of the curve
+ * the shape was learned on. Identical deployed code — immutables included, they
+ * live in the code — executes identically; only storage differs, and the
+ * storage question ("is this really MY token's curve?") is answered by
+ * simulate(), because a curve bound to a different token reverts our call.
+ *
+ * ⚠️ WHAT REPLACES `sane()` HERE, because there is nothing to feed it: the
+ * shape's meaning was sane()-checkable when it was LEARNED (real samples), the
+ * bytecode identity carries that meaning over, and the on-chain floor is OURS —
+ * `minOutRaw` from a STRONG independent price is REQUIRED, never optional and
+ * never a weak tier. A wrong slot reading puts a huge floor into a slot that
+ * cannot hold one, and simulate/the chain refuses; the bounded cost is gas.
+ */
+function buildFromShape(shapeLeg, opts) {
+  const o = opts || {};
+  const { token, wallet, slippageBps = 500 } = o;
+  const valueWei = big(o.valueWei) ?? 0n;
+  const minOutRaw = big(o.minOutRaw);
+  const slipBps = Number(slippageBps);
+  if (!shapeLeg || !shapeLeg.selector || !Array.isArray(shapeLeg.slots)) return { ok: false, why: 'no transferred shape to build from' };
+  if (!Number.isFinite(slipBps)) return { ok: false, why: 'slippage is not a number' };
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(token || ''))) return { ok: false, why: 'not an EVM token address' };
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(wallet || ''))) return { ok: false, why: 'no wallet to build for' };
+  // Native-paid legs only: a quote-token pad needs the acquire/approve legs,
+  // and stretching the transfer that far multiplies what can be wrong.
+  if (!shapeLeg.native) return { ok: false, why: "this pad's buy is not paid in the native coin — a transferred shape covers native-paid pads only" };
+
+  const scaled = shapeLeg.slots.filter((s) => s.role === 'scales');
+  if (scaled.length > 1) return { ok: false, why: 'the learned shape has two amount-tracking slots — only one can be a minimum-out, and picking is not allowed' };
+  // A shape with no minimum-out slot leaves nothing on-chain protecting the
+  // fill, and sane() is not run on a transfer — with both gone the trade would
+  // be gated by gas alone, which is no gate.
+  if (!scaled.length) return { ok: false, why: 'the learned shape carries no minimum-out slot, so nothing on-chain would protect the fill — refusing' };
+  // ⚠️ THE FLOOR IS MANDATORY AND MUST BE OURS. Without our own strong price
+  // there is no protection left on a shape this token's own trades never
+  // checked — refusing here is what keeps the transfer honest.
+  if (!(minOutRaw > 0n)) {
+    return { ok: false, why: 'a transferred shape may only be signed with an independent minimum-out from a strong price — none was available' };
+  }
+
+  const words = [];
+  for (const s of shapeLeg.slots) {
+    if (s.role === 'token') { words.push(addrWord(token)); continue; }
+    if (s.role === 'sender') { words.push(addrWord(wallet)); continue; }
+    if (s.role === 'scales') {
+      const bounded = (minOutRaw * BigInt(10000 - Math.max(0, Math.min(9000, Math.round(slipBps))))) / 10000n;
+      words.push(HEX(bounded > 0n ? bounded : 1n));
+      continue;
+    }
+    if (s.role === 'constant') {
+      const w = String(s.value || '');
+      // The sibling's classify already refused a stranger's constant address;
+      // re-checked here because the shape crossed a persistence boundary and a
+      // stored file is not a proof.
+      if (/^0{24}[0-9a-fA-F]{40}$/.test(w) && !/^0+$/.test(w) && !/^0{8}/.test(w.slice(24))) {
+        return { ok: false, why: 'the learned shape carries a constant address that is neither the token nor the trader — refusing to replay it' };
+      }
+      if (!/^[0-9a-fA-F]{64}$/.test(w)) return { ok: false, why: 'the learned shape holds a malformed constant' };
+      words.push(w.toLowerCase());
+      continue;
+    }
+    return { ok: false, why: `the learned shape cannot explain argument ${s.i} (${s.role}) — refusing to build around it` };
+  }
+
+  return {
+    ok: true, why: null,
+    data: shapeLeg.selector + words.join(''),
+    value: valueWei,
+    slots: shapeLeg.slots,
+    expected: null,                    // nothing observed on THIS token — see the header
+    boundedByIndependentPrice: scaled.length > 0,
+    transferred: true,
+  };
+}
+
+module.exports = { buildCurveCall, buildFromShape, simulate, sane, SIZE_BAND, _addrWord: addrWord, _HEX: HEX, _big: big };

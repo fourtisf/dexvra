@@ -2240,7 +2240,11 @@ const _curveGas = (est) => {
  */
 const CURVE_SEED_MAX = 12;
 const CURVE_SEED_SPAN = Math.max(10_000, Number(process.env.CURVE_SEED_SPAN || 400_000));
-async function _curveTradeHashes(chainKey, ca) {
+
+/** The pool/curve address the INDEXER names for this token — DS pair first
+ *  (for an indexed curve token the pair IS the curve contract), GT's deepest
+ *  pool second. null when nobody names one. */
+async function _curvePoolOf(chainKey, ca) {
   try {
     let pool = null;
     const slug = DS_CHAIN_KEY[chainKey];
@@ -2259,7 +2263,15 @@ async function _curveTradeHashes(chainKey, ca) {
         if (best && best.attributes && best.attributes.address) pool = best.attributes.address;
       }
     }
-    if (!pool || !/^0x[a-fA-F0-9]{40}$/.test(String(pool))) return [];
+    return pool && /^0x[a-fA-F0-9]{40}$/.test(String(pool)) ? String(pool) : null;
+  } catch (_) { return null; }
+}
+
+async function _curveTradeHashes(chainKey, ca) {
+  try {
+    const pool = await _curvePoolOf(chainKey, ca);
+    const net = GT_NET[chainKey];
+    if (!pool) return [];
     const out = [];
     const push = (h) => { if (typeof h === 'string' && /^0x[0-9a-fA-F]{64}$/.test(h) && !out.includes(h) && out.length < CURVE_SEED_MAX) out.push(h); };
 
@@ -2298,6 +2310,13 @@ const _curveDeps = (iface) => ({
   record: (chainKey, ca, opts) => launchpads.record(chainKey, ca, opts),
   nativeUsd: (chainKey) => ethUsd(chainKey),
   decimals: (ca, chainKey) => tokenDecimalsOrNull(ca, chainKey),
+  // Tier 2b's source — the indexer's own cap for an indexed curve token. On a
+  // box where the pad's HTTP host is unreachable and a fresh launch has no
+  // fills, this is the only strong price there is.
+  indexerMcapUsd: async (ca, chainKey) => {
+    const m = await marketOf(ca, chainKey).catch(() => null);
+    return m && Number(m.mcapUsd) > 0 ? Number(m.mcapUsd) : null;
+  },
   totalSupply: (ca, chainKey) => tokenSupplyRaw(ca, chainKey),
   iface,
 });
@@ -2401,7 +2420,12 @@ async function _curveIface(chainKey, ca) {
   const bound = new Promise((res) => { timer = setTimeout(() => res({ ok: false, why: `reading this curve's interface took longer than ${Math.round(CURVE_DISCOVER_MS / 1000)}s — nothing was sent` }), CURVE_DISCOVER_MS); });
   try {
     return await Promise.race([
-      curveTrade.ifaceFor(providerFor(chainKey), chainKey, ca, { tradeHashes: () => _curveTradeHashes(chainKey, ca) }),
+      curveTrade.ifaceFor(providerFor(chainKey), chainKey, ca, {
+        tradeHashes: () => _curveTradeHashes(chainKey, ca),
+        // The learned-shape transfer's anchor: the curve address the indexer
+        // names, whose bytecode is then matched against a taught sibling's.
+        poolHint: () => _curvePoolOf(chainKey, ca),
+      }),
       bound,
     ]);
   } catch (e) {

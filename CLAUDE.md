@@ -3980,6 +3980,58 @@ pool is a property of the box's egress — `npm run abi:check -- <token> --curve
 on the box is still the measurement when a card stays unroutable, and the
 `[curve]` log line now names the stage that refused.
 
+#### "ini token kan belum bonding" — the FIRST buyer could never buy, and that is the launch snipe
+
+The next report was a token the operator had JUST launched: 0% to graduation,
+0.002069 ETH raised, no trades. The observed route needs two trades of
+different sizes on the token itself, so the first buyer of a fresh launch was
+structurally refused — and the first buy is the entire point of sniping a
+launch.
+
+**The LEARNED-SHAPE TRANSFER is the answer, and byte-identity is its licence.**
+A launchpad deploys the same curve for every token it launches. Every
+successful discovery now RECORDS the pad's buy shape (selector + per-slot
+roles, constants included; the sibling's ratio deliberately dropped — it is the
+sibling's price), keyed by `keccak256(getCode(curve))` and persisted to
+`DATA_DIR/curveShapes.json`. A fresh token whose indexer-named pool carries
+**byte-identical code** gets the shape transferred: identical deployed code —
+immutables live in the code — executes identically, only storage differs, and
+the storage question ("is this really MY token's curve?") is answered by
+`simulate`, because a curve bound to another token reverts the call.
+
+- **What replaces `sane()` on a transfer** — there is nothing observed on THIS
+  token to feed it: the shape was sane()-checkable when it was learned, the
+  code identity carries the meaning over, and the on-chain floor is OURS from
+  a STRONG price — `buildFromShape` refuses to build without one, refuses a
+  shape with no minimum-out slot (gas alone is no gate), refuses two scaling
+  slots, and re-refuses a stranger's constant address even out of the stored
+  file (a file is not a proof).
+- **Tier 2b joined `curvePrice`: the INDEXER's cap ÷ on-chain supply.** On the
+  operator's box the pad's HTTP host is unreachable and a fresh launch has no
+  fills for tier 3 — so without this there was NO strong price for exactly the
+  tokens the transfer exists for. DexScreener publishes a cap for indexed
+  curve tokens; same independence class as tiers 1–2.
+- **The classify-short case rides the same proof**: a token with ONE observed
+  buy (decodable, not classifiable — "only 1 sample") falls back to the
+  learned shape when the selector matches what was observed.
+- **One taught sibling, ever, is enough** — the registry survives restarts,
+  and any traded token on the pad teaches it organically (a card open, a buy,
+  the snipe warm). Transfer is native-paid buys only; a transferred SELL is
+  deliberately out — a sell's argument semantics cannot be disambiguated
+  without observation, and "one sale by anyone teaches it" already stands.
+- Mutation-tested: ignoring the bytecode identity fails the different-code
+  test; the mandatory-floor, stranger-constant and no-minimum-out refusals
+  each carry their own.
+
+```bash
+cd tradebot && node --test curveShape.test.js curveCardPath.test.js   # incl. the fresh-launch end-to-end
+```
+
+**Config a fix depends on:** nothing. The one operational fact worth knowing:
+after a deploy, the FIRST fresh-launch buy on a pad needs the pad to have been
+taught once — paste any traded token from that pad (or let the snipe warm one)
+and every later launch is buyable by its first buyer.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
