@@ -1590,6 +1590,47 @@ new row on a keyboard that is already fourteen deep: **the label IS the input**.
 cd bot && node scripts/run-tests.js test/autoListerTyped.test.js   # 13 tests, no network
 ```
 
+## "auto listing aktiv tapi hari ni listing 0 dari kmrin listing 0" — the band top was a jitter wearing a size limit's label
+
+Reported 2026-08-28 with every panel light green: Status 🟢 ON, pace *"due
+now"*, 105 listed lifetime — today 0, yesterday 0. Nothing was down and no scan
+was blocked. The operator had set the trigger band to **$1M–$100M** (with
+Ignore-above at $100M — plainly *"list anything from $1M to $100M"*), and
+`triggerMcap` drew every token's trigger UNIFORMLY across the whole band.
+Measured, not argued: mean trigger **$50M**, and **0.4%** of tokens drew one
+under $1.5M. The discovery feeds carry $1–5M projects, so ~97% of every scan
+was refused "below its trigger", the refusals cooled for 12h, and a feed that
+had listed 105 tokens went to zero **by arithmetic** — the quiet-market look,
+with the operator as the detector again.
+
+- **The two readings of "Trigger band" coincide on a narrow band and diverge
+  catastrophically apart.** The band was designed as the anti-round-number
+  smear (listings at $1.08M / $1.42M, the shipped $1M–$1.5M), where "how much
+  jitter" and "up to what size may a token list" are the same answer. Widened,
+  they are opposite answers, and the engine had the one no operator means —
+  the `🧲 max 3/chain` label defect, with two days of dead feed attached.
+- **The jitter is bounded by the FLOOR now** (`triggerJitterSpan`: at most half
+  the floor above the floor — the designed smear exactly). The band top past
+  that governs nothing; eligibility's ceiling is `maxMcapHard`, which is its
+  own row. On the shipped band the draw is **bit-for-bit what it always was**
+  (span 500k either way, pinned by a test), so no install's triggers move
+  unless its band was wide — where the old triggers were the defect.
+- **The panel does the arithmetic out loud** when the stored band is wider
+  than the draw: *"triggers land in $1.00M–$1.50M — a token past its trigger
+  lists at any size up to the $100,000,000 ceiling."* The number that actually
+  governs is the one on screen, which is what stops the next widened band
+  being read as a dead feature.
+- Mutation-tested: restoring the unbounded draw fails the wide-band test (a
+  $5M token must qualify under a $1M–$100M band).
+
+```bash
+cd bot && node scripts/run-tests.js test/autoLister.test.js   # includes the two band tests
+```
+
+**Config a fix depends on:** nothing. The operator's stored band keeps its
+stored values; only the draw is bounded. If listings are still 0 after this
+deploys, 🔎 Test scan names the next gate in line — it is no longer this one.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:
@@ -3784,6 +3825,65 @@ whether a real Pons curve's arguments classify at all, whether that node's
 real buy on the box is the measurement, and `npm run abi:check -- <the token>
 --curve` is what predicts it — section **4** now prints what each argument
 MEANS, which is the same inference the buy path runs.
+
+### "bot tidak bisa beli token di beberapa launchpad jika masih bonding curve" — INDEXED made it worse
+
+Reported (2026-08-28) with the feature above fully deployed: the same Pons
+token, the same card — price, cap, liquidity, volume all filled in, *"This
+token's liquidity is on Pons v2, which Dexvra can't route through yet … Price
+above is live from the indexer"*, and no Buy button. **That last sentence was
+the diagnosis.** DexScreener indexes several pads' bonding curves as ordinary
+pairs — Pons on Robinhood among them, since DS added the chain — and
+`tokenSnapshot`'s curve leg only ran when `marketOf` answered NULL. An indexed
+curve token took the `dexVenue:'ext', routable:false` branch without the curve
+reader ever being consulted, `telegram.js` gates every Buy button on exactly
+that field, and `core.buy` — whose own curve leg fills this exact shape,
+indexed or not — was unreachable from the one surface a user can press Buy on.
+**Being indexed made a token LESS buyable than being invisible.**
+
+- **The indexed branch consults `_curveIface` now** and returns a routable
+  curve snapshot when the interface reads: the indexer's numbers stay (they are
+  facts, and the card the operator screenshotted showed them), the route comes
+  from the chain. Bounded (`CURVE_DISCOVER_MS`) and cached (curveTrade: hits
+  30 min, misses 90s), and an AMM can never read as a curve — the curve is the
+  contract the token itself moves to and from, which a router never is.
+- ⚠️ **AND `canTradeNow`'s curve leg now WARMS the cache it reads.** It read
+  the cache ONLY, on the stated assumption that "buy() does the discovering,
+  and the first buy warms this for every prober after it" — an assumption that
+  is false for exactly the tokens the leg exists for: a snipe-watched launch
+  never gets a manual first buy. The dev snipe, the CA snipe, `_fireLaunch`'s
+  gate and the retry ring all poll `canTradeNow`; nothing ever filled the
+  cache; so every automated path still bought at graduation while the manual
+  button worked. The probe still answers NOW from the cache (the callers are
+  timers, and a dozen serial reads per probe costs the launch) — the discovery
+  runs FIRE-AND-FORGET, bounded, paced per token (`CURVE_WARM_MS`, default
+  120s), and the next poll reads what it learned. A brand-new curve with no
+  trades stays unreadable until somebody trades on the pad; the snipe now
+  fires within a poll or two of that first observed trade instead of at
+  graduation.
+- Both are MUTATION-TESTED as positives, the `curveBuyPath` rule (a wiring
+  that does nothing refuses beautifully): restoring the unconditional
+  `routable:false` and dropping the warm each fail their tests.
+- ⚠️ **And the window ladder was stopping one rung short on a range-capped
+  node.** A node that REJECTS the wide `getLogs` (Robinhood's public RPC caps
+  ranges — fbf33e2's subject) while serving every step produced a stepped walk
+  that cleanly covered the whole span, found nothing — and was reported as
+  *"could not read"*, because one `lastErr` variable could not tell the wide
+  ask's failure from a hole in the walk. `ifaceFor` escalates to the wider
+  windows only on *"no trades found"* and caches only a non-transport verdict,
+  so a quiet pad's token was re-walked from scratch on every attempt and never
+  once looked in the window its trades were actually in. `stepErrs` separates
+  the two: zero step errors is zero holes (the step size always covers the
+  span within the budget), so the answer escalates and caches. Mutation-tested
+  — collapsing the two errors back into one fails two tests, including the
+  ladder-climbs-on-a-capped-node one in `curveTrade.test.js`.
+
+```bash
+cd tradebot && node --test curveCardPath.test.js   # 4 tests, no network
+```
+
+**Config a fix depends on:** nothing. `CURVE_WARM_MS` paces the background
+warm; `CURVE_ROUTE=0` still kills the whole route, card leg included.
 
 ## Two bot processes, one config
 
