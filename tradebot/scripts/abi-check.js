@@ -15,6 +15,14 @@
  *   node scripts/abi-check.js 0x<token> --curve      # find the curve first, then read it
  *   node scripts/abi-check.js 0x<contract> --chain robinhood
  *
+ * It answers four questions in order, and the LAST one is the one that works
+ * on a box whose explorer is behind Cloudflare:
+ *
+ *   1. which contract does this token trade through?
+ *   2. is that contract verified — and if not, could we even ASK?
+ *   3. does the 4-byte registry know the selector, and does its SHAPE match?
+ *   4. what do the trades themselves say each argument MEANS?
+ *
  * ⚠️ IT DRIVES abiSource.js, NOT A COPY OF THE REQUEST. Checking this by hand
  * with curl reported `301 Moved Permanently` and looked like a dead end — curl
  * does not follow redirects unless told, and the bot's fetch does. A check that
@@ -134,8 +142,52 @@ async function main() {
     console.log(`\n${C}3. What does the 4-byte registry say about ${observed.buy.selector}?${X}`);
     const fb = await abi.fourByteSignatures(observed.buy.selector);
     if (!fb.ok) console.log(`   ${Y}·${X} ${fb.why}`);
-    else for (const s of fb.signatures) console.log(`   ${D}·${X} ${s}`);
+    else for (const s of fb.signatures) {
+      // ⚠️ The registry is anyone-submitted and selector collisions are
+      // routine, so a candidate is only worth anything if its SHAPE matches
+      // the calls we actually watched execute. Two sources that have never
+      // met, agreeing, is the whole value here.
+      const sh = abi.shapeMatches(s, observed.buy.args);
+      console.log(sh.ok
+        ? `   ${G}✓${X} ${C}${s}${X} ${D}— matches the observed argument shape${X}`
+        : `   ${D}·${X} ${s} ${R}— discarded: ${sh.why}${X}`);
+    }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ⚠️ THIS SECTION USED TO RUN ONLY WHEN THE EXPLORER ANSWERED, and on the
+  // live box the explorer answers HTML — so the one reading that WAS available
+  // was the one never printed. The 4-byte registry gives types and no parameter
+  // names, so `roleOfParam` can say nothing from it; the samples are the only
+  // source of MEANING this box can reach, and meaning is what a route needs.
+  // It runs on its own now, published ABI or not.
+  if (observed && observed.buy) {
+    console.log(`\n${C}4. What do the trades themselves say each argument MEANS?${X}`);
+    for (const [what, leg] of [['buy', observed.buy], ['sell', observed.sell]]) {
+      if (!leg) { console.log(`   ${Y}·${X} no ${what} seen in this window`); continue; }
+      const cls = classifySlots(leg, target);
+      console.log(`   ${what} ${leg.selector} ${D}— ${cls.samples} sample(s)${X}`);
+      if (!leg.args.length) { console.log(`       ${D}(no arguments)${X}`); }
+      for (const sl of cls.slots) {
+        const seen = leg.args[sl.i];
+        const held = seen ? (seen.addr ? seen.addr : `0x${(seen.word || '').replace(/^0+/, '') || '0'}`) : '?';
+        const note = sl.role === 'scales' ? `tracks the trade size`
+          : sl.role === 'token' ? 'the token itself'
+            : sl.role === 'sender' ? 'the buyer/seller'
+              : sl.role === 'constant' ? 'the same in every sample'
+                : (sl.why || 'could not be explained');
+        console.log(`       arg[${sl.i}] ${(sl.role === 'unknown' ? R : G)}${sl.role.padEnd(8)}${X} ${D}${note}${X}`);
+        console.log(`               ${D}last seen holding ${held}${X}`);
+      }
+      console.log(cls.ok
+        ? `       ${G}✓${X} every argument is explained — a ${what} can be built from this`
+        : `       ${R}✗${X} ${cls.why}`);
+      // The fix for "not enough samples" is not a code change, and saying so is
+      // the difference between a diagnosis and a shrug.
+      if (!cls.ok && cls.samples < 2) console.log(`         ${D}make one more ${what} of a DIFFERENT size on the pad — one sample shows the shape, it cannot show what a slot means${X}`);
+    }
+  }
+
   console.log('');
 }
 

@@ -58,6 +58,21 @@ async function getJson(url, fetchImpl) {
  *  a refusal (404: no such contract) IS an answer. */
 const refused = (e) => !e || !e.status || e.status === 429 || e.status === 403 || e.status === 401 || e.status >= 500;
 
+/** ⚠️ AN EXPLORER THAT ANSWERS **HTML** IS ITS OWN DIAGNOSIS. `Unexpected token
+ *  < in JSON` is what a Cloudflare interstitial, a login wall or a wrong API
+ *  path all look like from inside a JSON parser, and reporting it as a bare
+ *  parse error sends the reader hunting through this code for a bug that is not
+ *  here. It is still "could not ask" — but the operator needs to know it was
+ *  the explorer talking, not us mis-parsing. */
+// Both V8 spellings: `Unexpected token < in JSON at position 0` (node 18, which
+// production runs) and `Unexpected token '<', "<!DOCTYPE"... is not valid JSON`
+// (node 20+). A regex that only knew one would report the box's own message
+// raw — which is the exact defect this exists to fix.
+const htmlish = (e) => /Unexpected token\s*'?</i.test(String((e && e.message) || e)) || /<!DOCTYPE|<html/i.test(String((e && e.message) || e));
+const explain = (e) => (htmlish(e)
+  ? 'answered HTML rather than JSON (a Cloudflare page, a login wall, or this is not the API path)'
+  : (e && e.message) || String(e));
+
 /**
  * The 4-byte selector of a human-readable signature, e.g. "buy(address,uint256)".
  *
@@ -95,7 +110,7 @@ async function fetchVerifiedAbi(explorerBase, address, opts = {}) {
     if (j && Array.isArray(j.abi) && j.abi.length) return { ok: true, abi: j.abi, source: 'blockscout', name: j.name || null };
     tried.push('blockscout: no abi in the answer (contract not verified)');
     attempts++;
-  } catch (e) { attempts++; if (refused(e)) couldNotAsk++; tried.push(`blockscout: ${(e && e.message) || e}`); }
+  } catch (e) { attempts++; if (refused(e) || htmlish(e)) couldNotAsk++; tried.push(`blockscout: ${explain(e)}`); }
 
   // Etherscan-compatible.
   try {
@@ -106,7 +121,7 @@ async function fetchVerifiedAbi(explorerBase, address, opts = {}) {
     }
     tried.push(`etherscan-compatible: ${(j && j.result) || 'no abi'}`);
     attempts++;
-  } catch (e) { attempts++; if (refused(e)) couldNotAsk++; tried.push(`etherscan-compatible: ${(e && e.message) || e}`); }
+  } catch (e) { attempts++; if (refused(e) || htmlish(e)) couldNotAsk++; tried.push(`etherscan-compatible: ${explain(e)}`); }
 
   // `reachable:false` means the explorer could not be ASKED. The caller must not
   // read that as "unverified" and fall through to inference as though the
@@ -215,4 +230,42 @@ function reconcile(published, inferred) {
   return out;
 }
 
-module.exports = { fetchVerifiedAbi, entryForSelector, fourByteSignatures, roleOfParam, rolesOfEntry, reconcile, selectorOf };
+/**
+ * Does a signature's parameter SHAPE match what we watched on-chain?
+ *
+ * The 4-byte registry gives types and no names, so `roleOfParam` can say very
+ * little from it — but the shape is still a real, independent check. The live
+ * box observed `args[num,num,addr]` and the registry answered
+ * `buy(uint256,uint256,address)`: two sources that have never met, agreeing.
+ * A registry entry whose arity or types disagree is about a COLLIDING selector
+ * — the registry is anyone-submitted and collisions are routine — and must be
+ * discarded rather than averaged in.
+ *
+ * ⚠️ IT MAY ONLY EVER DISCARD A CANDIDATE, never authorise one. Two readings
+ * can share a shape and mean different things, which is the whole reason
+ * `classifySlots` exists.
+ *
+ * ⚠️ AND AN ALL-ZERO WORD IS COMPATIBLE WITH EVERYTHING. `address(0)` and the
+ * number 0 are the same 32 bytes, so a slot holding one must not be read as a
+ * contradiction of either type — the first cut refused a correct signature over
+ * a zero referrer address. `wordAddr` deliberately rejects a low number as an
+ * address, so a word that IS address-shaped is a real signal in the other
+ * direction: a uint256 large enough to look like one is ~2^128, which no
+ * amount on any chain reaches.
+ */
+function shapeMatches(signature, observedArgs) {
+  const m = /^[^(]+\((.*)\)$/.exec(String(signature || '').replace(/\s+/g, ''));
+  if (!m) return { ok: false, why: 'not a signature' };
+  const types = m[1] ? m[1].split(',') : [];
+  const args = observedArgs || [];
+  if (types.length !== args.length) return { ok: false, why: `signature takes ${types.length} argument(s); the trades show ${args.length}` };
+  for (let i = 0; i < types.length; i++) {
+    const t = types[i], a = args[i] || {};
+    if (/^0*$/.test(String(a.word || ''))) continue;   // zero: address(0) and 0 are one word
+    if (t === 'address' && !a.addr) return { ok: false, why: `argument ${i} is an address in the signature, but the trades put a plain number there` };
+    if (/^u?int\d*$/.test(t) && a.addr) return { ok: false, why: `argument ${i} is a number in the signature, but the trades put an address there` };
+  }
+  return { ok: true, why: null, types };
+}
+
+module.exports = { fetchVerifiedAbi, entryForSelector, fourByteSignatures, roleOfParam, rolesOfEntry, reconcile, selectorOf, shapeMatches };

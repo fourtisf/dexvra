@@ -122,3 +122,55 @@ test('⚠️ "could not ask" and "not verified" are opposite conclusions', async
   assert.equal(missing.reachable, true);
   assert.match(missing.why, /no verified ABI/);
 });
+
+test('⚠️ an explorer that answers HTML says so, instead of reading as our own parse bug', async () => {
+  // What the live box actually got: `Unexpected token < in JSON at position 0`,
+  // twice, from a Cloudflare page in front of the Robinhood explorer. Reported
+  // verbatim it reads as a bug in this file, and the operator goes looking for
+  // one — the reason is the explorer talking, and the report has to say that.
+  const cloudflare = async () => ({ ok: true, status: 200, async json() { throw new SyntaxError('Unexpected token < in JSON at position 0'); } });
+  const r = await A.fetchVerifiedAbi('https://explorer.example', ADDR, { fetchImpl: cloudflare });
+  assert.equal(r.ok, false);
+  assert.equal(r.reachable, false, 'HTML is not an answer about whether the contract is verified');
+  assert.match(r.why, /Cloudflare|HTML/i);
+  assert.doesNotMatch(r.why, /Unexpected token/, 'a raw parser message is not a diagnosis');
+});
+
+test('⚠️ a 4-byte candidate whose SHAPE disagrees with the trades is discarded', () => {
+  // The registry is append-only and anyone-submitted, so selector collisions
+  // are routine. The shape is a second, independent source: the box observed
+  // args[num,num,addr] and the registry answered buy(uint256,uint256,address).
+  const w = (h) => h.padStart(64, '0');
+  const num = { word: w('1f4'), addr: null, num: 500n };
+  const addr = { word: w('1234567890abcdef1234567890abcdef12345678'), addr: '0x1234567890abcdef1234567890abcdef12345678', num: 1n };
+  const observed = [num, num, addr];
+
+  assert.equal(A.shapeMatches('buy(uint256,uint256,address)', observed).ok, true);
+  assert.match(A.shapeMatches('buy(uint256)', observed).why, /takes 1 argument/);
+  assert.match(A.shapeMatches('buy(address,uint256,address)', observed).why, /argument 0 is an address/);
+  assert.match(A.shapeMatches('buy(uint256,uint256,uint256)', observed).why, /argument 2 is a number/);
+  assert.equal(A.shapeMatches('not a signature', observed).ok, false);
+});
+
+test('⚠️ an all-zero word is compatible with EVERY type', () => {
+  // `address(0)` and the number 0 are the same 32 bytes. The first cut refused
+  // a correct signature over a zero referrer address — discarding the right
+  // candidate, quietly, which is the failure this check exists to prevent in
+  // the other direction.
+  const zero = { word: '0'.repeat(64), addr: null, num: 0n };
+  assert.equal(A.shapeMatches('buy(address)', [zero]).ok, true);
+  assert.equal(A.shapeMatches('buy(uint256)', [zero]).ok, true);
+});
+
+test('shapeMatches may only ever DISCARD — a match is not a licence to sign', () => {
+  // Two readings can share a shape and mean different things, which is the
+  // whole reason classifySlots exists. Everything this returns on a match is
+  // the types it parsed; nothing here says "safe".
+  const w = (h) => h.padStart(64, '0');
+  const r = A.shapeMatches('buy(uint256,uint256,address)', [
+    { word: w('1f4'), addr: null, num: 500n },
+    { word: w('2ee'), addr: null, num: 750n },
+    { word: w('1234567890abcdef1234567890abcdef12345678'), addr: '0x1234567890abcdef1234567890abcdef12345678', num: 1n },
+  ]);
+  assert.deepEqual(Object.keys(r).sort(), ['ok', 'types', 'why']);
+});
