@@ -51,10 +51,13 @@ const H1 = '0x' + '11'.repeat(32);
 const H2 = '0x' + '22'.repeat(32);
 
 /** A chain where the token's ONLY market is its curve: no V2 pair, no V3 pool,
- *  two real buys through the curve — none when `quiet`, and none VISIBLE TO
- *  getLogs when `capped` (the node silently empties every range, the live
- *  Robinhood shape — the trades exist only behind their receipts). */
-function stubChain(token, { quiet = false, capped = false } = {}) {
+ *  two real buys through the curve — none when `quiet`, and none VISIBLE TO an
+ *  ADDRESS-filtered getLogs when `capped` (the node silently empties every
+ *  range, the live Robinhood shape — the trades exist only behind their
+ *  receipts). `topicLogs` makes topic-only asks answer, the measured quirk of
+ *  that same node: it served the preflight's topic-filtered sweeps while
+ *  emptying the address-filtered ones. */
+function stubChain(token, { quiet = false, capped = false, topicLogs = false } = {}) {
   const logs = quiet ? [] : [
     { transactionHash: H1, blockNumber: 10, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(1000n * E18) },
     { transactionHash: H2, blockNumber: 11, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(2000n * E18) },
@@ -73,8 +76,15 @@ function stubChain(token, { quiet = false, capped = false } = {}) {
     async getBlockNumber() { return 5000; },
     async getLogs(f) {
       state.getLogsCalls++;
-      if (capped) return [];   // answered, empty — never an error
-      return String(f && f.address).toLowerCase() === token.toLowerCase() ? logs : [];
+      if (quiet) return [];
+      if (f && f.address) {
+        if (capped) return [];   // answered, empty — never an error
+        return String(f.address).toLowerCase() === token.toLowerCase() ? logs : [];
+      }
+      // A topic-only ask — the seed's shape. Served only when the stub models
+      // the node quirk, and only for the curve's own topic.
+      if (topicLogs && JSON.stringify((f && f.topics) || []).toLowerCase().includes(addrWord(CURVE).toLowerCase())) return logs;
+      return [];
     },
     async getTransaction(h) { return txs[h] || null; },
     async getTransactionReceipt(h) { return receipts[h] || null; },
@@ -185,6 +195,24 @@ test('⚠️ the reported state end-to-end: the node silently caps every getLogs
     assert.equal(snap.dexVenue, 'curve');
     assert.equal(String(snap.curve).toLowerCase(), CURVE);
     assert.equal(snap.priceUsd, 0.0000421, "the indexer's numbers still ride along");
+  } finally { restore(); }
+});
+
+test('⚠️ …and with NO GeckoTerminal at all, the CHAIN itself seeds: the curve\'s topic-filtered legs', async () => {
+  // The box's measured quirk: wide ADDRESS-filtered getLogs silently empty,
+  // while topic-filtered asks answer (it is how the preflight found the real
+  // Pons factory). The seed's first source rides that — the curve address the
+  // indexer names, as a Transfer topic — so the route lights up with GT
+  // knowing nothing about the pool.
+  const token = '0x5555555555555555555555555555555555555555';
+  const chain = stubChain(token, { capped: true, topicLogs: true });
+  const restore = withStubs(chain, { indexed: true, gtTrades: [] });
+  try {
+    const snap = await core.tokenSnapshot(token, 'base');
+    assert.ok(snap, 'the token snapshots');
+    assert.equal(snap.routable, true, 'the chain-native seed must light the Buy button without GT');
+    assert.equal(snap.dexVenue, 'curve');
+    assert.equal(String(snap.curve).toLowerCase(), CURVE);
   } finally { restore(); }
 });
 

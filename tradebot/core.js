@@ -77,6 +77,7 @@ const launchpads = require('./launchpads');
  */
 const curveTrade = require('./curveTrade');   // a launchpad curve read off the chain's own trades
 const curvePrice = require('./curvePrice');   // the INDEPENDENT price that gate is checked against
+const { TRANSFER_TOPIC: CURVE_TRANSFER_TOPIC } = require('./curveIface.js');   // for the seed's topic-filtered log ask
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // ---------------------------------------------------------------- config
@@ -2219,19 +2220,28 @@ const _curveGas = (est) => {
 };
 
 /*
- * THE INDEXER'S TRADE LIST, as discovery seed hashes — see curveTrade's
- * `_receiptLogs` header for why the window ladder alone is structurally blind
- * to a quiet token's trades on a range-capped node. The pool asked is the
- * indexer's own pair for this token, which for an indexed curve token IS the
- * curve contract. Hashes are pointers only: everything decoded is read back
- * from the chain's receipts, so a wrong hash contributes nothing. [] on any
- * failure — the ladder still runs without it.
+ * DISCOVERY SEED HASHES — see curveTrade's `_receiptLogs` header for why the
+ * window ladder alone is structurally blind to a quiet token's trades on a
+ * range-capped node. The pool asked about is the indexer's own pair for this
+ * token, which for an indexed curve token IS the curve contract. Hashes are
+ * pointers only: everything decoded is read back from the chain's receipts,
+ * so a wrong hash contributes nothing. [] on any failure — the ladder still
+ * runs without it.
+ *
+ * TWO SOURCES, the chain's first:
+ *   1. The curve's OWN Transfer legs, topic-filtered. The node that silently
+ *      empties a wide ADDRESS-filtered `getLogs` has answered wide
+ *      TOPIC-filtered asks on this same box — it is how the preflight found
+ *      the real Pons factory when both researched guesses were wrong. The
+ *      filter carries no address on purpose: adding one is what re-triggers
+ *      the cap, and a foreign token's log in the answer costs nothing — only
+ *      the HASH travels, and the receipts are filtered to OUR token.
+ *   2. GeckoTerminal's trade list for the pool, where GT carries it.
  */
 const CURVE_SEED_MAX = 12;
+const CURVE_SEED_SPAN = Math.max(10_000, Number(process.env.CURVE_SEED_SPAN || 400_000));
 async function _curveTradeHashes(chainKey, ca) {
   try {
-    const net = GT_NET[chainKey];
-    if (!net) return [];
     let pool = null;
     const slug = DS_CHAIN_KEY[chainKey];
     if (slug) {
@@ -2239,7 +2249,8 @@ async function _curveTradeHashes(chainKey, ca) {
       const best = pairs.sort((a, b) => _dsLiq(b) - _dsLiq(a))[0];
       if (best) pool = best.pairAddress;
     }
-    if (!pool) {
+    const net = GT_NET[chainKey];
+    if (!pool && net) {
       const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${_idQ(ca)}/pools?page=1`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
       if (r.ok) {
         const j = await r.json();
@@ -2248,15 +2259,34 @@ async function _curveTradeHashes(chainKey, ca) {
         if (best && best.attributes && best.attributes.address) pool = best.attributes.address;
       }
     }
-    if (!pool) return [];
-    const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/pools/${_idQ(pool)}/trades`, { signal: AbortSignal.timeout(8000), headers: { accept: 'application/json' } });
-    if (!r.ok) return [];
-    const j = await r.json();
+    if (!pool || !/^0x[a-fA-F0-9]{40}$/.test(String(pool))) return [];
     const out = [];
-    for (const t of (Array.isArray(j && j.data) ? j.data : [])) {
-      const h = t && t.attributes && (t.attributes.tx_hash || t.attributes.txHash);
-      if (typeof h === 'string' && /^0x[0-9a-fA-F]{64}$/.test(h) && !out.includes(h)) out.push(h);
-      if (out.length >= CURVE_SEED_MAX) break;
+    const push = (h) => { if (typeof h === 'string' && /^0x[0-9a-fA-F]{64}$/.test(h) && !out.includes(h) && out.length < CURVE_SEED_MAX) out.push(h); };
+
+    try {
+      const prov = providerFor(chainKey);
+      const head = Number(await prov.getBlockNumber());
+      const from = Math.max(0, head - CURVE_SEED_SPAN);
+      const poolTopic = '0x' + '0'.repeat(24) + String(pool).slice(2).toLowerCase();
+      // Buys pay OUT of the curve (topics[1]); sells pay INTO it (topics[2]).
+      const [outs, ins] = await Promise.all([
+        prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, poolTopic], fromBlock: from, toBlock: head }).catch(() => []),
+        prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, null, poolTopic], fromBlock: from, toBlock: head }).catch(() => []),
+      ]);
+      const legs = [...(outs || []), ...(ins || [])]
+        .filter((l) => l && l.transactionHash)
+        .sort((a, b) => Number(b.blockNumber || 0) - Number(a.blockNumber || 0));   // newest first, like an indexer answers
+      for (const lg of legs) push(lg.transactionHash);
+    } catch (_) { /* the chain source failing costs the chain source */ }
+
+    if (out.length < 2 && net) {
+      const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/pools/${_idQ(pool)}/trades`, { signal: AbortSignal.timeout(8000), headers: { accept: 'application/json' } });
+      if (r.ok) {
+        const j = await r.json();
+        for (const t of (Array.isArray(j && j.data) ? j.data : [])) {
+          push(t && t.attributes && (t.attributes.tx_hash || t.attributes.txHash));
+        }
+      }
     }
     return out;
   } catch (_) { return []; }

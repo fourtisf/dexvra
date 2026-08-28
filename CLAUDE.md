@@ -3943,13 +3943,18 @@ within the step budget comes back empty. The walk honestly reports "no trades
 found", caches the miss for 90s, and re-reports it for ever — about a token
 DexScreener was pricing on the same render.
 
-- **The indexer that prices it also PUBLISHES its trades' tx hashes**, and
-  that is the way in: GeckoTerminal's pool-trades endpoint, asked through the
-  pool the indexer itself names for this token (for an indexed curve token the
-  DS pair address IS the curve contract). `ifaceFor` seeds discovery from
-  those hashes when a window comes up empty — after the FIRST window, so a
-  fresh launch still resolves without an indexer request, and a quiet token
-  skips the two wide windows that are usually blind to it anyway.
+- **The trades are found by their HASHES, from two seed sources — the chain's
+  own first.** The node that empties a wide ADDRESS-filtered ask has answered
+  wide TOPIC-filtered asks on this same box (it is how the preflight found the
+  real Pons factory), so source 1 is the curve's own Transfer legs, topic-
+  filtered by the pool address the indexer names (for an indexed curve token
+  the DS pair address IS the curve contract) — no address in the filter, on
+  purpose: the address is what re-triggers the cap, and a foreign token's log
+  costs nothing because only the HASH travels. Source 2 is GeckoTerminal's
+  pool-trades endpoint, where GT carries the pool. `ifaceFor` seeds discovery
+  from the hashes when a window comes up empty — after the FIRST window, so a
+  fresh launch still resolves without a seed request, and a quiet token skips
+  the two wide windows that are usually blind to it anyway.
 - ⚠️ **The hashes are POINTERS, never facts.** Everything decoded still comes
   off the chain's own receipts and transactions — the same trust base as
   `getLogs` — so a wrong or fabricated hash yields no receipt or no Transfer
