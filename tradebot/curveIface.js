@@ -39,6 +39,60 @@
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
+/*
+ * ⚠️ THE STEP SIZE IS FIXED, NEVER DERIVED FROM THE SPAN.
+ *
+ * The stepped walk existed because this node silently answers a too-wide
+ * `eth_getLogs` with `[]` rather than an error — but its step was
+ * `ceil(span / budget)`, so the wider the window, the wider each step: 209
+ * blocks at 5,000, 2,500 at 60,000, **16,667** at 400,000. Every window past
+ * the first therefore asked in ranges the node empties, and the ladder's whole
+ * point — reaching a quiet token's older trades — could never work. The card
+ * said "no trades found in the last 400000 blocks (also walked 24 smaller
+ * ranges)" about a token whose launch buy is plainly on chain, and it said it
+ * identically at 17:57, 18:09 and 18:19.
+ *
+ * The size a node serves is a property of the NODE, not of how far back we
+ * want to look. The snipe loop reads this same chain in ~60-block ranges all
+ * day, so a small fixed step is the known-good shape; how FAR we reach is the
+ * budget's job. `CURVE_LOG_STEP` / `CURVE_LOG_STEPS` tune it per box.
+ */
+const LOG_STEP = Math.max(50, Number(process.env.CURVE_LOG_STEP || 500));
+const LOG_STEPS = Math.max(1, Number(process.env.CURVE_LOG_STEPS || 48));
+
+/**
+ * Walk a log filter backwards from `head` in bounded, node-sized steps.
+ *
+ * NEWEST FIRST and stops as soon as `want` entries are in hand: on a live pad
+ * the answer is usually within a step or two of the head, so the budget is
+ * only ever spent by a token that genuinely has nothing recent.
+ *
+ * Reports what it actually WALKED, because a refusal quoting the window it
+ * *wanted* rather than the range it *covered* is a diagnosis about a search
+ * that did not happen — which is exactly what this file has been printing.
+ */
+async function steppedLogs(chain, filter, opts = {}) {
+  const head = Number(opts.head);
+  const span = Math.max(1, Number(opts.span) || 5000);
+  const step = Math.max(1, Number(opts.step) || LOG_STEP);
+  const budget = Math.max(1, Number(opts.budget) || LOG_STEPS);
+  const want = Math.max(0, Number(opts.want) || 0);
+  const floor = Math.max(0, head - span);
+  const out = [];
+  let stepped = 0, errs = 0, lastErr = null, lowest = head;
+  for (let to = head; to > floor && stepped < budget; to -= step) {
+    const lo = Math.max(floor, to - step + 1);
+    stepped++;
+    lowest = lo;
+    try {
+      const r = await chain.getLogs({ ...filter, fromBlock: lo, toBlock: to });
+      if (Array.isArray(r) && r.length) out.push(...r);
+    } catch (e) { errs++; lastErr = e; }   // one bad range must not abandon the walk
+    if (want && out.length >= want) break;
+  }
+  return { logs: out, stepped, errs, lastErr, walked: Math.max(0, head - lowest) };
+}
+
 /**
  * A 32-byte word that is an ABI-encoded address (12 zero bytes, then 20).
  *
@@ -137,13 +191,40 @@ async function decodeCurveIface(chain, token, opts = {}) {
     catch (e) { lastErr = e; }
   }
 
+  let walked = 0;
   if ((!logs || !logs.length) && !Array.isArray(opts.logs)) {
-    const step = Math.max(200, Math.ceil(span / budget));
-    const found = [];
-    for (let to = head; to > from && stepped < budget && found.length < maxTx * 2; to -= step) {
-      stepped++;
-      try { found.push(...(await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: Math.max(from, to - step + 1), toBlock: to })) || []); }
-      catch (e) { lastErr = e; stepErrs++; }   // one bad range must not abandon the walk
+    const filter = { address: token, topics: [TRANSFER_TOPIC] };
+    /*
+     * TWO PASSES, COARSE THEN FINE — because "the range this node serves" is a
+     * fact about the node and we do not get to know it.
+     *
+     * COARSE covers the whole span in `budget` steps: on a node that serves
+     * wide ranges it is the cheap answer, and it is what reaches a trade far
+     * back in the window.
+     *
+     * FINE re-walks NEAR THE HEAD in fixed, small, node-sized asks. On the box
+     * this feature is for, every coarse step past the first window is wider
+     * than the node will serve and comes back silently empty — so the coarse
+     * pass reports "nothing" over a token whose launch buy is plainly on
+     * chain. Running fine only after coarse found nothing keeps the cheap path
+     * cheap and makes the answer honest on a capped node.
+     */
+    const coarse = await steppedLogs(chain, filter,
+      { head, span, budget, want: maxTx * 2, step: Math.max(200, Math.ceil(span / budget)) });
+    stepped = coarse.stepped; stepErrs = coarse.errs; walked = coarse.walked;
+    if (coarse.lastErr) lastErr = coarse.lastErr;
+    let found = coarse.logs;
+    // ⚠️ A NODE THAT ANSWERED NOTHING AT ALL IS NOT RE-WALKED. When every
+    // coarse step threw, the fine pass is the same silence 48 more times —
+    // this file's own rule about a dead node, which the second pass would
+    // otherwise triple the cost of.
+    const coarseDead = coarse.stepped > 0 && coarse.errs === coarse.stepped;
+    if (!found.length && !coarseDead) {
+      const fine = await steppedLogs(chain, filter, { head, span, want: maxTx * 2, step: opts.step });
+      stepped += fine.stepped; stepErrs += fine.errs;
+      walked = Math.max(walked, fine.walked);
+      if (fine.lastErr) lastErr = fine.lastErr;
+      found = fine.logs;
     }
     if (found.length) logs = found.reverse();   // the walk runs newest-first; restore oldest-first
     else if (!logs && (stepErrs > 0 || !stepped)) {
@@ -173,7 +254,13 @@ async function decodeCurveIface(chain, token, opts = {}) {
     // never populates `opts`, so the window is whatever this module chose.
     // Telling somebody to add a CLI flag to a chat message is the placeholder
     // defect wearing a different hat.
-    return { ok: false, why: `no trades found for this token in the last ${span} blocks${stepped ? ` (also walked ${stepped} smaller ranges, in case the node caps them)` : ''} — nothing to read its interface from yet` };
+    // ⚠️ THE RANGE WALKED, NOT THE RANGE WANTED. Quoting `span` described a
+    // search that did not happen: the old walk's steps were wider than this
+    // node serves, so "the last 400000 blocks" covered nothing at all, and the
+    // same sentence came back three times over an hour while the real reach
+    // never changed.
+    const reach = walked || span;
+    return { ok: false, why: `no trades found for this token in the last ${reach} blocks${stepped ? ` (walked ${stepped} range(s) the node will serve)` : ''} — nothing to read its interface from yet` };
   }
 
   // Newest first: a curve's interface can change between deployments, and the
@@ -379,7 +466,7 @@ function describeIface(r) {
   return `curve ${r.curve} · ${b} · ${sl}`;
 }
 
-module.exports = { decodeCurveIface, describeIface, TRANSFER_TOPIC, _argsOf: argsOf, _wordAddr: wordAddr };
+module.exports = { decodeCurveIface, describeIface, steppedLogs, TRANSFER_TOPIC, LOG_STEP, LOG_STEPS, _argsOf: argsOf, _wordAddr: wordAddr };
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────

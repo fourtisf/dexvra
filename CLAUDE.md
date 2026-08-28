@@ -4023,8 +4023,41 @@ the storage question ("is this really MY token's curve?") is answered by
   test; the mandatory-floor, stranger-constant and no-minimum-out refusals
   each carry their own.
 
+#### ⚠️ …and the walk's STEP SCALED WITH THE SPAN, so the ladder never reached anything
+
+Three cards over 22 minutes carried the identical sentence — *"no trades found
+for this token in the last 400000 blocks (also walked 24 smaller ranges)"* —
+about a token whose launch buy is plainly on chain. **The number in that
+sentence was the range we WANTED, and the range we COVERED was nothing at
+all.** The stepped walk exists because this node answers a too-wide
+`eth_getLogs` with `[]` rather than an error, and its step was
+`ceil(span / budget)`: 209 blocks at the 5,000 window, **2,500** at 60,000,
+**16,667** at 400,000. Every step of every window past the first was itself
+too wide, silently emptied, and the ladder's whole purpose — reaching an older
+trade — could not work. Meanwhile the snipe loop reads this same chain in
+~60-block ranges all day.
+
+- **The step is FIXED now** (`CURVE_LOG_STEP`, 500), because the range a node
+  serves is a property of the NODE, not of how far back we want to look. How
+  FAR we reach is the budget's job (`CURVE_LOG_STEPS`, 48).
+- **TWO PASSES, coarse then fine.** Coarse keeps the old cheap behaviour for a
+  node that serves wide ranges (and is what reaches a trade far back in the
+  window); fine re-walks near the head in node-sized asks, and only when
+  coarse found nothing. ⚠️ A node where every coarse step ERRORED is not
+  re-walked — that is the same silence 48 more times, this file's own dead-node
+  rule, which the second pass would otherwise triple the cost of.
+- **The refusal quotes the range WALKED, not the range wanted.** "The last
+  400000 blocks" described a search that did not happen, and it is why the same
+  sentence came back three times while the real reach never changed.
+- **`steppedLogs` is the one owner** and the seed, the sibling-curve scan and
+  the decoder all read through it — the wide single ask was silently empty in
+  every one of them.
+- Mutation-tested: dropping the fine pass fails the new silent-cap test (a stub
+  node that empties anything wider than it serves, with the trade older than
+  the first window).
+
 ```bash
-cd tradebot && node --test curveShape.test.js curveCardPath.test.js   # incl. the fresh-launch end-to-end
+cd tradebot && node --test curveShape.test.js curveCardPath.test.js curveIface.test.js
 ```
 
 **Config a fix depends on:** nothing — and the pad teaches ITSELF, see below.

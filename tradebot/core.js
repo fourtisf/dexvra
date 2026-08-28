@@ -77,7 +77,7 @@ const launchpads = require('./launchpads');
  */
 const curveTrade = require('./curveTrade');   // a launchpad curve read off the chain's own trades
 const curvePrice = require('./curvePrice');   // the INDEPENDENT price that gate is checked against
-const { TRANSFER_TOPIC: CURVE_TRANSFER_TOPIC } = require('./curveIface.js');   // for the seed's topic-filtered log ask
+const { TRANSFER_TOPIC: CURVE_TRANSFER_TOPIC, steppedLogs: curveSteppedLogs } = require('./curveIface.js');   // the seed's topic-filtered, node-sized log walk
 const padFactory = require('./padFactory.js');   // where a pad announces its launches — shared with watchers.js
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
@@ -2373,15 +2373,15 @@ async function _chainSiblingCurves(chainKey, ourCurve) {
   const want = await _codeHash(prov, ourCurve);
   if (!want) return [];
   const head = Number(await prov.getBlockNumber());
-  const from = Math.max(0, head - CURVE_SIB_SPAN);
   const seen = [];
   for (const a of anns) {
     for (const f of a.factories) {
       // Topic-filtered AND address-filtered on the factory: a factory is one
       // address, so this is the narrow ask the node serves happily — it is the
       // same read the snipe loop already makes every few seconds.
-      const logs = await prov.getLogs({ address: f, topics: [a.topic0], fromBlock: from, toBlock: head }).catch(() => []);
-      for (const lg of (logs || []).slice().reverse()) {   // newest launches first
+      const w = await curveSteppedLogs(prov, { address: f, topics: [a.topic0] },
+        { head, span: CURVE_SIB_SPAN, want: CURVE_SIB_CANDIDATES });
+      for (const lg of (w.logs || [])) {   // the walk runs newest-first already
         for (const addr of _namedAddrs(lg)) if (!seen.includes(addr)) seen.push(addr);
         if (seen.length >= CURVE_SIB_CANDIDATES) break;
       }
@@ -2405,13 +2405,12 @@ async function _chainSiblingCurves(chainKey, ourCurve) {
 async function _curveTokenAndTrades(chainKey, curve) {
   const prov = providerFor(chainKey);
   const head = Number(await prov.getBlockNumber());
-  const from = Math.max(0, head - CURVE_SEED_SPAN);
   const t = '0x' + '0'.repeat(24) + String(curve).slice(2).toLowerCase();
   const [outs, ins] = await Promise.all([
-    prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, t], fromBlock: from, toBlock: head }).catch(() => []),
-    prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, null, t], fromBlock: from, toBlock: head }).catch(() => []),
+    curveSteppedLogs(prov, { topics: [CURVE_TRANSFER_TOPIC, t] }, { head, span: CURVE_SEED_SPAN, want: CURVE_SEED_MAX }),
+    curveSteppedLogs(prov, { topics: [CURVE_TRANSFER_TOPIC, null, t] }, { head, span: CURVE_SEED_SPAN, want: CURVE_SEED_MAX }),
   ]);
-  const legs = [...(outs || []), ...(ins || [])]
+  const legs = [...(outs.logs || []), ...(ins.logs || [])]
     .filter((l) => l && l.transactionHash && /^0x[a-fA-F0-9]{40}$/.test(String(l.address || '')))
     .sort((a, b) => Number(b.blockNumber || 0) - Number(a.blockNumber || 0));
   if (!legs.length) return null;
@@ -2464,14 +2463,16 @@ async function _curveTradeHashes(chainKey, ca) {
     try {
       const prov = providerFor(chainKey);
       const head = Number(await prov.getBlockNumber());
-      const from = Math.max(0, head - CURVE_SEED_SPAN);
       const poolTopic = '0x' + '0'.repeat(24) + String(pool).slice(2).toLowerCase();
       // Buys pay OUT of the curve (topics[1]); sells pay INTO it (topics[2]).
+      // ⚠️ STEPPED, not one wide ask: this node answers a too-wide getLogs with
+      // [] rather than an error, so the wide version of this read was silently
+      // empty every time — the same defect the decoder's own walk carried.
       const [outs, ins] = await Promise.all([
-        prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, poolTopic], fromBlock: from, toBlock: head }).catch(() => []),
-        prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, null, poolTopic], fromBlock: from, toBlock: head }).catch(() => []),
+        curveSteppedLogs(prov, { topics: [CURVE_TRANSFER_TOPIC, poolTopic] }, { head, span: CURVE_SEED_SPAN, want: CURVE_SEED_MAX }),
+        curveSteppedLogs(prov, { topics: [CURVE_TRANSFER_TOPIC, null, poolTopic] }, { head, span: CURVE_SEED_SPAN, want: CURVE_SEED_MAX }),
       ]);
-      const legs = [...(outs || []), ...(ins || [])]
+      const legs = [...(outs.logs || []), ...(ins.logs || [])]
         .filter((l) => l && l.transactionHash)
         .sort((a, b) => Number(b.blockNumber || 0) - Number(a.blockNumber || 0));   // newest first, like an indexer answers
       for (const lg of legs) push(lg.transactionHash);

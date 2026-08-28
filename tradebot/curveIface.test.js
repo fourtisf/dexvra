@@ -290,6 +290,34 @@ test('⚠️ a range-capped node is WALKED before its empty answer is believed',
   assert.equal(r.curve, CURVE, 'the trade the capped node was hiding is found');
 });
 
+test("⚠️ a node that silently empties anything WIDE is still walked — the step must not scale with the span", async () => {
+  /*
+   * The 17:57 / 18:09 / 18:19 card, three times identical: "no trades found
+   * for this token in the last 400000 blocks (also walked 24 smaller ranges)"
+   * about a token whose launch buy is plainly on chain. The walk's step was
+   * ceil(span / budget), so the deep window asked in 16,667-block ranges —
+   * and this node answers anything that wide with [] rather than an error.
+   * Every step of every window past the first was therefore silently empty,
+   * and the ladder could never reach an older trade however far it "looked".
+   */
+  const CAP = 800;                       // what this node will actually serve
+  const TRADE_AT = 60_000 - 12_000;      // older than the first window, well inside the last
+  let wideAsks = 0;
+  const chain = {
+    async getLogs({ fromBlock, toBlock }) {
+      if (toBlock - fromBlock > CAP) { wideAsks++; return []; }   // silently emptied, never an error
+      return fromBlock <= TRADE_AT && TRADE_AT <= toBlock
+        ? [{ ...xfer(CURVE, WALLET, '0xh1'), blockNumber: TRADE_AT }]
+        : [];
+    },
+    async getTransaction() { return { to: CURVE, from: WALLET, value: 10n ** 17n, data: '0xaabbccdd' + word(TOKEN) + num(500) }; },
+  };
+  const r = await decodeCurveIface(chain, TOKEN, { head: 60_000, blocks: 60_000 });
+  assert.equal(r.ok, true, `the fine walk never reached the trade: ${r.why}`);
+  assert.equal(r.curve, CURVE);
+  assert.ok(wideAsks > 0, 'the cheap wide asks are still tried first — they are one request when they work');
+});
+
 test('a walk where every step errors is an outage, not an untraded token', async () => {
   const chain = { async getLogs() { throw new Error('range too wide'); }, async getTransaction() { return null; } };
   const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 5000 });
@@ -317,10 +345,16 @@ test('⚠️ a wide ask that ERRORS over a clean, empty stepped walk is "no trad
 });
 
 test('the walk is BOUNDED — a wide window must not become hundreds of round trips', async () => {
+  // Two passes now (coarse over the span, then fine near the head in
+  // node-sized asks — see decodeCurveIface), so the ceiling is their two
+  // budgets plus the single wide ask. What must never come back is an
+  // unbounded walk: 5,000,000 blocks at the fine step alone would be 10,000
+  // requests.
   let calls = 0;
   const chain = { async getLogs() { calls++; return []; }, async getTransaction() { return null; } };
   await decodeCurveIface(chain, TOKEN, { head: 10_000_000, blocks: 5_000_000, steps: 24 });
-  assert.ok(calls <= 25, `made ${calls} getLogs calls`);
+  const ceiling = 1 + 24 + require('./curveIface.js').LOG_STEPS;
+  assert.ok(calls <= ceiling, `made ${calls} getLogs calls, ceiling ${ceiling}`);
 });
 
 test("⚠️ a CONSTANT ADDRESS is refused — replaying a stranger's is how a buy pays out to somebody else", () => {
