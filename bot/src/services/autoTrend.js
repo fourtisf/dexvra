@@ -558,7 +558,10 @@ function floorsPhrase(cfg) {
  * token nobody priced is how a dead row reaches the board — they are simply not
  * COUNTED as having failed a floor nobody read them against.
  */
-const looked = (r) => r._change !== undefined;
+// "We opened this row and got an answer." `undefined` is the unprobed tail past
+// PROBE_CAP; `_unread` is a row we DID probe and could not read — the upstream
+// refused us. Neither may be counted as having failed a floor.
+const looked = (r) => r._change !== undefined && !r._unread;
 function countFloorRefusals(ranked, cfg) {
   return ranked.filter((r) => looked(r) && rowRefusal(r, cfg)).length;
 }
@@ -575,8 +578,26 @@ async function byGain(rows, rng = Math.random) {
     let priced = false;
     let mcap = null;
     let vol24 = null;
+    // ⚠️ "WE COULD NOT ASK" IS NOT "THIS TOKEN HAS NOTHING", and this loop
+    // collapsed the two. A throw, and a `fetchMarket` that answers `null`
+    // because neither GeckoTerminal nor DexScreener could be reached, both left
+    // `change`/`mcap`/`vol24` null — exactly what an indexer ANSWERING with no
+    // data leaves. Three rules downstream then act on that:
+    //   • `hasReading` refuses the row (right — a blank row may not be
+    //     published — but for a reason that is not about the token);
+    //   • `rowRefusal` reads a null cap as failing the free-trending floors,
+    //     so the log accuses the operator's own listings of being too small;
+    //   • the chain's shortfall is attributed to the floors rather than to the
+    //     upstream, which is the cause an operator would act on.
+    // GT's free tier is ~30 req/min PER IP and this box shares it with the
+    // website, so a cycle that loses most of its reads is ordinary here — and
+    // the board then publishes only as many rows as GT happened to answer for.
+    let unread = false;
     try {
       const m = await market.fetchMarket(r.chain, r.address);
+      // `fetchMarket` returns null only when BOTH readers came up empty, which
+      // on this box is far more often a shared 429 than a token nobody indexes.
+      if (!m) unread = true;
       if (m && Number.isFinite(m.change24h)) change = m.change24h;
       // The SAME read, not a second lookup. `fetchMarket` already returns the
       // cap and the 24h volume, and this loop is paced at 250ms against a quota
@@ -597,12 +618,16 @@ async function byGain(rows, rng = Math.random) {
       // no pool anywhere has nothing, and a row for it is decoration.
       if (m && Number.isFinite(m.priceUsd)) priced = true;
     } catch {
-      /* unpriced — handled below */
+      unread = true; // the read itself failed — a fact about the upstream
     }
     r._change = change;   // carried so the caller can apply a floor without re-fetching
     r._priced = priced;
     r._mcap = mcap;
     r._vol24 = vol24;
+    // Not a verdict about the token. `looked()` reads this, so an unread row is
+    // still refused (a blank row may not be published) and is NOT counted as
+    // having failed a floor nobody could read it against.
+    r._unread = unread;
     scored.push({ r, change });
     await sleep(PROBE_GAP_MS);
   }
@@ -709,6 +734,11 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
   // which is how three rounds of "trending minimal harus 5" each had to be
   // diagnosed from scratch.
   const floorRefusedByChain = new Map();
+  // Per chain: how many candidates this pass could not PRICE at all. Its own
+  // counter because it is its own cause with its own fix — "GT is rate limited"
+  // sends an operator to a key, "below the floors" sends them to a setting, and
+  // until now the first was reported as the second.
+  const unreadByChain = new Map();
 
   for (const step of plan) {
     if (step.need <= 0) continue;
@@ -779,6 +809,17 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
       if (bad && looked(r)) refusals.push({ r, bad });
       return !bad;
     });
+    const unread = ranked.filter((r) => r._unread).length;
+    if (unread) {
+      unreadByChain.set(step.id, unread);
+      // INFO, not debug. A cycle that could not read most of its candidates
+      // publishes a short board, and "why is the board short" has to be
+      // answerable from pm2 alone.
+      log.info(
+        `[autotrend] ${step.id}: could not price ${unread} of ${ranked.length} candidate(s) — the market read failed, ` +
+          `not the tokens. GECKOTERMINAL_API_KEY raises the shared ceiling; see the [gt] boot line.`,
+      );
+    }
     if (refusals.length) {
       // INFO, not debug: with the floors on, this is the commonest reason a
       // chain sits under its minimum, and "why is the board short" has to be
@@ -982,7 +1023,11 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
           // A fill that could not happen is its own fact, and it is the one an
           // operator needs: "GT is rate-limited" and "every big token here is
           // already listed" have different answers.
-          log.debug(`[autotrend] could not fill ${id}: ${r.why}`);
+          // INFO, not debug — production does not print debug, so the one line
+          // explaining a permanently short board went to nobody. It is also the
+          // line that distinguishes "GT is rate-limited" from "every big token
+          // here is already listed", which have different answers.
+          log.info(`[autotrend] could not fill ${id}: ${r.why}`);
           short.push(`${id} (could not fill: ${r.why})`);
         }
       } catch (e) {
@@ -1016,6 +1061,7 @@ async function runOnce({ rng = Math.random, chain = null, count = 1, deps = {} }
         // none went on — they are below −15%", which is a true count under a
         // false reason, and it is the reason the operator would act on.
         floorRefused: floorRefusedByChain.get(id) || 0,
+        unread: unreadByChain.get(id) || 0,
         // The PHRASE, not the two numbers: `trendingWatch` is pure and must not
         // grow its own idea of how a floor of 0 reads (it had one, and it
         // printed `min cap $0`).

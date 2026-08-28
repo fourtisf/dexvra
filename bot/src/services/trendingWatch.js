@@ -51,6 +51,9 @@ function diagnose({
   fillWhy = null,
   gainFloor = 0,
   floorRefused = 0,
+  // How many spares this cycle could not price at all — an upstream fact, and
+  // deliberately NOT folded into `floorRefused`: they need different answers.
+  unread = 0,
   // ⚠️ THE RENDERED PHRASE, not the two numbers. This branch used to format
   // them itself and printed `min cap $0` for a floor the operator had switched
   // OFF — accusing their tokens of failing a floor of nothing. `fmtCap(0)` is
@@ -78,6 +81,21 @@ function diagnose({
   // chain whose spares were refused for a $0.05 volume, and it is the sentence
   // an operator would act on. `floorRefused` is counted by the promoter on the
   // pass that refused them, so it can only be non-zero when a cycle has run.
+  // ⚠️ ABOVE the floor branch: "we could not read the market" outranks "your
+  // tokens are too small", and reporting the second over the first is what
+  // sends an operator to change a setting over an upstream that refused us.
+  // GT's free tier is ~30 req/min per IP and this box shares it with the
+  // website, so a cycle losing most of its reads is ordinary — and the board
+  // then carries only as many rows as the read happened to answer for.
+  if (unread > 0 && unread >= eligible) {
+    return {
+      code: 'unpriced',
+      text:
+        `${unread} spare listing(s) here could not be PRICED at all — the market read failed, not the tokens. ` +
+        `That is the shared GeckoTerminal quota, not your floors: GECKOTERMINAL_API_KEY raises the ceiling ` +
+        `(see the [gt] boot line), and \`npm run trending:check\` measures it on the box.`,
+    };
+  }
   if (floorRefused > 0) {
     return {
       code: 'below_floors',

@@ -719,6 +719,71 @@ cd bot && npm run trending:check    # per chain: featured / minimum / spares / w
 **Config a fix depends on:** nothing. `TREND_SHORT_GRACE_MS` and
 `TREND_SHORT_REPEAT_MS` exist for an operator who finds 45 min too twitchy.
 
+### The sixth cause: a market read that FAILED read as a token with no market
+
+"free trending tidak begitu bekerja, tidak sesuai dengan minimum yang sudah di
+set" (2026-08-28), with the panel showing `Solana 3/5–8 · BSC 1/5–8 ·
+Ethereum 1 · Base 1 · Robinhood 1 · Tron 3/5–8` and the pinned board matching
+it row for row. Every configured chain under the floor — and the board carrying
+$WIF, $FLOKI, $PEPE, $TOSHI, $BTT, which is the market filler's own work. So
+nothing was idle; everything was simply stopping at one or three.
+
+**It was one `catch {}` in `byGain`.** A market read that FAILED — a shared 429
+from GeckoTerminal, a timeout, a `fetchMarket` that answers `null` because
+neither reader could be reached — left `_change`, `_mcap` and `_vol24` null,
+which is byte-identical to an indexer ANSWERING that the token has no data.
+Three rules downstream then act on that null:
+
+- `hasReading` refuses the row — right, a blank row may not be published, but
+  for a reason that is not about the token;
+- `rowRefusal` reads the null cap as failing the free-trending floors, because
+  a floor is a CLAIM and a token with no cap cannot be shown to satisfy it;
+- so the chain's shortfall is attributed to the FLOORS, and the INFO line
+  accuses the operator's own listings of being too small.
+
+**The board therefore publishes only as many rows as the read happened to
+answer for.** GT's free tier is ~30 req/min counted PER IP and this box shares
+it with the website's charts, so a cycle losing most of its reads is ordinary
+here — which is the whole distance between a board that fills and one stuck at
+1. And it is the same collapse the free-listing feed had just been fixed for
+(`fetchTokenInfoX`), one service over, on the pass that decides what goes on a
+public board.
+
+- **`_unread` is the fact, and `looked()` is the one reader.** A row we could
+  not price is still REFUSED — publishing it is how a blank reaches the board —
+  but it is no longer COUNTED as having failed a floor nobody could read it
+  against. The unprobed tail past `PROBE_CAP` already had this distinction
+  (`_change === undefined`); a read that was attempted and failed did not.
+- **Its own counter, its own sentence, its own log line at INFO.** "GT is rate
+  limited" sends an operator to a key; "below the floors" sends them to a
+  setting. Until now the first was reported as the second.
+- ⚠️ **The watch branch is NARROW: only where the read failed for EVERY spare**
+  is the upstream the answer. Two unread out of twelve is a quota blip, and the
+  chain's real problem is whatever refused the other ten — the same narrowness
+  `hasMarket` and `hasReading` already state about their own exemptions.
+- ⚠️ **`log.debug` on a fill that could not happen.** The line above it —
+  a fill that SUCCEEDED — is INFO, so a working filler logged and a failing one
+  did not. Production does not print debug, so the one line explaining a
+  permanently short board went to nobody. This file has now had to fix that
+  exact asymmetry in three services.
+- `trending:check --floors` prints `N could not be priced` beside the floor
+  count, measured with the bot's own annotation rather than a second copy of
+  the question.
+
+Mutation-tested: restoring the old `looked()`, dropping `_unread`, and removing
+the watch branch each fail between one and three tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/trendUnpriced.test.js   # 8 tests, no network
+cd bot && npm run trending:check -- --floors                     # per chain: refused vs unreadable
+```
+
+**Config a fix depends on:** nothing in this repo — but ⚠️ **`GECKOTERMINAL_API_KEY`
+in `bot/.env` is the only thing that raises the shared ceiling rather than
+dividing it**, and this is the seventh place in this file that sentence appears.
+Until it is set, a busy minute still costs a cycle its reads; what changed is
+that the board now says so instead of blaming the operator's tokens.
+
 ### A row with a market cap and no percentage
 
 "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" — on the pinned board,

@@ -95,6 +95,7 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   // flag is the next thing to try.
   const measureFloors = process.argv.includes('--floors');
   const refusedByChain = new Map();
+  const unreadByChain = new Map();
   if (measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
     console.log(`  ${D}pricing every spare against the floors — this takes a moment${X}\n`);
     for (const id of cfg.chains) {
@@ -108,6 +109,11 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       // one number an operator would act on. `fonts:check` printed nine green
       // ticks over a banner drawing boxes for exactly this reason.
       refusedByChain.set(id, autoTrend.countFloorRefusals(ranked, cfg));
+      // ⚠️ AND HOW MANY COULD NOT BE READ AT ALL. A shared-429 leaves a null
+      // cap, a null cap cannot satisfy a floor, and the whole chain then reads
+      // as "your tokens are too small" — an upstream reported as a setting.
+      // Measured with the bot's own annotation, not a second idea of it.
+      unreadByChain.set(id, ranked.filter((r) => r._unread).length);
     }
   }
 
@@ -126,10 +132,15 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       // whose spares are dead, which is the wrong sentence and the one the
       // operator would act on.
       floorRefused: refusedByChain.get(id) || 0,
+      unread: unreadByChain.get(id) || 0,
       minMcapUsd: cfg.minMcapUsd,
       minVol24hUsd: cfg.minVol24hUsd,
     });
-    const floorNote = refusedByChain.has(id) ? ` ${D}· ${refusedByChain.get(id)} below the floors${X}` : '';
+    const unread = unreadByChain.get(id) || 0;
+    const floorNote = refusedByChain.has(id)
+      ? ` ${D}· ${refusedByChain.get(id)} below the floors${X}` +
+        (unread ? ` ${Y}· ${unread} could not be priced${X}` : '')
+      : '';
     if (why) {
       short.push({ id, featured, why });
       console.log(`  ${R}✗${X} ${String(label).padEnd(12)} ${R}${featured}/${cfg.perChainMin}${X} ${D}· ${eligible} spare listing(s)${X}${floorNote}`);
