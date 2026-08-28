@@ -223,7 +223,78 @@ async function udfConfig(base, root, vars) {
 
 export const fill = (tpl, v) =>
   tpl.replace(/\{dex\}/g, v.dex).replace(/\{chain\}/g, v.chain).replace(/\{pair\}/g, v.pair)
+     // `{fromSec}`/`{toSec}` before `{from}`/`{to}`, or the shorter token eats
+     // the longer one and leaves a stray "Sec" — the same ordering rule
+     // dsChartQuery states.
+     .replace(/\{fromSec\}/g, Math.floor(v.from / 1000))
+     .replace(/\{toSec\}/g, Math.floor(v.to / 1000))
      .replace(/\{from\}/g, v.from).replace(/\{to\}/g, v.to).replace(/\{res\}/g, v.res).replace(/\{limit\}/g, v.limit);
+
+/**
+ * THE DEEP QUERY SWEEP — run once the path is KNOWN.
+ *
+ * The first live run ended with `35×404 · 15×403 · 5×400`, and the 400 was the
+ * whole answer: `/dex/chart/amm/v3/{dex}/bars/{chain}/{pair}` — the shipped
+ * default — EXISTS and refused every query shape we had. It also refused with
+ * an EMPTY BODY, so the upstream named nothing and the five guesses ran out.
+ *
+ * Guessing more PATHS at that point is wasted: 11 paths × 5 queries spends 55
+ * requests to learn one thing. One known path × a real parameter grid spends
+ * about the same and can actually land. So when a path answers 400, the sweep
+ * escalates onto it instead of stopping.
+ *
+ * ⚠️ THE UNIT IS THE FIRST SUSPECT. DexScreener's DOCUMENTED api. host returns
+ * `pairCreatedAt` in epoch MILLISECONDS, and this repo has already been bitten
+ * by that exact asymmetry in the other direction — `barToRow` converts ms→s
+ * because a millisecond stamp read as seconds is silently dropped as "the
+ * future". Sending seconds to a feed that wants milliseconds is the same scar,
+ * pointing back. So the grid varies the UNIT before anything else.
+ */
+const DEEP_GRID = {
+  // Both spellings of the window, because only one of them can be right.
+  unit: ["s", "ms"],
+  // Every name a TradingView-shaped feed uses for the bar size…
+  resKey: ["res", "resolution", "tf", "interval"],
+  // …and every spelling of the value itself.
+  resVal: ["15", "15m", "m15"],
+  // How many bars back. The empty string means "omit it" — a required-looking
+  // parameter that is actually forbidden is one way to earn a 400.
+  cbKey: ["cb", "countback", "limit", ""],
+};
+
+/** Every query string in the grid, coarsest axis first so a hit is found early. */
+export function deepQueries(nowMs = Date.now(), hours = 6, limit = 100) {
+  const out = [];
+  for (const unit of DEEP_GRID.unit) {
+    const div = unit === "ms" ? 1 : 1000;
+    const to = Math.floor(nowMs / div);
+    const from = Math.floor((nowMs - hours * 3600_000) / div);
+    // The placeholders dsChartQuery understands for THIS unit, so whatever
+    // wins can be written straight into DS_CHART_QUERY and mean the same
+    // thing when the app substitutes its own window.
+    const fromTok = unit === "ms" ? "{from}" : "{fromSec}";
+    const toTok = unit === "ms" ? "{to}" : "{toSec}";
+    for (const resKey of DEEP_GRID.resKey) {
+      for (const resVal of DEEP_GRID.resVal) {
+        for (const cbKey of DEEP_GRID.cbKey) {
+          // ⚠️ THE TEMPLATE MUST CARRY {res}, NOT THE SPELLING THAT WON.
+          // Freezing `resolution=15` into DS_CHART_QUERY draws 15m candles on
+          // the 1h, 4h and 1d tabs — a chart that looks like it works because
+          // the tab you are on happens to be the one that was probed. Same
+          // defect as baking the dex id into the path. `{res}` is only usable
+          // when the winning spelling is what DS_RES already produces ("15");
+          // any other vocabulary needs a code change, and `canon` says so.
+          const canon = resVal === "15";
+          const q = [`from=${from}`, `to=${to}`, `${resKey}=${encodeURIComponent(resVal)}`];
+          const tpl = [`from=${fromTok}`, `to=${toTok}`, `${resKey}=${canon ? "{res}" : encodeURIComponent(resVal)}`];
+          if (cbKey) { q.push(`${cbKey}=${limit}`); tpl.push(`${cbKey}={limit}`); }
+          out.push({ q: q.join("&"), tpl: tpl.join("&"), unit, resKey, resVal, cbKey: cbKey || "(omitted)", canon });
+        }
+      }
+    }
+  }
+  return out;
+}
 
 /** dsChart.barsOf, in plain JS — same envelope vocabulary, same one level of
  *  nesting. A probe that parses more leniently than the provider would report
@@ -340,8 +411,14 @@ async function main() {
     const addressable = (p) => p.includes("{pair}") || p.includes("{chain}");
     const discovered = [...(d.templates ?? []), ...(d.fragments ?? [])].filter(addressable);
     const paths = [...new Set([...discovered, ...BUILTIN_PATHS])]; // mutable: UDF hits are unshifted in front
-    const now = Math.floor(Date.now() / 1000);
-    const vars = { dex: pair.dexId, chain: pair.chainId, pair: pair.pairAddress, from: now - 6 * 3600, to: now, res: "15", limit: 100 };
+    // ⚠️ MILLISECONDS, BECAUSE THAT IS WHAT dsChart.ts SENDS. It builds its
+    // window from `Date.now()`. This probe asked in SECONDS, so every request
+    // it made was a different request from the one the app makes — and the 400
+    // it reported may have been its own unit, not the app's shape. A guard is
+    // only honest while it measures the stack the caller actually uses; this
+    // repo states that rule about fonts:check and it applies here identically.
+    const nowMs = Date.now();
+    const vars = { dex: pair.dexId, chain: pair.chainId, pair: pair.pairAddress, from: nowMs - 6 * 3600_000, to: nowMs, res: "15", limit: 100 };
 
     // A UDF datafeed answers /config with `supported_resolutions`, which no
     // other endpoint does by accident. A hit here pins the ROOT exactly, so
@@ -364,6 +441,7 @@ async function main() {
 
     console.log(`  ${D}probing ${[...new Set(bases)].length} base(s) × ${paths.length} path(s) × ${BUILTIN_QUERIES.length} query shape(s)${X}`);
     let win = null;
+    const base0 = [...new Set(bases)][0];
     const seen = new Map(); // status -> count, so a silent sweep still shows its work
     // ⚠️ THE NEAR MISS IS THE ANSWER, AND IT WAS BURIED. A real run asked 55
     // times and reported "35×404 · 15×403 · 5×400" — that 400 is one path
@@ -409,8 +487,50 @@ async function main() {
     // last thing on screen, which is where a scrolled terminal leaves the
     // reader. 404s are deliberately not listed: "these seven paths do not
     // exist" is the one fact nobody can act on.
-    const near = answered.get(400);
-    if (near?.size) {
+    // ⚠️ A KNOWN PATH IS WORTH MORE THAN ANOTHER ROUND OF PATHS. If something
+    // answered 400 the path is settled, so escalate onto it with the real
+    // parameter grid rather than reporting a dead end and waiting for a human
+    // to come back with a browser.
+    let near = answered.get(400);
+    if (!win && near?.size) {
+      const path = [...near.keys()][0];
+      const grid = deepQueries();
+      console.log(`\n  ${C}▸ path found — sweeping ${grid.length} query shapes on it${X} ${D}${path}${X}`);
+      let refusals = 0;
+      for (const g of grid) {
+        const r = await get(`${base0}${fill(path, vars)}?${g.q}`);
+        const v = classify(r);
+        if (v.win) {
+          win = { base: base0, path, q: g.tpl };
+          console.log(`    ${G}✓${X} ${D}${g.unit} · ${g.resKey}=${g.resVal} · ${g.cbKey}${X}  ${v.verdict}`);
+          if (!g.canon) {
+            // The feed names bar sizes differently from DS_RES, so no template
+            // can carry the reader's timeframe — every tab would draw the one
+            // size that was probed. Saying this is the difference between a
+            // chart that works and one that lies on four tabs out of five.
+            console.log(`    ${Y}⚠ it wants "${g.resVal}", but DS_RES sends "15"/"60"/"240"/"1D".${X}`);
+            console.log(`      ${Y}The query below PINS ${g.resVal} — every timeframe tab would draw that size.${X}`);
+            console.log(`      ${Y}Send me this line: DS_RES needs the feed's vocabulary, which is a code change.${X}`);
+          }
+          break;
+        }
+        if ([401, 403, 429, 451].includes(r.status)) refusals++;
+        // ⚠️ STOP WHEN THE HOST STARTS REFUSING. Cloudflare answers a burst
+        // with 403s, and grinding through 96 of them proves nothing and looks
+        // exactly like a wrong grid. Ten in a row is the host talking, not the
+        // parameters.
+        if (refusals >= 10) {
+          console.log(`    ${R}✗${X} the host began refusing this server mid-sweep (${refusals}×) — stopped`);
+          break;
+        }
+        // Paced: this is somebody else's private endpoint, not ours to hammer.
+        await new Promise((r2) => setTimeout(r2, 60));
+      }
+      if (!win) console.log(`    ${Y}·${X} none of ${grid.length} query shapes was accepted`);
+      near = answered.get(400);
+    }
+
+    if (near?.size && !win) {
       console.log(`\n  ${Y}▸ THIS PATH EXISTS — only the query is wrong:${X}`);
       for (const [path, why] of near) {
         console.log(`      ${C}${path}${X}`);

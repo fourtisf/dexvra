@@ -684,3 +684,26 @@ test("⚠️ an HTTP error carries the upstream's own explanation", () => {
   assert.match(src, /replace\(\/<\[\^>\]\*>\/g, " "\)/, "an HTML error page is flattened, not pasted into the panel");
   assert.match(src, /slice\(0, 140\)/, "and bounded");
 });
+
+test("⚠️ the query template can express BOTH time units", () => {
+  // `{from}`/`{to}` are milliseconds because the caller passes Date.now(). A
+  // feed that wants seconds could not be described at all before `{fromSec}`
+  // existed — and the probe on the box got a 400 with an EMPTY BODY, which is
+  // exactly what a wrong unit looks like: no message, nothing to read.
+  const ms = 1_700_000_000_000;
+  const q = dsChartQuery(ms - 3_600_000, ms, "15", 100, "from={from}&to={to}&res={res}&cb={limit}");
+  assert.equal(q, `from=${ms - 3_600_000}&to=${ms}&res=15&cb=100`);
+
+  const secQ = dsChartQuery(ms - 3_600_000, ms, "15", 100, "from={fromSec}&to={toSec}&res={res}");
+  assert.equal(secQ, `from=${(ms - 3_600_000) / 1000}&to=${ms / 1000}&res=15`);
+});
+
+test("{from} substitution does not corrupt {fromSec}", () => {
+  // Replacing the shorter token first would leave a stray "Sec" behind, and
+  // the upstream would answer 400 about a parameter the operator can see is
+  // correct in their .env.
+  const ms = 1_700_000_000_000;
+  const q = dsChartQuery(ms, ms, "15", 1, "a={from}&b={fromSec}&c={to}&d={toSec}");
+  assert.ok(!/Sec/.test(q), q);
+  assert.equal(q, `a=${ms}&b=${ms / 1000}&c=${ms}&d=${ms / 1000}`);
+});
