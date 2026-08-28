@@ -2267,6 +2267,61 @@ async function _curvePoolOf(chainKey, ca) {
   } catch (_) { return null; }
 }
 
+/*
+ * SIBLINGS ON THE SAME PAD — so the bot TEACHES ITSELF.
+ *
+ * The learned-shape transfer needs one token on the pad whose interface was
+ * read. Making that a manual step ("paste a traded token first") is the
+ * "apt-get install is not a fix, it is a request" defect, on the feature the
+ * operator has already asked for four times: it reads as the route still not
+ * working, because from Telegram it IS.
+ *
+ * The indexer that prices our token also lists the pad's OTHER pools, and a
+ * busy one has the trade history a fresh launch lacks. Each candidate is
+ * checked by BYTECODE before anything is learned from it, so a sibling from a
+ * different pad — or a wrong list — teaches nothing.
+ */
+const CURVE_SIBLINGS = Math.max(0, Number(process.env.CURVE_SIBLINGS || 6));
+const _sibCache = new Map();   // `${chainKey}:${dexId}` → { at, list }
+const SIB_TTL_MS = 10 * 60_000;
+async function _curveSiblingsOf(chainKey, dexId) {
+  const net = GT_NET[chainKey];
+  const dex = String(dexId || '').trim();
+  if (!net || !dex || !CURVE_SIBLINGS) return [];
+  const key = `${chainKey}:${dex}`;
+  const hit = _sibCache.get(key);
+  if (hit && Date.now() - hit.at < SIB_TTL_MS) return hit.list;
+  let list = [];
+  try {
+    const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/dexes/${encodeURIComponent(dex)}/pools?page=1`, { signal: AbortSignal.timeout(8000), headers: { accept: 'application/json' } });
+    if (r.ok) {
+      const j = await r.json();
+      for (const p of (Array.isArray(j && j.data) ? j.data : [])) {
+        const pool = p && p.attributes && p.attributes.address;
+        // GT ids are "<net>_<address>" — the base token of the pool is the
+        // launched token, which is what a sibling's interface is read from.
+        const bid = p && p.relationships && p.relationships.base_token && p.relationships.base_token.data && p.relationships.base_token.data.id;
+        const token = typeof bid === 'string' ? bid.split('_').slice(1).join('_') : null;
+        if (/^0x[a-fA-F0-9]{40}$/.test(String(pool || '')) && /^0x[a-fA-F0-9]{40}$/.test(String(token || ''))) {
+          list.push({ pool: String(pool), token: String(token) });
+        }
+        if (list.length >= CURVE_SIBLINGS) break;
+      }
+    }
+  } catch (_) { list = []; }
+  _sibCache.set(key, { at: Date.now(), list });
+  return list;
+}
+
+/** The pad's other tokens, for the self-teaching pass. Excludes `ca` itself —
+ *  a token cannot teach the shape it is missing. */
+async function _curveSiblings(chainKey, ca) {
+  const m = await marketOf(ca, chainKey).catch(() => null);
+  const list = await _curveSiblingsOf(chainKey, m && m.dexId);
+  const me = String(ca).toLowerCase();
+  return list.filter((s) => String(s.token).toLowerCase() !== me);
+}
+
 async function _curveTradeHashes(chainKey, ca) {
   try {
     const pool = await _curvePoolOf(chainKey, ca);
@@ -2425,6 +2480,10 @@ async function _curveIface(chainKey, ca) {
         // The learned-shape transfer's anchor: the curve address the indexer
         // names, whose bytecode is then matched against a taught sibling's.
         poolHint: () => _curvePoolOf(chainKey, ca),
+        // …and where to LEARN that shape from when nothing has taught the pad
+        // yet. Each candidate is bytecode-checked before it teaches anything.
+        siblings: () => _curveSiblings(chainKey, ca),
+        siblingHashes: (sibCa) => _curveTradeHashes(chainKey, sibCa),
       }),
       bound,
     ]);
@@ -2752,10 +2811,13 @@ async function tokenSnapshot(ca, chainKey) {
     // "genuinely unreadable" from pm2 alone. The card cannot carry it (it is
     // an operator diagnostic on a user surface), and without it every round of
     // "masih sama aja" starts from zero.
-    if (CURVE_ROUTE_ON) {
-      console.log(`[curve] card ${chainKey}/${String(ca).slice(0, 10)}… unroutable: ${iface.why || (iface.ok ? 'interface read, but no BUY leg observed yet' : 'unreadable')}`);
-    }
-    return { ...extBase, curve: '', dex: true, graduated: true, progressPct: 100, dexVenue: 'ext', routable: false };
+    const curveWhy = CURVE_ROUTE_ON
+      ? (iface.why || (iface.ok ? 'interface read, but no BUY leg observed yet' : 'unreadable'))
+      : null;
+    if (curveWhy) console.log(`[curve] card ${chainKey}/${String(ca).slice(0, 10)}… unroutable: ${curveWhy}`);
+    // `curveWhy` rides ON the snapshot so the CARD can say it — see
+    // unroutableCard: the pm2 line above was unretrievable on this box.
+    return { ...extBase, curve: '', dex: true, graduated: true, progressPct: 100, dexVenue: 'ext', routable: false, curveWhy };
   }
   return { ca, curve: '', priceEth, mcapEth, graduated: true, progressPct: 100, decimals: dec, dex: true, dexVenue, venueWethEth, routable: true };
 }

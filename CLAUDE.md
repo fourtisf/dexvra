@@ -4027,10 +4027,34 @@ the storage question ("is this really MY token's curve?") is answered by
 cd tradebot && node --test curveShape.test.js curveCardPath.test.js   # incl. the fresh-launch end-to-end
 ```
 
-**Config a fix depends on:** nothing. The one operational fact worth knowing:
-after a deploy, the FIRST fresh-launch buy on a pad needs the pad to have been
-taught once — paste any traded token from that pad (or let the snipe warm one)
-and every later launch is buyable by its first buyer.
+**Config a fix depends on:** nothing — and the pad teaches ITSELF, see below.
+
+#### …and "teach it by pasting a traded token first" was the same defect again
+
+The transfer shipped needing the pad to be primed once, by hand. The next
+report was the same screenshot: a fresh Pons launch, no Buy button — because
+from Telegram, a route that needs a manual priming step is a route that does
+not work. **"apt-get install is not a fix, it is a request"**, on the feature
+that had now been reported four times.
+
+- **`siblings()` is the self-teaching pass.** When nothing has taught the
+  pad, the bot asks the indexer for the pad's OTHER pools (GeckoTerminal's
+  dex-pools list, keyed by the `dexId` the card already shows), reads the
+  first one with a usable history, and records the shape — which then
+  transfers to our token. Bounded (`CURVE_SIBLINGS`, 6), cached 10 min,
+  recursion stopped at depth 1 by `learning`.
+- ⚠️ **THE BYTECODE GATE HOLDS ON THE TEACHING PATH TOO.** A sibling teaches
+  nothing until `_shapeFor` matches OUR curve's code — so a wrong list, a
+  different pad, or a hostile answer contributes nothing at all. Pinned by its
+  own test and mutation-tested: taking the sibling's own pool as the key
+  instead of ours fails it.
+- ⚠️ **AND THE REASON MOVED ONTO THE CARD.** The card path already logged why
+  it refused, and the operator's `grep '[curve]'` came back EMPTY on a box
+  rendering that exact card: the snipe loop writes several lines a second, so
+  the one line that mattered had scrolled past `--lines 200`. A diagnostic
+  that exists and cannot be retrieved is "a value nobody can read is the same
+  as no value" — it cost four rounds. `curveWhy` rides on the snapshot and
+  `unroutableCard` prints one short line, only when a reason was recorded.
 
 ## Two bot processes, one config
 

@@ -269,7 +269,32 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
       && /no trades found|no decodable calls|neither a buy nor a sell/.test(res.why || '')) {
     try {
       const pool = await opts.poolHint();
-      const hit = await _shapeFor(chain, chainKey, pool);
+      let hit = await _shapeFor(chain, chainKey, pool);
+      /*
+       * ⚠️ NOTHING HAS TAUGHT THIS PAD YET — so TEACH IT, rather than telling
+       * the operator to go and paste a traded token. That instruction is the
+       * "apt-get install is not a fix, it is a request" defect on the one
+       * feature that has now been reported four times: from Telegram, a route
+       * that needs a manual priming step is a route that does not work.
+       *
+       * A sibling only ever teaches after its curve's BYTECODE matches ours
+       * (inside _shapeFor), so a wrong list, a different pad or a hostile
+       * answer teaches nothing at all. Bounded: the first sibling with a
+       * readable history wins, and `learning` stops the recursion at depth 1.
+       */
+      if (!hit && !opts.learning && typeof opts.siblings === 'function') {
+        const sibs = await opts.siblings().catch(() => []);
+        for (const s of (Array.isArray(sibs) ? sibs : [])) {
+          if (!s || !s.token) continue;
+          const r = await ifaceFor(chain, chainKey, s.token, {
+            learning: true,
+            tradeHashes: typeof opts.siblingHashes === 'function' ? () => opts.siblingHashes(s.token) : undefined,
+          }).catch(() => null);
+          if (!r || !r.ok || r.transferred) continue;
+          hit = await _shapeFor(chain, chainKey, pool);   // did THAT sibling teach OUR bytecode?
+          if (hit) break;
+        }
+      }
       if (hit) {
         res = {
           ok: true, transferred: true, why: null, curve: String(pool).toLowerCase(),

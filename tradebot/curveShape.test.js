@@ -80,6 +80,60 @@ test('⚠️ a discovered sibling TEACHES the pad, and a fresh launch with zero 
   assert.ok(ct.cached('robinhood', FRESH), 'a transferred route caches like a read one — canTradeNow lights up');
 });
 
+test('⚠️ NOTHING taught the pad — the bot teaches ITSELF from a sibling, with no manual step', async () => {
+  // The four-times-reported shape: telling the operator to go and paste a
+  // traded token first is "apt-get install is not a fix, it is a request".
+  // The indexer lists the pad's other pools; the bot reads one of them and
+  // teaches itself. Nothing is learned before the bytecode matches.
+  const sibLogs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+  const sibTxs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(SIB) + num(1000n * E18) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(SIB) + num(2000n * E18) },
+  };
+  const chain = {
+    async getBlockNumber() { return 9000; },
+    // OUR token has no history; the sibling does.
+    async getLogs(f) { return String((f && f.address) || '').toLowerCase() === SIB ? sibLogs : []; },
+    async getTransaction(h) { return sibTxs[h] || null; },
+    async getCode(a) { return [CURVE, NEWCURVE].includes(String(a).toLowerCase()) ? CODE : '0x'; },
+    async call() { return '0x'; },
+    async estimateGas() { return 210000n; },
+  };
+  let askedSiblings = 0;
+  const r = await ct.ifaceFor(chain, 'robinhood', FRESH, {
+    poolHint: async () => NEWCURVE,
+    siblings: async () => { askedSiblings++; return [{ token: SIB, pool: CURVE }]; },
+  });
+  assert.equal(r.ok, true, `the pad was never taught: ${r.why}`);
+  assert.equal(r.transferred, true);
+  assert.equal(askedSiblings, 1, 'the sibling list is asked once, not per window');
+  assert.equal(String(r.learnedFrom.token).toLowerCase(), SIB, 'and it says WHICH token taught it');
+});
+
+test('⚠️ a sibling from a DIFFERENT pad teaches nothing — the bytecode gate holds on the teaching path too', async () => {
+  const OTHER = '0xc2000000000000000000000000000000000000c2';   // another pad's curve
+  const otherLogs = [xfer(OTHER, WALLET, '0xo1'), xfer(OTHER, WALLET, '0xo2')];
+  const otherTxs = {
+    '0xo1': { to: OTHER, from: WALLET, value: E17, data: '0x99887766' + word(SIB) + num(1000n * E18) },
+    '0xo2': { to: OTHER, from: WALLET, value: 2n * E17, data: '0x99887766' + word(SIB) + num(2000n * E18) },
+  };
+  const chain = {
+    async getBlockNumber() { return 9000; },
+    async getLogs(f) { return String((f && f.address) || '').toLowerCase() === SIB ? otherLogs : []; },
+    async getTransaction(h) { return otherTxs[h] || null; },
+    // The sibling's curve carries DIFFERENT code from ours.
+    async getCode(a) { return String(a).toLowerCase() === OTHER ? '0x60806040' + 'ee'.repeat(64) : (String(a).toLowerCase() === NEWCURVE ? CODE : '0x'); },
+    async call() { return '0x'; },
+    async estimateGas() { return 210000n; },
+  };
+  const r = await ct.ifaceFor(chain, 'robinhood', FRESH, {
+    poolHint: async () => NEWCURVE,
+    siblings: async () => [{ token: SIB, pool: OTHER }],
+  });
+  assert.equal(r.ok, false, "a foreign pad's shape must never cross onto our curve");
+  assert.match(r.why, /no trades found/);
+});
+
 test('⚠️ DIFFERENT bytecode refuses the transfer — identity is the whole safety argument', async () => {
   await ct.ifaceFor(sibChain(), 'robinhood', SIB);
   const r = await ct.ifaceFor(freshChain({ code: '0x60806040' + 'ff'.repeat(64) }), 'robinhood', FRESH, { poolHint: async () => NEWCURVE });

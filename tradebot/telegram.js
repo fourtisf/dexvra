@@ -1269,6 +1269,20 @@ function unroutableCard(ca, chainKey, info) {
   if (info.liquidityUsd > 0) L.push(`<b>Liquidity:</b> ${usdX(info.liquidityUsd)}`);
   if (info.volH24Usd > 0) L.push(`<b>24h volume:</b> ${usdX(info.volH24Usd)}`);
   L.push('', `⚠️ This token's liquidity is on <b>${esc(info.extVenue)}</b>, which Dexvra can't route through yet — so there's nothing to quote and no swap to sign. Price above is live from the indexer.`);
+  /*
+   * ⚠️ THE REASON, ON THE CARD — because pm2 was not answerable.
+   *
+   * The card path logs why it refused, and the operator's `grep '[curve]'`
+   * came back EMPTY on a box rendering this exact card: the tradebot's snipe
+   * loop writes several lines a second, so the one line that mattered had
+   * scrolled past `--lines 200` before it could be read. A diagnostic that
+   * exists and cannot be retrieved is the "value nobody can read is the same
+   * as no value" rule, and it cost four rounds of this report.
+   *
+   * One short line, only when the engine actually recorded a reason — never a
+   * blank row on a card for a token that simply has no route.
+   */
+  if (info.curveWhy) L.push(`<i>Stage that refused: ${esc(String(info.curveWhy).slice(0, 160))}</i>`);
   return {
     text: L.join('\n'),
     kb: rows(
