@@ -4038,16 +4038,32 @@ not work. **"apt-get install is not a fix, it is a request"**, on the feature
 that had now been reported four times.
 
 - **`siblings()` is the self-teaching pass.** When nothing has taught the
-  pad, the bot asks the indexer for the pad's OTHER pools (GeckoTerminal's
-  dex-pools list, keyed by the `dexId` the card already shows), reads the
-  first one with a usable history, and records the shape — which then
-  transfers to our token. Bounded (`CURVE_SIBLINGS`, 6), cached 10 min,
-  recursion stopped at depth 1 by `learning`.
+  pad, the bot finds one of the pad's OTHER tokens, reads its interface, and
+  records the shape — which then transfers to ours. Recursion stopped at depth
+  1 by `learning`.
+- ⚠️ **AND ITS FIRST SOURCE HAD TO BE THE CHAIN.** The first cut asked
+  GeckoTerminal for the pad's other pools, and on the one chain this feature
+  is for GT need not carry the pad at all: the next card came back *"no trades
+  found … nothing to read its interface from yet"* — nothing had taught the
+  pad and nothing could — while the bot's own snipe loop had already seen
+  **227 Pons launches** from the factory's announcements. Those are read now
+  (`padFactory.announcersFor`, shared with `watchers.js` so a factory address
+  has ONE owner), address+topic filtered, which is the narrow ask this node
+  serves. The event's ABI is unknown, so **bytecode identity does the
+  identification**: every address a launch log names is a candidate, and the
+  ones whose code hashes equal our curve's are sibling curves by construction.
+  A sibling's own Transfer legs then name its token, and carry the hashes the
+  decode needs — no indexer at any point. GT's dex list stays as the second
+  source.
 - ⚠️ **THE BYTECODE GATE HOLDS ON THE TEACHING PATH TOO.** A sibling teaches
   nothing until `_shapeFor` matches OUR curve's code — so a wrong list, a
   different pad, or a hostile answer contributes nothing at all. Pinned by its
   own test and mutation-tested: taking the sibling's own pool as the key
-  instead of ours fails it.
+  instead of ours fails it. ⚠️ The code comparison in the CANDIDATE scan is a
+  cost filter and says so — mutation-testing proved it changes no outcome,
+  because a shape is recorded under the code hash of the curve it was read
+  from and `_shapeFor` looks it up under ours. Writing it up as the boundary
+  would have been a comment describing a guard that is somewhere else.
 - ⚠️ **AND THE REASON MOVED ONTO THE CARD.** The card path already logged why
   it refused, and the operator's `grep '[curve]'` came back EMPTY on a box
   rendering that exact card: the snipe loop writes several lines a second, so

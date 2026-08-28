@@ -288,7 +288,12 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
           if (!s || !s.token) continue;
           const r = await ifaceFor(chain, chainKey, s.token, {
             learning: true,
-            tradeHashes: typeof opts.siblingHashes === 'function' ? () => opts.siblingHashes(s.token) : undefined,
+            // A chain-found sibling arrives WITH its trade hashes (they are how
+            // its token was identified at all), so the decode costs receipts
+            // only. An indexer-found one is looked up the ordinary way.
+            tradeHashes: Array.isArray(s.hashes) && s.hashes.length
+              ? async () => s.hashes
+              : (typeof opts.siblingHashes === 'function' ? () => opts.siblingHashes(s.token) : undefined),
           }).catch(() => null);
           if (!r || !r.ok || r.transferred) continue;
           hit = await _shapeFor(chain, chainKey, pool);   // did THAT sibling teach OUR bytecode?

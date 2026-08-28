@@ -451,54 +451,16 @@ async function _followerBuy(u, t, token, chainKey, out) {
 // this scan has to answer. Watching both costs one getLogs each and _snipeMark
 // collapses a token seen twice into one fire. Same rule as JUP_BASES: a LIST,
 // current first, so a rollover in either direction needs no deploy.
-const PONS_FACTORY_DEFAULT = '0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e,0xe33e9e479df8802cb0866d5d05258bec4cf62948';
-// The topic0 the launchpad actually emits. It is a HASH with no name attached —
-// 1050 candidate `name(argtypes)` spellings were hashed against it and none
-// matched, so the event's ABI is genuinely unknown and this scan must work
-// without one. A human-readable PONS_EVENT still wins wherever somebody learns
-// the real spelling; KNOWN_SIGS is where it lands so the decode path lights up
-// again by itself.
-const PONS_TOPIC0_DEFAULT = '0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607';
-const PONS_EVENT_DEFAULT = PONS_TOPIC0_DEFAULT;
-// Signatures we know the spelling of. A matched topic0 here decodes properly
-// (named `token` / `deployer`, no receipt read at all); an unmatched one falls
-// to the measured resolve. The documented Pons signature is kept because it may
-// well be live on another deployment — it simply is not the one this chain
-// emits.
-const PONS_KNOWN_SIGS = [
-  'event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchConfigId, uint256 positionId, uint256 restrictionsEndBlock, uint256 initialBuyAmount)',
-];
-const _envs = (k, d) => { const v = String(process.env[k] == null ? '' : process.env[k]).trim(); return v || d; };
-const _isTopic0 = (s) => /^0x[0-9a-fA-F]{64}$/.test(String(s || '').trim());
-/** topic0 for a human-readable `event Foo(...)` — the canonical `Foo(t1,t2)`
- *  form ethers hashes, with `indexed` and parameter names stripped. */
-function _sigTopic(sig) {
-  try { return ethers.EventFragment.from(sig).topicHash; } catch (_) { return null; }
-}
-/** Read PER CALL, not at require time, so `--update-env` + restart is the whole
- *  fix — and so the kill switch shares LAUNCHPAD_PONS with the HTTP pad: an
- *  operator turning Pons off must not have to know it is two mechanisms. */
-function _ponsCfg() {
-  const flag = _envs('LAUNCHPAD_PONS', '').toLowerCase();
-  const on = !(flag === '0' || flag === 'false' || flag === 'off' || flag === 'no');
-  const raw = _envs('PONS_EVENT', PONS_EVENT_DEFAULT);
-  // Two spellings, one knob: an operator reading a topic0 off an explorer must
-  // not have to invent an ABI to use it, and one who KNOWS the ABI must not
-  // lose the named decode. Which one arrived is decided by shape, never by a
-  // second env var that can disagree with the first.
-  let eventSig = null, topic0 = null;
-  if (_isTopic0(raw)) {
-    topic0 = raw.toLowerCase();
-    eventSig = PONS_KNOWN_SIGS.find((s) => _sigTopic(s) === topic0) || null;
-  } else {
-    eventSig = raw;
-    topic0 = _sigTopic(raw);
-  }
-  const name = eventSig ? (eventSig.match(/event\s+(\w+)/) || [])[1] || 'TokenLaunched' : '';
-  const factories = _envs('PONS_FACTORY', PONS_FACTORY_DEFAULT)
-    .split(',').map((x) => x.trim()).filter((x) => /^0x[0-9a-fA-F]{40}$/.test(x));
-  return { on, factories, factory: factories[0] || '', eventSig, topic0, name, decodable: !!(eventSig && topic0) };
-}
+// The launchpad's factory addresses, its topic0 and the config reader all live
+// in `padFactory.js` now: core.js needs the same facts to find a SIBLING token
+// on the pad (the learned-shape transfer), and two copies of a factory address
+// is how the two modules would eventually disagree about where a pad announces
+// from — on values the box already measured wrong twice.
+const padFactory = require('./padFactory.js');
+const { PONS_KNOWN_SIGS, PONS_TOPIC0_DEFAULT, PONS_FACTORY_DEFAULT } = padFactory;
+const _ponsCfg = padFactory.ponsCfg;
+const _sigTopic = padFactory.sigTopic;
+const _envs = padFactory._envs;
 
 // ---- resolving a launch whose ABI we do not have -------------------------
 const _TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');

@@ -38,7 +38,7 @@ process.env.SKIP_DOTENV = '1';
 process.env.WALLET_SECRET = 'c'.repeat(48);
 process.env.DATA_DIR = path.join(os.tmpdir(), 'dexvra-curvecard-' + process.pid);
 process.env.TRADEBOT_TOKEN = 'x';
-process.env.ENABLED_CHAINS = 'base';
+process.env.ENABLED_CHAINS = 'base,robinhood';   // robinhood too: the pad-factory sibling source is keyed on it
 process.env.BASE_RPC = 'http://127.0.0.1:1';
 // The background warm's pace floor is 30s; the pace map is per token, so each
 // test below uses its own token address rather than fighting the floor.
@@ -113,7 +113,7 @@ function stubChain(token, { quiet = false, capped = false, topicLogs = false } =
 /** Stub every seam tokenSnapshot reaches: the chain, the v4 probes, and — for
  *  the "indexed" half of the report — DexScreener answering with a pair, plus
  *  GeckoTerminal's trades endpoint when `gtTrades` names the hashes. */
-function withStubs(chain, { indexed = true, gtTrades = null } = {}) {
+function withStubs(chain, { indexed = true, gtTrades = null, dsChain = 'base' } = {}) {
   const realProv = core._deps.providerFor;
   const realFetch = global.fetch;
   const realPrice = core.v4.price;
@@ -131,7 +131,7 @@ function withStubs(chain, { indexed = true, gtTrades = null } = {}) {
     const u = String(url);
     if (u.includes('api.dexscreener.com/latest/dex/tokens/')) {
       const pairs = indexed ? [{
-        chainId: 'base', priceUsd: '0.0000421', marketCap: 4209,
+        chainId: dsChain, priceUsd: '0.0000421', marketCap: 4209,
         liquidity: { usd: 4370 }, volume: { h24: 320 },
         dexId: 'pons', labels: ['v2'], pairAddress: CURVE,
         baseToken: { name: 'Test', symbol: 'TEST' },
@@ -256,6 +256,74 @@ test('⚠️ "ini token kan belum bonding" — a FRESH launch with zero history 
     assert.equal(snap.routable, true, 'the taught shape must light the Buy button for the FIRST buyer');
     assert.equal(snap.dexVenue, 'curve');
     assert.equal(String(snap.curve).toLowerCase(), CURVE);
+  } finally { restore(); }
+});
+
+test('⚠️ the 18:09 card, end to end: nothing taught, GT carries no pad — the FACTORY\'s launches teach it', async () => {
+  /*
+   * The reported state verbatim: "Stage that refused: no trades found for this
+   * token in the last 400000 blocks … nothing to read its interface from yet".
+   * The self-teach had asked GeckoTerminal for the pad's other pools, and GT
+   * need not carry the pad at all — so nothing had taught it and nothing could,
+   * while the bot's own snipe loop had already seen 227 launches from the
+   * factory. Bytecode identity picks the sibling curve out of a launch log
+   * whose ABI is unknown; the sibling's own legs name its token.
+   */
+  const fresh = '0x1f94e478675d37f15704a48756b5fdf969e39845';
+  const sibTok = '0x7777777777777777777777777777777777777777';
+  const SIBCURVE = '0xc7000000000000000000000000000000000000c7';
+  const FACTORY = '0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e';   // the measured Pons deployment
+  const TOPIC0 = '0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607';
+  const SH1 = '0x' + '33'.repeat(32);
+  const SH2 = '0x' + '44'.repeat(32);
+  const w = (a) => '0x' + '0'.repeat(24) + String(a).slice(2);
+  const sibLegs = [
+    { transactionHash: SH1, blockNumber: 20, address: sibTok, topics: [TRANSFER, topic(SIBCURVE), topic(BUYER)], data: '0x' + num(1000n * E18) },
+    { transactionHash: SH2, blockNumber: 21, address: sibTok, topics: [TRANSFER, topic(SIBCURVE), topic(BUYER)], data: '0x' + num(2000n * E18) },
+  ];
+  const sibTxs = {
+    [SH1]: { to: SIBCURVE, from: BUYER, value: E17, data: '0xaabbccdd' + addrWord(sibTok) + addrWord(BUYER) + num(1000n * E18) },
+    [SH2]: { to: SIBCURVE, from: BUYER, value: 2n * E17, data: '0xaabbccdd' + addrWord(sibTok) + addrWord(BUYER) + num(2000n * E18) },
+  };
+  const chain = {
+    async getBlockNumber() { return 5000; },
+    async getLogs(f) {
+      // The factory's launch announcement — an ABI nobody has, naming several
+      // addresses; only bytecode tells which one is the curve.
+      if (String(f && f.address || '').toLowerCase() === FACTORY) {
+        return [{ address: FACTORY, blockNumber: 19, topics: [TOPIC0, w(sibTok)], data: (w(BUYER) + w(SIBCURVE).slice(2)).replace('0x0x', '0x') }];
+      }
+      if (f && f.address) return [];                    // the fresh token: nothing, anywhere
+      const t = JSON.stringify((f && f.topics) || []).toLowerCase();
+      if (t.includes(addrWord(SIBCURVE).toLowerCase())) return sibLegs;   // the sibling curve's own legs
+      return [];
+    },
+    async getTransaction(h) { return sibTxs[h] || null; },
+    async getTransactionReceipt(h) { return sibTxs[h] ? { logs: sibLegs.filter((l) => l.transactionHash === h) } : null; },
+    async getCode(a) {
+      const x = String(a).toLowerCase();
+      if (x === CURVE.toLowerCase() || x === SIBCURVE) return PAD_CODE;   // same pad → same code
+      if (x === FACTORY) return '0x6080';
+      return '0x';
+    },
+    async call() { throw new Error('no data'); },
+    async estimateGas() { return 210000n; },
+    async getBalance() { return 5n * E18; },
+    async getFeeData() { return { gasPrice: ethers.parseUnits('0.02', 'gwei'), maxFeePerGas: null, maxPriorityFeePerGas: null }; },
+    async getBlock() { return { number: 5000, baseFeePerGas: ethers.parseUnits('0.01', 'gwei') }; },
+    getNetwork: async () => ({ chainId: 8453n }),
+    _detectNetwork: async () => ({ chainId: 8453n }),
+    resolveName: (n) => n,
+  };
+  // The chain must be robinhood for the factory list to apply — that is where
+  // the pad lives, and announcersFor is keyed on it.
+  const restore = withStubs(chain, { indexed: true, gtTrades: [], dsChain: 'robinhood' });
+  try {
+    const snap = await core.tokenSnapshot(fresh, 'robinhood');
+    assert.ok(snap, 'the fresh token snapshots');
+    assert.equal(snap.routable, true, `the factory's own launches must teach the pad: ${snap.curveWhy || ''}`);
+    assert.equal(snap.dexVenue, 'curve');
+    assert.equal(String(snap.curve).toLowerCase(), CURVE, "and the route aims at OUR token's curve");
   } finally { restore(); }
 });
 

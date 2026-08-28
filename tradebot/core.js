@@ -78,6 +78,7 @@ const launchpads = require('./launchpads');
 const curveTrade = require('./curveTrade');   // a launchpad curve read off the chain's own trades
 const curvePrice = require('./curvePrice');   // the INDEPENDENT price that gate is checked against
 const { TRANSFER_TOPIC: CURVE_TRANSFER_TOPIC } = require('./curveIface.js');   // for the seed's topic-filtered log ask
+const padFactory = require('./padFactory.js');   // where a pad announces its launches — shared with watchers.js
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // ---------------------------------------------------------------- config
@@ -2313,13 +2314,143 @@ async function _curveSiblingsOf(chainKey, dexId) {
   return list;
 }
 
-/** The pad's other tokens, for the self-teaching pass. Excludes `ca` itself —
- *  a token cannot teach the shape it is missing. */
+/*
+ * SIBLINGS FROM THE CHAIN — the source that cannot be missing.
+ *
+ * The first cut asked GeckoTerminal for the pad's other pools, and on the one
+ * chain this feature is for GT need not carry the pad at all: the card came
+ * back saying "no trades found … nothing to read its interface from yet", i.e.
+ * nothing had taught the pad and nothing could. Meanwhile the bot's own snipe
+ * loop had already SEEN 227 Pons launches — from the factory's announcements,
+ * on this node, topic-filtered (the ask shape this RPC serves).
+ *
+ * ⚠️ AND THE EVENT'S ABI IS UNKNOWN, so which word is the token and which is
+ * the pool cannot be decoded — 1050 candidate spellings were hashed against
+ * that topic0 and none matched. It does not need to be: BYTECODE IDENTITY does
+ * the identification. Every address a launch log NAMES is a candidate, and the
+ * ones whose deployed code hashes equal OUR curve's code are sibling curves by
+ * construction.
+ *
+ * ⚠️ THE CODE COMPARISON HERE IS A COST FILTER, NOT THE SAFETY BOUNDARY — and
+ * saying so is the point, because it reads like the boundary. Mutation-testing
+ * proved it: dropping it changes no outcome, since a shape is recorded under
+ * the code hash of the curve it was READ from and `curveTrade._shapeFor` looks
+ * it up under OURS. A foreign candidate therefore teaches nothing whatever
+ * this filter does; what it saves is the legs-and-receipts read on contracts
+ * that could never have taught us. The boundary is `_shapeFor`, and it carries
+ * its own test.
+ */
+const CURVE_SIB_SPAN = Math.max(10_000, Number(process.env.CURVE_SIB_SPAN || 400_000));
+const CURVE_SIB_CANDIDATES = Math.max(1, Number(process.env.CURVE_SIB_CANDIDATES || 14));
+const _codeHash = async (prov, addr) => {
+  try {
+    const c = await prov.getCode(addr);
+    return c && c !== '0x' ? ethers.keccak256(c) : null;
+  } catch (_) { return null; }
+};
+/** Every address a log names — indexed topics plus data words shaped like a
+ *  left-padded address. Order-independent, because a layout guess is exactly
+ *  what an unknown ABI forbids. */
+function _namedAddrs(log) {
+  const out = [];
+  const add = (w) => {
+    if (typeof w !== 'string' || !/^0x0{24}[0-9a-fA-F]{40}$/.test(w)) return;
+    const a = '0x' + w.slice(26).toLowerCase();
+    if (!/^0x0+$/.test(a) && !out.includes(a)) out.push(a);
+  };
+  for (const t of (log.topics || []).slice(1)) add(t);
+  const data = String(log.data || '0x').slice(2);
+  for (let i = 0; i + 64 <= data.length; i += 64) add('0x' + data.slice(i, i + 64));
+  return out;
+}
+
+/** Sibling CURVES on this pad: addresses from recent launch announcements whose
+ *  deployed bytecode is identical to `ourCurve`'s. */
+async function _chainSiblingCurves(chainKey, ourCurve) {
+  const anns = padFactory.announcersFor(chainKey);
+  if (!anns.length) return [];
+  const prov = providerFor(chainKey);
+  const want = await _codeHash(prov, ourCurve);
+  if (!want) return [];
+  const head = Number(await prov.getBlockNumber());
+  const from = Math.max(0, head - CURVE_SIB_SPAN);
+  const seen = [];
+  for (const a of anns) {
+    for (const f of a.factories) {
+      // Topic-filtered AND address-filtered on the factory: a factory is one
+      // address, so this is the narrow ask the node serves happily — it is the
+      // same read the snipe loop already makes every few seconds.
+      const logs = await prov.getLogs({ address: f, topics: [a.topic0], fromBlock: from, toBlock: head }).catch(() => []);
+      for (const lg of (logs || []).slice().reverse()) {   // newest launches first
+        for (const addr of _namedAddrs(lg)) if (!seen.includes(addr)) seen.push(addr);
+        if (seen.length >= CURVE_SIB_CANDIDATES) break;
+      }
+      if (seen.length >= CURVE_SIB_CANDIDATES) break;
+    }
+  }
+  const mine = String(ourCurve).toLowerCase();
+  const out = [];
+  for (const addr of seen.slice(0, CURVE_SIB_CANDIDATES)) {
+    if (addr === mine) continue;
+    if (await _codeHash(prov, addr) === want) out.push(addr);
+    if (out.length >= 3) break;   // the first with a readable history teaches; three is plenty
+  }
+  return out;
+}
+
+/** The token a curve trades, learned from the curve's own recent legs: the
+ *  ERC-20 whose Transfer moved to or from it. Returns {token, hashes} so the
+ *  caller can hand the hashes straight to the decoder — no second lookup, and
+ *  no indexer involved at any point. */
+async function _curveTokenAndTrades(chainKey, curve) {
+  const prov = providerFor(chainKey);
+  const head = Number(await prov.getBlockNumber());
+  const from = Math.max(0, head - CURVE_SEED_SPAN);
+  const t = '0x' + '0'.repeat(24) + String(curve).slice(2).toLowerCase();
+  const [outs, ins] = await Promise.all([
+    prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, t], fromBlock: from, toBlock: head }).catch(() => []),
+    prov.getLogs({ topics: [CURVE_TRANSFER_TOPIC, null, t], fromBlock: from, toBlock: head }).catch(() => []),
+  ]);
+  const legs = [...(outs || []), ...(ins || [])]
+    .filter((l) => l && l.transactionHash && /^0x[a-fA-F0-9]{40}$/.test(String(l.address || '')))
+    .sort((a, b) => Number(b.blockNumber || 0) - Number(a.blockNumber || 0));
+  if (!legs.length) return null;
+  // The commonest token across the legs — a curve trades exactly one.
+  const tally = new Map();
+  for (const l of legs) {
+    const k = String(l.address).toLowerCase();
+    tally.set(k, (tally.get(k) || 0) + 1);
+  }
+  const token = [...tally.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const hashes = [];
+  for (const l of legs) {
+    if (String(l.address).toLowerCase() !== token) continue;
+    if (!hashes.includes(l.transactionHash)) hashes.push(l.transactionHash);
+    if (hashes.length >= CURVE_SEED_MAX) break;
+  }
+  return hashes.length ? { token, hashes } : null;
+}
+
+/** The pad's other tokens, for the self-teaching pass. The CHAIN first (it
+ *  cannot be missing), the indexer second. Excludes `ca` itself — a token
+ *  cannot teach the shape it is missing. */
 async function _curveSiblings(chainKey, ca) {
-  const m = await marketOf(ca, chainKey).catch(() => null);
-  const list = await _curveSiblingsOf(chainKey, m && m.dexId);
   const me = String(ca).toLowerCase();
-  return list.filter((s) => String(s.token).toLowerCase() !== me);
+  const out = [];
+  try {
+    const ourCurve = await _curvePoolOf(chainKey, ca);
+    if (ourCurve) {
+      for (const curve of await _chainSiblingCurves(chainKey, ourCurve)) {
+        const hit = await _curveTokenAndTrades(chainKey, curve).catch(() => null);
+        if (hit && hit.token !== me) out.push({ token: hit.token, pool: curve, hashes: hit.hashes });
+      }
+    }
+  } catch (_) { /* the chain source failing falls through to the indexer */ }
+  const m = await marketOf(ca, chainKey).catch(() => null);
+  for (const s of await _curveSiblingsOf(chainKey, m && m.dexId)) {
+    if (String(s.token).toLowerCase() !== me && !out.some((x) => x.token === String(s.token).toLowerCase())) out.push(s);
+  }
+  return out;
 }
 
 async function _curveTradeHashes(chainKey, ca) {
