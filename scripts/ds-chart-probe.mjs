@@ -365,6 +365,19 @@ async function main() {
     console.log(`  ${D}probing ${[...new Set(bases)].length} base(s) × ${paths.length} path(s) × ${BUILTIN_QUERIES.length} query shape(s)${X}`);
     let win = null;
     const seen = new Map(); // status -> count, so a silent sweep still shows its work
+    // ⚠️ THE NEAR MISS IS THE ANSWER, AND IT WAS BURIED. A real run asked 55
+    // times and reported "35×404 · 15×403 · 5×400" — that 400 is one path
+    // saying "I EXIST, your parameters are wrong", i.e. the single most
+    // valuable line in the sweep. It scrolled off the top among fifty others,
+    // and the guidance underneath said "a line 400 → that PATH is right"
+    // without naming WHICH. A diagnosis the reader has to go hunting for is
+    // the defect this whole script exists to remove, one level up.
+    const answered = new Map(); // status -> Map(path -> first body hint)
+    const note = (status, path, why) => {
+      const m = answered.get(status) ?? new Map();
+      if (!m.has(path)) m.set(path, why);
+      answered.set(status, m);
+    };
     for (const base of [...new Set(bases)]) {
       for (const path of paths) {
         for (const q of BUILTIN_QUERIES) {
@@ -373,6 +386,7 @@ async function main() {
           const v = classify(r);
           const key = r.status === 0 ? "could not ask" : String(r.status);
           seen.set(key, (seen.get(key) ?? 0) + 1);
+          if (r.status && r.status !== 404) note(r.status, path, v.verdict);
           // Only a hit, or something that is TALKING to us, is worth a line —
           // a full 404 matrix would bury the one line that matters.
           if (v.win || r.status === 400 || (r.status === 200 && !v.win) || [401, 403, 429, 451].includes(r.status)) {
@@ -390,6 +404,32 @@ async function main() {
     // need opposite next steps.
     const tally = [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n}×${k}`).join(" · ");
     console.log(`  ${D}asked ${[...seen.values()].reduce((a, b) => a + b, 0)}: ${tally || "nothing"}${X}`);
+
+    // The sweep's findings, named — printed AFTER the tally so they are the
+    // last thing on screen, which is where a scrolled terminal leaves the
+    // reader. 404s are deliberately not listed: "these seven paths do not
+    // exist" is the one fact nobody can act on.
+    const near = answered.get(400);
+    if (near?.size) {
+      console.log(`\n  ${Y}▸ THIS PATH EXISTS — only the query is wrong:${X}`);
+      for (const [path, why] of near) {
+        console.log(`      ${C}${path}${X}`);
+        // The upstream's own words usually name the missing parameter, which
+        // is the difference between one more .env line and another sweep.
+        // bodyHint() prefixes " — "; strip the verdict AND that separator so
+        // the upstream's own sentence reads as a sentence.
+        const body = String(why).replace(/^400 — RIGHT PATH, wrong parameters\s*/, "").replace(/^—\s*/, "").trim();
+        if (body) console.log(`      ${D}it said:${X} ${body}`);
+      }
+      console.log(`      ${D}Pin it and fix only the query:${X}`);
+      console.log(`      ${G}DS_CHART_PATH=${[...near.keys()][0]}${X}`);
+    }
+    for (const st of [403, 401, 451, 429]) {
+      const m = answered.get(st);
+      if (!m?.size) continue;
+      console.log(`\n  ${R}▸ ${st} on ${m.size} path(s)${X} ${D}— about this server, not about the path:${X}`);
+      for (const path of [...m.keys()].slice(0, 6)) console.log(`      ${D}${path}${X}`);
+    }
 
     if (win) {
       anyWin = true;
