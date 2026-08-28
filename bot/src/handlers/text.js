@@ -43,6 +43,11 @@ async function textRouter(ctx) {
     if (s.type === "massdm") return await require("./massdm").handleText(ctx);
   } catch (e) {
     log.warn(`[text] ${s.type} handler: ${e.message}`);
+    // ⚠️ The user was PROMPTED for this input — a flow asked a question and
+    // they answered it. Swallowing the error into a warn nobody reads leaves
+    // the prompt card standing over a bot that never replies, which reads as
+    // dead and gets reported as dead. The refusal-off-screen lesson, on text.
+    await require("../helpers/message").toast(ctx, require("../templates").render("flow_step_failed"));
   }
 }
 
@@ -56,6 +61,8 @@ async function mediaRouter(ctx) {
     if (s.type === "massdm") return await require("./massdm").handlePhoto(ctx);
   } catch (e) {
     log.warn(`[media] ${s.type} handler: ${e.message}`);
+    // Same rule as textRouter: an answered prompt is never met with silence.
+    await require("../helpers/message").toast(ctx, require("../templates").render("flow_step_failed"));
   }
 }
 

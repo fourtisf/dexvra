@@ -2740,6 +2740,50 @@ raises the site's share and `0` turns it off, and `GECKOTERMINAL_API_KEY` is
 still the only thing that raises the real ceiling rather than dividing it.
 
 
+## "bot tidak merespon untuk paket listing setelah di minta drop ca" — the form was queued behind every timer job
+
+Reported 2026-08-28: the listing flow's CA prompt standing in the chat, a
+pump.fun mint pasted under it, and nothing ever coming back — the bot alive
+(it had just sent the prompt) and silent. **Nothing had crashed.** The contract
+step awaited `fetchMarket` and `fetchTokenDescription`, and both wait on
+`gtTurn()` → `gtSlot(PRIO_BACKGROUND)` — the shared GeckoTerminal queue, which
+has **no deadline of its own**: one release per `GT_MIN_GAP_MS`, capped at 200
+entries. The day before, the keyless budget was halved to 5/min (a 12-SECOND
+gap per slot), so behind a normal day of timer pipelines — the trending
+poster, autoTrend, the pump checker, the candle reads — a **user-prompted**
+paste sat in the background tier for minutes. From Telegram that is a dead
+bot, and it was reported as one. It "previously worked" because the budget was
+15/min until the split was enforced.
+
+- **The autofill is BOUNDED at the caller** (`LISTING_AUTOFILL_MS`, 8s per
+  source). Autofill is an ENRICHMENT — every field it fills, the form lets the
+  user edit — so a slow source contributes nothing and the form goes on: the
+  registry's own dead-pad rule, applied to the form that reads through it. The
+  background pipelines keep their queue semantics untouched; only the form
+  stops waiting on them. The abandoned lookup still lands in its cache.
+- **The paste is ANSWERED before the indexers are asked** — a "🔎 Reading your
+  token's profile…" card goes out immediately, and the review card (or the
+  next prompt) replaces it. A prompted input followed by seconds of nothing is
+  "the button does nothing", the atrun lesson on a text prompt.
+- ⚠️ **`bounded`'s timer is NOT unref'd** — the `gtDrain` rule one module
+  over, relearnt by watching all four tests get "cancelledByParent": a user is
+  waiting on that timer, and an unref'd one does not hold the event loop open,
+  so a process with nothing else pending exits with the form hung forever.
+- ⚠️ **A flow handler that throws now ANSWERS.** `textRouter`'s catch logged a
+  warn and said nothing, so ANY error inside a form step left the prompt
+  standing over silence — the refusal-off-screen defect, on text input. Both
+  routers reply "That didn't go through — please send it again."
+- Mutation-tested: unbounding the lookups and re-silencing the catch each fail
+  their tests.
+
+```bash
+cd bot && node scripts/run-tests.js test/listingAutofill.test.js   # 4 tests, no network
+```
+
+**Config a fix depends on:** nothing. `LISTING_AUTOFILL_MS` widens the wait for
+an operator with a GT key and an empty queue; `GECKOTERMINAL_API_KEY` is still
+what makes the queue itself short.
+
 ## "robinhood chain price dll tidak ada datanya" — a chain of $0 rows, and no line anywhere saying why
 
 Reported with a screenshot of the home board: seven Robinhood listings —

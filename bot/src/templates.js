@@ -192,6 +192,12 @@ const DEFAULTS = {
     "🔹 Please have your banner ready (GIF, JPG or PNG). Choose a format:",
   listing_ca_prompt:
     "📄 **Contract Address**\n\n🔹 Paste your token's contract address on **{chain}**:",
+  listing_lookup_wait:
+    "🔎 **Reading your token's profile…**\n\n" +
+    "🔹 Pulling the name, logo and socials from the indexers — a few seconds.",
+  flow_step_failed:
+    "⚠️ **That didn't go through**\n\n" +
+    "🔹 Something went wrong on our side handling your last message — please send it again.",
   listing_name_prompt: "🪙 **Token Name**\n\n🔹 What is your project called?",
   listing_symbol_prompt: "💠 **Ticker**\n\n🔹 Send your token symbol (e.g. PEPE):",
   listing_logo_prompt: "🖼 **Logo**\n\n🔹 Send your logo as a photo — or /skip to continue without one.",

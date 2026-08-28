@@ -20,6 +20,49 @@ const log = require("../helpers/logger");
 
 const URL_RE = /^https?:\/\/\S+$/i;
 
+/*
+ * ⚠️ THE AUTOFILL IS BOUNDED, because two of its three sources queue on the
+ * shared GeckoTerminal budget with NO deadline of their own.
+ *
+ * `fetchMarket` and `fetchTokenDescription` wait on `gtTurn()` →
+ * `gtSlot(PRIO_BACKGROUND)` (group/gtPairs): a queue released once per
+ * GT_MIN_GAP_MS — 12 SECONDS per slot on the keyless 5/min split — capped at
+ * 200 entries, i.e. up to ~40 minutes of wait before it even rejects. Every
+ * background pipeline (trending poster, autoTrend, pump checker, the candle
+ * reads) keeps that queue populated all day, so a USER-PROMPTED paste sat
+ * behind timer jobs for minutes. From Telegram that is a prompt card standing
+ * over a bot that never answers — reported verbatim as "bot tidak merespon
+ * untuk paket listing setelah di minta drop ca", the day after the GT budget
+ * was halved and every queue wait tripled.
+ *
+ * Autofill is an ENRICHMENT: every field it fills, the form lets the user
+ * edit. A slow source contributes nothing and the form goes on — the same
+ * rule the launchpad registry states for a dead pad. The abandoned lookup
+ * keeps running and lands in its cache, so a retry gets it for free.
+ */
+const AUTOFILL_MAX_MS = Math.max(1000, Number(process.env.LISTING_AUTOFILL_MS || 8000));
+
+/** Test seam — the three lookups, swappable without a network. The
+ *  `core._deps.providerFor` shape, for the same reason. */
+const _lookups = { fetchTokenInfo, fetchMarket, fetchTokenDescription };
+
+/** Run one lookup with a ceiling. Resolves null on timeout, rejection, or a
+ *  synchronous throw — an autofill source can fail, never the form.
+ *  ⚠️ NOT unref'd — the gtDrain rule, one module over: a user is waiting on
+ *  this timer, an unref'd one does not hold the event loop open, and a process
+ *  with nothing else pending would exit with the form hung forever. It lives
+ *  at most AUTOFILL_MAX_MS, so reffing it cannot keep a process alive. */
+const bounded = (fn, ms = AUTOFILL_MAX_MS) =>
+  new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    Promise.resolve()
+      .then(fn)
+      .then(
+        (v) => { clearTimeout(t); resolve(v); },
+        () => { clearTimeout(t); resolve(null); },
+      );
+  });
+
 function emptyForm() {
   return {
     chain: null, address: null, sym: null, name: null, emoji: "🪙", overview: null,
@@ -110,14 +153,21 @@ async function handleText(ctx) {
       // filled in for a listing that can never be sold.
       if (await listed.blockIfListed(ctx, input, f.chain)) return;
       f.address = input;
+      // The paste is ANSWERED before the indexers are asked. The lookups below
+      // are bounded but still seconds long, and a prompted input followed by
+      // seconds of nothing is "the button does nothing" — the report that
+      // produced the atrun fix, on a text prompt. The review card (or the next
+      // prompt) replaces this card, so the flow stays one live message.
+      await sendCard(ctx, tpl.render("listing_lookup_wait"), menu.withHome([]));
       // Autofill from the token's own indexer — pools.trade on Robinhood Chain,
       // DexScreener everywhere else (name/symbol/logo + socials: X/Telegram/
       // Website) — and GeckoTerminal (name/symbol/logo + project overview).
-      // The indexer wins for socials.
+      // The indexer wins for socials. Each source has AUTOFILL_MAX_MS to
+      // answer; see `bounded` for why a ceiling here is load-bearing.
       const [ds, gt, desc] = await Promise.all([
-        fetchTokenInfo(f.chain, input).catch(() => null),
-        fetchMarket(f.chain, input).catch(() => null),
-        fetchTokenDescription(f.chain, input).catch(() => null),
+        bounded(() => _lookups.fetchTokenInfo(f.chain, input)),
+        bounded(() => _lookups.fetchMarket(f.chain, input)),
+        bounded(() => _lookups.fetchTokenDescription(f.chain, input)),
       ]);
       const name = (ds && ds.name) || (gt && gt.name);
       const symbol = (ds && ds.symbol) || (gt && gt.symbol);
@@ -392,5 +442,6 @@ module.exports = {
   discard,
   handleText,
   handlePhoto,
+  _lookups,
   _test: { bondingLine, emptyForm },
 };
