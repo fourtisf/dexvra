@@ -105,10 +105,24 @@ export function dsChartBases(override = "", extra = ""): string[] {
  * `{from}` `{to}` `{res}` `{limit}` are substituted. An operator can read the
  * real shape out of their own browser (dexscreener.com → DevTools → Network →
  * filter "bars") and paste it here with no deploy at all.
+ *
+ * ⚠️ `{from}` AND `{to}` ARE MILLISECONDS — the caller passes `Date.now()`.
+ * `{fromSec}` and `{toSec}` are the same instants in SECONDS, and they exist
+ * because a template could not otherwise express a feed that wants them: an
+ * operator who found the working shape in a browser would have had no way to
+ * write it down. Which unit an undocumented feed wants is not knowable from
+ * here, and getting it wrong is exactly the kind of failure that answers 400
+ * with an empty body — no message, nothing to read, the whole chart gone. The
+ * same asymmetry `barToRow` handles in the other direction.
  */
 export function dsChartQuery(from: number, to: number, res: string, limit: number, override = process.env.DS_CHART_QUERY): string {
   const tpl = String(override ?? "").trim() || "from={from}&to={to}&res={res}&cb={limit}";
+  const sec = (ms: number) => String(Math.floor(ms / 1000));
   return tpl
+    // The seconds forms first: `{from}` is a prefix of nothing, but replacing
+    // `{from}` before `{fromSec}` would leave a stray "Sec" behind.
+    .replace(/\{fromSec\}/g, sec(from))
+    .replace(/\{toSec\}/g, sec(to))
     .replace(/\{from\}/g, String(from))
     .replace(/\{to\}/g, String(to))
     .replace(/\{res\}/g, encodeURIComponent(res))
