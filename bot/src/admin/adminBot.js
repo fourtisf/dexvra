@@ -4910,7 +4910,27 @@ function build() {
             })
             .catch(() => {});
         }
-        const c = await autoLister.set({ [alKey]: asked });
+        // ⚠️ THE ONE WRITE `alWrite` CANNOT SERVE, and so the one that was left
+        // bare. `set()` refuses over an unreadable `autoLister.json` — right,
+        // because writing DEFAULTS over it wipes every tuned threshold — and a
+        // throw out of `bot.on("text")` is swallowed by `bot.catch`, i.e. pm2
+        // only. So the operator taps a ✏️ row, types `2h30m`, and the bot says
+        // NOTHING AT ALL: no ✅, no ⚠️, no panel edit. That is the worse half of
+        // the pair — a spinning button at least spins — and it is "tidak
+        // bekerja" produced by the guard written to end it. Same sentence
+        // `alWrite` gives, through the channel a text message actually has.
+        let c;
+        try {
+          c = await autoLister.set({ [alKey]: asked });
+        } catch (e) {
+          log.error(`[adminbot] auto-listing typed write refused: ${e.message}`);
+          return ctx
+            .reply(`⛔ ${escapeHtml(String(e.message).slice(0, 300))}\n\n<i>Tidak ada yang diubah.</i>`, {
+              ...HTML,
+              ...alKb(), // hands attached: back on the panel whose banner names the file
+            })
+            .catch(() => {});
+        }
         const got = c[alKey];
         // AND SAY SO WHEN IT WAS CLAMPED. Storing something other than what was
         // asked for and answering ✅ is the same defect as the default

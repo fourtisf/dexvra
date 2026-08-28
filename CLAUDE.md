@@ -1804,7 +1804,7 @@ the only thing that can say which of these the operator is actually hitting.
 those entries: the fix stops new ones, and 🧹 Clear history is still the only
 eraser, which re-opens everything at once.
 
-#### The audit round — eight of these were in the FIX
+#### The audit round — nine of these were in the FIX
 
 Run against the finished change by seven independent lenses, and every defect
 found is one of this file's own recurring shapes, reintroduced by the code
@@ -1888,6 +1888,17 @@ written to stop it.
   not change, nothing reaches them, and free listings stay stopped: "tidak
   bekerja", manufactured by the guard. `alWrite()` is the one owner — fourteen
   try/catches is a guard the fifteenth handler forgets.
+- ⚠️ **AND THE THIRTEENTH WRITE WAS LEFT BARE — the one channel `alWrite` cannot
+  serve.** The ✏️ typed-value path is a `bot.on("text")` handler, so it has no
+  callback to answer; the helper wrapped twelve call sites and this one stayed
+  uncovered. A throw there is swallowed by `bot.catch`, so the operator taps a
+  row, types `2h30m`, and the bot says **nothing at all** — no ✅, no ⚠️, no
+  panel edit. That is the WORSE half of the pair: a spinning button at least
+  spins. Found by the audit's own synthesis, after a fix that wrapped twelve of
+  thirteen. So the rule is COUNTED now, not trusted: a test scans
+  `adminBot.js` for every `autoLister.set|reset|togglePkg` and fails on any that
+  is neither inside `alWrite` nor inside a `try` — a fourteenth handler added
+  later forgets in exactly the same way, and its symptom is this whole section.
 - **Three things were asserted in comments and nowhere in a test**, and each is
   invisible in the reassuring direction: `api/dexvra.js` had NO test at all (a
   POST that really created the row but whose envelope we stopped reading makes

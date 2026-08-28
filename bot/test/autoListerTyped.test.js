@@ -292,3 +292,61 @@ test("/cancel disarms it, so the next message is not swallowed", async (t) => {
   await h.say("3.2M");
   assert.strictEqual(autoLister.get().maxMcap, before, "the wait survived /cancel and ate the next message");
 });
+
+// ── A write the config REFUSES must reach the operator, on this channel too ──
+
+test("⚠️ an unreadable CONFIG answers the typed value — it does not swallow it", async (t) => {
+  t.after(restore);
+  await fresh({ minListGapMin: 120, maxListGapMin: 180 });
+  const fss2 = require("node:fs");
+  const path2 = require("node:path");
+  const f = path2.join(process.env.BOT_DATA_DIR, "autoLister.json");
+  const good = fss2.readFileSync(f, "utf8");
+  const h = harness();
+  await h.tap("alset:minListGapMin");
+  fss2.writeFileSync(f, '{"enabled":true,"minListGapMin":'); // a truncated write
+  const before = fss2.readFileSync(f, "utf8");
+  try {
+    await h.say("2h30m");
+    // `set()` refuses over an unreadable config — right, because writing the
+    // DEFAULTS over it wipes every tuned threshold. But a throw out of
+    // bot.on("text") is swallowed by bot.catch, i.e. pm2 only: the operator
+    // types a value and the bot says NOTHING. That is the worse half of the
+    // pair `alWrite` fixes — a spinning button at least spins — and it is
+    // "tidak bekerja" produced by the guard written to end it.
+    const msgs = h.sent();
+    assert.ok(msgs.length, "the typed value got no reply at all");
+    assert.match(h.lastSent(), /cannot read autoLister\.json/);
+    // …and the hands are attached: back on the panel whose banner names the file.
+    assert.ok(msgs[msgs.length - 1].payload.reply_markup, "no keyboard — a diagnosis with nothing to tap");
+    // …and it changed nothing.
+    assert.strictEqual(fss2.readFileSync(f, "utf8"), before, "it overwrote a config it could not read");
+  } finally {
+    fss2.writeFileSync(f, good);
+  }
+});
+
+test("⚠️ EVERY Auto-Listing write reaches the operator when it refuses — counted, not trusted", () => {
+  // This hole was made by a fix that wrapped TWELVE of thirteen call sites. A
+  // fourteenth handler added later forgets in exactly the same way, and the
+  // symptom is the report this whole feature came from. So the rule is counted:
+  // a write is either inside `alWrite` (the callback channel) or inside a `try`
+  // (the text channel, which has no callback to answer).
+  const fss2 = require("node:fs");
+  const raw = fss2.readFileSync(require.resolve("../src/admin/adminBot.js"), "utf8");
+  // ⚠️ The CODE, not the prose — the comments beside these writes quote the
+  // defect they guard against, which is the repo's own rule for a source scan.
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const lines = src.split("\n");
+  const bare = [];
+  lines.forEach((line, i) => {
+    if (!/autoLister\.(set|reset|togglePkg)\s*\(/.test(line)) return;
+    const window = lines.slice(Math.max(0, i - 3), i + 1).join(" ");
+    if (/alWrite\s*\(/.test(window) || /\btry\s*\{/.test(window)) return;
+    bare.push(`${i + 1}: ${line.trim()}`);
+  });
+  assert.deepStrictEqual(bare, [], `these writes fail in silence:\n  ${bare.join("\n  ")}`);
+  // Vacuity: the scan must actually be finding the writes it is judging.
+  const total = lines.filter((l) => /autoLister\.(set|reset|togglePkg)\s*\(/.test(l)).length;
+  assert.ok(total >= 10, `only ${total} write call sites found — the pattern has drifted and this guard is checking nothing`);
+});
