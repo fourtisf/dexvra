@@ -35,7 +35,7 @@
 //     verifiedTier), and Diamond/Gold carry it — Silver does not.
 // Change TREND_TIERS below to change the draw.
 const crypto = require("node:crypto");
-const { loadJSONSync, saveJSON } = require("../helpers/persist");
+const { loadJSONSync, readJSONSync, saveJSON } = require("../helpers/persist");
 // Every discovery source behind one seam (DexScreener + pools.trade). Named
 // `ds` still because the two functions it exposes are the two this service has
 // always called, with the same shapes; see discovery.js for what merged.
@@ -49,6 +49,7 @@ const { CHANNELS, SITE_URL, X_AUTOLIST_ENABLED, X_POST_TIMEOUT_MS } = require(".
 const { sanitizeTicker } = require("../helpers/ticker");
 const { chainOf } = require("../config/chains");
 const { tierLabel } = require("../config/packages");
+const listingWatch = require("./listingWatch");
 const log = require("../helpers/logger");
 
 const FILE = "autoLister.json";
@@ -68,6 +69,56 @@ const BLOCKED_ALERTS_AT = 3;
 // candidate list; only here so a long-running process cannot grow the file
 // without limit.
 const MAX_COOL = 4_000;
+
+/** Statuses that mean "this ROW is wrong", as opposed to "the site is refusing
+ *  this bot" (401/403/451) or "not right now" (429/5xx). Only these are worth
+ *  remembering against a token. */
+const PAYLOAD_REFUSAL = new Set([400, 404, 409, 413, 422]);
+
+/**
+ * A scan that cannot even record what stopped it.
+ *
+ * ⚠️ Both halts below refuse to WRITE — that is the whole point of them — so
+ * `fileReport` is unavailable and `lastScan()` goes stale. And a stale report is
+ * exactly what `alScanLine` and `listing:check` read as "the loop has stopped",
+ * so without this the diagnosis would accuse a perfectly healthy loop and send
+ * the operator to pm2 to hunt a process that is running fine. `lastHalt()` is
+ * the readable channel: in memory, because memory is the only place left.
+ */
+let haltAlerted = false;
+
+// ⚠️ ITS OWN FILE, because the two things that need to read it are in ANOTHER
+// PROCESS. The loop runs in dexvra-bot; the panel runs in dexvra-adminbot and
+// `listing:check` is a third process again — so an in-memory halt is invisible
+// to both, and they would go on diagnosing "the loop is not running" about a
+// loop that is running perfectly. It cannot be the state file (refusing to
+// write that is the whole point of a halt) and it is not the ledger, so a
+// separate two-field file is safe to write even when the state file is not.
+const HEALTH_FILE = "autoListerHealth.json";
+
+async function halt(report, why) {
+  report.blocker = why;
+  // AWAITED. A fire-and-forget write races the very readers this file exists
+  // for — the panel and `listing:check` in their own processes — so the halt
+  // would be invisible for exactly as long as it takes them to look.
+  await saveJSON(HEALTH_FILE, { at: report.at, why }).catch((e) => log.error(`[autolist] could not record the halt: ${e.message}`));
+  log.error(`[autolist] ${why}`);
+  // Once per process: this is a condition that persists, and a page every 25–90
+  // min is a channel nobody reads by the second hour.
+  if (!haltAlerted) {
+    haltAlerted = true;
+    log.alert(`🚨 <b>Auto-Listing halted</b>\n\n<code>${String(why).slice(0, 400)}</code>\n\n<i>Nothing is being listed.</i>`);
+  }
+  return 0;
+}
+
+/** The last halt, or null. Read by the panel and `listing:check` — both in other
+ *  processes — because a halt is the one state that cannot reach the scan
+ *  report. Cleared by the first scan that gets far enough to file one. */
+const lastHalt = () => {
+  const h = loadJSONSync(HEALTH_FILE, null);
+  return h && h.at && h.why ? h : null;
+};
 
 const DEFAULTS = {
   enabled: false, // OFF until the operator turns it on — it publishes in public
@@ -169,6 +220,12 @@ const HARD = {
   trendHours: [1, 48],
 };
 
+/** Whether the last `get()` could actually READ the config file. Its own
+ *  function because `get()`'s return is compared against DEFAULTS field for
+ *  field, and is what `set()` writes back. */
+let cfgRead = { ok: true, why: null };
+const configOk = () => ({ ok: cfgRead.ok, why: cfgRead.why });
+
 function clampInt(v, [lo, hi], fb) {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fb;
@@ -176,7 +233,20 @@ function clampInt(v, [lo, hi], fb) {
 
 /** Current config, defaults applied and every value forced within its rails. */
 function get() {
-  const c = loadJSONSync(FILE, {}) || {};
+  // ⚠️ AN UNREADABLE CONFIG IS NOT A FRESH INSTALL EITHER, and this one is worse
+  // than the state file: `DEFAULTS.enabled` is false, so a corrupt or
+  // root-owned `autoLister.json` (DATA_DIR is shared by both PM2 processes —
+  // one `sudo node scripts/…` is enough) reads as the operator having switched
+  // the service OFF. The panel then says 🔴 OFF and `listing:check` tells them
+  // to tap ▶️ Enable — which calls `set()`, which writes `{...get()}` and so
+  // overwrites every tuned threshold with the shipped defaults. A read failure
+  // laundered into a settings wipe.
+  const read = readJSONSync(FILE, {});
+  const c = read.value || {};
+  // The read status is its own question and its own function (`configOk()`) —
+  // NOT a field on the config, which is compared field-for-field against
+  // DEFAULTS in a dozen places and is written straight back by `set()`.
+  cfgRead = read;
   const g = { ...DEFAULTS };
   for (const k of ["enabled", "postChannel", "announceChannel", "paceListings"])
     if (typeof c[k] === "boolean") g[k] = c[k];
@@ -224,6 +294,10 @@ function get() {
 /** Patch any subset of the config; persists and returns the clamped result. */
 async function set(patch = {}) {
   const next = { ...get() };
+  // Refuse rather than overwrite: writing the defaults back over a file we
+  // could not read is how one bad read becomes a permanent settings wipe.
+  const rd = configOk();
+  if (!rd.ok) throw new Error(`cannot read ${FILE} — ${rd.why}. Refusing to overwrite it.`);
   for (const [k, v] of Object.entries(patch)) if (k in DEFAULTS && v != null) next[k] = v;
   // A single `pkg` still means "only this one, nothing else" — that is what it
   // meant before the rotation existed, and an older caller saying it must not
@@ -246,8 +320,25 @@ async function togglePkg(key) {
   return set({ pkgs: PKG_KEYS.filter((k) => next.includes(k)) });
 }
 
+/**
+ * Put every THRESHOLD back to its shipped value.
+ *
+ * ⚠️ THE SWITCH IS NOT A THRESHOLD, and this used to take it with everything
+ * else. `DEFAULTS.enabled` is false — correct for a fresh install, because this
+ * service publishes in public — so ↩️ Reset silently turned a running feed OFF,
+ * announced as a bare "↩️ Reset". And a service that is off files no scan
+ * report, so the panel then printed "⚠️ The scanner has gone quiet — the loop
+ * has stopped. Check pm2 logs", sending the operator to hunt a dead process
+ * that their own tap had switched off. Two taps from "free listing tidak
+ * bekerja" and nothing on any screen naming the cause.
+ *
+ * Resetting the numbers is not a decision about whether the service runs, so
+ * the switch is CARRIED OVER. Turning it off is what ⏸ Disable is for, and that
+ * button says what it does.
+ */
 async function reset() {
-  await saveJSON(FILE, { ...DEFAULTS });
+  const wasEnabled = get().enabled;
+  await saveJSON(FILE, { ...DEFAULTS, enabled: wasEnabled });
   return get();
 }
 
@@ -255,17 +346,28 @@ async function reset() {
  *  and the ever-listed ledger below. The deliberate operator escape hatch
  *  ("🧹 Clear history"), used after wiping the site's listings so it can
  *  repopulate. Nothing else may clear the ledger. */
-async function resetState() {
+async function resetState(now = Date.now()) {
+  // ⚠️ THE SCAN REPORT SURVIVES. It is an observation about the LOOP, not
+  // knowledge about tokens — and clearing it made `alScanLine` instantly print
+  // "the scanner has never reported … it is NOT running" over a loop that was
+  // running perfectly, from the operator's own tap. Two taps from "free listing
+  // tidak bekerja", with nothing on any screen naming the cause. `blocked` goes
+  // with it for the same reason: it counts consecutive failures of the loop.
+  const prev = loadState();
   await saveJSON(STATE_FILE, {
     listed: {},
     day: null,
     everListed: {},
     pkgTurn: 0,
     cool: {},
-    scan: null,
-    blocked: 0,
+    scan: prev._ok ? prev.scan : null,
+    blocked: prev._ok ? prev.blocked : 0,
     lastListAt: null,
     paceRoll: 0,
+    watch: {},
+    // When the operator cleared, so a scan already in flight cannot write its
+    // pre-clear snapshot back over this. See fileReport.
+    clearedAt: now,
   });
 }
 
@@ -279,9 +381,18 @@ async function resetState() {
 // auto-lister happily hands the same token back out for free on the next scan.
 // Once a contract is in here it is never free-listed again.
 const loadState = () => {
-  const s = loadJSONSync(STATE_FILE, {}) || {};
+  // ⚠️ AN UNREADABLE STATE FILE IS NOT A FIRST RUN. `everListed` is append-only
+  // and permanent; reading a truncated or half-restored file as `{}` and then
+  // saving over it wipes the ledger for good — and its symptom is free listings
+  // appearing for tokens the site has already SOLD. `runOnce` refuses to scan on
+  // `_ok: false` rather than write, which is the same call `getListings()`
+  // already makes one gate down: bail instead of guessing.
+  const read = readJSONSync(STATE_FILE, {});
+  const s = read.value || {};
   const obj = (v) => (v && typeof v === "object" ? v : {});
   return {
+    _ok: read.ok,
+    _why: read.why,
     listed: obj(s.listed),
     day: s.day || null,
     everListed: obj(s.everListed),
@@ -314,6 +425,14 @@ const loadState = () => {
     // roll meaning "the shortest wait in the band", which is the safe way to
     // fall: an unreadable roll must never freeze the feed for the maximum.
     paceRoll: rollOf(s.paceRoll),
+    // When 🧹 Clear history last ran — see fileReport, which uses it to refuse a
+    // stale snapshot rather than silently undoing the clear.
+    clearedAt: Number(s.clearedAt) || 0,
+    // The symptom watch's own clock — see services/listingWatch.js. Kept beside
+    // the scan report rather than in memory for the reason the pace clock is:
+    // this service is redeployed far more often than it is quiet, and a watch
+    // that reset on every restart could never reach its grace period.
+    watch: obj(s.watch),
   };
 };
 
@@ -338,11 +457,49 @@ const blank = (now) => ({
   known: 0, // already on the site / already listed / in the never-relist ledger
   cooled: 0, // skipped by the rejection memo
   offChain: 0, // outside the operator's chain scope — costs no lookup
+  // ⚠️ A candidate on a chain `chainOf()` cannot resolve. Counted rather than
+  // dropped in silence: discovery maps a feed entry back through DS_CHAIN, so
+  // the only way to land here is a chain the two maps disagree about — which is
+  // a whole network going invisible, and the panel used to render it as
+  // candidates that simply evaporated between "seen" and "priced".
+  unsupported: 0,
   reasons: {}, // rejection text (numbers stripped) → count
+  // ⚠️ THE TOKEN QUALIFIED AND THE SITE WOULD NOT TAKE IT. Nothing recorded
+  // this: a create that threw was one log.warn and a `continue`, so a site
+  // refusing every listing produced "40 candidates · 40 priced · 0 listed" —
+  // byte-identical to a healthy scan in a quiet market, with `blocker` null and
+  // the blocked-scan watchdog silent. That is the state the operator reported
+  // as "free listing tidak bekerja", and it was invisible from the panel, the
+  // alert channel and the INFO log alike.
+  refused: 0,
+  refusals: {}, // the site's own words → count
+  // ⚠️ "We could not ask the pricing source", which is NOT the same fact as the
+  // token having no market — and rendering it as the second is what let a
+  // DexScreener refusing this box read as a quiet market for as long as it did.
+  unpriced: 0,
+  unpricedWhy: {},
+  sources: [], // per discovery source: {name, n, ok, why}
+  off: false, // the operator's own switch — a REPORTED state, never a silence
   capped: null, // "9/9" when the operator's own daily cap ended the scan
   paced: null, // {waitMs, nextAt, gapMs} when the listing pace held this scan back
   blocker: null,
 });
+
+/**
+ * Record a create the site would not take.
+ *
+ * The reason is kept VERBATIM (bounded) rather than bucketed like a market
+ * rejection: `reasonBucket` strips parenthesised figures because those are live
+ * numbers, while a refusal is the site's own sentence and every word of it is
+ * the diagnosis — "400: Invalid ticker" and "401: unauthorized" are a listing
+ * payload problem and a credentials problem, and telling them apart is the
+ * whole point of writing it down.
+ */
+function noteRefusal(report, why) {
+  const text = String(why || "refused").slice(0, 160);
+  report.refused++;
+  report.refusals[text] = (report.refusals[text] || 0) + 1;
+}
 
 /** The last scan's report, or null before the first one. */
 const lastScan = () => loadState().scan;
@@ -361,10 +518,67 @@ const reasonBucket = (why) => String(why).replace(/\s*\([^)]*\)/g, "").trim();
  * answer — counts, and only after BLOCKED_ALERTS_AT of them in a row.
  */
 async function fileReport(report, state = loadState()) {
+  // Reaching here at all means the halt is over — the scan read both files and
+  // is about to write one. A stale halt on the panel is the same defect as a
+  // stale scan report, pointing the other way.
+  if (lastHalt()) {
+    await saveJSON(HEALTH_FILE, {}).catch(() => {});
+    haltAlerted = false;
+    log.alert("✅ <b>Auto-Listing is scanning again</b> — the file it could not read is readable.");
+  }
+  // ⚠️ THE LEDGER IS APPEND-ONLY AND THIS IS NOT THE ONLY WRITER. `state` is a
+  // snapshot taken at the top of the scan, and `fulfillment.js` calls
+  // `rememberListed` the moment a PAID listing goes live — which can land in the
+  // middle of a scan that takes forty serial lookups. Writing the snapshot back
+  // whole would drop that entry, and the token it protects becomes eligible for
+  // a free auto listing. Merged, never overwritten.
+  const fresh = readJSONSync(STATE_FILE, {});
+  if (fresh.ok && fresh.value) {
+    // ⚠️ …AND THE OPERATOR'S CLEAR OUTRANKS THE SNAPSHOT. 🧹 Clear history can
+    // land in the middle of a scan — the window is up to forty serial lookups,
+    // minutes wide when DexScreener is slow, which is exactly when somebody
+    // taps it — and a blind union of fresh-into-stale restores every entry they
+    // just deleted. The panel would report the history cleared and the tokens
+    // would go on being refused for ever. A clear stamped after this scan
+    // started means the snapshot's token bookkeeping is void: keep the report,
+    // discard what the scan believed about the ledger.
+    if (Number(fresh.value.clearedAt) > report.at) {
+      const after = loadState();
+      for (const k of ["listed", "everListed", "cool", "day", "pkgTurn", "lastListAt", "paceRoll", "clearedAt"]) {
+        state[k] = after[k];
+      }
+    } else if (fresh.value.everListed) {
+      state.everListed = { ...fresh.value.everListed, ...state.everListed };
+    }
+  }
   const wasBlocked = state.blocked;
   state.scan = report;
   state.blocked = report.blocker ? wasBlocked + 1 : 0;
-  await saveJSON(STATE_FILE, state).catch(() => {});
+
+  // ── The SYMPTOM watch ─────────────────────────────────────────────────────
+  // Everything above answers "could this scan run". `listingWatch` answers the
+  // question the operator actually asks — "is anything being listed" — because
+  // a service that runs perfectly and can never publish is the state that looks
+  // most like a healthy one. Folded in HERE because this is the one function
+  // every scan passes through, paced and capped scans included: hanging it off
+  // the listing path instead would freeze the watch on exactly the installs
+  // that stay broken longest.
+  let watchAlerts = [];
+  try {
+    const w = listingWatch.evaluate(
+      { enabled: get().enabled, lastListAt: state.lastListAt, scan: report },
+      state.watch,
+      { now: report.at },
+    );
+    state.watch = w.state;
+    watchAlerts = w.alerts;
+  } catch (e) {
+    // A watch that throws must never cost the scan its report.
+    log.debug(`[autolist] watch: ${e.message}`);
+  }
+
+  await saveJSON(STATE_FILE, state).catch((e) => log.error(`[autolist] could not persist ${STATE_FILE}: ${e.message} — this scan's bookkeeping is lost`));
+  for (const a of watchAlerts) log.alert(a.text);
 
   if (report.blocker) {
     if (state.blocked === BLOCKED_ALERTS_AT) {
@@ -446,6 +660,16 @@ async function rememberListed(rows, now = Date.now()) {
   const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
   if (!list.length) return 0;
   const state = loadState();
+  // ⚠️ THE GUARD LIVES HERE, not only at the scan's call site. `fulfillment.js`
+  // calls this the moment a PAID listing goes live, and writing over an
+  // unreadable state file re-opens every contract the site has ever held for
+  // free auto-listing — plus it clears the pace clock, so the next scan
+  // publishes immediately. A caller can be wrong about what it is holding; the
+  // store cannot.
+  if (!state._ok) {
+    log.error(`[autolist] refusing to write the state file — ${state._why}. ${list.length} contract(s) not recorded.`);
+    return 0;
+  }
   let added = 0;
   for (const r of list) {
     if (!r || !r.chain || !r.address) continue;
@@ -454,7 +678,7 @@ async function rememberListed(rows, now = Date.now()) {
     state.everListed[k] = now;
     added++;
   }
-  if (added) await saveJSON(STATE_FILE, state).catch(() => {});
+  if (added) await saveJSON(STATE_FILE, state).catch((e) => log.error(`[autolist] could not persist ${STATE_FILE}: ${e.message} — this scan's bookkeeping is lost`));
   return added;
 }
 const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
@@ -708,6 +932,27 @@ function rejectReason(info, cfg, trigger, now = Date.now()) {
   return null;
 }
 
+/**
+ * A URL the site will actually accept, or undefined.
+ *
+ * Mirrors `adminValidate.URL_RE` (`^https?://\S+$`) deliberately rather than
+ * being cleverer than it: the point is to send only what the validator takes,
+ * and a second, looser idea of "a URL" here would put the 400 straight back.
+ * `https://` is upgraded from a bare `http://`-less host only where the pad gave
+ * us something unambiguous — a bare `@handle` is NOT a URL and is dropped,
+ * because guessing which network it belongs to is how a listing ends up linking
+ * a stranger.
+ */
+function siteUrl(v) {
+  const t = String(v == null ? "" : v).trim();
+  if (!t || /\s/.test(t)) return undefined;
+  if (/^https?:\/\/\S+$/i.test(t)) return t;
+  // `t.me/foo`, `x.com/foo`, `project.io` — a host with a dot and no scheme is
+  // a URL somebody forgot to prefix, and the site takes it once it has one.
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/\S*)?$/i.test(t)) return `https://${t}`;
+  return undefined; // a bare handle, a placeholder, or something we cannot vouch for
+}
+
 /** The listing payload the site expects for an auto-listed token, shaped by
  *  `pkgKey` — the package whose turn it is (see nextPkg). Defaults to the first
  *  enabled one so a caller that only wants to see the shape need not care. */
@@ -724,10 +969,18 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
     // operator's call, and the one thing here that puts an auto listing on the
     // same footing as a purchase. See the file header for what that changes.
     tier: tierFor(pkgKey, address),
-    logoUrl: info.logoUrl && /^https:\/\//.test(info.logoUrl) ? info.logoUrl : undefined,
-    website: info.website || undefined,
-    twitter: info.twitter || undefined,
-    telegram: info.telegram || undefined,
+    logoUrl: siteUrl(info.logoUrl),
+    // ⚠️ AN OPTIONAL FIELD MAY NOT COST THE WHOLE LISTING. `adminValidate.buildRow`
+    // refuses the ENTIRE row with a 400 when a social is not a full http(s) URL —
+    // and the launchpad half of `discovery.mergeInfo` fills these holes from pads
+    // that publish bare handles (`@project`) and scheme-less hosts (`t.me/x`). So
+    // one project's tidy-looking profile turned a qualifying token into a refusal,
+    // and until the scan report grew `refused` that was a silent `continue`.
+    // Dropping a social we cannot vouch for loses a link; sending it loses the
+    // listing, and the link with it.
+    website: siteUrl(info.website),
+    twitter: siteUrl(info.twitter),
+    telegram: siteUrl(info.telegram),
   };
   if (p.trending) {
     // Sub-order only — it marks the row as featured. WHERE it lands on the board
@@ -767,14 +1020,68 @@ async function createFromInfo(chain, address, info, { cfg = get(), now = Date.no
  * not take down the service loop. `deps` is injectable so tests don't touch the
  * network.
  */
+/**
+ * The two upstream seams, in the shape that can tell a refusal from an answer.
+ *
+ * A caller injecting the LEGACY `fetchDiscovery` / `fetchTokenInfo` is wrapped
+ * as `ok: true` — a stub handing back a record, or null, is asserting that the
+ * source ANSWERED, which is what every existing test means by it. Only a real
+ * upstream can report "we could not ask", and only the X shapes carry it.
+ */
+function seams(deps = {}) {
+  const discoverX =
+    deps.fetchDiscoveryX ||
+    (deps.fetchDiscovery
+      ? async () => ({ items: (await deps.fetchDiscovery()) || [], ok: true, why: null, sources: [] })
+      : ds.fetchDiscoveryX);
+  const priceX =
+    deps.fetchTokenInfoX ||
+    (deps.fetchTokenInfo
+      ? async (c, a) => ({ info: await deps.fetchTokenInfo(c, a), ok: true, why: null })
+      : ds.fetchTokenInfoX);
+  return { discoverX, priceX };
+}
+
 async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = {}) {
   const cfg = get();
-  if (!cfg.enabled) return 0; // not a fault, and not worth a report
-  const discover = deps.fetchDiscovery || ds.fetchDiscovery;
-  const price = deps.fetchTokenInfo || ds.fetchTokenInfo;
   const report = blank(now);
+  const rd = configOk();
+  if (!rd.ok) {
+    // Not the OFF branch: this service has NOT been switched off, we simply
+    // cannot tell what it was set to.
+    return await halt(report, `cannot read ${FILE} — ${rd.why}. Auto-Listing is halted; its settings are NOT lost, but nothing will be listed until that file is readable.`);
+  }
+  if (!cfg.enabled) {
+    // ⚠️ AN OFF SERVICE STILL FILES ITS REPORT. It used to return here in
+    // silence — "not a fault, and not worth a report" — and the consequence was
+    // that `state.scan` went stale, so `alScanLine` printed "⚠️ The scanner has
+    // gone quiet … the loop has stopped" over a service the operator had simply
+    // switched off, and sent them to pm2 logs to look for a process that was
+    // running perfectly. A stale report is supposed to mean the LOOP stopped;
+    // it can only mean that if every other reason files one. Same rule as
+    // `lastCheckedAt` vs `lastOkAt` on the auto-raid panel.
+    report.off = true;
+    await fileReport(report, loadState());
+    return 0;
+  }
+  // ⚠️ THE `X` SHAPES, because "it answered with nothing" and "it did not answer"
+  // are different facts and this service used to render them identically. An
+  // injected LEGACY dep is wrapped rather than refused: a stub that returns a
+  // record or null is stating "it answered", which is exactly what a test means.
+  const { discoverX, priceX } = seams(deps);
 
   let state = loadState();
+  if (!state._ok) {
+    // The ledger is the only thing standing between a deleted PAID listing and
+    // a free re-list, so a scan that cannot read it must not run at all — and
+    // must certainly not persist the empty one it just fell back to.
+    return await halt(
+      report,
+      `cannot read the auto-lister's own state — ${state._why}. The never-relist ledger lives in that file, so the ` +
+        `scan refuses to run rather than risk handing a previously PAID listing back for free. Fix or delete ` +
+        `${STATE_FILE} in DATA_DIR — deleting it re-opens every contract the site has ever held.`,
+    );
+  }
   let today = todayCount(state, now);
   if (today >= cfg.maxPerDay) {
     // A cap the operator set, doing exactly what they set it to do. Reported so
@@ -785,8 +1092,11 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
   }
 
   let candidates;
+  let sources = [];
   try {
-    candidates = await discover();
+    const d = await discoverX();
+    candidates = d.items || [];
+    sources = d.sources || [];
   } catch (e) {
     report.blocker = `discovery failed: ${e.message}`;
     log.warn(`[autolist] ${report.blocker}`);
@@ -794,11 +1104,19 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
     return 0;
   }
   report.candidates = candidates.length;
+  report.sources = sources;
   if (!candidates.length) {
-    // Every feed empty at once is a DexScreener outage or a reshaped response,
-    // not a quiet market. It used to return silently — the single most likely
-    // way for this service to look enabled and do nothing indefinitely.
-    report.blocker = "discovery returned no candidates (every source empty — DexScreener feeds and pools.trade)";
+    // ⚠️ NAME WHAT ACTUALLY HAPPENED. This used to assert "every source empty"
+    // for every way discovery can fail — and all three DexScreener feeds live
+    // on ONE host, so a single 403 takes them together and the operator was
+    // sent to look for a quiet market. `sources` carries each one's own answer;
+    // a source that ANSWERED with nothing and one that would not answer at all
+    // are different problems with different fixes.
+    const down = sources.filter((x) => !x.ok);
+    report.blocker = down.length
+      ? `discovery could not reach ${down.length === sources.length ? "any source" : "some sources"} — ` +
+        down.map((x) => `${x.name}: ${x.why}`).join(" · ")
+      : "discovery returned no candidates (every source answered, with nothing — DexScreener feeds and pools.trade)";
     // To pm2 too, not just the panel: an operator grepping `autolist` during an
     // outage saw NOTHING between two healthy scans — hours of silence that read
     // as the loop having died, when it was running and being starved.
@@ -811,11 +1129,23 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
   let known = new Set();
   try {
     const rows = await api.getListings();
+    // Every row this cycle, whatever its status: a contract sitting in the
+    // review queue must not be auto-listed out from under the admin looking at
+    // it, and a rejected one must not be handed back on the same pass.
     known = new Set(rows.map((r) => keyOf(r.chain, r.address)));
-    // …and it stays off the table after it is gone. Fold today's listings into
-    // the permanent ledger BEFORE picking anything, so a row deleted later can
-    // never come back as a free auto-listing.
-    const added = await rememberListed(rows, now);
+    // …and a row that was really LISTED stays off the table after it is gone.
+    //
+    // ⚠️ APPROVED ONLY. This used to fold the site's ENTIRE roster into a
+    // PERMANENT ledger — so anyone posting a contract to the public listing form
+    // (unauthenticated, `pending`) locked that token out of free auto-listing for
+    // ever, as did every submission an admin rejected. The ledger's stated job is
+    // "a token that was listed once, including a paid one later deleted, is never
+    // handed back free"; a row nobody ever listed is not that, and the only
+    // eraser is 🧹 Clear history, which re-opens everything at once.
+    const added = await rememberListed(
+      rows.filter((r) => (r.status || "approved") === "approved"),
+      now,
+    );
     if (added) {
       state = loadState(); // rememberListed wrote through — re-read before use
       log.debug(`[autolist] ledger +${added} (${Object.keys(state.everListed).length} contracts remembered)`);
@@ -868,7 +1198,15 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
       report.known++;
       continue;
     }
-    if (!chainOf(c.chain)) continue;
+    // ⚠️ COUNTED, not skipped in silence. `discovery` maps a feed entry back to
+    // our chain id before it is ever offered here, so a candidate that cannot be
+    // resolved means the two directions of that map disagree — one whole chain
+    // discovered and then dropped, with the panel showing candidates that
+    // vanish between "seen" and "priced" and no line anywhere naming the chain.
+    if (!chainOf(c.chain)) {
+      report.unsupported++;
+      continue;
+    }
     // The operator's chain scope. Skipped BEFORE any lookup is spent, which is
     // the entire point of focusing: the whole pricing budget goes to the
     // chosen chains instead of being burned on the market's loudest one.
@@ -885,7 +1223,24 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
 
     lookups++;
     report.priced++;
-    const info = await price(c.chain, c.address).catch(() => null);
+    const ans = await priceX(c.chain, c.address).catch((e) => ({ info: null, ok: false, why: e.message }));
+    // ⚠️ "WE COULD NOT ASK" IS NOT "THIS TOKEN HAS NO MARKET".
+    //
+    // A refusal used to arrive here as a bare null, `rejectReason` rendered it
+    // as "no market data" — a claim about the TOKEN — and `coolUntil` then
+    // benched it for TWELVE HOURS. So a DexScreener refusing this box produced
+    // `40 priced · 0 listed — no market data ×40`, which reads as a quiet
+    // market, and the damage outlived the outage by half a day. It is its own
+    // counter, its own sentence, and it writes NO cool entry: the miss-vs-
+    // undecided line `logoFill` draws, on the path that publishes listings.
+    if (!ans.ok) {
+      report.unpriced++;
+      const b = reasonBucket(ans.why || "could not price it");
+      report.unpricedWhy[b] = (report.unpricedWhy[b] || 0) + 1;
+      log.debug(`[autolist] could not price ${c.chain}/${c.address}: ${ans.why}`);
+      continue;
+    }
+    const info = ans.info;
     const trigger = triggerMcap(c.address, cfg);
     const why = rejectReason(info, cfg, trigger, now);
     if (why) {
@@ -905,10 +1260,38 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
     try {
       made = await createFromInfo(c.chain, c.address, info, { cfg, now, pkgKey });
     } catch (e) {
+      // ON THE REPORT, not only in pm2. This token cleared every gate the
+      // operator set and the site turned it down; "0 listed" with an empty
+      // reason tally says the market was quiet, which is the opposite of what
+      // happened. See `refused` in blank() for what that cost.
+      noteRefusal(report, e.message);
+      // ⚠️ A 4xx IS A FACT ABOUT THIS TOKEN'S PAYLOAD and will not change on the
+      // next scan — an unparseable social, a ticker the site's validator will
+      // never take. Without a memo the same token is re-priced and re-refused
+      // every 25–90 min for ever, spending one of `maxLookupsPerRun` each time;
+      // a handful near the head of a focused chain's candidate list is enough to
+      // crowd out everything listable. A 5xx or a transport failure is a fact
+      // about the SITE and is deliberately NOT memoed — cooling that would hide
+      // an outage behind a bookkeeping entry, which is the line `logoFill` draws
+      // between a decided miss and an undecided one.
+      // ⚠️ AND NOT EVERY 4xx IS ABOUT THE PAYLOAD. 401/403/429/451 are the site
+      // refusing US — they apply to every token equally, so memoing them would
+      // bench the entire candidate list over a credentials problem and leave the
+      // feed dead long after the token was fixed. Only a VALIDATOR refusal is a
+      // fact about this row.
+      const st = Number((String(e.message).match(/→\s*(\d{3})/) || [])[1]);
+      if (PAYLOAD_REFUSAL.has(st)) state.cool[key] = now + 12 * HOUR_MS;
       log.warn(`[autolist] createListing ${sanitizeTicker(info.symbol)} (${c.chain}): ${e.message}`);
       continue;
     }
-    if (!made) continue;
+    if (!made) {
+      // A 2xx carrying no listing. Different sentence from a thrown refusal —
+      // the request succeeded and the row still does not exist — and the same
+      // rule: it may not be silent.
+      noteRefusal(report, "the site accepted the request but returned no listing");
+      log.warn(`[autolist] createListing ${sanitizeTicker(info.symbol)} (${c.chain}): no listing returned`);
+      continue;
+    }
     const { input } = made;
 
     state.listed[key] = { at: now, sym: input.sym, mcap: Math.round(info.mcap), trigger, pkg: pkgKey, tier: input.tier };
@@ -927,7 +1310,7 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
     // pace(): re-rolling on each scan collapses the spacing to the floor.
     state.lastListAt = now;
     state.paceRoll = rng();
-    await saveJSON(STATE_FILE, state).catch(() => {});
+    await saveJSON(STATE_FILE, state).catch((e) => log.error(`[autolist] could not persist ${STATE_FILE}: ${e.message} — this scan's bookkeeping is lost`));
     log.info(
       `[autolist] listed ${input.sym} on ${c.chain} at $${Math.round(info.mcap).toLocaleString("en-US")} ` +
         `(its trigger was $${trigger.toLocaleString("en-US")}) as "${pkgOf(pkgKey).label}"` +
@@ -939,6 +1322,37 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
     if (cfg.postChannel && tg) await announce(tg, c, info, input, cfg).catch(() => {});
   }
   report.listed = listedNow;
+  // ⚠️ EVERY CREATE REFUSED IS A BLOCKED SCAN, not a quiet market.
+  //
+  // `fileReport` draws that line deliberately narrowly — "a scan that priced
+  // forty tokens and liked none of them is the service working correctly, and
+  // paging for that is how a monitor gets muted". This is the other case, and
+  // it fits that definition exactly: these tokens cleared every gate, so the
+  // scan HAD something to list and could not. A rotated INTERNAL_API_TOKEN, a
+  // moved DEXVRA_API_BASE, a payload the site's validator now rejects and a 500
+  // all land here, and until this line existed all four read as "0 listed".
+  //
+  // Only when NOT ONE create landed: a scan that listed something and refused
+  // one token has a per-token problem, which the panel now prints, and paging
+  // for it would be the muted monitor again.
+  // ⚠️ EVERY CANDIDATE UNPRICEABLE IS A BLOCKED SCAN. The pricing host refusing
+  // this box is not a market that has nothing — it is the scan unable to judge
+  // anything at all, and it used to print as "no market data ×40". Checked
+  // BEFORE the refusal ladder below because a scan that could price nothing
+  // never reached a create.
+  if (!listedNow && report.unpriced > 0 && report.unpriced === report.priced) {
+    const [why, n] = Object.entries(report.unpricedWhy).sort((a, b) => b[1] - a[1])[0];
+    report.blocker =
+      `could not price a single one of ${report.priced} candidate(s) — ` +
+      `most common: ${why}${n < report.unpriced ? ` (×${n})` : ""}`;
+    log.warn(`[autolist] ${report.blocker}`);
+  } else if (!listedNow && report.refused > 0) {
+    const [why, n] = Object.entries(report.refusals).sort((a, b) => b[1] - a[1])[0];
+    report.blocker =
+      `the site refused all ${report.refused} listing(s) this scan — ` +
+      `most common: ${why}${n < report.refused ? ` (×${n})` : ""}`;
+    log.warn(`[autolist] ${report.blocker}`);
+  }
   await fileReport(report, state);
   // One line per scan at INFO, so pm2 logs alone answer "is it running and what
   // is it finding" without DEBUG. Previously the only INFO line was a successful
@@ -950,6 +1364,7 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
 /** A scan report as one line — used by the log, the panel and the test scan, so
  *  all three describe a scan the same way. */
 function scanLine(report) {
+  if (report.off) return "the service is switched OFF — nothing is scanned or listed";
   if (report.blocker) return `⛔ ${report.blocker}`;
   if (report.capped) return `daily cap reached (${report.capped}) — nothing more today, by your setting`;
   if (report.paced)
@@ -964,13 +1379,30 @@ function scanLine(report) {
     `${report.candidates} candidates · ${report.priced} priced · ${report.listed} listed` +
     (report.known ? ` · ${report.known} already known` : "") +
     (report.cooled ? ` · ${report.cooled} on cool-off` : "") +
-    (report.offChain ? ` · ${report.offChain} outside chain scope` : "");
+    (report.offChain ? ` · ${report.offChain} outside chain scope` : "") +
+    // A chain the two halves of the DexScreener slug map disagree about. Named
+    // here because it is the difference between "the market is quiet" and "a
+    // whole network never reaches the pricing step".
+    (report.unsupported ? ` · ${report.unsupported} on an unmappable chain` : "");
+  // REFUSALS LEAD THE TALLY, and they are a separate clause from the market
+  // rejections. "below its trigger ×38" is the market; "the site refused it" is
+  // us, and reading the second as the first is what made this invisible.
+  const parts = [];
+  if (report.unpriced) {
+    const t = Object.entries(report.unpricedWhy || {}).sort((a, b) => b[1] - a[1])[0];
+    parts.push(`⚠️ ${report.unpriced} could not be priced${t ? ` (${t[0]})` : ""}`);
+  }
+  if (report.refused) {
+    const top = Object.entries(report.refusals || {}).sort((a, b) => b[1] - a[1])[0];
+    parts.push(`⚠️ ${report.refused} refused by the site${top ? ` (${top[0]})` : ""}`);
+  }
   const why = Object.entries(report.reasons)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
     .map(([r, n]) => `${r} ×${n}`)
     .join(" · ");
-  return why ? `${head} — ${why}` : head;
+  if (why) parts.push(why);
+  return parts.length ? `${head} — ${parts.join(" · ")}` : head;
 }
 
 /**
@@ -993,21 +1425,28 @@ const DRY_LOOKUPS = 15;
 
 async function dryRun({ now = Date.now(), deps = {} } = {}) {
   const cfg = get();
-  const discover = deps.fetchDiscovery || ds.fetchDiscovery;
-  const price = deps.fetchTokenInfo || ds.fetchTokenInfo;
+  const { discoverX, priceX } = seams(deps);
   const report = blank(now);
   const state = loadState();
 
   let candidates;
+  let sources = [];
   try {
-    candidates = await discover();
+    const d = await discoverX();
+    candidates = d.items || [];
+    sources = d.sources || [];
   } catch (e) {
     report.blocker = `discovery failed: ${e.message}`;
     return report;
   }
   report.candidates = candidates.length;
+  report.sources = sources;
   if (!candidates.length) {
-    report.blocker = "discovery returned no candidates (every source empty — DexScreener feeds and pools.trade)";
+    const down = sources.filter((x) => !x.ok);
+    report.blocker = down.length
+      ? `discovery could not reach ${down.length === sources.length ? "any source" : "some sources"} — ` +
+        down.map((x) => `${x.name}: ${x.why}`).join(" · ")
+      : "discovery returned no candidates (every source answered, with nothing — DexScreener feeds and pools.trade)";
     return report;
   }
 
@@ -1016,6 +1455,22 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     known = new Set((await api.getListings()).map((r) => keyOf(r.chain, r.address)));
   } catch (e) {
     report.blocker = `site API unreachable: ${e.message}`;
+    return report;
+  }
+
+  // ⚠️ AND CAN THE SITE ACTUALLY TAKE A LISTING? The read above proves only that
+  // it answers. This button exists to answer "why has nothing been listed?", and
+  // until it asked this it reported "2 qualify — a real scan would list the first
+  // one" over a service whose every create was being refused: the diagnostic and
+  // the engine disagreeing, in the reassuring direction. `api.canCreate()` is the
+  // one owner — `listing:check` asks the same question the same way — and it
+  // probes with a payload the site's validator refuses outright, so it cannot
+  // create anything.
+  const canCreate = deps.canCreate || api.canCreate;
+  const write = await canCreate().catch((e) => ({ ok: false, status: null, why: e.message }));
+  report.write = write;
+  if (!write.ok) {
+    report.blocker = `the site will not take a listing: ${write.why}`;
     return report;
   }
 
@@ -1039,7 +1494,10 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
       report.known++;
       continue;
     }
-    if (!chainOf(c.chain)) continue;
+    if (!chainOf(c.chain)) {
+      report.unsupported++;
+      continue;
+    }
     // The scope IS honoured here, unlike the cool-off below: the cool-off is
     // this service's bookkeeping, the scope is the operator's setting, and a
     // test scan that prices chains the real scan will never list on reports a
@@ -1052,7 +1510,18 @@ async function dryRun({ now = Date.now(), deps = {} } = {}) {
     // the market looks like right now; answering from a memo would show them the
     // service's bookkeeping instead.
     report.priced++;
-    const info = await price(c.chain, c.address).catch(() => null);
+    const ans = await priceX(c.chain, c.address).catch((e) => ({ info: null, ok: false, why: e.message }));
+    // The same line the real scan draws: a source that would not answer must
+    // not be reported to the operator as a token with no market. This is the
+    // button they tap to ask "why has nothing been listed" — answering it with
+    // the wrong fact is the whole reason it exists.
+    if (!ans.ok) {
+      report.unpriced++;
+      const b = reasonBucket(ans.why || "could not price it");
+      report.unpricedWhy[b] = (report.unpricedWhy[b] || 0) + 1;
+      continue;
+    }
+    const info = ans.info;
     const trigger = triggerMcap(c.address, cfg);
     const why = rejectReason(info, cfg, trigger, now);
     if (why) {
@@ -1265,7 +1734,10 @@ function start(tg, { rng = Math.random } = {}) {
     try {
       await runOnce({ tg });
     } catch (e) {
-      log.debug(`[autolist] ${e.message}`);
+      // ERROR, not debug. An exception escaping runOnce is a scan that did not
+      // happen, and at debug level — which production does not print — it is
+      // byte-identical to a loop that never ran.
+      log.error(`[autolist] scan threw: ${(e && e.stack ? String(e.stack).split("\n")[0] : e)}`);
     }
     schedule();
   };
@@ -1303,6 +1775,8 @@ module.exports = {
   runOnce,
   dryRun,
   lastScan,
+  lastHalt,
+  configOk,
   scanLine,
   coolUntil,
   stats,

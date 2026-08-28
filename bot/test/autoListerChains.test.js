@@ -28,7 +28,12 @@ const healthy = (over = {}) => ({
 });
 
 function stubApi(t, created) {
-  const real = { createListing: api.createListing, getListings: api.getListings };
+  const real = { createListing: api.createListing, getListings: api.getListings, canCreate: api.canCreate };
+  // ⚠️ The WRITE PROBE too. 🔎 Test scan asks `api.canCreate()` now — it used to
+  // exercise only the read path and so reported "2 qualify" over a service whose
+  // every create was being refused. A stub that leaves it out talks to the real
+  // site, which is a test passing or failing on somebody's network.
+  api.canCreate = async () => ({ ok: true, status: 400, why: null });
   api.createListing = async (input) => {
     created.push(input);
     return { id: "x", ...input };

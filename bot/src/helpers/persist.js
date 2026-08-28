@@ -26,10 +26,40 @@ function ensureDir() {
 }
 
 function loadJSONSync(name, def) {
+  return readJSONSync(name, def).value;
+}
+
+/**
+ * The same read, with the reason — because "there is no file yet" and "the file
+ * is there and I could not read it" are DIFFERENT FACTS and `loadJSONSync`
+ * answers `def` to both.
+ *
+ * ⚠️ That collapse is destructive for an append-only store. `autoLister`'s
+ * `everListed` is the permanent ledger that stops a token which was listed once
+ * — including one somebody PAID for and later deleted — being handed back as a
+ * free auto listing. A truncated write, a full disk or a half-restored volume
+ * makes the file unreadable, `loadState()` reads it as a first run, and the very
+ * next save writes the empty ledger over the top and mirrors it to Mongo. The
+ * loss is silent and permanent, and its symptom is free listings appearing for
+ * tokens the site has already sold.
+ *
+ * `existed` is what separates the two: a fresh install has no file at all.
+ */
+function readJSONSync(name, def) {
+  const file = path.join(DATA_DIR, name);
+  let text;
   try {
-    return JSON.parse(fss.readFileSync(path.join(DATA_DIR, name), "utf8"));
-  } catch {
-    return def;
+    text = fss.readFileSync(file, "utf8");
+  } catch (e) {
+    // ENOENT is the ordinary "nothing saved yet". Anything else — EACCES, EIO,
+    // EISDIR — is a real read failure about a file that may well be there.
+    const missing = e && e.code === "ENOENT";
+    return { value: def, ok: missing, existed: !missing, why: missing ? null : `${name}: ${e.message}` };
+  }
+  try {
+    return { value: JSON.parse(text), ok: true, existed: true, why: null };
+  } catch (e) {
+    return { value: def, ok: false, existed: true, why: `${name}: unreadable JSON (${e.message})` };
   }
 }
 
@@ -255,4 +285,4 @@ class DedupSet {
 module.exports = {
   sweepMirror,
   mirrorIdle,
-  startMirrorSweep, loadJSONSync, saveJSON, ensureDir, hydrate, DedupSet, DATA_DIR };
+  startMirrorSweep, loadJSONSync, readJSONSync, saveJSON, ensureDir, hydrate, DedupSet, DATA_DIR };

@@ -55,9 +55,17 @@ const pageCount = (n) => Math.max(1, Math.ceil(n / GROUP_PAGE));
 const clampPage = (p, pages) => Math.max(0, Math.min(Number(p) || 0, pages - 1));
 
 function guard(ctx) {
-  if (ctx.chat && ctx.chat.type !== "private") return false;
-  if (!isAdminUser(ctx)) return false;
-  return true;
+  const ok = !(ctx.chat && ctx.chat.type !== "private") && isAdminUser(ctx);
+  // ⚠️ A REFUSED TAP IS ANSWERED, and that is the whole change. Every handler
+  // guarded here returns on false without touching the callback query, so a
+  // non-admin — or anyone who reached this keyboard outside a private chat —
+  // taps and the button spins for ever, with no message anywhere and no log
+  // line. That is indistinguishable from a handler that does not exist, i.e.
+  // literally "tidak bekerja", and it is true of every button on every admin
+  // panel. Answering here rather than in each handler is the one-owner fix; a
+  // guard the 40th handler has to remember is one the 40th handler forgets.
+  if (!ok && ctx.callbackQuery) ctx.answerCbQuery("⛔ Admins only, in a private chat.", { show_alert: true }).catch(() => {});
+  return ok;
 }
 
 // ── Keyboards ────────────────────────────────────────────────────────────────
@@ -1788,9 +1796,17 @@ function alPaceLine(c) {
   // is on — the auto-raid panel had to learn to DROP its ready line rather than
   // reword it, for the same reason.
   const today = autoLister.stats().today;
+  const scan = autoLister.lastScan();
+  const loopDead = autoLister.lastHalt() || !scan || Date.now() - scan.at > 2 * c.maxGapMin * 60_000 + 600_000;
   let next;
+  // The CERTAIN facts first — a switch the operator set and a cap they set are
+  // known, where "the scanner has not reported" is an inference.
   if (!c.enabled) next = `<b>held</b> — the service is 🔴 OFF`;
   else if (today >= c.maxPerDay) next = `<b>held</b> — today's <b>${today}/${c.maxPerDay}</b> cap is reached`;
+  // ⚠️ …and then DROPPED, never reworded. "the next scan may list one" printed
+  // twelve lines under "the loop has stopped" is a panel contradicting itself
+  // with the reassuring half first — the rule the auto-raid panel had to learn.
+  else if (loopDead) next = `<b>held</b> — the scanner has not reported; the loop may not be running`;
   else if (p.skewed) next = `<b>due now</b> — the stored clock reads in the future and was discarded`;
   else if (p.waitMs > 0) next = `next one due <b>in ${gap(p.waitMs / 60000)}</b>`;
   // ⚠️ "nothing listed yet" is a claim about the FEED and this is a claim about
@@ -1935,6 +1951,20 @@ function alScanLine(scan, cfg) {
   // could tell the difference. A scan report is the only proof the loop is
   // alive, so its absence or its age is what gets reported here.
   const stale = 2 * cfg.maxGapMin * 60_000 + 600_000; // two full gaps, plus slack
+  // ⚠️ A HALT CANNOT REACH THE SCAN REPORT — that is what makes it a halt: the
+  // scan refuses to write the very file the report lives in. Without this the
+  // stale-report branch below would accuse a perfectly healthy loop of having
+  // died and send the operator to pm2 to hunt a process that is running fine,
+  // while the actual cause (one unreadable file, a one-line fix) is named
+  // nowhere they will look.
+  const halt = autoLister.lastHalt();
+  if (halt && (!scan || halt.at >= scan.at)) {
+    return (
+      `⛔ <b>Auto-Listing is halted</b> (${ago(Date.now() - halt.at)})\n` +
+      `<code>${escapeHtml(String(halt.why).slice(0, 300))}</code>\n` +
+      `<i>The loop IS running — it is refusing to write rather than lose data.</i>\n\n`
+    );
+  }
   if (!scan) {
     return (
       `⚠️ <b>The scanner has never reported</b> — if the bot has been up more than ` +
@@ -3953,6 +3983,7 @@ function build() {
     }
     alScanBusy = false;
     const found = (r.qualified || [])
+      .slice(0, 8) // the verdict has to fit beside the panel, and eight is a list
       .map((q) => `• <b>${q.sym}</b> on ${q.chain} — ${usd(q.mcap)} (trigger ${usd(q.trigger)})`)
       .join("\n");
     const sampled = r.sampled ? ` <i>(sample of the first ${r.priced} — a tap must not run for minutes)</i>` : "";
@@ -3962,14 +3993,33 @@ function build() {
     // why dryRun still prices while the pace holds) — what it may not do is
     // describe a scan the engine would not perform.
     const p = r.pace || autoLister.pace();
-    const wouldList = !p.on
+    // ⚠️ AND TO THE TWO GATES THAT RUN BEFORE IT. `runOnce` checks `enabled` and
+    // the daily cap and returns without ever reaching the pace, so a verdict
+    // that starts at the pace promises a listing over a service that is switched
+    // off — the same defect alPaceLine had to be rescued from, one message down.
+    const cfgNow = autoLister.get();
+    const todayNow = autoLister.stats().today;
+    const held = !cfgNow.enabled
+      ? `the service is 🔴 OFF, so a real scan lists nothing`
+      : todayNow >= cfgNow.maxPerDay
+        ? `today's <b>${todayNow}/${cfgNow.maxPerDay}</b> cap is reached, so a real scan lists nothing`
+        : null;
+    const wouldList = held
+      ? `<b>${r.listed}</b> qualif${r.listed === 1 ? "ies" : "y"}, but ${held}`
+      : !p.on
       ? `<b>${r.listed}</b> would be listed right now`
       : p.due
         ? `<b>${r.listed}</b> qualif${r.listed === 1 ? "ies" : "y"} — a real scan would list <b>the first one</b>, then wait ${escapeHtml(autoLister.paceRange())}`
         : `<b>${r.listed}</b> qualif${r.listed === 1 ? "ies" : "y"}, but the pace holds the next listing for ` +
           `<b>${escapeHtml(autoLister.fmtGap(p.waitMs / 60000))}</b>`;
+    // ⚠️ BOUNDED AT SOURCE. A blocker now names each failing source and its
+    // reason, so it can run to several hundred characters — and the trim below
+    // only shortens the PANEL half, so an over-long verdict built a message
+    // Telegram rejects outright. The edit then fails, the panel never updates,
+    // and the one button that answers "why has nothing been listed?" reads as
+    // dead precisely when it has an answer. Same cap as alScanLine.
     const verdict = r.blocker
-      ? `⛔ <b>${escapeHtml(r.blocker)}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
+      ? `⛔ <b>${escapeHtml(String(r.blocker).slice(0, 300))}</b>\n\n<i>This is why nothing is being listed. The service cannot work until it clears.</i>`
       : `🔎 <b>Test scan</b> — ${escapeHtml(autoLister.scanLine(r))}${sampled}\n\n` +
         (r.listed
           ? `${wouldList}:\n${found}\n\n<i>Nothing was listed — this was a dry run.</i>`
@@ -3982,8 +4032,29 @@ function build() {
   });
   bot.action("alrst", async (ctx) => {
     if (!guard(ctx)) return;
-    await autoLister.reset();
-    ctx.answerCbQuery("↩️ Reset").catch(() => {});
+    // ⚠️ It resets the THRESHOLDS and leaves the switch alone — see
+    // autoLister.reset(). It used to take `enabled` with everything else, so
+    // this button silently stopped a running public feed and the panel then
+    // accused the loop of having died. The answer says which it did, because
+    // a bare "↩️ Reset" is what made that invisible.
+    // ⚠️ IT RESETS EVERY SETTING BUT THE SWITCH, so the answer names what
+    // actually moved. "Thresholds reset" alone was true of the thresholds and
+    // silent about the pace going back ON, the packages falling back to Free
+    // and the chain scope reopening — three changes an operator would report as
+    // "free listing tidak bekerja, sebelumnya bekerja".
+    const before = autoLister.get();
+    const c = await autoLister.reset();
+    const moved = [];
+    if (before.paceListings !== c.paceListings) moved.push(`pace ${c.paceListings ? `ON (${autoLister.paceRange(c)})` : "OFF"}`);
+    if (before.pkgs.join() !== c.pkgs.join()) moved.push(`packages ${c.pkgs.map((k) => autoLister.pkgOf(k).label).join(" → ")}`);
+    if (before.chains.length !== c.chains.length) moved.push(c.chains.length ? `chains ${c.chains.join(", ")}` : "chains ALL");
+    if (before.postChannel !== c.postChannel) moved.push(`channel post ${c.postChannel ? "ON" : "OFF"}`);
+    ctx
+      .answerCbQuery(
+        `↩️ Settings back to defaults${moved.length ? ` · ${moved.join(" · ")}` : ""} — the service stays ${c.enabled ? "🟢 ON" : "🔴 OFF"}`,
+        { show_alert: moved.length > 0 },
+      )
+      .catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   bot.action("alclr", async (ctx) => {

@@ -274,8 +274,17 @@ test("config rails: an impossible band or a runaway cap is clamped", async () =>
   assert.ok(c.maxMcap >= c.minMcap, "band stays valid");
   assert.ok(c.maxPerDay <= 100, "daily cap railed");
   assert.ok(c.maxGapMin >= c.minGapMin, "gap stays valid");
+  // ⚠️ THE SWITCH IS NOT A THRESHOLD, and ↩️ Reset carries it over. It used to
+  // take `enabled` with everything else — and `DEFAULTS.enabled` is false — so
+  // resetting the numbers silently stopped a live public feed, announced as a
+  // bare "↩️ Reset", after which the panel accused the loop of having died.
+  // Stated out loud here rather than inherited from whatever ran before.
+  await al.set({ enabled: true });
   await al.reset();
-  assert.deepStrictEqual(al.get(), { ...al.DEFAULTS }, "reset returns the shipped defaults");
+  assert.deepStrictEqual(al.get(), { ...al.DEFAULTS, enabled: true }, "reset returns the shipped thresholds and keeps the switch");
+  await al.set({ enabled: false });
+  await al.reset();
+  assert.deepStrictEqual(al.get(), { ...al.DEFAULTS, enabled: false }, "…and it does not switch a stopped service on either");
 });
 
 // ── Package selection ───────────────────────────────────────────────────────

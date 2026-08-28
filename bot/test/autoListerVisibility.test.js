@@ -38,9 +38,14 @@ const healthy = (over = {}) => ({
 
 /** Stub the site API for one test. */
 function stubApi(t, { listings = [], create = async (i) => ({ id: "x", ...i }) } = {}) {
-  const real = { createListing: api.createListing, getListings: api.getListings };
+  const real = { createListing: api.createListing, getListings: api.getListings, canCreate: api.canCreate };
   api.getListings = async () => (typeof listings === "function" ? listings() : listings);
   api.createListing = create;
+  // ⚠️ The WRITE PROBE too. 🔎 Test scan asks `api.canCreate()` now — it used to
+  // exercise only the read path and so reported "2 qualify" over a service whose
+  // every create was being refused. A stub that leaves it out talks to the real
+  // site, which is a test passing or failing on somebody's network.
+  api.canCreate = async () => ({ ok: true, status: 400, why: null });
   t.after(() => Object.assign(api, real));
 }
 
@@ -344,6 +349,12 @@ test("the test scan reports verdicts and lists NOTHING", async (t) => {
       return { id: "x", ...i };
     },
   });
+  // ⚠️ The report BEFORE, not `null`. 🧹 Clear history preserves the scan report
+  // now — it is an observation about the LOOP, not knowledge about tokens, and
+  // wiping it made the panel instantly accuse a healthy loop of being dead. So
+  // "the dry run writes no state" is asserted as "the report did not change",
+  // which is the same rule stated more exactly and survives that.
+  const before = JSON.stringify(al.lastScan());
   const r = await al.dryRun({
     now,
     deps: {
@@ -360,7 +371,7 @@ test("the test scan reports verdicts and lists NOTHING", async (t) => {
   assert.strictEqual(r.qualified[0].sym, "NINEHOOD");
   assert.deepStrictEqual(r.reasons, { "below its trigger": 1 });
   // …and it writes no state: the report on disk is untouched.
-  assert.strictEqual(al.lastScan(), null);
+  assert.strictEqual(JSON.stringify(al.lastScan()), before);
 });
 
 test("the test scan answers even when the service is OFF", async (t) => {

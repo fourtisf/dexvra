@@ -50,6 +50,10 @@ function harness(addresses, { info = healthy } = {}) {
   let siteReads = 0;
   const realCreate = api.createListing;
   const realGet = api.getListings;
+  const realCan = api.canCreate;
+  // ⚠️ The WRITE PROBE too — 🔎 Test scan asks `api.canCreate()` now, and a stub
+  // that leaves it out talks to the real site.
+  api.canCreate = async () => ({ ok: true, status: 400, why: null });
   api.createListing = async (input) => {
     created.push(input);
     return { id: `id${created.length}`, ...input };
@@ -75,6 +79,7 @@ function harness(addresses, { info = healthy } = {}) {
     restore: () => {
       api.createListing = realCreate;
       api.getListings = realGet;
+      api.canCreate = realCan;
     },
   };
 }

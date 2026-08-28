@@ -170,3 +170,31 @@ test("the summary never claims a failure when there is none to claim", (t) => {
   assert.ok(!/FAILED:[^\n]*autoLister/.test(summary), "autoLister must start wherever the rest can");
   assert.ok(services.length > 0);
 });
+
+// ⚠️ …AND THE PAGE HAS TO BE DELIVERABLE WHEN IT FIRES.
+//
+// `attachServices` reports a failed service through `log.alert`, and that is the
+// ONE alarm for a dead auto-lister loop: the admin panel reads a config file and
+// has never known whether the loop behind its 🟢 ON switch is running. `bot.js`
+// used to call `applyMiddleware(bot)` — which is what runs `setupMonitoring` and
+// therefore this whole report — BEFORE `log.attach(bot, …)`. So the page went to
+// a logger with no bot attached, landed in pm2's stdout, and the ops channel got
+// nothing. The failure was real; only its delivery was lost, which is the worse
+// half: the operator's only remaining tell was a stale-scan line pointing at logs
+// they have no reason to open.
+//
+// A source scan, because running the real boot needs a Telegram token — and it
+// reads the CODE, since the comment above that line quotes the ordering it fixes.
+test("bot.js attaches the alert channel BEFORE it starts the background services", () => {
+  const fss = require("node:fs");
+  const raw = fss.readFileSync(require.resolve("../src/bot.js"), "utf8");
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const attach = src.search(/log\.attach\(\s*bot\b/);
+  const middleware = src.search(/^\s*applyMiddleware\(bot\);/m);
+  assert.notStrictEqual(attach, -1, "log.attach(bot, …) is gone — nothing can page the ops channel");
+  assert.notStrictEqual(middleware, -1, "applyMiddleware(bot) is gone — this guard is describing nothing");
+  assert.ok(
+    attach < middleware,
+    "applyMiddleware runs setupMonitoring, which pages when a service fails to start — attaching the logger afterwards drops that page",
+  );
+});

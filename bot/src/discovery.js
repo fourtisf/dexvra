@@ -43,24 +43,35 @@ const log = require("./helpers/logger");
  *
  * @returns {Promise<Array<{chain: string, address: string}>>}
  */
-async function fetchDiscovery() {
+async function fetchDiscoveryX() {
   const sources = [
-    { name: "dexscreener", fn: () => ds.fetchDiscovery() },
-    { name: "poolstrade", fn: () => poolstrade.fetchDiscovery() },
+    { name: "dexscreener", fn: () => ds.fetchDiscoveryX() },
+    {
+      name: "poolstrade",
+      fn: async () => {
+        const rows = await poolstrade.fetchDiscovery();
+        // poolstrade has no X shape; a throw is the only failure it reports, so
+        // an empty answer from it genuinely means "nothing new", not "we could
+        // not ask". Stated here rather than assumed at the call site.
+        return { items: Array.isArray(rows) ? rows : [], ok: true, why: null };
+      },
+    },
   ];
-  const lists = await Promise.all(
+  const answers = await Promise.all(
     sources.map(async (s) => {
       try {
-        const rows = await s.fn();
-        return Array.isArray(rows) ? rows : [];
+        const r = await s.fn();
+        return { name: s.name, items: Array.isArray(r.items) ? r.items : [], ok: r.ok !== false, why: r.why || null };
       } catch (e) {
         // One source failing must not take the scan down — that is the whole
         // reason this is a Promise.all over guarded thunks and not a bare one.
-        log.debug(`[discovery] ${s.name}: ${e.message}`);
-        return [];
+        const why = `${e.message}${e.cause && e.cause.code ? ` (${e.cause.code})` : ""}`;
+        log.debug(`[discovery] ${s.name}: ${why}`);
+        return { name: s.name, items: [], ok: false, why };
       }
     }),
   );
+  const lists = answers.map((a) => a.items);
 
   const seen = new Set();
   const out = [];
@@ -75,7 +86,22 @@ async function fetchDiscovery() {
       out.push({ chain: c.chain, address: c.address });
     }
   }
-  return out;
+  // ⚠️ "EVERY SOURCE EMPTY" AND "NO SOURCE ANSWERED" ARE DIFFERENT FACTS, and
+  // the auto-lister's blocker used to assert the first about the second — which
+  // sends an operator to look for a quiet market while a host is refusing the
+  // box. `ok` is "at least one source answered".
+  const ok = answers.some((a) => a.ok);
+  return {
+    items: out,
+    ok,
+    why: ok ? null : answers.map((a) => `${a.name}: ${a.why || "no answer"}`).join(" · "),
+    sources: answers.map((a) => ({ name: a.name, n: a.items.length, ok: a.ok, why: a.why })),
+  };
+}
+
+/** The long-standing array shape, for callers that do not need the reason. */
+async function fetchDiscovery() {
+  return (await fetchDiscoveryX()).items;
 }
 
 /**
@@ -124,20 +150,51 @@ function mergeInfo(base, extra) {
  * numbers on that pair are the ones worth keeping (so the pads must not
  * overwrite them). Filling holes is the only combination that gets both.
  */
-async function fetchTokenInfo(chain, address) {
+async function fetchTokenInfoX(chain, address) {
+  const dsP = ds.fetchTokenInfoX(chain, address);
+  // The launchpads that know this token, most specific first. `mergeInfo` only
+  // ever fills holes, so this order is precedence among them — and the indexer
+  // below outranks all of them on the fields it answers for.
+  const extras = [];
   if (chain === poolstrade.OUR_CHAIN) {
-    const info = await poolstrade.fetchTokenInfo(chain, address).catch(() => null);
-    if (info) return info;
+    // ⚠️ A MERGE, NOT AN OVERRIDE, and that changed the day DexScreener started
+    // indexing Robinhood Chain (July 2026 — see config/chains.js
+    // DEXSCREENER_SLUG). This used to `return` the pools.trade record and never
+    // ask the indexer at all, which was right while pools.trade was the only
+    // source for the chain and became wrong the moment it was not: the
+    // auto-lister's gates read `liq` / `vol24` / `pairCreatedAt`, a bonding-curve
+    // envelope coerces the ones it does not publish to 0, and the result was
+    // `thin liquidity ($0)` for EVERY Robinhood token on every scan — including
+    // graduated ones with a real pair and real depth. One chain structurally
+    // unlistable, with the panel asserting a measured $0 for a market nobody had
+    // looked at. Now the indexer's live numbers win and the pad fills the holes
+    // it is actually good for: the socials, the logo and the curve state.
+    extras.push(poolstrade.fetchTokenInfo(chain, address).catch(() => null));
   }
-  if (!launchpads.covers(chain)) return ds.fetchTokenInfo(chain, address);
-  const [dsInfo, lpInfo] = await Promise.all([
-    ds.fetchTokenInfo(chain, address).catch(() => null),
-    launchpads.fetchTokenInfo(chain, address).catch((e) => {
-      log.debug(`[discovery] launchpads ${chain}/${address}: ${e.message}`);
-      return null;
-    }),
-  ]);
-  return mergeInfo(dsInfo, lpInfo);
+  if (launchpads.covers(chain)) {
+    extras.push(
+      launchpads.fetchTokenInfo(chain, address).catch((e) => {
+        log.debug(`[discovery] launchpads ${chain}/${address}: ${e.message}`);
+        return null;
+      }),
+    );
+  }
+  if (!extras.length) return dsP;
+  const [dsAns, ...rest] = await Promise.all([dsP, ...extras]);
+  let info = dsAns.info;
+  for (const e of rest) info = mergeInfo(info, e);
+  // ⚠️ A LAUNCHPAD RECORD DOES NOT MAKE A REFUSAL INTO AN ANSWER on the fields
+  // the gates read. The pads carry socials and a logo; `liq`, `vol24` and
+  // `pairCreatedAt` come from the indexer, and scoring those gates against a
+  // record whose indexer half we could not read is judging a token by numbers
+  // nobody measured. `ok` therefore still follows DexScreener — the caller can
+  // use the merged record for display and must not treat it as priced.
+  return { info, ok: dsAns.ok, why: dsAns.why };
 }
 
-module.exports = { fetchDiscovery, fetchTokenInfo, mergeInfo };
+/** The long-standing shape, for callers that only ever wanted the record. */
+async function fetchTokenInfo(chain, address) {
+  return (await fetchTokenInfoX(chain, address)).info;
+}
+
+module.exports = { fetchDiscovery, fetchDiscoveryX, fetchTokenInfo, fetchTokenInfoX, mergeInfo };

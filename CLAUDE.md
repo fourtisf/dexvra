@@ -1631,6 +1631,258 @@ cd bot && node scripts/run-tests.js test/autoLister.test.js   # includes the two
 stored values; only the draw is bounded. If listings are still 0 after this
 deploys, 🔎 Test scan names the next gate in line — it is no longer this one.
 
+### …and the same day, "free listing di admin bot tidak bekerja sebelumnya bekerja"
+
+The band-top defect above is why that operator's feed went to zero. This is the
+audit that followed it, and its subject is not a fifth cause — it is that **all
+five looked identical from every surface an operator has.** The panel read 🟢 ON
+and the scan line under it read
+
+```
+🔍 Last scan (4 min ago): 40 candidates · 40 priced · 0 listed
+```
+
+**That sentence is what a healthy scan in a quiet market looks like, it is what
+the band-top defect looked like for two days, and it is what every one of the
+following looks like** — a site refusing every create, a pricing host refusing
+the box, one whole chain that can never be resolved, and an operator's own
+↩️ Reset tap. Five different faults, one rendering, `blocker` null in all of
+them, and the blocked-scan watchdog silent because it only ever fired when a
+scan could not RUN.
+
+The service was in fact the best-instrumented one in this repo — `scanReport`,
+`BLOCKED_ALERTS_AT`, the panel's "the scanner has gone quiet" line — and every
+hole below is somewhere those instruments do not reach.
+
+- ⚠️ **A CREATE THE SITE REFUSED WAS A `continue`.** One `log.warn` and nothing
+  else: no counter, no reason on the panel, no blocker. A rotated
+  `INTERNAL_API_TOKEN`, a payload the site's validator rejects and a 500 all
+  rendered as `0 listed` with an EMPTY reason tally — which reads as "the market
+  had nothing", the opposite of what happened. `report.refused` / `refusals`
+  carries the site's verbatim sentence now, `scanLine` leads with it, and a scan
+  in which **not one** create landed is a BLOCKER: those tokens cleared every
+  gate the operator set, so that scan had something to list and could not, which
+  is the definition `fileReport` already used. One that listed something and
+  refused one token is not — paging for a per-token problem is how a monitor
+  gets muted.
+- ⚠️ **"WE COULD NOT ASK" WAS BEING FILED AS A FACT ABOUT THE TOKEN, AND THE
+  TOKEN PAID FOR IT FOR TWELVE HOURS.** `dexscreener.fetchTokenInfo` returned a
+  bare `null` for a 403, a 429, a dead socket AND a token with genuinely no
+  pair; `rejectReason` renders a null as `"no market data"`, and `coolUntil`
+  benches that for **12h**. So a DexScreener refusing this box produced
+  `40 priced · 0 listed — no market data ×40` and then kept the feed dead for
+  half a day after the outage ended. `fetchTokenInfoX` returns
+  `{info, ok, why}` — `pumpfunNewX`'s shape, for the fourth time in this repo —
+  `ok:false` is its own counter and its own sentence, and it writes **no cool
+  entry at all**.
+- **The host is BENCHED on a refusal, and the feeds share the bench.** 401/403/
+  429/451 only: a 5xx or a timeout is a per-request failure and says nothing
+  about the quota, and a 404 is an answer about the token. Discovery and pricing
+  are the same host, so two benches would let the half still asking keep the
+  refusal alive for the half that stopped — `gt.ts`'s contract, verbatim.
+- ⚠️ **↩️ RESET SWITCHED THE SERVICE OFF, and the panel then blamed the loop.**
+  `DEFAULTS.enabled` is false — right for a fresh install, which publishes in
+  public — so resetting the THRESHOLDS stopped a running feed, announced as a
+  bare "↩️ Reset". And an off service filed no scan report, so `alScanLine` went
+  on to print *"⚠️ The scanner has gone quiet — the loop has stopped. Check the
+  [monitoring] lines in pm2 logs"*, sending the operator to hunt a dead process
+  that was running perfectly. **Two taps from the reported symptom, with nothing
+  on any screen naming the cause.** The switch is carried across a reset now, the
+  button says which state it left the service in, and an OFF scan FILES its
+  report — a stale report is supposed to mean the loop stopped, and it can only
+  mean that if every other reason files one.
+- ⚠️ **TWO OWNERS FOR THE DEXSCREENER SLUG, disagreeing about one chain.**
+  `config/chains.js` has `DEXSCREENER_SLUG` (`sei: "seiv2"`); `dexscreener.js`
+  built its own identity map from an `OVERRIDES` table nobody ever filled in. So
+  every Sei token answered "no market data" and every Sei feed entry was dropped
+  before it was counted — one whole network invisible to free listings,
+  silently, while the panel said it watches "every supported chain". One owner;
+  identity stays the FALLBACK so adding a chain still makes it discoverable.
+- ⚠️ **AND THE GUARD TEST FOR THAT COULD NOT FAIL.** It asserted the map had one
+  entry per chain and no duplicate slugs — both true of the broken map. It
+  asserts equality with `DEXSCREENER_SLUG` now, and `dexscreener.test.js` drives
+  a real captured payload through the parser: **that module had no test at
+  all**, so a renamed DexScreener field would have made every candidate on every
+  chain read as "no market data" with 1,700 tests green.
+- **Robinhood pricing OVERRODE the indexer, and that rule expired.** `discovery`
+  returned the pools.trade record and never asked DexScreener — correct while
+  pools.trade was the only source for the chain, and wrong from the day
+  DexScreener added it (July 2026). The gates read `liq`/`vol24`/
+  `pairCreatedAt`; a bonding-curve envelope coerces what it does not publish to
+  0, so the whole chain read as `thin liquidity ($0)`, including graduated
+  tokens with real depth. It is a MERGE now — the indexer's live numbers win,
+  the pad fills the socials, logo and curve state. The test that pinned the
+  override now states why it expired.
+- ⚠️ **A LAUNCHPAD RECORD MAY NOT DRESS A REFUSAL AS AN ANSWER.** With the merge
+  in place, a DexScreener that could not be asked plus a pad record would have
+  produced a full-looking row with `liq: 0` — reported as `thin liquidity`,
+  which sends the operator to change `minLiq` over an upstream outage, and
+  shortens the cool from 12h to 1h. `ok` follows the INDEXER; the pad is display
+  data.
+- **An optional social may not cost the whole listing.** `adminValidate` refuses
+  the ENTIRE row over a `website`/`twitter`/`telegram` that is not a full URL,
+  and the pads publish bare handles. `siteUrl()` mirrors the site's own rule and
+  DROPS what it cannot vouch for — losing a link beats losing the listing and
+  the link with it.
+- **A refusal is memoed only when it is about the ROW.** 400/404/409/422 will not
+  change on the next scan, so the token is cooled; 401/403/429 are the site
+  refusing US and apply to every token equally — memoing those would bench the
+  entire candidate list over a credentials problem. Caught by a test, not by
+  reading.
+- **The permanent ledger records what was LISTED.** `rememberListed` folded the
+  site's ENTIRE roster, so anyone posting a contract to the public form
+  (unauthenticated, `pending`) locked that token out of free listing for ever,
+  as did every submission an admin rejected. Approved rows only; `known` still
+  skips everything for the current cycle, which is a different rule.
+- ⚠️ **AN UNREADABLE STATE FILE IS NOT A FIRST RUN.** `loadJSONSync` answers
+  `def` to both, and `everListed` is the append-only ledger that stops a
+  previously PAID listing being handed back free — so a truncated write read as
+  `{}` and the next save made the loss permanent, mirrored to Mongo. The scan
+  now REFUSES to run and pages once; `readJSONSync` is what tells the two apart.
+- **`fileReport` merges the ledger instead of writing its snapshot back.**
+  `fulfillment.js` calls `rememberListed` the moment a paid listing goes live,
+  which can land in the middle of a forty-lookup scan.
+
+#### So it cannot go quiet unnoticed again
+
+The causes will keep changing — that is the lesson this repo has already paid
+for three times on the trending board. What is watched is the PROMISE the
+operator set when they switched it on: **free listings actually go out.**
+
+| layer | stops |
+| --- | --- |
+| `report.refused` / `unpriced` / `unsupported` + the blocker ladder | a fault rendered as a quiet market |
+| `listingWatch.js` in the running bot | the operator being the detector |
+| `api.canCreate()` on 🔎 Test scan | the panel promising a listing the site would refuse |
+| `npm run listing:check` + the build stamp | "which of the six is it?", on the box |
+| `dexscreener.test.js` | a parser drift that reads as an empty market |
+| `servicesLoad.test.js` | a service module that cannot be required at all |
+
+- **`listingWatch.evaluate()` is PURE** and the caller owns persistence, so a
+  test walks the service through days of scans in milliseconds. Transition only,
+  after `LISTING_QUIET_GRACE_MS` (12h — the shipped pace is one listing every
+  2–3h, and a market that hands us nothing for an afternoon is ordinary); a
+  RECOVERY is an alert too; it repeats every `LISTING_QUIET_REPEAT_MS` (24h).
+- **It says when nothing is wrong.** A quiet market is reported as
+  `ℹ️ … the service is running correctly — this is what it found`, with the
+  dominant rejection reason; only a real fault gets ⚠️. A monitor that cries
+  wolf at a quiet market is one that gets muted, which is why the trade bot's
+  "possible rug" alert had to be deleted rather than tuned.
+- **A blocked scan is left to the blocked-scan watchdog** — one fault, one
+  alert. The clock keeps running so the recovery still fires.
+- ⚠️ **`listing:check` exits ZERO on a quiet market**, and non-zero only when
+  free listings CANNOT happen. A check that is always red trains the reader to
+  ignore the red, which is the state `chart:preview` sat in for weeks.
+- **§5 probes the WRITE path** with a payload the site's validator refuses
+  outright (`{}` → 400), so it can never create anything — and a 400 back is the
+  proof: authorised, reachable, validator working. `api.canCreate()` is the one
+  owner, shared with 🔎 Test scan, because a check that asked its own way is how
+  `fonts:check` printed nine green ticks over a banner publishing boxes.
+- ⚠️ **`servicesLoad.test.js` exists because this fix nearly shipped broken.**
+  `autoLister` requires the new `listingWatch`, and a commit taking the modified
+  file without the new one would have produced `[monitoring] service
+  "autoLister" failed to start` — with the panel reading 🟢 ON and "the scanner
+  has gone quiet", i.e. **the exact symptom being fixed**. It requires every
+  module in `src/services/` and every path `attach.js` names, and it is
+  mutation-tested against that hazard. Its source scan strips comments first:
+  attach.js's header quotes `require("./x")`, the very line it was written
+  about.
+
+```bash
+cd bot && npm run listing:check                                     # per box: which of the six it is
+cd bot && node scripts/run-tests.js test/listingBlocked.test.js \
+    test/dexscreener.test.js test/servicesLoad.test.js              # 51 tests, no network
+```
+
+**Config a fix depends on:** nothing. `LISTING_QUIET_GRACE_MS` /
+`LISTING_QUIET_REPEAT_MS` exist for an operator who finds 12h too twitchy, and
+`DEXSCREENER_BENCH_MS` widens the back-off. ⚠️ **But whether DexScreener answers
+this box at all is a property of the server's egress today** — it answers 403
+from the sandbox this was written in — so `npm run listing:check` on the box is
+the only thing that can say which of these the operator is actually hitting.
+⚠️ And an install whose ledger was already poisoned by public submissions keeps
+those entries: the fix stops new ones, and 🧹 Clear history is still the only
+eraser, which re-opens everything at once.
+
+#### The audit round — six of these were in the FIX
+
+Run against the finished change by seven independent lenses, and every defect
+found is one of this file's own recurring shapes, reintroduced by the code
+written to stop it.
+
+- ⚠️ **THE HALT WAS INVISIBLE TO EVERYTHING THAT NEEDED TO READ IT.** Both new
+  refusals decline to WRITE — that is what makes them halts — so `lastScan()`
+  goes stale, and a stale report is exactly what `alScanLine` and
+  `listing:check` read as *"the loop has stopped"*. The fix would have accused a
+  perfectly healthy loop and sent the operator to pm2 to hunt a process that was
+  running fine. Worse, the first cut put the halt in a MODULE-LEVEL VARIABLE —
+  and the loop runs in `dexvra-bot` while the panel runs in `dexvra-adminbot`
+  and the check is a third process again, so it was invisible to both anyway.
+  Its own two-field file, written and AWAITED (a fire-and-forget write races the
+  readers it exists for), cleared by the first scan that files a report — with a
+  recovery alert, because a fixed halt and a forgotten one look identical.
+- ⚠️ **AN UNREADABLE CONFIG READ AS "the operator switched it OFF".**
+  `DEFAULTS.enabled` is false, so a corrupt or root-owned `autoLister.json` —
+  DATA_DIR is shared by both PM2 processes, one `sudo node scripts/…` is enough
+  — took the new OFF branch, and the panel and the check then both told the
+  operator to tap **▶️ Enable**, which calls `set()`, which writes `{...get()}`
+  and so overwrites every tuned threshold with the shipped defaults. A read
+  failure laundered into a settings wipe, by the very code written to diagnose
+  it. `configOk()` is its own question (never a field on the config — that
+  object is compared against DEFAULTS field-for-field and is what `set()` writes
+  back), the scan halts instead, and `set()` refuses.
+- ⚠️ **THE LEDGER MERGE UNDID 🧹 Clear history.** The merge that stops a paid
+  listing's entry being dropped mid-scan unions fresh into stale — so a clear
+  landing inside the scan window (up to forty serial lookups, minutes wide when
+  DexScreener is slow, which is exactly when somebody taps it) restored every
+  entry just deleted. The panel would report the history cleared and the tokens
+  would go on being refused for ever. `clearedAt` is stamped by the clear, and a
+  snapshot older than it loses its token bookkeeping and keeps only its report.
+- ⚠️ **`rememberListed` HAD THE GUARD ONLY AT ONE CALL SITE.** `fulfillment.js`
+  calls it the moment a PAID listing goes live, outside any scan — so an
+  unreadable state file at that moment still wiped the ledger, the pace clock
+  and the day count. The guard belongs in the writer: *a caller can be wrong
+  about what it is holding, and the store cannot.*
+- ⚠️ **🧹 Clear history WIPED THE SCAN REPORT**, so the panel instantly printed
+  *"the scanner has never reported … it is NOT running"* over a healthy loop,
+  from the operator's own tap. The report is an observation about the LOOP, not
+  knowledge about tokens; it survives, and so does `blocked`.
+- ⚠️ **`log.attach()` RAN AFTER `setupMonitoring()`**, so the
+  `🚨 N background service(s) did not start` page — the ONE alarm for a dead
+  auto-lister loop — went to a logger with no bot attached and was dropped into
+  pm2's stdout. That is the two-day incident `attach.js`'s own header was
+  written about, with its fix undone by boot order. Pinned by a source scan that
+  strips comments first.
+- **↩️ Reset resets every setting but the switch**, and the toast said only what
+  it did NOT change — silent about the pace going back ON, the packages falling
+  back to Free and the chain scope reopening. It names what moved now, in an
+  alert rather than a toast when anything did.
+- ⚠️ **The Test scan verdict promised a listing over the two gates that run
+  BEFORE the pace** (the service switched off, and the daily cap), and its
+  4096-char trim shortened only the PANEL half — so a blocker that now names
+  each failing source could build a message Telegram rejects outright, losing
+  the verdict entirely and leaving the button reading as dead precisely when it
+  had an answer. Bounded at source, capped at eight qualified rows.
+- **The ready line printed over a loop the panel had already worked out was
+  dead.** Dropped, never reworded — and ordered by CERTAINTY: a switch and a cap
+  the operator set are known facts, "the scanner has not reported" is an
+  inference.
+- **A refused admin tap was never answered**, so every button on every admin
+  panel spins for ever for a non-admin — indistinguishable from a handler that
+  does not exist. `guard()` answers now, which is the one-owner fix: a guard the
+  fortieth handler has to remember is one it forgets.
+- **Every state write was `.catch(() => {})` and the loop's own exception handler
+  was `log.debug`** — both produce nothing at any level production prints, and
+  both look exactly like a dead loop.
+
+⚠️ **One thing deliberately NOT changed.** The age gate fails OPEN on an unknown
+`pairCreatedAt` (`if (info.pairCreatedAt && …)`), which is the inverse of this
+file's rule that a floor is a CLAIM an unknown value cannot satisfy. Closing it
+would refuse every token from a source that does not publish the field — and
+making a gate stricter inside a change whose whole purpose is to get listings
+flowing is the wrong direction to be wrong in. Recorded so it is not
+rediscovered as an oversight.
+
 ## A Top 3 that was not the top of the Top 5
 
 Two banners, one minute apart, from the same admin panel:

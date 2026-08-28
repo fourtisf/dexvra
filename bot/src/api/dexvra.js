@@ -115,6 +115,53 @@ async function uploadImage(buffer, filename = "logo.png", mime = "image/png") {
   return json && json.url ? `${DEXVRA_API_BASE}${json.url}` : null;
 }
 
+// The site refuses a token under this length outright (src/lib/internalAuth.ts
+// MIN_LEN) — "not configured → closed". Mirrored here so the bot can say WHICH
+// problem it is: a 401 over a token both halves agree on sends an operator
+// hunting for a mismatch that does not exist.
+const MIN_TOKEN_LEN = 24;
+
+/**
+ * CAN THIS BOT CREATE A LISTING RIGHT NOW — reads are not the same question.
+ *
+ * The auto-lister's whole failure mode was that nothing ever asked this: a
+ * create the site refused was a `continue`, and 🔎 Test scan — the button whose
+ * job is answering "why has nothing been listed?" — only ever exercised the
+ * READ path, so it went on reporting "2 qualify" over a service that could not
+ * publish anything at all. A guard is only honest while it measures the stack
+ * the runner uses.
+ *
+ * ⚠️ Probed with a body the site's own validator refuses OUTRIGHT (`buildRow`
+ * rejects an empty chain before `addListing` is ever reached), so this can never
+ * create, promote or touch a row. A 400 back is the proof we wanted: the route
+ * authorised us and then refused the payload.
+ *
+ * @returns {Promise<{ok: boolean, status: number|null, why: string|null}>}
+ */
+async function canCreate() {
+  if (!INTERNAL_API_TOKEN) return { ok: false, status: null, why: "INTERNAL_API_TOKEN is not set" };
+  if (INTERNAL_API_TOKEN.length < MIN_TOKEN_LEN) {
+    return {
+      ok: false,
+      status: null,
+      why: `INTERNAL_API_TOKEN is only ${INTERNAL_API_TOKEN.length} characters — the site refuses anything under ${MIN_TOKEN_LEN}, however exactly the two halves match`,
+    };
+  }
+  try {
+    await createListing({});
+    return { ok: false, status: 200, why: "the site accepted an empty listing payload — its validator is not refusing what it should" };
+  } catch (e) {
+    const m = String(e.message);
+    const status = Number((m.match(/→\s*(\d{3})/) || [])[1]) || null;
+    // 400 = authorised, reachable, and the validator working. That IS the pass.
+    if (status === 400) return { ok: true, status, why: null };
+    if (status === 401 || status === 403) {
+      return { ok: false, status, why: `the site refuses this bot's credentials (${status}) — INTERNAL_API_TOKEN must match the one the web app reads` };
+    }
+    return { ok: false, status, why: m };
+  }
+}
+
 /** Best-effort health check of the internal API + token. */
 async function ping() {
   try {
@@ -129,6 +176,8 @@ async function ping() {
 module.exports = {
   deleteListing,
   createListing,
+  canCreate,
+  MIN_TOKEN_LEN,
   updateListing,
   getListings,
   findListing,

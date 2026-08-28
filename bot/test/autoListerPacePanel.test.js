@@ -25,6 +25,49 @@ const ADMIN = { id: Number(ADMIN_IDS[0]), is_bot: false, first_name: "Owner", us
 const CHAT = { id: 4242, type: "private" };
 const REAL_CALL_API = Telegram.prototype.callApi;
 
+/**
+ * Stub the discovery module for a test that drives the REAL registered handler
+ * (which takes no `deps`).
+ *
+ * ⚠️ THE `X` SEAMS ARE THE ONES THE SCAN CALLS. `fetchDiscovery` /
+ * `fetchTokenInfo` are back-compat wrappers now — patching those alone leaves
+ * the handler talking to the real DexScreener, which is a test that passes or
+ * fails on somebody's network rather than on the code. Both are replaced here
+ * so a caller of either sees the stub, and the X pair is what actually matters.
+ */
+function stubSeams({ candidates, info } = {}) {
+  const ds = require("../src/discovery");
+  const real = {
+    d: ds.fetchDiscovery,
+    dx: ds.fetchDiscoveryX,
+    i: ds.fetchTokenInfo,
+    ix: ds.fetchTokenInfoX,
+  };
+  const rows = candidates || [
+    { chain: "solana", address: "So1a" },
+    { chain: "solana", address: "So1b" },
+  ];
+  const rec = info || {
+    name: "Tok",
+    symbol: "TOK",
+    mcap: 1.5e6,
+    liq: 120_000,
+    vol24: 300_000,
+    priceUsd: 1,
+    pairCreatedAt: Date.now() - 48 * 3600_000,
+  };
+  ds.fetchDiscovery = async () => rows;
+  ds.fetchDiscoveryX = async () => ({ items: rows, ok: true, why: null, sources: [] });
+  ds.fetchTokenInfo = async () => rec;
+  ds.fetchTokenInfoX = async () => ({ info: rec, ok: true, why: null });
+  return () => {
+    ds.fetchDiscovery = real.d;
+    ds.fetchDiscoveryX = real.dx;
+    ds.fetchTokenInfo = real.i;
+    ds.fetchTokenInfoX = real.ix;
+  };
+}
+
 function harness() {
   const bot = adminBot.build();
   bot.botInfo = { id: 777, is_bot: true, first_name: "Dexvra Admin", username: "dexvraadminbot" };
@@ -283,6 +326,11 @@ test("'nothing listed yet' is a claim about the CLOCK, and every install upgrade
     JSON.stringify({
       listed: { "solana:a": { at: 1, sym: "AAA" }, "solana:b": { at: 2, sym: "BBB" } },
       everListed: { "solana:a": 1, "solana:b": 2 },
+      // ⚠️ A FRESH SCAN REPORT, because the clock line only exists over a loop
+      // the panel believes is alive. Without one, the ready line is DROPPED for
+      // "the scanner has not reported" — correct, and a different sentence from
+      // the one this test is about. Stated rather than inherited.
+      scan: { at: Date.now(), candidates: 3, priced: 3, listed: 0, known: 0, cooled: 0, offChain: 0, unsupported: 0, reasons: {}, refused: 0, refusals: {}, unpriced: 0, unpricedWhy: {}, capped: null, paced: null, blocker: null },
     }),
   );
   const h = harness();
@@ -299,26 +347,20 @@ test("🔎 Test scan does not contradict the pace line four lines above it", asy
   await autoLister.resetState();
   await autoLister.set({ enabled: true, minMcap: 1e6, maxMcap: 1.5e6, minListGapMin: 150, maxListGapMin: 150 });
 
-  const ds = require("../src/discovery");
   const api = require("../src/api/dexvra");
-  const real = { d: ds.fetchDiscovery, i: ds.fetchTokenInfo, g: api.getListings };
+  const real = { g: api.getListings, c: api.canCreate };
   t.after(() => {
-    ds.fetchDiscovery = real.d;
-    ds.fetchTokenInfo = real.i;
     api.getListings = real.g;
+    api.canCreate = real.c;
+    restoreSeams();
   });
-  ds.fetchDiscovery = async () => [
-    { chain: "solana", address: "So1a" },
-    { chain: "solana", address: "So1b" },
-  ];
-  ds.fetchTokenInfo = async () => ({
-    name: "Tok",
-    symbol: "TOK",
-    mcap: 1.5e6,
-    liq: 120_000,
-    vol24: 300_000,
-    priceUsd: 1,
-    pairCreatedAt: Date.now() - 48 * 3600_000,
+  // ⚠️ The WRITE PROBE too — 🔎 Test scan asks `api.canCreate()` now.
+  api.canCreate = async () => ({ ok: true, status: 400, why: null });
+  const restoreSeams = stubSeams({
+    candidates: [
+      { chain: "solana", address: "So1a" },
+      { chain: "solana", address: "So1b" },
+    ],
   });
   api.getListings = async () => [];
 
@@ -329,6 +371,9 @@ test("🔎 Test scan does not contradict the pace line four lines above it", asy
   const st = JSON.parse(fss2.readFileSync(f, "utf8"));
   st.lastListAt = Date.now() - 30 * 60_000; // 30 min into a 150 min wait
   st.paceRoll = 0;
+  // A live loop, for the reason above: the pace line is dropped over one the
+  // panel has already worked out is not running.
+  st.scan = { at: Date.now(), candidates: 2, priced: 2, listed: 0, known: 0, cooled: 0, offChain: 0, unsupported: 0, reasons: {}, refused: 0, refusals: {}, unpriced: 0, unpricedWhy: {}, capped: null, paced: null, blocker: null };
   fss2.writeFileSync(f, JSON.stringify(st));
 
   const h = harness();
@@ -347,27 +392,20 @@ test("…and with the pace open the verdict says only the FIRST of them goes", a
   await autoLister.resetState();
   await autoLister.set({ enabled: true, minMcap: 1e6, maxMcap: 1.5e6, maxPerRun: 3 });
 
-  const ds = require("../src/discovery");
   const api = require("../src/api/dexvra");
-  const real = { d: ds.fetchDiscovery, i: ds.fetchTokenInfo, g: api.getListings };
+  const real = { g: api.getListings, c: api.canCreate };
+  const restoreSeams = stubSeams({
+    candidates: [
+      { chain: "solana", address: "So1c" },
+      { chain: "solana", address: "So1d" },
+    ],
+  });
   t.after(() => {
-    ds.fetchDiscovery = real.d;
-    ds.fetchTokenInfo = real.i;
     api.getListings = real.g;
+    api.canCreate = real.c;
+    restoreSeams();
   });
-  ds.fetchDiscovery = async () => [
-    { chain: "solana", address: "So1c" },
-    { chain: "solana", address: "So1d" },
-  ];
-  ds.fetchTokenInfo = async () => ({
-    name: "Tok",
-    symbol: "TOK",
-    mcap: 1.5e6,
-    liq: 120_000,
-    vol24: 300_000,
-    priceUsd: 1,
-    pairCreatedAt: Date.now() - 48 * 3600_000,
-  });
+  api.canCreate = async () => ({ ok: true, status: 400, why: null });
   api.getListings = async () => [];
 
   const h = harness();

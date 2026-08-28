@@ -198,9 +198,22 @@ async function startBot() {
   require("./db/mediaMirror").startSweep();
 
   const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 120000 });
-  applyMiddleware(bot);
+  // ⚠️ THE ALERT CHANNEL IS ATTACHED FIRST, BEFORE applyMiddleware.
+  //
+  // `applyMiddleware` calls `setupMonitoring`, which starts every background
+  // service and pages `🚨 N background service(s) did not start` when one of
+  // them fails to load. That page went to a logger with no bot attached yet, so
+  // it was written to pm2's stdout and DROPPED — the one alarm that exists for a
+  // dead auto-lister loop, silently unsent. The panel meanwhile keeps reading
+  // 🟢 ON (it reads a config file and has never known whether the loop behind
+  // it runs), so the operator's only tell was a stale-scan line pointing at logs
+  // they have no reason to open. That is the exact two-day incident attach.js's
+  // own header was written about, with its fix undone by boot order.
+  //
+  // Neither attach needs the middleware; both only need the Telegraf instance.
   log.attach(bot, LOG_CHANNEL, ERROR_CHANNEL);
   require("./channels/post").attach(bot.telegram); // channel posts use the bot's Telegram
+  applyMiddleware(bot);
 
   // All pre-launch work happens here — in Telegraf v4, launch() only resolves
   // when the bot STOPS, so anything after `await launch()` never runs.
