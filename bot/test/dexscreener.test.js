@@ -216,3 +216,26 @@ test("the discovery feed maps DexScreener's chain slug back to ours — includin
     "a slug we cannot map is dropped; one we CAN must not be",
   );
 });
+
+test("⚠️ REFUSALS ONLY — a 5xx must NOT bench the host", async (t) => {
+  ds.resetBench();
+  stubFetch(t, async () => reply("", { status: 500 }));
+  const r = await ds.fetchTokenInfoX("solana", "So1Mint");
+  assert.strictEqual(r.ok, false, "a 500 is still 'could not ask'");
+  // The bench is ONE bench for the whole host, so arming it here would stop
+  // pricing AND all three discovery feeds — the scan would then record
+  // "discovery could not reach any source" and three of those page the ops
+  // channel. A whole-feed outage manufactured from one slow response.
+  assert.strictEqual(ds.benched(), null, "a per-request failure says nothing about the quota");
+});
+
+test("Retry-After is honoured, and bounded — a hostile header must not bench us for a day", async (t) => {
+  ds.resetBench();
+  stubFetch(t, async () => reply("", { status: 429, headers: { "retry-after": "86400" } }));
+  await ds.fetchTokenInfoX("solana", "So1Mint");
+  const held = ds.benched();
+  assert.ok(held, "a 429 must bench");
+  const secs = Number((held.match(/(\d+)s/) || [])[1]);
+  assert.ok(secs > 0 && secs <= 600, `benched for ${secs}s — the cap is ten minutes`);
+  ds.resetBench();
+});

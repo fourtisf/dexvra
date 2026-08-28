@@ -416,3 +416,70 @@ test("…and with the pace open the verdict says only the FIRST of them goes", a
   assert.ok(!/would be listed right now/.test(txt));
   assert.match(txt, /a real scan would list <b>the first one<\/b>/);
 });
+
+// ── The buttons that START and RESET the feed, driven for real ──────────────
+//
+// ⚠️ ▶️ Enable is the single switch that starts free listings, and until now
+// NOTHING drove it: eleven buttons on this panel could be made completely inert
+// with the whole suite green. If ▶️ Enable stops persisting — or ↩️ Reset goes
+// back to taking `enabled` with the thresholds — the report is "free listing di
+// admin bot tidak bekerja, sebelumnya bekerja", which is exactly how this
+// feature arrived here.
+
+test("▶️ Enable / ⏸ Disable persist, and the label follows", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.set({ enabled: false });
+  const h = harness();
+
+  await h.tap("alen");
+  assert.strictEqual(autoLister.get().enabled, true, "▶️ Enable did not persist — free listings never start");
+  assert.match(h.lastText(), /Status: <b>🟢 ON<\/b>/);
+
+  await h.tap("alen");
+  assert.strictEqual(autoLister.get().enabled, false);
+  assert.match(h.lastText(), /Status: <b>🔴 OFF<\/b>/);
+});
+
+test("⚠️ ↩️ Reset restores the thresholds and LEAVES THE SERVICE RUNNING", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.set({ enabled: true, minMcap: 7e6, maxPerDay: 3 });
+  const h = harness();
+
+  await h.tap("alrst");
+  const c = autoLister.get();
+  assert.strictEqual(c.enabled, true, "resetting the numbers silently stopped a live public feed");
+  assert.strictEqual(c.minMcap, autoLister.DEFAULTS.minMcap, "…while still doing what the button says");
+  assert.strictEqual(c.maxPerDay, autoLister.DEFAULTS.maxPerDay);
+  assert.match(h.lastText(), /Status: <b>🟢 ON<\/b>/);
+});
+
+test("⚠️ a write the config refuses ANSWERS — it does not leave the button spinning", async (t) => {
+  t.after(restore);
+  await autoLister.reset();
+  await autoLister.set({ enabled: false });
+  const fss2 = require("node:fs");
+  const path2 = require("node:path");
+  const f = path2.join(process.env.BOT_DATA_DIR, "autoLister.json");
+  const good = fss2.readFileSync(f, "utf8");
+  fss2.writeFileSync(f, '{"enabled":false,');
+  const h = harness();
+  try {
+    // `set()` and `reset()` refuse over an unreadable config — the right call,
+    // because writing DEFAULTS over it wipes every tuned threshold. But a throw
+    // inside a bot.action is swallowed by bot.catch, so the operator taps
+    // ▶️ Enable, the button spins, the panel never changes and free listings
+    // stay stopped: the guard producing the symptom it was written to end.
+    await h.tap("alen");
+    const answers = h.calls.filter((c) => c.method === "answerCallbackQuery");
+    assert.ok(answers.length, "the tap was never answered");
+    assert.match(String(answers[answers.length - 1].payload.text), /cannot read autoLister\.json/);
+    assert.strictEqual(answers[answers.length - 1].payload.show_alert, true);
+    // …and ↩️ Reset must NOT be the one button that "works" here, by wiping it.
+    await h.tap("alrst");
+    assert.strictEqual(fss2.readFileSync(f, "utf8"), '{"enabled":false,', "↩️ Reset overwrote a config it could not read");
+  } finally {
+    fss2.writeFileSync(f, good);
+  }
+});

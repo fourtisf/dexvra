@@ -3786,6 +3786,32 @@ function build() {
   });
 
   // ── Auto Listing ──
+  /**
+   * Run an Auto-Listing WRITE and never let it fail in silence.
+   *
+   * ⚠️ `set()` and `reset()` refuse over an unreadable `autoLister.json` — the
+   * right call, because writing DEFAULTS over a file we could not read wipes
+   * every tuned threshold. But a throw inside a `bot.action` handler is caught
+   * by `bot.catch` and nothing reaches the operator: the button spins, the
+   * panel does not change, and free listings stay stopped. That is the same
+   * "tidak bekerja" the whole feature was reported for, produced by its own
+   * guard. One helper rather than fourteen try/catches — a guard the fifteenth
+   * handler has to remember is one it forgets.
+   */
+  async function alWrite(ctx, fn, onOk) {
+    let c;
+    try {
+      c = await fn();
+    } catch (e) {
+      ctx.answerCbQuery(`⛔ ${String(e.message).slice(0, 180)}`, { show_alert: true }).catch(() => {});
+      log.error(`[adminbot] auto-listing write refused: ${e.message}`);
+      await edit(ctx, alText(), alKb());
+      return null;
+    }
+    if (onOk) onOk(c);
+    return c;
+  }
+
   bot.action("al", async (ctx) => {
     ctx.answerCbQuery().catch(() => {});
     if (!guard(ctx)) return;
@@ -3814,21 +3840,24 @@ function build() {
   });
   bot.action("alen", async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ enabled: !autoLister.get().enabled });
+    const c = await alWrite(ctx, () => autoLister.set({ enabled: !autoLister.get().enabled }));
+    if (!c) return;
     log.info(`[adminbot] auto-listing ${c.enabled ? "ENABLED" : "disabled"} by @${ctx.from.username || ctx.from.id}`);
     ctx.answerCbQuery(c.enabled ? "🟢 Auto Listing ON" : "🔴 Auto Listing OFF").catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   bot.action("alpost", async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ postChannel: !autoLister.get().postChannel });
+    const c = await alWrite(ctx, () => autoLister.set({ postChannel: !autoLister.get().postChannel }));
+    if (!c) return;
     log.info(`[adminbot] auto-listing channel post ${c.postChannel ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
     ctx.answerCbQuery(c.postChannel ? "📣 Posts to the listing channel" : "🤫 Site only").catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   bot.action("alann", async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ announceChannel: !autoLister.get().announceChannel });
+    const c = await alWrite(ctx, () => autoLister.set({ announceChannel: !autoLister.get().announceChannel }));
+    if (!c) return;
     log.info(`[adminbot] auto-listing ${CHANNELS.announce} announcement ${c.announceChannel ? "ON" : "OFF"} by @${ctx.from.username || ctx.from.id}`);
     ctx
       .answerCbQuery(
@@ -3841,7 +3870,8 @@ function build() {
   });
   const alStep = (key, label) => async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ [key]: autoLister.get()[key] + Number(ctx.match[1]) });
+    const c = await alWrite(ctx, () => autoLister.set({ [key]: autoLister.get()[key] + Number(ctx.match[1]) }));
+    if (!c) return;
     ctx.answerCbQuery(`${label}: ${usd(c[key])}`).catch(() => {});
     await edit(ctx, alText(), alKb());
   };
@@ -3851,14 +3881,16 @@ function build() {
   bot.action(/^alvol:(-?\d+)$/, alStep("minVol24", "Min 24h volume"));
   bot.action(/^alday:(-?\d+)$/, async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ maxPerDay: autoLister.get().maxPerDay + Number(ctx.match[1]) });
+    const c = await alWrite(ctx, () => autoLister.set({ maxPerDay: autoLister.get().maxPerDay + Number(ctx.match[1]) }));
+    if (!c) return;
     ctx.answerCbQuery(`Max/day: ${c.maxPerDay}`).catch(() => {});
     await edit(ctx, alText(), alKb());
   });
   bot.action("alpace", async (ctx) => {
     if (!guard(ctx)) return;
     const on = !autoLister.get().paceListings;
-    const c = await autoLister.set({ paceListings: on });
+    const c = await alWrite(ctx, () => autoLister.set({ paceListings: on }));
+    if (!c) return;
     log.info(
       `[adminbot] auto-listing pace ${on ? `ON (1 every ${autoLister.paceRange(c)})` : "OFF"} ` +
         `by @${ctx.from.username || ctx.from.id}`,
@@ -3879,7 +3911,8 @@ function build() {
   const alGapStep = (key) => async (ctx) => {
     if (!guard(ctx)) return;
     const asked = autoLister.get()[key] + Number(ctx.match[1]);
-    const c = await autoLister.set({ [key]: asked });
+    const c = await alWrite(ctx, () => autoLister.set({ [key]: asked }));
+    if (!c) return;
     // The whole BAND is reported, never just the end that was tapped: lowering
     // the ceiling under the floor moves the floor's partner too (an inverted
     // range resolves to the floor), and an answer naming one number while the
@@ -3912,7 +3945,8 @@ function build() {
     const id = ctx.match[1];
     const on = autoLister.get().chains;
     const next = on.includes(id) ? on.filter((k) => k !== id) : [...on, id];
-    const c = await autoLister.set({ chains: next });
+    const c = await alWrite(ctx, () => autoLister.set({ chains: next }));
+    if (!c) return;
     log.info(`[adminbot] auto-listing chain scope → ${c.chains.length ? c.chains.join(", ") : "ALL"} by @${ctx.from.username || ctx.from.id}`);
     ctx
       .answerCbQuery(
@@ -3928,7 +3962,8 @@ function build() {
 
   bot.action("alchall", async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ chains: [] });
+    const c = await alWrite(ctx, () => autoLister.set({ chains: [] }));
+    if (!c) return;
     log.info(`[adminbot] auto-listing chain scope → ALL by @${ctx.from.username || ctx.from.id}`);
     ctx.answerCbQuery("🌐 ALL chains").catch(() => {});
     await edit(ctx, alchText(), alchKb());
@@ -3938,7 +3973,8 @@ function build() {
     if (!guard(ctx)) return;
     const key = ctx.match[1];
     const before = autoLister.get().pkgs;
-    const c = await autoLister.togglePkg(key);
+    const c = await alWrite(ctx, () => autoLister.togglePkg(key));
+    if (!c) return;
     log.info(`[adminbot] auto-listing packages → ${c.pkgs.join(", ")} by @${ctx.from.username || ctx.from.id}`);
     // Refused: this was the last one on. Say so, or the tap looks like a bug.
     const refused = before.length === 1 && before[0] === key && c.pkgs.length === 1;
@@ -3955,7 +3991,8 @@ function build() {
   });
   bot.action(/^alth:(-?\d+)$/, async (ctx) => {
     if (!guard(ctx)) return;
-    const c = await autoLister.set({ trendHours: autoLister.get().trendHours + Number(ctx.match[1]) });
+    const c = await alWrite(ctx, () => autoLister.set({ trendHours: autoLister.get().trendHours + Number(ctx.match[1]) }));
+    if (!c) return;
     ctx.answerCbQuery(`🔥 Slot: ${c.trendHours}h`).catch(() => {});
     await edit(ctx, alText(), alKb());
   });
@@ -4043,7 +4080,8 @@ function build() {
     // and the chain scope reopening — three changes an operator would report as
     // "free listing tidak bekerja, sebelumnya bekerja".
     const before = autoLister.get();
-    const c = await autoLister.reset();
+    const c = await alWrite(ctx, () => autoLister.reset());
+    if (!c) return;
     const moved = [];
     if (before.paceListings !== c.paceListings) moved.push(`pace ${c.paceListings ? `ON (${autoLister.paceRange(c)})` : "OFF"}`);
     if (before.pkgs.join() !== c.pkgs.join()) moved.push(`packages ${c.pkgs.map((k) => autoLister.pkgOf(k).label).join(" → ")}`);

@@ -269,3 +269,27 @@ test("a pools.trade error during pricing falls through instead of failing the to
     },
   );
 });
+
+test("⚠️ a LAUNCHPAD RECORD DOES NOT MAKE A REFUSAL INTO AN ANSWER", async () => {
+  // The rule was asserted in a comment and nowhere in a test, and it is
+  // invisible in the direction that matters: with ok:true the scan's `unpriced`
+  // counter stays 0, so the "could not price a single one of N" blocker never
+  // fires — and every token is instead judged on a pad-only record whose `liq`
+  // and `vol24` are 0 and rejected as `thin liquidity ($0)`. The panel then
+  // accuses the operator's candidates of having no depth, about tokens with
+  // real six-figure liquidity, and sends them to lower minLiq over an upstream
+  // outage.
+  const real = { ix: ds.fetchTokenInfoX, pi: ps.fetchTokenInfo };
+  ds.fetchTokenInfoX = async () => ({ info: null, ok: false, why: "DexScreener HTTP 403" });
+  ps.fetchTokenInfo = async () => ({ name: "Pad", symbol: "PAD", liq: 0, vol24: 0, twitter: "https://x.com/p" });
+  try {
+    const r = await discovery.fetchTokenInfoX("robinhood", evm(1));
+    assert.strictEqual(r.ok, false, "the indexer could not be asked — the pad record does not change that");
+    assert.match(r.why, /403/);
+    // …and the pad's data still travels, for the display the card needs.
+    assert.strictEqual(r.info.twitter, "https://x.com/p");
+  } finally {
+    ds.fetchTokenInfoX = real.ix;
+    ps.fetchTokenInfo = real.pi;
+  }
+});

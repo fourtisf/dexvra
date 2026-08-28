@@ -311,6 +311,8 @@ async function set(patch = {}) {
  *  the service would keep scanning and list everything as a plain free listing,
  *  which is a setting nobody chose. Returns the resulting config. */
 async function togglePkg(key) {
+  // No guard of its own: every path out of here goes through `set()`, which
+  // refuses over an unreadable config. One owner for that rule.
   if (!PACKAGES[key]) return get();
   const on = get().pkgs;
   const next = on.includes(key) ? on.filter((k) => k !== key) : [...on, key];
@@ -338,6 +340,15 @@ async function togglePkg(key) {
  */
 async function reset() {
   const wasEnabled = get().enabled;
+  // ⚠️ THE SAME GUARD `set()` HAS, and it was missing on its sibling — which is
+  // the worse of the two to miss. `get()` answers DEFAULTS for an unreadable
+  // file, so `wasEnabled` reads FALSE, and this would then write the shipped
+  // defaults over a config it could not read AND switch the live feed off: every
+  // threshold destroyed, from the one button whose documented contract is that
+  // it never touches the switch. A read failure laundered into a settings wipe,
+  // by the code written to stop exactly that.
+  const rd = configOk();
+  if (!rd.ok) throw new Error(`cannot read ${FILE} — ${rd.why}. Refusing to overwrite it.`);
   await saveJSON(FILE, { ...DEFAULTS, enabled: wasEnabled });
   return get();
 }

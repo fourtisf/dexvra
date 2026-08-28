@@ -1804,7 +1804,7 @@ the only thing that can say which of these the operator is actually hitting.
 those entries: the fix stops new ones, and 🧹 Clear history is still the only
 eraser, which re-opens everything at once.
 
-#### The audit round — six of these were in the FIX
+#### The audit round — eight of these were in the FIX
 
 Run against the finished change by seven independent lenses, and every defect
 found is one of this file's own recurring shapes, reintroduced by the code
@@ -1874,6 +1874,28 @@ written to stop it.
 - **Every state write was `.catch(() => {})` and the loop's own exception handler
   was `log.debug`** — both produce nothing at any level production prints, and
   both look exactly like a dead loop.
+- ⚠️ **…AND `reset()` NEVER GOT THE GUARD ITS SIBLING JUST GOT**, which is the
+  worse of the two to miss. `get()` answers DEFAULTS for an unreadable config,
+  so `wasEnabled` read FALSE, and ↩️ Reset would write the shipped defaults over
+  a file it could not read **and switch the live feed off** — every threshold
+  destroyed, from the one button whose whole contract is that it never touches
+  the switch. A fix applied to one of two siblings is a fix half-made; the pace
+  panel's success-path-only lesson, one function over.
+- ⚠️ **AND THE GUARD THEN PRODUCED THE SYMPTOM IT WAS WRITTEN TO END.** `set()`
+  and `reset()` THROW over an unreadable config — right, because writing over it
+  wipes the settings — and a throw inside a `bot.action` is swallowed by
+  `bot.catch`. So the operator taps ▶️ Enable, the button spins, the panel does
+  not change, nothing reaches them, and free listings stay stopped: "tidak
+  bekerja", manufactured by the guard. `alWrite()` is the one owner — fourteen
+  try/catches is a guard the fifteenth handler forgets.
+- **Three things were asserted in comments and nowhere in a test**, and each is
+  invisible in the reassuring direction: `api/dexvra.js` had NO test at all (a
+  POST that really created the row but whose envelope we stopped reading makes
+  the bot page the operator about a site that is working); "a launchpad record
+  does not make a refusal into an answer"; and "REFUSALS ONLY, never a 5xx" on
+  the bench, where arming it would take pricing AND all three feeds down from
+  one slow response. Eleven panel buttons — ▶️ Enable among them — could be made
+  completely inert with 1789/1789 green.
 
 ⚠️ **One thing deliberately NOT changed.** The age gate fails OPEN on an unknown
 `pairCreatedAt` (`if (info.pairCreatedAt && …)`), which is the inverse of this
