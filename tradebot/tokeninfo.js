@@ -229,6 +229,10 @@ async function enrich(ca, chainKey) {
    */
   const gasP = gasSnapshot(chainKey).catch(() => null);
   const mktP = marketStats(ca, chainKey).catch(() => null);
+  // The launchpad's own record does not read the snapshot either, and on a
+  // curve chain it was the LAST wave of the card — two round trips tacked onto
+  // the end of a scan that had already finished everything it needed.
+  const padP = chain.curve ? launchpadApi(ca, chainKey).catch(() => null) : null;
   const snap = await core.tokenSnapshot(ca, chainKey).catch(() => null);
   if (!snap) return null;
   const info = { ...snap, chainKey, native: chain.native };
@@ -288,7 +292,7 @@ async function enrich(ca, chainKey) {
     info.dexVenue = p && p.kind;
     info.liquidityNative = p && p.wethBal != null ? Number(ethers.formatEther(p.wethBal)) * 2 : null;
   }).catch(() => { info.liquidityNative = null; }));
-  if (chain.curve) tasks.push(launchpadApi(ca, chainKey).then((a) => { info.api = a; }));
+  if (padP) tasks.push(padP.then((a) => { info.api = a; }));   // STARTED above
   // Both were STARTED above, alongside the snapshot — collected here.
   tasks.push(mktP.then((m) => { if (m) info.market = m; }));
   tasks.push(gasP.then((g) => { info.gas = g; }));

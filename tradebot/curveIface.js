@@ -294,10 +294,26 @@ async function decodeCurveIface(chain, token, opts = {}) {
     byTx.get(h).push(lg);
   }
 
+  /*
+   * ⚠️ THE TRANSACTIONS ARE FETCHED TOGETHER, NOT ONE PER LOOP TURN.
+   *
+   * This loop awaited `getTransaction(hash)` inside itself, so a dozen samples
+   * were a dozen SERIAL round trips — measured at 50ms simulated latency, the
+   * card's whole tail was this: getBlockNumber → getLogs → tx → tx → tx …, and
+   * on a real public RPC that is seconds on the one screen a user stares at
+   * after pasting an address. They do not depend on each other; the only reason
+   * they were serial is that the fetch sat in the loop that consumes them.
+   *
+   * The PROCESSING stays ordered and sequential — sample order decides which
+   * trade defines the route — so only the waiting is collapsed.
+   */
+  const hashes = [...byTx.keys()];
+  const fetched = await Promise.all(hashes.map((h) => chain.getTransaction(h).catch(() => null)));
+  const txByHash = new Map(hashes.map((h, i) => [h, fetched[i]]));
+
   const calls = new Map(); // `${to}|${selector}` → record
   for (const [hash, group] of byTx) {
-    let tx = null;
-    try { tx = await chain.getTransaction(hash); } catch (_) { continue; }
+    const tx = txByHash.get(hash);
     if (!tx || !tx.to || !tx.data || tx.data.length < 10) continue;
     const to = lc(tx.to);
     const trader = lc(tx.from);

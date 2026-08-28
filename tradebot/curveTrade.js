@@ -139,17 +139,20 @@ const SEED_MAX_TX = 12;
 async function _receiptLogs(chain, token, hashes) {
   if (typeof chain.getTransactionReceipt !== 'function') return [];
   const lcTok = String(token).toLowerCase();
-  const out = [];
   // Newest-first from the indexer; decode expects oldest-first input.
-  for (const h of hashes.slice(0, SEED_MAX_TX).reverse()) {
-    let rcpt = null;
-    try { rcpt = await chain.getTransactionReceipt(h); } catch (_) { continue; }
-    for (const lg of (rcpt && rcpt.logs) || []) {
+  const want = hashes.slice(0, SEED_MAX_TX).reverse();
+  // ⚠️ TOGETHER, not one per loop turn — a dozen receipts read serially is a
+  // dozen round trips on the card's critical path, and they do not depend on
+  // each other. The same shape `decodeCurveIface` carries for its transactions.
+  const rcpts = await Promise.all(want.map((h) => chain.getTransactionReceipt(h).catch(() => null)));
+  const out = [];
+  want.forEach((h, i) => {
+    for (const lg of (rcpts[i] && rcpts[i].logs) || []) {
       if (!lg || String(lg.address || '').toLowerCase() !== lcTok) continue;
       if (!lg.topics || lg.topics[0] !== TRANSFER_TOPIC) continue;
       out.push({ transactionHash: h, topics: lg.topics, data: lg.data, blockNumber: lg.blockNumber });
     }
-  }
+  });
   return out;
 }
 

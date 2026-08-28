@@ -2853,6 +2853,12 @@ async function tokenSnapshot(ca, chainKey) {
     }
     // Still nothing on-chain. The indexers see venues we have no reader for at
     // all, so they are the last word before giving up.
+    //
+    // The native's USD rate is started WITH the market lookup, not after it:
+    // every branch below needs it, it depends on nothing either indexer says,
+    // and awaiting it afterwards put a second HTTP round trip on the end of the
+    // card's critical path. (`ethUsd` caches, so a warm render pays nothing.)
+    const usdP = ethUsd(chainKey).catch(() => 0);
     const m = await marketOf(ca, chainKey);
     if (!m) {
       /*
@@ -2874,7 +2880,7 @@ async function tokenSnapshot(ca, chainKey) {
        * unreachable.
        */
       const lpRec = launchpads.covers(chainKey) ? await launchpads.record(chainKey, ca).catch(() => null) : null;
-      const usd0 = await ethUsd(chainKey).catch(() => 0);
+      const usd0 = await usdP;
       const padSnap = launchpads.curveSnapshot(ca, chainKey, lpRec, usd0);
       const iface = CURVE_ROUTE_ON ? await _curveIface(chainKey, ca) : { ok: false };
       // ROUTABLE IS MEASURED, NEVER INFERRED FROM HAVING A PRICE.
@@ -2907,7 +2913,7 @@ async function tokenSnapshot(ca, chainKey) {
         routable: true,
       };
     }
-    const usd = await ethUsd(chainKey).catch(() => 0);
+    const usd = await usdP;
     /*
      * ⚠️ AN INDEXED TOKEN CAN STILL BE ON A BONDING CURVE, and this branch used
      * to be the one place that never asked.
