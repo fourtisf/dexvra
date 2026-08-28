@@ -295,7 +295,20 @@ async function fetchPage(cursor) {
     body: JSON.stringify(buildBody(cursor)),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // ⚠️ CARRY THE BODY. This repo's own rule — "an HTTP error puts the
+    // explanation in the response body" — and a bare `HTTP 409` is exactly the
+    // shape it was written against: true, useless, and hiding whatever the
+    // gateway actually objected to. Uniswap's is a private Connect-RPC gateway,
+    // so its refusals name the header or field it wanted; that sentence is the
+    // difference between one line in .env and another round of guessing.
+    // Flattened and bounded — an HTML error page is not a message for a reader.
+    const hint = await res
+      .text()
+      .then((t) => String(t).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160))
+      .catch(() => "");
+    throw new Error(`HTTP ${res.status}${hint ? `: ${hint}` : ""}`);
+  }
   return res.json();
 }
 

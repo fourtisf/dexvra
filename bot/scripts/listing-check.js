@@ -166,7 +166,22 @@ const faults = [];
     sources = d.sources || [];
     for (const src of sources) {
       if (src.name === "dexscreener") continue; // already reported per feed above
-      if (!src.ok) bad(`${src.name} → ${src.why}`);
+      if (!src.ok) {
+        bad(`${src.name} → ${src.why}`);
+        // ⚠️ RED, BUT NOT FATAL — AND IT HAS TO SAY WHY. A ✗ over a green
+        // verdict is a mixed signal the reader has to decode, which is how a
+        // check stops being read. pools.trade supplies PRE-MIGRATION launches:
+        // a bonding-curve token has no pool, so it fails minLiq / minVol24 /
+        // minAgeHours by definition and could never have been free-listed
+        // anyway. DexScreener carries the chain now, so what this costs is
+        // visibility of launches before they graduate — not listings.
+        if (src.name === "poolstrade") {
+          note(`Costs pre-migration Robinhood launches only — those fail your liquidity/volume/age gates anyway,`);
+          note(`and DexScreener indexes the chain now. Not why free listings would stop. \`npm run poolstrade:check\` digs in.`);
+        } else {
+          faults.push(`${src.name} discovery is unreachable: ${src.why}`);
+        }
+      }
       // A source that ANSWERED with nothing is a quiet launchpad, and says so
       // rather than wearing the same ⚠ as one that could not be reached.
       else if (!src.n) note(`${src.name} → answered, 0 candidate(s) (nothing new launched)`);

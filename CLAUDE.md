@@ -1943,6 +1943,25 @@ only, because losing page three is a shorter list and not an outage — and the
 check prints *"answered, 0 candidate(s)"* for a quiet pad rather than the same
 ⚠ a dead one gets.
 
+⚠️ **And the next run named it: `✗ poolstrade → HTTP 409`** — the same line that
+had been printing `0 candidate(s)` since the feature existed. Two things that
+answer needed:
+
+- **The reason was thrown away.** `fetchPage` raised a bare
+  `Error("HTTP " + status)`, so the gateway's own sentence — Uniswap's is a
+  private Connect-RPC endpoint, and its refusals name the header or field they
+  wanted — never reached anyone. That is this file's own rule ("an HTTP error
+  puts the explanation in the response body") broken on the one source whose
+  request shape is a guess. The body travels now, flattened and bounded.
+- ⚠️ **RED, BUT NOT FATAL — AND THE CHECK HAS TO SAY WHY.** A ✗ printed above a
+  green *"Free listings can go out"* is a mixed signal the reader has to decode,
+  which is how a check stops being read. pools.trade supplies PRE-MIGRATION
+  launches: a bonding-curve token has no pool, so it fails `minLiq`, `minVol24`
+  and `minAgeHours` **by definition** — `discovery.js`'s own header says exactly
+  this about launchpads. What a dead pad costs is visibility of launches before
+  they graduate, not listings. The check names that cost in place, and points at
+  `poolstrade:check` rather than leaving a red mark with no verdict attached.
+
 **And "below its trigger ×14" is the market, not a fault** — the check says so
 in as many words, and the layer that decides is `TRIGGER_JITTER_OF_FLOOR`, one
 section up. Lower 🎯 From to widen it. With `max 5/day` under a 2h–4h pace
