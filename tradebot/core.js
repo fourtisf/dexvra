@@ -2218,6 +2218,50 @@ const _curveGas = (est) => {
   return g > ceil ? ceil : g;
 };
 
+/*
+ * THE INDEXER'S TRADE LIST, as discovery seed hashes — see curveTrade's
+ * `_receiptLogs` header for why the window ladder alone is structurally blind
+ * to a quiet token's trades on a range-capped node. The pool asked is the
+ * indexer's own pair for this token, which for an indexed curve token IS the
+ * curve contract. Hashes are pointers only: everything decoded is read back
+ * from the chain's receipts, so a wrong hash contributes nothing. [] on any
+ * failure — the ladder still runs without it.
+ */
+const CURVE_SEED_MAX = 12;
+async function _curveTradeHashes(chainKey, ca) {
+  try {
+    const net = GT_NET[chainKey];
+    if (!net) return [];
+    let pool = null;
+    const slug = DS_CHAIN_KEY[chainKey];
+    if (slug) {
+      const pairs = (await dsPairsX(ca)).pairs.filter((p) => p && p.chainId === slug && p.pairAddress);
+      const best = pairs.sort((a, b) => _dsLiq(b) - _dsLiq(a))[0];
+      if (best) pool = best.pairAddress;
+    }
+    if (!pool) {
+      const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${_idQ(ca)}/pools?page=1`, { signal: AbortSignal.timeout(6000), headers: { accept: 'application/json' } });
+      if (r.ok) {
+        const j = await r.json();
+        const best = (Array.isArray(j && j.data) ? j.data : [])
+          .sort((a, b) => Number(((b || {}).attributes || {}).reserve_in_usd || 0) - Number(((a || {}).attributes || {}).reserve_in_usd || 0))[0];
+        if (best && best.attributes && best.attributes.address) pool = best.attributes.address;
+      }
+    }
+    if (!pool) return [];
+    const r = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/pools/${_idQ(pool)}/trades`, { signal: AbortSignal.timeout(8000), headers: { accept: 'application/json' } });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const out = [];
+    for (const t of (Array.isArray(j && j.data) ? j.data : [])) {
+      const h = t && t.attributes && (t.attributes.tx_hash || t.attributes.txHash);
+      if (typeof h === 'string' && /^0x[0-9a-fA-F]{64}$/.test(h) && !out.includes(h)) out.push(h);
+      if (out.length >= CURVE_SEED_MAX) break;
+    }
+    return out;
+  } catch (_) { return []; }
+}
+
 /** What `curvePrice` needs, wired to this module's own readers. `iface` carries
  *  the observed samples for its last-resort tier. */
 const _curveDeps = (iface) => ({
@@ -2326,7 +2370,10 @@ async function _curveIface(chainKey, ca) {
   let timer;
   const bound = new Promise((res) => { timer = setTimeout(() => res({ ok: false, why: `reading this curve's interface took longer than ${Math.round(CURVE_DISCOVER_MS / 1000)}s — nothing was sent` }), CURVE_DISCOVER_MS); });
   try {
-    return await Promise.race([curveTrade.ifaceFor(providerFor(chainKey), chainKey, ca), bound]);
+    return await Promise.race([
+      curveTrade.ifaceFor(providerFor(chainKey), chainKey, ca, { tradeHashes: () => _curveTradeHashes(chainKey, ca) }),
+      bound,
+    ]);
   } catch (e) {
     return { ok: false, why: `could not read this curve (${(e && e.message) || e})` };
   } finally { clearTimeout(timer); }
@@ -2646,6 +2693,13 @@ async function tokenSnapshot(ca, chainKey) {
         ...extBase, curve: iface.curve, dex: false, graduated: false, progressPct: 0,
         dexVenue: 'curve', onCurve: true, routable: true,
       };
+    }
+    // The one line that separates "not deployed", "discovery timed out" and
+    // "genuinely unreadable" from pm2 alone. The card cannot carry it (it is
+    // an operator diagnostic on a user surface), and without it every round of
+    // "masih sama aja" starts from zero.
+    if (CURVE_ROUTE_ON) {
+      console.log(`[curve] card ${chainKey}/${String(ca).slice(0, 10)}… unroutable: ${iface.why || (iface.ok ? 'interface read, but no BUY leg observed yet' : 'unreadable')}`);
     }
     return { ...extBase, curve: '', dex: true, graduated: true, progressPct: 100, dexVenue: 'ext', routable: false };
   }

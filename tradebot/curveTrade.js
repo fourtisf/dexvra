@@ -23,8 +23,51 @@
  * cannot be traded", because the first is ours and the second is not ours to
  * assert. `why` says which, always.
  */
-const { decodeCurveIface, describeIface } = require('./curveIface.js');
+const { decodeCurveIface, describeIface, TRANSFER_TOPIC } = require('./curveIface.js');
 const { buildCurveCall, simulate, sane, _big: big } = require('./curveRoute.js');
+
+/*
+ * ⚠️ THE INDEXER'S TRADE LIST SEEDS DISCOVERY, because the window ladder can
+ * be structurally blind on the box this feature is for.
+ *
+ * Robinhood's public RPC silently caps wide `eth_getLogs` — a 50,000-block ask
+ * answered [] over real trades, which is what forced the stepped walk — and
+ * the wider windows' steps grow with the span (400,000/24 ≈ 16,667 blocks), so
+ * past some age the walk cannot see a trade AT ALL: every range big enough to
+ * reach it within the budget is silently emptied. A curve token whose last
+ * trade is half a day old therefore read "no trades found" for ever, and its
+ * card said "can't route through yet" over a token DexScreener was pricing on
+ * the same render.
+ *
+ * The indexer that prices it also PUBLISHES its trades' transaction hashes.
+ * They are used as POINTERS ONLY: everything decoded still comes from the
+ * chain's own receipts and transactions — the same trust base as getLogs — so
+ * a wrong or fabricated hash yields no receipt or no Transfer of OUR token and
+ * contributes nothing. Every gate downstream (classification, sane(),
+ * simulate) is unchanged. An indexer that is down costs the seed and nothing
+ * else: the ladder still runs.
+ */
+const SEED_MAX_TX = 12;
+
+/** This token's trade Transfers, read off the RECEIPTS of the given hashes.
+ *  Oldest-first, the order the walk produces. Per-receipt failures are
+ *  skipped — a pointer that resolves to nothing contributes nothing. */
+async function _receiptLogs(chain, token, hashes) {
+  if (typeof chain.getTransactionReceipt !== 'function') return [];
+  const lcTok = String(token).toLowerCase();
+  const out = [];
+  // Newest-first from the indexer; decode expects oldest-first input.
+  for (const h of hashes.slice(0, SEED_MAX_TX).reverse()) {
+    let rcpt = null;
+    try { rcpt = await chain.getTransactionReceipt(h); } catch (_) { continue; }
+    for (const lg of (rcpt && rcpt.logs) || []) {
+      if (!lg || String(lg.address || '').toLowerCase() !== lcTok) continue;
+      if (!lg.topics || lg.topics[0] !== TRANSFER_TOPIC) continue;
+      out.push({ transactionHash: h, topics: lg.topics, data: lg.data, blockNumber: lg.blockNumber });
+    }
+  }
+  return out;
+}
 
 /** Interfaces are per (chain, token) and change only when a pad redeploys, so
  *  they are worth holding — a rediscovery is a dozen RPC reads. A MISS is held
@@ -99,6 +142,23 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
   try { head = Number(await chain.getBlockNumber()); }
   catch (e) { return { ok: false, why: `could not read the chain head (${(e && e.message) || e})` }; }   // NOT cached: an outage is not a fact about the token
 
+  // At most ONE seed attempt per discovery, tried after the FIRST empty window
+  // — the cheap window finds a fresh launch's trades by itself, and a quiet
+  // token gets the seed before paying for the two wide windows that are
+  // usually blind to it anyway (see the header on _receiptLogs).
+  let seedTried = false;
+  const trySeed = async () => {
+    if (seedTried || typeof opts.tradeHashes !== 'function') return null;
+    seedTried = true;
+    let hashes = null;
+    try { hashes = await opts.tradeHashes(); } catch (_) { return null; }
+    if (!Array.isArray(hashes) || !hashes.length) return null;
+    const logs = await _receiptLogs(chain, ca, hashes);
+    if (!logs.length) return null;
+    const r = await decodeCurveIface(chain, ca, { logs, maxTx: opts.maxTx });
+    return r.ok ? r : null;
+  };
+
   const windows = opts.blocks ? [Math.floor(Number(opts.blocks))] : WINDOWS;
   let res = null;
   for (const blocks of windows) {
@@ -108,7 +168,12 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
     // other refusal — a call we cannot decode, a token that never touched the
     // contract, a node that would not answer — says the same thing at any size.
     if (!/^no trades found/.test(res.why || '')) break;
+    const s = await trySeed();
+    if (s) { res = s; break; }
   }
+  // A walk that ended in a transport failure never reached the seed — and the
+  // seed is a DIFFERENT transport, so it is still worth one try.
+  if (res && !res.ok) { const s = await trySeed(); if (s) res = s; }
 
   // A transport failure is never remembered — the `pumpfunNewX` rule, on the
   // path that spends money.

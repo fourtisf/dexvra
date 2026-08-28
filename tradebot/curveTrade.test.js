@@ -302,6 +302,70 @@ test('⚠️ the window ESCALATES, because "any launchpad" means any PACE', asyn
   assert.equal(seen[0], 5000, 'and it still STARTED cheap — every lookup must not pay for the slowest pad');
 });
 
+test('⚠️ the indexer\'s trade list seeds discovery when every getLogs is silently emptied', async () => {
+  // The live shape one node quirk further than the range cap: past some age,
+  // EVERY range big enough to reach a trade within the step budget is silently
+  // answered [] — so the walk reads "no trades found" for ever about a token
+  // the indexer is pricing on the same card. The indexer also publishes the
+  // trades' tx hashes; they are pointers only, and everything decoded below
+  // still comes off the chain's own receipts.
+  const txs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+  };
+  const receipts = {
+    '0xb1': { logs: [{ address: TOKEN, topics: [TRANSFER_TOPIC, topic(CURVE), topic(WALLET)], data: '0x' + num(1000n) }] },
+    '0xb2': { logs: [{ address: TOKEN, topics: [TRANSFER_TOPIC, topic(CURVE), topic(WALLET)], data: '0x' + num(2000n) }] },
+  };
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    async getLogs() { return []; },                    // the silent cap, everywhere
+    async getTransaction(h) { return txs[h] || null; },
+    async getTransactionReceipt(h) { return receipts[h] || null; },
+    async estimateGas() { return 210000n; },
+  };
+  let asked = 0;
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN, {
+    tradeHashes: async () => { asked++; return ['0xb2', '0xb1']; },   // newest first, as an indexer answers
+  });
+  assert.equal(r.ok, true, `the seed did not rescue a blind walk: ${r.why}`);
+  assert.equal(r.curve, CURVE);
+  assert.equal(r.buy.selector, '0xaabbccdd');
+  assert.equal(asked, 1, 'the indexer is asked once, not per window');
+  assert.ok(ct.cached('robinhood', TOKEN), 'a seeded read is a read — it caches like one');
+});
+
+test('the seed is not asked while the walk can answer', async () => {
+  const chain = chainWithBuys();
+  let asked = 0;
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN, { tradeHashes: async () => { asked++; return []; } });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(asked, 0, 'a walk that found the trades must not spend an indexer request');
+});
+
+test('a dead indexer costs the seed and nothing else — the ladder still climbs', async () => {
+  // Same capped node as the ladder test below, with the seed source throwing:
+  // the fallback failing must never make the primary worse.
+  const logs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+  const txs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+  };
+  const TRADE_AT = 405000;
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    async getLogs(f) {
+      const from = Number(f.fromBlock), to = Number(f.toBlock);
+      if (to - from > 20000) throw new Error('block range too large');
+      return from <= TRADE_AT && TRADE_AT <= to ? logs : [];
+    },
+    async getTransaction(h) { return txs[h]; },
+    async estimateGas() { return 210000n; },
+  };
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN, { tradeHashes: async () => { throw new Error('indexer down'); } });
+  assert.equal(r.ok, true, `a failed seed broke the ladder: ${r.why}`);
+});
+
 test('⚠️ the ladder still climbs on a node that REJECTS wide ranges', async () => {
   // The live shape on Robinhood's public RPC: the wide ask for windows 2 and 3
   // errors with a range cap while every step inside them answers fine. Before

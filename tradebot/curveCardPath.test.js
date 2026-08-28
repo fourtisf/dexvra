@@ -45,16 +45,27 @@ process.env.BASE_RPC = 'http://127.0.0.1:1';
 const core = require('./core');
 const curveTrade = require('./curveTrade');
 
+// Full-width hashes: core's _curveTradeHashes refuses anything that is not a
+// real 32-byte transaction hash, exactly so an indexer cannot hand it junk.
+const H1 = '0x' + '11'.repeat(32);
+const H2 = '0x' + '22'.repeat(32);
+
 /** A chain where the token's ONLY market is its curve: no V2 pair, no V3 pool,
- *  two real buys through the curve — or none, when `quiet`. */
-function stubChain(token, { quiet = false } = {}) {
+ *  two real buys through the curve — none when `quiet`, and none VISIBLE TO
+ *  getLogs when `capped` (the node silently empties every range, the live
+ *  Robinhood shape — the trades exist only behind their receipts). */
+function stubChain(token, { quiet = false, capped = false } = {}) {
   const logs = quiet ? [] : [
-    { transactionHash: '0xb1', blockNumber: 10, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(1000n * E18) },
-    { transactionHash: '0xb2', blockNumber: 11, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(2000n * E18) },
+    { transactionHash: H1, blockNumber: 10, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(1000n * E18) },
+    { transactionHash: H2, blockNumber: 11, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(2000n * E18) },
   ];
   const txs = {
-    '0xb1': { to: CURVE, from: BUYER, value: E17, data: '0xaabbccdd' + addrWord(token) + addrWord(BUYER) + num(1000n * E18) },
-    '0xb2': { to: CURVE, from: BUYER, value: 2n * E17, data: '0xaabbccdd' + addrWord(token) + addrWord(BUYER) + num(2000n * E18) },
+    [H1]: { to: CURVE, from: BUYER, value: E17, data: '0xaabbccdd' + addrWord(token) + addrWord(BUYER) + num(1000n * E18) },
+    [H2]: { to: CURVE, from: BUYER, value: 2n * E17, data: '0xaabbccdd' + addrWord(token) + addrWord(BUYER) + num(2000n * E18) },
+  };
+  const receipts = {
+    [H1]: { logs: [{ address: token, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(1000n * E18) }] },
+    [H2]: { logs: [{ address: token, topics: [TRANSFER, topic(CURVE), topic(BUYER)], data: '0x' + num(2000n * E18) }] },
   };
   const state = { getLogsCalls: 0 };
   return {
@@ -62,9 +73,11 @@ function stubChain(token, { quiet = false } = {}) {
     async getBlockNumber() { return 5000; },
     async getLogs(f) {
       state.getLogsCalls++;
+      if (capped) return [];   // answered, empty — never an error
       return String(f && f.address).toLowerCase() === token.toLowerCase() ? logs : [];
     },
     async getTransaction(h) { return txs[h] || null; },
+    async getTransactionReceipt(h) { return receipts[h] || null; },
     async call(tx) {
       const sel = String(tx.data || '').slice(0, 10);
       if (sel === '0x70a08231') return '0x' + num(0n);                        // balanceOf
@@ -84,8 +97,9 @@ function stubChain(token, { quiet = false } = {}) {
 }
 
 /** Stub every seam tokenSnapshot reaches: the chain, the v4 probes, and — for
- *  the "indexed" half of the report — DexScreener answering with a pair. */
-function withStubs(chain, { indexed = true } = {}) {
+ *  the "indexed" half of the report — DexScreener answering with a pair, plus
+ *  GeckoTerminal's trades endpoint when `gtTrades` names the hashes. */
+function withStubs(chain, { indexed = true, gtTrades = null } = {}) {
   const realProv = core._deps.providerFor;
   const realFetch = global.fetch;
   const realPrice = core.v4.price;
@@ -105,10 +119,14 @@ function withStubs(chain, { indexed = true } = {}) {
       const pairs = indexed ? [{
         chainId: 'base', priceUsd: '0.0000421', marketCap: 4209,
         liquidity: { usd: 4370 }, volume: { h24: 320 },
-        dexId: 'pons', labels: ['v2'],
+        dexId: 'pons', labels: ['v2'], pairAddress: CURVE,
         baseToken: { name: 'Test', symbol: 'TEST' },
       }] : [];
       return { ok: true, async json() { return { pairs }; } };
+    }
+    if (u.includes('geckoterminal.com') && u.includes('/trades')) {
+      const data = (gtTrades || []).map((h) => ({ attributes: { tx_hash: h } }));
+      return { ok: true, async json() { return { data }; } };
     }
     if (u.includes('coinbase')) return { ok: true, async json() { return { data: { amount: '2000' } }; } };
     return { ok: true, async json() { return {}; } };
@@ -148,6 +166,25 @@ test('⚠️ an INDEXED bonding-curve token gets a routable snapshot — the Buy
     assert.equal(snap.mcapUsd, 4209);
     assert.equal(snap.liquidityUsd, 4370);
     assert.equal(snap.sym, 'TEST');
+  } finally { restore(); }
+});
+
+test('⚠️ the reported state end-to-end: the node silently caps every getLogs, the indexer seeds the route', async () => {
+  // $TEST at 17:14, 2026-08-28: DexScreener pricing the token on the very card
+  // that said "can't route through yet". Its last trades were hours old — past
+  // every window the range-capped node will serve — so the walk read "no
+  // trades found" for ever. The indexer's trade list is the way in: hashes
+  // only, receipts from the chain itself.
+  const token = '0x4444444444444444444444444444444444444444';
+  const chain = stubChain(token, { capped: true });
+  const restore = withStubs(chain, { indexed: true, gtTrades: [H2, H1] });
+  try {
+    const snap = await core.tokenSnapshot(token, 'base');
+    assert.ok(snap, 'the token snapshots');
+    assert.equal(snap.routable, true, 'the seeded discovery must light the Buy button');
+    assert.equal(snap.dexVenue, 'curve');
+    assert.equal(String(snap.curve).toLowerCase(), CURVE);
+    assert.equal(snap.priceUsd, 0.0000421, "the indexer's numbers still ride along");
   } finally { restore(); }
 });
 

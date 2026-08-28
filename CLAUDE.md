@@ -3929,6 +3929,52 @@ cd tradebot && node --test curveCardPath.test.js   # 4 tests, no network
 **Config a fix depends on:** nothing. `CURVE_WARM_MS` paces the background
 warm; `CURVE_ROUTE=0` still kills the whole route, card leg included.
 
+#### "masih sama aja" again — the walk was structurally BLIND to a quiet token's trades
+
+The same token, the fix above deployed-or-not, the same card — and this time
+the tell was on the card itself: **24h volume frozen at $320.96 across three
+renders 90 minutes apart**. The token's last trades were HOURS old, and the
+window ladder cannot see a trade that old on this node no matter how often it
+retries: Robinhood's public RPC **silently empties** wide `eth_getLogs` (a
+50,000-block ask answered `[]` over real trades — the incident that forced the
+stepped walk), and the wider windows' steps grow with the span (400,000/24 ≈
+16,667 blocks), so past some age EVERY range big enough to reach a trade
+within the step budget comes back empty. The walk honestly reports "no trades
+found", caches the miss for 90s, and re-reports it for ever — about a token
+DexScreener was pricing on the same render.
+
+- **The indexer that prices it also PUBLISHES its trades' tx hashes**, and
+  that is the way in: GeckoTerminal's pool-trades endpoint, asked through the
+  pool the indexer itself names for this token (for an indexed curve token the
+  DS pair address IS the curve contract). `ifaceFor` seeds discovery from
+  those hashes when a window comes up empty — after the FIRST window, so a
+  fresh launch still resolves without an indexer request, and a quiet token
+  skips the two wide windows that are usually blind to it anyway.
+- ⚠️ **The hashes are POINTERS, never facts.** Everything decoded still comes
+  off the chain's own receipts and transactions — the same trust base as
+  `getLogs` — so a wrong or fabricated hash yields no receipt or no Transfer
+  of OUR token and contributes nothing; classification, `sane()` and
+  `simulate` are untouched. An indexer that is down costs the seed and
+  nothing else: the ladder still runs, and the seed is also tried once after
+  a walk that ended in transport failure (a different transport says nothing
+  about this one).
+- **The card path finally SAYS why it refused** — `[curve] card <chain>/<ca>
+  unroutable: <why>` at info, because "not deployed", "discovery timed out"
+  and "genuinely unreadable" were indistinguishable from Telegram, and every
+  round of this report has started from zero because of it.
+- Mutation-tested: disabling the seed fails the unit test AND the end-to-end
+  card test that reproduces the reported state verbatim (every `getLogs`
+  silently empty, DS pricing the token, GT naming the trades).
+
+```bash
+cd tradebot && node --test curveCardPath.test.js curveTrade.test.js   # incl. the seeded-discovery tests
+```
+
+**Config a fix depends on:** nothing. Whether GT serves the trades for a given
+pool is a property of the box's egress — `npm run abi:check -- <token> --curve`
+on the box is still the measurement when a card stays unroutable, and the
+`[curve]` log line now names the stage that refused.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

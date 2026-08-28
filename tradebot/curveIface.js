@@ -120,15 +120,24 @@ async function decodeCurveIface(chain, token, opts = {}) {
    */
   const from = Math.max(0, head - span);
   const budget = Math.max(1, Number(opts.steps) || 24);
-  let logs = null;
+  /*
+   * `opts.logs` BYPASSES THE WALK: the caller already holds this token's trade
+   * Transfers — read from transaction RECEIPTS, i.e. the same chain the walk
+   * asks — and only the decode is wanted. The seed path in curveTrade uses it
+   * for tokens whose trades are older than any window a range-capped node will
+   * serve; see `ifaceFor`.
+   */
+  let logs = Array.isArray(opts.logs) ? opts.logs : null;
   let stepped = 0;
   let stepErrs = 0;
   let lastErr = null;
 
-  try { logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: from, toBlock: head }); }
-  catch (e) { lastErr = e; }
+  if (!logs) {
+    try { logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: from, toBlock: head }); }
+    catch (e) { lastErr = e; }
+  }
 
-  if (!logs || !logs.length) {
+  if ((!logs || !logs.length) && !Array.isArray(opts.logs)) {
     const step = Math.max(200, Math.ceil(span / budget));
     const found = [];
     for (let to = head; to > from && stepped < budget && found.length < maxTx * 2; to -= step) {
