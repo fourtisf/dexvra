@@ -59,6 +59,8 @@ const wordAddr = (w) =>
   /^0{24}[0-9a-fA-F]{40}$/.test(w) && !/^0{8}/.test(w.slice(24)) ? '0x' + w.slice(24).toLowerCase() : null;
 const topicAddr = (t) => (typeof t === 'string' && t.length === 66 ? '0x' + t.slice(26).toLowerCase() : null);
 const lc = (s) => String(s || '').toLowerCase();
+/** A Transfer's `value` — the non-indexed uint256 in the log data. */
+const logAmount = (lg) => { try { return BigInt(lg && lg.data ? lg.data : 0); } catch (_) { return 0n; } };
 
 /** The calldata's argument words, classified. Bounded: a curve buy takes a
  *  handful of arguments, and a long tail is calldata we do not understand
@@ -128,7 +130,13 @@ async function decodeCurveIface(chain, token, opts = {}) {
     // sizes is either a constant, or a number that scales with the amount, and
     // those need opposite treatment when we build our own call. `classifySlots`
     // is what turns samples into meaning, and it needs more than one.
-    rec.samples.push({ value: v, args: argsOf(tx.data, token), from: lc(tx.from), hash: lg.transactionHash });
+    // ⚠️ THE TOKEN AMOUNT, TOO — because on a SELL `msg.value` is always zero.
+    // The size a sell is denominated in lives in an argument, not in the value
+    // field, so correlating slots against `value` alone can never explain a
+    // sell's arguments: every slot looks constant, nothing scales, and the
+    // price gate then has no curve-side number to check. The Transfer log the
+    // sample came from carries the amount, so it costs nothing to keep.
+    rec.samples.push({ value: v, amount: logAmount(lg), args: argsOf(tx.data, token), from: lc(tx.from), hash: lg.transactionHash });
     // The largest value seen for this shape, so one dust trade does not hide a
     // real one.
     if (v > rec.value) { rec.value = v; rec.hash = lg.transactionHash; rec.args = argsOf(tx.data, token); }
@@ -248,7 +256,9 @@ function classifySlots(leg, token, opts = {}) {
     // equal-sized samples an amount slot is also constant, and freezing it
     // would send a minimum-out computed for a trade that is not ours.
     const values = samples.map((s) => s.args[i].num);
-    const vals = samples.map((s) => s.value);
+    // The SIZE this leg is denominated in: what was paid on a buy, what was
+    // handed over on a sell. Without the second half a sell explains nothing.
+    const vals = samples.map((s) => (s.value > 0n ? s.value : BigInt(s.amount || 0)));
     const varied = vals.some((v) => v !== vals[0]);
     if (varied && values.every((n) => n !== null && n > 0n) && vals.every((v) => v > 0n)) {
       const r0 = (values[0] * 10n ** 18n) / vals[0];

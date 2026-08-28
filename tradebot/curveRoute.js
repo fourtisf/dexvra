@@ -47,6 +47,10 @@ function buildCurveCall(leg, opts) {
   const size = valueWei > 0n ? valueWei : amountRaw;
 
   const words = [];
+  // What the CURVE's own arguments say we should receive, before slippage. This
+  // is the only number the built call itself asserts, and it is what `sane()`
+  // has to compare against an independent price — see the note at the return.
+  let expected = null;
   for (const s of cls.slots) {
     if (s.role === 'token') { words.push(addrWord(token)); continue; }
     if (s.role === 'sender') { words.push(addrWord(wallet)); continue; }
@@ -56,7 +60,7 @@ function buildCurveCall(leg, opts) {
       // ⚠️ RECOMPUTED FOR OUR SIZE, then cut by slippage. Reusing the observed
       // number would carry somebody else's bound: too high and every buy
       // reverts, too low and it is a free option for anyone watching.
-      const expected = (s.ratioE18 * size) / E18;
+      expected = (s.ratioE18 * size) / E18;
       const bounded = (expected * BigInt(10000 - Math.max(0, Math.min(9000, slippageBps)))) / 10000n;
       words.push(HEX(bounded > 0n ? bounded : 1n));
       continue;
@@ -71,6 +75,21 @@ function buildCurveCall(leg, opts) {
     value: valueWei,
     slots: cls.slots,
     samples: cls.samples,
+    /**
+     * ⚠️ THE CALL'S OWN EXPECTATION, and `null` when it has none.
+     *
+     * `sane()` exists to catch an interface read the right shape and the wrong
+     * meaning, and it can only do that by comparing TWO independent numbers.
+     * The caller passed `built.expected ?? expectedTokens` for a while, which
+     * — with `expected` never set — compared the indexer's number against
+     * itself and therefore passed everything. A gate that cannot fail is worse
+     * than no gate: it reads as protection in every review of the code.
+     *
+     * `null` is honest and is a REFUSAL upstream: a pad whose buy carries no
+     * amount-scaled argument gives us nothing to check the interface against,
+     * and offers no on-chain slippage bound of its own either.
+     */
+    expected,
   };
 }
 
