@@ -21,6 +21,43 @@ command: describe where the value comes from and let them fill it in, and make
 the code reject a value that cannot possibly be right (`report.js`
 `_looksLikeChatId`).
 
+⚠️ **AND IT HAPPENED A THIRD TIME, in a script written to diagnose something
+else.** `abi:check`'s own usage line read `node scripts/abi-check.js
+0x<contract>`, an operator pasted `0xTOKEN_YANG_ANDA_BELI` exactly as it was
+offered, and the tool reported its own usage screen back at them. The
+angle-bracket spelling is the worse of the two: **bash reads `<` and `>` as
+redirects**, so the command dies with `syntax error near unexpected token`
+BEFORE the script runs — which reads as a broken tool rather than an unfilled
+blank, and is what the Pons `--tx 0x<your own buy>` instruction already cost.
+
+- **The fix is never to reword the placeholder.** It is to print a REAL value —
+  `abi:check` with no address now asks the CHAIN for the launches that actually
+  happened and prints one complete, pasteable line per token; `group-ca.js`
+  uses a chatId from the row it just listed — or to describe the argument in
+  prose and print no command at all, which is what `buybot:check` does because
+  it can know neither of its two arguments.
+- **A non-address argument is DIAGNOSED, not bounced to usage.** ⚠️ And the
+  `0x` prefix is not the test: `0xTOKEN_YANG_ANDA_BELI` starts with `0x`, so
+  "40 hex characters, that one has 20" is true, useless, and points at the
+  wrong problem. Whether the rest is HEX is what separates a placeholder from
+  a truncated address.
+- **`tradebot/pasteableCommands.test.js` scans every `scripts/` directory in
+  the repo** — one guard, not one per package, because three copies of a rule
+  eventually disagree. ⚠️ Its first cut anchored the match to the start of the
+  line and therefore **passed on the exact revision it exists to catch** (the
+  line was `usage: node …` — a label, then the command); the vacuity test
+  beside it is what said so. Mutation-tested against the three real pre-fix
+  sources.
+- The `.env` reference table `launchpads:check` prints (`LAUNCHPAD_<PAD>_API`)
+  is deliberately **out of scope** and the guard says so: it is framed as
+  variable names to edit by hand, it explains `<PAD>` on the next line, and
+  there is no real value to substitute for a base URL. A judgement, recorded so
+  it is not rediscovered as an oversight.
+
+```bash
+cd tradebot && node --test pasteableCommands.test.js   # 3 tests, no network
+```
+
 ## Release flow — `main` is what the server runs
 
 **Every change ends up on `main`, and the server only ever deploys `main`.**

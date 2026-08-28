@@ -75,14 +75,107 @@ function stamp() {
   } catch (_) { return 'unknown'; }
 }
 
+/*
+ * ⚠️ NO PASTEABLE COMMAND MAY CONTAIN A PLACEHOLDER — THIS FILE'S OWN FIRST RULE,
+ * BROKEN BY THIS FILE.
+ *
+ * The usage line read `node scripts/abi-check.js 0x<contract>`, and it was
+ * pasted into a live shell exactly as written. Two ways that hurts, and the
+ * repo has already paid for both:
+ *
+ *   · bash reads `<` and `>` as redirects, so the command dies before the
+ *     script runs — the same `syntax error near unexpected token` the Pons
+ *     `--tx 0x<your own buy>` instruction produced;
+ *   · a placeholder without brackets gets pasted verbatim instead, which is
+ *     how `REPORT_CHANNEL_ID=-100xxxxxxxxxx` reached a live .env and silently
+ *     stopped every ops report.
+ *
+ * So this prints no fake command at all. It ASKS THE CHAIN for the launches
+ * that actually happened and prints one complete, real, pasteable line per
+ * token — "only real values, or it must not be a command". Nothing here can be
+ * copied wrongly because there is nothing fake to copy.
+ */
+async function noAddress(chain) {
+  // Name what was typed. Landing on a generic usage screen after pasting a
+  // placeholder reads as "the command is wrong", not as "that argument is not
+  // an address" — and those send the operator to different places.
+  const typed = argv.find((a) => !a.startsWith('--') && a !== chainKey && a !== optOf('blocks') && a !== optOf('steps'));
+  if (typed) {
+    console.log(`\n${R}✗${X} ${C}${typed}${X} is not a contract address.`);
+    // ⚠️ THE 0x PREFIX IS NOT THE TEST. `0xTOKEN_YANG_ANDA_BELI` starts with 0x
+    // and is a placeholder; reporting it as "40 hex characters, that one is 20"
+    // is true, useless, and points at the wrong problem. What separates them is
+    // whether the rest is HEX.
+    const body = typed.replace(/^0x/i, '');
+    if (!/^[a-fA-F0-9]*$/.test(body) || !/^0x/i.test(typed)) {
+      console.log(`${D}   That is a placeholder, not an address — and if it came out of a command`);
+      console.log(`   somebody handed you, the command was wrong to contain one. Real ones below.${X}`);
+    } else {
+      console.log(`${D}   An address is 0x followed by 40 hex characters; that one has ${body.length}.${X}`);
+    }
+  }
+  console.log(`\n${Y}This needs a token address, and it has to be a real one.${X}`);
+  console.log(`${D}  It reads a curve's interface off REAL trades, so give it the token you`);
+  console.log(`  bought on the pad — the address at the end of its launchpad page's URL,`);
+  console.log(`  or the one on the bot's own token card.${X}`);
+
+  // The launches this chain actually announced, so the operator copies a whole
+  // line rather than filling in a blank.
+  let launches = [];
+  let why = null;
+  try {
+    const { ethers } = require('ethers');
+    const t = require('../watchers')._test;
+    const cfg = t._ponsCfg();
+    // ⚠️ PONS_FACTORY is a Robinhood address, and _ponsCfg() answers with it
+    // whatever chain was asked for. Scanning it against another chain's RPC
+    // would come back empty and read as "this chain announced nothing" — a
+    // fact about our own misuse, dressed up as a fact about the chain.
+    if (chainKey !== 'robinhood') why = `recent launches can only be listed on robinhood, not ${chainKey}`;
+    else if (!cfg.factories.length || !cfg.topic0) why = 'no Pons factory or event configured on this chain';
+    else {
+      const prov = new ethers.JsonRpcProvider(chain.rpc, undefined, { staticNetwork: true });
+      const head = await prov.getBlockNumber();
+      const span = Number(optOf('blocks')) || 200000;
+      const logs = [];
+      for (const f of cfg.factories) {
+        try { logs.push(...(await prov.getLogs({ address: f, topics: [cfg.topic0], fromBlock: Math.max(0, head - span), toBlock: head })) || []); }
+        catch (e) { why = (e && e.message) || String(e); }
+      }
+      for (const lg of logs.sort((a, b) => b.blockNumber - a.blockNumber).slice(0, 6)) {
+        const r = await t._ponsResolve(prov, lg, cfg.factories).catch(() => null);
+        if (!r || !r.token) continue;
+        let sym = '';
+        try { sym = await new ethers.Contract(r.token, ['function symbol() view returns (string)'], prov).symbol(); } catch (_) {}
+        launches.push({ token: r.token, sym, block: lg.blockNumber, behind: head - lg.blockNumber });
+      }
+      if (!launches.length && !why) why = `no launch found in the last ${span} blocks`;
+    }
+  } catch (e) { why = (e && e.message) || String(e); }
+
+  if (launches.length) {
+    console.log(`\n${C}Launches this chain announced — copy one of these lines whole:${X}\n`);
+    for (const l of launches) {
+      console.log(`    npm run abi:check -- ${l.token} --curve`);
+      console.log(`      ${D}${l.sym ? '$' + l.sym + '  ' : ''}block ${l.block}${l.behind ? ` · ${l.behind} blocks ago` : ''}${X}`);
+    }
+  } else {
+    // "We could not look" and "this chain announced nothing" are different
+    // facts, and neither is a reason to print a made-up address.
+    console.log(`\n${D}  (could not list recent launches: ${why || 'unknown'})${X}`);
+  }
+
+  console.log(`\n${D}flags: --curve  resolve the token's curve first (you almost always want this)`);
+  console.log(`       --chain  a chain key other than robinhood`);
+  console.log(`       --blocks how far back to look, default 200000`);
+  console.log(`       --steps  how many smaller ranges to walk if the node caps getLogs${X}\n`);
+}
+
 async function main() {
   console.log(`\nCan this box read a published ABI?   ${D}checkout ${stamp()} · chain ${chainKey}${X}`);
   const chain = chainOf(chainKey);
   if (!chain) { console.log(`${R}unknown chain ${chainKey}${X}\n`); process.exit(1); }
-  if (!target) {
-    console.log(`\n${Y}usage:${X} node scripts/abi-check.js 0x<contract>   ${D}(add --curve to resolve a token's curve first)${X}\n`);
-    process.exit(1);
-  }
+  if (!target) { await noAddress(chain); process.exit(1); }
   console.log(`${D}  explorer ${chain.explorer || '(none configured)'}${X}\n`);
 
   let contract = target;

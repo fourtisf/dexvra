@@ -62,8 +62,15 @@ async function main() {
   console.log("─".repeat(64));
 
   if (!token) {
-    console.log("Usage: npm run buybot:check -- <chain> <token-address>");
-    console.log(`Chains: ${Object.keys(require("../src/config/chains").CHAINS).join(", ")}`);
+    // ⚠️ NOT PRINTED AS A COMMAND. It needs a chain and a token address, and
+    // this script knows neither — so it describes them rather than offering a
+    // line with placeholders in it, which is what gets pasted verbatim into a
+    // live shell (bash reads `<` and `>` as redirects, and a bracket-less
+    // placeholder simply arrives as a literal). Only real values, or no
+    // command at all.
+    console.log("Run it with two arguments after `npm run buybot:check --`:");
+    console.log("  1. a chain key, one of: " + Object.keys(require("../src/config/chains").CHAINS).join(", "));
+    console.log("  2. the token's contract address on that chain (0x… on EVM, the mint on Solana)");
     process.exit(2);
   }
 

@@ -64,7 +64,13 @@ if (!target) {
     );
   }
   if (set.length) {
-    console.log(`\nTo clear one:  node scripts/group-ca.js <chatId> --clear`);
+    // ⚠️ A REAL chatId, taken from the row just printed — never `<chatId>`.
+    // bash reads the angle brackets as redirects and the command dies before
+    // this script runs, and a bracket-less placeholder gets pasted verbatim
+    // instead. Both have already cost this repo an operator's evening, so a
+    // command printed for pasting carries only values that exist.
+    console.log(`\nTo clear one, run it with that group's id from the left column:\n`);
+    console.log(`    node scripts/group-ca.js ${set[0].chatId} --clear`);
   }
   process.exit(0);
 }
