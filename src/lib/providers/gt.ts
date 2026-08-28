@@ -107,13 +107,19 @@ const MIN_GAP_MS = num(process.env.GT_MIN_GAP_MS, 120, 0);
 /**
  * ⚠️ THIS PROCESS'S HALF OF ONE IP'S ALLOWANCE, and the half that was missing.
  *
- * The ceiling is ~30 req/min counted PER IP, and the bot suite lives on the
- * same box — so, as CLAUDE.md puts it, "the two processes' budgets have to ADD
- * UP TO IT". The bot's client was cut to `GT_MAX_RPM=15` for exactly that
- * reason. The site never got its half: a 120ms floor is ~500 req/min, i.e. no
+ * The ceiling is counted PER IP and the bot suite lives on the same box — so,
+ * as CLAUDE.md puts it, "the two processes' budgets have to ADD UP TO IT". The
+ * site never got its half at first: a 120ms floor is ~500 req/min, i.e. no
  * budget at all, so the bot held politely to fifteen while the site took
  * whatever it liked and both of them ate the 429. A split one side observes is
  * not a split.
+ *
+ * ⚠️ AND THE CEILING ITSELF WAS WRONG. Both halves were computed from ~30/min,
+ * which nobody had checked. GeckoTerminal's own API page states the free figure
+ * while advertising the paid one — "increase rate limits by 25X, from 10
+ * calls/min to 250 calls/min". Ten. So 15 + 15 was three times the allowance,
+ * and the endless "GeckoTerminal is rate limited — cooling down" on the token
+ * page was not a busy neighbour: it was us, every minute, by design.
  *
  * It is a PACE, not a refusal: over budget, a request WAITS for a slot rather
  * than failing, because a chart that draws a second late beats one that does
@@ -125,7 +131,18 @@ const MIN_GAP_MS = num(process.env.GT_MIN_GAP_MS, 120, 0);
  * the boot line prints whatever is in force, because a budget nobody can read
  * is how this one stayed missing.
  */
-const MAX_RPM = num(process.env.GT_MAX_RPM, 15, 0);
+const FREE_CEILING_RPM = num(process.env.GT_FREE_CEILING_RPM, 10, 1);
+/** Half of the IP's allowance — the bot's client computes its half the same way
+ *  from the same figure, so the two add up to the ceiling instead of tripling
+ *  it. A key makes both irrelevant. */
+const MAX_RPM = num(process.env.GT_MAX_RPM, Math.max(1, Math.floor(FREE_CEILING_RPM / 2)), 0);
+
+/** This process's budget, in requests a minute. Exported because a test that
+ *  writes the number down again is a second copy of it — and the copy that was
+ *  written down (15, half of an unchecked ~30) is precisely what went wrong. */
+export const gtBudgetRpm = (): number => MAX_RPM;
+/** The whole IP's allowance, which the two processes split. */
+export const gtFreeCeilingRpm = (): number => FREE_CEILING_RPM;
 /** The longest a request may wait for a budget slot before answering "could not
  *  ask". Longer than a couple of seconds and a page reads as hung, which is a
  *  worse failure than a chart that retries. */
@@ -185,7 +202,7 @@ export function gtBanner(): void {
     `[gt] ${
       GT_KEYED
         ? `API key set · ${PINNED_TIER ? `${PINNED_TIER.toUpperCase()} tier (pinned)` : `trying the ${tier.toUpperCase()} tier first, the other on a 401/403`} — the allowance is counted PER KEY, not per IP`
-        : "PUBLIC free tier (~30 req/min per IP, shared with the bot suite on this box) — set GECKOTERMINAL_API_KEY to raise it (a free CoinGecko Demo key works)"
+        : `PUBLIC free tier (~${FREE_CEILING_RPM} req/min per IP, shared with the bot suite on this box) — set GECKOTERMINAL_API_KEY to raise it (a free CoinGecko Demo key works)`
     } · budget ${MAX_RPM > 0 ? `${MAX_RPM}/min from THIS process` : "OFF (GT_MAX_RPM=0)"} · base ${baseNow()}`,
   );
 }

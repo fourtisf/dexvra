@@ -9,7 +9,7 @@ process.env.GT_MIN_GAP_MS = "0"; // the pacing gap is not what these pin
 // Short enough to assert on, long enough that "it waited" is measurable. Read
 // at module load, which is why it is set before the import.
 process.env.GT_BUDGET_WAIT_MS = "150";
-const { _gtReset, gtArmCooldown, gtBaseFor, gtGet, gtHeadersFor, gtInCooldown, gtSpentThisMinute } = await import("./gt.ts");
+const { _gtReset, gtArmCooldown, gtBaseFor, gtBudgetRpm, gtGet, gtHeadersFor, gtInCooldown, gtSpentThisMinute } = await import("./gt.ts");
 const { readFileSync } = await import("node:fs");
 /** Read the module's SOURCE. The env knobs are read at load, so the shape of
  *  the knob is what a test can pin without a second module instance. */
@@ -151,19 +151,25 @@ test("under budget, nothing is held back", async () => {
   assert.equal(gtSpentThisMinute(), 2, "a request that went out takes exactly one slot");
 });
 
-test("⚠️ the budget PACES — the 16th request waits for a slot before it gives up", async () => {
+test("⚠️ the budget PACES — the request past the budget waits for a slot before it gives up", async () => {
   // A refusal would blank a chart the moment a board rebuild used the minute's
   // allowance. Waiting is the point: a chart that draws a second late beats one
   // that does not draw.
+  //
+  // ⚠️ THE BUDGET IS READ, NOT WRITTEN DOWN HERE. This used to hardcode 15 —
+  // half of a ~30/min ceiling nobody had checked — and GeckoTerminal's own API
+  // page says the free tier is 10. A test that repeats a wrong constant fails
+  // for the right change, which is what it just did.
+  const budget = gtBudgetRpm();
   let hits = 0;
   const t0 = Date.now();
   let over: Awaited<ReturnType<typeof gtGet>> | null = null;
   await withFetch(async () => { hits++; return reply(200, { ok: 1 }); }, async () => {
-    for (let i = 0; i < 15; i++) assert.equal((await gtGet(`/p${i}`)).ok, true);
-    over = await gtGet("/p15");
+    for (let i = 0; i < budget; i++) assert.equal((await gtGet(`/p${i}`)).ok, true);
+    over = await gtGet(`/p${budget}`);
   });
   const waited = Date.now() - t0;
-  assert.equal(hits, 15, "the 16th request must not have been made");
+  assert.equal(hits, budget, "the request past the budget must not have been made");
   assert.ok(waited >= 120, `it must actually wait for a slot, waited ${waited}ms`);
   assert.equal(over!.ok, false);
   // ⚠️ status 0 is "we did not ask" — the same answer the cooldown gives, which
@@ -188,8 +194,19 @@ test("the budget is a ROLLING window, not a per-minute bucket", async () => {
 
 test("GT_MAX_RPM is READ from the env and 0 turns it off — the escape hatch a Pro key needs", () => {
   const src = readGt();
-  assert.match(src, /num\(process\.env\.GT_MAX_RPM, 15, 0\)/, "default 15 = half of the free ~30/min ceiling");
+  assert.match(src, /num\(process\.env\.GT_MAX_RPM, Math\.max\(1, Math\.floor\(FREE_CEILING_RPM \/ 2\)\), 0\)/,
+    "the default is DERIVED from the ceiling, never a second copy of the number");
   assert.match(src, /if \(MAX_RPM <= 0\) return true;/);
+});
+
+test("⚠️ this process takes HALF the IP's allowance, because the bot suite takes the other", () => {
+  // The two budgets have to ADD UP TO the ceiling. They used to add up to three
+  // times it — 15 here and 15 in the bot, against a documented 10 — so the
+  // "GeckoTerminal is rate limited" the token page kept showing was ours.
+  const src = readGt();
+  assert.match(src, /num\(process\.env\.GT_FREE_CEILING_RPM, 10, 1\)/,
+    "the free ceiling is 10/min per geckoterminal.com/dex-api, and overridable");
+  assert.ok(gtBudgetRpm() * 2 <= 10, `two halves must fit the ceiling, got ${gtBudgetRpm()} each`);
 });
 
 test("the boot line PRINTS the budget — a split nobody can read is how this one stayed missing", () => {
