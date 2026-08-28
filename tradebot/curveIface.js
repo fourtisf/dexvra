@@ -119,11 +119,18 @@ async function decodeCurveIface(chain, token, opts = {}) {
     const to = lc(tx.to);
     const sel = tx.data.slice(0, 10).toLowerCase();
     const key = `${to}|${sel}`;
-    const rec = calls.get(key) || { to, sel, n: 0, value: 0n, hash: lg.transactionHash, args: argsOf(tx.data, token), from: null, into: null };
+    const rec = calls.get(key) || { to, sel, n: 0, value: 0n, hash: lg.transactionHash, args: argsOf(tx.data, token), from: null, into: null, samples: [] };
     rec.n++;
+    const v = BigInt(tx.value || 0);
+    // ⚠️ EVERY SAMPLE IS KEPT, not just the biggest. One trade shows the SHAPE
+    // of a call; it cannot show what any argument MEANS. A slot that holds 500
+    // in one buy is a mystery — the same slot across three buys of different
+    // sizes is either a constant, or a number that scales with the amount, and
+    // those need opposite treatment when we build our own call. `classifySlots`
+    // is what turns samples into meaning, and it needs more than one.
+    rec.samples.push({ value: v, args: argsOf(tx.data, token), from: lc(tx.from), hash: lg.transactionHash });
     // The largest value seen for this shape, so one dust trade does not hide a
     // real one.
-    const v = BigInt(tx.value || 0);
     if (v > rec.value) { rec.value = v; rec.hash = lg.transactionHash; rec.args = argsOf(tx.data, token); }
     // ⚠️ DIRECTION COMES FROM THE TRANSFER, NOT FROM `value`. A buy moves the
     // token OUT of the curve and a sell moves it IN, and that is true even for
@@ -156,8 +163,8 @@ async function decodeCurveIface(chain, token, opts = {}) {
     ok: !!buy,
     why: buy ? null : 'these trades show no BUY — only the curve taking the token in. Make one small buy on the pad and it will be read next time.',
     curve,
-    buy: buy && { selector: buy.sel, value: buy.value, args: buy.args, hash: buy.hash, seen: buy.n, native: buy.value > 0n },
-    sell: sell && { selector: sell.sel, args: sell.args, hash: sell.hash, seen: sell.n },
+    buy: buy && { selector: buy.sel, value: buy.value, args: buy.args, hash: buy.hash, seen: buy.n, native: buy.value > 0n, samples: buy.samples },
+    sell: sell && { selector: sell.sel, args: sell.args, hash: sell.hash, seen: sell.n, samples: sell.samples },
     samples: newest.length,
   };
 }
@@ -171,3 +178,96 @@ function describeIface(r) {
 }
 
 module.exports = { decodeCurveIface, describeIface, TRANSFER_TOPIC, _argsOf: argsOf, _wordAddr: wordAddr };
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT DOES EACH ARGUMENT MEAN?
+ *
+ * Knowing a call's SHAPE is not knowing how to make one. `buy(address,uint256)`
+ * with the observed words `[TOKEN, 500]` says nothing about whether 500 is a
+ * minimum-out, a deadline, a referrer code or a slippage bound — and building
+ * our own buy means putting OUR number in that slot. Guessing there is the same
+ * class of mistake as guessing the contract address, with the same consequence.
+ *
+ * One trade cannot answer it. SEVERAL CAN, because the samples differ:
+ *
+ *   • a slot equal to the token, in every sample            → the token
+ *   • a slot equal to that sample's SENDER                  → the recipient
+ *   • a slot whose value/msg.value ratio holds across
+ *     samples of different sizes                            → scales with the trade
+ *   • a slot identical in every sample                      → a constant
+ *   • anything else                                         → UNKNOWN
+ *
+ * ⚠️ AND UNKNOWN IS A REFUSAL, NOT A DEFAULT. A slot nobody can explain is the
+ * one that must stop the buy: filling it with the value from somebody else's
+ * trade is how a bot sends a stranger's referrer code, an expired deadline, or
+ * a minimum-out computed for an amount 100× ours. "A missed trade is a shrug;
+ * spending wrongly is not" — this repo's own rule, one module over.
+ */
+
+/** Two ratios agree if they are within `tolBps` of each other. Curves are not
+ *  linear, so a minimum-out does NOT scale exactly with the amount — the test
+ *  is that it tracks, not that it matches. */
+const ratioClose = (a, b, tolBps) => {
+  if (a === 0n || b === 0n) return a === b;
+  const hi = a > b ? a : b, lo = a > b ? b : a;
+  return (hi - lo) * 10000n <= hi * BigInt(tolBps);
+};
+
+/**
+ * Per-slot roles for a decoded leg, from its samples.
+ *
+ * `minSamples` is 2 by default: with one sample every slot is "constant", which
+ * is true and useless — and would let a referrer code be reused as a constant
+ * while a minimum-out is frozen at somebody else's number.
+ */
+function classifySlots(leg, token, opts = {}) {
+  const minSamples = Math.max(1, Number(opts.minSamples) || 2);
+  const tolBps = Number(opts.tolBps) || 4000;      // curves bend; 40% is "tracks", not "equals"
+  const samples = (leg && leg.samples) || [];
+  const width = leg && leg.args ? leg.args.length : 0;
+  const out = { ok: false, why: null, slots: [], samples: samples.length };
+
+  if (!width) { out.ok = true; out.why = null; return out; }   // no arguments at all is a complete answer
+  if (samples.length < minSamples) {
+    out.why = `only ${samples.length} sample${samples.length === 1 ? '' : 's'} of this call — at least ${minSamples} are needed before an argument's meaning can be inferred`;
+    out.slots = leg.args.map((a, i) => ({ i, role: 'unknown', value: a.word }));
+    return out;
+  }
+
+  for (let i = 0; i < width; i++) {
+    const words = samples.map((s) => (s.args[i] ? s.args[i].word : null));
+    if (words.some((w) => w === null)) { out.slots.push({ i, role: 'unknown', why: 'not present in every sample' }); continue; }
+    const first = samples[0].args[i];
+
+    if (samples.every((s) => s.args[i].isToken)) { out.slots.push({ i, role: 'token' }); continue; }
+    if (samples.every((s) => s.args[i].addr && s.from && s.args[i].addr === s.from)) { out.slots.push({ i, role: 'sender' }); continue; }
+
+    const same = words.every((w) => w === words[0]);
+    // A slot that scales BEFORE one that is merely constant: on a run of
+    // equal-sized samples an amount slot is also constant, and freezing it
+    // would send a minimum-out computed for a trade that is not ours.
+    const values = samples.map((s) => s.args[i].num);
+    const vals = samples.map((s) => s.value);
+    const varied = vals.some((v) => v !== vals[0]);
+    if (varied && values.every((n) => n !== null && n > 0n) && vals.every((v) => v > 0n)) {
+      const r0 = (values[0] * 10n ** 18n) / vals[0];
+      if (samples.every((s, k) => ratioClose((values[k] * 10n ** 18n) / vals[k], r0, tolBps))) {
+        out.slots.push({ i, role: 'scales', ratioE18: r0 });
+        continue;
+      }
+    }
+    if (same) { out.slots.push({ i, role: 'constant', value: first.word }); continue; }
+    out.slots.push({ i, role: 'unknown', why: 'differs between samples with no relationship to the amount' });
+  }
+
+  const bad = out.slots.filter((s) => s.role === 'unknown');
+  out.ok = bad.length === 0;
+  // ⚠️ Never "the token cannot be traded" — only "we cannot build this call
+  // safely yet". A wider window, or one more trade on the pad, changes it.
+  if (!out.ok) out.why = `argument${bad.length === 1 ? '' : 's'} ${bad.map((s) => s.i).join(', ')} could not be explained from ${samples.length} samples`;
+  return out;
+}
+
+module.exports.classifySlots = classifySlots;
+module.exports._ratioClose = ratioClose;

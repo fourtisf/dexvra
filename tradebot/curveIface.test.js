@@ -171,3 +171,88 @@ test('an ABI address word is only an address when its top 12 bytes are zero', ()
   assert.equal(_wordAddr('1' + '0'.repeat(23) + 'a'.repeat(40)), null, 'a big number is not an address');
   assert.equal(_wordAddr('0'.repeat(64)), null, 'the zero address is not a participant');
 });
+
+// ── classifySlots ────────────────────────────────────────────────────────────
+// What each argument MEANS. Every case here is a slot that, filled wrongly,
+// sends somebody's money into a call that does something other than buy.
+const { classifySlots } = require('./curveIface.js');
+
+const S = (value, words, from) => ({ value: BigInt(value), from, args: words.map((w, i) => {
+  const addr = /^0{24}[0-9a-fA-F]{40}$/.test(w) && !/^0{8}/.test(w.slice(24)) ? '0x' + w.slice(24).toLowerCase() : null;
+  return { i, word: w, addr, num: BigInt('0x' + w), isToken: addr === TOKEN };
+}) });
+const leg = (samples) => ({ args: samples[0].args, samples });
+
+test('a slot that holds the token in every sample is the token', async () => {
+  const r = classifySlots(leg([S(10n ** 17n, [word(TOKEN), num(1)], WALLET), S(2n * 10n ** 17n, [word(TOKEN), num(2)], WALLET)]), TOKEN);
+  assert.equal(r.slots[0].role, 'token');
+});
+
+test("a slot that holds each sample's own sender is the recipient", async () => {
+  const OTHER = '0xb0000000000000000000000000000000000000b0';
+  const r = classifySlots(leg([S(1, [word(WALLET)], WALLET), S(2, [word(OTHER)], OTHER)]), TOKEN);
+  assert.equal(r.slots[0].role, 'sender', 'it tracks the sender, so it is not a constant');
+});
+
+test('⚠️ a slot that tracks the amount is SCALES, never a constant to be frozen', async () => {
+  // Freeze it and every buy carries a minimum-out computed for somebody else's
+  // trade — too high and it always reverts, too low and it is a free option
+  // for whoever is watching the mempool.
+  const r = classifySlots(leg([
+    S(10n ** 17n, [word(TOKEN), num(1000n)], WALLET),
+    S(5n * 10n ** 17n, [word(TOKEN), num(5000n)], WALLET),
+    S(10n ** 18n, [word(TOKEN), num(10000n)], WALLET),
+  ]), TOKEN);
+  assert.equal(r.slots[1].role, 'scales');
+  assert.equal(r.ok, true, r.why);
+});
+
+test('a curve is not linear, so "tracks" is a band and not an equality', async () => {
+  // Real bonding curves give fewer tokens per unit as they fill. A classifier
+  // demanding an exact ratio would call every real minimum-out unknown and
+  // refuse every trade.
+  const r = classifySlots(leg([
+    S(10n ** 17n, [num(1000n)], WALLET),
+    S(2n * 10n ** 17n, [num(1750n)], WALLET),   // 12.5% below linear
+  ]), TOKEN);
+  assert.equal(r.slots[0].role, 'scales');
+});
+
+test('a slot identical everywhere, while the amounts differ, is a constant', async () => {
+  const r = classifySlots(leg([S(10n ** 17n, [num(300n)], WALLET), S(9n * 10n ** 17n, [num(300n)], WALLET)]), TOKEN);
+  assert.equal(r.slots[0].role, 'constant');
+  assert.equal(r.slots[0].value, num(300n));
+});
+
+test('⚠️ a slot nobody can explain REFUSES the whole leg', async () => {
+  // The safety line. A deadline, a referrer code or a nonce filled from a
+  // stranger's trade is a call that does something other than what we intend.
+  const r = classifySlots(leg([S(10n ** 17n, [num(111n)], WALLET), S(2n * 10n ** 17n, [num(999999n)], WALLET)]), TOKEN);
+  assert.equal(r.slots[0].role, 'unknown');
+  assert.equal(r.ok, false);
+  assert.match(r.why, /could not be explained/);
+  // …and it is never a claim about the token itself.
+  assert.doesNotMatch(r.why, /cannot be traded|no route|not tradable/i);
+});
+
+test('⚠️ ONE sample explains nothing, and must not pass as "all constant"', async () => {
+  const r = classifySlots(leg([S(10n ** 17n, [word(TOKEN), num(1000n)], WALLET)]), TOKEN);
+  assert.equal(r.ok, false);
+  assert.match(r.why, /only 1 sample/);
+  assert.ok(r.slots.every((s) => s.role === 'unknown'), 'nothing may be inferred from a single trade');
+});
+
+test('a call with no arguments at all is completely understood', async () => {
+  const r = classifySlots({ args: [], samples: [] }, TOKEN);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.slots, []);
+});
+
+test('samples of identical size cannot prove a slot scales', async () => {
+  // Two buys of the same amount make an amount slot look constant. Without a
+  // varied sample the honest answer is "constant", and the builder treats a
+  // constant amount as exactly what it is — which is why the varied case above
+  // is the one that unlocks `scales`.
+  const r = classifySlots(leg([S(10n ** 17n, [num(1000n)], WALLET), S(10n ** 17n, [num(1000n)], WALLET)]), TOKEN);
+  assert.equal(r.slots[0].role, 'constant');
+});
