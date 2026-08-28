@@ -2452,6 +2452,61 @@ async function _curveSiblings(chainKey, ca) {
   return out;
 }
 
+/*
+ * ⚠️ A TOKEN NO INDEXER KNOWS YET STILL HAS A CURVE — the chain announced it.
+ *
+ * `_curvePoolOf` asks DexScreener and GeckoTerminal, so a launch minutes old
+ * that neither has indexed has no curve address at all: the card fell to
+ * "❌ Couldn't price it", which is the state a launch snipe exists to act in.
+ * The pad's factory names both the token and its pool in ONE log, so the launch
+ * announcement that NAMES this token is the binding — every contract that log
+ * names is a candidate for its curve.
+ *
+ * ⚠️ THE CANDIDATES ARE NOT TRUSTED, THEY ARE OFFERED. A launch log also names
+ * the dex factory and the quote token, and picking wrong would aim a buy at the
+ * wrong contract — so the caller tries each against `curveTrade._shapeFor`,
+ * which only matches an address whose deployed BYTECODE is a learned pad
+ * curve's. Filtering to logs that name our token is what keeps a matched
+ * candidate OUR launch's curve rather than a sibling's.
+ *
+ * Only walked when the indexers gave nothing, so an ordinary indexed token
+ * pays for none of it.
+ */
+async function _curveFromLaunchLog(chainKey, ca) {
+  const anns = padFactory.announcersFor(chainKey);
+  if (!anns.length) return [];
+  const prov = providerFor(chainKey);
+  const head = Number(await prov.getBlockNumber());
+  const me = String(ca).toLowerCase();
+  for (const a of anns) {
+    for (const f of a.factories) {
+      const w = await curveSteppedLogs(prov, { address: f, topics: [a.topic0] }, { head, span: CURVE_SIB_SPAN });
+      for (const lg of (w.logs || [])) {              // newest launches first
+        const named = _namedAddrs(lg);
+        if (!named.includes(me)) continue;            // not THIS token's launch
+        const others = named.filter((x) => x !== me);
+        const coded = await Promise.all(others.map((x) => prov.getCode(x).catch(() => '0x')));
+        const out = others.filter((_, i) => coded[i] && coded[i] !== '0x');
+        if (out.length) return out;
+      }
+    }
+  }
+  return [];
+}
+
+/** Every address that might be this token's curve, best first: what the
+ *  indexer names, then what its launch announcement named. */
+async function _curvePoolCandidates(chainKey, ca) {
+  const out = [];
+  const indexed = await _curvePoolOf(chainKey, ca).catch(() => null);
+  if (indexed) out.push(indexed);
+  if (!out.length) {
+    try { for (const c of await _curveFromLaunchLog(chainKey, ca)) if (!out.includes(c)) out.push(c); }
+    catch (_) { /* the chain fallback failing leaves the indexer's answer */ }
+  }
+  return out;
+}
+
 async function _curveTradeHashes(chainKey, ca) {
   try {
     const pool = await _curvePoolOf(chainKey, ca);
@@ -2611,7 +2666,7 @@ async function _curveIface(chainKey, ca) {
         tradeHashes: () => _curveTradeHashes(chainKey, ca),
         // The learned-shape transfer's anchor: the curve address the indexer
         // names, whose bytecode is then matched against a taught sibling's.
-        poolHint: () => _curvePoolOf(chainKey, ca),
+        poolHint: () => _curvePoolCandidates(chainKey, ca),
         // …and where to LEARN that shape from when nothing has taught the pad
         // yet. Each candidate is bytecode-checked before it teaches anything.
         siblings: () => _curveSiblings(chainKey, ca),

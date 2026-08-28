@@ -4056,6 +4056,19 @@ trade — could not work. Meanwhile the snipe loop reads this same chain in
   node that empties anything wider than it serves, with the trade older than
   the first window).
 
+- ⚠️ **A LAUNCH NO INDEXER KNOWS YET had no curve address at all.** The pool
+  lookup asked DexScreener and GeckoTerminal only, so a token minutes old that
+  neither had indexed fell to *"❌ Couldn't price it"* — the exact state a
+  launch snipe exists to act in. The pad's factory names the token AND its pool
+  in ONE log, so the announcement that names this token is the binding, and
+  every contract that log names becomes a CANDIDATE. They are offered, never
+  trusted: the same log names the dex factory and the quote token, and
+  `_shapeFor`'s bytecode gate picks — filtering to logs that name our token is
+  what keeps a matched candidate OUR launch's curve rather than a sibling's.
+  Only walked when the indexers gave nothing, so an indexed token pays nothing.
+  Mutation-tested: taking the first candidate instead of the matching one fails
+  the unindexed-launch test.
+
 ```bash
 cd tradebot && node --test curveShape.test.js curveCardPath.test.js curveIface.test.js
 ```

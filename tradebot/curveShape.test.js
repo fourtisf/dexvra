@@ -134,6 +134,45 @@ test('⚠️ a sibling from a DIFFERENT pad teaches nothing — the bytecode gat
   assert.match(r.why, /no trades found/);
 });
 
+test("⚠️ a launch NO INDEXER knows yet: the curve comes from the launch log, and only the right one", async () => {
+  /*
+   * The 18:55 card: "Couldn't price it — no market on Robinhood Chain … at
+   * either index". A launch minutes old that DexScreener and GeckoTerminal
+   * have not indexed had no curve address AT ALL, because the pool lookup only
+   * ever asked them — which is exactly the state a launch snipe exists to act
+   * in. The pad's factory names both the token and its pool in one log.
+   *
+   * The log also names the dex factory and the quote token, so the caller
+   * offers EVERY contract it named and the bytecode gate picks. This pins that
+   * the wrong ones are refused and the right one is taken.
+   */
+  const DEXFACTORY = '0xdf000000000000000000000000000000000000df';   // named by the log, wrong code
+  const QUOTE = '0xq0000000000000000000000000000000000000q0'.replace(/q/g, 'b');
+  await ct.ifaceFor(sibChain(), 'robinhood', SIB);                   // the pad is taught
+  const chain = {
+    async getBlockNumber() { return 9000; },
+    async getLogs() { return []; },                                  // our token: no history anywhere
+    async getTransaction() { return null; },
+    async getCode(a) {
+      const x = String(a).toLowerCase();
+      if (x === NEWCURVE) return CODE;                               // the pad's curve code
+      if (x === DEXFACTORY || x === QUOTE) return '0x60806040' + 'aa'.repeat(32);   // contracts, other code
+      return '0x';
+    },
+    async call() { return '0x'; },
+    async estimateGas() { return 210000n; },
+  };
+  const tried = [];
+  const r = await ct.ifaceFor(chain, 'robinhood', FRESH, {
+    // What the launch log named, in log order — the curve is NOT first.
+    poolHint: async () => { tried.push('asked'); return [DEXFACTORY, QUOTE, NEWCURVE]; },
+  });
+  assert.equal(r.ok, true, `an unindexed launch got no route: ${r.why}`);
+  assert.equal(r.transferred, true);
+  assert.equal(r.curve, NEWCURVE, 'the bytecode gate picked the curve, not the factory or the quote token');
+  assert.equal(tried.length, 1, 'the launch log is read once, not per candidate');
+});
+
 test('⚠️ DIFFERENT bytecode refuses the transfer — identity is the whole safety argument', async () => {
   await ct.ifaceFor(sibChain(), 'robinhood', SIB);
   const r = await ct.ifaceFor(freshChain({ code: '0x60806040' + 'ff'.repeat(64) }), 'robinhood', FRESH, { poolHint: async () => NEWCURVE });

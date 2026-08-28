@@ -271,8 +271,21 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
   if (res && !res.ok && typeof opts.poolHint === 'function'
       && /no trades found|no decodable calls|neither a buy nor a sell/.test(res.why || '')) {
     try {
-      const pool = await opts.poolHint();
-      let hit = await _shapeFor(chain, chainKey, pool);
+      /*
+       * The hint may be ONE address or SEVERAL. A token no indexer knows has
+       * its curve named only by its launch announcement, which also names the
+       * dex factory and the quote token — so the caller offers every contract
+       * that log named and the bytecode gate below picks, rather than the
+       * caller guessing which word of an unknown ABI is the pool.
+       */
+      const hinted = await opts.poolHint();
+      const pools = (Array.isArray(hinted) ? hinted : [hinted]).filter((p) => /^0x[a-fA-F0-9]{40}$/.test(String(p || '')));
+      let pool = null, hit = null;
+      for (const p of pools) {
+        const h = await _shapeFor(chain, chainKey, p);
+        if (h) { pool = p; hit = h; break; }
+      }
+      if (!pool) pool = pools[0] || null;
       /*
        * ⚠️ NOTHING HAS TAUGHT THIS PAD YET — so TEACH IT, rather than telling
        * the operator to go and paste a traded token. That instruction is the
@@ -299,11 +312,15 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
               : (typeof opts.siblingHashes === 'function' ? () => opts.siblingHashes(s.token) : undefined),
           }).catch(() => null);
           if (!r || !r.ok || r.transferred) continue;
-          hit = await _shapeFor(chain, chainKey, pool);   // did THAT sibling teach OUR bytecode?
+          // Did THAT sibling teach the bytecode of any candidate we hold?
+          for (const p of pools) {
+            const h = await _shapeFor(chain, chainKey, p);
+            if (h) { pool = p; hit = h; break; }
+          }
           if (hit) break;
         }
       }
-      if (hit) {
+      if (hit && pool) {
         res = {
           ok: true, transferred: true, why: null, curve: String(pool).toLowerCase(),
           learnedFrom: { curve: hit.curve, token: hit.token },
