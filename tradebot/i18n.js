@@ -713,6 +713,25 @@ const S = {
     en: "No tradable route for this token — the aggregator found no pool it can {act} through. <b>Nothing was sent and nothing was spent.</b> Retrying won't change it: a token still on its launchpad curve becomes tradable only once it migrates to a pool.",
     id: 'Tidak ada rute untuk token ini — aggregator tidak menemukan pool untuk {act}. <b>Tidak ada yang dikirim dan tidak ada dana keluar.</b> Mengulang tidak akan mengubahnya: token yang masih di kurva launchpad baru bisa ditradingkan setelah pindah ke pool.',
   },
+  /*
+   * THE DISCOVERED LAUNCHPAD CURVE REFUSED TO BE BUILT.
+   *
+   * ⚠️ It needs its own key because every existing rule gets it WRONG. "the
+   * curve rejected this call (execution reverted…)" matches the `reverted` in
+   * the slippage rule and comes out as "the price moved" — a false diagnosis
+   * about a call the chain declined outright. And a refusal that matched
+   * nothing at all fell to `err.generic` ("try again in a moment"), which is
+   * the exact sentence i18n.test.js exists to keep away from engine errors.
+   *
+   * It deliberately does NOT say "retrying won't change it", unlike no_route:
+   * most of these refusals are fixed by one more trade on the pad, and a
+   * sentence that tells the user to give up on a token that becomes tradable in
+   * a minute is as wrong as one that tells them to keep retrying for ever.
+   */
+  'err.curve_refused': {
+    en: "Dexvra reads a launchpad curve from its own trades, and it couldn't build a safe {act} for this one yet. <b>Nothing was sent and nothing was spent.</b> A curve usually becomes readable after a few more trades on the pad.",
+    id: 'Dexvra membaca kurva launchpad dari transaksi nyatanya, dan untuk token ini belum bisa membuat {act} yang aman. <b>Tidak ada yang dikirim dan tidak ada dana keluar.</b> Biasanya kurvanya bisa dibaca setelah ada beberapa transaksi lagi di padnya.',
+  },
   // Priced, then refused at the build step. Says the two things that matter:
   // nothing was signed, and it is the router's problem rather than the token's.
   'err.build_failed': {
@@ -804,13 +823,22 @@ function errorKey(raw) {
   if (/token balance is 0|no bag/.test(m)) return 'err.no_bag';
   if (/insufficient|need ~|exceeds balance/.test(m)) return 'err.insufficient';
   if (/max fee per gas|base fee|underpriced|replacement|nonce/.test(m)) return 'err.gas_moved';
+  // BEFORE the slippage rule, which matches on the word "reverted" and would
+  // otherwise report a call the chain DECLINED as a price that moved — sending
+  // the user to widen a slippage setting that had nothing to do with it.
+  if (/launchpad curve|the curve rejected this call|curve needs an allowance|no independent price/.test(m)) return 'err.curve_refused';
   if (/thin pool|price impact|slippage|reverted|iia|too little received/.test(m)) return 'err.slippage';
   if (/not confirmed|timeout|pending/.test(m)) return 'err.unconfirmed';
   // BEFORE the no_price rule, which would otherwise swallow it: "no liquidity"
   // appears in both, and only this one means the token cannot be traded at all.
   // `no pool? try again` is deliberately NOT here — that is a pool READ that
   // failed, which is ours and is worth retrying.
-  if (/no route|no liquidity \/ zero quote|not tradable/.test(m)) return 'err.no_route';
+  // "can't route through yet" is the SAME fact and had been falling to
+  // err.generic — "try again in a moment" under a Try again button, for a
+  // condition that does not change until the token migrates. It is the very
+  // defect the comment above this key describes, on the sentence that produces
+  // it most often.
+  if (/no route|no liquidity \/ zero quote|not tradable|can't route through/.test(m)) return 'err.no_route';
   if (/could not (read|price)|pool read|quote|no pool|no liquidity/.test(m)) return 'err.no_price';
   if (/private beta|not allowed|notallowed/.test(m)) return 'err.restricted';
   // THE AGGREGATOR PRICED IT AND THEN REFUSED TO BUILD THE TRANSACTION. A

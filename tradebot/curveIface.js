@@ -144,45 +144,114 @@ async function decodeCurveIface(chain, token, opts = {}) {
   }
 
   if (!logs || !logs.length) {
-    return { ok: false, why: `no trades found for this token in the last ${span} blocks${stepped ? ` (also walked ${stepped} smaller ranges, in case the node caps them)` : ''} — try a wider window with --blocks` };
+    // ⚠️ NO `--blocks` HERE. This string reaches a Telegram user through
+    // curveTrade → core.buy, and there is no flag they can pass: prepareBuy
+    // never populates `opts`, so the window is whatever this module chose.
+    // Telling somebody to add a CLI flag to a chat message is the placeholder
+    // defect wearing a different hat.
+    return { ok: false, why: `no trades found for this token in the last ${span} blocks${stepped ? ` (also walked ${stepped} smaller ranges, in case the node caps them)` : ''} — nothing to read its interface from yet` };
   }
 
   // Newest first: a curve's interface can change between deployments, and the
   // most recent trades are the ones a route built now has to match.
   const newest = logs.slice(-maxTx).reverse();
-  const calls = new Map(); // `${to}|${selector}` → record
+
+  /*
+   * ⚠️ ONE SAMPLE PER TRANSACTION, NEVER PER LOG.
+   *
+   * The first cut pushed a sample for every Transfer it walked. A curve that
+   * emits a FEE transfer alongside the trade transfer therefore produced TWO
+   * samples for one trade — identical calldata, identical `value`, and one of
+   * them carrying the FEE as its `amount`. Two consequences, both quiet:
+   *
+   *   · `classifySlots` needs `minSamples` (2) before it will assign meaning to
+   *     an argument. Two logs from ONE trade satisfied that count, so a single
+   *     trade could be read as if it were two independent ones.
+   *   · anything reading `amount` as "what this trade paid out" could pick the
+   *     fee log and price the trade at its own fee.
+   *
+   * So: group by transaction, ask the chain once per transaction, and keep the
+   * ONE log that is the trade itself — the one that moves the token between the
+   * curve and the TRADER. A payout to somebody who is not the trader is kept
+   * only as a marked fallback, because that is a fact worth seeing rather than
+   * one worth hiding: it is what a recipient ARGUMENT looks like from outside.
+   */
+  const byTx = new Map();
   for (const lg of newest) {
+    const h = lg.transactionHash;
+    if (!byTx.has(h)) byTx.set(h, []);
+    byTx.get(h).push(lg);
+  }
+
+  const calls = new Map(); // `${to}|${selector}` → record
+  for (const [hash, group] of byTx) {
     let tx = null;
-    try { tx = await chain.getTransaction(lg.transactionHash); } catch (_) { continue; }
+    try { tx = await chain.getTransaction(hash); } catch (_) { continue; }
     if (!tx || !tx.to || !tx.data || tx.data.length < 10) continue;
     const to = lc(tx.to);
+    const trader = lc(tx.from);
     const sel = tx.data.slice(0, 10).toLowerCase();
     const key = `${to}|${sel}`;
-    const rec = calls.get(key) || { to, sel, n: 0, value: 0n, hash: lg.transactionHash, args: argsOf(tx.data, token), from: null, into: null, samples: [] };
-    rec.n++;
+    const args = argsOf(tx.data, token);
+    // ⚠️ `argsOf` READS AT MOST 8 WORDS, and a call we only half-read is a call
+    // we cannot rebuild: `buildCurveCall` emits exactly the classified slots, so
+    // a wider call would be silently TRUNCATED into malformed calldata. Usually
+    // the decoder reverts and `simulate` catches it — caught by luck rather than
+    // by rule, and a dynamic trailing argument can decode as empty and go
+    // through. Recorded here so the build can refuse it outright.
+    const wide = Math.floor((String(tx.data).length - 10) / 64) > args.length;
+
+    const rec = calls.get(key) || { to, sel, n: 0, value: 0n, hash, args, from: null, into: null, samples: [], wide: false };
+    rec.wide = rec.wide || wide;
     const v = BigInt(tx.value || 0);
+
+    // The token moving OUT of the curve is a buy; INTO it is a sell. Direction
+    // comes from the Transfer, never from `value` — a pad whose buy takes a
+    // quote token has `value === 0` and judging by it alone calls every buy a
+    // sell.
+    const payout = group.filter((l) => topicAddr(l.topics && l.topics[1]) === to);
+    const intake = group.filter((l) => topicAddr(l.topics && l.topics[2]) === to);
+    const toTrader = payout.find((l) => topicAddr(l.topics && l.topics[2]) === trader);
+    const fromTrader = intake.find((l) => topicAddr(l.topics && l.topics[1]) === trader);
+
+    let lg = null, dir = null, exact = true;
+    if (toTrader) { lg = toTrader; dir = 'buy'; }
+    else if (fromTrader) { lg = fromTrader; dir = 'sell'; }
+    else if (payout.length) {
+      // The curve paid SOMEBODY ELSE. Kept, and marked: this is exactly what a
+      // recipient argument looks like from outside, and dropping it would hide
+      // the one shape a route must never reproduce blindly.
+      lg = payout.reduce((a, b) => (logAmount(b) > logAmount(a) ? b : a));
+      dir = 'buy'; exact = false;
+    } else if (intake.length) {
+      lg = intake.reduce((a, b) => (logAmount(b) > logAmount(a) ? b : a));
+      dir = 'sell'; exact = false;
+    } else { continue; }   // the token moved, but not to or from this contract
+
+    rec.n++;
     // ⚠️ EVERY SAMPLE IS KEPT, not just the biggest. One trade shows the SHAPE
     // of a call; it cannot show what any argument MEANS. A slot that holds 500
     // in one buy is a mystery — the same slot across three buys of different
     // sizes is either a constant, or a number that scales with the amount, and
-    // those need opposite treatment when we build our own call. `classifySlots`
-    // is what turns samples into meaning, and it needs more than one.
+    // those need opposite treatment when we build our own call.
     // ⚠️ THE TOKEN AMOUNT, TOO — because on a SELL `msg.value` is always zero.
     // The size a sell is denominated in lives in an argument, not in the value
     // field, so correlating slots against `value` alone can never explain a
-    // sell's arguments: every slot looks constant, nothing scales, and the
-    // price gate then has no curve-side number to check. The Transfer log the
-    // sample came from carries the amount, so it costs nothing to keep.
-    rec.samples.push({ value: v, amount: logAmount(lg), args: argsOf(tx.data, token), from: lc(tx.from), hash: lg.transactionHash });
+    // sell's arguments.
+    rec.samples.push({
+      value: v,
+      amount: logAmount(lg),
+      args,
+      from: trader,
+      to: topicAddr(lg.topics && lg.topics[2]),
+      exact,
+      hash,
+    });
     // The largest value seen for this shape, so one dust trade does not hide a
     // real one.
-    if (v > rec.value) { rec.value = v; rec.hash = lg.transactionHash; rec.args = argsOf(tx.data, token); }
-    // ⚠️ DIRECTION COMES FROM THE TRANSFER, NOT FROM `value`. A buy moves the
-    // token OUT of the curve and a sell moves it IN, and that is true even for
-    // a pad whose buy takes a quote token rather than native — where `value`
-    // is 0 and judging by it alone would classify every buy as a sell.
-    if (topicAddr(lg.topics && lg.topics[1]) === to) rec.from = to;   // curve paid out → buy
-    if (topicAddr(lg.topics && lg.topics[2]) === to) rec.into = to;   // curve took in  → sell
+    if (v > rec.value) { rec.value = v; rec.hash = hash; rec.args = args; }
+    if (dir === 'buy') rec.from = to;
+    if (dir === 'sell') rec.into = to;
     calls.set(key, rec);
   }
   if (!calls.size) return { ok: false, why: 'no decodable calls behind those transfers — they may all be plain wallet-to-wallet sends' };
@@ -205,11 +274,15 @@ async function decodeCurveIface(chain, token, opts = {}) {
   const sell = mine.filter((r) => r.into && (!buy || r.sel !== buy.sel)).sort((a, b) => b.n - a.n)[0] || null;
 
   return {
-    ok: !!buy,
-    why: buy ? null : 'these trades show no BUY — only the curve taking the token in. Make one small buy on the pad and it will be read next time.',
+    // ⚠️ `ok` USED TO MEAN "a BUY was observed", and prepareSell gated on it —
+    // so a curve whose recent trades are all SELLS could not be sold, which is
+    // exactly the market in which somebody wants out. A decoded sell leg is a
+    // complete answer to the sell question; the buy question refuses on its own.
+    ok: !!(buy || sell),
+    why: (buy || sell) ? null : 'these trades show neither a buy nor a sell through the curve',
     curve,
-    buy: buy && { selector: buy.sel, value: buy.value, args: buy.args, hash: buy.hash, seen: buy.n, native: buy.value > 0n, samples: buy.samples },
-    sell: sell && { selector: sell.sel, args: sell.args, hash: sell.hash, seen: sell.n, samples: sell.samples },
+    buy: buy && { selector: buy.sel, value: buy.value, args: buy.args, hash: buy.hash, seen: buy.n, native: buy.value > 0n, wide: buy.wide, samples: buy.samples },
+    sell: sell && { selector: sell.sel, args: sell.args, hash: sell.hash, seen: sell.n, wide: sell.wide, samples: sell.samples },
     samples: newest.length,
   };
 }
@@ -218,8 +291,12 @@ async function decodeCurveIface(chain, token, opts = {}) {
  *  only that an interface was observed. */
 function describeIface(r) {
   if (!r || !r.ok) return (r && r.why) || 'no curve interface found';
-  const a = r.buy.args.map((x) => (x.isToken ? 'TOKEN' : x.addr ? 'addr' : x.num === null ? '?' : 'num')).join(',');
-  return `curve ${r.curve} · buy ${r.buy.selector}${r.buy.native ? ' (payable)' : ''} args[${a}]${r.sell ? ` · sell ${r.sell.selector}` : ' · sell not seen'}`;
+  const shape = (leg) => (leg.args || []).map((x) => (x.isToken ? 'TOKEN' : x.addr ? 'addr' : x.num === null ? '?' : 'num')).join(',');
+  // `ok` no longer implies a buy leg — a sell-only history is a complete answer
+  // to the sell question, and this line has to survive that.
+  const b = r.buy ? `buy ${r.buy.selector}${r.buy.native ? ' (payable)' : ''} args[${shape(r.buy)}]` : 'buy not seen';
+  const sl = r.sell ? `sell ${r.sell.selector} args[${shape(r.sell)}]` : 'sell not seen';
+  return `curve ${r.curve} · ${b} · ${sl}`;
 }
 
 module.exports = { decodeCurveIface, describeIface, TRANSFER_TOPIC, _argsOf: argsOf, _wordAddr: wordAddr };
@@ -289,6 +366,30 @@ function classifySlots(leg, token, opts = {}) {
     if (samples.every((s) => s.args[i].addr && s.from && s.args[i].addr === s.from)) { out.slots.push({ i, role: 'sender' }); continue; }
 
     const same = words.every((w) => w === words[0]);
+    /*
+     * ⚠️ A CONSTANT ADDRESS IS THE ONE SLOT THAT MOVES SOMEBODY ELSE'S MONEY.
+     *
+     * The token and the sender are already handled above, so an address slot
+     * that is identical across every sample is a STRANGER'S address — a
+     * recipient, a referrer, a router; nothing here can tell which. Replayed as
+     * a 'constant' it would go into our calldata verbatim, and the recipient
+     * reading is the ordinary one when the only trades on file are the dev's,
+     * from one wallet into another.
+     *
+     * That failure is invisible to every gate downstream: `estimateGas`
+     * succeeds (the call is perfectly valid) and the price check succeeds (the
+     * AMOUNT is right — it is the destination that is wrong), so the buy lands
+     * on-chain with the tokens minted to somebody else and the only thing that
+     * notices is a balance read after the money is gone.
+     *
+     * So it is UNKNOWN, which is a refusal. The zero address is exempt: it is
+     * the same 32 bytes as the number 0, it is what an unused optional slot
+     * holds, and sending it to nobody is not sending it to a stranger.
+     */
+    if (same && first.addr && !/^0+$/.test(first.word)) {
+      out.slots.push({ i, role: 'unknown', addr: first.addr, why: `every sample puts the same address (${first.addr}) here and it is neither the token nor the trader — replaying a stranger's address is how a buy pays out to somebody else` });
+      continue;
+    }
     // A slot that scales BEFORE one that is merely constant: on a run of
     // equal-sized samples an amount slot is also constant, and freezing it
     // would send a minimum-out computed for a trade that is not ours.

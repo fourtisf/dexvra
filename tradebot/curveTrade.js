@@ -24,7 +24,7 @@
  * assert. `why` says which, always.
  */
 const { decodeCurveIface, describeIface } = require('./curveIface.js');
-const { buildCurveCall, simulate, sane } = require('./curveRoute.js');
+const { buildCurveCall, simulate, sane, _big: big } = require('./curveRoute.js');
 
 /** Interfaces are per (chain, token) and change only when a pad redeploys, so
  *  they are worth holding — a rediscovery is a dozen RPC reads. A MISS is held
@@ -45,6 +45,24 @@ function _cached(chainKey, ca) {
 
 /** Test seam — the cache is process-wide by design. */
 function _reset() { _cache.clear(); }
+
+/** The cached interface for a token, or null. Read-only, no network.
+ *
+ *  `canTradeNow` needs this: it is polled on a timer by the CA snipe and the
+ *  launch retry ring, so it may not pay a dozen RPC reads per probe. A cached
+ *  yes is a cheap yes; the absence of one is not a no, which is why the caller
+ *  must not turn a miss into "this token cannot be traded". */
+function cached(chainKey, ca) { return _cached(chainKey, ca); }
+
+/** Forget a token's interface.
+ *
+ *  ⚠️ A CURVE THAT REJECTS OUR CALL MAY HAVE BEEN REDEPLOYED, and the cache
+ *  holds its OLD address for half an hour. Without this, every buy in that
+ *  window aims at an abandoned contract, is refused with "the curve rejected
+ *  this call", and there is no path back except waiting — a stuck state that
+ *  looks exactly like a broken feature. Re-discovery costs a dozen reads; being
+ *  stuck costs the token. */
+function forget(chainKey, ca) { _cache.delete(key(chainKey, ca)); }
 
 /**
  * The curve interface for a token, discovered once and remembered.
@@ -74,11 +92,22 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
  * with, and a slot read as a minimum-out that is really a fee tier estimates
  * gas perfectly cleanly.
  */
-async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, expectedTokens, tolPct }) {
+async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, expectedTokens, tolPct, minOutRaw }) {
+  // Normalised at the door, so a Number from core.js's price side can never
+  // reach a BigInt comparison and throw instead of refusing.
+  const spendWei = big(valueWei);
+  if (!(spendWei > 0n)) return { ok: false, stage: 'build', why: 'no amount to spend' };
   const iface = await ifaceFor(chain, chainKey, ca);
   if (!iface.ok) return { ok: false, why: iface.why, stage: 'discover' };
+  // `ok` means "an interface was read", which since the sell-only fix no longer
+  // implies a BUY leg. The buy question needs its own answer and its own
+  // sentence — one more trade on the pad is the fix, and saying so is the
+  // difference between a diagnosis and a shrug.
+  if (!iface.buy) {
+    return { ok: false, stage: 'discover', needsMoreTrades: true, why: 'no BUY has been seen through this curve yet — the recent trades are all sells. One purchase by anyone on the pad teaches it.' };
+  }
 
-  const built = buildCurveCall(iface.buy, { token: ca, wallet, valueWei, slippageBps });
+  const built = buildCurveCall(iface.buy, { token: ca, wallet, valueWei: spendWei, slippageBps, minOutRaw });
   if (!built.ok) return { ok: false, why: built.why, stage: 'build', needsMoreTrades: built.needsMoreTrades };
   // ⚠️ A CURVE PRICED IN A QUOTE TOKEN IS NOT SUPPORTED YET, and must not be
   // sent as if it were payable: the value would simply be lost to a function
@@ -88,16 +117,17 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, 
     return { ok: false, stage: 'build', why: "this pad's buy is priced in a token rather than the native coin, which needs an approval step Dexvra doesn't build yet" };
   }
 
-  const call = { to: iface.curve, data: built.data, value: valueWei };
+  const call = { to: iface.curve, data: built.data, value: spendWei };
   const sim = await simulate(chain, call, wallet);
-  if (!sim.ok) return { ok: false, why: sim.why, stage: 'simulate', call };
+  // A rejected call may mean the pad redeployed under us — see `forget`.
+  if (!sim.ok) { forget(chainKey, ca); return { ok: false, why: sim.why, stage: 'simulate', call }; }
 
   // NOT `built.expected ?? expectedTokens` — that compared the indexer's own
   // number against itself and passed everything.
   const check = sane(built.expected, expectedTokens, tolPct);
   if (!check.ok) return { ok: false, why: check.why, stage: 'sane', call };
 
-  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, describe: describeIface(iface) };
+  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, boundedByIndependentPrice: built.boundedByIndependentPrice, describe: describeIface(iface) };
 }
 
 /**
@@ -108,26 +138,51 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, 
  * plainly is the whole point: "the sell reverted" sends somebody hunting
  * through slippage settings for a step that was never taken.
  */
-async function prepareSell(chain, chainKey, ca, { wallet, amountRaw, slippageBps, expectedNative, tolPct, allowance = 0n }) {
+async function prepareSell(chain, chainKey, ca, { wallet, amountRaw, slippageBps, expectedNative, tolPct, allowance = 0n, minOutRaw }) {
+  const sellRaw = big(amountRaw);
+  if (!(sellRaw > 0n)) return { ok: false, stage: 'build', why: 'no amount to sell' };
+  const have = big(allowance) ?? 0n;   // an allowance we could not read is not an allowance
   const iface = await ifaceFor(chain, chainKey, ca);
   if (!iface.ok) return { ok: false, why: iface.why, stage: 'discover' };
   if (!iface.sell) {
     return { ok: false, stage: 'discover', why: "no SELL has been seen on this curve yet — one sale by anyone teaches it, and then this works" };
   }
-  if (BigInt(allowance) < BigInt(amountRaw)) {
-    return { ok: false, stage: 'approve', needsApprove: { spender: iface.curve, amountRaw }, why: 'the curve needs an allowance for this token before it can take it' };
-  }
-  const built = buildCurveCall(iface.sell, { token: ca, wallet, amountRaw, slippageBps });
+
+  /*
+   * ⚠️ THE ALLOWANCE CHECK RUNS LAST, AND THAT ORDER IS THE POINT.
+   *
+   * It used to run FIRST — above build, above the price check, above simulate —
+   * so a `stage:'approve'` refusal said nothing at all about whether the call
+   * was buildable or sanely priced. The caller granted an allowance to a
+   * contract address inferred from log scoring, re-called, and could still be
+   * refused at 'build' ("argument 2 is not understood") or at 'sane'. The
+   * approval stayed granted, forever, for a sell that never happened.
+   *
+   * Built and priced first collapses that to the one case that genuinely cannot
+   * be pre-run: `simulate`, which reverts at the transferFrom without an
+   * allowance. Everything that can refuse for free now refuses for free.
+   */
+  const built = buildCurveCall(iface.sell, { token: ca, wallet, amountRaw: sellRaw, slippageBps, minOutRaw });
   if (!built.ok) return { ok: false, why: built.why, stage: 'build', needsMoreTrades: built.needsMoreTrades };
 
-  const call = { to: iface.curve, data: built.data, value: 0n };
-  const sim = await simulate(chain, call, wallet);
-  if (!sim.ok) return { ok: false, why: sim.why, stage: 'simulate', call };
-
   const check = sane(built.expected, expectedNative, tolPct);
-  if (!check.ok) return { ok: false, why: check.why, stage: 'sane', call };
+  if (!check.ok) return { ok: false, why: check.why, stage: 'sane' };
 
-  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots };
+  const call = { to: iface.curve, data: built.data, value: 0n };
+  if (have < sellRaw) {
+    // ⚠️ `amountRaw` EXACTLY, never an unlimited grant. The spender here was
+    // inferred from Transfer logs and is vouched for by nobody — v4.js already
+    // draws this line for a discovered router: "an operator-set router gets a
+    // standing allowance; a discovered one gets this sell and nothing more."
+    // An unlimited grant to a wrong address is the only unbounded loss in this
+    // whole design, and it outlives the trade.
+    return { ok: false, stage: 'approve', needsApprove: { spender: iface.curve, amountRaw: sellRaw, exact: true }, call, why: 'the curve needs an allowance for this token before it can take it' };
+  }
+
+  const sim = await simulate(chain, call, wallet);
+  if (!sim.ok) { forget(chainKey, ca); return { ok: false, why: sim.why, stage: 'simulate', call }; }
+
+  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, boundedByIndependentPrice: built.boundedByIndependentPrice };
 }
 
-module.exports = { ifaceFor, prepareBuy, prepareSell, _reset, _cache };
+module.exports = { ifaceFor, prepareBuy, prepareSell, cached, forget, _reset, _cache };

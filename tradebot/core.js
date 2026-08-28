@@ -65,6 +65,18 @@ const solana = require('./solana');   // non-EVM (Solana) adapter — used only 
 // Pre-migration metadata. DISPLAY ONLY — see the header of launchpads.js: it
 // may fill a card, never price, route or authorise a swap.
 const launchpads = require('./launchpads');
+/*
+ * ⚠️ REQUIRED AS MODULE OBJECTS, NEVER DESTRUCTURED.
+ *
+ * `const { prepareBuy } = require('./curveTrade')` captures the function at
+ * require time, so `require('./curveTrade').prepareBuy = stub` in a test would
+ * be SILENTLY INERT — the stub never runs and the test passes on whatever the
+ * real module does. That is the exact scar `_deps.providerFor` above carries,
+ * and it is worse here: this is the money path, so the test that never ran is
+ * the one proving a discovered call is gated.
+ */
+const curveTrade = require('./curveTrade');   // a launchpad curve read off the chain's own trades
+const curvePrice = require('./curvePrice');   // the INDEPENDENT price that gate is checked against
 const report = require('./report');   // ops reporting to admin channel (never sends secrets)
 
 // ---------------------------------------------------------------- config
@@ -1629,7 +1641,7 @@ const _ckey = (chainKey, x) => chainKey + ':' + (isSvm(chainKey) ? String(x) : S
 // server.
 // _dsCache too: it is a 30s memo of an EXTERNAL answer, and a test that swaps
 // the indexer out gets the previous test's response without this.
-function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); _gtCache.clear(); }
+function _clearReadCaches() { _metaCache.clear(); _curveCache.clear(); _gradCache.clear(); _dsCache.clear(); _gtCache.clear(); _venueCache.clear(); curveTrade._reset(); }
 
 // Why the launchpad last failed to answer, per chain. resolveCurve deliberately
 // collapses a factory error into '' — the same value that means "this token genuinely
@@ -1680,6 +1692,36 @@ async function isGraduated(curveAddr, chainKey) {
 async function tokenDecimals(ca, chainKey) {
   const hit = _metaCache.get(_ckey(chainKey, ca)); if (hit) return hit.decimals;
   try { return Number(await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).decimals()); } catch (_) { return 18; }
+}
+/**
+ * Decimals, or NULL when the read failed.
+ *
+ * ⚠️ `tokenDecimals` answers 18 for a read that did not happen, which is right
+ * for a display path — a wrong exponent on a card is a wrong-looking number and
+ * nothing more. It is wrong wherever the exponent scales a value the engine
+ * then ACTS on: on a 6-decimal token that guess is off by 10^12, and a gate fed
+ * it refuses with "the curve disagrees with the market" — a confident wrong
+ * diagnosis pointing at the token instead of at our own failed RPC.
+ *
+ * The Solana side already had to learn this (`solana.splDecimalsOrNull`); the
+ * EVM side had no such reader until the curve route needed one.
+ */
+async function tokenDecimalsOrNull(ca, chainKey) {
+  const hit = _metaCache.get(_ckey(chainKey, ca));
+  if (hit && Number.isFinite(Number(hit.decimals))) return Number(hit.decimals);
+  try {
+    const d = Number(await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).decimals());
+    return Number.isFinite(d) ? d : null;
+  } catch (_) { return null; }
+}
+/** Total supply in raw units, or null. Null is "could not ask", never zero —
+ *  a zero supply would divide a market cap into an infinite price. */
+async function tokenSupplyRaw(ca, chainKey) {
+  try {
+    const ts = await new ethers.Contract(ca, ERC20_ABI, providerFor(chainKey)).totalSupply();
+    const v = BigInt(ts);
+    return v > 0n ? v : null;
+  } catch (_) { return null; }
 }
 async function tokenMeta(ca, chainKey) {
   const k = _ckey(chainKey, ca);
@@ -2140,6 +2182,69 @@ async function _solRoutable(mint) {
  *
  * Never throws: a probe that can throw is a watcher that can die.
  */
+// ---------------------------------------------- the DISCOVERED launchpad curve
+/*
+ * A token still on a bonding curve has no AMM pool, so `bestDexVenue` finds
+ * nothing and the buy used to end at "which Dexvra can't route through yet".
+ * `curveIface` reads the pad's buy/sell interface off REAL trades on the chain,
+ * `curveRoute` builds our own call and refuses anything it cannot explain, and
+ * `curvePrice` supplies the independent number that check is made against.
+ *
+ * ⚠️ IT SHIPS ON, and that CHANGES an existing install's behaviour on deploy —
+ * deliberately, the way the trending floors did. `CURVE_ROUTE=0` is the kill
+ * switch. What it does NOT change is the refusal: every gate still refuses to
+ * SIGN rather than declaring a verdict on the token, and a refusal is always
+ * cheaper than a wrong fill.
+ */
+const CURVE_ROUTE_ON = !/^(0|false|off|no)$/i.test(String(process.env.CURVE_ROUTE ?? '').trim());
+/*
+ * ⚠️ DISCOVERY HAPPENS INSIDE `withWalletLock`, so it needs a ceiling.
+ *
+ * Reading an interface is up to a dozen serial `getTransaction` calls plus a
+ * stepped `getLogs` walk, and ethers' own request timeout is 300s. Every queued
+ * operation for that wallet waits behind it — a triggered stop-loss, an
+ * auto-protect rescue, a copy-exit leg. A bounded refusal is a shrug; an
+ * unbounded one holds the exit.
+ */
+const CURVE_DISCOVER_MS = Math.max(1000, Number(process.env.CURVE_DISCOVER_MS || 12000));
+/** A gas limit, not a verdict: the estimate is padded, floored so a buy that
+ *  fills the curve and triggers graduation (which seeds a pool, and costs
+ *  millions) is not sent out-of-gas, and capped so a wild estimate cannot make
+ *  the node refuse the transaction for want of balance. */
+const _curveGas = (est) => {
+  const padded = est > 0n ? est + est / 4n : 0n;
+  const floor = 900000n, ceil = 3000000n;
+  const g = padded > floor ? padded : floor;
+  return g > ceil ? ceil : g;
+};
+
+/** What `curvePrice` needs, wired to this module's own readers. `iface` carries
+ *  the observed samples for its last-resort tier. */
+const _curveDeps = (iface) => ({
+  record: (chainKey, ca, opts) => launchpads.record(chainKey, ca, opts),
+  nativeUsd: (chainKey) => ethUsd(chainKey),
+  decimals: (ca, chainKey) => tokenDecimalsOrNull(ca, chainKey),
+  totalSupply: (ca, chainKey) => tokenSupplyRaw(ca, chainKey),
+  iface,
+});
+
+/**
+ * Discover the curve, bounded — or say why not.
+ *
+ * ONE owner, because buy() and sell() would otherwise grow two ideas of how
+ * long a discovery may take and two ideas of what an unbounded one means.
+ */
+async function _curveIface(chainKey, ca) {
+  if (!CURVE_ROUTE_ON) return { ok: false, why: 'the discovered-curve route is switched off (CURVE_ROUTE=0)' };
+  let timer;
+  const bound = new Promise((res) => { timer = setTimeout(() => res({ ok: false, why: `reading this curve's interface took longer than ${Math.round(CURVE_DISCOVER_MS / 1000)}s — nothing was sent` }), CURVE_DISCOVER_MS); });
+  try {
+    return await Promise.race([curveTrade.ifaceFor(providerFor(chainKey), chainKey, ca), bound]);
+  } catch (e) {
+    return { ok: false, why: `could not read this curve (${(e && e.message) || e})` };
+  } finally { clearTimeout(timer); }
+}
+
 async function canTradeNow(ca, chainKey) {
   try {
     if (isSvm(chainKey)) return await _solRoutable(ca);
@@ -2154,7 +2259,28 @@ async function canTradeNow(ca, chainKey) {
     // contract waiting for liquidity, and buying into it is how a snipe fills at
     // an arbitrary price. The reserve is the launch, not the pair.
     if (pick && pick.wethBal != null && pick.wethBal > 0n) return true;
-    return await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false);
+    if (await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false)) return true;
+    /*
+     * ⚠️ THE CURVE LEG, AND IT READS THE CACHE ONLY.
+     *
+     * Without it every AUTOMATED path stays inert while the manual Buy button
+     * works: the dev snipe, the CA snipe, `_fireLaunch`'s gate and the launch
+     * retry ring all poll this predicate, so a token core.buy can now fill
+     * would keep answering "not tradeable" — a user watching a manual buy
+     * succeed while an armed snipe never fires, which is worse than before
+     * because the bot has told them in writing it would buy at graduation.
+     *
+     * It may NOT discover here: this is polled on a timer, and a dozen RPC
+     * reads per probe would cost the launch the snipe exists to catch. A cached
+     * yes is a cheap yes, and the absence of one is "we have not looked" —
+     * never "this token cannot be traded". buy() does the discovering, and the
+     * first buy warms this for every prober after it.
+     */
+    if (CURVE_ROUTE_ON) {
+      const hit = curveTrade.cached(chainKey, ca);
+      if (hit && hit.ok && hit.buy) return true;
+    }
+    return false;
   } catch (_) { return false; }
 }
 
@@ -2317,7 +2443,59 @@ async function tokenSnapshot(ca, chainKey) {
     // Still nothing on-chain. The indexers see venues we have no reader for at
     // all, so they are the last word before giving up.
     const m = await marketOf(ca, chainKey);
-    if (!m) return null;   // genuinely no market either indexer can see
+    if (!m) {
+      /*
+       * ⚠️ AND `return null` HERE WOULD HAVE MADE THE WHOLE CURVE ROUTE
+       * UNREACHABLE.
+       *
+       * A pre-migration EVM token has no pool and no indexer, so this branch
+       * answered null and the card said "❌ Couldn't price it" — with no Buy
+       * button — about a token trading perfectly well on its launchpad.
+       * `core.buy` being able to fill it changes nothing if the only surface a
+       * user can press it from never offers the tap. Inert in the way that
+       * matters, and the Solana branch has had a launchpad leg since the day it
+       * was written; the EVM branch never got one.
+       *
+       * ⚠️ AND THE PAD IS NOT ENOUGH ON ITS OWN. The operator's own box reports
+       * `✗ pons — can't reach api.pons.fun`, so a launchpad-only leg would be
+       * null exactly where it is needed. The token's own TRADES are on the
+       * chain we are already talking to, and that is the source that cannot be
+       * unreachable.
+       */
+      const lpRec = launchpads.covers(chainKey) ? await launchpads.record(chainKey, ca).catch(() => null) : null;
+      const usd0 = await ethUsd(chainKey).catch(() => 0);
+      const padSnap = launchpads.curveSnapshot(ca, chainKey, lpRec, usd0);
+      const iface = CURVE_ROUTE_ON ? await _curveIface(chainKey, ca) : { ok: false };
+      // ROUTABLE IS MEASURED, NEVER INFERRED FROM HAVING A PRICE.
+      // `curveSnapshot` returns `routable: false` always and says why in its own
+      // header; this is the same override the Solana branch makes with
+      // `_solRoutable`, and reading a price is still not being able to fill.
+      const routable = !!(iface.ok && iface.buy);
+      if (padSnap) {
+        padSnap.decimals = dec; padSnap.lp = lpRec || null; padSnap.routable = routable;
+        return padSnap;
+      }
+      if (!routable) return null;   // genuinely nothing: no pool, no indexer, no pad, no readable curve
+      // The pad could not be reached, so the price comes from the token's own
+      // fills. `weak` rides along so nothing downstream mistakes it for an
+      // indexed quote.
+      const px = await curvePrice.priceWeiPerToken(chainKey, ca, _curveDeps(iface));
+      if (!px.ok) return null;
+      const pe = Number(ethers.formatEther(px.weiPerTok));
+      const ts = await tokenSupplyRaw(ca, chainKey);
+      return {
+        ca, curve: iface.curve, decimals: dec, dex: false, graduated: false, progressPct: 0,
+        priceEth: pe, priceUsd: usd0 > 0 ? pe * usd0 : 0,
+        mcapEth: ts ? pe * Number(ethers.formatUnits(ts, dec)) : 0,
+        mcapUsd: ts && usd0 > 0 ? pe * Number(ethers.formatUnits(ts, dec)) * usd0 : 0,
+        // NULL, never 0 — a curve has no pool depth to report, and "0" on a card
+        // reads as a rug. The rule launchpads.js states for the same field.
+        liquidityUsd: null, volH24Usd: null,
+        dexVenue: 'curve', extVenue: 'a launchpad curve', onCurve: true,
+        priceSource: px.source, priceWeak: !!px.weak,
+        routable: true,
+      };
+    }
     const usd = await ethUsd(chainKey).catch(() => 0);
     return {
       ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
@@ -2657,6 +2835,35 @@ async function v3SwapGas(chainKey, from, to, data, value) {
     const g = await providerFor(chainKey).estimateGas({ from, to, data, value: value || 0n });
     return g + g / 4n;
   } catch (_) { return 800000n; }
+}
+
+/**
+ * Approve EXACTLY this much, to a spender the bot INFERRED.
+ *
+ * ⚠️ `ensureApprove` grants `MaxUint256`, which is right for a router this repo
+ * ships the address of and wrong for a contract picked out of Transfer logs by
+ * a popularity score. v4.js already draws the line in as many words: "an
+ * operator-set router gets a standing allowance; a discovered one gets this
+ * sell and nothing more."
+ *
+ * It matters more here than anywhere else in the file: every other risk on the
+ * discovered-curve path is bounded by one trade, and an unlimited grant to a
+ * wrong address is bounded by the whole bag, for ever, and outlives the trade
+ * that asked for it.
+ */
+async function approveExact(wallet, ca, spender, amount, chainKey, gasMult, gas) {
+  const erc = new ethers.Contract(ca, ERC20_ABI, wallet);
+  const cur = await erc.allowance(wallet.address, spender).catch(() => 0n);
+  if (cur >= amount) return cur;
+  const data = new ethers.Interface(ERC20_ABI).encodeFunctionData('approve', [spender, amount]);
+  const h = await rawSend(wallet, chainKey, ca, data, 120000n, 0n, gasMult || 1, gas ? { fee: gas } : undefined);
+  const r = await waitHash(h, chainKey);
+  if (r && r.status === 0) throw new Error('the approval for this curve reverted — nothing was sold. Tx: ' + h);
+  // ⚠️ RE-READ, never assume. A token with a non-standard `approve` (one that
+  // returns false, or refuses a non-zero-to-non-zero change) leaves the
+  // allowance short with nothing thrown, and passing an assumed value would
+  // push a call that reverts at the transferFrom straight past the gate.
+  return await erc.allowance(wallet.address, spender).catch(() => 0n);
 }
 
 async function ensureApprove(wallet, ca, spender, amount, chainKey) {
@@ -3228,6 +3435,10 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     const grad = curve ? await isGraduated(curve, chainKey) : true;
 
     let venue, hash, trc;
+    // What checked this trade, when it went through a DISCOVERED curve. A gate
+    // nobody can read is the same as no gate — the receipt says which price
+    // agreed, and says when it was the weak one.
+    let curveVia = null;
     if (curve && !grad) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
       let minTok;
@@ -3301,8 +3512,76 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
           venue = 'dex·v4'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
           if (trc && trc.status === 0) throw new Error('the v4 buy reverted on-chain (price moved past your slippage, or gas) — try again. Tx: ' + hash);
         } else {
-          const m = await marketOf(ca, chainKey).catch(() => null);
-          if (m) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
+          /*
+           * NO POOL ANYWHERE — so this is a token still on a launchpad's
+           * bonding curve, and the curve is the only place to buy it.
+           *
+           * ⚠️ THIS ONE INSERTION CLOSES TWO DEAD ENDS, and the second is the
+           * one the target tokens actually hit. The throw below is guarded on
+           * `m`, and a pre-migration token has no indexed pool, so `marketOf`
+           * returns null, nothing is thrown, and control used to fall through
+           * to the V2 router and die at `getAmountsOut` with "no pool? try
+           * again". Setting `hash` here makes the `if (!hash)` guard below
+           * false, which skips both.
+           *
+           * ⚠️ AND THE FIRST ARGUMENT IS THE PROVIDER, NOT `chain`. The local
+           * `chain` is the config record from `chainOf` and has no `getLogs`;
+           * passing it does not throw — it returns "could not read the chain
+           * head (chain.getBlockNumber is not a function)" and the buy falls
+           * straight back to the old sentence. The feature would ship INERT
+           * with no error anywhere.
+           */
+          // ⚠️ SWITCHED OFF MEANS THE OLD BEHAVIOUR, EXACTLY. A kill switch that
+          // leaves a new sentence behind is a kill switch that half-works: the
+          // operator who turned it off gets a message about a feature they
+          // disabled instead of the one they had before it shipped.
+          const iface = CURVE_ROUTE_ON ? await _curveIface(chainKey, ca) : { ok: false, why: null };
+          let why = iface.why;
+          if (iface.ok) {
+            // The independent price FIRST. It is what `sane()` is checked
+            // against, and — when it is a strong one — it is also the floor the
+            // call carries on-chain, which is strictly better than stretching a
+            // stranger's bound across a convex curve.
+            const exp = await curvePrice.expectedTokensFor(chainKey, ca, spend, _curveDeps(iface));
+            if (!exp.ok) why = exp.why;
+            else {
+              const prep = await curveTrade.prepareBuy(providerFor(chainKey), chainKey, ca, {
+                wallet: wallet.address,
+                valueWei: spend,
+                slippageBps: Number(slip),          // slip is a BigInt here; Math.min inside would throw on one
+                expectedTokens: exp.raw,
+                tolPct: exp.tolPct,
+                // A weak price may check the interface but may not become the
+                // on-chain floor: it is read from the same trades the interface
+                // is, so the size band stays in force for it.
+                minOutRaw: exp.weak ? undefined : exp.raw,
+              });
+              if (!prep.ok) why = prep.why;
+              else {
+                curveVia = { source: exp.source, weak: !!exp.weak, curve: prep.call.to, bound: !!prep.boundedByIndependentPrice };
+                hash = await rawSend(wallet, chainKey, prep.call.to, prep.call.data, _curveGas(prep.gas), prep.call.value, gasBoost, { fee: gas });
+                venue = 'curve·obs'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
+                if (trc && trc.status === 0) throw new Error('the curve rejected this buy on-chain — nothing was bought. Tx: ' + hash);
+              }
+            }
+          }
+          if (hash) {
+            // Filled on the discovered curve. The shared tail below books it
+            // exactly as it books every other venue.
+          } else {
+            const m = await marketOf(ca, chainKey).catch(() => null);
+            // ⚠️ THE WORDING DECIDES WHETHER A SNIPE RETRIES THIS. watchers.js
+            // excludes anything matching /route through/i from the retry ring,
+            // on the reasoning that an unroutable venue will not change. A
+            // curve refusal that one more trade on the pad would fix must NOT
+            // carry that phrase, or the ring drops a launch it could have
+            // filled two minutes later.
+            if (m && !why) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
+            if (why) throw new Error(`Dexvra could not build a safe buy on this token's launchpad curve (${why}) — nothing was sent`);
+            // Neither — which only happens with the route switched off and the
+            // token unindexed. Fall through untouched, so the V2 leg reports it
+            // exactly as it did before this feature existed.
+          }
         }
       }
       if (!hash) {
@@ -3351,6 +3630,26 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     // thrown) OR a positive balance change. Only "pending" if BOTH the receipt
     // timed out (null) AND the balance read shows no gain — so a successful buy
     // whose balance read merely failed isn't falsely retried (double-buy).
+    /*
+     * ⚠️ A CONFIRMED CURVE BUY THAT RECEIVED NOTHING IS A FAILURE, and only on
+     * this venue is that state reachable.
+     *
+     * The guard below needs BOTH a missing receipt AND no balance gain, so a
+     * receipt with `status === 1` and zero tokens falls straight through and is
+     * booked as a completed buy: full cost added to the position, `gotTokens:
+     * 0`, and a green tick on the receipt. On v2/v3/v4 a positive minimum-out
+     * makes that impossible; a discovered curve makes it reachable — a constant
+     * slot that is really a recipient delivers the tokens elsewhere, a replayed
+     * `minOut = 0` leaves no on-chain protection at all, and a mint into a
+     * vesting escrow looks identical.
+     *
+     * `broadcast` because the transaction DID land: the caller must not roll
+     * back a budget or re-arm a snipe on it.
+     */
+    if (venue === 'curve·obs' && got <= 0n) {
+      const e = new Error('the curve accepted the transaction but no tokens reached your wallet — check it before retrying. Tx: ' + hash);
+      e.broadcast = true; throw e;
+    }
     if (!trc && got <= 0n) {
       // Broadcast succeeded but we can't confirm the fill (receipt timed out AND the
       // balance read shows no gain). The tx MAY still land, so tag it: callers that
@@ -3381,7 +3680,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     _pushHistory(wal, { side: 'buy', chain: chainKey, ca, sym: meta.sym, ethAmount: Number(ethers.formatEther(spend)), tokens: Number(ethers.formatUnits(got, meta.decimals)), hash });
     saveStore();
 
-    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, spentEth: Number(ethers.formatEther(spend)), feeEth: Number(ethers.formatEther(fee)), gotTokens: Number(ethers.formatUnits(got, meta.decimals)), gotRaw: got.toString(), dec: meta.decimals, sym: meta.sym };
+    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, spentEth: Number(ethers.formatEther(spend)), feeEth: Number(ethers.formatEther(fee)), gotTokens: Number(ethers.formatUnits(got, meta.decimals)), gotRaw: got.toString(), dec: meta.decimals, sym: meta.sym, curveVia };
     _afterTrade(u, 'buy', res).catch(() => {});   // account + report (fire-and-forget)
     return res;
   });
@@ -3447,12 +3746,65 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // through Permit2 rather than a plain allowance — so it is resolved here,
     // alongside the venue pick, and skips ensureApprove entirely. Buying into a
     // venue that cannot be sold out of would be a trap, so this is not optional.
-    const p4Sell = (!onCurve && pick.kind === 'v2' && !_v2Fillable(pick))
+    // ONE reading of "there is no AMM pair worth routing to", used by the v4
+    // probe and by the discovered-curve fallback below it. Two copies of this
+    // predicate would eventually disagree about which bags have an exit.
+    const noAmm = !onCurve && pick.kind === 'v2' && !_v2Fillable(pick);
+    const p4Sell = noAmm
       ? await v4.bestPool(ca, chainKey, { chainOf, providerFor }).catch(() => null)
       : null;
-    if (!p4Sell) {
+    /*
+     * A BAG WITH NO POOL TO SELL INTO — the exit side of the discovered curve.
+     *
+     * ⚠️ IT IS PREPARED HERE, ABOVE THE `ethBefore` SNAPSHOT, and that placement
+     * is load-bearing: an approval sent after the snapshot has its gas
+     * subtracted from the native balance delta, and on a curve sell that delta
+     * IS the proceeds figure — so the bot's fee, the receipt and the stored
+     * realised P/L would all be understated. The comment on the existing
+     * `ensureApprove` line says the same thing and this path has to obey it.
+     *
+     * ⚠️ AND WIRING THE SELL IS NOT OPTIONAL ONCE THE BUY IS WIRED. A position
+     * the bot can open and cannot close is the stop-loss-the-user-believes-
+     * exists, one field over — and there is no `resolveCurve` for these tokens,
+     * so nothing else in this function can reach them.
+     */
+    let obsSell = null, obsWhy = null, obsVia = null;
+    const noVenue = CURVE_ROUTE_ON && noAmm && !p4Sell;
+    if (noVenue) {
+      const iface = await _curveIface(chainKey, ca);
+      obsWhy = iface.why;
+      if (iface.ok && !iface.sell) obsWhy = 'no SELL has been seen through this curve yet — one sale by anyone on the pad teaches it';
+      else if (iface.ok) {
+        const exp = await curvePrice.expectedNativeFor(chainKey, ca, amount, _curveDeps(iface));
+        if (!exp.ok) obsWhy = exp.why;
+        else {
+          const args = {
+            wallet: wallet.address, amountRaw: amount, slippageBps: Number(slip),
+            expectedNative: exp.raw, tolPct: exp.tolPct,
+            minOutRaw: exp.weak ? undefined : exp.raw,
+          };
+          const have = await erc.allowance(wallet.address, iface.curve).catch(() => 0n);
+          let prep = await curveTrade.prepareSell(providerFor(chainKey), chainKey, ca, { ...args, allowance: have });
+          // ⚠️ ONE retry, never a loop. `approveExact` re-reads the allowance
+          // and an RPC failure there reads as 0 — a while-loop on that spins
+          // for ever, granting an approval per turn.
+          if (!prep.ok && prep.stage === 'approve') {
+            const now = await approveExact(wallet, ca, prep.needsApprove.spender, prep.needsApprove.amountRaw, chainKey, gasMult, gas);
+            prep = await curveTrade.prepareSell(providerFor(chainKey), chainKey, ca, { ...args, allowance: now });
+          }
+          if (prep.ok) { obsSell = prep; obsVia = { source: exp.source, weak: !!exp.weak, curve: prep.call.to, bound: !!prep.boundedByIndependentPrice }; }
+          else obsWhy = prep.why;
+        }
+      }
+    }
+    if (!p4Sell && !obsSell) {
       const spender = onCurve ? curve : (v3 ? v3.router : chain.router);
-      await ensureApprove(wallet, ca, spender, amount, chainKey);   // before ethBefore snapshot
+      // ⚠️ AND NOT AT ALL WHEN THERE IS NOWHERE TO SELL. This used to grant an
+      // unlimited allowance to the V2 router for a bonding-curve token whose
+      // pair does not exist, then fail at `getAmountsOut` — an approval for a
+      // route that can never run, on every attempt, before the curve route was
+      // even a thing.
+      if (!noVenue) await ensureApprove(wallet, ca, spender, amount, chainKey);   // before ethBefore snapshot
     }
     const ethBefore = await ethBalance(wallet.address, chainKey);
 
@@ -3552,6 +3904,19 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       venue = 'curve'; sent(hash);
       trc = await waitHash(hash, chainKey);
       if (trc && trc.status === 0) throw new Error('the sell reverted on-chain — you may not be allowed to sell this token yet (private beta), or try a slightly smaller amount. Tx: ' + hash);
+    } else if (obsSell) {
+      // The DISCOVERED curve. Built, priced against an independent source and
+      // executed by an eth_call before it got here; all that is left is to send
+      // it. `filledRaw` is MEASURED in the tail, never assumed — see there.
+      hash = await rawSend(wallet, chainKey, obsSell.call.to, obsSell.call.data, _curveGas(obsSell.gas), 0n, gasMult, { fee: gas });
+      venue = 'curve·obs'; sent(hash);
+      trc = await waitHash(hash, chainKey);
+      if (trc && trc.status === 0) throw new Error('the curve rejected this sell on-chain — nothing was sold. Tx: ' + hash);
+    } else if (noVenue) {
+      // Nowhere to sell, and the curve route could not be built. Say WHICH,
+      // because "could not quote this sell (no pool? try again)" sends the user
+      // to retry something that cannot change, three times, with rising gas.
+      throw new Error(`Dexvra could not build a safe sell on this token's launchpad curve${obsWhy ? ` (${obsWhy})` : ''} — nothing was sold`);
     } else if (v3) {
       // V3 sell: token → WETH via SwapRouter02, then unwrap. minOut floored off
       // slot0 spot using ONLY the user's slippage (no +1200 padding) so a fill
@@ -3606,6 +3971,32 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // Confirmed = receipt status 1, OR tokens actually left the wallet. Only
     // "pending" if the receipt timed out AND the balance read shows no change.
     if (!trc && tokAfter >= bal) throw new Error('sell sent but not confirmed yet — check your wallet before retrying. Tx: ' + hash);
+    /*
+     * ⚠️ ON A DISCOVERED CURVE, WHAT SOLD IS MEASURED — never assumed.
+     *
+     * `filledRaw` defaults to `amount`, which is what we ASKED to sell, and a
+     * discovered call may hand over less: an argument that tracks the trade
+     * size is slippage-cut by `buildCurveCall`, and on a `sell(tokensIn, …)`
+     * shape that argument IS the amount. A receipt printing the ask rather than
+     * the fill is a receipt that will not reconcile against the explorer — the
+     * same reason the pools.trade branch sets `filledRaw` to its shaved amount.
+     */
+    if (venue === 'curve·obs' && tokAfter < bal) filledRaw = bal - tokAfter;
+    /*
+     * ⚠️ AND A CONFIRMED SELL THAT PRODUCED NO NATIVE IS NOT A ZERO-PROCEEDS
+     * SELL. `curveIface` establishes which currency the BUY is paid in
+     * (`native`) and has no sell-side equivalent, so a pad that pays out in
+     * WETH would leave the delta at zero: a profitable exit booked as a total
+     * loss, with the WETH sitting unswept. The audit-B3 rule, on a venue that
+     * can genuinely hit it.
+     */
+    if (venue === 'curve·obs' && tokAfter < bal) {
+      const paid = await ethBalance(wallet.address, chainKey).catch(() => null);
+      if (paid != null && paid <= ethBefore) {
+        const e = new Error('the curve took your tokens but paid out nothing this wallet can see — it may settle in a wrapped token. Check the wallet before selling more. Tx: ' + hash);
+        e.broadcast = true; throw e;
+      }
+    }
     const ethAfter = await ethBalance(wallet.address, chainKey);
     // Proceeds: for a V3 sell — and a v4 sell out of a WETH-quoted pool — use
     // the WETH the swap produced (v3ProceedsWei). It's exact and independent of
@@ -3629,7 +4020,11 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       // realized PnL is correct on PARTIAL sells and a full exit zeroes the
       // basis (a later re-buy then starts fresh instead of inheriting old cash).
       if (pos.costEth == null) pos.costEth = Math.max(0, (pos.ethIn || 0) - (pos.ethOut || 0));   // migrate legacy
-      const soldFrac = bal > 0n ? Number(amount) / Number(bal) : 1;   // amount sold / bag held
+      // ⚠️ The basis is pro-rated by what ACTUALLY sold. It used to use
+      // `amount` — the ask — which on a curve that fills short leaves the
+      // position claiming a smaller remaining basis than the bag it still
+      // holds, and a later re-buy inherits it.
+      const soldFrac = bal > 0n ? Number(filledRaw) / Number(bal) : 1;   // sold / bag held
       const costOfSold = pos.costEth * Math.min(1, Math.max(0, soldFrac));
       const netProceeds = Number(ethers.formatEther(proceeds - fee));
       realizedThisSell = netProceeds - costOfSold;   // profit/loss on THIS sell (for the receipt)
@@ -3640,6 +4035,10 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       // Treat a dust remainder (e.g. curve shave-to-fit leaving a few wei) as
       // closed too, so a full exit zeroes the basis and doesn't trip a false
       // "possible rug" alert on the leftover dust (audit C3).
+      // ⚠️ CLOSED is judged on the BAG, not on the percentage asked for. `p` is
+      // computed from `amount`, so a 100% sell that only moved 95% used to book
+      // the position closed with 5% of it still in the wallet — a false close,
+      // and a later re-buy starting from a zeroed basis.
       if (pos.tokens === '0' || (p >= 100 && tokAfter <= bal / 1000000n)) { pos.costEth = 0; pos.closed = true; }
     }
     _pushHistory(wal, { side: 'sell', chain: chainKey, ca, sym: (pos && pos.sym) || '', ethAmount: Number(ethers.formatEther(proceeds)), pct: p, hash });
@@ -3649,7 +4048,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
     // after the wallet delta is measured, so `proceedsEth` is the gross — and
     // every EVM sell receipt has been printing that as "Received", overstating
     // it by the fee. A receipt may not claim the user got more than they did.
-    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, soldTokens: Number(ethers.formatUnits(filledRaw, dec)), proceedsEth: Number(ethers.formatEther(proceeds)), netEth: Number(ethers.formatEther(proceeds - fee)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '' };
+    const res = { chain: chainKey, native: chain.native, ca, venue, hash, feeHash, soldPct: p, soldTokens: Number(ethers.formatUnits(filledRaw, dec)), proceedsEth: Number(ethers.formatEther(proceeds)), netEth: Number(ethers.formatEther(proceeds - fee)), feeEth: Number(ethers.formatEther(fee)), realizedEth: realizedThisSell, sym: (pos && pos.sym) || '', curveVia: obsVia };
     _afterTrade(u, 'sell', res).catch(() => {});   // account + report (fire-and-forget)
     return res;
   });
@@ -4159,6 +4558,11 @@ module.exports = {
   feePayoutEnabled, payFromFeeWallet,
   resolveCurve, isGraduated, launchpadDiag, tokenMeta, tokenDecimals, tokenSnapshot, ethBalance, tokenBalance, tokenBalanceOrNull, tokenSupplyUi, tokenAcrossWallets, tokenBalancesAcross, ethUsd, gasOverrides, rawSend, posKey, bestDexVenue,
   dsMarket, gtMarket, marketOf, dsChainsOf, marketProbe, dsVenueLabel, v4,
+  // Exported the way `v4` is: as MODULE OBJECTS, so the test seam is DECLARED
+  // rather than incidental. A test replaces `core.curveTrade.prepareBuy` and
+  // stubs the whole discovery + simulate + price stack; destructured at the
+  // require above, that seam would be dead and the failure silent.
+  curveTrade, curvePrice, tokenDecimalsOrNull, tokenSupplyRaw, approveExact,
   walletFunds, solWithdrawPlan, evmWithdrawPlan, exportMnemonic,
   ethBalanceOrNull,
   buy, sell, withdraw, withdrawMany, withdrawToken, portfolio, portfolioAll, tokenPnl, tokenLogoUrl, DB,

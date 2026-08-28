@@ -124,15 +124,20 @@ test('⚠️ "could not look" and "nothing to look at" never collapse — and ne
   assert.notEqual(a.why, quiet.why, 'an outage must not read as an untraded token');
 });
 
-test('a token that only ever moved INTO the curve reports no buy, and says what would fix it', async () => {
+test('⚠️ a sell-only history still ANSWERS — it is the buy that has no answer', async () => {
+  // `ok` used to mean "a BUY was observed", and prepareSell gated on it — so a
+  // curve whose recent trades are all sells could not be SOLD, which is exactly
+  // the market in which somebody wants out. The buy question refuses on its own
+  // (curveTrade.prepareBuy), where the sentence can name the fix.
   const chain = stub({
     logs: [xfer(WALLET, CURVE, '0xh1')],
     txs: { '0xh1': { to: CURVE, value: 0n, data: '0x5e115e11' + word(TOKEN) } },
   });
   const r = await decodeCurveIface(chain, TOKEN, { head: 9000 });
-  assert.equal(r.ok, false);
-  assert.match(r.why, /no BUY/);
-  assert.match(r.why, /make one small buy/i);
+  assert.equal(r.ok, true, 'a decoded sell leg is a complete answer to the sell question');
+  assert.equal(r.buy, null, 'and no answer at all to the buy question');
+  assert.equal(r.sell.selector, '0x5e115e11');
+  assert.equal(r.curve, CURVE);
 });
 
 test('plain wallet-to-wallet transfers name no curve at all', async () => {
@@ -142,9 +147,10 @@ test('plain wallet-to-wallet transfers name no curve at all', async () => {
   });
   const r = await decodeCurveIface(chain, TOKEN, { head: 9000 });
   // ROUTER is on the receiving end of the Transfer AND is what was called, so
-  // it does score — but it is a sell-shaped leg with no buy, which is honest.
-  assert.equal(r.ok, false);
-  assert.ok(/no BUY|never to or from/.test(r.why), r.why);
+  // it does score — as a sell-shaped leg with no buy. That is honest, and it is
+  // why the BUY refusal lives in curveTrade rather than here.
+  assert.equal(r.buy, null, 'nothing here shows the contract paying the token out');
+  assert.equal(r.curve, ROUTER);
 });
 
 test('a bad token address is refused before any request is made', async () => {
@@ -295,4 +301,44 @@ test('the walk is BOUNDED — a wide window must not become hundreds of round tr
   const chain = { async getLogs() { calls++; return []; }, async getTransaction() { return null; } };
   await decodeCurveIface(chain, TOKEN, { head: 10_000_000, blocks: 5_000_000, steps: 24 });
   assert.ok(calls <= 25, `made ${calls} getLogs calls`);
+});
+
+test("⚠️ a CONSTANT ADDRESS is refused — replaying a stranger's is how a buy pays out to somebody else", () => {
+  // The token and the sender are handled above this, so an address identical
+  // across every sample is a stranger's: a recipient, a referrer, a router, and
+  // nothing here can tell which. The recipient reading is the ORDINARY one when
+  // the only trades on file are the dev's, from one wallet into another.
+  //
+  // Nothing downstream can catch it: estimateGas succeeds (the call is
+  // perfectly valid) and the price check succeeds (the AMOUNT is right — it is
+  // the destination that is wrong), so the buy lands on-chain with the tokens
+  // minted to somebody else.
+  const STRANGER = '0xf00d000000000000000000000000000000000f00';
+  const pad = (a) => '0'.repeat(24) + a.slice(2);
+  const E17 = 10n ** 17n;
+  const leg = {
+    selector: '0x11223344',
+    args: [{ i: 0, word: pad(STRANGER), addr: STRANGER, num: 1n, isToken: false }],
+    samples: [
+      { value: E17, amount: 1n, from: WALLET, args: [{ i: 0, word: pad(STRANGER), addr: STRANGER, num: 1n, isToken: false }] },
+      { value: 2n * E17, amount: 2n, from: '0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1', args: [{ i: 0, word: pad(STRANGER), addr: STRANGER, num: 1n, isToken: false }] },
+    ],
+  };
+  const r = classifySlots(leg, TOKEN);
+  assert.equal(r.ok, false, 'unknown is a refusal, and this must be unknown');
+  assert.equal(r.slots[0].role, 'unknown');
+  assert.match(r.slots[0].why, /neither the token nor the trader/);
+});
+
+test('…but the ZERO address is not a stranger — it is the same 32 bytes as the number 0', () => {
+  const E17 = 10n ** 17n;
+  const leg = {
+    selector: '0x11223344',
+    args: [{ i: 0, word: '0'.repeat(64), addr: null, num: 0n, isToken: false }],
+    samples: [
+      { value: E17, amount: 1n, from: WALLET, args: [{ i: 0, word: '0'.repeat(64), addr: null, num: 0n, isToken: false }] },
+      { value: 2n * E17, amount: 2n, from: WALLET, args: [{ i: 0, word: '0'.repeat(64), addr: null, num: 0n, isToken: false }] },
+    ],
+  };
+  assert.equal(classifySlots(leg, TOKEN).slots[0].role, 'constant', 'sending to nobody is not sending to a stranger');
 });

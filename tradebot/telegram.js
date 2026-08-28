@@ -2911,7 +2911,21 @@ async function doBuy(chatId, ca, amt, chain, walletId) {
         if (Number(r.shortfall) > 0.01) statLine += '\n' + T(chatId, 'buy.receipt.shortfall', { pct: (Number(r.shortfall) * 100).toFixed(1) });
       } catch (_) {}
       const exp2 = core.chainOf(r.chain);
-      const venue = r.venue === 'curve' ? 'Launchpad' : (r.venue === 'dex·v3' ? 'DEX (V3)' : 'DEX');
+      /*
+       * ⚠️ A DISCOVERED CURVE IS NOT THE SAME VENUE AS A KNOWN ONE, and the
+       * receipt has to say so. The route was read off the pad's own trades and
+       * checked against an independent price; a user comparing this fill
+       * against an explorer is owed the difference between "we routed through a
+       * DEX" and "we read this curve ourselves". The same rule as the site's
+       * `via DexScreener` chip.
+       *
+       * `startsWith('curve')` rather than a third `===`: the two curve venues
+       * are the same thing to a reader, and a fourth spelling must not silently
+       * fall through to "DEX".
+       */
+      const venue = String(r.venue || '').startsWith('curve')
+        ? (r.curveVia ? `Launchpad curve (read from its own trades, checked against ${r.curveVia.weak ? 'recent fills' : 'the launchpad price'})` : 'Launchpad')
+        : (r.venue === 'dex·v3' ? 'DEX (V3)' : 'DEX');
       const autoLine = await _placeAutoExit(chatId, r, wid);
       const receipt =
         T(chatId, 'buy.receipt.title', { sym: esc(r.sym) }) + '\n' +
@@ -3185,7 +3199,9 @@ async function doSell(chatId, ca, pct, chain, walletId) {
       const sexp = core.chainOf(r.chain);
       const uu2 = core.getUser(chatId);
       const wl2 = core.walletLabel((uu2 && core.walletById(uu2, wid)) || core.activeWallet(uu2), wi);
-      const svenue = r.venue === 'curve' ? 'Launchpad' : (r.venue === 'dex·v3' ? 'DEX (V3)' : 'DEX');
+      const svenue = String(r.venue || '').startsWith('curve')
+        ? (r.curveVia ? `Launchpad curve (read from its own trades, checked against ${r.curveVia.weak ? 'recent fills' : 'the launchpad price'})` : 'Launchpad')
+        : (r.venue === 'dex·v3' ? 'DEX (V3)' : 'DEX');
       const pnl = Number(r.realizedEth);   // profit/loss on this sell in native
       const pnlUsd = sUsd > 0 ? pnl * sUsd : null;
       const pnlLine = Number.isFinite(pnl) && pnl !== 0

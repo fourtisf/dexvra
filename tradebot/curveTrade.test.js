@@ -164,3 +164,53 @@ test('a buy with no amount-scaled argument is refused — nothing could check th
   assert.equal(r.ok, false);
   assert.equal(r.stage, 'sane');
 });
+
+test('⚠️ the allowance gate runs LAST, so nothing is approved for a sell that then refuses', async () => {
+  // It used to run first — above build, above the price check — so a
+  // stage:'approve' refusal said nothing about whether the call was buildable.
+  // The caller granted an allowance to a log-scored address, re-called, and
+  // could still be refused at 'build'. The approval stayed granted for ever,
+  // for a sell that never happened.
+  const chain = chainWithBuys({ sell: true });
+  const r = await ct.prepareSell(chain, 'robinhood', TOKEN, {
+    wallet: WALLET, amountRaw: 1000n, slippageBps: 500,
+    expectedNative: 1n, allowance: 0n,        // nothing approved
+  });
+  assert.equal(r.ok, false);
+  assert.notEqual(r.stage, 'approve', 'a call that cannot be built must refuse before asking for an allowance');
+});
+
+test("⚠️ a discovered spender is approved for THIS SELL and nothing more", async () => {
+  // The sell leg's own ratio is 10 native per 1000 tokens, so 2000 tokens is
+  // 20 — a price the gate agrees with, which is what lets it reach 'approve'.
+  const chain = chainWithBuys({ sell: true });
+  const r = await ct.prepareSell(chain, 'robinhood', TOKEN, {
+    wallet: WALLET, amountRaw: 2000n, slippageBps: 500, expectedNative: 20n, allowance: 0n,
+  });
+  assert.equal(r.stage, 'approve', r.why);
+  // v4.js already draws this line for a discovered router. An unlimited grant
+  // to an address inferred from log scoring is the only unbounded loss in this
+  // design, and it outlives the trade.
+  assert.equal(r.needsApprove.amountRaw, 2000n);
+  assert.equal(r.needsApprove.exact, true);
+});
+
+test('a curve that rejects our call is FORGOTTEN, so a redeploy heals itself', async () => {
+  // The cache holds the discovered ADDRESS for half an hour. Without eviction,
+  // every buy in that window aims at an abandoned contract and there is no path
+  // back except waiting — a stuck state indistinguishable from a broken bot.
+  const chain = chainWithBuys({ gas: async () => { throw new Error('execution reverted'); } });
+  const before = await ct.prepareBuy(chain, 'robinhood', TOKEN, {
+    wallet: WALLET, valueWei: 4n * 10n ** 17n, slippageBps: 500, expectedTokens: 4000n,
+  });
+  assert.equal(before.stage, 'simulate', before.why);
+  assert.equal(ct.cached('robinhood', TOKEN), null, 'the rejected interface must not be served again');
+});
+
+test('cached() is a cheap yes and never a no', () => {
+  // canTradeNow polls on a timer, so it may not pay a dozen RPC reads per
+  // probe. The absence of a cached interface is "we have not looked", which the
+  // caller must not render as "this token cannot be traded".
+  ct._reset();
+  assert.equal(ct.cached('robinhood', TOKEN), null);
+});

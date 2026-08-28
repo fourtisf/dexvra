@@ -39,8 +39,67 @@ test('⚠️ the amount bound is never the observed one', () => {
   // Reusing a stranger's minimum-out is either an always-reverting buy or a
   // free option for whoever is watching the mempool.
   const l = leg('0x11111111', [S(E17, [_HEX(1000n)], WALLET), S(2n * E17, [_HEX(2000n)], WALLET)]);
+  const r = buildCurveCall(l, { token: TOKEN, wallet: WALLET, valueWei: 4n * E17, slippageBps: 0 });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(BigInt('0x' + r.data.slice(10)), 4000n, 'scaled to our size, not copied');
+});
+
+test("⚠️ …but a stranger's bound may not be STRETCHED — a curve is convex", () => {
+  // The same leg, 50× the largest trade on file. Extrapolating linearly there
+  // is either an always-revert or no bound at all, and sane() cannot tell the
+  // difference: both sides of its comparison are linear in size, so size
+  // cancels and its verdict is identical for a 0.001 and a 100 ETH buy.
+  const l = leg('0x11111111', [S(E17, [_HEX(1000n)], WALLET), S(2n * E17, [_HEX(2000n)], WALLET)]);
   const r = buildCurveCall(l, { token: TOKEN, wallet: WALLET, valueWei: 100n * E17, slippageBps: 0 });
-  assert.equal(BigInt('0x' + r.data.slice(10)), 100000n, 'scaled to our size, not copied');
+  assert.equal(r.ok, false);
+  assert.match(r.why, /very different size/);
+  assert.equal(r.data, undefined);
+});
+
+test('an INDEPENDENT bound lifts the size band, because that bound is ours', () => {
+  // The band exists because a stranger's ratio cannot be stretched. A caller
+  // that priced the trade itself is not stretching anything, and its floor is
+  // correctly sized by construction.
+  const l = leg('0x11111111', [S(E17, [_HEX(1000n)], WALLET), S(2n * E17, [_HEX(2000n)], WALLET)]);
+  const r = buildCurveCall(l, { token: TOKEN, wallet: WALLET, valueWei: 100n * E17, slippageBps: 1000, minOutRaw: 90000n });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(BigInt('0x' + r.data.slice(10)), 81000n, "our own floor, cut by our own slippage");
+  assert.equal(r.boundedByIndependentPrice, true, 'the receipt is owed the difference');
+  // ⚠️ …and `expected` stays the RATIO's reading, because that is what sane()
+  // tests. Answering the gate with the caller's own number is the gate
+  // checking itself.
+  assert.equal(r.expected, 100000n);
+});
+
+test('⚠️ two slots that both scale is a refusal, never a guess', () => {
+  // `expected` is one variable, so with two of them the LAST one becomes what
+  // sane() checks — on a sell(tokensIn, minEthOut) that compares tokens against
+  // wei. And the slippage cut lands in both, so a 100% sell hands over 95%.
+  const l = leg('0x44444444', [
+    S(E17, [_HEX(1000n), _HEX(500n)], WALLET),
+    S(2n * E17, [_HEX(2000n), _HEX(1000n)], WALLET),
+  ]);
+  const r = buildCurveCall(l, { token: TOKEN, wallet: WALLET, valueWei: E17 });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /both track the trade size/);
+});
+
+test('⚠️ a call wider than we can read is refused, not truncated', () => {
+  const l = leg('0x55555555', [S(E17, [_HEX(1000n)], WALLET), S(2n * E17, [_HEX(2000n)], WALLET)]);
+  l.wide = true;
+  const r = buildCurveCall(l, { token: TOKEN, wallet: WALLET, valueWei: E17 });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /more arguments than Dexvra reads/);
+});
+
+test('⚠️ a float amount is normalised, never thrown at the user', () => {
+  // core.js prices in Numbers. An un-normalised float reaches `hi - lo` and
+  // throws `Cannot mix BigInt` out of core.buy, which the router renders as
+  // "Something glitched handling that" — the gate crashing instead of refusing.
+  assert.equal(sane(1000, 1100).ok, true);
+  assert.equal(sane(1000n, 3000).ok, false);
+  assert.equal(sane('1000', 1100n).ok, true);
+  assert.equal(sane(null, 1100n).ok, false);
 });
 
 test('⚠️ an unexplained argument refuses the trade — it is never defaulted or copied', () => {

@@ -3526,6 +3526,217 @@ npm run chart:preview                        # 35 checks, incl. LIN/LOG, every d
 
 **Config a fix depends on:** nothing.
 
+## "Mengapa masih tidak bisa buy token yang masih bonding curve?"
+
+Because the four modules that read a curve were on `main` and **wired to
+nothing**. `abi:check` could describe a curve perfectly and no button could
+spend through one. This wires it — and the wiring is the small half.
+
+⚠️ **A NAIVE WIRING WOULD HAVE SHIPPED INERT, and passed every test.**
+`curveRoute.sane()` is the last gate and it refuses without an independent
+price. The obvious source is `marketOf`, which asks DexScreener and
+GeckoTerminal — and **both index POOLS**. A token still on a bonding curve has
+no pool; that is the entire premise of the feature. So the gate would have
+refused 100% of its own target set, at the last stage, after a dozen RPC reads
+— wired, green, and never once firing. From Telegram that is indistinguishable
+from a broken bot, which this repo already treats as costing what a wrong fill
+costs.
+
+An adversarial audit (six independent lenses over the buy path, the sell path,
+the pricing sources, the tests, the messaging, and one whose only job was to
+find how the design loses money) found eleven more. Each is fixed below, and
+the four that could move money are MUTATION-TESTED rather than argued.
+
+### `curvePrice.js` — the number that authorises the trade
+
+Three tiers, ranked by how independent they actually are, and the weakest says
+so out loud:
+
+| # | source | independent of the curve? | of the slots? | tol |
+| --- | --- | --- | --- | --- |
+| 1 | the launchpad's USD price × Coinbase spot | ✅ two third parties | ✅ | 35% |
+| 2 | the pad's market cap ÷ on-chain `totalSupply()` | ✅ | ✅ | 35% |
+| 3 | the rate recent fills actually PAID | ❌ same transactions | ✅ different FIELD | 60%, `weak` |
+| — | nothing | | | **refuse, naming WHICH nothing** |
+
+- **Tier 3 is why it is not inert on the operator's own box.** Their
+  `launchpads:check` says `✗ pons — can't reach api.pons.fun`, so tiers 1–2 may
+  never answer there. What the contract PAID OUT is a different field from the
+  argument `ratioE18` is read from — a trader's chosen bound versus the
+  contract's actual payout — so it genuinely catches a slot that is not
+  denominated in the output token. It catches nothing about staleness, curve
+  movement, or a history somebody wrote on purpose, which is exactly why it
+  carries a wider band and a `weak` flag, and why **a weak price may check the
+  interface but may never become the on-chain floor**.
+- ⚠️ **NOTHING HERE MAY BE ANSWERED BY THE CURVE.** That is the thing under
+  test. `curveQuote()` exists and is deliberately kept apart: it is the curve
+  quoting itself, right for a minimum-out floor and disqualified from `sane()`.
+  A source scan pins that `priceWeiPerToken` never touches `chain.call`.
+- ⚠️ **`tokenDecimals` ANSWERS 18 FOR A READ THAT FAILED**, and this is the one
+  number that scales the answer by a power of ten. On a 6-decimal token that
+  guess is off by 10¹², `sane()` refuses, and the refusal reads as *"the curve
+  disagrees with the market"* — a confident wrong diagnosis pointing at the
+  token instead of at our own throttled RPC. `tokenDecimalsOrNull` is the EVM
+  twin of `solana.splDecimalsOrNull`, which exists for the same reason.
+- **"Could not ask" and "nothing there" stay different refusals.** One is a line
+  in `.env`; the other is a statement about the token.
+
+### The money-loss paths the audit found, and what closed them
+
+- ⚠️ **A CONSTANT ADDRESS SLOT WOULD HAVE PAID SOMEBODY ELSE.** The token and
+  the sender are classified above it, so an address identical across every
+  sample is a STRANGER'S — a recipient, a referrer, a router, and nothing can
+  tell which. Replayed verbatim it is invisible to every gate downstream:
+  `estimateGas` succeeds (the call is valid) and the price check succeeds (the
+  AMOUNT is right — it is the destination that is wrong), so the buy lands with
+  the tokens minted elsewhere and the only thing that notices is a balance read
+  after the money is gone. It is UNKNOWN now, which is a refusal. **The zero
+  address is exempt**: it is the same 32 bytes as the number 0, and sending to
+  nobody is not sending to a stranger.
+- ⚠️ **AN UNLIMITED APPROVAL TO A LOG-SCORED ADDRESS WAS THE ONLY UNBOUNDED
+  LOSS.** Every other risk here is capped by one trade; that one is capped by
+  the whole bag, for ever, and it outlives the trade. `approveExact` grants
+  `amountRaw` and nothing more — the line `v4.js` already draws for a discovered
+  router. And it **re-reads** the allowance rather than assuming: a token whose
+  `approve` returns false leaves it short with nothing thrown.
+- ⚠️ **AND THE ALLOWANCE GATE RAN FIRST**, above build, above the price check,
+  so a `stage:'approve'` refusal said nothing about whether the call was even
+  buildable. The caller granted, re-called, and could still be refused — with
+  the approval standing for a sell that never happened. Everything that can
+  refuse for free now refuses for free; only `simulate` genuinely cannot be
+  pre-run without an allowance.
+- ⚠️ **`sane()` IS SIZE-INVARIANT AND CANNOT SEE CURVATURE.** Both sides of its
+  comparison are linear in size, so `size` cancels and the verdict is identical
+  for a 0.001 and a 100 ETH buy. A bonding curve is convex, so a stranger's
+  bound stretched to our size is either an always-revert or no bound at all.
+  `SIZE_BAND` (4× either way) refuses outside a narrow band — and is LIFTED
+  when the caller supplies its own independently-priced floor, because that
+  bound is ours and correctly sized by construction.
+- ⚠️ **TWO SLOTS THAT BOTH SCALE IS A REFUSAL.** `expected` is one variable,
+  reassigned by each, so with two the LAST one becomes what `sane()` checks —
+  on a `sell(tokensIn, minEthOut)` that compares tokens against wei. Worse, the
+  slippage cut landed in BOTH: a 100% sell that hands over 95% and still books
+  the position closed.
+- ⚠️ **eth_call IS THE GATE, NOT eth_estimateGas.** `core.js` says twice that
+  the Robinhood node strips revert data and returns a non-standard error
+  envelope on `eth_estimateGas` — which is why `v3SwapGas` swallows a failed
+  estimate and why the existing curve branch quotes with a `staticCall` and
+  sends a flat limit. Robinhood is where Pons lives, i.e. the chain this whole
+  feature is for: gating on the estimate there turns a node quirk into a
+  permanent refusal, reported to the user as the CURVE rejecting them, with the
+  reason stripped. The estimate is now best-effort, for the limit only.
+- ⚠️ **A CALL WE ONLY HALF-READ IS REFUSED.** `argsOf` stops at eight words and
+  the builder emits exactly the classified slots, so a wider call was silently
+  TRUNCATED into malformed calldata — usually caught by the decoder reverting,
+  i.e. by luck rather than by rule.
+- ⚠️ **ONE SAMPLE PER TRANSACTION, NEVER PER LOG.** A curve that emits a FEE
+  transfer alongside the trade produced two samples for one trade — identical
+  calldata, and one of them carrying the fee as its `amount`. That silently
+  satisfied `minSamples: 2` from a single trade, and let the observed rate price
+  a buy at its own fee. Samples now carry `to` and an `exact` flag, and a payout
+  that did not reach the trader is never a fill rate.
+- ⚠️ **`ok` MEANT "a BUY was observed", AND `prepareSell` GATED ON IT** — so a
+  curve whose recent trades are all sells could not be SOLD, which is exactly
+  the market in which somebody wants out. A decoded sell leg is a complete
+  answer to the sell question; the buy refuses on its own, where the sentence
+  can name the fix.
+- ⚠️ **A CONFIRMED BUY THAT RECEIVED NOTHING WAS BOOKED AS A SUCCESS.** The
+  pending guard needs BOTH a missing receipt and no balance gain, so
+  `status === 1` with zero tokens fell straight through: full cost added to the
+  position, `gotTokens: 0`, green tick. On v2/v3/v4 a positive minimum-out makes
+  that unreachable; a discovered curve makes it reachable.
+- ⚠️ **A CURVE THAT REJECTS OUR CALL IS FORGOTTEN.** The cache held the
+  discovered address for half an hour, so a pad that redeployed left every buy
+  in that window aimed at an abandoned contract with no path back except
+  waiting — a stuck state indistinguishable from a broken feature.
+- ⚠️ **DISCOVERY RUNS INSIDE `withWalletLock`**, so it has a ceiling
+  (`CURVE_DISCOVER_MS`, 12s). Ethers' own request timeout is 300s, and every
+  queued operation for that wallet — a triggered stop-loss, an auto-protect
+  rescue, a copy-exit leg — waits behind it.
+- ⚠️ **`canTradeNow` GAINED A CURVE LEG, or every automated path stays inert
+  while the manual button works.** The dev snipe, the CA snipe, `_fireLaunch`'s
+  gate and the launch retry ring all poll it. It reads the CACHE only: this is
+  polled on a timer, and a dozen RPC reads per probe would cost the launch the
+  snipe exists to catch. A cached yes is a cheap yes; the absence of one is "we
+  have not looked", never "this token cannot be traded".
+- **Every amount is normalised at the boundary.** `core.js` prices in Numbers
+  and these modules are BigInt: an un-normalised float reached `hi - lo` and
+  threw `Cannot mix BigInt` out of `core.buy`, which the router renders as
+  "Something glitched handling that" — the gate CRASHING instead of refusing,
+  with the user never learning a refusal happened.
+- **`err.curve_refused`, in both languages.** "the curve rejected this call
+  (execution reverted…)" matched the `reverted` in the slippage rule and came
+  out as *"the price moved"* — a false diagnosis about a call the chain
+  declined. And a refusal that matched nothing fell to `err.generic`, i.e. "try
+  again in a moment". It deliberately does NOT say *"retrying won't change it"*:
+  most of these are fixed by one more trade on the pad. Separately,
+  `can't route through yet` now maps to `err.no_route`, where it always
+  belonged.
+- **The receipt NAMES the discovered route** and says which price checked it. A
+  gate nobody can read is the same as no gate, and a strong check and a weak one
+  are different assurances — the `via DexScreener` rule, one process over.
+
+### ⚠️ …and the CARD would still have had no Buy button
+
+`core.buy` filling a curve changes nothing if the only surface a user can press
+it from never offers the tap. On EVM, `tokenSnapshot` ended at
+`if (!m) return null` — no pool, no indexer, so **"❌ Couldn't price it"** and no
+buttons, about a token trading perfectly well on its pad. Every gate above
+would have been reachable only from a snipe.
+
+- **The Solana branch has had a launchpad leg since it was written**; the EVM
+  branch never got one — `launchpads.*` appears only inside `isSvm`. It has one
+  now.
+- ⚠️ **And the pad alone is not enough**, because the operator's own box reports
+  `✗ pons — can't reach api.pons.fun`: a launchpad-only leg is null exactly
+  where it is needed. So the last source is the token's **own trades**, on the
+  chain we are already talking to — no third party at all, and the one source
+  that cannot be unreachable.
+- **`routable` is MEASURED.** `curveSnapshot` returns `routable: false` always
+  and says why in its own header; this overrides it with whether an interface
+  was actually read, the same way the Solana branch overrides it with
+  `_solRoutable`. Reading a price is still not being able to fill.
+- **`liquidityUsd` is `null`, never `0`.** A curve has no pool depth to report,
+  and `0` on a card reads as a rug — the rule `launchpads.js` already states for
+  this exact field.
+
+### The insertion point, and why there is only one
+
+`resolveCurve` resolves the **pools.trade** factory only, so a Pons token
+answers `''`, which is then read as "graduated" and routed to the DEX. One
+insertion inside `pick.kind === 'v2' && !_v2Fillable(pick)`, after the v4 probe
+returns null, closes both dead ends — and ⚠️ **the second is the one the target
+tokens actually hit**: the `can't route through yet` throw is guarded on the
+token being INDEXED, and a pre-migration token is not, so control used to fall
+through to the V2 router and die at `getAmountsOut`.
+
+⚠️ **AND THE FIRST ARGUMENT IS THE PROVIDER, NOT `chain`.** The local `chain` is
+the config record from `chainOf` and has no `getLogs`. Passing it does not
+throw — it answers *"could not read the chain head"* and the buy falls back to
+the old sentence, so the feature ships inert with no error anywhere. That is why
+`curveBuyPath.test.js` asserts a **POSITIVE**: a refusal-only suite passes on
+the broken wiring, and mutation-testing that exact substitution fails four tests.
+
+```bash
+cd tradebot && node --test curveIface.test.js curveRoute.test.js curveTrade.test.js curvePrice.test.js curveBuyPath.test.js curveSellPath.test.js
+cd tradebot && npm run abi:check              # what THIS box can read off a curve
+```
+
+**Config a fix depends on:** nothing — but ⚠️ **it ships ON and that CHANGES an
+existing install on deploy**, deliberately, the way the trending floors did.
+`CURVE_ROUTE=0` is the kill switch and restores the old behaviour EXACTLY (the
+old sentence, not a new one about a feature the operator turned off — pinned by
+a test). `CURVE_DISCOVER_MS` bounds the discovery.
+
+⚠️ **What could NOT be verified from here.** Every module is driven against stub
+chains because this sandbox has no egress, so what remains unmeasured is
+whether a real Pons curve's arguments classify at all, whether that node's
+`eth_call` accepts a value-carrying call, and whether any EVM pad in
+`shared/launchpads/pads.js` publishes a usable pre-migration price. The first
+real buy on the box is the measurement, and `npm run abi:check -- <the token>
+--curve` is what predicts it — section **4** now prints what each argument
+MEANS, which is the same inference the buy path runs.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
