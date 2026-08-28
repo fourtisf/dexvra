@@ -97,9 +97,18 @@ function buildCurveCall(leg, opts) {
     return { ok: false, slots: cls.slots, why: `arguments ${scaled.map((s) => s.i).join(' and ')} both track the trade size — only one of them can be a minimum-out, and picking which is not something this may do` };
   }
 
-  // The size OUR call is denominated in: what we pay on a buy, what we hand
-  // over on a sell. A scaling slot is a bound on the other side of that.
-  const size = valueWei > 0n ? valueWei : amountRaw;
+  /*
+   * The size OUR call is denominated in: what we pay on a buy, what we hand
+   * over on a sell. A scaling slot is a bound on the other side of that.
+   *
+   * `sizeRaw` is the QUOTE-TOKEN case — a pad priced in an ERC-20 rather than
+   * the native coin, where `valueWei` is 0 by construction and the amount paid
+   * lives in an allowance instead. Without it every slot on such a pad
+   * correlates against zero and the call reads as unexplained: the pad looks
+   * broken rather than different.
+   */
+  const sizeRaw = big(o.sizeRaw);
+  const size = sizeRaw != null && sizeRaw > 0n ? sizeRaw : (valueWei > 0n ? valueWei : amountRaw);
 
   /*
    * ⚠️ A BONDING CURVE IS CONVEX, AND `ratioE18` WAS MEASURED AT SOMEBODY
@@ -117,8 +126,18 @@ function buildCurveCall(leg, opts) {
    * narrow band rather than sign a bound nobody computed for this trade.
    */
   if (minOutRaw == null && scaled.length && size > 0n) {
+    // ⚠️ THE SAMPLE'S OWN `size`, which is the ONLY reading that is in the same
+    // denomination as ours. Falling back to `amount` on a quote-token pad
+    // compares the tokens a trade RECEIVED against the quote we are about to
+    // PAY — two different currencies — and every such buy is refused as "a very
+    // different size", which reads as a rule working when it is a unit bug.
+    // The value/amount fallback keeps hand-built legs in the unit tests working.
     const sizes = (leg.samples || [])
-      .map((sm) => { const v = big(sm.value) ?? 0n; return v > 0n ? v : (big(sm.amount) ?? 0n); })
+      .map((sm) => {
+        if (sm.size != null) { const z = big(sm.size); if (z != null) return z; }
+        const v = big(sm.value) ?? 0n;
+        return v > 0n ? v : (big(sm.amount) ?? 0n);
+      })
       .filter((v) => v > 0n);
     const near = sizes.some((v) => v * SIZE_BAND >= size && size * SIZE_BAND >= v);
     if (sizes.length && !near) {

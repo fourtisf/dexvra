@@ -64,7 +64,22 @@ function observedRate(leg, max = 3) {
   const rates = [];
   for (const s of (leg && leg.samples) || []) {
     if (s.exact === false) continue;
-    const v = s.value, a = s.amount;
+    /*
+     * ⚠️ THE SAMPLE'S OWN `size`, NOT `value`.
+     *
+     * A pad that charges in its own ERC-20 pays no `msg.value`, so dividing by
+     * it gave nothing at all — this whole tier was DEAD on exactly the pads
+     * whose HTTP host is most likely to be the unreachable one, i.e. where the
+     * fallback is the only thing left. `curveIface` decides `size` where the
+     * direction is known: native paid, or quote paid, or tokens handed over.
+     *
+     * The rate is then "tokens per unit of whatever this pad charges", which is
+     * the same denomination `ratioE18` is in — so the cross-check still compares
+     * the contract's PAYOUT against an ARGUMENT the trader chose, which is the
+     * whole point of the tier.
+     */
+    const v = s.size != null ? BigInt(s.size) : s.value;
+    const a = s.amount;
     if (!(v > 0n) || !(a > 0n)) continue;
     rates.push((a * E18) / v);
     if (rates.length >= max) break;
@@ -85,7 +100,7 @@ function observedRate(leg, max = 3) {
  * @returns {Promise<{ok:boolean, raw?:bigint, source?:string, tolPct?:number,
  *                    weak?:boolean, why?:string}>}
  */
-async function priceWeiPerToken(chainKey, ca, deps = {}) {
+async function priceWeiPerToken(chainKey, ca, deps = {}, opts = {}) {
   const { record, nativeUsd, decimals, totalSupply, iface } = deps;
 
   /*
@@ -127,10 +142,13 @@ async function priceWeiPerToken(chainKey, ca, deps = {}) {
     if (weiPerTok > 0n) return { ok: true, weiPerTok, unit, source, tolPct: 35, weak: false };
   }
 
-  // ── 3 · LAST RESORT — what the curve actually paid, per wei ────────────────
+  // ── 3 · LAST RESORT — what the curve actually paid, per unit it charges ────
   const obs = observedRate(iface && iface.buy);
   if (obs && obs.rateE18 > 0n) {
-    // rateE18 is raw-token-units per wei. Inverted, that is wei per whole token.
+    // rateE18 is raw-token-units per unit of what the pad charges. Inverted,
+    // that is charge-units per whole token — wei on a native pad, and the pad's
+    // own token elsewhere, which is why `sizeRaw` below has to be denominated
+    // the same way.
     const weiPerTok = (unit * E18) / obs.rateE18;
     if (weiPerTok > 0n) {
       return {
@@ -159,12 +177,26 @@ async function priceWeiPerToken(chainKey, ca, deps = {}) {
  * How many raw token units `valueWei` should buy — or a refusal naming which
  * kind of nothing it is.
  */
-async function expectedTokensFor(chainKey, ca, valueWei, deps = {}) {
+async function expectedTokensFor(chainKey, ca, valueWei, deps = {}, opts = {}) {
   const spend = (() => { try { return BigInt(valueWei); } catch (_) { return 0n; } })();
-  if (!(spend > 0n)) return { ok: false, why: 'no amount to price' };
+  /*
+   * ⚠️ `sizeRaw` IS THE PAD'S OWN DENOMINATION, and it is used by the observed
+   * tier ONLY.
+   *
+   * Tiers 1 and 2 price a token in USD, so the native spend is the right size
+   * for them whatever the pad charges — leg one converts at market. The
+   * observed tier is a rate per unit of what the pad CHARGES, so on a
+   * quote-token pad it must be multiplied by the quote we actually hold. Mixing
+   * the two is a comparison in two different currencies that passes or fails on
+   * an exchange rate nobody intended to test.
+   */
+  const size = (() => { try { return opts.sizeRaw == null ? null : BigInt(opts.sizeRaw); } catch (_) { return null; } })();
+  if (!(spend > 0n) && !(size > 0n)) return { ok: false, why: 'no amount to price' };
   const px = await priceWeiPerToken(chainKey, ca, deps);
   if (!px.ok) return px;
-  return { ok: true, raw: (spend * px.unit) / px.weiPerTok, source: px.source, tolPct: px.tolPct, weak: px.weak };
+  const basis = px.weak && size > 0n ? size : spend;
+  if (!(basis > 0n)) return { ok: false, why: 'no amount to price' };
+  return { ok: true, raw: (basis * px.unit) / px.weiPerTok, source: px.source, tolPct: px.tolPct, weak: px.weak };
 }
 
 /**
@@ -204,4 +236,4 @@ async function curveQuote(chain, call, from) {
   return n > 1000n ? n : null;                  // 0 and 1 are a bool, not a quote
 }
 
-module.exports = { expectedTokensFor, expectedNativeFor, priceWeiPerToken, curveQuote, _observedRate: observedRate };
+module.exports = { expectedTokensFor, expectedNativeFor, priceWeiPerToken, curveQuote, observedRate, _observedRate: observedRate };

@@ -2228,6 +2228,93 @@ const _curveDeps = (iface) => ({
   iface,
 });
 
+/*
+ * A CURVE PRICED IN AN ERC-20, NOT IN THE NATIVE COIN.
+ *
+ * Robinhood's pads take the native coin; Virtuals-class pads take their own
+ * token. "Any launchpad" means both, and the second needs two legs: swap into
+ * what the pad charges, approve the curve for exactly that, then call it.
+ *
+ * ⚠️ IT IS THE EXISTING ROUTER, NOT A NEW MONEY PATH. Leg one is the same V2 or
+ * V3 swap `buy()` already makes, aimed at the quote token instead of at the
+ * token being bought — and the quote token is by definition one with a real
+ * pool, or the pad could not price in it.
+ *
+ * ⚠️ AND A FAILURE BETWEEN THE LEGS LEAVES THE USER HOLDING THE QUOTE TOKEN,
+ * which every caller must SAY. The v4 path already sets that precedent with
+ * "Your ETH is safe as WETH in the wallet": money that moved and did not arrive
+ * where the user expected is a fact they are owed immediately, not one they
+ * discover in a block explorer.
+ */
+async function _acquireQuote(wallet, chainKey, quoteToken, spendWei, slip, gasBoost, gas, sent) {
+  const chain = chainOf(chainKey);
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(quoteToken || ''))) throw new Error('this pad is priced in a token Dexvra could not read — nothing was sent');
+  const before = await tokenBalance(quoteToken, wallet.address, chainKey);
+  const pick = await bestDexVenue(quoteToken, chainKey);
+  const v3 = pick && pick.kind === 'v3' ? v3Cfg(chainKey) : null;
+  let hash;
+  if (v3) {
+    const expTok = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, chain.weth, spendWei);
+    if (expTok == null || expTok <= 0n) throw new Error(`could not price ${chain.native} → this pad's own token — nothing was sent`);
+    const minTok = expTok * (10000n - slip) / 10000n;
+    const ri = new ethers.Interface(V3_ROUTER_ABI);
+    const data = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: chain.weth, tokenOut: quoteToken, fee: pick.feeTier, recipient: wallet.address, amountIn: spendWei, amountOutMinimum: minTok, sqrtPriceLimitX96: 0n }]);
+    hash = await rawSend(wallet, chainKey, v3.router, data, await v3SwapGas(chainKey, wallet.address, v3.router, data, spendWei), spendWei, gasBoost, { fee: gas });
+  } else if (_v2Fillable(pick)) {
+    const router = new ethers.Contract(chain.router, ROUTER_ABI, wallet);
+    let expTok = 0n;
+    try { const amts = await router.getAmountsOut(spendWei, [chain.weth, quoteToken]); expTok = amts[1]; }
+    catch (e) { throw new Error(`could not price ${chain.native} → this pad's own token (${(e && e.shortMessage) || e.message || e}) — nothing was sent`); }
+    const minTok = expTok > 0n ? expTok * (10000n - slip) / 10000n : 0n;
+    if (minTok <= 0n) throw new Error(`no liquidity to buy this pad's own token with — nothing was sent`);
+    const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTok, [chain.weth, quoteToken], wallet.address, Math.floor(Date.now() / 1000) + 600, { value: spendWei, ...gas });
+    hash = tx.hash;
+  } else {
+    // The pad's own token has no market on this chain, which is a fact about
+    // the pad rather than a failure of ours — and nothing has been spent.
+    throw new Error(`this pad charges in a token there is no pool for on ${chain.name} — nothing was sent`);
+  }
+  if (sent) sent(hash);
+  const rc = await waitHash(hash, chainKey);
+  if (rc && rc.status === 0) throw new Error(`the swap into this pad's own token reverted — nothing else was sent. Tx: ${hash}`);
+  const after = await tokenBalance(quoteToken, wallet.address, chainKey);
+  const got = after > before ? after - before : 0n;
+  // A confirmed swap that produced nothing is not a zero-sized swap. Never
+  // continue on it: the second leg would be built for an amount we do not hold.
+  if (got <= 0n) throw new Error(`the swap into this pad's own token confirmed but nothing arrived — check the wallet before retrying. Tx: ${hash}`);
+  return { got, hash };
+}
+
+/** The reverse leg: a curve that PAYS in an ERC-20 leaves the proceeds in it,
+ *  and a sell whose money is stranded in a token the user did not ask for is a
+ *  sell that did not finish. Best-effort by design — the tokens are already in
+ *  the wallet, so a failed swap-back is a nuisance, never a loss. */
+async function _dumpQuote(wallet, chainKey, quoteToken, amountRaw, slip, gasBoost, gas) {
+  const chain = chainOf(chainKey);
+  if (!(amountRaw > 0n)) return null;
+  try {
+    const pick = await bestDexVenue(quoteToken, chainKey);
+    const v3 = pick && pick.kind === 'v3' ? v3Cfg(chainKey) : null;
+    await approveExact(wallet, quoteToken, v3 ? v3.router : chain.router, amountRaw, chainKey, gasBoost, gas);
+    if (v3) {
+      const expW = await v3ExpectedOutRaw(chainKey, pick.pool, pick.feeTier, quoteToken, amountRaw);
+      if (expW == null || expW <= 0n) return null;
+      const ri = new ethers.Interface(V3_ROUTER_ABI);
+      const data = ri.encodeFunctionData('exactInputSingle', [{ tokenIn: quoteToken, tokenOut: chain.weth, fee: pick.feeTier, recipient: wallet.address, amountIn: amountRaw, amountOutMinimum: expW * (10000n - slip) / 10000n, sqrtPriceLimitX96: 0n }]);
+      const h = await rawSend(wallet, chainKey, v3.router, data, await v3SwapGas(chainKey, wallet.address, v3.router, data, 0n), 0n, gasBoost, { fee: gas });
+      await waitHash(h, chainKey);
+      return h;
+    }
+    if (!_v2Fillable(pick)) return null;
+    const router = new ethers.Contract(chain.router, ROUTER_ABI, wallet);
+    const amts = await router.getAmountsOut(amountRaw, [quoteToken, chain.weth]);
+    if (!(amts[1] > 0n)) return null;
+    const tx = await router.swapExactTokensForETHSupportingFeeOnTransferTokens(amountRaw, amts[1] * (10000n - slip) / 10000n, [quoteToken, chain.weth], wallet.address, Math.floor(Date.now() / 1000) + 600, gas);
+    await waitBounded(tx);
+    return tx.hash;
+  } catch (_) { return null; }
+}
+
 /**
  * Discover the curve, bounded — or say why not.
  *
@@ -3439,6 +3526,9 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
     // nobody can read is the same as no gate — the receipt says which price
     // agreed, and says when it was the weak one.
     let curveVia = null;
+    // …and, on a pad that charges in its own token, the leg that got us there.
+    // Two transactions for one tap is a fact the receipt has to carry.
+    let quoteLeg = null;
     if (curve && !grad) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
       let minTok;
@@ -3542,23 +3632,66 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
             // against, and — when it is a strong one — it is also the floor the
             // call carries on-chain, which is strictly better than stretching a
             // stranger's bound across a convex curve.
-            const exp = await curvePrice.expectedTokensFor(chainKey, ca, spend, _curveDeps(iface));
-            if (!exp.ok) why = exp.why;
+            let exp = await curvePrice.expectedTokensFor(chainKey, ca, spend, _curveDeps(iface));
+            /*
+             * ⚠️ A QUOTE-TOKEN PAD MAY NOT BE PRICEABLE UNTIL AFTER LEG ONE,
+             * and that must not be discovered by spending first.
+             *
+             * The observed tier is a rate per unit of what the pad CHARGES, so
+             * on such a pad it can only be turned into a token count once we
+             * know how much of that token we hold — which is after the swap.
+             * Whether that rate EXISTS is knowable now, from the samples alone,
+             * so the refusal still happens before any money moves.
+             */
+            const padCharges = !!(iface.buy && !iface.buy.native && iface.buy.quote);
+            const laterRate = padCharges && !!curvePrice.observedRate(iface.buy);
+            if (!exp.ok && !laterRate) why = exp.why;
             else {
-              const prep = await curveTrade.prepareBuy(providerFor(chainKey), chainKey, ca, {
+              const args = {
                 wallet: wallet.address,
                 valueWei: spend,
                 slippageBps: Number(slip),          // slip is a BigInt here; Math.min inside would throw on one
-                expectedTokens: exp.raw,
+                expectedTokens: exp.ok ? exp.raw : 0n,
                 tolPct: exp.tolPct,
                 // A weak price may check the interface but may not become the
                 // on-chain floor: it is read from the same trades the interface
                 // is, so the size band stays in force for it.
-                minOutRaw: exp.weak ? undefined : exp.raw,
-              });
+                minOutRaw: exp.ok && !exp.weak ? exp.raw : undefined,
+              };
+              let prep = await curveTrade.prepareBuy(providerFor(chainKey), chainKey, ca, args);
+              /*
+               * THE PAD CHARGES IN ITS OWN TOKEN. Swap into it, approve the
+               * curve for exactly that, and build again.
+               *
+               * ⚠️ AND THE INDEPENDENTLY-PRICED FLOOR IS DROPPED FOR THIS LEG.
+               * It was computed for the native we no longer hold in full — leg
+               * one spent its own slippage — so carrying it over would set a
+               * bound above what the curve can now pay and revert our own buy.
+               * The ratio-derived bound applies instead, which is sized in the
+               * quote token and therefore in the same units as what we hold,
+               * and the size band stays in force for it.
+               */
+              if (!prep.ok && prep.stage === 'quote' && prep.quoteToken) {
+                const leg = await _acquireQuote(wallet, chainKey, prep.quoteToken, spend, slip, gasBoost, gas, sent);
+                const safe = ` Your ${ethers.formatEther(spend)} ${chain.native} is now this pad's own token in your wallet — nothing is lost, and selling it back is one tap on 📤.`;
+                try {
+                  await approveExact(wallet, prep.quoteToken, iface.curve, leg.got, chainKey, gasBoost, gas);
+                } catch (e) { throw new Error(`${(e && e.message) || e}${safe}`); }
+                // Priced again, now in the pad's OWN denomination — the only
+                // basis on which the observed tier means anything here.
+                const exp2 = await curvePrice.expectedTokensFor(chainKey, ca, spend, _curveDeps(iface), { sizeRaw: leg.got });
+                if (!exp2.ok) throw new Error(`${exp2.why}${safe}`);
+                exp = exp2;
+                prep = await curveTrade.prepareBuy(providerFor(chainKey), chainKey, ca, {
+                  ...args, valueWei: 0n, quoteRaw: leg.got, minOutRaw: undefined,
+                  expectedTokens: exp2.raw, tolPct: exp2.tolPct,
+                });
+                if (!prep.ok) throw new Error(`Dexvra could not build a safe buy on this token's launchpad curve (${prep.why}).${safe}`);
+                quoteLeg = { token: prep.quoteToken, raw: leg.got, hash: leg.hash };
+              }
               if (!prep.ok) why = prep.why;
               else {
-                curveVia = { source: exp.source, weak: !!exp.weak, curve: prep.call.to, bound: !!prep.boundedByIndependentPrice };
+                curveVia = { source: exp.source, weak: !!exp.weak, curve: prep.call.to, bound: !!prep.boundedByIndependentPrice, quote: quoteLeg };
                 hash = await rawSend(wallet, chainKey, prep.call.to, prep.call.data, _curveGas(prep.gas), prep.call.value, gasBoost, { fee: gas });
                 venue = 'curve·obs'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
                 if (trc && trc.status === 0) throw new Error('the curve rejected this buy on-chain — nothing was bought. Tx: ' + hash);
@@ -3991,6 +4124,18 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
      * can genuinely hit it.
      */
     if (venue === 'curve·obs' && tokAfter < bal) {
+      /*
+       * A CURVE THAT PAYS IN ITS OWN TOKEN leaves the proceeds in that token,
+       * and a sell whose money is stranded somewhere the user did not ask for
+       * is a sell that did not finish. Swapped back through the same router the
+       * buy leg used — best-effort, because the tokens ARE in the wallet: a
+       * failed swap-back is a nuisance, never a loss, and refusing the whole
+       * sell over it would be worse.
+       */
+      if (obsSell && obsSell.quoteToken) {
+        const q = await tokenBalance(obsSell.quoteToken, wallet.address, chainKey).catch(() => 0n);
+        if (q > 0n) await _dumpQuote(wallet, chainKey, obsSell.quoteToken, q, slip, gasMult, gas);
+      }
       const paid = await ethBalance(wallet.address, chainKey).catch(() => null);
       if (paid != null && paid <= ethBefore) {
         const e = new Error('the curve took your tokens but paid out nothing this wallet can see — it may settle in a wrapped token. Check the wallet before selling more. Tx: ' + hash);

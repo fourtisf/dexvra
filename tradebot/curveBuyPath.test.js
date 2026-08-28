@@ -78,7 +78,7 @@ function stubChain(over = {}) {
     '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + addrWord(TOKEN) + addrWord(WALLET) + num(1000n * E18) },
     '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + addrWord(TOKEN) + addrWord(WALLET) + num(2000n * E18) },
   };
-  const state = { balanceOf: 0n, calls: [], sent: [] };
+  const state = { balanceOf: 0n, tokenBal: 0n, quoteBal: 0n, allow: 0n, calls: [], sent: [] };
   const answer = (tx) => {
     const sel = String(tx.data || '').slice(0, 10);
     state.calls.push(sel);
@@ -319,5 +319,103 @@ test('…and a contract with no curve, no pool and no pad is still honestly noth
   const restore = withStubs(chain, { padOk: false });
   try {
     assert.equal(await core.tokenSnapshot(TOKEN, 'base'), null);
+  } finally { restore(); }
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// A PAD THAT CHARGES IN ITS OWN TOKEN — the Virtuals-class shape.
+//
+// "walaupun token launch di launchpad manapun" means both kinds. A pad priced
+// in an ERC-20 pays no `msg.value`, so which token it takes is in neither the
+// calldata nor this token's own logs: it is in the transaction's OTHER Transfer
+// logs, where the trader paid the curve.
+const QUOTE = '0x4444444444444444444444444444444444444444';
+const V3POOL = '0x5555555555555555555555555555555555555555';
+const WETH = '0x4200000000000000000000000000000000000006';   // Base's, from chains.js
+
+function quoteChain() {
+  const c = stubChain();
+  const logs = [
+    { transactionHash: '0xq1', blockNumber: 10, topics: [TRANSFER, topic(CURVE), topic(WALLET)], data: '0x' + num(1000n * E18) },
+    { transactionHash: '0xq2', blockNumber: 11, topics: [TRANSFER, topic(CURVE), topic(WALLET)], data: '0x' + num(2000n * E18) },
+  ];
+  const txs = {
+    '0xq1': { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + addrWord(TOKEN) + addrWord(WALLET) + num(1000n * E18) },
+    '0xq2': { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + addrWord(TOKEN) + addrWord(WALLET) + num(2000n * E18) },
+  };
+  const paid = { '0xq1': E17, '0xq2': 2n * E17 };   // 1:1 with native, so the value maths stays readable
+  c.state.quoteBal = 0n;
+  c.getLogs = async (f) => (String(f && f.address).toLowerCase() === TOKEN.toLowerCase() ? logs : []);
+  c.getTransaction = async (h) => txs[h] || null;
+  c.getTransactionReceipt = async (h) => ({ logs: [{ address: QUOTE, topics: [TRANSFER, topic(WALLET), topic(CURVE)], data: '0x' + num(paid[h] || 0n) }] });
+  c.call = async (tx) => {
+    const sel = String(tx.data || '').slice(0, 10);
+    const to = String(tx.to || '').toLowerCase();
+    if (sel === '0x70a08231') {
+      const who = '0x' + String(tx.data).slice(-40).toLowerCase();
+      // v3BestPool asks WETH how much the POOL holds — that reserve is what
+      // makes a venue fillable, and without it the swap leg has nowhere to go.
+      if (to === WETH) return '0x' + num(who === V3POOL ? 50n * E18 : 0n);
+      if (to === QUOTE) return '0x' + num(who === V3POOL ? 50n * E18 : c.state.quoteBal);
+      return '0x' + num(c.state.tokenBal || 0n);
+    }
+    if (sel === '0x313ce567') return '0x' + num(18n);
+    if (sel === '0x18160ddd') return '0x' + num(1_000_000_000n * E18);
+    if (sel === '0xdd62ed3e') return '0x' + num(c.state.allow || 0n);
+    // The V3 factory names a pool for the QUOTE token so the swap leg has a
+    // venue; our token has none, which is the whole premise.
+    if (sel === '0x1698ee82') return '0x' + addrWord(String(tx.data).toLowerCase().includes(QUOTE.slice(2).toLowerCase()) ? V3POOL : ethers.ZeroAddress);
+    if (sel === '0xe6a43905') return '0x' + addrWord(ethers.ZeroAddress);
+    if (to === V3POOL && sel === '0x3850c7bd') {            // slot0
+      return '0x' + num(2n ** 96n) + num(0n) + num(0n) + num(0n) + num(0n) + num(0n) + num(1n);
+    }
+    if (to === V3POOL && sel === '0x0dfe1681') return '0x' + addrWord(QUOTE);   // token0
+    if (to === CURVE.toLowerCase()) return '0x' + num(1000n * E18);
+    throw new Error('no data');
+  };
+  return c;
+}
+
+test('⚠️ a pad that charges in ITS OWN TOKEN is bought in two legs, and the receipt says so', async () => {
+  const chain = quoteChain();
+  const restore = withStubs(chain, { padOk: false });
+  try {
+    const real = global.fetch;
+    global.fetch = async (url, init) => {
+      let body = null; try { body = init && init.body ? JSON.parse(init.body) : null; } catch (_) {}
+      if (body && body.method === 'eth_sendRawTransaction') {
+        const tx = ethers.Transaction.from(body.params[0]);
+        // Leg one lands the quote token; the approval records itself; the curve
+        // call pays out our token.
+        if (tx.value > 0n && String(tx.to).toLowerCase() !== CURVE.toLowerCase()) chain.state.quoteBal += tx.value;
+        if (tx.data.startsWith('0x095ea7b3')) chain.state.allow = BigInt('0x' + tx.data.slice(74, 138));
+        if (String(tx.to).toLowerCase() === CURVE.toLowerCase()) chain.state.tokenBal = 1000n * E18;
+      }
+      return real(url, init);
+    };
+    const r = await core.buy(CHAT, TOKEN, 0.1, 'base');
+    assert.equal(r.venue, 'curve·obs');
+    assert.ok(r.gotTokens > 0, 'the tokens arrived');
+    // ⚠️ TWO TRANSACTIONS FOR ONE TAP is a fact the receipt has to carry.
+    assert.ok(r.curveVia.quote, 'the leg that got us there is on the receipt');
+    assert.equal(String(r.curveVia.quote.token).toLowerCase(), QUOTE);
+    assert.ok(r.curveVia.quote.raw > 0n);
+  } finally { restore(); }
+});
+
+test("⚠️ …and the quote token is READ off the chain, never guessed", async () => {
+  // A pad whose samples disagree about what it charges in is a pad we do not
+  // understand — two pads behind one selector, or a router in the middle.
+  // Picking the commonest would put a guessed token address on a money path.
+  const chain = quoteChain();
+  let n = 0;
+  chain.getTransactionReceipt = async () => ({ logs: [{
+    address: (n++ % 2) ? QUOTE : '0x7777777777777777777777777777777777777777',
+    topics: [TRANSFER, topic(WALLET), topic(CURVE)], data: '0x' + num(E17),
+  }] });
+  const restore = withStubs(chain, { padOk: false });
+  try {
+    await assert.rejects(() => core.buy(CHAT, TOKEN, 0.1, 'base'), /launchpad curve|nothing was sent/);
   } finally { restore(); }
 });

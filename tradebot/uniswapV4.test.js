@@ -261,5 +261,12 @@ test("an empty V2 pair is not a market, and does not block the v4 route", () => 
   assert.match(CORE.slice(i, i + 200), /pick\.pair && pick\.wethBal > 0n/, "a pair with no reserve is not fillable");
   // And both money paths gate on it, not on the address alone.
   assert.ok(!/pick\.kind === 'v2' && !pick\.pair/.test(CORE), "no caller still gates on the bare address");
-  assert.strictEqual((CORE.match(/!_v2Fillable\(pick\)/g) || []).length, 2, "buy and sell both");
+  // ⚠️ COUNTED BY SITE, and the count is what makes this a guard rather than a
+  // grep: it fails when a gate DISAPPEARS as loudly as when an unreviewed one
+  // appears. The four are the buy's routing decision, the sell's (`noAmm`), and
+  // the two quote-token swap legs, which route into and out of the token a
+  // launchpad curve charges in and are subject to the same rule — a pair
+  // CONTRACT existing is not liquidity.
+  assert.strictEqual((CORE.match(/!_v2Fillable\(pick\)/g) || []).length, 3, "buy, sell, and the quote-token swap-back");
+  assert.strictEqual((CORE.match(/\} else if \(_v2Fillable\(pick\)\)/g) || []).length, 1, "and the quote-token buy leg, positively");
 });

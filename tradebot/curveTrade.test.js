@@ -61,18 +61,76 @@ test('⚠️ a call the chain would revert is NEVER signed, and the reason trave
   assert.match(r.why, /NotOpen/);
 });
 
-test('⚠️ a quote-token curve is refused rather than sent with a value it never asked for', async () => {
-  // Its buy carries no native value, so sending ours would simply lose it to a
-  // function that takes payment in an ERC-20 we have not approved.
-  const logs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+const QUOTE = '0x9999999999999999999999999999999999999999';
+
+/** A pad priced in an ERC-20: no msg.value, and the payment visible only in the
+ *  transaction's OTHER Transfer logs. */
+function quoteChain({ quoteToken = QUOTE, agree = true } = {}) {
+  const logs = [xfer(CURVE, WALLET, '0xq1'), xfer(CURVE, WALLET, '0xq2')];
   const txs = {
-    '0xb1': { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
-    '0xb2': { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+    '0xq1': { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + word(TOKEN) + num(900n) },
+    '0xq2': { to: CURVE, from: WALLET, value: 0n, data: '0xaabbccdd' + word(TOKEN) + num(1800n) },
   };
-  const chain = { async getBlockNumber() { return 9000; }, async getLogs() { return logs; }, async getTransaction(h) { return txs[h]; }, async estimateGas() { return 1n; } };
-  const r = await ct.prepareBuy(chain, 'robinhood', TOKEN, { wallet: WALLET, valueWei: E17, expectedTokens: 1000n });
+  const paid = { '0xq1': 1000n, '0xq2': 2000n };
+  const other = { '0xq1': quoteToken, '0xq2': agree ? quoteToken : '0x8888888888888888888888888888888888888888' };
+  return {
+    async getBlockNumber() { return 9000; },
+    async getLogs() { return logs; },
+    async getTransaction(h) { return txs[h]; },
+    async getTransactionReceipt(h) {
+      return { logs: [{ address: other[h], topics: [TRANSFER_TOPIC, topic(WALLET), topic(CURVE)], data: '0x' + num(paid[h]) }] };
+    },
+    async estimateGas() { return 210000n; },
+  };
+}
+
+test('⚠️ a quote-token curve is never sent a value it never asked for — and the token is READ, not guessed', async () => {
+  // Its buy carries no native value, so sending ours would lose it to a
+  // function that takes payment in an ERC-20. Which ERC-20 is in neither the
+  // calldata nor this token's own logs — it is in the transaction's other
+  // Transfer logs, where the trader paid the curve.
+  const r = await ct.prepareBuy(quoteChain(), 'robinhood', TOKEN, { wallet: WALLET, valueWei: E17, expectedTokens: 900n });
   assert.equal(r.ok, false);
-  assert.match(r.why, /approval step/);
+  assert.equal(r.stage, 'quote', 'a caller that can swap into it needs to know that, not just "no"');
+  assert.equal(r.quoteToken, QUOTE);
+  assert.match(r.why, /priced in/);
+});
+
+test('…and WITH the quote already in hand it builds, carrying no value at all', async () => {
+  const r = await ct.prepareBuy(quoteChain(), 'robinhood', TOKEN, {
+    // ⚠️ A NATIVE AMOUNT IS PASSED TOO, deliberately. The caller that swapped
+    // into the quote token still knows what it spent, and a build that carried
+    // that number into `value` would hand it to a function which never asked
+    // for it — simply gone. Mutation-tested: without the native/quote branch
+    // this assertion is the only thing that fails.
+    wallet: WALLET, valueWei: E17, quoteRaw: 1000n, expectedTokens: 900n, slippageBps: 500,
+  });
+  assert.equal(r.ok, true, r.why);
+  assert.equal(r.call.value, 0n, 'a value here would simply be lost');
+  assert.equal(r.quoteToken, QUOTE);
+  // Sized by the QUOTE paid, not by a native value that is zero by construction
+  // — without which every slot correlates against zero and the pad reads as
+  // broken rather than different.
+  assert.equal(BigInt('0x' + r.call.data.slice(74, 138)), 855n);   // 900 less 5%
+});
+
+test('⚠️ samples that disagree about the quote token refuse — one token or none', async () => {
+  // Two pads behind one selector, a router in the middle, or a read that went
+  // wrong. Picking the commonest would put a guessed token address on a money
+  // path.
+  const r = await ct.prepareBuy(quoteChain({ agree: false }), 'robinhood', TOKEN, {
+    wallet: WALLET, quoteRaw: 1000n, expectedTokens: 900n,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /do not show what it IS paid in/);
+});
+
+test('a payable pad still refuses when no native amount is given', async () => {
+  const r = await ct.prepareBuy(chainWithBuys(), 'robinhood', TOKEN, {
+    wallet: WALLET, quoteRaw: 1000n, expectedTokens: 1000n,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /paid in the native coin/);
 });
 
 test('⚠️ a quote that disagrees with the indexer refuses — gas estimating is not agreeing', async () => {
@@ -213,4 +271,49 @@ test('cached() is a cheap yes and never a no', () => {
   // caller must not render as "this token cannot be traded".
   ct._reset();
   assert.equal(ct.cached('robinhood', TOKEN), null);
+});
+
+test('⚠️ the window ESCALATES, because "any launchpad" means any PACE', async () => {
+  // 5000 blocks is under three hours on a two-second chain. A pad whose tokens
+  // trade a few times a day reads as "no trades found" there — a statement
+  // about the WINDOW reported as a fact about the TOKEN, and exactly what would
+  // have made this feature Pons-shaped: fine on a busy launch, blind on a quiet
+  // one. Widening the FIRST look instead would make every lookup pay for the
+  // slowest pad, on a call that sits inside the wallet lock.
+  const logs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+  const txs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+  };
+  const seen = [];
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    async getLogs(f) {
+      const span = 500000 - Number(f.fromBlock);
+      seen.push(span);
+      return span >= 60000 ? logs : [];        // the trades are older than three hours
+    },
+    async getTransaction(h) { return txs[h]; },
+    async estimateGas() { return 210000n; },
+  };
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN);
+  assert.equal(r.ok, true, r.why);
+  assert.ok(Math.max(...seen) >= 60000, 'it looked further than the cheap first window');
+  assert.equal(seen[0], 5000, 'and it still STARTED cheap — every lookup must not pay for the slowest pad');
+});
+
+test('…but a dead node is not widened — three tries is three times the same silence', async () => {
+  let asked = 0;
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    async getLogs() { asked++; throw new Error('ETIMEDOUT'); },
+    async getTransaction() { return null; },
+  };
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN);
+  assert.equal(r.ok, false);
+  assert.match(r.why, /could not read/);
+  // The stepped walk inside one window is expected; what must not happen is the
+  // whole window ladder being climbed for an outage.
+  assert.ok(asked < 30, `a transport failure escalated the window (${asked} reads)`);
+  assert.equal(ct.cached('robinhood', TOKEN), null, 'and an outage is never remembered');
 });

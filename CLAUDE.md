@@ -3700,6 +3700,54 @@ would have been reachable only from a snipe.
   and `0` on a card reads as a rug — the rule `launchpads.js` already states for
   this exact field.
 
+### "walaupun token launch di launchpad manapun" — the two things that were narrow
+
+Nothing here was ever pad-SPECIFIC: the interface is read off real trades, so
+the pad is data. But two constraints made it work on a Pons-shaped launch and
+not on the rest.
+
+- ⚠️ **THE WINDOW WAS FIXED AT 5000 BLOCKS** — under three hours on a
+  two-second chain. A pad whose tokens trade a few times a day reads as "no
+  trades found" there, which is a statement about the WINDOW reported as a fact
+  about the TOKEN. `ifaceFor` escalates (`CURVE_WINDOWS`, 5000 → 60k → 400k),
+  and **only on that one answer**: widening the first look instead would make
+  every lookup pay for the slowest pad, on a call that sits inside the wallet
+  lock, and a dead node asked three times is three times the same silence.
+- ⚠️ **A PAD PRICED IN ITS OWN ERC-20 WAS REFUSED.** Robinhood's pads take the
+  native coin; Virtuals-class pads take their own token. That buy pays no
+  `msg.value`, so **which** token it takes is in neither the calldata nor this
+  token's own logs — it is in the transaction's OTHER Transfer logs, where the
+  trader paid the curve. One extra read, and only for the pads that need it.
+  - **ONE quote token, or none.** Samples that disagree are two pads behind one
+    selector, or a router in the middle; picking the commonest would put a
+    guessed token address on a money path.
+  - **Two legs, using the EXISTING router** — the same V2/V3 swap `buy()`
+    already makes, aimed at the quote token, then an exact approval, then the
+    curve. Not a new money path.
+  - ⚠️ **A failure BETWEEN the legs leaves the user holding the quote token**,
+    and every such error says so. The v4 wrapping path set that precedent with
+    *"Your ETH is safe as WETH in the wallet"*.
+  - ⚠️ **`size` is decided where the DIRECTION is known**, not derived later. A
+    buy's size is what was PAID (native, or the quote); a sell's is what was
+    handed over. Three places had to learn it and two of them were caught by a
+    test rather than by reading: `observedRate` divided by `value`, so the
+    whole fallback tier was **dead on exactly the pads whose HTTP host is most
+    likely unreachable**; and the size band compared the tokens a trade
+    RECEIVED against the quote we were about to PAY — two currencies — refusing
+    every such buy as "a very different size", which reads as a rule working
+    when it is a unit bug.
+  - ⚠️ **A quote pad may not be priceable until after leg one**, because the
+    observed rate is per unit of what the pad CHARGES. Whether that rate
+    EXISTS is knowable from the samples alone, so the refusal still happens
+    **before any money moves**.
+  - **The independently-priced floor is DROPPED for the second leg.** It was
+    computed for native we no longer hold in full — leg one spent its own
+    slippage — so carrying it over would set a bound above what the curve can
+    now pay and revert our own buy.
+  - **The sell swaps the proceeds back**, best-effort: the tokens are already in
+    the wallet, so a failed swap-back is a nuisance and never a loss, and
+    refusing the whole sell over it would be worse.
+
 ### The insertion point, and why there is only one
 
 `resolveCurve` resolves the **pools.trade** factory only, so a Pons token

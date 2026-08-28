@@ -71,13 +71,45 @@ function forget(chainKey, ca) { _cache.delete(key(chainKey, ca)); }
  * this is provable without a node — the only way it CAN be proved from a
  * sandbox with no egress, which is where every line of it was written.
  */
+/*
+ * ⚠️ THE WINDOW IS ESCALATED, because "any launchpad" means any PACE.
+ *
+ * The decoder's default window is 5000 blocks — under three hours on a
+ * two-second chain. A pad whose tokens trade a few times a day reads as "no
+ * trades found" there, which is a statement about the WINDOW being reported as
+ * a fact about the token, and it is what would have made this feature look
+ * Pons-shaped: fine on a busy launch, blind on a quiet one.
+ *
+ * Widening the first look instead would make every lookup pay for the slowest
+ * pad, on a call that sits inside the wallet lock. So: start cheap, and widen
+ * only when the cheap look found NOTHING — which is the one answer a wider
+ * window can change. A transport failure never escalates: asking a dead node
+ * three times is three times the wait for the same silence.
+ */
+const WINDOWS = (() => {
+  const raw = String(process.env.CURVE_WINDOWS || '5000,60000,400000').split(',');
+  const out = raw.map((x) => Math.floor(Number(String(x).trim()))).filter((n) => Number.isFinite(n) && n >= 100);
+  return out.length ? out : [5000, 60000, 400000];
+})();
+
 async function ifaceFor(chain, chainKey, ca, opts = {}) {
   const hit = _cached(chainKey, ca);
   if (hit) return hit;
   let head;
   try { head = Number(await chain.getBlockNumber()); }
   catch (e) { return { ok: false, why: `could not read the chain head (${(e && e.message) || e})` }; }   // NOT cached: an outage is not a fact about the token
-  const res = await decodeCurveIface(chain, ca, { head, blocks: opts.blocks, maxTx: opts.maxTx });
+
+  const windows = opts.blocks ? [Math.floor(Number(opts.blocks))] : WINDOWS;
+  let res = null;
+  for (const blocks of windows) {
+    res = await decodeCurveIface(chain, ca, { head, blocks, maxTx: opts.maxTx, steps: opts.steps });
+    if (res.ok) break;
+    // Only "we looked and this window held nothing" is worth widening. Every
+    // other refusal — a call we cannot decode, a token that never touched the
+    // contract, a node that would not answer — says the same thing at any size.
+    if (!/^no trades found/.test(res.why || '')) break;
+  }
+
   // A transport failure is never remembered — the `pumpfunNewX` rule, on the
   // path that spends money.
   if (res.ok || !/could not read/.test(res.why || '')) _cache.set(key(chainKey, ca), { res, ts: Date.now() });
@@ -92,11 +124,14 @@ async function ifaceFor(chain, chainKey, ca, opts = {}) {
  * with, and a slot read as a minimum-out that is really a fee tier estimates
  * gas perfectly cleanly.
  */
-async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, expectedTokens, tolPct, minOutRaw }) {
+async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, quoteRaw, slippageBps, expectedTokens, tolPct, minOutRaw }) {
   // Normalised at the door, so a Number from core.js's price side can never
   // reach a BigInt comparison and throw instead of refusing.
-  const spendWei = big(valueWei);
-  if (!(spendWei > 0n)) return { ok: false, stage: 'build', why: 'no amount to spend' };
+  const spendWei = big(valueWei) ?? 0n;
+  // A pad priced in an ERC-20 pays nothing in `value`; what it spends is the
+  // allowance the caller has already granted. One of the two must be real.
+  const spendQuote = big(quoteRaw) ?? 0n;
+  if (!(spendWei > 0n) && !(spendQuote > 0n)) return { ok: false, stage: 'build', why: 'no amount to spend' };
   const iface = await ifaceFor(chain, chainKey, ca);
   if (!iface.ok) return { ok: false, why: iface.why, stage: 'discover' };
   // `ok` means "an interface was read", which since the sell-only fix no longer
@@ -107,17 +142,36 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, 
     return { ok: false, stage: 'discover', needsMoreTrades: true, why: 'no BUY has been seen through this curve yet — the recent trades are all sells. One purchase by anyone on the pad teaches it.' };
   }
 
-  const built = buildCurveCall(iface.buy, { token: ca, wallet, valueWei: spendWei, slippageBps, minOutRaw });
-  if (!built.ok) return { ok: false, why: built.why, stage: 'build', needsMoreTrades: built.needsMoreTrades };
-  // ⚠️ A CURVE PRICED IN A QUOTE TOKEN IS NOT SUPPORTED YET, and must not be
-  // sent as if it were payable: the value would simply be lost to a function
-  // that never asked for it. Buying with an ERC-20 needs an allowance step
-  // this does not build.
+  /*
+   * ⚠️ A PAYABLE CALL AND A QUOTE-TOKEN CALL ARE DIFFERENT TRANSACTIONS, and
+   * sending one as the other loses the money: `value` handed to a function that
+   * never asked for it is simply gone.
+   *
+   * A quote-token pad is supported now — the caller has to have swapped into
+   * that token and approved the curve for it first, which is why `quoteRaw` is
+   * REQUIRED here rather than assumed. Refusing without it is what stops a
+   * value-less call being built for a payable pad and vice versa.
+   */
+  if (iface.buy.native && !(spendWei > 0n)) {
+    return { ok: false, stage: 'build', why: "this pad's buy is paid in the native coin and no amount was given" };
+  }
   if (!iface.buy.native) {
-    return { ok: false, stage: 'build', why: "this pad's buy is priced in a token rather than the native coin, which needs an approval step Dexvra doesn't build yet" };
+    if (!iface.buy.quote) {
+      return { ok: false, stage: 'build', why: "this pad's buy is not paid in the native coin, and its trades do not show what it IS paid in — refusing rather than guessing a token address" };
+    }
+    if (!(spendQuote > 0n)) {
+      return { ok: false, stage: 'quote', quoteToken: iface.buy.quote, why: `this pad is priced in ${iface.buy.quote}, not the native coin` };
+    }
   }
 
-  const call = { to: iface.curve, data: built.data, value: spendWei };
+  const built = buildCurveCall(iface.buy, {
+    token: ca, wallet, slippageBps, minOutRaw,
+    valueWei: iface.buy.native ? spendWei : 0n,
+    sizeRaw: iface.buy.native ? 0n : spendQuote,
+  });
+  if (!built.ok) return { ok: false, why: built.why, stage: 'build', needsMoreTrades: built.needsMoreTrades };
+
+  const call = { to: iface.curve, data: built.data, value: iface.buy.native ? spendWei : 0n };
   const sim = await simulate(chain, call, wallet);
   // A rejected call may mean the pad redeployed under us — see `forget`.
   if (!sim.ok) { forget(chainKey, ca); return { ok: false, why: sim.why, stage: 'simulate', call }; }
@@ -127,7 +181,7 @@ async function prepareBuy(chain, chainKey, ca, { wallet, valueWei, slippageBps, 
   const check = sane(built.expected, expectedTokens, tolPct);
   if (!check.ok) return { ok: false, why: check.why, stage: 'sane', call };
 
-  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, boundedByIndependentPrice: built.boundedByIndependentPrice, describe: describeIface(iface) };
+  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, quoteToken: iface.buy.native ? null : iface.buy.quote, boundedByIndependentPrice: built.boundedByIndependentPrice, describe: describeIface(iface) };
 }
 
 /**
@@ -182,7 +236,7 @@ async function prepareSell(chain, chainKey, ca, { wallet, amountRaw, slippageBps
   const sim = await simulate(chain, call, wallet);
   if (!sim.ok) { forget(chainKey, ca); return { ok: false, why: sim.why, stage: 'simulate', call }; }
 
-  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, boundedByIndependentPrice: built.boundedByIndependentPrice };
+  return { ok: true, why: null, call, gas: sim.gas, iface, slots: built.slots, quoteToken: (iface.sell && iface.sell.quote) || null, boundedByIndependentPrice: built.boundedByIndependentPrice };
 }
 
 module.exports = { ifaceFor, prepareBuy, prepareSell, cached, forget, _reset, _cache };

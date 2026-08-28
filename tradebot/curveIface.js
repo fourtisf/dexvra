@@ -228,6 +228,47 @@ async function decodeCurveIface(chain, token, opts = {}) {
       dir = 'sell'; exact = false;
     } else { continue; }   // the token moved, but not to or from this contract
 
+    /*
+     * ⚠️ A BUY WITH NO `msg.value` IS PAID IN A QUOTE TOKEN — and which one is
+     * in neither the calldata nor this token's own logs.
+     *
+     * `getLogs` was filtered to OUR token, so the quote leg is invisible here.
+     * It is in the transaction's OTHER Transfer logs: the trader moved
+     * something to the curve. One extra read, and only for the pads that need
+     * it — a native-quoted buy never pays for this.
+     *
+     * Without it a quote-token pad is not merely unsupported, it is MIS-SIZED:
+     * `value` is 0, so every slot correlates against the wrong number and the
+     * amount-scaled argument reads as unexplained. The pad looks broken rather
+     * than different.
+     */
+    let quote = null;
+    const needQuote = (dir === 'buy' && v === 0n) || dir === 'sell';
+    if (needQuote && typeof chain.getTransactionReceipt === 'function') {
+      const rcpt = await chain.getTransactionReceipt(hash).catch(() => null);
+      const other = ((rcpt && rcpt.logs) || []).filter((l) =>
+        l && l.topics && l.topics[0] === TRANSFER_TOPIC && lc(l.address) !== lc(token));
+      // A buy: the TRADER paid the curve. A sell: the CURVE paid the trader.
+      const leg = dir === 'buy'
+        ? other.find((l) => topicAddr(l.topics[1]) === trader && topicAddr(l.topics[2]) === to)
+        : other.find((l) => topicAddr(l.topics[1]) === to && topicAddr(l.topics[2]) === trader);
+      if (leg) quote = { token: lc(leg.address), amount: logAmount(leg) };
+    }
+
+    /*
+     * THE SIZE THIS SAMPLE IS DENOMINATED IN, decided where the direction is
+     * known rather than guessed downstream.
+     *
+     * A buy's size is what was PAID — native, or the quote token. A sell's is
+     * what was HANDED OVER, which is our token. Deriving it later from `value`
+     * alone can never explain a sell (value is always 0 there), and deriving it
+     * from `amount` alone reads a quote-token BUY's size as the tokens it
+     * RECEIVED — the output, not the input.
+     */
+    const size = dir === 'buy'
+      ? (v > 0n ? v : (quote ? quote.amount : 0n))
+      : logAmount(lg);
+
     rec.n++;
     // ⚠️ EVERY SAMPLE IS KEPT, not just the biggest. One trade shows the SHAPE
     // of a call; it cannot show what any argument MEANS. A slot that holds 500
@@ -241,6 +282,8 @@ async function decodeCurveIface(chain, token, opts = {}) {
     rec.samples.push({
       value: v,
       amount: logAmount(lg),
+      size,
+      quote,
       args,
       from: trader,
       to: topicAddr(lg.topics && lg.topics[2]),
@@ -269,6 +312,19 @@ async function decodeCurveIface(chain, token, opts = {}) {
     return { ok: false, why: 'the token moved, but never to or from the contract that was called — no curve in these trades' };
   }
 
+  /*
+   * ⚠️ ONE QUOTE TOKEN, OR NONE. A leg whose samples disagree about what was
+   * paid is a leg we do not understand — two pads behind one selector, a
+   * router in the middle, or a read that went wrong. Picking the commonest
+   * would put a guessed token address on a money path, which is the one thing
+   * this module exists to refuse.
+   */
+  const quoteOf = (r) => {
+    const q = r.samples.map((x) => x.quote).filter(Boolean);
+    if (!q.length || q.length !== r.samples.length) return null;
+    return q.every((x) => x.token === q[0].token) ? q[0].token : null;
+  };
+
   const mine = [...calls.values()].filter((r) => r.to === curve);
   const buy = mine.filter((r) => r.from).sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : b.n - a.n))[0] || null;
   const sell = mine.filter((r) => r.into && (!buy || r.sel !== buy.sel)).sort((a, b) => b.n - a.n)[0] || null;
@@ -281,8 +337,8 @@ async function decodeCurveIface(chain, token, opts = {}) {
     ok: !!(buy || sell),
     why: (buy || sell) ? null : 'these trades show neither a buy nor a sell through the curve',
     curve,
-    buy: buy && { selector: buy.sel, value: buy.value, args: buy.args, hash: buy.hash, seen: buy.n, native: buy.value > 0n, wide: buy.wide, samples: buy.samples },
-    sell: sell && { selector: sell.sel, args: sell.args, hash: sell.hash, seen: sell.n, wide: sell.wide, samples: sell.samples },
+    buy: buy && { selector: buy.sel, value: buy.value, args: buy.args, hash: buy.hash, seen: buy.n, native: buy.value > 0n, quote: quoteOf(buy), wide: buy.wide, samples: buy.samples },
+    sell: sell && { selector: sell.sel, args: sell.args, hash: sell.hash, seen: sell.n, quote: quoteOf(sell), wide: sell.wide, samples: sell.samples },
     samples: newest.length,
   };
 }
@@ -294,7 +350,7 @@ function describeIface(r) {
   const shape = (leg) => (leg.args || []).map((x) => (x.isToken ? 'TOKEN' : x.addr ? 'addr' : x.num === null ? '?' : 'num')).join(',');
   // `ok` no longer implies a buy leg — a sell-only history is a complete answer
   // to the sell question, and this line has to survive that.
-  const b = r.buy ? `buy ${r.buy.selector}${r.buy.native ? ' (payable)' : ''} args[${shape(r.buy)}]` : 'buy not seen';
+  const b = r.buy ? `buy ${r.buy.selector}${r.buy.native ? ' (payable)' : r.buy.quote ? ` (paid in ${r.buy.quote.slice(0, 10)}…)` : ''} args[${shape(r.buy)}]` : 'buy not seen';
   const sl = r.sell ? `sell ${r.sell.selector} args[${shape(r.sell)}]` : 'sell not seen';
   return `curve ${r.curve} · ${b} · ${sl}`;
 }
@@ -396,7 +452,9 @@ function classifySlots(leg, token, opts = {}) {
     const values = samples.map((s) => s.args[i].num);
     // The SIZE this leg is denominated in: what was paid on a buy, what was
     // handed over on a sell. Without the second half a sell explains nothing.
-    const vals = samples.map((s) => (s.value > 0n ? s.value : BigInt(s.amount || 0)));
+    // `size` is decided at collection time, where the direction is known. The
+    // fallback keeps older shapes (and the unit tests' hand-built legs) working.
+    const vals = samples.map((s) => (s.size != null ? BigInt(s.size) : (s.value > 0n ? s.value : BigInt(s.amount || 0))));
     const varied = vals.some((v) => v !== vals[0]);
     if (varied && values.every((n) => n !== null && n > 0n) && vals.every((v) => v > 0n)) {
       const r0 = (values[0] * 10n ** 18n) / vals[0];
