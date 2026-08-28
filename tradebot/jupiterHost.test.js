@@ -155,7 +155,13 @@ test('a real on-chain failure is not swallowed by the offline rule', () => {
   // trade errors whose wording overlaps ("timeout", "not confirmed").
   assert.strictEqual(i18n.errorKey('transaction was not confirmed in 30.00 seconds'), 'err.unconfirmed');
   assert.strictEqual(i18n.errorKey('insufficient funds for gas'), 'err.insufficient');
-  assert.strictEqual(i18n.errorKey('no route / no liquidity for this token on Jupiter'), 'err.no_price');
+  // err.no_ROUTE since the two were split: this line's point is that the offline
+  // rule does not swallow it, and that still holds. The split exists because
+  // "no route" was rendering as "couldn't read pricing, try again in a moment"
+  // under a 🔄 Try again button, so a token with no tradable pool had users
+  // retrying it forever — see i18n.test.js.
+  assert.strictEqual(i18n.errorKey('no route / no liquidity for this token on Jupiter'), 'err.no_route');
+  assert.notStrictEqual(i18n.errorKey('no route / no liquidity for this token on Jupiter'), 'err.offline');
   assert.strictEqual(i18n.errorKey('execution reverted: IIA'), 'err.slippage');
 });
 

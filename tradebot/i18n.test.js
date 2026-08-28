@@ -75,6 +75,7 @@ test('each failure class maps to its own message, in both languages', () => {
     ['execution reverted', 'err.slippage'],
     ['trade sent but not confirmed', 'err.unconfirmed'],
     ['could not price this buy on Base V3 (pool read failed)', 'err.no_price'],
+    ['no route / no liquidity for this token on Jupiter', 'err.no_route'],
     ['NotAllowed: private beta', 'err.restricted'],
     ['something nobody has seen before', 'err.generic'],
   ];
@@ -149,4 +150,45 @@ test('the bot reads the stored language instead of assuming English', () => {
   // single caller. If this count goes back to zero, the feature is dead again.
   const reads = (TG.match(/core\.getLang\(/g) || []).length;
   assert.ok(reads > 0, 'nothing in the UI reads the user language');
+});
+
+test('⚠️ "no route" is a fact about the TOKEN and never reads as a hiccup', () => {
+  // It used to match the err.no_price rule and come out as "Couldn't read live
+  // pricing … please try again in a moment", under a 🔄 Try again button — so a
+  // user whose token has no tradable pool was told to keep retrying, and did.
+  for (const raw of [
+    'no route / no liquidity for this token on Jupiter',
+    'no liquidity / zero quote for this token on Base',
+    'no liquidity / zero quote for this sell on Base',
+  ]) {
+    assert.equal(i18n.errorKey(new Error(raw)), 'err.no_route', raw);
+    for (const lang of i18n.LANGS) {
+      const msg = i18n.errorText(lang, new Error(raw), 'buy');
+      assert.ok(msg.length > 20, `${lang} rendered empty`);
+      // Never invite a retry that cannot succeed…
+      assert.ok(!/try again in a moment|coba lagi sebentar/i.test(msg), `${lang} still says "try again in a moment": ${msg}`);
+      // …and always say the money is untouched, which is the first thing
+      // somebody asks when a buy fails on two wallets at once.
+      assert.ok(/nothing was spent|tidak ada dana keluar/i.test(msg), `${lang} does not say nothing was spent`);
+    }
+  }
+});
+
+test('a pool READ that failed is still ours, and still worth retrying', () => {
+  // The neighbouring string differs by two words and means the opposite: we
+  // could not look, rather than there is nothing to look at.
+  for (const raw of [
+    'could not quote this buy on Base V3 (no pool? try again): boom',
+    'could not price this buy on Base V3 (pool read failed)',
+  ]) {
+    assert.equal(i18n.errorKey(new Error(raw)), 'err.no_price', raw);
+  }
+});
+
+test('a transport failure still outranks both — nothing was ever sent', () => {
+  // Ordered first on purpose: "fetch failed" carries no words about routes, but
+  // a host that never answered must not be reported as a token with no pool.
+  for (const raw of ['fetch failed', "can't reach lite-api.jup.ag", 'getaddrinfo ENOTFOUND']) {
+    assert.equal(i18n.errorKey(new Error(raw)), 'err.offline', raw);
+  }
 });
