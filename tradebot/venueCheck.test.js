@@ -31,6 +31,8 @@ const TOKEN = '0x4e51c77048ead3d01e2cb1f96dfcad37bf587777';
 const PAIR  = '0x8bb731b2e3b04d69c0736b1cc1dc27e6fe12c657';
 const QUOTE = '0xe93237c50d904957cf27e7b1133b510c669c2e74';
 const ROUTER = '0x1111111111111111111111111111111111111111';
+const FACTORY = '0x2222222222222222222222222222222222222222';
+const PAIR_CREATED = '0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9';
 const HEAD = 49329875;
 const SERVES = 600;        // the widest range this node will actually answer
 
@@ -42,7 +44,16 @@ const I = new ethers.Interface([
   'function getAmountsOut(uint256,address[]) view returns (uint256[])',
 ]);
 
-const stats = { wide: 0, stepped: 0 };
+/*
+ * ⚠️ THE NODE TREATS THE TWO WIDE ASKS DIFFERENTLY, AND SO MUST THIS STUB.
+ * It silently empties a wide ADDRESS-filtered `getLogs` — the defect the stepped
+ * walk exists for — and it answers a wide TOPIC-filtered one, which is what
+ * `curveTrade`'s seed is built on and what makes the factory findable in a
+ * single query. Counting them as one thing would make section 2b look like the
+ * very bug it avoids.
+ */
+const stats = { wideAddr: 0, wideTopic: 0, stepped: 0 };
+let silentPair = false;   // the real case: a pair that has not traded in the walked window
 let server;
 
 function rpc(req, res) {
@@ -56,9 +67,24 @@ function rpc(req, res) {
     if (r.method === 'eth_getLogs') {
       const f = r.params[0];
       const from = parseInt(f.fromBlock, 16), to = parseInt(f.toBlock, 16);
-      if (to - from > SERVES) { stats.wide++; return send([]); }   // ⚠️ SILENT, not an error
+      const byTopic = !f.address && Array.isArray(f.topics) && f.topics.length;
+      if (to - from > SERVES && !byTopic) { stats.wideAddr++; return send([]); }   // ⚠️ SILENT, not an error
+      if (byTopic) {
+        stats.wideTopic++;
+        // The pair's PairCreated log, emitted BY the factory — topic[1] is token0.
+        const want = '0x' + '0'.repeat(24) + TOKEN.slice(2);
+        if (f.topics[0] === PAIR_CREATED && String(f.topics[1] || '').toLowerCase() === want) {
+          return send([{
+            address: FACTORY, topics: [PAIR_CREATED, want, '0x' + '0'.repeat(24) + QUOTE.slice(2)],
+            data: '0x' + '0'.repeat(24) + PAIR.slice(2) + '00'.repeat(32),
+            blockNumber: '0x' + (HEAD - 900000).toString(16), blockHash: '0x' + 'be'.repeat(32),
+            transactionHash: '0x' + 'cd'.repeat(32), transactionIndex: '0x0', logIndex: '0x0', removed: false,
+          }]);
+        }
+        return send([]);
+      }
       stats.stepped++;
-      if (String(f.address).toLowerCase() === PAIR && to >= HEAD - 1200) {
+      if (!silentPair && String(f.address).toLowerCase() === PAIR && to >= HEAD - 1200) {
         return send([{
           address: PAIR, topics: ['0x' + 'd7'.repeat(32)], data: '0x',
           blockNumber: '0x' + (HEAD - 100).toString(16), blockHash: '0x' + 'be'.repeat(32),
@@ -68,9 +94,10 @@ function rpc(req, res) {
       return send([]);
     }
     if (r.method === 'eth_getTransactionByHash') {
+      const isCreation = String(r.params[0]).toLowerCase() === '0x' + 'cd'.repeat(32);
       return send({
         hash: r.params[0], blockHash: '0x' + 'be'.repeat(32), blockNumber: '0x' + (HEAD - 100).toString(16),
-        transactionIndex: '0x0', from: '0x' + 'cc'.repeat(20), to: ROUTER, value: '0x0',
+        transactionIndex: '0x0', from: '0x' + 'cc'.repeat(20), to: isCreation ? ROUTER : ROUTER, value: '0x0',
         gas: '0x30d40', gasPrice: '0x3b9aca00', nonce: '0x1', type: '0x0', chainId: '0x1237',
         input: '0x38ed1739' + '00'.repeat(160), v: '0x1b', r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32),
       });
@@ -86,6 +113,7 @@ function rpc(req, res) {
         return send('0x');                                  // no factory(), no fee() — the real fork
       }
       if (t === QUOTE && sel === I.getFunction('symbol').selector) return enc('symbol', ['MSFT']);
+      if (t === FACTORY && sel === I.getFunction('getPair').selector) return enc('getPair', [PAIR]);
       if (t === ROUTER && sel === I.getFunction('getAmountsOut').selector) {
         const [, p] = I.decodeFunctionData('getAmountsOut', data);
         if (p.length === 2) return enc('getAmountsOut', [[10n ** 18n, 1394n * 10n ** 18n]]);
@@ -123,11 +151,38 @@ async function run() {
 test.before(async () => { server = http.createServer(rpc); await new Promise((r) => server.listen(8611, r)); });
 test.after(() => server && server.close());
 
-test('⚠️ it never makes an over-wide getLogs — the node answers those with silence', async () => {
-  stats.wide = 0; stats.stepped = 0;
+test('⚠️ it never makes an over-wide ADDRESS-filtered getLogs — those come back silently empty', async () => {
+  stats.wideAddr = 0; stats.wideTopic = 0; stats.stepped = 0;
   await run();
-  assert.equal(stats.wide, 0, 'a wide ask is silently emptied by this node — the walk exists to avoid it');
+  assert.equal(stats.wideAddr, 0, 'a wide address-filtered ask is silently emptied — the walk exists to avoid it');
   assert.ok(stats.stepped > 10, `the stepped walk did not run — ${stats.stepped} narrow ask(s)`);
+  assert.ok(stats.wideTopic > 0, 'the factory query is topic-filtered and whole-chain BY DESIGN — that one is fine');
+});
+
+test('⚠️ it finds the FACTORY from its own PairCreated log, and proves it with getPair', async () => {
+  const out = await run();
+  assert.match(out, new RegExp(`factory ${FACTORY}`, 'i'), 'the emitting address of PairCreated IS the factory');
+  assert.match(out, /getPair\(\) resolves back to this exact pair — proved/);
+  assert.match(out, new RegExp(`created by a call to ${ROUTER}`, 'i'));
+});
+
+test('⚠️ a pair with NO recent trades still yields a PROVED router', async () => {
+  /*
+   * This is the real case and the one the first cut could not handle: the pair
+   * had not traded in 39,999 blocks, so a probe that only read recent trades
+   * produced no candidates and gave up. The pair's CREATION cannot go stale.
+   *
+   * ⚠️ The first version of this test ran against a stub whose pair DID have a
+   * log, so it passed on code that only probed recent trades — a mutation run
+   * said so. The silence has to be real for the test to mean anything.
+   */
+  silentPair = true;
+  try {
+    const out = await run();
+    assert.match(out, /no logs from the pair/, 'precondition: the pair must actually be silent here');
+    assert.match(out, new RegExp(`factory ${FACTORY}`, 'i'), 'the factory is still found — it comes from creation');
+    assert.match(out, /quotes quote → token/, 'the creator was never probed as a router');
+  } finally { silentPair = false; }
 });
 
 test('it reaches the V2 verdict, names the quote token, and says the factory is not ours', async () => {

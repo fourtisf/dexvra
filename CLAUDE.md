@@ -5188,11 +5188,36 @@ is the failure this file keeps paying for.
   narrow ranges and silently EMPTIES wide ones, so a version that goes back to
   one wide ask finds nothing in the test exactly as it found nothing on the box.
 
-Mutation-tested: the single wide `getLogs` and the missing `getAmountsOut` proof
-each fail between one and two tests.
+#### The router was in the pair's BIRTH, not in its trades
+
+The next run walked correctly — 80 steps, 39,999 blocks — and found **zero
+logs**: that pair genuinely had not traded in ~22 hours. So a probe that reads
+the router out of recent TRADES gives up on exactly the tokens most likely to
+need it, and the answer was in the wrong place entirely.
+
+**A `PairCreated` log is emitted BY THE FACTORY, and its two tokens are
+INDEXED.** So one topic-filtered whole-chain query names the factory — the log's
+own `address` — with no scan at all. This node empties a wide ADDRESS-filtered
+ask and answers wide TOPIC-filtered ones, which is the rule `curveTrade`'s seed
+already relies on, and it is exactly the shape of this query.
+
+- **The factory is PROVED, not assumed**: `getPair(token0, token1)` has to
+  resolve back to this exact pair.
+- **The transaction that emitted it is the one that CREATED the pair**, and its
+  `to` is whatever added the first liquidity — a router candidate that cannot go
+  stale, still proved by `getAmountsOut`.
+- ⚠️ **The router probe now runs whether or not the pair traded lately.** It sat
+  inside `if (logs.length)`, so a silent pair produced no candidates at all.
+- ⚠️ **AND THE TEST FOR THAT PASSED ON THE BROKEN CODE** — the stub's pair had a
+  log, so the silence was never real and the mutation survived. A precondition
+  assertion (`no logs from the pair`) is what makes it mean anything now.
+
+Mutation-tested: the single wide `getLogs`, the missing `getAmountsOut` proof,
+the missing factory discovery, and the trade-gated router probe each fail
+between one and two tests.
 
 ```bash
-cd tradebot && node --test venueCheck.test.js   # 4 tests, no network
+cd tradebot && node --test venueCheck.test.js   # 6 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but what it reports is a property of the

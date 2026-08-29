@@ -167,10 +167,70 @@ async function main() {
     note('so it is a v4-style singleton, a bonding curve, or a custom AMM');
   }
 
-  // ── 3. what does a real trade actually call? ─────────────────────────────
-  console.log(`\n${C}3. What does a real trade call? ${D}(the pair's own logs — narrow, not a scan)${X}`);
+  /*
+   * ── 2b. WHOSE factory is it? ─────────────────────────────────────────────
+   *
+   * ⚠️ THIS IS THE CHEAP, DECISIVE QUESTION, and the first cut of this script
+   * did not ask it — it went hunting for the router in the pair's trades, which
+   * fails outright on a pair that has not traded lately (this one: 80 steps,
+   * 39,999 blocks, zero logs).
+   *
+   * A `PairCreated` log is emitted BY THE FACTORY, and its two tokens are
+   * INDEXED — so one topic-filtered query over the whole chain finds it, and the
+   * log's own `address` IS the factory. No scan, no guessing. This node empties
+   * a wide ADDRESS-filtered ask and has answered wide TOPIC-filtered ones (the
+   * rule `curveTrade`'s seed is built on), which is exactly the shape this is.
+   *
+   * The transaction that emitted it is the one that CREATED the pair, and its
+   * `to` is whatever added the first liquidity — the router, or the launchpad
+   * contract that calls it. A candidate either way, proved below by getAmountsOut.
+   */
   let head = 0;
   try { head = Number(await prov.getBlockNumber()); } catch (e) { bad(`could not read the chain head (${(e && e.message) || e})`); }
+
+  const PAIR_CREATED = '0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9';
+  let factory = '', creator = '';
+  if (isV2 && head) {
+    console.log(`\n${C}2b. Whose factory created this pair? ${D}(one topic-filtered query — no scan)${X}`);
+    const padded = '0x' + '0'.repeat(24) + token.slice(2).toLowerCase();
+    let found = null, asked = 0, failed = null;
+    for (const topics of [[PAIR_CREATED, padded], [PAIR_CREATED, null, padded]]) {
+      if (found) break;
+      asked++;
+      try {
+        const got = await prov.getLogs({ topics, fromBlock: 0, toBlock: head });
+        if (Array.isArray(got) && got.length) found = got[0];
+      } catch (e) { failed = e; }
+    }
+    if (found) {
+      factory = ethers.getAddress(found.address);
+      ok(`factory ${factory}  ${D}(block ${Number(found.blockNumber)})${X}`);
+      // ⚠️ PROVED, not assumed: the factory must resolve THIS pair back.
+      const fAbi = new ethers.Interface(['function getPair(address,address) view returns (address)']);
+      try {
+        const raw = await prov.call({ to: factory, data: fAbi.encodeFunctionData('getPair', [t0, t1]) });
+        const back = raw && raw !== '0x' ? fAbi.decodeFunctionResult('getPair', raw)[0] : null;
+        if (back && lc(back) === lc(pair)) ok('…and getPair() resolves back to this exact pair — proved');
+        else warn(`getPair() answered ${back} — that is NOT this pair, so this factory is not the one`);
+      } catch (_) { warn('the factory does not expose getPair() — unusual for a V2 fork'); }
+      const ctx = await prov.getTransaction(found.transactionHash).catch(() => null);
+      if (ctx && ctx.to) {
+        creator = ethers.getAddress(ctx.to);
+        ok(`created by a call to ${creator}  ${D}selector ${String(ctx.data).slice(0, 10)}${X}`);
+        note('that is the router or the launchpad contract that calls it — proved below');
+      }
+      console.log(`\n${G}   → Dexvra can route this venue once it knows that factory and a router.${X}`);
+    } else if (failed) {
+      bad(`the node refused the topic query (${(failed && (failed.shortMessage || failed.message)) || failed})`);
+      note('so this run says nothing about the factory — it is about the node, not the pair');
+    } else {
+      warn(`no PairCreated log names this token in ${asked} topic-filtered quer(ies)`);
+      note('either this node empties whole-chain queries too, or the fork renamed the event');
+    }
+  }
+
+  // ── 3. what does a real trade actually call? ─────────────────────────────
+  console.log(`\n${C}3. What does a real trade call? ${D}(the pair's own logs — narrow, not a scan)${X}`);
   let logs = [];
   const SPAN = Math.max(200, Number(optOf('blocks') || 40000));
   if (head) {
@@ -202,15 +262,26 @@ async function main() {
     note(`walked ${w.walked} block(s) in ${w.stepped} step(s) — ${logs.length} log(s)`);
   }
   if (!logs.length) {
-    warn(`no logs from the pair in the blocks actually walked`);
+    warn('no logs from the pair in the blocks actually walked');
     note('rerun with --blocks and a larger number if the pair trades rarely');
-  } else {
+  }
+
+  /*
+   * ⚠️ THE ROUTER PROBE RUNS WHETHER OR NOT THE PAIR HAS TRADED LATELY, and the
+   * first cut did not — it lived inside `if (logs.length)`, so a pair with no
+   * recent trades (this one: 80 steps, 39,999 blocks, zero logs) produced no
+   * candidates at all and the check simply gave up. 2b names a candidate from
+   * the pair's CREATION, which cannot go stale, so there is always something to
+   * prove or rule out.
+   */
+  {
     const seen = new Map();
     for (let i = logs.length - 1; i >= 0 && seen.size < 4; i--) {
       const h = logs[i].transactionHash;
       if (h && !seen.has(h)) seen.set(h, true);
     }
     const routers = new Set();
+    if (creator) routers.add(creator);   // the pair's own creator is a candidate too
     for (const h of seen.keys()) {
       const tx = await prov.getTransaction(h).catch(() => null);
       if (!tx || !tx.data) continue;
