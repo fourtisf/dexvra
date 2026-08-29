@@ -6514,6 +6514,60 @@ the relative time being server-rendered again. Each fails exactly one test.
 
 **Config a fix depends on:** nothing.
 
+#### …and the one-liner I handed the operator printed `0`
+
+`curl -s https://dexvra.io/ | grep -c 'class="row'` → **0**, run in the seconds
+after `pm2 restart dexvra`. It read as a broken deploy and it was the system
+working: a process that has just booted has an empty cache, `SiteLayout` is
+BOUNDED, so it drops the board from the HTML rather than hang. **A check that
+fails on its own happy path teaches the reader to ignore it** — the state
+`chart:preview` sat in for weeks — and this one was mine, handed over in a
+message.
+
+- **`npm run firstpaint:check` RETRIES**, says *"the process looks cold, waiting
+  for the market read…"*, and reports how much warm-up it needed. It prints the
+  build stamp for the reason `fonts:check` does, and it exits non-zero only when
+  the board is genuinely absent from a warm server.
+- **It defaults to the LOCAL server and says why that matters.** Green locally
+  and red on `https://dexvra.io` is one specific answer — something in front of
+  the app is serving cached HTML — and pointing the same script at the public
+  origin is how to tell.
+- ⚠️ **The cold window is now mostly closed at the source.** `instrumentation.ts`
+  starts the board load at BOOT, so the cache is filling before the first
+  visitor arrives (`[boot] board warm in 455ms · 14 token(s) · live false`).
+  Fire-and-forget: `register()` blocks the server from accepting connections,
+  and waiting on a market read before serving anything is the stall this exists
+  to avoid.
+- ⚠️ **AND IT MUST LIVE IN ITS OWN FILE.** `instrumentation.ts` is compiled for
+  the EDGE runtime too, and an early `return` is not something a bundler can act
+  on: written inline, webpack pulled `providers → store → mongo` into the edge
+  bundle and the build failed outright on `Can't resolve 'net'`. A dynamic
+  import of a separate module inside a positive
+  `process.env.NEXT_RUNTIME === "nodejs"` branch is the shape Next eliminates.
+
+⚠️ **And the check's own first two cuts each carried a defect of exactly the kind
+it exists to catch**, which is why its predicates are exported and unit-tested
+rather than trusted:
+
+- **It reported the `<noscript>` fallback as render-blocking.** That link is
+  supposed to have no `media="print"` — nothing can promote it without JS — so
+  the check was red on correct code, which is the failure it was written about.
+- **It printed ✓ over a stylesheet it could not read.** The CSS fetches never
+  looked at the status; against a server whose build had been replaced under it
+  every request came back a 400 HTML page with no `@import` in it, and *"no
+  stylesheet @imports over the network"* was reported about an error page.
+  "Could not ask" and "nothing there" are different facts — the rule this repo
+  is built on, broken in the script written to enforce it.
+- **And the `@import` regex matched only the source spelling.** A minifier
+  rewrites `@import url('x')` as `@import"x"`, which is what the build actually
+  emits — so it would have passed on the very revision it exists to catch.
+
+```bash
+cd /opt/dexvra && npm run firstpaint:check          # against the local server
+cd /opt/dexvra && npm run firstpaint:check -- https://dexvra.io   # …and the public one
+pm2 logs dexvra --lines 30 --nostream | grep -F '[boot]'
+```
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

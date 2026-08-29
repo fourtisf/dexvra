@@ -28,6 +28,12 @@ export async function register(): Promise<void> {
     gtBanner();
     const { chartSourceBanner } = await import("./lib/ohlcv");
     console.log(chartSourceBanner());
+    // Separate module, positive guard — see instrumentation.node.ts. Written
+    // inline it takes mongo into the edge bundle and the build fails.
+    if (process.env.NEXT_RUNTIME === "nodejs") {
+      const { warmBoard } = await import("./instrumentation.node");
+      warmBoard();
+    }
   } catch (err) {
     console.error("[boot] instrumentation failed (the site is unaffected):", err);
   }

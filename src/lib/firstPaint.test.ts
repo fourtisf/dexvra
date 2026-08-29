@@ -84,3 +84,51 @@ test("⚠️ a relative time is not rendered on the server — it is the one str
   assert.match(body, /loading \|\| !mounted \? "…" : <>\{freshness\(updatedAt\)\}/);
   assert.match(body, /useEffect\(\(\) => setMounted\(true\), \[\]\)/);
 });
+
+// ── The check itself ────────────────────────────────────────────────────────
+// `npm run firstpaint:check` replaced a one-liner that printed 0 in the seconds
+// after a restart and read as a broken deploy. Its own first two cuts each
+// carried a defect of exactly the kind it exists to catch, so its predicates
+// are exported and driven here rather than trusted.
+const { boardRows, fontVerdict, importsOverNetwork } = await import("../../scripts/firstpaint-check.mjs");
+
+test("the row count ignores the header row", () => {
+  assert.equal(boardRows('<div class="board"><div class="row head">h</div><div class="row  ">a</div><div class="row ">b</div></div>'), 2);
+  assert.equal(boardRows('<div class="row head">h</div>'), 0, "a header alone is not a board");
+  assert.equal(boardRows("<div>nothing</div>"), 0);
+});
+
+test("⚠️ the <noscript> fallback is SUPPOSED to have no media=print — the check may not call it broken", () => {
+  // The first cut matched it and reported correct code as red. A check that is
+  // red on a healthy page teaches the reader to ignore the red.
+  const good =
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>' +
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?x" media="print" data-webfont=""/>' +
+    "<script>!function(){var l=q();l.sheet?go():l.addEventListener('load',go)}()</script>" +
+    '<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?x"/></noscript>';
+  const v = fontVerdict(good);
+  assert.deepEqual(
+    { links: v.links, blocking: v.blocking, promoted: v.promoted, noscript: v.noscript, preconnected: v.preconnected },
+    { links: 1, blocking: 0, promoted: true, noscript: true, preconnected: true },
+  );
+});
+
+test("…and it does catch a genuinely render-blocking font link", () => {
+  const bad = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?x"/>';
+  const v = fontVerdict(bad);
+  assert.equal(v.blocking, 1);
+  assert.equal(v.promoted, false);
+  assert.equal(v.noscript, false);
+  assert.equal(v.preconnected, false);
+});
+
+test("⚠️ a MINIFIED @import is the one the build actually emits", () => {
+  // The first cut only matched the source spelling `@import url('…')`, so it
+  // printed ✓ over the very build it exists to catch: a minifier rewrites that
+  // as `@import"…"`.
+  assert.equal(importsOverNetwork('@import"https://fonts.googleapis.com/css2?x";body{}'), true, "minified");
+  assert.equal(importsOverNetwork("@import url('https://fonts.googleapis.com/css2?x');"), true, "source spelling");
+  assert.equal(importsOverNetwork("@import url(https://fonts.googleapis.com/css2?x);"), true, "unquoted");
+  assert.equal(importsOverNetwork('@import "./local.css";'), false, "a local import costs no round trip");
+  assert.equal(importsOverNetwork("body{color:red}"), false);
+});
