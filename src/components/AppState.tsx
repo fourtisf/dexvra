@@ -88,10 +88,33 @@ function saveLocal(key: string, value: unknown) {
 const POLL_TOKENS_MS = 30_000;
 const POLL_FNG_MS = 5 * 60_000;
 
-export function AppProvider({ children }: { children: ReactNode }) {
+/**
+ * ⚠️ THE BOARD ARRIVES WITH THE HTML, or the reader watches a waterfall.
+ *
+ * Every page under (site) is a client component reading `data` from here, and
+ * `data` started as `null` — so first paint was skeleton rows and the real
+ * board could not appear until the browser had downloaded the bundle, hydrated,
+ * and then made a round trip of its own. Three serial steps before the first
+ * request for the thing the page is FOR. `SiteLayout` is a server component and
+ * already knows the answer, so it hands it over as a prop and the first render
+ * on both sides has the board in it.
+ *
+ * The polling effect below is untouched and still fetches immediately on mount:
+ * seeding the state can then only ever make the first paint earlier, never the
+ * data staler, which is what keeps this from being a trade.
+ */
+export function AppProvider({
+  children,
+  initialData = null,
+  initialFng = null,
+}: {
+  children: ReactNode;
+  initialData?: TokensPayload | null;
+  initialFng?: FearGreed | null;
+}) {
   const router = useRouter();
-  const [data, setData] = useState<TokensPayload | null>(null);
-  const [fng, setFng] = useState<FearGreed | null>(null);
+  const [data, setData] = useState<TokensPayload | null>(initialData);
+  const [fng, setFng] = useState<FearGreed | null>(initialFng);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [myListings, setMyListings] = useState<MyListing[]>([]);

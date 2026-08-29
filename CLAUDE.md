@@ -6407,6 +6407,113 @@ mostly DexScreener-priced rather than slow and mostly unpriced.
 raises the ceiling rather than dividing it — and this is the eighth place in
 this file that sentence appears.
 
+### "masih lama juga" — and the browser named two causes the server could not
+
+The cache fix made `/api/tokens` fast and the page was still slow, because
+**nothing above had touched the reason the reader waits.** Measured this time in
+a real browser (Chromium is on the box; `PLAYWRIGHT_BROWSERS_PATH` points at
+it), timing the thing that actually matters — *when does a real board row exist
+in the DOM*:
+
+```
+BEFORE   first real board row: 13470ms      JS OFF: never
+AFTER    first real board row:   467ms      JS OFF:  478ms
+```
+
+⚠️ **`JS OFF: never` is the whole first cause.** Every page under `(site)` is a
+client component reading `data` from `AppState`, and `data` started as `null` —
+so the HTML held skeleton rows and the real board was three SERIAL steps away:
+download the bundle, hydrate, then make a round trip of its own. The server
+already knew the answer.
+
+- **`SiteLayout` is a server component, so it hands the payload over as a
+  prop.** `AppProvider` seeds its two `useState`s from it and the first render
+  on both sides has the board in it. The polling effect is untouched and still
+  fetches on mount, which is what keeps this a pure head start rather than a
+  trade against freshness.
+- ⚠️ **…so the segment has to be `force-dynamic`.** These pages were prerendered
+  at build time, which is only fast the way a photograph of a board is fast.
+  Left static WITH a data fetch in it, the board would instead be frozen at
+  whatever the market looked like when somebody last ran `npm run build` —
+  worse than either. Measured: `/community` (same layout, near-empty page) has
+  the same TTFB as `/`, so server-rendering the whole board costs nothing
+  detectable; the TTFB is the data call, and that is a cache read.
+- **`within(…, SSR_WAIT_MS)` bounds both payloads at 1.2s and failure is free.**
+  Once anything is warm these are microsecond map reads; on a cold process the
+  honest answer is to ship the shell and let the client fetch, which is exactly
+  what the page did before. **Seeding may make the first paint earlier; it must
+  never make the response slower than the static shell it replaced.**
+- ⚠️ **A RELATIVE TIME MAY NOT BE SERVER-RENDERED.** `freshness(updatedAt)` in
+  the Market Movers header is the one string whose value depends on WHEN it is
+  rendered, not on what: the server computes it against its clock and the
+  browser against its own a second later, which is a hydration mismatch React
+  patches over in silence. It waits for mount. Audited the rest — every other
+  time on the page (`listedMinutesAgo`, the signal ages, the Fear & Greed age)
+  is a NUMBER computed into the payload server-side, so it is identical on both
+  sides, and the `Math.random` in `TokenBoard` is inside an effect.
+
+#### ⚠️ The second cause was one line of CSS, and it was the biggest
+
+The request trace said it outright — `/api/tokens` **was not requested until
+t=13056ms**, and the thing in front of it was `fonts.googleapis.com`:
+
+```
+   12466ms  start@  430  FAIL https://fonts.googleapis.com/css2?family=Archivo…
+     407ms  start@   13  /
+     375ms  start@13056  /api/tokens
+```
+
+`globals.css` opened with `@import url('https://fonts.googleapis.com/…')`, which
+is the slowest way there is to load a font. The browser must download and parse
+`globals.css` *before it can even discover the rule*, then open a fresh
+connection to a third-party origin (DNS + TCP + TLS) for the CSS, then a third
+to `fonts.gstatic.com` for the `.woff2` files — **three round trips in series,
+all render-blocking. And a pending stylesheet blocks SCRIPT EXECUTION**, so
+React could not hydrate and the board's own request could not be made until
+Google had answered. This box cannot reach Google Fonts, so it paid the full
+12.5s; a reader on a slow phone pays a smaller version of the same bill on every
+load, and it is in front of everything.
+
+- **The link moved to `layout.tsx` and is NON-BLOCKING.** `media="print"` does
+  not match a screen, so the browser fetches it at low priority and never blocks
+  on it; a five-line inline script promotes it to `media="all"` once it has
+  arrived. Both origins are preconnected, `fonts.gstatic.com` with `crossorigin`
+  because font files are a CORS fetch and a preconnect without it warms the
+  wrong connection.
+- ⚠️ **`l.sheet ? go() : l.addEventListener('load', go)`.** A cached stylesheet
+  can be ready before the script runs, and an `onload` that has already fired
+  never fires again — the fallback-that-never-fires shape, on the path that
+  decides whether the site has any brand type at all.
+- **`<noscript>` carries a plain link.** With no JS nothing can promote it, and
+  a reader with no JS has no hydration to block anyway.
+- `display=swap` was already in the URL, so text has always been readable in the
+  fallback stack while the faces arrive — which is what makes this safe.
+- ⚠️ **NOT `next/font/google`, and the reason is the deploy.** It is the better
+  answer — Next downloads the faces at BUILD time and self-hosts them, so there
+  is no third-party hop at all — and it makes `npm run build` require egress to
+  Google. This sandbox has none, so it could not have been built or verified
+  here, and **shipping a build step that cannot be run is how a deploy breaks at
+  the worst moment.** Worth doing on the box, where it can be measured.
+- **Noted, deliberately not changed:** `--fd` is `'Sora','Space Grotesk',…` and
+  **Sora is not in that URL** — the brand display face has never been loaded on
+  the site, so every heading falls back. Adding it is a visual change and
+  another font download; it is the operator's call, not a side effect of a
+  performance fix.
+
+```bash
+npm run build && node node_modules/next/dist/bin/next start -p 3055 &
+curl -s http://127.0.0.1:3055/ | grep -c 'class="row'      # the board is IN the html
+node --test --experimental-strip-types src/lib/firstPaint.test.ts
+```
+
+Nine guarantees MUTATION-TESTED rather than argued — the `@import` returning,
+the stylesheet going render-blocking, the promoter missing a cached file, the
+preconnect losing its CORS flag, the layout dropping the seed, the segment going
+back to prerendered, SSR waiting unbounded, `AppProvider` ignoring the seed, and
+the relative time being server-rendered again. Each fails exactly one test.
+
+**Config a fix depends on:** nothing.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

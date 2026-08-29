@@ -1,4 +1,18 @@
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Instrument+Serif:ital@1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap');
+/* ⚠️ THE WEBFONTS ARE NOT @import'ED HERE, AND THAT WAS THE PAGE'S LONGEST
+   SERIAL WAIT. A CSS @import is the slowest way there is to load a font: the
+   browser has to download and parse THIS file before it can even discover the
+   rule, then open a fresh connection to a third-party origin (DNS + TCP + TLS)
+   for the CSS, then a third to fonts.gstatic.com for the .woff2 files — three
+   round trips in series, all of them render-blocking. And a pending stylesheet
+   blocks SCRIPT EXECUTION, so React could not hydrate and the board's own
+   request could not even be made until Google Fonts had answered.
+   Measured in a browser against a box that cannot reach fonts.googleapis.com:
+   /api/tokens was not requested until t=13056ms. That box is the pathological
+   case; a reader on a slow phone pays a smaller version of the same bill on
+   every single load.
+   The link lives in src/app/layout.tsx now, non-blocking, with the two
+   origins preconnected. `font-display: swap` was already in the URL, so text
+   has always been readable in the fallback face while it arrives. */
 
 :root{
   --bg:#090C12; --panel:#0D1119; --card:#101624;

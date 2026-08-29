@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { BOT_URL, BRAND_NAME, TELEGRAM_TRENDING_URL, TELEGRAM_URL, X_LISTING_URL, X_URL } from "@/config/brand";
+import { within } from "@/lib/cache";
+import { getFearGreed, getTokensPayload } from "@/lib/providers";
 import { AppProvider } from "@/components/AppState";
 import { WalletModal } from "@/components/WalletModal";
 import { ListingModal } from "@/components/ListingModal";
@@ -13,9 +15,52 @@ import { Topbar } from "@/components/Topbar";
 // now (primary links inline, everything else behind the ⋮ menu, which
 // Sidebar.tsx still feeds via NAV_GROUPS). The admin panel (/panel) lives
 // outside this group and never renders any of it.
-export default function SiteLayout({ children }: { children: ReactNode }) {
+/**
+ * ⚠️ RENDERED PER REQUEST, because it now carries data.
+ *
+ * These pages were prerendered at build time, which is only fast in the way a
+ * photograph of a board is fast: the HTML held skeleton rows, and the real
+ * numbers were three serial steps away (bundle → hydrate → fetch). Left static
+ * with a data fetch in it, the board would instead be frozen at whatever the
+ * market looked like when somebody last ran `npm run build`, which is worse
+ * than either.
+ */
+export const dynamic = "force-dynamic";
+
+/**
+ * How long server rendering may wait for the two payloads.
+ *
+ * ⚠️ SHORT, AND FAILURE IS FREE. Both are cache reads that answer in
+ * microseconds once anything is warm (lib/cache serves an expired entry
+ * instantly), so this only ever binds on a cold process — and there the honest
+ * answer is to ship the shell and let the client fetch, which is exactly what
+ * the page did before any of this. Seeding the state can make the first paint
+ * earlier; it must never be able to make the response slower than the static
+ * shell it replaced.
+ */
+const SSR_WAIT_MS = 1_200;
+
+async function seed() {
+  try {
+    const [tokens, fng] = await Promise.all([
+      within(getTokensPayload(), SSR_WAIT_MS),
+      within(getFearGreed(), SSR_WAIT_MS),
+    ]);
+    return {
+      initialData: tokens.ok ? tokens.value : null,
+      initialFng: fng.ok ? fng.value : null,
+    };
+  } catch {
+    // The client fetches both on mount regardless, so a server-side failure
+    // costs the head start and nothing else.
+    return { initialData: null, initialFng: null };
+  }
+}
+
+export default async function SiteLayout({ children }: { children: ReactNode }) {
+  const { initialData, initialFng } = await seed();
   return (
-    <AppProvider>
+    <AppProvider initialData={initialData} initialFng={initialFng}>
       <div className="app">
         <div className="main">
           <Topbar />

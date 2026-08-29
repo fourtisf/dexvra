@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BoardToken, PeriodKey } from "@/lib/types";
 import { fmtAge, fmtCap } from "@/lib/format";
 import { changeReading, freshness, movers, tradedEnough, type MoverKind } from "@/lib/home";
@@ -144,6 +144,14 @@ export function MarketMovers({
   loading?: boolean;
 }) {
   const [frame, setFrame] = useState<PeriodKey>("24h");
+  // ⚠️ A RELATIVE TIME MAY NOT BE RENDERED ON THE SERVER. The board now arrives
+  // with the HTML, so this line would be computed once against the server's
+  // clock and again, a second or two later, against the browser's — different
+  // text for the same props, which is a hydration mismatch React patches over
+  // silently. It is the one string on this page whose value depends on WHEN it
+  // is rendered rather than on what was rendered.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const lists = useMemo(
     () => DECKS.map((d) => ({ deck: d, rows: movers(tokens, d.kind, frame) })),
     [tokens, frame],
@@ -163,7 +171,7 @@ export function MarketMovers({
         {/* "$0 traded" during load is a sum over a market nobody has read —
             the same false claim as the empty cards, one line up. */}
         <span className="mv-stamp">
-          {loading ? "…" : <>{freshness(updatedAt)} · <b>{fmtCap(vol)}</b> traded</>}
+          {loading || !mounted ? "…" : <>{freshness(updatedAt)} · <b>{fmtCap(vol)}</b> traded</>}
         </span>
         <div className="ttabs mv-frames">
           {FRAMES.map((f) => (

@@ -63,6 +63,15 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * ONE owner for the webfont URL — it is referenced twice below (the real link
+ * and the <noscript> fallback), and two spellings would eventually load two
+ * different sets of faces. `display=swap` is part of the contract: text renders
+ * in the fallback stack immediately and swaps when the face arrives.
+ */
+const FONT_CSS =
+  "https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Instrument+Serif:ital@1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap";
+
 export const viewport: Viewport = {
   themeColor: "#090C12",
   width: "device-width",
@@ -75,6 +84,31 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* ⚠️ THE FONTS MAY NOT BLOCK THE PAGE. They used to arrive through an
+            `@import` at the top of globals.css — three serial round trips, all
+            render-blocking, and a pending stylesheet also stops scripts from
+            running, so hydration and the board's own fetch waited on Google.
+            `media="print"` does not match a screen, so the browser fetches this
+            at low priority and never blocks on it; the script below promotes it
+            the moment it has loaded. Checking `.sheet` first matters — a
+            cached file can be ready before the script runs, and an `onload`
+            that has already fired never fires again. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="stylesheet" href={FONT_CSS} media="print" data-webfont="" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "!function(){var l=document.querySelector('link[data-webfont]');if(!l)return;var go=function(){l.media='all'};l.sheet?go():l.addEventListener('load',go)}()",
+          }}
+        />
+        <noscript>
+          {/* Without JS nothing can promote the link, so serve it plainly. A
+              reader with no JS has no hydration to block anyway. */}
+          <link rel="stylesheet" href={FONT_CSS} />
+        </noscript>
+      </head>
       <body>
         {/* Organization + WebSite, once per page. This is what turns the brand
             name from a string on a page into a named thing with a website and a
