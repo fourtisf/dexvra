@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NOT_A_PROJECT, fold, hideFromBoard, notAProject } from "./notAProject.ts";
+import { NOT_A_PROJECT, fold, hideFromBoard, notAProject, hiddenReport, _resetHiddenReport } from "./notAProject.ts";
 
 test("the reported rows are refused, and the projects beside them are not", () => {
   // Straight off the screenshot, in the order it listed them.
@@ -123,8 +123,11 @@ test("⚠️ filtered ONCE, in the payload — not per component", () => {
   // runner cannot resolve.)
   const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const pipe = strip(readFileSync(join(process.cwd(), "src/lib/providers/index.ts"), "utf8"));
-  assert.match(pipe, /const hidden = tokens\.filter\(hideFromBoard\)\.length;/);
+  assert.match(pipe, /const hidden = tokens\.filter\(hideFromBoard\);/);
   assert.match(pipe, /tokens = tokens\.filter\(\(t\) => !hideFromBoard\(t\)\);/);
+  // Reported through the one owner, so the cadence rule cannot be re-decided
+  // here — this line was itself a per-cycle flood for a whole deploy.
+  assert.match(pipe, /hiddenReport\(hidden\.map\(\(t\) => t\.symbol\)\)/);
   // Before buildSignals, or the wire headline can still crown a stablecoin.
   assert.ok(
     pipe.indexOf("hideFromBoard(t)") < pipe.indexOf("buildSignals(tokens)"),
@@ -132,9 +135,48 @@ test("⚠️ filtered ONCE, in the payload — not per component", () => {
   );
   // A row that disappears with nothing naming a cause is the shape this repo
   // keeps having to diagnose from a screenshot.
-  assert.match(pipe, /\[market\] \$\{hidden\} auto-listed/);
+
 
   for (const f of ["src/components/TopCoins.tsx", "src/components/TokenBoard.tsx", "src/components/MarketMovers.tsx"])
     assert.doesNotMatch(strip(readFileSync(join(process.cwd(), f), "utf8")), /notAProject|hideFromBoard/,
       `${f} is growing a second copy of the rule`);
+});
+
+// ── Reporting it ─────────────────────────────────────────────────────────────
+// ⚠️ The filter's own line was the flood it was printed next to: `[market] 2
+// auto-listed stablecoin/wrapper row(s) kept off the board`, once per 60s cycle
+// for ever, added in the very change that made the line beside it report on the
+// transition only.
+test("⚠️ the filter reports on CHANGE, not on a cadence", () => {
+  _resetHiddenReport();
+  const first = hiddenReport(["$WTRX", "$USDG"]);
+  assert.match(String(first), /2 auto-listed/);
+  assert.equal(hiddenReport(["$WTRX", "$USDG"]), null, "the same roster is not news");
+  assert.equal(hiddenReport(["$USDG", "$WTRX"]), null, "…nor is it in a different order");
+});
+
+test("⚠️ it NAMES them — a count cannot say which two of three", () => {
+  // "2" over three visible offenders is exactly the ambiguity that hid a dead
+  // symbol rule for a whole deploy.
+  _resetHiddenReport();
+  const line = String(hiddenReport(["$BTCB", "$WTRX", "$USDG"]));
+  for (const sym of ["$BTCB", "$WTRX", "$USDG"]) assert.ok(line.includes(sym), `${sym} is not named`);
+});
+
+test("a roster that empties is said too, and only once", () => {
+  _resetHiddenReport();
+  hiddenReport(["$USDG"]);
+  assert.match(String(hiddenReport([])), /no auto-listed stablecoin/);
+  assert.equal(hiddenReport([]), null);
+});
+
+test("a roster that GROWS is news again", () => {
+  _resetHiddenReport();
+  hiddenReport(["$WTRX"]);
+  assert.match(String(hiddenReport(["$WTRX", "$BTCB"])), /\$BTCB/);
+});
+
+test("nothing hidden on a fresh process says nothing at all", () => {
+  _resetHiddenReport();
+  assert.equal(hiddenReport([]), null, "a clean board must not announce itself at boot");
 });

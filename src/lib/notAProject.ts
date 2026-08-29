@@ -121,3 +121,46 @@ const raw = (displaySymbol: string): string => displaySymbol.replace(/^\$+/, "")
 
 export const hideFromBoard = (t: { symbol: string; name: string; tier: string }): boolean =>
   t.tier === "FREE" && notAProject(raw(t.symbol), t.name);
+
+/**
+ * ⚠️ THE FILTER'S OWN LINE WAS THE FLOOD IT WAS PRINTED NEXT TO.
+ *
+ * `[market] 2 auto-listed stablecoin/wrapper row(s) kept off the board`, once
+ * per 60s cycle, for ever — added in the same change that made the last-known
+ * line report on the transition only. A lesson applied to the line beside it
+ * and not to the one being written; the trade bot's refusal path learnt the
+ * same thing about its own if/else.
+ *
+ * And a COUNT was the wrong payload anyway. "2" over three visible offenders is
+ * the ambiguity that hid a dead symbol rule for a whole deploy: a number cannot
+ * tell you WHICH two. It names them.
+ *
+ * Reported when the SET changes, never on a cadence — this is a fact about the
+ * roster, not about the cycle, so it is silent for as long as the roster holds.
+ */
+/**
+ * ⚠️ THE BOOT STATE IS THE EMPTY ROSTER, NOT "UNKNOWN". A clean board is the
+ * normal state and must not announce itself on every restart — the recovery
+ * line only means something after something was actually hidden.
+ *
+ * ⚠️ AND IT IS ONE CONSTANT, shared with the test seam. Written as two
+ * literals, `_resetHiddenReport()` set the state the test wanted rather than
+ * the state the process boots into, so a mutation of the INITIALISER was
+ * invisible to every test — the reset seam quietly answering for the thing
+ * under test. Found by mutation testing, not by reading.
+ */
+const CLEAN_ROSTER = "";
+let lastHidden = CLEAN_ROSTER;
+
+export function hiddenReport(symbols: readonly string[]): string | null {
+  const sig = [...symbols].sort().join(",");
+  if (sig === lastHidden) return null;
+  lastHidden = sig;
+  if (!symbols.length) return "no auto-listed stablecoin or wrapper rows left on the board";
+  return `${symbols.length} auto-listed stablecoin/wrapper row(s) kept off the board: ${[...symbols].sort().join(" ")}`;
+}
+
+/** Test seam — module state outliving one test is how the next one lies. */
+export const _resetHiddenReport = (): void => {
+  lastHidden = CLEAN_ROSTER;
+};

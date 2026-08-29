@@ -24,7 +24,9 @@
     "seed:chain": "node scripts/seed-chain.js",
     "trending:chains": "node scripts/trending-chains.js",
     "unseed:chain": "node scripts/unseed-chain.js",
-    "listings:fix": "node scripts/fix-listings.js",
+    "comment_nostables": "Remove the stablecoins and wrappers already on the site. createFromInfo now refuses them at the one door every listing goes through, but no gate reaches backwards over rows listed before it existed. Dry run by default; --apply deletes. It prints the TIER, because FREE is the tier the bot books itself and anything else was paid for.",
+  "listings:nostables": "node scripts/listings-stables.js",
+  "listings:fix": "node scripts/fix-listings.js",
     "listing:check": "node scripts/listing-check.js"
   },
   "engines": {

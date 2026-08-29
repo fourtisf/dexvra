@@ -6758,6 +6758,81 @@ Mutation-tested: judging the `$` as part of the ticker, announcing a recovery
 that never happened, reporting every cycle, never repeating, and sharing one
 report slot between chains each fail between one and three tests.
 
+### "jangan pernah listing stable coin … hapus smua yang listing" — the rule was on one door of three
+
+Two halves, and the first is why the first half kept being needed.
+
+**`bigCoins.topByMcap` has filtered these out since the market filler was
+written**, so the rule LOOKED covered. It is one door of three. The auto-lister
+SCAN lists from the DISCOVERY feeds — DexScreener profiles and boosts,
+pools.trade — which are not ranked by pool depth and had **no such filter at
+all**; `chainSeed` is a third; and the fourth is whatever gets added next.
+
+- **`createFromInfo` is the documented ONE OWNER of "turn a priced token into a
+  listing", so the gate goes there** and every door is covered at once. A rule
+  the second caller has to remember is one the third forgets — which is exactly
+  how the discovery feeds ended up with none.
+- ⚠️ **It refuses BEFORE the site is called.** A gate that let the create through
+  and undid it would put the row on a public site for however long the second
+  call takes, and would write `everListed` for a token we never want back.
+  Pinned by a test that asserts the ledger is untouched.
+- **It is a refusal with a REASON, not a silent skip.** `null` is what both
+  callers already read as "the site did not create it", and the line names the
+  token — a feed full of stablecoins must not read as a quiet market.
+- A test pins `notAProject` to exactly ONE call site in `autoLister.js` and
+  refuses `trendFill.js` growing its own copy.
+
+**And no gate reaches backwards.** `npm run listings:nostables` removes the rows
+listed before it existed — dry run by default, `--apply` to delete, the
+`listings:fix` contract, and it matters more here because a listing is gone for
+good and the site is public.
+
+- ⚠️ **It prints the TIER, and a PAID row is flagged above the table.** `FREE`
+  is the tier the bot books itself and nobody can buy; anything else was bought.
+  The instruction was "all", so `--apply` removes all of them — but a paid row
+  can never leave without being named on screen first, because that one is a
+  refund conversation rather than a tidy-up.
+- **`{deleted:false}` is not a deletion.** The route answers that for an id it
+  does not hold, and counting it is how a report says "removed 7" over a board
+  that still has seven.
+- It reads BOTH `sym` and `symbol` — the bot writes one and an older row may
+  carry the other, and reading one only is how half a roster reads as clean.
+
+#### ⚠️ …and the filter's own log line was the flood it was printed next to
+
+```
+[market] 2 auto-listed stablecoin/wrapper row(s) kept off the board   ×11
+```
+
+Added in the very change that taught the line BESIDE it to report on the
+transition only. A lesson applied to one line and not to the one being written —
+the trade bot's refusal path learnt this about its own if/else.
+
+- **Reported when the SET CHANGES, never on a cadence.** This is a fact about
+  the roster, not about the cycle, so it is silent for as long as the roster
+  holds — and an emptied roster is said once, because a board that healed and
+  one nobody noticed look identical otherwise.
+- ⚠️ **It NAMES them.** "2" over three visible offenders is precisely the
+  ambiguity that hid a dead symbol rule for a whole deploy: a number cannot say
+  WHICH two.
+- ⚠️ **THE BOOT STATE AND THE TEST SEAM ARE ONE CONSTANT.** Written as two
+  literals, `_resetHiddenReport()` set the state the test wanted rather than the
+  state the process boots into — so mutating the INITIALISER was invisible to
+  every test, the reset seam quietly answering for the thing under test. A clean
+  board announcing itself on every restart would have shipped. Found by mutation
+  testing, not by reading.
+
+```bash
+cd bot && npm run listings:nostables              # what would go, with tiers
+cd bot && npm run listings:nostables -- --apply   # remove them
+cd bot && node scripts/run-tests.js test/noStables.test.js
+npm test                                          # notAProject — 15 tests
+```
+
+**Config a fix depends on:** nothing for the gate. The cleanup script needs
+`INTERNAL_API_TOKEN` and `SITE_URL`, which live only on the server — it says so
+rather than reporting an empty roster.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

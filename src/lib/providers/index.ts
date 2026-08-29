@@ -1,6 +1,6 @@
 import { CHAINS } from "@/config/chains";
 import { cache, cached, within } from "@/lib/cache";
-import { hideFromBoard } from "@/lib/notAProject";
+import { hiddenReport, hideFromBoard } from "@/lib/notAProject";
 import {
   SEED_ROWS,
   rowToBoardToken,
@@ -404,11 +404,14 @@ export async function getTokensPayload(): Promise<TokensPayload> {
   // up disagreeing about what is on the board, which this file has already paid
   // for once. Only auto-listings are touched (see hideFromBoard): somebody's
   // paid listing is somebody's money.
-  const hidden = tokens.filter(hideFromBoard).length;
-  if (hidden) tokens = tokens.filter((t) => !hideFromBoard(t));
-  // Said, not silent: a row that disappears with nothing anywhere naming a
-  // cause is the shape this repo keeps having to diagnose from a screenshot.
-  if (hidden) console.log(`[market] ${hidden} auto-listed stablecoin/wrapper row(s) kept off the board`);
+  const hidden = tokens.filter(hideFromBoard);
+  if (hidden.length) tokens = tokens.filter((t) => !hideFromBoard(t));
+  // Said, not silent — but on the TRANSITION and by NAME. A count printed every
+  // cycle is the flood this line was written next to a fix for, and "2" over
+  // three visible offenders is exactly the ambiguity that hid a dead symbol
+  // rule for a whole deploy.
+  const say = hiddenReport(hidden.map((t) => t.symbol));
+  if (say) console.log(`[market] ${say}`);
   const signals = buildSignals(tokens);
   return {
     build: BUILD,

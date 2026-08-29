@@ -50,6 +50,9 @@ const { sanitizeTicker } = require("../helpers/ticker");
 const { chainOf } = require("../config/chains");
 const { tierLabel } = require("../config/packages");
 const listingWatch = require("./listingWatch");
+// The one owner of "is this the money rather than the project" — the same set
+// the market filler ranks against and the site ranks against.
+const { notAProject } = require("./bigCoins");
 const log = require("../helpers/logger");
 
 const FILE = "autoLister.json";
@@ -1019,6 +1022,24 @@ function listingInput(chain, address, info, cfg = get(), now = Date.now(), pkgKe
  * run, and the two callers answer that differently.
  */
 async function createFromInfo(chain, address, info, { cfg = get(), now = Date.now(), pkgKey = 'free' } = {}) {
+  // ⚠️ NEVER LIST THE MONEY — and it belongs HERE, not in the callers.
+  //
+  // "jangan pernah listing stable coin". `bigCoins.topByMcap` has filtered
+  // these out of the board FILLER's candidates since it was written, so the
+  // rule looked covered — but that is one of three doors. The scan loop lists
+  // from the DISCOVERY feeds (DexScreener profiles and boosts, pools.trade),
+  // which are not ranked by pool depth and had no such filter at all, and
+  // `chainSeed` is a third. This function is the documented one owner of "turn
+  // a priced token into a listing", so the gate goes on it and every door is
+  // covered at once — including the fourth one somebody adds later.
+  //
+  // It is a REFUSAL, not a silent skip: `null` is what the callers already read
+  // as "the site did not create it", and the line says which token and why so a
+  // feed full of stablecoins does not read as a quiet market.
+  if (notAProject(info.symbol, info.name)) {
+    log.info(`[autolist] refused ${info.symbol} on ${chain} — the money, not a project (stablecoin/wrapper)`);
+    return null;
+  }
   const input = listingInput(chain, address, info, cfg, now, pkgKey);
   const listing = await api.createListing(input);
   if (!listing) return null;
