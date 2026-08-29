@@ -1,5 +1,6 @@
 import { CHAINS } from "@/config/chains";
 import { cache, cached, within } from "@/lib/cache";
+import { hideFromBoard } from "@/lib/notAProject";
 import {
   SEED_ROWS,
   rowToBoardToken,
@@ -387,6 +388,18 @@ export async function getTokensPayload(): Promise<TokensPayload> {
     tokens = rowsToBoardTokens(await loadRows());
     live = false;
   }
+  // ⚠️ THE MONEY IS NOT A PROJECT — filtered ONCE, here, and therefore true of
+  // every surface at the same time: the trending board, Top Coins, the movers,
+  // the heat map, the wire, the chain counts and the tracked-volume figure.
+  // Patching it into each component instead is how the board and the ticker end
+  // up disagreeing about what is on the board, which this file has already paid
+  // for once. Only auto-listings are touched (see hideFromBoard): somebody's
+  // paid listing is somebody's money.
+  const hidden = tokens.filter(hideFromBoard).length;
+  if (hidden) tokens = tokens.filter((t) => !hideFromBoard(t));
+  // Said, not silent: a row that disappears with nothing anywhere naming a
+  // cause is the shape this repo keeps having to diagnose from a screenshot.
+  if (hidden) console.log(`[market] ${hidden} auto-listed stablecoin/wrapper row(s) kept off the board`);
   const signals = buildSignals(tokens);
   return {
     build: BUILD,

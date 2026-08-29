@@ -51,9 +51,9 @@ const snum = (x) => {
 const NOT_A_PROJECT = new Set([
   // stables
   'USDT', 'USDC', 'DAI', 'BUSD', 'TUSD', 'FDUSD', 'USDE', 'SUSDE', 'USDS', 'USDBC', 'USDT0',
-  'PYUSD', 'LUSD', 'GUSD', 'USDD', 'FRAX', 'CRVUSD', 'GHO', 'USD1', 'EURC', 'EURS',
+  'PYUSD', 'LUSD', 'GUSD', 'USDD', 'FRAX', 'CRVUSD', 'GHO', 'USD1', 'EURC', 'EURS', 'USDG',
   // natives + their wrappers
-  'ETH', 'WETH', 'BTC', 'WBTC', 'CBBTC', 'TBTC', 'BNB', 'WBNB', 'SOL', 'WSOL', 'MSOL',
+  'ETH', 'WETH', 'BTC', 'WBTC', 'CBBTC', 'TBTC', 'BTCB', 'BNB', 'WBNB', 'SOL', 'WSOL', 'MSOL',
   'MATIC', 'WMATIC', 'POL', 'AVAX', 'WAVAX', 'TRX', 'WTRX', 'TON', 'WTON', 'SUI', 'WSUI', 'XPL', 'WXPL',
   // liquid staking / restaking receipts
   'STETH', 'WSTETH', 'RETH', 'CBETH', 'WEETH', 'EETH', 'EZETH', 'RSETH', 'METH', 'SFRXETH', 'FRXETH',
@@ -96,7 +96,16 @@ const fold = (sym) =>
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
 // A stable/wrapper ISSUER, not a word that might appear in a memecoin's name.
-const MONEY_NAME = /^(tether|usd coin|circle|binance[- ]peg|bridged|wrapped|staked|rebasing|liquid staked|restaked|first digital|paypal usd|ethena usde|sky dollar|dai stablecoin)\b/i;
+/*
+ * ⚠️ `USDG` (Global Dollar), `BTCB` (Binance-Peg BTC) and `global dollar` were
+ * added after all three reached the SITE's Top Coins board — reported as
+ * "hapus stable coin", with $WTRX at rank 1 and $USDG at rank 7. WTRX was
+ * already refused here and had simply been listed before this rule existed;
+ * the other two were never in it. The site now applies the same rule
+ * (src/lib/notAProject.ts, kept equal by a test), so this list governs both
+ * what gets listed and what gets ranked.
+ */
+const MONEY_NAME = /^(tether|usd coin|circle|binance[- ]peg|bridged|wrapped|staked|rebasing|liquid staked|restaked|first digital|paypal usd|ethena usde|sky dollar|dai stablecoin|global dollar)\b/i;
 
 /** Is this the money rather than the project? */
 const notAProject = (sym, name) => {

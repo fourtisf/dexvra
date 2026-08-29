@@ -6626,6 +6626,68 @@ it.
 cd tradebot && node --test pasteableCommands.test.js   # 3 tests, no network
 ```
 
+## "hapus stable coin" — the site never had the rule the bot has always had
+
+Reported with the Top Coins board open on **`$WTRX Wrapped TRX`** at rank 1 and
+carrying **`$USDG Global Dollar`** at rank 7, beside `$BTCB`, `$SHIB`, `$PUMP`.
+
+**The bot has answered this since its market filler was written.** GeckoTerminal
+ranks POOLS, so the top of any chain is WETH, USDC, wstETH, cbBTC, and
+`bigCoins.notAProject()` refuses to LIST them — a board whose Ethereum section
+reads `WETH · USDC · USDT` is worse than one with three rows. **The site never
+had the rule at all**, so it happily ranked the ones listed before that rule
+existed. `WTRX` was in the bot's set the whole time and was simply listed
+first; `USDG` and `BTCB` were never in it.
+
+- **`src/lib/notAProject.ts` is a PORT, and a port is a second owner.** The bot
+  is a separate CommonJS package this build cannot import, so
+  `notAProject.test.ts` reads `bigCoins.js` and asserts the two lists are
+  EQUAL — and the issuer regex too. Same guard `market:check`'s ported chain map
+  carries, for the same reason: **a rule that drifts between two copies is worse
+  than a rule in one place only, because both look right.** Mutation-tested in
+  both directions — dropping an entry from EITHER side fails it.
+- ⚠️ **ONLY AN AUTO-LISTING IS HIDDEN, and that is the whole safety of it.**
+  `FREE` is the tier the filler books itself and is deliberately absent from the
+  pricing UI, so it can never be bought. Everything else on that board is
+  somebody's money, and a paid listing that vanished from the site is a refund
+  conversation — the rule this repo already states about demoting rather than
+  hiding a quiet pool, applied to a category instead of to a bad afternoon. A
+  project that pays to list a stablecoin gets exactly what it paid for.
+- **Filtered ONCE, in the payload.** Patching it into each component is how the
+  board and the ticker end up disagreeing about what is on the board; one filter
+  in `getTokensPayload` makes it true of the trending board, Top Coins, the
+  movers, the heat map, the wire, the chain counts and the tracked-volume figure
+  at the same instant. It runs BEFORE `buildSignals`, or the wire headline can
+  still crown a stablecoin. A test refuses any component that grows its own copy.
+- **It says how many it kept off.** A row that disappears with nothing anywhere
+  naming a cause is the shape this repo keeps having to diagnose from a
+  screenshot.
+- ⚠️ **NO SUBSTRING MATCH ON "USD"** — that would eat every stablecoin-themed
+  memecoin there is, and the bot's comment has said so since it was written.
+- ⚠️ **AND THE SUFFIX TRIM IS BOUNDED.** `USDC.e` folds to `USDCE` and must be
+  refused, so a trailing `E`/`B`/digit is trimmed before re-checking; trimming
+  ANY trailing character instead would delete `$SOLD` (base SOL), `$DAIS` (DAI),
+  `$POLY` (POL) and `$BTCX` (BTC). ⚠️ **The first test written for that rule was
+  VACUOUS** — it used `USDX`, which folds to `USD`, a string in neither set, so
+  the mutant that unbounds the trim survived it untouched. Found by mutation
+  testing, not by reading.
+- **The glyph scar came across verbatim**: `USD₮0` is U+20AE, not a T, and the
+  bot's first cut STRIPPED it (folding to `USD0`, still not refused) rather than
+  transliterating. `$USDT` reached a public board at $185B that way.
+
+**What this does NOT do: delete anything.** The rows are still listings and
+their token pages still work — they are kept off the site's rankings, and the
+bot will not list new ones. Removing them for good is 🗑 in the admin panel, and
+that is deliberately a human's call.
+
+```bash
+npm test                                     # notAProject — 9 tests, no network
+cd bot && npm test                           # bigCoins is unchanged in behaviour
+```
+
+**Config a fix depends on:** nothing. ⚠️ It ships ON and CHANGES an existing
+board on deploy, deliberately, the way the trending floors did.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`
