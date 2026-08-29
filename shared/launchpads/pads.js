@@ -459,6 +459,64 @@ function build() {
         });
       },
     },
+    {
+      key: 'flap',
+      label: 'Flap',
+      chains: ['robinhood'],
+      verified: false,
+      covers: 'flap.sh / FlapLaunch (Robinhood Chain)',
+      // The SECOND launchpad on Robinhood Chain, and it is here for the reason
+      // the Pons row above is: the factory scan filters ONE address for ONE
+      // signature, and `eth_getLogs` answers an unknown one with an EMPTY ARRAY.
+      // So a launch on a pad nothing here knows about does not look like a
+      // missing feature — it looks like a quiet chain, behind a green /health.
+      // A token reported on this pad ($MACROHARD, 0x4e51…7777) rendered a live
+      // price and a real market cap while the bot could say nothing at all
+      // about its bonding curve.
+      //
+      // ⚠️ THE HOSTS AND BOTH PATHS ARE GUESSES, AND THE BASE LIST IS NOT
+      // INSURANCE AGAINST THEM. Failover between bases is TRANSPORT-only — an
+      // HTTP status means the host answered, and the same request gets the same
+      // status everywhere else — so if `api.flap.sh` resolves and 404s we stop
+      // there and never try the others. The list covers only a host that does
+      // not resolve or does not connect. What makes a wrong guess cheap is the
+      // env overrides: LAUNCHPAD_FLAP_API pins a base AND skips the list, and
+      // LAUNCHPAD_FLAP_TOKEN_PATH / _FEED_PATH replace the paths, so a renamed
+      // segment costs a line in .env rather than a deploy.
+      //
+      // This is exactly the state the Pons row was in — and there the researched
+      // host WAS wrong, with `launchpads:check` on the box the thing that
+      // settled it. `verified: false` says so out loud.
+      bases: ['https://api.flap.sh', 'https://flap.sh/api', 'https://www.flap.sh/api'],
+      tokenPath: '/token/{id}',
+      // ⚠️ A DEFAULT IS REQUIRED, not optional: the builder below applies
+      // LAUNCHPAD_<KEY>_FEED_PATH only to a pad that already HAS one
+      // (`d.feedPath ? path(...) : null`). Shipping without a default would make
+      // the env override silently do nothing, and turning the feed on later
+      // would need a deploy — the whole thing these overrides exist to avoid.
+      // It is also what puts this pad into the snipe's launch discovery and
+      // into the watchdog's probe list.
+      feedPath: '/tokens?sort=created&order=desc&limit={n}',
+      idKeys: ['address', 'tokenAddress', 'contractAddress', 'token.address', 'id'],
+      parse: (pad, chain, raw, now) => {
+        const rec = common(blank(pad, chain, str(pick(raw, ['address', 'tokenAddress', 'contractAddress', 'token.address']), 64)), raw, now);
+        rec.launchpad = 'Flap';
+        if (rec.address) rec.launchUrl = 'https://flap.sh/token/' + rec.address;
+        return curveState(rec, {
+          graduated: bool(pick(raw, ['graduated', 'isGraduated', 'migrated', 'completed', 'isCompleted', 'listed'])),
+          progressApi: pick(raw, ['progress', 'progressPct', 'bondingProgress', 'curveProgress', 'bondingCurveProgress']),
+          progressDerived: null,
+          // ⚠️ NEVER `migratedPool` FROM A GUESSED FIELD NAME ON A PAD THAT ALSO
+          // REPORTS PROGRESS: `curveState` turns any non-empty value here into
+          // `graduated: true`, which forces progressPct to 100, sets onCurve
+          // false, outranks every other pad in the merge, and makes the snipe
+          // skip the launch outright. A bonding token silently reclassified as
+          // migrated is worse than one with no pool field at all, so only the
+          // two unambiguous spellings are read.
+          migratedPool: str(pick(raw, ['poolAddress', 'migratedPool']), 64),
+        });
+      },
+    },
   ];
 
   return defs.map((d) => ({

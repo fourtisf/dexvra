@@ -409,3 +409,74 @@ test('…but a dead node is not widened — three tries is three times the same 
   assert.ok(asked < 30, `a transport failure escalated the window (${asked} reads)`);
   assert.equal(ct.cached('robinhood', TOKEN), null, 'and an outage is never remembered');
 });
+
+test('⚠️ ONE observed trade is `ok` and UNBUILDABLE — it takes the short TTL, not thirty minutes', async () => {
+  /*
+   * `curveIface` sets `ok` from having decoded a leg; `classifySlots` refuses to
+   * infer an argument's meaning below minSamples (2). So a curve with a single
+   * observed trade is both at once — and it was remembered for OK_TTL_MS while
+   * the MISS TTL beside it exists, in its own words, for "not enough trades yet,
+   * which the next trade fixes". That is the state of a token at 0.05% of its
+   * curve, which is the token this whole feature is for, and the card now reads
+   * this cache directly.
+   *
+   * Mutation test: restore `hit.res.ok ? OK_TTL_MS : MISS_TTL_MS` and this fails.
+   */
+  ct._reset();
+  const one = { ok: true, curve: CURVE, buy: { selector: '0xaabbccdd', seen: 1, args: [] } };
+  const two = { ok: true, curve: CURVE, buy: { selector: '0xaabbccdd', seen: 2, args: [] } };
+  const k = 'robinhood:' + TOKEN.toLowerCase();
+  const aged = Date.now() - 100_000;    // past the 90s miss TTL, far inside the 30-minute one
+
+  ct._cache.set(k, { res: one, ts: aged });
+  assert.equal(ct.cached('robinhood', TOKEN), null, 'a single-sample read expires on the SHORT clock');
+
+  ct._cache.set(k, { res: two, ts: aged });
+  assert.ok(ct.cached('robinhood', TOKEN), 'a buildable read still keeps the long one');
+});
+
+test('⚠️ one pasted CA is ONE discovery, however many callers ask at once', async () => {
+  // The cache stores results, not promises, so nothing is written until a walk
+  // FINISHES and a second caller mid-walk starts its own. The card consults
+  // this on every render of an indexed curve token, so it stops being "a user
+  // tapped twice" and becomes "everyone who pasted this CA" — concurrent
+  // bursts against a chain deliberately exempt from JSON-RPC batching.
+  ct._reset();
+  let heads = 0;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const chain = {
+    async getBlockNumber() { heads++; await gate; return 500000; },
+    async getLogs() { return [xfer(CURVE, WALLET, '0xc1')]; },
+    async getTransaction() { return { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) }; },
+  };
+  const all = Promise.all([1, 2, 3, 4, 5].map(() => ct.ifaceFor(chain, 'robinhood', TOKEN)));
+  release();
+  const rs = await all;
+  assert.equal(heads, 1, 'five callers, one discovery');
+  assert.ok(rs.every((r) => r === rs[0]), 'and they all got the same answer object');
+});
+
+test('⚠️ …but a SEEDED caller is never handed the seedless answer', async () => {
+  // A call that can seed from the indexer's trade list, or teach from a
+  // sibling, can succeed exactly where a bare one fails — that is why those
+  // seams were added. Coalescing across them would quietly discard the seed on
+  // whichever caller happened to arrive second, which is the quiet-token case
+  // the seeding exists for.
+  ct._reset();
+  let bare = 0, seeded = 0;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const chain = {
+    async getBlockNumber() { await gate; return 500000; },
+    async getLogs() { return []; },
+    async getTransaction() { return null; },
+  };
+  const p1 = ct.ifaceFor(chain, 'robinhood', TOKEN);
+  const p2 = ct.ifaceFor(chain, 'robinhood', TOKEN, { tradeHashes: async () => { seeded++; return []; } });
+  bare = 1;
+  release();
+  await Promise.all([p1, p2]);
+  assert.equal(bare, 1);
+  assert.equal(seeded, 1, 'the seeded caller was answered by a discovery that never used its seed');
+});

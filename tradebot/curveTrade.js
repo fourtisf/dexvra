@@ -176,16 +176,37 @@ const MISS_TTL_MS = 90_000;
 const _cache = new Map();
 const key = (chainKey, ca) => `${chainKey}:${String(ca).toLowerCase()}`;
 
+/**
+ * ⚠️ `ok: true` MEANS "WE READ A TRADE", NOT "WE CAN BUILD A CALL" — and the gap
+ * between those two was taking the THIRTY-MINUTE cache.
+ *
+ * `curveIface` sets `ok` from having decoded a buy or a sell leg, but
+ * `classifySlots` refuses to assign meaning to an argument until it has seen
+ * `minSamples` (2) of the same call shape. So a curve with exactly ONE observed
+ * trade is `ok` and unbuildable at the same time — and it was remembered for
+ * half an hour, while the short TTL beside it says in its own words that it
+ * exists for "not enough trades yet, which the next trade fixes".
+ *
+ * That is precisely the state of the token this feature is for: the reported
+ * $CD was at 0.05% of its curve. One more trade on the pad makes it buyable,
+ * and the user had to wait out a thirty-minute cache to find out — on a card
+ * that now consults this cache directly.
+ */
+function _ttlFor(res) {
+  if (!res || !res.ok) return MISS_TTL_MS;
+  const seen = Math.max(Number((res.buy && res.buy.seen) || 0), Number((res.sell && res.sell.seen) || 0));
+  return seen >= 2 ? OK_TTL_MS : MISS_TTL_MS;
+}
+
 function _cached(chainKey, ca) {
   const hit = _cache.get(key(chainKey, ca));
   if (!hit) return null;
-  const ttl = hit.res && hit.res.ok ? OK_TTL_MS : MISS_TTL_MS;
-  if (Date.now() - hit.ts > ttl) { _cache.delete(key(chainKey, ca)); return null; }
+  if (Date.now() - hit.ts > _ttlFor(hit.res)) { _cache.delete(key(chainKey, ca)); return null; }
   return hit.res;
 }
 
 /** Test seam — the cache is process-wide by design. */
-function _reset() { _cache.clear(); }
+function _reset() { _cache.clear(); _inflight.clear(); }
 
 /** The cached interface for a token, or null. Read-only, no network.
  *
@@ -203,7 +224,12 @@ function cached(chainKey, ca) { return _cached(chainKey, ca); }
  *  this call", and there is no path back except waiting — a stuck state that
  *  looks exactly like a broken feature. Re-discovery costs a dozen reads; being
  *  stuck costs the token. */
-function forget(chainKey, ca) { _cache.delete(key(chainKey, ca)); }
+function forget(chainKey, ca) {
+  _cache.delete(key(chainKey, ca));
+  // …and any discovery still in flight for it, or a redeployed curve keeps
+  // being answered by the walk already running against its old address.
+  for (const k of [..._inflight.keys()]) if (k.startsWith(key(chainKey, ca) + '|')) _inflight.delete(k);
+}
 
 /**
  * The curve interface for a token, discovered once and remembered.
@@ -264,9 +290,40 @@ async function _teachFromSiblings(chain, chainKey, opts, pools) {
   return null;
 }
 
-async function ifaceFor(chain, chainKey, ca, opts = {}) {
+/**
+ * ⚠️ THE CACHE HOLDS RESULTS, NOT PROMISES — so N callers were N discoveries.
+ *
+ * Nothing is written until a discovery FINISHES, so a second caller arriving
+ * while the first is still walking sees an empty cache and starts its own. The
+ * card consults this on every render of an indexed curve token, so it stops
+ * being "a user tapped twice" and becomes "everyone who pasted this CA" —
+ * concurrent bursts of round trips against a chain deliberately exempt from
+ * JSON-RPC batching, each making the other slower.
+ *
+ * ⚠️ THE KEY CARRIES THE CAPABILITY SET, not just the token. A call that can
+ * seed from the indexer's trade list or teach from a sibling can succeed where
+ * a bare one fails, so handing a seeded caller the seedless answer would lose
+ * exactly the seed that was added to fix a quiet token. A pinned window and a
+ * `learning` recursion are different questions again and are never coalesced.
+ */
+const _inflight = new Map();
+
+function ifaceFor(chain, chainKey, ca, opts = {}) {
   const hit = _cached(chainKey, ca);
-  if (hit) return hit;
+  if (hit) return Promise.resolve(hit);
+  if (opts.blocks || opts.learning) return _discover(chain, chainKey, ca, opts);
+  const k = key(chainKey, ca) + '|' + (typeof opts.tradeHashes === 'function' ? 't' : '') + (typeof opts.siblings === 'function' ? 's' : '');
+  const live = _inflight.get(k);
+  if (live) return live;
+  // ⚠️ Only retire THIS promise: `forget()` can drop the entry mid-flight and a
+  // later caller can install a fresh one under the same key, and an
+  // unconditional delete would retire that newer discovery instead.
+  const p = _discover(chain, chainKey, ca, opts).finally(() => { if (_inflight.get(k) === p) _inflight.delete(k); });
+  _inflight.set(k, p);
+  return p;
+}
+
+async function _discover(chain, chainKey, ca, opts = {}) {
   let head;
   try { head = Number(await chain.getBlockNumber()); }
   catch (e) { return { ok: false, why: `could not read the chain head (${(e && e.message) || e})` }; }   // NOT cached: an outage is not a fact about the token

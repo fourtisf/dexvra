@@ -116,6 +116,53 @@ const lc = (s) => String(s || '').toLowerCase();
 /** A Transfer's `value` — the non-indexed uint256 in the log data. */
 const logAmount = (lg) => { try { return BigInt(lg && lg.data ? lg.data : 0); } catch (_) { return 0n; } };
 
+/**
+ * Did the node REFUSE us, rather than cap a range?
+ *
+ * The walk below exists for a node that serves small spans and rejects big
+ * ones. A 429/403/401 is about US and is waiting identically on every one of
+ * its steps, so walking it turns one bad second into a coarse pass of refusals
+ * — the shape CLAUDE.md records for the CoinGecko sweep ("a 429 now arms a
+ * cooldown and the rest of the sweep is not asked at all"), on the path that
+ * spends money.
+ *
+ * ⚠️ Matched on TEXT, and anything unrecognised is treated as a RANGE problem
+ * so the walk still happens. That is the fail-safe direction: misreading a
+ * refusal as a range error costs requests, misreading a range error as a
+ * refusal would switch off the walk that is the fix for it.
+ */
+function _refusal(err) {
+  if (!err) return false;
+  const s = `${(err && (err.shortMessage || err.message)) || err} ${(err && (err.code || err.status)) || ''}`.toLowerCase();
+  return /\b(429|403|401)\b|too many requests|rate.?limit|forbidden|unauthorized|quota/.test(s);
+}
+
+/**
+ * ⚠️ THE WALK'S OUTPUT IS IN NEITHER ORDER, AND `.reverse()` CANNOT FIX IT.
+ *
+ * `steppedLogs` walks newest RANGE first while `getLogs` returns each range
+ * oldest-first, so `found` is "chunks descending, items within a chunk
+ * ascending" — sorted in neither direction. Reversing that flat array gives
+ * "chunks ascending, items descending": still not sorted. The caller then takes
+ * `slice(-maxTx).reverse()` believing it holds the NEWEST trades newest-first,
+ * and on the walked path it held the OLDEST trades of the newest chunk,
+ * oldest-first.
+ *
+ * Not cosmetic. `curvePrice.observedRate` is the last price tier and the only
+ * one that answers when the pad's own host is unreachable — which is this
+ * operator's box — and a curve's price rises as supply sells, so feeding it the
+ * cheapest fills overstates tokens-per-unit on the number that authorises a
+ * curve buy.
+ *
+ * A real sort, on the two fields that define log order. Both are optional on a
+ * stub and ethers v6 spells the second `index`, so a missing one sorts as 0
+ * rather than throwing.
+ */
+const _n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+const _pos = (l) => (l && l.logIndex != null ? l.logIndex : (l && l.index));
+const _chrono = (logs) => logs.slice().sort((a, b) => _n(a.blockNumber) - _n(b.blockNumber) || _n(_pos(a)) - _n(_pos(b)));
+
+
 /** The calldata's argument words, classified. Bounded: a curve buy takes a
  *  handful of arguments, and a long tail is calldata we do not understand
  *  anyway. */
@@ -209,8 +256,21 @@ async function decodeCurveIface(chain, token, opts = {}) {
      * chain. Running fine only after coarse found nothing keeps the cheap path
      * cheap and makes the answer honest on a capped node.
      */
-    const coarse = await steppedLogs(chain, filter,
-      { head, span, budget, want: maxTx * 2, step: Math.max(200, Math.ceil(span / budget)) });
+    /*
+     * ⚠️ A REFUSAL IS NOT A RANGE CAP, AND WALKING ONE BUYS A WHOLE COARSE PASS
+     * OF THE SAME ANSWER — once per window. See `_refusal`.
+     *
+     * ⚠️ And the skip belongs HERE, around the passes, not around this whole
+     * block: the "could not read" return below lives inside it, so guarding the
+     * block would send a refused node to the "no trades found" sentence — a
+     * verdict about the TOKEN produced by a host refusing US, which is the
+     * exact confusion this file exists to prevent. Measured: it did.
+     */
+    const refused = _refusal(lastErr);
+    const coarse = refused
+      ? { logs: [], stepped: 0, errs: 0, lastErr: null, walked: 0 }
+      : await steppedLogs(chain, filter,
+        { head, span, budget, want: maxTx * 2, step: Math.max(200, Math.ceil(span / budget)) });
     stepped = coarse.stepped; stepErrs = coarse.errs; walked = coarse.walked;
     if (coarse.lastErr) lastErr = coarse.lastErr;
     let found = coarse.logs;
@@ -219,15 +279,15 @@ async function decodeCurveIface(chain, token, opts = {}) {
     // this file's own rule about a dead node, which the second pass would
     // otherwise triple the cost of.
     const coarseDead = coarse.stepped > 0 && coarse.errs === coarse.stepped;
-    if (!found.length && !coarseDead) {
+    if (!found.length && !coarseDead && !refused) {
       const fine = await steppedLogs(chain, filter, { head, span, want: maxTx * 2, step: opts.step });
       stepped += fine.stepped; stepErrs += fine.errs;
       walked = Math.max(walked, fine.walked);
       if (fine.lastErr) lastErr = fine.lastErr;
       found = fine.logs;
     }
-    if (found.length) logs = found.reverse();   // the walk runs newest-first; restore oldest-first
-    else if (!logs && (stepErrs > 0 || !stepped)) {
+    if (found.length) logs = _chrono(found);   // see _chrono: neither `found` nor its reverse is sorted
+    else if (!logs && (stepErrs > 0 || !stepped || refused)) {
       // A range with holes in it. "We could not look" — never cached, never
       // rendered as a fact about the token.
       return { ok: false, why: `could not read this token's transfers (${(lastErr && lastErr.message) || lastErr})` };

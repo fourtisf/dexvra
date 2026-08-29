@@ -55,7 +55,10 @@ test('critical means "users cannot trade", and is not handed out freely', () => 
 test('every probe says what the USER loses, not just which host is down', () => {
   for (const p of upstreams.PROBES) {
     assert.ok(p.costs && p.costs.length > 15, `${p.key} has no user-facing consequence`);
-    assert.ok(!/http|api\.|\.ag|\.fun/i.test(p.costs), `${p.key} describes a host, not a consequence: ${p.costs}`);
+    // `.sh` joined the list when the Flap pad was added. A guard that covers one
+    // instance of a general failure is how the general failure survives being
+    // fixed — the lesson the banner's CJK-only boot warning already cost.
+    assert.ok(!/http|api\.|\.ag|\.fun|\.sh\b|\.io\b|\.meme\b/i.test(p.costs), `${p.key} describes a host, not a consequence: ${p.costs}`);
   }
 });
 

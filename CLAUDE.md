@@ -4631,6 +4631,146 @@ curve walk, the balances and the meta reads all share.
 pm2 logs dexvra-tradebot --nostream --lines 400 | grep -F '[ui] card'
 ```
 
+## flap.sh, and four things the curve walk was getting wrong
+
+Reported with four screenshots (2026-08-29): Maestro rendering `$CD` on **Pons**
+and `$MACROHARD` on **FlapLaunch** — both Robinhood Chain, both a fraction of a
+percent along their curves — beside DexvraTradeBot showing a live price for the
+same two contracts and refusing to trade them.
+
+Most of the answer was already here. The indexed branch had just learned to
+consult the curve, the walk had just learned to climb, and the card had just
+learned to carry `curveWhy`. **What was left is a second launchpad and four
+defects underneath the walk**, each of which makes a quiet token — which is what
+a token at 0.05% of its curve is — look untradeable.
+
+### The walk handed back the OLDEST trades and called them the newest
+
+`found.reverse()` looked right and could not be right. `steppedLogs` walks newest
+RANGE first while `getLogs` returns each range oldest-first, so `found` is
+"chunks descending, items within a chunk ascending" — sorted in neither
+direction. Reversing that flat array gives "chunks ascending, items descending":
+still not sorted. `decodeCurveIface` then takes `slice(-maxTx).reverse()`
+believing it holds the newest trades newest-first, and on the walked path it held
+the OLDEST trades of the newest chunk, oldest-first.
+
+**Not cosmetic.** `curvePrice.observedRate` is the LAST price tier and the only
+one that answers when the pad's own host is unreachable — which is this
+operator's box, where `launchpads:check` reports `✗ pons` — and a curve's price
+rises as supply sells, so feeding it the cheapest fills overstates
+tokens-per-unit on the number that authorises a curve buy.
+
+- ⚠️ **The first test written for it PASSED ON THE BUG.** With one log per range,
+  `.reverse()` and a real sort happen to agree; the defect needs two logs in ONE
+  range. A test that cannot fail on the defect is a test about nothing, and it
+  took a mutation run to notice.
+- **`_chrono` sorts on the two fields that define log order**, and reads
+  `logIndex` or ethers v6's `index`, either missing sorting as 0 rather than
+  throwing.
+
+### `ok: true` did not mean "we can build a call", and it took the long cache
+
+`curveIface` sets `ok` from having decoded a leg; `classifySlots` refuses to
+assign meaning to an argument below `minSamples` (2). So a curve with exactly ONE
+observed trade is `ok` AND unbuildable — and it was remembered for **thirty
+minutes**, while the 90-second miss TTL beside it says in its own words that it
+exists for *"not enough trades yet, which the next trade fixes"*. That is exactly
+the state of the token this feature is for, and the card now reads this cache
+directly, so the wrong TTL is what a user sees.
+
+### One pasted CA was one discovery PER CALLER
+
+The cache stores results, not promises, so nothing is written until a walk
+FINISHES and a second caller arriving mid-walk starts its own. The card consults
+this on every render of an indexed curve token, so it stops being "a user tapped
+twice" and becomes "everyone who pasted this CA" — concurrent bursts of round
+trips against a chain deliberately exempt from JSON-RPC batching
+(`batchMaxCount: 1`), each making the other slower.
+
+- ⚠️ **The in-flight key carries the CAPABILITY SET, not just the token.** A call
+  that can seed from the indexer's trade list or teach from a sibling can succeed
+  exactly where a bare one fails — that is why those seams exist — so handing a
+  seeded caller the seedless answer would quietly discard the seed on whichever
+  caller arrived second, in the quiet-token case the seeding was added for. A
+  pinned window and a `learning` recursion are different questions again and are
+  never coalesced.
+- `forget()` drops the in-flight entry too, or a redeployed curve keeps being
+  answered by the walk already running against its old address.
+
+### A 429 bought a whole coarse pass, once per window
+
+The walk exists for a node that serves small spans and rejects big ones. A
+429/403/401 is about US and is waiting identically on every step of it — the
+shape this file already records for the CoinGecko sweep, on the path that spends
+money.
+
+- ⚠️ **AND THE FIRST CUT OF THAT FIX TURNED A REFUSAL INTO A VERDICT.** Guarding
+  the whole walk BLOCK also skipped the "could not read this token's transfers"
+  return that lives inside it, so a refused node fell through to *"no trades
+  found for this token in the last N blocks"* — a claim about the TOKEN produced
+  by a host refusing US, which is the precise confusion this file exists to
+  prevent. Measured, not spotted by reading. The skip guards the two PASSES only.
+- **Anything unrecognised is treated as a RANGE problem**, so the walk still
+  happens. That is the fail-safe direction: misreading a refusal as a range error
+  costs requests; misreading a range error as a refusal would switch off the walk
+  that is the fix for it.
+
+### The second pad
+
+- **`flap` is a new row** (Robinhood, `verified: false`) — added for the reason
+  the Pons row exists: the factory scan filters ONE address for ONE signature and
+  `eth_getLogs` answers an unknown one with an EMPTY ARRAY, so a launch on a pad
+  nothing here knows about reads as a quiet chain, behind a green `/health`. A
+  pad with a `feedPath` joins the snipe's discovery and the watchdog with no
+  wiring of its own.
+- ⚠️ **`ponsfamily.com` WAS ALREADY THERE** and already led the pons base list.
+  Reporting "the API has been added" would be the reassuring reading of something
+  that already shipped; what has never been measured is whether its PATHS answer.
+- ⚠️ **A BASE LIST IS NOT INSURANCE AGAINST A WRONG PATH.** Failover between bases
+  is TRANSPORT-only, so if `api.flap.sh` resolves and 404s we stop there and never
+  try the others — the list covers only a host that does not resolve. What makes a
+  wrong guess cheap is the env overrides, and the comment says so rather than
+  letting the list imply a safety it does not provide.
+- ⚠️ **A default `feedPath` is load-bearing, not decoration**: the builder applies
+  `LAUNCHPAD_<KEY>_FEED_PATH` only to a pad that already has one, so shipping
+  without a default would make the override silently do nothing and turning the
+  feed on later would need a deploy.
+- ⚠️ **`migratedPool` is read from two spellings only.** `curveState` turns ANY
+  non-empty value there into `graduated: true`, forcing progressPct to 100,
+  outranking every other pad in the merge and making the snipe skip the launch —
+  so a pad reporting a `pairAddress` for its own curve would silently reclassify a
+  live bonding token as migrated.
+- `.sh` joined the probe-`costs` host regex. A guard that covers one instance of a
+  general failure is how the general failure survives being fixed.
+
+```bash
+cd tradebot && node --test curveIface.test.js curveTrade.test.js launchpads.test.js
+cd bot && npm run launchpads:check     # does flap.sh answer FROM THE BOX, and with what shape
+```
+
+⚠️ The tradebot copy takes a token address as its argument, and there is
+deliberately no pasteable line for it here: this file's own first rule is that a
+command an operator can paste must contain only real values, and **bash reads
+`<` and `>` as redirects**, so an angle-bracket placeholder dies with a syntax
+error before the script runs. Run `npm run launchpads:check` in `tradebot/` with
+a contract address from the pad you are checking.
+
+Five guarantees are MUTATION-TESTED rather than argued: the walk's ordering, the
+short TTL on a single-sample read, the coalescing key carrying the capability
+set, the refusal classification in both directions, and flap's migration guard.
+
+**Config a fix depends on:** nothing — every knob has a working default and it
+all ships ON. ⚠️ But whether flap.sh's guessed HOST and PATHS answer is a
+property of the server's egress today and **cannot be learned from here** (the
+host is unreachable from this sandbox), so `launchpads:check` on the box is the
+measurement and a wrong path is `LAUNCHPAD_FLAP_API` / `_TOKEN_PATH` /
+`_FEED_PATH` in `bot/.env` — a line, not a deploy.
+
+⚠️ **What this still does NOT do: trade a curve nobody has traded yet.** The
+interface is read off REAL trades, so a token with fewer than two of them is
+refused. That boundary is deliberate: a guessed ABI on a money path is the one
+thing this repo refuses outright.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

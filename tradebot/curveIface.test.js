@@ -290,6 +290,45 @@ test('⚠️ a range-capped node is WALKED before its empty answer is believed',
   assert.equal(r.curve, CURVE, 'the trade the capped node was hiding is found');
 });
 
+test('⚠️ the WALKED path hands back the NEWEST trades, newest-first', async () => {
+  /*
+   * `found.reverse()` looked right and could not be right. The walk runs newest
+   * RANGE first while `getLogs` returns each range oldest-first, so `found` is
+   * "chunks descending, items ascending" — sorted in neither direction; its
+   * reverse is "chunks ascending, items descending", also not sorted. The
+   * caller's `slice(-maxTx).reverse()` then took the OLDEST trades of the
+   * newest chunk and called them the newest.
+   *
+   * Not cosmetic: `curvePrice.observedRate` is the last price tier and the only
+   * one that answers when the pad's host is unreachable, and a curve's price
+   * rises as supply sells — so the cheapest fills overstate tokens-per-unit on
+   * the number that authorises a curve buy.
+   *
+   * ⚠️ BOTH TRADES SIT IN ONE RANGE, ascending, which is what `getLogs`
+   * returns. That is the case `.reverse()` gets wrong: one trade per range
+   * cannot tell the two implementations apart, and the first cut of this test
+   * made exactly that mistake and passed on the bug.
+   *
+   * Mutation test: restore `found.reverse()` and this fails.
+   */
+  const at = (blk, hash) => ({ ...xfer(CURVE, WALLET, hash), blockNumber: blk, logIndex: 0 });
+  const asked = [];
+  const chain = {
+    async getLogs({ fromBlock, toBlock }) {
+      if (toBlock - fromBlock > 500) return [];                  // capped → force the walk
+      if (fromBlock <= 8700 && toBlock >= 8900) return [at(8700, '0xOLD'), at(8900, '0xNEW')];
+      return [];
+    },
+    async getTransaction(h) {
+      asked.push(h);
+      return { to: CURVE, from: WALLET, value: 10n ** 17n, data: '0xaabbccdd' + word(TOKEN) };
+    },
+  };
+  const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 9000 });
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual(asked, ['0xNEW', '0xOLD'], 'newest trade read first — observedRate documents that requirement');
+});
+
 test("⚠️ a node that silently empties anything WIDE is still walked — the step must not scale with the span", async () => {
   /*
    * The 17:57 / 18:09 / 18:19 card, three times identical: "no trades found
@@ -428,4 +467,32 @@ test('…but the ZERO address is not a stranger — it is the same 32 bytes as t
     ],
   };
   assert.equal(classifySlots(leg, TOKEN).slots[0].role, 'constant', 'sending to nobody is not sending to a stranger');
+});
+
+test('⚠️ a RANGE error still walks — only a refusal stops it', async () => {
+  /*
+   * The dangerous direction of `_refusal`. The walk exists FOR a node that caps
+   * ranges, so misreading "query returned more than 10000 results" as a refusal
+   * would switch off the fix for the exact failure it was written for — and
+   * silently, because the result is the same honest "could not read" either way.
+   *
+   * A refusal stops after one request: a 429 is waiting identically on every
+   * step of the coarse pass, once per window, and this repo has already paid
+   * for that shape with CoinGecko. Everything unrecognised is treated as a
+   * range problem, which is fail-safe: at worst it costs requests.
+   */
+  const run = async (msg) => {
+    let n = 0;
+    const chain = { async getLogs() { n++; throw new Error(msg); }, async getTransaction() { return null; } };
+    const r = await decodeCurveIface(chain, TOKEN, { head: 9000, blocks: 9000 });
+    assert.equal(r.ok, false);
+    assert.match(r.why, /could not read/, 'either way it is "we could not look", never a verdict on the token');
+    return n;
+  };
+  for (const range of ['query returned more than 10000 results', 'exceed maximum block range: 5000', 'Log response size exceeded', '-32005: query timeout exceeded']) {
+    assert.ok(await run(range) > 1, `a range cap stopped the walk that exists for it: ${range}`);
+  }
+  for (const refusal of ['429 Too Many Requests', 'request failed with status code 403', 'Unauthorized: 401', 'rate limit exceeded']) {
+    assert.equal(await run(refusal), 1, `a refusal bought a whole coarse pass: ${refusal}`);
+  }
 });

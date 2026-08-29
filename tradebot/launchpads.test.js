@@ -359,3 +359,90 @@ test('every launchpad probe names a consequence, not a host', () => {
     assert.equal(p.critical, false, 'a launchpad outage was marked critical — trading is unaffected');
   }
 });
+
+// ── flap.sh ──────────────────────────────────────────────────────────────────
+//
+// The second launchpad on Robinhood Chain. Added because the factory scan
+// filters ONE address for ONE signature and `eth_getLogs` answers an unknown
+// one with an EMPTY ARRAY — so a launch on a pad nothing here knows about reads
+// as a quiet chain rather than as a missing feature. $MACROHARD (0x4e51…7777)
+// rendered a live price and a real market cap while the bot could say nothing
+// at all about its bonding curve.
+//
+// ⚠️ Its hosts and both paths are GUESSES — there is no egress from the sandbox
+// this was written in, so nothing here asserts the pad ANSWERS. What is pinned
+// is the contract that makes a wrong guess cost a line in .env rather than a
+// deploy, which is the only reason shipping an unverified shape is safe.
+
+const PADS = require('../shared/launchpads/pads.js');
+const flapPad = () => PADS.build().find((p) => p.key === 'flap');
+
+test('flap is a robinhood pad, marked unverified, and carries both paths', () => {
+  reset();
+  const p = flapPad();
+  assert.ok(p, 'the flap pad is gone');
+  assert.deepEqual(p.chains, ['robinhood']);
+  assert.equal(p.verified, false, 'its request shape has never been exercised against the live API');
+  assert.ok(p.tokenPath.includes('{id}'), 'the per-token path has no {id} to fill');
+  // ⚠️ A DEFAULT feedPath IS LOAD-BEARING: the builder applies
+  // LAUNCHPAD_<KEY>_FEED_PATH only to a pad that already has one, so shipping
+  // without it would make the env override silently do nothing and turning the
+  // feed on later would need a deploy. It is also what puts the pad into the
+  // snipe's discovery and the watchdog's probes.
+  assert.ok(p.feedPath && p.feedPath.includes('{n}'), 'no default feed path — the env override would be silently ignored');
+});
+
+test('every guess about flap is overridable from .env, which is why shipping one is safe', () => {
+  reset();
+  process.env.LAUNCHPAD_FLAP_API = 'https://example.invalid/v2';
+  process.env.LAUNCHPAD_FLAP_TOKEN_PATH = '/t/{id}';
+  process.env.LAUNCHPAD_FLAP_FEED_PATH = '/new?take={n}';
+  try {
+    const p = flapPad();
+    assert.deepEqual(p.bases, ['https://example.invalid/v2'], 'a pinned base must also SKIP the list');
+    assert.equal(p.tokenPath, '/t/{id}');
+    assert.equal(p.feedPath, '/new?take={n}');
+  } finally {
+    delete process.env.LAUNCHPAD_FLAP_API; delete process.env.LAUNCHPAD_FLAP_TOKEN_PATH; delete process.env.LAUNCHPAD_FLAP_FEED_PATH;
+  }
+  process.env.LAUNCHPAD_FLAP = '';
+  try { assert.equal(flapPad().enabled, true, 'a bare LAUNCHPAD_FLAP= must not read as "refused"'); }
+  finally { delete process.env.LAUNCHPAD_FLAP; }
+  process.env.LAUNCHPAD_FLAP = '0';
+  try { assert.equal(flapPad().enabled, false, 'an explicit 0 must still switch it off'); }
+  finally { delete process.env.LAUNCHPAD_FLAP; }
+});
+
+test('⚠️ flap never invents a migration from a pair address', () => {
+  reset();
+  const p = flapPad();
+  // `curveState` turns ANY non-empty migratedPool into graduated:true, which
+  // forces progressPct to 100, sets onCurve false, outranks every other pad in
+  // the merge, and makes the snipe skip the launch outright. A pad reporting a
+  // `pairAddress` for its own bonding curve would silently reclassify a live
+  // curve token as migrated — invisible, and worse than no pool field at all.
+  const r = p.parse(p, 'robinhood', { address: '0x' + '1'.repeat(40), pairAddress: '0x' + '2'.repeat(40), bondingProgress: 5 }, Date.now());
+  assert.equal(r.migratedPool, null, 'a pairAddress was read as a migration pool');
+  assert.equal(r.graduated, false);
+  assert.equal(r.onCurve, true, 'a bonding token was reclassified as migrated');
+});
+
+test('flap reads the fields the pad actually shows, and states its phase', () => {
+  reset();
+  const p = flapPad();
+  const r = p.parse(p, 'robinhood', {
+    address: '0x4e51c77048ead3d01e2cb1f96dfcad37bf587777', name: 'MACROHARD', symbol: 'MACROHARD',
+    marketCapUsd: 3696, priceUsd: 0.000037, liquidityUsd: 138, graduated: false, progressPct: 0.67,
+  }, Date.now());
+  assert.equal(r.symbol, 'MACROHARD');
+  assert.equal(r.mcapUsd, 3696);
+  assert.equal(r.launchpad, 'Flap');
+  assert.equal(r.onCurve, true, 'a token below its threshold is ON the curve');
+  assert.equal(r.graduated, false);
+  // A pad that says nothing about its phase leaves all three null rather than
+  // guessing — the rule the whole registry is built on.
+  const quiet = p.parse(p, 'robinhood', { address: '0x' + '3'.repeat(40), name: 'Q' }, Date.now());
+  assert.equal(quiet.onCurve, null);
+  assert.equal(quiet.graduated, null);
+  assert.equal(quiet.progressPct, null);
+});
