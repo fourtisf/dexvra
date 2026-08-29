@@ -183,6 +183,50 @@ test("⚠️ the budget PACES — the request past the budget waits for a slot b
   assert.match(over!.reason ?? "", /GT_MAX_RPM|GECKOTERMINAL_API_KEY/, "the refusal names the knob that lifts it");
 });
 
+test("⚠️ a caller with a second source takes a free slot and NEVER queues for one", async () => {
+  // `slot()` is serialised process-wide, so a wait is charged to everything
+  // behind it, not to the waiter. One board refresh is ~19 chunks against a
+  // 5/min budget: ~14 of them queued the full wait for a slot that was never
+  // coming, and a token page's chart request sat behind all of it. A caller
+  // that has DexScreener behind it loses nothing by leaving at once — that is
+  // where those tokens were going three seconds later anyway.
+  const budget = gtBudgetRpm();
+  let hits = 0;
+  await withFetch(async () => { hits++; return reply(200, { ok: 1 }); }, async () => {
+    // a free slot is still TAKEN — this is not "skip GeckoTerminal"
+    const first = await gtGet("/free", undefined, { waitMs: 0 });
+    assert.equal(first.ok, true, "a free slot must still be used");
+    for (let i = 1; i < budget; i++) assert.equal((await gtGet(`/q${i}`)).ok, true);
+
+    const t0 = Date.now();
+    const over = await gtGet("/over", undefined, { waitMs: 0 });
+    const waited = Date.now() - t0;
+    assert.equal(over.ok, false);
+    assert.equal(over.status, 0, "the same 'we did not ask' every caller already reads");
+    assert.match(over.reason ?? "", /budget/i);
+    assert.ok(waited < 100, `it queued for ${waited}ms — the whole point is that it does not`);
+  });
+  assert.equal(hits, budget, "and nothing extra was sent");
+});
+
+test("waitMs defaults to the shared budget wait — an omitted option may not silently mean 0", () => {
+  // The GT-ONLY chains depend on the wait: for them it is the difference
+  // between a priced row and a dash, and they are the reason the scheduler
+  // orders the cycle at all.
+  const src = readGt();
+  assert.match(src, /Number\.isFinite\(opts\?\.waitMs\) \? Math\.max\(0, opts!\.waitMs!\) : BUDGET_WAIT_MS/);
+});
+
+test("the board asks for the no-queue slot on covered chains ONLY, off the same map the scheduler reads", () => {
+  const src = readFileSync("src/lib/providers/geckoterminal.ts", "utf8").replace(/^\s*(?:\/\/|\*|\/\*).*$/gm, "");
+  assert.match(src, /const waitMs = dsCovers\(chainId\) \? 0 : undefined;/,
+    "the board either queues for everything or for nothing");
+  assert.match(src, /waitMs === undefined \? undefined : \{ waitMs \}/, "…and it reaches the request");
+  // A second list of "which chains DexScreener covers" is how two of them end
+  // up disagreeing; dsCovers is the one owner and partitionByFallback reads it.
+  assert.doesNotMatch(src, /dexscreener:\s*(?:null|")/, "geckoterminal.ts is keeping its own coverage list");
+});
+
 test("the budget is a ROLLING window, not a per-minute bucket", async () => {
   // A bucket lets 15 requests go at :59 and 15 more at :00 — the burst the
   // ceiling actually punishes.

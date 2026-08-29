@@ -147,6 +147,8 @@ export const gtFreeCeilingRpm = (): number => FREE_CEILING_RPM;
  *  ask". Longer than a couple of seconds and a page reads as hung, which is a
  *  worse failure than a chart that retries. */
 const BUDGET_WAIT_MS = num(process.env.GT_BUDGET_WAIT_MS, 3000, 0);
+/** This process's budget, and how long a caller may wait for a slot in it. */
+export const gtBudgetWaitMs = (): number => BUDGET_WAIT_MS;
 const TIMEOUT_MS = 9000;
 
 // Next can hold more than one instance of a module; a per-instance cooldown
@@ -211,7 +213,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Serialise the gap so concurrent callers space out instead of all firing at
  *  once (the same shape as the CoinGecko pacer in tokenLogo). */
-function slot(): Promise<boolean> {
+function slot(waitMs: number): Promise<boolean> {
   const wait = state.chain.then(async () => {
     const now = Date.now();
     const delay = Math.max(0, state.nextAt - now);
@@ -221,7 +223,7 @@ function slot(): Promise<boolean> {
     // A ROLLING window, not a per-minute bucket: a bucket lets 15 requests go
     // at :59 and 15 more at :00, which is the burst the ceiling actually
     // punishes.
-    const giveUpAt = Date.now() + BUDGET_WAIT_MS;
+    const giveUpAt = Date.now() + waitMs;
     for (;;) {
       const at = Date.now();
       if (gtSpentThisMinute(at) < MAX_RPM) {
@@ -268,13 +270,36 @@ export interface GtResult<T = unknown> {
  *    status that means "all of you, stop" — the bot's client draws the same
  *    line for the same reason.
  */
-export async function gtGet<T = unknown>(path: string, params?: Record<string, string | number>): Promise<GtResult<T>> {
+export interface GtOpts {
+  /**
+   * ⚠️ HOW LONG THIS CALLER MAY HOLD THE SHARED QUEUE WAITING FOR A BUDGET SLOT.
+   * Defaults to `GT_BUDGET_WAIT_MS`; `0` means "take a free slot, never queue
+   * for one".
+   *
+   * `slot()` is serialised process-wide, so the wait is not paid by the waiter
+   * alone — it is paid by everything behind it. Measured on a box with the
+   * shipped free budget (10/min for the IP, 5/min for this process): one board
+   * refresh is ~19 chunks, so ~14 of them cannot have a slot and each held that
+   * one queue for the full three seconds. Forty seconds of the site's GT
+   * pipeline, every cycle, spent waiting for slots that were never coming —
+   * with a token page's chart request stuck behind all of it.
+   *
+   * So a caller that HAS a second source does not queue: it takes a slot if one
+   * is free and goes to DexScreener if not, which is what it would have done
+   * three seconds later anyway. A caller with no second source still waits,
+   * because for it the wait is the difference between data and none.
+   */
+  waitMs?: number;
+}
+
+export async function gtGet<T = unknown>(path: string, params?: Record<string, string | number>, opts?: GtOpts): Promise<GtResult<T>> {
   if (gtInCooldown())
     return { ok: false, status: 0, reason: `rate limited — cooling down for ${Math.ceil(gtCooldownLeftMs() / 1000)}s`, body: null };
 
   const qs = params ? new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString() : "";
   const url = `${baseNow()}${path}${qs ? `?${qs}` : ""}`;
-  if (!(await slot()))
+  const waitMs = Number.isFinite(opts?.waitMs) ? Math.max(0, opts!.waitMs!) : BUDGET_WAIT_MS;
+  if (!(await slot(waitMs)))
     return {
       ok: false,
       status: 0,

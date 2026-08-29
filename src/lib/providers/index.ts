@@ -1,5 +1,5 @@
 import { CHAINS } from "@/config/chains";
-import { cached } from "@/lib/cache";
+import { cache, cached, within } from "@/lib/cache";
 import {
   SEED_ROWS,
   rowToBoardToken,
@@ -38,6 +38,28 @@ import { listUploads } from "@/lib/uploadsDir";
 // The web app must be the polite tenant — `cached` serves stale on a failed
 // refresh, so a missed minute costs staleness, never a DEMO board.
 const PRICE_TTL = 60_000;
+/** The one owner of the board's cache key: `getTokensPayload` writes through it
+ *  and then reads `cache.storedAt` off it to date the payload, and two spellings
+ *  would date a payload built from some other entry. */
+const BOARD_KEY = "listings:market";
+const FNG_KEY = "fng";
+/**
+ * ⚠️ HOW LONG A COLD START MAY HOLD THE PAGE — and only a cold start.
+ *
+ * `cached()` serves an expired board instantly, so the only visitor who can
+ * still wait on the loader is the first one after a restart, when there is
+ * genuinely nothing to serve. That visitor exists on every deploy, and this box
+ * is redeployed constantly: ~19 GeckoTerminal chunks against a 15/min budget is
+ * a minute or more on a rate-limited afternoon, and a page that hangs that long
+ * reads as broken rather than slow. Past this the captured-at-listing board
+ * goes out under its own `demo data` pill — real names, honest dashes, and the
+ * real board on the next 30s poll, because the load is left RUNNING and its
+ * result still lands in the cache.
+ *
+ * Generous on purpose: a healthy cold load is a few seconds, and tripping this
+ * on a good box would trade a short skeleton for a demo pill nobody needed.
+ */
+const COLD_WAIT_MS = 8_000;
 /** Matches the TTL /api/pool, /api/ohlcv and /api/trades read that key with —
  *  one number, or the board would plant an entry they expire differently. */
 const FNG_TTL = 10 * 60_000;
@@ -355,9 +377,13 @@ function buildWire(signals: Signal[]): WireItem[] {
 export async function getTokensPayload(): Promise<TokensPayload> {
   let tokens: BoardToken[];
   let live = true;
-  try {
-    tokens = await cached("listings:market", PRICE_TTL, loadListedTokens);
-  } catch {
+  // `within` absorbs the load's own rejection, so the two failure modes this
+  // has — down, and too slow to wait for — reach the same fallback and neither
+  // can surface as an unhandled rejection once nobody is awaiting the load.
+  const board = await within(cached(BOARD_KEY, PRICE_TTL, loadListedTokens), COLD_WAIT_MS);
+  if (board.ok) {
+    tokens = board.value;
+  } else {
     tokens = rowsToBoardTokens(await loadRows());
     live = false;
   }
@@ -370,13 +396,26 @@ export async function getTokensPayload(): Promise<TokensPayload> {
     wire: buildWire(signals),
     trackedVol24h: tokens.reduce((s, t) => s + t.vol["24h"], 0),
     live,
-    updatedAt: Date.now(),
+    // ⚠️ WHEN THE DATA WAS READ, NEVER WHEN THE RESPONSE WAS BUILT. An expired
+    // board is served instantly now, so `Date.now()` here would stamp a reading
+    // from an hour ago as a reading from this second — and `freshness()` prints
+    // that stamp under the board as "3s ago". A staleness the reader cannot see
+    // is the reassuring reading of a state that is not.
+    updatedAt: (live ? cache.storedAt(BOARD_KEY) : undefined) ?? Date.now(),
   };
 }
 
 export async function getFearGreed(): Promise<FearGreed> {
   try {
-    return await cached("fng", FNG_TTL, fetchFearGreed);
+    const v = await cached(FNG_KEY, FNG_TTL, fetchFearGreed);
+    // `updatedMinutesAgo` is alternative.me's OWN reading age, measured when we
+    // fetched it — so a value served from the cache has to carry the time it
+    // has since spent sitting there, or a provider we have not reached for
+    // three hours goes on reporting the age it had when we last did.
+    const at = cache.storedAt(FNG_KEY);
+    if (!at) return v;
+    const held = Math.max(0, Math.round((Date.now() - at) / 60_000));
+    return held ? { ...v, updatedMinutesAgo: v.updatedMinutesAgo + held } : v;
   } catch {
     return SEED_FEAR_GREED;
   }

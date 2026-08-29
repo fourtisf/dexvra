@@ -6283,6 +6283,130 @@ send — never matched either, and neither did any of the other 32.
 
 **Config a fix depends on:** nothing.
 
+## "Websitenya loadingnya terlalu lama" — the cache blocked on the one thing it was there to cover
+
+Reported with a screenshot of dexvra.io: the Trending Listings board as unfilled
+skeleton rows, and nothing under it. The page is a client component driven by
+one `fetch("/api/tokens")`, so until that request answers there is nothing on
+screen at all — and that request was sitting behind the board's whole market
+refresh.
+
+**`cached()` served the stale copy only when the loader THREW, never when it was
+merely SLOW.** `cache.get()` answers `undefined` the moment an entry expires, so
+control fell straight through to `await loader()`; `getStale` was reached from
+the `catch` and nowhere else. The board's TTL is 60s and its loader is ~19
+GeckoTerminal chunks paced against a per-process budget, each able to wait 3s
+for a slot and then time out after 9s. **So once every sixty seconds one visitor
+paid for the entire refresh with the page held blank, over a perfectly good
+board that was sixty-one seconds old** — and the payload's own HTTP header
+(`stale-while-revalidate=30`) had been promising every CDN in front of it the
+opposite behaviour since the route was written.
+
+- **An expired entry is served NOW and refreshed behind it**, deduped through
+  the same in-flight map, so a burst of readers still costs one load. It is in
+  `cached()` and therefore true of every caller — the pool cache, the candles,
+  the trades feed, the token preview, the logo sweep — because every one of them
+  is a flaky-free-tier read where a slightly stale answer beats a spinner.
+- ⚠️ **THERE IS DELIBERATELY NO UPPER BOUND ON HOW STALE A SERVED VALUE MAY
+  BE.** The alternative to serving it is blocking and then serving the very same
+  value out of the `catch` — the same data behind a spinner. What a long outage
+  owes the reader is the AGE, not a wait.
+- ⚠️ **…so `updatedAt` had to stop being `Date.now()`.** The payload stamped the
+  time the RESPONSE was built, and `freshness()` prints that stamp under the
+  board — an hour-old reading rendered as "3s ago". `cache.storedAt(key)` dates
+  the WRITE. Fear & Greed needed the same: `updatedMinutesAgo` is
+  alternative.me's own reading age measured when we fetched it, so a value
+  served from the cache now carries the time it has since spent sitting there.
+- ⚠️ **A background refresh has nobody awaiting it, and an unhandled rejection
+  ends the process in Node 18** — a provider outage would have stopped the whole
+  site rather than leaving it stale. `refresh()` resolves to the stale copy
+  rather than rejecting whenever there is one, and the fire-and-forget call
+  catches on top of that.
+- ⚠️ **AND THE OLDEST TEST IN THE FILE WENT VACUOUS THE MOMENT THIS LANDED.**
+  "an expired entry is still the stale copy served when a provider is down" now
+  takes the stale-while-revalidate branch and returns before the loader is ever
+  consulted — so deleting the loader-failed→stale fallback outright kept it
+  green. Found by mutation testing, not by reading. The shape that still reaches
+  that fallback is a COLD key with TWO writers, which is exactly `poolCache`: a
+  token page resolves `pool:<net>:<addr>` from GeckoTerminal while the board's
+  own refresh plants the same key from the market read it already paid for.
+
+### A cold start is the one case a stale copy cannot cover
+
+`cached()` covers every visitor but the first one after a restart, and this box
+is redeployed constantly. `within(p, COLD_WAIT_MS)` bounds that wait at 8s and
+**leaves the load RUNNING**, so its result still lands in the cache for the next
+30s poll; past the deadline the captured-at-listing board goes out under its own
+`demo data` pill. Generous on purpose — a healthy cold load is a few seconds,
+and tripping this on a good box would trade a short skeleton for a demo pill
+nobody needed.
+
+- ⚠️ **The deadline timer is NOT `unref`'d.** A REQUEST is waiting on it, and an
+  unref'd timer does not hold the event loop open — a process with nothing else
+  pending exits with the caller hung for ever. The trade bot's `bounded()` has
+  this exact scar, and the first cut of this reintroduced it; three tests said
+  so within a minute of being written.
+- `{ok: false}` covers slow AND failed, deliberately: the caller's answer to
+  both is its fallback, and absorbing the rejection here is what keeps it from
+  surfacing once nobody is awaiting the load.
+
+### …and then the measurement named a second cause the reasoning had not
+
+Built and timed on a box with the upstreams unreachable, which is the
+pathological case: `/api/tokens` took **8s, 8s, 1.1s, 8s** — every request
+hitting the cold deadline — and the boot line said why.
+
+```
+[gt] PUBLIC free tier (~10 req/min per IP …) · budget 5/min from THIS process
+```
+
+**Five a minute against ~19 chunks a cycle. The board's demand cannot fit in its
+own budget, and it never could.** `slot()` is serialised process-wide, so the
+3s each over-budget chunk waits is not paid by that chunk — it is paid by
+everything behind it: the next chain's chunks, and the chart request of whoever
+just opened a token page. ~14 chunks × 3s is **forty seconds of the site's whole
+GeckoTerminal pipeline, burnt every cycle, waiting for slots that were never
+coming.**
+
+- **A caller that HAS a second source takes a free slot and never queues for
+  one.** It goes to DexScreener instead — which is where those tokens were going
+  three seconds later anyway. `gtGet(path, params, { waitMs: 0 })`.
+- ⚠️ **A GT-ONLY CHAIN STILL WAITS**, because for it the wait is the difference
+  between a priced row and a dash. It is the same fact `partitionByFallback`
+  already orders the cycle on, read from the same `dsCovers` map rather than
+  from a second list of chains that would drift.
+- ⚠️ **An omitted `waitMs` may not silently mean 0.** That is the mutant that
+  turns a politeness knob into a permanent refusal for exactly the chains the
+  scheduler exists to protect, and it has its own test.
+
+Measured again on the same box, same build, upstreams equally dead:
+
+| | before | after |
+| --- | --- | --- |
+| `/api/tokens`, four requests | 8s · 8s · 1.1s · 8s | 0.60s · 0.46s · 0.47s · 0.47s |
+| `/api/ohlcv` behind a board refresh | 7.0s | 3.1s |
+
+```bash
+npm test                                       # cache (12) · gt (18) · gtBudget (10)
+npm run build && npx next start -p 3055 &      # and time it, rather than reasoning about it
+curl -s -o /dev/null -w "%{time_total}\n" localhost:3055/api/tokens
+pm2 logs dexvra --lines 50 --nostream | grep -F '[gt]'   # the budget in force
+```
+
+Every guarantee is MUTATION-TESTED rather than argued — restoring the blocking
+read, leaving the background rejection unhandled, unref'ing the deadline,
+dropping the loader-failed→stale fallback, stamping the payload from the clock,
+spelling the board's cache key twice, unbounding the cold start, ignoring
+`waitMs`, defaulting it to 0, and taking the no-queue slot on GT-only chains
+too. Each fails between one and two tests.
+
+**Config a fix depends on:** nothing. ⚠️ But the arithmetic underneath is
+unchanged: **~19 chunks do not fit in 5/min**, so the board is now fast and
+mostly DexScreener-priced rather than slow and mostly unpriced.
+`GECKOTERMINAL_API_KEY` in the **repo-root** `.env` is still the only thing that
+raises the ceiling rather than dividing it — and this is the eighth place in
+this file that sentence appears.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

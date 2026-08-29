@@ -74,3 +74,51 @@ test("⚠️ a cycle cut short by the cooldown is a FAILED cycle, not a partial 
   // the whole chain to DexScreener, which covers 22 of the 23 chains.
   assert.match(MARKET, /if \(failed > 0 && gtInCooldown\(\)\) throw/);
 });
+
+// ── The board's freshness ────────────────────────────────────────────────────
+// `providers/index.ts` cannot be imported by this runner (it reaches for the
+// `@/` alias through `@/lib/store`), so these are source scans — mutation
+// tested against the revision each one describes.
+
+const stripComments = (src: string) => src.replace(/^\s*(?:\/\/|\*|\/\*).*$/gm, "");
+
+test("⚠️ the board is dated from the CACHE, never from the clock", () => {
+  // An expired board is served instantly now (lib/cache.ts), so a `Date.now()`
+  // stamp presents an hour-old reading as a reading from this second — and
+  // `freshness()` prints exactly that stamp under the board as "3s ago". The
+  // staleness the reader cannot see is the reassuring reading of a state that
+  // is not.
+  const body = stripComments(PIPE);
+  assert.ok(!/updatedAt:\s*Date\.now\(\),/.test(body), "the payload is stamped with the response time");
+  assert.match(body, /updatedAt:\s*\(live \? cache\.storedAt\(BOARD_KEY\) : undefined\)/);
+});
+
+test("⚠️ ONE spelling of the board's cache key, or the payload dates some other entry", () => {
+  const body = stripComments(PIPE);
+  assert.match(body, /const BOARD_KEY = "listings:market";/);
+  assert.equal((body.match(/"listings:market"/g) ?? []).length, 1, "the key is written twice");
+});
+
+test("a COLD start is bounded, and what it falls back to says so on the page", () => {
+  // Only the first visitor after a restart can still wait on the loader — and
+  // this box is redeployed constantly. Past the deadline the captured board
+  // goes out under its own `demo data` pill (live: false), and the abandoned
+  // load still lands in the cache for the next 30s poll.
+  const body = stripComments(PIPE);
+  assert.match(body, /const COLD_WAIT_MS = [\d_]+;/);
+  assert.match(
+    body,
+    /within\(cached\(BOARD_KEY, PRICE_TTL, loadListedTokens\), COLD_WAIT_MS\)/,
+    "the board load is not bounded",
+  );
+  assert.match(body, /tokens = rowsToBoardTokens\(await loadRows\(\)\);\s*live = false;/);
+});
+
+test("Fear & Greed reports the age it has SINCE spent in the cache", () => {
+  // `updatedMinutesAgo` is alternative.me's own reading age, measured when we
+  // fetched it. Served stale for three hours it would go on reporting the age
+  // it had when we last reached them.
+  const body = stripComments(PIPE);
+  assert.match(body, /const held = Math\.max\(0, Math\.round\(\(Date\.now\(\) - at\) \/ 60_000\)\);/);
+  assert.match(body, /updatedMinutesAgo: v\.updatedMinutesAgo \+ held/);
+});

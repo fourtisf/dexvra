@@ -3,6 +3,10 @@
 // the same rule every other node-tested module here already follows.
 import { CHAINS } from "../../config/chains.ts";
 import { gtGet, gtInCooldown } from "./gt.ts";
+// `dexscreener.ts` imports only a TYPE from here, so this edge is one-way at
+// runtime. `dsCovers` is the one owner of "does this chain have a second
+// source" and the scheduler already orders the cycle on it.
+import { dsCovers } from "./dexscreener.ts";
 import type { PeriodKey, TxSplit } from "@/lib/types";
 
 // GeckoTerminal free API (no key). We fetch live market data for a SPECIFIC
@@ -142,6 +146,7 @@ async function fetchChunk(
   network: string,
   chunk: string[],
   out: Map<string, LiveMarket>,
+  waitMs: number | undefined,
 ): Promise<void> {
   // ⚠️ Addresses go to GT VERBATIM — base58 (Solana) is case-significant, and
   // lowercasing one asks GT about an address that does not exist. Only OUR map
@@ -153,6 +158,7 @@ async function fetchChunk(
   const res = await gtGet<{ data?: GtToken[]; included?: GtPool[] }>(
     `/networks/${network}/tokens/multi/${chunk.join(",")}`,
     { include: "top_pools" },
+    waitMs === undefined ? undefined : { waitMs },
   );
   if (!res.ok) throw new Error(`${res.reason ?? "GeckoTerminal failed"} (${chainId})`);
   const json = res.body ?? {};
@@ -191,6 +197,24 @@ export async function fetchListedMarket(
   const out = new Map<string, LiveMarket>();
   if (!network || addresses.length === 0) return out;
 
+  // ⚠️ THE BOARD MAY NOT QUEUE FOR A SLOT IT HAS A SECOND SOURCE FOR.
+  //
+  // `slot()` is serialised process-wide, so a chunk that waits its full three
+  // seconds for a budget that is already spent is three seconds charged to
+  // everything behind it — the next chain's chunks, and the chart request of
+  // whoever just opened a token page. Measured on the shipped free budget
+  // (10/min for the IP, 5/min for this process) one refresh is ~19 chunks, so
+  // ~14 of them queued for a slot that was never coming: ~40s of the site's GT
+  // pipeline burnt per cycle, every cycle.
+  //
+  // On a chain DexScreener covers, waiting buys nothing — `fetchIndexedMarket`
+  // asks DexScreener for exactly these leftovers, which is where they were
+  // going to end up three seconds later. A GT-ONLY chain still waits, because
+  // there the wait is the difference between a priced row and a dash; it is the
+  // same fact `partitionByFallback` orders the cycle on, read from the same map
+  // rather than from a second list of chains.
+  const waitMs = dsCovers(chainId) ? 0 : undefined;
+
   const chunks: string[][] = [];
   for (let i = 0; i < addresses.length; i += GT_MULTI_MAX) chunks.push(addresses.slice(i, i + GT_MULTI_MAX));
 
@@ -203,7 +227,7 @@ export async function fetchListedMarket(
   for (let i = 0; i < chunks.length; i++) {
     if (i > 0) await sleep(CHUNK_GAP_MS);
     try {
-      await fetchChunk(chainId, network, chunks[i], out);
+      await fetchChunk(chainId, network, chunks[i], out, waitMs);
     } catch (err) {
       failed++;
       if (firstErr === undefined) firstErr = err;
