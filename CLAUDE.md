@@ -6833,6 +6833,66 @@ npm test                                          # notAProject — 15 tests
 `INTERNAL_API_TOKEN` and `SITE_URL`, which live only on the server — it says so
 rather than reporting an empty roster.
 
+### "beberapa token presentasi 0%" — the 0% was true; the CAP was the claim
+
+Reported with the Top Coins board opening on `$AI Barking Puppy $2.41B`, two
+copies of `$BONK`, and `$TRUMP OFFER TRUTH $1.84B`, several rows reading
+`+0.00%`. The token page for that $TRUMP settles it:
+
+```
+PRICE $9.17   24H +0.0%   MCAP $1.84B   LIQUIDITY $8.28M
+VOL·24H $5    TXNS·24H 2  HOLDERS 0
+```
+
+**The percentage is not a dummy — it is a measurement.** Five dollars of volume
+and two transactions in a day is a pool that did not move, and `+0.00%` is the
+truth about it. Refusing to print it would be the fabricated blank this repo
+already refuses to fabricate in the other direction.
+
+**The CAP is the unearned number.** A market cap is price × supply, and on a
+token nobody trades the price is whatever the last five dollars said — so the
+figure is arbitrarily large, completely unbacked, and it was ranking the board.
+
+This is the `$MRNA +465% on $0.05 of volume` defect exactly, **one column
+over**. `changeRank` grew `tradedEnough` for the percentage ranking and stopped
+there, on the stated reasoning that *"idle tokens are deliberately not excluded
+from the VOLUME or SCORE rankings, which is right, because on those an idle
+token sinks by itself"*. True of those two — and market cap is a THIRD ranking,
+where an idle token floats for exactly the same reason a change ranking does.
+The comment argued the general case and then enumerated two of three.
+
+- **`topCoins` sorted by cap now demotes anything under `RANK_MIN_VOL_USD`** —
+  the same predicate, not a second copy of the idea.
+- ⚠️ **IT DEMOTES, IT NEVER HIDES.** `changeRank`'s rule and the same reason:
+  these boards carry paying customers, and a listing that vanished because its
+  pool was quiet today is a refund conversation. The row keeps its real cap in
+  its own column; it just cannot lead a board it has not earned.
+- ⚠️ **`-Infinity - -Infinity` is NaN, and a NaN comparator neither orders nor
+  ties** — control falls through to whatever comes next. The demoted rows are
+  separated by a boolean first and only then compared on their real value, so
+  they stay ordered by cap among themselves.
+- **The floor binds the MCAP ranking ONLY.** On volume and score an idle token
+  sinks by itself, and demoting it there would be a second rule doing the first
+  one's job.
+- **An UNREADABLE volume is not a small one** — `tradedEnough`'s own exemption,
+  and it still fails open here.
+
+⚠️ **AND THE FIRST FIXTURE FOR THE NaN RULE COULD NOT SEE IT.** Its cap order
+happened to BE its alphabetical order, so the mutant that drops the guard fell
+through to the name tiebreak and produced the identical list. The three rows
+disagree on purpose now — by cap `ZED → MID → ALPHA`, by name the reverse.
+
+Mutation-tested: dropping the floor, leaking it onto the volume and score
+rankings, and removing the NaN guard each fail exactly one test.
+
+```bash
+npm test    # home — 61 tests, no network
+```
+
+**Config a fix depends on:** nothing. `RANK_MIN_VOL_USD` ($1,000) is shared with
+the change ranking — deliberately far below anything a reader would call busy,
+because it is a ranking floor and not an eligibility one.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

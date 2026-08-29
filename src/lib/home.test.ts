@@ -6,26 +6,7 @@ import test from "node:test";
 import assert from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  HOME_BOARD_ROWS,
-  HOME_CHAIN_LIMIT,
-  HOME_TRENDING_MAX,
-  SANE_CHANGE_PCT,
-  byChange,
-  changeRank,
-  changeReading,
-  expander,
-  capped,
-  chainCounts,
-  freshness,
-  inChain,
-  movers,
-  resolveChain,
-  splitChains,
-  topCoins,
-  tradedEnough,
-  figureReading,
-} from "./home.ts";
+import { HOME_BOARD_ROWS, HOME_CHAIN_LIMIT, HOME_TRENDING_MAX, SANE_CHANGE_PCT, byChange, changeRank, changeReading, expander, capped, chainCounts, freshness, inChain, movers, resolveChain, splitChains, topCoins, tradedEnough, figureReading } from "./home.ts";
 import { CHAINS, CHAIN_IDS } from "../config/chains.ts";
 import type { BoardToken, PeriodKey } from "./types.ts";
 
@@ -823,4 +804,68 @@ test("market:check never turns its exit code on one source's rate limit", () => 
   assert.match(src, /if \(recoverable > 0\) \{[\s\S]{0,600}process\.exit\(1\)/, "a recoverable blank row no longer fails the check");
   // A token no source has is the board being HONEST, never a failure.
   assert.match(src, /nowhere === rows\.length[\s\S]{0,600}process\.exit\(0\)/, "an unindexed token fails the check again");
+});
+
+// ── A market cap is a claim, and a dead pool cannot support one ──────────────
+// Reported with the Top Coins board opening on `$AI Barking Puppy $2.41B`, two
+// copies of `$BONK`, and `$TRUMP OFFER TRUTH $1.84B` — whose token page reads
+// VOL·24H $5, TXNS·24H 2, HOLDERS 0.
+const coin = (symbol: string, mcap: number | null, vol24: number, extra: Partial<BoardToken> = {}): BoardToken =>
+  ({
+    key: `solana:${symbol}`, chain: "solana", address: symbol, symbol, name: symbol,
+    logoUrl: null, emoji: "🪙", gradient: ["#111", "#222", "#333"],
+    priceUsd: 1, mcap, liq: 1, vol: { "5m": 0, "1h": 0, "6h": 0, "24h": vol24 },
+    chg: { "5m": 0, "1h": 0, "6h": 0, "24h": 0 }, txns: { buys: 0, sells: 0 },
+    holders: 0, taxPct: 0, trend: [], verified: false, source: "live",
+    tier: "FREE", trendingRank: null, listedMinutesAgo: 1, score: 50,
+    poolAddress: null, links: { website: null, twitter: null, telegram: null },
+    overview: null, ...extra,
+  }) as BoardToken;
+
+test("⚠️ a $1.84B cap on $5 of volume cannot lead the market-cap board", () => {
+  const rows = topCoins(
+    [
+      coin("TRUMP", 1_840_000_000, 5), // the reported row
+      coin("AI", 2_410_000_000, 0),
+      coin("REAL", 5_000_000, 250_000), // small, but it actually trades
+    ],
+    "mcap",
+  ).rows;
+  assert.equal(rows[0].symbol, "REAL", "a traded market must lead a market-cap board");
+  // …DEMOTED, never hidden: these boards carry paying customers. Below the
+  // floor they still order by their own real cap — the column is not a lie,
+  // it just cannot buy the top of the board.
+  assert.deepEqual(rows.map((r) => r.symbol), ["REAL", "AI", "TRUMP"]);
+});
+
+test("the demoted rows keep their own order — by CAP, not by name", () => {
+  // ⚠️ `-Infinity - -Infinity` is NaN. A comparator that returns NaN neither
+  // orders nor ties: control falls through to whatever comes next, which here
+  // would be the alphabetical tiebreak.
+  //
+  // ⚠️ AND THE FIRST FIXTURE FOR THIS COULD NOT TELL THE TWO APART — its cap
+  // order happened to BE its alphabetical order, so the mutant that drops the
+  // NaN guard survived it untouched. These three disagree on purpose:
+  // by cap ZED → MID → ALPHA, by name ALPHA → MID → ZED.
+  const rows = topCoins(
+    [coin("ALPHA", 1_000_000, 0), coin("ZED", 9_000_000_000, 0), coin("MID", 50_000_000, 0)],
+    "mcap",
+  ).rows;
+  assert.deepEqual(rows.map((r) => r.symbol), ["ZED", "MID", "ALPHA"]);
+});
+
+test("⚠️ the floor binds the MCAP ranking only — on volume and score an idle token sinks by itself", () => {
+  const tokens = [coin("QUIET", 9_000_000_000, 0, { score: 99 }), coin("BUSY", 1_000_000, 500_000, { score: 10 })];
+  assert.equal(topCoins(tokens, "score").rows[0].symbol, "QUIET", "score is untouched");
+  assert.equal(topCoins(tokens, "vol").rows[0].symbol, "BUSY", "volume ranks itself");
+});
+
+test("an UNREADABLE volume is not a small one — it must not be demoted", () => {
+  // tradedEnough's own exemption: `!Number.isFinite(vol24)` passes. A token we
+  // could not read is not a token that did not trade.
+  const rows = topCoins(
+    [coin("UNREAD", 9_000_000_000, NaN), coin("BUSY", 1_000_000, 500_000)],
+    "mcap",
+  ).rows;
+  assert.equal(rows[0].symbol, "UNREAD");
 });

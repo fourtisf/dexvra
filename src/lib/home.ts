@@ -177,9 +177,37 @@ export function topCoins(
   limit = HOME_BOARD_ROWS,
 ): TopCoins {
   const priced = sort === "mcap" ? tokens.filter((t) => t.mcap != null) : [...tokens];
+  // ⚠️ A MARKET CAP IS A CLAIM, AND A DEAD POOL CANNOT SUPPORT ONE.
+  //
+  // The board was reported opening on `$AI Barking Puppy $2.41B`, two copies of
+  // `$BONK`, and `$TRUMP OFFER TRUTH $1.84B` — whose token page reads
+  // `VOL·24H $5 · TXNS·24H 2 · HOLDERS 0`. A cap is price × supply, and on a
+  // token nobody trades the price is whatever the last five dollars said, so
+  // the number is arbitrarily large and completely unearned.
+  //
+  // This is the `$MRNA +465% on $0.05 of volume` defect exactly, one COLUMN
+  // over: `changeRank` grew `tradedEnough` for the percentage ranking and
+  // stopped there, on the reasoning that "on VOLUME or SCORE an idle token
+  // sinks by itself". True of those two — and market cap is a third ranking
+  // where an idle token FLOATS, for the same reason a change ranking does.
+  //
+  // ⚠️ IT DEMOTES, IT NEVER HIDES — `changeRank`'s rule, and the same reason:
+  // these boards carry paying customers, and a listing that vanished because
+  // its pool was quiet today is a refund conversation. The row keeps its real
+  // cap in its own column; it just cannot lead a board it has not earned.
+  const quiet = sort === "mcap" ? (t: BoardToken) => !tradedEnough(t) : () => false;
   const val = (t: BoardToken): number =>
     sort === "mcap" ? (t.mcap ?? 0) : sort === "vol" ? t.vol[period] : t.score;
-  const sorted = [...priced].sort((a, b) => val(b) - val(a) || a.symbol.localeCompare(b.symbol));
+  const rank = (t: BoardToken): number => (quiet(t) ? -Infinity : val(t));
+  const sorted = [...priced].sort(
+    (a, b) =>
+      // ⚠️ `-Infinity - -Infinity` is NaN, and a NaN comparator scrambles the
+      // whole list rather than tying — so the demoted rows are separated first
+      // and only then compared on their real value. The unrankable comparator
+      // one function up has this exact scar.
+      Number(quiet(a)) - Number(quiet(b)) || rank(b) - rank(a) || val(b) - val(a) ||
+      a.symbol.localeCompare(b.symbol),
+  );
   // ⚠️ `limit` of 0 means NO CAP — the same contract `capped()` states, because
   // "Show all" passes 0. `slice(0, 0)` is the empty array, so the unconditional
   // slice this replaces answered an expanded table with zero rows and the
