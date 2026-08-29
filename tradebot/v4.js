@@ -456,11 +456,49 @@ function _resetDiscovery() { _disc.clear(); }
 
 /** poolId for a PoolKey. currency0 MUST sort below currency1 — v4 rejects a key
  *  that doesn't, and the id would be for a pool that cannot exist. */
+/*
+ * ⚠️ HAND-ENCODED, AND THE EQUIVALENCE IS PINNED BY A TEST.
+ *
+ * `AbiCoder.encode` costs ~156µs a call, which is nothing for the handful of
+ * ids the constructed sweep needs and is the whole budget for `v4Calldata`,
+ * which hashes thousands of candidate assignments to find a pool in a router's
+ * calldata. Five fixed 32-byte words need no coder: this is ~7× faster and, for
+ * the same reason it must be, byte-identical — `uniswapV4.test.js` asserts it
+ * against `coder.encode` on the negative tickSpacing and the boundary values,
+ * because a hand-rolled encoder is exactly the kind of thing that agrees on the
+ * easy cases.
+ *
+ * It stays the ONE owner of the hash. A second, faster copy inside v4Calldata is
+ * how two modules end up disagreeing about the very thing being proved.
+ */
+const _pidBuf = new Uint8Array(160);
+function _putAddr(a, off) {
+  const h = String(a);
+  const p = h.charCodeAt(1) === 120 /* x */ ? 2 : 0;   // tolerate a bare hex string
+  for (let i = 0; i < 20; i++) _pidBuf[off + 12 + i] = parseInt(h.substr(p + i * 2, 2), 16);
+}
+/*
+ * ⚠️ NO EXPLICIT TWO'S-COMPLEMENT STEP, and that is deliberate rather than an
+ * omission. `int24` encodes negative ticks as two's complement, and BigInt's `&`
+ * and `>>` already operate in infinite two's complement — so `-120n & 0xffn` is
+ * 136n, which is the byte `abi.encode` writes. An explicit `n += 1n << 256n`
+ * above this loop produces identical bytes; a mutation run deleting it failed
+ * nothing, which is what a redundant guard looks like. Saying so beats carrying
+ * a line that reads as load-bearing. The equivalence itself is pinned in
+ * `uniswapV4.test.js` against the coder, on both int24 boundaries.
+ */
+function _putInt(v, end) {
+  let n = BigInt(v);
+  for (let i = 0; i < 32; i++) { _pidBuf[end - i] = Number(n & 0xffn); n >>= 8n; }
+}
 function poolId(currency0, currency1, fee, tickSpacing, hooks = NATIVE) {
-  return ethers.keccak256(coder.encode(
-    ['address', 'address', 'uint24', 'int24', 'address'],
-    [currency0, currency1, fee, tickSpacing, hooks],
-  ));
+  _pidBuf.fill(0);
+  _putAddr(currency0, 0);
+  _putAddr(currency1, 32);
+  _putInt(fee, 95);
+  _putInt(tickSpacing, 127);
+  _putAddr(hooks == null ? NATIVE : hooks, 128);
+  return ethers.keccak256(_pidBuf);
 }
 
 /** The two currencies of a token↔native pool, in v4's required order. */

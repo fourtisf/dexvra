@@ -57,7 +57,46 @@ test('⚠️ a signature that does not ROUND-TRIP is refused, selector match or 
   // (ethers ignores them) and only the re-encode notices.
   const padded = good + 'deadbeef';
   assert.ok(cd.decodeVerified(padded) === null, 'calldata that cannot round-trip was accepted');
-  assert.deepEqual(cd.poolKeysFrom(padded, TOKEN, v4.poolId), [], '…and it must not yield a pool either');
+
+  /*
+   * ⚠️ PREMISE CHANGED, NOT RULE. This used to also assert "…and it must not
+   * yield a pool either", on the reasoning that a call we cannot decode is a
+   * call we may not read a pool out of.
+   *
+   * That reasoning was the feature's own ceiling: it meant a router whose
+   * signature nobody had written down was unreadable — hand-writing an
+   * integration per launchpad, the exact thing this module exists to beat. A pad
+   * we had not met (flap.sh) decoded to nothing and its token read as
+   * unroutable.
+   *
+   * Decoding is no longer how the pool is found. The raw 32-byte WORDS are, and
+   * ABI encoding puts everything in words, so it is strictly more complete. The
+   * safety is unchanged and lives entirely in proof 3: the assignment survives
+   * only if the chain's own poolId hash of it equals a word the calldata already
+   * carried, which no misreading can fake. Proof 2 still governs `decodeVerified`
+   * above, which is what stops a bad layout being TRUSTED as a decode.
+   */
+  const keys = cd.poolKeysFrom(padded, TOKEN, v4.poolId);
+  assert.equal(keys.length, 1, 'the words are still there, so the pool is still provable');
+  assert.equal(keys[0].id, ID.toLowerCase());
+});
+
+test('⚠️ a router NOBODY has a signature for still yields its pool', () => {
+  // The whole point. `0xdeadbeef` is in no candidate list and never will be, so
+  // this is a call we cannot decode at all — and the words are the same words.
+  const unknown = '0xdeadbeef' + callData().slice(10);
+  assert.equal(cd.decodeVerified(unknown), null, 'precondition: this call is genuinely undecodable');
+  const keys = cd.poolKeysFrom(unknown, TOKEN, v4.poolId);
+  assert.equal(keys.length, 1, 'a pad we have never met must not read as unroutable');
+  assert.equal(keys[0].id, ID.toLowerCase());
+  assert.equal(keys[0].quote, QUOTE);
+});
+
+test('⚠️ …and a call carrying no matching poolId still yields NOTHING', () => {
+  // Reading raw words widens what can be READ; it may not widen what is
+  // BELIEVED. Strip the id word and the proof has nothing to land on.
+  const stripped = callData().split(ID.toLowerCase().slice(2)).join('11'.repeat(32));
+  assert.deepEqual(cd.poolKeysFrom(stripped, TOKEN, v4.poolId), []);
 });
 
 test('⚠️ a selector that no candidate hashes to is refused outright', () => {

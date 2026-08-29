@@ -72,6 +72,8 @@ const lc = (s) => String(s == null ? '' : s).toLowerCase();
  * The first was read off the chain: `abi:check` found selector 0x4d819a2a in six
  * real trades, and this signature's keccak is that selector.
  */
+const MAX_HASHES = Math.max(1000, Number(process.env.V4_CALLDATA_MAX_HASHES || 20000));
+
 const DEFAULT_SIGS = [
   'swap((uint8,address,address,address,uint24,int24,address,bytes,address,bytes32)[],address,uint256,uint256,uint256)',
 ];
@@ -154,13 +156,61 @@ function _harvest(node, out, depth = 0) {
  * chain — one owner for the hash lives in `v4.js`, and two would eventually
  * disagree about the very thing being proved.
  */
+/*
+ * Every 32-byte WORD of the raw calldata, without decoding anything.
+ *
+ * ⚠️ THIS IS WHY THE SIGNATURE LIST STOPPED BEING A REQUIREMENT, and it is the
+ * whole difference between working on one launchpad and working on all of them.
+ * The first cut could only read a router whose signature was already known —
+ * which is hand-writing an integration per pad, the very thing this was supposed
+ * to beat. A pad we had not met (flap.sh) decoded to nothing and its token read
+ * as unroutable.
+ *
+ * ABI encoding lays EVERYTHING out in 32-byte words — a tuple array's contents,
+ * a nested dynamic tail, all of it — so reading the words is strictly MORE
+ * complete than decoding, not less. And it costs no safety: proofs 1 and 2 exist
+ * to justify UNDERSTANDING a call, and nothing here understands one. Exactly one
+ * value is extracted — a PoolKey — and it is kept only when the chain's own
+ * `poolId` hash of it matches a word the calldata already carried, which a wrong
+ * reading cannot fake.
+ */
+function _words(data) {
+  const out = { addrs: new Set(), ids: new Set(), small: new Set() };
+  const body = lc(data).slice(10);                         // past the selector
+  for (let i = 0; i + 64 <= body.length; i += 64) {
+    const w = body.slice(i, i + 64);
+    out.ids.add('0x' + w);
+    // An address is 12 zero bytes then 20 non-zero-ish bytes. The zero address
+    // is deliberately NOT collected as an address: it is the same 32 bytes as
+    // the number 0, and it is offered as a `hooks` candidate regardless.
+    if (/^0{24}[0-9a-f]{40}$/.test(w) && !/^0{64}$/.test(w)) out.addrs.add('0x' + w.slice(24));
+    // A fee is a uint24 and a tickSpacing an int24 — so both are small, in one
+    // of two spellings. Negative ticks arrive as two's complement in raw words.
+    const n = BigInt('0x' + w);
+    if (n < 0x1000000n) out.small.add(Number(n));
+    else if (n > (1n << 255n)) { const neg = n - (1n << 256n); if (neg > -0x800000n) out.small.add(Number(neg)); }
+  }
+  return out;
+}
+
+/** Merge b's three sets into a. */
+function _merge(a, b) {
+  for (const k of ['addrs', 'ids', 'small']) for (const v of b[k]) a[k].add(v);
+  return a;
+}
+
 function poolKeysFrom(data, token, poolId, opts = {}) {
-  const dec = decodeVerified(data, opts);
-  if (!dec) return [];
+  const hex = lc(data);
+  if (!/^0x[0-9a-f]{8,}$/.test(hex)) return [];
   const tok = lc(token);
   if (!/^0x[0-9a-f]{40}$/.test(tok)) return [];
 
-  const h = _harvest(dec.args, { addrs: new Set(), ids: new Set(), small: new Set() });
+  // The raw words are the floor — they work for a router nobody has met. A
+  // signature we DO know is merged on top: it costs one decode and can only add
+  // candidates, never remove one.
+  const h = _words(hex);
+  const dec = decodeVerified(hex, opts);
+  if (dec) _merge(h, _harvest(dec.args, { addrs: new Set(), ids: new Set(), small: new Set() }));
   if (!h.ids.size) return [];               // nothing to check an assignment against
   // ⚠️ OUR TOKEN MUST BE IN THERE. A router path names every hop; a pool that
   // does not contain this token is somebody else's pair.
@@ -173,12 +223,22 @@ function poolKeysFrom(data, token, poolId, opts = {}) {
   const smalls = [...h.small];
   const out = [];
   const seen = new Set();
+  /*
+   * ⚠️ BOUNDED. Reading raw words instead of a decoded tree makes the candidate
+   * sets as large as the calldata, and this runs on the card's critical path —
+   * an unbounded search here would be the 12s refusal in a third disguise. It
+   * is MEASURED, not guessed: `v4.poolId` costs ~23µs, so 20,000 is ~0.45s of
+   * worst case, and a real router call (a dozen addresses, a handful of small
+   * ints) is an order of magnitude under it.
+   */
+  let budget = MAX_HASHES;
   for (const other of others) {
     const [c0, c1] = tok < other ? [tok, other] : [other, tok];
     for (const fee of smalls) {
       if (fee < 0) continue;                                  // a fee is unsigned
       for (const ts of smalls) {
         for (const hooks of hooksC) {
+          if (budget-- <= 0) return out;
           let id;
           try { id = lc(poolId(c0, c1, fee, ts, hooks)); } catch (_) { continue; }
           if (!h.ids.has(id) || seen.has(id)) continue;
@@ -191,4 +251,4 @@ function poolKeysFrom(data, token, poolId, opts = {}) {
   return out;
 }
 
-module.exports = { decodeVerified, poolKeysFrom, selectorOf, DEFAULT_SIGS, sigs, _harvest };
+module.exports = { decodeVerified, poolKeysFrom, selectorOf, DEFAULT_SIGS, sigs, _harvest, _words };

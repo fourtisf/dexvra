@@ -336,3 +336,33 @@ test("⚠️ a foreign-quoted pool does not PRICE the card — that would be a w
   assert.match(CORE, /if \(v4Alt && await v4\.canSwapLive\(/, "a foreign-quoted pool loses its Buy button");
   assert.match(CORE, /dexVenue: 'v4', v4: v4Alt, routable: true/);
 });
+
+/*
+ * ⚠️ `poolId` IS HAND-ENCODED, so its equivalence to the coder is a TEST, not a
+ * comment. It was rewritten because `AbiCoder.encode` costs ~156µs and
+ * `v4Calldata` hashes thousands of candidate assignments to find a pool in a
+ * router's calldata — 20,000 of those is 3.1s through the coder and 0.45s
+ * through this. A hand-rolled encoder is exactly the kind of thing that agrees
+ * on the easy cases, so the cases here are the ones that break one: a NEGATIVE
+ * tickSpacing (two's complement), both int boundaries, and a zero fee.
+ */
+test('poolId is byte-identical to abi.encode — including negative ticks and the boundaries', () => {
+  const { ethers } = require('ethers');
+  const v4 = require('./v4.js');
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  const ref = (a, b, f, t, h) => ethers.keccak256(coder.encode(
+    ['address', 'address', 'uint24', 'int24', 'address'], [a, b, f, t, h]));
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0xe29c005941845f7e5ec2009f86c4478746d33b2c';
+  const Z = '0x0000000000000000000000000000000000000000';
+  const cases = [
+    [A, B, 3000, 60, Z],
+    [A, B, 0, -120, A],                 // negative tickSpacing
+    [A, B, 16777215, 8388607, B],       // uint24 max, int24 max
+    [A, B, 100, -8388608, A],           // int24 min
+    [B, A, 500, 1, Z],
+  ];
+  for (const c of cases) assert.equal(v4.poolId(...c), ref(...c), `poolId disagrees for ${JSON.stringify(c)}`);
+  // The default hooks argument must still be the zero address.
+  assert.equal(v4.poolId(A, B, 3000, 60), ref(A, B, 3000, 60, Z));
+});

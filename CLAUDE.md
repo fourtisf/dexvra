@@ -4631,6 +4631,62 @@ curve walk, the balances and the meta reads all share.
 pm2 logs dexvra-tradebot --nostream --lines 400 | grep -F '[ui] card'
 ```
 
+### The signature list was the feature's own ceiling
+
+With the stage bound in, the card stopped timing out and said something new —
+`interface read, but no BUY leg observed yet`. That is the curve reader
+correctly reporting that **this is not a curve**: like `$CD`, `$MACROHARD`
+trades through a ROUTER, whose arguments are a dynamic path array that
+`curveIface` refuses by design.
+
+`v4Calldata` is the module for that case, and it could not read this one:
+`poolKeysFrom` began with `decodeVerified`, so a router whose signature was not
+already written down decoded to nothing and its token read as unroutable.
+**That is hand-writing an integration per launchpad — the exact thing the module
+exists to beat.** One pad was known, the next was not, and the next never would
+be.
+
+- **THE POOL IS READ OUT OF THE RAW 32-BYTE WORDS, and no signature is needed.**
+  ABI encoding lays everything out in words — a tuple array's contents, a nested
+  dynamic tail, all of it — so reading the words is strictly MORE complete than
+  decoding, not less. A known signature is still merged on top; it can only add
+  candidates.
+- **It costs no safety, because the safety was never in the decode.** Proofs 1
+  and 2 exist to justify UNDERSTANDING a call, and nothing here understands one:
+  exactly one value comes out — a PoolKey — and it survives only if the chain's
+  own `poolId` hash of it equals a word the calldata already carried, which no
+  misreading can fake. `bestPool` then reads that pool's state, so a proved key
+  that does not exist is dropped. ⚠️ Widening what can be READ may never widen
+  what is BELIEVED: a call with no matching id still yields nothing, and that has
+  its own test.
+- ⚠️ **AND THE GENERALISATION MADE THE SEARCH BIG ENOUGH TO BE THE 12s REFUSAL
+  IN A THIRD DISGUISE.** Raw words make the candidate sets as large as the
+  calldata, and this runs on the card's critical path. Measured rather than
+  reasoned about: `AbiCoder.encode` costs **~156µs**, so 20,000 candidate hashes
+  is **3.1 seconds**. `poolId` is hand-encoded now — five fixed 32-byte words
+  need no coder — at ~23µs, and the search is capped at 20,000.
+- **`poolId` stays the ONE owner of the hash.** A second, faster copy inside
+  `v4Calldata` is how two modules end up disagreeing about the very thing being
+  proved. Its equivalence to `abi.encode` is a TEST, not a comment — on a
+  negative tickSpacing and both int24 boundaries, because a hand-rolled encoder
+  is exactly the kind of thing that agrees on the easy cases.
+- ⚠️ **A guard that a mutation run cannot kill is not a guard.** The explicit
+  two's-complement step was deleted and nothing failed: BigInt's `&` and `>>`
+  already work in infinite two's complement, so it was a no-op reading as
+  load-bearing. It says so now instead of carrying a test that claims to cover
+  it.
+
+Mutation-tested: requiring the signature again, and dropping the poolId proof,
+each fail between one and two tests.
+
+```bash
+cd tradebot && node --test v4Calldata.test.js uniswapV4.test.js   # 37 tests, no network
+```
+
+**Config a fix depends on:** nothing. `V4_ROUTER_SIGS` still adds a signature
+(now only to widen the merged candidates) and `V4_CALLDATA_MAX_HASHES` bounds
+the search.
+
 ### ⚠️ The fix for the 12s refusal WAS the 12s refusal — an unbounded stage
 
 Deployed, restarted, sha confirmed `abf13ed` on the box — and the card came back
