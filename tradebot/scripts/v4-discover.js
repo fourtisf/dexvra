@@ -63,17 +63,32 @@ const asTopic = (addr) => ethers.zeroPadValue(ethers.getAddress(addr), 32);
 
   // The token is currency0 OR currency1 — both indexed, so it takes two filters.
   const found = [];
+  // ⚠️ A PROBE THAT PRINTS NOTHING FOR TWO MINUTES READS AS HUNG, and this one
+  // printed only on an error or a hit — so a clean scan that is simply working
+  // its way back looks identical to a wedged process. That is this repo's own
+  // rule ("a probe that hangs is worse than one that says it cannot answer"),
+  // and the arithmetic makes it easy to hit: 200k blocks in 9k steps is ~23
+  // iterations x 2 topic filters = up to 46 SERIAL requests, on a chain
+  // deliberately exempt from JSON-RPC batching.
+  const steps = Math.ceil((head - from) / STEP);
+  let done = 0;
   for (let lo = head; lo > from && !found.length; lo -= STEP) {
     const hi = lo;
     const start = Math.max(from, lo - STEP + 1);
+    done++;
+    // One line, rewritten in place, so the operator can see it moving without
+    // 23 lines of noise above the answer.
+    if (process.stdout.isTTY) process.stdout.write(`\r   … ${done}/${steps} windows searched (back to block ${start})   `);
+    else if (done === 1 || done % 10 === 0) console.log(`   … ${done}/${steps} windows searched`);
     for (const topics of [[INIT_TOPIC, null, asTopic(token)], [INIT_TOPIC, null, null, asTopic(token)]]) {
       let logs = [];
       try { logs = await prov.getLogs({ fromBlock: start, toBlock: hi, topics }); }
       catch (e) { console.log(`   … blocks ${start}-${hi}: ${(e && (e.shortMessage || e.message)) || e}`); continue; }
       for (const l of logs) found.push(l);
     }
-    if (found.length) console.log(`   ✔ hit in blocks ${start}-${hi}`);
+    if (found.length) { if (process.stdout.isTTY) process.stdout.write('\r'.padEnd(60) + '\r'); console.log(`   ✔ hit in blocks ${start}-${hi}`); }
   }
+  if (!found.length && process.stdout.isTTY) process.stdout.write('\r'.padEnd(60) + '\r');
 
   if (!found.length) {
     console.log('❌ No v4 Initialize log for this token in the scanned range.');
