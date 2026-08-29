@@ -270,3 +270,69 @@ test("an empty V2 pair is not a market, and does not block the v4 route", () => 
   assert.strictEqual((CORE.match(/!_v2Fillable\(pick\)/g) || []).length, 3, "buy, sell, and the quote-token swap-back");
   assert.strictEqual((CORE.match(/\} else if \(_v2Fillable\(pick\)\)/g) || []).length, 1, "and the quote-token buy leg, positively");
 });
+
+// ── a pool quoted in a THIRD token ───────────────────────────────────────────
+//
+// `bestPool` finds a pool of ANY pairing — `discoverPoolKeys` reads the whole
+// PoolKey off the Initialize log and takes whichever currency is not ours,
+// verified by recomputing the poolId. The PAYMENT side did not keep up: it read
+// "not native ⇒ WETH", so a pool quoted in a third token wrapped the user's
+// native into WETH, approved WETH, and then tried to swap a token it did not
+// hold. That is why a Pons token on Robinhood Chain would not trade — $CD's
+// pool is quoted in NVDA. The venue was found and the payment was built in the
+// wrong currency.
+
+test("⚠️ the v4 buy pays in the pool's OWN quote, not 'native or else WETH'", () => {
+  const i = CORE.indexOf("if (pick.kind === 'v2' && !_v2Fillable(pick)) {");
+  const body = CORE.slice(i, CORE.indexOf("if (!hash) {", i));
+  // WETH is now recognised as ITSELF, not as "anything that is not native".
+  assert.match(body, /const wrapping = !!wethAddr && payWith === wethAddr;/, "the WETH branch still claims every non-native quote");
+  assert.match(body, /const foreign = payWith !== v4\.NATIVE && !wrapping;/, "a third currency is not distinguished at all");
+  // …and a third currency is ACQUIRED, through the two legs that already exist
+  // rather than a second private idea of the same thing.
+  assert.match(body, /if \(foreign\) \{\s*\n\s*const leg = await _acquireQuote\(/, "a foreign-quoted pool is never bought into");
+  // The swap must be SIZED in what was acquired. Quoting a foreign-quoted pool
+  // with the native amount prices the trade in the wrong unit entirely.
+  assert.match(body, /v4\.quoteExactIn\(p4, payAmt, payWith\)/, "the quote is still sized in native");
+  assert.match(body, /amountIn: payAmt/, "the swap is still built with the native amount");
+  assert.ok(!/amountIn: spend/.test(body), "a native amount still reaches the v4 swap");
+});
+
+test("⚠️ …and every failure after leg one SAYS what the wallet is holding", () => {
+  // Money that moved and did not arrive where the user expected is a fact they
+  // are owed immediately, not one they find in a block explorer — the precedent
+  // the WETH branch set with "Your ETH is safe as WETH in the wallet".
+  const i = CORE.indexOf("if (pick.kind === 'v2' && !_v2Fillable(pick)) {");
+  const body = CORE.slice(i, CORE.indexOf("if (!hash) {", i));
+  assert.match(body, /const safe = foreign/, "there is no held-funds sentence for the foreign leg");
+  for (const site of [/did not price — try again\.\$\{safe\}/, /zero quote from the v4 pool for this token\.\$\{safe\}/, /would revert \(\$\{prep\.err\}\) — nothing was sent\.\$\{safe\}/]) {
+    assert.match(body, site, `a failure path after leg one says nothing about the funds: ${site}`);
+  }
+});
+
+test("⚠️ the v4 SELL tracks the payout currency it will actually receive", () => {
+  // The same wrong reading with a worse ending: watching the WETH balance on a
+  // pool that pays a third token sees no change, books gained = 0 — a confirmed,
+  // profitable exit recorded as a total loss — and then calls withdraw() on a
+  // contract that has no such function, stranding the proceeds.
+  const i = CORE.indexOf("if (p4Sell) {");
+  const body = CORE.slice(i, CORE.indexOf("} else if (onCurve) {", i));
+  assert.match(body, /v4QuoteToken = p4Quote === v4\.NATIVE \? null : p4Quote;/, "the sell still assumes a non-native payout is WETH");
+  assert.ok(!/v4QuoteToken = String\(p4Sell\.quote\)\.toLowerCase\(\) === v4\.NATIVE \? null : chain\.weth/.test(body), "the old assumption is back");
+  // withdraw() is for WETH ONLY; a third currency is swapped back instead.
+  assert.match(body, /if \(wethOut\) \{/, "unwrapping is not gated on the payout actually BEING WETH");
+  assert.match(body, /_dumpQuote\(wallet, chainKey, v4QuoteToken, gained/, "a foreign payout is never returned to native");
+});
+
+test("⚠️ a foreign-quoted pool does not PRICE the card — that would be a wrong number", () => {
+  // `priceEth` comes straight off sqrtPriceX96, so on a pool paired against a
+  // third token it is a price in THAT token. Printing it as native is a wrong
+  // number rather than a missing one, and it feeds mcapEth and the USD cap too.
+  assert.match(CORE, /const p4Native = !!p4 && \(p4Quote === v4\.NATIVE \|\| \(_isAddr\(chain\.weth\) && p4Quote === String\(chain\.weth\)\.toLowerCase\(\)\)\);/);
+  assert.match(CORE, /const v4Alt = p4 && !p4Native \? p4 : null;/);
+  assert.match(CORE, /if \(p4 && p4Native\) \{/, "the v4 branch still prices any pool it finds");
+  // …but the ROUTE it proves still reaches the card, or the fix would take the
+  // Buy button away from exactly the tokens it exists to make buyable.
+  assert.match(CORE, /if \(v4Alt && await v4\.canSwapLive\(/, "a foreign-quoted pool loses its Buy button");
+  assert.match(CORE, /dexVenue: 'v4', v4: v4Alt, routable: true/);
+});

@@ -4796,6 +4796,84 @@ interface is read off REAL trades, so a token with fewer than two of them is
 refused. That boundary is deliberate: a guessed ABI on a money path is the one
 thing this repo refuses outright.
 
+## "Bisa buy and sale walau masih di bonding curve" — the pool was found, the payment was not
+
+Four screenshots, then the box settled it. `abi:check` on `$CD` (Pons,
+Robinhood) printed the selector's registry match and discarded it:
+
+```
+swap((uint8,address,address,address,uint24,int24,address,bytes,address,bytes32)[],
+     address,uint256,uint256,uint256)  — discarded: signature takes 14 argument(s);
+                                          the trades show 8
+```
+
+**That tuple is a Uniswap V4 path hop** — `uint24` fee, `int24` tickSpacing,
+`address` hooks, `bytes` hookData, `bytes32` poolId. So the token does not trade
+on a bonding curve at all: it trades through a V4-style router, and the pad's own
+page says what against — **`Paired NVDA`**, a tokenised asset on that chain.
+
+- ⚠️ **THE CURVE READER'S REFUSAL WAS CORRECT.** `arg[0]=0xa0`, `arg[6]=0x60`,
+  `arg[7]=0x1c0` are ABI OFFSETS into dynamic data, not values, and args 3/4/7
+  could not be explained. `argsOf` reads flat 32-byte words; rebuilding a
+  dynamic-ABI router call from classified words emits malformed calldata, which
+  is what the `wide` flag already refuses. Nothing to fix there.
+- ⚠️ **The check DISCARDED a correct signature**, comparing ABI parameters plus
+  tuple fields (14) against flat words read (8) — different units. Verified:
+  `keccak` of that signature is exactly `0x4d819a2a`, and 5 top-level params
+  means a 160-byte head = `0xa0`, which is exactly what `arg[0]` holds. Had it
+  not been discarded, the first run would have said "this is a V4 router".
+
+### The real gap, and it was three lines
+
+⚠️ **A first reading of `bestPool` said the NVDA pool was never searched — that
+was WRONG, and worth recording because it nearly produced the wrong fix.** The
+constructed sweep is native/WETH-only, but fifteen lines further `bestPool`
+merges in `discoverPoolKeys`, which reads the whole PoolKey off the Initialize
+log, takes whichever currency is not ours, and verifies by recomputing the
+poolId. **Any pairing is already found.** The defect is entirely on the payment
+side:
+
+| where | assumed | on an NVDA-quoted pool |
+| --- | --- | --- |
+| buy (`core.js`) | `wrapping = payWith !== NATIVE` | wraps ETH into WETH, approves WETH, swaps a token it does not hold |
+| sell (`core.js`) | `v4QuoteToken = … ? null : chain.weth` | watches a balance that never moves, books `gained = 0` — a profitable exit as a total loss — then calls `withdraw()` on a contract with no such function |
+| card (`v4.price`) | `priceEth` off `sqrtPriceX96` | a price in NVDA printed as native, feeding `mcapEth` and the USD cap |
+
+- **`_acquireQuote` / `_dumpQuote` already existed** for the curve path and are
+  reused rather than re-invented: swap into what the venue takes, approve exactly
+  that, swap, and on the way out swap the proceeds back. Best-effort on the way
+  out by design — the proceeds are in the wallet either way.
+- ⚠️ **EVERY ADDRESS COMES FROM THE CHAIN.** The quote is a field of the PoolKey
+  whose id was recomputed and matched. No launchpad reaches the money path, so
+  the registry's oldest rule is intact — and this is why the fix is the pool key
+  rather than the pad's `Paired NVDA` line, which says the same thing and may not
+  be trusted to.
+- ⚠️ **A foreign-quoted pool does not PRICE the card**, because a wrong number is
+  worse than a missing one. The indexer prices it in USD, correctly — but the
+  ROUTE the chain proved is carried down to the indexed branch, or the fix would
+  take the Buy button away from exactly the tokens it exists to make buyable.
+- **The swap is SIZED in what was acquired.** Quoting a foreign-quoted pool with
+  the native amount prices the trade in the wrong unit entirely.
+- **Every failure after leg one says what the wallet is holding** — the precedent
+  the WETH branch set with "Your ETH is safe as WETH in the wallet".
+
+⚠️ **What this does NOT do.** It does not make a token with no pool tradable, and
+it does not replay a router call from guessed arguments. It also cannot be proved
+from here: whether a given pad's pool is discoverable, and whether a route
+ETH↔quote exists for leg one, are facts about the chain and the box. A missing
+leg-one route refuses honestly ("this pad charges in a token there is no pool for
+on <chain> — nothing was sent") and spends nothing.
+
+```bash
+cd tradebot && node --test uniswapV4.test.js robinhoodRouting.test.js
+```
+
+Four guarantees are MUTATION-TESTED: the buy's currency choice, the swap being
+sized in the acquired amount, the sell's payout tracking, and the card refusing
+to price a foreign-quoted pool. Each fails exactly one test.
+
+**Config a fix depends on:** nothing.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

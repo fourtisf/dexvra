@@ -2909,7 +2909,23 @@ async function tokenSnapshot(ca, chainKey) {
     // the deployment from the chain's own logs and caches it, so an unconfigured
     // chain costs one sweep and every token after it is free.
     const p4 = await v4.price(ca, chainKey, dec, { chainOf, providerFor }).catch(() => null);
-    if (p4) {
+    /*
+     * ⚠️ `priceEth` IS THE PRICE IN THE POOL'S QUOTE CURRENCY, WHATEVER THAT IS.
+     *
+     * It comes straight off `sqrtPriceX96`, so on a pool paired against a third
+     * token it is a price in THAT token — and printing it as native is a WRONG
+     * number rather than a missing one, which is the worse of the two. It also
+     * feeds `mcapEth` and, through `ethUsd`, the market cap on the card.
+     *
+     * So a foreign-quoted pool does not price the card. It is remembered and the
+     * indexer prices it instead (correctly, in USD), and the ROUTE it proves is
+     * carried down to the indexed branch — losing the Buy button here would undo
+     * the whole point of being able to fill this pool.
+     */
+    const p4Quote = p4 ? String(p4.quote).toLowerCase() : '';
+    const p4Native = !!p4 && (p4Quote === v4.NATIVE || (_isAddr(chain.weth) && p4Quote === String(chain.weth).toLowerCase()));
+    const v4Alt = p4 && !p4Native ? p4 : null;
+    if (p4 && p4Native) {
       let ts = 0n; try { ts = await new ethers.Contract(ca, ERC20_ABI, prov).totalSupply(); } catch (_) {}
       return {
         ca, curve: '', decimals: dec, dex: true, graduated: true, progressPct: 100,
@@ -3010,6 +3026,16 @@ async function tokenSnapshot(ca, chainKey) {
       liquidityUsd: m.liqUsd, volH24Usd: m.volH24Usd, name: m.name, sym: m.sym,
       extVenue: dsVenueLabel(m),
     };
+    /*
+     * A v4 pool quoted in a THIRD token: the indexer priced it, and the chain
+     * proved the venue. `buy()` fills this by acquiring the pool's own quote
+     * first — the same two legs the curve path already uses — so it is routable,
+     * and the numbers on the card stay the indexer's rather than being read out
+     * of a pool denominated in something other than the native coin.
+     */
+    if (v4Alt && await v4.canSwapLive(ca, chainKey, { chainOf, providerFor }).catch(() => false)) {
+      return { ...extBase, curve: '', dex: true, graduated: true, progressPct: 100, dexVenue: 'v4', v4: v4Alt, routable: true };
+    }
     const iface = CURVE_ROUTE_ON ? await _curveIface(chainKey, ca) : { ok: false };
     if (iface.ok && iface.buy) {
       return {
@@ -4000,40 +4026,87 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
           // directly (address(0)) or against WETH, and the old code paid every
           // pool in native — which on a WETH-quoted pool made zeroForOne come
           // out backwards and built a SELL while the user was buying.
+          /*
+           * ⚠️ THE POOL'S QUOTE IS NOT ALWAYS NATIVE OR WETH, and reading it as
+           * "not native ⇒ WETH" is what kept a whole class of token unbuyable.
+           *
+           * `bestPool` finds a pool of ANY pairing — `discoverPoolKeys` reads
+           * the whole PoolKey off the Initialize log and takes whichever
+           * currency is not ours, verified by recomputing the poolId. But the
+           * payment side assumed only two currencies could ever come back, so a
+           * pool quoted in a THIRD token wrapped the user's native into WETH,
+           * approved WETH, and then tried to swap a token it did not hold.
+           *
+           * That is the real reason a Pons token on Robinhood Chain would not
+           * trade: $CD's pool is quoted in NVDA. The venue was found, the price
+           * was right, and the payment was built in the wrong currency.
+           *
+           * A launchpad pairing against something other than the native coin is
+           * the ordinary case on a chain of tokenised assets, and it is exactly
+           * what `_acquireQuote` was written for one branch down — swap into
+           * what the venue takes, approve exactly that, then swap. This reuses
+           * it rather than growing a second idea of the same two legs.
+           *
+           * ⚠️ EVERY ADDRESS HERE COMES FROM THE CHAIN. `p4.quote` is a field of
+           * the PoolKey whose id was recomputed and matched; no launchpad, and
+           * no guess, reaches this line.
+           */
           const payWith = String(p4.quote).toLowerCase();
-          const wrapping = payWith !== v4.NATIVE;
+          const wethAddr = _isAddr(chain.weth) ? String(chain.weth).toLowerCase() : '';
+          const wrapping = !!wethAddr && payWith === wethAddr;
+          const foreign = payWith !== v4.NATIVE && !wrapping;
+
+          // Leg one, and ONLY for a third currency: buy what the pool takes.
+          // Sized in that token from here on — quoting a foreign-quoted pool
+          // with a native amount prices the trade in the wrong unit entirely.
+          let payAmt = spend;
+          if (foreign) {
+            const leg = await _acquireQuote(wallet, chainKey, payWith, spend, slip, gasBoost, gas, sent);
+            payAmt = leg.got;
+          }
+          // ⚠️ WHAT THE USER IS HOLDING IF THE NEXT STEP FAILS. Money that moved
+          // and did not arrive where they expected is a fact they are owed
+          // immediately, not one they find in a block explorer — the precedent
+          // the WETH branch set with "Your ETH is safe as WETH in the wallet".
+          const safe = foreign
+            ? ` Your ${ethers.formatEther(spend)} ${chain.native} is now this pool's own quote token in your wallet — nothing is lost, and selling it back is one tap on 📤.`
+            : (wrapping ? ` Your ${chain.native} is safe as W${chain.native} in the wallet.` : '');
+
           // Quoted off the pool's OWN depth and fee, not its spot price. Spot
           // charges no fee and has no depth term, so on the thin pools this
           // feature exists for it overstated the fill and quietly spent the
           // user's slippage before their slippage had protected anything.
-          let expTok = v4.quoteExactIn(p4, spend, payWith);
+          let expTok = v4.quoteExactIn(p4, payAmt, payWith);
           if (expTok <= 0n) {
             // No in-range liquidity to walk (an empty tick) — fall back to spot
             // so a quotable pool still trades, with slippage as the only floor.
             const px = v4.priceNativeFromSqrt(p4.sqrtPriceX96, dec4, p4.tokenIsZero);
-            if (!(px > 0)) throw new Error('the v4 pool did not price — try again');
-            expTok = (spend * 10n ** BigInt(dec4)) / BigInt(Math.max(1, Math.round(px * 1e18)));
+            if (!(px > 0)) throw new Error(`the v4 pool did not price — try again.${safe}`);
+            expTok = (payAmt * 10n ** BigInt(dec4)) / BigInt(Math.max(1, Math.round(px * 1e18)));
           }
           const minTok = expTok * (10000n - slip) / 10000n;
-          if (minTok <= 0n) throw new Error('zero quote from the v4 pool for this token');
+          if (minTok <= 0n) throw new Error(`zero quote from the v4 pool for this token.${safe}`);
           // A WETH-quoted pool is paid in WETH, so the native has to be wrapped
-          // and handed to Permit2 before the router can pull it.
+          // and handed to Permit2 before the router can pull it. A foreign-quoted
+          // one is already held after leg one and only needs the allowance.
           let approved = null;
           if (wrapping) {
             const wi = new ethers.Interface(WETH9_ABI);
             const wh = await rawSend(wallet, chainKey, chain.weth, wi.encodeFunctionData('deposit', []), 150000n, spend, gasBoost, { fee: gas });
             const wr = await waitHash(wh, chainKey);
             if (wr && wr.status === 0) throw new Error(`could not wrap ${chain.native} for this v4 pool — nothing else was sent. Tx: ${wh}`);
-            approved = await _v4Approve(wallet, chainKey, p4, chain.weth, spend, gasBoost, gas);
+            approved = await _v4Approve(wallet, chainKey, p4, chain.weth, payAmt, gasBoost, gas);
+          } else if (foreign) {
+            approved = await _v4Approve(wallet, chainKey, p4, payWith, payAmt, gasBoost, gas);
           }
           const prep = await v4.prepareSwap(providerFor(chainKey), chainKey, p4, wallet.address,
-            { tokenIn: payWith, amountIn: spend, minOut: minTok, deadline }, { chainOf, providerFor });
+            { tokenIn: payWith, amountIn: payAmt, minOut: minTok, deadline }, { chainOf, providerFor });
           // SIMULATED BEFORE SIGNED, and that is also how the router is chosen —
           // a candidate that cannot fill this exact calldata for free never gets
           // to fill it for money.
           if (prep.err) {
             if (approved) v4.demoteRouter(chainKey, approved);
-            throw new Error(`the v4 swap would revert (${prep.err}) — nothing was sent.${wrapping ? ` Your ${chain.native} is safe as W${chain.native} in the wallet.` : ''}`);
+            throw new Error(`the v4 swap would revert (${prep.err}) — nothing was sent.${safe}`);
           }
           hash = await rawSend(wallet, chainKey, prep.call.to, prep.call.data, 700000n, prep.call.value, gasBoost, { fee: gas });
           venue = 'dex·v4'; sent(hash); trc = await waitBuyReceipt(() => waitHash(hash, chainKey));
@@ -4418,7 +4491,23 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       // book that confirmed sell as ZERO proceeds — no fee, and a profitable
       // exit recorded as a total loss — while the WETH sat in the wallet with
       // nothing ever unwrapping it. Track the real payout currency instead.
-      v4QuoteToken = String(p4Sell.quote).toLowerCase() === v4.NATIVE ? null : chain.weth;
+      /*
+       * ⚠️ THE PAYOUT CURRENCY IS THE POOL'S, AND "not native ⇒ WETH" IS THE
+       * SAME WRONG READING AS ON THE BUY SIDE — with a worse ending here.
+       *
+       * A pool quoted in a third token (a Pons pair against a tokenised asset,
+       * say) pays out THAT token. Watching the WETH balance instead sees no
+       * change, books `gained = 0`, and the comment above describes precisely
+       * what follows: a confirmed, profitable exit recorded as a total loss —
+       * and then `withdraw()` called on a contract that has no such function,
+       * leaving the proceeds stranded in a currency nothing ever converts back.
+       *
+       * Track what the pool actually pays. `_dumpQuote` below returns it to
+       * native, the same way the curve path already does.
+       */
+      const p4Quote = String(p4Sell.quote).toLowerCase();
+      v4QuoteToken = p4Quote === v4.NATIVE ? null : p4Quote;
+      const wethOut = !!v4QuoteToken && _isAddr(chain.weth) && v4QuoteToken === String(chain.weth).toLowerCase();
       let wBefore = null;
       if (v4QuoteToken) {
         const wc = new ethers.Contract(v4QuoteToken, ERC20_ABI, providerFor(chainKey));
@@ -4435,16 +4524,27 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
         let gained = (wAfter != null && wAfter > wBefore) ? wAfter - wBefore : 0n;
         if (gained <= 0n) gained = expEth;   // confirmed swap, unreadable balance → the quote, never 0
         v3ProceedsWei = gained;
-        const wi = new ethers.Interface(WETH9_ABI);
-        let unwrapped = false;
-        for (let i = 0; i < 3 && !unwrapped; i++) {
-          try {
-            const uh = await rawSend(wallet, chainKey, v4QuoteToken, wi.encodeFunctionData('withdraw', [gained]), await v3SwapGas(chainKey, wallet.address, v4QuoteToken, wi.encodeFunctionData('withdraw', [gained]), 0n), 0n, gasMult + i);
-            const urc = await waitHash(uh, chainKey);
-            if (!urc || urc.status !== 0) unwrapped = true;
-          } catch (e) { console.error('WETH unwrap after v4 sell failed:', e.message); }
+        if (wethOut) {
+          const wi = new ethers.Interface(WETH9_ABI);
+          let unwrapped = false;
+          for (let i = 0; i < 3 && !unwrapped; i++) {
+            try {
+              const uh = await rawSend(wallet, chainKey, v4QuoteToken, wi.encodeFunctionData('withdraw', [gained]), await v3SwapGas(chainKey, wallet.address, v4QuoteToken, wi.encodeFunctionData('withdraw', [gained]), 0n), 0n, gasMult + i);
+              const urc = await waitHash(uh, chainKey);
+              if (!urc || urc.status !== 0) unwrapped = true;
+            } catch (e) { console.error('WETH unwrap after v4 sell failed:', e.message); }
+          }
+          if (!unwrapped) console.error('WETH unwrap failed after a v4 sell — proceeds are safe as WETH in the wallet.');
+        } else {
+          // A THIRD currency cannot be unwrapped — there is nothing to unwrap it
+          // INTO. It is swapped back through the router the rest of this file
+          // already uses, best-effort by design: the proceeds are in the wallet
+          // either way, so a failed swap-back is a nuisance and never a loss,
+          // and refusing the whole sell over it would be worse. The curve path
+          // draws exactly this line with `_dumpQuote`.
+          const back = await _dumpQuote(wallet, chainKey, v4QuoteToken, gained, slip, gasMult, gas);
+          if (!back) console.error('could not swap this v4 pool\'s quote token back to native — the proceeds are safe in the wallet as that token.');
         }
-        if (!unwrapped) console.error('WETH unwrap failed after a v4 sell — proceeds are safe as WETH in the wallet.');
       }
     } else if (onCurve) {
       const cc = new ethers.Contract(curve, CURVE_ABI, wallet);
