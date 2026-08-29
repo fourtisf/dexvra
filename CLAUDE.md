@@ -6688,6 +6688,76 @@ cd bot && npm test                           # bigCoins is unchanged in behaviou
 **Config a fix depends on:** nothing. ⚠️ It ships ON and CHANGES an existing
 board on deploy, deliberately, the way the trending floors did.
 
+### ⚠️ …and it shipped with the symbol rule INERT, reading as 2 rows filtered
+
+The first live run said
+
+```
+[market] 2 auto-listed stablecoin/wrapper row(s) kept off the board
+```
+
+Three rows were reported and two were filtered, which reads like a working
+filter with one gap. It was not: **every symbol rule was dead, and the two that
+went were caught by the NAME rules alone.** "Wrapped TRX" matched
+`WRAPPER_NAME`, "Global Dollar" matched `MONEY_NAME` — and `$BTCB` ("BTCB
+Token") matches no name rule, so it reached the board.
+
+**`BoardToken.symbol` is the DISPLAY form and it carries a `$`.** `fold`
+transliterates currency glyphs rather than stripping them — `₮` IS a T, and `$`
+is an S — which is right for a ticker a brand writes in a glyph and
+catastrophic for a `$` this app prepends itself: `"$WTRX"` folds to `"SWTRX"`,
+which is in no set.
+
+That is **the exact scar this module inherited**, reintroduced one field over.
+`bigCoins.js` states it in its own header: *"The symbol we JUDGED and the symbol
+we PUBLISHED were different strings, which is why nothing looked wrong at either
+end."*
+
+- **The prefix comes off at `hideFromBoard`**, the one boundary that knows the
+  convention, so `fold` stays byte-identical to the bot's and the equality guard
+  keeps meaning what it says.
+- ⚠️ **AND THE TESTS COULD NOT HAVE CAUGHT IT**, because every one of them
+  passed a RAW ticker — the shape the BOT sees — while the site passes the
+  display form. A test measuring its own fake, for the third time in this file.
+  `$BTCB` is now the assertion that matters: it matches no name rule, so it is
+  caught by the symbol or not at all.
+
+### The same run buried everything under a line that was not a fault
+
+Six lines a minute of
+
+```
+[market] solana: served last-known reading for 24 token(s) the providers missed this cycle
+```
+
+at WARN, one per chain per cycle, for ever — and **that is the ORDINARY state of
+this box**: the site's GeckoTerminal budget is 5/min against ~19 chunks a cycle,
+so some chunks always lose and `fillFromLastGood` is what keeps their rows
+priced. It is the system working, reported as a fault, and it buried the one
+line that said a stablecoin had been filtered.
+
+"An alert every cycle is a channel nobody reads by the second hour" —
+`upstreams.js`, borrowed for the fourth time. `shouldReport()` is PURE and lives
+beside the memory it describes, so a test walks a chain through days of cycles
+in milliseconds:
+
+- **The transition only.** A count drifting 24 → 23 → 24 is one incident, not
+  thirty; re-triggering on each change is the flood again with an extra
+  condition on it.
+- **A RECOVERY is an alert too**, at INFO — a chain that healed and one nobody
+  noticed look identical otherwise — and it is not announced for a chain that
+  was never degraded.
+- **It repeats** while the state holds, so a long outage does not scroll away.
+- **Chains are tracked apart**, or one noisy chain silences the rest.
+
+```bash
+npm test    # notAProject (10) · lastGood (10)
+```
+
+Mutation-tested: judging the `$` as part of the ticker, announcing a recovery
+that never happened, reporting every cycle, never repeating, and sharing one
+report slot between chains each fail between one and three tests.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

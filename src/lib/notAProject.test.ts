@@ -61,6 +61,26 @@ test("the ISSUER name is matched, because a ticker is renamed far more readily t
   assert.equal(notAProject("XYZ", "Doge Wrapped In Bacon"), false);
 });
 
+test("⚠️ hideFromBoard is given the DISPLAY symbol, which carries a $", () => {
+  // The defect this test exists for, and the reason the tests above could not
+  // catch it: they passed raw tickers — the shape the BOT sees — while the site
+  // passes `BoardToken.symbol`, which is "$"-prefixed. `fold` turns `$` into an
+  // S (it transliterates currency glyphs rather than stripping them, which is
+  // right for `₮`), so "$WTRX" folded to "SWTRX" and every symbol rule was
+  // inert. It read as working because the NAME rules still caught two of the
+  // three rows on the reported board.
+  //
+  // ⚠️ $BTCB is the whole test: "BTCB Token" matches no name rule, so it is
+  // caught by the SYMBOL or not at all.
+  assert.equal(hideFromBoard({ symbol: "$BTCB", name: "BTCB Token", tier: "FREE" }), true);
+  assert.equal(hideFromBoard({ symbol: "$WTRX", name: "Wrapped TRX", tier: "FREE" }), true);
+  assert.equal(hideFromBoard({ symbol: "$USDG", name: "Global Dollar", tier: "FREE" }), true);
+  assert.equal(hideFromBoard({ symbol: "$USDT", name: "Whatever", tier: "FREE" }), true);
+  // …and a project is still a project once the prefix is off.
+  assert.equal(hideFromBoard({ symbol: "$SHIB", name: "Shiba Inu", tier: "FREE" }), false);
+  assert.equal(hideFromBoard({ symbol: "$PUMP", name: "Pump", tier: "FREE" }), false);
+});
+
 test("⚠️ ONLY an auto-listing is hidden — a paid listing is somebody's money", () => {
   const usdg = { symbol: "USDG", name: "Global Dollar" };
   assert.equal(hideFromBoard({ ...usdg, tier: "FREE" }), true);

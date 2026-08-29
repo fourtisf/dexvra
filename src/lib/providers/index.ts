@@ -26,7 +26,7 @@ import { type LiveMarket } from "./geckoterminal";
 import { POOLS_TRADE_CHAIN, fetchLaunchMarket } from "./poolstrade";
 import { fetchIndexedMarket } from "./indexedMarket";
 import { partitionByFallback } from "./dexscreener";
-import { fillFromLastGood } from "./lastGood";
+import { fillFromLastGood, shouldReport } from "./lastGood";
 import { pickLogo } from "./tokenLogo";
 import { rememberPool } from "./poolCache";
 import { backfillLogos, knownLogo, rememberLogo, shouldLookUp } from "./logoFill";
@@ -185,8 +185,17 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   for (const [chain, addrs] of Object.entries(byChain)) {
     const map = live.get(chain) ?? new Map<string, LiveMarket>();
     const filled = fillFromLastGood(chain, map, addrs);
-    if (filled.length > 0)
-      console.warn(`[market] ${chain}: served last-known reading for ${filled.length} token(s) the providers missed this cycle`);
+    // Transition only — see lastGood.ts. At WARN every cycle this was six lines
+    // a minute describing the ordinary state of this box, and it buried
+    // everything else in pm2.
+    const say = shouldReport(chain, filled.length);
+    if (say === "recovered")
+      console.log(`[market] ${chain}: every token priced again — the last-known stand-in is no longer needed`);
+    else if (say)
+      console.warn(
+        `[market] ${chain}: serving the last-known reading for ${filled.length} token(s) the providers missed` +
+          `${say === "still" ? " (still)" : ""} — a lost GeckoTerminal chunk, not a dead chain`,
+      );
     if (!live.has(chain) && map.size > 0) live.set(chain, map);
   }
 

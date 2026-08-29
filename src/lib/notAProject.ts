@@ -99,5 +99,25 @@ export function notAProject(sym: string | null | undefined, name?: string | null
  *
  * So a project that pays to list a stablecoin gets exactly what it paid for.
  */
+/**
+ * ⚠️ `BoardToken.symbol` IS THE DISPLAY FORM, AND IT CARRIES A `$`.
+ *
+ * The very scar this module inherited, reintroduced one field over. `fold`
+ * transliterates currency glyphs rather than stripping them — `₮` IS a T, and
+ * `$` is an S — which is right for a ticker a brand writes in a glyph, and
+ * catastrophic for a `$` this app prepends for display: `"$WTRX"` folds to
+ * `"SWTRX"`, which is in no set, so **every symbol rule was inert**.
+ *
+ * It shipped looking like it worked. The log said `2 auto-listed
+ * stablecoin/wrapper row(s) kept off the board` — because "Wrapped TRX" and
+ * "Global Dollar" were caught by the NAME rules — while `$BTCB` ("BTCB Token",
+ * which matches no name rule) sailed onto the board. Two out of three reads as
+ * a working filter.
+ *
+ * So the display prefix is removed HERE, at the one boundary that knows the
+ * convention, and `fold` stays byte-identical to the bot's.
+ */
+const raw = (displaySymbol: string): string => displaySymbol.replace(/^\$+/, "");
+
 export const hideFromBoard = (t: { symbol: string; name: string; tier: string }): boolean =>
-  t.tier === "FREE" && notAProject(t.symbol, t.name);
+  t.tier === "FREE" && notAProject(raw(t.symbol), t.name);
