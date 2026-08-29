@@ -5123,6 +5123,49 @@ containing our token. Each fails between one and four tests.
 **Config a fix depends on:** nothing. `V4_ROUTER_SIGS` adds a router signature
 without a deploy; `V4_TRADE_SCAN_TX` bounds how many trades are read.
 
+## "Can't route through yet" is THREE different venues, and the card says one thing
+
+A token can be indexed, priced, and unroutable — and the card says only
+*"liquidity is on <X>, which Dexvra can't route through yet"*. Three completely
+different markets produce that one sentence:
+
+| what it actually is | what unblocks it |
+| --- | --- |
+| a bonding curve whose interface could not be read | more trades on the pad, or the learned shape |
+| a Uniswap-v4-style router | `v4Calldata` reads the PoolKey out of its own calldata |
+| an AMM whose factory we do not know | nothing yet — this is the real gap |
+
+`abi:check --curve` answers a NEIGHBOURING question by scanning up to 200,000
+blocks for the token's own transfers, which on the node this matters for is slow
+enough to be abandoned — and it was, twice, mid-run. **`venue:check` asks the
+shorter question in about five requests**, because the indexer already knows the
+pair address and a pair contract will say what it is if you ask it: `token0()`,
+`token1()`, `getReserves()`, `factory()`, `fee()`, then the `to` and selector of
+a real recent trade taken from the PAIR's own logs (address-filtered and narrow,
+never a scan).
+
+- **It reads and it prints — nothing here is a routing decision.** Every address
+  it reports came from the chain or the indexer, and the bot still proves a venue
+  for itself before it signs. Same contract `poolstrade.js` and the launchpad
+  registry state.
+- ⚠️ **It carries a PORT of `core.js`'s `DS_CHAIN_KEY`**, because that map is a
+  private const and requiring core from a script boots the whole trade bot.
+  `venueCheck.test.js` reads core's SOURCE and asserts the copy is equal — a
+  stale slug makes the check report *"no pair for this token"* about a token the
+  bot prices perfectly well, which is a diagnostic lying in the reassuring
+  direction. Mutation-tested.
+- **No pasteable command with a placeholder**, this file's first rule for the
+  fifth time: only the operator knows which token they mean, so the argument is
+  described in prose and no command is printed at all.
+
+```bash
+cd tradebot && node --test venueCheck.test.js   # 2 tests, no network
+```
+
+**Config a fix depends on:** nothing — but what it reports is a property of the
+box's egress and of the chain today, which is the whole reason it is a script and
+not a test.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and

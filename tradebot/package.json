@@ -10,6 +10,7 @@
     "preflight:solana": "node scripts/solana-preflight.js",
     "preflight:robinhood": "node scripts/robinhood-preflight.js",
     "abi:check": "node scripts/abi-check.js",
+    "venue:check": "node scripts/venue-check.js",
     "launchpads:check": "node scripts/launchpads-check.js",
     "test": "SKIP_DOTENV=1 node --test *.test.js"
   },
