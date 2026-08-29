@@ -53,7 +53,53 @@ export function fontVerdict(html) {
  */
 export const importsOverNetwork = (css) => /@import\s*(?:url\()?\s*['"]?https?:/i.test(css);
 
-async function main(origin) {
+/**
+ * Ports this app is plausibly listening on locally.
+ *
+ * ⚠️ THE DEFAULT IS A GUESS, and a wrong guess reads exactly like a dead
+ * server — `pm2 ls` says `online` and the check says "did not answer", which
+ * sends the reader to debug a process that is working perfectly.
+ */
+const LOCAL_PORTS = [process.env.PORT, 3005, 3000, 3001, 3055, 8080].filter(Boolean);
+
+/**
+ * ⚠️ A COMMAND AN OPERATOR CAN PASTE MUST CONTAIN ONLY REAL VALUES, or it must
+ * not be a command. This file's first draft answered a wrong port by printing
+ * `npm run firstpaint:check -- http://127.0.0.1:<port>` — angle brackets, which
+ * bash reads as REDIRECTS, so the line dies with `syntax error near unexpected
+ * token` before the script runs. That is CLAUDE.md's opening rule, broken in
+ * the act of diagnosing something else, for the fourth time in this repo.
+ *
+ * So it does not ask for the port. It ASKS THE BOX — the same move `abi:check`
+ * makes when it is given no address.
+ */
+async function findLocal(defaultOrigin) {
+  try {
+    await fetch(defaultOrigin + "/api/tokens");
+    return { origin: defaultOrigin, found: false };
+  } catch { /* keep looking */ }
+  for (const port of LOCAL_PORTS) {
+    const candidate = `http://127.0.0.1:${port}`;
+    if (candidate === defaultOrigin) continue;
+    try {
+      const res = await fetch(candidate + "/api/tokens");
+      // Our app, not merely something listening: the payload carries a build.
+      if (res.ok && JSON.parse(await res.text()).build !== undefined)
+        return { origin: candidate, found: true };
+    } catch { /* next */ }
+  }
+  return { origin: defaultOrigin, found: false };
+}
+
+async function main(origin, { discover = false } = {}) {
+  if (discover) {
+    const hit = await findLocal(origin);
+    if (hit.found) {
+      console.log(`\nNothing on ${origin}; the app answers on ${hit.origin} — measuring that.`);
+      console.log(`(pass it explicitly next time: npm run firstpaint:check -- ${hit.origin})`);
+      origin = hit.origin;
+    }
+  }
   const get = async (path) => {
     const t0 = Date.now();
     const res = await fetch(origin + path, { redirect: "follow" });
@@ -80,6 +126,9 @@ async function main(origin) {
   } catch (err) {
     console.log("1 · build unknown");
     fail(`the server did not answer — is it running? (${err?.message ?? err})`);
+    note("`pm2 ls` may well say `online` — that only means nothing is listening HERE.");
+    note("The port is not a fact this script can know, so it goes looking; if that");
+    note("finds nothing, pass the origin as an argument (the public one works too).");
     console.log("\nNothing else can be measured.\n");
     return 1;
   }
@@ -155,5 +204,10 @@ async function main(origin) {
 }
 
 // Importable for the tests without running the check.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  process.exit(await main(process.argv[2] || `http://127.0.0.1:${process.env.PORT || 3005}`));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const given = process.argv[2];
+  // Only hunt for the port when nobody named an origin — an argument is a
+  // decision, and quietly measuring somewhere else would answer a question
+  // that was not asked.
+  process.exit(await main(given || `http://127.0.0.1:${process.env.PORT || 3005}`, { discover: !given }));
+}

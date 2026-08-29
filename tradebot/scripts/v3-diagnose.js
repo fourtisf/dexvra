@@ -14,7 +14,16 @@ const V3_FEES = [100, 500, 3000, 10000];
 (async () => {
   const ca = String(process.argv[2] || '').trim();
   const chainKey = String(process.argv[3] || 'robinhood').trim();
-  if (!/^0x[0-9a-fA-F]{40}$/.test(ca)) { console.error('usage: node scripts/v3-diagnose.js <tokenCA> [chainKey]'); process.exit(1); }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(ca)) {
+    // ⚠️ DESCRIBED, NEVER OFFERED AS A COMMAND. A `<tokenCA>` in a line that
+    // starts with `node` dies in bash — `<` is a redirect — before this script
+    // runs at all, which reads as a broken tool rather than an unfilled blank.
+    // There is no real value to print here: only the operator knows which
+    // token they are asking about.
+    console.error('This takes the TOKEN address (0x + 40 hex) as its first argument,');
+    console.error('and optionally a chain key as its second. Run it from tradebot/.');
+    process.exit(1);
+  }
   const chain = core.chainOf(chainKey);
   console.log(`\n=== V3 diagnose · ${chain.name} · token ${ca} ===\n`);
 

@@ -6568,6 +6568,64 @@ cd /opt/dexvra && npm run firstpaint:check -- https://dexvra.io   # …and the p
 pm2 logs dexvra --lines 30 --nostream | grep -F '[boot]'
 ```
 
+##### …and the fix's own diagnostic broke this file's first rule, in the guard that exists to stop it
+
+`firstpaint:check` answered a wrong port with
+
+```
+npm run firstpaint:check -- http://127.0.0.1:<port>
+```
+
+— **CLAUDE.md's opening rule, for the fourth time**, and this time inside the
+tool written to diagnose something else. Bash reads `<` and `>` as redirects, so
+that line dies with `syntax error near unexpected token` before the script runs.
+
+The fix is the one this file already states: **do not ask for the value, ask the
+box.** `findLocal()` probes the plausible local ports for a response carrying a
+`build` field — that is OUR app, not merely something listening — and measures
+it, printing the complete real line to use next time. Only when no origin was
+given: an argument is a decision, and quietly measuring somewhere else would
+answer a question nobody asked.
+
+⚠️ **AND `pasteableCommands.test.js` PASSED ON IT.** The guard scanned
+`console.log(...)` calls and nothing else, so a script with a printer of its own
+(`note()`, `fail()`, `ok()`) walked straight through — the bracketed placeholder
+reached the operator and the suite stayed green. That is the second time this
+guard has been blind to the revision it exists to catch, and the second time a
+MUTANT is what said so rather than a reading.
+
+- **Widening it to every STRING LITERAL was the obvious next cut and was still
+  wrong.** A regex containing a quote — `/rel="stylesheet"/`, `/href="([^"]+)"/`
+  — desynchronises a naive literal scanner, and the offending line was silently
+  skipped. The mutant survived twice.
+- **So the question is asked of the LINE**, over the comment-stripped source. A
+  printer cannot be recognised by NAME (the next one will be called something
+  else, which is how this hole was dug), and `COMMAND_LINE` + `BRACKETED`
+  together are narrow enough that a line which is not an instruction almost
+  never matches: it must carry a shell verb AND an angle-bracketed token. A
+  template literal spanning real newlines is covered for free, which is what the
+  previous cut needed a special case for.
+
+**The widened guard immediately found four real offences it had been hiding**,
+all of them usage lines printed through `console.error`:
+
+| script | printed |
+| --- | --- |
+| `tradebot/scripts/v3-diagnose.js` | `usage: node scripts/v3-diagnose.js <tokenCA> [chainKey]` |
+| `tradebot/scripts/v3-discover.js` | `Usage: node scripts/v3-discover.js <v3-pool-address> [chainKey]` |
+| `tradebot/scripts/v4-discover.js` | `usage: node scripts/v4-discover.js <token-address> …` |
+| `scripts/gen-admin-secrets.mjs` | `Usage: node scripts/gen-admin-secrets.mjs <username> <password>` |
+
+None can know a real value — only the operator knows which token they mean —
+so all four DESCRIBE the argument in prose and print no command at all, which is
+the other half of the rule. ⚠️ The last one mattered twice over: a pasteable
+line carrying a password puts that password in the shell history of whoever runs
+it.
+
+```bash
+cd tradebot && node --test pasteableCommands.test.js   # 3 tests, no network
+```
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

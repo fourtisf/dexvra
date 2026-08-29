@@ -66,7 +66,12 @@ async function findRouter(prov, pool) {
   const pool = String(process.argv[2] || '').trim();
   const chainKey = String(process.argv[3] || 'robinhood').trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(pool)) {
-    console.error('Usage: node scripts/v3-discover.js <v3-pool-address> [chainKey]');
+    // Described rather than offered: a bracketed placeholder in a `node …`
+    // line is a redirect to bash and dies before the script starts.
+    console.error('This takes the v3 POOL address (0x + 40 hex) as its first argument,');
+    console.error('and optionally a chain key as its second. The pool address is the');
+    console.error("/robinhood/0x… part of the token's DexScreener URL, for a pair");
+    console.error('labelled "v3". Run it from tradebot/.');
     process.exit(1);
   }
   const ch = chains.chainOf(chainKey);

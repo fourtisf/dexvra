@@ -36,7 +36,11 @@ const BLOCKS = Math.max(1, Number(flag('blocks', 200000)));
 const STEP = Math.max(1, Number(flag('step', 9000)));
 
 if (!ethers.isAddress(token)) {
-  console.error('usage: node scripts/v4-discover.js <token-address> [chainKey] [--blocks N] [--step N]');
+  // Described rather than offered: a bracketed placeholder in a `node …` line
+  // is a redirect to bash and dies before the script starts.
+  console.error('This takes the TOKEN address (0x + 40 hex) as its first argument, and');
+  console.error('optionally a chain key as its second. --blocks and --step each take a');
+  console.error('number and bound how far back the Initialize scan walks.');
   process.exit(1);
 }
 const chain = chains.chainOf(chainKey);

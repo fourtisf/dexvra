@@ -54,18 +54,30 @@ function printedLines(src) {
   // Only what a script SAYS. A `<…>` inside a comment is a useful note for
   // whoever edits the file next; on a screen it is an instruction, and this
   // repo has already paid for scanning one and calling it the other.
-  const out = [];
+  //
+  // ⚠️ EVERY LINE, NOT ONLY `console.log`'s — and this is the SECOND time this
+  // guard has passed on a revision it exists to catch. It matched
+  // `console.log(...)` calls alone, so a script with a printer of its own
+  // (`firstpaint-check.mjs` says `note(...)`, `fail(...)`, `ok(...)`) walked
+  // straight through: the bracketed placeholder reached the operator and the
+  // suite stayed green. Widening it to every STRING LITERAL was the obvious
+  // next cut and it was still wrong — a regex containing a quote
+  // (`/rel="stylesheet"/`) desynchronises a naive literal scanner, and the
+  // offending line was silently skipped. Measured, not assumed: the mutant
+  // survived twice.
+  //
+  // So the question is asked of the LINE. A printer cannot be recognised by
+  // name — the next one will be called something else, which is how this hole
+  // was dug — and `COMMAND_LINE` plus `BRACKETED` together are narrow enough
+  // that a line which is not an instruction almost never matches: it has to
+  // carry a shell verb AND an angle-bracketed token.
+  //
+  // A template literal spanning real newlines is one string to the parser, but
+  // it is still many lines in the file, so this covers it for free — the very
+  // thing the previous cut needed a special case for.
   const noComments = src.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const m of noComments.matchAll(/console\.log\(([\s\S]*?)\);/g)) {
-    for (const lit of m[1].matchAll(/`([^`]*)`|"([^"]*)"|'([^']*)'/g)) {
-      // BOTH newline spellings. A template literal spanning real newlines is
-      // one string to the parser, and splitting only on the escaped `\n` folded
-      // a whole help screen into a single "line" — which then matched on one
-      // word and reported the wrong thing entirely.
-      for (const line of String(lit[1] ?? lit[2] ?? lit[3] ?? '').split(/\\n|\n/)) out.push(line);
-    }
-  }
-  return out;
+  // BOTH newline spellings: `"a\nnode foo"` is one physical line carrying two.
+  return noComments.split(/\\n|\n/);
 }
 
 test('⚠️ no script prints a pasteable command with a placeholder in it', () => {
