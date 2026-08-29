@@ -52,19 +52,52 @@ function padOn(key) {
   return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
 }
 
+/**
+ * ⚠️ AN UNFILLED PLACEHOLDER IS NOT A VALUE, AND BASH WILL ACCEPT IT SILENTLY.
+ *
+ * This file's own first rule in CLAUDE.md is that a command an operator can
+ * paste must contain only real values — and it keeps being broken, because the
+ * failure is so quiet. An angle-bracket placeholder at least dies with a shell
+ * syntax error. `LAUNCHPAD_PONS_TOKEN_PATH=/api/…/{id}` does not: `VAR=value`
+ * is a legal assignment whatever the value is, so the operator gets a clean
+ * prompt back and every lookup afterwards requests `/api/%E2%80%A6/0x…` and
+ * 404s for ever. From `launchpads:check` that is indistinguishable from a
+ * launchpad that moved — which is the very thing the override exists to fix.
+ *
+ * So the value is REFUSED rather than used, and the refusal is LOUD: an
+ * operator who set something and is being ignored must be told, or "the
+ * override did not work" and "the override was never read" look identical.
+ *
+ * `{id}` and `{n}` are the legitimate fillers and are untouched — the markers
+ * below are ones no real URL path or host can contain.
+ */
+const PLACEHOLDER = /…|\.\.\.|[<>]|\s/;
+const _warned = new Set();
+function realValue(name, v) {
+  if (!v || !PLACEHOLDER.test(v)) return v;
+  if (!_warned.has(name)) {
+    _warned.add(name);
+    console.warn(`[launchpads] ignoring ${name}: "${v}" still contains a placeholder (… or <>) or a space — using the built-in value instead. Paste the real path, not the example.`);
+  }
+  return '';
+}
+
 /** The base list for a pad: an explicit `<PAD>_API` pins one host AND skips the
  *  list — the same override-and-skip contract `<CHAIN>_V4_POOLMANAGER` has.
  *  `aliases` lets a pad honour an env var that already exists in this repo, so
  *  an operator who set PUMPFUN_API is not silently overruled by a second one. */
 function basesFor(key, defaults, aliases) {
   for (const name of ['LAUNCHPAD_' + key.toUpperCase() + '_API', ...(aliases || [])]) {
-    const v = env(name).replace(/\/+$/, '');
+    const v = realValue(name, env(name).replace(/\/+$/, ''));
     if (v) return [v];
   }
   return defaults.slice();
 }
 
-const path = (key, which, fallback) => env(`LAUNCHPAD_${key.toUpperCase()}_${which}_PATH`) || fallback;
+const path = (key, which, fallback) => {
+  const name = `LAUNCHPAD_${key.toUpperCase()}_${which}_PATH`;
+  return realValue(name, env(name)) || fallback;
+};
 const fill = (tpl, vars) => String(tpl).replace(/\{(\w+)\}/g, (m, k) => (vars[k] === undefined ? m : encodeURIComponent(String(vars[k]))));
 
 // ── shared field vocabularies ────────────────────────────────────────────────

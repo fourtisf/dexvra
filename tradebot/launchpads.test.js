@@ -446,3 +446,53 @@ test('flap reads the fields the pad actually shows, and states its phase', () =>
   assert.equal(quiet.graduated, null);
   assert.equal(quiet.progressPct, null);
 });
+
+// ── a pasted placeholder is refused, loudly ──────────────────────────────────
+//
+// The failure this exists for happened in this repo's own workflow, twice in
+// one session. An angle-bracket placeholder at least dies with a shell syntax
+// error; `LAUNCHPAD_PONS_TOKEN_PATH=/api/…/{id}` does NOT — `VAR=value` is a
+// legal assignment whatever the value is, so the operator gets a clean prompt
+// back and every lookup afterwards requests `/api/%E2%80%A6/0x…` and 404s for
+// ever. From `launchpads:check` that is indistinguishable from a launchpad that
+// moved, which is the very thing the override exists to fix.
+
+test('⚠️ an env override that still holds a placeholder is IGNORED, not used', () => {
+  reset();
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    for (const bad of ['/api/…/{id}', '/api/.../{id}', '/api/<path>/{id}', '/api/ /{id}']) {
+      process.env.LAUNCHPAD_PONS_TOKEN_PATH = bad;
+      const p = PADS.build().find((x) => x.key === 'pons');
+      assert.equal(p.tokenPath, '/launchpad/{id}', `a placeholder was used as a real path: ${bad}`);
+    }
+    // …and the base, which takes the same kind of paste.
+    process.env.LAUNCHPAD_PONS_API = '<base>';
+    assert.ok(PADS.build().find((x) => x.key === 'pons').bases[0].includes('ponsfamily'), 'a placeholder host replaced the base list');
+  } finally {
+    delete process.env.LAUNCHPAD_PONS_TOKEN_PATH; delete process.env.LAUNCHPAD_PONS_API;
+    console.warn = realWarn;
+  }
+  // ⚠️ AND IT SAYS SO. Silently falling back is the reassuring reading: an
+  // operator who set something and is being ignored must be told, or "the
+  // override did not work" and "the override was never read" look identical.
+  assert.ok(warned.length, 'the refusal was silent — the operator would think it was applied');
+  assert.match(warned[0], /LAUNCHPAD_PONS_TOKEN_PATH/);
+});
+
+test('…and a REAL override still wins, including the legitimate {id} / {n} fillers', () => {
+  reset();
+  process.env.LAUNCHPAD_PONS_TOKEN_PATH = '/api/token/{id}';
+  process.env.LAUNCHPAD_PONS_FEED_PATH = '/api/tokens?limit={n}&sort=new';
+  process.env.LAUNCHPAD_PONS_API = 'https://api.example.test/v1';
+  try {
+    const p = PADS.build().find((x) => x.key === 'pons');
+    assert.equal(p.tokenPath, '/api/token/{id}', 'the guard ate a perfectly good path');
+    assert.equal(p.feedPath, '/api/tokens?limit={n}&sort=new');
+    assert.deepEqual(p.bases, ['https://api.example.test/v1']);
+  } finally {
+    delete process.env.LAUNCHPAD_PONS_TOKEN_PATH; delete process.env.LAUNCHPAD_PONS_FEED_PATH; delete process.env.LAUNCHPAD_PONS_API;
+  }
+});

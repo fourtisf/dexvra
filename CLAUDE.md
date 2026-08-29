@@ -4743,6 +4743,31 @@ money.
 - `.sh` joined the probe-`costs` host regex. A guard that covers one instance of a
   general failure is how the general failure survives being fixed.
 
+### ⚠️ …and the placeholder rule was broken AGAIN, in the fix's own handover
+
+The operator was handed `LAUNCHPAD_PONS_TOKEN_PATH=/api/…/{id}` to paste, and
+pasted it. **This is the file's first rule, for the fourth time** — but with a
+new and worse ending: an angle-bracket placeholder at least dies with a shell
+syntax error, and this one did not. `VAR=value` is a legal assignment whatever
+the value is, so the shell returned a clean prompt and said nothing. Exported,
+it would have made every pons lookup request `/api/%E2%80%A6/0x…` and 404 for
+ever — indistinguishable, from `launchpads:check`, from the launchpad having
+moved, which is the exact thing the override exists to fix.
+
+**Rewording the placeholder is not the fix, and neither is remembering.** The
+fix this file already prescribes is to make the code reject a value that cannot
+possibly be right (`report.js` `_looksLikeChatId`). `realValue()` refuses an
+override containing `…`, `...`, `<`, `>` or whitespace and falls back to the
+built-in — and WARNS, because an operator who set something and is being ignored
+must be told, or "the override did not work" and "the override was never read"
+are the same observation. `{id}` and `{n}` are the legitimate fillers and are
+untouched.
+
+⚠️ The reference table `launchpads:check` prints (`LAUNCHPAD_<PAD>_API=<base>`)
+stays out of scope, as recorded above: it is framed as variable NAMES to edit by
+hand and explains `<PAD>` on the next line. What was wrong was presenting a line
+with a placeholder in it as a value to set.
+
 ```bash
 cd tradebot && node --test curveIface.test.js curveTrade.test.js launchpads.test.js
 cd bot && npm run launchpads:check     # does flap.sh answer FROM THE BOX, and with what shape
