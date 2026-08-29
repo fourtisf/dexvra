@@ -345,9 +345,45 @@ async function _discover(chain, chainKey, ca, opts = {}) {
     return r.ok ? r : null;
   };
 
+  /*
+   * ⚠️ ONE REQUEST BEFORE THE LADDER — this is the 12s refusal, fixed.
+   *
+   * The ladder below is three windows, and each that finds nothing pays a wide
+   * `getLogs` plus a coarse AND a fine stepped walk: tens of SERIAL round trips
+   * on a chain deliberately exempt from JSON-RPC batching (`batchMaxCount: 1`),
+   * against `CURVE_DISCOVER_MS`. The user sees "reading this curve's interface
+   * took longer than 12s" — arithmetic, not bad luck.
+   *
+   * HOISTED HERE, not inside `decodeCurveIface`, because that is called once per
+   * window: an unbounded look in there costs one extra request PER WINDOW on a
+   * node that refuses it, which is the opposite of the point.
+   *
+   * ⚠️ A caller that PINS a window is asking about that window and must not be
+   * answered about the whole chain.
+   */
+  let wide = null;
+  if (!opts.blocks && !opts.logs) {
+    wide = await decodeCurveIface(chain, ca, { head, full: true, maxTx: opts.maxTx });
+    // Only an EXPLICIT `retry: false` (a refusal) suppresses the ladder. A
+    // missing flag means "we did not decide", and the fail-safe reading of that
+    // is to pay for the windows: costing requests is recoverable, a false
+    // "this token cannot be traded" is not.
+    if (!wide.ok && wide.retry !== false) wide = null;
+  }
+
   const windows = opts.blocks ? [Math.floor(Number(opts.blocks))] : WINDOWS;
-  let res = null;
-  for (const blocks of windows) {
+  let res = wide;
+  /*
+   * ⚠️ THE WIDE LOOK FEEDS `res` — IT DOES NOT RETURN EARLY.
+   *
+   * A first cut returned straight out of the wide look, which skipped
+   * everything below: `_recordShape`, the sibling teach, and the cache write.
+   * So a SUCCESSFUL one-request discovery stopped teaching the pad — and the
+   * next fresh launch on it, the very case the shape registry exists for, lost
+   * its route. Four tests said so. A fast path that also skips the bookkeeping
+   * is not the same fast path.
+   */
+  for (const blocks of res ? [] : windows) {
     res = await decodeCurveIface(chain, ca, { head, blocks, maxTx: opts.maxTx, steps: opts.steps });
     if (res.ok) break;
     // Only "we looked and this window held nothing" is worth widening. Every

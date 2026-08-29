@@ -234,8 +234,31 @@ async function decodeCurveIface(chain, token, opts = {}) {
   let lastErr = null;
 
   if (!logs) {
-    try { logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: from, toBlock: head }); }
+    try { logs = await chain.getLogs({ address: token, topics: [TRANSFER_TOPIC], fromBlock: opts.full ? 0 : from, toBlock: head }); }
     catch (e) { lastErr = e; }
+  }
+
+  /*
+   * ⚠️ ONE REQUEST FOR THE WHOLE HISTORY — this is what the 12s refusal was.
+   *
+   * The ladder below plus its coarse/fine walk is tens of SERIAL round trips on
+   * a chain deliberately exempt from JSON-RPC batching, against a ceiling that
+   * only ever bought a bounded refusal. A bonding-curve token's history is short
+   * and this filter is narrow (one address, one topic) — the shape a node
+   * answers over a wide range; `v4.js:180` already issues `fromBlock: 0` on this
+   * very chain for the same reason.
+   *
+   * ⚠️ AN EMPTY ANSWER HERE IS INCONCLUSIVE, NOT A VERDICT. A first cut read it
+   * as "this token has never traded" and cached that, reasoning the whole chain
+   * cannot be too narrow. Wrong objection: narrowness was never the issue, the
+   * CAP is — and `fromBlock: 0` is the WIDEST range a capping node can be
+   * handed, so it is the request most likely to come back silently empty. That
+   * turned one request into a false verdict where the ladder finds the trades.
+   * Only an explicit refusal suppresses the ladder.
+   */
+  if (opts.full) {
+    if (!logs) return { ok: false, retry: !_refusal(lastErr), why: `could not read this token's transfers (${(lastErr && lastErr.message) || lastErr})` };
+    if (!logs.length) return { ok: false, retry: true, why: 'no trades found for this token in one whole-chain look — the node may be capping the range' };
   }
 
   let walked = 0;

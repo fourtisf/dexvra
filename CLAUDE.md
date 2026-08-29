@@ -4872,6 +4872,39 @@ Four guarantees are MUTATION-TESTED: the buy's currency choice, the swap being
 sized in the acquired amount, the sell's payout tracking, and the card refusing
 to price a foreign-quoted pool. Each fails exactly one test.
 
+### ⚠️ …and the 12s refusal was still there, because the fix for it was dropped
+
+The next screenshot, after the deploy, carried the identical sentence: *"reading
+this curve's interface took longer than 12s"*. **A one-request whole-history look
+had been written for exactly that and then left out of the rebase**, on the
+reasoning that the seeding work already on `main` had superseded it. It had not:
+seeding is a fallback for a walk that comes back empty, and the walk is what
+costs the twelve seconds in the first place.
+
+The arithmetic is the whole story. The ladder is three windows, each paying a
+wide `getLogs` plus a coarse AND a fine stepped walk — tens of SERIAL round trips
+on a chain deliberately exempt from JSON-RPC batching, against a ceiling that
+only ever bought a bounded refusal. A bonding-curve token's history is short and
+the filter is narrow (one address, one topic), so `fromBlock: 0` is one request —
+and `v4.js:180` already issues exactly that on this very chain.
+
+- ⚠️ **AN EMPTY WIDE ANSWER IS INCONCLUSIVE, NOT A VERDICT.** A first cut read it
+  as "this token has never traded" and cached that, reasoning that the whole
+  chain cannot be too narrow. Wrong objection: narrowness was never the issue,
+  the CAP is — this file's own header records a live box answering `[]` to a
+  50,000-block range — and `fromBlock: 0` is the WIDEST range a capping node can
+  be handed, so it is the request MOST likely to come back silently empty. Only
+  an explicit refusal suppresses the ladder.
+- ⚠️ **AND THE FAST PATH MUST NOT SKIP THE BOOKKEEPING.** The first cut returned
+  straight out of the wide look, which skipped `_recordShape`, the sibling teach
+  and the cache write below it — so a SUCCESSFUL one-request discovery stopped
+  teaching the pad, and the next fresh launch on it (the case the shape registry
+  exists for) lost its route. Four tests said so. It feeds `res` now and falls
+  through the tail. A fast path that also skips the tail is not the same path.
+- **The existing range-cap test could not see any of this**: it calls
+  `decodeCurveIface` directly and never passes `full`. The new one drives
+  `ifaceFor`, the door the bot uses.
+
 **Config a fix depends on:** nothing.
 
 ## Two bot processes, one config

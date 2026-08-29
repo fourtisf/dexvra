@@ -273,23 +273,55 @@ test('cached() is a cheap yes and never a no', () => {
   assert.equal(ct.cached('robinhood', TOKEN), null);
 });
 
-test('⚠️ the window ESCALATES, because "any launchpad" means any PACE', async () => {
-  // 5000 blocks is under three hours on a two-second chain. A pad whose tokens
-  // trade a few times a day reads as "no trades found" there — a statement
-  // about the WINDOW reported as a fact about the TOKEN, and exactly what would
-  // have made this feature Pons-shaped: fine on a busy launch, blind on a quiet
-  // one. Widening the FIRST look instead would make every lookup pay for the
-  // slowest pad, on a call that sits inside the wallet lock.
-  const logs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
-  const txs = {
-    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
-    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+const TRADE_LOGS = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+const TRADE_TXS = {
+  '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+  '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+};
+
+test('⚠️ the whole history is read in ONE request — the ladder was the 12s refusal', async () => {
+  /*
+   * This replaces an assertion that the first look was 5000 blocks, on the
+   * reasoning that "widening the FIRST look would make every lookup pay for the
+   * slowest pad". That reasoning was about widening the LADDER — three windows,
+   * each paying a wide call plus a coarse AND a fine stepped walk, which is tens
+   * of SERIAL round trips on a chain exempt from JSON-RPC batching, and is
+   * exactly what the operator kept seeing as "reading this curve's interface
+   * took longer than 12s".
+   *
+   * It does not apply to ONE topic-narrow `fromBlock: 0` request, which costs a
+   * single round trip whatever the span. `v4.js:180` already issues exactly this
+   * on this chain. The ladder underneath is unchanged and still pinned below.
+   */
+  const seen = [];
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    // The trades are OLD — far outside the cheap 5000-block window, which is the
+    // case that used to cost the whole ladder and time the buy out.
+    async getLogs(f) { seen.push(Number(f.fromBlock)); return TRADE_LOGS; },
+    async getTransaction(h) { return TRADE_TXS[h]; },
+    async estimateGas() { return 210000n; },
   };
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN);
+  assert.equal(r.ok, true, r.why);
+  assert.equal(seen.length, 1, 'ONE getLogs — the ladder is what the 12s ceiling was spent on');
+  assert.equal(seen[0], 0, 'and it asked for the whole chain, so a quiet pad is not mistaken for an untraded token');
+});
+
+test('⚠️ the window still ESCALATES for a node that refuses the whole history', async () => {
+  // A node that caps ranges throws on `fromBlock: 0`. The ladder underneath is
+  // what covers it, and it must still widen: 5000 blocks is under three hours on
+  // a two-second chain, so a pad whose tokens trade a few times a day reads as
+  // "no trades found" there — a statement about the WINDOW reported as a fact
+  // about the TOKEN.
+  const logs = TRADE_LOGS;
+  const txs = TRADE_TXS;
   const seen = [];
   const chain = {
     async getBlockNumber() { return 500000; },
     async getLogs(f) {
       const span = 500000 - Number(f.fromBlock);
+      if (span >= 500000) throw new Error('query returned more than 10000 results');   // a RANGE cap, not a refusal
       seen.push(span);
       return span >= 60000 ? logs : [];        // the trades are older than three hours
     },
@@ -299,7 +331,7 @@ test('⚠️ the window ESCALATES, because "any launchpad" means any PACE', asyn
   const r = await ct.ifaceFor(chain, 'robinhood', TOKEN);
   assert.equal(r.ok, true, r.why);
   assert.ok(Math.max(...seen) >= 60000, 'it looked further than the cheap first window');
-  assert.equal(seen[0], 5000, 'and it still STARTED cheap — every lookup must not pay for the slowest pad');
+  assert.equal(seen[0], 5000, 'and the ladder still STARTS cheap once the wide look is off the table');
 });
 
 test('⚠️ the indexer\'s trade list seeds discovery when every getLogs is silently emptied', async () => {
@@ -479,4 +511,43 @@ test('⚠️ …but a SEEDED caller is never handed the seedless answer', async 
   await Promise.all([p1, p2]);
   assert.equal(bare, 1);
   assert.equal(seeded, 1, 'the seeded caller was answered by a discovery that never used its seed');
+});
+
+test('⚠️ a node that CAPS BY ANSWERING [] still reaches the ladder — an empty wide answer is not a verdict', async () => {
+  /*
+   * `curveIface`'s own header records, from a live-box measurement, that some
+   * public RPCs cap `eth_getLogs` by ANSWERING `[]` rather than by throwing —
+   * "that empty array is about the CAP, not about the token". A first cut of
+   * the one-request look returned "no trades found at all" on exactly that
+   * answer with no `retry`, so `_discover` skipped the ladder, cached the
+   * sentence, and the card lost its Buy button while the snipe went inert. One
+   * request and a false verdict, where the ladder finds the trades.
+   *
+   * `fromBlock: 0` is the WIDEST range a capping node can be handed, so it is
+   * the request MOST likely to come back silently empty — which is why the
+   * reassuring reading ("the whole chain cannot be too narrow") is the wrong
+   * objection.
+   *
+   * Driven through `ifaceFor`, the door the bot uses — the existing range-cap
+   * test calls `decodeCurveIface` directly and never passes `full`, so it
+   * cannot see this.
+   */
+  ct._reset();
+  let asked = 0;
+  const CAP = 20000;
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    async getLogs(f) {
+      asked++;
+      const span = 500000 - Number(f.fromBlock);
+      if (span > CAP) return [];            // silently capped — NOT a throw
+      return Number(f.toBlock) >= 460000 ? TRADE_LOGS : [];
+    },
+    async getTransaction(h) { return TRADE_TXS[h]; },
+    async estimateGas() { return 210000n; },
+  };
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN);
+  assert.equal(r.ok, true, `the capped node's empty answer was believed: ${r.why}`);
+  assert.equal(r.curve, CURVE);
+  assert.ok(asked > 1, 'it stopped after the wide look instead of paying for the ladder');
 });
