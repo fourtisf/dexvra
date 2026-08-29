@@ -23,6 +23,7 @@
  */
 const { ethers } = require('ethers');
 const { chainOf, enabledChains } = require('../chains.js');
+const { steppedLogs } = require('../curveIface.js');
 const build = require('../build.js');
 
 /*
@@ -37,8 +38,6 @@ const build = require('../build.js');
  * reason.
  */
 const DS_SLUG = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum', solana: 'solana', robinhood: 'robinhood' };
-
-module.exports = { DS_SLUG };
 
 const argv = process.argv.slice(2);
 const optOf = (n) => { const i = argv.indexOf('--' + n); return i >= 0 ? (argv[i + 1] || '') : ''; };
@@ -56,12 +55,11 @@ const note = (m) => console.log(`     ${D}${m}${X}`);
  * they mean, so the argument is DESCRIBED and no command is printed at all.
  * `<...>` in a shell dies as a redirect before the script even runs.
  */
-if (require.main === module && !token) {
+function usage() {
   console.log(`\n${C}venue:check${X} — what kind of market does a token have, and can Dexvra route it?\n`);
   console.log('Run it with the token contract address as the argument, and');
   console.log('optionally --chain <key> (default: the first enabled chain).');
   console.log(`\nEnabled chains: ${enabledChains().map((c) => c.key).join(', ')}\n`);
-  process.exit(2);
 }
 
 const IFACE = new ethers.Interface([
@@ -104,7 +102,7 @@ async function dsPair(chainKey, ca) {
   return { ok: true, pair: pairs[0], why: null };
 }
 
-if (require.main === module) (async () => {
+async function main() {
   const chainKey = optOf('chain') || (enabledChains()[0] || {}).key;
   const chain = chainOf(chainKey);
   if (!chain) { bad(`unknown chain "${chainKey}"`); process.exit(2); }
@@ -141,6 +139,7 @@ if (require.main === module) (async () => {
   ]);
   const lc = (s) => String(s || '').toLowerCase();
   const isV2 = !!(t0 && t1 && res);
+  let quoteTok = '';
   if (isV2) {
     const mine = lc(t0) === lc(token) || lc(t1) === lc(token);
     ok(`token0 ${t0}`);
@@ -151,6 +150,7 @@ if (require.main === module) (async () => {
       bad('…but neither side is the token asked about — this pair is somebody else\'s');
     } else {
       const quote = lc(t0) === lc(token) ? t1 : t0;
+      quoteTok = quote;
       const [qs, fee, sfee] = await Promise.all([
         callOr(prov, quote, 'symbol'),
         callOr(prov, pair, 'fee'),
@@ -172,20 +172,45 @@ if (require.main === module) (async () => {
   let head = 0;
   try { head = Number(await prov.getBlockNumber()); } catch (e) { bad(`could not read the chain head (${(e && e.message) || e})`); }
   let logs = [];
-  const SPAN = Math.max(200, Number(optOf('blocks') || 20000));
+  const SPAN = Math.max(200, Number(optOf('blocks') || 40000));
   if (head) {
-    try { logs = await prov.getLogs({ address: pair, fromBlock: Math.max(0, head - SPAN), toBlock: head }) || []; }
-    catch (e) { warn(`getLogs refused (${(e && e.shortMessage) || e.message || e})`); }
+    /*
+     * ⚠️ THE BOT'S OWN STEPPED WALK, NOT A SINGLE WIDE `getLogs`.
+     *
+     * The first cut of this section asked one 20,000-block range and reported
+     * "no logs from the pair" for a pair doing $6,069 of volume a day. This node
+     * SILENTLY ANSWERS `[]` when a range is too wide — the defect `steppedLogs`
+     * exists for, documented at its own definition — so the wide ask reported a
+     * busy pair as a dead one, and the check said the opposite of the truth on
+     * the one line that matters. Driving the bot's walk is also the rule: a
+     * check that asks its own way is how fonts:check printed nine green ticks
+     * over a banner drawing boxes.
+     */
+    /*
+     * ⚠️ THE BUDGET HAS TO FOLLOW THE SPAN, or `--blocks` is decoration.
+     * `steppedLogs` defaults to 48 steps of 500, so it reaches 24,000 blocks
+     * whatever span it is handed — a run asking for 40,000 quietly searched
+     * 24,000 and reported the shortfall as "no logs from the pair", which is the
+     * refusal quoting a range it never walked. Capped, because this is a
+     * diagnostic making one request per step.
+     */
+    const STEP = 500;
+    const budget = Math.min(240, Math.ceil(SPAN / STEP));
+    const w = await steppedLogs(prov, { address: pair }, { head, span: SPAN, step: STEP, budget, want: 40 });
+    logs = w.logs;
+    if (!logs.length && w.errs) warn(`every range refused (${(w.lastErr && (w.lastErr.shortMessage || w.lastErr.message)) || w.lastErr})`);
+    note(`walked ${w.walked} block(s) in ${w.stepped} step(s) — ${logs.length} log(s)`);
   }
   if (!logs.length) {
-    warn(`no logs from the pair in the last ${SPAN} blocks`);
-    note('a quiet pair, or this node caps ranges — rerun with --blocks and a smaller number');
+    warn(`no logs from the pair in the blocks actually walked`);
+    note('rerun with --blocks and a larger number if the pair trades rarely');
   } else {
     const seen = new Map();
     for (let i = logs.length - 1; i >= 0 && seen.size < 4; i--) {
       const h = logs[i].transactionHash;
       if (h && !seen.has(h)) seen.set(h, true);
     }
+    const routers = new Set();
     for (const h of seen.keys()) {
       const tx = await prov.getTransaction(h).catch(() => null);
       if (!tx || !tx.data) continue;
@@ -193,9 +218,97 @@ if (require.main === module) (async () => {
       const words = Math.floor((String(tx.data).length - 10) / 64);
       ok(`to ${tx.to}  selector ${sel}  ${words} word(s)  value ${ethers.formatEther(tx.value || 0n)}`);
       note(`tx ${h}`);
+      if (tx.to && lc(tx.to) !== lc(pair)) routers.add(ethers.getAddress(tx.to));
     }
-    note('the "to" above is the ROUTER a trade goes through; the selector is what identifies it');
+
+    /*
+     * ⚠️ THE `to` OF A TRADE IS A CANDIDATE, NOT A ROUTER. It can be an
+     * aggregator, a multicall, someone's own contract, or the pair itself. What
+     * PROVES a router routes this pair is that it will quote it — `getAmountsOut`
+     * is a view function on every V2 router, and a non-zero answer for
+     * [quote, token] means that router's own factory resolves to THIS pair.
+     * That is a fact read off the chain, and it is exactly the probe the buy
+     * path would have to make before it could sign anything.
+     */
+    if (routers.size && quoteTok) {
+      console.log(`\n${C}   …and does any of them QUOTE this pair? ${D}(getAmountsOut — one eth_call each)${X}`);
+      const rAbi = new ethers.Interface(['function getAmountsOut(uint256,address[]) view returns (uint256[])']);
+      const ONE = 10n ** 18n;
+      for (const r of routers) {
+        for (const [label, path] of [
+          ['quote → token', [quoteTok, token]],
+          [`W${chain.native} → quote → token`, [chain.weth, quoteTok, token]],
+        ]) {
+          if (!path.every((a) => /^0x[a-fA-F0-9]{40}$/.test(String(a || '')))) continue;
+          let out = null;
+          try {
+            const raw = await prov.call({ to: r, data: rAbi.encodeFunctionData('getAmountsOut', [ONE, path]) });
+            if (raw && raw !== '0x') out = rAbi.decodeFunctionResult('getAmountsOut', raw)[0];
+          } catch (_) { /* a router that cannot quote this path says so by reverting */ }
+          const last = out && out.length ? out[out.length - 1] : 0n;
+          if (last > 0n) ok(`${r} quotes ${label} — 1.0 in → ${ethers.formatUnits(last, 18)} out`);
+          else note(`${r} does not quote ${label}`);
+        }
+      }
+      console.log(`\n   ${D}A router that QUOTES the path is one Dexvra could route through.${X}`);
+      console.log(`   ${D}None quoting it means the trades go through something that is not a V2 router.${X}`);
+    }
+  }
+
+  /*
+   * ── 4. the question the verdict raises ──────────────────────────────────
+   *
+   * A pair quoted in a token that is neither the native coin nor WETH cannot be
+   * bought in one leg. `core.buy` already has the two-leg shape (`_acquireQuote`
+   * → swap → `_dumpQuote`) for exactly this, and it is only routable if the
+   * FIRST leg is: native → the quote token. So the honest question is not "is
+   * this pair tradable" but "can we reach its quote token", and this answers it
+   * with the same two probes the bot would make.
+   */
+  if (isV2 && quoteTok) {
+    console.log(`\n${C}4. Can the FIRST leg be routed — ${chain.native} → the quote token?${X}`);
+    const facAbi = new ethers.Interface(['function getPair(address,address) view returns (address)']);
+    let ours = null;
+    if (chain.factory && chain.weth) {
+      try {
+        const raw = await prov.call({ to: chain.factory, data: facAbi.encodeFunctionData('getPair', [quoteTok, chain.weth]) });
+        const a = raw && raw !== '0x' ? facAbi.decodeFunctionResult('getPair', raw)[0] : null;
+        if (a && a !== ethers.ZeroAddress) ours = a;
+      } catch (_) { /* a factory that will not answer is the same as no pair */ }
+    }
+    if (ours) {
+      const r = await callOr(prov, ours, 'getReserves');
+      if (r && (r[0] > 0n || r[1] > 0n)) {
+        ok(`Dexvra's own V2 factory has a ${chain.native}/quote pair: ${ours}`);
+        note(`reserves ${r[0]} / ${r[1]} — leg one is routable through the configured router`);
+      } else { warn(`a pair exists at ${ours} but holds no reserves`); }
+    } else {
+      warn(`Dexvra's V2 factory has no W${chain.native}/quote pair for ${quoteTok}`);
+      const q = await dsPair(chainKey, quoteTok);
+      if (q.ok && q.pair) {
+        note(`the indexer does have one: dex "${q.pair.dexId}" · pair ${q.pair.pairAddress}`);
+        note(`quoted against ${q.pair.quoteToken && q.pair.quoteToken.symbol} · liquidity $${Number((q.pair.liquidity || {}).usd || 0).toLocaleString()}`);
+        note('so leg one needs the same foreign-pair route as leg two');
+      } else {
+        note(q.ok ? 'and the indexer has no pair for it either' : q.why);
+      }
+    }
   }
 
   console.log('');
-})().catch((e) => { bad(`venue:check failed (${(e && e.stack) || e})`); process.exit(1); });
+  return 0;
+}
+
+/*
+ * ⚠️ THE CLI AND THE FUNCTION ARE SEPARATE, so a test can DRIVE this rather than
+ * read it. The first version of the walk fix was "verified" by `node --check`,
+ * which proves nothing about a runtime shape — and the defect it replaced (a
+ * single wide `getLogs` silently answered `[]`) is precisely a runtime shape.
+ */
+module.exports = { DS_SLUG, main };
+
+if (require.main === module) {
+  if (!token) { usage(); process.exit(2); }
+  main().then((c) => process.exit(c || 0))
+    .catch((e) => { bad(`venue:check failed (${(e && e.stack) || e})`); process.exit(1); });
+}

@@ -5158,8 +5158,41 @@ never a scan).
   fifth time: only the operator knows which token they mean, so the argument is
   described in prose and no command is printed at all.
 
+### …and its first run answered the WRONG WAY on the one line that mattered
+
+`no logs from the pair in the last 20000 blocks`, about a pair doing **$6,069 of
+volume a day**. Those cannot both be true, and the check was the thing that was
+wrong: it asked ONE wide `eth_getLogs`, and this node **silently answers `[]`**
+to a range that wide — the defect `steppedLogs` exists for, documented at its own
+definition, broken in the script written to diagnose something else. A busy pair
+reported as a dead one is a diagnostic lying in the reassuring direction, which
+is the failure this file keeps paying for.
+
+- **It drives the bot's OWN walk** (`curveIface.steppedLogs`), not a second idea
+  of how to read logs on this chain.
+- ⚠️ **The budget has to follow the span, or `--blocks` is decoration.**
+  `steppedLogs` defaults to 48 steps of 500, so it reaches 24,000 blocks whatever
+  span it is handed: a run asking for 40,000 quietly searched 24,000 and then
+  quoted 40,000 in its refusal — the range it never walked. It prints what it
+  actually reached.
+- ⚠️ **THE `to` OF A TRADE IS A CANDIDATE, NOT A ROUTER.** It can be an
+  aggregator, a multicall, or somebody's own contract, and reporting it as the
+  router is how a guessed address reaches a money path. What PROVES it is
+  `getAmountsOut(1e18, [quote, token])` — a view function on every V2 router, and
+  a non-zero answer means that router's own factory resolves to THIS pair. It is
+  read off the chain, and it is the same probe the buy path would have to make
+  before it could sign anything.
+- ⚠️ **`node --check` PROVED NOTHING** — the defect was a runtime shape, the
+  lesson `curveTrade` had just learnt about an unbounded stage one file over. The
+  test stands up an RPC that is faithful in the way that matters: it SERVES
+  narrow ranges and silently EMPTIES wide ones, so a version that goes back to
+  one wide ask finds nothing in the test exactly as it found nothing on the box.
+
+Mutation-tested: the single wide `getLogs` and the missing `getAmountsOut` proof
+each fail between one and two tests.
+
 ```bash
-cd tradebot && node --test venueCheck.test.js   # 2 tests, no network
+cd tradebot && node --test venueCheck.test.js   # 4 tests, no network
 ```
 
 **Config a fix depends on:** nothing — but what it reports is a property of the
