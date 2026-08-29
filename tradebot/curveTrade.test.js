@@ -367,12 +367,37 @@ test('⚠️ the indexer\'s trade list seeds discovery when every getLogs is sil
   assert.ok(ct.cached('robinhood', TOKEN), 'a seeded read is a read — it caches like one');
 });
 
-test('the seed is not asked while the walk can answer', async () => {
+/*
+ * ⚠️ PREMISE CHANGED, NOT RULE. This test used to assert "the seed is not asked
+ * while the walk can answer" — the seed was tried only after a window came back
+ * empty, so an indexer request the cheap window made unnecessary was never
+ * spent.
+ *
+ * That reasoning holds only while the walk is CHEAP, and on the node this
+ * feature exists for it is not: the walk spent the entire CURVE_DISCOVER_MS
+ * budget, so "seed last" meant SEED NEVER on exactly the tokens the seed
+ * answers in three requests. The seed now starts CONCURRENTLY with the
+ * whole-chain look, so it costs no latency where that look succeeds.
+ *
+ * What survives is the part that was always the point: ONE request, never one
+ * per window — and a caller that PINNED a window is asking about that window
+ * and must not spend an indexer request at all.
+ */
+test('the seed is spent ONCE, and never by a caller that pinned a window', async () => {
   const chain = chainWithBuys();
   let asked = 0;
   const r = await ct.ifaceFor(chain, 'robinhood', TOKEN, { tradeHashes: async () => { asked++; return []; } });
   assert.equal(r.ok, true, r.why);
-  assert.equal(asked, 0, 'a walk that found the trades must not spend an indexer request');
+  assert.equal(asked, 1, 'one indexer request per discovery, not one per window');
+
+  ct.forget('robinhood', TOKEN);
+  let pinned = 0;
+  const r2 = await ct.ifaceFor(chain, 'robinhood', TOKEN, {
+    blocks: 5000,
+    tradeHashes: async () => { pinned++; return []; },
+  });
+  assert.equal(r2.ok, true, r2.why);
+  assert.equal(pinned, 0, 'a pinned window asks about that window — it may not reach for the indexer');
 });
 
 test('a dead indexer costs the seed and nothing else — the ladder still climbs', async () => {
@@ -550,4 +575,110 @@ test('⚠️ a node that CAPS BY ANSWERING [] still reaches the ladder — an em
   assert.equal(r.ok, true, `the capped node's empty answer was believed: ${r.why}`);
   assert.equal(r.curve, CURVE);
   assert.ok(asked > 1, 'it stopped after the wide look instead of paying for the ladder');
+});
+
+/*
+ * ⚠️ THE REGRESSION THIS FILE EXISTS TO PIN: A SLOW NODE, NOT A BROKEN ONE.
+ *
+ * The whole-chain look was added to END the "reading this curve's interface took
+ * longer than 12s" refusal, and it REPRODUCED it. It had no timeout of its own —
+ * ethers' default is 300s — so on a node that merely takes its time over
+ * `fromBlock: 0` across ~49M blocks, that ONE request consumed the entire
+ * CURVE_DISCOVER_MS budget and nothing underneath it ever ran: not the ladder,
+ * not the seed, not the learned shape. Same sentence, different cause, which is
+ * precisely why it read as "masih sama aja".
+ *
+ * Every other test here uses a node that answers instantly or throws, and both
+ * of those are fine on the broken code. SLOWNESS is the shape that catches it.
+ */
+test('⚠️ a whole-chain look that is SLOW does not eat the ladder, the seed, or the shape', async () => {
+  process.env.CURVE_STAGE_MS = '500';   // the floor; the stub below sleeps past it
+  delete require.cache[require.resolve('./curveTrade.js')];
+  const ct2 = require('./curveTrade.js');
+  try {
+    const logs = [xfer(CURVE, WALLET, '0xb1'), xfer(CURVE, WALLET, '0xb2')];
+    const txs = {
+      '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+      '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+    };
+    let wideCalls = 0;
+    const chain = {
+      async getBlockNumber() { return 500000; },
+      async getLogs(f) {
+        // `fromBlock: 0` is the whole-chain look. It ANSWERS — eventually — and
+        // "eventually" is the entire defect.
+        if (Number(f.fromBlock) === 0) {
+          wideCalls++;
+          await new Promise((r) => setTimeout(r, 1200));
+          return logs;
+        }
+        const from = Number(f.fromBlock), to = Number(f.toBlock);
+        return from <= 405000 && 405000 <= to ? logs : [];
+      },
+      async getTransaction(h) { return txs[h]; },
+      async estimateGas() { return 210000n; },
+    };
+
+    const t0 = Date.now();
+    const r = await ct2.ifaceFor(chain, 'robinhood', TOKEN, {});
+    const took = Date.now() - t0;
+
+    assert.equal(wideCalls, 1, 'precondition: the slow whole-chain look was actually attempted');
+    assert.equal(r.ok, true, `the slow look starved everything below it: ${r.why}`);
+    assert.equal(r.buy.selector, '0xaabbccdd', 'and the ladder underneath still read the interface');
+    // The bound is what makes this possible at all: unbounded, the answer could
+    // not arrive before the slow request did.
+    assert.ok(took < 900, `discovery must not wait out the slow stage — took ${took}ms`);
+  } finally {
+    delete process.env.CURVE_STAGE_MS;
+    delete require.cache[require.resolve('./curveTrade.js')];
+  }
+});
+
+/*
+ * ⚠️ THE SEED MUST BE SPENT BEFORE THE LADDER, NOT AFTER IT — and this is the
+ * test that makes that an assertion rather than an argument.
+ *
+ * A mutation run said so: moving the seed back to "after a window came back
+ * empty" passed every other test in this file, because they all use a node whose
+ * walk is instantaneous. In production it is not — the walk is up to ~96 serial
+ * `getLogs` on a chain deliberately exempt from JSON-RPC batching — so a seed
+ * that runs last runs after the 12s budget is already gone. Seed-last is
+ * seed-never on exactly the tokens the seed answers in three requests.
+ *
+ * So the shape is: a node that ANSWERS every walk, slowly, with nothing (the
+ * silent range cap this whole ladder exists for), and an indexer that knows the
+ * trades. Only the ordering separates a fast answer from a slow one.
+ */
+test('⚠️ the seed answers BEFORE the ladder is walked, not after', async () => {
+  const txs = {
+    '0xb1': { to: CURVE, from: WALLET, value: E17, data: '0xaabbccdd' + word(TOKEN) + num(1000n) },
+    '0xb2': { to: CURVE, from: WALLET, value: 2n * E17, data: '0xaabbccdd' + word(TOKEN) + num(2000n) },
+  };
+  const rcpt = (h, amt) => ({
+    logs: [{ address: TOKEN, topics: [TRANSFER_TOPIC, topic(CURVE), topic(WALLET)], data: '0x' + num(amt), blockNumber: 405000 }],
+    transactionHash: h,
+  });
+  let walked = 0;
+  const chain = {
+    async getBlockNumber() { return 500000; },
+    // Every range answers — emptily, and never quickly. This is the node the
+    // ladder was written for, and the one it cannot finish against in time.
+    async getLogs() { walked++; await new Promise((r) => setTimeout(r, 30)); return []; },
+    async getTransaction(h) { return txs[h]; },
+    async getTransactionReceipt(h) { return h === '0xb1' ? rcpt(h, 1000n) : rcpt(h, 2000n); },
+    async estimateGas() { return 210000n; },
+  };
+
+  const t0 = Date.now();
+  const r = await ct.ifaceFor(chain, 'robinhood', TOKEN, { tradeHashes: async () => ['0xb2', '0xb1'] });
+  const took = Date.now() - t0;
+
+  assert.equal(r.ok, true, `the seed never got its turn: ${r.why}`);
+  assert.equal(r.buy.selector, '0xaabbccdd');
+  // The ladder is ~96 stepped reads per window. Reaching the answer without
+  // paying for them is the entire point; a handful of probes is the wide look
+  // and the first window, not a walk.
+  assert.ok(walked <= 4, `the ladder was walked before the seed was spent — ${walked} getLogs`);
+  assert.ok(took < 400, `discovery paid for the walk it did not need — took ${took}ms`);
 });

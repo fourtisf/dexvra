@@ -4631,6 +4631,55 @@ curve walk, the balances and the meta reads all share.
 pm2 logs dexvra-tradebot --nostream --lines 400 | grep -F '[ui] card'
 ```
 
+### ⚠️ The fix for the 12s refusal WAS the 12s refusal — an unbounded stage
+
+Deployed, restarted, sha confirmed `abf13ed` on the box — and the card came back
+with the identical sentence. So the stale-checkout reading was wrong, and the
+cause was the fix itself.
+
+`decodeCurveIface(… { full: true })` was hoisted in front of the ladder to turn
+~75 serial requests into one. **It had no timeout of its own** — ethers' default
+is 300s — while `core._curveIface` races the whole discovery against
+`CURVE_DISCOVER_MS` (12s). So on a node that merely takes its TIME over
+`fromBlock: 0` across ~49M blocks, that single request consumed the entire budget
+and **nothing underneath it ever ran**: not the ladder, not the seed, not the
+learned shape. Same sentence, opposite cause, which is exactly why three rounds
+of it read as "masih sama aja" — and why "check the sha" was the wrong answer the
+one time the sha was right.
+
+- **NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.** `STAGE_MS`
+  (`CURVE_STAGE_MS`, 4s, floor 500ms) bounds the whole-chain look, and a stage
+  that overruns its slice is INCONCLUSIVE — never a verdict. That is the same
+  fail-safe direction the wide look's empty answer already takes, for the same
+  reason: costing requests is recoverable, a false "this token cannot be traded"
+  is not.
+- ⚠️ **THE SEED IS SPENT BEFORE THE LADDER, NOT AFTER IT.** It used to be tried
+  only once a window came back empty — sound while the walk is cheap, and on the
+  node this feature exists for the walk is up to ~96 serial `getLogs`. So "seed
+  last" meant **seed never**, on exactly the tokens the seed answers in three
+  requests. It is a DIFFERENT TRANSPORT, so a slow node cannot hide it, and it is
+  started CONCURRENTLY with the whole-chain look — one request either way, no
+  latency where that look succeeds.
+- ⚠️ **A PINNED WINDOW MAY NOT REACH FOR THE INDEXER.** `opts.blocks` asks about
+  that window; receipts fetched by hash come from wherever the trades are, which
+  answers a different question — the rule the whole-chain look already states.
+- ⚠️ **EVERY OTHER TEST ON THIS PATH USES A NODE THAT ANSWERS INSTANTLY OR
+  THROWS, AND BOTH ARE FINE ON THE BROKEN CODE.** SLOWNESS is the shape that
+  catches it, and nothing in the suite had it. Two of the three guarantees also
+  survived their first mutation run — the seed ordering was pinned by no test at
+  all, because a stub whose walk is instantaneous cannot tell first from last.
+  A guarantee that is argued rather than measured is not a guarantee.
+
+Mutation-tested: unbounding the whole-chain look, moving the seed back behind
+the ladder, and letting a pinned window reach the indexer each fail a test.
+
+```bash
+cd tradebot && node --test curveTrade.test.js   # 32 tests, no network
+```
+
+**Config a fix depends on:** nothing. `CURVE_STAGE_MS` widens the per-stage slice
+for an operator on a slow node with a raised `CURVE_DISCOVER_MS`.
+
 ### "masih aja" — the buy refusal was invisible to everything but the person who tapped
 
 Four rounds of this report, and every one of them started from the same place: a

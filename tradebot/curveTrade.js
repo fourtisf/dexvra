@@ -253,6 +253,33 @@ function forget(chainKey, ca) {
  * window can change. A transport failure never escalates: asking a dead node
  * three times is three times the wait for the same silence.
  */
+/*
+ * ⚠️ NO SINGLE STAGE MAY CONSUME THE WHOLE BUDGET.
+ *
+ * `core._curveIface` races this against CURVE_DISCOVER_MS (12s) and renders the
+ * loser to the user as "reading this curve's interface took longer than 12s".
+ * The whole-chain look below has NO timeout of its own — ethers' default is
+ * 300s — so on a node that is merely SLOW to answer `fromBlock: 0` (Robinhood's
+ * public RPC over ~49M blocks) that one request ate the entire budget and
+ * NOTHING underneath it ever ran: not the ladder, not the seed, not the learned
+ * shape. The fix for the 12s refusal reproduced the 12s refusal, from a
+ * different cause, which is exactly why it read as unchanged.
+ *
+ * A stage that overruns its slice is INCONCLUSIVE, never a verdict — the same
+ * fail-safe direction the wide look's empty answer already takes.
+ */
+const STAGE_MS = Math.max(500, Number(process.env.CURVE_STAGE_MS || 4000));
+
+/** Resolve to `null` if `p` has not settled in `ms`. The loser is left running
+ *  into nothing; its rejection is handled here, because an unhandled one ends
+ *  the process on Node 18. */
+function _within(p, ms) {
+  let t;
+  const guard = new Promise((res) => { t = setTimeout(() => res(null), ms); });
+  return Promise.race([Promise.resolve(p).then((v) => v, () => null), guard])
+    .finally(() => clearTimeout(t));
+}
+
 const WINDOWS = (() => {
   const raw = String(process.env.CURVE_WINDOWS || '5000,60000,400000').split(',');
   const out = raw.map((x) => Math.floor(Number(String(x).trim()))).filter((n) => Number.isFinite(n) && n >= 100);
@@ -328,16 +355,33 @@ async function _discover(chain, chainKey, ca, opts = {}) {
   try { head = Number(await chain.getBlockNumber()); }
   catch (e) { return { ok: false, why: `could not read the chain head (${(e && e.message) || e})` }; }   // NOT cached: an outage is not a fact about the token
 
-  // At most ONE seed attempt per discovery, tried after the FIRST empty window
-  // — the cheap window finds a fresh launch's trades by itself, and a quiet
-  // token gets the seed before paying for the two wide windows that are
-  // usually blind to it anyway (see the header on _receiptLogs).
+  /*
+   * ⚠️ THE SEED IS STARTED NOW, NOT AFTER THE LADDER.
+   *
+   * It used to be tried only once a window came back empty, to avoid paying for
+   * an indexer request the cheap window would have made unnecessary. That
+   * reasoning holds only while the walk is cheap — and on the node this feature
+   * exists for it is not: the walk spent the whole 12s budget, so "seed last"
+   * meant SEED NEVER, on exactly the tokens the seed answers instantly. It is a
+   * DIFFERENT TRANSPORT, so a slow node cannot hide it.
+   *
+   * Started CONCURRENTLY with the whole-chain look below, so it costs no
+   * latency at all where that look succeeds — one request either way, and both
+   * are bounded.
+   */
+  const seedable = !opts.blocks && !opts.logs && typeof opts.tradeHashes === 'function';
+  const hashesP = seedable ? _within(Promise.resolve().then(() => opts.tradeHashes()), STAGE_MS) : null;
+
   let seedTried = false;
   const trySeed = async () => {
-    if (seedTried || typeof opts.tradeHashes !== 'function') return null;
+    // ⚠️ A PINNED WINDOW MAY NOT REACH FOR THE INDEXER. `opts.blocks` asks about
+    // that window; receipts fetched by hash come from wherever the trades are,
+    // which answers a different question — the same rule the whole-chain look
+    // already states one block down.
+    if (seedTried || !seedable) return null;
     seedTried = true;
     let hashes = null;
-    try { hashes = await opts.tradeHashes(); } catch (_) { return null; }
+    try { hashes = await hashesP; } catch (_) { return null; }
     if (!Array.isArray(hashes) || !hashes.length) return null;
     const logs = await _receiptLogs(chain, ca, hashes);
     if (!logs.length) return null;
@@ -363,13 +407,23 @@ async function _discover(chain, chainKey, ca, opts = {}) {
    */
   let wide = null;
   if (!opts.blocks && !opts.logs) {
-    wide = await decodeCurveIface(chain, ca, { head, full: true, maxTx: opts.maxTx });
+    // ⚠️ BOUNDED. Unbounded, this single request is the 12s refusal — see
+    // STAGE_MS. A null here is "we did not decide", which is the same
+    // fail-safe reading an empty answer already gets.
+    wide = await _within(decodeCurveIface(chain, ca, { head, full: true, maxTx: opts.maxTx }), STAGE_MS);
     // Only an EXPLICIT `retry: false` (a refusal) suppresses the ladder. A
     // missing flag means "we did not decide", and the fail-safe reading of that
     // is to pay for the windows: costing requests is recoverable, a false
     // "this token cannot be traded" is not.
-    if (!wide.ok && wide.retry !== false) wide = null;
+    if (wide && !wide.ok && wide.retry !== false) wide = null;
   }
+
+  /*
+   * …and the seed is spent BEFORE the ladder, because it is the cheap answer:
+   * a handful of receipts against ~96 stepped `getLogs`. It only fires if the
+   * whole-chain look did not already settle it.
+   */
+  if (!wide || !wide.ok) { const s0 = await trySeed(); if (s0) wide = s0; }
 
   const windows = opts.blocks ? [Math.floor(Number(opts.blocks))] : WINDOWS;
   let res = wide;
