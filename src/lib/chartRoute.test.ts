@@ -147,8 +147,49 @@ test("the chart is candles, with volume, on a timeframe the reader picks", () =>
   // The renderer is ours end to end. An embed must not creep back in through
   // the component now that the unlisted page — which used to guard this — no
   // longer mounts it at all.
-  assert.ok(!/<iframe/.test(CHART));
   assert.match(CHART, /fetch\(`\/api\/ohlcv\?/);
+});
+
+test("⚠️ the embed is a FALLBACK, never the default — the ban moved, it did not lift", () => {
+  // "kalo misal apikey gecko terminal limit ganti dexscreener gpp ada
+  // watermark" — the operator's call, and the boundary is the whole of it. The
+  // original ban was on a third-party iframe on EVERY token page: it sat on
+  // "Loading chart settings…" and planted a competitor's wordmark across a
+  // Dexvra page. That still may not happen. What it replaces is an APOLOGY over
+  // an empty panel, which is strictly worse than a working chart with somebody
+  // else's watermark on it.
+  const iframes = CHART.match(/<iframe/g) ?? [];
+  assert.equal(iframes.length, 1, "exactly one iframe, and it is the fallback");
+  // Gated on the ERROR state — not on "none", which is a fact about the TOKEN
+  // (nothing has traded yet), where their chart is just as empty while implying
+  // the failure was ours.
+  assert.match(CHART, /status === "error" && embedUrl \? \(/);
+  assert.ok(
+    !/status === "none" && embedUrl/.test(CHART),
+    "a token with no pool must not be handed a third-party empty chart",
+  );
+  // And it says it is not ours. A chart the reader cannot attribute is worse
+  // than no chart — the `via DexScreener` rule, one feature over.
+  //
+  // ⚠️ ASSERTED INSIDE THE EMBED'S OWN NOTE, not anywhere in the file: the
+  // native DexScreener SOURCE already prints a `via DexScreener` chip, so a
+  // bare match on that string is true of a build where the embed says nothing
+  // at all. The mutant that strips the label survived exactly that.
+  const note = CHART.match(/className="ck-embed-note">([\s\S]*?)<\/p>/);
+  assert.ok(note, "the embed has no note element");
+  assert.match(note[1], /via DexScreener/);
+  assert.match(note[1], /feed\?\.why/, "…and it carries why OUR chart could not be read");
+});
+
+test("the embed URL is built in ONE place, and never for a chain DexScreener lacks", () => {
+  // A constructed URL for a chain it has never indexed frames DexScreener's own
+  // "not found" inside our panel, which reads as OUR page being broken.
+  assert.ok(!/dexscreener\.com\//.test(CHART), "the component builds no third-party URL of its own");
+  assert.match(CHART, /dsEmbedUrl\(chain, address\)/);
+  const OWNER = readFileSync(join(process.cwd(), "src/lib/dsEmbed.ts"), "utf8");
+  assert.match(OWNER, /const slug = CHAINS\[chain\]\?\.dexscreener;/);
+  assert.match(OWNER, /if \(!slug \|\| !address\) return null;/);
+  assert.match(OWNER, /embed=1/);
 });
 
 test("a poll that fails never blanks a chart that is already drawn", () => {

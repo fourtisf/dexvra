@@ -517,14 +517,23 @@ test("the panel SAYS when it drew from the fallback", () => {
   assert.match(chart, /Open the pool on \{srcName\}/);
 });
 
-test("no iframe — this is DexScreener's DATA, never its widget", () => {
-  // Two separate bans, and collapsing them is how one comes back: the
-  // third-party EMBED was removed because it planted a competitor's wordmark
-  // across a Dexvra page after seconds of "Loading chart settings…". Adding a
-  // second DATA source does not relax that.
-  assert.ok(!/<iframe/i.test(read("src/components/CandleChart.tsx")));
+test("this provider is DexScreener's DATA, never its widget", () => {
+  // Two separate bans, and collapsing them is how one comes back. THIS one is
+  // about the PROVIDER: adding a second data source must not turn into
+  // embedding the source's page, or the fallback quietly stops being a chart of
+  // ours at all. It is unchanged and unrelaxed.
   assert.ok(!/<iframe/i.test(read("src/lib/providers/dsChart.ts")));
   assert.ok(!/dexscreener\.com\/[^"']*embed/i.test(read("src/lib/providers/dsChart.ts")));
+  // ⚠️ The component's iframe is a DIFFERENT decision, made later and on the
+  // operator's explicit call ("gpp ada watermark"): it appears only where we
+  // could not READ a chart, in place of an apology over an empty panel. Its
+  // boundary is pinned in chartRoute.test.ts — exactly one iframe, gated on the
+  // error state, never on "none", and labelled. What must not come back is the
+  // embed as the DEFAULT, which is what planted a competitor's wordmark on
+  // every token page.
+  const chart = read("src/components/CandleChart.tsx");
+  assert.equal((chart.match(/<iframe/gi) ?? []).length, 1, "the embed must stay a single fallback");
+  assert.match(chart, /status === "error" && embedUrl/);
 });
 
 test("?source pins ONE upstream, and it is part of the cache key", () => {

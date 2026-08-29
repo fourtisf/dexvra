@@ -6893,6 +6893,72 @@ npm test    # home — 61 tests, no network
 the change ranking — deliberately far below anything a reader would call busy,
 because it is a ranking floor and not an eligibility one.
 
+### "ganti dexscreener gpp ada watermark" — the apology was worse than the watermark
+
+`ds:probe` on the box, and it found the half that matters:
+
+```
+✓ resolve pair HSKxCANK…AUWdbX  dex=raydium  liq=$8,276,316
+· discover https://dexscreener.com 403 (candidates fall back to the built-in guesses)
+  · /dex/chart/amm/v3/{dex}/bars/{chain}/{pair} ?from&to&res&cb
+      400 — RIGHT PATH, wrong parameters
+  ✗ /dex/chart/amm/v2/…   403 — the host refuses THIS SERVER, not this path
+```
+
+**The PATH is confirmed** — a 400 is the host saying "this resource exists and
+your query is wrong", which is a completely different fact from the 404 that
+started this. What is still unknown is the parameter vocabulary, and the one
+step that could answer it outright — reading DexScreener's own JS bundle — is
+**403 from this box**: Cloudflare refuses the datacenter IP for the HTML page,
+so the script cannot see the code that builds those URLs. The deep grid (480
+shapes: unit × resKey × resVal × countback × extra) is what is left, and it may
+simply not contain the right one.
+
+So the native DexScreener chart stays a guess with an open question, and the
+operator's call is the pragmatic one: **DexScreener's own chart, embedded, with
+its watermark.**
+
+- ⚠️ **THE BAN WAS ON THE EMBED AS THE DEFAULT, AND THAT BAN STANDS.** A
+  third-party iframe on every token page sat on "Loading chart settings…" for
+  seconds and then planted a competitor's logo and wordmark across a Dexvra
+  page. The native chart is still what a reader gets whenever either source can
+  draw one — our colours, our type, our LIN/LOG and drag controls. What changed
+  is only the ALTERNATIVE: an apology over an empty panel is strictly worse than
+  a working chart with somebody else's mark in the corner.
+- ⚠️ **`status === "none"` DELIBERATELY DOES NOT GET IT.** That state is a fact
+  about the TOKEN — nothing has traded yet — and their chart would be just as
+  empty while implying the failure was ours.
+- ⚠️ **NULL FOR A CHAIN DEXSCREENER DOES NOT INDEX.** A constructed URL for a
+  chain it has never heard of frames DexScreener's own "not found" inside our
+  panel, which reads as OUR page being broken. The registry is the one owner —
+  the same field `dsCovers` orders the market cycle on.
+- **It says it is not ours**, and carries why our own could not be read — the
+  `via DexScreener` rule, and what stops the next round of diagnosis.
+- **A TOKEN address is embedded, not a pair.** dexscreener.com resolves it to
+  the token's top pair itself, so this costs no request of ours and cannot go
+  stale the way a cached pair address can.
+
+⚠️ **THE THIRD IFRAME GUARD WAS IN A FILE I HAD NOT FOUND** — `dsChart.test.ts`
+holds one about the PROVIDER ("this is DexScreener's DATA, never its widget"),
+which is a different and still-live rule: adding a second data source must not
+turn into embedding the source's page. It is unchanged; only the component's
+boundary moved, and it is pinned where it belongs.
+
+⚠️ **And the test for the label was VACUOUS.** `assert.match(CHART, /via
+DexScreener/)` is true of a build where the embed says nothing at all, because
+the native DexScreener SOURCE already prints a chip with that text. It asserts
+inside the embed's own `<p className="ck-embed-note">` now — found by mutation
+testing, not by reading.
+
+```bash
+npm test                                        # dsEmbed (5) · chartRoute (29) · dsChart
+cd /opt/dexvra && npm run ds:probe -- solana 5m8k6jHhYFZkiL8FVLFtiu1EEki6HiTbQvLADoUbTJAA
+```
+
+**Config a fix depends on:** nothing — the embed needs no key and no path guess.
+`DS_CHART_PATH` / `DS_CHART_QUERY` still take the native shape the moment
+`ds:probe` lands one, and the native chart wins the instant it can draw.
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

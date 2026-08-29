@@ -58,6 +58,7 @@ import {
   type TimeView,
 } from "@/lib/chartScale";
 import { fmtCap, fmtPrice } from "@/lib/format";
+import { dsEmbedUrl } from "@/lib/dsEmbed";
 
 interface Feed {
   ok: boolean;
@@ -132,6 +133,8 @@ export function CandleChart({
   /** Fallback "open it elsewhere" link for the states with nothing to draw. */
   gtUrl?: string | null;
 }) {
+  // Resolved once: it depends only on the token, never on the feed's outcome.
+  const embedUrl = useMemo(() => dsEmbedUrl(chain, address), [chain, address]);
   const [tf, setTf] = useState<Timeframe>("15m");
   const [status, setStatus] = useState<Status>("loading");
   const [feed, setFeed] = useState<Feed | null>(null);
@@ -544,7 +547,33 @@ export function CandleChart({
 
         {tooSmall && <div className="ck-msg">Not enough room here to draw the chart.</div>}
 
-        {(status === "none" || status === "error") && (
+        {/* ⚠️ AN APOLOGY IS WORSE THAN SOMEBODY ELSE'S WATERMARK. Where we could
+            not READ a chart, DexScreener's own is embedded rather than an empty
+            panel — the operator's explicit call ("gpp ada watermark"), and it
+            reverses only the ALTERNATIVE, never the default: the native chart
+            is still what a reader gets whenever either source can draw one.
+            `status === "none"` deliberately does NOT get it — that is a fact
+            about the TOKEN (no pool has traded yet), and their chart would be
+            just as empty while implying the failure was ours. */}
+        {status === "error" && embedUrl ? (
+          <div className="ck-embed">
+            <iframe
+              src={embedUrl}
+              title={`${symbol} chart on DexScreener`}
+              loading="lazy"
+              // Their chart is a TradingView widget: it needs scripts and its
+              // own origin. No sandbox that would leave a blank frame — a
+              // broken embed is the state this replaces, not a safer one.
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+            {/* SAID, not implied. A chart that is not ours must say so — the
+                `via DexScreener` rule one feature over — and the reason our own
+                could not draw is what stops the next round of diagnosis. */}
+            <p className="ck-embed-note">
+              via DexScreener — {feed?.why ?? "our own chart could not be read just now."}
+            </p>
+          </div>
+        ) : (status === "none" || status === "error") ? (
           <div className="ck-msg ck-empty">
             {/* The two states read differently on purpose: one is about the
                 token (no pool yet), the other about us (we could not read it). */}
@@ -556,7 +585,7 @@ export function CandleChart({
               </a>
             )}
           </div>
-        )}
+        ) : null}
 
         {status === "ok" && geo && (
           <svg className="ck-svg" width={geo.w} height={geo.h} aria-label={`${symbol} price chart, ${tf} candles`} role="img">

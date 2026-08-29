@@ -1956,3 +1956,13 @@ body{
 
 /* skeletons inherit the surface, so loading keeps the same shape */
 .skr{border-bottom-color:rgba(190,215,255,.05)}
+
+/* The DexScreener embed — shown only where our own chart could not be read
+   (see lib/dsEmbed.ts). It fills the panel the native chart would have used, so
+   the page does not resize between the two. */
+.ck-embed{position:absolute;inset:0;display:flex;flex-direction:column}
+.ck-embed iframe{flex:1;width:100%;border:0;background:var(--panel)}
+.ck-embed-note{
+  flex:0 0 auto;padding:6px 10px;font-size:11px;letter-spacing:.04em;
+  color:var(--faint);background:var(--panel);border-top:1px solid var(--line);
+}
