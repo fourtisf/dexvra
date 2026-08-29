@@ -292,6 +292,7 @@ async function loadListedTokens(): Promise<BoardToken[]> {
   // where that becomes true, rather than a comment describing nothing.)
   needLogo.sort((a, b) => Number(b.featured) - Number(a.featured) || b.vol - a.vol);
   backfillLogos(needLogo, {
+    queued: needLogo.length,
     persist: setResolvedLogo,
     log: (msg) => console.log(msg),
   });

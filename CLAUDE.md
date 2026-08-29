@@ -6959,6 +6959,51 @@ cd /opt/dexvra && npm run ds:probe -- solana 5m8k6jHhYFZkiL8FVLFtiu1EEki6HiTbQvL
 `DS_CHART_PATH` / `DS_CHART_QUERY` still take the native shape the moment
 `ds:probe` lands one, and the native chart wins the instant it can draw.
 
+### "bagaimana dengan logonya?" — and the line meant to answer it could not
+
+Three things produce a monogram and the board renders all three identically:
+the row lost its logo, the file is gone, or **our own proxy refuses a working
+url**. `logos:check` names which — that has existed since the `$BREAKING`
+round. What did not exist is an answer to the question actually being asked,
+which is not "which row is broken" but **"is this broken at all, or is it just
+not done yet?"**
+
+The sweep already logged every pass. It could not say how much was LEFT:
+
+```
+[logos] looked up 8: 6 found (6 dexscreener), 1 with no artwork anywhere,
+        1 undecided (an upstream could not be asked), 6 written to the listing store
+```
+
+Eight rows a rebuild against a backlog nobody could see. **"The resolver is
+failing" and "the resolver is working through 214 rows at 8 a minute" rendered
+as the same line** — and the second is not a fault, it is under half an hour.
+`queued` makes it arithmetic:
+
+```
+        · 206 still queued (~26 more rebuild(s))
+```
+
+- ⚠️ **An absent `queued` reports NO backlog rather than guessing one.** A
+  caller that does not know the queue length must not make the line invent a
+  number — a fabricated backlog is the same class of claim as a fabricated 0%,
+  on the one line an operator reads to decide whether to go hunting.
+- **A queue that fits in one pass says nothing.** A finished queue is not news,
+  and this line is already the noisiest thing the board prints.
+
+**What was checked and found sound**, so the next round does not re-check it:
+`backfillLogos` is wired with both `persist` and `log` (a sweep whose writes all
+fail says so in as many words — *"NONE of them could be written"*); the market
+filler does carry `image_url` through to the listing (`bigCoins.js`), so a
+filled row arrives with artwork whenever GeckoTerminal published any; and the
+proxy allowlist covers the two indexes, the curated sets, the wallet asset
+repos and the IPFS gateways the launchpads mint through.
+
+```bash
+pm2 logs dexvra --lines 300 --nostream | grep -F '[logos]'   # is it working, and how much is left
+npm run logos:check -- --bad                                  # …and WHICH rows are broken
+```
+
 ## Conventions
 
 - Tests live beside the code they cover, in `bot/test/`, `tradebot/*.test.js`

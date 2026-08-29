@@ -230,3 +230,50 @@ test("…and one that really is not an image stays a decided miss", async () => 
   assert.equal(r.undecided, 0);
   assert.equal(shouldLookUp("ethereum", tok(10).address, T + _UNDECIDED_TTL_MS + 1), false, "a real miss is not re-asked in 30 minutes");
 });
+
+// ── The backlog ──────────────────────────────────────────────────────────────
+// "bagaimana dengan logonya?" — and the line that was supposed to answer it
+// could not. "Some tokens have no logo" has two completely different causes
+// this rendered identically: the resolver is failing, or it is working through
+// a queue at MAX_PER_SWEEP a minute and has not reached that row yet.
+test("the sweep line says how much is LEFT, so the wait is arithmetic not a fault", async () => {
+  _resetLogoMemory();
+  const lines: string[] = [];
+  const many = Array.from({ length: 214 }, (_, i) => ({ chain: "solana", address: `a${i}` }));
+  await sweepLogos(many, {
+    resolve: async () => ({ ok: true, url: "https://x/l.png", source: "dexscreener", tried: [], unreachable: [] }),
+    log: (m) => lines.push(m),
+    queued: many.length,
+  });
+  const line = lines.join("\n");
+  assert.match(line, /206 still queued/, "214 queued minus the 8 this pass looked at");
+  assert.match(line, /~26 more rebuild\(s\)/, "…and how many rebuilds that is");
+});
+
+test("no backlog line when the queue fits in one pass — a finished queue is not news", async () => {
+  _resetLogoMemory();
+  const lines: string[] = [];
+  const few = [{ chain: "solana", address: "z1" }, { chain: "solana", address: "z2" }];
+  await sweepLogos(few, {
+    resolve: async () => ({ ok: true, url: "https://x/l.png", source: "dexscreener", tried: [], unreachable: [] }),
+    log: (m) => lines.push(m),
+    queued: few.length,
+  });
+  assert.doesNotMatch(lines.join("\n"), /still queued/);
+});
+
+test("⚠️ an absent `queued` reports NO backlog rather than guessing one", async () => {
+  // A caller that does not know the queue length must not make the line invent
+  // a number: a fabricated backlog is the same class of claim as a fabricated
+  // 0%, on the line an operator reads to decide whether to go hunting.
+  _resetLogoMemory();
+  const lines: string[] = [];
+  await sweepLogos(
+    Array.from({ length: 50 }, (_, i) => ({ chain: "solana", address: `q${i}` })),
+    {
+      resolve: async () => ({ ok: true, url: "https://x/l.png", source: "dexscreener", tried: [], unreachable: [] }),
+      log: (m) => lines.push(m),
+    },
+  );
+  assert.doesNotMatch(lines.join("\n"), /still queued/);
+});

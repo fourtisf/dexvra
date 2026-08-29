@@ -90,6 +90,9 @@ export function rememberLogo(chain: string, address: string, url: string, now = 
 }
 
 export interface FillDeps {
+  /** How many rows are waiting, so the line can say how long the queue is.
+   *  Absent, it reports no backlog rather than guessing one. */
+  queued?: number;
   resolve?: (chain: string, address: string) => Promise<LogoResult>;
   /** Writes the resolved logo into the listing store. Best-effort: a failed
    *  write costs permanence, never the logo — the process memory still has it. */
@@ -160,10 +163,20 @@ export async function sweepLogos(
 
   if (deps.log && report.looked > 0) {
     const src = Object.entries(report.bySource).map(([k, n]) => `${n} ${k}`).join(", ");
+    // ⚠️ THE BACKLOG, because without it the line cannot answer the question it
+    // is read for. "Some tokens have no logo" has two completely different
+    // causes that this line rendered identically: the resolver is failing, or
+    // it is working through a queue at 8 rows a minute and simply has not
+    // reached that row yet. `queued` turns the second into arithmetic an
+    // operator can do — 214 left is under half an hour — instead of a fault
+    // they go hunting for.
+    const left = Math.max(0, (deps.queued ?? report.looked) - report.looked);
+    const eta = left > 0 ? ` · ${left} still queued (~${Math.ceil(left / MAX_PER_SWEEP)} more rebuild(s))` : "";
     deps.log(
       `[logos] looked up ${report.looked}: ${report.found} found${src ? ` (${src})` : ""}` +
         `, ${report.missing} with no artwork anywhere, ${report.undecided} undecided (an upstream could not be asked)` +
         `, ${report.persisted} written to the listing store` +
+        eta +
         // A store that refuses every write is a sweep whose work dies with the
         // process — the logos come back on the next restart and nothing said
         // why. The count alone reads as a detail; this reads as a fault.
