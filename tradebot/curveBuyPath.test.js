@@ -419,3 +419,67 @@ test("⚠️ …and the quote token is READ off the chain, never guessed", async
     await assert.rejects(() => core.buy(CHAT, TOKEN, 0.1, 'base'), /launchpad curve|nothing was sent/);
   } finally { restore(); }
 });
+
+/*
+ * ⚠️ A REFUSAL THE OPERATOR CANNOT READ IS THE SAME AS NO REFUSAL.
+ *
+ * The CARD path has logged `[curve] card … unroutable: <why>` since it was
+ * written; the TRADE path — the one that renders "Stage that refused: …" to the
+ * person who pressed Buy — logged nothing. Four rounds of "masih sama aja" each
+ * began from a screenshot of a Telegram message and nothing else.
+ *
+ * ⚠️ THE FIRST CUT PUT THE LOG INSIDE `_curveIface`, AND THIS TEST IS WHY IT
+ * MOVED. `why` is set by the interface read, then possibly REPLACED by the price
+ * gate and again by the build — so a log at the interface covered only the stage
+ * that happens to be reported today, and the refusal below (the price gate, on a
+ * perfectly readable interface) produced no line at all. The log belongs at the
+ * convergence, which is the single throw both stages reach.
+ *
+ * ELAPSED is what is asserted, not the wording: ~12000ms is the bound tripping —
+ * something walked — and a few hundred is a real refusal with a real reason.
+ */
+function capture() {
+  const real = console.log;
+  const lines = [];
+  console.log = (...a) => { lines.push(a.join(' ')); };
+  return { lines, restore: () => { console.log = real; } };
+}
+
+test('⚠️ a curve refusal reaches pm2 with its reason AND how long it took', async () => {
+  const chain = stubChain();
+  for (const lg of await chain.getLogs({ address: TOKEN })) lg.data = '0x' + num(0n);
+  const restore = withStubs(chain, { padOk: false });
+  const cap = capture();
+  try {
+    await core.buy(CHAT, TOKEN, 0.1, 'base').catch(() => {});
+  } finally { cap.restore(); restore(); }
+
+  // The interface here reads FINE — it is the price gate that refuses. A log
+  // wired to the interface stage alone finds nothing.
+  const line = cap.lines.find((l) => l.startsWith('[curve] buy '));
+  assert.ok(line, `the buy refusal must land in the log — got:\n${cap.lines.join('\n')}`);
+  assert.match(line, /base\/0x[0-9a-f]{8}… refused after \d+ms: /, 'chain, token, and the elapsed that names the stage');
+  assert.match(line, /could not be reached from this server/, 'and the reason itself, not a shrug');
+});
+
+test('…and a discovery that WORKED writes nothing, or the line that matters scrolls away', async () => {
+  // This runs on every paste and every warm, into a log the snipe loop is
+  // already filling — the exact way the card path's own line got lost.
+  const chain = stubChain();
+  const restore = withStubs(chain);
+  const cap = capture();
+  try {
+    const realCall = chain.call.bind(chain);
+    let bought = false;
+    chain.call = async (tx) => {
+      if (String(tx.data || '').startsWith('0x70a08231') && bought) return '0x' + num(1000n * E18);
+      return realCall(tx);
+    };
+    const origWait = chain.waitForTransaction.bind(chain);
+    chain.waitForTransaction = async (...a) => { bought = true; return origWait(...a); };
+    const r = await core.buy(CHAT, TOKEN, 0.1, 'base');
+    assert.equal(r.venue, 'curve·obs', 'precondition: this buy actually filled');
+  } finally { cap.restore(); restore(); }
+
+  assert.equal(cap.lines.filter((l) => l.startsWith('[curve] buy ')).length, 0);
+});

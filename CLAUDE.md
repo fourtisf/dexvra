@@ -4631,6 +4631,40 @@ curve walk, the balances and the meta reads all share.
 pm2 logs dexvra-tradebot --nostream --lines 400 | grep -F '[ui] card'
 ```
 
+### "masih aja" — the buy refusal was invisible to everything but the person who tapped
+
+Four rounds of this report, and every one of them started from the same place: a
+screenshot of a Telegram message reading *"Stage that refused: reading this
+curve's interface took longer than 12s — nothing was sent"*, and nothing
+anywhere else. The CARD path logs `[curve] card … unroutable: <why>` and has
+since it was written; **the TRADE path logged nothing at all**, so from the box
+there was no way to separate the three things that produce that one sentence:
+the window ladder actually walked (75 serial requests into the bound), the node
+was slow, or the checkout was simply older than the fix.
+
+- **`_curveRefused` sits at the CONVERGENCE, not at a stage.** `why` is set by
+  the interface read, then possibly replaced by the price gate and again by the
+  build — three stages, one throw. ⚠️ The first cut put it inside `_curveIface`
+  and covered only the stage that happens to be reported today; the test written
+  for it found no line at all, because the refusal it drove reads the interface
+  perfectly well and fails at the price. A lesson applied to one branch of an
+  if/else is a lesson half-learnt, so the SELL throw has it too.
+- **ELAPSED is the discriminator, and it is what the test asserts** rather than
+  the wording. ~12000ms is the bound tripping — something walked — and a few
+  hundred is a real refusal with a real reason; those send an operator to
+  completely different places.
+- **Only a REFUSAL is logged.** This path runs on every paste and every warm,
+  into a log the snipe loop is already filling — and a line per success is
+  exactly how the card path's own line came to be missed under `--lines 200`.
+- Mutation-tested: dropping the line, and moving it back to the interface stage,
+  each fail the same test.
+
+```bash
+pm2 logs dexvra-tradebot --nostream --lines 400 | grep -F '[curve]'
+```
+
+**Config a fix depends on:** nothing.
+
 ## flap.sh, and four things the curve walk was getting wrong
 
 Reported with four screenshots (2026-08-29): Maestro rendering `$CD` on **Pons**

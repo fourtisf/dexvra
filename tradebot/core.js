@@ -2667,6 +2667,36 @@ async function _dumpQuote(wallet, chainKey, quoteToken, amountRaw, slip, gasBoos
   } catch (_) { return null; }
 }
 
+/*
+ * A REFUSAL THAT NOBODY CAN READ IS THE SAME AS NO REFUSAL.
+ *
+ * The CARD path has logged `[curve] card … unroutable: <why>` since it was
+ * written; the TRADE path — the one that renders "Stage that refused: …" to the
+ * person who pressed Buy — logged NOTHING AT ALL. So four separate rounds of
+ * "masih sama aja" each began from a screenshot of a Telegram message, with no
+ * way to tell whether the bound tripped because the window ladder walked,
+ * because the node was slow, or because the box was simply on older code.
+ *
+ * ⚠️ IT SITS AT THE CONVERGENCE, NOT AT ONE STAGE. `why` is set by the interface
+ * read, then possibly replaced by the price gate and again by the build — three
+ * stages, one throw. Logging inside `_curveIface` would have covered only the
+ * stage that happens to be reported today, which is this file's own scar: a
+ * lesson applied to one branch of an if/else is a lesson half-learnt. Buy and
+ * sell both call it for the same reason.
+ *
+ * ELAPSED is asserted rather than the wording, because elapsed is the
+ * discriminator: ~12000ms is the bound tripping — something walked — and a few
+ * hundred is a real refusal with a real reason, and those two send an operator
+ * to completely different places.
+ *
+ * Only a REFUSAL is logged. A trade that filled writes nothing: this path runs
+ * on every paste and every warm, into a log the snipe loop is already filling,
+ * and a line per success is exactly how the card path's own line scrolled away.
+ */
+function _curveRefused(side, chainKey, ca, t0, why) {
+  console.log(`[curve] ${side} ${chainKey}/${String(ca).slice(0, 10)}… refused after ${Date.now() - t0}ms: ${why || 'no reason given'}`);
+}
+
 /**
  * Discover the curve, bounded — or say why not.
  *
@@ -4135,6 +4165,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
           // leaves a new sentence behind is a kill switch that half-works: the
           // operator who turned it off gets a message about a feature they
           // disabled instead of the one they had before it shipped.
+          const curveT0 = Date.now();
           const iface = CURVE_ROUTE_ON ? await _curveIface(chainKey, ca) : { ok: false, why: null };
           let why = iface.why;
           if (iface.ok) {
@@ -4220,7 +4251,7 @@ async function buy(chatId, ca, ethAmount, chainKey, walletId, opts) {
             // carry that phrase, or the ring drops a launch it could have
             // filled two minutes later.
             if (m && !why) throw new Error(`this token's liquidity is on ${dsVenueLabel(m)}, which Dexvra can't route through yet — no swap to sign`);
-            if (why) throw new Error(`Dexvra could not build a safe buy on this token's launchpad curve (${why}) — nothing was sent`);
+            if (why) { _curveRefused('buy', chainKey, ca, curveT0, why); throw new Error(`Dexvra could not build a safe buy on this token's launchpad curve (${why}) — nothing was sent`); }
             // Neither — which only happens with the route switched off and the
             // token unindexed. Fall through untouched, so the V2 leg reports it
             // exactly as it did before this feature existed.
@@ -4412,6 +4443,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
      * so nothing else in this function can reach them.
      */
     let obsSell = null, obsWhy = null, obsVia = null;
+    const curveT0 = Date.now();
     const noVenue = CURVE_ROUTE_ON && noAmm && !p4Sell;
     if (noVenue) {
       const iface = await _curveIface(chainKey, ca);
@@ -4586,6 +4618,7 @@ async function sell(chatId, ca, pct, chainKey, walletId, opts) {
       // Nowhere to sell, and the curve route could not be built. Say WHICH,
       // because "could not quote this sell (no pool? try again)" sends the user
       // to retry something that cannot change, three times, with rising gas.
+      _curveRefused('sell', chainKey, ca, curveT0, obsWhy);
       throw new Error(`Dexvra could not build a safe sell on this token's launchpad curve${obsWhy ? ` (${obsWhy})` : ''} — nothing was sold`);
     } else if (v3) {
       // V3 sell: token → WETH via SwapRouter02, then unwrap. minOut floored off
