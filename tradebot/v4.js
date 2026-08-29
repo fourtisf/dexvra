@@ -76,6 +76,10 @@ const STATEVIEW_ABI = [
 const INITIALIZE_EVENT =
   'event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)';
 const INITIALIZE_TOPIC = ethers.id('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
+// One owner for the Transfer topic — `curveIface` defines it and this reads the
+// same logs for a different reason.
+const { TRANSFER_TOPIC } = require('./curveIface.js');
+const v4cd = require('./v4Calldata.js');
 
 const NATIVE = '0x0000000000000000000000000000000000000000';
 const coder = ethers.AbiCoder.defaultAbiCoder();
@@ -282,6 +286,61 @@ async function cfgLive(chainKey, ca, deps) {
  * 10^n class of error the whole price path is shaped around avoiding — and a
  * quote currency we cannot value is not a quote.
  */
+/*
+ * A THIRD SOURCE: the pool the token's OWN TRADES name.
+ *
+ * The constructed sweep guesses native/WETH pairings; `discoverPoolKeys` reads
+ * Initialize logs. Both can miss the same pool — the sweep because the pairing
+ * is a third token, the Initialize scan because that one log is somewhere in the
+ * whole history and a range-capped node can hide it. Meanwhile the token trades
+ * every few minutes, and every one of those trades is a router call that NAMES
+ * the pool it went through.
+ *
+ * That is the case the reported token sits in: a launchpad router, a pairing
+ * against a tokenised asset, and a card that could price it but not route it.
+ * A competitor trades it by hand-writing an integration per launchpad; this
+ * reads the same fact off the chain and proves it, which is why it needs no
+ * per-pad code at all.
+ *
+ * ⚠️ THE CALLDATA IS NEVER REPLAYED — see `v4Calldata.js`. Only a PoolKey comes
+ * out, proved by recomputing its own id, and every candidate still has to
+ * survive the state read in `bestPool` below: a pool that does not exist on
+ * chain, or holds nothing, is dropped exactly like any other. So the worst a
+ * hostile trade can do is name a pool that is not there.
+ */
+const TRADE_SCAN_TX = Math.max(1, Number(process.env.V4_TRADE_SCAN_TX || 6));
+
+async function tradePoolKeys(ca, chainKey, deps) {
+  if (!_autoOk(chainKey)) return [];
+  const ck = `tradekeys:${chainKey}:${String(ca).toLowerCase()}`;
+  const hit = _lookup(ck);
+  if (hit !== undefined) return hit || [];
+  let provider; try { provider = deps.providerFor(chainKey); } catch (_) { return _cached(ck, null) || []; }
+  if (typeof provider.getTransaction !== 'function') return _cached(ck, null) || [];
+
+  const logs = await _scanLogs(provider, chainKey, { address: ca, topics: [TRANSFER_TOPIC], limit: 40 });
+  // Newest first, and deduplicated: a trade emits several Transfers and they all
+  // point at the same call.
+  const hashes = [];
+  for (let i = logs.length - 1; i >= 0 && hashes.length < TRADE_SCAN_TX; i--) {
+    const h = logs[i] && logs[i].transactionHash;
+    if (h && !hashes.includes(h)) hashes.push(h);
+  }
+  const keys = [];
+  const seen = new Set();
+  for (const h of hashes) {
+    let tx = null;
+    try { tx = await provider.getTransaction(h); } catch (_) { continue; }
+    if (!tx || !tx.data) continue;
+    for (const k of v4cd.poolKeysFrom(tx.data, ca, poolId)) {
+      if (seen.has(k.id)) continue;
+      seen.add(k.id);
+      keys.push(k);
+    }
+  }
+  return _cached(ck, keys.length ? keys : null) || [];
+}
+
 async function discoverPoolKeys(ca, chainKey, c, deps) {
   if (!_autoOk(chainKey)) return [];
   const ck = `keys:${chainKey}:${String(ca).toLowerCase()}`;
@@ -495,6 +554,14 @@ async function bestPool(ca, chainKey, deps) {
     }
   }
   for (const k of await discoverPoolKeys(ca, chainKey, c, deps).catch(() => [])) {
+    if (!candidates.has(k.id)) candidates.set(k.id, k);
+  }
+  // THE THIRD SOURCE. Asked LAST and only for what the first two missed: it
+  // costs a log scan plus a few getTransaction, where the sweep is four hashes
+  // and no request at all. It is the only one that can find a pool whose
+  // Initialize log a capped node hides, or whose pairing nobody would have
+  // guessed — which is exactly the reported token.
+  for (const k of await tradePoolKeys(ca, chainKey, deps).catch(() => [])) {
     if (!candidates.has(k.id)) candidates.set(k.id, k);
   }
 
@@ -777,7 +844,7 @@ async function permit2Calls(provider, chainKey, token, owner, amount, router) {
 }
 
 module.exports = {
-  cfg, cfgLive, enabled, poolId, orderCurrencies, poolState, bestPool, price, priceNativeFromSqrt,
+  cfg, cfgLive, enabled, poolId, orderCurrencies, poolState, bestPool, price, priceNativeFromSqrt, tradePoolKeys,
   quoteExactIn, discoverPoolManager, discoverPoolKeys, routerCandidates, electRouter, demoteRouter,
   routerCfg, canSwap, canSwapLive, swapCalldata, simulate, prepareSwap, permit2Calls,
   // Whether this chain may DISCOVER its v4 deployment, as opposed to having one

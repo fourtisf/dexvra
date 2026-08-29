@@ -4907,6 +4907,75 @@ and `v4.js:180` already issues exactly that on this very chain.
 
 **Config a fix depends on:** nothing.
 
+## "Sama seperti Maestro agar bisa baca" — the pool is IN the router's calldata
+
+Maestro trades a Pons/Flap token because it hand-writes an integration per
+launchpad and therefore knows the router's ABI. This repo refuses a guessed ABI
+on a money path, so the same token was unbuyable — and `abi:check` showed why in
+one line: `arg[0]=0xa0`, `arg[6]=0x60`, `arg[7]=0x1c0` are ABI OFFSETS into
+dynamic data, not values. `curveIface` classifies flat 32-byte words, which is
+right for `buy(token, minOut)` and cannot work for a path array. Its refusal was
+correct and is unchanged.
+
+**`v4Calldata.js` does better than a hand-written integration, and needs no
+per-pad code at all: it reads the POOL out of a real trade, and PROVES it.**
+
+- ⚠️ **NOTHING FROM THAT CALLDATA IS EVER REPLAYED.** One thing comes out — the
+  PoolKey — and it goes to `v4.bestPool`, which reads the pool's own state and
+  builds OUR swap through the router it already discovers and simulates. A
+  stranger's calldata never reaches a signer, so a hostile trade can at worst
+  name a pool that does not exist, which the state read then drops.
+
+Three proofs, and none is an inference:
+
+| # | proof | what it rules out |
+| --- | --- | --- |
+| 1 | `keccak(signature) === selector` observed in real trades | a guessed ABI. `abi:check` found `0x4d819a2a` in six real trades on the box, and the shipped signature hashes to exactly that — a hash match is a fact, not a guess |
+| 2 | decode, RE-ENCODE, require byte-identical | a signature that collides on four bytes while describing a different layout. This is what turns "the name matches" into "the layout matches" |
+| 3 | recompute `poolId` and require it to equal a `bytes32` the tuple already carries | reading the tuple BY POSITION. v4 defines `poolId = keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks))`, so a wrong assignment needs a keccak collision |
+
+Proof 3 is the one that matters most. The tuple is `(uint8, address, address,
+address, uint24, int24, address, bytes, address, bytes32)` and **nothing
+published says which address is a currency, which is the hooks contract and
+which is a recipient**. Reading them by position is exactly the plausible-looking
+mistake that puts a wrong address on a money path, so every assignment is hashed
+and only a match survives.
+
+- **The candidate pair is always (our token, some other address)** — structural,
+  not a filter. A router path names every hop, and a pool without our token
+  would price and trade a stranger's pair under our ticker. ⚠️ The
+  `addrs.has(token)` early return is an OPTIMISATION and changes no outcome; the
+  first cut of the test credited it with the guarantee, and a mutation run said
+  otherwise.
+- **The signature list is env-overridable** (`V4_ROUTER_SIGS`, `|`-separated,
+  operator entries first) — the `pads.js` contract. Being on the list buys a
+  candidate NOTHING: it still has to pass all three proofs, so a wrong entry is
+  inert rather than dangerous, which is what makes adding one cheap.
+- **It is the THIRD source and is asked LAST.** The sweep is four hashes and no
+  request; `discoverPoolKeys` is one `eth_getLogs`. This costs a log scan plus a
+  few `getTransaction`, and it is the only one that can find a pool whose
+  Initialize log a range-capped node hides, or whose pairing nobody would have
+  guessed.
+- ⚠️ **A negative `tickSpacing` has two spellings.** ethers decodes `int24` to a
+  real negative BigInt; a raw calldata word would be two's-complement near 2^256.
+  Offering only the unsigned reading silently failed to prove an ordinary hooked
+  pool.
+- ⚠️ **The round-trip test had to use TRAILING GARBAGE, not truncation.** A
+  truncated call makes `decodeFunctionData` THROW, so the try/catch catches it
+  and the re-encode is never exercised — the first version asserted the guard and
+  proved the catch. Extra bytes decode cleanly and only the re-encode notices.
+
+```bash
+cd tradebot && node --test v4Calldata.test.js uniswapV4.test.js
+```
+
+Four guarantees are MUTATION-TESTED: the trade source being merged into
+`bestPool`, the round-trip proof, the poolId proof, and the pairing always
+containing our token. Each fails between one and four tests.
+
+**Config a fix depends on:** nothing. `V4_ROUTER_SIGS` adds a router signature
+without a deploy; `V4_TRADE_SCAN_TX` bounds how many trades are read.
+
 ## Two bot processes, one config
 
 `bot/` runs **two** PM2 processes: `dexvra-bot` (`main.js`) and
