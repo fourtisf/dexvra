@@ -4683,9 +4683,17 @@ each fail between one and two tests.
 cd tradebot && node --test v4Calldata.test.js uniswapV4.test.js   # 37 tests, no network
 ```
 
+- ⚠️ **AND THE CAP WAS PER-CALL, WHICH IS NOT THE CAP IT CLAIMED TO BE.**
+  `tradePoolKeys` reads up to six transactions, so "capped at 20,000" was really
+  120,000 — ~2.8s of pure CPU on the card's critical path and on `canTradeNow`,
+  which every snipe polls on a timer. The budget is the CALLER'S now and the
+  whole scan carries a deadline (`V4_TRADE_SCAN_MS`, 4s): a partial answer beats
+  a late one, and whatever was proved is already verified by its own poolId.
+  Found by re-reading the fix for the very defect it repeats, one module over.
+
 **Config a fix depends on:** nothing. `V4_ROUTER_SIGS` still adds a signature
-(now only to widen the merged candidates) and `V4_CALLDATA_MAX_HASHES` bounds
-the search.
+(now only to widen the merged candidates), `V4_CALLDATA_MAX_HASHES` bounds the
+search and `V4_TRADE_SCAN_MS` bounds the scan.
 
 ### ⚠️ The fix for the 12s refusal WAS the 12s refusal — an unbounded stage
 

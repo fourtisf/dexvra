@@ -309,6 +309,7 @@ async function cfgLive(chainKey, ca, deps) {
  * hostile trade can do is name a pool that is not there.
  */
 const TRADE_SCAN_TX = Math.max(1, Number(process.env.V4_TRADE_SCAN_TX || 6));
+const TRADE_SCAN_MS = Math.max(500, Number(process.env.V4_TRADE_SCAN_MS || 4000));
 
 async function tradePoolKeys(ca, chainKey, deps) {
   if (!_autoOk(chainKey)) return [];
@@ -318,7 +319,17 @@ async function tradePoolKeys(ca, chainKey, deps) {
   let provider; try { provider = deps.providerFor(chainKey); } catch (_) { return _cached(ck, null) || []; }
   if (typeof provider.getTransaction !== 'function') return _cached(ck, null) || [];
 
+  /*
+   * ⚠️ BOUNDED IN TIME AND IN WORK, because this sits on the card's critical
+   * path and on `canTradeNow`, which every snipe polls on a timer. Reading the
+   * pool out of a router's calldata costs a log scan, a handful of
+   * `getTransaction`, and a bounded search per call — and this repo has just
+   * spent three rounds on a single unbounded stage eating a whole budget.
+   */
+  const until = Date.now() + TRADE_SCAN_MS;
+  const budget = { left: v4cd.MAX_HASHES };
   const logs = await _scanLogs(provider, chainKey, { address: ca, topics: [TRANSFER_TOPIC], limit: 40 });
+  if (Date.now() > until) return _cached(ck, null) || [];
   // Newest first, and deduplicated: a trade emits several Transfers and they all
   // point at the same call.
   const hashes = [];
@@ -329,10 +340,13 @@ async function tradePoolKeys(ca, chainKey, deps) {
   const keys = [];
   const seen = new Set();
   for (const h of hashes) {
+    // A partial answer beats a late one: whatever was proved so far is already
+    // verified by its own poolId and is handed on.
+    if (Date.now() > until || budget.left <= 0) break;
     let tx = null;
     try { tx = await provider.getTransaction(h); } catch (_) { continue; }
     if (!tx || !tx.data) continue;
-    for (const k of v4cd.poolKeysFrom(tx.data, ca, poolId)) {
+    for (const k of v4cd.poolKeysFrom(tx.data, ca, poolId, { budget })) {
       if (seen.has(k.id)) continue;
       seen.add(k.id);
       keys.push(k);

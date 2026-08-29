@@ -281,3 +281,31 @@ test('⚠️ a pool BOTH existing sources miss is found from the token\'s own tr
     assert.equal(p.quote, QUOTE, 'and the currency a buy must be paid in came with it');
   } finally { delete process.env.ROBINHOOD_V4_POOLMANAGER; }
 });
+
+/*
+ * ⚠️ A CAP THAT IS PER-CALL IS NOT THE CAP IT CLAIMS TO BE.
+ *
+ * `tradePoolKeys` reads up to six transactions. With the budget owned by
+ * `poolKeysFrom`, "capped at 20,000 hashes" was really 120,000 — ~2.8s of pure
+ * CPU on the card's critical path and on `canTradeNow`, which every snipe polls
+ * on a timer. That is the same shape as the unbounded stage that cost this
+ * feature three rounds, moved one module over.
+ */
+test('⚠️ several calls SHARE one hash budget', () => {
+  const good = callData();
+  let hashes = 0;
+  const counting = (...a) => { hashes++; return v4.poolId(...a); };
+
+  // Spent budget: the second call must not get a fresh allowance.
+  const budget = { left: 3 };
+  cd.poolKeysFrom(good, TOKEN, counting, { budget });
+  const afterFirst = hashes;
+  cd.poolKeysFrom(good, TOKEN, counting, { budget });
+  assert.ok(afterFirst <= 4, `the first call overran a budget of 3 — ${afterFirst} hashes`);
+  assert.ok(hashes - afterFirst <= 1, 'the second call was handed a fresh budget');
+
+  // …and with no budget passed, one call still has a ceiling of its own.
+  let solo = 0;
+  cd.poolKeysFrom(good, TOKEN, (...a) => { solo++; return v4.poolId(...a); });
+  assert.ok(solo > 0 && solo <= cd.MAX_HASHES, 'an unbudgeted call is still capped');
+});

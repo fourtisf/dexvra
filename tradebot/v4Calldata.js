@@ -231,14 +231,21 @@ function poolKeysFrom(data, token, poolId, opts = {}) {
    * worst case, and a real router call (a dozen addresses, a handful of small
    * ints) is an order of magnitude under it.
    */
-  let budget = MAX_HASHES;
+  /*
+   * ⚠️ THE BUDGET IS THE CALLER'S, NOT THIS CALL'S. `tradePoolKeys` reads up to
+   * six transactions, so a per-call cap is six times the ceiling it claims to
+   * be — 120,000 hashes is ~2.8s of pure CPU on the card's critical path and on
+   * every snipe poll. A caller that reads several calls passes ONE budget and
+   * they share it.
+   */
+  const budget = opts.budget || { left: MAX_HASHES };
   for (const other of others) {
     const [c0, c1] = tok < other ? [tok, other] : [other, tok];
     for (const fee of smalls) {
       if (fee < 0) continue;                                  // a fee is unsigned
       for (const ts of smalls) {
         for (const hooks of hooksC) {
-          if (budget-- <= 0) return out;
+          if (budget.left-- <= 0) return out;
           let id;
           try { id = lc(poolId(c0, c1, fee, ts, hooks)); } catch (_) { continue; }
           if (!h.ids.has(id) || seen.has(id)) continue;
@@ -251,4 +258,4 @@ function poolKeysFrom(data, token, poolId, opts = {}) {
   return out;
 }
 
-module.exports = { decodeVerified, poolKeysFrom, selectorOf, DEFAULT_SIGS, sigs, _harvest, _words };
+module.exports = { decodeVerified, poolKeysFrom, selectorOf, DEFAULT_SIGS, sigs, _harvest, _words, MAX_HASHES };
