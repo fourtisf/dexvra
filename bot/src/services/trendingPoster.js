@@ -148,7 +148,12 @@ async function buildText() {
   const featured = all.filter(
     (r) => r.status === "approved" && r.trendingRank != null && (!r.trendExp || r.trendExp > now),
   );
-  if (!featured.length) return null;
+  // ⚠️ NOT `if (!featured.length) return null` ANY MORE — see the end of this
+  // function. A board with no BOOKED slot is no longer a board with nothing to
+  // show: the website's ranking can fill it on its own. That early return meant
+  // a promoter that stalled and let every slot expire took the whole board down
+  // with it — which is exactly the nine-hour outage this session spent the day
+  // chasing. "Nothing to publish" is now measured from the rows actually drawn.
 
   const byChain = {};
   for (const r of featured) (byChain[r.chain] ||= []).push(r);
@@ -404,6 +409,10 @@ async function buildText() {
   // actually used. `trending:check --rows` reads this, so it can never report a
   // clean board while this function publishes dashes.
   lastRender = { at: now, rows: rowCount, blank };
+  // Nothing booked AND nothing to mirror — a title with no rows under it is not
+  // a board, and editing the pinned message down to one line is worse than
+  // leaving the last good one in place.
+  if (!rowCount) return null;
   return lines.join("\n");
 }
 

@@ -1598,6 +1598,55 @@ cd bot && node scripts/run-tests.js test/boardSync.test.js test/freeListingRepor
 npm test                                                                                    # site: board-rank route
 ```
 
+#### "bagaimana agar masalah ini tidak terjadi lgi" — the rules did not move house
+
+Three regressions in three commits, all mine, all one cause: the board's row
+SELECTION moved from `autoTrend` (the promoter) into `trendingPoster` (the
+website mirror), and the rules that governed it stayed behind. Every one of
+them was already written down — `cfg.chains` … *"Everything else is
+PAID-ONLY"*; the per-chain target is a ROLLED RANGE; a failure path is as loud
+as the success path — and being written down is exactly what did not help. **A
+comment in module A is not a guard on new code in module B, and this file is
+prose, not a test.**
+
+So `boardContract.test.js` asserts the properties of what the CHANNEL
+PUBLISHES, driven through the real `buildText()`, over randomised worlds with a
+seeded PRNG. It says nothing about which module chose the rows: a future change
+that moves the selection somewhere else again has to keep them true.
+
+| the contract | the incident it is made of |
+| --- | --- |
+| no section for an unconfigured chain, unless it holds a PAID row | POLYGON/OPTIMISM/BERACHAIN/HYPEREVM grew headings |
+| a chain surviving on a purchase is never topped up | the exception re-creating the section |
+| the per-chain count is a rolled range **as rendered** | every chain published exactly 5 for ever |
+| a row the BOT chose carries a reading; a purchase may render `—` | the blank-percentage saga |
+| a purchase is never displaced | the refund conversation this repo keeps avoiding |
+| demo data never publishes; booked slots still do | `live:false` reaching the channel |
+| exactly ONE report line per publish, naming the reason | four states reading as one short board |
+
+- ⚠️ **THE FIRST CUT PASSED HAVING CHECKED NOTHING.** Its section parser
+  anchored on `^\*\*`, and the header renders as
+  `[🔶](emoji/…) **BSC - Trending**` — so it returned `{}` for every board and
+  three assertions iterated an empty object. `expectRows()` is the guard: a
+  parse that finds no board is an ERROR, never a quiet pass.
+- ⚠️ **AND THE ROLLED-RANGE ASSERTION DID NOT COVER THE RENDERER.** Pinning the
+  board's target back to `perChainMin` left `_rolledTarget` correct and every
+  test green — the `fonts:check` rule, one module over. It measures the SECTION
+  SIZES the board actually drew now.
+- ⚠️ **Writing it found a real defect.** `buildText` bailed out on
+  `!featured.length`, so a board with no BOOKED slot published nothing at all —
+  meaning a promoter that stalls and lets every slot expire takes the whole
+  board down with it, which is precisely the nine-hour outage above. The mirror
+  can fill a board on its own; "nothing to publish" is measured from the rows
+  actually drawn now.
+- Mutation-tested against all four of the session's regressions: filling every
+  chain, pinning the target, deleting the report, and choosing a row with no
+  reading each fail between one and two of these.
+
+```bash
+cd bot && node scripts/run-tests.js test/boardContract.test.js test/boardSync.test.js   # 23 tests, no network
+```
+
 **Config a fix depends on:** `LOG_CHANNEL` in `bot/.env` — the visitor channel.
 It is optional and already used for `/start` and purchase reports; unset, the
 free-listing report goes to pm2 only and nothing else changes.
