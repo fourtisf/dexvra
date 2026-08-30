@@ -133,6 +133,15 @@ async function buildText() {
   // put `$MRNA +465%` on five cents of volume at the top of a public board.
   let siteRank = {};
   let siteLive = false;
+  // ⚠️ WHY THE TOP-UP DID OR DID NOT HAPPEN, reported on every publish.
+  //
+  // The first cut of this had a `warnOnce` on failure and NOTHING on success —
+  // so "the site was unreachable", "the site is on demo data", "there was
+  // nothing readable to add" and "it worked" were one observation from the
+  // channel: a short board. That is the exact defect this session has now had
+  // to fix three times in autoTrend, reintroduced by the code written to end
+  // it. A board that is short must be able to say which of the four it is.
+  let fillWhy = null;
   try {
     const rank = await api.boardRank("24h");
     // ⚠️ DEMO DATA MAY NOT REACH THE CHANNEL. `live:false` is the site saying
@@ -143,13 +152,22 @@ async function buildText() {
       siteRank = rank.chains || {};
       siteLive = true;
     } else {
-      warnOnce("rank-demo", "[trending] the site's board is not live — publishing booked slots only, no top-up");
+      // The site fell back to captured-at-listing rows. Publishing those is the
+      // fabricated figure this board refuses to render, one layer earlier — so
+      // the top-up stands down, and says so, because "dexvra.io is itself on
+      // demo data" is an outage the operator can act on and is nothing to do
+      // with their trending settings.
+      fillWhy = "the site's own board is not live (demo data) — nothing to mirror";
+      warnOnce("rank-demo", `[trending] ${fillWhy}`);
     }
   } catch (e) {
     // A board that vanished is worse than one that is short: the booked slots
     // are still real and still paid for, so they go out either way.
-    warnOnce("rank-fail", `[trending] could not read the site's ranking, publishing booked slots only: ${e.message}`);
+    fillWhy = `could not read the site's ranking: ${e.message}`;
+    warnOnce("rank-fail", `[trending] ${fillWhy}, publishing booked slots only`);
   }
+  // Per chain: booked rows, and how many the site's order added on top.
+  const fillStat = [];
   const keyOf = (chain, address) => `${chain}:${String(address || "").toLowerCase()}`;
   // The operator's own "minimum N per chain", read from the one place that
   // owns it (⚙️ Auto-Trend). A second number here is how the panel and the
@@ -182,6 +200,9 @@ async function buildText() {
       if (!Number.isFinite(t.change24h)) continue;
       shown.add(keyOf(t.chain, t.address));
       fill.push(t);
+    }
+    if (booked.length || fill.length) {
+      fillStat.push(`${chain} ${booked.length}+${fill.length}`);
     }
     const arr = [...booked, ...fill.map((t) => ({
       chain: t.chain,
@@ -262,6 +283,17 @@ async function buildText() {
   // symbol nobody defined is noise, and printing "🌩 = newly entered" on a board
   // with no 🌩 on it is worse — it sends the reader hunting for a mark that is
   // not there.
+  // ⚠️ ONE LINE PER PUBLISH, at info. `booked+filled` per chain, and the reason
+  // when nothing was mirrored. This is the only thing that separates "the
+  // top-up ran and the site had nothing readable to add" from "the bot could
+  // not reach the site at all" — and from the channel both render as a board
+  // that is still short, which is how six rounds of this were each diagnosed
+  // from scratch.
+  log.info(
+    `[trending] board: ${fillStat.join(" · ") || "nothing featured"}` +
+      ` (booked+from-site, minimum ${perChain}/chain)` +
+      (siteLive ? "" : ` — NOT mirrored: ${fillWhy || "unknown"}`),
+  );
   if (newCount > 0) {
     const h = board.newHours();
     lines.push(`\n${board.newEmoji()} = Newly Entered Trending (slot started in the last ${h} hour${h === 1 ? "" : "s"})`);

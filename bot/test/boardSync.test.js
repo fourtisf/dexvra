@@ -16,6 +16,7 @@ const api = require("../src/api/dexvra");
 const market = require("../src/marketdata");
 const poster = require("../src/services/trendingPoster");
 const autoTrend = require("../src/services/autoTrend");
+const log = require("../src/helpers/logger");
 
 const listing = (over) => ({
   status: "approved", chain: "solana", sym: "X", trendingRank: null, ...over,
@@ -147,4 +148,34 @@ test("⚠️ the bot does not rank for itself — it reads the site's order", as
   );
   assert.ok(/changeRank|tradedEnough/.test(fss.readFileSync(path.join(__dirname, "..", "..", "src", "lib", "home.ts"), "utf8")),
     "…and the site's owner must still exist, or this scan proves nothing");
+});
+
+test("⚠️ every publish SAYS what the top-up did, or why it did not happen", async () => {
+  // The first cut warned on failure and said nothing on success, so "the site
+  // was unreachable", "the site is on demo data", "there was nothing readable
+  // to add" and "it worked" were one observation from the channel: a board
+  // that is still short. That is this session's own recurring defect, in the
+  // code written to end it.
+  const realInfo = log.info;
+  const lines = [];
+  log.info = (m) => lines.push(String(m));
+  const now = Date.now();
+  const paid = listing({ address: "p", sym: "PAID", trendingRank: 1, trendStart: now, trendExp: now + 3600_000, tier: "DIAMOND" });
+  try {
+    lines.length = 0;
+    await render({ listings: [paid], chains: { solana: [siteRow("AAA", 20), siteRow("BBB", 10)] } });
+    const ok = lines.find((l) => /\[trending\] board:/.test(l));
+    assert.ok(ok, `no publish line at all: ${JSON.stringify(lines)}`);
+    assert.match(ok, /solana 1\+2/, `it did not say what it added: ${ok}`);
+    assert.ok(!/NOT mirrored/.test(ok), `a working mirror reported as broken: ${ok}`);
+
+    // …and the reason is NAMED when the site is on demo data.
+    lines.length = 0;
+    await render({ listings: [paid], chains: { solana: [siteRow("AAA", 20)] }, live: false });
+    const demo = lines.find((l) => /\[trending\] board:/.test(l));
+    assert.match(demo, /NOT mirrored/, demo);
+    assert.match(demo, /demo data/, `the reason must be actionable, not "unknown": ${demo}`);
+  } finally {
+    log.info = realInfo;
+  }
 });

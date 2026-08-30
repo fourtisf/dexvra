@@ -1516,6 +1516,15 @@ ranked from different places.
 - **`perChainMin` is read from ⚙️ Auto-Trend**, its one owner. A second number
   in the poster is how the panel and the channel would come to disagree about
   what the minimum is, which is the shape of all six rounds of this report.
+- ⚠️ **AND EVERY PUBLISH SAYS WHAT THE TOP-UP DID.** The first cut warned on
+  failure and said nothing on success — so *"the site was unreachable"*, *"the
+  site is on demo data"*, *"there was nothing readable to add"* and *"it
+  worked"* were ONE observation from the channel: a board that is still short.
+  That is this session's own recurring defect (three fixes in `autoTrend`),
+  reintroduced by the code written to end it, and it left the very next round
+  with nothing to read. One line at info per publish —
+  `[trending] board: solana 4+1 · bsc 3+2 (booked+from-site, minimum 5/chain)`
+  — and the REASON appended whenever nothing was mirrored.
 
 ### Every free listing reports to the visitor channel
 
