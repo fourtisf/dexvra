@@ -441,7 +441,9 @@ test("a chain short for the OLD reasons still gets the old answers", async () =>
   // The new branch must not swallow the other three. `floorRefused` is only
   // ever non-zero on a pass that actually measured it.
   assert.strictEqual(watch.diagnose({ featured: 5, floor: 5, eligible: 0 }), null, "at target → nothing to say");
-  assert.strictEqual(watch.diagnose({ featured: 1, floor: 5, eligible: 3 }).code, "spares_unusable");
+  // `considered` STATED: without it `diagnose` cannot say WHY and answers
+  // `unmeasured` — see trendingWatch.test.js, "a cause NOBODY MEASURED".
+  assert.strictEqual(watch.diagnose({ featured: 1, floor: 5, eligible: 3, considered: 3 }).code, "spares_unusable");
   assert.strictEqual(watch.diagnose({ featured: 1, floor: 5, eligible: 0 }).code, "no_listings");
   assert.strictEqual(
     watch.diagnose({ featured: 1, floor: 5, eligible: 3, fillWhy: "GT rate limited", floorRefused: 3 }).code,

@@ -659,6 +659,42 @@ test("⚠️ the probe WINDOW ROTATES — a fixed prefix starved a chain of 190 
   }
 });
 
+test("⚠️ the BOT always measures, so an ops alert can never say 'this run did not price them'", async () => {
+  // `trendingWatch` answers `unmeasured` when nobody priced the spares — right
+  // for `trending:check` without --floors, and nonsense in the ops channel: the
+  // cycle is the thing that prices them. So every chain the bot reports on with
+  // spares must carry a `considered`, or an early `continue` added above
+  // `byGain` one day turns the alert into a shrug.
+  await autoTrend._test.forgetProbes();
+  const watch = require("../src/services/trendingWatch");
+  const realEval = watch.evaluate;
+  const realFetch = market.fetchMarket;
+  const realGet = api.getListings;
+  const seen = [];
+  watch.evaluate = (snapshot, prev, opts) => (seen.push(...snapshot), realEval(snapshot, prev, opts));
+  market.fetchMarket = async () => ({ priceUsd: 1e-7, mcap: 1_000, vol24h: 5, change24h: -2 });
+  api.getListings = async () => [
+    { status: "approved", chain: "bsc", address: "a1", sym: "A1", trendingRank: null },
+    { status: "approved", chain: "bsc", address: "a2", sym: "A2", trendingRank: null },
+  ];
+  api.bookTrending = async () => ({});
+  try {
+    await autoTrend.set({ enabled: true, chains: ["bsc"], perChainMin: 5, perChainMax: 5, minMcapUsd: 100_000, minVol24hUsd: 10_000, fillFromMarket: false });
+    await autoTrend.runOnce({ rng: () => 0.5 });
+    const bsc = seen.find((c) => c.id === "bsc");
+    assert.ok(bsc, "the cycle must report on the chain it just worked");
+    assert.ok(bsc.eligible > 0, "the fixture must leave spares, or this proves nothing");
+    assert.strictEqual(typeof bsc.considered, "number", "the cycle handed the watch an unmeasured chain");
+    assert.notStrictEqual(watch.diagnose(bsc).code, "unmeasured", watch.diagnose(bsc).text);
+  } finally {
+    watch.evaluate = realEval;
+    market.fetchMarket = realFetch;
+    api.getListings = realGet;
+    await autoTrend._test.forgetProbes();
+    await autoTrend.set({ chains: autoTrend.DEFAULTS.chains, minMcapUsd: 0, minVol24hUsd: 0, fillFromMarket: true });
+  }
+});
+
 test("⚠️ a short board never claims something about rows nobody opened", async () => {
   // The log line, the ops alert and ⚡ Run now all said "every spare is below
   // the free-trending floors" while the ranking pass had opened a bounded

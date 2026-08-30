@@ -1336,6 +1336,42 @@ Each is pinned, and the two behavioural ones are MUTATION-TESTED: putting the
 bare `saveJSON` back in `resetAnnounceState` fails the rotation-survives test,
 and giving the check its own predicate back fails the one-owner test.
 
+#### …and the FIRST LIVE RUN printed a cause nobody had measured
+
+`npm run trending:check` on the box, straight after the deploy (`build
+ca975ca`), reported Robinhood `3/5 · 63 spare listing(s)` under
+
+> 63 spare listing(s) here, and none went on — they are below −15%, the one
+> thing never auto-promoted.
+
+…and the same sentence for a chain with 75. **The check had priced nothing.**
+Without `--floors` it opens no rows at all, so it hands `diagnose`
+`floorRefused: 0, unread: 0` — which mean *"we looked and found none"* to that
+function and *"we never looked"* from that caller — and the branch left standing
+is the one that asserts a specific cause for all of them. Six rounds of this
+symptom have turned on telling causes apart, and the diagnostic was inventing
+one.
+
+- **`considered == null` is "not measured", and it now has its own answer.**
+  `unmeasured` names the count it does know (63 spares, board short) and the
+  flag that answers the rest, instead of picking the last branch standing. The
+  bot always measures, so this can never reach the ops channel — asserted by
+  driving `runOnce` and reading the snapshot it hands the watch, because an
+  early `continue` added above `byGain` one day is exactly how it would.
+- ⚠️ **`--floors` is no longer gated on a floor being ON.** It measures three
+  things now — rows opened, rows refused, rows unreadable — and only the middle
+  one is about the floors, so with both at `0` it priced nothing and every short
+  chain answered *"this run did not price them"* naming the flag the operator
+  had just used.
+- ⚠️ **And the window may never print MORE spares than the chain has left.**
+  `considered` is measured before the pass promotes anything and `eligible` is
+  counted after, so a chain that filled part of its gap has the window as the
+  larger number — `Math.min`, or the sentence claims spares that are on the
+  board.
+
+Both are mutation-tested: deleting the `unmeasured` branch, and letting the
+window overstate the spares, each fail it.
+
 ```bash
 cd bot && node scripts/run-tests.js test/autoTrend.test.js test/trendQuality.test.js test/trendingWatch.test.js
 cd bot && npm run trending:check -- --floors    # N of M opened, and how many are not opened yet

@@ -123,6 +123,29 @@ function diagnose({
     };
   }
   if (eligible > 0) {
+    // ⚠️ A CAUSE NOBODY MEASURED IS NOT A CAUSE.
+    //
+    // The branch below asserts "they are below −15%", which is the one reading
+    // left once the floors and the upstream have been ruled OUT — and both of
+    // those are ruled out by counts a caller has to have MEASURED. A caller
+    // that priced nothing hands over `floorRefused: 0, unread: 0` because it
+    // never looked, not because it looked and found none, and this then told
+    // the operator a confident cause for all of them. The live run said it
+    // about 63 Robinhood spares and 75 on another chain, from a `trending:check`
+    // that had not opened a single row.
+    //
+    // `considered == null` is the repo's spelling of "not measured" — the same
+    // one `floorRefused` and `unread` already use — and the honest answer is to
+    // say so and name the flag that measures it.
+    if (considered == null) {
+      return {
+        code: 'unmeasured',
+        text:
+          `${eligible} spare listing(s) here and the board is short, but this run did not price any of them — ` +
+          `so it cannot say whether they are below the floors, in free-fall, or simply could not be read. ` +
+          `\`npm run trending:check -- --floors\` opens this cycle's window and answers it.`,
+      };
+    }
     // Spare listings exist and none went on. Since the minimum outranks the
     // gain floor, the only survivable readings are that they are all in
     // free-fall — in which case the next cycle asks the filler to cover it —
@@ -130,7 +153,11 @@ function diagnose({
     return {
       code: 'spares_unusable',
       text:
-        `${judged} spare listing(s) here, and none went on — they are below −15%, the one thing never ` +
+        // ⚠️ …and never MORE than are left. `considered` was measured before
+        // this pass promoted anything, `eligible` is counted after — so on a
+        // chain that filled part of its gap the window is the larger number,
+        // and printing it would claim more spares than the chain still has.
+        `${Math.min(judged, eligible)} spare listing(s) here, and none went on — they are below −15%, the one thing never ` +
         `auto-promoted. The next cycle lists a big-cap to cover it while 🧲 Fill from market is ON. ⚡ Run now settles it.` + restNote,
     };
   }

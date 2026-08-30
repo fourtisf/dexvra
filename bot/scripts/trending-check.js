@@ -97,7 +97,13 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
   const refusedByChain = new Map();
   const unreadByChain = new Map();
   const consideredByChain = new Map();
-  if (measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
+  // ⚠️ NOT GATED ON THE FLOORS BEING ON ANY MORE. This pass measures three
+  // things now — how many rows the window opened, how many the floors refused,
+  // how many could not be read — and only the middle one is about the floors.
+  // With both floors at 0 the old gate priced nothing, so every short chain
+  // reported "this run did not price them" and the fix it names (`--floors`)
+  // was the flag the operator had just used.
+  if (measureFloors) {
     console.log(`  ${D}pricing spares against the floors — a bounded, rotating window per chain, this takes a moment${X}\n`);
     for (const id of cfg.chains) {
       const spares = rows.filter((r) => r.status === 'approved' && !isFeatured(r) && on(r, id));
@@ -174,8 +180,10 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
       console.log(`  ${G}✓${X} ${String(label).padEnd(12)} ${featured}/${cfg.perChainMin} ${D}· ${eligible} spare listing(s)${X}${floorNote}`);
     }
   }
-  if (!measureFloors && (cfg.minMcapUsd > 0 || cfg.minVol24hUsd > 0)) {
-    console.log(`\n  ${D}re-run with --floors to price this cycle's window and see how many the floors refuse${X}`);
+  // Printed whatever the floors are set to: without this flag nothing here was
+  // priced, so every short chain above could only say it does not know why.
+  if (!measureFloors && short.length) {
+    console.log(`\n  ${D}re-run with --floors to price this cycle's window — how many rows it opened, how many the floors refuse, how many could not be read${X}`);
   }
 
   // ── "ADA BEBERAPA TOKEN TIDAK ADA PERSENAN TOKENYA WHY?" ───────────────────

@@ -55,7 +55,10 @@ test("a RECOVERY is an alert too", () => {
 });
 
 test("the three causes get three different answers — that is what took three rounds", () => {
-  const spares = watch.diagnose({ featured: 3, floor: 5, eligible: 4 });
+  // ⚠️ `considered` STATED, not inherited. It is how many of the spares the
+  // caller actually priced, and without it this branch is not reachable at all
+  // any more — see the unmeasured test below for why.
+  const spares = watch.diagnose({ featured: 3, floor: 5, eligible: 4, considered: 4 });
   assert.strictEqual(spares.code, "spares_unusable");
   assert.match(spares.text, /−15%/, "must not read as 'no listings'");
   assert.match(spares.text, /next cycle/, "with the filler on, that state resolves itself");
@@ -79,6 +82,30 @@ test("the three causes get three different answers — that is what took three r
 
   assert.strictEqual(watch.diagnose({ featured: 5, floor: 5, eligible: 0 }), null, "at the floor is not a problem");
   assert.strictEqual(watch.diagnose({ featured: 9, floor: 5, eligible: 0 }), null);
+});
+
+test("⚠️ a cause NOBODY MEASURED is not a cause", () => {
+  // Live run, straight after the deploy: `trending:check` (no --floors) printed
+  // "63 spare listing(s) here, and none went on — they are below −15%" for
+  // Robinhood and "75 spare listing(s)…" for another chain, having priced not
+  // one row. `floorRefused: 0` and `unread: 0` mean "we looked and found none"
+  // to this function and "we never looked" from that caller, and the confident
+  // sentence was the reading an operator would act on.
+  const blind = watch.diagnose({ featured: 3, floor: 5, eligible: 63 });
+  assert.strictEqual(blind.code, "unmeasured", blind.text);
+  assert.ok(!/−15%/.test(blind.text), `it asserted a cause it did not measure: ${blind.text}`);
+  assert.match(blind.text, /--floors/, "it must name what would answer it");
+  assert.match(blind.text, /63 spare/, "the count it DOES know is still worth naming");
+
+  // …and a caller that DID measure still gets the specific answer.
+  assert.strictEqual(watch.diagnose({ featured: 3, floor: 5, eligible: 63, considered: 40 }).code, "spares_unusable");
+
+  // ⚠️ NEVER MORE SPARES THAN THE CHAIN HAS LEFT. `considered` is measured
+  // BEFORE the pass promotes anything and `eligible` is counted after, so on a
+  // chain that filled part of its gap the window is the bigger number — and
+  // printing it would claim more spares than are actually there.
+  const partly = watch.diagnose({ featured: 4, floor: 5, eligible: 2, considered: 40 });
+  assert.match(partly.text, /^2 spare/, partly.text);
 });
 
 test("every chain is judged on its own — one healthy chain must not mask a short one", () => {
