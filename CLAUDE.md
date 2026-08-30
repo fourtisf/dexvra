@@ -1473,6 +1473,83 @@ cd bot && npm run trending:check -- --floors    # N of M opened, and how many ar
 per chain per pass for an operator with thousands of listings; the rotation is
 what makes the size a matter of speed rather than of reach.
 
+### The channel and the website were two answers to one question
+
+"di website gambar ke 3 kan sudah ada trending di website nah itu aja yang d
+ambil haerus sinkron … jadi channel trending token trending harus sesuai di
+websitenya" — a project opens dexvra.io and `@dexvratrending` side by side and
+sees two different sets of tokens. They were not out of sync by accident: they
+ranked from different places.
+
+| | what it shows |
+| --- | --- |
+| dexvra.io *Trending Listings* | every listing on the chain, ordered by 24h % (`byChange`) |
+| `@dexvratrending` | whoever holds a BOOKED slot (paid + auto-promoted) |
+
+- **The board is a TOP-UP, never a mirror, and that was the operator's call.**
+  Asked directly, with the trade-off stated: a straight mirror would drop a
+  trending slot somebody PAID for on the day their token is down — every other
+  ranking surface in this repo demotes rather than hides for exactly that
+  reason. So booked slots are pinned, and the site's ranking fills what is left
+  up to `perChainMin`. Everything nobody bought matches the website exactly, and
+  a purchase still gets its row.
+- ⚠️ **THE ORDER IS READ, NEVER RECOMPUTED.** `/api/internal/board-rank` serves
+  the site's own `byChange` output per chain. A copy of that rule inside the bot
+  would be the FOURTH private answer to "which change may rank this" in this
+  repo — and the first three are what put `$MRNA +465%` on five cents of volume
+  at the top of a public board. A source scan fails the build if the poster
+  grows `changeRank`/`tradedEnough` of its own.
+- **The readings travel with it** (`changeReading`, `figureReading`), so a row
+  the site supplied is never re-priced. Asking again would spend the shared
+  GeckoTerminal ceiling to re-derive a number we were just handed — and would
+  let the two surfaces print different percentages for the same token, which is
+  the desync being fixed.
+- ⚠️ **`live:false` NEVER REACHES THE CHANNEL.** That flag is the site saying
+  these are captured-at-listing numbers rather than readings; publishing a board
+  built from them is the fabricated figure this board already refuses to render,
+  arrived at one layer earlier. Booked slots still publish.
+- **A row with no 24h reading is never CHOSEN by us** — the rule the promoter
+  and the market filler already honour. A paid slot keeps its space and renders
+  `—`; a row the board picked for itself has no such claim on it.
+- **A site that cannot be reached still publishes the booked slots.** A board
+  that vanished is worse than one that is short, and those rows are real.
+- **`perChainMin` is read from ⚙️ Auto-Trend**, its one owner. A second number
+  in the poster is how the panel and the channel would come to disagree about
+  what the minimum is, which is the shape of all six rounds of this report.
+
+### Every free listing reports to the visitor channel
+
+"setiap free listing harus ada kirim laporan di channel dexvra visitor, bawah
+free listing yang jelas". A free listing left no trace an operator could read:
+`announce()` fires only when 📣 Post to channel is ON **and** the package is the
+one that reaches @dexvraio, so `free` and `xpress` auto listings — the great
+majority — went live with nothing but a pm2 line, and the operator learned about
+them by looking at the site.
+
+- **`log.report` is the transport, and it already existed** — the visitor
+  channel (`LOG_CHANNEL`) is where this repo already sends business events (a
+  `/start`, a purchase). Deliberately NOT de-duplicated: two listings that look
+  alike are two real listings, and collapsing them would hide the feed.
+- **Neither gate applies.** This is a report to the OPERATOR, not a public post,
+  so it is sent with 📣 Post to channel OFF and on every package. An operator who
+  switched the public post off did not ask to stop being told what their own bot
+  listed.
+- **Readable without opening the site**: ticker, name, chain, package and tier,
+  cap/liquidity/24h volume at the moment it was listed, the contract, the day's
+  count against the cap, and a link.
+- ⚠️ **A channel that is down never costs the listing.** The report runs after
+  the row is already live, and a throw there would turn a successful listing
+  into a failed scan.
+
+```bash
+cd bot && node scripts/run-tests.js test/boardSync.test.js test/freeListingReport.test.js   # 10 tests, no network
+npm test                                                                                    # site: board-rank route
+```
+
+**Config a fix depends on:** `LOG_CHANNEL` in `bot/.env` — the visitor channel.
+It is optional and already used for `/start` and purchase reports; unset, the
+free-listing report goes to pm2 only and nothing else changes.
+
 ## The gap between two free listings was never a setting
 
 "fitur free listing itu buat berapa jam sekali baru free listing di range misal

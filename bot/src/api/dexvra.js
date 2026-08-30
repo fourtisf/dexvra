@@ -69,6 +69,23 @@ async function getListings() {
   return (out && out.listings) || [];
 }
 
+/**
+ * THE SITE'S OWN TRENDING ORDER, per chain — `{ frame, live, updatedAt, chains }`.
+ *
+ * The channel board mirrors dexvra.io rather than ranking for itself: the two
+ * were showing different tokens because they answered "what is trending" from
+ * different places, and a project checks one against the other. The site owns
+ * that answer (`byChange` in src/lib/home.ts); this reads it.
+ *
+ * Throws what the call threw — the poster treats an unreachable site as "no
+ * top-up available" and still publishes the booked slots, because a board that
+ * vanished is worse than one that is short.
+ */
+async function boardRank(frame = "24h") {
+  const out = await call("GET", `/api/internal/board-rank?frame=${encodeURIComponent(frame)}`);
+  return out && out.chains ? out : { frame, live: false, chains: {} };
+}
+
 /** Find the stored listing for a chain+address (case-insensitive), or null. */
 async function findListing(chain, address) {
   const addr = String(address || "").toLowerCase();
@@ -180,6 +197,7 @@ module.exports = {
   MIN_TOKEN_LEN,
   updateListing,
   getListings,
+  boardRank,
   findListing,
   bookTrending,
   expireTrending,

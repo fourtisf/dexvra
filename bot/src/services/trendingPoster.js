@@ -111,6 +111,54 @@ async function buildText() {
   const byChain = {};
   for (const r of featured) (byChain[r.chain] ||= []).push(r);
 
+  // ── THE BOARD MIRRORS THE WEBSITE ────────────────────────────────────────
+  //
+  // "di website sudah ada trending, nah itu aja yang diambil, harus sinkron" —
+  // a project opens dexvra.io and the channel side by side and sees two
+  // different sets of tokens, because the two answer "what is trending" from
+  // different places: the site ranks every listing by 24h %, this renders
+  // whoever holds a booked slot. And a chain with fewer booked slots than the
+  // operator's minimum published a short board for six rounds running.
+  //
+  // ⚠️ BOOKED SLOTS ARE PINNED AND ARE NEVER REPLACED. Somebody PAID for those
+  // rows; a board that dropped a purchase because the token was down that day
+  // is a refund conversation, and this repo's own rule on every other ranking
+  // surface is that a paid row demotes, never disappears. The site's ranking
+  // fills what is LEFT, in the site's own order — so everything nobody bought
+  // matches dexvra.io exactly, and a purchase still gets its row.
+  //
+  // ⚠️ AND THE ORDER IS READ, NEVER RECOMPUTED. `byChange` on the site is the
+  // one owner of "which change may rank this"; a copy of it here is the fourth
+  // private answer to that question in this repo, and the first three are what
+  // put `$MRNA +465%` on five cents of volume at the top of a public board.
+  let siteRank = {};
+  let siteLive = false;
+  try {
+    const rank = await api.boardRank("24h");
+    // ⚠️ DEMO DATA MAY NOT REACH THE CHANNEL. `live:false` is the site saying
+    // these are captured-at-listing numbers, not readings — publishing a board
+    // built from them would be the fabricated figure this file already refuses
+    // to render, arrived at one layer earlier.
+    if (rank && rank.live) {
+      siteRank = rank.chains || {};
+      siteLive = true;
+    } else {
+      warnOnce("rank-demo", "[trending] the site's board is not live — publishing booked slots only, no top-up");
+    }
+  } catch (e) {
+    // A board that vanished is worse than one that is short: the booked slots
+    // are still real and still paid for, so they go out either way.
+    warnOnce("rank-fail", `[trending] could not read the site's ranking, publishing booked slots only: ${e.message}`);
+  }
+  const keyOf = (chain, address) => `${chain}:${String(address || "").toLowerCase()}`;
+  // The operator's own "minimum N per chain", read from the one place that
+  // owns it (⚙️ Auto-Trend). A second number here is how the panel and the
+  // channel would come to disagree about what the minimum is — which is the
+  // shape of every round of this report. Lazily required: autoTrend does not
+  // require this module, so there is no cycle, but the dependency is one-way
+  // and stating it at the call site keeps it that way.
+  const perChain = Number(require("./autoTrend").get().perChainMin) || 0;
+
   // Title emoji is admin-settable (@dexvraadminbot → Trending board) so the
   // operator can make it a premium, animated fire without a redeploy.
   const lines = [`${board.titleEmoji()} **Dexvra Trending** — live featured slots`];
@@ -119,11 +167,45 @@ async function buildText() {
   let rowCount = 0;
   const blank = [];
   for (const chain of CHAIN_ORDER) {
-    const arr = byChain[chain];
-    if (!arr || !arr.length) continue;
+    const booked = byChain[chain] || [];
+    // Top up from the site's order, skipping anything already booked here.
+    const shown = new Set(booked.map((r) => keyOf(r.chain, r.address)));
+    const fill = [];
+    for (const t of siteRank[chain] || []) {
+      if (fill.length >= Math.max(0, perChain - booked.length)) break;
+      if (shown.has(keyOf(t.chain, t.address))) continue;
+      // ⚠️ A ROW WITH NO READING MAY NOT BE PUT ON THE BOARD BY US. The site
+      // sends `null` for a change it could not read, and this board's standing
+      // rule is that a slot it books ITSELF must carry a percentage — the
+      // promoter and the market filler both honour it. A paid slot keeps its
+      // row and renders `—`; a row we chose has no such claim on the space.
+      if (!Number.isFinite(t.change24h)) continue;
+      shown.add(keyOf(t.chain, t.address));
+      fill.push(t);
+    }
+    const arr = [...booked, ...fill.map((t) => ({
+      chain: t.chain,
+      address: t.address,
+      sym: t.symbol,
+      // No tier: these are not purchases, and `tierPrio` must sort them below
+      // every paid row. Nothing here writes to the store — the board mirrors
+      // the site, it does not book anything.
+      tier: undefined,
+      _fromSite: t,
+    }))];
+    if (!arr.length) continue;
     // Pull live 24h change + market cap for each token (polite to GeckoTerminal).
     const enriched = [];
     for (const r of arr) {
+      // ⚠️ A ROW THE SITE SUPPLIED IS NOT RE-PRICED. The site priced it this
+      // cycle and sent the figure; asking again would spend the shared
+      // GeckoTerminal ceiling to re-derive a number we were just handed — and
+      // would let the two surfaces print different percentages for the same
+      // token, which is the desync this whole change exists to end.
+      if (r._fromSite) {
+        enriched.push({ r, change: r._fromSite.change24h, mcap: r._fromSite.mcap, why: null });
+        continue;
+      }
       const m = await market.fetchMarket(r.chain, r.address).catch(() => null);
       await sleep(300);
       enriched.push({

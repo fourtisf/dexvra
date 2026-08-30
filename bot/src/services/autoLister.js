@@ -48,6 +48,10 @@ const x = require("../twitter");
 const { CHANNELS, SITE_URL, X_AUTOLIST_ENABLED, X_POST_TIMEOUT_MS } = require("../config/constants");
 const { sanitizeTicker } = require("../helpers/ticker");
 const { chainOf } = require("../config/chains");
+// The repo's one money formatter — the visitor report prints caps and volumes,
+// and a second spelling of "$1.10M" across surfaces is how two screens come to
+// describe one number differently.
+const { fmtCap } = require("../helpers/format");
 const { tierLabel } = require("../config/packages");
 const listingWatch = require("./listingWatch");
 // The one owner of "is this the money rather than the project" — the same set
@@ -1352,6 +1356,23 @@ async function runOnce({ tg, now = Date.now(), deps = {}, rng = Math.random } = 
     );
 
     if (cfg.postChannel && tg) await announce(tg, c, info, input, cfg).catch(() => {});
+    // ⚠️ EVERY FREE LISTING IS REPORTED TO THE VISITOR CHANNEL, and it is
+    // reported whether or not it was ANNOUNCED.
+    //
+    // "setiap free listing harus ada kirim laporan di channel dexvra visitor,
+    // bawah free listing yang jelas". Until now a free listing left no trace an
+    // operator could read: `announce()` only fires when 📣 Post to channel is on
+    // AND the package is the one that reaches @dexvraio, so `free` and `xpress`
+    // auto listings — the great majority — went live with nothing but a pm2
+    // line. The site gained a row and the operator learned about it by looking
+    // at the site.
+    //
+    // `log.report` is the visitor-channel transport this repo already uses for
+    // business events (a /start, a purchase). It is deliberately NOT
+    // de-duplicated: two listings that look alike are two real listings, and
+    // collapsing them would hide the feed. A failure to post must never cost
+    // the listing, which has already happened.
+    reportFreeListing(c, info, input, pkgKey, { today, cap: cfg.maxPerDay });
   }
   report.listed = listedNow;
   // ⚠️ EVERY CREATE REFUSED IS A BLOCKED SCAN, not a quiet market.
@@ -1619,6 +1640,40 @@ function badgeFor(tier) {
  * the channels but not the feed was the one hole in that rule, and it is the
  * hole most listings fell through once auto-listing was switched on.
  */
+/**
+ * The visitor-channel line for a listing this service put on the site.
+ *
+ * PLAIN and complete on purpose: what went live, on which chain, which package
+ * it was listed under, what it was worth at the moment it was listed, and where
+ * to look. An operator reading the visitor channel should not have to open the
+ * site to learn what happened — that is the state this replaces.
+ *
+ * Never throws: it runs after the listing is already live, and a channel that
+ * is unreachable must not turn a successful listing into a failed scan.
+ */
+function reportFreeListing(c, info, input, pkgKey, { today, cap } = {}) {
+  try {
+    const pkg = pkgOf(pkgKey);
+    const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const money = (n) => (Number.isFinite(Number(n)) ? fmtCap(Number(n)) : "—");
+    const chain = (chainOf(c.chain) && chainOf(c.chain).label) || c.chain;
+    log.report(
+      `🆓 <b>FREE LISTING</b> — <b>${esc(input.sym)}</b> is live on Dexvra\n` +
+        `<b>${esc(input.name)}</b> · ${esc(chain)}\n` +
+        `Package: <b>${esc(pkg.label)}</b>${input.tier && input.tier !== "FREE" ? ` · tier <b>${esc(input.tier)}</b>` : ""}` +
+        `${input.trendExp != null ? " · <b>on the Trending board</b>" : ""}\n` +
+        `Cap ${money(info.mcap)} · Liq ${money(info.liq)} · 24h vol ${money(info.vol24)}\n` +
+        `<a href="${esc(SITE_URL)}/token/${esc(c.chain)}/${esc(c.address)}">Open on dexvra.io</a>` +
+        `${Number.isFinite(Number(today)) ? ` · ${esc(today)}/${esc(cap)} free listings today` : ""}\n` +
+        `<code>${esc(c.address)}</code>`,
+    );
+  } catch (e) {
+    // The listing is already live. This line is a report about it, and a report
+    // that throws must not be why a scan is recorded as having failed.
+    log.debug(`[autolist] free-listing report: ${e.message}`);
+  }
+}
+
 async function announce(tg, c, info, input, cfg = get()) {
   const isTrending = input.trendExp != null;
   const coin = {
